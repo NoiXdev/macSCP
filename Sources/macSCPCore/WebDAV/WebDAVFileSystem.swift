@@ -547,3 +547,33 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 }
+
+/// WebDAV's answer to the checksum question, which is that it has none —
+/// said as an outcome rather than left as a hole.
+///
+/// The conformance exists precisely BECAUSE the answer is negative. A
+/// backend that simply did not conform would come back `nil` from the
+/// surface's `as?`, and a caller holding nothing has only a greyed-out menu
+/// entry to offer; the design of 2026-08-31 rules that out in as many words:
+/// "this server does not deliver checksums" is an answer, a dead menu entry
+/// is not. A thrown error is ruled out for the same reason — it would read
+/// as a failure of this request rather than a property of the protocol.
+///
+/// `ProtocolCapabilities.supportsRemoteChecksum` stays `false` for WebDAV,
+/// and the two say different things: the capability is what a menu consults
+/// before it is built, this is what a caller that asked anyway gets told.
+///
+/// Deliberately NOT read here: `OC-Checksum`, the Nextcloud/ownCloud
+/// property. The design excludes it from this piece of work — it is a
+/// server extension, present on some deployments and absent on others, so
+/// it is its own case with its own way of finding out whether it is there.
+extension WebDAVFileSystem: RemoteChecksumProvider {
+    /// Answers without asking the server, and that is the point: no request
+    /// can turn this into a checksum, so spending one would only make the
+    /// same answer slower.
+    public func remoteChecksum(
+        forFileAt path: String, algorithm: ChecksumAlgorithm
+    ) async throws -> RemoteChecksumOutcome {
+        .unavailableOnThisConnection
+    }
+}

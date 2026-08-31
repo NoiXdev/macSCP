@@ -103,15 +103,35 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         return items
     }
 
+    /// The entry at `path`, found the way `listedEntry` describes below.
+    public func stat(path: String) async throws -> RemoteFileItem {
+        try await listedEntry(at: path).item
+    }
+
+    /// One entry of a listing, plus the raw `<ETag>` text the listing
+    /// carried for it. `eTag` is `nil` for anything that is not an object —
+    /// a `CommonPrefixes` "directory", or the bucket root.
+    private struct ListedEntry {
+        let item: RemoteFileItem
+        let eTag: String?
+    }
+
     /// Looks up a single entry by listing its PARENT with a delimiter and
     /// matching the leaf name — S3 has no dedicated "stat a single key"
     /// call that also tells you whether a key is a `CommonPrefixes` (a
     /// "directory"), so this reuses the same signed-list machinery `list`
     /// uses rather than adding a second, subtly-different request path.
-    public func stat(path: String) async throws -> RemoteFileItem {
+    ///
+    /// `stat` and `remoteChecksum` are its callers, and it exists as one
+    /// function because they want the same walk over the same pages: the
+    /// checksum capability's whole source is the ETag that comes back in
+    /// THIS listing, so a second, separate lookup for it would be the
+    /// "subtly-different request path" the paragraph above rules out.
+    private func listedEntry(at path: String) async throws -> ListedEntry {
         let normalized = RemotePath.normalizedAbsolute(path)
         if normalized == "/" {
-            return RemoteFileItem(name: "/", path: "/", kind: .directory)
+            return ListedEntry(
+                item: RemoteFileItem(name: "/", path: "/", kind: .directory), eTag: nil)
         }
         let leafName = normalized.split(separator: "/").last.map(String.init) ?? normalized
         let parentPrefix = Self.s3Prefix(forPath: RemotePath.parent(of: normalized))
@@ -120,7 +140,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         repeat {
             let page = try await fetchPage(prefix: parentPrefix, continuationToken: token)
             if let match = page.items.first(where: { $0.name == leafName }) {
-                return match
+                return ListedEntry(item: match, eTag: page.eTags[match.path])
             }
             token = page.continuationToken
         } while token != nil
@@ -387,7 +407,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// transport-level (network) failure → `.connectionFailed`.
     private func fetchPage(
         prefix: String, continuationToken: String?
-    ) async throws -> (items: [RemoteFileItem], continuationToken: String?) {
+    ) async throws -> (items: [RemoteFileItem], continuationToken: String?, eTags: [String: String]) {
         let request = try buildListRequest(prefix: prefix, continuationToken: continuationToken)
         let (data, response) = try await send(request)
 
@@ -769,6 +789,52 @@ extension S3FileSystem: PresignedURLProvider {
             throw RemoteFSError.protocolError(reason: "Failed to build presigned URL")
         }
         return url
+    }
+}
+
+/// The checksum capability for an object store, which is a different kind of
+/// answer from SSH's: **nothing is computed on request here.** S3 offers no
+/// way to ask a bucket for a digest, and the maintainer's ruling of
+/// 2026-08-27 rules out the alternative — downloading the object to hash it
+/// — explicitly, and not as a fallback either. What is left is the digest
+/// the store already published: the `ETag` that came back in the listing.
+///
+/// That value is not always the object's hash, which is the whole reason
+/// `ChecksumProvenance` exists. An upload that arrived in one part has an
+/// ETag that IS the MD5 of the bytes; a multipart upload has an MD5 over the
+/// parts' MD5s with `-N` appended — and that shape turns up on exactly the
+/// large files somebody wants to check. Both come back as values, because
+/// hiding the composite and passing it off as a file hash are both worse
+/// than showing it for what it is; which one it was is carried in the
+/// result's provenance, where a display cannot drop it without dropping the
+/// value with it.
+extension S3FileSystem: RemoteChecksumProvider {
+    /// The ETag of the object at `path`, read for what it is.
+    ///
+    /// `algorithm` is a REQUEST, not a promise, and this is the one backend
+    /// where the two can differ: a store computes nothing on demand, so the
+    /// only digest available is the ETag's MD5 whatever was asked for. The
+    /// answer names its own algorithm (`FileChecksum.algorithm`) and its own
+    /// origin, so nothing labelled SHA-256 ever comes back carrying an MD5.
+    ///
+    /// Never `.unavailableOnThisConnection`: that case says a connection
+    /// cannot answer for any file, and this one can. An ETag that is not a
+    /// digest at all — some stores put opaque text there — is a failure
+    /// instead, the same treatment the SSH path gives output it cannot read.
+    public func remoteChecksum(
+        forFileAt path: String, algorithm: ChecksumAlgorithm
+    ) async throws -> RemoteChecksumOutcome {
+        let entry = try await listedEntry(at: path)
+        guard entry.item.kind == .file else {
+            throw RemoteFSError.protocolError(reason: "path is a directory: \(path)")
+        }
+        guard let raw = entry.eTag else {
+            throw RemoteFSError.protocolError(reason: "the listing carried no ETag for this object")
+        }
+        guard let checksum = FileChecksum.objectStorageETag(raw) else {
+            throw RemoteFSError.protocolError(reason: "the object's ETag is not a checksum")
+        }
+        return .checksum(checksum)
     }
 }
 

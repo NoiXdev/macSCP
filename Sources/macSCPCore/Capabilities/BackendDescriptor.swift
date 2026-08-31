@@ -372,7 +372,7 @@ public struct BackendDescriptor: Sendable {
         capabilities: ProtocolCapabilities(
             supportsShell: false, permissionModel: .none, supportsSymlinks: false,
             atomicRename: false, directoriesAreReal: false, resumeMode: .rangeGet,
-            supportsPresignedURL: true, supportsRemoteChecksum: false,
+            supportsPresignedURL: true, supportsRemoteChecksum: true,
             transport: .optionalTLS),
         connectionSchema: S3FieldSchema.connection,
         credentialSchema: S3FieldSchema.credential,
@@ -391,12 +391,15 @@ public struct BackendDescriptor: Sendable {
             FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
         ])
 
-    /// The two capability axes that deliberately flip against S3 (M21): real
-    /// directories and atomic rename, the exact two WebDAV actually has and
-    /// S3 does not. Everything else mirrors S3 -- no shell, no POSIX
-    /// permissions, no symlinks, range-GET resume, no presigned URLs, no
-    /// remotely computed checksums, and optional TLS (WebDAV is commonly run
-    /// over plain HTTP on a home NAS).
+    /// The capability axes that deliberately differ from S3 (M21): real
+    /// directories and atomic rename, the two WebDAV actually has and S3
+    /// does not -- and, the other way round, the two S3 has and WebDAV does
+    /// not: presigned URLs and an answerable checksum question (S3 has the
+    /// ETag; WebDAV publishes no digest this project reads, and
+    /// `OC-Checksum` is an extension and its own case). The remaining five
+    /// axes mirror S3: no shell, no POSIX permissions, no symlinks,
+    /// range-GET resume, and optional TLS (WebDAV is commonly run over
+    /// plain HTTP on a home NAS).
     static let webdavDescriptor = BackendDescriptor(
         kind: .webdav,
         capabilities: ProtocolCapabilities(

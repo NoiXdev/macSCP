@@ -16,9 +16,15 @@ public struct ProtocolCapabilities: Sendable, Equatable {
     public var directoriesAreReal: Bool
     public var resumeMode: ResumeMode
     public var supportsPresignedURL: Bool
-    /// Whether this protocol has a way to have the far side compute a file's
-    /// checksum (`RemoteChecksumProvider`). A statement about the PROTOCOL:
-    /// a connection whose far side turns out to carry no checksum tool
+    /// Whether this protocol can answer the checksum question with a value
+    /// at all (`RemoteChecksumProvider`). A statement about the PROTOCOL,
+    /// and deliberately not about HOW the answer is obtained: SSH has the
+    /// far side compute a digest, S3 reports the ETag its listing already
+    /// carries, and whether a given value describes the file's content is
+    /// carried by `FileChecksum.provenance` — never by this flag. WebDAV is
+    /// the one that is false: it publishes no digest this project reads.
+    ///
+    /// A connection whose far side turns out to carry no checksum tool
     /// answers `.unavailableOnThisConnection`, which is what the surface
     /// then says. Both are needed — this one so a menu can exist at all
     /// without asking the connection anything, that one so the menu tells

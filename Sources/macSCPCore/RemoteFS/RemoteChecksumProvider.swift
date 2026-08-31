@@ -2,20 +2,35 @@ import Foundation
 
 /// What a connection answered when it was asked for a file's checksum.
 public enum RemoteChecksumOutcome: Sendable, Equatable {
-    /// The far side computed it.
+    /// A value, carrying where it came from — computed on the far side,
+    /// computed here, or read off an object store's ETag.
     case checksum(FileChecksum)
-    /// This connection has no checksum tool, so it cannot answer this
-    /// question — for any file, not just this one.
+    /// This connection cannot answer the question — for any file, not just
+    /// this one. An SSH far side with no checksum tool answers it, and so
+    /// does WebDAV, which has no digest to report at all.
     ///
     /// A case and not an error, because it is an answer: "this server does
     /// not offer checksums" is something to say to the user, where a thrown
-    /// failure invites a dead, greyed-out menu entry instead.
+    /// failure invites a dead, greyed-out menu entry instead. It is also not
+    /// the answer for a single file that went wrong — an unreadable answer
+    /// about one file is a `RemoteFSError`, because the next file may be
+    /// fine.
     case unavailableOnThisConnection
 }
 
-/// An OPTIONAL backend capability (queried via `as?`, like
-/// `RemoteShellProvider` and `PresignedURLProvider`): have the FAR SIDE
-/// compute the digest of one file, without moving its bytes anywhere.
+/// A backend capability queried via `as?`, like `RemoteShellProvider` and
+/// `PresignedURLProvider`: the digest of one file, without moving its bytes
+/// anywhere.
+///
+/// Where that digest comes from is the backend's business and the answer
+/// says which: SSH has the far side compute it, the local file system
+/// computes it here over a file that is already here, S3 reports the ETag
+/// its listing carries, and WebDAV answers that it cannot. That is every
+/// backend this project has — so a surface asks the same question of all of
+/// them and never branches on `ConnectionKind`. What no backend does is
+/// download a file in order to hash it; the maintainer ruled that out on
+/// 2026-08-27, fallbacks included, and it is why S3's answer is an ETag or
+/// nothing.
 ///
 /// Read the parameter list, because it is the whole design. A path and one
 /// of three algorithms — and no third parameter. Nothing here carries a
@@ -33,13 +48,19 @@ public enum RemoteChecksumOutcome: Sendable, Equatable {
 /// `CLAUDE.md`, and it is why the narrow capability is the design rather
 /// than a preference.
 public protocol RemoteChecksumProvider: Sendable {
-    /// Computes `algorithm`'s digest of the file at `path` on the far side.
+    /// The digest of the file at `path` under `algorithm`.
     ///
-    /// Throws when the far side answered something that is not a checksum,
-    /// when the command failed there, or when the bound elapsed. Returns
-    /// `.unavailableOnThisConnection` when the connection has no checksum
-    /// tool at all — see `RemoteChecksumOutcome` for why that one is not a
-    /// throw.
+    /// `algorithm` is what the caller ASKED for, and a backend that computes
+    /// on demand delivers exactly it. An object store computes nothing on
+    /// demand, so S3 answers with the ETag's MD5 whatever was asked — which
+    /// is visible rather than silent, because a `FileChecksum` names its own
+    /// algorithm and its own origin.
+    ///
+    /// Throws when the answer about THIS file could not be had: output that
+    /// is not a checksum, a command that failed on the far side, a bound
+    /// that elapsed, a path that is missing or is a directory. Returns
+    /// `.unavailableOnThisConnection` when the backend cannot answer for any
+    /// file — see `RemoteChecksumOutcome` for why that one is not a throw.
     func remoteChecksum(
         forFileAt path: String, algorithm: ChecksumAlgorithm
     ) async throws -> RemoteChecksumOutcome
@@ -223,8 +244,10 @@ actor ChecksumFormMemory {
 /// The whole of "compute this file's checksum on the far side", above the
 /// connection and therefore decidable without one.
 ///
-/// It is `RemoteChecksumProvider`'s body; `CitadelFileSystem` supplies the
-/// channel and the memory and adds nothing of its own.
+/// It is the SSH backend's `RemoteChecksumProvider` body — the other three
+/// backends answer without a command and never come through here;
+/// `CitadelFileSystem` supplies the channel and the memory and adds nothing
+/// of its own.
 enum RemoteChecksumRun {
     static func checksum(
         forFileAt path: String,

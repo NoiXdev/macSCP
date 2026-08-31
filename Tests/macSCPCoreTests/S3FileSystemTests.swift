@@ -811,4 +811,125 @@ struct S3FileSystemTests {
             try await fs.deleteTree(at: "/d")
         }
     }
+
+    // MARK: - Checksums (the ETag from the listing, read for what it is)
+
+    /// A one-object listing whose `ETag` is exactly `etag` — written into
+    /// the XML the way S3 writes it, quotes and all.
+    private func listingXML(etag: String) -> String {
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <IsTruncated>false</IsTruncated>
+            <Contents>
+                <Key>a.txt</Key>
+                <LastModified>2024-01-02T03:04:05.000Z</LastModified>
+                <ETag>\(etag)</ETag>
+                <Size>12</Size>
+            </Contents>
+        </ListBucketResult>
+        """
+    }
+
+    /// The `as?` route the surface takes, from an existential of the
+    /// file-system protocol rather than from the concrete type.
+    private func checksumProvider(_ fs: S3FileSystem) throws -> any RemoteChecksumProvider {
+        let erased: any RemoteFileSystem = fs
+        return try #require(erased as? any RemoteChecksumProvider)
+    }
+
+    /// An upload that arrived in one part: the ETag IS the object's MD5, and
+    /// the value says where it came from.
+    @Test func aSinglePartETagBecomesAnMD5ThatDescribesTheObject() async throws {
+        let (fs, _) = try await connect(responses: [
+            (Data(listingXML(etag: "&quot;598d4c200461b81522a3328565c25f7c&quot;").utf8),
+             httpResponse(status: 200))
+        ])
+
+        let outcome = try await checksumProvider(fs)
+            .remoteChecksum(forFileAt: "/a.txt", algorithm: .md5)
+
+        guard case .checksum(let checksum) = outcome else {
+            Issue.record("expected a checksum, got \(outcome)")
+            return
+        }
+        #expect(checksum.algorithm == .md5)
+        #expect(checksum.hex == "598d4c200461b81522a3328565c25f7c")
+        #expect(checksum.provenance == .objectStorageETagSinglePart)
+        #expect(checksum.describesFileContent)
+    }
+
+    /// The case a display could lie about: `<md5 of the parts' md5s>-N` is
+    /// not the object's hash, and it turns up on exactly the large files
+    /// somebody wants to check. The value comes out carrying that.
+    @Test func aMultipartETagIsCarriedAsSomethingThatIsNotTheFilesHash() async throws {
+        let (fs, _) = try await connect(responses: [
+            (Data(listingXML(etag: "&quot;9bb58f26192e4ba00f01e2e7b136bbd8-3&quot;").utf8),
+             httpResponse(status: 200))
+        ])
+
+        let outcome = try await checksumProvider(fs)
+            .remoteChecksum(forFileAt: "/a.txt", algorithm: .md5)
+
+        guard case .checksum(let checksum) = outcome else {
+            Issue.record("expected a checksum, got \(outcome)")
+            return
+        }
+        #expect(checksum.provenance == .objectStorageETagMultipart(partCount: 3))
+        #expect(!checksum.describesFileContent)
+        #expect(checksum.hex == "9bb58f26192e4ba00f01e2e7b136bbd8")
+    }
+
+    /// Some stores put arbitrary opaque text in the ETag. That is an answer
+    /// that cannot be read, not a store without checksums — the same
+    /// treatment SSH gives output it cannot read.
+    @Test func anOpaqueETagIsAFailureRatherThanAValue() async throws {
+        let (fs, _) = try await connect(responses: [
+            (Data(listingXML(etag: "&quot;not-a-digest&quot;").utf8), httpResponse(status: 200))
+        ])
+
+        await #expect(throws: RemoteFSError.self) {
+            _ = try await self.checksumProvider(fs)
+                .remoteChecksum(forFileAt: "/a.txt", algorithm: .md5)
+        }
+    }
+
+    /// An object store computes nothing on request: the only digest it has
+    /// is the ETag's MD5, whatever algorithm was asked for. The answer
+    /// therefore names its own algorithm, and asking for SHA-256 does not
+    /// silently produce something labelled SHA-256.
+    @Test func askingForSHA256StillYieldsTheETagsMD5AndSaysSo() async throws {
+        let (fs, _) = try await connect(responses: [
+            (Data(listingXML(etag: "&quot;598d4c200461b81522a3328565c25f7c&quot;").utf8),
+             httpResponse(status: 200))
+        ])
+
+        let outcome = try await checksumProvider(fs)
+            .remoteChecksum(forFileAt: "/a.txt", algorithm: .sha256)
+
+        guard case .checksum(let checksum) = outcome else {
+            Issue.record("expected a checksum, got \(outcome)")
+            return
+        }
+        #expect(checksum.algorithm == .md5)
+        #expect(checksum.provenance == .objectStorageETagSinglePart)
+    }
+
+    @Test func aKeyThatIsNotInTheListingIsNotFound() async throws {
+        let (fs, _) = try await connect(responses: [
+            (Data(listingXML(etag: "&quot;598d4c200461b81522a3328565c25f7c&quot;").utf8),
+             httpResponse(status: 200))
+        ])
+
+        await #expect(throws: RemoteFSError.self) {
+            _ = try await self.checksumProvider(fs)
+                .remoteChecksum(forFileAt: "/b.txt", algorithm: .md5)
+        }
+    }
+
+    /// The capability field beside the behaviour it claims: S3 can answer
+    /// the checksum question, so a menu may exist for it.
+    @Test func theS3CapabilityAgreesThatItCanAnswerTheChecksumQuestion() {
+        #expect(BackendDescriptor.descriptor(for: .s3).capabilities.supportsRemoteChecksum)
+    }
 }

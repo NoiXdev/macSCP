@@ -1,3 +1,4 @@
+import Crypto
 import Foundation
 
 /// Local file system behind the same abstraction as SFTP — so both panes
@@ -341,5 +342,101 @@ public struct LocalFileSystem: RemoteFileSystem {
             return RemoteFSError.permissionDenied(path: path)
         }
         return RemoteFSError.protocolError(reason: String(describing: error))
+    }
+}
+
+/// The checksum capability for files that are already on this machine.
+///
+/// The maintainer's ruling of 2026-08-27 — a checksum is never obtained by
+/// DOWNLOADING — is what shapes the other backends, and it rules nothing out
+/// here: reading a local file is not a transfer, it is reading the file the
+/// question is about. So this is the one backend where this process itself
+/// computes the digest over the content, and the value says exactly that
+/// (`ChecksumProvenance.computedLocally`).
+///
+/// Conformance rather than a method of its own, because the surface reaches
+/// every backend the same way — `as? any RemoteChecksumProvider` — and never
+/// branches on which side of the window it is looking at.
+extension LocalFileSystem: RemoteChecksumProvider {
+    /// Computes `algorithm`'s digest of the file at `path`.
+    ///
+    /// Never `.unavailableOnThisConnection`: there is no far side that could
+    /// be missing a tool. What it does refuse is a path that is not a file
+    /// with bytes to hash — a missing one as `notFound`, a directory as a
+    /// `protocolError` — because a digest of "nothing readable" is the one
+    /// answer that would look like a result.
+    public func remoteChecksum(
+        forFileAt path: String, algorithm: ChecksumAlgorithm
+    ) async throws -> RemoteChecksumOutcome {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            throw RemoteFSError.notFound(path: path)
+        }
+        guard !isDirectory.boolValue else {
+            throw RemoteFSError.protocolError(reason: "path is a directory: \(path)")
+        }
+
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+        } catch {
+            throw Self.map(error, path: path)
+        }
+        defer { try? handle.close() }
+
+        let hex: String
+        do {
+            hex = try Self.streamedDigest(of: algorithm, reading: handle)
+        } catch let cancellation as CancellationError {
+            throw cancellation
+        } catch {
+            throw RemoteFSError.protocolError(reason: String(describing: error))
+        }
+
+        // The factory checks the hex and may refuse it. It cannot refuse
+        // this one — `fold` emits exactly the digit count the algorithm
+        // prescribes, in lowercase — but there is no construction that
+        // skips the check, and that is the point of `FileChecksum`'s private
+        // initializer rather than something to route around here.
+        guard let checksum = FileChecksum.computedLocally(algorithm, hex: hex) else {
+            throw RemoteFSError.protocolError(reason: "the computed digest was not readable as hex")
+        }
+        return .checksum(checksum)
+    }
+
+    /// The digest as lowercase hex, one algorithm per case so the hasher and
+    /// the `ChecksumAlgorithm` case cannot drift apart in a defaulted branch.
+    private static func streamedDigest(
+        of algorithm: ChecksumAlgorithm, reading handle: FileHandle
+    ) throws -> String {
+        switch algorithm {
+        case .sha256: try fold(SHA256(), reading: handle)
+        case .sha1: try fold(Insecure.SHA1(), reading: handle)
+        case .md5: try fold(Insecure.MD5(), reading: handle)
+        }
+    }
+
+    /// Folds the file into `function` one `TransferChunk.size` read at a
+    /// time — the same chunk every transfer on this backend uses.
+    ///
+    /// This is what makes the operation safe for the sizes the design names:
+    /// a 40 GB file costs one chunk of memory, not 40 GB, because the whole
+    /// file is never a `Data`. There is no time bound and there must not be
+    /// one — the bound the SSH path carries exists for a far side that stops
+    /// answering, and a local read either returns or fails. What bounds this
+    /// one is the caller: `Task.checkCancellation` runs once per chunk, so a
+    /// cancelled request stops within one chunk's work rather than at the
+    /// end of the file.
+    private static func fold<Function: HashFunction>(
+        _ function: Function, reading handle: FileHandle
+    ) throws -> String {
+        var function = function
+        while true {
+            try Task.checkCancellation()
+            guard let chunk = try handle.read(upToCount: TransferChunk.size), !chunk.isEmpty
+            else { break }
+            function.update(data: chunk)
+        }
+        return function.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }

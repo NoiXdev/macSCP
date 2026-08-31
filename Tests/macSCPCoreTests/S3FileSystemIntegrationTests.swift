@@ -1,3 +1,4 @@
+import Crypto
 import Foundation
 import Testing
 @testable import macSCPCore
@@ -492,5 +493,86 @@ struct S3FileSystemIntegrationTests {
         for (k, v) in extraHeaders { request.setValue(v, forHTTPHeaderField: k) }
 
         _ = try? await URLSession.shared.data(for: request)
+    }
+
+
+    // MARK: - Checksums against a real store
+
+    /// What no canned XML can show: that a REAL object store puts the digest
+    /// where this code reads it, and that both ETag shapes come out of the
+    /// same call meaning different things.
+    ///
+    /// Both objects are uploaded here rather than taken from the seed,
+    /// because the point is the SHAPE of the upload: one small enough for a
+    /// single PUT, one past the uploader's 8 MiB part size so MinIO really
+    /// composes the ETag out of the parts' MD5s. The multipart half is the
+    /// one that matters — its hex is compared against the MD5 of the very
+    /// bytes that were uploaded, and it must NOT match, which is exactly
+    /// what `describesFileContent == false` is saying.
+    @Test func minioAnswersASinglePartETagAsTheObjectsMD5AndAMultipartOneAsNotThat() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let provider = try #require((fs as any RemoteFileSystem) as? any RemoteChecksumProvider)
+        let smallKey = "checksum-single-\(UUID().uuidString).bin"
+        let largeKey = "checksum-multipart-\(UUID().uuidString).bin"
+
+        let small = Data("the quick brown fox".utf8)
+        // 12 MiB, past the uploader's 8 MiB part size, so this arrives as
+        // more than one part — same size and generator as the multipart
+        // round-trip above.
+        var state: UInt64 = 0x1234_5678_9abc_def0
+        var large = Data(capacity: 12 * 1024 * 1024)
+        for _ in 0..<(12 * 1024 * 1024) {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            large.append(UInt8((state >> 33) & 0xFF))
+        }
+
+        var caught: Error?
+        do {
+            for (key, body) in [(smallKey, small), (largeKey, large)] {
+                try await fs.write(
+                    path: "/\(key)", mode: .overwrite,
+                    contents: AsyncThrowingStream<Data, Error> { continuation in
+                        let chunkSize = 256 * 1024
+                        var offset = 0
+                        while offset < body.count {
+                            let end = min(offset + chunkSize, body.count)
+                            continuation.yield(body.subdata(in: offset..<end))
+                            offset = end
+                        }
+                        continuation.finish()
+                    })
+            }
+
+            let singleOutcome = try await provider.remoteChecksum(
+                forFileAt: "/\(smallKey)", algorithm: .md5)
+            guard case .checksum(let single) = singleOutcome else {
+                Issue.record("expected a checksum for the single-part object, got \(singleOutcome)")
+                return
+            }
+            #expect(single.provenance == .objectStorageETagSinglePart)
+            #expect(single.describesFileContent)
+            #expect(single.hex == Insecure.MD5.hash(data: small).map { String(format: "%02x", $0) }.joined())
+
+            let multipartOutcome = try await provider.remoteChecksum(
+                forFileAt: "/\(largeKey)", algorithm: .md5)
+            guard case .checksum(let multipart) = multipartOutcome else {
+                Issue.record("expected a checksum for the multipart object, got \(multipartOutcome)")
+                return
+            }
+            guard case .objectStorageETagMultipart(let partCount) = multipart.provenance else {
+                Issue.record("expected a multipart provenance, got \(multipart.provenance)")
+                return
+            }
+            #expect(partCount >= 2)
+            #expect(!multipart.describesFileContent)
+            let realMD5 = Insecure.MD5.hash(data: large).map { String(format: "%02x", $0) }.joined()
+            #expect(multipart.hex != realMD5)
+        } catch {
+            caught = error
+        }
+        try? await fs.delete(path: "/\(smallKey)")
+        try? await fs.delete(path: "/\(largeKey)")
+        if let caught { throw caught }
     }
 }

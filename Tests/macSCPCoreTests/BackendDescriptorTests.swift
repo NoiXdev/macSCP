@@ -26,7 +26,11 @@ struct BackendDescriptorTests {
         #expect(!c.directoriesAreReal)
         #expect(c.resumeMode == .rangeGet)
         #expect(c.supportsPresignedURL)          // capability is TRUE; M14 wires the action
-        #expect(!c.supportsRemoteChecksum)
+        // TRUE since the checksum work of 2026-08-31: S3 computes nothing on
+        // request, but it can answer the question from the ETag the listing
+        // already carries — and whether that ETag describes the object's
+        // content is carried by the result's provenance, not by this flag.
+        #expect(c.supportsRemoteChecksum)
         #expect(c.transport == .optionalTLS)
     }
 

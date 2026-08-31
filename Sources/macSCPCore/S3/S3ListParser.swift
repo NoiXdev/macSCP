@@ -13,6 +13,13 @@ import Synchronization
 ///   has no POSIX metadata).
 /// - `<CommonPrefixes><Prefix>` → a `.directory` item.
 ///
+/// A `Contents` entry's `<ETag>` is returned SEPARATELY, keyed by the same
+/// `path` the item carries, rather than as a field on `RemoteFileItem`: an
+/// ETag is an object store's own notion and every other backend would carry
+/// `nil` for it. `S3FileSystem`'s checksum capability is the one reader, and
+/// it interprets the raw text through `FileChecksum.objectStorageETag` —
+/// nothing here decides whether an ETag is a file hash.
+///
 /// `prefix` is the same query `prefix` the request was made with (e.g. `""`
 /// for the bucket root, or `"sub/"` when listing under `sub`) — it is
 /// stripped off each `Key`/`Prefix` to produce the leaf `name`. A `Contents`
@@ -22,7 +29,7 @@ import Synchronization
 public enum S3ListParser {
     public static func parse(
         _ data: Data, prefix: String
-    ) throws -> (items: [RemoteFileItem], continuationToken: String?) {
+    ) throws -> (items: [RemoteFileItem], continuationToken: String?, eTags: [String: String]) {
         let delegate = ParserDelegate(prefix: prefix)
         let parser = XMLParser(data: data)
         parser.delegate = delegate
@@ -30,7 +37,7 @@ public enum S3ListParser {
             let reason = parser.parserError?.localizedDescription ?? "unknown XML error"
             throw RemoteFSError.protocolError(reason: "Failed to parse S3 ListObjectsV2 response: \(reason)")
         }
-        return (delegate.items, delegate.continuationToken)
+        return (delegate.items, delegate.continuationToken, delegate.eTags)
     }
 
     /// ISO8601 with fractional seconds (`2024-01-02T03:04:05.000Z`, the
@@ -83,6 +90,9 @@ public enum S3ListParser {
         let prefix: String
         private(set) var items: [RemoteFileItem] = []
         private(set) var continuationToken: String?
+        /// The raw `<ETag>` text of each file entry, by the item's `path`.
+        /// Absent for an entry whose listing carried no ETag at all.
+        private(set) var eTags: [String: String] = [:]
 
         private var elementStack: [String] = []
         private var currentText = ""
@@ -90,6 +100,7 @@ public enum S3ListParser {
 
         private var currentKey: String?
         private var currentSize: UInt64?
+        private var currentETag: String?
         private var currentModifiedAt: Date?
         private var currentPrefixEntry: String?
 
@@ -109,6 +120,7 @@ public enum S3ListParser {
                 currentKey = nil
                 currentSize = nil
                 currentModifiedAt = nil
+                currentETag = nil
             case "CommonPrefixes":
                 currentPrefixEntry = nil
             default:
@@ -134,6 +146,8 @@ public enum S3ListParser {
                 currentSize = UInt64(trimmed)
             case "LastModified" where parent == "Contents":
                 currentModifiedAt = S3ListParser.parseDate(trimmed)
+            case "ETag" where parent == "Contents":
+                currentETag = trimmed
             case "Prefix" where parent == "CommonPrefixes":
                 currentPrefixEntry = trimmed
             case "IsTruncated":
@@ -143,9 +157,11 @@ public enum S3ListParser {
             case "Contents":
                 if let key = currentKey, key != prefix {
                     let name = S3ListParser.leafName(key: key, prefix: prefix)
+                    let path = "/" + key
                     items.append(RemoteFileItem(
-                        name: name, path: "/" + key, kind: .file,
+                        name: name, path: path, kind: .file,
                         size: currentSize, modifiedAt: currentModifiedAt))
+                    if let currentETag, !currentETag.isEmpty { eTags[path] = currentETag }
                 }
             case "CommonPrefixes":
                 if let prefixEntry = currentPrefixEntry, prefixEntry != prefix {

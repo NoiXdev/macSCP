@@ -1,3 +1,4 @@
+import Crypto
 import Foundation
 import Testing
 @testable import macSCPCore
@@ -577,5 +578,102 @@ struct LocalFileSystemTests {
         let file = items.first { $0.name == "datei.txt" }
         #expect(file?.owner != nil)
         #expect(file?.group != nil)
+    }
+
+    // MARK: - Checksums (computed here, over a file that is already here)
+
+    /// The `as?` route the surface takes, from an existential of the
+    /// file-system protocol — not a cast of the concrete type, which would
+    /// always succeed and prove nothing about the conformance being
+    /// reachable the way a caller reaches it.
+    private func checksumProvider() throws -> any RemoteChecksumProvider {
+        let fs: any RemoteFileSystem = LocalFileSystem()
+        return try #require(fs as? any RemoteChecksumProvider)
+    }
+
+    /// Figures produced by this host's `shasum`/`md5` over the same five
+    /// bytes, not by this code: a hasher wired to the wrong algorithm would
+    /// still be self-consistent, and only an outside figure catches that.
+    @Test func computesAllThreeDigestsOfALocalFileAndSaysItComputedThemHere() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
+        let provider = try checksumProvider()
+
+        let expected: [ChecksumAlgorithm: String] = [
+            .sha256: "d3751d33f9cd5049c4af2b462735457e4d3baf130bcbb87f389e349fbaeb20b9",
+            .sha1: "fd4cef7a4e607f1fcc920ad6329a6df2df99a4e8",
+            .md5: "598d4c200461b81522a3328565c25f7c",
+        ]
+        for algorithm in ChecksumAlgorithm.allCases {
+            let outcome = try await provider.remoteChecksum(forFileAt: path, algorithm: algorithm)
+            guard case .checksum(let checksum) = outcome else {
+                Issue.record("expected a checksum for \(algorithm), got \(outcome)")
+                continue
+            }
+            #expect(checksum.algorithm == algorithm)
+            #expect(checksum.hex == expected[algorithm])
+            #expect(checksum.provenance == .computedLocally)
+            #expect(checksum.describesFileContent)
+        }
+    }
+
+    /// A file several read chunks long, against a one-shot hash of the same
+    /// bytes. The reference is computed here in the test rather than pasted,
+    /// because the point is the chunk seam: a streamed digest that dropped
+    /// or repeated a chunk boundary would disagree with it.
+    @Test func aFileLongerThanOneReadChunkHashesTheSameAsAOneShotDigest() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // Not a multiple of the chunk size, so the last read is a short one.
+        let contents = Data((0..<(TransferChunk.size * 3 + 517)).map { UInt8($0 % 251) })
+        let url = root.appendingPathComponent("gross.bin")
+        try contents.write(to: url)
+        let provider = try checksumProvider()
+
+        let outcome = try await provider.remoteChecksum(
+            forFileAt: url.path(percentEncoded: false), algorithm: .sha256)
+
+        guard case .checksum(let checksum) = outcome else {
+            Issue.record("expected a checksum, got \(outcome)")
+            return
+        }
+        let oneShot = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
+        #expect(checksum.hex == oneShot)
+    }
+
+    @Test func aMissingFileHasNoChecksumAndSaysSoAsNotFound() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let provider = try checksumProvider()
+
+        await #expect(throws: RemoteFSError.self) {
+            _ = try await provider.remoteChecksum(
+                forFileAt: root.appendingPathComponent("weg.txt").path(percentEncoded: false),
+                algorithm: .sha256)
+        }
+    }
+
+    /// A directory is not a file with bytes to hash, and the refusal has to
+    /// SAY that — which is why the exact reason is asserted here rather than
+    /// merely that something was thrown.
+    ///
+    /// Measured on 2026-08-31 with the explicit check removed, on the two
+    /// spellings a directory path takes: WITH a trailing slash (what
+    /// `URL.path(percentEncoded:)` yields for a directory, so what this test
+    /// passes) `FileHandle(forReadingFrom:)` throws Cocoa error 4, which
+    /// this file maps to `.notFound` — an existing directory reported as
+    /// missing. WITHOUT one it throws Cocoa error 512, whose message is
+    /// about a file that could not be SAVED in a folder, for a read. Both
+    /// are what the user would be shown.
+    @Test func aDirectoryIsRefusedWithAReasonThatNamesTheDirectory() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let provider = try checksumProvider()
+        let path = root.appendingPathComponent("unterordner").path(percentEncoded: false)
+
+        await #expect(throws: RemoteFSError.protocolError(reason: "path is a directory: \(path)")) {
+            _ = try await provider.remoteChecksum(forFileAt: path, algorithm: .sha256)
+        }
     }
 }

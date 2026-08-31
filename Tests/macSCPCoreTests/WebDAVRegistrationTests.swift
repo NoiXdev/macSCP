@@ -4,9 +4,16 @@ import Testing
 
 @Suite("WebDAV registration")
 struct WebDAVRegistrationTests {
-    /// The point of the whole milestone: two axes flip against S3 while shell
-    /// and permissions stay off. If these ever change silently, the framework
-    /// claim is no longer true.
+    /// The point of the whole milestone: real directories and atomic rename
+    /// flip against S3 while shell and permissions stay off. If these ever
+    /// change silently, the framework claim is no longer true.
+    ///
+    /// Two axes flip the other way, and both are asserted here beside the
+    /// WebDAV values so a negative reading of this suite is never the only
+    /// thing pinning them: presigned URLs, and — since the checksum work of
+    /// 2026-08-31 — whether the backend can answer the checksum question at
+    /// all. S3 can, from the ETag; WebDAV publishes no digest this project
+    /// reads.
     @Test func capabilitiesFlipDirectoriesAndRenameAgainstS3() {
         let webdav = BackendDescriptor.descriptor(for: .webdav).capabilities
         let s3 = BackendDescriptor.descriptor(for: .s3).capabilities
@@ -21,7 +28,9 @@ struct WebDAVRegistrationTests {
         #expect(webdav.supportsSymlinks == false)
         #expect(webdav.resumeMode == .rangeGet)
         #expect(webdav.supportsPresignedURL == false)
+        #expect(s3.supportsPresignedURL == true)
         #expect(webdav.supportsRemoteChecksum == false)
+        #expect(s3.supportsRemoteChecksum == true)
         #expect(webdav.transport == .optionalTLS)
     }
 

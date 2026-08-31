@@ -348,4 +348,24 @@ struct WebDAVFileSystemTests {
         let fs = WebDAVFileSystem(config: config, transport: FakeHTTPTransport(replies: []))
         #expect(fs.supportsAppendResume == false)
     }
+
+    // MARK: - Checksums (a statement, not a dead menu entry)
+
+    /// WebDAV has no checksum of its own — this piece of work deliberately
+    /// leaves `OC-Checksum` out, it is an extension and its own case. So the
+    /// answer is the outcome that SAYS the connection cannot answer, not a
+    /// thrown error and not a missing conformance: a caller that reaches
+    /// this backend through `as?` gets a sentence to show, and it costs no
+    /// request to find out.
+    @Test func webdavAnswersThatItHasNoChecksumsWithoutAskingTheServer() async throws {
+        let transport = FakeHTTPTransport(replies: [])
+        let erased: any RemoteFileSystem = WebDAVFileSystem(config: config, transport: transport)
+        let provider = try #require(erased as? any RemoteChecksumProvider)
+
+        let outcome = try await provider.remoteChecksum(forFileAt: "/a.txt", algorithm: .sha256)
+
+        #expect(outcome == .unavailableOnThisConnection)
+        #expect(transport.requests.isEmpty)
+        #expect(!BackendDescriptor.descriptor(for: .webdav).capabilities.supportsRemoteChecksum)
+    }
 }
