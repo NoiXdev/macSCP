@@ -895,13 +895,16 @@ struct SnippetCommandSurveyTests {
 
     /// Core files that CALL the shell-lexing code without lexing themselves.
     /// They are excluded from the `Character` ban for stated reasons:
-    /// `SSHConnectionConfig` keeps two `Character` allow lists (see the
-    /// guard above), and the other two only hand a value to
-    /// `PosixQuoting.singleQuoted`.
+    /// `SSHConnectionConfig` keeps `Character` allow lists (see the guard
+    /// above); `FileChecksum` walks a digest field it requires to be ASCII
+    /// element by element, so a grapheme cluster carrying a combining mark
+    /// is refused rather than mis-read; `SSHCommandBuilder` and
+    /// `CLIToolInstaller` only hand a value to `PosixQuoting.singleQuoted`.
     private static let shellCallerFileNames = [
         "SSHConnectionConfig.swift",
         "SSHCommandBuilder.swift",
         "CLIToolInstaller.swift",
+        "FileChecksum.swift",
     ]
 
     private static func shellLexingSourceFiles() throws -> [URL] {
