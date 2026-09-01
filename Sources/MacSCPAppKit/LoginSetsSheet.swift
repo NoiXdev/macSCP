@@ -868,7 +868,15 @@ private struct LoginSetEditorView: View {
         for kind: ConnectionKind, existing: LoginSet?
     ) -> FieldValues {
         let descriptor = BackendDescriptor.descriptor(for: kind)
-        var values = descriptor.defaultValues
+        // `editBaseline`, NOT `defaultValues`: this sheet also opens on an
+        // EXISTING set, and `defaultValues` would put S3's new-form region
+        // assumption into `values` even though nothing here ever shows or
+        // saves it (the credential form renders only `accessKeyID` /
+        // `secretAccessKey`, and `S3FieldSchema.loginSet(id:name:from:)`
+        // reads only `accessKeyID`) -- behaviour-neutral today, same as
+        // `ContentView.fillForm`'s `editBaseline` switch. SSH and WebDAV are
+        // unaffected: their `editBaseline` equals their `defaultValues`.
+        var values = descriptor.editBaseline
         // Only when the set IS of this kind: switching the picker away and
         // back must not carry an SSH set's user name into an S3 access key.
         if let existing, existing.kind == kind {
