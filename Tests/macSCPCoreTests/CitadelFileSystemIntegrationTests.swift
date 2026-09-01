@@ -1591,6 +1591,10 @@ struct CitadelFileSystemIntegrationTests {
         let detail: String
     }
 
+    private struct AskPassHelperError: Error {
+        let detail: String
+    }
+
     /// Starts a BRAND-NEW `ssh-agent -s` process this test owns exclusively
     /// (parsed from its own stdout) — never the maintainer's real agent.
     /// Killed in the caller's `defer`.
@@ -1636,10 +1640,14 @@ struct CitadelFileSystemIntegrationTests {
     /// process. The passphrase is never interpolated into shell syntax: it is
     /// written raw to a 0600 secret file, and the 0700 helper script just
     /// `cat`s that file, so a passphrase containing a quote or any other
-    /// shell metacharacter cannot break or inject into the script. Both
-    /// files are removed in a `defer` set up before either is written, so a
-    /// throw from `write`/`setAttributes`/`run`/`waitUntilExit` still cleans
-    /// them up — they do not linger on disk past this call.
+    /// shell metacharacter cannot break or inject into the script. Each file
+    /// is created with its final permissions in one `createFile` call — never
+    /// written world/group-readable and then chmod'd — so there is no window
+    /// where the plaintext passphrase sits at default permissions. `defer`
+    /// removal is armed (`secretFile`/`helperScript` assigned) BEFORE each
+    /// `createFile` call, so even a `createFile` that reports failure still
+    /// gets any partially-written file cleaned up; `removeItem` on a path
+    /// that was never created is a harmless `try?`.
     private func addKey(atPath keyPath: String, to agent: SpawnedAgent,
                         passphrase: String? = nil, helperDirectory: URL? = nil) throws {
         let add = Process()
@@ -1657,14 +1665,25 @@ struct CitadelFileSystemIntegrationTests {
         }
         if let passphrase, let helperDirectory {
             let secret = helperDirectory.appendingPathComponent("askpass-secret")
-            try passphrase.write(to: secret, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: secret.path(percentEncoded: false))
             secretFile = secret
+            let secretCreated = FileManager.default.createFile(
+                atPath: secret.path(percentEncoded: false), contents: Data(passphrase.utf8),
+                attributes: [.posixPermissions: 0o600])
+            #expect(secretCreated)
+            guard secretCreated else {
+                throw AskPassHelperError(detail: "could not create askpass secret file at \(secret.path(percentEncoded: false))")
+            }
 
             let script = helperDirectory.appendingPathComponent("askpass.sh")
-            try "#!/bin/sh\ncat \"\(secret.path(percentEncoded: false))\"\n".write(to: script, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path(percentEncoded: false))
             helperScript = script
+            let scriptContents = "#!/bin/sh\ncat \"\(secret.path(percentEncoded: false))\"\n"
+            let scriptCreated = FileManager.default.createFile(
+                atPath: script.path(percentEncoded: false), contents: Data(scriptContents.utf8),
+                attributes: [.posixPermissions: 0o700])
+            #expect(scriptCreated)
+            guard scriptCreated else {
+                throw AskPassHelperError(detail: "could not create askpass script at \(script.path(percentEncoded: false))")
+            }
 
             environment["SSH_ASKPASS"] = script.path(percentEncoded: false)
             environment["SSH_ASKPASS_REQUIRE"] = "force"
