@@ -1,84 +1,84 @@
-# P3c: Terminal aus dem Host-Kontextmenü — Implementation Plan
+# P3c: Terminal from the host context menu — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Das Kontextmenü einer gespeicherten Sitzung bekommt „Terminal
-öffnen" (in macSCP, ohne Dateibrowser) und „In externem Terminal öffnen" —
-beide nur, wenn die Sitzung eine Shell hat.
+**Goal:** The context menu of a stored session gets "Open Terminal"
+(in macSCP, without the file browser) and "Open in External Terminal" —
+both only when the session has a shell.
 
-**Architecture:** Die Konfigurations-Auflösung, die `connect()` heute intern
-macht, wird zu einer eigenen Funktion, die **beide** Wege benutzen — der
-Verbindungsaufbau und der externe Start. Kein zweiter Auflösungspfad.
+**Architecture:** The configuration resolution that `connect()` today does
+internally becomes its own function, which **both** paths use — connection
+setup and the external launch. No second resolution path.
 
 **Tech Stack:** Swift 6, `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+,
-SwiftUI, Swift Testing, zwei Testtargets.
+SwiftUI, Swift Testing, two test targets.
 
-Spec: `docs/superpowers/specs/2026-08-18-p3-ordnung-design.md`, Abschnitt P3c.
+Spec: `docs/superpowers/specs/2026-08-18-p3-ordnung-design.md`, section P3c.
 
 ## Global Constraints
 
-- **Code, Kommentare, Testnamen: Englisch.** Interne Doku (`docs/`) Deutsch.
-- **Jeder neue L10n-Schlüssel in allen vier Katalogen** (en/de/fr/pl),
-  identische Schlüsselmengen, `plutil -lint` sauber.
-- **Nie eine Zeilennummer in einen Kommentar.**
-- **Kein Secret in Log, Fehler oder Testfehlermeldung.** Diese Phase fasst
-  Anmeldedaten an — siehe die eigene Warnung unten.
-- **Jede Tatsachenbehauptung dieses Plans ist am Code zu prüfen, bevor sie
-  benutzt wird.** Im letzten Meilenstein enthielten **zwölf** meiner
-  Aufgabenbeschreibungen einen sachlichen Fehler über den Code. Die unten
-  zitierten Signaturen sind am 2026-08-18 gemessen; weicht etwas ab, ist
-  **der Plan** falsch — melden, nicht anpassen.
-- **Zwei Proben vor jedem Commit**, beide:
-  1. Bliebe ein Test grün, wenn die Funktion konstant zurückgäbe?
-  2. **Welche Behauptung meines Doc-Kommentars beobachtet kein Test?**
-     Im letzten Meilenstein waren **fünf** Doc-Kommentare schlicht falsch.
-     Prüfe jeden Satz am Code, bevor du ihn schreibst.
-- **Die GUI wird nicht gestartet.** `scripts/package-app` erlaubt,
-  `scripts/release` nicht.
-- Conventional Commits, Englisch, Footer:
+- **Code, comments, test names: English.** Internal docs (`docs/`) German.
+- **Every new L10n key in all four catalogs** (en/de/fr/pl), identical
+  key sets, `plutil -lint` clean.
+- **Never a line number in a comment.**
+- **No secret in a log, error, or test failure message.** This phase
+  handles credentials — see the dedicated warning below.
+- **Every factual claim in this plan must be checked against the code
+  before it is used.** In the last milestone, **twelve** of my task
+  descriptions contained a factual error about the code. The signatures
+  quoted below were measured on 2026-08-18; if something differs, **the
+  plan** is wrong — report it, don't adapt around it.
+- **Two probes before every commit**, both:
+  1. Would a test stay green if the function returned a constant?
+  2. **Which claim in my doc comment does no test observe?**
+     In the last milestone, **five** doc comments were simply wrong.
+     Check every sentence against the code before writing it.
+- **The GUI is not launched.** `scripts/package-app` is allowed,
+  `scripts/release` is not.
+- Conventional Commits, English, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- Volle Suite grün vor jedem Commit. Ausgangsstand: **2060 Tests in 176
-  Suiten** — selbst nachmessen.
+- Full suite green before every commit. Starting point: **2060 tests in
+  176 suites** — measure it yourself too.
 
-## Gemessener Ist-Zustand (2026-08-18)
+## Measured current state (2026-08-18)
 
-- `ConnectionViewModel.connect()` macht vier Dinge nacheinander: Formular
-  prüfen (Schema + Jump), `descriptor.makeConfig(values, resolvedSecret)`,
-  `attachingJump(to:)`, dann wählen. Bei Erfolg merkt es sich
-  `lastConnectedConfig` — **nur** für den SSH-Fall.
-- `ContentView.requestExternalTerminal(for tab:)` verlangt heute
-  `tab.isConnected` **und** `tab.connectionViewModel.lastConnectedConfig`.
-  Ein externes Terminal ist damit nur aus einem **bereits verbundenen** Tab
-  erreichbar.
-- `ExternalTerminalLauncher.open(config:target:customPath:root:)` braucht
-  eine fertige `SSHConnectionConfig`.
-- `disconnect` setzt `lastConnectedConfig` auf `nil` — bewusst, damit kein
-  Klartext-Passwort über die Trennung hinaus liegen bleibt. **Diese
-  Eigenschaft darf diese Phase nicht aufweichen.**
-- Das Zeilen-Kontextmenü der Sidebar enthält heute „Connect" und „Edit…"
-  (`sidebar.connect`, `sidebar.edit`) und ruft `onSelect()` / `onEdit()`.
-- `BackendDescriptor.descriptor(for:).capabilities.supportsShell` ist für
-  S3 und WebDAV `false`.
-- `SessionTab.showsFiles` und `PaneVisibility` (aus P2) bestimmen, welche
-  Fensterhälften eine Sitzung zeigt; `StoredSession.paneVisibility` hält das
-  gespeichert, Standard `.filesOnly`.
+- `ConnectionViewModel.connect()` does four things in sequence: validate
+  the form (schema + jump), `descriptor.makeConfig(values, resolvedSecret)`,
+  `attachingJump(to:)`, then dial. On success it remembers
+  `lastConnectedConfig` — **only** for the SSH case.
+- `ContentView.requestExternalTerminal(for tab:)` today requires
+  `tab.isConnected` **and** `tab.connectionViewModel.lastConnectedConfig`.
+  An external terminal is thereby reachable only from a tab that is
+  **already connected**.
+- `ExternalTerminalLauncher.open(config:target:customPath:root:)` needs a
+  finished `SSHConnectionConfig`.
+- `disconnect` sets `lastConnectedConfig` to `nil` — deliberately, so no
+  plaintext password persists past disconnection. **This phase must not
+  weaken that property.**
+- The sidebar's row context menu today contains "Connect" and "Edit…"
+  (`sidebar.connect`, `sidebar.edit`) and calls `onSelect()` / `onEdit()`.
+- `BackendDescriptor.descriptor(for:).capabilities.supportsShell` is
+  `false` for S3 and WebDAV.
+- `SessionTab.showsFiles` and `PaneVisibility` (from P2) determine which
+  window halves a session shows; `StoredSession.paneVisibility` holds
+  that persisted, default `.filesOnly`.
 
 ---
 
-### Task 1: Eine Auflösung, zwei Aufrufer (Core)
+### Task 1: One resolution, two callers (Core)
 
-**Warum:** Ein externes Terminal braucht genau die ersten drei Schritte von
-`connect()` und darf den vierten nicht tun. Diese drei Schritte ein zweites
-Mal hinzuschreiben ist der Fehler, für den dieses Projekt in den letzten
-Phasen mehrfach bezahlt hat.
+**Why:** An external terminal needs exactly the first three steps of
+`connect()` and must not do the fourth. Writing those three steps a
+second time is the mistake this project has paid for repeatedly in
+recent phases.
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/ConnectionViewModel.swift`
-- Create/Modify: die zugehörigen Tests
+- Create/Modify: the associated tests
 
 **Interfaces:**
-- Produces (Namen sind ein Vorschlag — wähle bessere, wenn du welche
-  siehst, und schreib die gewählten in den Bericht):
+- Produces (names are a suggestion — pick better ones if you see them,
+  and write the ones you chose into the report):
 
 ```swift
 /// The config `connect()` would dial, resolved without dialing anything.
@@ -87,30 +87,31 @@ Phasen mehrfach bezahlt hat.
 public func resolvedConfigWithoutDialing() -> ConnectionConfig?
 ```
 
-- [ ] **Schritt 1: Erst lesen, dann schneiden**
+- [ ] **Step 1: Read first, then cut**
 
-Lies `connect()` ganz. Bestimme, welcher Teil **reine Auflösung** ist und wo
-der Verbindungsaufbau anfängt. Der Schnitt liegt vor `state = .connecting`.
+Read `connect()` in full. Determine which part is **pure resolution**
+and where connection setup begins. The cut sits before
+`state = .connecting`.
 
-Prüfe dabei, ob `state` beim Scheitern in beiden Wegen dasselbe bedeuten
-soll. Ein externer Start, der das Formular in den Fehlerzustand versetzt,
-kann richtig sein — oder störend, weil das Formular gar nicht sichtbar ist.
-**Entscheide bewusst und begründe im Bericht.**
+While doing so, check whether `state` on failure should mean the same
+thing on both paths. An external launch that puts the form into the
+error state may be correct — or disruptive, because the form isn't even
+visible. **Decide deliberately and justify it in the report.**
 
-- [ ] **Schritt 2: Der Äquivalenz-Wächter zuerst**
+- [ ] **Step 2: The equivalence guard first**
 
-Ein Test, der beweist, dass `connect()` und die neue Funktion **dieselbe**
-Konfiguration erzeugen — für einen einfachen SSH-Fall, einen mit Jump, und
-einen, bei dem die Auflösung scheitert. Er ist der Grund für diese Task; er
-muss rot werden, wenn jemand später einen der beiden Wege ändert.
+A test that proves `connect()` and the new function produce the **same**
+configuration — for a simple SSH case, one with a jump, and one where
+resolution fails. It is the reason for this task; it must go red if
+someone later changes one of the two paths.
 
-- [ ] **Schritt 3: `connect()` ruft auf statt zu wiederholen**
+- [ ] **Step 3: `connect()` calls it instead of repeating it**
 
-`connect()` benutzt die neue Funktion und behält sein Verhalten exakt. Die
-volle Suite ist hier der Regressionsnachweis: `connect()` ist in diesem
-Projekt vielfach getestet.
+`connect()` uses the new function and keeps its behavior exactly. The
+full suite is the regression proof here: `connect()` is extensively
+tested in this project.
 
-- [ ] **Schritt 4: Volle Suite + Commit**
+- [ ] **Step 4: Full suite + commit**
 
 ```bash
 swift test
@@ -119,77 +120,76 @@ git commit -m "refactor(core): resolve a connection config without dialing it"
 
 ---
 
-### Task 2: Die zwei Einträge (App)
+### Task 2: The two entries (App)
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SessionSidebar.swift`
-- Modify: `Sources/MacSCPAppKit/ContentView.swift` und/oder die passende
-  Erweiterungsdatei
-- Modify: die vier `Localizable.strings`
-- Create: `Tests/macSCPAppKitTests/…` (siehe Schritt 4)
+- Modify: `Sources/MacSCPAppKit/ContentView.swift` and/or the matching
+  extension file
+- Modify: the four `Localizable.strings`
+- Create: `Tests/macSCPAppKitTests/…` (see Step 4)
 
 **Interfaces:**
-- Consumes: `resolvedConfigWithoutDialing()` aus Task 1
+- Consumes: `resolvedConfigWithoutDialing()` from Task 1
 
-- [ ] **Schritt 1: Die Sichtbarkeitsregel — als testbarer Typ, nicht als `if`**
+- [ ] **Step 1: The visibility rule — as a testable type, not an `if`**
 
-Ob die beiden Einträge erscheinen, hängt an
+Whether the two entries appear depends on
 `BackendDescriptor.descriptor(for: session.kind).capabilities.supportsShell`.
-**Ausgeblendet, nicht ausgegraut** — ein dauerhaft toter Eintrag an einem
-S3-Bucket erklärt nichts.
+**Hidden, not greyed out** — a permanently dead entry on an S3 bucket
+explains nothing.
 
-Diese Entscheidung gehört als kleine, testbare Funktion nach Core oder in
-eine testbare App-Datei, **nicht** als Bedingung in den View-Body. In P2 hat
-genau diese Form ein leeres Fenster erzeugt, und in P3a hat sie leere
-Gruppen verschwinden lassen.
+This decision belongs as a small, testable function in Core or in a
+testable App file, **not** as a condition in the view body. In P2 exactly
+this shape produced an empty window, and in P3a it made groups vanish
+empty.
 
-Neue Schlüssel (alle vier Kataloge):
-- `sidebar.openTerminal` — „Open Terminal"
-- `sidebar.openExternalTerminal` — „Open in External Terminal"
+New keys (all four catalogs):
+- `sidebar.openTerminal` — "Open Terminal"
+- `sidebar.openExternalTerminal` — "Open in External Terminal"
 
-- [ ] **Schritt 2: „Terminal öffnen"**
+- [ ] **Step 2: "Open Terminal"**
 
-Verbindet wie „Verbinden", aber die Sitzung kommt **ohne Dateibrowser**
-hoch. Die Mechanik dafür steht seit P2.
+Connects like "Connect", but the session comes up **without the file
+browser**. The mechanism for that has existed since P2.
 
-**Beide Fragen, die die Spec offen gelassen hat, beantwortest du hier — und
-zwar so:** dieser Eintrag verhält sich in allem, was nicht die
-Fenster­aufteilung betrifft, **exakt wie „Verbinden"**. Neuer Tab oder
-aktiver Tab, bereits verbundene Sitzung, Fehlerfall: was „Verbinden" heute
-tut, tut dieser Eintrag auch. **Miss nach, was das ist**, und schreib es in
-den Bericht — nicht, weil ich es nicht entscheiden will, sondern weil zwei
-Einträge, die sich unterschiedlich verhalten, ohne Grund verwirren.
+**Both questions the spec left open, you answer here — as follows:**
+this entry behaves, in everything not concerning window layout, **exactly
+like "Connect"**. New tab or active tab, already-connected session, error
+case: whatever "Connect" does today, this entry does too. **Measure what
+that is**, and write it into the report — not because I don't want to
+decide it, but because two entries that behave differently confuse
+people for no reason.
 
-- [ ] **Schritt 3: „In externem Terminal öffnen"**
+- [ ] **Step 3: "Open in External Terminal"**
 
-Löst die Konfiguration über Task 1 auf und übergibt sie an
-`ExternalTerminalLauncher`. **macSCP verbindet sich dabei nicht.**
+Resolves the configuration via Task 1 and hands it to
+`ExternalTerminalLauncher`. **macSCP itself does not connect.**
 
-**Drei Dinge, die hier zwingend sind:**
+**Three things that are mandatory here:**
 
-1. **Der vorhandene Passworthinweis gilt auch hier.**
-   `requestExternalTerminal` zeigt ihn einmalig, wenn die Auth ein Passwort
-   ist — weil das Passwort in ein Skript geschrieben wird. Dieser Weg darf
-   ihn nicht umgehen. Prüfe am Code, wie er ausgelöst wird, und häng dich
-   ein, statt einen zweiten zu bauen.
-2. **Kein Secret bleibt liegen.** `disconnect` setzt `lastConnectedConfig`
-   bewusst auf `nil`, damit kein Klartext-Passwort über die Trennung hinaus
-   existiert. Dein Weg darf **keine** neue Stelle schaffen, an der eine
-   aufgelöste Konfiguration länger lebt als der Aufruf. Halte sie lokal.
-3. **Fehler werden gezeigt.** Scheitert die Auflösung (fehlendes Secret,
-   kaputter Jump) oder der Start, bekommt der Nutzer dieselbe Art Meldung
-   wie auf dem vorhandenen Weg — kein stiller Fehlschlag.
+1. **The existing password notice applies here too.**
+   `requestExternalTerminal` shows it once, when the auth is a password —
+   because the password gets written into a script. This path must not
+   bypass it. Check in the code how it is triggered, and hook into it
+   instead of building a second one.
+2. **No secret is left lying around.** `disconnect` deliberately sets
+   `lastConnectedConfig` to `nil`, so no plaintext password exists past
+   disconnection. Your path must create **no** new spot where a resolved
+   configuration lives longer than the call. Keep it local.
+3. **Errors are shown.** If resolution fails (missing secret, broken
+   jump) or the launch fails, the user gets the same kind of message as
+   on the existing path — no silent failure.
 
-- [ ] **Schritt 4: Was prüfbar ist, prüfen**
+- [ ] **Step 4: Check what's checkable**
 
-Die Sichtbarkeitsregel aus Schritt 1 ist eine reine Funktion und bekommt
-echte Tests. Die Verdrahtung der Menüeinträge ist ohne Rendering-Werkzeug
-nicht beobachtbar — **sag das im Bericht klar**, statt Abdeckung zu
-suggerieren. Das Projekt hat sieben Quelltext-Wächter und eine Review hat
-das Muster als über seiner nützlichen Größe bezeichnet: einen achten nur mit
-Begründung.
+The visibility rule from Step 1 is a pure function and gets real tests.
+The wiring of the menu entries is not observable without a rendering
+tool — **say that plainly in the report**, instead of implying coverage.
+The project has seven source-scanning guards, and a review has called
+the pattern past its useful size: an eighth only with justification.
 
-- [ ] **Schritt 5: Katalog-Nachweis + volle Suite + Commit**
+- [ ] **Step 5: Catalog proof + full suite + commit**
 
 ```bash
 for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done
@@ -199,12 +199,12 @@ git commit -m "feat(app): open a terminal straight from a host's context menu"
 
 ---
 
-### Task 3: Phasenabschluss
+### Task 3: Phase closeout
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-18-p3c-abschluss.md`
 
-- [ ] **Schritt 1: Messen**
+- [ ] **Step 1: Measure**
 
 ```bash
 swift test 2>&1 | tail -3
@@ -212,21 +212,21 @@ for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done
 MACSCP_VERSION="1.2.0-dev" MACSCP_BUILD="$(git rev-list --count HEAD)" ./scripts/package-app
 ```
 
-Den Build **im Hintergrund** starten; danach beide Binaries (`lipo -archs`),
-beide Ressourcen-Bundles, alle vier `.lproj`, `plutil -lint` auf die
-Info.plist prüfen. **Die App wird nicht gestartet.**
+Start the build **in the background**; afterward check both binaries
+(`lipo -archs`), both resource bundles, all four `.lproj`, `plutil -lint`
+on the Info.plist. **The app is not launched.**
 
-- [ ] **Schritt 2: Bericht**
+- [ ] **Step 2: Report**
 
-Er nennt die gemessenen Zahlen; wie die Auflösung geteilt wurde und was der
-Äquivalenz-Wächter hält; was „Verbinden" tut und womit sich „Terminal
-öffnen" deshalb deckt; dass keine aufgelöste Konfiguration länger lebt als
-der Aufruf; und **ausdrücklich**, dass die GUI nicht gestartet wurde — mit
-der Liste für den Maintainer: beide Einträge an einer SSH-Sitzung, **keiner**
-an einer S3- oder WebDAV-Sitzung, das eingebaute Terminal ohne
-Dateibrowser, der externe Start samt Passworthinweis beim ersten Mal.
+It states the measured numbers; how the resolution was split and what
+the equivalence guard holds; what "Connect" does and what "Open Terminal"
+therefore matches; that no resolved configuration lives longer than the
+call; and **explicitly**, that the GUI was not launched — with the list
+for the maintainer: both entries on an SSH session, **neither** on an S3
+or WebDAV session, the built-in terminal without the file browser, the
+external launch including the password notice the first time.
 
-- [ ] **Schritt 3: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git commit -m "docs(app): record the terminal context menu phase"
@@ -234,18 +234,18 @@ git commit -m "docs(app): record the terminal context menu phase"
 
 ---
 
-## Selbstreview dieses Plans
+## Self-review of this plan
 
-**Spec-Abdeckung:** Zwei getrennte Einträge → Task 2. Nur bei vorhandener
-Shell, ausgeblendet statt ausgegraut → Task 2, Schritt 1. Eingebaut =
-ohne Dateibrowser → Task 2, Schritt 2. Extern = keine eigene Verbindung →
-Task 2, Schritt 3. Die zwei offenen Fragen der Spec (neuer Tab? bereits
-verbunden?) → beantwortet durch die Regel „verhält sich wie Verbinden",
-gemessen statt geraten.
+**Spec coverage:** Two separate entries → Task 2. Only when a shell is
+present, hidden instead of greyed out → Task 2, Step 1. Built-in =
+without the file browser → Task 2, Step 2. External = no connection of
+its own → Task 2, Step 3. The spec's two open questions (new tab?
+already connected?) → answered by the rule "behaves like Connect",
+measured rather than guessed.
 
-**Platzhalter:** keine. Task 1 nennt bewusst keinen fertigen Rumpf, weil der
-Schnitt am gelesenen `connect()` zu bestimmen ist — das ist eine
-Arbeitsanweisung, kein offener Punkt.
+**Placeholders:** none. Task 1 deliberately names no finished body,
+because the cut has to be determined from reading `connect()` — that is
+a work instruction, not an open point.
 
-**Typkonsistenz:** `resolvedConfigWithoutDialing()` in den Tasks 1 und 2
-gleich geschrieben; der Name darf sich ändern, dann aber an beiden Stellen.
+**Type consistency:** `resolvedConfigWithoutDialing()` written the same
+way in Tasks 1 and 2; the name may change, but then in both places.

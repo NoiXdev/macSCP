@@ -1,144 +1,141 @@
-# Backlog: Wie weit lässt sich die Oberfläche prüfen?
+# Backlog: How far can the interface be tested?
 
-**Angelegt:** 2026-08-21, aus einer Maintainer-Frage nach dem
-Popover-Fehler. War eine Abwägung ohne Entscheidung; **seit dem 2026-08-28
-entschieden** — siehe den letzten Abschnitt. Der Rest steht unverändert da,
-damit die Abwägung nachlesbar bleibt statt neu geführt zu werden.
+**Created:** 2026-08-21, from a maintainer question after the popover bug.
+Was a weighing without a decision; **decided as of 2026-08-28** — see the
+final section. The rest stands unchanged, so the weighing stays readable
+instead of being re-argued.
 
-## Ausgangslage, gemessen
+## Starting point, measured
 
-39 Testdateien in `Tests/macSCPAppKitTests`. **Zwei** bauen ein echtes
-`NSMenu` (`SnippetMenuItemsTests`, `TerminalContextMenuTests`). **Keine**
-zeichnet eine SwiftUI-Ansicht — kein ViewInspector, kein `XCUIApplication`,
-kein `NSHostingView`.
+39 test files in `Tests/macSCPAppKitTests`. **Two** build a real `NSMenu`
+(`SnippetMenuItemsTests`, `TerminalContextMenuTests`). **None** renders a
+SwiftUI view — no ViewInspector, no `XCUIApplication`, no `NSHostingView`.
 
-Daraus folgt die heutige Grenze, und sie ist keine Nachlässigkeit, sondern
-Bauweise: Entscheidungen wandern aus den Ansichten in schlichte Typen
+That is where today's boundary comes from, and it is not neglect but
+construction: decisions move out of the views into plain types
 (`SnippetSendPlan`, `SnippetListPlan`, `SnippetMenuModel`,
-`SnippetCommandSurvey`), Quellscan-Wächter sichern die Aufrufstellen, und
-was übrig bleibt, geht auf die Sichtprüfungsliste.
+`SnippetCommandSurvey`), source-scanning guards secure the call sites, and
+what remains goes on the visual-inspection list.
 
-## Der Anlass
+## The occasion
 
-Der Fehler vom 2026-08-21: das Wert-Abfrage-**Sheet** wurde angefordert,
-während das Snippet-**Popover** noch stand, und verfiel spurlos. Über das
-Terminal-Icon taten Ausführen und Einfügen darum gar nichts, sobald ein
-Snippet eine Variable deklarierte.
+The bug from 2026-08-21: the value-prompt **sheet** was requested while the
+snippet **popover** was still up, and vanished without a trace. As a
+result, via the terminal icon, running and inserting did nothing at all as
+soon as a snippet declared a variable.
 
-Bemerkenswert daran: der Kontextmenü-Weg **war** abgedeckt — ein `NSMenu`
-lässt sich im Test bauen. Der Popover-Weg nicht. Die Grenze der Abdeckung
-und die Stelle des Fehlers waren dieselbe Linie.
+Notable about it: the context-menu path **was** covered — an `NSMenu` can
+be built in tests. The popover path was not. The boundary of coverage and
+the location of the bug were the same line.
 
-## Die drei Möglichkeiten
+## The three options
 
-### A. Wächtertests auf Präsentationsreihenfolge ausweiten
+### A. Extend guard tests to presentation order
 
-Dieselbe Quelltext-Prüfung, die heute drei Aufrufstellen sichert, könnte
-festhalten: *dismiss, dann nächste Runloop-Runde, dann auslösen.* Der
-bestehende Wächter für `triggerSnippet` prüft bereits eine **Reihenfolge**
-(Prüfung → Meldung → `return` → Abfrage), das Muster existiert also schon.
+The same source check that today secures three call sites could pin down:
+*dismiss, then next runloop turn, then trigger.* The existing guard for
+`triggerSnippet` already checks an **order** (check → alert → `return` →
+prompt), so the pattern already exists.
 
-**Hätte den Fehler verhindert. Kostet keine Infrastruktur.** Schwäche: es
-prüft Quelltext, nicht Verhalten — eine neue Auslösestelle in einer nicht
-gescannten Datei bliebe unsichtbar.
+**Would have prevented the bug. Costs no infrastructure.** Weakness: it
+checks source text, not behavior — a new trigger site in an unscanned file
+would stay invisible.
 
 ### B. ViewInspector
 
-Bibliothek, läuft unter `swift test`, prüft den SwiftUI-Baum und kann
-Knopf-Aktionen auslösen. Fängt „ist der Knopf da, ruft er das Richtige".
+A library, runs under `swift test`, inspects the SwiftUI tree and can
+trigger button actions. Catches "is the button there, does it call the
+right thing".
 
-**Hätte den Fehler *nicht* gefangen** — Präsentations-Timing bildet es nicht
-ab. Kostet eine Abhängigkeit, die an SwiftUI-Interna hängt und bei
-OS-Sprüngen bricht.
+**Would *not* have caught the bug** — it does not model presentation
+timing. Costs a dependency that hangs on SwiftUI internals and breaks on
+OS jumps.
 
 ### C. XCUITest
 
-Fährt die echte App und klickt wirklich. **Hätte den Fehler gefangen.**
+Drives the real app and clicks for real. **Would have caught the bug.**
 
-Kostet ein Xcode-Projekt neben dem reinen SwiftPM-Aufbau und einen
-CI-Runner mit GUI-Sitzung. Das ist ein eigenes Vorhaben, kein Zusatz — und
-es berührt `scripts/package-app` und die Release-Kette.
+Costs an Xcode project alongside the pure SwiftPM setup and a CI runner
+with a GUI session. That is a project of its own, not an add-on — and it
+touches `scripts/package-app` and the release chain.
 
-## Zweiter belegter Fall (2026-08-21, Verbindungszustand Task 4)
+## Second proven case (2026-08-21, connection-state task 4)
 
-Derselbe Riss, an anderer Stelle und diesmal **dreifach gemessen**. Die
-Sonde soll jeden verbundenen Tab prüfen, nicht nur den sichtbaren. Die
-Entscheidung darüber wurde in einen prüfbaren Typ gezogen
-(`LivenessProbeCoverage.tabsToProbe(from:)`, ohne `activeTabID`-Parameter,
-sodass die Einschränkung dort nicht einmal formulierbar ist). Trotzdem
-bringt jede dieser drei Änderungen den Fehler zurück, und **alle drei
-lassen die volle Suite grün**:
+The same crack, in a different spot, and this time **proved threefold**.
+The probe is supposed to check every connected tab, not just the visible
+one. The decision about that was pulled into a checkable type
+(`LivenessProbeCoverage.tabsToProbe(from:)`, with no `activeTabID`
+parameter, so the restriction cannot even be phrased there). Even so, each
+of these three changes brings the bug back, and **all three leave the full
+suite green**:
 
-- ein `.filter { $0.id == activeTabID }` hinter dem Aufruf am Montageort,
-- die Einschränkung im Runner statt an der Montage,
-- ein Runner-Rumpf, der für nicht-aktive Tabs `EmptyView()` liefert.
+- a `.filter { $0.id == activeTabID }` behind the call at the mount site,
+- the restriction in the runner instead of at the mount,
+- a runner body that returns `EmptyView()` for non-active tabs.
 
-Der Grund ist immer derselbe: ein Quelltext-Scan beweist, dass ein Aufruf
-**existiert**, nicht dass er **wirkt**. Drei Wächter auf diesem Zweig sind
-nacheinander an genau dieser Grenze gescheitert — erst ein Etikett statt
-eines durchgereichten Werts, dann Anwesenheit statt Ort, dann Ort statt
-Abdeckung.
+The reason is always the same: a source scan proves that a call **exists**,
+not that it **works**. Three guards on this branch failed one after
+another at exactly this boundary — first a label instead of a passed-
+through value, then presence instead of location, then location instead of
+coverage.
 
-**Entscheidung:** nicht weiterverfolgt. Ein vierter, klügerer Scan hätte
-dieselbe Grenze. Was diese Klasse fängt, ist Möglichkeit **C** — und die ist
-ein eigenes Vorhaben, kein Zusatz. Die Lücke steht als Kommentar an
-`LivenessProbeMountGuardTests`, damit sie am Ort des Geschehens sichtbar ist
-statt nur hier.
+**Decision:** not pursued further. A fourth, cleverer scan would hit the
+same boundary. What catches this class is option **C** — and that is a
+project of its own, not an add-on. The gap stands as a comment on
+`LivenessProbeMountGuardTests`, so it is visible at the site of the
+problem rather than only here.
 
-**Damit sind es zwei belegte Fälle statt einem** — die Zahl, an der die
-Empfehlung unten hängt.
+**That makes two proven cases instead of one** — the number the
+recommendation below hangs on.
 
-## Empfehlung
+## Recommendation
 
-**A jetzt, C als eigenes Vorhaben erwägen, B nicht.** B kostet eine
-Abhängigkeit und sieht ausgerechnet die Fehlerklasse nicht, die uns
-getroffen hat.
+**A now, consider C as its own project, not B.** B costs a dependency and,
+of all things, does not see the bug class that hit us.
 
-Vor C wäre ehrlich zu fragen, wie viele Fehler dieser Art es bisher gab.
-Gezählt am 2026-08-21: **vier**. Zwei verschluckte Präsentationen (der
-Ablehnungs-Alert aus Snippets Teil 2, das Wert-Sheet aus dem Popover) und
-zwei Fälle, in denen ein Wächter eine Schreibweise statt einer Eigenschaft
-bezeugte (die Aufbaufrist, die Sonden-Abdeckung).
+Before C, it would be honest to ask how many bugs of this kind there have
+been so far. Counted on 2026-08-21: **four**. Two swallowed presentations
+(the rejection alert from Snippets part 2, the value sheet from the
+popover) and two cases where a guard witnessed a spelling instead of a
+property (the build deadline, the probe coverage).
 
-Vier ist keine Zahl mehr, die für A allein spricht. Sie spricht dafür, C
-ernsthaft zu terminieren — aber als eigenes Vorhaben mit eigenem Entwurf,
-nicht als Anhängsel an den nächsten Zweig.
+Four is no longer a number that argues for A alone. It argues for taking
+C seriously — but as its own project with its own design, not as an
+attachment to the next branch.
 
-## Entscheidung des Maintainers (2026-08-28): C vorerst gestrichen
+## Maintainer decision (2026-08-28): C struck for now
 
-**XCUITest wird nicht terminiert.** Nicht verworfen — gestrichen, bis ein
-Anlass es zurückholt. Die Empfehlung oben bleibt stehen, damit die Abwägung
-nachlesbar ist; sie ist ab hier keine offene Aufgabe mehr.
+**XCUITest will not be pursued.** Not rejected — struck, until an occasion
+brings it back. The recommendation above stands, so the weighing stays
+readable; from here it is no longer an open task.
 
-Der Grund ist nicht, dass die Fehlerklasse verschwunden wäre. Sie ist
-gewachsen. C kostet ein Xcode-Projekt neben dem reinen SwiftPM-Aufbau, einen
-CI-Runner mit GUI-Sitzung und fasst `scripts/package-app` samt Release-Kette
-an — und der Release-Stau ist selbst ein offener Posten. Ein zweites
-Bausystem in eine Lage einzuziehen, in der das erste noch nicht ausgeliefert
-hat, verschiebt das Problem, statt es zu lösen.
+The reason is not that the bug class has disappeared. It has grown. C
+costs an Xcode project alongside the pure SwiftPM setup, a CI runner with
+a GUI session, and touches `scripts/package-app` along with the release
+chain — and the release backlog is itself an open item. Pulling in a
+second build system while the first has not yet shipped moves the problem
+instead of solving it.
 
-**Die Zahl oben ist überholt, und zwar in die Richtung, die für C spricht.**
-„Vier" ist vom 2026-08-21. Nachweisbar dazugekommen, ohne dass hier neu
-durchgezählt wurde:
+**The number above is stale, and in the direction that argues for C.**
+"Four" is from 2026-08-21. Provably added since, without recounting here:
 
-- der Reiter-Menü-Wächter, der fünf Korrekturrunden überstand, und der
-  Prefill-Wächter, der still verstummte — beide gemessen am 2026-08-27 und
-  in `CLAUDE.md` unter „Guards that name what they watch" festgehalten;
-- die Umbenennung `replacedSession` → `nameConflict`, die einen Filter auf
-  ein Symbol zeigen ließ, das es nicht mehr gab (2026-08-28);
-- sechs Runden, sechs Schreibweisen am Verbindungspfad, siehe
+- the tab-menu guard that survived five correction rounds, and the
+  prefill guard that went silent without anyone noticing — both measured
+  on 2026-08-27 and recorded in `CLAUDE.md` under "Guards that name what
+  they watch";
+- the rename `replacedSession` → `nameConflict`, which left a filter
+  naming a symbol that no longer existed (2026-08-28);
+- six rounds, six spellings on the connection path, see
   `2026-08-22-backlog-verbindungs-fähigkeit.md`.
 
-**A ist damit nicht automatisch beauftragt.** Der Wächter, den A meint,
-existiert inzwischen als `SnippetVariablePromptWiringGuardTests` — was er
-über die Präsentationsreihenfolge festhält und was noch fehlt, ist beim
-Angehen zu messen, nicht von hier aus zu behaupten. Wer A angeht, zählt
-zuerst nach.
+**That does not automatically commission A.** The guard A refers to now
+exists as `SnippetVariablePromptWiringGuardTests` — what it pins down
+about presentation order and what is still missing is to be measured when
+taken up, not asserted from here. Whoever takes on A counts first.
 
-**Was C zurückholt:** ein Fehler dieser Klasse, der einen Nutzer erreicht —
-nicht einer, den eine Prüfrunde vorher findet. Bis dahin gilt der Weg, den
-dieses Projekt seit dem Eintrag tatsächlich gegangen ist und der in den
-letzten Vorgängen mehrfach getragen hat: **nicht ein klügerer Scan, sondern
-eine Fähigkeitsgrenze** — ein Typ, der den Verstoß nicht übersetzen lässt.
-Das ist weder A noch C, und es war beim Anlegen dieses Eintrags noch nicht
-sichtbar.
+**What brings C back:** a bug of this class that reaches a user — not one
+a review round catches beforehand. Until then, the path this project has
+actually walked since the entry, and which has carried in several recent
+tasks, applies: **not a cleverer scan, but a capability boundary** — a
+type that cannot let the violation compile. That is neither A nor C, and
+it was not yet visible when this entry was filed.

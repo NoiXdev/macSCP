@@ -1,15 +1,15 @@
-# Snippet-Editor Teil 2 — mehrzeilige Snippets: Umsetzungsplan
+# Snippet Editor Part 2 — Multi-line Snippets: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein Snippet darf mehrere Zeilen haben; beim Auslösen entscheidet der
-Bracketed-Paste-Modus der Gegenseite, wie es gesendet wird.
+**Goal:** A snippet may have several lines; when triggered, the remote's
+bracketed-paste mode decides how it is sent.
 
-**Architecture:** Eine reine Planungsfunktion in Core entscheidet aus
-(Befehl, ausführen?, Klammerung?) über die Bytes — oder über eine Ablehnung.
-Die App-Schicht liest den Modus aus SwiftTerms `Terminal` und reicht ihn als
-`Bool` hinein; Core sieht SwiftTerm nicht. Das Modell verliert seine
-Umbruch-Abweisung, der Editor wird mehrzeilig.
+**Architecture:** A pure planning function in Core decides, from
+(command, execute?, bracketed?), the bytes to send — or a refusal.
+The app layer reads the mode from SwiftTerm's `Terminal` and passes it in as
+a `Bool`; Core never sees SwiftTerm. The model loses its line-break
+rejection, and the editor becomes multi-line.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, macOS 15+,
 Swift Testing (`@Test`/`#expect`), SwiftUI + AppKit, SwiftTerm.
@@ -18,54 +18,54 @@ Swift Testing (`@Test`/`#expect`), SwiftUI + AppKit, SwiftTerm.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **Englisch**.
-  Interne Doku unter `docs/` bleibt Deutsch.
-- Conventional Commits. Footer auf **jedem** Commit:
+- Code, comments, identifiers, test names, commit messages: **English**.
+  Internal docs under `docs/` stay German.
+- Conventional Commits. Footer on **every** commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- TDD rot→grün. Jede neue Logik kommt mit Tests; jede Regression wird zuerst
-  rot bewiesen.
-- Unit-Suite: `swift test`. Ausgangswert vor diesem Plan: **2197 Tests in 196
-  Suiten, grün.**
-- Nutzer-sichtbare Zeichenketten gehen durch `L10n.string` und existieren in
-  **allen vier** Katalogen (`en`, `de`, `fr`, `pl`). Ein Wächtertest hält die
-  Schlüsselmengen gleich — ein Schlüssel in nur drei Katalogen färbt die
-  Suite rot.
-- **Wer eine Zahl oder eine Aufzählung von Aufrufstellen in einen Kommentar
-  schreibt, zählt sie im selben Moment nach** (`CLAUDE.md`). Das gilt auch
-  für Zahlen, die aus diesem Plan stammen.
-- Snippets enthalten **niemals** Zugangsdaten — der Store ist reines JSON.
-  Keine Änderung dieses Plans darf daran rütteln.
-- Die App wird **nicht** gestartet; Sichtprüfungen sind Maintainer-Sache.
+- TDD red→green. Every new piece of logic ships with tests; every
+  regression is proved red first.
+- Unit suite: `swift test`. Baseline before this plan: **2197 tests in 196
+  suites, green.**
+- User-visible strings go through `L10n.string` and exist in
+  **all four** catalogs (`en`, `de`, `fr`, `pl`). A guard test keeps the
+  key sets equal — a key present in only three catalogs turns the suite
+  red.
+- **Writing a number or an enumeration of call sites into a comment means
+  counting them in that same moment** (`CLAUDE.md`). That also applies to
+  numbers that come from this plan.
+- Snippets **never** contain credentials — the store is plain JSON.
+  No change in this plan may touch that.
+- The app is **not** launched; visual checks are the maintainer's job.
 
 ---
 
-## Dateien
+## Files
 
-**Neu:**
+**New:**
 
-- `Sources/macSCPCore/Terminal/SnippetSendPlan.swift` — der Ergebnistyp und
-  die Planungsfunktion. Einzige Zuständigkeit: aus Befehl + zwei Flags die
-  Bytes oder die Ablehnung ableiten.
+- `Sources/macSCPCore/Terminal/SnippetSendPlan.swift` — the result type and
+  the planning function. Sole responsibility: derive the bytes, or the
+  refusal, from a command plus two flags.
 - `Tests/macSCPCoreTests/SnippetSendPlanTests.swift`
 
-**Geändert:**
+**Changed:**
 
-- `Sources/macSCPCore/Terminal/SnippetKeystrokes.swift` — bekommt eine
-  Zeilen-Funktion, auf die der Planer aufsetzt.
-- `Sources/macSCPCore/Terminal/Snippet.swift` — Initializer verliert die
-  Umbruch-Abweisung und damit seine Fehlbarkeit.
-- `Sources/macSCPCore/Terminal/SnippetCommandInput.swift` — **gelöscht.**
-- `Sources/MacSCPAppKit/SnippetCommandEditor.swift` — mehrzeilig.
-- `Sources/MacSCPAppKit/SnippetsSheet.swift` — ⌘Return, Listenzeile.
-- `Sources/MacSCPAppKit/ContentView.swift` — `triggerSnippet` über den Planer.
-- `Sources/MacSCPAppKit/SSHTerminalView.swift` — reicht den Modus durch.
-- `Sources/macSCPCore/Presentation/TerminalPanelViewModel.swift` — nimmt ihn
-  entgegen.
-- Die vier `Localizable.strings`.
+- `Sources/macSCPCore/Terminal/SnippetKeystrokes.swift` — gains a
+  per-line function that the planner builds on.
+- `Sources/macSCPCore/Terminal/Snippet.swift` — the initializer loses the
+  line-break rejection and, with it, its failability.
+- `Sources/macSCPCore/Terminal/SnippetCommandInput.swift` — **deleted.**
+- `Sources/MacSCPAppKit/SnippetCommandEditor.swift` — becomes multi-line.
+- `Sources/MacSCPAppKit/SnippetsSheet.swift` — ⌘Return, list row.
+- `Sources/MacSCPAppKit/ContentView.swift` — `triggerSnippet` routed through the planner.
+- `Sources/MacSCPAppKit/SSHTerminalView.swift` — passes the mode through.
+- `Sources/macSCPCore/Presentation/TerminalPanelViewModel.swift` — receives
+  it.
+- The four `Localizable.strings` files.
 
 ---
 
-## Task 1: Core — der Sendeplan
+## Task 1: Core — the Send Plan
 
 **Files:**
 - Create: `Sources/macSCPCore/Terminal/SnippetSendPlan.swift`
@@ -73,23 +73,23 @@ Swift Testing (`@Test`/`#expect`), SwiftUI + AppKit, SwiftTerm.
 - Modify: `Sources/macSCPCore/Terminal/SnippetKeystrokes.swift`
 
 **Interfaces:**
-- Consumes: nichts aus anderen Tasks.
+- Consumes: nothing from other tasks.
 - Produces:
   - `public enum SnippetSendPlan: Equatable { case send([UInt8]); case refusedMultilineInsert }`
   - `public enum SnippetSendPlanner { public static func plan(command: String, execute: Bool, bracketedPaste: Bool) -> SnippetSendPlan }`
   - `public static func SnippetKeystrokes.bytes(forLine line: String, execute: Bool) -> [UInt8]`
 
-**Kontext, den der Umsetzer braucht:** `SnippetKeystrokes` sendet heute
-`Array(snippet.command.utf8)` plus, bei `execute`, ein CR (`0x0D`). Der
-Doc-Kommentar an `terminator` trägt die gemessene Belegkette dafür — **nicht
-anfassen, nicht umformulieren.** Diese Aufgabe schiebt nur einen Parameter
-von `Snippet` auf `String`.
+**Context the implementer needs:** `SnippetKeystrokes` today sends
+`Array(snippet.command.utf8)` plus, when `execute`, a CR (`0x0D`). The
+doc comment on `terminator` carries the measured chain of evidence for
+that — **do not touch it, do not rephrase it.** This task only shifts a
+parameter from `Snippet` to `String`.
 
-- [ ] **Schritt 1: Zeilen-Funktion aus `bytes(for:execute:)` herausziehen**
+- [ ] **Step 1: Extract a per-line function from `bytes(for:execute:)`**
 
-In `SnippetKeystrokes.swift`: `private static let terminator` wird zu
-`static let terminator` (modulintern, damit der Planer es anhängen kann; der
-gesamte Doc-Kommentar bleibt unverändert stehen). Dann:
+In `SnippetKeystrokes.swift`: `private static let terminator` becomes
+`static let terminator` (module-internal, so the planner can append it; the
+entire doc comment stays unchanged). Then:
 
 ```swift
     /// The keystrokes for a single command line: `line` as UTF-8, followed
@@ -119,13 +119,13 @@ gesamte Doc-Kommentar bleibt unverändert stehen). Dann:
     }
 ```
 
-- [ ] **Schritt 2: Bauen und die bestehende Suite laufen lassen**
+- [ ] **Step 2: Build and run the existing suite**
 
 Run: `swift build && swift test 2>&1 | tail -3`
-Expected: 2197 Tests, grün. Diese Umstellung ändert kein Verhalten; wird sie
-rot, stimmt etwas anderes nicht.
+Expected: 2197 tests, green. This change alters no behavior; if it
+turns red, something else is wrong.
 
-- [ ] **Schritt 3: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 3: Write the failing tests**
 
 `Tests/macSCPCoreTests/SnippetSendPlanTests.swift`:
 
@@ -239,25 +239,25 @@ struct SnippetSendPlanTests {
 }
 ```
 
-**Beachte:** `crlfCountsAsALineBreak` hat oben **absichtlich kein** `@Test` —
-das ist ein Fehler, den Schritt 5 findet. Siehe dort.
+**Note:** `crlfCountsAsALineBreak` above **deliberately has no** `@Test` —
+that is a mistake that Step 5 finds. See there.
 
-- [ ] **Schritt 4: Rot laufen lassen**
+- [ ] **Step 4: Run red**
 
 Run: `swift test --filter SnippetSendPlan 2>&1 | tail -20`
-Expected: Compile-Fehler — `SnippetSendPlanner` und `SnippetSendPlan` gibt es
-nicht.
+Expected: compile error — `SnippetSendPlanner` and `SnippetSendPlan` do
+not exist yet.
 
-- [ ] **Schritt 5: Das fehlende `@Test` ergänzen**
+- [ ] **Step 5: Add the missing `@Test`**
 
-`crlfCountsAsALineBreak` trägt keine `@Test`-Annotation und wird deshalb nie
-ausgeführt — ein Test, der nichts beweist, ist schlimmer als keiner. Setze
-`@Test("a CRLF command counts as two lines")` davor.
+`crlfCountsAsALineBreak` carries no `@Test` annotation and is therefore
+never run — a test that proves nothing is worse than no test at all. Put
+`@Test("a CRLF command counts as two lines")` in front of it.
 
-Run danach: `swift test --filter SnippetSendPlan 2>&1 | grep -c 'Test .* passed\|Test .* failed'`
-Expected: **10** Testfunktionen werden gezählt (nicht 9).
+Run afterwards: `swift test --filter SnippetSendPlan 2>&1 | grep -c 'Test .* passed\|Test .* failed'`
+Expected: **10** test functions are counted (not 9).
 
-- [ ] **Schritt 6: Die minimale Implementierung schreiben**
+- [ ] **Step 6: Write the minimal implementation**
 
 `Sources/macSCPCore/Terminal/SnippetSendPlan.swift`:
 
@@ -333,22 +333,22 @@ public enum SnippetSendPlanner {
 }
 ```
 
-- [ ] **Schritt 7: Grün laufen lassen**
+- [ ] **Step 7: Run green**
 
 Run: `swift test --filter SnippetSendPlan 2>&1 | tail -5`
-Expected: alle 10 grün.
+Expected: all 10 green.
 
-- [ ] **Schritt 8: Die Konstant-Rückgabe-Probe von Hand fahren**
+- [ ] **Step 8: Manually run the constant-return probe**
 
-Ersetze den Rumpf von `plan` vorübergehend durch
-`return .send(Array(command.utf8))` und lasse die Suite laufen.
+Temporarily replace `plan`'s body with
+`return .send(Array(command.utf8))` and run the suite.
 
 Run: `swift test --filter SnippetSendPlan 2>&1 | grep -c 'failed'`
-Expected: **mindestens 5** Tests scheitern. Scheitern weniger, prüfen die
-Tests zu wenig — melde das, statt weiterzugehen. Stelle den Rumpf danach
-wieder her und lasse die Suite erneut grün laufen.
+Expected: **at least 5** tests fail. If fewer fail, the tests aren't
+checking enough — report that instead of moving on. Afterwards restore
+the body and run the suite green again.
 
-- [ ] **Schritt 9: Committen**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add Sources/macSCPCore/Terminal/SnippetSendPlan.swift Sources/macSCPCore/Terminal/SnippetKeystrokes.swift Tests/macSCPCoreTests/SnippetSendPlanTests.swift
@@ -362,35 +362,34 @@ EOF
 
 ---
 
-## Task 2: Core — das Modell nimmt Umbrüche an
+## Task 2: Core — the Model Accepts Line Breaks
 
 **Files:**
 - Modify: `Sources/macSCPCore/Terminal/Snippet.swift`
 - Delete: `Sources/macSCPCore/Terminal/SnippetCommandInput.swift`
-- Modify: `Tests/macSCPCoreTests/SnippetHighlighterTests.swift` (drei
-  `SnippetCommandInput`-Tests entfallen)
-- Modify: alle Dateien mit `Snippet(`-Aufrufen (siehe Schritt 4)
-- Modify: `Sources/MacSCPAppKit/SnippetCommandEditor.swift` (nur der
-  Sanitizer-Aufruf, siehe Schritt 5)
+- Modify: `Tests/macSCPCoreTests/SnippetHighlighterTests.swift` (three
+  `SnippetCommandInput` tests are removed)
+- Modify: all files with `Snippet(` call sites (see Step 4)
+- Modify: `Sources/MacSCPAppKit/SnippetCommandEditor.swift` (only the
+  sanitizer call, see Step 5)
 - Modify: `Tests/macSCPCoreTests/SnippetTests.swift`,
   `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift`
 
 **Interfaces:**
-- Consumes: nichts aus Task 1.
+- Consumes: nothing from Task 1.
 - Produces: `public init(id: UUID = UUID(), name: String, command: String, tags: [String] = [])`
-  — **nicht mehr fehlbar.** Task 3 und 4 verlassen sich darauf, dass ein
-  mehrzeiliger Befehl konstruierbar ist.
+  — **no longer failable.** Tasks 3 and 4 rely on a multi-line command
+  being constructible.
 
-**Kontext:** Die Umbruch-Abweisung war der **einzige** Grund, aus dem
-`Snippet.init?` scheitern konnte. Fällt sie, ist ein `init?`, das nie `nil`
-liefert, eine Lüge — jeder spätere Leser schriebe ein `guard let` für nichts.
-Deshalb wird der Initializer nicht-fehlbar, und die Aufrufstellen ziehen mit.
-Das ist mechanisch und umfangreich; es ist Absicht, dass es eine eigene
-Aufgabe ist.
+**Context:** The line-break rejection was the **only** reason
+`Snippet.init?` could fail. Once it goes, an `init?` that never returns
+`nil` is a lie — every later reader would write a `guard let` for nothing.
+So the initializer becomes non-failable, and the call sites follow suit.
+This is mechanical and extensive; it is deliberately its own task.
 
-- [ ] **Schritt 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-An `Tests/macSCPCoreTests/SnippetTests.swift` anhängen:
+Append to `Tests/macSCPCoreTests/SnippetTests.swift`:
 
 ```swift
     /// Part 2: a snippet may span lines. `"\r\n"` is ONE `Character` in
@@ -411,7 +410,7 @@ An `Tests/macSCPCoreTests/SnippetTests.swift` anhängen:
     }
 ```
 
-An `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift` anhängen:
+Append to `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift`:
 
 ```swift
     /// The audit log is one line per event. `SnippetAuditDetail` already
@@ -428,17 +427,17 @@ An `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift` anhängen:
     }
 ```
 
-- [ ] **Schritt 2: Rot laufen lassen**
+- [ ] **Step 2: Run red**
 
 Run: `swift test --filter 'Snippet' 2>&1 | tail -20`
-Expected: Compile-Fehler in den neuen Tests — `Snippet(...)` liefert ein
-`Snippet?`, das sich nicht mit `String` vergleichen lässt.
+Expected: compile errors in the new tests — `Snippet(...)` returns a
+`Snippet?`, which cannot be compared with a `String`.
 
-- [ ] **Schritt 3: Den Initializer umstellen**
+- [ ] **Step 3: Convert the initializer**
 
-In `Snippet.swift` den Doc-Kommentar an `command` kürzen (der Absatz über die
-Einzeiligkeit stimmt nicht mehr; der Absatz über `let` und die Normalisierung
-bleibt) und den Initializer ersetzen:
+In `Snippet.swift`, shorten the doc comment on `command` (the paragraph
+about single-line-ness is no longer true; the paragraph about `let` and
+normalization stays) and replace the initializer:
 
 ```swift
     /// Normalizes `tags` via `TagList.normalized` — see that type's doc
@@ -456,78 +455,78 @@ bleibt) und den Initializer ersetzen:
     }
 ```
 
-Und im Decoder den `guard let`-Block durch den direkten Aufruf ersetzen:
+And in the decoder, replace the `guard let` block with the direct call:
 
 ```swift
         let tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         self = Self(id: id, name: name, command: command, tags: tags)
 ```
 
-Der Kommentar darüber („Via the normalizing (and validating) init …") wird zu
-„Via the normalizing init — otherwise decode would be a second write path
+The comment above it ("Via the normalizing (and validating) init …") becomes
+"Via the normalizing init — otherwise decode would be a second write path
 that a hand-edited store file could use to smuggle an untrimmed or duplicate
 tag past the normalization above."
 
-- [ ] **Schritt 4: Die Aufrufstellen nachziehen**
+- [ ] **Step 4: Update the call sites**
 
 Run: `grep -rn 'Snippet(name:\|Snippet(id:' Sources/ Tests/ | wc -l`
 
-Notiere die Zahl **jetzt**; sie ist die Arbeitsmenge und gehört in den
-Bericht. Entferne an jeder dieser Stellen das nachgestellte `!` bzw. wickle
-`try #require(...)` ab. Betroffen sind Dateien in `Sources/macSCPCore/`,
-`Tests/macSCPCoreTests/` und `Tests/macSCPAppKitTests/`.
+Note the number **now**; it is the amount of work and belongs in the
+report. At every one of these spots, remove the trailing `!` or unwrap
+`try #require(...)`. Affected are files in `Sources/macSCPCore/`,
+`Tests/macSCPCoreTests/`, and `Tests/macSCPAppKitTests/`.
 
-Run danach: `swift build 2>&1 | grep -c error`
+Run afterwards: `swift build 2>&1 | grep -c error`
 Expected: `0`.
 
-- [ ] **Schritt 5: Den Sanitizer löschen**
+- [ ] **Step 5: Delete the sanitizer**
 
 ```bash
 git rm Sources/macSCPCore/Terminal/SnippetCommandInput.swift
 ```
 
-Entferne die drei `SnippetCommandInput`-Zeilen aus
-`Tests/macSCPCoreTests/SnippetHighlighterTests.swift` samt der Testfunktionen,
-die sie tragen, und deren Doc-Kommentaren.
+Remove the three `SnippetCommandInput` lines from
+`Tests/macSCPCoreTests/SnippetHighlighterTests.swift`, along with the test
+functions that carry them and their doc comments.
 
-Entferne im selben Zug den einen verbleibenden Aufruf in
-`Sources/MacSCPAppKit/SnippetCommandEditor.swift`: die Delegate-Methode
-`textView(_:shouldChangeTextIn:replacementString:)` tat nichts anderes als
-zu sanitisieren und entfällt vollständig. **Nur diese Methode** — der Rest
-des Editors gehört Task 3.
+In the same pass, remove the one remaining call in
+`Sources/MacSCPAppKit/SnippetCommandEditor.swift`: the delegate method
+`textView(_:shouldChangeTextIn:replacementString:)` did nothing but
+sanitize and is removed entirely. **Only this method** — the rest of the
+editor belongs to Task 3.
 
-Das gehört hierher und nicht in Task 3, damit jeder Commit dieses Zweigs für
-sich baut; ein Commit, der die App-Schicht nicht übersetzt, ist an den
-CI-Gates dieses Projekts kein zulässiger Zwischenstand. Der Editor nimmt
-damit ab jetzt eingefügte Umbrüche an, während eine getippte Eingabetaste
-noch verschluckt wird — ein stimmiger Zwischenzustand, den Task 3 auflöst.
+This belongs here and not in Task 3, so that every commit on this branch
+compiles on its own; a commit that doesn't build the app layer is not an
+acceptable intermediate state under this project's CI gates. From now on
+the editor accepts pasted line breaks, while a typed Return is still
+swallowed — a coherent intermediate state that Task 3 resolves.
 
 Run: `grep -rn 'SnippetCommandInput' Sources/ Tests/`
-Expected: **keine Treffer.**
+Expected: **no matches.**
 
-- [ ] **Schritt 6: Die zwei Doc-Kommentare korrigieren, die jetzt falsch sind**
+- [ ] **Step 6: Fix the two doc comments that are now wrong**
 
-`Tests/macSCPCoreTests/SnippetExportCodecTests.swift` (Zeilenbereich um den
-Kommentar „`Snippet.init(from:)` refuses a multi-line command") und
-`Tests/macSCPCoreTests/SnippetImportPlannerTests.swift` („`Snippet.init?` only
-rejects a multi-line command, not a blank name") behaupten beide eine Regel,
-die es nicht mehr gibt. Suche sie mit
+`Tests/macSCPCoreTests/SnippetExportCodecTests.swift` (the line range around
+the comment "`Snippet.init(from:)` refuses a multi-line command") and
+`Tests/macSCPCoreTests/SnippetImportPlannerTests.swift` ("`Snippet.init?` only
+rejects a multi-line command, not a blank name") both claim a rule that no
+longer exists. Find them with
 
 ```bash
 grep -rn 'refuses a multi-line\|rejects a multi-line' Tests/
 ```
 
-und schreibe sie auf das um, was der jeweilige Test tatsächlich prüft. Prüfe
-im selben Durchgang, ob der zugehörige Test noch etwas beweist — tut er es
-nicht mehr, melde das, statt ihn stillschweigend stehen zu lassen.
+and rewrite them to say what the respective test actually checks. In the
+same pass, check whether the associated test still proves anything — if it
+no longer does, report that instead of silently leaving it in place.
 
-- [ ] **Schritt 7: Bauen und die volle Suite laufen lassen**
+- [ ] **Step 7: Build and run the full suite**
 
 Run: `swift build && swift test 2>&1 | tail -3`
-Expected: grün — **die ganze Suite, nicht nur Core.** Baut die App-Schicht
-nicht, ist Schritt 5 unvollständig.
+Expected: green — **the whole suite, not just Core.** If the app layer
+does not build, Step 5 is incomplete.
 
-- [ ] **Schritt 8: Committen**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A Sources/macSCPCore Tests/macSCPCoreTests Tests/macSCPAppKitTests
@@ -541,7 +540,7 @@ EOF
 
 ---
 
-## Task 3: App — der Editor wird mehrzeilig
+## Task 3: App — the Editor Becomes Multi-line
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SnippetCommandEditor.swift`
@@ -549,22 +548,23 @@ EOF
 - Modify: `Tests/macSCPAppKitTests/SnippetCommandEditorGuardTests.swift`
 
 **Interfaces:**
-- Consumes: aus Task 2, dass `Snippet(name:command:)` nicht mehr fehlbar ist
-  und Umbrüche annimmt.
-- Produces: nichts, worauf Task 4 sich stützt.
+- Consumes: from Task 2, that `Snippet(name:command:)` is no longer failable
+  and accepts line breaks.
+- Produces: nothing that Task 4 relies on.
 
-**Kontext:** Der Editor ist ein `NSTextView` in einem
-`NSViewRepresentable`, gebaut in Teil 1 und vom Maintainer am laufenden Build
-geprüft. Was dort steht, ist teuer erarbeitet — insbesondere die
-abgeschalteten automatischen Ersetzungen, die Tab-Behandlung und die
-Nicht-Umbruch-Einstellung. **Nichts davon anfassen**, außer was hier
-ausdrücklich genannt ist.
+**Context:** The editor is an `NSTextView` inside an
+`NSViewRepresentable`, built in Part 1 and checked by the maintainer
+against the running build. What's there was hard-won — in particular the
+disabled automatic substitutions, the Tab handling, and the
+no-line-break setting. **Don't touch any of it**, except what is
+explicitly named here.
 
-- [ ] **Schritt 1: Die Wächtertests umdrehen (rot)**
+- [ ] **Step 1: Flip the guard tests (red)**
 
-In `SnippetCommandEditorGuardTests.swift`: Der Suite-Doc-Kommentar nennt
-Punkt 4 „Return swallowed at the command layer" mit der Begründung „This
-field is single-line". Beides gilt nicht mehr. Ersetze den Absatz durch:
+In `SnippetCommandEditorGuardTests.swift`: the suite's doc comment names
+point 4 "Return swallowed at the command layer" with the justification
+"This field is single-line". Neither is true any more. Replace the
+paragraph with:
 
 ```swift
 /// 4. **Return inserts a line break.** Part 2 made a snippet command
@@ -575,13 +575,13 @@ field is single-line". Beides gilt nicht mehr. Ersetze den Absatz durch:
 ///    nothing" rather than like a bug.
 ```
 
-Und benenne den Test `insertNewlineIsClaimedInDoCommandBy` in
-`insertNewlineIsNotClaimedInDoCommandBy` um, mit umgekehrter Erwartung: der
-Selektor darf in `doCommandBy` **nicht** vorkommen. Passe die zwei
-Selbsttests dieses Tests entsprechend an.
+And rename the test `insertNewlineIsClaimedInDoCommandBy` to
+`insertNewlineIsNotClaimedInDoCommandBy`, with the reversed expectation:
+the selector must **not** appear in `doCommandBy`. Adjust that test's two
+self-tests accordingly.
 
-Ergänze einen Wächter für das neue Speichern-Kürzel, im Stil der Nachbarn in
-dieser Datei (Quelltext-Scan, fail-closed, mit Selbsttest):
+Add a guard for the new Save shortcut, in the style of its neighbors in
+this file (source-scanning, fail-closed, with a self-test):
 
 ```swift
     /// The snippet editor's Save button carries ⌘Return, not the plain
@@ -610,23 +610,23 @@ dieser Datei (Quelltext-Scan, fail-closed, mit Selbsttest):
     }
 ```
 
-Sollte `functionBody(containing:in:)` die Editor-Aufrufstelle nicht in einer
-Funktion finden, die auch den Speichern-Knopf enthält, dann liegen beide
-nicht im selben Rumpf — melde das, statt den Scan aufzuweichen.
+If `functionBody(containing:in:)` cannot find the editor call site inside a
+function that also contains the Save button, then the two are not in the
+same body — report that instead of loosening the scan.
 
 Run: `swift test --filter SnippetCommandEditor 2>&1 | tail -10`
-Expected: rot — der Selektor steht noch da.
+Expected: red — the selector is still there.
 
-- [ ] **Schritt 2: Den Editor umstellen**
+- [ ] **Step 2: Convert the editor**
 
 In `SnippetCommandEditor.swift`:
 
-1. Den `case #selector(NSResponder.insertNewline(_:))`-Zweig aus
-   `textView(_:doCommandBy:)` entfernen (Tab und Shift-Tab bleiben).
-2. Im `shouldChangeTextIn:`-Delegate den Sanitizer-Aufruf entfernen; die
-   Methode entfällt damit vollständig, weil sie nichts anderes tat.
-3. Den Doc-Kommentar des Typs überarbeiten: Hazard 4 hieß „Newlines" und
-   beschrieb das Ersetzen. Er wird zu:
+1. Remove the `case #selector(NSResponder.insertNewline(_:))` branch from
+   `textView(_:doCommandBy:)` (Tab and Shift-Tab stay).
+2. Remove the sanitizer call in the `shouldChangeTextIn:` delegate; the
+   method is thereby removed entirely, because it did nothing else.
+3. Revise the type's doc comment: Hazard 4 was called "Newlines" and
+   described the substitution. It becomes:
 
 ```swift
 /// 4. **Line breaks are content.** Part 2 made a snippet command
@@ -636,13 +636,13 @@ In `SnippetCommandEditor.swift`:
 ///    from the remote's bracketed-paste mode — not this view's.
 ```
 
-4. `textView.isVerticallyResizable` bleibt `false` und
-   `autoresizingMask` bleibt `[.height]`: die Höhe kommt weiterhin aus der
-   Formularzeile. Der Kommentar dort begründet das mit „one-line field" —
-   ändere die Begründung auf „the row decides the height; the view reports
-   how tall it would like to be through `intrinsicHeight` below", **nicht**
-   die Einstellung.
-5. Ergänze eine gemessene Wunschhöhe, die die Aufrufstelle lesen kann:
+4. `textView.isVerticallyResizable` stays `false` and `autoresizingMask`
+   stays `[.height]`: the height still comes from the form row. The
+   comment there justifies that with "one-line field" — change the
+   justification to "the row decides the height; the view reports how
+   tall it would like to be through `intrinsicHeight` below", **not** the
+   setting.
+5. Add a measured desired height that the call site can read:
 
 ```swift
     /// How tall this field wants to be for `text`: one line's height per
@@ -660,47 +660,47 @@ In `SnippetCommandEditor.swift`:
     }
 ```
 
-6. `scroll.hasVerticalScroller = true` setzen (statt `false`), damit ein
-   Rumpf jenseits der Obergrenze erreichbar bleibt.
+6. Set `scroll.hasVerticalScroller = true` (instead of `false`), so a
+   body beyond the upper bound stays reachable.
 
-- [ ] **Schritt 3: Die Aufrufstelle im Sheet umstellen**
+- [ ] **Step 3: Update the call site in the sheet**
 
-In `SnippetsSheet.swift` die feste `.frame(height: 24)` durch die gemessene
-Höhe ersetzen und das Speichern-Kürzel setzen. Suche die Stelle mit
+In `SnippetsSheet.swift`, replace the fixed `.frame(height: 24)` with the
+measured height and set the Save shortcut. Find the spot with
 
 ```bash
 grep -n 'SnippetCommandEditor(' Sources/MacSCPAppKit/SnippetsSheet.swift
 ```
 
-und ersetze `.frame(height: 24)` durch
+and replace `.frame(height: 24)` with
 `.frame(height: SnippetCommandEditor.intrinsicHeight(for: command))`.
 
-Der Speichern-Knopf **dieses** Sheets verliert `.keyboardShortcut(.defaultAction)`
-und bekommt `.keyboardShortcut(.return, modifiers: .command)`. Zähle vorher
-nach, welche `.defaultAction`-Stellen die Datei hat, und ändere **nur** die
-im Snippet-Editor:
+**This** sheet's Save button loses `.keyboardShortcut(.defaultAction)`
+and gets `.keyboardShortcut(.return, modifiers: .command)`. Count
+beforehand how many `.defaultAction` spots the file has, and change
+**only** the one in the snippet editor:
 
 ```bash
 grep -n 'keyboardShortcut(.defaultAction)' Sources/MacSCPAppKit/SnippetsSheet.swift
 ```
 
-Trage die Zahl in den Bericht ein und begründe im Commit, welche du
-angefasst hast.
+Enter the number in the report and explain in the commit which one you
+touched.
 
-- [ ] **Schritt 4: Die Listenzeile ehrlich machen**
+- [ ] **Step 4: Make the list row honest**
 
-Der Befehlstext wird an drei Stellen einzeilig dargestellt — im Sheet
-(`SnippetsSheet.row`), in der Vorschauzeile am Terminal-Panel
-(`ContentView+Detail.commandPreviewLine`) und im Aktions-Sheet
-(`SnippetActionSheet`). Prüfe alle drei nach:
+The command text is displayed on a single line in three places — in the
+sheet (`SnippetsSheet.row`), in the preview line on the terminal panel
+(`ContentView+Detail.commandPreviewLine`), and in the action sheet
+(`SnippetActionSheet`). Check all three:
 
 ```bash
 grep -rn 'Text(snippet.command)\|snippet.command$' Sources/MacSCPAppKit/
 ```
 
-`.lineLimit(1)` zeigt bei einem mehrzeiligen Befehl nur die erste Zeile,
-**ohne** dass erkennbar wäre, dass weitere folgen. Lege dafür einen
-getesteten Helfer in Core an, statt die Regel dreimal in Views zu schreiben —
+`.lineLimit(1)` shows only the first line of a multi-line command,
+**with no indication** that more follow. For this, add a tested helper in
+Core instead of writing the rule three times in views —
 `Sources/macSCPCore/Terminal/SnippetCommandSummary.swift`:
 
 ```swift
@@ -725,7 +725,7 @@ public enum SnippetCommandSummary {
 }
 ```
 
-Test dazu in `Tests/macSCPCoreTests/SnippetCommandSummaryTests.swift`:
+The corresponding test, in `Tests/macSCPCoreTests/SnippetCommandSummaryTests.swift`:
 
 ```swift
 import Testing
@@ -765,14 +765,13 @@ struct SnippetCommandSummaryTests {
 }
 ```
 
-Verdrahte ihn an den beiden einzeiligen Stellen. In `SnippetsSheet.row`
-ersetzt
+Wire it up at the two single-line spots. In `SnippetsSheet.row`, replace
 
 ```swift
                 Text(snippet.command)
 ```
 
-diesen Block:
+this line with this block:
 
 ```swift
                 let summary = SnippetCommandSummary.firstLine(of: snippet.command)
@@ -787,27 +786,27 @@ diesen Block:
                 }
 ```
 
-In `ContentView+Detail.commandPreviewLine` dieselbe Ableitung auf den dort
-per `SnippetPreviewLine.row(hovered:pinned:)` gefundenen Befehl anwenden;
-der Fallback-Text („Point at a snippet…") bleibt unverändert.
+In `ContentView+Detail.commandPreviewLine`, apply the same derivation to
+the command found there via `SnippetPreviewLine.row(hovered:pinned:)`; the
+fallback text ("Point at a snippet…") stays unchanged.
 
-Das **Aktions-Sheet** (`SnippetActionSheet.swift`) zeigt den Befehl als
-Ganzes und ist die einzige Stelle, die ihn vollständig zeigen soll: dort
-entfällt jede Kürzung, der `Text(snippet.command)` bekommt kein
-`lineLimit`. Prüfe beim Anfassen nach, ob dort eines steht.
+The **action sheet** (`SnippetActionSheet.swift`) shows the command in
+full and is the one place meant to show it completely: there, any
+truncation is removed — the `Text(snippet.command)` gets no `lineLimit`.
+When touching it, check whether one is already there.
 
-Der Schlüssel `snippets.command.moreLines %lld` geht in alle vier Kataloge;
-die Texte stehen in Task 4 Schritt 4. Die Form — Formatmarker **im
-Schlüssel**, Aufruf über `String(format:)` — ist die dieses Projekts, siehe
-`AuditLogSheet.swift` mit `audit.count %lld`. Weiche nicht davon ab.
+The key `snippets.command.moreLines %lld` goes into all four catalogs; the
+texts are in Task 4 Step 4. The form — format marker **in the key**, call
+via `String(format:)` — is this project's own, see `AuditLogSheet.swift`
+with `audit.count %lld`. Do not deviate from it.
 
-- [ ] **Schritt 5: Bauen und die Suite laufen lassen**
+- [ ] **Step 5: Build and run the suite**
 
 Run: `swift build && swift test 2>&1 | tail -3`
-Expected: grün, und mehr Tests als vor Task 2 (die neuen aus Task 1 und 2
-minus die drei gelöschten Sanitizer-Tests).
+Expected: green, and more tests than before Task 2 (the new ones from
+Task 1 and 2, minus the three deleted sanitizer tests).
 
-- [ ] **Schritt 6: Committen**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A Sources/MacSCPAppKit Tests/macSCPAppKitTests
@@ -821,7 +820,7 @@ EOF
 
 ---
 
-## Task 4: App — Verdrahtung, Ablehnung, Übersetzungen
+## Task 4: App — Wiring, Refusal, Translations
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/TerminalPanelViewModel.swift`
@@ -830,21 +829,22 @@ EOF
 - Modify: `Sources/MacSCPAppKit/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 
 **Interfaces:**
-- Consumes: `SnippetSendPlanner.plan(command:execute:bracketedPaste:)` und
-  `SnippetSendPlan` aus Task 1.
-- Produces: nichts.
+- Consumes: `SnippetSendPlanner.plan(command:execute:bracketedPaste:)` and
+  `SnippetSendPlan` from Task 1.
+- Produces: nothing.
 
-**Kontext:** `triggerSnippet` in `ContentView.swift` ruft heute
-`SnippetKeystrokes.bytes(for:execute:)` und `terminal.send(bytes)`. `terminal`
-ist ein `TerminalPanelViewModel` (Core) — es kennt SwiftTerm nicht. Die
-SwiftTerm-`TerminalView` entsteht in `SSHTerminalView.makeNSView`. Der
-etablierte Weg zwischen beiden ist ein Closure, den die View dem Modell
-übergibt: `viewModel.onOutput = { [weak terminal] bytes in … }` steht genau
-dort. Diese Aufgabe nutzt dieselbe Form für die Rückrichtung.
+**Context:** `triggerSnippet` in `ContentView.swift` today calls
+`SnippetKeystrokes.bytes(for:execute:)` and `terminal.send(bytes)`.
+`terminal` is a `TerminalPanelViewModel` (Core) — it does not know
+SwiftTerm. The SwiftTerm `TerminalView` is created in
+`SSHTerminalView.makeNSView`. The established path between the two is a
+closure that the view hands to the model: `viewModel.onOutput = { [weak
+terminal] bytes in … }` sits right there. This task uses the same shape
+for the reverse direction.
 
-- [ ] **Schritt 1: Den Kanal im Modell anlegen**
+- [ ] **Step 1: Add the channel in the model**
 
-In `TerminalPanelViewModel.swift`, neben `onOutput`:
+In `TerminalPanelViewModel.swift`, next to `onOutput`:
 
 ```swift
     /// Whether the remote has bracketed paste (mode 2004) on, as the local
@@ -858,9 +858,9 @@ In `TerminalPanelViewModel.swift`, neben `onOutput`:
     public var remoteWantsBracketedPaste: Bool { bracketedPasteQuery?() ?? false }
 ```
 
-- [ ] **Schritt 2: Die View füllt ihn**
+- [ ] **Step 2: The view fills it**
 
-In `SSHTerminalView.makeNSView`, unmittelbar bei `viewModel.onOutput = …`:
+In `SSHTerminalView.makeNSView`, right next to `viewModel.onOutput = …`:
 
 ```swift
         viewModel.bracketedPasteQuery = { [weak terminal] in
@@ -868,10 +868,10 @@ In `SSHTerminalView.makeNSView`, unmittelbar bei `viewModel.onOutput = …`:
         }
 ```
 
-- [ ] **Schritt 3: `triggerSnippet` über den Planer führen**
+- [ ] **Step 3: Route `triggerSnippet` through the planner**
 
-In `ContentView.swift` den Block ab `let bytes = SnippetKeystrokes.bytes(...)`
-ersetzen:
+In `ContentView.swift`, replace the block starting at
+`let bytes = SnippetKeystrokes.bytes(...)`:
 
 ```swift
         let plan = SnippetSendPlanner.plan(
@@ -886,10 +886,10 @@ ersetzen:
         }
 ```
 
-Der Rest (`guard execute else { terminal.send(bytes); return }` und der
-Audit-Zweig) bleibt unverändert. Ergänze `@State var pendingMultilineInsertRefusal: Snippet?` neben den
-übrigen `@State`-Feldern in `ContentView.swift` und den Alert dort, wo die
-Datei ihre übrigen Alerts trägt:
+The rest (`guard execute else { terminal.send(bytes); return }` and the
+audit branch) stays unchanged. Add `@State var pendingMultilineInsertRefusal: Snippet?` next to the
+other `@State` fields in `ContentView.swift`, and the alert wherever the
+file keeps its other alerts:
 
 ```swift
         .alert(
@@ -913,22 +913,21 @@ Datei ihre übrigen Alerts trägt:
         }
 ```
 
-**Vor dem Schreiben nachsehen:** ob `common.cancel` als Schlüssel existiert.
+**Before writing it, check** whether `common.cancel` exists as a key.
 
 ```bash
 grep -n '"common.cancel"' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings
 ```
 
-Findet das nichts, nimm den Schlüssel, den die Nachbar-Alerts dieser Datei
-für ihren Abbrechen-Knopf benutzen — und trage in den Bericht ein, welcher
-das war.
+If that finds nothing, use whatever key this file's neighboring alerts use
+for their Cancel button — and note in the report which one that was.
 
-- [ ] **Schritt 4: Die Texte in alle vier Kataloge**
+- [ ] **Step 4: The texts into all four catalogs**
 
-Vier Schlüssel, in `en`, `de`, `fr` und `pl`. `snippets.command.moreLines %lld`
-gehört zu Task 3 Schritt 4 und wird hier mit eingetragen, damit die vier
-Kataloge in einem Zug gleichziehen. Setze sie in jedem Katalog an
-dieselbe Stelle wie die übrigen `snippets.*`-Schlüssel:
+Four keys, in `en`, `de`, `fr`, and `pl`. `snippets.command.moreLines %lld`
+belongs to Task 3 Step 4 and is entered here too, so that the four
+catalogs catch up in one pass. Put them in each catalog at the same spot
+as the other `snippets.*` keys:
 
 ```
 "snippets.insert.multilineRefused.title" = "This snippet has several lines";
@@ -937,7 +936,7 @@ dieselbe Stelle wie die übrigen `snippets.*`-Schlüssel:
 "snippets.command.moreLines %lld" = "+%lld more";
 ```
 
-Deutsch:
+German:
 
 ```
 "snippets.insert.multilineRefused.title" = "Dieses Snippet hat mehrere Zeilen";
@@ -946,7 +945,7 @@ Deutsch:
 "snippets.command.moreLines %lld" = "+%lld weitere";
 ```
 
-Französisch:
+French:
 
 ```
 "snippets.insert.multilineRefused.title" = "Cet extrait comporte plusieurs lignes";
@@ -955,7 +954,7 @@ Französisch:
 "snippets.command.moreLines %lld" = "+%lld de plus";
 ```
 
-Polnisch:
+Polish:
 
 ```
 "snippets.insert.multilineRefused.title" = "Ten fragment ma kilka wierszy";
@@ -964,13 +963,13 @@ Polnisch:
 "snippets.command.moreLines %lld" = "+%lld więcej";
 ```
 
-- [ ] **Schritt 5: Bauen und die volle Suite laufen lassen**
+- [ ] **Step 5: Build and run the full suite**
 
 Run: `swift build && swift test 2>&1 | tail -3`
-Expected: grün. Fehlt ein Schlüssel in einem Katalog, färbt der
-L10n-Wächtertest die Suite rot — das ist der beabsichtigte Fangnetzeffekt.
+Expected: green. If a key is missing from a catalog, the L10n guard test
+turns the suite red — that is the intended safety-net effect.
 
-- [ ] **Schritt 6: Committen**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A Sources
@@ -984,20 +983,20 @@ EOF
 
 ---
 
-## Abschluss
+## Wrap-up
 
-Nach Task 4 gehört ein Abschlussbericht nach
-`docs/superpowers/specs/2026-08-19-snippet-mehrzeilig-abschluss.md`, deutsch,
-mit:
+After Task 4, a wrap-up report belongs at
+`docs/superpowers/specs/2026-08-19-snippet-mehrzeilig-abschluss.md`, in
+German, with:
 
-- den gemessenen Suite-Zahlen vorher und nachher,
-- der in Task 2 Schritt 4 gezählten Aufrufstellen-Zahl,
-- der in Task 3 Schritt 3 gezählten `.defaultAction`-Zahl,
-- **ausdrücklich** der ausstehenden Sichtprüfung: das Mitwachsen des Feldes
-  samt Obergrenze, ⌘Return, die drei Anzeigestellen mit einem mehrzeiligen
-  Befehl, und ein geklammertes Einfügen gegen eine echte Shell mit
-  eingeschaltetem Modus.
+- the measured suite counts before and after,
+- the call-site count counted in Task 2 Step 4,
+- the `.defaultAction` count counted in Task 3 Step 3,
+- **explicitly**, the pending visual check: the field growing along with
+  its upper bound, ⌘Return, the three display spots with a multi-line
+  command, and a bracketed paste against a real shell with the mode
+  turned on.
 
-Teil 1 hat gezeigt, dass für `NSViewRepresentable` weder die grüne Suite noch
-das Review ausreicht: der Blick auf die laufende App fand dort zwei Fehler,
-die beide plausibel aussahen. Dieser Abschnitt ist keine Fußnote.
+Part 1 showed that for `NSViewRepresentable`, neither the green suite nor
+the review is enough: looking at the running app found two bugs there,
+both of which looked plausible. This section is not a footnote.

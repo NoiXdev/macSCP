@@ -417,39 +417,40 @@ git commit -m "feat: share-link context action, sheet and settings"
 
 ---
 
-## Abschluss M14 (2026-08-01)
+## M14 close-out (2026-08-01)
 
-**Alle 5 Tasks umgesetzt, jeweils Task-Review + Fix-Runden sauber.** Task 3
-wurde vom Koordinator committet (Implementer kehrte ohne Commit von einem
-Hintergrund-Testlauf zurück; Arbeit war korrekt). Task 5 (App) wurde nach einem
-API-Stall des ersten Implementers von einem Continuation-Agenten fertiggestellt
-(das korrekte Threading/Sheet-Gerüst blieb erhalten).
+**All 5 tasks implemented, each with a clean task review + fix rounds.** Task
+3 was committed by the coordinator (the implementer returned from a
+background test run without committing; the work was correct). Task 5 (App)
+was finished by a continuation agent after the first implementer's API stall
+(the correct threading/sheet scaffolding was preserved).
 
-**Verifikation:**
-- Voller gated Lauf `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → 992/71 grün;
-  die presign-GET/PUT-MinIO-Tests liefen und bestanden (plain URLSession nur mit
-  der signierten Query — der einzige Test, der einen echten SigV4-Bug fängt),
-  dazu S3-MinIO/SSH-Integration/Keychain. `swift build` sauber bis auf EINE
-  pre-existing `TransferEngine.swift:141`-Warnung (non-Sendable-Capture, von M14
-  NICHT berührt — Alt-Schuld für späteren Cleanup).
-- **Whole-Milestone Opus-Review: „Ready to merge: Yes"** — (a)–(g) alle
-  bestanden: presigned SigV4 gegen AWS-Vektor + gated GET/PUT live; die
-  presigned URL nur in die Zwischenablage, nie geloggt/persistiert, Secret nie
-  in der URL; Abstraktions-Reinheit (nur `as? PresignedURLProvider` +
-  Descriptor-`fileActions`, kein `if kind ==`); Ablauf geklemmt [1,604800];
-  PUT-Überschreib-Warnung; L10n-Parität ×4; ⌘W-Refactor verhaltensgleich.
+**Verification:**
+- Full gated run `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → 992/71 green;
+  the presign-GET/PUT MinIO tests ran and passed (plain URLSession using only
+  the signed query — the one test that catches a real SigV4 bug), plus
+  S3-MinIO/SSH-integration/Keychain. `swift build` clean except for ONE
+  pre-existing `TransferEngine.swift:141` warning (non-Sendable capture, NOT
+  touched by M14 — old debt for a later cleanup).
+- **Whole-milestone Opus review: "Ready to merge: Yes"** — (a)–(g) all
+  passed: presigned SigV4 against the AWS vector + gated GET/PUT live; the
+  presigned URL only to the clipboard, never logged/persisted, secret never
+  in the URL; abstraction purity (only `as? PresignedURLProvider` +
+  descriptor `fileActions`, no `if kind ==`); expiry clamped [1,604800];
+  PUT overwrite warning; L10n parity ×4; ⌘W refactor behavior-identical.
 
-**Geliefert:** SigV4-Query-Signing (GET+PUT), `PresignedURLProvider`-Seam +
-`S3FileSystem.presignedURL`, erstmalige Verdrahtung des M12-Contribution-Seams
-ins Kontextmenü (S3 steuert „Share Link…" bei, generischer Layer rendert es),
-`PresignedURLSheet` (Methode/Ablauf/PUT-Key/Kopieren), Settings-Default-Ablauf,
-EN/DE/FR/PL.
+**Delivered:** SigV4 query signing (GET+PUT), `PresignedURLProvider` seam +
+`S3FileSystem.presignedURL`, the first wiring of the M12 contribution seam
+into the context menu (S3 contributes "Share Link…", the generic layer
+renders it), `PresignedURLSheet` (method/expiry/PUT key/copy), settings
+default expiry, EN/DE/FR/PL.
 
-**Offen (bewusst, kein Blocker):** Maintainer-Sichtprüfung des Live-Share-Link-
-Flows (Rechtsklick S3-Datei → „Share Link…" → GET/PUT/Kopieren gegen echtes
-MinIO) steht aus. Ledger-Minors: SettingsView-Ablauf-Picker nutzt nicht
-`allCases` (künftige-Wartung); `supportsPresignedURL`-Flag ist rein
-dokumentarisch (vorbestehend M12); FR/PL KI-generiert (Native-Review vor Release).
+**Open (deliberately, not a blocker):** maintainer visual check of the live
+share-link flow (right-click S3 file → "Share Link…" → GET/PUT/copy against
+real MinIO) is still pending. Ledger minors: SettingsView's expiry picker
+doesn't use `allCases` (future maintenance); the `supportsPresignedURL` flag
+is purely documentary (pre-existing from M12); FR/PL AI-generated (native
+review before release).
 
-**Grenzen:** Cross-Backend S3↔SSH = M15; „Öffnen mit" S3-CLI = späterer
-Meilenstein. **KEIN Release.**
+**Boundaries:** cross-backend S3↔SSH = M15; "Open with" S3 CLI = a later
+milestone. **NO release.**

@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Einzelne Dateien zwischen den Panes übertragen — Download (Remote→Lokal) und Upload (Lokal→Remote) per Button, mit Fortschrittsanzeige in den Duo-Farben.
+**Goal:** Transfer individual files between the panes — download (remote→local) and upload (local→remote) via button, with progress display in the duo colors.
 
-**Architecture:** Das `RemoteFileSystem`-Protocol bekommt Chunk-Streams (`readStream`/`write`), implementiert von Mock, `LocalFileSystem` und `CitadelFileSystem`. Eine richtungs-agnostische `TransferEngine` pumpt Quelle→Ziel und meldet Fortschritt; ein `TransferViewModel` (`@Observable`) hält den UI-Zustand. Die Tabelle bekommt Einfach-Auswahl; `ContentView` verdrahtet zwei Transfer-Buttons (→ Upload, ← Download) und eine Fortschrittsleiste.
+**Architecture:** The `RemoteFileSystem` protocol gets chunk streams (`readStream`/`write`), implemented by Mock, `LocalFileSystem`, and `CitadelFileSystem`. A direction-agnostic `TransferEngine` pumps source→destination and reports progress; a `TransferViewModel` (`@Observable`) holds the UI state. The table gets single selection; `ContentView` wires up two transfer buttons (→ upload, ← download) and a progress bar.
 
-**Abhängigkeitsgraph (Parallel-Phasen für den Koordinator):**
+**Dependency graph (parallel phases for the coordinator):**
 
 ```
 Task 0 ─→ Task 1 ─→ Task 2 (Citadel-Streams)   ─→ Task 5 ─→ Task 6
@@ -14,18 +14,18 @@ Task 0 ─→ Task 1 ─→ Task 2 (Citadel-Streams)   ─→ Task 5 ─→ Task
    (Task 1 ∥ Task 4)   (Task 2 ∥ Task 3 — disjunkte Dateien)
 ```
 
-**Tech Stack:** wie M2b. Citadel-Datei-API (`openFile`/`read`/`write`) wird in Task 2 gegen `.build/checkouts/Citadel/` verifiziert.
+**Tech stack:** same as M2b. The Citadel file API (`openFile`/`read`/`write`) is verified in Task 2 against `.build/checkouts/Citadel/`.
 
 ## Global Constraints
 
-- swift-tools-version 6.0, alle Targets Language Mode v5; macOS 14; UI-Texte Deutsch
-- Conventional Commits, Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; niemals pushen (macht der Koordinator)
-- YAGNI für M2c: EINE Transfer gleichzeitig, KEIN Abbrechen/Resume/Queue (→ M5), KEINE Verzeichnis-Transfers, KEIN Drag & Drop (→ M2d), KEINE Konfliktdialoge (Ziel wird überschrieben — bewusst, wird in M5 durch Konfliktregeln ersetzt)
-- Chunk-Größe einheitlich 64 KiB (`TransferChunk.size`)
-- Duo-Farben nur semantisch: Upload Bernstein, Download Ozeanblau
-- Nach jedem Task: `swift test` grün (ohne Docker); Citadel-Streams zusätzlich via `MACSCP_ITEST=1` gegen das Docker-Rig
+- swift-tools-version 6.0, all targets Language Mode v5; macOS 14; UI text German
+- Conventional Commits, footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; never push (the coordinator does that)
+- YAGNI for M2c: ONE transfer at a time, NO cancel/resume/queue (→ M5), NO directory transfers, NO drag & drop (→ M2d), NO conflict dialogs (destination gets overwritten — deliberate, will be replaced by conflict rules in M5)
+- Chunk size uniformly 64 KiB (`TransferChunk.size`)
+- Duo colors only semantic: upload amber, download ocean blue
+- After every task: `swift test` green (without Docker); Citadel streams additionally via `MACSCP_ITEST=1` against the Docker rig
 
-## Datei-Landkarte (Delta M2c)
+## File map (delta M2c)
 
 ```
 Sources/macSCPCore/
@@ -51,18 +51,18 @@ Tests/macSCPCoreTests/
 
 ---
 
-### Task 0: Auftakt-Fixes aus dem M2b-Abschluss-Review
+### Task 0: Kickoff fixes from the M2b closing review
 
 **Files:**
 - Modify: `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift` (Pfad-Normalisierung in `item(for:)`)
-- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (nur Kommentar Zeile ~61)
+- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (comment only, line ~61)
 - Test: `Tests/macSCPCoreTests/LocalFileSystemTests.swift` (+1 Test)
 
-**Interfaces:** keine API-Änderung. Invariante danach: `RemoteFileItem.path` trägt NIE einen Trailing-Slash (außer `/`) — Voraussetzung für Pfad-Vergleiche in Task 3/5.
+**Interfaces:** no API change. Invariant afterward: `RemoteFileItem.path` NEVER carries a trailing slash (except `/`) — a precondition for path comparisons in Task 3/5.
 
-Bewusst NICHT in diesem Task (dritter Punkt der M2c-Opening-List): das `try?`-Schlucken in `item(for:)`/`stat` bei unlesbaren Pfaden bleibt vorerst — es betrifft nur Metadaten-Anzeige, ein verlässlicher CI-Test dafür ist ohne root-Rechte fragil, und die Transfer-Pfade (readStream/write) mappen Berechtigungsfehler ohnehin typisiert. Wird wieder relevant, wenn M5-Konfliktregeln stat-Metadaten für Entscheidungen nutzen.
+Deliberately NOT in this task (third point of the M2c opening list): the `try?` swallowing in `item(for:)`/`stat` for unreadable paths stays for now — it only affects metadata display, a reliable CI test for it is fragile without root privileges, and the transfer paths (readStream/write) map permission errors as typed errors anyway. Becomes relevant again once M5 conflict rules use stat metadata for decisions.
 
-- [x] **Step 1: Fehlschlagender Test** — in `LocalFileSystemTests` ergänzen:
+- [x] **Step 1: Failing test** — add to `LocalFileSystemTests`:
 
 ```swift
     @Test func directoryPathsHaveNoTrailingSlash() async throws {
@@ -77,9 +77,9 @@ Bewusst NICHT in diesem Task (dritter Punkt der M2c-Opening-List): das `try?`-Sc
     }
 ```
 
-Run: `swift test --filter LocalFileSystemTests` — der neue Test muss FAILEN (Verzeichnis-URLs liefern Trailing-Slash).
+Run: `swift test --filter LocalFileSystemTests` — the new test must FAIL (directory URLs return a trailing slash).
 
-- [x] **Step 2: Fix** — in `LocalFileSystem.item(for:)` die `path:`-Zeile ersetzen durch normalisierte Variante (vor dem `RemoteFileItem`-Init):
+- [x] **Step 2: Fix** — in `LocalFileSystem.item(for:)` replace the `path:` line with a normalized variant (before the `RemoteFileItem` init):
 
 ```swift
         var normalizedPath = url.path(percentEncoded: false)
@@ -88,16 +88,16 @@ Run: `swift test --filter LocalFileSystemTests` — der neue Test muss FAILEN (V
         }
 ```
 
-und im Init `path: normalizedPath` verwenden.
+and use `path: normalizedPath` in the init.
 
-- [x] **Step 3: Kommentar-Fix** — in `RemoteBrowserViewModel.swift` den Kommentar über `sortedForDisplay` ändern zu:
+- [x] **Step 3: Comment fix** — in `RemoteBrowserViewModel.swift` change the comment above `sortedForDisplay` to:
 
 ```swift
     /// Verzeichnisse zuerst, dann Name case-insensitiv —
     /// kein Backend sortiert; dies ist die einzige Sortier-Autorität.
 ```
 
-- [x] **Step 4: Grün** — `swift test`: 53 Tests grün (52 + 1).
+- [x] **Step 4: Green** — `swift test`: 53 tests green (52 + 1).
 
 - [x] **Step 5: Commit**
 
@@ -110,7 +110,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 1: Streams im Protocol (Mock + LocalFileSystem)
+### Task 1: Streams in the protocol (Mock + LocalFileSystem)
 
 **Files:**
 - Modify: `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift`
@@ -119,7 +119,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Create: `Tests/macSCPCoreTests/StreamRoundtripTests.swift`
 
 **Interfaces:**
-- Produces (für Task 2/3): Protocol-Erweiterung
+- Produces (for Task 2/3): protocol extension
 
 ```swift
 public enum TransferChunk {
@@ -134,9 +134,9 @@ public enum TransferChunk {
     func write(path: String, contents: AsyncThrowingStream<Data, Error>) async throws
 ```
 
-- MockRemoteFileSystem zusätzlich: `init(tree:files:)` mit `files: [String: Data] = [:]` (Pfad→Inhalt) und `func writtenData(at path: String) -> Data?` zum Assertieren.
+- MockRemoteFileSystem additionally: `init(tree:files:)` with `files: [String: Data] = [:]` (path→content) and `func writtenData(at path: String) -> Data?` for asserting.
 
-- [x] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Failing tests**
 
 `Tests/macSCPCoreTests/StreamRoundtripTests.swift`:
 
@@ -207,11 +207,11 @@ struct StreamRoundtripTests {
 }
 ```
 
-Run: `swift test --filter StreamRoundtripTests` — Compile-Fehler (Protocol kennt `readStream` nicht, Mock kennt `files:` nicht).
+Run: `swift test --filter StreamRoundtripTests` — compile error (protocol doesn't know `readStream`, Mock doesn't know `files:`).
 
 - [x] **Step 2: Protocol + TransferChunk**
 
-In `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift` — Datei komplett ersetzen:
+In `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift` — replace the file entirely:
 
 ```swift
 /// Einheitliche Transfer-Chunk-Größe für alle Backends.
@@ -232,11 +232,11 @@ public protocol RemoteFileSystem: Sendable {
 }
 ```
 
-(`import Foundation` ergänzen — `Data`.)
+(add `import Foundation` — for `Data`.)
 
-- [x] **Step 3: Mock erweitern**
+- [x] **Step 3: Extend the mock**
 
-`Tests/macSCPCoreTests/MockRemoteFileSystem.swift` — Datei komplett ersetzen:
+`Tests/macSCPCoreTests/MockRemoteFileSystem.swift` — replace the file entirely:
 
 ```swift
 import Foundation
@@ -303,9 +303,9 @@ actor MockRemoteFileSystem: RemoteFileSystem {
 }
 ```
 
-- [x] **Step 4: LocalFileSystem-Streams**
+- [x] **Step 4: LocalFileSystem streams**
 
-In `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift` vor `disconnect()` ergänzen:
+In `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift`, add before `disconnect()`:
 
 ```swift
     public func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
@@ -351,9 +351,9 @@ In `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift` vor `disconnect()` ergän
     }
 ```
 
-Hinweis Fehlermapping: `FileHandle(forReadingFrom:)` wirft bei fehlender Datei einen NSCocoaError, den `Self.map` bereits auf `notFound` übersetzt.
+Error-mapping note: `FileHandle(forReadingFrom:)` throws an NSCocoaError for a missing file, which `Self.map` already translates to `notFound`.
 
-- [x] **Step 5: Grün** — `swift test --filter StreamRoundtripTests` (5 Tests PASS), dann `swift test` komplett: **58 Tests grün** (53 + 5). ACHTUNG: `CitadelFileSystem` kompiliert jetzt NICHT mehr (Protocol-Lücke) — die Datei bekommt in diesem Task ÜBERGANGSWEISE zwei Stubs, damit das Paket baut:
+- [x] **Step 5: Green** — `swift test --filter StreamRoundtripTests` (5 tests PASS), then `swift test` in full: **58 tests green** (53 + 5). WARNING: `CitadelFileSystem` now fails to compile (protocol gap) — the file gets two TRANSITIONAL stubs in this task, so the package builds:
 
 ```swift
     public func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
@@ -365,7 +365,7 @@ Hinweis Fehlermapping: `FileHandle(forReadingFrom:)` wirft bei fehlender Datei e
     }
 ```
 
-(Task 2 ersetzt beide durch echte Implementierungen.)
+(Task 2 replaces both with real implementations.)
 
 - [x] **Step 6: Commit**
 
@@ -378,17 +378,17 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: CitadelFileSystem-Streams + Integrationstests
+### Task 2: CitadelFileSystem streams + integration tests
 
 **Files:**
-- Modify: `Sources/macSCPCore/SSH/CitadelFileSystem.swift` (Stubs aus Task 1 ersetzen)
-- Modify: `Tests/macSCPCoreTests/CitadelFileSystemIntegrationTests.swift` (+2 Tests)
+- Modify: `Sources/macSCPCore/SSH/CitadelFileSystem.swift` (replace the stubs from Task 1)
+- Modify: `Tests/macSCPCoreTests/CitadelFileSystemIntegrationTests.swift` (+2 tests)
 
-**Interfaces:** Consumes Task 1 (`TransferChunk`, Protocol-Signaturen). Keine neuen Producer.
+**Interfaces:** Consumes Task 1 (`TransferChunk`, protocol signatures). No new producers.
 
-**Parallel-Hinweis für den Koordinator:** disjunkt zu Task 3 — parallel ausführbar (Worktree).
+**Parallel note for the coordinator:** disjoint from Task 3 — can run in parallel (worktree).
 
-- [x] **Step 1: Fehlschlagende (gated) Tests** — in `CitadelFileSystemIntegrationTests` ergänzen:
+- [x] **Step 1: Failing (gated) tests** — add to `CitadelFileSystemIntegrationTests`:
 
 ```swift
     @Test func readStreamDeliversSeededFileContent() async throws {
@@ -423,10 +423,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
     }
 ```
 
-Run (Docker-Rig muss laufen): `MACSCP_ITEST=1 swift test --filter CitadelFileSystem`
-Expected: die zwei neuen Tests FAILEN mit `protocolError("… kommt in M2c Task 2")`, die vier alten bleiben grün.
+Run (Docker rig must be up): `MACSCP_ITEST=1 swift test --filter CitadelFileSystem`
+Expected: the two new tests FAIL with `protocolError("… kommt in M2c Task 2")`, the four old ones stay green.
 
-- [x] **Step 2: Implementieren** — die beiden Stubs in `CitadelFileSystem.swift` ersetzen:
+- [x] **Step 2: Implement** — replace both stubs in `CitadelFileSystem.swift`:
 
 ```swift
     public func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
@@ -479,11 +479,11 @@ Expected: die zwei neuen Tests FAILEN mit `protocolError("… kommt in M2c Task 
     }
 ```
 
-(`import NIOCore` oben ergänzen, falls `ByteBuffer` nicht sichtbar.)
+(add `import NIOCore` at the top if `ByteBuffer` isn't visible.)
 
-**API-Drift-Behandlung wie in M1 bewährt:** Falls der Compiler `openFile(filePath:flags:)`, `SFTPOpenFileFlags`-Case-Namen (`.read/.create/.write/.truncate`), `file.read(from:length:) -> ByteBuffer`, `file.write(_:at:)` oder `file.close()` ablehnt: exakte Namen in `.build/checkouts/Citadel/Sources/Citadel/SFTP/` nachschlagen und NUR die Aufrufstellen anpassen — Protocol, Tests und Fehler-Mapping bleiben. Die zwei Integrationstests definieren den Vertrag.
+**API drift handling, proven in M1:** if the compiler rejects `openFile(filePath:flags:)`, the `SFTPOpenFileFlags` case names (`.read/.create/.write/.truncate`), `file.read(from:length:) -> ByteBuffer`, `file.write(_:at:)`, or `file.close()`: look up the exact names in `.build/checkouts/Citadel/Sources/Citadel/SFTP/` and adjust ONLY the call sites — protocol, tests, and error mapping stay. The two integration tests define the contract.
 
-- [x] **Step 3: Verifizieren** — `swift test` (58 grün, ungated) UND `MACSCP_ITEST=1 swift test --filter CitadelFileSystem` (6/6).
+- [x] **Step 3: Verify** — `swift test` (58 green, ungated) AND `MACSCP_ITEST=1 swift test --filter CitadelFileSystem` (6/6).
 
 - [x] **Step 4: Commit**
 
@@ -504,8 +504,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Create: `Tests/macSCPCoreTests/TransferEngineTests.swift`
 
 **Interfaces:**
-- Consumes: Task 1 (Streams, `TransferChunk`), `RemotePath.join`
-- Produces (für Task 5):
+- Consumes: Task 1 (streams, `TransferChunk`), `RemotePath.join`
+- Produces (for Task 5):
 
 ```swift
 public struct TransferProgress: Equatable, Sendable {
@@ -546,9 +546,9 @@ public enum TransferEngine {
 }
 ```
 
-**Parallel-Hinweis für den Koordinator:** disjunkt zu Task 2 — parallel ausführbar (Worktree).
+**Parallel note for the coordinator:** disjoint from Task 2 — can run in parallel (worktree).
 
-- [x] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Failing tests**
 
 `Tests/macSCPCoreTests/TransferEngineTests.swift`:
 
@@ -643,9 +643,9 @@ private actor ProgressRecorder {
 }
 ```
 
-Run: `swift test --filter TransferEngineTests` — Compile-Fehler (`TransferEngine` unbekannt).
+Run: `swift test --filter TransferEngineTests` — compile error (`TransferEngine` unknown).
 
-- [x] **Step 2: TransferEngine implementieren**
+- [x] **Step 2: Implement TransferEngine**
 
 `Sources/macSCPCore/RemoteFS/TransferEngine.swift`:
 
@@ -701,7 +701,7 @@ public enum TransferEngine {
 }
 ```
 
-- [x] **Step 3: TransferViewModel implementieren**
+- [x] **Step 3: Implement TransferViewModel**
 
 `Sources/macSCPCore/Presentation/TransferViewModel.swift`:
 
@@ -774,7 +774,7 @@ public final class TransferViewModel {
 }
 ```
 
-- [x] **Step 4: Grün** — `swift test --filter TransferEngineTests` (5 PASS), dann komplett: **63 Tests grün** (58 + 5).
+- [x] **Step 4: Green** — `swift test --filter TransferEngineTests` (5 PASS), then in full: **63 tests green** (58 + 5).
 
 - [x] **Step 5: Commit**
 
@@ -787,20 +787,20 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: Einfach-Auswahl in Tabelle und ViewModel
+### Task 4: Single selection in table and view model
 
 **Files:**
-- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (`selectedItem` + Reset bei Navigation)
-- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (Auswahl-Callback)
-- Modify: `Sources/MacSCPApp/BrowserPane.swift` (Auswahl durchreichen)
-- Test: `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift` (+1 Test)
+- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (`selectedItem` + reset on navigation)
+- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (selection callback)
+- Modify: `Sources/MacSCPApp/BrowserPane.swift` (pass selection through)
+- Test: `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift` (+1 test)
 
 **Interfaces:**
-- Produces (für Task 5): `RemoteBrowserViewModel.selectedItem: RemoteFileItem?` (public var; wird bei `load()` auf nil zurückgesetzt), `RemoteFileTableView(items:onOpen:onSelect:)`
+- Produces (for Task 5): `RemoteBrowserViewModel.selectedItem: RemoteFileItem?` (public var; reset to nil in `load()`), `RemoteFileTableView(items:onOpen:onSelect:)`
 
-**Parallel-Hinweis für den Koordinator:** unabhängig von Task 1–3 — parallel zu Task 1 ausführbar (Worktree; disjunkte Dateien: RemoteBrowserViewModel wird von Task 0 berührt, daher NACH Task 0 starten).
+**Parallel note for the coordinator:** independent of Task 1–3 — can run in parallel with Task 1 (worktree; disjoint files: RemoteBrowserViewModel is touched by Task 0, so start AFTER Task 0).
 
-- [x] **Step 1: Fehlschlagender Test** — in `RemoteBrowserViewModelTests` ergänzen:
+- [x] **Step 1: Failing test** — add to `RemoteBrowserViewModelTests`:
 
 ```swift
     @Test func navigationResetsSelection() async {
@@ -812,24 +812,24 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
     }
 ```
 
-Run: `swift test --filter RemoteBrowserViewModelTests` — Compile-Fehler (`selectedItem` unbekannt).
+Run: `swift test --filter RemoteBrowserViewModelTests` — compile error (`selectedItem` unknown).
 
-- [x] **Step 2: ViewModel** — in `RemoteBrowserViewModel` ergänzen:
+- [x] **Step 2: View model** — add to `RemoteBrowserViewModel`:
 
 ```swift
     /// Aktuell in der Tabelle ausgewählter Eintrag (Einfach-Auswahl).
     public var selectedItem: RemoteFileItem?
 ```
 
-und in `load()` als erste Zeile nach `state = .loading`:
+and in `load()` as the first line after `state = .loading`:
 
 ```swift
         selectedItem = nil
 ```
 
-- [x] **Step 3: Tabelle** — `RemoteFileTableView` erweitern (nur die gezeigten Stellen ändern):
+- [x] **Step 3: Table** — extend `RemoteFileTableView` (change only the spots shown):
 
-Signatur/Properties:
+Signature/properties:
 
 ```swift
     let items: [RemoteFileItem]
@@ -845,13 +845,13 @@ Signatur/Properties:
     }
 ```
 
-`updateNSView` zusätzlich:
+`updateNSView` additionally:
 
 ```swift
         context.coordinator.onSelect = onSelect
 ```
 
-Coordinator: Property `var onSelect: (RemoteFileItem?) -> Void`, Init um `onSelect:` erweitern, und Delegate-Methode ergänzen:
+Coordinator: add the property `var onSelect: (RemoteFileItem?) -> Void`, extend the init with `onSelect:`, and add the delegate method:
 
 ```swift
         func tableViewSelectionDidChange(_ notification: Notification) {
@@ -861,7 +861,7 @@ Coordinator: Property `var onSelect: (RemoteFileItem?) -> Void`, Init um `onSele
         }
 ```
 
-- [x] **Step 4: BrowserPane** — Aufrufstelle anpassen:
+- [x] **Step 4: BrowserPane** — adjust the call site:
 
 ```swift
                 RemoteFileTableView(
@@ -871,7 +871,7 @@ Coordinator: Property `var onSelect: (RemoteFileItem?) -> Void`, Init um `onSele
                 )
 ```
 
-- [x] **Step 5: Grün** — `swift build && swift test`: **Testzahl je nach Merge-Reihenfolge** (allein auf Task-0-Basis: 54; nach Merge mit Task 1/3: entsprechend mehr — der Koordinator verifiziert die Gesamtzahl nach dem Zusammenführen).
+- [x] **Step 5: Green** — `swift build && swift test`: **test count depends on merge order** (on Task-0 basis alone: 54; after merging with Task 1/3: correspondingly more — the coordinator verifies the total count after merging).
 
 - [x] **Step 6: Commit**
 
@@ -884,25 +884,25 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Transfer-UI (Buttons + TransferBar)
+### Task 5: Transfer UI (buttons + TransferBar)
 
 **Files:**
 - Create: `Sources/MacSCPApp/TransferBar.swift`
-- Modify: `Sources/MacSCPApp/ContentView.swift` (komplett ersetzen)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (replace entirely)
 
-**Interfaces:** Consumes Task 3 (`TransferViewModel`, `TransferDirection`, `TransferProgress`) und Task 4 (`selectedItem`). `BrowserSession` wird um die Dateisysteme erweitert (die Engine braucht Quelle/Ziel direkt).
+**Interfaces:** Consumes Task 3 (`TransferViewModel`, `TransferDirection`, `TransferProgress`) and Task 4 (`selectedItem`). `BrowserSession` gets extended with the file systems (the engine needs source/destination directly).
 
-- [x] **Step 0: Auswahl über reloadData hinweg erhalten** (Review-Fund aus Task 4, empirisch belegt: `reloadData()` löscht die visuelle Auswahl, OHNE den Delegate zu feuern — sobald ContentView `selectedItem` liest, würde jeder Klick sofort optisch „entwählt".)
+- [x] **Step 0: Preserve selection across reloadData** (review finding from Task 4, proven empirically: `reloadData()` clears the visual selection WITHOUT firing the delegate — as soon as ContentView reads `selectedItem`, every click would immediately appear visually "deselected".)
 
 `Sources/MacSCPApp/RemoteFileTableView.swift`:
 
-1. Neues Property nach `items`:
+1. New property after `items`:
 
 ```swift
     let selectedPath: String?
 ```
 
-2. `updateNSView` komplett ersetzen:
+2. Replace `updateNSView` entirely:
 
 ```swift
     func updateNSView(_ nsView: NSScrollView, context: Context) {
@@ -922,13 +922,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
     }
 ```
 
-3. Im `Coordinator`: Property `var suppressSelectionCallback = false` ergänzen und `tableViewSelectionDidChange` als erste Zeile absichern:
+3. In `Coordinator`: add the property `var suppressSelectionCallback = false` and guard `tableViewSelectionDidChange` with this as the first line:
 
 ```swift
             guard !suppressSelectionCallback else { return }
 ```
 
-4. In `Sources/MacSCPApp/BrowserPane.swift` die Aufrufstelle erweitern:
+4. In `Sources/MacSCPApp/BrowserPane.swift`, extend the call site:
 
 ```swift
                 RemoteFileTableView(
@@ -939,9 +939,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
                 )
 ```
 
-- [x] **Step 0b: Fortschritts-Reihenfolge in TransferViewModel deterministisch machen** (Review-Fund aus Task 3: die pro Chunk gespawnten `Task { @MainActor … }` sind untereinander und gegenüber dem synchronen `.finished` unsortiert — ein später eintreffendes Progress-Update könnte `.finished` überschreiben.)
+- [x] **Step 0b: Make progress ordering in TransferViewModel deterministic** (review finding from Task 3: the per-chunk spawned `Task { @MainActor … }` are unordered among themselves and relative to the synchronous `.finished` — a progress update arriving late could overwrite `.finished`.)
 
-In `Sources/macSCPCore/Presentation/TransferViewModel.swift` den Body von `run(...)` ersetzen:
+In `Sources/macSCPCore/Presentation/TransferViewModel.swift`, replace the body of `run(...)`:
 
 ```swift
         guard !isRunning else { return }
@@ -975,13 +975,13 @@ In `Sources/macSCPCore/Presentation/TransferViewModel.swift` den Body von `run(.
         }
 ```
 
-Und in `Tests/macSCPCoreTests/TransferEngineTests.swift` den Test `viewModelRunsTransferAndCallsCompletion` verschärfen: `let content = Data("inhalt".utf8)` ersetzen durch
+And in `Tests/macSCPCoreTests/TransferEngineTests.swift`, tighten the test `viewModelRunsTransferAndCallsCompletion`: replace `let content = Data("inhalt".utf8)` with
 
 ```swift
         let content = Data(repeating: 42, count: TransferChunk.size * 3)
 ```
 
-(damit mehrere Progress-Events feuern — vor dem Fix wäre `.finished` dann gelegentlich überschrieben worden) und die letzte Assertion `writtenData`-Vergleich entsprechend gegen `content` lassen (unverändert korrekt). Test-Reihenfolge: erst Test verschärfen und mehrfach laufen lassen (`swift test --filter TransferEngineTests` 5×) — wenn er dabei nie rot wird, trotzdem fixen (das Race ist real, nur schwer zu treffen) und danach erneut 5× grün bestätigen.
+(so that multiple progress events fire — before the fix, `.finished` would occasionally have been overwritten) and leave the last assertion's `writtenData` comparison against `content` as is (correct unchanged). Test order: first tighten the test and run it repeatedly (`swift test --filter TransferEngineTests` 5×) — if it never goes red doing so, fix it anyway (the race is real, just hard to hit) and then confirm green 5× again.
 
 - [x] **Step 1: TransferBar**
 
@@ -1043,9 +1043,9 @@ struct TransferBar: View {
 }
 ```
 
-- [x] **Step 2: ContentView ersetzen**
+- [x] **Step 2: Replace ContentView**
 
-`Sources/MacSCPApp/ContentView.swift` — Datei komplett ersetzen:
+`Sources/MacSCPApp/ContentView.swift` — replace the file entirely:
 
 ```swift
 import SwiftUI
@@ -1166,7 +1166,7 @@ struct ContentView: View {
 }
 ```
 
-- [x] **Step 3: Grün** — `swift build && swift test` (64 Tests grün: 63 + 1 aus Task 4; Zahl nach Merge-Lage verifizieren).
+- [x] **Step 3: Green** — `swift build && swift test` (64 tests green: 63 + 1 from Task 4; verify the number based on merge state).
 
 - [x] **Step 4: Commit**
 
@@ -1179,13 +1179,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 6: Abschluss-Verifikation
+### Task 6: Final verification
 
-- [x] **Step 1:** `swift test` — 64 Tests grün (Gesamtzahl gegen Datei-Landkarte prüfen: 52 + 1 T0 + 5 T1 + 5 T3 + 1 T4 = 64)
-- [x] **Step 2:** Docker-Rig hoch, `MACSCP_ITEST=1 swift test --filter CitadelFileSystem` — 6/6, Rig runter
-- [x] **Step 3: Visueller Smoke-Test** (Koordinator): Datei lokal auswählen → „Hochladen" (Bernstein) → Fortschritt in Bernstein → Remote-Pane zeigt die Datei nach Refresh; Remote-Datei auswählen → „Herunterladen" (Ozeanblau) → lokale Datei erscheint; Verzeichnis ausgewählt → Buttons deaktiviert; während des Transfers → beide Buttons + Trennen deaktiviert
-- [x] **Step 4:** Checkboxen dieses Plans abhaken, Commit `docs: mark M2c plan tasks as completed` (mit Footer)
+- [x] **Step 1:** `swift test` — 64 tests green (check total against the file map: 52 + 1 T0 + 5 T1 + 5 T3 + 1 T4 = 64)
+- [x] **Step 2:** bring the Docker rig up, `MACSCP_ITEST=1 swift test --filter CitadelFileSystem` — 6/6, bring the rig down
+- [x] **Step 3: Visual smoke test** (coordinator): select a file locally → „Hochladen" (amber) → progress in amber → remote pane shows the file after refresh; select a remote file → „Herunterladen" (ocean blue) → local file appears; directory selected → buttons disabled; during the transfer → both buttons + „Trennen" disabled
+- [x] **Step 4:** check off this plan's checkboxes, commit `docs: mark M2c plan tasks as completed` (with footer)
 
-## Ausblick
+## Outlook
 
-**M2d — Drag & Drop** (eigener Plan): Finder → Remote-Pane (`onDrop` + Upload über die jetzt vorhandene Engine), Remote → Finder (`NSFilePromiseProvider` + Download), Pane ↔ Pane.
+**M2d — Drag & Drop** (own plan): Finder → remote pane (`onDrop` + upload via the now-existing engine), remote → Finder (`NSFilePromiseProvider` + download), pane ↔ pane.

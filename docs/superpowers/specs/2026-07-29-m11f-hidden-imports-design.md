@@ -1,104 +1,103 @@
-# M11f — Ausgeblendete Importe (Design)
+# M11f — Hidden Imports (Design)
 
-Datum: 2026-07-29 · Status: vom Maintainer freigegeben („ja los gehts")
+Date: 2026-07-29 · Status: approved by the maintainer ("go ahead")
 
-## Ziel
+## Goal
 
-Importierte Verbindungen aus `~/.ssh/config` sollen aus der Seitenleiste
-verschwinden können, ohne dass macSCP die config-Datei anfasst. Der Rückweg
-führt über ein eigenes Verwaltungs-Sheet (Maintainer-Entscheid 2026-07-29,
-Variante „Eigenes Verwaltungs-Sheet" — konsistent mit Known Hosts und
-Login-Sets).
+Connections imported from `~/.ssh/config` should be able to disappear from
+the sidebar without macSCP touching the config file. The way back
+goes through a dedicated management sheet (maintainer decision 2026-07-29,
+the "dedicated management sheet" option — consistent with Known Hosts and
+Login Sets).
 
-## Ausgangslage
+## Starting point
 
-- `SSHConfigImporter.load(path:)` liest `~/.ssh/config` bei jedem Öffnen
-  eines Fensters neu (`ContentView.task`), dedupliziert nach Alias
-  (first-wins, ssh-Semantik) und sortiert alphabetisch.
-- `SSHConfigHost` trägt `alias`, `hostName`, `user`, `port`,
-  `identityFile` — keine Geheimnisse, keine ID außer dem Alias.
-- Die Sidebar-Sektion IMPORTIERT zeigt sie rein lesend; ein Klick füllt das
-  Formular, ohne zu verbinden. Es gibt heute kein Kontextmenü.
-- `~/.ssh/config` ist strikt read-only — seit M3d eine bewusste Zusage.
+- `SSHConfigImporter.load(path:)` re-reads `~/.ssh/config` every time a
+  window opens (`ContentView.task`), deduplicates by alias
+  (first-wins, ssh semantics) and sorts alphabetically.
+- `SSHConfigHost` carries `alias`, `hostName`, `user`, `port`,
+  `identityFile` — no secrets, no ID other than the alias.
+- The sidebar's IMPORTED section shows them read-only; a click fills
+  the form, without connecting. There is no context menu today.
+- `~/.ssh/config` is strictly read-only — a deliberate commitment since
+  M3d.
 
-## 1. Persistenz (Core)
+## 1. Persistence (Core)
 
-`HiddenImportStore` nach dem Muster von `LoginSetStore`: eigene JSON-Datei
-`hidden-imports.json` im selben Verzeichnis wie `sessions.json`, stateless,
-atomare Writes, vorwärtskompatibles Containerformat (unbekannte Felder
-überleben Schreibvorgänge nicht — aber eine ältere Datei ohne die Felder
-lädt anstandslos).
+`HiddenImportStore`, following the pattern of `LoginSetStore`: its own
+JSON file `hidden-imports.json` in the same directory as `sessions.json`,
+stateless, atomic writes, a forward-compatible container format (unknown
+fields don't survive a write — but an older file without those fields
+loads without complaint).
 
-Gespeichert wird ausschließlich der **Alias** — er ist die Identität, unter
-der der Eintrag sowohl in der config als auch in der Seitenleiste steht.
-Kein Host, kein Benutzer, kein Pfad: die Liste soll nicht zu einer zweiten,
-veraltenden Kopie der config werden.
+Only the **alias** is stored — it is the identity under which the entry
+sits both in the config and in the sidebar. No host, no user, no
+path: the list must not become a second, staling copy of the config.
 
 API: `allHidden() -> [String]`, `hide(_ alias: String)`,
 `unhide(_ alias: String)`, `isHidden(_ alias: String) -> Bool`.
-`hide`/`unhide` sind idempotent. Der Vergleich ist exakt (nicht
-case-insensitiv): ssh behandelt `Host`-Aliase als exakte Zeichenketten, und
-eine großzügigere Regel würde Einträge ausblenden, die der Nutzer nie
-gemeint hat.
+`hide`/`unhide` are idempotent. The comparison is exact (not
+case-insensitive): ssh treats `Host` aliases as exact strings, and
+a more lenient rule would hide entries the user never meant.
 
-## 2. Filter + Waisen (Core, pur)
+## 2. Filter + orphans (Core, pure)
 
-Eine reine Funktion trennt die geladenen Hosts in das, was die Seitenleiste
-zeigt, und das, was das Sheet zeigt:
+A pure function splits the loaded hosts into what the sidebar
+shows and what the sheet shows:
 
-- **sichtbar**: alle Hosts, deren Alias nicht in der Ausblend-Liste steht.
-- **ausgeblendet**: Aliase aus der Liste, die es in der config noch gibt.
-- **verwaist**: Aliase aus der Liste, zu denen es in der config KEINEN Host
-  mehr gibt (umbenannt oder gelöscht).
+- **visible**: all hosts whose alias is not in the hidden list.
+- **hidden**: aliases from the list that still exist in the config.
+- **orphaned**: aliases from the list for which the config has NO
+  matching host anymore (renamed or deleted).
 
-Die Trennung ist pur und ohne Dateizugriff testbar; das Laden bleibt in
+The split is pure and testable without file access; loading stays in
 `SSHConfigImporter`.
 
-## 3. Bedienung (App)
+## 3. Operation (App)
 
-- **Ausblenden**: Kontextmenü auf einer importierten Zeile → „Ausblenden".
-  Der Eintrag verschwindet sofort; kein Bestätigungsdialog (der Vorgang ist
-  verlustfrei und mit einem Klick umkehrbar).
-- **Zurückholen**: Menü **Sitzungen ▸ Ausgeblendete Importe… (⌘⇧I)**.
-  ⌘⇧I ist frei (belegt sind ⌘N, ⌘W, ⌘1–9, ⌘⇧., ⌘⇧K, ⌘⇧L, ⌘T, ⌘,).
-  Der Menütitel trägt die Anzahl, solange etwas ausgeblendet ist — ohne
-  diesen Hinweis wäre der Rückweg unauffindbar, sobald die Sektion
-  IMPORTIERT komplett leer ist.
-- **Sheet**: eine Zeile je ausgeblendetem Alias mit „Wieder einblenden".
-  Verwaiste Einträge sind als solche gekennzeichnet („nicht mehr in
-  ~/.ssh/config") und lassen sich ganz aus der Liste entfernen, damit dort
-  nichts verrottet, das niemand mehr zuordnen kann. Leerzustand mit einem
-  Satz, der erklärt, wie Einträge hierher kommen.
-- Nach jeder Änderung aktualisiert sich die Seitenleiste sofort (der
-  gelesene config-Bestand bleibt im Fenster-State, neu gefiltert wird ohne
-  erneutes Lesen der Datei).
+- **Hide**: context menu on an imported row → „Ausblenden".
+  The entry disappears immediately; no confirmation dialog (the action
+  is lossless and reversible with one click).
+- **Bring back**: menu **Sitzungen ▸ Ausgeblendete Importe… (⌘⇧I)**.
+  ⌘⇧I is free (taken are ⌘N, ⌘W, ⌘1–9, ⌘⇧., ⌘⇧K, ⌘⇧L, ⌘T, ⌘,).
+  The menu title carries the count as long as something is hidden — without
+  this hint the way back would be undiscoverable once the IMPORTED
+  section is completely empty.
+- **Sheet**: one row per hidden alias with „Wieder einblenden".
+  Orphaned entries are marked as such („nicht mehr in
+  ~/.ssh/config") and can be removed from the list entirely, so nothing
+  rots there that nobody can attribute anymore. Empty state with a
+  sentence explaining how entries get here.
+- After every change, the sidebar updates immediately (the
+  read config data stays in the window state, re-filtered without
+  re-reading the file).
 
-## 4. Was bewusst NICHT passiert
+## 4. What deliberately does NOT happen
 
-- Kein Schreiben in `~/.ssh/config` — in keiner Variante.
-- Die Ausblend-Liste reist **nicht** im Sessions-Export (M9a) mit: sie
-  gehört zu einer lokalen Datei auf genau diesem Rechner, nicht zu den
-  Verbindungen. Auf einem anderen Rechner sähe dieselbe Liste willkürlich
-  aus.
-- Kein Ausblenden per Muster/Wildcard, keine Gruppen, kein Bearbeiten
-  importierter Einträge (letzteres bliebe ein Widerspruch zur read-only-
-  Zusage).
-- Kein Audit-Eintrag: Ausblenden ist reine Anzeige-Einstellung ohne
-  Sicherheitsrelevanz.
+- No writing to `~/.ssh/config` — in any variant.
+- The hidden list does **not** travel with the sessions export (M9a): it
+  belongs to a local file on this exact machine, not to the
+  connections. On a different machine, the same list would look
+  arbitrary.
+- No hiding by pattern/wildcard, no groups, no editing
+  imported entries (the latter would remain a contradiction to the
+  read-only commitment).
+- No audit entry: hiding is a pure display setting with no
+  security relevance.
 
 ## 5. Tests
 
-- Store: Roundtrip hide/unhide, Idempotenz beider Richtungen, leere Datei,
-  fehlende Datei, unbekannte Felder in der Datei (Vorwärtskompatibilität),
-  exakter (nicht case-insensitiver) Vergleich.
-- Filter: sichtbar/ausgeblendet/verwaist über eine Tabelle von Fällen,
-  inklusive „Alias umbenannt ⇒ alter Eintrag verwaist, neuer sichtbar".
-- Reihenfolge der sichtbaren Hosts bleibt die der Importer-Sortierung.
-- EN/DE-Kataloge: Key-Mengen identisch (der Parsing-Wächter aus M11d deckt
-  das Format ab).
+- Store: roundtrip hide/unhide, idempotency in both directions, empty file,
+  missing file, unknown fields in the file (forward compatibility),
+  exact (not case-insensitive) comparison.
+- Filter: visible/hidden/orphaned across a table of cases,
+  including "alias renamed ⇒ old entry orphaned, new one visible".
+- Order of visible hosts stays the importer's sort order.
+- EN/DE catalogs: identical key sets (the parsing guard from M11d covers
+  the format).
 
-## 6. Aufteilung
+## 6. Breakdown
 
-T1 Core (Store + reine Trennfunktion) → T2 App (Kontextmenü, Sheet,
-Menüeintrag mit Zähler, Verdrahtung, EN/DE) → T3 Abschluss.
-KEIN Release.
+T1 Core (store + pure split function) → T2 App (context menu, sheet,
+menu item with counter, wiring, EN/DE) → T3 wrap-up.
+NO release.

@@ -2,49 +2,49 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** „Übertragen zu Session xy" aus beiden Panes — inklusive direktem Remote→Remote-Stream durch die App, Doppel-Bucket-Drossel, zweitem Rig-Container für den Server-zu-Server-Beweis und Schließen-Warnung für Ziel-Tabs.
+**Goal:** "Transfer to session xy" from both panes — including a direct remote→remote stream through the app, a double-bucket throttle, a second rig container for the server-to-server proof, and a close warning for target tabs.
 
-**Architecture:** Der Job landet in der Queue des QUELL-Tabs; die Engine ist bereits quell-/ziel-agnostisch, sie bekommt für Remote→Remote einen ZWEITEN Bucket (zählt in beiden Richtungen — Spec-§4-Carry aus M8a). Das Menü-Modell in Core wird um Ziel-Sessions erweitert (`transferToSession`), der exhaustive Switch in `ContentView` erzwingt die neue Behandlung zur Compile-Zeit. Queue-Items tragen eine opake `destinationTabID` für die Schließen-Warnung.
+**Architecture:** The job lands in the SOURCE tab's queue; the engine is already source-/target-agnostic, it receives a SECOND bucket for remote→remote (counts in both directions — spec §4 carry-over from M8a). The menu model in Core is extended with target sessions (`transferToSession`), the exhaustive switch in `ContentView` enforces handling the new case at compile time. Queue items carry an opaque `destinationTabID` for the close warning.
 
-**Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, AppKit `NSMenu` (macOS 15 → `NSMenuItem.subtitle` verfügbar), Docker-Compose-Rig.
+**Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, AppKit `NSMenu` (macOS 15 → `NSMenuItem.subtitle` available), Docker Compose rig.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-27-m8-tabs-design.md` §4 (Doppel-Bucket), §5, §6 — bindend. Branch: **develop**.
-- Queue-Invarianten unverändert (FIFO, exactly-once Waiter, cancelAll, Gruppen-onCompleted exactly-once); Konflikt-Maschinerie läuft unverändert gegen das Ziel-FS.
-- Drossel-Semantik: Remote→Remote konsumiert JEDEN Chunk aus BEIDEM Bucket-Paar (Down + Up — es ist real beides auf der Leitung); sequenzielles `consume` auf zwei unabhängigen Actors ist deadlockfrei (kein Lock wird über ein await gehalten); Gesamtwartezeit = max beider Freigaben ⇒ Rate = min beider Limits. Lokal→Ziel-Remote zählt nur im Upload-Bucket.
-- Menü-Regeln (Spec §6, unit-getestet): Ziel-Einträge nur, wenn die Auswahl übertragbar ist (gleiches Gate wie `transferToOtherPane`); NIE der eigene Tab; NIE Formular-Tabs (die App übergibt nur verbundene andere Tabs); Reihenfolge = Strip-Reihenfolge; ohne andere verbundene Tabs Optik wie heute (kein Submenü-Zwang). Ziel-Pfad wird beim KLICK eingefroren.
-- Kanten (Spec §5.3): Ziel-Tab schließt während des Streams → vorhandenes M5d-Mapping (kein Sonderpfad); Schließen-Nachfrage erscheint auch, wenn der Tab ZIEL aktiver Transfers anderer Tabs ist (eigener Text); Enqueue gegen totes FS endet als normale Fehlermeldung.
-- Symlinks bleiben von Übertragungen ausgeschlossen (M7b-Regeln unverändert); Ordner über `enqueueTree`.
-- Rig: NIE `up`/`down` aus Worktrees, nur `start`/`stop` aus dem Haupt-Checkout; zweiter Container gleiche Image-PIN, Port 2223; `PerSourcePenalties` deaktiviert (geteilte sshd_config.d).
-- Alle neuen UI-Texte EN/DE (`Sources/MacSCPApp/Resources/*/Localizable.strings`); Code + Kommentare NUR Englisch.
-- Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` + volle `swift test` nach jedem Task grün (Ausgangslage 376 Tests / 32 Suiten); gated Suiten in T3 (Implementer, Rig läuft) und T5.
-- TDD für Core; App-Target untestbar → T4 liefert Build + Verhaltensbeschreibung; Tests SYNCHRON im Vordergrund.
-- M8a-Backlog NICHT in M8b (Tab-a11y, Menü-Aufräumen) — nichts davon „mitnehmen".
+- Spec: `docs/superpowers/specs/2026-07-27-m8-tabs-design.md` §4 (double bucket), §5, §6 — binding. Branch: **develop**.
+- Queue invariants unchanged (FIFO, exactly-once waiter, cancelAll, group onCompleted exactly-once); conflict machinery runs unchanged against the target FS.
+- Throttle semantics: remote→remote consumes EVERY chunk from BOTH bucket pairs (down + up — it really is both on the line); sequential `consume` on two independent actors is deadlock-free (no lock is held across an await); total wait time = max of both allowances ⇒ rate = min of both limits. Local→target-remote counts only against the upload bucket.
+- Menu rules (spec §6, unit-tested): target entries only when the selection is transferable (same gate as `transferToOtherPane`); NEVER the tab's own entry; NEVER form tabs (the app only passes other connected tabs); order = strip order; without other connected tabs the look is as today (no forced submenu). Target path is frozen at CLICK time.
+- Edges (spec §5.3): target tab closes during the stream → existing M5d mapping (no special path); close confirmation also appears if the tab is the TARGET of active transfers from other tabs (own text); enqueue against a dead FS ends as a normal error message.
+- Symlinks stay excluded from transfers (M7b rules unchanged); folders via `enqueueTree`.
+- Rig: NEVER `up`/`down` from worktrees, only `start`/`stop` from the main checkout; second container, same image PIN, port 2223; `PerSourcePenalties` disabled (shared sshd_config.d).
+- All new UI text EN/DE (`Sources/MacSCPApp/Resources/*/Localizable.strings`); code + comments ONLY English.
+- Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` + full `swift test` green after every task (starting point 376 tests / 32 suites); gated suites in T3 (implementer, rig running) and T5.
+- TDD for Core; App target untestable → T4 delivers build + behavior description; tests run SYNCHRONOUSLY in the foreground.
+- M8a backlog NOT in M8b (tab a11y, menu cleanup) — none of it gets "carried along".
 
 ## Schedule
 
-T1 (Doppel-Bucket + destinationTabID, Core) → T2 (Menü-Modell, Core) → T3 (zweiter Rig-Container + gated Remote→Remote-Test) → T4 (App: Submenü, Handler, Schließen-Warnung) → T5 Abschluss (Koordinator).
+T1 (double bucket + destinationTabID, Core) → T2 (menu model, Core) → T3 (second rig container + gated remote→remote test) → T4 (App: submenu, handler, close warning) → T5 wrap-up (coordinator).
 
 ---
 
-### Task 1: Engine-Doppel-Bucket + Queue-Erweiterungen (Core)
+### Task 1: Engine double bucket + queue extensions (Core)
 
 **Files:**
-- Modify: `Sources/macSCPCore/RemoteFS/TransferEngine.swift` (`copyFile` ~Zeile 89–143)
-- Modify: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift` (Job/Item, `enqueue`/`enqueueAndWait`/`enqueueTree`, Throttle-Auflösung ~Zeile 697)
+- Modify: `Sources/macSCPCore/RemoteFS/TransferEngine.swift` (`copyFile` ~line 89–143)
+- Modify: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift` (job/item, `enqueue`/`enqueueAndWait`/`enqueueTree`, throttle resolution ~line 697)
 - Test: `Tests/macSCPCoreTests/TransferEngineTests.swift`, `Tests/macSCPCoreTests/TransferQueueViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: `BandwidthBucket` (injizierbare Uhr über den bestehenden Test-Init), `BandwidthLimiter` (M8a).
-- Produces (T3/T4 verlassen sich exakt hierauf):
-  - `TransferEngine.copyFile(..., throttle: BandwidthBucket? = nil, secondaryThrottle: BandwidthBucket? = nil, ...)` — jeder Chunk konsumiert erst `throttle`, dann `secondaryThrottle`.
-  - `TransferQueueViewModel.enqueue(fileName:direction:source:sourcePath:destination:destinationDirectory:onCompleted:destinationTabID:crossRemote:)` — beide neuen Parameter mit Default (`destinationTabID: UUID? = nil`, `crossRemote: Bool = false`); gleiche Erweiterung an `enqueueTree` (Vererbung an alle expandierten Items) und `enqueueAndWait` NICHT nötig (kein Konsument).
-  - `crossRemote: true` ⇒ Throttle-Auflösung: primär = `limiter?.uploadBucket`, sekundär = `limiter?.downloadBucket` (Richtung des Jobs ist `.upload` — Ziel-Schreiben; der Indikator zeigt Bernstein).
-  - `TransferQueueViewModel.hasActiveItems(destinationTabID: UUID) -> Bool` — true, wenn ein nicht-terminales Item (queued/running/im Konflikt) diese Ziel-Tab-ID trägt.
+- Consumes: `BandwidthBucket` (injectable clock via the existing test init), `BandwidthLimiter` (M8a).
+- Produces (T3/T4 rely on this exactly):
+  - `TransferEngine.copyFile(..., throttle: BandwidthBucket? = nil, secondaryThrottle: BandwidthBucket? = nil, ...)` — every chunk consumes `throttle` first, then `secondaryThrottle`.
+  - `TransferQueueViewModel.enqueue(fileName:direction:source:sourcePath:destination:destinationDirectory:onCompleted:destinationTabID:crossRemote:)` — both new parameters have a default (`destinationTabID: UUID? = nil`, `crossRemote: Bool = false`); the same extension on `enqueueTree` (inherited by all expanded items) and NOT needed on `enqueueAndWait` (no consumer).
+  - `crossRemote: true` ⇒ throttle resolution: primary = `limiter?.uploadBucket`, secondary = `limiter?.downloadBucket` (the job's direction is `.upload` — writing to the target; the indicator shows amber).
+  - `TransferQueueViewModel.hasActiveItems(destinationTabID: UUID) -> Bool` — true when a non-terminal item (queued/running/in conflict) carries this target tab ID.
 
-- [x] **Step 1: Failing Tests.** In `TransferEngineTests.swift` (bestehende Muster der Datei für FS-Mocks/Bucket-Uhr übernehmen — Helper-Namen anpassen, Assertions unverändert):
+- [x] **Step 1: Failing tests.** In `TransferEngineTests.swift` (follow the file's existing patterns for FS mocks/bucket clock — adapt helper names, keep assertions unchanged):
 
 ```swift
     @Test func copyFileConsumesBothThrottles() async throws {
@@ -61,7 +61,7 @@ T1 (Doppel-Bucket + destinationTabID, Core) → T2 (Menü-Modell, Core) → T3 (
     }
 ```
 
-(Die konkreten Werte/Toleranzen an die vorhandenen M6a-Drossel-Tests der Datei angleichen; der Test MUSS scheitern, weil `secondaryThrottle` noch nicht existiert.)
+(Align the concrete values/tolerances with the file's existing M6a throttle tests; the test MUST fail because `secondaryThrottle` does not exist yet.)
 
 In `TransferQueueViewModelTests.swift`:
 
@@ -88,9 +88,9 @@ In `TransferQueueViewModelTests.swift`:
     }
 ```
 
-- [x] **Step 2: Rot beweisen.** `swift test --filter TransferEngineTests` und `--filter TransferQueueViewModelTests` → FAIL (Parameter existieren nicht).
+- [x] **Step 2: Prove red.** `swift test --filter TransferEngineTests` and `--filter TransferQueueViewModelTests` → FAIL (parameters do not exist).
 
-- [x] **Step 3: Engine.** In `copyFile` den Parameter `secondaryThrottle: BandwidthBucket? = nil` ergänzen (nach `throttle`), Doku-Zeile: „Second bucket for cross-remote transfers (M8b): a remote→remote stream is real download AND upload on this machine's link, so every chunk pays both buckets; the pace follows the tighter one." Im Chunk-Loop nach dem bestehenden `try await throttle.consume(chunk.count)`:
+- [x] **Step 3: Engine.** In `copyFile`, add the parameter `secondaryThrottle: BandwidthBucket? = nil` (after `throttle`), doc line: "Second bucket for cross-remote transfers (M8b): a remote→remote stream is real download AND upload on this machine's link, so every chunk pays both buckets; the pace follows the tighter one." In the chunk loop, after the existing `try await throttle.consume(chunk.count)`:
 
 ```swift
             if let secondaryThrottle {
@@ -98,7 +98,7 @@ In `TransferQueueViewModelTests.swift`:
             }
 ```
 
-- [x] **Step 4: Queue.** `Job` um `let destinationTabID: UUID?` und `let crossRemote: Bool` erweitern; `Item` um `public let destinationTabID: UUID?` (für `hasActiveItems`; Anzeige unverändert). `enqueue`/`enqueueTree` um die Parameter mit Defaults erweitern (`enqueueTree` reicht beide an jedes expandierte File-Item weiter). Throttle-Auflösung beim Job-Start:
+- [x] **Step 4: Queue.** Extend `Job` with `let destinationTabID: UUID?` and `let crossRemote: Bool`; extend `Item` with `public let destinationTabID: UUID?` (for `hasActiveItems`; display unchanged). Extend `enqueue`/`enqueueTree` with the parameters, with defaults (`enqueueTree` forwards both to every expanded file item). Throttle resolution at job start:
 
 ```swift
         let throttle: BandwidthBucket?
@@ -115,7 +115,7 @@ In `TransferQueueViewModelTests.swift`:
         }
 ```
 
-`copyFile`-Aufruf um `secondaryThrottle: secondary` ergänzen. Neu:
+Extend the `copyFile` call with `secondaryThrottle: secondary`. New:
 
 ```swift
     /// True while any non-terminal item targets the given tab (M8b) — the
@@ -126,28 +126,28 @@ In `TransferQueueViewModelTests.swift`:
     }
 ```
 
-(Exakte `isTerminal`-Zugriffsform an `Item.Status` der Datei anpassen.)
+(Match the exact `isTerminal` access form to the file's `Item.Status`.)
 
-- [x] **Step 5: Grün + volle Suite.** `swift test` → 376 + neue (Zahl im Report festhalten); Build sauber.
+- [x] **Step 5: Green + full suite.** `swift test` → 376 + new ones (record the number in the report); build clean.
 
 - [x] **Step 6: Commit.** `feat: pay both bandwidth buckets on cross-remote transfers`
 
 ---
 
-### Task 2: Menü-Modell mit Ziel-Sessions (Core)
+### Task 2: Menu model with target sessions (Core)
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/BrowserContextMenu.swift`
 - Test: `Tests/macSCPCoreTests/BrowserContextMenuTests.swift`
 
 **Interfaces:**
-- Produces (T4 verlässt sich exakt hierauf):
-  - `public struct CrossSessionTarget: Equatable, Sendable, Identifiable { public let id: UUID; public let title: String; public let remotePath: String; public init(id:title:remotePath:) }` (id = Tab-ID; `remotePath` = beim Menü-Aufbau eingefrorener aktueller Remote-Pfad des Ziel-Tabs).
+- Produces (T4 relies on this exactly):
+  - `public struct CrossSessionTarget: Equatable, Sendable, Identifiable { public let id: UUID; public let title: String; public let remotePath: String; public init(id:title:remotePath:) }` (id = tab ID; `remotePath` = the target tab's current remote path, frozen at menu-build time).
   - `BrowserMenuEntry` + `case transferToSession(CrossSessionTarget)`.
-  - `entries(for:side:crossSessionTargets:)` — neuer Parameter `crossSessionTargets: [CrossSessionTarget] = []`; die bestehende Zwei-Parameter-Form bleibt als Überladung/Default funktionsfähig (Bestandsaufrufer + Tests unverändert).
-  - Regel: `transferToSession`-Einträge erscheinen genau dann, wenn auch `transferToOtherPane` erscheint (gleiches Übertragbarkeits-Gate), direkt NACH ihm, in Listen-Reihenfolge (= Strip-Reihenfolge, die die App liefert). Leere Liste ⇒ Rückgabe exakt wie heute.
+  - `entries(for:side:crossSessionTargets:)` — new parameter `crossSessionTargets: [CrossSessionTarget] = []`; the existing two-parameter form stays functional as an overload/default (existing callers + tests unchanged).
+  - Rule: `transferToSession` entries appear exactly when `transferToOtherPane` also appears (same transferability gate), directly AFTER it, in list order (= strip order, as supplied by the app). Empty list ⇒ return exactly as today.
 
-- [x] **Step 1: Failing Tests** (an den Stil der bestehenden `BrowserContextMenuTests` angleichen):
+- [x] **Step 1: Failing tests** (match the style of the existing `BrowserContextMenuTests`):
 
 ```swift
     @Test func crossSessionTargetsFollowTransferEntry() {
@@ -180,25 +180,25 @@ In `TransferQueueViewModelTests.swift`:
     }
 ```
 
-- [x] **Step 2: Rot beweisen**, dann implementieren: Nach dem `transferToOtherPane`-Append `entries.append(contentsOf: crossSessionTargets.map { .transferToSession($0) })`. Doku-Kommentare aktualisieren (der `transferToOtherPane`-Kommentar sagt bereits „M8 adds per-session targets").
+- [x] **Step 2: Prove red**, then implement: after the `transferToOtherPane` append, `entries.append(contentsOf: crossSessionTargets.map { .transferToSession($0) })`. Update the doc comments (the `transferToOtherPane` comment already says "M8 adds per-session targets").
 
-- [x] **Step 3: Grün + volle Suite + Commit.** `feat: add cross-session targets to the context-menu model`
+- [x] **Step 3: Green + full suite + commit.** `feat: add cross-session targets to the context-menu model`
 
 ---
 
-### Task 3: Zweiter Rig-Container + gated Remote→Remote-Test
+### Task 3: Second rig container + gated remote→remote test
 
 **Files:**
 - Modify: `docker/test-server/compose.yml`
-- Test: `Tests/macSCPCoreTests/CitadelIntegrationTests.swift` (bzw. die Datei, die die `MACSCP_ITEST`-Suite enthält — vorher nachschlagen; neue Tests dort einfügen)
+- Test: `Tests/macSCPCoreTests/CitadelIntegrationTests.swift` (or whichever file holds the `MACSCP_ITEST` suite — check beforehand; insert the new tests there)
 
 **Interfaces:**
-- Consumes: `TransferEngine.copyFile(..., secondaryThrottle:)` (T1), bestehende Docker-Suite-Helfer (Connect-Config testuser/testpass, Port-Konstante, Cleanup-Muster).
-- Produces: zweiter sshd-Dienst auf **127.0.0.1:2223** (gleiches Image-PIN `lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230`, Container `macscp-test-sshd-2`, gleiche env, gleiche `sshd_config.d`-Mounts, EIGENES leeres Seed-Verzeichnis `./seed2:/data/seed:ro` — Verzeichnis mit `.gitkeep` anlegen).
+- Consumes: `TransferEngine.copyFile(..., secondaryThrottle:)` (T1), existing Docker suite helpers (connect config testuser/testpass, port constant, cleanup pattern).
+- Produces: second sshd service on **127.0.0.1:2223** (same image PIN `lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230`, container `macscp-test-sshd-2`, same env, same `sshd_config.d` mounts, its OWN empty seed directory `./seed2:/data/seed:ro` — create the directory with `.gitkeep`).
 
-- [x] **Step 1: Compose erweitern** (Service `sshd2` als Kopie von `sshd` mit `container_name: macscp-test-sshd-2`, `ports: ["2223:2222"]`, `./seed2`-Mount). Rig aus dem HAUPT-Checkout neu erzeugen — einmalig ist hier `docker compose -f docker/test-server/compose.yml up -d` nötig (neuer Service; Host-Key-Rotation des ersten Containers vermeiden: `up -d` erzeugt nur den NEUEN Service neu, wenn der alte unverändert läuft — mit `docker compose ... up -d --no-recreate` absichern). Beide Container laufen lassen.
+- [x] **Step 1: Extend compose** (service `sshd2` as a copy of `sshd` with `container_name: macscp-test-sshd-2`, `ports: ["2223:2222"]`, `./seed2` mount). Re-create the rig from the MAIN checkout — a one-time `docker compose -f docker/test-server/compose.yml up -d` is needed here (new service; avoid rotating the first container's host key: `up -d` only re-creates the NEW service as long as the old one keeps running unchanged — secure that with `docker compose ... up -d --no-recreate`). Keep both containers running.
 
-- [x] **Step 2: Failing gated Test** (in der bestehenden Docker-Suite, gleiche Gate-Konvention):
+- [x] **Step 2: Failing gated test** (in the existing Docker suite, same gate convention):
 
 ```swift
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"))
@@ -215,40 +215,40 @@ In `TransferQueueViewModelTests.swift`:
     }
 ```
 
-Rot beweisen heißt hier: der Test scheitert VOR Step 1 (nur ein Server) — Reihenfolge im Task: Test zuerst schreiben, `MACSCP_ITEST=1 swift test --filter <name>` gegen das alte Rig → FAIL (connection refused 2223), dann Compose-Step, dann grün.
+Proving red here means: the test fails BEFORE Step 1 (only one server) — task order: write the test first, `MACSCP_ITEST=1 swift test --filter <name>` against the old rig → FAIL (connection refused 2223), then the compose step, then green.
 
-- [x] **Step 3: Grün beweisen.** `MACSCP_ITEST=1 swift test` KOMPLETT (alle gated Suiten, beide Container) + ungated `swift test`.
+- [x] **Step 3: Prove green.** `MACSCP_ITEST=1 swift test` in FULL (all gated suites, both containers) + ungated `swift test`.
 
 - [x] **Step 4: Commit.** `feat: add a second test server and prove remote-to-remote streaming`
 
 ---
 
-### Task 4: App — Submenü, Handler, Schließen-Warnung
+### Task 4: App — submenu, handler, close warning
 
 **Files:**
-- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (NSMenu-Brücke), `Sources/MacSCPApp/BrowserPane.swift` (Durchreichung), `Sources/MacSCPApp/ContentView.swift` (Targets bauen, Handler, Schließen-Warnung), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
-- Test: keiner (App-Target; Smoke in T5)
+- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (NSMenu bridge), `Sources/MacSCPApp/BrowserPane.swift` (pass-through), `Sources/MacSCPApp/ContentView.swift` (build targets, handler, close warning), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
+- Test: none (App target; smoke in T5)
 
 **Interfaces:**
 - Consumes: `CrossSessionTarget`/`transferToSession` (T2), `enqueue(..., destinationTabID:crossRemote:)`/`enqueueTree(...)`/`hasActiveItems(destinationTabID:)` (T1), `tabsModel`/`SessionTab` (M8a).
-- Produces: Kontextmenü „Übertragen" als Submenü, sobald Ziel-Sessions existieren; Schließen-Confirm auch für Ziel-Tabs.
+- Produces: context-menu "Transfer" as a submenu as soon as target sessions exist; close confirmation also for target tabs.
 
-**Verhaltens-Anforderungen:**
-1. **Targets bauen (ContentView):** Closure `crossSessionTargets(for tab: SessionTab) -> [CrossSessionTarget]` — alle ANDEREN Tabs in Strip-Reihenfolge mit `session != nil`, gemappt auf `CrossSessionTarget(id: other.id, title: other.displayTitle, remotePath: other.session!.remote.currentPath)`. Als Closure durch `BrowserPane` in den Tabellen-Coordinator reichen (frisch bei JEDEM `menuNeedsUpdate` ausgewertet — Menü-Aufbau friert den Pfad ein, Spec §5.3).
-2. **NSMenu-Brücke:** Enthält das Modell mindestens einen `transferToSession`-Eintrag, werden ALLE transfer*-Einträge zu einem Submenü „Transfer"/„Übertragen" (neuer Key `menu.transfer.submenu`): erstes Item = bisheriger `transferToOtherPane`-Titel, Separator, dann je Ziel `String(format: L10n.string("menu.transfer.toSession", "To “%@”"), target.title)` mit `menuItem.subtitle = target.remotePath` (macOS 15 ≥ 14.4, verfügbar). OHNE Ziel-Einträge bleibt die heutige flache Struktur byte-identisch. `MenuActionBox`-Muster beibehalten (Selektion by value; Ziel im representedObject mitführen).
-3. **Handler (ContentView, exhaustiver Switch):** `case .transferToSession(let target)`: Ziel-Tab via `tabsModel.tabs.first { $0.id == target.id }`; guard `let targetSession = targetTab?.session` else return (Ziel trennte inzwischen — Enqueue unterbleibt, kein Crash; die Queue-Fehlermeldung entsteht nur bei bereits laufenden Jobs, Spec §5.3). Pro Auswahl-Item (Symlinks überspringen wie `transferSelection`):
-   - Quelle lokal: `enqueue(fileName:direction:.upload, source: tab.session!.localFS, sourcePath:, destination: targetSession.remoteFS, destinationDirectory: target.remotePath, onCompleted: [weak remote = targetSession.remote] refresh, destinationTabID: target.id)`; Ordner analog `enqueueTree`.
-   - Quelle remote: identisch, aber `source: tab.session!.remoteFS` und `crossRemote: true` (Richtung bleibt `.upload`).
-   Alles auf der Queue des QUELL-Tabs (`tab.transferQueue`).
-4. **Schließen-Warnung:** `requestClose` fragt zusätzlich, ob IRGENDEIN anderer Tab `hasActiveItems(destinationTabID: tab.id)` meldet; dann Confirm mit eigenem Text `tabs.close.incomingTransfers` („Other tabs are streaming to this session; closing cancels those transfers." / „Andere Tabs übertragen gerade zu dieser Session; Schließen bricht diese Übertragungen ab.") — beide Gründe können gemeinsam zutreffen (Texte kombinieren: eigener + eingehender Hinweis untereinander).
-5. Keys EN/DE: `menu.transfer.submenu` „Transfer"/„Übertragen", `menu.transfer.toSession` „To “%@”"/„Zu „%@"", `tabs.close.incomingTransfers` (siehe oben).
+**Behavior requirements:**
+1. **Build targets (ContentView):** closure `crossSessionTargets(for tab: SessionTab) -> [CrossSessionTarget]` — all OTHER tabs in strip order with `session != nil`, mapped to `CrossSessionTarget(id: other.id, title: other.displayTitle, remotePath: other.session!.remote.currentPath)`. Pass as a closure through `BrowserPane` into the table coordinator (re-evaluated freshly on EVERY `menuNeedsUpdate` — menu build freezes the path, spec §5.3).
+2. **NSMenu bridge:** if the model contains at least one `transferToSession` entry, ALL transfer* entries become a submenu "Transfer"/"Übertragen" (new key `menu.transfer.submenu`): first item = the previous `transferToOtherPane` title, separator, then per target `String(format: L10n.string("menu.transfer.toSession", "To “%@”"), target.title)` with `menuItem.subtitle = target.remotePath` (macOS 15 ≥ 14.4, available). WITHOUT target entries, today's flat structure stays byte-identical. Keep the `MenuActionBox` pattern (selection by value; carry the target in the representedObject).
+3. **Handler (ContentView, exhaustive switch):** `case .transferToSession(let target)`: target tab via `tabsModel.tabs.first { $0.id == target.id }`; guard `let targetSession = targetTab?.session` else return (target disconnected in the meantime — enqueue is skipped, no crash; the queue error message only arises for jobs already running, spec §5.3). Per selection item (skip symlinks like `transferSelection`):
+   - Local source: `enqueue(fileName:direction:.upload, source: tab.session!.localFS, sourcePath:, destination: targetSession.remoteFS, destinationDirectory: target.remotePath, onCompleted: [weak remote = targetSession.remote] refresh, destinationTabID: target.id)`; folders analogous via `enqueueTree`.
+   - Remote source: identical, but `source: tab.session!.remoteFS` and `crossRemote: true` (direction stays `.upload`).
+   All on the SOURCE tab's queue (`tab.transferQueue`).
+4. **Close warning:** `requestClose` additionally asks whether ANY other tab reports `hasActiveItems(destinationTabID: tab.id)`; then confirm with its own text `tabs.close.incomingTransfers` ("Other tabs are streaming to this session; closing cancels those transfers." / "Andere Tabs übertragen gerade zu dieser Session; Schließen bricht diese Übertragungen ab.") — both reasons can apply together (combine the texts: own hint plus incoming hint, one under the other).
+5. Keys EN/DE: `menu.transfer.submenu` "Transfer"/"Übertragen", `menu.transfer.toSession` "To “%@”"/"Zu „%@"", `tabs.close.incomingTransfers` (see above).
 
-- [x] **Step 1:** Brücke + Durchreichung; **Step 2:** Handler; **Step 3:** Schließen-Warnung; **Step 4:** Katalog-Keys + Gegenprobe (jeder Key in BEIDEN Dateien); **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T3); **Step 6:** Commit `feat: transfer selections to other session tabs from the context menu`.
+- [x] **Step 1:** bridge + pass-through; **Step 2:** handler; **Step 3:** close warning; **Step 4:** catalog keys + cross-check (every key in BOTH files); **Step 5:** `swift build` (0 errors, no new warnings) + full `swift test` (state at T3); **Step 6:** commit `feat: transfer selections to other session tabs from the context menu`.
 
 ---
 
-### Task 5: Abschluss-Verifikation (Koordinator)
+### Task 5: Wrap-up verification (coordinator)
 
-- [x] Gated Suiten mit BEIDEN Containern: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips (386 vor / 389 nach den Final-Review-Fixes).
-- [ ] Visueller Smoke — **an den Maintainer delegiert** (Wrapper läuft; Checkliste in der Milestone-Zusammenfassung): Submenü zeigt nur verbundene andere Tabs (Formular-Tab nie, eigener nie) mit Pfad-Untertitel; lokale Auswahl → Ziel-Tab-Remote (Queue im Quell-Tab, Ziel-Pane refresht); Remote-Auswahl → Server-zu-Server (docker exec-Beweis auf Container 2, kein lokales Tempfile); Drossel: Remote→Remote bei Limit X drückt BEIDE Richtungen (Rate ≈ min); Ordner-Transfer cross-session inkl. Konflikt-Sheet im QUELL-Tab; Ziel-Tab schließen während Stream → Warn-Text, nach Bestätigung fehlgeschlagener Transfer im Quell-Tab (kein Hänger); ohne zweiten Tab Menü-Optik wie heute; Regressionen: transferToOtherPane, M7b-Dialoge.
-- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1; „No" mit einem Critical → Fix-Commit d147ed5 → Re-Review „Ready to merge: Yes"), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ Frage: Release v1.1.0 jetzt taggen — M7+M8 komplett).
+- [x] Gated suites with BOTH containers: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ fully green, zero skips (386 before / 389 after the final-review fixes).
+- [ ] Visual smoke — **delegated to the maintainer** (wrapper is running; checklist in the milestone summary): submenu shows only other connected tabs (never a form tab, never the tab's own) with a path subtitle; local selection → target tab's remote (queue in the source tab, target pane refreshes); remote selection → server-to-server (docker exec proof on container 2, no local temp file); throttle: remote→remote at limit X depresses BOTH directions (rate ≈ min); folder transfer cross-session including the conflict sheet in the SOURCE tab; closing the target tab during a stream → warning text, after confirmation a failed transfer in the source tab (no hang); without a second tab the menu looks as today; regressions: transferToOtherPane, M7b dialogs.
+- [x] Plan checkboxes, ledger, Opus whole-branch final review (base = commit before T1; "No" with one Critical → fix commit d147ed5 → re-review "Ready to merge: Yes"), fixes, push develop, CI, rig `stop`, memory update, milestone summary (+ question: tag release v1.1.0 now — M7+M8 complete).

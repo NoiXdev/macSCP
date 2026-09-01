@@ -1,68 +1,68 @@
-# P3e — Snippet-Ausführungen im Sitzungsprotokoll
+# P3e — snippet executions in the session log
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Wer ein Snippet im Terminal ausführt, findet das später im
-Sitzungsprotokoll wieder — mit dem Befehl, der tatsächlich lief.
+**Goal:** Anyone who runs a snippet in the terminal can find it again
+later in the session log — with the command that actually ran.
 
-**Architecture:** Die Machbarkeitsmessung hat entschieden, was hier NICHT
-gebaut wird: freie Tastatureingabe wird nicht protokolliert, weil der Client
-einen Passwortprompt nicht erkennen kann (siehe Spec-Nachtrag 2026-08-19).
-Protokolliert wird ausschließlich, was macSCP selbst absendet und dessen
-Text es kennt — Snippets, die laut Projektregel keine Zugangsdaten tragen.
+**Architecture:** The feasibility measurement has decided what NOT to
+build here: free-typed keyboard input is not logged, because the client
+cannot recognize a password prompt (see the spec addendum,
+2026-08-19). What is logged is exclusively what macSCP itself sends and
+whose text it knows — snippets, which by project rule carry no
+credentials.
 
-Zwei Messungen machen die Phase klein: die Audit-Maschinerie aus M9b steht
-komplett (`AuditEvent.Kind`, `AuditRecorder.recordAction(_:)`, das Sheet mit
-Suche und Filter), und alle vier Snippet-Oberflächen laufen durch **einen**
-Trichter, `ContentView.triggerSnippet(_:execute:)`. Also: eine neue
-Ereignisart, ein Core-Formatierer für den Text, eine Aufzeichnungszeile im
-Trichter, eine Filterkategorie.
+Two measurements keep this phase small: the audit machinery from M9b
+stands complete (`AuditEvent.Kind`, `AuditRecorder.recordAction(_:)`, the
+sheet with search and filter), and all four snippet surfaces run through
+**one** funnel, `ContentView.triggerSnippet(_:execute:)`. So: one new
+event kind, one Core formatter for the text, one recording line in the
+funnel, one filter category.
 
-**Nur Ausführungen, nie Einfügungen.** Ein eingefügtes Snippet steht im
-Prompt und kann vor dem Absenden noch geändert werden; es als „ausgeführt"
-zu protokollieren wäre ein falscher Eintrag. `execute == false` schreibt
-nichts.
+**Executions only, never insertions.** An inserted snippet sits in the
+prompt and can still be changed before it is sent; logging it as
+"executed" would be a false entry. `execute == false` writes nothing.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, Swift Testing.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen: **ausschließlich Englisch.**
-- Nutzer-sichtbare Strings über `L10n.string`; die Schlüsselmengen der vier
-  Kataloge (en/de/fr/pl) müssen **identisch** bleiben — ein Wächtertest
-  prüft das bereits.
-- `AuditEvent.detail` ist fertiger englischer Klartext; das Sheet
-  lokalisiert nur das Label der Art.
-- Ein Geheimnis darf nie gedruckt, geloggt oder in eine Meldung eingebettet
-  werden. Snippets tragen laut Projektregel keine Zugangsdaten — diese
-  Regel ist die Voraussetzung dieser Phase, nicht eine Annahme darüber.
-- Nie eine Zeilennummer in einen Kommentar schreiben.
-- Kein Doc-Kommentar behauptet etwas, das der Code nicht tut.
-- Tests: TDD rot→grün. `swift test` am Ende jeder Task grün.
-- Conventional Commits, Footer:
+- Code, comments, identifiers, test names: **English only.**
+- User-visible strings via `L10n.string`; the key sets of the four
+  catalogs (en/de/fr/pl) must stay **identical** — a guard test already
+  checks this.
+- `AuditEvent.detail` is finished English plain text; the sheet only
+  localizes the kind's label.
+- A secret must never be printed, logged, or embedded in a message.
+  Snippets carry no credentials by project rule — this rule is the
+  precondition of this phase, not an assumption about it.
+- Never write a line number into a comment.
+- No doc comment claims something the code does not do.
+- Tests: TDD red→green. `swift test` green at the end of every task.
+- Conventional Commits, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 
 ---
 
-### Task 1: Ereignisart + Textformatierer (Core)
+### Task 1: Event kind + text formatter (Core)
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/AuditEvent.swift`
 - Create: `Sources/macSCPCore/Terminal/SnippetAuditDetail.swift`
-- Test: `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift` (new)
 
 **Interfaces:**
-- Produces: `AuditEvent.Kind.snippetExecuted` und
-  `SnippetAuditDetail.text(for: Snippet) -> String`. Task 2 nutzt beide.
+- Produces: `AuditEvent.Kind.snippetExecuted` and
+  `SnippetAuditDetail.text(for: Snippet) -> String`. Task 2 uses both.
 
-**Warum ein eigener Formatierer im Core:** Der Text muss einzeilig, ohne
-Steuerzeichen und begrenzt sein — das Protokoll ist eine überfliegbare
-Liste, kein Mitschnitt. Ein mehrzeiliges Snippet würde die Zeilenhöhe des
-Sheets sprengen. Diese Regel gehört dorthin, wo sie geprüft werden kann.
+**Why a dedicated formatter in Core:** The text must be single-line,
+free of control characters, and bounded — the log is a skimmable list,
+not a transcript. A multi-line snippet would blow up the sheet's row
+height. This rule belongs where it can be tested.
 
 - [ ] **Step 1: Write the failing tests**
 
-Neue Datei `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift`:
+New file `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift`:
 
 ```swift
 import Foundation
@@ -114,14 +114,14 @@ struct SnippetAuditDetailTests {
 Run: `swift test --filter "SnippetAuditDetail"`
 Expected: FAIL — `cannot find 'SnippetAuditDetail' in scope`.
 
-Falls der `Snippet`-Initializer andere Argumente verlangt: lies
-`Sources/macSCPCore/Terminal/Snippet.swift` und passe **nur** den
-`snippet(name:command:)`-Helfer an, nicht die geprüften Erwartungen.
+If the `Snippet` initializer requires different arguments: read
+`Sources/macSCPCore/Terminal/Snippet.swift` and adjust **only** the
+`snippet(name:command:)` helper, not the checked expectations.
 
 - [ ] **Step 3: Implement**
 
-`Sources/macSCPCore/Sessions/AuditEvent.swift` — im `enum Kind` hinter
-`crossSessionTransfer` ergänzen:
+`Sources/macSCPCore/Sessions/AuditEvent.swift` — in `enum Kind`, add
+after `crossSessionTransfer`:
 
 ```swift
         /// A snippet the user ran in the session's terminal (P3e). Only
@@ -134,7 +134,7 @@ Falls der `Snippet`-Initializer andere Argumente verlangt: lies
         case snippetExecuted
 ```
 
-Neue Datei `Sources/macSCPCore/Terminal/SnippetAuditDetail.swift`:
+New file `Sources/macSCPCore/Terminal/SnippetAuditDetail.swift`:
 
 ```swift
 import Foundation
@@ -176,12 +176,13 @@ public enum SnippetAuditDetail {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `swift test --filter "SnippetAuditDetail"`
-Expected: PASS (5 Tests). Danach `swift test` — muss grün sein.
+Expected: PASS (5 tests). Then `swift test` — must be green.
 
-Achte darauf, dass die Suite **nicht** an einem Vollständigkeits-Wächter
-über `AuditEvent.Kind.allCases` scheitert (es gibt L10n-Wächter, die jeden
-Fall verlangen). Falls doch: das ist Task 2's Aufgabe (die Kataloge) — melde
-es, statt hier Katalogeinträge vorzuziehen.
+Watch that the suite does **not** fail against an
+`AuditEvent.Kind.allCases` completeness guard (there are L10n guards
+that require every case). If it does: that is Task 2's job (the
+catalogs) — report it rather than adding catalog entries ahead of time
+here.
 
 - [ ] **Step 5: Commit**
 
@@ -192,36 +193,36 @@ git commit -m "feat(core): describe a snippet execution for the audit log"
 
 ---
 
-### Task 2: Aufzeichnen, filtern, übersetzen (App)
+### Task 2: Record, filter, translate (App)
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/ContentView.swift` (`triggerSnippet(_:execute:)`)
-- Modify: `Sources/MacSCPAppKit/AuditLogSheet.swift` (Filterkategorie)
+- Modify: `Sources/MacSCPAppKit/AuditLogSheet.swift` (filter category)
 - Modify: `Sources/MacSCPAppKit/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
-- Test: `Tests/macSCPAppKitTests/SnippetAuditWiringGuardTests.swift` (neu)
+- Test: `Tests/macSCPAppKitTests/SnippetAuditWiringGuardTests.swift` (new)
 
 **Interfaces:**
-- Consumes: `AuditEvent.Kind.snippetExecuted` und
-  `SnippetAuditDetail.text(for:)` aus Task 1.
+- Consumes: `AuditEvent.Kind.snippetExecuted` and
+  `SnippetAuditDetail.text(for:)` from Task 1.
 
-**Kontext, den du nicht raten musst:**
-- `triggerSnippet(_:execute:)` endet mit
+**Context you don't have to guess:**
+- `triggerSnippet(_:execute:)` ends with
   `terminal.send(SnippetKeystrokes.bytes(for: snippet, execute: execute))`.
-  Der Eintrag gehört **hinter** dieses `send` — protokolliert wird, was
-  wirklich rausging, nicht was vorhatte rauszugehen.
-- Der Recorder hängt am Tab: `activeTab.auditRecorder` (optional). Ist er
-  `nil`, wird nichts protokolliert und nichts abgestürzt.
-- Das Sheet labelt Arten über `L10n.string("audit.kind.\(kind.rawValue)", …)`
-  und Filter über `audit.filter.<case>`.
+  The recording call belongs **after** this `send` — what gets logged is
+  what actually went out, not what was about to go out.
+- The recorder hangs off the tab: `activeTab.auditRecorder` (optional).
+  If it is `nil`, nothing is recorded and nothing crashes.
+- The sheet labels kinds via `L10n.string("audit.kind.\(kind.rawValue)", …)`
+  and filters via `audit.filter.<case>`.
 
 - [ ] **Step 1: Write the failing test**
 
-Es gibt keinen Renderer für SwiftUI-Views in dieser Suite, und
-`triggerSnippet` hängt an `@State`. Der prüfbare Teil ist die
-Vollständigkeit der Kataloge — und die ist der Teil, der erfahrungsgemäß
-vergessen wird.
+There is no renderer for SwiftUI views in this suite, and
+`triggerSnippet` hangs off `@State`. The checkable part is the
+completeness of the catalogs — and that is the part that experience
+shows gets forgotten.
 
-Neue Datei `Tests/macSCPAppKitTests/SnippetAuditWiringGuardTests.swift`:
+New file `Tests/macSCPAppKitTests/SnippetAuditWiringGuardTests.swift`:
 
 ```swift
 import Foundation
@@ -263,16 +264,16 @@ struct SnippetAuditWiringGuardTests {
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `swift test --filter "Snippet audit wiring"`
-Expected: FAIL — beide Tests, weil die Schlüssel fehlen.
+Expected: FAIL — both tests, because the keys are missing.
 
-Falls `Bundle.module` die Kataloge nicht so findet: sieh in
-`Tests/macSCPAppKitTests/L10nTests.swift` nach, wie dort auf die Kataloge
-zugegriffen wird, und übernimm **genau diesen** Weg.
+If `Bundle.module` does not find the catalogs that way: look at
+`Tests/macSCPAppKitTests/L10nTests.swift` for how the catalogs are
+accessed there, and adopt **exactly that** approach.
 
-- [ ] **Step 3: Aufzeichnen im Trichter**
+- [ ] **Step 3: Record in the funnel**
 
 In `Sources/MacSCPAppKit/ContentView.swift`, `triggerSnippet(_:execute:)`,
-hinter dem vorhandenen `terminal.send(...)`:
+after the existing `terminal.send(...)`:
 
 ```swift
         // Only an EXECUTION is an event: an inserted snippet still sits in
@@ -284,20 +285,20 @@ hinter dem vorhandenen `terminal.send(...)`:
         }
 ```
 
-- [ ] **Step 4: Filterkategorie**
+- [ ] **Step 4: Filter category**
 
 In `Sources/MacSCPAppKit/AuditLogSheet.swift`:
 
 `case all, transfers, fileOps, connection, errors`
 → `case all, transfers, fileOps, terminal, connection, errors`
 
-Im Picker, hinter dem `fileOps`-Eintrag:
+In the picker, after the `fileOps` entry:
 
 ```swift
                 Text(L10n.string("audit.filter.terminal", "Terminal")).tag(Filter.terminal)
 ```
 
-In `matchesFilter(_:)`, als neuer Fall:
+In `matchesFilter(_:)`, as a new case:
 
 ```swift
         case .terminal:
@@ -309,10 +310,10 @@ In `matchesFilter(_:)`, als neuer Fall:
             }
 ```
 
-- [ ] **Step 5: Kataloge (alle vier)**
+- [ ] **Step 5: Catalogs (all four)**
 
-Je zwei Schlüssel, neben die vorhandenen `audit.kind.*`- bzw.
-`audit.filter.*`-Blöcke:
+Two keys each, next to the existing `audit.kind.*` resp.
+`audit.filter.*` blocks:
 
 ```
 en: "audit.kind.snippetExecuted" = "Snippet run";
@@ -328,8 +329,8 @@ pl: "audit.kind.snippetExecuted" = "Wykonano fragment";
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `swift test --filter "Snippet audit wiring"` → PASS.
-Danach die volle Suite: `swift test` — muss grün sein, einschließlich der
-vorhandenen L10n-Wächter über die Schlüsselgleichheit der vier Kataloge.
+Then the full suite: `swift test` — must be green, including the
+existing L10n guards for key equality across the four catalogs.
 
 - [ ] **Step 7: Commit**
 

@@ -1,37 +1,46 @@
-# M12 — Multi-Protokoll-Fundament + Fähigkeits-Framework + dünnes S3 Implementation Plan
+# M12 — Multi-Protocol Foundation + Capability Framework + Thin S3 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** macSCP von einem SSH-Einzweck-Client zu einem Protokoll-Plugin-System umbauen (Verbindungstyp-Diskriminator + Fähigkeits-Framework) und als validierenden zweiten Consumer ein dünnes S3-Backend (nur Verbinden + Browsen/Listen) hinzufügen.
+**Goal:** Rebuild macSCP from a single-purpose SSH client into a protocol
+plugin system (connection-kind discriminator + capability framework) and add
+a thin S3 backend (connect + browse/list only) as a validating second
+consumer.
 
-**Architecture:** Core bekommt `ConnectionKind` + `ConnectionConfig`-Enum, ein statisches `BackendDescriptor`-Framework (`ProtocolCapabilities` + Formular-Schema + Presets) plus Laufzeit-`as?`-Capability-Protokolle, und einen `BackendConnector`-Dispatcher. `S3FileSystem` implementiert `RemoteFileSystem` dünn über einen `SigV4Signer` (swift-crypto) und einen injizierbaren HTTP-Transport. Die App rendert das Verbindungsformular schema-getrieben, zeigt ein Typ-Badge und gated SSH-Tools per Capability.
+**Architecture:** Core gets a `ConnectionKind` + `ConnectionConfig` enum, a
+static `BackendDescriptor` framework (`ProtocolCapabilities` + form schema +
+presets) plus runtime `as?` capability protocols, and a `BackendConnector`
+dispatcher. `S3FileSystem` implements `RemoteFileSystem` thinly over a
+`SigV4Signer` (swift-crypto) and an injectable HTTP transport. The app
+renders the connection form schema-driven, shows a type badge and gates SSH
+tools by capability.
 
-**Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), swift-crypto (vorhanden, SigV4), Foundation URLSession (HTTP), Swift Testing, macOS 15, Docker (MinIO-Rig).
+**Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), swift-crypto (already present, SigV4), Foundation URLSession (HTTP), Swift Testing, macOS 15, Docker (MinIO rig).
 
 ## Global Constraints
 
-- Swift-tools 6.0, alle Targets `.swiftLanguageMode(.v5)`, min. macOS 15.
-- **Keine neue Dependency** — SigV4 über das vorhandene `swift-crypto` (HMAC-SHA256/SHA256), HTTP über `URLSession`.
-- Code/Kommentare **English only**; UI-Strings über die `.strings`-Kataloge EN/DE/FR/PL, kein ASCII-`"` in Nicht-EN-Werten; FR/PL KI-generiert (Kopf-/Native-Review).
-- Diskriminator/Capabilities/Config/Signer/S3FS in **Core** (testbar); lokalisierte Labels in der App (Split wie `FileColumn`).
-- **Vorwärtskompatibilität:** neues `StoredSession.kind`/`LoginSet.kind` MUSS `decodeIfPresent(...) ?? .ssh` sein (synthesized Codable wendet KEINE Defaults auf fehlende Keys an → custom `init(from:)`). Alt-`sessions.json`/Login-Sets laden unverändert als `.ssh`.
-- **Secrets** (SSH-Passwort/Passphrase **und** S3-Secret-Access-Key) ausschließlich in der Keychain (`SecretStore`), nie in JSON.
-- TOFU-Host-Key-Sicherheit für SSH unverändert; S3 hat keinen Decider.
-- **M11n-Lektion:** Runtime-Idle-CPU-Rauchtest vor Auslieferung (App startet, SSH unverändert, S3-Tab ohne Spin).
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- Baseline: **903 Tests / 62 Suiten** grün. Kein Release/Tag ohne Maintainer-Anordnung.
+- Swift tools 6.0, all targets `.swiftLanguageMode(.v5)`, min. macOS 15.
+- **No new dependency** — SigV4 over the existing `swift-crypto` (HMAC-SHA256/SHA256), HTTP over `URLSession`.
+- Code/comments **English only**; UI strings via the `.strings` catalogs EN/DE/FR/PL, no ASCII `"` in non-EN values; FR/PL AI-generated (head/native review).
+- Discriminator/capabilities/config/signer/S3FS in **Core** (testable); localized labels in the App (split like `FileColumn`).
+- **Forward compatibility:** the new `StoredSession.kind`/`LoginSet.kind` MUST be `decodeIfPresent(...) ?? .ssh` (synthesized Codable applies NO defaults to missing keys → custom `init(from:)`). Legacy `sessions.json`/login sets load unchanged as `.ssh`.
+- **Secrets** (SSH password/passphrase **and** S3 secret access key) exclusively in the Keychain (`SecretStore`), never in JSON.
+- TOFU host-key security for SSH unchanged; S3 has no decider.
+- **M11n lesson:** runtime idle-CPU smoke test before shipping (app launches, SSH unchanged, S3 tab without spin).
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- Baseline: **903 tests / 62 suites** green. No release/tag without maintainer order.
 
-## Dateistruktur (neu/geändert)
+## File Structure (new/changed)
 
-- Neu Core: `Settings`… nein → `Sources/macSCPCore/Connection/ConnectionKind.swift`, `ConnectionConfig.swift`, `S3/S3ConnectionConfig.swift`, `Capabilities/ProtocolCapabilities.swift`, `Capabilities/BackendDescriptor.swift`, `Capabilities/ConnectionFieldSchema.swift`, `Capabilities/BackendContributions.swift`, `S3/SigV4Signer.swift`, `S3/S3HTTPTransport.swift`, `S3/S3ListParser.swift`, `S3/S3FileSystem.swift`, `Connection/BackendConnector.swift`.
-- Ändern Core: `Sessions/StoredSession.swift`, `Sessions/LoginSetStore.swift`, `Sessions/SessionExportCodec.swift`, `Presentation/ConnectionViewModel.swift` (Connector-Typealias).
-- Ändern App: `ConnectionFormView.swift`, `SessionSidebar.swift`, `TabStripView.swift`, `ContentView.swift` (connect-Aufruf + Gating), `Resources/{en,de,fr,pl}.lproj/Localizable.strings`.
-- Neu Tests: je Core-Datei ein Test; `Tests/macSCPCoreTests/S3FileSystemIntegrationTests.swift` (gated MinIO).
-- Ändern Infra: `docker/test-server/compose.yml` (MinIO-Service).
+- New Core: `Settings`… no → `Sources/macSCPCore/Connection/ConnectionKind.swift`, `ConnectionConfig.swift`, `S3/S3ConnectionConfig.swift`, `Capabilities/ProtocolCapabilities.swift`, `Capabilities/BackendDescriptor.swift`, `Capabilities/ConnectionFieldSchema.swift`, `Capabilities/BackendContributions.swift`, `S3/SigV4Signer.swift`, `S3/S3HTTPTransport.swift`, `S3/S3ListParser.swift`, `S3/S3FileSystem.swift`, `Connection/BackendConnector.swift`.
+- Change Core: `Sessions/StoredSession.swift`, `Sessions/LoginSetStore.swift`, `Sessions/SessionExportCodec.swift`, `Presentation/ConnectionViewModel.swift` (connector typealias).
+- Change App: `ConnectionFormView.swift`, `SessionSidebar.swift`, `TabStripView.swift`, `ContentView.swift` (connect call + gating), `Resources/{en,de,fr,pl}.lproj/Localizable.strings`.
+- New tests: one test per Core file; `Tests/macSCPCoreTests/S3FileSystemIntegrationTests.swift` (gated MinIO).
+- Change Infra: `docker/test-server/compose.yml` (MinIO service).
 
 ---
 
-### Task 1: Core-Diskriminator — ConnectionKind, ConnectionConfig, S3ConnectionConfig, StoredSession.kind
+### Task 1: Core discriminator — ConnectionKind, ConnectionConfig, S3ConnectionConfig, StoredSession.kind
 
 **Files:**
 - Create: `Sources/macSCPCore/Connection/ConnectionKind.swift`, `Sources/macSCPCore/Connection/ConnectionConfig.swift`, `Sources/macSCPCore/S3/S3ConnectionConfig.swift`
@@ -80,7 +89,7 @@ struct ConnectionKindTests {
 }
 ```
 
-- [ ] **Step 2: Rot.** `swift test --filter ConnectionKind` → FAIL (types missing).
+- [ ] **Step 2: Red.** `swift test --filter ConnectionKind` → FAIL (types missing).
 
 - [ ] **Step 3: Implement enums + S3 config.** `ConnectionKind.swift`:
 
@@ -171,7 +180,7 @@ public enum ConnectionConfig: Equatable, Sendable {
 }
 ```
 
-- [ ] **Step 4: Grün.** `swift test --filter ConnectionKind` → PASS.
+- [ ] **Step 4: Green.** `swift test --filter ConnectionKind` → PASS.
 
 - [ ] **Step 5: Failing test — StoredSession legacy decode + s3 roundtrip.** In `Tests/macSCPCoreTests/StoredSessionTests.swift` (create if missing; `@testable import macSCPCore`):
 
@@ -199,7 +208,7 @@ public enum ConnectionConfig: Equatable, Sendable {
     }
 ```
 
-- [ ] **Step 6: Rot.** `swift test --filter StoredSession` → FAIL.
+- [ ] **Step 6: Red.** `swift test --filter StoredSession` → FAIL.
 
 - [ ] **Step 7: Add kind/s3 with custom decode.** In `StoredSession.swift`: add stored props (after `jump`):
 
@@ -240,7 +249,7 @@ Add both to the memberwise `init` signature (defaulted: `kind: ConnectionKind = 
 
 (The synthesized `encode(to:)` stays — it writes every property; only `init(from:)` is customized. If the compiler now demands an explicit `encode`, add the mirror using `encodeIfPresent` for the optionals.)
 
-- [ ] **Step 8: Grün + volle Suite.** `swift test --filter StoredSession` → PASS; `swift test` → **903 + neue** grün, keine neuen Warnungen.
+- [ ] **Step 8: Green + full suite.** `swift test --filter StoredSession` → PASS; `swift test` → **903 + new** green, no new warnings.
 
 - [ ] **Step 9: Commit.**
 
@@ -251,7 +260,7 @@ git commit -m "feat: add ConnectionKind, typed ConnectionConfig and S3 session f
 
 ---
 
-### Task 2: Fähigkeits-Framework — ProtocolCapabilities, BackendDescriptor, ConnectionFieldSchema, Contribution-Seams
+### Task 2: Capability framework — ProtocolCapabilities, BackendDescriptor, ConnectionFieldSchema, contribution seams
 
 **Files:**
 - Create: `Sources/macSCPCore/Capabilities/ProtocolCapabilities.swift`, `Capabilities/ConnectionFieldSchema.swift`, `Capabilities/BackendContributions.swift`, `Capabilities/BackendDescriptor.swift`
@@ -303,7 +312,7 @@ struct BackendDescriptorTests {
 }
 ```
 
-- [ ] **Step 2: Rot.** `swift test --filter BackendDescriptor` → FAIL.
+- [ ] **Step 2: Red.** `swift test --filter BackendDescriptor` → FAIL.
 
 - [ ] **Step 3: Implement the framework types.** `ProtocolCapabilities.swift`:
 
@@ -475,7 +484,7 @@ public struct BackendDescriptor: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Grün + Suite.** `swift test --filter BackendDescriptor` → PASS; `swift test` → grün.
+- [ ] **Step 4: Green + suite.** `swift test --filter BackendDescriptor` → PASS; `swift test` → green.
 
 - [ ] **Step 5: Commit.**
 
@@ -486,11 +495,11 @@ git commit -m "feat: add the protocol capability framework and backend descripto
 
 ---
 
-### Task 3: Generalisierter Connector + BackendConnector-Dispatcher (SSH-Regression grün)
+### Task 3: Generalized connector + BackendConnector dispatcher (SSH regression green)
 
 **Files:**
 - Create: `Sources/macSCPCore/Connection/BackendConnector.swift`
-- Modify: `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` (Connector typealias), `Sources/MacSCPApp/ContentView.swift` (connect call site), `Sources/MacSCPCLI/MacSCPCLI.swift`
+- Modify: `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` (connector typealias), `Sources/MacSCPApp/ContentView.swift` (connect call site), `Sources/MacSCPCLI/MacSCPCLI.swift`
 - Test: `Tests/macSCPCoreTests/BackendConnectorTests.swift`
 
 **Interfaces:**
@@ -520,7 +529,7 @@ struct BackendConnectorTests {
 }
 ```
 
-- [ ] **Step 2: Rot.** `swift test --filter BackendConnector` → FAIL.
+- [ ] **Step 2: Red.** `swift test --filter BackendConnector` → FAIL.
 
 - [ ] **Step 3: Extract HostKeyDecider + generalize the typealias.** In `ConnectionViewModel.swift`, replace the `Connector` typealias (lines ~73-75) with:
 
@@ -555,7 +564,7 @@ public enum BackendConnector {
 
 - [ ] **Step 5: Rewire the App + CLI call sites.** `ContentView.swift` (~line 1168) and `MacSCPCLI.swift` (~line 25): replace the direct `CitadelFileSystem.connect(...)` with building a `ConnectionConfig` from the session/args and calling `BackendConnector.connect(_:decider:)`. Keep the SSH behavior byte-identical (same decider, same config).
 
-- [ ] **Step 6: Grün + volle Suite.** `swift test --filter BackendConnector` → PASS; `swift build` clean; `swift test` → grün; **gated** `MACSCP_ITEST=1 swift test --filter Citadel` → SSH integration unchanged.
+- [ ] **Step 6: Green + full suite.** `swift test --filter BackendConnector` → PASS; `swift build` clean; `swift test` → green; **gated** `MACSCP_ITEST=1 swift test --filter Citadel` → SSH integration unchanged.
 
 - [ ] **Step 7: Commit.**
 
@@ -566,7 +575,7 @@ git commit -m "feat: dispatch connections by kind through a generalized connecto
 
 ---
 
-### Task 4: SigV4Signer (gegen AWS-Testvektoren)
+### Task 4: SigV4Signer (against AWS test vectors)
 
 **Files:**
 - Create: `Sources/macSCPCore/S3/SigV4Signer.swift`
@@ -618,9 +627,9 @@ struct SigV4SignerTests {
 
 > **Implementer note:** implement the standard AWS Signature Version 4 steps exactly — (1) canonical request (method, canonical URI, canonical query string, canonical headers incl. `host` and `x-amz-date`, signed headers, payload hash), (2) string-to-sign (`AWS4-HMAC-SHA256\n{amzDate}\n{scope}\n{sha256(canonicalRequest)}`), (3) signing key (`HMAC(HMAC(HMAC(HMAC("AWS4"+secret, date), region), service), "aws4_request")`), (4) `signature = hex(HMAC(signingKey, stringToSign))`. Percent-encode per RFC 3986 (S3: do NOT double-encode the path for `s3`, but for the generic signer encode each path segment except `/`). Verify against the AWS SigV4 test-suite vectors; if the final Authorization for the reference case does not match the documented value, the encoding/ordering is wrong — fix until it does.
 
-- [ ] **Step 2: Rot.** `swift test --filter SigV4Signer` → FAIL.
+- [ ] **Step 2: Red.** `swift test --filter SigV4Signer` → FAIL.
 - [ ] **Step 3: Implement `SigV4Signer`** per the note (canonicalization, HMAC chain via swift-crypto, `x-amz-date`/`x-amz-content-sha256` headers, `emptyPayloadHash` constant). Support an optional `sessionToken` → `x-amz-security-token` header included in the canonical headers when present.
-- [ ] **Step 4: Grün.** `swift test --filter SigV4Signer` → PASS (both tests).
+- [ ] **Step 4: Green.** `swift test --filter SigV4Signer` → PASS (both tests).
 - [ ] **Step 5: Commit.**
 
 ```bash
@@ -630,7 +639,7 @@ git commit -m "feat: add an AWS SigV4 request signer over swift-crypto"
 
 ---
 
-### Task 5: Dünnes S3FileSystem (connect + list + stat) + MinIO-Rig
+### Task 5: Thin S3FileSystem (connect + list + stat) + MinIO rig
 
 **Files:**
 - Create: `Sources/macSCPCore/S3/S3HTTPTransport.swift`, `S3/S3ListParser.swift`, `S3/S3FileSystem.swift`
@@ -648,15 +657,15 @@ git commit -m "feat: add an AWS SigV4 request signer over swift-crypto"
 > parameter, and the secret is never persisted.
 
 - [ ] **Step 1: Failing test — ListObjectsV2 XML parsing.** `Tests/macSCPCoreTests/S3ListParserTests.swift`: feed a canned `ListBucketResult` XML with two `<Contents>` (a file `a.txt`, size 12; a file under `sub/` should NOT appear because delimiter groups it) and one `<CommonPrefixes><Prefix>sub/</Prefix>`; assert the parser yields one directory item `sub` and one file `a.txt` (size 12), and reads `<NextContinuationToken>` / `<IsTruncated>` into the returned token (nil when not truncated). Include the exact XML inline.
-- [ ] **Step 2: Rot.** `swift test --filter S3ListParser` → FAIL.
+- [ ] **Step 2: Red.** `swift test --filter S3ListParser` → FAIL.
 - [ ] **Step 3: Implement `S3ListParser`** with `XMLParser` (Foundation): collect `Contents` (Key/Size/LastModified/ETag) and `CommonPrefixes/Prefix`, strip the query `prefix` to produce leaf names, map `key/`-prefixes to `.directory` items and objects to `.file` (owner/group/permissions = nil), parse `IsTruncated`/`NextContinuationToken`.
-- [ ] **Step 4: Grün.** `swift test --filter S3ListParser` → PASS.
+- [ ] **Step 4: Green.** `swift test --filter S3ListParser` → PASS.
 - [ ] **Step 5: Failing test — S3FileSystem.list over a fake transport.** `Tests/macSCPCoreTests/S3FileSystemTests.swift`: a `FakeTransport` returns the canned XML for a `GET …?list-type=2&prefix=&delimiter=/` and asserts `list("/")` returns the mapped items; a second fake returns HTTP 403 → assert `list` throws `RemoteFSError.authenticationFailed`; a fake with `IsTruncated=true` + a second page asserts pagination concatenates. Also assert `write`/`readStream`/`delete`/`rename`/`createDirectory`/`deleteTree` throw a `RemoteFSError.protocolError` (M13 stubs) and `setPermissions` throws `protocolError`.
-- [ ] **Step 6: Rot.** `swift test --filter S3FileSystem` → FAIL.
+- [ ] **Step 6: Red.** `swift test --filter S3FileSystem` → FAIL.
 - [ ] **Step 7: Implement `S3FileSystem`** (list via signed ListObjectsV2 with pagination through `S3ListParser`; `stat` via a targeted list/HeadObject; `homeDirectoryPath` → `"/"`; the not-yet-supported mutating methods throw `protocolError`; `connect` does one ListObjectsV2 probe and maps 403→`authenticationFailed`/404→`notFound`/network→`connectionFailed`). Build the endpoint URL per `usePathStyle`.
-- [ ] **Step 8: Grün.** `swift test --filter S3FileSystem` → PASS.
+- [ ] **Step 8: Green.** `swift test --filter S3FileSystem` → PASS.
 - [ ] **Step 9: MinIO rig + gated integration test.** Add a `minio/minio` service to `docker/test-server/compose.yml` (pinned tag, a root user/pass, a seeded bucket with a couple of objects via a one-shot `mc` init container or a mounted seed). `S3FileSystemIntegrationTests.swift` (`MACSCP_ITEST=1`): connect to `http://127.0.0.1:9000`, path-style, list the seed bucket, assert the seeded keys/prefixes appear.
-- [ ] **Step 10: Grün gated.** Rig up (`docker compose -f docker/test-server/compose.yml up -d` from the MAIN checkout), `MACSCP_ITEST=1 swift test --filter S3FileSystemIntegration` → PASS. Full ungated `swift test` → grün.
+- [ ] **Step 10: Green gated.** Rig up (`docker compose -f docker/test-server/compose.yml up -d` from the MAIN checkout), `MACSCP_ITEST=1 swift test --filter S3FileSystemIntegration` → PASS. Full ungated `swift test` → green.
 - [ ] **Step 11: Commit.**
 
 ```bash
@@ -666,7 +675,7 @@ git commit -m "feat: add a thin S3 file system (connect + list) with a MinIO rig
 
 ---
 
-### Task 6: Login-Sets `kind` + Resolver + Export/Import
+### Task 6: Login sets `kind` + resolver + export/import
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/LoginSetStore.swift`, `Sources/macSCPCore/Sessions/SessionExportCodec.swift`
@@ -677,13 +686,13 @@ git commit -m "feat: add a thin S3 file system (connect + list) with a MinIO rig
 - Produces: `LoginSet.kind: ConnectionKind` (`decodeIfPresent ?? .ssh`) + optional S3 auth payload (accessKeyID; secret stays Keychain); `ExportedSession.kind`/`.s3*` fields with the same legacy-nil decode.
 
 - [ ] **Step 1: Failing test — legacy login set decodes as ssh + s3 roundtrip.** In `LoginSetStoreTests.swift`: decode a legacy `LoginSet` JSON (no `kind`) → `.ssh`; create an `.s3` set with `accessKeyID` → roundtrips.
-- [ ] **Step 2: Rot** → FAIL.
+- [ ] **Step 2: Red** → FAIL.
 - [ ] **Step 3: Add `kind` + s3 fields to `LoginSet`** (`LoginSetStore.swift:6`), custom `init(from:)` with `decodeIfPresent(ConnectionKind) ?? .ssh` (same rationale as StoredSession). The resolver that binds a set to a session must require matching `kind`.
-- [ ] **Step 4: Grün** → PASS.
+- [ ] **Step 4: Green** → PASS.
 - [ ] **Step 5: Failing test — export/import carries kind + s3.** In `SessionExportCodecTests.swift`: export an `.s3` session (endpoint/region/bucket/accessKey; secret handled separately like `jumpPassword`), import it back → `kind == .s3`, config intact; a legacy exported payload without `kind` imports as `.ssh`.
-- [ ] **Step 6: Rot** → FAIL.
+- [ ] **Step 6: Red** → FAIL.
 - [ ] **Step 7: Add `kind`/`s3*` to `ExportedSession`** (`SessionExportCodec.swift:31`) with `decodeIfPresent`, mirror in the export/import mapping (the S3 secret access key travels the same optional-plaintext channel as `jumpPassword`, i.e. only in the encrypted export path).
-- [ ] **Step 8: Grün + volle Suite.** `swift test` → grün.
+- [ ] **Step 8: Green + full suite.** `swift test` → green.
 - [ ] **Step 9: Commit.**
 
 ```bash
@@ -693,7 +702,7 @@ git commit -m "feat: type login sets and session export by connection kind"
 
 ---
 
-### Task 7: App — schema-getriebenes Formular, Typ-Schalter, Provider-Presets, Badge, Capability-Gating, L10n
+### Task 7: App — schema-driven form, type switch, provider presets, badge, capability gating, L10n
 
 **Files:**
 - Modify: `Sources/MacSCPApp/ConnectionFormView.swift`, `Sources/MacSCPApp/SessionSidebar.swift`, `Sources/MacSCPApp/TabStripView.swift`, `Sources/MacSCPApp/ContentView.swift`, `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
@@ -701,14 +710,14 @@ git commit -m "feat: type login sets and session export by connection kind"
 **Interfaces:**
 - Consumes: `ConnectionKind`, `BackendDescriptor.descriptor(for:)`, `ConnectionFieldSchema`, `ProtocolCapabilities`, `S3ConnectionConfig` (Tasks 1–2); the existing form/session/badge sites.
 
-> **App layer has no test target** — verify by build + trace + the runtime smoke test.
+> **The App layer has no test target** — verify by build + trace + the runtime smoke test.
 
-- [ ] **Step 1: Typ-Schalter + schema-getriebene S3-Sektion.** In `ConnectionFormView.swift`: a `Picker` over `ConnectionKind` at the top. For `.ssh`, render the existing bespoke SSH sections (unchanged). For `.s3`, render a section generated from `BackendDescriptor.descriptor(for: .s3).fieldSchema` (a `FormRow` per `ConnectionField`; `.secret` → `SecureField`, `.toggle` → `Toggle`, else `TextField`) plus a provider-preset `Picker` that fills field values. On save, persist the SECRET-FREE fields into `StoredSession.s3` (`StoredS3Config`) and the secret access key into the Keychain via `SecretStore`. At CONNECT time, build the runtime `S3ConnectionConfig` from the `StoredS3Config` + the Keychain secret (`S3ConnectionConfig(stored:secretAccessKey:)`) and pass `ConnectionConfig.s3(...)` to `BackendConnector.connect`.
+- [ ] **Step 1: Type switch + schema-driven S3 section.** In `ConnectionFormView.swift`: a `Picker` over `ConnectionKind` at the top. For `.ssh`, render the existing bespoke SSH sections (unchanged). For `.s3`, render a section generated from `BackendDescriptor.descriptor(for: .s3).fieldSchema` (a `FormRow` per `ConnectionField`; `.secret` → `SecureField`, `.toggle` → `Toggle`, else `TextField`) plus a provider-preset `Picker` that fills field values. On save, persist the SECRET-FREE fields into `StoredSession.s3` (`StoredS3Config`) and the secret access key into the Keychain via `SecretStore`. At CONNECT time, build the runtime `S3ConnectionConfig` from the `StoredS3Config` + the Keychain secret (`S3ConnectionConfig(stored:secretAccessKey:)`) and pass `ConnectionConfig.s3(...)` to `BackendConnector.connect`.
 - [ ] **Step 2: Badge.** In `SessionSidebar.swift` (session row) and `TabStripView.swift` (tab): a small badge from `BackendDescriptor.descriptor(for: session.kind).badgeLabelKey` (localized), styled like existing small labels (reuse the M11m column-label typography tokens).
-- [ ] **Step 3: Capability-Gating.** In `ContentView.swift`: gate the terminal toolbar button on `BackendDescriptor.descriptor(for: activeTab.kind).capabilities.supportsShell`; the Terminal menu entry disabled when false. If a shell-only keyboard command is invoked on a non-shell backend, present a localized error alert `shortcut.unavailableForProtocol` (no silent no-op). Symlink marker / permissions editor / resume banner already exist — gate them on the respective capabilities where they read the active backend.
+- [ ] **Step 3: Capability gating.** In `ContentView.swift`: gate the terminal toolbar button on `BackendDescriptor.descriptor(for: activeTab.kind).capabilities.supportsShell`; the Terminal menu entry disabled when false. If a shell-only keyboard command is invoked on a non-shell backend, present a localized error alert `shortcut.unavailableForProtocol` (no silent no-op). Symlink marker / permissions editor / resume banner already exist — gate them on the respective capabilities where they read the active backend.
 - [ ] **Step 4: L10n EN + DE + FR + PL.** Add the new keys (badge.ssh/s3, connection.s3.* field labels, connection.s3.preset.*, shortcut.unavailableForProtocol) to ALL FOUR catalogs. FR/PL: guillemets/„…" as established, no ASCII `"` in values; header comment already marks the catalogs AI-generated.
 - [ ] **Step 5: plutil + parity + build.** `for l in en de fr pl; do plutil -lint Sources/MacSCPApp/Resources/$l.lproj/Localizable.strings; done` → OK; `swift test --filter Localizable` → PASS; `swift build` clean.
-- [ ] **Step 6: Runtime-Rauchtest.** Package the dev app, launch, confirm idle ~0% CPU, the SSH form still works, and switching the type picker to S3 shows the S3 fields without a spin. (Commands as in prior milestones: `scripts/package-app` → codesign → xattr → open → `ps -o %cpu,state` → kill.)
+- [ ] **Step 6: Runtime smoke test.** Package the dev app, launch, confirm idle ~0% CPU, the SSH form still works, and switching the type picker to S3 shows the S3 fields without a spin. (Commands as in prior milestones: `scripts/package-app` → codesign → xattr → open → `ps -o %cpu,state` → kill.)
 - [ ] **Step 7: Commit.**
 
 ```bash
@@ -718,56 +727,56 @@ git commit -m "feat: schema-driven connection form, type badge and capability ga
 
 ---
 
-### Task 8: Abschluss-Verifikation (Koordinator)
+### Task 8: Closing verification (coordinator)
 
-- [ ] Gated Suiten inkl. MinIO: SSH-Rig + MinIO hoch (aus dem Haupt-Checkout), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips (SSH-Integration unverändert, S3-Integration grün).
-- [ ] `swift build` sauber (keine neuen Warnungen); `plutil -lint` alle vier Kataloge OK; `LocalizableStringsTests` grün.
-- [ ] Runtime-Idle-CPU-Rauchtest bestanden; S3-Tab öffnet ohne Spin; SSH-Verbindung + Terminal unverändert.
-- [ ] Whole-Milestone Opus-Review über `review-package <base> HEAD`: Fokus auf (a) Vorwärtskompat (Alt-sessions.json/Login-Sets/Export laden als `.ssh`, `decodeIfPresent`); (b) der generische Layer liest NUR Capabilities, kein `if kind ==` in Browser/Menü/Info; (c) SigV4 gegen die AWS-Vektoren korrekt, kein Secret in Logs/JSON; (d) S3-Secret nur in der Keychain, Export-Secret-Kanal wie `jumpPassword`; (e) SSH-Pfad byte-gleich hinter dem generalisierten Connector (Regression); (f) Gating korrekt + Kürzel-Fehler statt No-op; (g) MinIO-Rig aus dem Haupt-Checkout, Seed reproduzierbar. Fix-Runden bis „Ready to merge: Yes".
-- [ ] Visueller Smoke — Maintainer (Typ-Schalter SSH/S3, Provider-Presets füllen Felder, S3 verbinden + Bucket browsen gegen echtes MinIO/Hetzner, Badge in Sidebar/Tab, Terminal-Knopf bei S3 weg + Kürzel-Fehler, SSH unverändert; hell/dunkel; DE/FR/PL).
-- [ ] Plan-Checkboxen, Ledger, Push develop, `gh run watch`, Dev-Build deployen, Memory. **KEIN Release.** S3-Transfer/CRUD = M13, Presigned/Cross-Backend = M14, Diagnose-Tools + SSH-Key-Manager = spätere Meilensteine.
+- [ ] Gated suites incl. MinIO: bring up the SSH rig + MinIO (from the main checkout), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → green, zero skips (SSH integration unchanged, S3 integration green).
+- [ ] `swift build` clean (no new warnings); `plutil -lint` all four catalogs OK; `LocalizableStringsTests` green.
+- [ ] Runtime idle-CPU smoke test passed; S3 tab opens without spin; SSH connection + terminal unchanged.
+- [ ] Whole-milestone Opus review via `review-package <base> HEAD`: focus on (a) forward compat (legacy sessions.json/login sets/export load as `.ssh`, `decodeIfPresent`); (b) the generic layer reads ONLY capabilities, no `if kind ==` in browser/menu/info; (c) SigV4 correct against the AWS vectors, no secret in logs/JSON; (d) S3 secret only in the Keychain, export secret channel like `jumpPassword`; (e) SSH path byte-identical behind the generalized connector (regression); (f) gating correct + shortcut error instead of no-op; (g) MinIO rig from the main checkout, reproducible seed. Fix rounds until "Ready to merge: Yes".
+- [ ] Visual smoke — maintainer (type switch SSH/S3, provider presets fill fields, S3 connect + browse a bucket against real MinIO/Hetzner, badge in sidebar/tab, terminal button gone for S3 + shortcut error, SSH unchanged; light/dark; DE/FR/PL).
+- [ ] Plan checkboxes, ledger, push develop, `gh run watch`, deploy dev build, memory. **NO release.** S3 transfer/CRUD = M13, presigned/cross-backend = M14, diagnostics tools + SSH key manager = later milestones.
 
 ---
 
-## Abschluss M12 (2026-08-01)
+## M12 close (2026-08-01)
 
-**Alle 8 Tasks umgesetzt, jeweils Task-Review + Fix-Runden sauber.** Task 7
-wurde vom Koordinator in 7a (Core-VM: `kind` + S3-Felder + connect/save/
-beginEditing-Verzweigung, getestet) und 7b (App-UI: Formular/Badge/Gating/
-L10n) gesplittet, weil die VM-Logik testbarer Core-Code ist. Task 2 wurde nach
-einem Implementer-Stall vom Koordinator fertiggestellt (`BackendDescriptor.swift`).
+**All 8 tasks implemented, each with a task review + clean fix rounds.** Task 7
+was split by the coordinator into 7a (Core VM: `kind` + S3 fields + connect/save/
+beginEditing branch, tested) and 7b (App UI: form/badge/gating/
+L10n), because the VM logic is testable Core code. Task 2 was finished by
+the coordinator after an implementer stall (`BackendDescriptor.swift`).
 
-**Verifikation:**
-- Voller gated Lauf `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün; die
-  Suiten *CitadelFileSystem/-Shell against Docker SSH*, *S3FileSystem against
-  Docker MinIO* und *KeychainSecretStore* liefen und bestanden (zero echte
-  Skips). `swift build` sauber (52 Warnungen, unverändert), `plutil -lint`
-  alle vier App-Kataloge OK, `LocalizableStringsTests` grün.
-- Runtime-Idle-CPU-Rauchtest: universelles v1.2.0-dev gepackt, ad-hoc
-  signiert, gestartet → durchgehend 0,0 % CPU (kein Layout-Sturm durch den
-  neuen Typ-Schalter). Nebenbei einen verwaisten 99-%-CPU-Debug-`macSCP`
-  (der nie gekillte M11n-MenuBarExtra-Freeze-Prozess vom 31.07.) aufgeräumt.
-- **Whole-Milestone Opus-Review: „Ready to merge: Yes"** — (a)–(g) alle
-  bestanden (Vorwärtskompat `decodeIfPresent ?? .ssh` an allen drei Decode-
-  Grenzen; generischer Layer liest nur Capabilities; SigV4 gegen AWS-Vektor;
-  Secret nur Keychain + verschlüsselter Export wie `jumpPassword`; SSH-Pfad
-  byte-gleich; Gating korrekt + Kürzel-Fehler; MinIO-Rig reproduzierbar).
-- **Ein bestätigtes Important (I-1) sofort gefixt** (nicht nach M13 verschoben):
-  S3-`list` signierte die Query strikt (RFC 3986), sendete sie aber über
-  `URLComponents` (das `+`/`/` nicht kodiert) → Signatur-Mismatch (403) bei
-  Pagination (Continuation-Tokens sind base64, enthalten oft `+`) und bei
-  `+`-haltigen Prefixes. Fix: Wire-Query aus derselben `canonicalQueryString`
-  bauen wie der Signer (Single-Source, jetzt `internal`). Zwei neue Tests
-  (`+` in Token/Prefix → `%2B` auf der Leitung); gated MinIO danach weiter 4/4.
+**Verification:**
+- Full gated run `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → green; the
+  suites *CitadelFileSystem/-Shell against Docker SSH*, *S3FileSystem against
+  Docker MinIO* and *KeychainSecretStore* ran and passed (zero real
+  skips). `swift build` clean (52 warnings, unchanged), `plutil -lint`
+  all four App catalogs OK, `LocalizableStringsTests` green.
+- Runtime idle-CPU smoke test: universal v1.2.0-dev packaged, ad-hoc
+  signed, launched → continuously 0.0% CPU (no layout storm from the
+  new type switch). Along the way, cleaned up an orphaned 99%-CPU debug `macSCP`
+  (the never-killed M11n MenuBarExtra freeze process from 31 July).
+- **Whole-milestone Opus review: "Ready to merge: Yes"** — (a)–(g) all
+  passed (forward compat `decodeIfPresent ?? .ssh` at all three decode
+  boundaries; generic layer reads only capabilities; SigV4 against the AWS vector;
+  secret only Keychain + encrypted export like `jumpPassword`; SSH path
+  byte-identical; gating correct + shortcut error; MinIO rig reproducible).
+- **One confirmed Important (I-1) fixed immediately** (not deferred to M13):
+  S3 `list` signed the query strictly (RFC 3986), but sent it via
+  `URLComponents` (which does not encode `+`/`/`) → signature mismatch (403) on
+  pagination (continuation tokens are base64, often contain `+`) and on
+  `+`-bearing prefixes. Fix: build the wire query from the same `canonicalQueryString`
+  as the signer (single source, now `internal`). Two new tests
+  (`+` in token/prefix → `%2B` on the wire); gated MinIO afterward still 4/4.
 
-**Offen (bewusst, kein Blocker):** Maintainer-Sichtprüfung steht aus
-(hell/dunkel, DE/FR/PL, echtes S3-Browsen) — Maintainer war offline. FR/PL
-weiterhin KI-generiert, Muttersprachler-Review vor einem Release. Kleinere
-Nachträge (Ledger): virtuelles-Host-S3-URL ungetestet, `minio-init`-Retry
-unbegrenzt, Provider-Preset-Picker zeigt beim erneuten Öffnen „Custom",
-Login-Set-S3-AccessKeyID-Auflösung beim Export erst M13, SigV4-Header-
-Whitespace-Kollaps nicht implementiert (von S3-Headern nicht ausgelöst).
+**Open (deliberate, not a blocker):** maintainer visual review is outstanding
+(light/dark, DE/FR/PL, real S3 browsing) — maintainer was offline. FR/PL
+still AI-generated, native-speaker review before a release. Minor
+follow-ups (ledger): virtual-host S3 URL untested, `minio-init`
+retry unbounded, provider-preset picker shows "Custom" when reopened,
+login-set S3 access-key-ID resolution on export not until M13, SigV4 header
+whitespace collapsing not implemented (not triggered by S3 headers).
 
-**Grenzen des Meilensteins:** S3-Transfer/CRUD = M13, Presigned/Cross-Backend
-= M14, Verbindungs-Diagnose + SSH-Key-Manager = spätere Meilensteine.
-**KEIN Release.**
+**Milestone boundaries:** S3 transfer/CRUD = M13, presigned/cross-backend
+= M14, connection diagnostics + SSH key manager = later milestones.
+**NO release.**

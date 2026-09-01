@@ -1,121 +1,118 @@
-# Backlog: Snippet-Editor — Variablen falten, Platzhalter vorschlagen
+# Backlog: snippet editor — collapse variables, suggest placeholders
 
-**Angelegt:** 2026-08-21, aus Maintainer-Sichtprüfung am gebauten Bundle.
-Gesicherte Ideen, **kein Design**. Zwei Layout-Fehler aus derselben Sichtung
-sind bereits behoben und stehen hier nur als Kontext.
+**Filed:** 2026-08-21, from a maintainer visual check on the built bundle.
+Secured ideas, **not a design**. Two layout bugs from the same review pass
+are already fixed and stand here only as context.
 
-## Bereits behoben (nicht Backlog)
+## Already fixed (not backlog)
 
-- Der Variablen-Block war kein `FormRow` und stand darum am linken Rand,
-  während Name, Kommando und Tags 120 pt eingerückt beginnen. Jetzt eine
-  Zeile wie die anderen.
-- Beide Hilfetexte hatten kein `fixedSize` und wurden bei 460 pt Sheet-Breite
-  einzeilig abgeschnitten.
+- The variables block wasn't a `FormRow` and so sat at the left edge, while
+  name, command and tags start indented 120 pt. Now a row like the others.
+- Both help texts lacked `fixedSize` and got clipped to one line at the
+  460 pt sheet width.
 
-## 1. Variablen ein- und ausklappbar
+## 1. Variables collapsible and expandable
 
-Jede Variable soll für sich zusammenklappbar sein, und neben
-„Variable hinzufügen" braucht es **Massenaktionen**: alle auf, alle zu.
+Every variable should be individually collapsible, and next to
+"Add Variable" there need to be **bulk actions**: expand all, collapse all.
 
-Warum das drückt: eine Variablenzeile trägt heute Name, Art, Aufforderung,
-Platzierung, Vorgabewert und das Merk-Kennzeichen — bei drei Variablen ist
-das Formular länger als das Sheet. Der Editor ist auf 460 pt Breite fest,
-also geht Platz nur nach unten.
+Why this is pressing: a variable row today carries name, kind, prompt,
+placement, default value and the remember flag — with three variables the
+form is already longer than the sheet. The editor is fixed at 460 pt wide,
+so room can only grow downward.
 
-Vor dem Entwurf zu entscheiden:
+To decide before the design:
 
-- **Was steht in der eingeklappten Zeile?** Sinnvoller Kandidat: Name,
-  Art und Platzierung — genug, um die richtige wiederzufinden, ohne sie zu
-  öffnen.
-- **Was ist der Startzustand?** Eine neu hinzugefügte Variable muss offen
-  sein, sonst tippt niemand hinein. Bestehende beim Öffnen des Editors
-  vermutlich zu — das ist zu prüfen, nicht zu setzen.
-- **Wird der Zustand gemerkt?** Wenn ja, gehört er in die Ansicht, nicht ins
-  Modell — ein Faltzustand hat im `snippets.json` nichts verloren und darf
-  erst recht nicht mit einem Export reisen.
-- Eine Variable mit **Fehler** (ungültiger Name, doppelter Name) muss sich
-  von selbst aufklappen oder im eingeklappten Zustand als fehlerhaft
-  erkennbar sein. Sonst versteckt das Falten genau die Zeile, die Beachtung
-  braucht.
+- **What does the collapsed row show?** A sensible candidate: name, kind
+  and placement — enough to find the right one again without opening it.
+- **What is the starting state?** A newly added variable must be open,
+  otherwise nobody types into it. Existing ones presumably collapsed when
+  the editor opens — that needs checking, not assuming.
+- **Is the state remembered?** If so, it belongs in the view, not the
+  model — a collapse state has no business in `snippets.json`, and it must
+  especially not travel with an export.
+- A variable with an **error** (invalid name, duplicate name) must either
+  expand itself automatically or be recognizable as faulty while
+  collapsed. Otherwise collapsing hides exactly the row that needs
+  attention.
 
-## 2. Platzhalter im Kommandofeld vorschlagen
+## 2. Suggest placeholders in the command field
 
-Gewünscht: der Editor erkennt beim Tippen die deklarierten Variablen und
-schlägt sie vor — oder bietet einen Weg, sie einzufügen.
+Wanted: the editor recognizes the declared variables while typing and
+suggests them — or offers a way to insert them.
 
-**Der Baustein ist schon da.** `SnippetCommandEditor` ist bereits ein
-`NSTextView` (aus Teil 1, weil ein SwiftUI-`TextField` nicht während des
-Tippens einfärben kann). Eine Vorschlagsliste an einem `NSTextView` ist ein
-gelöstes Problem; an einem `TextField` wäre es keins gewesen.
+**The building block already exists.** `SnippetCommandEditor` is already
+an `NSTextView` (from part 1, because a SwiftUI `TextField` cannot color
+while typing). A suggestion list on an `NSTextView` is a solved problem;
+on a `TextField` it would not have been.
 
-Der natürliche Auslöser ist die öffnende Klammer: sobald `{{` getippt ist,
-die deklarierten Namen anbieten. Das ist billig, weil die Liste im selben
-Formular direkt darüber steht.
+The natural trigger is the opening brace: as soon as `{{` is typed, offer
+the declared names. That's cheap because the list sits directly above, in
+the same form.
 
-Vor dem Entwurf zu klären:
+To clarify before the design:
 
-- **Vorschlagen, einfügen, oder beides?** Ein Menü am „+"-Knopf der
-  Variablenzeile („in den Befehl einfügen") ist deutlich weniger Arbeit als
-  eine Tipp-Vervollständigung und deckt den Fall ab, dass man den Namen
-  nicht mehr weiß. Beides zusammen ist der Komfortfall.
-- **Was passiert bei einer Variablen mit Platzierung „Umgebungsvariable"?**
-  Die gehört gerade **nicht** als `{{NAME}}` in den Befehl — sie wird als
-  Zuweisung vorangestellt. Eine Vervollständigung, die sie mit anbietet,
-  führt zum genauen Gegenteil. Entweder nicht anbieten, oder als `$NAME`
-  anbieten (siehe Fußangel unten).
-- **Der umgekehrte Weg wäre wertvoller als der Komfort:** ein `{{NAME}}` im
-  Befehl, das *nicht* deklariert ist, ist heute stumm — es bleibt als
-  Literal stehen. Ein Hinweis darauf wäre der eigentliche Gewinn.
+- **Suggest, insert, or both?** A menu on the variable row's "+" button
+  ("insert into command") is significantly less work than type-ahead
+  completion and covers the case where you no longer remember the name.
+  Both together is the convenience case.
+- **What happens with a variable whose placement is "environment
+  variable"?** That one specifically does **not** belong in the command as
+  `{{NAME}}` — it's prepended as an assignment. A completion that offers
+  it too produces exactly the opposite. Either don't offer it, or offer it
+  as `$NAME` (see the pitfall below).
+- **The reverse path would be more valuable than the convenience:** a
+  `{{NAME}}` in the command that is *not* declared is silent today — it
+  stays as a literal. A notice for that would be the real win.
 
-### Fußangel, die dabei sichtbar wird
+### The pitfall this surfaces
 
-Bei einer einzeiligen Zuweisung als Präfix expandiert die Shell `$NAME`,
-**bevor** die Zuweisung greift — gemessen: `P=neu echo "$P"` gibt den alten
-Wert aus. Wer also eine Umgebungsvariable per Vervollständigung als `$NAME`
-in einen einzeiligen Befehl setzt, bekommt still das Falsche. Siehe
-`2026-08-20-backlog-snippet-probelauf.md`, Abschnitt B2.
+For a single-line assignment used as a prefix, the shell expands `$NAME`
+**before** the assignment takes effect — measured: `P=neu echo "$P"`
+prints the old value. So anyone who inserts an environment variable as
+`$NAME` into a single-line command via completion silently gets the wrong
+thing. See `2026-08-20-backlog-snippet-probelauf.md`, section B2.
 
-## Reihenfolge
+## Order
 
-1 zuerst — es ist das gemeldete Platzproblem und hängt an nichts. 2 danach,
-und dort **zuerst der Einfüge-Weg** über das Variablen-Menü: er löst den
-größten Teil des Bedarfs, ohne eine Vervollständigung samt ihrer Sonderfälle
-zu bauen.
+1 first — it's the reported space problem and depends on nothing. 2
+afterward, and there **the insert path first**, via the variable menu: it
+resolves most of the need without building completion and its edge cases.
 
 ---
 
-## Erledigt 2026-08-30 (`bbd25c8`, `60dcea9`)
+## Done 2026-08-30 (`bbd25c8`, `60dcea9`)
 
-Entworfen in `2026-08-30-snippet-editor-bedienung-design.md`.
+Designed in `2026-08-30-snippet-editor-bedienung-design.md`.
 
-**Punkt 1:** Variablen falten, ohne gemerkten Zustand — bestehende zu, eine
-neue offen. Die zugeklappte Zeile trägt Name, Art und Platzierung. Eine
-Variable **mit Problem lässt sich nicht zuklappen**, woraus „alle zu" von
-selbst zu „zeig mir nur die Probleme" wird.
+**Point 1:** collapsing variables, with no remembered state — existing
+ones collapsed, a new one open. The collapsed row carries name, kind and
+placement. A variable **with a problem cannot be collapsed**, which
+turns "collapse all" into "show me only the problems" on its own.
 
-**Punkt 2:** Einfügen über die Variablenzeile, Vervollständigung bei `{{`,
-und der Hinweis auf ein undeklariertes `{{NAME}}` — der Punkt, den dieser
-Eintrag als den eigentlichen Gewinn benannt hat. Der Hinweis ist eine
-**Anzeige**, kein `Problem`-Fall: gesendet werden darf wie zuvor.
+**Point 2:** inserting via the variable row, completion on `{{`, and the
+notice for an undeclared `{{NAME}}` — the point this entry named as the
+real win. The notice is a **display**, not a `Problem` case: sending is
+still allowed as before.
 
-Umgebungsvariablen werden von **keinem** Zugang angeboten, auch nicht als
-`$NAME`. Beide fragen dieselbe Funktion, der Ausschluss ist also strukturell.
+Environment variables are offered by **neither** access path, not even as
+`$NAME`. Both ask the same function, so the exclusion is structural.
 
-## Was dabei offen blieb — eine Entwurfsfrage, kein Fehler
+## What was left open here — a design question, not a bug
 
-**`{{DB}}` für eine Variable mit Platzierung „Umgebungsvariable" ist
-weiterhin stumm.** `resolve` setzt nur `.placeholder` ein; der Text bleibt
-wörtlich stehen, **genau wie bei einer undeklarierten**. Der neue Hinweis
-meldet es bewusst nicht, weil „nicht als Variable deklariert" für einen
-deklarierten Namen falsch wäre.
+**`{{DB}}` for a variable with placement "environment variable" is still
+silent.** `resolve` only substitutes `.placeholder`; the text stays
+literal, **exactly as for an undeclared one**. The new notice deliberately
+does not flag it, because "not declared as a variable" would be wrong for
+a declared name.
 
-Es ist **ein Klick im Platzierungs-Menü** von dem Fall entfernt, den der
-Hinweis behebt — und die Wirkung ist dieselbe. Was fehlt, ist ein zweiter
-Satz für diesen Fall („deklariert, aber als Umgebungsvariable — hier wird
-nichts eingesetzt"). Das ist zu entwerfen, nicht umzubenennen.
+It is **one click in the placement menu** away from the case the notice
+fixes — and the effect is the same. What's missing is a second sentence
+for this case ("declared, but as an environment variable — nothing gets
+substituted here"). That needs designing, not renaming.
 
-Zwei weitere benannte Grenzen: der Einfüge-Weg an der Zeile hängt am Ende an
-(SwiftUI reicht einer `View` keine Cursorposition; die Vervollständigung ist
-der Zugang, der an der Stelle einfügt), und ein `{{foo}}` aus einer fremden
-Vorlagensprache wird mitgemeldet — es blockiert nichts, und was es sagt,
-stimmt.
+Two further named limits: the insert path on the row currently appends at
+the end (SwiftUI doesn't hand a `View` a cursor position; completion is
+the access path that inserts at the point), and a `{{foo}}` from a foreign
+templating language gets flagged along with the rest — it blocks nothing,
+and what it says is correct.

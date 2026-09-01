@@ -1,42 +1,42 @@
-# M5h — Design-Polish Sidebar Implementation Plan
+# M5h — Sidebar design polish implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die Sessions-Sidebar übernimmt Fläche (getönter Mischton + rechte Hairline), Zeilen-Rhythmus und Label-Typo aus dem CI-Mockup — reiner View-Layer, null Verhaltensänderung.
+**Goal:** The sessions sidebar takes on surface (tinted blend + right hairline), row rhythm, and label typography from the CI mockup — pure view layer, zero behavior change.
 
-**Architecture:** Drei neue Flächen-Tokens (`paper`, `card`, `sidebarSurface`) über den bestehenden `dynamicNS`-Helper; `SessionSidebar` bekommt die getönte Container-Fläche mit Hairline-Kante, die drei Abschnitts-Label-Stellen die exakte Mockup-Typo, `SessionRow` die 5×10-Maße mit `remoteSoft`-Aktiv-Fill. Ein Koordinator-Abschlusstask verifiziert visuell in beiden Appearances und darf die Listen-Fluchtung um wenige Punkte feinjustieren.
+**Architecture:** Three new surface tokens (`paper`, `card`, `sidebarSurface`) via the existing `dynamicNS` helper; `SessionSidebar` gets the tinted container surface with a hairline edge, the three section-label spots get the exact mockup typography, `SessionRow` gets the 5×10 metrics with a `remoteSoft` active fill. A coordinator closeout task verifies visually in both appearances and may fine-tune the list alignment by a few points.
 
-**Tech Stack:** Swift 6 Toolchain / `.swiftLanguageMode(.v5)`, SwiftUI, macOS 15+. Keine neuen Unit-Tests (View-Layer); bestehende 295 bleiben grün.
+**Tech Stack:** Swift 6 toolchain / `.swiftLanguageMode(.v5)`, SwiftUI, macOS 15+. No new unit tests (view layer); the existing 295 stay green.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-11-m5h-sidebar-polish-design.md` — bindend, inkl. Wertetabelle.
-- KEINE Verhaltensänderung: Kontextmenüs, Inline-Rename (Enter/Escape/Blur-Cancel), Drag & Drop, Lösch-Dialog, Neue-Gruppe-Alert, Collapse-State, `interactionsDisabled`, Fehlertext-Bereich — exakt wie heute. Alle Callbacks/State-Maschinen in `SessionSidebar`/`SessionRow` unangetastet.
-- Beide Appearances über dynamische Tokens; keine statischen Farben in Views.
-- CI-Regeln: Blau = aktiv/Auswahl (`remoteSoft`/`remoteBlue`), Phosphor nur Status.
-- Code + Kommentare NUR Englisch; Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` und volle `swift test` (295) nach jedem Task grün.
-- Umgebungs-Hinweis: Bash-Fehler „claude-opus-4-8 is temporarily unavailable … cannot determine the safety" sind KEINE Permission-Denials — warten und identisch wiederholen.
+- Spec: `docs/superpowers/specs/2026-07-11-m5h-sidebar-polish-design.md` — binding, including the value table.
+- NO behavior change: context menus, inline rename (Enter/Escape/blur cancel), drag & drop, delete dialog, new-group alert, collapse state, `interactionsDisabled`, error-text area — exactly as today. All callbacks/state machines in `SessionSidebar`/`SessionRow` untouched.
+- Both appearances via dynamic tokens; no static colors in views.
+- CI rules: blue = active/selection (`remoteSoft`/`remoteBlue`), phosphor for status only.
+- Code + comments English ONLY; Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` and full `swift test` (295) green after every task.
+- Environment note: Bash errors "claude-opus-4-8 is temporarily unavailable … cannot determine the safety" are NOT permission denials — wait and retry identically.
 
 ## Schedule
 
-T1 → T2 → T3 sequenziell.
+T1 → T2 → T3 sequential.
 
 ---
 
-### Task 1: Flächen-Tokens
+### Task 1: Surface tokens
 
 **Files:**
-- Modify: `Sources/MacSCPApp/DesignTokens.swift` (unter den M5g-Tokens ergänzen)
+- Modify: `Sources/MacSCPApp/DesignTokens.swift` (add below the M5g tokens)
 
 **Interfaces:**
-- Consumes: bestehender privater Helper `dynamicNS(light:dark:alpha:)`.
-- Produces (T2 verlässt sich exakt hierauf):
-  - `DesignTokens.paper: Color` — hell `#F4F7FA`, dunkel `#0D1720`
-  - `DesignTokens.card: Color` — hell `#FFFFFF`, dunkel `#14212E`
-  - `DesignTokens.sidebarSurface: Color` — hell `#FCFDFE`, dunkel `#121E2A`
+- Consumes: existing private helper `dynamicNS(light:dark:alpha:)`.
+- Produces (T2 relies on this exactly):
+  - `DesignTokens.paper: Color` — light `#F4F7FA`, dark `#0D1720`
+  - `DesignTokens.card: Color` — light `#FFFFFF`, dark `#14212E`
+  - `DesignTokens.sidebarSurface: Color` — light `#FCFDFE`, dark `#121E2A`
 
-- [x] **Step 1: Implementieren** — nach `localSoft` einfügen:
+- [x] **Step 1: Implement** — insert after `localSoft`:
 
 ```swift
     // Surface hierarchy (mockup: paper ground, card content surface).
@@ -49,21 +49,21 @@ T1 → T2 → T3 sequenziell.
     static let sidebarSurface = Color(nsColor: dynamicNS(light: 0xFCFDFE, dark: 0x121E2A))
 ```
 
-- [x] **Step 2: Build + Suite** — `swift build` fehlerfrei, `swift test` 295/295.
+- [x] **Step 2: Build + suite** — `swift build` error-free, `swift test` 295/295.
 - [x] **Step 3: Commit** — `feat: add surface hierarchy design tokens`.
 
 ---
 
-### Task 2: Sidebar-Fläche, Label-Typo, Zeilen-Maße
+### Task 2: Sidebar surface, label typography, row metrics
 
 **Files:**
-- Modify: `Sources/MacSCPApp/SessionSidebar.swift` (aktuell 368 Zeilen; NUR die unten gezeigten Styling-Stellen — sämtliche Logik, Callbacks, Menüs, Rename-/Drop-/Alert-Maschinerie bleiben byte-identisch)
+- Modify: `Sources/MacSCPApp/SessionSidebar.swift` (currently 368 lines; ONLY the styling spots shown below — all logic, callbacks, menus, rename/drop/alert machinery stays byte-identical)
 
 **Interfaces:**
-- Consumes: T1 `sidebarSurface` + M5g-Tokens `hairline`, `inkTertiary`, `remoteSoft`.
-- Produces: keine neuen APIs.
+- Consumes: T1 `sidebarSurface` + M5g tokens `hairline`, `inkTertiary`, `remoteSoft`.
+- Produces: no new APIs.
 
-- [x] **Step 1: Container-Fläche + Hairline-Kante** — am äußeren `VStack` (nach `.disabled(interactionsDisabled)`, vor `.alert`):
+- [x] **Step 1: Container surface + hairline edge** — on the outer `VStack` (after `.disabled(interactionsDisabled)`, before `.alert`):
 
 ```swift
         .padding(.top, 12)
@@ -75,13 +75,13 @@ T1 → T2 → T3 sequenziell.
         }
 ```
 
-  (Das 12-pt-Top-Padding ist das Container-Padding der Spec-Tabelle; die
-  horizontalen ~8 pt liefern List-Insets + Label-/Zeilen-Padding, kein
-  zusätzlicher Modifier nötig.)
+  (The 12 pt top padding is the container padding from the spec table; the
+  horizontal ~8 pt come from list insets + label/row padding, no
+  additional modifier needed.)
 
-- [x] **Step 2: Label-Typo an drei Stellen** — identischer Stil, jeweils ersetzen:
+- [x] **Step 2: Label typography in three spots** — identical style, replace each:
 
-„SESSIONS"-Label (Zeilen 39–44), alt `.font(.caption2.weight(.semibold)) .tracking(0.8) .foregroundStyle(.secondary) .padding(.horizontal, 12) .padding(.vertical, 6)` → neu:
+The "SESSIONS" label (lines 39–44), old `.font(.caption2.weight(.semibold)) .tracking(0.8) .foregroundStyle(.secondary) .padding(.horizontal, 12) .padding(.vertical, 6)` → new:
 
 ```swift
                 .font(.system(size: 10.5, weight: .semibold))
@@ -92,9 +92,9 @@ T1 → T2 → T3 sequenziell.
                 .padding(.bottom, 6)
 ```
 
-`groupHeader`-Text (Zeilen 168–172) und „IMPORTIERT"-Header (Zeilen 210–213): dieselben drei Modifier (`font`/`tracking(1.0)`/`foregroundStyle(DesignTokens.inkTertiary)`) anstelle von `.font(.caption2.weight(.semibold)) .tracking(0.8) .foregroundStyle(.secondary)`; die Header liegen in der List und behalten ihre List-Insets (kein zusätzliches Padding), Kontextmenü/Drop/Rename unverändert.
+The `groupHeader` text (lines 168–172) and the "IMPORTED" header (lines 210–213): the same three modifiers (`font`/`tracking(1.0)`/`foregroundStyle(DesignTokens.inkTertiary)`) in place of `.font(.caption2.weight(.semibold)) .tracking(0.8) .foregroundStyle(.secondary)`; the headers sit in the list and keep their list insets (no extra padding), context menu/drop/rename unchanged.
 
-- [x] **Step 3: Zeilen-Maße in `SessionRow`** — Padding und Aktiv-Fill (Zeilen 323–330) ersetzen:
+- [x] **Step 3: Row metrics in `SessionRow`** — replace padding and active fill (lines 323–330):
 
 ```swift
         .padding(.vertical, 5)
@@ -107,23 +107,23 @@ T1 → T2 → T3 sequenziell.
         )
 ```
 
-  und in `sessionRows(_:)` auf die `SessionRow` anwenden: `.listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 6))` (2 pt effektiver Zeilenabstand; leading 0, weil die Zeile ihr 10-pt-Innenpadding selbst trägt und mit dem 10-pt-Label-Padding fluchtet).
+  and apply to `SessionRow` in `sessionRows(_:)`: `.listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 6))` (2 pt effective row spacing; leading 0, because the row carries its own 10 pt inner padding and aligns with the 10 pt label padding).
 
-- [x] **Step 4: Build + volle Suite** — `swift build`, `swift test` 295/295.
+- [x] **Step 4: Build + full suite** — `swift build`, `swift test` 295/295.
 - [x] **Step 5: Commit** — `feat: tint the sidebar surface and align rows with the mockup rhythm`.
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Closeout verification (coordinator)
 
-- [x] `swift test` gesamt; Rig hoch (`docker compose -f docker/test-server/compose.yml start` — Container existiert gestoppt, `start` behält Host-Keys) und `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
-- [x] **Visueller Smoke in HELL und DUNKEL** (hell app-only via `NSRequiresAquaSystemAppearance` im Wrapper-Info.plist erzwingen, danach ENTFERNEN):
-  - Getönte Sidebar-Fläche hebt sich von der Pane-Fläche ab; 1-pt-Hairline an der rechten Kante sichtbar.
-  - Labels („SESSIONS", Gruppenname, „IMPORTIERT") 10,5 pt versal mit Laufweite in inkTertiary; Fluchtung Labels ↔ Zeilen (beide 10 pt vom Rand) — bei Abweichung darf der Koordinator die `listRowInsets`-Werte um ±2 pt nachjustieren (als eigener `fix:`-Commit).
-  - Aktive Zeile: `remoteSoft`-Pille (r6) + blaue semibold-Schrift + Phosphor-Punkt; Hover dezent.
-  - Verhaltens-Regression: Verbinden-Klick, Kontextmenü (Session + Gruppe + Hintergrund), Inline-Rename Enter/Escape, Gruppe ein-/ausklappen, Lösch-Dialog (Abbrechen).
-- [x] Checkboxen im Plan abhaken, Commit `docs: mark M5h plan tasks as completed` (+ Footer).
+- [x] `swift test` overall; rig up (`docker compose -f docker/test-server/compose.yml start` — the container exists stopped, `start` keeps host keys) and `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` fully green.
+- [x] **Visual smoke test in LIGHT and DARK** (light app-only via forcing `NSRequiresAquaSystemAppearance` in the wrapper Info.plist, then REMOVE it afterward):
+  - The tinted sidebar surface stands out against the pane surface; 1 pt hairline visible on the right edge.
+  - Labels ("SESSIONS", group name, "IMPORTED") 10.5 pt small caps with tracking in inkTertiary; alignment labels ↔ rows (both 10 pt from the edge) — on a mismatch the coordinator may adjust the `listRowInsets` values by ±2 pt (as its own `fix:` commit).
+  - Active row: `remoteSoft` pill (r6) + blue semibold text + phosphor dot; hover subtle.
+  - Behavior regression: connect click, context menu (session + group + background), inline rename Enter/Escape, expand/collapse group, delete dialog (cancel).
+- [x] Check off the plan checkboxes, commit `docs: mark M5h plan tasks as completed` (+ footer).
 
-## Ausblick
+## Outlook
 
-Runde 3: Transfer-Leiste (5-pt-Pillen-Progress r99, 8×14-Maße) & Terminal-Strip · Runde 4: Formular-Grid (110-pt-Labels) & Button-Radien r7. Danach M6 — Release.
+Round 3: transfer bar (5 pt pill progress r99, 8×14 metrics) & terminal strip · Round 4: form grid (110 pt labels) & button radii r7. After that, M6 — release.

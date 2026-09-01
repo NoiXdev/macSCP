@@ -1,94 +1,91 @@
-# macSCP M7b — Kontextmenü & Dialoge (Design-Spec)
+# macSCP M7b — Context menu & dialogs (design spec)
 
-**Datum:** 2026-07-27
-**Status:** vom Maintainer freigegeben (Block 2)
-**Kontext:** Zweiter Teil des Datei-Browser-Ausbaus, baut auf M7a
-(rename/setPermissions/deleteTree, Multi-Select, Hidden-Filter) auf.
-Tabs sind M8 — das „Übertragen"-Submenü ist die vorbereitete
-Einhängestelle („Übertragen zu Session xy" kommt dort dazu).
+**Date:** 2026-07-27
+**Status:** approved by the maintainer (block 2)
+**Context:** Second part of the file-browser expansion, builds on M7a
+(rename/setPermissions/deleteTree, multi-select, hidden filter). Tabs are
+M8 — the "Übertragen" submenu is the prepared mounting point ("Transfer to
+session xy" is added there).
 
-## Kontextmenü
+## Context menu
 
-- Rechtsklick auf Zeilen BEIDER Panes; Implementierung als `NSMenu` im
-  Tabellen-Coordinator (die Tabelle ist AppKit), Aktionen laufen über
-  Callbacks in die SwiftUI-/ViewModel-Schicht.
-- Rechtsklick auf eine NICHT selektierte Zeile selektiert sie zuerst
-  (Finder-Verhalten); Rechtsklick in eine bestehende Mehrfachauswahl
-  behält die Auswahl.
-- Einträge (Einzelauswahl):
-  1. **Übertragen** — Submenü, heute genau ein Eintrag „Zum anderen
-     Pane" (Upload bzw. Download je nach Pane; Datei → `enqueue`,
-     Ordner → `enqueueTree`).
-  2. **Öffnen** — nur Remote-DATEIEN (der M5e-Editor-Pfad); im lokalen
-     Pane und für Ordner/Symlinks ausgeblendet.
+- Right-click on rows in EITHER pane; implemented as `NSMenu` in the
+  table coordinator (the table is AppKit), actions run via callbacks into
+  the SwiftUI/view model layer.
+- Right-clicking a row that is NOT selected selects it first (Finder
+  behavior); right-clicking within an existing multi-selection keeps the
+  selection.
+- Entries (single selection):
+  1. **Übertragen** — submenu, today exactly one entry "Zum anderen Pane"
+     (upload or download depending on the pane; file → `enqueue`, folder
+     → `enqueueTree`).
+  2. **Öffnen** — remote FILES only (the M5e editor path); hidden in the
+     local pane and for folders/symlinks.
   3. **Umbenennen…**
   4. **Informationen & Rechte…**
-  5. **Neuer Ordner…** (wirkt auf das aktuelle Verzeichnis des Panes;
-     auch im Hintergrund-Kontext ohne Zeile verfügbar)
-  6. **Pfad kopieren** (voller Pfad ins Pasteboard; bei Mehrfachauswahl
-     eine Zeile pro Pfad)
-  7. Separator, dann **Löschen…** (rot, `.destructive`)
-- Mehrfachauswahl: Umbenennen, Informationen & Rechte und Öffnen
-  entfallen; Übertragen/Pfad kopieren/Löschen wirken auf alle.
-- Symlinks: Übertragen entfällt (Queue überträgt keine Symlinks),
-  Umbenennen/Löschen/Pfad kopieren funktionieren.
+  5. **Neuer Ordner…** (acts on the pane's current directory; also
+     available in the background context without a row)
+  6. **Pfad kopieren** (full path onto the pasteboard; for multi-selection
+     one line per path)
+  7. Separator, then **Löschen…** (red, `.destructive`)
+- Multi-selection: Umbenennen, Informationen & Rechte and Öffnen are
+  dropped; Übertragen/Pfad kopieren/Löschen act on all of them.
+- Symlinks: Übertragen is dropped (the queue does not transfer symlinks),
+  Umbenennen/Löschen/Pfad kopieren work.
 
-## Dialoge (alle als Sheets, Buttons im PolishedButtonStyle)
+## Dialogs (all as sheets, buttons in PolishedButtonStyle)
 
-- **Umbenennen…**: Namens-Sheet, vorausgefüllt mit dem aktuellen Namen.
-  Validierung: nicht leer, kein `/`; Kollision und andere Fehler kommen
-  als lokalisierter Fehlertext in den Sheet (Sheet bleibt offen).
-  Bestätigen ruft `rename(from:to:)` mit dem Pfad im selben Verzeichnis,
-  danach Pane-Refresh (Auswahl folgt dem neuen Namen, wenn möglich).
-- **Neuer Ordner…**: gleicher Namens-Sheet-Typ (geteilte Komponente),
-  Default „untitled folder"/„unbenannter Ordner"; ruft
-  `createDirectory`, danach Refresh + Auswahl des neuen Ordners.
-- **Informationen & Rechte…**: zeigt Name, vollständigen Pfad, Art,
-  Größe (formatiert wie die Liste), Änderungsdatum sowie die Rechte:
-  rwx-Grid (3×3 Checkboxen Besitzer/Gruppe/Andere) + Oktal-Feld
-  (3–4 Stellen), beide bidirektional synchron; Basis ist
-  `RemoteFileItem.permissions` (fehlt der Wert, ist der Rechte-Teil
-  ausgegraut mit Hinweis). „Übernehmen" ruft `setPermissions` (nur
-  untere 12 Bits), danach Refresh; Fehler als Text im Sheet.
-- **Löschen…**: Bestätigungs-Alert, destruktiver roter Bestätigen-
-  Button. Text nennt bei Einzelauswahl den Namen, bei Mehrfachauswahl
-  die Anzahl; enthält bei Ordnern den Hinweis „einschließlich des
-  gesamten Inhalts"; immer „Diese Aktion kann nicht widerrufen
-  werden." Ausführung sequenziell über `deleteTree`/`delete` in einem
-  Task mit Abbruch-Propagation; danach Refresh. Fehler → Fehler-Alert
-  (lokalisiertes Mapping), bereits gelöschte Items bleiben gelöscht.
+- **Umbenennen…**: name sheet, pre-filled with the current name.
+  Validation: not empty, no `/`; collision and other errors appear as
+  localized error text in the sheet (sheet stays open). Confirming calls
+  `rename(from:to:)` with the path in the same directory, followed by a
+  pane refresh (selection follows the new name where possible).
+- **Neuer Ordner…**: same name-sheet type (shared component), default
+  "untitled folder"/"unbenannter Ordner"; calls `createDirectory`,
+  followed by refresh + selection of the new folder.
+- **Informationen & Rechte…**: shows name, full path, kind, size
+  (formatted like the list), modification date, and the permissions: an
+  rwx grid (3×3 checkboxes owner/group/other) + octal field (3–4 digits),
+  both kept in sync bidirectionally; based on `RemoteFileItem.permissions`
+  (if the value is missing, the permissions part is greyed out with a
+  note). "Übernehmen" calls `setPermissions` (lower 12 bits only),
+  followed by refresh; errors as text in the sheet.
+- **Löschen…**: confirmation alert, destructive red confirm button. Text
+  names the item for single selection, the count for multi-selection;
+  for folders it includes the note "einschließlich des gesamten Inhalts";
+  always "Diese Aktion kann nicht widerrufen werden." Execution runs
+  sequentially via `deleteTree`/`delete` in a task with cancellation
+  propagation; followed by refresh. Error → error alert (localized
+  mapping), items already deleted stay deleted.
 
-## Fehlerbehandlung & Lokalisierung
+## Error handling & localization
 
-- Alle Aktionen melden Fehlschläge über einen Alert mit dem
-  bestehenden lokalisierten Fehler-Mapping
-  (`TransferQueueViewModel.message(for:)` bzw. Core-Keys); kein
+- All actions report failures via an alert using the existing localized
+  error mapping (`TransferQueueViewModel.message(for:)` or Core keys); no
   `String(describing:)`.
-- Sämtliche neuen Menü-, Sheet- und Alert-Texte werden EN/DE
-  katalogisiert.
+- All new menu, sheet, and alert texts are cataloged EN/DE.
 
-## Invarianten
+## Invariants
 
-- Kein Verhalten bestehender Wege ändert sich (Doppelklick-Editor,
-  Toolbar-Buttons, Drag&Drop, Queue-Invarianten).
-- Aktionen laufen sequenziell und UI-blockierungsfrei; während einer
-  laufenden Lösch-/Rename-Aktion ist das auslösende Pane-Refresh-Ziel
-  klar definiert (Refresh erst nach Abschluss).
-- Code + Kommentare Englisch.
+- No behavior of existing paths changes (double-click editor, toolbar
+  buttons, drag & drop, queue invariants).
+- Actions run sequentially and without blocking the UI; during an
+  in-progress delete/rename action, the pane refresh target it triggers
+  is clearly defined (refresh only after completion).
+- Code + comments in English.
 
 ## Tests
 
-- Menü-Zustandslogik (welche Einträge bei welcher Auswahl) als
-  unit-testbare Helper-Funktion (Items + Pane-Seite → Menü-Modell).
-- Namens-Validierung unit-getestet; Oktal↔Grid-Konvertierung
-  unit-getestet.
-- Visueller Smoke: Menü in beiden Panes, Rename-Kollision, chmod auf
-  dem Rig (`ls -l`-Beweis via docker exec), rekursives Löschen mit
-  Bestätigung, Neuer Ordner, Pfad kopieren, Mehrfachauswahl-Varianten.
+- Menu state logic (which entries for which selection) as a unit-testable
+  helper function (items + pane side → menu model).
+- Name validation unit-tested; octal↔grid conversion unit-tested.
+- Visual smoke: menu in both panes, rename collision, chmod on the rig
+  (`ls -l` proof via docker exec), recursive delete with confirmation,
+  new folder, copy path, multi-selection variants.
 
-## Bewusst NICHT in M7b
+## Deliberately NOT in M7b
 
-- „Übertragen zu Session xy" (M8-Tabs; Submenü-Struktur steht bereit).
-- Papierkorb/Undo fürs Löschen (SFTP kennt keinen Papierkorb; lokal
-  bewusst symmetrisch hartes Löschen mit Bestätigung).
-- Duplizieren, Komprimieren, „Öffnen mit"-Untermenü (Backlog v1.2).
+- "Übertragen zu Session xy" (M8 tabs; submenu structure is ready).
+- Trash/undo for deleting (SFTP has no trash; local deletion is
+  deliberately symmetric — hard delete with confirmation).
+- Duplicate, compress, "Öffnen mit" submenu (backlog v1.2).

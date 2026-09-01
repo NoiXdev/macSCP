@@ -1,141 +1,138 @@
-> **Umgesetzt am 2026-08-28** über
+> **Implemented on 2026-08-28** via
 > `docs/superpowers/plans/2026-08-28-faehigkeitsgrenze-verbinden.md`
 > (`04a6def`, `b62f8b5`, `637c82b`, `dba405a`).
 >
-> **Was der Compiler jetzt hält:** Entscheider sind Typen mit privatem
-> Initialisierer — `{ _ in true }` an einer Aufrufstelle kompiliert nicht mehr,
-> also ist Runde 6 nicht mehr formulierbar. `BackendDescriptor.connect` und die
-> drei Backend-`connect` sind modulintern; eine Direktwahl aus App oder CLI
-> scheitert mit `'connect' is inaccessible due to 'internal' protection level`.
-> Beides von außen gepflanzt und die Fehler wörtlich belegt.
+> **What the compiler now holds:** deciders are types with a private
+> initializer — `{ _ in true }` at a call site no longer compiles, so round 6
+> is no longer expressible. `BackendDescriptor.connect` and the three backend
+> `connect`s are module-internal; a direct dial from the App or the CLI fails
+> with `'connect' is inaccessible due to 'internal' protection level`. Both
+> planted from outside and the errors proved verbatim.
 >
-> **Was er nicht hält, und warum kein siebter Scan das ändert:** `import Citadel`
-> kompiliert in `Sources/MacSCPAppKit`, obwohl `Package.swift` die Abhängigkeit
-> nur für Core deklariert — SwiftPM lässt transitive Module auf dem Suchpfad.
-> Ein rohes `SSHClient.connect(…, hostKeyValidator: .acceptAnything(), …)`
-> erreicht dort **kein TOFU**. Diese Lücke liegt *unterhalb* der Typen; der
-> Scan und die Import-Allow-List bleiben dafür tragend und wurden deshalb
-> **nicht** gelöscht.
+> **What it does not hold, and why a seventh scan would not change that:**
+> `import Citadel` compiles in `Sources/MacSCPAppKit`, even though
+> `Package.swift` declares the dependency only for Core — SwiftPM leaves
+> transitive modules on the search path. A raw
+> `SSHClient.connect(…, hostKeyValidator: .acceptAnything(), …)` reaches
+> **no TOFU** there. This gap sits *below* the types; the scan and the
+> import allowlist remain load-bearing for it and were therefore **not**
+> deleted.
 >
-> Ebenfalls offen und benannt: `ConnectionViewModel.connect()` ist öffentlich
-> und umgeht die Formular-Wege; das App-Testziel importiert `@testable` und
-> bekommt alles zurück; und `.asking { _ in true }` an der einen
-> Zertifikats-Aufrufstelle der App röten gepflanzt **nichts** — gemeldet statt
-> bewacht, weil ein siebter Scan über eine Aufrufstelle die Beweislast nicht
-> trägt.
+> Also open and named: `ConnectionViewModel.connect()` is public and
+> bypasses the form paths; the App test target imports `@testable` and gets
+> everything back; and planting `.asking { _ in true }` at the App's one
+> certificate call site turns **nothing** red — reported rather than
+> guarded, because a seventh scan over one call site does not carry the
+> burden of proof.
 >
-> Die Lektion unten steht unverändert und hat sich beim Umsetzen dreimal
-> bestätigt: jede der vier Aufgaben hat eine Prämisse dieses Plans widerlegt.
+> The lesson below stands unchanged and was confirmed three times during
+> implementation: each of the four tasks refuted a premise of this plan.
 
-# Backlog: Die App sollte gar nicht wählen können
+# Backlog: The app should not be able to dial at all
 
-**Angelegt:** 2026-08-22, nach vier Prüfrunden an einem Wächter. Ein
-Architekturvorschlag, **kein Entwurf** — und eine Grenze, die ehrlich
-benannt gehört.
+**Created:** 2026-08-22, after four review rounds on one guard. An
+architecture proposal, **not a design** — and a boundary that deserves to
+be named honestly.
 
-## Was gesichert werden soll
+## What is meant to be secured
 
-Ein Wiederaufbau nach Verbindungsverlust muss durch **denselben**
-Verbindungspfad laufen wie ein frischer Aufbau. Daran hängen TOFU als
-harter Stopp, die Keychain-Regeln, das Auflösen von Login-Sets und die
-Passphrasen-Abfrage. Ein zweiter Weg an dieser Stelle ist eine zweite
-Gelegenheit, eine Sicherheitsregel zu vergessen.
+Rebuilding a connection after a connection loss must run through **the
+same** connection path as a fresh build. TOFU as a hard stop, the keychain
+rules, login-set resolution, and the passphrase prompt all hang on this. A
+second path at this point is a second chance to forget a security rule.
 
-## Was versucht wurde, und wie weit es trägt
+## What was tried, and how far it carries
 
-Ein Quelltext-Wächter, in vier Runden immer weiter umgedreht:
+A source-code guard, turned around four times, round after round:
 
-1. **Delegation geprüft** — verankert an einer Funktion. Umgangen: der
-   Zeitplan erreichte den Pfad an einer anderen Stelle.
-2. **Erlaubnisliste der Aufrufstellen** — jede Wähl- und Übergabestelle muss
-   benannt sein. Umgangen: die *Erkennung* war weiter eine Aufzählung —
-   `.connect(` mit Klammer, eine feste Wurzelliste, ein Zeilenanfangs-Muster.
-3. **Erkennung umgedreht** — Kategorie-Muster statt Namen, Wurzeln aus
-   Dateisystem *und* `Package.swift` abgeleitet, positionsfreie Muster.
-   Umgangen: ein **symbolisch verlinktes Verzeichnis** wird kompiliert, aber
-   nicht durchlaufen.
-4. **Symlinks geschlossen.** Und dann blieb der Fall, der bleibt.
+1. **Delegation checked** — anchored to one function. Bypassed: the
+   scheduling reached the path at a different spot.
+2. **Allowlist of call sites** — every dial and hand-off site must be
+   named. Bypassed: the *detection* was still an enumeration —
+   `.connect(` with a paren, a fixed root list, a start-of-line pattern.
+3. **Detection turned around** — category patterns instead of names,
+   roots derived from the filesystem *and* `Package.swift`,
+   position-free patterns. Bypassed: a **symlinked directory** gets
+   compiled but not walked.
+4. **Symlinks closed.** And then the case remained that remains.
 
-## Die Grenze
+## The boundary
 
-**Ein Wählvorgang in Core unter anderem Namen, von der App aufgerufen, ist
-textuell nicht erkennbar.** `QuickOpenHelper.open(config)` nennt kein
-`connect`, keinen Backend-Typ, braucht keinen neuen Import. Core ist als
-Wurzel ausgenommen, weil dort das Wählen **hingehört** — ein App-Aufruf in
-eine beliebig benannte Core-Funktion sieht aus wie jeder andere Core-Aufruf.
+**A dial process in Core under a different name, called by the App, is not
+textually recognizable.** `QuickOpenHelper.open(config)` names no
+`connect`, no backend type, needs no new import. Core is excluded as a
+root because that is **where** dialing belongs — an App call into an
+arbitrarily named Core function looks like any other Core call.
 
-Das zu fangen hieße zu wissen, welche Core-Funktionen wählen. Das ist
-dasselbe Problem eine Ebene tiefer.
+Catching that would mean knowing which Core functions dial. That is the
+same problem, one layer down.
 
-## Der Vorschlag
+## The proposal
 
-Nicht besser **beobachten**, sondern die Fähigkeit **entziehen**: die
-App-Schicht kann eine Verbindung nicht herstellen, außer über einen Typ, den
-sie halten muss und den nur der gemeinsame Pfad ausgibt. Dann ist „am Pfad
-vorbei" kein Verstoß, den ein Test finden müsste, sondern etwas, das sich
-nicht formulieren lässt.
+Not to **watch** better, but to **withdraw** the capability: the App layer
+cannot establish a connection except through a type it must hold and that
+only the shared path issues. Then "around the path" is not a violation a
+test would have to find — it is something that cannot be expressed at all.
 
-Vor einem Entwurf zu klären: wo dieser Typ entsteht, wer ihn weitergeben
-darf, und was er für CLI und Tests bedeutet — beide brauchen heute einen Weg
-zur Verbindung, der nicht durch die App-Oberfläche führt.
+To clarify before a design: where this type is created, who is allowed to
+pass it on, and what it means for the CLI and for tests — both currently
+need a way to connect that does not go through the App surface.
 
-## Warum es überhaupt hier steht
+## Why this is here at all
 
-Vier Runden, vier Löcher, jedes in der Schicht, die noch niemand umgedreht
-hatte. Die Lektion, die dabei am meisten wert ist:
+Four rounds, four holes, each in the layer nobody had turned around yet.
+The lesson worth the most out of this:
 
-> **Mutationstests belegen die Empfindlichkeit eines Wächters, nie seinen
-> Geltungsbereich.**
+> **Mutation tests prove a guard's sensitivity, never its scope.**
 
-Ein Wächter, der nach der Umsetzung geschrieben wird, ist auf die gerade
-geschriebenen Zeilen zugeschnitten — und alle Mutationen, die man sich dazu
-ausdenkt, stammen aus demselben Denkmodell. Was fehlt, ist die Frage
-*woher könnte die Eigenschaft überhaupt verletzt werden*, und die stellt man
-vor dem Schreiben oder gar nicht.
+A guard written after the implementation is cut to fit the lines just
+written — and every mutation dreamed up for it comes from the same mental
+model. What is missing is the question *where could the property even be
+violated from*, and that question gets asked before writing, or not at
+all.
 
-Zwei weitere Umgehungen sind bekannt und im Wächter selbst dokumentiert:
-ein Keypath-Schreibzugriff und ein `Mirror`-Zugriff über Feldnamen. Beide
-exotisch, beide benannt statt beschwiegen.
+Two further bypasses are known and documented in the guard itself: a
+keypath write access and a `Mirror` access via field names. Both exotic,
+both named rather than left unspoken.
 
 ---
 
-## Nachtrag 2026-08-25: Runde 6, und was sie über die Priorität sagt
+## Addendum 2026-08-25: round 6, and what it says about priority
 
-Die Abschlussdurchsicht des Plans *gescheiterter Aufbau* hat den Wächter ein
-sechstes Mal geschlagen — und diesmal **nicht** an der oben benannten
-Grenze. Es war die *benannte, direkte* Form:
+The closing review of the *failed build* plan beat the guard a sixth
+time — and this time **not** at the boundary named above. It was the
+*named, direct* form:
 
 ```swift
 async let dialed = BackendDescriptor.descriptor(for: config.kind).connect(
     config, { _ in true }, { _ in true }, 30)
 ```
 
-Ein roher Backend-Wählvorgang mit Akzeptiere-alles-Entscheidern, in einer
-neuen App-Datei. Kompiliert, ganze Suite grün. Die Kontrollen im selben
-Durchgang — dieselbe Zeile mit `await`, und ein `Task.detached` darum —
-waren beide rot, der Scan erreichte die Datei also sehr wohl.
+A raw backend dial with accept-everything deciders, in a new App file.
+Compiles, full suite green. The controls run in the same pass — the same
+line with `await`, and a `Task.detached` around it — were both red, so the
+scan did in fact reach the file.
 
-Der Grund: die Diskriminierung fragte nach dem **Wort** `await`, und
-`async let` ruft eine `async`-Funktion auf, ohne es zu schreiben. Der
-Suitenkommentar behauptete ausdrücklich das Gegenteil („jeder Wählvorgang in
-diesem Projekt ist `async` und kann daher nicht ohne `await` aufgerufen
-werden"), womit ein Leser der Lückenliste korrekt zu dem Schluss kam, diese
-Form sei erfasst.
+The reason: the discrimination asked for the **word** `await`, and
+`async let` calls an `async` function without writing it. The suite
+comment explicitly claimed the opposite ("every dial process in this
+project is `async` and therefore cannot be called without `await`"),
+which led a reader of the gap list to correctly conclude that this form
+was covered.
 
-Geschlossen (die Diskriminierung kennt jetzt beide Schreibweisen), und die
-Lückenliste sagt jetzt, was sie weiter nicht sieht.
+Closed (the discrimination now knows both spellings), and the gap list
+now says what it still does not see.
 
-**Was das für diese Notiz bedeutet.** Solange die Grenze oben als „ein Scan
-kann eine umbenannte Core-Funktion nicht sehen" gelesen wurde, war sie
-akademisch. Runde 6 zeigt, dass auch die direkte, benannte Form entkommt,
-sobald die Schreibweise das Muster meidet — und dass die Behebung wieder
-darin bestand, **die gerade gefundene Schreibweise aufzuschreiben**.
+**What this means for this note.** As long as the boundary above was read
+as "a scan cannot see a renamed Core function", it was academic. Round 6
+shows that even the direct, named form escapes as soon as the spelling
+avoids the pattern — and that the fix again consisted of **writing down
+the spelling that was just found**.
 
-> Ein Scan über einer Sprache mit mehreren Schreibweisen pro Semantik
-> verliert dieses Rennen dauerhaft. Nicht weil er schlampig ist, sondern
-> weil er nur aufzählen kann, was jemand schon gedacht hat.
+> A scan over a language with several spellings per semantics loses this
+> race permanently. Not because it is sloppy, but because it can only
+> enumerate what someone has already thought of.
 
-Sechs Runden, sechs Schreibweisen, jede aus dem Inneren der jeweils
-vorherigen Runde vollständig aussehend. Das ist das Argument für die
-Fähigkeitsgrenze — **höher zu priorisieren**, nicht ein siebtes Muster zu
-ergänzen.
+Six rounds, six spellings, each looking complete from inside the round
+before it. That is the argument for the capability boundary — **to raise
+its priority**, not to add a seventh pattern.

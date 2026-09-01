@@ -1,132 +1,132 @@
-# M11g — Interaktive Pfadzeile (Design)
+# M11g — Interactive path bar (design)
 
-Datum: 2026-07-30 · Status: vom Maintainer freigegeben („ja los gehts")
+Date: 2026-07-30 · Status: approved by the maintainer ("yes, go ahead")
 
-## Ziel
+## Goal
 
-Die Pfadzeile im Pane-Kopf wird bedienbar: Klick kopiert den Pfad,
-Doppelklick öffnet eine manuelle Eingabe, Tab vervollständigt im Shell-Stil
-(Maintainer-Entscheid 2026-07-30).
+The path bar in the pane header becomes interactive: click copies the
+path, double-click opens manual entry, tab completes shell-style
+(maintainer decision 2026-07-30).
 
-## Ausgangslage
+## Starting point
 
-- Die Pfadzeile ist heute ein reiner `Text(viewModel.currentPath)` im Kopf
-  von `BrowserPane` (11,5 pt monospaced, `inkTertiary`, `.middle`-Truncation).
-- `RemoteBrowserViewModel` kennt `open(_ item:)`, `goUp()`, `refresh()` —
-  **kein** direktes Springen auf einen Pfad.
-- Beide Panes hängen hinter demselben `RemoteFileSystem`-Protokoll
-  (`LocalFileSystem` und `CitadelFileSystem`), das Verzeichnis-Listing ist
-  also für Vervollständigung auf beiden Seiten dieselbe Operation.
+- The path bar today is a plain `Text(viewModel.currentPath)` in the
+  header of `BrowserPane` (11.5 pt monospaced, `inkTertiary`,
+  `.middle` truncation).
+- `RemoteBrowserViewModel` knows `open(_ item:)`, `goUp()`, `refresh()` —
+  **no** direct jump to a path.
+- Both panes sit behind the same `RemoteFileSystem` protocol
+  (`LocalFileSystem` and `CitadelFileSystem`), so directory listing is the
+  same operation for completion on both sides.
 
-## 1. Vervollständigung (Core, pur)
+## 1. Completion (Core, pure)
 
-`PathCompletion.complete(input:entries:caseSensitive:) -> Result` ist eine
-reine Funktion über dem getippten Text und einem Verzeichnis-Listing:
+`PathCompletion.complete(input:entries:caseSensitive:) -> Result` is a
+pure function over the typed text and a directory listing:
 
-- `Result.completedInput: String` — der Text nach der Ergänzung bis zum
-  eindeutigen gemeinsamen Präfix (unverändert, wenn nichts ergänzbar ist).
-- `Result.candidates: [String]` — die passenden Ordnernamen, alphabetisch.
-- Nur **Verzeichnisse** sind Kandidaten (auf eine Datei zu springen bringt
-  nichts) und werden mit `/` ergänzt, damit sofort weitergetippt werden kann.
-- Trailing `/` im Input heißt „dieses Verzeichnis listen"; sonst filtert die
-  letzte Pfadkomponente per Präfix.
-- `caseSensitive` ist ein Parameter, kein Default: die Gegenseite ist es in
-  der Regel, ein lokales macOS-Dateisystem in der Standardkonfiguration
-  nicht. Ein fester Wert würde in genau einem der beiden Panes falsch
-  vervollständigen.
+- `Result.completedInput: String` — the text after completion up to the
+  unambiguous common prefix (unchanged if nothing can be completed).
+- `Result.candidates: [String]` — the matching folder names, alphabetical.
+- Only **directories** are candidates (jumping to a file gets you
+  nowhere) and get `/` appended, so typing can continue immediately.
+- A trailing `/` in the input means "list this directory"; otherwise the
+  last path component filters by prefix.
+- `caseSensitive` is a parameter, not a default: the far side usually is
+  case-sensitive, a local macOS filesystem in the default configuration
+  usually is not. A fixed value would complete incorrectly in exactly one
+  of the two panes.
 
-Kandidaten-Ermittlung braucht das Listing des **Elternverzeichnisses** des
-getippten Pfades — die App holt es über das FS des Panes und übergibt es;
-die Funktion selbst macht keine I/O.
+Determining candidates needs the listing of the typed path's **parent
+directory** — the App fetches it via the pane's FS and passes it in; the
+function itself does no I/O.
 
-## 2. Springen (Core, ViewModel)
+## 2. Jumping (Core, ViewModel)
 
-`navigate(to path: String) async -> String?` (nil = Erfolg, sonst
-lokalisierte Meldung), nach dem Muster der M7b-Aktionen:
+`navigate(to path: String) async -> String?` (nil = success, otherwise a
+localized message), following the pattern of the M7b actions:
 
-- normalisiert mehrfache und abschließende Slashes (dieselbe Falle wie in
-  M7a `deleteTree`: einmaliges Strippen genügt nicht),
-- prüft per `stat`, dass das Ziel existiert und ein **Verzeichnis** ist —
-  eine Datei bekommt eine eigene Meldung, nicht dieselbe wie „existiert
-  nicht",
-- **Symlinks (Korrektur 2026-07-30, T1-Review):** `LocalFileSystem.stat`
-  meldet für einen Symlink bewusst `kind == .symlink`, auch wenn er auf ein
-  Verzeichnis zeigt, während Citadels `stat` Links auflöst. Ein reiner
-  `isDirectory`-Test hätte im lokalen Pane also `/tmp`, `/var` und `/etc`
-  abgelehnt — Symlinks auf jedem Mac — und zwar mit der sachlich falschen
-  Meldung „kein Verzeichnis". Bei `kind == .symlink` wird deshalb ein
-  `list()` versucht: gelingt es, ist das Ziel begehbar. Core bleibt damit
-  symlink-agnostisch (kein `lstat`, keine Auflösungslogik), und die
-  Gegenseite ist unberührt, weil ihr `stat` bereits auflöst.
-- fehlende Rechte bekommen die Meldung des Dateisystems,
-- bei Erfolg wird geladen wie bei `open`, inklusive Auswahl-Reset.
+- normalizes repeated and trailing slashes (the same trap as in M7a's
+  `deleteTree`: stripping once is not enough),
+- checks via `stat` that the target exists and is a **directory** — a
+  file gets its own message, not the same one as "does not exist",
+- **symlinks (correction 2026-07-30, T1 review):** `LocalFileSystem.stat`
+  deliberately reports `kind == .symlink` for a symlink, even one pointing
+  at a directory, while Citadel's `stat` resolves links. A plain
+  `isDirectory` test would therefore have rejected `/tmp`, `/var`, and
+  `/etc` in the local pane — symlinks on every Mac — with the factually
+  wrong message "not a directory". For `kind == .symlink`, a `list()` is
+  therefore attempted: if it succeeds, the target is navigable. Core thus
+  stays symlink-agnostic (no `lstat`, no resolution logic), and the far
+  side is untouched, because its `stat` already resolves.
+- missing permissions get the filesystem's own message,
+- on success, it loads the same way as `open`, including a selection
+  reset.
 
-## 3. Bedienung (App)
+## 3. Interaction (App)
 
-- **Einfacher Klick**: kopiert den vollen Pfad in die Zwischenablage. Der
-  Zeiger wird zur Hand (sonst ist die Fähigkeit unauffindbar), und eine
-  kurze Bestätigung blendet ein und wieder aus — ohne Rückmeldung wüsste
-  niemand, ob es geklappt hat.
-- **Doppelklick**: die Zeile wird ein Textfeld, vorbelegt mit dem aktuellen
-  Pfad, Cursor am Ende. **Enter** springt, **Esc** bricht ab,
-  **Fokusverlust** bricht ebenfalls ab — identisch zum Inline-Umbenennen in
-  der Seitenleiste (M5f), damit es nur eine Regel zu merken gibt.
-- **Tab**: ergänzt bis zum eindeutigen gemeinsamen Präfix. Ein zweites,
-  unmittelbar folgendes Tab klappt die Kandidaten unter dem Feld auf; die
-  Liste ist anklickbar. Jeder weitere Tastendruck schließt sie wieder.
-- Während einer laufenden Vervollständigung bleibt das Feld bedienbar; ein
-  langsames Listing darf die Eingabe nicht blockieren.
+- **Single click**: copies the full path to the clipboard. The cursor
+  turns into a hand (otherwise the capability would be undiscoverable),
+  and a brief confirmation fades in and back out — without feedback,
+  nobody would know whether it worked.
+- **Double-click**: the row becomes a text field, prefilled with the
+  current path, cursor at the end. **Enter** jumps, **Esc** cancels,
+  **losing focus** also cancels — identical to the inline rename in the
+  sidebar (M5f), so there is only one rule to remember.
+- **Tab**: completes up to the unambiguous common prefix. A second,
+  immediately following tab expands the candidates below the field; the
+  list is clickable. Any further keystroke closes it again.
+- While a completion is in progress, the field stays interactive; a slow
+  listing must not block input.
 
-## 4. Fehler ehrlich
+## 4. Errors, honestly
 
-Ein Pfad, der nicht existiert, eine Datei ist oder dem die Rechte fehlen,
-lässt das Feld **offen** mit der Meldung darunter — der getippte Text geht
-nicht verloren. Kein stilles Verwerfen, kein Zurückfallen auf den alten
-Pfad ohne Hinweis.
+A path that does not exist, is a file, or lacks permissions leaves the
+field **open** with the message below it — the typed text is not lost. No
+silent discarding, no falling back to the old path without a notice.
 
-## 5. Bewusst NICHT in M11g
+## 5. Deliberately NOT in M11g
 
-- Keine anklickbaren Pfad-Segmente (Breadcrumb): der Klick ist per
-  Maintainer-Entscheid zum Kopieren belegt.
-- Keine Verlaufs-Liste, kein Globbing, keine Lesezeichen.
-- Keine `~`-Auflösung auf der Gegenseite: das bräuchte eine Extra-Abfrage
-  beim Server, und ein halb funktionierendes `~` ist schlechter als keines.
-- Kein Audit-Eintrag (Navigation ist keine Änderung).
-- **Vervollständigung bietet keine Symlinks an, auch wenn ihr Ziel ein
-  Verzeichnis ist** (Nachtrag, Abschluss-Review M11g): Getipptes Navigieren
-  folgt einem symlink-Verzeichnis seit T1 (`RemoteBrowserViewModel.
-  navigate(to:)` prüft `list()` auf das Ziel, wenn `stat` `.symlink`
-  liefert). `PathCompletion.complete` filtert Symlinks dagegen weiterhin
-  komplett heraus (siehe dessen eigener Doc-Kommentar) — bewusst, nicht aus
-  Versehen: ob ein Symlink auf ein Verzeichnis zeigt, ist ohne einen `stat`
-  pro Eintrag nicht feststellbar, und genau das würde `PathCompletion`s
-  I/O-freien Vertrag brechen (die Funktion bekommt nur die fertige Liste,
-  nie die Erlaubnis, selbst nachzufragen). Die Folge ist eine sichtbare
-  Asymmetrie: Auf jedem Mac ist `/tmp`, `/var` und `/etc` ein Symlink, Tab
-  bei `/t` bietet dort nichts an, während `/tmp` als fertig getippter Pfad
-  klaglos funktioniert. Ein Doppelklick auf einen Symlink-Eintrag in der
-  Dateiliste ist aus demselben Grund wirkungslos (kein Navigations-Handler
-  dafür). Beides bleibt in M11g unverändert; die Ungleichheit ist erkannt
-  und akzeptiert, kein offener Fehler.
+- No clickable path segments (breadcrumb): the click is assigned to
+  copying by maintainer decision.
+- No history list, no globbing, no bookmarks.
+- No `~` resolution on the far side: that would need an extra query to
+  the server, and a half-working `~` is worse than none.
+- No audit entry (navigation is not a change).
+- **Completion does not offer symlinks, even if their target is a
+  directory** (addendum, M11g closing review): typed navigation has
+  followed a symlink directory since T1
+  (`RemoteBrowserViewModel.navigate(to:)` checks `list()` on the target
+  when `stat` returns `.symlink`). `PathCompletion.complete`, by
+  contrast, still filters symlinks out entirely (see its own doc
+  comment) — deliberately, not by oversight: whether a symlink points at
+  a directory cannot be determined without a `stat` per entry, and that
+  would break `PathCompletion`'s I/O-free contract (the function only
+  gets the finished list, never permission to query on its own). The
+  consequence is a visible asymmetry: on every Mac, `/tmp`, `/var`, and
+  `/etc` are symlinks; tab at `/t` offers nothing there, while `/tmp` as
+  a fully typed path works without complaint. A double-click on a symlink
+  entry in the file list is likewise inert, for the same reason (no
+  navigation handler for it). Both stay unchanged in M11g; the
+  inconsistency is recognized and accepted, not an open bug.
 
 ## 6. Tests
 
-- `PathCompletion`: absolutes Präfix, eindeutiger Treffer, mehrere
-  Kandidaten (gemeinsames Präfix wird ergänzt, Rest bleibt), kein Treffer,
-  Trailing-Slash listet alles, Dateien sind nie Kandidaten, Groß-/
-  Kleinschreibung in beiden Modi, leeres Listing, Wurzelverzeichnis,
-  Komponenten mit Leerzeichen.
-- `navigate(to:)`: Erfolg lädt und setzt `currentPath`; Datei statt Ordner,
-  nicht existierend und Rechte-Fehler liefern je eine unterschiedliche
-  Meldung; Slash-Normalisierung inklusive Doppel-Slash und mehrfachem
-  Trailing-Slash; Auswahl wird geleert.
-- Gated Rig-Test: Sprung in ein tiefes Verzeichnis und zurück, plus
-  Vervollständigung gegen ein echtes Listing.
-- EN/DE-Kataloge: Key-Mengen identisch (der Parsing-Wächter aus M11d deckt
-  das Format ab).
+- `PathCompletion`: absolute prefix, unambiguous match, several
+  candidates (common prefix gets completed, the rest stays), no match,
+  trailing slash lists everything, files are never candidates, case
+  sensitivity in both modes, empty listing, root directory, components
+  with spaces.
+- `navigate(to:)`: success loads and sets `currentPath`; file instead of
+  folder, non-existent, and permission errors each produce a different
+  message; slash normalization including double slash and repeated
+  trailing slash; selection gets cleared.
+- Gated rig test: jump into a deep directory and back, plus completion
+  against a real listing.
+- EN/DE catalogs: key sets identical (the M11d parsing guard covers this
+  format).
 
-## 7. Aufteilung
+## 7. Breakdown
 
-T1 Core (`PathCompletion` + `navigate(to:)` + Rig-Test) → T2 App (Pfadzeile:
-Kopieren, Eingabe, Tab, Kandidatenliste, Fehlerzeile, EN/DE) → T3 Abschluss.
-KEIN Release.
+T1 Core (`PathCompletion` + `navigate(to:)` + rig test) → T2 App (path
+bar: copy, entry, tab, candidate list, error line, EN/DE) → T3 closeout.
+NO release.

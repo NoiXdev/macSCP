@@ -1,124 +1,121 @@
-# Bereiche aus dem Reiter-Menü umschalten — Entwurf
+# Toggling panes from the tab menu — Design
 
-**Stand:** 2026-08-27. Umsetzung von Abschnitt **B** aus
-`docs/superpowers/specs/2026-08-27-backlog-reiter-feinschliff.md`, und damit
-zugleich die Antwort auf **I4** aus der Abschlussprüfung des Tab-Menüs.
+**Status:** 2026-08-27. Implements section **B** from
+`docs/superpowers/specs/2026-08-27-backlog-reiter-feinschliff.md`, and
+thereby also answers **I4** from the tab menu's closing review.
 
 ---
 
-## Zwei Korrekturen am Backlog-Eintrag, beide gemessen
+## Two corrections to the backlog entry, both measured
 
-Der Eintrag stützte sich auf zwei Annahmen. Beide sind falsch, und beide machen
-diesen Vorgang **kleiner**, nicht größer.
+The entry rested on two assumptions. Both are wrong, and both make this
+change **smaller**, not bigger.
 
-**1. Die „zwei Wahrheiten" sind längst zusammengeführt.** Der Doku-Kommentar an
-`PaneVisibility` vertagt das Verhältnis zu `TerminalPanelViewModel.isVisible`
-auf „die Entscheidung einer späteren Aufgabe". Diese Aufgabe hat inzwischen
-stattgefunden: `SessionTab.effectivePaneVisibility(terminalIsVisible:hasShell:)`
-ist der eine Zusammenbau-Punkt —
+**1. The "two truths" were already merged.** The doc comment on
+`PaneVisibility` defers the relationship to `TerminalPanelViewModel.isVisible`
+to "a later task's decision". That task has since happened:
+`SessionTab.effectivePaneVisibility(terminalIsVisible:hasShell:)` is the one
+assembly point —
 
 ```swift
 PaneVisibility(showsFiles: showsFiles, showsTerminal: terminalIsVisible && hasShell)
 ```
 
-— und sein eigener Kommentar hält fest, dass es **nur einen** geben darf. Der
-Kommentar an `PaneVisibility` ist damit veraltet und wird in diesem Vorgang
-richtiggestellt.
+— and its own comment states that there must be **only one**. The comment
+on `PaneVisibility` is therefore stale and is corrected in this change.
 
-**2. `terminalTarget` gehört ausdrücklich NICHT hierher.** I4 las sich als
-Inkonsistenz („Werkzeugleiste und ⌘T folgen der Einstellung, das Reiter-Menü
-nicht"). Gemessen folgt nur der Werkzeugleisten-Knopf ihr. Das „Terminal"-Menü
-trägt zwei Einträge, die sich **bewusst nie** mit der Einstellung ändern, mit
-der Begründung im Quelltext:
+**2. `terminalTarget` explicitly does NOT belong here.** I4 read as an
+inconsistency ("the toolbar and ⌘T follow the setting, the tab menu
+doesn't"). Measured, only the toolbar button follows it. The "Terminal"
+menu carries two entries that **deliberately never** change with the
+setting, with the rationale in the source:
 
-> …sodass ein Umstellen nie eine Fähigkeit wegnimmt.
+> …so that switching never takes a capability away.
 
-Das Reiter-Menü der Einstellung folgen zu lassen hätte es also **inkonsistent**
-gemacht, nicht konsistenter — und hätte einem Nutzer, der auf ein externes
-Terminal umstellt, den eingebauten Bereich aus diesem Menü genommen. **I4 ist
-damit beantwortet: der Eintrag folgt der Einstellung nicht, und das ist
-richtig so.**
+Making the tab menu entry follow the setting would therefore have made it
+**inconsistent**, not more consistent — and would have taken the built-in
+pane out of this menu for a user who switches to an external terminal.
+**I4 is thereby answered: the entry does not follow the setting, and that
+is correct as is.**
 
 ---
 
-## Die Regel, die alles andere entscheidet
+## The rule that decides everything else
 
-**Nur zeigen, was möglich ist.** Kein ausgegrauter Eintrag — ein Eintrag, den
-man sieht und nicht benutzen kann, verwirrt mehr, als ein fehlender fehlt
-(Maintainer, 2026-08-27). Das ist dieselbe Regel, der die übrigen Einträge
-dieses Menüs seit `519c2df` folgen.
+**Show only what is possible.** No grayed-out entry — an entry you can see
+and cannot use confuses more than a missing one is missed (maintainer,
+2026-08-27). That is the same rule the rest of this menu's entries have
+followed since `519c2df`.
 
-Für die Bereichsumschalter heißt das zweierlei:
+For the pane toggles that means two things:
 
-- Ist eine Aktion nicht möglich, **fehlt der Eintrag** — nicht `.disabled`.
-- Die Beschriftung nennt die Aktion, die möglich ist: **„Terminal einblenden"**
-  oder **„Terminal ausblenden"**, je nach Zustand. Ein Eintrag pro Bereich,
-  wechselnde Beschriftung.
+- If an action isn't possible, **the entry is absent** — not `.disabled`.
+- The label names the action that IS possible: **"Show Files"**
+  or **"Hide Files"**, depending on state. One entry per pane, a changing
+  label.
 
-Das unterscheidet sich bewusst vom „Terminal"-Menü der Menüleiste, das seine
-Einträge ausgraut. Dort ist es richtig, weil eine Menüleiste ihre Struktur
-behalten muss; ein Kontextmenü hat diese Verpflichtung nicht.
+This deliberately differs from the menu bar's "Terminal" menu, which grays
+its entries out. There it's correct because a menu bar has to keep its
+structure; a context menu has no such obligation.
 
-## Was das Menü künftig trägt
+## What the menu will carry
 
-| Eintrag | Bedeutung | Erscheint, wenn |
+| Entry | Meaning | Appears when |
 |---|---|---|
-| Dateien ein-/ausblenden | Bereichsumschalter | `toggleState(for: .files, …).isEnabled` |
-| Terminal ein-/ausblenden | Bereichsumschalter, **immer der eingebaute** | `toggleState(for: .terminal, …).isEnabled` |
-| Externes Terminal öffnen | eigener Weg, **immer extern** | verbunden **und** `supportsShell` |
+| Show/Hide Files | pane toggle | `toggleState(for: .files, …).isEnabled` |
+| Show/Hide Terminal | pane toggle, **always the built-in one** | `toggleState(for: .terminal, …).isEnabled` |
+| Open External Terminal | its own path, **always external** | connected **and** `supportsShell` |
 
-Der bisherige einseitige Eintrag **„Terminal öffnen" entfällt** und wird durch
-den Umschalter ersetzt. Er blendete nur ein und kehrte wortlos zurück, wenn das
-Terminal schon sichtbar war — aus diesem Menü führte kein Weg zurück zu den
-Dateien.
+The former one-way entry **"Open Terminal" is removed** and replaced by the
+toggle. It only showed the pane and returned silently if the terminal was
+already visible — this menu had no way back to the files.
 
-**Warum die Invariante die Umschalter von selbst richtig macht:**
-`PaneVisibility` kann „keine Hälfte sichtbar" nicht darstellen; sein
-Initialisierer repariert das auf „Dateien gewinnen". `toggleState` meldet
-deshalb für die **einzige noch sichtbare** Hälfte `isEnabled == false`. Nach
-der Regel oben fehlt dieser Eintrag dann schlicht — und damit gibt es keinen
-Klick, der das Fenster leeren könnte, ohne dass irgendwo eine zweite Prüfung
-dafür geschrieben werden müsste.
+**Why the invariant makes the toggles correct on its own:**
+`PaneVisibility` cannot represent "neither half visible"; its initializer
+repairs that to "files win". `toggleState` therefore reports
+`isEnabled == false` for the **only currently visible** half. Per the rule
+above, that entry then simply doesn't appear — so there is no click that
+could empty the window, without anyone having to write a second check for
+it anywhere.
 
-**Beide Hälften sichtbar** ist ein gültiger Zustand, und das Paar drückt ihn
-korrekt aus: dann erscheinen beide Einträge, jeder blendet seine Hälfte aus.
-Ein einzelner Umschalter „Terminal ↔ Dateien" könnte das nicht.
+**Both halves visible** is a valid state, and the pair expresses it
+correctly: then both entries appear, each hiding its own half. A single
+"Terminal ↔ Files" toggle could not do that.
 
-## Woher die Fakten kommen
+## Where the facts come from
 
-Nichts davon wird neu gerechnet. `TabContextMenu.entries(…)` bekommt die
-fertige Antwort als Eingabe, so wie es `supportsShell`, `isAdHoc` und
-`isConnected` heute schon bekommt — die Ansicht entscheidet nichts, und
-`ConnectionKind` kommt an keiner Stelle vor.
+None of this is recomputed. `TabContextMenu.entries(…)` receives the
+finished answer as input, the same way it already receives `supportsShell`,
+`isAdHoc` and `isConnected` today — the view decides nothing, and
+`ConnectionKind` appears nowhere.
 
-Der Wert, der hineingeht, stammt aus `effectivePaneVisibility(…)` und
-`toggleState(for:hasShell:)`, also aus genau den Funktionen, aus denen auch
-die Werkzeugleiste liest. Damit können Werkzeugleiste, Menüleiste und
-Reiter-Menü nicht auseinanderlaufen — sie beantworten dieselbe Frage an
-derselben Stelle.
+The value that goes in comes from `effectivePaneVisibility(…)` and
+`toggleState(for:hasShell:)`, i.e. from exactly the functions the toolbar
+also reads from. That means the toolbar, the menu bar, and the tab menu
+cannot drift apart — they answer the same question in the same place.
 
-Was ein Klick bewirkt, beantwortet `applyingClick(on:hasShell:)`; für das
-Terminal bleibt `TerminalPanelViewModel.toggle()` der einzige Schreibweg, weil
-er den Lebenszyklus der Shell besitzt (er öffnet sie beim Einblenden). Ein
-nackter Bool-Schreibvorgang würde das umgehen — der Quelltext sagt das an
-dieser Stelle bereits ausdrücklich, und dieser Vorgang ändert daran nichts.
+What a click does is answered by `applyingClick(on:hasShell:)`; for the
+terminal, `TerminalPanelViewModel.toggle()` remains the only write path,
+because it owns the shell's lifecycle (it opens it when showing). A bare
+Bool write would bypass that — the source already states this explicitly
+at that spot, and this change does not alter it.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist, welche Einträge bei welchem Zustand erscheinen und wie sie heißen
-— das ist ein Wert in Core mit Tests, wie die übrigen Einträge auch.
+Testable is which entries appear for which state and what they're named —
+that's a value in Core with tests, like the rest of this menu's entries.
 
-**Nicht prüfbar** ist, dass ein Klick auf den Eintrag den Bereich in der
-laufenden App tatsächlich ein- oder ausblendet. Das entscheidet ein Blick des
-Maintainers und wird nicht als „grün" verbucht.
+**Not testable** is that clicking the entry actually shows or hides the
+pane in the running app. That's decided by a maintainer's look, and it's
+not counted as "green".
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly excluded
 
-- Keine Änderung an `terminalTarget`, an der Werkzeugleiste oder am
-  „Terminal"-Menü der Menüleiste.
-- Kein Ausgrauen im Reiter-Menü — die Regel ist Weglassen.
-- Keine Änderung daran, wie `TerminalPanelViewModel.isVisible` geschrieben
-  wird: `toggle()` bleibt der einzige Weg.
-- Keine Antwort auf I5 (Speichern überschreibt namensgleich) — eigener Punkt.
+- No change to `terminalTarget`, to the toolbar, or to the menu bar's
+  "Terminal" menu.
+- No graying out in the tab menu — the rule is omission.
+- No change to how `TerminalPanelViewModel.isVisible` is written:
+  `toggle()` remains the only path.
+- No answer to I5 (saving overwrites a same-named entry) — a separate item.

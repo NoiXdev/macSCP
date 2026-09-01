@@ -1,105 +1,103 @@
-# P5 — Drei Nachzügler aus P3
+# P5 — Three stragglers from P3
 
-**Stand:** fertig. Suite 2150 Tests in 191 Suiten, grün.
+**Status:** done. Suite 2150 tests in 191 suites, green.
 
-## Task 1 — Ein kaputter Eintrag löscht kein Protokoll mehr
+## Task 1 — A broken entry no longer deletes a log
 
-**Der Fehler:** `AuditLogStore.loadIfNeeded` dekodierte das ganze Array auf
-einmal und schluckte jeden Fehler mit `?? []`. Ein einziger nicht
-dekodierbarer Eintrag machte daraus `[]`, und der nächste `append` schrieb
-die Datei mit **nur dem neuen Eintrag** neu. Die Historie der Sitzung war
-weg, ohne Meldung. Erreichbar durch jede Ereignisart, die eine ältere
-App-Version nicht kennt — `AuditEvent.Kind` ist ein `String`-Enum, ein
-unbekannter Rohwert wirft.
+**The bug:** `AuditLogStore.loadIfNeeded` decoded the whole array at
+once and swallowed every error with `?? []`. A single non-decodable
+entry turned that into `[]`, and the next `append` rewrote the file with
+**only the new entry**. The session's history was gone, without notice.
+Reachable via any event kind an older App version doesn't know —
+`AuditEvent.Kind` is a `String` enum, an unknown raw value throws.
 
-**Zwei Hälften, beide nötig:** elementweise dekodieren, damit ein kaputter
-Eintrag nur sich selbst kostet; und ein unvollständig gelesenes Protokoll
-nicht überschreiben, damit die ältere Version die Einträge der neueren nicht
-endgültig wegschreibt. Ohne die zweite Hälfte wäre der Verlust nur
-verzögert worden.
+**Two halves, both necessary:** decode element by element, so a broken
+entry only costs itself; and don't overwrite an incompletely read log,
+so the older version doesn't permanently write away the newer version's
+entries. Without the second half, the loss would only have been
+delayed.
 
-**Bewusst nicht gemacht:** eine `unknown`-Ereignisart. Ein einfacher Fall
-ohne mitgeführten Rohwert würde beim Zurückschreiben aus `snippetExecuted`
-ein `unknown` machen — das verfälscht die Historie, statt sie nur zu
-verkürzen.
+**Deliberately not done:** an `unknown` event kind. A plain case
+without a carried raw value would turn `snippetExecuted` into
+`unknown` on write-back — that falsifies the history instead of merely
+truncating it.
 
-Der Implementierer fand eine Lücke in der Vorgabe: „Protokoll leeren" und
-„Sitzung löschen" hätte der Schreibschutz stillschweigend blockiert. Eine
-ausdrückliche Nutzeraktion muss durchgehen; beide setzen den Schutz für die
-Sitzung zurück. Vom Prüfer bestätigt, inklusive dass der „wird nicht
-überschrieben"-Test die Datei wirklich neu von der Platte liest — ein
-Cache-Test wäre auch grün geblieben, wenn die Datei zerstört worden wäre.
+The implementer found a gap in the spec: "clear log" and
+"delete session" would have been silently blocked by the write protection.
+An explicit user action must go through; both reset the protection for
+the session. Confirmed by the reviewer, including that the "is not
+overwritten" test really re-reads the file from disk — a cache test
+would have stayed green even if the file had been destroyed.
 
-## Task 2 — Echte Pluralformen für die zwei Anzahl-Meldungen
+## Task 2 — Real plural forms for the two count messages
 
-„%lld snippets will be written" las sich bei einer Auswahl als „1 snippets",
-und seit P3h ist die Eins bei Snippets der **Regelfall** (Zeile auswählen →
-Exportieren), nicht mehr der Sonderfall.
+"%lld snippets will be written" read, for a single selection, as "1 snippets",
+and since P3h a single item is the **normal case** for snippets
+(select a row → export), no longer the special case.
 
-Vier `.stringsdict`-Kataloge statt einer Verzweigung im Code: Polnisch hat
-drei Kategorien (one/few/many, nach 5 der Genitiv Plural), Französisch
-behandelt die Null wie die Eins. Eine Zwei-Wege-Verzweigung wäre für die
-Hälfte der unterstützten Sprachen falsch gewesen.
+Four `.stringsdict` catalogs instead of a branch in the code: Polish has
+three categories (one/few/many, based on the genitive plural after 5),
+French treats zero the same as one. A two-way branch would have been
+wrong for half of the supported languages.
 
-**Drei Messungen vorab, nicht angenommen:**
-- `NSLocalizedString` löst einen `.stringsdict`-Eintrag vor einem
-  gleichnamigen `.strings`-Eintrag auf — mit absichtlich widersprüchlichen
-  Werten in einem Wegwerf-Bundle geprüft.
-- SwiftPMs `.process(...)` kopiert eine `.stringsdict` aus dem `.lproj` ins
-  gebaute Bundle.
-- Der vorhandene Katalog-Wächter liest ausschließlich `.strings`. Die
-  Schlüssel bleiben deshalb dort stehen (die `.stringsdict` gewinnt zur
-  Laufzeit), der Wächter bleibt unberührt und der Rückfalltext existiert
-  weiter.
+**Three measurements made up front, not assumed:**
+- `NSLocalizedString` resolves a `.stringsdict` entry before a
+  `.strings` entry of the same name — checked with deliberately
+  contradictory values in a throwaway bundle.
+- SwiftPM's `.process(...)` copies a `.stringsdict` from the `.lproj` into
+  the built bundle.
+- The existing catalog guard reads only `.strings`. The
+  keys therefore stay there (the `.stringsdict` wins at runtime), the
+  guard stays untouched, and the fallback text keeps existing.
 
-Eine vierte Erkenntnis kam beim Testen und ist die subtilste:
-**`String(format:)` ohne explizites `Locale` wählt die Pluralkategorie nach
-dem Prozess-Locale**, nicht nach der Sprache des Katalogs, aus dem der
-Formatstring stammt. Ein Test, der einfach das polnische Bundle lädt und
-formatiert, hätte auf einem deutschen Rechner die deutschen Regeln angewandt
-und wäre trotzdem grün geworden — also nichts bewiesen. Die Tests paaren
-deshalb explizit geladenes Sprachbundle mit explizitem `Locale`.
+A fourth finding came up during testing and is the most subtle:
+**`String(format:)` without an explicit `Locale` picks the plural
+category based on the process locale**, not the language of the
+catalog the format string came from. A test that simply loads the
+Polish bundle and formats would, on a German machine, have applied
+the German rules and would still have gone green — proving nothing. The
+tests therefore explicitly pair a loaded language bundle with an
+explicit `Locale`.
 
-**Offen, nicht geprüft:** die Aufrufstellen in der App übergeben kein
-`Locale`. Ob das Prozess-Locale dem `AppleLanguages`-Override aus M11p
-folgt, ist plausibel, aber nicht Ende-zu-Ende belegt. Billig zu prüfen:
-App-Sprache auf Polnisch stellen, ein einzelnes Snippet exportieren.
+**Open, not verified:** the call sites in the App don't pass a
+`Locale`. Whether the process locale follows the `AppleLanguages`
+override from M11p is plausible, but not proved end to end. Cheap to
+check: set the App language to Polish, export a single snippet.
 
-## Task 3 — Kein Protokolleintrag ohne Zustellung
+## Task 3 — No log entry without delivery
 
-`TerminalPanelViewModel.send` ist fire-and-forget: Bytes, die vor dem Öffnen
-der Shell anfallen, werden gepuffert, und scheitert das Öffnen, verwirft der
-Fehlerzweig sie. Der Eintrag „ran snippet …" stand trotzdem, weil direkt
-nach dem `send`-Aufruf protokolliert wurde. Realistisch bei einem Konto mit
-`ForceCommand`, das den Shell-Kanal ablehnt.
+`TerminalPanelViewModel.send` is fire-and-forget: bytes that accumulate
+before the shell opens are buffered, and if opening fails, the error
+branch discards them. The "ran snippet …" entry was recorded anyway,
+because logging happened right after the `send` call. Realistic with an
+account that has a `ForceCommand` rejecting the shell channel.
 
-`send(_:onDelivered:)` feuert nur, wenn die Bytes wirklich abgingen: auf der
-laufenden Shell nach erfolgreichem `shell.send`, oder beim Ausspülen nach
-erfolgreichem Öffnen. Das bisherige `try?` wurde zu `do/catch`, damit ein
-geschluckter Sendefehler nicht als Zustellung durchgeht. Der Vorgabewert
-`nil` lässt jede vorhandene Aufrufstelle unverändert.
+`send(_:onDelivered:)` fires only when the bytes actually went out: on
+the running shell after a successful `shell.send`, or when flushed after
+a successful open. The previous `try?` became `do/catch`, so a
+swallowed send error doesn't pass as a delivery. The default
+value `nil` leaves every existing call site unchanged.
 
-Bytes und Rückrufe liegen in zwei Feldern — `pendingBytes` ist ein flaches
-Byte-Array, mehrere Sends verschmelzen darin, ihre Rückrufe sind daraus
-nicht rekonstruierbar. Alle Verwurfspfade gehen deshalb durch **einen**
-Helfer statt durch zwei Zuweisungen je Stelle: ein vergessener Rückruf würde
-eine Zustellung melden, die nie stattfand.
+Bytes and callbacks sit in two fields — `pendingBytes` is a flat
+byte array, multiple sends merge into it, and their callbacks aren't
+reconstructable from it. All the discard paths therefore go through
+**one** helper instead of two assignments per site: a forgotten callback
+would report a delivery that never happened.
 
-## Was diese Phase über die Arbeitsweise gezeigt hat
+## What this phase showed about the way of working
 
-**Zwei Delegationen sind steckengeblieben**, beide an derselben Stelle: der
-Implementierer startete Builds im Hintergrund und wartete darauf, beim
-zweiten Mal nach einem `rm -rf .build`, das alle Abhängigkeiten neu
-übersetzt. Seine Vorarbeit war trotzdem wertvoll — die drei Messungen und
-die Testdatei aus Task 2 stammen von ihm, die Kataloge und der Commit von
-mir. Für kleine, gut umrissene Aufgaben ist die Übergabe teurer als die
-Ausführung.
+**Two delegations got stuck**, both at the same spot: the implementer
+started builds in the background and waited on them, the second time after
+an `rm -rf .build` that recompiles every dependency. Their preparatory
+work was valuable regardless — the three measurements and the test file
+from Task 2 are theirs, the catalogs and the commit are mine. For small,
+well-scoped tasks, the handoff is more expensive than the execution.
 
-**Ein roter Test ist mitcommittet worden**, weil Suite-Lauf und Commit im
-selben Befehl standen und die Ausgabe nicht gelesen wurde, bevor sie
-landete. Der Fix steht im Commit danach.
+**A red test got committed**, because the suite run and the commit
+were in the same command and the output wasn't read before it
+landed. The fix is in the commit right after.
 
-**Der rote Test war zeitabhängig** — 250 ms feste Wartezeit, allein
-ausreichend, unter Volllast der Suite nicht. Er pollt jetzt auf die
-Bedingung; die Prüfung „noch gepuffert" steht synchron vor jeder
-Unterbrechung, wo keine Last hinreicht.
+**The red test was time-dependent** — a fixed 250 ms wait, sufficient on
+its own, not under the suite's full load. It now polls for the
+condition; the "still buffered" check runs synchronously before any
+interruption, where no load is sufficient to trip it.

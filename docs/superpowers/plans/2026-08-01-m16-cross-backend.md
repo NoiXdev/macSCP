@@ -2,62 +2,62 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** S3↔SSH-Transfers gated verifizieren und Cross-Backend-Transfers in der UI sichtbar machen (Ziel/Backend-Kennzeichnung + passive Resume-Warnung), ohne die Transfer-Engine anzufassen.
+**Goal:** Verify S3↔SSH transfers under a gate and make cross-backend transfers visible in the UI (destination/backend labeling + passive resume warning), without touching the transfer engine.
 
-**Architecture:** Die Transfer-Engine ist bereits backend-agnostisch (verifiziert) — M16 fügt nur (1) einen gated S3↔SSH-Integrationstest, (2) additive Anzeige-Metadaten am Queue-`Item`, (3+4) UI hinzu. Die Metadaten leben **allein auf dem `Item`** (einmal bei Erstellung gesetzt, nie rekonstruiert); der `Job` bleibt unangetastet, weil nur er bei Interrupt/Retry neu gebaut wird und keine Anzeige-Daten braucht.
+**Architecture:** The transfer engine is already backend-agnostic (verified) — M16 only adds (1) a gated S3↔SSH integration test, (2) additive display metadata on the queue `Item`, (3+4) UI. The metadata lives **solely on the `Item`** (set once at creation, never reconstructed); the `Job` stays untouched, because only it gets rebuilt on interrupt/retry and needs no display data.
 
-**Tech Stack:** Swift (SwiftPM, `.swiftLanguageMode(.v5)`), Swift Testing, SwiftUI+AppKit, macOS 15+, MinIO+sshd-Docker-Rig für gated Tests.
+**Tech Stack:** Swift (SwiftPM, `.swiftLanguageMode(.v5)`), Swift Testing, SwiftUI+AppKit, macOS 15+, MinIO+sshd Docker rig for gated tests.
 
 ## Global Constraints
 
-- Swift `.swiftLanguageMode(.v5)`, minimum macOS 15; **keine neue externe Dependency**.
-- Tests: Swift Testing, TDD rot→grün.
-- **KEINE Änderung an Signer/Transport/`TransferEngine`-Kopierlogik** — nur additive Metadaten + View.
-- **Kein `if kind == .s3` in der Kopierlogik**; die Backend-Kennung im `Item` ist reine Anzeige.
-- Resume-Guard (M13) bleibt unangetastet — der gated Test verifiziert ihn nur über die Backend-Grenze.
-- Additive `Item`-Felder an **jeder** `Item`-Konstruktionsstelle explizit gesetzt (keine Struct-Defaults → der Compiler erzwingt Vollständigkeit).
-- Secret ausschließlich im Keychain; nie in JSON/Logs/URLs.
-- gated Tests `MACSCP_ITEST=1` (+ `MACSCP_KEYCHAIN=1`), **immer aus dem Haupt-Checkout, nie aus einem Worktree**; Rig `docker compose -f docker/test-server/compose.yml up -d` (sshd:2222, minio:19000/19001).
-- Code/Kommentare/Tests **Englisch**; UI-Strings EN/DE/FR/PL mit **typografischen Anführungszeichen** in nicht-englischen Werten, FR/PL KI-generiert.
-- Conventional Commits (CI-Gate); Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- Swift `.swiftLanguageMode(.v5)`, minimum macOS 15; **no new external dependency**.
+- Tests: Swift Testing, TDD red→green.
+- **NO change to Signer/Transport/`TransferEngine` copy logic** — only additive metadata + view.
+- **No `if kind == .s3` in the copy logic**; the backend label on the `Item` is display only.
+- The resume guard (M13) stays untouched — the gated test only verifies it across the backend boundary.
+- Additive `Item` fields explicitly set at **every** `Item` construction site (no struct defaults → the compiler enforces completeness).
+- Secrets exclusively in the keychain; never in JSON/logs/URLs.
+- Gated tests `MACSCP_ITEST=1` (+ `MACSCP_KEYCHAIN=1`), **always from the main checkout, never from a worktree**; rig `docker compose -f docker/test-server/compose.yml up -d` (sshd:2222, minio:19000/19001).
+- Code/comments/tests **English**; UI strings EN/DE/FR/PL with **typographic quotation marks** in non-English values, FR/PL AI-generated.
+- Conventional Commits (CI gate); footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
 ---
 
 ## File Structure
 
-- `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift` — **modify**: `CrossBackendTarget`-Typ, `Item` um zwei Felder, `enqueue`/`enqueueTree`/`expandTree`/`addTerminalItem` um einen `crossBackendTarget`-Parameter, drei `Item(...)`-Konstruktionsstellen.
-- `Tests/macSCPCoreTests/TransferQueueViewModelTests.swift` (oder die bestehende Queue-Test-Datei) — **modify**: Unit-Tests für die Metadaten.
-- `Tests/macSCPCoreTests/CrossBackendTransferIntegrationTests.swift` — **create**: gated S3↔SSH-Test.
-- `Sources/MacSCPApp/ContentView.swift` — **modify**: `CrossSessionTarget` um `kind`, `crossSessionTargets(for:)`, `transferToSession`, Submenü-Rendering.
-- `Sources/MacSCPApp/TransferQueueBar.swift` — **modify**: `row(_:)` um Backend-Badge + Resume-⚠.
-- `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` — **modify**: neue Strings.
+- `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift` — **modify**: `CrossBackendTarget` type, `Item` gets two fields, `enqueue`/`enqueueTree`/`expandTree`/`addTerminalItem` get a `crossBackendTarget` parameter, three `Item(...)` construction sites.
+- `Tests/macSCPCoreTests/TransferQueueViewModelTests.swift` (or the existing queue test file) — **modify**: unit tests for the metadata.
+- `Tests/macSCPCoreTests/CrossBackendTransferIntegrationTests.swift` — **create**: gated S3↔SSH test.
+- `Sources/MacSCPApp/ContentView.swift` — **modify**: `CrossSessionTarget` gets `kind`, `crossSessionTargets(for:)`, `transferToSession`, submenu rendering.
+- `Sources/MacSCPApp/TransferQueueBar.swift` — **modify**: `row(_:)` gets backend badge + resume ⚠.
+- `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` — **modify**: new strings.
 
 ---
 
-## Task 1: Core — `CrossBackendTarget` + `Item`-Anzeige-Metadaten
+## Task 1: Core — `CrossBackendTarget` + `Item` display metadata
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift`
 - Test: `Tests/macSCPCoreTests/TransferQueueViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: `ConnectionKind` (`.ssh`/`.s3`), `any RemoteFileSystem` (`.supportsAppendResume: Bool`), bestehende `enqueue`/`enqueueTree`/`expandTree`/`addTerminalItem`.
+- Consumes: `ConnectionKind` (`.ssh`/`.s3`), `any RemoteFileSystem` (`.supportsAppendResume: Bool`), existing `enqueue`/`enqueueTree`/`expandTree`/`addTerminalItem`.
 - Produces:
   - `public struct CrossBackendTarget: Equatable, Sendable { public var name: String; public var kind: ConnectionKind; public init(name: String, kind: ConnectionKind) }`
-  - `Item.destinationSupportsResume: Bool` (kein Struct-Default) + `Item.crossBackendTarget: CrossBackendTarget?` (kein Struct-Default)
-  - `enqueue`/`enqueueTree` neuer Parameter `crossBackendTarget: CrossBackendTarget? = nil` (nach `crossRemote`)
+  - `Item.destinationSupportsResume: Bool` (no struct default) + `Item.crossBackendTarget: CrossBackendTarget?` (no struct default)
+  - `enqueue`/`enqueueTree` new parameter `crossBackendTarget: CrossBackendTarget? = nil` (after `crossRemote`)
 
-**Wichtig (Architektur):** Der `Item` wird an genau drei Stellen konstruiert — `enqueue` (~425), `enqueueEditUpload` (~452), `addTerminalItem` (~1129) — und danach nie rekonstruiert (nur `setStatus` mutiert ihn). Deshalb tragen **nur diese drei Stellen** die neuen Felder; der `Job` und die Interrupt-/Retry-Pfade (~581, ~915) bleiben unverändert. `destinationSupportsResume` wird aus dem an der jeweiligen Stelle vorhandenen `destination` gelesen; wo kein `destination` existiert (`addTerminalItem` — Skip/Fehler-Items, die nie übertragen), ist es `true`.
+**Important (architecture):** The `Item` is constructed at exactly three sites — `enqueue` (~425), `enqueueEditUpload` (~452), `addTerminalItem` (~1129) — and never reconstructed afterward (only `setStatus` mutates it). That is why **only these three sites** carry the new fields; the `Job` and the interrupt/retry paths (~581, ~915) stay unchanged. `destinationSupportsResume` is read from the `destination` present at the respective site; where no `destination` exists (`addTerminalItem` — skip/error items, which are never transferred), it is `true`.
 
-- [ ] **Step 1: Failing-Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-In `Tests/macSCPCoreTests/TransferQueueViewModelTests.swift` (die bestehende Queue-Test-Datei; falls anders benannt, die Datei mit `TransferQueueViewModel`-Tests nehmen) einen neuen Test-Block ans Ende der Suite einfügen. Nutze den in dieser Datei bereits vorhandenen FS-Fake (z. B. `RecordingFS`/`FakeFS` mit überschreibbarem `supportsAppendResume`) — den exakten Namen aus der Datei übernehmen; hier `StubFS` als Platzhalter, beim Schreiben durch den realen Fake ersetzen:
+In `Tests/macSCPCoreTests/TransferQueueViewModelTests.swift` (the existing queue test file; if named differently, take the file with the `TransferQueueViewModel` tests) insert a new test block at the end of the suite. Use the FS fake already present in this file (e.g. `RecordingFS`/`FakeFS` with an overridable `supportsAppendResume`) — take the exact name from the file; here `StubFS` is a placeholder, replace it with the real fake when writing:
 
 ```swift
     // MARK: - Cross-backend display metadata (M16)
 
     @Test func enqueueToS3TargetMarksNoResumeAndCarriesTarget() async {
-        let vm = TransferQueueViewModel(/* … gleiche Init wie die übrigen Tests dieser Datei … */)
+        let vm = TransferQueueViewModel(/* … same init as this file's other tests … */)
         let source = StubFS(supportsAppendResume: true)
         let s3Dest = StubFS(supportsAppendResume: false)
         _ = vm.enqueue(
@@ -98,16 +98,16 @@ In `Tests/macSCPCoreTests/TransferQueueViewModelTests.swift` (die bestehende Que
     }
 ```
 
-Falls der Datei-Fake kein `init(supportsAppendResume:)` hat: gib ihm ein solches (überschreibbares) Property nach dem Muster, das die M13-Resume-Tests dieser Datei bereits verwenden (dort wird `supportsAppendResume` schon variiert) — nichts erfinden, das vorhandene Muster übernehmen.
+If the file's fake has no `init(supportsAppendResume:)`: give it one (overridable) property following the pattern this file's M13 resume tests already use (they already vary `supportsAppendResume` there) — invent nothing, adopt the existing pattern.
 
-- [ ] **Step 2: Test rot**
+- [ ] **Step 2: Test red**
 
 Run: `swift test --filter TransferQueueViewModelTests`
-Expected: FAIL — „cannot find 'CrossBackendTarget'" bzw. „extra argument 'crossBackendTarget'".
+Expected: FAIL — "cannot find 'CrossBackendTarget'" or "extra argument 'crossBackendTarget'".
 
-- [ ] **Step 3: `CrossBackendTarget` + `Item`-Felder**
+- [ ] **Step 3: `CrossBackendTarget` + `Item` fields**
 
-In `TransferQueueViewModel.swift`: den Typ auf Datei-Ebene (oder direkt vor der Klasse) einfügen:
+In `TransferQueueViewModel.swift`: insert the type at file scope (or directly above the class):
 
 ```swift
 /// A cross-backend transfer's destination label (M16): the target session's
@@ -123,7 +123,7 @@ public struct CrossBackendTarget: Equatable, Sendable {
 }
 ```
 
-Im `Item`-Struct (nach `destinationDirectory`) zwei Felder OHNE Default hinzufügen:
+In the `Item` struct (after `destinationDirectory`) add two fields WITHOUT a default:
 
 ```swift
         /// Whether the destination backend supports append-based resume (M16).
@@ -137,9 +137,9 @@ Im `Item`-Struct (nach `destinationDirectory`) zwei Felder OHNE Default hinzufü
         public let crossBackendTarget: CrossBackendTarget?
 ```
 
-- [ ] **Step 4: Parameter durchreichen + drei `Item(...)`-Stellen setzen**
+- [ ] **Step 4: Pass the parameter through + set the three `Item(...)` sites**
 
-(a) `enqueue` (~411): Parameter `crossBackendTarget: CrossBackendTarget? = nil` nach `crossRemote` ergänzen; die `Item(...)`-Konstruktion (~425) um:
+(a) `enqueue` (~411): add parameter `crossBackendTarget: CrossBackendTarget? = nil` after `crossRemote`; extend the `Item(...)` construction (~425) by:
 
 ```swift
         items.append(Item(
@@ -150,7 +150,7 @@ Im `Item`-Struct (nach `destinationDirectory`) zwei Felder OHNE Default hinzufü
             crossBackendTarget: crossBackendTarget))
 ```
 
-(b) `enqueueEditUpload` (~440): die `Item(...)`-Konstruktion (~452) um:
+(b) `enqueueEditUpload` (~440): extend the `Item(...)` construction (~452) by:
 
 ```swift
         items.append(Item(
@@ -161,7 +161,7 @@ Im `Item`-Struct (nach `destinationDirectory`) zwei Felder OHNE Default hinzufü
             crossBackendTarget: nil))
 ```
 
-(c) `addTerminalItem` (~1123): Signatur um `crossBackendTarget: CrossBackendTarget? = nil` ergänzen; die `Item(...)`-Konstruktion (~1129) um:
+(c) `addTerminalItem` (~1123): extend the signature by `crossBackendTarget: CrossBackendTarget? = nil`; extend the `Item(...)` construction (~1129) by:
 
 ```swift
         items.append(Item(
@@ -172,18 +172,18 @@ Im `Item`-Struct (nach `destinationDirectory`) zwei Felder OHNE Default hinzufü
             crossBackendTarget: crossBackendTarget))
 ```
 
-(d) `enqueueTree` (~525): Parameter `crossBackendTarget: CrossBackendTarget? = nil` ergänzen und an `expandTree` weiterreichen.
+(d) `enqueueTree` (~525): add parameter `crossBackendTarget: CrossBackendTarget? = nil` and pass it on to `expandTree`.
 
-(e) `expandTree` (~1044): Parameter `crossBackendTarget: CrossBackendTarget? = nil` ergänzen; im `.file`-Zweig an `enqueue(...)` durchreichen (`crossBackendTarget: crossBackendTarget`); im rekursiven `.directory`-Zweig an `expandTree(...)` durchreichen; in den drei `addTerminalItem(...)`-Aufrufen (Dir-Create-Fehler, List-Fehler, Symlink-Skip) `crossBackendTarget: crossBackendTarget` mitgeben.
+(e) `expandTree` (~1044): add parameter `crossBackendTarget: CrossBackendTarget? = nil`; pass it through to `enqueue(...)` in the `.file` branch (`crossBackendTarget: crossBackendTarget`); pass it through to `expandTree(...)` in the recursive `.directory` branch; pass `crossBackendTarget: crossBackendTarget` in the three `addTerminalItem(...)` calls (dir-create error, list error, symlink skip).
 
-- [ ] **Step 5: Test grün**
+- [ ] **Step 5: Test green**
 
 Run: `swift test --filter TransferQueueViewModelTests`
-Expected: PASS — die drei neuen Tests grün, alle bestehenden Queue-Tests weiter grün.
+Expected: PASS — the three new tests green, all existing queue tests still green.
 
-- [ ] **Step 6: Retry-Persistenz-Guard (Test)**
+- [ ] **Step 6: Retry-persistence guard (test)**
 
-Ergänze einen Test, der beweist, dass ein Item seine Metadaten über einen Interrupt→Retry-Zyklus behält (weil der Item NICHT rekonstruiert wird). Falls die Datei bereits einen Interrupt/Retry-Test-Helfer hat, dessen Muster nutzen; minimal:
+Add a test that proves an item keeps its metadata across an interrupt→retry cycle (because the item is NOT reconstructed). If the file already has an interrupt/retry test helper, use its pattern; minimally:
 
 ```swift
     @Test func interruptedItemKeepsCrossBackendMetadata() async {
@@ -195,22 +195,22 @@ Ergänze einen Test, der beweist, dass ein Item seine Metadaten über einen Inte
             onCompleted: nil, destinationTabID: UUID(), crossRemote: true,
             crossBackendTarget: CrossBackendTarget(name: "prod-bucket", kind: .s3))
         let id = vm.items.last!.id
-        vm.setStatusForTesting(id, .interrupted)   // <- realen Test-Hook/Weg dieser Datei nutzen
+        vm.setStatusForTesting(id, .interrupted)   // <- use the file's real test hook/path
         let item = vm.items.first { $0.id == id }!
         #expect(item.crossBackendTarget?.kind == .s3)
         #expect(item.destinationSupportsResume == false)
     }
 ```
 
-Gibt es keinen Test-Hook, um `.interrupted` zu setzen, entfalle dieser Test — die Persistenz ist strukturell garantiert (Item wird nie neu gebaut); dann in der Commit-Message vermerken, dass die Persistenz strukturell (nicht per Test) gesichert ist. **Keinen** privaten Zugriff erfinden.
+If there is no test hook to set `.interrupted`, drop this test — persistence is structurally guaranteed (the item is never rebuilt); then note in the commit message that persistence is secured structurally (not by test). **Do not** invent private access.
 
 Run: `swift test --filter TransferQueueViewModelTests`
-Expected: PASS (oder Test weggelassen wie beschrieben).
+Expected: PASS (or the test dropped as described).
 
-- [ ] **Step 7: Volle Core-Suite + 0 Warnungen**
+- [ ] **Step 7: Full core suite + 0 warnings**
 
 Run: `swift build && swift test`
-Expected: Build 0 Warnungen; alle Tests grün.
+Expected: Build 0 warnings; all tests green.
 
 - [ ] **Step 8: Commit**
 
@@ -223,20 +223,20 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 2: Gated S3↔SSH-Integrationstest
+## Task 2: Gated S3↔SSH integration test
 
 **Files:**
 - Create: `Tests/macSCPCoreTests/CrossBackendTransferIntegrationTests.swift`
 
 **Interfaces:**
-- Consumes: `TransferEngine.copyFile(...)` (Signatur aus `Sources/macSCPCore/RemoteFS/TransferEngine.swift:93` lesen), `S3FileSystem.connect(config)` + `S3ConnectionConfig` (aus `S3FileSystemIntegrationTests.swift` das `connect()`-Muster), `CitadelFileSystem`-Connect Port 2222 (aus `CitadelFileSystemIntegrationTests.swift`, `remoteToRemoteStreamCopiesByteIdentical` ~1195 als Vorlage), `readStream`/`write`/`createDirectory`/`list` des `RemoteFileSystem`-Protokolls.
-- Produces: nur Tests.
+- Consumes: `TransferEngine.copyFile(...)` (read the signature from `Sources/macSCPCore/RemoteFS/TransferEngine.swift:93`), `S3FileSystem.connect(config)` + `S3ConnectionConfig` (from `S3FileSystemIntegrationTests.swift`'s `connect()` pattern), `CitadelFileSystem` connect on port 2222 (from `CitadelFileSystemIntegrationTests.swift`, `remoteToRemoteStreamCopiesByteIdentical` ~1195 as the template), `readStream`/`write`/`createDirectory`/`list` of the `RemoteFileSystem` protocol.
+- Produces: tests only.
 
-**Verifizierte Rig-Werte:** S3 — accessKeyID `"macscp"`, secret `"macscpsecretkey"`, region `"us-east-1"`, endpoint `"http://127.0.0.1:19000"`, bucket `"macscp-seed"`, usePathStyle `true`. SSH — Host `127.0.0.1`, Port `2222`, user `testuser`, pass `testpass`. Suite-Gate `.enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1")`.
+**Verified rig values:** S3 — accessKeyID `"macscp"`, secret `"macscpsecretkey"`, region `"us-east-1"`, endpoint `"http://127.0.0.1:19000"`, bucket `"macscp-seed"`, usePathStyle `true`. SSH — host `127.0.0.1`, port `2222`, user `testuser`, pass `testpass`. Suite gate `.enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1")`.
 
-- [ ] **Step 1: Test-Datei-Gerüst**
+- [ ] **Step 1: Test file scaffold**
 
-`Tests/macSCPCoreTests/CrossBackendTransferIntegrationTests.swift` anlegen. Kopf + Connect-Helfer aus den zwei bestehenden Integrationstest-Dateien übernehmen (verbatim die Init-/Connect-Signaturen dort — `S3FileSystem.connect(config)` positional, `S3ConnectionConfig(...)` wie in `S3FileSystemIntegrationTests.connect()`, Citadel-Connect wie in `CitadelFileSystemIntegrationTests`). `TransferEngine`-Instanziierung + `copyFile`-Aufruf exakt so bauen, wie `remoteToRemoteStreamCopiesByteIdentical` es tut (dortiges Muster für Engine-Setup, Fortschritts-Closure, resume-Flag).
+Create `Tests/macSCPCoreTests/CrossBackendTransferIntegrationTests.swift`. Take the header + connect helpers from the two existing integration test files (the connect/init signatures there verbatim — `S3FileSystem.connect(config)` positional, `S3ConnectionConfig(...)` as in `S3FileSystemIntegrationTests.connect()`, Citadel connect as in `CitadelFileSystemIntegrationTests`). Build the `TransferEngine` instantiation + `copyFile` call exactly as `remoteToRemoteStreamCopiesByteIdentical` does (its pattern for engine setup, progress closure, resume flag).
 
 ```swift
 import Foundation
@@ -252,35 +252,35 @@ import Testing
     .serialized
 )
 struct CrossBackendTransferIntegrationTests {
-    // connectS3() / connectSSH() Helfer hier — 1:1 aus den beiden bestehenden
-    // Integrationstest-Dateien übernehmen (Werte oben).
+    // connectS3() / connectSSH() helpers here — carry over 1:1 from the two
+    // existing integration test files (values above).
 }
 ```
 
-- [ ] **Step 2: SSH→S3 byte-identisch**
+- [ ] **Step 2: SSH→S3 byte-identical**
 
-Test: eine Datei mit bekanntem Zufallsinhalt auf dem sshd anlegen (via `sshFS.write`), dann `TransferEngine.copyFile(source: sshFS, sourcePath: …, destination: s3FS, destinationPath: …)` (Signatur aus TransferEngine.swift:93), dann das S3-Objekt via `s3FS.readStream(...)` komplett lesen und `#expect(readBack == original)`. Zieldatei/-key nach dem Test aufräumen (best effort, wie die anderen Integrationstests).
+Test: create a file with known random content on the sshd (via `sshFS.write`), then `TransferEngine.copyFile(source: sshFS, sourcePath: …, destination: s3FS, destinationPath: …)` (signature from TransferEngine.swift:93), then read the S3 object back completely via `s3FS.readStream(...)` and `#expect(readBack == original)`. Clean up the target file/key afterward (best effort, like the other integration tests).
 
-- [ ] **Step 3: S3→SSH byte-identisch**
+- [ ] **Step 3: S3→SSH byte-identical**
 
-Test: ein Objekt in MinIO anlegen (`s3FS.write`), `copyFile(source: s3FS, destination: sshFS)`, dann via `sshFS.readStream` zurücklesen und `#expect` byte-identisch.
+Test: create an object in MinIO (`s3FS.write`), `copyFile(source: s3FS, destination: sshFS)`, then read it back via `sshFS.readStream` and `#expect` byte-identical.
 
-- [ ] **Step 4: Ordner-Baum cross-backend (eine Richtung)**
+- [ ] **Step 4: Directory tree cross-backend (one direction)**
 
-Test (SSH→S3 oder S3→SSH): ein Verzeichnis mit einer Datei und einem Unterordner-mit-Datei auf der Quelle anlegen; den Baum kopieren (über den Engine-/Queue-Baumweg oder rekursiv per `list`+`createDirectory`+`copyFile`, so wie ein Tree-Transfer es tut) und prüfen, dass auf der Zielseite beide Dateien in der richtigen Ordnerstruktur ankommen. Bei S3-Ziel: `createDirectory` legt den 0-Byte-Marker an; bei S3-Quelle: `list` liefert den Unterordner als `.directory` (CommonPrefix). `#expect` auf die gelisteten Zieleinträge.
+Test (SSH→S3 or S3→SSH): create a directory with a file and a subdirectory-with-file on the source; copy the tree (via the engine/queue tree path, or recursively via `list`+`createDirectory`+`copyFile`, the way a tree transfer does) and check that both files arrive on the destination side in the correct folder structure. With an S3 destination: `createDirectory` creates the 0-byte marker; with an S3 source: `list` returns the subfolder as `.directory` (CommonPrefix). `#expect` against the listed destination entries.
 
-- [ ] **Step 5: Resume-Guard über die Grenze**
+- [ ] **Step 5: Resume guard across the boundary**
 
-Test: einen SSH→S3-`copyFile` mit `resume: true` starten (die `copyFile`-Signatur trägt ein resume/offset-Argument — aus TransferEngine.swift:93 ff. lesen); verifizieren, dass die Übertragung erfolgreich byte-identisch durchläuft (S3 kann kein Append; der M13-Guard erzwingt `.overwrite`). Der Nachweis ist ein erfolgreicher, vollständiger Transfer trotz `resume: true` — kein 416/kein Korruptions-Byte-Mismatch. (Direkter Zugriff auf den internen write-mode ist nicht nötig/verfügbar; das byte-identische Ergebnis IST der Guard-Beweis.)
+Test: start an SSH→S3 `copyFile` with `resume: true` (the `copyFile` signature carries a resume/offset argument — read it from TransferEngine.swift:93 ff.); verify that the transfer completes successfully byte-identical (S3 cannot append; the M13 guard forces `.overwrite`). The proof is a successful, complete transfer despite `resume: true` — no 416/no corruption byte mismatch. (Direct access to the internal write mode is not needed/available; the byte-identical result IS the guard's proof.)
 
-- [ ] **Step 6: Rig hoch + gated Lauf**
+- [ ] **Step 6: Rig up + gated run**
 
 Run:
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
 MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test --filter CrossBackendTransferIntegrationTests
 ```
-Expected: alle vier/fünf Tests laufen (nicht geskippt) und sind grün. Ein 403/Byte-Mismatch deutet auf ein echtes Signatur-/Pfad-Problem (dann in M16 fixen — wie der M13-Trailing-Slash-Fund).
+Expected: all four/five tests run (not skipped) and are green. A 403/byte mismatch points to a real signature/path problem (then fix within M16 — like the M13 trailing-slash finding).
 
 - [ ] **Step 7: Commit**
 
@@ -293,23 +293,23 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 3: App — Transfer-Zeile mit Ziel/Backend-Badge + Resume-⚠
+## Task 3: App — transfer row with destination/backend badge + resume ⚠
 
 **Files:**
-- Modify: `Sources/MacSCPApp/ContentView.swift` (`CrossSessionTarget` ~vor 2579, `crossSessionTargets(for:)` ~2579, `transferToSession` ~2596)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (`CrossSessionTarget` ~before 2579, `crossSessionTargets(for:)` ~2579, `transferToSession` ~2596)
 - Modify: `Sources/MacSCPApp/TransferQueueBar.swift` (`row(_:)` 66–122)
 - Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 
 **Interfaces:**
-- Consumes (aus Task 1): `Item.destinationSupportsResume: Bool`, `Item.crossBackendTarget: CrossBackendTarget?`, `CrossBackendTarget.name`/`.kind`, `enqueue`/`enqueueTree` mit `crossBackendTarget:`-Parameter.
-- Consumes: `other.connectionViewModel.kind` (Backend-`kind` einer Ziel-Session, wie in ContentView.swift:1059 verwendet), `other.displayTitle`, `session.remote.currentPath`.
+- Consumes (from Task 1): `Item.destinationSupportsResume: Bool`, `Item.crossBackendTarget: CrossBackendTarget?`, `CrossBackendTarget.name`/`.kind`, `enqueue`/`enqueueTree` with `crossBackendTarget:` parameter.
+- Consumes: `other.connectionViewModel.kind` (a target session's backend `kind`, as used in ContentView.swift:1059), `other.displayTitle`, `session.remote.currentPath`.
 - Produces: `CrossSessionTarget.kind: ConnectionKind`.
 
-Reine SwiftUI/App-Verkabelung — build-verifiziert.
+Pure SwiftUI/App wiring — build-verified.
 
-- [ ] **Step 1: `CrossSessionTarget` um `kind` + `crossSessionTargets` ableiten**
+- [ ] **Step 1: `CrossSessionTarget` gets `kind` + derive `crossSessionTargets`**
 
-`CrossSessionTarget` (die `struct`, direkt vor `crossSessionTargets(for:)`) um `let kind: ConnectionKind` erweitern. In `crossSessionTargets(for:)` (~2582) den Konstruktor um `kind: other.connectionViewModel.kind` ergänzen:
+Extend `CrossSessionTarget` (the `struct` directly above `crossSessionTargets(for:)`) by `let kind: ConnectionKind`. In `crossSessionTargets(for:)` (~2582) extend the constructor by `kind: other.connectionViewModel.kind`:
 
 ```swift
             return CrossSessionTarget(
@@ -318,9 +318,9 @@ Reine SwiftUI/App-Verkabelung — build-verifiziert.
                 kind: other.connectionViewModel.kind)
 ```
 
-- [ ] **Step 2: `transferToSession` gibt `crossBackendTarget` mit**
+- [ ] **Step 2: `transferToSession` passes `crossBackendTarget` along**
 
-In `transferToSession` (~2596) an **allen vier** enqueue/enqueueTree-Aufrufen `crossBackendTarget: CrossBackendTarget(name: target.title, kind: target.kind)` ergänzen (die vier Aufrufe: local-dir → `enqueueTree`, local-file → `enqueue`, remote-dir → `enqueueTree` mit `crossRemote: true`, remote-file → `enqueue` mit `crossRemote: true`). Beispiel für den remote-file-Zweig:
+In `transferToSession` (~2596) add `crossBackendTarget: CrossBackendTarget(name: target.title, kind: target.kind)` to **all four** enqueue/enqueueTree calls (the four calls: local-dir → `enqueueTree`, local-file → `enqueue`, remote-dir → `enqueueTree` with `crossRemote: true`, remote-file → `enqueue` with `crossRemote: true`). Example for the remote-file branch:
 
 ```swift
                 queue.enqueue(
@@ -333,9 +333,9 @@ In `transferToSession` (~2596) an **allen vier** enqueue/enqueueTree-Aufrufen `c
                     crossBackendTarget: CrossBackendTarget(name: target.title, kind: target.kind))
 ```
 
-- [ ] **Step 3: Transfer-Zeile — Badge + ⚠**
+- [ ] **Step 3: Transfer row — badge + ⚠**
 
-In `TransferQueueBar.row(_:)` (66–122) direkt nach dem `Text(item.fileName)`-Block (und vor `Spacer(minLength: 8)`) zwei bedingte Elemente einfügen:
+In `TransferQueueBar.row(_:)` (66–122) insert two conditional elements directly after the `Text(item.fileName)` block (and before `Spacer(minLength: 8)`):
 
 ```swift
             if let target = item.crossBackendTarget {
@@ -359,7 +359,7 @@ In `TransferQueueBar.row(_:)` (66–122) direkt nach dem `Text(item.fileName)`-B
             }
 ```
 
-Und einen kleinen Helfer in derselben View ergänzen (Backend-Badge-Label; die Kürzel „SSH"/„S3" stammen aus M12 — dieselbe Quelle wie Sidebar/Tab, hier direkt gemappt):
+And add a small helper in the same view (backend badge label; the abbreviations "SSH"/"S3" originate from M12 — the same source as the sidebar/tab, mapped directly here):
 
 ```swift
     private func backendBadgeLabel(_ kind: ConnectionKind) -> String {
@@ -370,11 +370,11 @@ Und einen kleinen Helfer in derselben View ergänzen (Backend-Badge-Label; die K
     }
 ```
 
-Prüfen: heißen die M12-Badge-L10n-Keys bereits `backend.badge.ssh`/`backend.badge.s3` (Sidebar/TabStrip)? Falls ja, **diese** wiederverwenden statt neue anzulegen; falls die vorhandenen Keys anders heißen, die vorhandenen nehmen. `item.status.isRunning` gegen den realen Accessor prüfen (in dieser Datei/Item verwendet, siehe `isActive`/`isRunning`).
+Check: are the M12 badge L10n keys already named `backend.badge.ssh`/`backend.badge.s3` (sidebar/tab strip)? If so, reuse **those** instead of creating new ones; if the existing keys are named differently, use the existing ones. Check `item.status.isRunning` against the real accessor (used in this file/Item, see `isActive`/`isRunning`).
 
-- [ ] **Step 4: L10n (nur wirklich neue Keys)**
+- [ ] **Step 4: L10n (only genuinely new keys)**
 
-`transfers.noResume.hint` in alle vier Kataloge; die Backend-Badge-Keys nur, falls sie nicht schon existieren.
+`transfers.noResume.hint` into all four catalogs; the backend badge keys only if they do not already exist.
 
 EN:
 ```
@@ -386,18 +386,18 @@ DE:
 ```
 FR:
 ```
-"transfers.noResume.hint" = "En cas d’interruption, ce téléversement redémarre du début.";
+"transfers.noResume.hint" = "En cas d'interruption, ce téléversement redémarre du début.";
 ```
 PL:
 ```
 "transfers.noResume.hint" = "W razie przerwania to wysyłanie zacznie się od nowa.";
 ```
-(Typografische Apostrophe im FR-Wert; keine ASCII-Quotes.)
+(Typographic apostrophes in the FR value; no ASCII quotes.)
 
-- [ ] **Step 5: Build + Behaviour-Check**
+- [ ] **Step 5: Build + behavior check**
 
 Run: `swift build`
-Expected: 0 Warnungen. Verhalten per Codelesen: (1) Same-Session-Transfer unverändert (kein Badge); (2) Cross-Session zeigt Backend-Badge + `→ Ziel`; (3) jedes S3-Ziel (auch same-session lokal→S3) zeigt ⚠ solange aktiv, weg bei Abschluss.
+Expected: 0 warnings. Behavior by reading the code: (1) same-session transfer unchanged (no badge); (2) cross-session shows backend badge + `→ target`; (3) every S3 destination (even same-session local→S3) shows ⚠ while active, gone on completion.
 
 - [ ] **Step 6: Commit**
 
@@ -410,20 +410,20 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 4: App — Ziel-Session-Submenü mit Backend-Badge + Pfad
+## Task 4: App — destination-session submenu with backend badge + path
 
 **Files:**
-- Modify: `Sources/MacSCPApp/ContentView.swift` (das M8b-„An Session übertragen"-Submenü, das `crossSessionTargets(for:)` rendert)
-- Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` (nur falls ein Format-String nötig)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (the M8b "Transfer to Session" submenu that renders `crossSessionTargets(for:)`)
+- Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` (only if a format string is needed)
 
 **Interfaces:**
-- Consumes (aus Task 3): `CrossSessionTarget.kind`, `CrossSessionTarget.title`, `CrossSessionTarget.remotePath`, `backendBadgeLabel(_:)`-Idee (im Menü ggf. eigener kleiner Helfer, da andere View).
+- Consumes (from Task 3): `CrossSessionTarget.kind`, `CrossSessionTarget.title`, `CrossSessionTarget.remotePath`, the `backendBadgeLabel(_:)` idea (in the menu, possibly its own small helper, since it is a different view).
 
-Reine App-View — build-verifiziert.
+Pure App view — build-verified.
 
-- [ ] **Step 1: Submenü-Eintrag um Backend-Kürzel + Pfad**
+- [ ] **Step 1: Submenu entry gets backend abbreviation + path**
 
-Die Stelle finden, die die `crossSessionTargets(for:)`-Liste in Menüeinträge rendert (das „An Session übertragen"/„Transfer to session"-Submenü aus M8b; via `menuNeedsUpdate`/`NSMenuItem` oder SwiftUI-`Menu` — die reale Render-Stelle im Code lokalisieren). Den Eintragstitel von reinem `target.title` auf ein kompaktes `„<KIND> · <title> — <remotePath>"` umstellen, z. B.:
+Find the site that renders the `crossSessionTargets(for:)` list into menu entries (the M8b "Transfer to Session" submenu — via `menuNeedsUpdate`/`NSMenuItem` or SwiftUI `Menu` — locate the actual render site in the code). Change the entry title from plain `target.title` to a compact "`<KIND> · <title> — <remotePath>`", e.g.:
 
 ```swift
 let kindLabel = target.kind == .s3
@@ -434,21 +434,21 @@ let title = String(
     kindLabel, target.title, target.remotePath)
 ```
 
-Trägt das konkrete Menü-Widget einen zweizeiligen/attribuierten Eintrag sauber (z. B. `NSMenuItem.attributedTitle`), darf der Pfad stattdessen als kleinere zweite Zeile gesetzt werden — Entscheidung nach dem, was die reale Render-Stelle hergibt; sonst die kompakte einzeilige Form oben.
+If the concrete menu widget carries a clean two-line/attributed entry (e.g. `NSMenuItem.attributedTitle`), the path may instead be set as a smaller second line — decide based on what the actual render site offers; otherwise use the compact single-line form above.
 
 - [ ] **Step 2: L10n**
 
-`transfers.targetMenu.item %@ %@ %@` (Format `"%@ · %@ — %@"`) in alle vier Kataloge, identischer Format-String (die Reihenfolge der Platzhalter ist sprachneutral). Falls die reale Render-Stelle die zweizeilige Variante nutzt, den passenden Key stattdessen.
+`transfers.targetMenu.item %@ %@ %@` (format `"%@ · %@ — %@"`) into all four catalogs, identical format string (the order of the placeholders is language-neutral). If the actual render site uses the two-line variant, use the matching key instead.
 
-EN/DE/FR/PL jeweils:
+EN/DE/FR/PL each:
 ```
 "transfers.targetMenu.item %@ %@ %@" = "%@ · %@ — %@";
 ```
 
-- [ ] **Step 3: Build + Behaviour-Check**
+- [ ] **Step 3: Build + behavior check**
 
 Run: `swift build`
-Expected: 0 Warnungen. Verhalten: das „An Session übertragen"-Submenü zeigt pro Ziel `S3 · prod-bucket — /uploads` bzw. `SSH · web — /var/www`.
+Expected: 0 warnings. Behavior: the "Transfer to Session" submenu shows per target `S3 · prod-bucket — /uploads` or `SSH · web — /var/www`.
 
 - [ ] **Step 4: Commit**
 
@@ -461,48 +461,48 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 5: Abschluss — gated Suite, Review, Push/Deploy
+## Task 5: Closeout — gated suite, review, push/deploy
 
-**Files:** keine (Verifikation + Milestone-Closeout).
+**Files:** none (verification + milestone closeout).
 
-- [ ] **Step 1: Rig hoch + volle gated Suite**
+- [ ] **Step 1: Rig up + full gated suite**
 
 Run:
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
 MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test
 ```
-Expected: gesamte Suite grün, inkl. der neuen `CrossBackendTransferIntegrationTests` (nicht geskippt) und der neuen Queue-Unit-Tests; SSH/S3/Keychain-Suiten laufen mit.
+Expected: whole suite green, including the new `CrossBackendTransferIntegrationTests` (not skipped) and the new queue unit tests; SSH/S3/keychain suites run along.
 
-- [ ] **Step 2: Ungated Suite + 0 Warnungen**
+- [ ] **Step 2: Ungated suite + 0 warnings**
 
 Run: `swift build && swift test`
-Expected: Build 0 Warnungen; ungated Suite grün.
+Expected: build 0 warnings; ungated suite green.
 
-- [ ] **Step 3: Runtime-Idle-CPU-Smoke**
+- [ ] **Step 3: Runtime idle-CPU smoke**
 
-Dev-Build starten und Idle-CPU prüfen (Lektion M11n: neue GUI-Elemente vor Auslieferung per Idle-CPU-Rauchtest, da Reviews/CI die GUI nicht starten). Die neuen Elemente sind statische Labels/Badges — es darf keinen Layout-Sturm/Dauer-CPU geben.
+Launch the dev build and check idle CPU (M11n lesson: check new GUI elements via idle-CPU smoke test before shipping, since reviews/CI never launch the GUI). The new elements are static labels/badges — there must be no layout storm/sustained CPU.
 
-- [ ] **Step 4: Whole-Milestone-Review**
+- [ ] **Step 4: Whole-milestone review**
 
-Opus-Whole-Branch-Review über den gesamten M16-Diff (`git merge-base develop HEAD`..HEAD — Basis = M15-HEAD `9e6179f`), Fokus auf die Global Constraints (keine Engine-/Signer-Änderung, kein `if kind==.s3` in der Kopierlogik, Item-Metadaten korrekt an allen drei Stellen, Resume-Guard nur verifiziert).
+Opus whole-branch review over the entire M16 diff (`git merge-base develop HEAD`..HEAD — base = M15 HEAD `9e6179f`), focus on the Global Constraints (no engine/signer change, no `if kind==.s3` in the copy logic, item metadata correct at all three sites, resume guard only verified).
 
-- [ ] **Step 5: Push + CI + Dev-Build (auf Maintainer-Anordnung)**
+- [ ] **Step 5: Push + CI + dev build (on maintainer instruction)**
 
-Nach grünem Review — auf Maintainer-Anordnung: Push nach `develop`, `gh run watch`, Dev-Build v1.6.0-dev nach `~/Desktop/macSCP-dev.app`. Kein Release/Tag.
+After a green review — on maintainer instruction: push to `develop`, `gh run watch`, dev build v1.6.0-dev to `~/Desktop/macSCP-dev.app`. No release/tag.
 
 ---
 
 ## Self-Review
 
 **1. Spec coverage:**
-- Spec §1 (gated S3↔SSH-Test + Härtung) → Task 2. ✅
-- Spec §2 (Queue-Item-Metadaten `destinationSupportsResume` + `crossBackendTarget`, 4 Unit-Fälle inkl. Retry) → Task 1 (Steps 1–6). ✅ (Refinement: nur `Item`, kein `Job` — begründet, Retry-Persistenz strukturell/getestet.)
-- Spec §3 (Transfer-Zeile Badge + passive ⚠) → Task 3. ✅
-- Spec §4 (Ziel-Submenü Backend-Badge + Pfad) → Task 4. ✅
-- Spec §Tests (Core-Unit + gated + Idle-CPU) → Task 1/2 + Task 5. ✅
-- Spec §Sicherheit/Invarianten → Global Constraints + Task-5-Review. ✅
+- Spec §1 (gated S3↔SSH test + hardening) → Task 2. ✅
+- Spec §2 (queue item metadata `destinationSupportsResume` + `crossBackendTarget`, 4 unit cases incl. retry) → Task 1 (Steps 1–6). ✅ (Refinement: only `Item`, no `Job` — justified, retry persistence structural/tested.)
+- Spec §3 (transfer row badge + passive ⚠) → Task 3. ✅
+- Spec §4 (destination submenu backend badge + path) → Task 4. ✅
+- Spec §Tests (core unit + gated + idle-CPU) → Task 1/2 + Task 5. ✅
+- Spec §Security/invariants → Global Constraints + Task 5 review. ✅
 
-**2. Placeholder scan:** Bewusst offene Stellen: Fake-Name (`StubFS`) und `setStatusForTesting`-Hook in Task 1, Rig-Connect-Helfer/`copyFile`-Signatur in Task 2, reale Menü-Render-Stelle + M12-Badge-Key-Namen in Task 3/4 — alle mit klarer Anweisung, den realen Namen aus der genannten Quelldatei zu übernehmen, kein erfundener Wert. Kein „TBD/TODO".
+**2. Placeholder scan:** deliberately open spots: fake name (`StubFS`) and `setStatusForTesting` hook in Task 1, rig connect helpers/`copyFile` signature in Task 2, actual menu render site + M12 badge key names in Task 3/4 — all with a clear instruction to take the real name from the named source file, no invented value. No "TBD/TODO".
 
-**3. Type consistency:** `CrossBackendTarget(name:kind:)`, `Item.destinationSupportsResume`/`.crossBackendTarget`, `enqueue`/`enqueueTree`/`expandTree`/`addTerminalItem` `crossBackendTarget`-Parameter, `CrossSessionTarget.kind`, `backendBadgeLabel(_:)` — über alle Tasks konsistent. `ConnectionKind` (.ssh/.s3) einheitlich.
+**3. Type consistency:** `CrossBackendTarget(name:kind:)`, `Item.destinationSupportsResume`/`.crossBackendTarget`, `enqueue`/`enqueueTree`/`expandTree`/`addTerminalItem` `crossBackendTarget` parameter, `CrossSessionTarget.kind`, `backendBadgeLabel(_:)` — consistent across all tasks. `ConnectionKind` (.ssh/.s3) uniform.

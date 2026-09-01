@@ -1,64 +1,65 @@
-# M13 — S3-Transfer/CRUD Design
+# M13 — S3 Transfer/CRUD Design
 
-**Status:** freigegeben (Brainstorming 2026-08-01)
-**Meilenstein:** M13
-**Sprache:** Design-Doc DE; Code/Kommentare EN; keine neuen UI-Strings erwartet
-(die Fehler-/Aktions-Texte existieren backend-agnostisch aus M5/M7).
+**Status:** approved (brainstorming 2026-08-01)
+**Milestone:** M13
+**Language:** design doc EN; code/comments EN; no new UI strings expected
+(the error/action texts already exist backend-agnostic from M5/M7).
 
-## Ziel
+## Goal
 
-Die in M12 gestubbten mutierenden `S3FileSystem`-Operationen echt
-implementieren, sodass ein S3-Backend im Browser vollwertig transferieren und
-CRUD kann: **Download (`readStream`), Upload (`write`), `delete`,
-`createDirectory`, `rename`, `deleteTree`**. `setPermissions` bleibt bewusst
-`protocolError` (S3 hat kein POSIX-Rechtemodell — die Capability
-`permissionModel == .none` blendet den Editor ohnehin aus).
+Actually implement the mutating `S3FileSystem` operations stubbed in M12, so
+that an S3 backend can transfer and do CRUD fully in the browser:
+**download (`readStream`), upload (`write`), `delete`,
+`createDirectory`, `rename`, `deleteTree`**. `setPermissions` deliberately
+stays `protocolError` (S3 has no POSIX permission model — the capability
+`permissionModel == .none` hides the editor anyway).
 
-Validiert gegen das echte MinIO-Rig (`http://127.0.0.1:19000`, Bucket
-`macscp-seed`) und über den vorhandenen `SigV4Signer`. **Keine neue
-Dependency** (Foundation `URLSession`/`XMLParser` + swift-crypto via Signer).
+Validated against the real MinIO rig (`http://127.0.0.1:19000`, bucket
+`macscp-seed`) and through the existing `SigV4Signer`. **No new
+dependency** (Foundation `URLSession`/`XMLParser` + swift-crypto via the
+signer).
 
-**Nicht in M13:** Cross-Backend-Transfer S3↔SSH (die Engine ist
-backend-agnostisch — nach M13 läuft das prinzipiell „geschenkt", die
-*explizite* gated Verifikation + Doppel-Drossel-Härtung ist **M14**);
-Presigned-URLs (M14); echtes Upload-Resume (S3 kann es strukturell nicht,
-siehe §6).
+**Not in M13:** cross-backend transfer S3↔SSH (the engine is
+backend-agnostic — after M13 it in principle runs "for free", the
+*explicit* gated verification + double-throttle hardening is **M14**);
+presigned URLs (M14); real upload resume (S3 structurally cannot do it,
+see §6).
 
-## Ausgangslage (Ist)
+## Starting point (as-is)
 
-`S3FileSystem` (M12/T5) hat reale, signierte `connect`/`list`/`stat`
-(ListObjectsV2); alle mutierenden Methoden werfen
+`S3FileSystem` (M12/T5) has real, signed `connect`/`list`/`stat`
+(ListObjectsV2); all mutating methods throw
 `RemoteFSError.protocolError`. `SigV4Signer.authorizationHeader(method:host:
-path:query:headers:payloadHash:date:)` trägt bereits beliebige Methoden +
-Payload-Hash (die statische `canonicalQueryString` ist `internal`, single
-source). `S3HTTPTransport.send(_:) -> (Data, HTTPURLResponse)` liefert nur
-**gepuffert**. `TransferEngine.copyFile(from:…:resume:…)` treibt
+path:query:headers:payloadHash:date:)` already carries arbitrary methods +
+payload hash (the static `canonicalQueryString` is `internal`, single
+source). `S3HTTPTransport.send(_:) -> (Data, HTTPURLResponse)` only
+delivers **buffered**. `TransferEngine.copyFile(from:…:resume:…)` drives
 `source.stat().size` → `source.readStream(fromOffset:)` → `destination.write(
-mode:contents:)`; `resume` ist ein **opt-in-Flag** des Aufrufers.
+mode:contents:)`; `resume` is an **opt-in flag** of the caller.
 
-## S3-API-Mapping
+## S3 API mapping
 
-| `RemoteFileSystem` | S3-Operation |
+| `RemoteFileSystem` | S3 operation |
 |---|---|
-| `readStream(path:fromOffset:)` | `GET {key}` mit `Range: bytes={offset}-`, gestreamt; Offset ≥ EOF → leerer Stream (kein Fehler) |
-| `write(overwrite)` | Hybrid: ≤ Schwelle → einzelner `PUT {key}`; sonst Multipart |
-| `write(append)` | für S3-Ziel strukturell unmöglich → durch Engine-Sperre nie ausgelöst (§6) |
-| `delete(path:)` | `DELETE {key}` (einzelnes Objekt; Datei-Kontrakt) |
-| `createDirectory(at:)` | `PUT {key}/` mit 0-Byte-Body (Marker-Objekt), idempotent |
-| `rename(from:to:)` (Datei) | `PUT {toKey}` mit `x-amz-copy-source: /{bucket}/{fromKey}` (URL-enc.) + `DELETE {fromKey}` |
-| `rename(from:to:)` (Ordner) | copy+delete für **jedes** Objekt unter dem Prefix (inkl. Marker); nicht atomar, O(N) |
-| `deleteTree(at:)` | rekursiv listen (kein Delimiter) → `POST {bucket}?delete` (DeleteObjects) in ≤1000er-Batches; Marker inklusive |
-| `setPermissions` | weiter `protocolError` (kein POSIX) |
-| `homeDirectoryPath` | `"/"` (unverändert) |
+| `readStream(path:fromOffset:)` | `GET {key}` with `Range: bytes={offset}-`, streamed; offset ≥ EOF → empty stream (no error) |
+| `write(overwrite)` | hybrid: ≤ threshold → single `PUT {key}`; otherwise multipart |
+| `write(append)` | structurally impossible for an S3 target → never triggered by the engine lock (§6) |
+| `delete(path:)` | `DELETE {key}` (single object; file contract) |
+| `createDirectory(at:)` | `PUT {key}/` with 0-byte body (marker object), idempotent |
+| `rename(from:to:)` (file) | `PUT {toKey}` with `x-amz-copy-source: /{bucket}/{fromKey}` (URL-encoded) + `DELETE {fromKey}` |
+| `rename(from:to:)` (folder) | copy+delete for **every** object under the prefix (including the marker); not atomic, O(N) |
+| `deleteTree(at:)` | list recursively (no delimiter) → `POST {bucket}?delete` (DeleteObjects) in batches of ≤1000; marker included |
+| `setPermissions` | still `protocolError` (no POSIX) |
+| `homeDirectoryPath` | `"/"` (unchanged) |
 
-Key-Ableitung nutzt die vorhandene `S3FileSystem.s3Prefix(forPath:)`-Logik
-(kein führender Slash; Objekt-Key ohne, „Verzeichnis"-Key mit `/`-Suffix).
+Key derivation uses the existing `S3FileSystem.s3Prefix(forPath:)` logic
+(no leading slash; object key without, "directory" key with `/` suffix).
 
-## Architektur / Komponenten
+## Architecture / components
 
-### 1. Transport-Seam (`S3HTTPTransport`)
+### 1. Transport seam (`S3HTTPTransport`)
 
-Wächst um **genau eine** Methode für gestreamte Downloads:
+Grows by **exactly one** method for streamed downloads:
 
 ```swift
 public protocol S3HTTPTransport: Sendable {
@@ -68,169 +69,173 @@ public protocol S3HTTPTransport: Sendable {
 }
 ```
 
-- `URLSessionS3Transport.sendStreaming` nutzt `URLSession.bytes(for:)`,
-  liest die `AsyncBytes` und emittiert `TransferChunk.size`-große `Data`-Stücke
-  als `AsyncThrowingStream`. Nicht-2xx wird VOR dem Streamen als
-  `RemoteFSError` gemappt (403/404/sonst), damit Fehler nicht erst im
-  Stream-Consumer auftauchen.
-- **Uploads brauchen keinen neuen Seam**: der `URLRequest` trägt `httpBody`
-  (die gepufferte kleine Datei bzw. der gepufferte Multipart-Teil), das
-  vorhandene `send` genügt (Antworten sind klein: ETag/XML).
-- `FakeS3Transport` (Tests) implementiert beide Wege — `sendStreaming` liefert
-  einen kanonischen Byte-Stream aus kanned `Data`.
+- `URLSessionS3Transport.sendStreaming` uses `URLSession.bytes(for:)`,
+  reads the `AsyncBytes`, and emits `TransferChunk.size`-sized `Data`
+  chunks as an `AsyncThrowingStream`. Non-2xx is mapped to a
+  `RemoteFSError` BEFORE streaming begins (403/404/otherwise), so errors
+  do not first surface in the stream consumer.
+- **Uploads need no new seam**: the `URLRequest` carries `httpBody`
+  (the buffered small file, or the buffered multipart part), the
+  existing `send` suffices (responses are small: ETag/XML).
+- `FakeS3Transport` (tests) implements both paths — `sendStreaming` returns
+  a canonical byte stream from canned `Data`.
 
-### 2. Upload (`S3Uploader`, neue Datei `Sources/macSCPCore/S3/S3Uploader.swift`)
+### 2. Upload (`S3Uploader`, new file `Sources/macSCPCore/S3/S3Uploader.swift`)
 
-Ein fokussierter Uploader, den `S3FileSystem.write` aufruft. Kapselt die
-Hybrid-Entscheidung und den Multipart-Lebenszyklus.
+A focused uploader that `S3FileSystem.write` calls. Encapsulates the
+hybrid decision and the multipart lifecycle.
 
-- **Schwelle: 8 MiB** (`partSize`/`singlePutThreshold`, Konstante). Puffert
-  aus dem Chunk-Stream bis zur Schwelle:
-  - Stream endet vor der Schwelle → **einzelner `PUT {key}`** mit
-    `x-amz-content-sha256 = hex(sha256(body))` (der Body liegt vollständig
-    vor, also echte Signatur; `Content-Length` gesetzt).
-  - Schwelle erreicht → **Multipart**:
-    1. `POST {key}?uploads` → `UploadId` aus dem XML (`InitiateMultipartUpload`).
-    2. je Teil `PUT {key}?partNumber={n}&uploadId={id}` mit dem gepufferten
-       Teil (≥5 MiB außer dem letzten), `x-amz-content-sha256: UNSIGNED-PAYLOAD`;
-       `ETag` aus dem Response-Header sammeln (Teilnummer → ETag).
-    3. `POST {key}?uploadId={id}` mit `CompleteMultipartUpload`-XML (sortierte
+- **Threshold: 8 MiB** (`partSize`/`singlePutThreshold`, a constant). Buffers
+  from the chunk stream up to the threshold:
+  - Stream ends before the threshold → **single `PUT {key}`** with
+    `x-amz-content-sha256 = hex(sha256(body))` (the body is fully
+    present, so a real signature; `Content-Length` set).
+  - Threshold reached → **multipart**:
+    1. `POST {key}?uploads` → `UploadId` from the XML (`InitiateMultipartUpload`).
+    2. per part `PUT {key}?partNumber={n}&uploadId={id}` with the buffered
+       part (≥5 MiB except the last), `x-amz-content-sha256: UNSIGNED-PAYLOAD`;
+       collect `ETag` from the response header (part number → ETag).
+    3. `POST {key}?uploadId={id}` with `CompleteMultipartUpload` XML (sorted
        `<Part><PartNumber><ETag>`).
-- **Abbruch/Fehler**: jeder Fehler nach `Initiate` (inkl.
-  `CancellationError`) löst **immer** `DELETE {key}?uploadId={id}`
-  (`AbortMultipartUpload`) aus, bevor der Fehler weitergereicht wird — kein
-  verwaister Multipart-Upload, der sonst Speicher kostet/kostenpflichtig ist.
-- `Task.checkCancellation()` vor jedem Teil.
-- 5 MiB ist das S3-Minimum je Teil (außer letztem); die 8-MiB-Schwelle liegt
-  bewusst darüber, damit ein Multipart immer ≥2 valide Teile bilden kann.
+- **Abort/error**: every error after `Initiate` (including
+  `CancellationError`) **always** triggers `DELETE {key}?uploadId={id}`
+  (`AbortMultipartUpload`) before the error is propagated — no orphaned
+  multipart upload, which would otherwise cost storage/money.
+- `Task.checkCancellation()` before each part.
+- 5 MiB is the S3 minimum per part (except the last); the 8 MiB threshold
+  sits deliberately above that, so a multipart can always form ≥2 valid
+  parts.
 
 ### 3. Download (`S3FileSystem.readStream`)
 
-Baut den signierten Range-GET (`Range: bytes={offset}-`), ruft
-`transport.sendStreaming`, reicht dessen Body-Stream durch (bereits in
-`TransferChunk.size` geschnitten). Offset ≥ Objektgröße → S3 antwortet 416
-(oder leer); wird auf einen **leeren** Stream abgebildet (kein Fehler — der
-Protocol-Kontrakt verlangt „Offset at or beyond EOF yields an empty stream").
-Signatur mit `payloadHash = emptyPayloadHash` (GET hat keinen Body).
+Builds the signed range GET (`Range: bytes={offset}-`), calls
+`transport.sendStreaming`, passes its body stream through (already cut
+into `TransferChunk.size` pieces). Offset ≥ object size → S3 responds 416
+(or empty); mapped to an **empty** stream (no error — the protocol
+contract requires "offset at or beyond EOF yields an empty stream").
+Signature with `payloadHash = emptyPayloadHash` (GET has no body).
 
-### 4. CRUD-Operationen (`S3FileSystem`)
+### 4. CRUD operations (`S3FileSystem`)
 
-- `delete`: signierter `DELETE {key}`; 204/200 → ok, 404 → `.notFound`.
-- `createDirectory`: signierter `PUT {key}/` mit leerem Body
-  (`payloadHash = emptyPayloadHash`), idempotent (erneutes Anlegen ist ok).
-- `rename` (Datei): `PUT {toKey}` mit `x-amz-copy-source`-Header (Wert
-  `/{bucket}/{fromKey}`, RFC-3986-kodiert), leerer Body; danach
-  `DELETE {fromKey}`. **S3-PUT-Copy überschreibt still** — daher prüft `rename`
-  die Ziel-Existenz **aktiv vorab** (`stat {toKey}`; gefunden → `RemoteFSError`
-  statt still überschreiben, Protocol-Kontrakt). Da `stat` auch die Art kennt,
-  entscheidet `S3FileSystem` Datei- vs. Ordner-Pfad.
-- `rename` (Ordner): rekursiv alle Keys unter `fromPrefix` listen, für jeden
-  `copy {from} → {to}` (Prefix-Ersetzung) + `delete {from}`; inkl. des
-  `…/`-Markers. Nicht atomar (dokumentiert); ein Teil-Fehler lässt bereits
-  kopierte Objekte am Ziel stehen (kein Rollback — v1, dokumentiert).
-- `deleteTree`: rekursiv (ohne Delimiter) alle Keys unter dem Prefix listen,
-  in ≤1000er-Batches per `POST {bucket}?delete` (DeleteObjects-XML mit
-  `Content-MD5`, das die S3-API hier verlangt) löschen; Marker inklusive.
-  Kooperativ abbrechbar pro Batch; ein Abbruch lässt einen teilweise
-  gelöschten Baum stehen (wie Citadel/Local, dokumentiert).
+- `delete`: signed `DELETE {key}`; 204/200 → ok, 404 → `.notFound`.
+- `createDirectory`: signed `PUT {key}/` with empty body
+  (`payloadHash = emptyPayloadHash`), idempotent (creating it again is ok).
+- `rename` (file): `PUT {toKey}` with `x-amz-copy-source` header (value
+  `/{bucket}/{fromKey}`, RFC 3986 encoded), empty body; then
+  `DELETE {fromKey}`. **S3 PUT-copy silently overwrites** — so `rename`
+  actively checks the target's existence **beforehand** (`stat {toKey}`;
+  found → `RemoteFSError` instead of silently overwriting, protocol
+  contract). Since `stat` also knows the kind, `S3FileSystem` decides the
+  file vs. folder path.
+- `rename` (folder): recursively list all keys under `fromPrefix`, for each
+  `copy {from} → {to}` (prefix substitution) + `delete {from}`; including the
+  `…/` marker. Not atomic (documented); a partial failure leaves already
+  copied objects standing at the target (no rollback — v1, documented).
+- `deleteTree`: recursively (without delimiter) list all keys under the
+  prefix, delete in batches of ≤1000 via `POST {bucket}?delete`
+  (DeleteObjects XML with `Content-MD5`, which the S3 API requires here);
+  marker included. Cooperatively cancellable per batch; a cancellation
+  leaves a partially deleted tree standing (like Citadel/Local, documented).
 
-### 5. Signatur mit Body
+### 5. Signing with a body
 
-`buildSignedRequest(method:key:query:headers:body:payloadHash:)`-Helfer in
-`S3FileSystem` (Verallgemeinerung des vorhandenen `buildListRequest`): baut die
-URL (path- vs. virtual-host), signiert mit dem gegebenen `payloadHash`, setzt
-`httpBody` wenn vorhanden. `Content-Length` folgt aus `httpBody`.
-Wire-Query weiterhin über `SigV4Signer.canonicalQueryString` (I-1-Fix aus M12
-bleibt die single source der Query-Kodierung).
+`buildSignedRequest(method:key:query:headers:body:payloadHash:)` helper in
+`S3FileSystem` (a generalization of the existing `buildListRequest`): builds
+the URL (path- vs. virtual-host style), signs with the given `payloadHash`,
+sets `httpBody` when present. `Content-Length` follows from `httpBody`.
+Wire query still goes through `SigV4Signer.canonicalQueryString` (the I-1
+fix from M12 remains the single source of query encoding).
 
-### 6. Resume-Sperre (Core-Härtung — sicherheitskritisch für Korrektheit)
+### 6. Resume lock (Core hardening — security-critical for correctness)
 
-S3 kann keinen `.append`. Die Engine darf gegen ein S3-Ziel **niemals** einen
-Tail anhängen (sonst würde ein bestehendes, größen-verschiedenes Objekt am
-selben Key korrumpiert).
+S3 cannot do `.append`. The engine must **never** append a tail against an
+S3 target (otherwise an existing object of a different size at the same
+key would be corrupted).
 
-- Neu am Protokoll: `var supportsAppendResume: Bool { get }` mit
-  Default-Extension `true`. `LocalFileSystem`/`CitadelFileSystem` erben `true`;
-  `S3FileSystem` gibt `false`.
-- `TransferEngine.copyFile` behandelt intern `let resume = resume &&
-  destination.supportsAppendResume`. Damit ist für ein S3-Ziel `resumeOffset`
-  immer 0 und der Write-Mode immer `.overwrite` — egal was der Aufrufer
-  übergibt (Belt-and-suspenders; kein Aufrufer kann einen S3-Upload
-  korrumpieren).
-- `TransferQueueViewModel` liest `supportsAppendResume` des Ziels, um das
-  „Fortsetzen"-Angebot bei einem S3-Ziel gar nicht erst anzubieten
-  (UI-Konsistenz; die Engine-Sperre ist der eigentliche Schutz).
+- New on the protocol: `var supportsAppendResume: Bool { get }` with a
+  default extension of `true`. `LocalFileSystem`/`CitadelFileSystem` inherit
+  `true`; `S3FileSystem` returns `false`.
+- `TransferEngine.copyFile` internally treats `let resume = resume &&
+  destination.supportsAppendResume`. This means that for an S3 target
+  `resumeOffset` is always 0 and the write mode is always `.overwrite` —
+  no matter what the caller passes (belt-and-suspenders; no caller can
+  corrupt an S3 upload).
+- `TransferQueueViewModel` reads the target's `supportsAppendResume` so as
+  to not offer a "Resume" option at all for an S3 target in the first
+  place (UI consistency; the engine lock is the actual protection).
 
-## Fehlerbehandlung
+## Error handling
 
-- HTTP-Mapping konsistent mit M12: 403 → `.authenticationFailed`,
-  404 → `.notFound(path:)`, Netzwerk/Transport → `.connectionFailed(reason:)`,
-  sonstige non-2xx → `.protocolError(reason: "… HTTP {code}")`.
-- Multipart-Abort räumt bei jedem Fehler auf (§2).
-- `Task.checkCancellation()` pro Chunk (Upload-Teil, Download bereits über den
-  Engine-Stream) und pro DeleteObjects-Batch.
-- **Secret-Hygiene**: `secretAccessKey`/`sessionToken` fließen nur in den
-  Signer; nie geloggt/interpoliert. Keine Body-Inhalte in Logs.
+- HTTP mapping consistent with M12: 403 → `.authenticationFailed`,
+  404 → `.notFound(path:)`, network/transport → `.connectionFailed(reason:)`,
+  other non-2xx → `.protocolError(reason: "… HTTP {code}")`.
+- Multipart abort cleans up on every error (§2).
+- `Task.checkCancellation()` per chunk (upload part, download already via
+  the engine stream) and per DeleteObjects batch.
+- **Secret hygiene**: `secretAccessKey`/`sessionToken` only flow into the
+  signer; never logged/interpolated. No body contents in logs.
 
 ## Tests
 
-- **Core-Unit gegen `FakeS3Transport`** (kein Netz), je Operation:
-  - Upload einzelner-`PUT`-Pfad (kleiner Stream → ein PUT, korrekter
-    `payloadHash`, Key/Body stimmen).
-  - Upload Multipart-Pfad (Stream > Schwelle → Initiate/≥2× UploadPart/Complete;
-    Teilnummern + gesammelte ETags korrekt; Part-Reihenfolge im Complete-XML).
-  - Multipart-**Abort** bei Teil-Fehler (Fehler injiziert → Abort-Request geht
-    raus, Fehler wird propagiert).
-  - Download Range-GET (Offset-Header korrekt; Bytes werden gechunkt geliefert;
-    Offset ≥ EOF → leerer Stream).
-  - `createDirectory` (Marker-Key endet auf `/`, 0-Byte).
-  - `delete` (DELETE-Key; 404 → notFound).
-  - `rename` Datei (copy-source-Header + delete), Ordner (re-key aller Keys).
-  - `deleteTree` (rekursives Listen ohne Delimiter → DeleteObjects-Batch,
-    inkl. Marker; >1000 → mehrere Batches).
-  - **Resume-Sperre**: `TransferEngine.copyFile(resume: true)` mit einem
-    S3-Ziel-Fake, dessen `supportsAppendResume == false`, schreibt immer
-    `.overwrite` ab Offset 0 (nie `.append`) — auch wenn am Ziel ein kleineres
-    Objekt „liegt".
-- **Gated MinIO-Integration** (`MACSCP_ITEST=1`, echtes Rig aus dem
-  Haupt-Checkout): Upload→Download-Roundtrip (Inhalt bit-gleich), Datei > 8 MiB
-  (echter Multipart-Pfad), Ordner anlegen + wieder sehen, Datei umbenennen,
-  Ordner umbenennen, Baum löschen. Seed-Bucket bleibt reproduzierbar; der Test
-  räumt seine eigenen Keys auf.
+- **Core unit against `FakeS3Transport`** (no network), per operation:
+  - Upload single-`PUT` path (small stream → one PUT, correct
+    `payloadHash`, key/body match).
+  - Upload multipart path (stream > threshold → Initiate/≥2× UploadPart/Complete;
+    part numbers + collected ETags correct; part order in the Complete XML).
+  - Multipart **abort** on a part error (error injected → abort request goes
+    out, error is propagated).
+  - Download range GET (offset header correct; bytes delivered chunked;
+    offset ≥ EOF → empty stream).
+  - `createDirectory` (marker key ends in `/`, 0 bytes).
+  - `delete` (DELETE key; 404 → notFound).
+  - `rename` file (copy-source header + delete), folder (re-key all keys).
+  - `deleteTree` (recursive listing without delimiter → DeleteObjects batch,
+    marker included; >1000 → multiple batches).
+  - **Resume lock**: `TransferEngine.copyFile(resume: true)` with an
+    S3-target fake whose `supportsAppendResume == false` always writes
+    `.overwrite` from offset 0 (never `.append`) — even if a smaller
+    object already "sits" at the target.
+- **Gated MinIO integration** (`MACSCP_ITEST=1`, real rig from the
+  main checkout): upload→download roundtrip (bit-identical content), file > 8 MiB
+  (real multipart path), create a folder + see it again, rename a file,
+  rename a folder, delete a tree. Seed bucket stays reproducible; the test
+  cleans up its own keys.
 
-## Dateien
+## Files
 
-- Neu: `Sources/macSCPCore/S3/S3Uploader.swift` (Hybrid-PUT/Multipart-Logik).
-- Ändern: `Sources/macSCPCore/S3/S3FileSystem.swift` (readStream/write/delete/
-  createDirectory/rename/deleteTree real; `buildSignedRequest`-Helfer;
+- New: `Sources/macSCPCore/S3/S3Uploader.swift` (hybrid PUT/multipart logic).
+- Modify: `Sources/macSCPCore/S3/S3FileSystem.swift` (readStream/write/delete/
+  createDirectory/rename/deleteTree real; `buildSignedRequest` helper;
   `supportsAppendResume = false`).
-- Ändern: `Sources/macSCPCore/S3/S3HTTPTransport.swift` (`sendStreaming` +
-  Impl).
-- Ändern: `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift`
-  (`supportsAppendResume`-Requirement + Default-Extension).
-- Ändern: `Sources/macSCPCore/RemoteFS/TransferEngine.swift` (Resume-Guard).
-- Ändern: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift`
-  (Resume-Angebot gated auf `supportsAppendResume`).
-- Ggf. neu: `Sources/macSCPCore/S3/S3MultipartXML.swift` (Parser für
-  `InitiateMultipartUpload`/Builder für `CompleteMultipartUpload`/
-  `Delete`-XML) — oder inline in `S3Uploader`/`S3FileSystem`, je nach Größe
-  (der Plan entscheidet die Aufteilung).
+- Modify: `Sources/macSCPCore/S3/S3HTTPTransport.swift` (`sendStreaming` +
+  impl).
+- Modify: `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift`
+  (`supportsAppendResume` requirement + default extension).
+- Modify: `Sources/macSCPCore/RemoteFS/TransferEngine.swift` (resume guard).
+- Modify: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift`
+  (resume offer gated on `supportsAppendResume`).
+- Possibly new: `Sources/macSCPCore/S3/S3MultipartXML.swift` (parser for
+  `InitiateMultipartUpload`/builder for `CompleteMultipartUpload`/
+  `Delete` XML) — or inline in `S3Uploader`/`S3FileSystem`, depending on size
+  (the plan decides the split).
 - Tests: `Tests/macSCPCoreTests/S3UploaderTests.swift`,
-  Erweiterungen in `S3FileSystemTests.swift`, neue Fälle in
-  `TransferEngineTests.swift` (Resume-Sperre),
-  `S3FileSystemIntegrationTests.swift` (gated MinIO CRUD/Transfer).
+  extensions in `S3FileSystemTests.swift`, new cases in
+  `TransferEngineTests.swift` (resume lock),
+  `S3FileSystemIntegrationTests.swift` (gated MinIO CRUD/transfer).
 
 ## Global Constraints
 
-- Swift 6, alle Targets `.swiftLanguageMode(.v5)`, min. macOS 15.
-- Code/Kommentare **Englisch**; keine neuen UI-Strings erwartet (Fehler-/
-  Aktions-Texte sind backend-agnostisch vorhanden). Falls doch ein neuer
-  nutzer-sichtbarer String nötig wird, in alle vier Kataloge EN/DE/FR/PL
-  (typografische Anführungszeichen, kein ASCII-`"` in Nicht-EN).
-- **Keine neue Dependency** (Foundation + swift-crypto via `SigV4Signer`).
-- **Secret nur im Signer**, nie in Logs/JSON; keine Klartext-Bodys in Logs.
-- **Kein atomares Rename, kein echtes Resume** — dokumentierte S3-Grenzen.
-- Multipart wird bei jedem Fehlerpfad abgebrochen (kein verwaister Upload).
-- TDD red→green; neue Logik mit Tests; gated MinIO aus dem Haupt-Checkout,
-  Seed reproduzierbar.
-- **Kein Release.** Cross-Backend/Presigned = M14.
+- Swift 6, all targets `.swiftLanguageMode(.v5)`, min. macOS 15.
+- Code/comments **English**; no new UI strings expected (the error/
+  action texts already exist backend-agnostic). If a new
+  user-visible string does become necessary, it goes into all four
+  catalogs EN/DE/FR/PL (typographic quotation marks, no ASCII `"` in
+  non-EN).
+- **No new dependency** (Foundation + swift-crypto via `SigV4Signer`).
+- **Secret only in the signer**, never in logs/JSON; no plaintext bodies in
+  logs.
+- **No atomic rename, no real resume** — documented S3 limitations.
+- Multipart is aborted on every error path (no orphaned upload).
+- TDD red→green; new logic with tests; gated MinIO from the main checkout,
+  seed reproducible.
+- **No release.** Cross-backend/presigned = M14.

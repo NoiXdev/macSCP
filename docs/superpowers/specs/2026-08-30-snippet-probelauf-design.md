@@ -1,141 +1,138 @@
-# Snippet-Probelauf und der Ausstieg pro Snippet — Entwurf
+# Snippet dry run and the per-snippet opt-out — design
 
-**Stand:** 2026-08-30. Umsetzung von
+**As of:** 2026-08-30. Implementation of
 `docs/superpowers/specs/2026-08-20-backlog-snippet-probelauf.md`.
 
 ---
 
-## Entscheidungen des Maintainers (2026-08-30)
+## Maintainer decisions (2026-08-30)
 
-1. **Beides**: der Probelauf *und* das Kennzeichen am einzelnen Snippet.
-2. **Zwei Zugänge**: der Weg beim Auslösen einer Ablehnung, **und** ein
-   „Testen"-Knopf im Editor.
+1. **Both**: the dry run *and* the flag on the individual snippet.
+2. **Two entry points**: the path when triggering a rejection, **and** a
+   "Test" button in the editor.
 
-Aus dem Zweck ergibt sich die dritte Antwort ohne Rückfrage: **gemerkte
-Werte werden angezeigt.** Der Probelauf zeigt, was tatsächlich gesendet
-würde; zeigte er etwas anderes als den eingesetzten Wert, wäre er in genau
-der Rolle unehrlich, für die er gebaut wird.
+The third answer follows from the purpose without needing to be asked:
+**remembered values are displayed.** The dry run shows what would actually
+be sent; if it showed something other than the substituted value, it would
+be dishonest in exactly the role it is built for.
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
 | | |
 |---|---|
 | `SnippetSendPlan` | `.send([UInt8])` / `.refusedMultilineInsert` |
-| Platzhalter-Ablehnung | zweiter, getrennter Mechanismus (`SnippetCommandSurvey`) |
-| `SnippetHighlighter` | vorhanden, von der Prüfung strukturell abgeschnitten |
-| `SnippetVariable.remembersLastValue` | vorhanden, mit `SnippetVariableMemoryStore` |
-| **`SnippetExportPayload`** | trägt **`[Snippet]`** — denselben Typ wie der Store |
+| Placeholder rejection | a second, separate mechanism (`SnippetCommandSurvey`) |
+| `SnippetHighlighter` | present, structurally cut off from the check |
+| `SnippetVariable.remembersLastValue` | present, with `SnippetVariableMemoryStore` |
+| **`SnippetExportPayload`** | carries **`[Snippet]`** — the same type as the store |
 
-**Die letzte Zeile ist der Befund, der diesen Entwurf bestimmt.** Bei
-Sitzungen sind `ExportedGroup` und `ExportedSession` eigene Typen; bei
-Snippets ist der ausgeführte Typ der gespeicherte. Ein neues Feld an
-`Snippet` reist damit **von selbst** durch Export und Import.
+**The last row is the finding that determines this design.** For sessions,
+`ExportedGroup` and `ExportedSession` are their own types; for snippets, the
+executed type is the stored one. A new field on `Snippet` therefore
+travels **on its own** through export and import.
 
-## Die Grenze, ohne die B das Gegenteil bewirkt
+## The boundary, without which B does the opposite
 
-Der Eintrag formuliert die Auflage als Regel:
+The entry phrases the requirement as a rule:
 
-> **Ein importiertes Snippet kommt immer mit eingeschalteter Prüfung an.**
+> **An imported snippet always arrives with checking switched on.**
 
-Als Aufräumregel im Import-Planer wäre das eine Zeile, die jemand beim
-nächsten Umbau vergisst — und ihr Vergessen wäre unsichtbar, weil ein
-Snippet mit abgeschalteter Prüfung genauso aussieht wie eines ohne.
+As a cleanup rule in the import planner, that would be one line that
+someone forgets on the next rework — and forgetting it would be invisible,
+because a snippet with checking switched off looks exactly like one
+without the field at all.
 
-**Deshalb bekommt der Export einen eigenen Typ**, nach dem Vorbild der
-Sitzungen: `ExportedSnippet` trägt die Felder, die geteilt gehören, und das
-Kennzeichen ist **keines davon**. Ein Import kann es dann nicht setzen —
-nicht weil ein Test es verbietet, sondern weil es die Datei nicht ausdrücken
-kann.
+**That is why the export gets its own type**, modeled on sessions:
+`ExportedSnippet` carries the fields that belong shared, and the flag is
+**not one of them**. An import then cannot set it — not because a test
+forbids it, but because the file cannot express it.
 
-Das ist dieselbe Fähigkeitsgrenze, die diese Woche den Wählvorgang und den
-unbegrenzten SFTP-Schluss geschlossen hat, und aus demselben Grund: eine
-Regel, die der Compiler trägt, veraltet nicht still.
+That is the same capability boundary that closed the dial process and the
+unbounded SFTP close this week, and for the same reason: a rule the
+compiler carries does not go stale in silence.
 
-## Der Probelauf
+## The dry run
 
-### Was er zeigt
+### What it shows
 
-- Den **aufgelösten Befehl**, wie er auf die Leitung geht — nicht die
-  Vorlage.
-- Das Ergebnis des **Sendeplans**: einzeilig, geklammert eingefügt,
-  zeilenweise ausgeführt, oder abgelehnt. Bei einem mehrzeiligen Snippet ohne
-  Klammerungsmodus entscheidet das über etwas anderes als der Wortlaut.
-- **Syntaxfärbung** über `SnippetHighlighter`. Ein eingeschleustes `$(…)`
-  fällt gefärbt sofort auf.
-- Bei einer Ablehnung: **den Grund**, und darunter „trotzdem senden".
+- The **resolved command**, as it goes onto the wire — not the template.
+- The result of the **send plan**: single-line, inserted bracketed,
+  executed line by line, or rejected. For a multiline snippet without a
+  bracketing mode, this decides something different from the wording.
+- **Syntax highlighting** via `SnippetHighlighter`. An injected `$(…)`
+  stands out immediately, colored.
+- On a rejection: **the reason**, and below it "send anyway".
 
-### Was er ist
+### What it is
 
-Ein **prüfbarer Wert** in Core, der aus Snippet, Werten und Sendeplan die
-Anzeige beschreibt — nicht eine Ansicht, die selbst zusammensetzt. Beide
-Zugänge zeigen damit dasselbe, statt zweimal ähnlich.
+A **checkable value** in Core that describes the display from snippet,
+values and send plan — not a view that assembles it itself. Both entry
+points thereby show the same thing, instead of two similar ones.
 
-### Die Auflage, die er nicht verletzen darf
+### The requirement it must not violate
 
-Der eingesetzte Wert erscheint auf dem Bildschirm dessen, der ihn getippt
-hat — das ist in Ordnung. **Er darf von dort nicht ins Audit-Log, in einen
-Export oder in eine Fehlermeldung wandern.** Das Audit-Log führt die
-Vorlage, und dabei bleibt es.
+The substituted value appears on the screen of whoever typed it — that is
+fine. **It must not travel from there into the audit log, into an export,
+or into an error message.** The audit log carries the template, and that
+stays so.
 
-Das ist keine Stilfrage: es ist dieselbe Zusage, die dieses Projekt für
-Geheimnisse hält, angewandt auf einen Wert, der ein Geheimnis sein kann.
+This is not a style question: it is the same commitment this project holds
+for secrets, applied to a value that may be a secret.
 
-### Der Fall, den er sichtbar machen soll
+### The case it is meant to make visible
 
-Aus dem Eintrag, gemessen gegen `bash`: bei einer **einzeiligen** Zuweisung
-als Präfix expandiert die Shell `$P` **bevor** die Zuweisung greift.
+From the entry, measured against `bash`: for a **single-line** prefix
+assignment, the shell expands `$P` **before** the assignment takes effect.
 
 ```
 P=neu echo "$P"     →  alt
 ```
 
-Wer als Ausweg für ein abgelehntes `[ -f {{PATH}} ]` ein `P='…' [ -f "$P" ]`
-schreibt, bekommt still den alten oder gar keinen Wert. Der Probelauf zeigt
-den aufgelösten Text, und wer ihn liest, sieht es — heute merkt man es erst
-am falschen Ergebnis auf der Gegenseite.
+Anyone who, as a workaround for a rejected `[ -f {{PATH}} ]`, writes
+`P='…' [ -f "$P" ]` silently gets the old value or none at all. The dry
+run shows the resolved text, and whoever reads it sees it — today you only
+notice it from the wrong result on the other end.
 
-## Das Kennzeichen am Snippet
+## The flag on the snippet
 
-Ein Feld an `Snippet`, das die Positionsprüfung für **dieses** Snippet
-abschaltet. Es wirkt nur dort, wo jemand es bewusst gesetzt hat.
+A field on `Snippet` that turns off the placeholder position check for
+**this** snippet. It only takes effect where someone deliberately set it.
 
-- **Es reist nicht.** Siehe oben — `ExportedSnippet` kennt es nicht.
-- **Es ist sichtbar**, wo das Snippet bearbeitet wird, und benennt, was es
-  abschaltet. „Prüfung aus" ohne Gegenstand wäre ein Schalter, dessen Wirkung
-  man erst am Schaden lernt.
-- **Es schaltet die Platzhalter-Positionsprüfung ab, sonst nichts.** Der
-  Sendeplan und seine Ablehnung eines mehrzeiligen Einfügens bleiben
-  unberührt — das ist eine andere Frage und keine, die jemand pro Snippet
-  beantworten sollte.
+- **It does not travel.** See above — `ExportedSnippet` does not know it.
+- **It is visible** wherever the snippet is edited, and names what it
+  turns off. "Checking off" with no object would be a switch whose effect
+  you only learn from the damage.
+- **It turns off only the placeholder position check, nothing else.** The
+  send plan and its rejection of a multiline insert stay untouched — that
+  is a different question, and not one anyone should answer per snippet.
 
-## Der „Testen"-Knopf im Editor
+## The "Test" button in the editor
 
-Zeigt denselben Probelauf, ohne zu senden.
+Shows the same dry run, without sending.
 
-**Er braucht Werte für die Platzhalter**, und damit einen zweiten Ort, an dem
-Platzhalterwerte entstehen. Der Entwurf legt fest: er benutzt **dieselbe
-Abfrage** wie das Auslösen, mit denselben gemerkten Werten. Eine zweite
-Abfrageform wäre eine zweite Wahrheit darüber, was ein Wert ist.
+**It needs values for the placeholders**, and thus a second place where
+placeholder values arise. The design fixes it: it uses **the same prompt**
+as triggering does, with the same remembered values. A second prompt form
+would be a second truth about what a value is.
 
-**Nichts wird gesendet und nichts gemerkt**, was der Probelauf im Editor
-erfragt: eine Probe darf den nächsten echten Lauf nicht vorbelegen.
+**Nothing is sent and nothing is remembered** that the dry run in the
+editor asks for: a trial run must not preload the next real run.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: was die Anzeige beschreibt, dass beide
-Zugänge dieselbe beschreiben, dass das Kennzeichen nur die Positionsprüfung
-abschaltet, dass ein importiertes Snippet es nie trägt, und dass der
-eingesetzte Wert in keinem Protokoll und keiner Fehlermeldung auftaucht.
+Everything decidable is checkable: what the display describes, that both
+entry points describe the same thing, that the flag turns off only the
+position check, that an imported snippet never carries it, and that the
+substituted value appears in no log and no error message.
 
-**Nicht prüfbar** bleibt, ob die Färbung eine eingeschleuste Konstruktion für
-einen Menschen tatsächlich auffällig macht. Das ist der Zweck der Anzeige und
-der einzige Teil, den nur ein Blick beurteilt.
+**Not checkable** is whether the highlighting actually makes an injected
+construction stand out to a human. That is the purpose of the display, and
+the only part only a look can judge.
 
-## Was ausdrücklich nicht dazugehört
+## What is expressly not included
 
-- **Kein globaler Schalter** in den Einstellungen.
-- **Keine Änderung an `SnippetCommandSurvey`** selbst — die Erlaubnisliste
-  bleibt, wie acht Prüfrunden sie hinterlassen haben.
-- **Keine Änderung an `SnippetSendPlan`s** Ablehnung eines mehrzeiligen
-  Einfügens.
-- **Kein Merken von Werten aus dem Editor-Probelauf.**
+- **No global switch** in settings.
+- **No change to `SnippetCommandSurvey`** itself — the allowlist stays as
+  eight review rounds left it.
+- **No change to `SnippetSendPlan`'s** rejection of a multiline insert.
+- **No remembering of values from the editor dry run.**

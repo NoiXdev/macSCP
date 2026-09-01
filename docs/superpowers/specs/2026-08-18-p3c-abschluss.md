@@ -1,6 +1,6 @@
-# P3c — Abschluss: Terminal aus dem Host-Kontextmenü
+# P3c — Wrap-up: terminal from the host context menu
 
-Abgeschlossen 2026-08-18. Drei inhaltliche Commits plus zwei Ledger-Docs:
+Completed 2026-08-18. Three content commits plus two ledger docs:
 
 ```
 267930c refactor(core): resolve a connection config without dialing it
@@ -10,129 +10,128 @@ af2de15 feat(app): open a terminal straight from a host's context menu
 547dcef docs(app): record the retained password-hint config as P3g
 ```
 
-## Wie die Auflösung geteilt wird
+## How the resolution is shared
 
 `ConnectionViewModel.resolveConfigWithoutDialing() -> ConfigResolution`
-(`Sources/macSCPCore/Presentation/ConnectionViewModel.swift`) enthält alles,
-was `connect()` vor dem Dial tut, und nichts sonst: die Schema-Prüfung
-(`descriptor.firstViolation(requireSecrets: true)`), `validateJump`,
-`descriptor.makeConfig` und `attachingJump(to:)`. `connect()` behält nur den
-Re-Entrancy-Guard, die Save-Name-Prüfung, `state = .connecting`, den Dial samt
-Host-Key-Decider und die `lastConnectedConfig`-Aufzeichnung; es wiederholt
-keinen Auflösungsschritt.
+(`Sources/macSCPCore/Presentation/ConnectionViewModel.swift`) contains
+everything `connect()` does before the dial, and nothing else: the schema
+check (`descriptor.firstViolation(requireSecrets: true)`), `validateJump`,
+`descriptor.makeConfig` and `attachingJump(to:)`. `connect()` keeps only the
+re-entrancy guard, the save-name check, `state = .connecting`, the dial
+including the host-key decider, and the `lastConnectedConfig` recording; it
+repeats no resolution step.
 
-`ConfigResolution` ist ein eigener Rückgabetyp (`.resolved(ConnectionConfig)`
-/ `.failed(State)`), kein optionales `ConnectionConfig?`: der Fehlerfall
-trägt den exakten `State`, den `connect()` sonst zuweisen würde, damit die
-Fehlerabbildung (Meldung + Feld) an einer Stelle bleibt. Die Funktion
-**veröffentlicht nichts** — ein Fehlschlag wird zurückgegeben, nicht in
-`state` geschrieben, sonst würde eine extern ausgelöste Auflösung das
-`.connecting` überschreiben, das ein laufendes `connect()` besitzt — und
-**behält nichts**: das aufgelöste Klartext-Secret gehört dem Aufrufer für die
-Dauer seines Aufrufs, `lastConnectedConfig` wird weiterhin ausschließlich von
-einem erfolgreichen `connect()` geschrieben.
+`ConfigResolution` is its own return type (`.resolved(ConnectionConfig)` /
+`.failed(State)`), not an optional `ConnectionConfig?`: the failure case
+carries the exact `State` that `connect()` would otherwise assign, so the
+error mapping (message + field) stays in one place. The function
+**publishes nothing** — a failure is returned, not written to `state`,
+otherwise an externally triggered resolution would overwrite the
+`.connecting` that a running `connect()` owns — and **retains nothing**:
+the resolved plaintext secret belongs to the caller for the duration of
+its own call, `lastConnectedConfig` continues to be written exclusively by
+a successful `connect()`.
 
-Der **Äquivalenz-Wächter** (`Tests/macSCPCoreTests/ConnectionConfigResolutionTests.swift`,
-8 Tests) füllt zwei identisch konfigurierte View-Models — eines wählt, eines
-löst nur auf — und vergleicht, was das eine gewählt hat, mit dem, was das
-andere aufgelöst hat. Er geht rot, wenn `connect()` wieder selbst irgendetwas
-auflöst. Er hält aber **nicht** das Verhalten der geteilten Funktion selbst
-fest: `connect()` delegiert an sie, also bewegt eine Änderung dort beide
-Seiten des Vergleichs gleichzeitig mit — dafür stehen die fallweisen
-Zusicherungen (Hop-Host/-Port, jede Fehlermeldung samt Feld) daneben, nicht
-der Wächter.
+The **equivalence guard**
+(`Tests/macSCPCoreTests/ConnectionConfigResolutionTests.swift`, 8 tests)
+fills two identically configured view models — one dials, one only
+resolves — and compares what one dialed against what the other resolved.
+It goes red if `connect()` starts resolving anything itself again. It does
+**not**, however, pin the behavior of the shared function itself:
+`connect()` delegates to it, so a change there moves both sides of the
+comparison at once — that is what the case-by-case assertions (hop
+host/port, every error message including its field) stand next to it for,
+not the guard.
 
-## Warum die Save-Name-Regel nicht in der geteilten Funktion steht
+## Why the save-name rule is not in the shared function
 
-Ein Formular trägt legitim `shouldSaveSession == true` mit leerem
-Speichern-Namen, während der Nutzer eine Ad-hoc-„Speichern & Verbinden" noch
-tippt — das ist kein Fehlerzustand der Konfiguration, sondern eine
-Buchhaltungsregel des Formulars. Der Kontextmenü-Aufrufer speichert nichts
-und dürfte für eine Regel, die ihn nicht betrifft, nicht abgewiesen werden.
-Die Prüfung steht deshalb weiterhin in `connect()`, vor dem Aufruf von
-`resolveConfigWithoutDialing()`.
+A form legitimately carries `shouldSaveSession == true` with an empty save
+name while the user is still typing an ad-hoc "save & connect" — that is
+not an error state of the configuration but a bookkeeping rule of the
+form. The context-menu caller saves nothing and must not be rejected for a
+rule that does not apply to it. The check therefore stays in `connect()`,
+before the call to `resolveConfigWithoutDialing()`.
 
-(Task 1 hatte diesen Punkt zunächst umgekehrt umgesetzt und begründet — die
-Save-Name-Prüfung anfangs *in* der geteilten Funktion. Die Review widerlegte
-die Begründung, der Fix landete in `1081142`, per Mutation nachgewiesen:
-Regel zurückschieben → Wächter rot; eine Mutation innerhalb der geteilten
-Funktion → Äquivalenztests bleiben grün, die fallweisen fangen sie. Der
-Task-1-Bericht wurde dazu nachträglich vom Koordinator korrigiert; der Code
-und dieser Abschluss folgen der Korrektur.)
+(Task 1 had initially implemented and justified this point the other way
+round — the save-name check at first *inside* the shared function. The
+review refuted that justification, the fix landed in `1081142`, proved by
+mutation: pushing the rule back → guard goes red; a mutation inside the
+shared function → the equivalence tests stay green, the case-by-case ones
+catch it. The Task 1 report was subsequently corrected by the coordinator
+for this; the code and this wrap-up follow the correction.)
 
-## Die zwei Kontextmenü-Einträge
+## The two context-menu entries
 
-Unter „Verbinden" in der Sitzungszeile:
+Under "Connect" in the session row:
 
-- **„Terminal öffnen"** (`ContentView.openTerminalFromSidebar`) — verbindet
-  in macSCP wie `connect()`/`connectFromSidebar` (Zielwahl, Re-Entrancy,
-  Füllen, Fehleranzeige — alles unverändert), nur mit
-  `paneVisibility: .terminalOnly` statt der gespeicherten Aufteilung. Nichts
-  wird persistiert.
-- **„In externem Terminal öffnen"** (`ContentView.openExternalTerminalFromSidebar`)
-  — füllt ein **Wegwerf-`ConnectionViewModel`** (lokal, Connector wirft),
-  löst darauf `resolveConfigWithoutDialing()` auf und übergibt an den
-  eingestellten externen Terminal-Client. macSCP baut dabei keine eigene
-  Verbindung auf; das Wegwerf-Objekt überlebt den Aufruf nicht, damit das
-  aufgelöste Klartext-Secret keinen zweiten Ort bekommt.
+- **"Open Terminal"** (`ContentView.openTerminalFromSidebar`) — connects
+  within macSCP like `connect()`/`connectFromSidebar` (target selection,
+  re-entrancy, filling, error display — all unchanged), only with
+  `paneVisibility: .terminalOnly` instead of the saved split. Nothing is
+  persisted.
+- **"Open in External Terminal"**
+  (`ContentView.openExternalTerminalFromSidebar`) — fills a **throwaway
+  `ConnectionViewModel`** (local, the connector throws), resolves it with
+  `resolveConfigWithoutDialing()`, and hands it to the configured external
+  terminal client. macSCP does not establish its own connection in the
+  process; the throwaway object does not survive the call, so the resolved
+  plaintext secret never gets a second home.
 
-Sichtbarkeitsregel: `SessionRowTerminalMenuPlan.build(for:)`
-(`Sources/MacSCPAppKit/SessionSidebar.swift`) — `.shown`, wenn
-`BackendDescriptor.capabilities.supportsShell` zutrifft, sonst `.hidden`.
-Beide Einträge werden **ausgeblendet, nicht ausgegraut**, wenn eine Sitzung
-keine Shell hat: ein dauerhaft toter Eintrag an einem S3-Bucket erklärt
-nichts.
+Visibility rule: `SessionRowTerminalMenuPlan.build(for:)`
+(`Sources/MacSCPAppKit/SessionSidebar.swift`) — `.shown` when
+`BackendDescriptor.capabilities.supportsShell` holds, otherwise `.hidden`.
+Both entries are **hidden, not greyed out**, when a session has no shell:
+a permanently dead entry on an S3 bucket explains nothing.
 
-Das Füllen des Formulars (~240 Zeilen: Kind/Values, Login-Set-Auflösung,
-Keychain, Managed-Key-Passphrase, Jump-Auflösung) war inline in
-`connect(in:stored:)` und wurde nach `ContentView.fillForm(_:from:) throws
--> Bool` gezogen — beide Wege (Sidebar-Connect wie externer Start) rufen
-dieselbe Funktion. Die Verbatim-Eigenschaft dieser Extraktion wurde
-**mechanisch**, nicht durch einen Test geprüft: ein `diff` des extrahierten
-Blocks gegen den vorherigen Inline-Code zeigt exakt **sieben** Zeilen
-Unterschied, alle `return` → `return false`, plus Signatur und
-abschließendem `return true`. `ContentView` ist aus den Tests nicht
-instanziierbar (kein Rendering-Werkzeug im Projekt), ein Test war hier also
-strukturell nicht möglich — der `diff` plus die grüne volle Suite sind der
-Ersatz.
+Filling the form (~240 lines: kind/values, login-set resolution, keychain,
+managed-key passphrase, jump resolution) used to be inline in
+`connect(in:stored:)` and was pulled out into
+`ContentView.fillForm(_:from:) throws -> Bool` — both paths (sidebar
+connect as well as external launch) call the same function. The verbatim
+property of this extraction was checked **mechanically**, not by a test: a
+`diff` of the extracted block against the previous inline code shows
+exactly **seven** lines of difference, all `return` → `return false`, plus
+the signature and a trailing `return true`. `ContentView` cannot be
+instantiated from the tests (no rendering tool in the project), so a test
+was structurally not possible here — the `diff` plus the green full suite
+stand in for it.
 
-## Zurückgestellt: P3g
+## Deferred: P3g
 
-Aus der Gesamtprüfung von Task 2: `pendingPasswordHintRequest`
-(`ContentView.swift`) kann eine `SSHConnectionConfig` mit einem
-Klartext-Passwort halten, solange der einmalige Passworthinweis-Alert offen
-ist. Beide Alert-Knöpfe und jede SwiftUI-Auflösung des Dialogs setzen sie auf
-`nil` — aber `disconnect` und `clearRetainedSecrets` erreichen sie nicht.
-Vorbestehend seit M11d; diese Phase weitet den Zustand aus, weil der externe
-Weg jetzt auch für eine Sitzung erreichbar ist, mit der sich macSCP **nie**
-verbindet. Genau das, wovor der Doc-Kommentar von
-`resolveConfigWithoutDialing` warnt. Als eigene, kleine Phase P3g im Nachtrag
-der Spec (`docs/superpowers/specs/2026-08-18-p3-ordnung-design.md`) und im
-Commit `547dcef` festgehalten — kein Blocker, kein Teil dieser Phase.
+From Task 2's overall review: `pendingPasswordHintRequest`
+(`ContentView.swift`) can hold an `SSHConnectionConfig` with a plaintext
+password for as long as the one-time password-hint alert is open. Both
+alert buttons and every SwiftUI dismissal of the dialog set it to `nil` —
+but `disconnect` and `clearRetainedSecrets` do not reach it. Pre-existing
+since M11d; this phase widens the exposure because the external path is
+now also reachable for a session that macSCP **never** connects to.
+Exactly what the doc comment on `resolveConfigWithoutDialing` warns
+against. Recorded as its own small phase P3g in the spec addendum
+(`docs/superpowers/specs/2026-08-18-p3-ordnung-design.md`) and in commit
+`547dcef` — not a blocker, not part of this phase.
 
-## GUI: nicht gestartet
+## GUI: not launched
 
-Die App wurde in dieser Phase **nicht** gestartet. Für den Maintainer, zur
-Verifikation von Hand:
+The app was **not** launched during this phase. For the maintainer, to
+verify by hand:
 
-- Beide Einträge erscheinen am Kontextmenü einer gespeicherten **SSH**-Sitzung.
-- **Keiner** der beiden Einträge erscheint an einer **S3**- oder
-  **WebDAV**-Sitzung.
-- „Terminal öffnen" kommt ohne Dateibrowser hoch — nur das Terminal.
-- „In externem Terminal öffnen" zeigt beim ersten Mal den Passworthinweis
-  (bei Passwort-Auth), wie der bestehende Toolbar-Weg auch.
+- Both entries appear on the context menu of a saved **SSH** session.
+- **Neither** entry appears on an **S3** or **WebDAV** session.
+- "Open Terminal" comes up without the file browser — the terminal only.
+- "Open in External Terminal" shows the password hint the first time
+  (with password auth), the same as the existing toolbar path.
 
-## Messung
+## Measurement
 
 ```
 swift test          → 2076 tests in 178 suites, alle grün
 plutil -lint         → alle acht *.strings-Kataloge OK
 ```
 
-Unverändert gegenüber Task 2 (2076/178) — kein Test kam zwischen Task-2-Abschluss
-und diesem Abschluss hinzu oder ging verloren.
+Unchanged versus Task 2 (2076/178) — no test was added or lost between the
+Task 2 wrap-up and this wrap-up.
 
-## Build-Verifikation (`scripts/package-app`, im Hintergrund gestartet)
+## Build verification (`scripts/package-app`, started in the background)
 
 ```
 lipo -archs dist/macSCP.app/Contents/MacOS/macSCP      → x86_64 arm64
@@ -143,15 +142,14 @@ plutil -lint Info.plist                                  → OK
 UTExportedTypeDeclarations                                → 3 (dev.noix.macscp.sessions, .logins, .snippets)
 ```
 
-Die App wurde **nicht** gestartet; `scripts/release` wurde nicht ausgeführt.
+The app was **not** launched; `scripts/release` was not run.
 
-## Brief-Fehler
+## Brief error
 
-Der Auftrag dieser Phase enthielt keinen neuen Fehler gegenüber dem, was das
-Ledger bereits festhält (die vierzehnte Fehlbenennung von
-`resolveConfigWithoutDialing()` in Plan und Brief von Task 2, dort schon
-korrigiert). Der Task-1-Bericht selbst blieb nach dem Fix `1081142`
-unkorrigiert stehen und widerspricht dem heutigen Code in einem Punkt (Ort
-der Save-Name-Prüfung) — der Koordinator-Nachtrag am Ende dieses Berichts
-klärt das; dieser Abschluss folgt durchgehend dem Code, nicht dem
-unkorrigierten Abschnitt.
+This phase's brief contained no new error beyond what the ledger already
+records (the fourteenth misnaming of `resolveConfigWithoutDialing()` in
+Task 2's plan and brief, already corrected there). The Task 1 report
+itself was left uncorrected after the fix `1081142` and contradicts
+today's code on one point (the location of the save-name check) — the
+coordinator addendum at the end of this report clarifies that; this
+wrap-up follows the code throughout, not the uncorrected section.

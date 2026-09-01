@@ -1,98 +1,99 @@
-# Snippet-Editor Teil 2 — mehrzeilige Snippets: Abschluss
+# Snippet editor part 2 — multi-line snippets: completion
 
-**Stand:** fertig, mergefähig nach einer Fix-Welle. Suite **2217 Tests in 199
-Suiten**, grün. Ausgangswert vor dem Zweig: 2197 in 196.
+**Status:** done, mergeable after one fix wave. Suite **2217 tests in 199
+suites**, green. Starting value before the branch: 2197 in 196.
 
-## Was umgesetzt wurde
+## What was implemented
 
-Ein Snippet darf mehrere Zeilen haben. Was beim Auslösen auf die Gegenseite
-geht, entscheidet der Bracketed-Paste-Modus, den die entfernte Shell
-einschaltet und der lokale Emulator mitschreibt.
+A snippet may have several lines. What goes to the remote side when
+triggered is decided by bracketed-paste mode, which the remote shell
+switches on and the local emulator tracks.
 
-| Befehl | Klammerung | Aktion | Ergebnis |
+| Command | Bracketing | Action | Result |
 |---|---|---|---|
-| einzeilig | egal | beides | wie bisher, byteweise unverändert |
-| mehrzeilig | an | einfügen | `ESC[200~` + Rumpf + `ESC[201~` |
-| mehrzeilig | an | ausführen | dito + CR |
-| mehrzeilig | aus | ausführen | zeilenweise, CR nach jeder Zeile |
-| mehrzeilig | aus | einfügen | **abgelehnt**, mit Angebot auszuführen |
+| single-line | either | either | unchanged, byte-for-byte as before |
+| multi-line | on | insert | `ESC[200~` + body + `ESC[201~` |
+| multi-line | on | execute | same + CR |
+| multi-line | off | execute | line by line, CR after each line |
+| multi-line | off | insert | **rejected**, with an offer to execute |
 
-Zwischen den Klammern stehen die rohen UTF-8-Bytes des Rumpfs. Das ist nicht
-geraten, sondern an SwiftTerms eigenem ⌘V-Pfad abgelesen: `paste(_:)` reicht
-den Zwischenablage-String unverändert an `send(txt:)`, das daraus
-`[UInt8](txt.utf8)` macht — keine Zeilenenden-Übersetzung auf dem ganzen Weg.
+Between the brackets sit the raw UTF-8 bytes of the body. This is not
+guessed but read off SwiftTerm's own ⌘V path: `paste(_:)` passes the
+clipboard string unchanged to `send(txt:)`, which turns it into
+`[UInt8](txt.utf8)` — no line-ending translation anywhere along the way.
 
-Kein Feld am Modell, keine Store-Migration: ein Snippet **enthält** Umbrüche
-oder nicht, der Inhalt trägt die Information. `Snippet.init` verlor damit
-seinen einzigen Fehlschlag-Grund und ist nicht mehr fehlbar; **95**
-Aufrufstellen wurden nachgezogen, der Umbruch-Sanitizer gelöscht.
+No field on the model, no store migration: a snippet **contains** line
+breaks or it does not, the content itself carries the information.
+`Snippet.init` thereby lost its only failure reason and can no longer
+fail; **95** call sites were updated accordingly, and the line-break
+sanitizer was deleted.
 
-Im Editor schreibt Return jetzt einen Umbruch, Speichern ist ⌘Return (eine von
-**drei** `.defaultAction`-Stellen der Datei, die anderen zwei blieben), und das
-Feld wächst bis zu einer Obergrenze mit.
+In the editor, Return now writes a line break, Save is ⌘Return (one of
+**three** `.defaultAction` sites in the file, the other two were left
+alone), and the field grows along with the content up to an upper bound.
 
-## Kompatibilität — in eine Richtung
+## Compatibility — in one direction
 
-Alte `snippets.json` laden unverändert; das Format hat sich nicht geändert, der
-Decoder ist nur nachsichtiger geworden.
+Old `snippets.json` files load unchanged; the format has not changed, the
+decoder has only become more lenient.
 
-**Umgekehrt gilt es nicht.** Eine mit diesem Build geschriebene mehrzeilige
-Datei macht die **ganze** Datei für die ausgelieferte 1.2.0 unlesbar, deren
-Decoder auf den Umbruch wirft. Das gehört in die Release-Notes; ein Fix ist es
-nicht, weil ein Downgrade kein unterstützter Weg ist.
+**The reverse does not hold.** A multi-line file written by this build
+makes the **entire** file unreadable for the shipped 1.2.0, whose decoder
+throws on the line break. That belongs in the release notes; it is not a
+fix, because downgrading is not a supported path.
 
-## Das Schluss-Review fand einen Critical, den kein Task-Review sehen konnte
+## The closing review found a Critical that no task review could see
 
-`isVerticallyResizable = false` nagelte den Rahmen der Textansicht fest. Eine
-`NSScrollView` scrollt genau so weit, wie der Rahmen ihres Dokuments reicht —
-`hasVerticalScroller = true` allein bewirkt nichts. Jenseits der
-Acht-Zeilen-Grenze war der Text gesetzt, aber unerreichbar, und die
-Einfügemarke verließ beim Tippen das Sichtfeld.
+`isVerticallyResizable = false` nailed the text view's frame in place. An
+`NSScrollView` scrolls only as far as its document's frame reaches —
+`hasVerticalScroller = true` alone does nothing. Beyond the eight-line
+boundary the text was laid out but unreachable, and the insertion point
+left the visible area while typing.
 
-Der Prüfer hat das nicht vermutet, sondern **mit einer AppKit-Probe gemessen**:
-bei 5, 12, 30 und 60 Zeilen blieb der Rahmen bei 150 pt, während der Text 88,
-200, 488 und 968 brauchte.
+The reviewer did not suspect this, but **measured it with an AppKit
+probe**: at 5, 12, 30 and 60 lines the frame stayed at 150 pt, while the
+text needed 88, 200, 488 and 968.
 
-**Der Fehler stand so im Plan.** Er schrieb „`isVerticallyResizable` bleibt
-`false`" *und* „danach senkrechter Scroller" — ein Widerspruch, den der
-Umsetzer getreu beidem umgesetzt hat. Es ist der vierte Plan-Defekt dieses
-Zweigs und der teuerste.
+**The bug was in the plan as written.** It said "`isVerticallyResizable`
+stays `false`" *and* "after that a vertical scroller" — a contradiction
+that the implementer faithfully implemented both halves of. It is the
+fourth plan defect on this branch and the most expensive.
 
-Weiter behoben: `SnippetKeystrokes.bytes(for:execute:)` war verwaiste
-öffentliche API geworden, die genau die Gefahr wieder aufmachte, gegen die der
-Zweig gebaut ist (sie liefert für einen mehrzeiligen Befehl die rohen Umbrüche
-als Tastenanschläge) — jetzt `internal`. Die ganze App→Core-Verdrahtung war
-ungetestet; der Prüfer bewies es durch Mutation, nicht durch Behauptung: `??
-false` zu `?? true` gedreht, 318 Tests blieben grün. Und der Ablehnungs-Alert
-konnte verschluckt werden, weil der Auslöser feuerte, bevor Sheet und Popover
-geschlossen waren — die Fix-Welle fand dafür **zwei** Auslöser-Formen mit vier
-Closures, nicht die eine aus dem Befund.
+Also fixed: `SnippetKeystrokes.bytes(for:execute:)` had become orphaned
+public API that reopened exactly the danger this branch was built
+against (it delivers the raw line breaks as keystrokes for a multi-line
+command) — now `internal`. The entire App→Core wiring was untested; the
+reviewer proved it by mutation, not by assertion: flipped `?? false` to
+`?? true`, 318 tests stayed green. And the rejection alert could get
+swallowed because the trigger fired before sheet and popover had closed —
+the fix wave found **two** trigger forms with four closures for this, not
+the one from the finding.
 
-## Was ungeprüft bleibt — Sichtprüfung beim Maintainer
+## What stays unverified — visual check by the maintainer
 
-Kein Test dieses Projekts zeichnet einen `NSViewRepresentable` oder spricht mit
-einer echten Shell. Ausdrücklich offen:
+No test in this project draws an `NSViewRepresentable` or talks to a real
+shell. Explicitly open:
 
-- **Das Mitwachsen des Feldes** samt Obergrenze, und dass jenseits davon
-  senkrecht gescrollt werden kann. Der Critical oben war genau hier.
-- **⌘Return speichert**, Return schreibt einen Umbruch.
-- **Die drei Anzeigestellen** mit einem mehrzeiligen Befehl: Zeile im Sheet,
-  Vorschauzeile am Terminal-Panel (beide „+N weitere"), und das Aktions-Sheet,
-  das den Befehl absichtlich ganz zeigt.
-- **Der Ablehnungs-Alert aus allen vier Auslösern** — er ist das einzige neue
-  Modal des Zweigs, und die Präsentationsreihenfolge war ein Befund.
-- **Ein geklammertes Einfügen gegen eine echte Shell** mit eingeschaltetem
-  Modus 2004.
+- **The field growing along with content** including its upper bound, and
+  that beyond it vertical scrolling works. The Critical above was exactly
+  here.
+- **⌘Return saves**, Return writes a line break.
+- **The three display sites** for a multi-line command: the line in the
+  sheet, the preview line on the terminal panel (both "+N more"), and the
+  action sheet, which deliberately shows the command in full.
+- **The rejection alert from all four triggers** — it is the only new
+  modal on this branch, and the presentation order was a finding.
+- **A bracketed paste against a real shell** with mode 2004 switched on.
 
-## Die Lektion dieses Zweigs
+## The lesson of this branch
 
-Vier der fünf Fehler, die Reviews fanden, standen **im Plan**, nicht in der
-Umsetzung: eine Zahl, die ein Grep falsch zählte; ein Wächtertest, der nie
-hätte bestehen können; ein Kommentar, der eine Ausnahme verschwieg; und der
-Widerspruch oben. Die Umsetzer haben jedes Mal getan, was dastand.
+Four of the five bugs the reviews found were **in the plan**, not in the
+implementation: a number a grep miscounted; a guard test that could never
+have passed; a comment that concealed an exception; and the contradiction
+above. Every time, the implementers did exactly what was written.
 
-Das ist die dritte Wiederholung desselben Befunds in diesem Projekt.
-Plan-Prosa klingt beim Schreiben vollständig und wird beim Umsetzen geglaubt.
-Was hilft, ist nicht mehr Sorgfalt beim Schreiben, sondern dass die
-Umsetzer den Auftrag haben, Widersprüche zu **melden statt aufzulösen** — beide
-Male, wo das geschah, kam ein echter Fund heraus.
+This is the third repetition of the same finding in this project.
+Plan prose sounds complete while being written and is believed while
+being implemented. What helps is not more care while writing, but giving
+implementers the mandate to **report contradictions instead of resolving
+them** — both times that happened, a real finding came out of it.

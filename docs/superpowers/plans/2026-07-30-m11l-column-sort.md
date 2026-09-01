@@ -1,10 +1,10 @@
-# M11l — Sortieren per Spaltenklick: Implementierungsplan
+# M11l — Sorting by column click: implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** Dateiliste nach Name/Größe/Datum sortieren — Spaltenklick wählt den Schlüssel, erneuter Klick dreht die Richtung; Ordner bleiben oben.
+**Goal:** Sort the file list by name/size/date — a column click selects the key, clicking again flips the direction; folders stay on top.
 
-**Architecture:** Die bestehende Sortier-Autorität `sortedForDisplay` wird um Schlüssel + Richtung parametrisiert (Ordner-zuerst bleibt); der `RemoteBrowserViewModel` hält den Sortierzustand und reicht ihn in `displayItems` durch, sodass `load`/`refreshQuietly`/M11k-Suche konsistent sortieren. Die Tabelle meldet Header-Klicks, das ViewModel bleibt die einzige Sortier-Autorität.
+**Architecture:** The existing sort authority `sortedForDisplay` is parameterized by key + direction (folders-first stays); `RemoteBrowserViewModel` holds the sort state and threads it through `displayItems`, so `load`/`refreshQuietly`/the M11k search all sort consistently. The table reports header clicks, the ViewModel remains the single sort authority.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftUI + AppKit, Swift Testing.
 
@@ -12,121 +12,120 @@
 
 ## Global Constraints
 
-- Code und Kommentare **nur Englisch**; Anzeigetexte über die Kataloge.
-- **Ordner bleiben immer oben** (Gruppierung, unabhängig vom Schlüssel und
-  von der Richtung).
-- Sortierung ist STABIL (Name-Tiebreaker bei gleicher Größe/gleichem Datum);
-  fehlende Größe/fehlendes Datum deterministisch.
-- Die Sortier-Autorität bleibt an EINER Stelle (Core `sortedForDisplay`) —
-  AppKit sortiert die NSTableView-Zeilen NICHT selbst; die Reihenfolge kommt
-  aus `items`.
-- Sortierzustand überlebt `refreshQuietly` und Verzeichniswechsel (Anzeige-
-  Präferenz des Panes); die M11k-Suche wird beim Wechsel zurückgesetzt, die
-  Sortierung NICHT.
-- Der parameterlose `sortedForDisplay`-Aufruf bleibt als Default `.name`
-  aufsteigend erhalten (nichts anderes bricht).
-- `swift build` immer aus SAUBEREM Build-Verzeichnis prüfen.
-- Tests: Swift Testing, TDD. Baseline: **826 Tests / 58 Suiten**.
-- Kein Release, kein Merge auf `main`, kein Tag.
+- Code and comments **English only**; display text via the catalogs.
+- **Folders always stay on top** (grouping, independent of key and
+  direction).
+- Sorting is STABLE (name tiebreaker for equal size/date); missing
+  size/missing date deterministic.
+- Sort authority stays in ONE place (Core `sortedForDisplay`) — AppKit
+  does NOT sort the NSTableView rows itself; the order comes from
+  `items`.
+- Sort state survives `refreshQuietly` and directory changes (a display
+  preference of the pane); the M11k search resets on a directory change,
+  sorting does NOT.
+- The parameterless `sortedForDisplay` call remains, defaulting to
+  `.name` ascending (nothing else breaks).
+- Always check `swift build` from a CLEAN build directory.
+- Tests: Swift Testing, TDD. Baseline: **826 tests / 58 suites**.
+- No release, no merge to `main`, no tag.
 
 ---
 
-### Task 1: Parametrisierte Sortierung + VM-Zustand (Core)
+### Task 1: Parameterized sorting + VM state (Core)
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift`
-- Create: `Sources/macSCPCore/Presentation/FileSortKey.swift` (oder im VM-File, falls klein)
-- Test: `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift` (erweitern), ggf. `Tests/macSCPCoreTests/FileSortTests.swift`
+- Create: `Sources/macSCPCore/Presentation/FileSortKey.swift` (or inside the VM file, if small)
+- Test: `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift` (extend), possibly `Tests/macSCPCoreTests/FileSortTests.swift`
 
 **Interfaces:**
-- Consumes: `RemoteFileItem` (`name`, `isDirectory`, Größe, Änderungsdatum — die genauen Property-Namen im Typ nachsehen).
-- Produces (T2 verlässt sich wörtlich darauf):
+- Consumes: `RemoteFileItem` (`name`, `isDirectory`, size, modification date — check the exact property names in the type).
+- Produces (T2 relies on this literally):
   - `public enum FileSortKey: Sendable, Equatable { case name, size, modified }`
-  - `RemoteBrowserViewModel.sortedForDisplay(_:key:ascending:)` (static, key/ascending mit Defaults `.name`/`true`)
-  - Auf dem VM: `var sortKey: FileSortKey`, `var sortAscending: Bool` (@Observable, didSet → Neuableitung).
+  - `RemoteBrowserViewModel.sortedForDisplay(_:key:ascending:)` (static, key/ascending with defaults `.name`/`true`)
+  - On the VM: `var sortKey: FileSortKey`, `var sortAscending: Bool` (@Observable, didSet → re-derive).
 
-- [x] **Step 1: Failing tests** (rein, Core) für `sortedForDisplay(key:ascending:)`:
-  - Ordner-zuerst bei `.name`/`.size`/`.modified`, auf UND ab (auch
-    absteigend stehen Ordner oben).
-  - `.name` aufsteigend == heutiges Verhalten; absteigend kehrt innerhalb der
-    Gruppen um.
-  - `.size` NUMERISCH: Items mit Größen 9, 10, 100 ⇒ Reihenfolge 9,10,100
-    aufsteigend (nicht lexikografisch 10,100,9).
-  - `.modified` nach Zeitstempel auf/ab.
-  - Name-Tiebreaker: zwei Dateien gleicher Größe ⇒ nach Name sortiert
-    (stabil, deterministisch).
-  - fehlende Größe/fehlendes Datum: deterministische Position (dokumentieren,
-    welche).
+- [x] **Step 1: Failing tests** (pure, Core) for `sortedForDisplay(key:ascending:)`:
+  - Folders-first for `.name`/`.size`/`.modified`, both up and down (folders
+    stay on top even descending).
+  - `.name` ascending == today's behavior; descending reverses within the
+    groups.
+  - `.size` NUMERIC: items with sizes 9, 10, 100 ⇒ order 9,10,100
+    ascending (not lexicographic 10,100,9).
+  - `.modified` by timestamp up/down.
+  - Name tiebreaker: two files of equal size ⇒ sorted by name (stable,
+    deterministic).
+  - missing size/missing date: deterministic position (document which).
 
-- [x] **Step 2: Rot beweisen.** `swift test --filter <Sort>` → FAIL.
+- [x] **Step 2: Prove red.** `swift test --filter <Sort>` → FAIL.
 
-- [x] **Step 3: Implementierung.** `sortedForDisplay` bekommt `key`/
-  `ascending`; erst nach `isDirectory` gruppieren, dann innerhalb per Schlüssel
-  mit Name-Tiebreaker; `ascending == false` kehrt die Innen-Ordnung um, die
-  Gruppierung bleibt. Doc-Kommentar: Ordner-zuerst ist bewusste Gruppierung.
+- [x] **Step 3: Implementation.** `sortedForDisplay` gets `key`/
+  `ascending`; group by `isDirectory` first, then sort within groups by the
+  key with a name tiebreaker; `ascending == false` reverses the inner
+  order, the grouping stays. Doc comment: folders-first is a deliberate
+  grouping.
 
-- [x] **Step 4: Failing tests für den VM-Zustand**
-  (`RemoteBrowserViewModelTests`, Mock-FS):
-  - `sortKey`/`sortAscending` setzen ordnet `items` neu.
-  - Überlebt `refreshQuietly` (frische Liste, gleiche Sortierung).
-  - Überlebt `load` auf ein neues Verzeichnis (Sortierung bleibt, anders als
-    die Suche).
-  - Zusammen mit aktivem M11k-Filter: die gefilterte Liste ist sortiert.
+- [x] **Step 4: Failing tests for the VM state**
+  (`RemoteBrowserViewModelTests`, mock FS):
+  - Setting `sortKey`/`sortAscending` re-orders `items`.
+  - Survives `refreshQuietly` (fresh list, same sort).
+  - Survives `load` on a new directory (sort stays, unlike the search).
+  - Together with an active M11k filter: the filtered list is sorted.
 
-- [x] **Step 5: Rot beweisen, dann implementieren.** `sortKey`/
-  `sortAscending` aufs VM, `displayItems(from:)` reicht sie durch,
-  didSet-Neuableitung wie bei der Suche.
+- [x] **Step 5: Prove red, then implement.** `sortKey`/
+  `sortAscending` on the VM, `displayItems(from:)` threads them through,
+  didSet re-derives, same as for search.
 
-- [x] **Step 6: Grün + volle Suite.** `swift test` → 826 + neue.
+- [x] **Step 6: Green + full suite.** `swift test` → 826 + new ones.
 
 - [x] **Step 7: Commit.** `feat: sort the file listing by name, size or date`
 
 ---
 
-### Task 2: Spalten-Sortierung in der Tabelle (App)
+### Task 2: Column sorting in the table (App)
 
 **Files:**
-- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (sortDescriptorPrototypes, `sortDescriptorsDidChange`, Coordinator-Dispatch, Indikator im `PolishedHeaderCell` prüfen)
+- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (sortDescriptorPrototypes, `sortDescriptorsDidChange`, coordinator dispatch, check the indicator in `PolishedHeaderCell`)
 
 **Interfaces:**
-- Consumes: `FileSortKey` und der VM-Sortierzustand aus T1.
+- Consumes: `FileSortKey` and the VM sort state from T1.
 
-- [x] **Step 1: `sortDescriptorPrototype`s** auf die drei Spalten
-  (`name`/`size`/`modified`), key passend zum `FileSortKey`. Anfangszustand
-  der Tabelle spiegelt den VM-Default (`.name` aufsteigend), sodass das
-  Dreieck initial an der Namensspalte steht (oder bewusst unsichtbar, falls
-  das der M5g-Optik entspricht — im Report festhalten).
+- [x] **Step 1: `sortDescriptorPrototype`s** on the three columns
+  (`name`/`size`/`modified`), key matching the `FileSortKey`. The table's
+  initial state mirrors the VM default (`.name` ascending), so the
+  triangle initially sits on the name column (or is deliberately invisible,
+  if that matches the M5g look — note this in the report).
 
-- [x] **Step 2: `tableView(_:sortDescriptorsDidChange:)`** im Coordinator:
-  aus dem neuen aktiven `NSSortDescriptor` (key + `ascending`) den
-  `FileSortKey` ableiten und `viewModel.sortKey`/`sortAscending` setzen.
-  Standardrichtung beim Wechsel auf eine ANDERE Spalte: Name/Datum
-  aufsteigend, Größe absteigend (größte zuerst). Die NEUE `items`-Reihenfolge
-  fließt über die bestehende Reload-/Reconcile-Mechanik zurück — NICHT AppKit
-  die Zeilen selbst sortieren lassen.
+- [x] **Step 2: `tableView(_:sortDescriptorsDidChange:)`** in the
+  coordinator: derive the `FileSortKey` from the new active
+  `NSSortDescriptor` (key + `ascending`) and set
+  `viewModel.sortKey`/`sortAscending`. Default direction when switching to
+  a DIFFERENT column: name/date ascending, size descending (largest
+  first). The NEW `items` order flows back through the existing
+  reload/reconcile mechanism — do NOT let AppKit sort the rows itself.
 
-- [x] **Step 3: Indikator.** Prüfen, dass das native Sortier-Dreieck (▲/▼)
-  auf der aktiven Spalte sichtbar ist und `PolishedHeaderCell` es
-  durchzeichnet, ohne die M5g-Kopf-Optik (Versal, Kern, Hairline, 22 pt) zu
-  verschieben. Falls der Custom-HeaderCell den Indikator schluckt, minimal
-  nachbessern (nur das Dreieck, nicht die Typo).
+- [x] **Step 3: Indicator.** Check that the native sort triangle (▲/▼) is
+  visible on the active column and that `PolishedHeaderCell` draws it
+  through without shifting the M5g header look (small caps, kerning,
+  hairline, 22 pt). If the custom header cell swallows the indicator,
+  make a minimal fix (only the triangle, not the typography).
 
-- [x] **Step 4: Verifikation.** `swift build` aus sauberem Verzeichnis (keine
-  neuen Warnungen), volle `swift test`. Beide Panes unabhängig prüfen (der
-  Zustand hängt am jeweiligen ViewModel).
+- [x] **Step 4: Verification.** `swift build` from a clean directory (no
+  new warnings), full `swift test`. Check both panes independently (the
+  state hangs off the respective ViewModel).
 
 - [x] **Step 5: Commit.** `feat: sort the file list by clicking column headers`
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Closeout verification (coordinator)
 
-- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips.
-- [x] Visueller Smoke — Maintainer (Checkliste: Klick auf Name/Größe/Datum
-  sortiert; erneuter Klick dreht die Richtung; Ordner bleiben in beiden
-  Richtungen oben; Größe numerisch, nicht lexikografisch; das Dreieck steht
-  auf der aktiven Spalte; Sortierung überlebt Verzeichniswechsel und
-  Auto-Refresh; wirkt zusammen mit ⌘F-Filter; beide Panes unabhängig; M5g-
-  Kopf-Optik unverschoben).
-- [x] Plan-Checkboxen, Ledger, Opus-Final-Review, Fix-Runden bis „Yes",
-  Push develop, `gh run watch`, Memory. KEIN Release.
+- [x] Gated suites: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → green, zero skips.
+- [x] Visual smoke test — maintainer (checklist: clicking name/size/date
+  sorts; clicking again reverses direction; folders stay on top in both
+  directions; size numeric, not lexicographic; the triangle sits on the
+  active column; sorting survives directory changes and auto-refresh;
+  works together with the ⌘F filter; both panes independent; M5g header
+  look unshifted).
+- [x] Plan checkboxes, ledger, Opus final review, fix rounds until "Yes",
+  push develop, `gh run watch`, memory. NO release.

@@ -1,129 +1,131 @@
-# M10b — Login-Sets (Design)
+# M10b — Login sets (design)
 
-Datum: 2026-07-28 · Status: vom Maintainer freigegeben (Mockup eingefroren:
-`docs/design/assets/m10-mockups.html` Abschnitte 3+4; Design-Block „passt",
-direkt los)
+Date: 2026-07-28 · Status: approved by the maintainer (mockup frozen:
+`docs/design/assets/m10-mockups.html` sections 3+4; design block "fits",
+go straight ahead)
 
-## Ziel
+## Goal
 
-Wiederverwendbare Logins (Termius-artig): benannte Sets aus Benutzername +
-Auth, referenzierbar von Verbindungen („einmal ändern, gilt überall"), mit
-Dreiweg-Auswahl im Formular und automatischem Zusammenfassen-Vorschlag für
-gleiche bestehende Logins.
+Reusable logins (Termius-style): named sets of username + auth,
+referenceable from connections ("change once, applies everywhere"), with
+a three-way selector in the form and an automatic merge suggestion for
+existing identical logins.
 
-**Maintainer-Entscheidungen (2026-07-28):**
+**Maintainer decisions (2026-07-28):**
 
-1. ssh-agent-Auth wird NICHT Teil von M10b — eigener Meilenstein M10d
-   (Citadel hat keine Agent-Auth; bräuchte eigene Protokoll-Implementierung
-   über den Custom-Delegate-Haken). Das Set-Modell ist dafür
-   vorwärtskompatibel (`authKind` String-Raw).
-2. Dreiweg-Auswahl gilt in M10b für den ZIEL-Host; der Jump-Host (M10c)
-   nutzt dieselben Bausteine.
+1. ssh-agent auth is NOT part of M10b — its own milestone M10d (Citadel
+   has no agent auth; would need its own protocol implementation via the
+   custom-delegate hook). The set model is forward-compatible for this
+   (`authKind` string raw value).
+2. The three-way selector applies in M10b to the TARGET host; the jump
+   host (M10c) uses the same building blocks.
 
-## 1. Core-Modell
+## 1. Core model
 
 - `public struct LoginSet: Equatable, Identifiable, Sendable`:
   `id: UUID`, `name: String`, `username: String`,
-  `authKind: StoredSession.AuthKind` (WIEDERVERWENDET — kein Duplikat-Enum),
-  `keyPath: String?` (nur privateKey).
-- Vorwärtskompatibilität: der Store persistiert intern Records mit
-  `authKind` als String-Raw. Ein UNBEKANNTER Raw-Wert (z. B. ein
-  künftiges „agent" aus M10d) wird von `all()` NICHT als Set geliefert
-  (nie als Passwort-Set fehlinterpretiert), aber der Record bleibt in der
-  Datei erhalten — auch über upsert/delete anderer Einträge hinweg.
-- Secrets: Passwort bzw. Key-Passphrase liegen im Keychain UNTER DER
-  SET-ID (bestehender `SecretStore`; kein neues Secret-Format, nie in
+  `authKind: StoredSession.AuthKind` (REUSED — no duplicate enum),
+  `keyPath: String?` (privateKey only).
+- Forward compatibility: the store internally persists records with
+  `authKind` as a string raw value. An UNKNOWN raw value (e.g. a future
+  "agent" from M10d) is NOT delivered by `all()` as a set (never
+  misinterpreted as a password set), but the record stays in the file —
+  even across upsert/delete of other entries.
+- Secrets: password or key passphrase live in the keychain UNDER THE
+  SET ID (existing `SecretStore`; no new secret format, never in
   `logins.json`).
-- `LoginSetStore` (eigene `logins.json`, SessionStore-Muster: stateless,
-  atomar, vorwärtskompatibel): `all()`, `upsert`, `delete(id:)`.
-- `StoredSession.loginSetID: UUID?` — optional, decode-kompatibel (Legacy
-  nil = Manuell). nil/non-nil IST der Formular-Modus.
+- `LoginSetStore` (its own `logins.json`, SessionStore pattern: stateless,
+  atomic, forward-compatible): `all()`, `upsert`, `delete(id:)`.
+- `StoredSession.loginSetID: UUID?` — optional, decode-compatible (legacy
+  nil = manual). nil/non-nil IS the form mode.
 
-## 2. Connect-Auflösung
+## 2. Connect resolution
 
-- Referenziert eine Session ein Set, liefert die Auflösung beim Connect
-  Username + Auth aus dem SET (Passwort/Passphrase aus dem Keychain unter
-  der Set-ID). Eine testbare Core-Funktion (z. B.
-  `LoginResolver.resolve(session:sets:secrets:)`) baut die
-  `SSHConnectionConfig`-Bausteine; die App verdrahtet sie in den
-  bestehenden Connect-Fluss (connectStored/Formular).
-- Fehlt das referenzierte Set (gelöschte/kaputte Datei), schlägt der
-  Connect mit einer EHRLICHEN lokalisierten Meldung fehl („Das
-  hinterlegte Login wurde nicht gefunden") — kein stilles Raten, kein
-  stiller Manuell-Fallback (die Session hat ja keine eigenen Daten mehr).
+- If a session references a set, resolution at connect time delivers
+  username + auth from the SET (password/passphrase from the keychain
+  under the set ID). A testable Core function (e.g.
+  `LoginResolver.resolve(session:sets:secrets:)`) builds the
+  `SSHConnectionConfig` building blocks; the App wires it into the
+  existing connect flow (connectStored/form).
+- If the referenced set is missing (deleted/broken file), connect fails
+  with an HONEST localized message ("The saved login could not be
+  found") — no silent guessing, no silent manual fallback (the session no
+  longer has its own data at all).
 
-## 3. Set-Löschen = Rückstellung
+## 3. Deleting a set = reset
 
-- Rückfrage nennt die betroffenen Verbindungen (Anzahl + Namen).
-- Bestätigen: pro betroffener Session werden Username/authKind/keyPath in
-  die Session ZURÜCKKOPIERT, das Secret vom Set-Keychain-Eintrag in den
-  Session-Keychain-Eintrag KOPIERT, `loginSetID` genullt; danach Set +
-  Set-Secret gelöscht. Keychain-Fehler bei einer Session: Rückstellung
-  der übrigen läuft weiter, Ergebnis meldet die Fehlzahl (Muster
-  applyImport). Nie kaputte Verbindungen.
+- The confirmation names the affected connections (count + names).
+- On confirming: for each affected session, username/authKind/keyPath get
+  COPIED BACK into the session, the secret gets COPIED from the set's
+  keychain entry to the session's keychain entry, `loginSetID` gets
+  nulled; the set + set secret get deleted afterward. Keychain error on
+  one session: reset of the rest continues, the result reports the
+  failure count (applyImport pattern). Never broken connections.
 
-## 4. Gleichheits-Erkennung (LoginMergePlanner)
+## 4. Equality detection (LoginMergePlanner)
 
-- Reine Core-Funktion über Sessions OHNE Set:
-  - privateKey-Gruppen: gleicher (username, keyPath).
-  - password-Gruppen: gleicher username UND identisches Keychain-Passwort
-    (Vergleich über SecretStore-Reads; Werte werden nie angezeigt;
-    Sessions ohne gespeichertes Passwort nehmen nicht teil).
-- Gruppen ≥ 2 ⇒ Merge-Vorschlag (Banner). „Zusammenfassen…" zeigt die
-  Vorschau (Session-Namen), legt EIN Set an (Namensvorschlag aus dem
-  Username, bei Kollision „(2)"-Suffix wie Datei-Konflikte), setzt
-  `loginSetID` auf allen Gruppen-Sessions, übernimmt das Secret unter die
-  Set-ID; die Session-Secrets werden nach erfolgreicher Umstellung
-  GELÖSCHT (die Auflösung läuft ab jetzt ausschließlich über das Set).
-- „Ignorieren" persistiert die Gruppen-Signatur als MENGE der
-  Session-IDs in `logins.json` (`ignoredMergeGroups: [[UUID]]`) — bewusst
-  KEIN Passwort-Hash oder Ableitung davon auf Platte. Ein neues Mitglied
-  (Session-ID nicht in der ignorierten Menge) reaktiviert den Vorschlag
-  für die erweiterte Gruppe.
+- A pure Core function over sessions WITHOUT a set:
+  - privateKey groups: same (username, keyPath).
+  - password groups: same username AND identical keychain password
+    (comparison via SecretStore reads; values are never displayed;
+    sessions without a stored password do not participate).
+- Groups ≥ 2 ⇒ merge suggestion (banner). "Merge…" shows the preview
+  (session names), creates ONE set (name suggestion from the username, on
+  collision a "(2)" suffix like file conflicts), sets `loginSetID` on all
+  sessions in the group, moves the secret under the set ID; the session
+  secrets get DELETED after a successful switch (resolution from then on
+  runs exclusively through the set).
+- "Ignore" persists the group signature as a SET of session IDs in
+  `logins.json` (`ignoredMergeGroups: [[UUID]]`) — deliberately NO
+  password hash or derivation of one on disk. A new member (session ID
+  not in the ignored set) reactivates the suggestion for the expanded
+  group.
 
 ## 5. UI
 
-- Logins-Sheet (⌘⇧L im Sessions-Menü; Sidebar-Hintergrund-Menü über
-  „Bekannte Hosts…"; Link „Logins verwalten…" im Formular neben dem
-  Picker): Liste nach Mockup Abschnitt 3 (KEY/PASS-Badge, Name,
-  `user · Auth-Kurzform`, Nutzungszähler „n Verbindungen"), Fußzeile
-  Neu…/Bearbeiten…/Löschen…/Schließen; Merge-Banner oben (Mockup-Optik,
-  „Ignorieren" + „Zusammenfassen…" mit Vorschau-Dialog).
-- Set-Editor-Sheet (Neu/Bearbeiten): Name, Benutzername, Auth-Segmente
-  Passwort|SSH-Key (Passwort-SecureField mit „unverändert"-Prompt beim
-  Bearbeiten wie das Session-Formular; Key-Pfad + fileImporter +
-  Passphrase). Speichern validiert Name+Username nicht-leer.
-- Formular-Dreiweg (Ziel-Host) exakt Mockup Abschnitt 3 unteres Sheet:
-  Umschalter `Login-Set | Manuell` (Segmente); Set-Modus: Picker aller
-  Sets + „Logins verwalten…"-Link; Manuell-Modus: heutige Felder + Toggle
-  „Als neues Login-Set speichern" + Namensfeld (legt beim
-  Verbinden/Speichern das Set an, referenziert es sofort, Session-Secret
-  wandert unter die Set-ID). Edit-Modus zeigt den gemerkten Zustand
-  (loginSetID gesetzt ⇒ Set-Modus mit vorausgewähltem Set).
-- Export/Import (M9a): Sessions mit `loginSetID` exportieren die
-  AUFGELÖSTEN Werte (Username/Auth/ggf. Passwort) — das Export-Format
-  bleibt unverändert v1; Sets selbst werden NICHT exportiert (Backlog).
+- Logins sheet (⌘⇧L in the Sessions menu; sidebar background menu above
+  "Known Hosts…"; link "Manage Logins…" in the form next to the picker):
+  a list per mockup section 3 (KEY/PASS badge, name,
+  `user · auth short form`, usage counter "n connections"), footer
+  New…/Edit…/Delete…/Close; merge banner at the top (mockup look,
+  "Ignore" + "Merge…" with a preview dialog).
+- Set editor sheet (new/edit): name, username, auth segments
+  Password|SSH Key (password SecureField with an "unchanged" prompt when
+  editing, like the session form; key path + fileImporter + passphrase).
+  Save validates that name+username are non-empty.
+- Form three-way selector (target host) exactly mockup section 3 bottom
+  sheet: toggle `Login Set | Manual` (segments); set mode: picker of all
+  sets + a "Manage Logins…" link; manual mode: today's fields + a
+  "Save as new login set" toggle + a name field (creates the set on
+  connect/save, references it immediately, the session secret moves under
+  the set ID). Edit mode shows the remembered state (loginSetID set ⇒
+  set mode with the set preselected).
+- Export/import (M9a): sessions with a `loginSetID` export the RESOLVED
+  values (username/auth/password if applicable) — the export format
+  stays unchanged at v1; sets themselves are NOT exported (backlog).
 
 ## 6. Tests
 
-- Store: CRUD, Vorwärtskompatibilität (unbekannter authKind-Raw wird
-  übersprungen, Datei unangetastet), loginSetID-Decode-Kompat alter
+- Store: CRUD, forward compatibility (an unknown authKind raw value gets
+  skipped, file untouched), loginSetID decode compatibility with an old
   sessions.json.
-- Resolver: Set→Credentials inkl. Keychain; fehlendes Set ⇒ typisierter
-  Fehler mit lokalisierter Meldung.
-- Lösch-Rückstellung: Werte + Secret kopiert, loginSetID genullt,
-  Keychain-Fehler zählt statt bricht (Mock-SecretStore).
-- Merge-Planner: Key- und Passwort-Gruppierung (inkl. „ohne gespeichertes
-  Passwort nimmt nicht teil"), Ignorier-Signaturen (Reaktivierung bei
-  neuem Mitglied), Merge-Anwendung (Set angelegt, Sessions umgestellt,
-  Session-Secrets gelöscht, Namens-Kollision „(2)").
-- Export-Auflösung: Session mit Set exportiert aufgelöste Werte.
-- UI (Sheets, Banner, Dreiweg, Menü): visueller Smoke (T4).
+- Resolver: set→credentials including keychain; missing set ⇒ typed
+  error with a localized message.
+- Deletion reset: values + secret copied, loginSetID nulled, keychain
+  error counts instead of aborting (mock SecretStore).
+- Merge planner: key and password grouping (including "no stored
+  password does not participate"), ignore signatures (reactivation on a
+  new member), merge application (set created, sessions switched over,
+  session secrets deleted, name collision "(2)").
+- Export resolution: a session with a set exports resolved values.
+- UI (sheets, banner, three-way selector, menu): visual smoke test (T4).
 
-## 7. Bewusst NICHT in M10b
+## 7. Deliberately NOT in M10b
 
-- Kein ssh-agent (M10d), kein Jump-Host (M10c — nutzt dann den Dreiweg).
-- Kein Export/Import der Sets selbst (Backlog; Sessions exportieren
-  aufgelöst).
-- Keine Set-Nutzung im Edit-Session-„Speichern & verbinden"-Sonderfall
-  über das Normale hinaus (der Dreiweg gilt überall im Formular).
+- No ssh-agent (M10d), no jump host (M10c — which then uses the
+  three-way selector).
+- No export/import of the sets themselves (backlog; sessions export
+  resolved).
+- No use of sets in the edit-session "Save & connect" special case beyond
+  the normal case (the three-way selector applies everywhere in the
+  form).

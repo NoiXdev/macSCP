@@ -1,439 +1,440 @@
-# Terminal-Snippets — Abschlussbericht
+# Terminal Snippets — Completion Report
 
-**Status:** abgeschlossen 2026-08-10. HEAD vor diesem Bericht: `d1db769`.
+**Status:** completed 2026-08-10. HEAD before this report: `d1db769`.
 
-Wiederverwendbare Kommandozeilen, die sich aus dem Terminal-Menü in das
-SSH-Terminal-Panel einfügen — oder, ausdrücklich markiert, sofort ausführen —
-lassen. `Snippet`, `SnippetStore` und `SnippetKeystrokes` liegen in Core und
-sind vollständig geprüft; `SnippetsSheet` und die Menü-Verdrahtung sind
-App-seitig und bleiben ungepinnt.
+Reusable command lines that can be inserted from the terminal menu into the
+SSH terminal panel — or, when explicitly marked, executed immediately.
+`Snippet`, `SnippetStore` and `SnippetKeystrokes` live in Core and are
+fully covered by tests; `SnippetsSheet` and the menu wiring are on the
+app side and remain unpinned.
 
-Der Meilenstein hat **zwei echte Befunde**, und beide sitzen nicht dort, wo
-der Plan sie erwartet hätte: der Zeilenabschluss musste gemessen werden, und
-das Auslösen wäre auf einem frisch verbundenen Tab **stumm ins Leere**
-gelaufen. Beide stehen unten in eigenen Abschnitten.
+The milestone has **two real findings**, and neither sits where the plan
+would have expected it: the line terminator had to be measured, and
+triggering a snippet would have run **silently into the void** on a
+freshly connected tab. Both are covered below in their own sections.
 
 Spec: `2026-08-10-terminal-snippets-design.md`.
 Plan: `../plans/2026-08-10-terminal-snippets.md`.
 
 ## Commits
 
-Basis des Meilensteins: `7a1777b` (der Plan-Commit selbst).
+Base of the milestone: `7a1777b` (the plan commit itself).
 
-| Commit | Inhalt |
+| Commit | Content |
 |---|---|
-| `7a1777b` | Plan (= Basis) |
+| `7a1777b` | Plan (= base) |
 | `f7457d6` | T1 — `Snippet` + `SnippetStore` |
-| `af9dba2` | T2 — `SnippetKeystrokes` und der **gemessene** Zeilenabschluss |
-| `1ae8416` | T2 Fix-Runde — zwei überzogene Kommentar-Behauptungen |
+| `af9dba2` | T2 — `SnippetKeystrokes` and the **measured** line terminator |
+| `1ae8416` | T2 fix round — two overreaching comment claims |
 | `7b4d92c` | T3 — `SnippetsSheet` |
-| `b8152c0` | T4 — Einträge im Terminal-Menü + Shortcuts-Katalog |
-| `d1db769` | T4 Fix-Runde — die Wartepolitik nach Core, `Divider()`, stiller Timeout entfernt |
+| `b8152c0` | T4 — entries in the terminal menu + shortcuts catalog |
+| `d1db769` | T4 fix round — the wait policy moved to Core, `Divider()`, silent timeout removed |
 
-**Unversendet:** `git rev-list --count origin/develop..develop` → **9** vor
-diesem Bericht, **10** danach. **Release-Stau:**
-`git rev-list --count origin/main..develop` → **419** (420 nach diesem
-Commit); die Spec nannte beim Start 410, M29-P2 nannte 408.
+**Unpushed:** `git rev-list --count origin/develop..develop` → **9** before
+this report, **10** after. **Release backlog:**
+`git rev-list --count origin/main..develop` → **419** (420 after this
+commit); the spec named 410 at the start, M29-P2 named 408.
 
-Milestone-Diff (`git diff --shortstat -M 7a1777b..HEAD -- Sources Tests`):
-**15 Dateien, +1060 / −2**. Die drei neuen Core-Dateien tragen +60
-(`Snippet.swift`), +49 (`SnippetKeystrokes.swift`) und +46
-(`SnippetStore.swift`), die neue App-Datei `SnippetsSheet.swift` +308; die
-zwei neuen Testdateien +81 und +91.
+Milestone diff (`git diff --shortstat -M 7a1777b..HEAD -- Sources Tests`):
+**15 files, +1060 / −2**. The three new Core files carry +60
+(`Snippet.swift`), +49 (`SnippetKeystrokes.swift`) and +46
+(`SnippetStore.swift`), the new app file `SnippetsSheet.swift` +308; the
+two new test files +81 and +91.
 
-## Verifikation zum Abschluss
+## Verification at completion
 
-Alles Folgende wurde **in dieser Sitzung ausgeführt**. Wo etwas aus einem
-Task-Bericht übernommen ist, steht es ausdrücklich dabei.
+Everything below was **run in this session**. Where something is taken
+over from a task report, that is stated explicitly.
 
-| Lauf | Ergebnis |
+| Run | Result |
 |---|---|
 | `swift build` | `Build complete! (5.34s)` |
-| `swift test` | **1749 Tests in 143 Suiten, grün** (3,655 s) |
-| `docker compose -f docker/test-server/compose.yml up -d` | Rig oben (sshd, sshd-2, minio, minio-init, webdav), gestartet aus dem **Haupt-Checkout** |
-| `MACSCP_ITEST=1 swift test` | **1749 Tests in 143 Suiten, grün** (12,449 s) |
-| `MACSCP_KEYCHAIN=1 swift test --filter Keychain` | **29 Tests in 11 Suiten, grün** (0,066 s) |
-| `plutil -lint` über alle acht Kataloge (4× App, 4× Core) | jede Datei `OK` |
-| `pgrep -fl swiftpm-testing-helper` | keine Treffer, keine Waisen |
-| `git status --porcelain` | vor dem Bericht-Commit leer, auch nach der Mutationsprobe unten |
-| `scripts/release` | **nicht ausgeführt** (bindende Vorgabe) |
-| GUI | **nicht gestartet** (bindende Vorgabe) |
+| `swift test` | **1749 tests in 143 suites, green** (3.655 s) |
+| `docker compose -f docker/test-server/compose.yml up -d` | rig up (sshd, sshd-2, minio, minio-init, webdav), started from the **main checkout** |
+| `MACSCP_ITEST=1 swift test` | **1749 tests in 143 suites, green** (12.449 s) |
+| `MACSCP_KEYCHAIN=1 swift test --filter Keychain` | **29 tests in 11 suites, green** (0.066 s) |
+| `plutil -lint` over all eight catalogs (4× App, 4× Core) | every file `OK` |
+| `pgrep -fl swiftpm-testing-helper` | no hits, no orphans |
+| `git status --porcelain` | empty before the report commit, and also after the mutation probe below |
+| `scripts/release` | **not run** (binding requirement) |
+| GUI | **not started** (binding requirement) |
 
-**Dass die gegatete Suite wirklich lief**, ist an der Laufzeit ablesbar
-(3,655 s ungegatet gegen 12,449 s gegatet) und daran, dass die Ausgabe
-namentlich die Suite `CitadelFileSystem against Docker SSH server` führt. Die
-Testzahl ist in beiden Läufen identisch, weil die Integrationstests intern
-über die Umgebungsvariable früh zurückkehren — dieselbe Erklärung wie seit
-M24.
+**That the gated suite really ran** is legible from the runtime
+(3.655 s ungated versus 12.449 s gated) and from the output naming the
+suite `CitadelFileSystem against Docker SSH server` by name. The test
+count is identical in both runs because the integration tests internally
+return early via the environment variable — the same explanation as
+since M24.
 
-**Der seit M20 bekannte 0-%-CPU-Hänger trat in keinem der Läufe auf.** Eine
-Beobachtung, kein Beweis seiner Abwesenheit.
+**The 0% CPU hang known since M20 did not occur in either run.** An
+observation, not proof of its absence.
 
-### Testzahlen, vorher und nachher
+### Test counts, before and after
 
-Die **Vorher**-Zahl ist nicht fortgeschrieben, sondern gemessen: der
-Basiscommit `7a1777b` wurde in einem eigenen Worktree ausgecheckt und dort
-`swift test` gefahren (der Worktree danach entfernt). Der Wert bestätigt die
-Zahl, die die Task-Briefe nannten — er ist hier aber die Messung, nicht
-deren Übernahme.
+The **before** number is not carried forward, it is measured: the base
+commit `7a1777b` was checked out into its own worktree and `swift test`
+run there (the worktree was then removed). The value confirms the number
+the task briefs stated — but here it is the measurement, not an
+inheritance of it.
 
-| | Basis `7a1777b` | HEAD `d1db769` |
+| | Base `7a1777b` | HEAD `d1db769` |
 |---|---|---|
-| Gesamt | **1735 Tests / 141 Suiten** | **1749 Tests / 143 Suiten** |
+| Total | **1735 tests / 141 suites** | **1749 tests / 143 suites** |
 
-Also **+14 Tests, +2 Suiten**. Die Differenz ist restlos erklärt und
-ausgezählt:
+So **+14 tests, +2 suites**. The difference is fully accounted for and
+counted out:
 
-| Suite / Datei | neue `@Test` |
+| Suite / file | new `@Test` |
 |---|---|
-| `SnippetStoreTests` (neue Suite) | 6 |
-| `SnippetKeystrokesTests` (neue Suite) | 4 |
-| `TerminalPanelViewModelTests` (bestehende Suite) | 4 |
-| **Summe** | **14** |
+| `SnippetStoreTests` (new suite) | 6 |
+| `SnippetKeystrokesTests` (new suite) | 4 |
+| `TerminalPanelViewModelTests` (existing suite) | 4 |
+| **Sum** | **14** |
 
-Kein bestehender Test hat seinen Status geändert.
+No existing test changed status.
 
-## Die zehn Erfolgskriterien
+## The ten success criteria
 
-Belege nennen Testnamen und Symbole, **keine Zeilennummern**.
+Evidence names test names and symbols, **never line numbers**.
 
-| # | Kriterium | Ergebnis | Beleg |
+| # | Criterion | Result | Evidence |
 |---|---|---|---|
-| 1 | Ein eingefügtes Snippet endet **ohne** Zeilenabschluss | **erfüllt** | `anInsertingSnippetEndsWithoutATerminator` prüft die von `SnippetKeystrokes.bytes(for:)` erzeugten Bytes |
-| 2 | Ein ausführendes Snippet endet mit **genau einem** Zeilenabschluss, dem der Eingabetaste | **erfüllt** | `anExecutingSnippetAppendsExactlyOneTerminator` (genau ein zusätzliches Byte) und `theTerminatorIsCarriageReturn` (es ist `0x0D`). Das Byte ist **gemessen** — eigener Abschnitt unten |
-| 3 | Ein Kommando mit Zeilenumbruch wird abgelehnt | **erfüllt** | `aCommandWithALineBreakIsRefused` (Initialisierer, `\n` und `\r`) und `aHandEditedMultiLineCommandDoesNotDecode` (JSON-Literal, also ein von Hand bearbeiteter Store) |
-| 4 | Der Store überlebt Schreiben und Lesen unverändert | **erfüllt** | `aSavedSnippetSurvivesTheRoundTrip`; dazu `savingTheSameIdTwiceReplaces` und `removingAnIdLeavesTheOthers` |
-| 5 | Ein fehlender Store liefert eine leere Liste, keinen Fehler | **erfüllt** | `aMissingFileReadsAsAnEmptyList` |
-| 6 | Ausführende Snippets stehen im Menü in einem eigenen Abschnitt | **Review-Punkt; die Markierung selbst seit der Fix-Runde geprüft** | siehe eigener Absatz unten |
-| 7 | Ohne verbundene Sitzung sind die Einträge deaktiviert | **Review-Punkt, kein Test** | siehe eigener Absatz unten |
-| 8 | Der Store enthält nie ein Secret | **erfüllt, als Zusage gelesen** | `Snippet`s Doc-Kommentar sagt es am Typ („Never holds credentials… this project keeps secrets exclusively in the Keychain"). Der Editor im Sheet trägt denselben Hinweis mit Begründung. Es gibt **keinen** Test, der die Abwesenheit eines Secrets erzwingen könnte — Snippets sind Freitext |
-| 9 | Alle vier Kataloge tragen die neuen Schlüssel | **erfüllt** | **22** neue Schlüssel in `en` (mit der Fix-Runde unten: **25**); die Schlüsselmengen-Differenz gegen `en` ist für `de`, `fr` und `pl` **leer** (ausgezählt aus dem Milestone-Diff). Der Wächter `LocalizableStringsTests` (`appLayerLanguagesMatchEnglishKeys`, `coreLayerLanguagesMatchEnglishKeys`) bleibt grün, ebenso `KeyboardShortcutsCatalogTests.everyLabelKeyResolves`; `plutil -lint` auf allen acht Katalogen `OK`. Die **Core**-Kataloge hat dieser Meilenstein nicht angefasst — sie wurden trotzdem mitgelintet |
-| 10 | Der Shortcuts-Katalog nennt die neuen Kürzel | **erfüllt** | Neue Gruppe `settings.shortcuts.group.snippets` mit der Zeile `settings.shortcuts.label.insertSnippet` / „Insert snippet 1–3" / Glyph `⌃⌘1–3`; zusätzlich ist die Kürzel-Aufzählung im eigenen Doc-Kommentar des Katalogs (Fundstelle 1, die SwiftUI-Menüs) um `⌃⌘1–3` ergänzt — beide Stellen, die der Katalog selbst als Pflicht nennt |
+| 1 | An inserted snippet ends **without** a line terminator | **met** | `anInsertingSnippetEndsWithoutATerminator` checks the bytes produced by `SnippetKeystrokes.bytes(for:)` |
+| 2 | An executing snippet ends with **exactly one** line terminator, the one from the return key | **met** | `anExecutingSnippetAppendsExactlyOneTerminator` (exactly one extra byte) and `theTerminatorIsCarriageReturn` (it is `0x0D`). The byte is **measured** — own section below |
+| 3 | A command containing a line break is rejected | **met** | `aCommandWithALineBreakIsRefused` (initializer, `\n` and `\r`) and `aHandEditedMultiLineCommandDoesNotDecode` (JSON literal, i.e. a hand-edited store) |
+| 4 | The store survives writing and reading unchanged | **met** | `aSavedSnippetSurvivesTheRoundTrip`; plus `savingTheSameIdTwiceReplaces` and `removingAnIdLeavesTheOthers` |
+| 5 | A missing store returns an empty list, not an error | **met** | `aMissingFileReadsAsAnEmptyList` |
+| 6 | Executing snippets appear in the menu in their own section | **review point; the marking itself checked since the fix round** | see the dedicated paragraph below |
+| 7 | Entries are disabled without a connected session | **review point, no test** | see the dedicated paragraph below |
+| 8 | The store never contains a secret | **met, read as a commitment** | `Snippet`'s doc comment states it on the type ("Never holds credentials… this project keeps secrets exclusively in the Keychain"). The editor in the sheet carries the same note with a rationale. There is **no** test that could enforce the absence of a secret — snippets are free text |
+| 9 | All four catalogs carry the new keys | **met** | **22** new keys in `en` (with the fix round below: **25**); the key-set difference against `en` is **empty** for `de`, `fr` and `pl` (counted out from the milestone diff). The guard `LocalizableStringsTests` (`appLayerLanguagesMatchEnglishKeys`, `coreLayerLanguagesMatchEnglishKeys`) stays green, as does `KeyboardShortcutsCatalogTests.everyLabelKeyResolves`; `plutil -lint` on all eight catalogs `OK`. This milestone did NOT touch the **Core** catalogs — they were still linted along with the rest |
+| 10 | The shortcuts catalog names the new shortcuts | **met** | New group `settings.shortcuts.group.snippets` with the line `settings.shortcuts.label.insertSnippet` / "Insert snippet 1–3" / glyph `⌃⌘1–3`; in addition the shortcut enumeration in the catalog's own doc comment (finding site 1, the SwiftUI menus) is extended with `⌃⌘1–3` — both spots the catalog itself names as mandatory |
 
-### Kriterien 6 und 7: Review, nicht Test
+### Criteria 6 and 7: review, not test
 
-**Beide waren zum Abschluss ausdrücklich keine Tests, und dieser Bericht
-behauptete keine Testabdeckung für sie.** Die Menü-Verdrahtung ist
-App-seitig, und dieses Projekt kann keine `View` rendern — dieselbe Grenze,
-die M29 offengelegt hat. Was zum Abschluss vorlag, war ein gelesener
-Code-Stand. *(Teilweise überholt: die Fix-Runde hat die Markierung aus
-Kriterium 6 in eine reine Funktion gezogen und dort geprüft — das Menü
-selbst rendert weiterhin kein Test. Siehe den Einschub unter Kriterium 6.)*
+**Both were explicitly not tests at completion, and this report claimed
+no test coverage for them.** The menu wiring is on the app side, and this
+project cannot render a `View` — the same boundary M29 exposed. What was
+in place at completion was code that had been read. *(Partially
+superseded: the fix round pulled the marking from criterion 6 into a pure
+function and tested it there — the menu itself still renders under no
+test. See the insert under criterion 6.)*
 
-- **Kriterium 6:** `MacSCPApp.snippetMenuItems` teilt die Liste in
-  `inserting` und `executing`. Zwischen beiden steht ein expliziter
-  `Divider()`, darüber eine `Section` mit dem Titel
-  `menu.snippets.runsImmediately`. Die Trennung ruht bewusst auf dem
-  Divider: **wie `Section` seinen Titel in einem Menüleisten-Menü zeichnet,
-  hat niemand gesehen.** Der Titel ist die Zugabe, der Divider der tragende
-  Teil — so steht es auch im Doc-Kommentar der Funktion.
+- **Criterion 6:** `MacSCPApp.snippetMenuItems` splits the list into
+  `inserting` and `executing`. Between the two sits an explicit
+  `Divider()`, above that a `Section` titled
+  `menu.snippets.runsImmediately`. The separation deliberately rests on
+  the divider: **nobody has seen how `Section` draws its title in a menu
+  bar menu.** The title is the bonus, the divider the load-bearing
+  part — that's also what the function's doc comment says.
 
-  > **Falsch, korrigiert in der Fix-Runde (`429fdaf`).** Der Satz „der
-  > Divider der tragende Teil" hat keine Grundlage: `snippetMenuItems`
-  > setzte **drei** gleichrangige `Divider()` — vor dem Snippet-Block, vor
-  > der `Section`, vor „Manage Snippets…". Ein Divider markiert damit
-  > nichts Bestimmtes; das Einfüge-Band sah aus wie das Ausführ-Band sah aus
-  > wie das Verwaltungs-Band. Getragen hätte die Unterscheidung nur der
-  > `Section`-Titel — genau das Stück, das niemand gezeichnet gesehen hat.
-  > **Neu:** Die Markierung sitzt jetzt im Titel des Eintrags selbst
-  > (`SnippetMenuEntry.title(for:)`, Schlüssel
-  > `menu.snippets.executingItem`, „%@ (runs immediately)"). Ein Titel ist
-  > Text, den das Menü sicher zeichnet, und er hält auch dann, wenn es gar
-  > keine einfügenden Snippets gibt und die Gruppierung nichts mehr
-  > kontrastiert. Gruppierung und `Section`-Titel bleiben als Zugabe
-  > stehen. Der Doc-Kommentar der Funktion sagt beides jetzt so.
-  > **Und damit erstmals geprüft:** `onlyAnExecutingEntryIsMarkedInItsTitle`
-  > und `theExecutingMarkerResolvesFromTheCatalog` in
-  > `SnippetsPresentationTests` (App-Testziel `macSCPAppKitTests`, das es
-  > seit M29-P1 gibt). Das Menü selbst rendert weiterhin kein Test — was
-  > geprüft ist, ist der Titel, den es bekommt.
-- **Kriterium 7:** Jeder Snippet-Eintrag trägt in `MacSCPApp.snippetButton`
-  denselben Ausdruck wie die beiden vorbestehenden Einträge des Menüs,
-  `!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell`
-  — zeichengleich übernommen, nicht neu abgeleitet. „Manage Snippets…" ist
-  bewusst **nicht** deaktiviert; das folgt dem Sessions-Menü, dessen
-  Verwaltungseinträge ebenfalls keinen `.disabled` tragen.
+  > **Wrong, corrected in the fix round (`429fdaf`).** The sentence "the
+  > divider is the load-bearing part" has no basis: `snippetMenuItems`
+  > set **three** equally-ranked `Divider()`s — before the snippet
+  > block, before the `Section`, before "Manage Snippets…". A divider
+  > therefore marks nothing in particular; the insert band looked like
+  > the execute band looked like the management band. Only the
+  > `Section` title would have carried the distinction — exactly the
+  > piece nobody has seen drawn.
+  > **New:** the marking now sits in the title of the entry itself
+  > (`SnippetMenuEntry.title(for:)`, key
+  > `menu.snippets.executingItem`, "%@ (runs immediately)"). A title is
+  > text the menu reliably draws, and it holds even when there are no
+  > inserting snippets at all and the grouping has nothing left to
+  > contrast against. Grouping and the `Section` title remain as a
+  > bonus. The function's doc comment now says both things this way.
+  > **And with that, tested for the first time:**
+  > `onlyAnExecutingEntryIsMarkedInItsTitle` and
+  > `theExecutingMarkerResolvesFromTheCatalog` in
+  > `SnippetsPresentationTests` (app test target `macSCPAppKitTests`,
+  > which has existed since M29-P1). The menu itself still renders under
+  > no test — what is tested is the title it gets.
+- **Criterion 7:** every snippet entry in `MacSCPApp.snippetButton`
+  carries the same expression as the two pre-existing entries of the
+  menu, `!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell`
+  — taken over character-for-character, not newly derived. "Manage
+  Snippets…" is deliberately **not** disabled; that follows the Sessions
+  menu, whose management entries likewise carry no `.disabled`.
 
-Gesehen hat das beides bislang nur ein Leser des Quelltexts. **Die
-Sichtprüfung durch den Maintainer steht aus.**
+So far only a reader of the source has seen either of these. **The
+maintainer's visual check is still outstanding.**
 
-## Befund 1: Der Zeilenabschluss ist gemessen, nicht angenommen
+## Finding 1: The line terminator is measured, not assumed
 
-**Ergebnis: CR, `0x0D`. Nicht LF.**
+**Result: CR, `0x0D`. Not LF.**
 
-Die Spec hat sich hier bewusst nicht festgelegt und nur verlangt, dass die
-Antwort gemessen wird. Das war die richtige Vorsicht: **ein Plan, der `\n`
-behauptet hätte, hätte ein als „sofort ausführend" markiertes Snippet
-ausgeliefert, das still nichts tut** — der Text landet in der Eingabezeile
-und bleibt dort stehen.
+The spec deliberately did not commit to this and only required that the
+answer be measured. That was the right caution: **a plan that had
+asserted `\n` would have shipped a snippet marked "run immediately" that
+silently does nothing** — the text lands on the input line and just sits
+there.
 
-Die Kette, in Task 2 abgelaufen und **in dieser Sitzung an der gepinnten
-Revision unabhängig noch einmal nachgezogen**:
+The chain, worked through in Task 2 and **independently retraced in this
+session against the pinned revision**:
 
-1. `Package.swift` pinnt SwiftTerm auf eine feste Revision; der Checkout
-   unter `.build/checkouts/SwiftTerm` meldet genau diese als `HEAD`. Gelesen
-   wurde also der Code, gegen den dieses Paket baut.
-2. Eine unmodifizierte Return-Taste fällt in `MacTerminalView.keyDown(with:)`
-   durch alle Sonderzweige und wird von AppKit zum Kommando
-   `insertNewline(_:)`.
-3. `doCommand(by:)` beantwortet `#selector(insertNewline(_:))` mit
+1. `Package.swift` pins SwiftTerm to a fixed revision; the checkout
+   under `.build/checkouts/SwiftTerm` reports exactly this as `HEAD`. So
+   the code read was the code this package actually builds against.
+2. An unmodified return key falls through all special-case branches in
+   `MacTerminalView.keyDown(with:)` and is turned by AppKit into the
+   command `insertNewline(_:)`.
+3. `doCommand(by:)` answers `#selector(insertNewline(_:))` with
    `send(EscapeSequences.cmdRet)`.
-4. `EscapeSequences.cmdRet` ist `[ 13 ]` — ein Byte, `0x0D`, kein LF und kein
-   CR-LF-Paar.
-5. Die Bytes erreichen `TerminalPanelViewModel.send(_:)` unverändert über
+4. `EscapeSequences.cmdRet` is `[ 13 ]` — one byte, `0x0D`, neither LF nor
+   a CR-LF pair.
+5. The bytes reach `TerminalPanelViewModel.send(_:)` unchanged via
    `SSHTerminalView.Coordinator.send(source:data:)`.
 
-Drei Gegenproben aus Task 2, die den Befund tragen:
+Three counter-checks from Task 2 that support the finding:
 
-- **LF ist deklariert, aber tot.** `EscapeSequences.cmdNewLine` (`[ 10 ]`)
-  hat im gesamten Baum `Sources/SwiftTerm` genau **einen** Treffer: die
-  Deklaration selbst. Nachgezählt in dieser Sitzung — unverändert einer.
-- **LNM / `convertEol` fasst die Eingabe nicht an.** `Terminal.lineFeedMode`
-  wird nur in der Ausgabe- und der Modus-Melde-Behandlung gelesen, an keiner
-  Tastatur-Eingabestelle.
-- **Der Kitty-Pfad bestätigt die Legacy-Kodierung.** Ohne
-  report-all-keys landet eine unmodifizierte Return-Taste auf
+- **LF is declared but dead.** `EscapeSequences.cmdNewLine` (`[ 10 ]`)
+  has exactly **one** hit across the whole `Sources/SwiftTerm` tree: the
+  declaration itself. Recounted in this session — still one.
+- **LNM / `convertEol` does not touch the input.** `Terminal.lineFeedMode`
+  is only read in output handling and mode-report handling, at no
+  keyboard input site.
+- **The Kitty path confirms the legacy encoding.** Without
+  report-all-keys, an unmodified return key lands on
   `legacySpecialKeySequence` → `[ControlCodes.CR]` = `0x0d`.
 
-**Grenze des Befunds, ausdrücklich:** Das ist ein **statischer Quelltext-Lauf,
-keine Laufzeitaufnahme** — die GUI wurde nicht gestartet, weder in Task 2 noch
-hier. Es ist der stärkste Beleg, der ohne App-Start zu haben ist, und mehr
-behauptet er nicht.
+**The finding's boundary, explicitly:** this is a **static source-code
+trace, not a runtime capture** — the GUI was not started, neither in
+Task 2 nor here. It is the strongest evidence obtainable without starting
+the app, and it claims no more than that.
 
-**Und er ist nicht modus-unabhängig.** Die erste Fassung des Kommentars
-behauptete das; die Review hat es kassiert und `1ae8416` es korrigiert.
-Verhandelt ein Programm die report-all-keys-Stufe des
-Kitty-Tastaturprotokolls, kodiert eine echte Return-Taste als `ESC [ 13 u`;
-in diesem Modus ist das bare CR eines Snippets **nicht** byte-gleich mit
-einem Tastendruck. Der bewusst angenommene Geltungsbereich ist die
-Legacy-Kodierung am Shell-Prompt — genau das, worauf ein Snippet zielt. Der
-Doc-Kommentar von `SnippetKeystrokes` sagt das jetzt selbst, samt Zeiger auf
-`theTerminatorIsCarriageReturn` als Ort der vollständigen Beweiskette.
+**And it is not mode-independent.** The first draft of the comment
+claimed that; the review rejected it and `1ae8416` corrected it. When a
+program negotiates the report-all-keys tier of the Kitty keyboard
+protocol, a real return keypress is encoded as `ESC [ 13 u`; in that mode
+a snippet's bare CR is **not** byte-identical to a keypress. The
+deliberately assumed scope is the legacy encoding at the shell prompt —
+exactly what a snippet targets. `SnippetKeystrokes`'s doc comment now
+says this itself, complete with a pointer to
+`theTerminatorIsCarriageReturn` as the location of the full evidence
+chain.
 
-## Befund 2: Das Auslösen wäre stumm ins Leere gelaufen
+## Finding 2: Triggering would have run silently into the void
 
-Gefunden in Task 4, beim Lesen von `TerminalPanelViewModel` — der Plan hatte
-davon nichts.
+Found in Task 4, while reading `TerminalPanelViewModel` — the plan had
+nothing on this.
 
-`send(_:)` begann mit `guard let shell else { return }`. Das Panel startet
-geschlossen (`isVisible = false`, `state = .closed`). Ein Snippet auf einem
-frisch verbundenen Tab — **genau der Moment, in dem die Menüeinträge zum
-ersten Mal freigeschaltet sind** — hätte das Panel geöffnet und seine Bytes
-in denselben `guard` geschickt: verschluckt, ohne Spur. Die Spec sagt, ein
-Eintrag, der ins Leere läuft, sei schlechter als ein grauer; hier wäre er ins
-Leere gelaufen, ohne grau zu sein.
+`send(_:)` began with `guard let shell else { return }`. The panel starts
+closed (`isVisible = false`, `state = .closed`). A snippet on a freshly
+connected tab — **exactly the moment the menu entries first become
+enabled** — would have opened the panel and sent its bytes into that same
+`guard`: swallowed, without a trace. The spec says an entry that runs
+into the void is worse than a greyed-out one; here it would have run into
+the void without being greyed out.
 
-Die erste Fassung wartete in der View mit einem beschränkten Poll. Die Review
-hielt dagegen: der Timeout war selbst stumm und reproduzierte damit exakt den
-Defekt, den er beheben sollte, und die Politik saß untestbar im View-Code.
-Die Fix-Runde hat sie nach Core gezogen — und dabei **ist sie kleiner
-geworden als der Poll, den sie ersetzt**: `send(_:)` puffert, solange
-`state == .opening`, und `flushPendingBytes()` spielt in demselben
-synchronen Schritt zurück, der `.running` setzt. Damit gibt es keinen Timeout
-mehr, der ablaufen könnte. In der View bleiben drei geradlinige Aufrufe:
-Panel zeigen → `openIfNeeded()` → `send(...)`.
+The first draft waited in the view with a bounded poll. The review pushed
+back: the timeout was itself silent and thereby reproduced exactly the
+defect it was meant to fix, and the policy sat untestable in view code.
+The fix round moved it to Core — and in doing so **it became smaller than
+the poll it replaced**: `send(_:)` buffers while `state == .opening`, and
+`flushPendingBytes()` plays it back in the same synchronous step that
+sets `.running`. That leaves no timeout that could ever expire. In the
+view, three straightforward calls remain: show the panel →
+`openIfNeeded()` → `send(...)`.
 
-**Und sie hat einen vorbestehenden Fehler mitbehoben:** Tastendrücke, die
-während `.opening` ins Panel getippt wurden, fielen durch denselben `guard`
-— das Panel montiert `SSHTerminalView` auch für `.opening`. Sie werden jetzt
-ebenfalls zugestellt. Das war nicht das Ziel, sondern ein Nebenertrag davon,
-den Fehler an der Wurzel statt am Aufrufer zu beheben.
+**And it fixed a pre-existing bug along the way:** keystrokes typed into
+the panel during `.opening` fell through the same `guard` — the panel
+mounts `SSHTerminalView` for `.opening` too. They are now delivered as
+well. That was not the goal, but a by-product of fixing the bug at its
+root instead of at the call site.
 
-Vier neue Tests halten das (`sendDuringOpeningIsDeliveredOnceRunning`,
+Four new tests hold this (`sendDuringOpeningIsDeliveredOnceRunning`,
 `bytesHeldWhileOpeningKeepTheirOrder`,
 `bytesHeldWhileOpeningAreDroppedWhenTheOpenFails`,
-`bytesHeldWhileOpeningAreBounded`). **Drei davon waren nachweislich rot** —
-die Rot-Ausgabe steht im Task-4-Bericht und ist **in dieser Sitzung nicht
-reproduziert**. Der vierte wird ehrlich als das benannt, was er ist: er
-sichert die neue Fehlermöglichkeit des Fixes ab (ein alter Puffer, der in
-eine spätere Shell zurückspielt) und ist ohne den Fix trivial grün.
+`bytesHeldWhileOpeningAreBounded`). **Three of them were demonstrably
+red** — the red output is in the Task 4 report and **was not reproduced
+in this session**. The fourth is honestly named for what it is: it
+guards against the new failure mode the fix introduces (a stale buffer
+replaying into a later shell) and is trivially green without the fix.
 
-### Nachgemessen: die vier Löschstellen und die zwei `replayBuffer`-Stellen
+### Remeasured: the four clear sites and the two `replayBuffer` sites
 
-Der Task-4-Bericht schreibt, der Puffer werde an vier Stellen geleert, „jede
-neben dem bestehenden `replayBuffer`-Reset, neben dem sie sitzt". **Der
-zweite Halbsatz stimmt nicht, und dieser Bericht schreibt ihn nicht fort.**
-Nachgezählt in `TerminalPanelViewModel`:
+The Task 4 report states the buffer is cleared at four sites, "each next
+to the existing `replayBuffer` reset it sits beside". **The second half
+of that sentence is not true, and this report does not carry it
+forward.** Recounted in `TerminalPanelViewModel`:
 
-| | Stellen |
+| | Sites |
 |---|---|
-| `pendingBytes = []` als Lebenszyklus-Löschung | **vier** — `openIfNeeded()`, der `catch` des fehlgeschlagenen Öffnens, `finishShell`, `shutdown()` |
-| `replayBuffer = []` | **zwei** — `openIfNeeded()` und `shutdown()` |
+| `pendingBytes = []` as a lifecycle clear | **four** — `openIfNeeded()`, the `catch` of a failed open, `finishShell`, `shutdown()` |
+| `replayBuffer = []` | **two** — `openIfNeeded()` and `shutdown()` |
 
-Nur **zwei** der vier Löschstellen haben also überhaupt einen
-`replayBuffer`-Reset als Nachbarn; `catch` und `finishShell` haben keinen.
-Die engere Aussage im Quelltext selbst — dass die **Deckelung** dem Vorbild
-von `maxReplayBytes` folgt — ist dagegen richtig und bleibt stehen.
+So only **two** of the four clear sites even have a `replayBuffer` reset
+as a neighbor; `catch` and `finishShell` have none. The narrower claim in
+the source itself — that the **cap** follows the model of
+`maxReplayBytes` — is correct, though, and stands.
 
-### Nachgemessen: eine der vier Löschungen ist toter Code
+### Remeasured: one of the four clears is dead code
 
-Die Löschung im `catch` des fehlgeschlagenen Öffnens ist **wirkungslos**, ihr
-Kommentar stellt sie aber als tragend dar („Whatever was buffered was meant
-for THIS attempt's shell — there is none…").
+The clear in the `catch` of a failed open is **inert**, but its comment
+presents it as load-bearing ("Whatever was buffered was meant for THIS
+attempt's shell — there is none…").
 
-Zwei unabhängige Messungen:
+Two independent measurements:
 
-1. **Erreichbarkeit.** Der einzige Leser des Puffers ist
-   `flushPendingBytes()`, und der wird ausschließlich auf dem Erfolgspfad von
-   `openIfNeeded()` erreicht — dem eine eigene Löschung unmittelbar
-   vorausgeht. Nach dem `catch` kann also niemand mehr an die Bytes kommen,
-   ob sie stehen bleiben oder nicht.
-2. **Mutationsprobe.** Die Zeile samt Kommentar entfernt,
-   `swift test --filter TerminalPanelViewModel`: **17 Tests in 1 Suite, alle
-   grün** — kein Test hält sie, auch
-   `bytesHeldWhileOpeningAreDroppedWhenTheOpenFails` nicht. Rücknahme belegt:
-   `git status --porcelain` und `git diff --stat` beide leer.
+1. **Reachability.** The only reader of the buffer is
+   `flushPendingBytes()`, and it is reached exclusively on the success
+   path of `openIfNeeded()` — which is itself immediately preceded by its
+   own clear. So after the `catch`, nobody can reach the bytes anymore,
+   whether they stay or not.
+2. **Mutation probe.** With the line and its comment removed,
+   `swift test --filter TerminalPanelViewModel`: **17 tests in 1 suite,
+   all green** — no test holds it, not even
+   `bytesHeldWhileOpeningAreDroppedWhenTheOpenFails`. Reversion
+   confirmed: `git status --porcelain` and `git diff --stat` both empty.
 
-Das ist keine Sicherheitslücke und kein Verhaltensfehler — die Bytes gehen
-so oder so verloren, wie es sich gehört. Es ist eine **Kommentar-Unwahrheit**:
-defensive Redundanz, die als Notwendigkeit auftritt. Nach derselben Logik
-sind auch die Löschungen in `finishShell` und `shutdown()` defensiv statt
-tragend. Als kleiner Nachtrag offen (unten).
+This is not a security hole and not a behavioral bug — the bytes are
+lost either way, as they should be. It is a **comment falsehood**:
+defensive redundancy presenting itself as a necessity. By the same logic,
+the clears in `finishShell` and `shutdown()` are also defensive rather
+than load-bearing. Left open as a small follow-up (below).
 
-> **Erledigt in der Fix-Runde (`53f7fe1`).** Die Zeile bleibt stehen, der
-> Kommentar sagt jetzt, was sie ist: defensiv, nicht tragend. Eine
-> Wirkung hat sie doch, nur eine andere als behauptet — sie gibt bis zu
-> `maxPendingBytes` (64 KiB) **sofort** frei statt erst beim nächsten
-> `openIfNeeded()`/`shutdown()`. Nachgelesen an allen vier Schreibstellen
-> von `pendingBytes`; der einzige Leser bleibt `flushPendingBytes()` auf
-> dem Erfolgspfad.
+> **Done in the fix round (`53f7fe1`).** The line stays, the comment now
+> says what it is: defensive, not load-bearing. It does have an
+> effect, just a different one than claimed — it frees up to
+> `maxPendingBytes` (64 KiB) **immediately** instead of only at the next
+> `openIfNeeded()`/`shutdown()`. Rechecked at all four write sites of
+> `pendingBytes`; the only reader remains `flushPendingBytes()` on the
+> success path.
 
-## Was aus dem Ledger offen zurückbleibt
+## What remains open from the ledger
 
-Alle folgenden Punkte sind während der Reviews bewusst zurückgestellt worden.
+All of the following points were deliberately deferred during the reviews.
 
-- ~~**Leeres Trennband im Menü**, wenn es ausführende, aber **keine**
-  einfügenden Snippets gibt~~ — **erledigt in `429fdaf`**: der mittlere
-  Divider wird nur noch gesetzt, wenn auf beiden Seiten etwas steht.
-- **`prefix(maxPendingBytes - count)` würde bei negativem Argument
-  abstürzen.** Heute unerreichbar, weil der Anhang nie über die Deckelung
-  hinausläuft; ein `max(0,)` würde nichts kosten.
-- **`resize()` verwirft weiter während `.opening`**, während `send(_:)` das
-  nicht mehr tut — dieselbe `guard let shell`-Stelle, ohne
-  `.opening`-Zweig. Vorbestehende Asymmetrie; verschluckt vermutlich das
-  erste `sizeChanged` eines frisch geöffneten Panels.
-- **Zwei in demselben `.opening`-Fenster ausgelöste Snippets** hängen jetzt
-  in **definierter** Reihenfolge aneinander statt in unspezifizierter — das
-  Ergebnis ist trotzdem eine zusammengesetzte Eingabezeile. Von keinem Test
-  gehalten, von niemandem als sinnvoll angefordert.
-- **Der stille `try? await Task.sleep`** aus der ersten Fassung existiert
-  nicht mehr: der Poll, in dem er lebte, ist mit der Fix-Runde ganz
-  entfallen. Erledigt, nicht offen — hier genannt, damit die Ledger-Zeile
-  nicht als offener Punkt weiterlebt.
-- ~~**Der tote `pendingBytes = []` im `catch`** samt irreführendem
-  Kommentar~~ — **erledigt in `53f7fe1`**: Zeile bleibt, Kommentar sagt
-  jetzt die Wahrheit (siehe oben).
+- ~~**Empty separator band in the menu** when there are executing but
+  **no** inserting snippets~~ — **done in `429fdaf`**: the middle
+  divider is now only set when there is something on both sides.
+- **`prefix(maxPendingBytes - count)` would crash on a negative
+  argument.** Currently unreachable, because the append never runs past
+  the cap; a `max(0,)` would cost nothing.
+- **`resize()` still discards during `.opening`**, while `send(_:)` no
+  longer does — the same `guard let shell` spot, without an `.opening`
+  branch. Pre-existing asymmetry; presumably swallows the first
+  `sizeChanged` of a freshly opened panel.
+- **Two snippets triggered within the same `.opening` window** now
+  concatenate in **defined** order instead of unspecified order — the
+  result is still one composite input line either way. Held by no test,
+  requested by nobody as meaningful.
+- **The silent `try? await Task.sleep`** from the first draft no longer
+  exists: the poll it lived in was removed entirely with the fix round.
+  Done, not open — named here so the ledger line doesn't keep living on
+  as an open point.
+- ~~**The dead `pendingBytes = []` in the `catch`** with its misleading
+  comment~~ — **done in `53f7fe1`**: the line stays, the comment now
+  tells the truth (see above).
 
-## Fix-Runde nach der Whole-Branch-Review (2026-08-10)
+## Fix round after the whole-branch review (2026-08-10)
 
-Die Review über `7a1777b..53f3b4f` kam mit **Fix first** zurück: zwei
-Wichtige, drei Kleinigkeiten. Alle fünf Punkte wurden vor dem Umsetzen
-selbst nachgeprüft; alle fünf haben gehalten.
+The review over `7a1777b..53f3b4f` came back with **fix first**: two
+important items, three minor ones. All five points were rechecked
+independently before being fixed; all five held up.
 
-| Commit | Inhalt |
+| Commit | Content |
 |---|---|
-| `53f7fe1` | Core — Reihenfolge im Store, `sendTask`-Lebenszyklus, Kommentar im `catch` |
-| `429fdaf` | App — unlesbarer Store wird gesagt, ausführende Einträge tragen die Markierung selbst |
+| `53f7fe1` | Core — order in the store, `sendTask` lifecycle, comment in the `catch` |
+| `429fdaf` | App — an unreadable store is now reported, executing entries carry the marking themselves |
 
-**Die dritte stille Fehlermeldung, geschlossen.** `SnippetStore.all()` wirft
-bei einer Datei, die es nicht decodieren kann — ein von Hand eingetragenes
-mehrzeiliges Kommando genügt. Beide Leser haben das auf `[]` eingeebnet:
-das Menü zeigte keine Snippet-Einträge, und das Verwaltungs-Sheet — laut
-`ContentView`-Kommentar „the place to notice" — schrieb „No snippets yet."
-über eine Datei, die noch jedes Snippet enthält. Verloren geht dabei
-nichts (`save`/`remove` lesen vorher und werfen ebenfalls), ein Signal gab
-es aber auch nicht. Neu trägt `SnippetsLoad` das Leseergebnis statt einer
-nackten Liste: das Sheet zeigt den Lesefehler in seinem vorhandenen
-Fehler-Slot und behauptet nicht mehr, der Store sei leer; das Menü bekommt
-einen **deaktivierten Hinweiseintrag** — genau das Vokabular, mit dem
-dieses Menü schon „gerade nicht verfügbar" sagt —, während „Manage
-Snippets…" darunter aktiv bleibt. Geprüft in
-`anUndecodableStoreIsUnreadableRatherThanEmpty` (App-Testziel): dieselbe
-Dateiform wie im Core-Test, aber am App-seitigen Lesepfad.
+**The third silent failure, closed.** `SnippetStore.all()` throws on a
+file it cannot decode — a hand-entered multi-line command is enough. Both
+readers had flattened that to `[]`: the menu showed no snippet entries,
+and the management sheet — per the `ContentView` comment "the place to
+notice" — wrote "No snippets yet." over a file that still contained every
+snippet. Nothing is lost in the process (`save`/`remove` read first and
+also throw), but there was no signal either. `SnippetsLoad` now carries
+the read result instead of a bare list: the sheet shows the read error in
+its existing error slot and no longer claims the store is empty; the menu
+gets a **disabled hint entry** — exactly the vocabulary this menu already
+uses to say "currently unavailable" —, while "Manage Snippets…" beneath
+it stays active. Verified in `anUndecodableStoreIsUnreadableRatherThanEmpty`
+(app test target): the same file shape as the Core test, but on the
+app-side read path.
 
-**Die zwei Kleinigkeiten aus Core.** `SnippetStore.save` ersetzte per
-`removeAll` + `append` und schob ein bearbeitetes Snippet damit ans Ende —
-die positionsgebundenen ⌃⌘1–3 wanderten still mit. Jetzt wird an Ort und
-Stelle ersetzt (`replacingAnExistingIdKeepsItsPosition`); die Zusage des
-Kürzel-Katalogs, „in the order the menu lists them", stimmt damit wieder.
-`TerminalPanelViewModel` setzte `sendTask` nur in `shutdown()` zurück, also
-konnte sich nach `.ended` → Neuöffnen ein `send` an die **neue** Shell
-hinter einem `send` an die geschlossene anstellen. Verzögerung, keine
-Fehlzustellung. `cancelPendingSends()` läuft jetzt überall dort, wo die
-aktuelle Shell aufhört, das Ziel zu sein. Mutationsprobe: ohne den Fix
-fällt `aSendToAnEndedShellDoesNotDelayTheNextOne` nach 2,8 s durch, mit
-Fix läuft er in 0,08 s grün.
+**The two minor items from Core.** `SnippetStore.save` replaced via
+`removeAll` + `append` and thereby moved an edited snippet to the end —
+the position-bound ⌃⌘1–3 silently drifted along with it. It now replaces
+in place (`replacingAnExistingIdKeepsItsPosition`); the shortcuts
+catalog's promise, "in the order the menu lists them", holds again.
+`TerminalPanelViewModel` only reset `sendTask` in `shutdown()`, so after
+`.ended` → reopen, a `send` to the **new** shell could queue up behind a
+`send` to the closed one. A delay, not a misdelivery.
+`cancelPendingSends()` now runs everywhere the current shell stops being
+the target. Mutation probe: without the fix,
+`aSendToAnEndedShellDoesNotDelayTheNextOne` fails after 2.8 s, with the
+fix it runs green in 0.08 s.
 
-**Kataloge.** Drei neue Schlüssel (`snippets.load.error`,
-`menu.snippets.executingItem`, `menu.snippets.unreadable`) in allen vier
-App-Katalogen; die Meilenstein-Summe steigt damit von **22** auf **25**
-(gezählt über `git diff 7a1777b~1 -- …/en.lproj/Localizable.strings`).
-`plutil -lint` auf allen **acht** Katalogen: OK. **FR und PL sind
-maschinell erzeugt und ungeprüft.**
+**Catalogs.** Three new keys (`snippets.load.error`,
+`menu.snippets.executingItem`, `menu.snippets.unreadable`) in all four app
+catalogs; the milestone sum thereby rises from **22** to **25** (counted
+via `git diff 7a1777b~1 -- …/en.lproj/Localizable.strings`).
+`plutil -lint` on all **eight** catalogs: OK. **FR and PL are
+machine-generated and unreviewed.**
 
-**Suite:** **1756 Tests in 144 Suites**, grün (vorher 1749 in 143).
-`swift build` inklusive App-Target sauber.
+**Suite:** **1756 tests in 144 suites**, green (previously 1749 in 143).
+`swift build` including the app target clean.
 
-**Was diese Runde NICHT verifiziert hat:** die Oberfläche. Die App wurde
-wieder nicht gestartet — der Hinweiseintrag im Menü, der Fehlertext im
-Sheet und die Titel-Markierung sind gelesener, geprüfter Quelltext,
-gesehen hat sie niemand.
+**What this round did NOT verify:** the surface. The app was again not
+started — the hint entry in the menu, the error text in the sheet, and
+the title marking are read, tested source code; nobody has seen them.
 
-## Was in diesem Bericht NICHT verifiziert ist
+## What is NOT verified in this report
 
-- **Die gesamte Oberfläche.** Die App wurde **nicht gestartet** — bindende
-  Vorgabe. Damit hat **niemand gesehen**: die zwei Abschnitte im
-  Terminal-Menü, wie `Section` ihren Titel „Runs Immediately" zeichnet (oder
-  ob überhaupt), den grauen Zustand der Einträge ohne Verbindung, das
-  `SnippetsSheet` mit Liste, Suchfeld, Editor und Zugangsdaten-Hinweis, und
-  den Shortcuts-Tab mit der neuen Gruppe. Kriterien 6 und 7 sind
-  Review-Punkte; die **Sichtprüfung durch den Maintainer steht aus.**
-- **Die Verdrahtung Menü → Core.** Es gibt **keinen Test**, der
+- **The entire surface.** The app was **not started** — binding
+  requirement. So **nobody has seen**: the two sections in the terminal
+  menu, how `Section` draws its title "Runs Immediately" (or whether at
+  all), the greyed-out state of the entries without a connection, the
+  `SnippetsSheet` with list, search field, editor and credentials note,
+  and the shortcuts tab with the new group. Criteria 6 and 7 are review
+  points; the **maintainer's visual check is still outstanding.**
+- **The wiring from menu to Core.** There is **no test** that traces
   `MacSCPApp.snippetMenuItems` → `TabCommands.runSnippet` →
   `ContentView.triggerSnippet(_:)` → `TerminalPanelViewModel.send(_:)`
-  durchmisst. Die Kette ist gelesen, nicht ausgeführt. Kein
-  View-Testwerkzeug im Projekt — bewusst, siehe M29.
-- **Der Zeilenabschluss zur Laufzeit.** Statischer Quelltext-Lauf gegen die
-  gepinnte SwiftTerm-Revision; kein einziges Byte wurde dabei über eine echte
-  PTY geschickt. Ebenso ungeprüft: dass die Gegenseite auf CR so reagiert,
-  wie ein POSIX-Terminal es üblicherweise tut.
-- **Die Rot-Zustände.** Die Compile-Fehler aus T1/T2 und der Rot-Lauf der
-  drei Puffer-Tests aus T4 sind aus den Task-Berichten **übernommen**, nicht
-  in dieser Sitzung neu erzeugt. Neu erzeugt wurde in dieser Sitzung
-  ausschließlich die Mutationsprobe zum toten `catch`-Zweig oben.
-- **Die FR- und PL-Übersetzungen der 22 neuen Schlüssel** sind maschinell
-  erzeugt und **nicht muttersprachlich geprüft**; der stehende Vorbehalt des
-  Projekts gilt unverändert. Die deutsche Fassung ist handgeschrieben.
-- ~~**Die Whole-Branch-Review über `7a1777b..HEAD`** ist noch nicht
-  gelaufen.~~ **Gelaufen**, mit genau dem erwarteten Ergebnis: sie hat zwei
-  weitere falsche Behauptungen gefunden, die diesen Bericht überlebt hatten.
-  Beide sind oben korrigiert, die Fix-Runde steht in ihrem eigenen
-  Abschnitt.
-- **`scripts/release`** — nicht ausgeführt.
-- **Dass der Testsuite-Hänger nicht mehr auftritt** — er trat in keinem der
-  Läufe auf, mehr ist damit nicht gesagt.
+  end to end. The chain has been read, not executed. No view-testing
+  tool exists in the project — deliberate, see M29.
+- **The line terminator at runtime.** A static source-code trace against
+  the pinned SwiftTerm revision; not a single byte was actually sent over
+  a real PTY. Equally unverified: that the far side reacts to CR the way
+  a POSIX terminal usually does.
+- **The red states.** The compile failures from T1/T2 and the red run of
+  the three buffer tests from T4 are **taken over** from the task
+  reports, not newly reproduced in this session. What was newly produced
+  in this session is exclusively the mutation probe on the dead `catch`
+  branch above.
+- **The FR and PL translations of the 22 new keys** are machine-generated
+  and **not reviewed by a native speaker**; the project's standing
+  reservation applies unchanged. The German version is hand-written.
+- ~~**The whole-branch review over `7a1777b..HEAD`** has not run yet.~~
+  **It has run**, with exactly the expected result: it found two further
+  false claims that had survived this report. Both are corrected above,
+  the fix round has its own section.
+- **`scripts/release`** — not run.
+- **That the test-suite hang no longer occurs** — it did not occur in
+  either run; nothing more is claimed than that.
 
-## Für die Release-Notes
+## For the release notes
 
-**Ein Satz.** Häufig gebrauchte Befehle lassen sich als Snippets ablegen und
-im Terminal einfügen.
+**One sentence.** Frequently used commands can be saved as snippets and
+inserted into the terminal.
 
-## Was offen bleibt
+## What remains open
 
-- **Die Sichtprüfung der GUI** — der einzige Weg, Kriterien 6 und 7 von
-  „gelesen" auf „gesehen" zu heben.
-- Die **drei** noch offenen Kleinigkeiten aus dem Abschnitt oben
-  (`prefix` mit negativem Argument, `resize()` während `.opening`, zwei im
-  selben `.opening`-Fenster ausgelöste Snippets); zwei weitere sind in der
-  Fix-Runde erledigt.
-- Aus der Spec ausdrücklich ausgeschlossen und unverändert offen:
-  Platzhalter, Export/Import von Snippets, Bindung an Hosts oder Gruppen,
-  mehrzeilige Skripte — und **Agent-Forwarding** als eigener Meilenstein,
-  im Backlog seit M10d.
-- **M29-P3** — die Entkernung des Rests von `ContentView`.
-- Unverändert vom Backlog: der veraltete Slot einer set-gebundenen Sitzung,
-  die Editor-Reibung beim Bearbeiten eines Login-Sets, ein app-weiter
-  Audit-Bereich, der 0-%-CPU-Testsuite-Hänger, der Pfad, über den die
-  ausgelieferte App ihr Ressourcen-Bundle findet.
-- **Der Release-Stau: 419 Commits vor `origin/main`** (M29-P2 nannte 408,
-  M29-P1 397). Weiter gewachsen.
+- **The visual check of the GUI** — the only way to lift criteria 6 and 7
+  from "read" to "seen".
+- The **three** still-open minor items from the section above
+  (`prefix` with a negative argument, `resize()` during `.opening`, two
+  snippets triggered within the same `.opening` window); two more were
+  resolved in the fix round.
+- Explicitly excluded from the spec and unchanged open: placeholders,
+  export/import of snippets, binding to hosts or groups, multi-line
+  scripts — and **agent forwarding** as its own milestone, on the
+  backlog since M10d.
+- **M29-P3** — decoupling the rest of `ContentView`.
+- Unchanged from the backlog: the stale slot of a set-bound session, the
+  editor friction when editing a login set, an app-wide audit area, the
+  0% CPU test-suite hang, the path via which the shipped app finds its
+  resource bundle.
+- **The release backlog: 419 commits ahead of `origin/main`** (M29-P2
+  named 408, M29-P1 397). Grown further.

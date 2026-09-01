@@ -1,63 +1,63 @@
-# Backlog: Werkzeuge zum Untersuchen einer Verbindung
+# Backlog: tools for investigating a connection
 
-**Angelegt:** 2026-08-25, aus Maintainer-Zuruf. Gesicherte Idee, **kein
-Entwurf**.
+**Created:** 2026-08-25, from a maintainer note. A solid idea, **not a
+design**.
 
-## Der Wunsch
+## The wish
 
-Werkzeuge pro Verbindung, um eine tote Leitung zu untersuchen: **Ping**,
-**Trace**, Ähnliches. Und ausdrücklich **auch ohne gespeicherten Host** — mit
-einem Feld für IP oder Domäne, sodass man etwas prüfen kann, das man noch
-gar nicht angelegt hat.
+Per-connection tools for investigating a dead line: **ping**, **trace**,
+similar. And explicitly **also without a stored host** — with a field
+for an IP or domain, so you can check something you haven't even set up
+yet.
 
-## Warum das gerade jetzt naheliegt
+## Why this is a natural fit right now
 
-Der Verbindungszustands-Zweig hat der App beigebracht, einen Abriss zu
-**bemerken** und ihn zu **zeigen**. Was fehlt, ist die nächste Frage des
-Nutzers: *woran liegt es?* Heute endet die Auskunft bei „keine Verbindung
-möglich" plus technischer Meldung im Details-Dialog — was die App weiß, aber
-nicht, was die Leitung tut.
+The connection-state branch taught the app to **notice** a lost
+connection and **show** it. What's missing is the user's next question:
+*what's causing it?* Today the information ends at "no connection
+possible" plus a technical message in the details dialog — what the app
+knows, but not what the line is doing.
 
-Der Fehler-Zweig hat außerdem gemessen, dass eine Zeitüberschreitung und ein
-hängender Namensdienst sich völlig verschieden verhalten und heute gleich
-aussehen. Genau diese Unterscheidung würden solche Werkzeuge sichtbar machen.
+The error branch also measured that a timeout and a hanging name service
+behave completely differently and today look the same. Exactly this
+distinction is what such tools would make visible.
 
-## Vor einem Entwurf zu klären
+## To clarify before a design
 
-**Was heißt „Ping" hier eigentlich?** Ein echtes ICMP-Echo braucht erhöhte
-Rechte oder einen besonderen Socket-Typ; ein TCP-Verbindungsversuch auf den
-Zielport braucht das nicht und beantwortet die praktisch interessantere
-Frage — *nimmt dort jemand Verbindungen an?* Das ist die erste Entscheidung
-und sie bestimmt den ganzen Umfang.
+**What does "ping" actually mean here?** A real ICMP echo needs elevated
+privileges or a special socket type; a TCP connection attempt to the
+target port doesn't need that and answers the practically more
+interesting question — *is anyone accepting connections there?* That's
+the first decision and it determines the whole scope.
 
-**Was heißt „Trace"?** Ein Wegverfolgen im Netz ist wieder ein Rechtethema.
-Ein Protokoll dessen, was **macSCPs eigener Verbindungsaufbau** tut — Name
-aufgelöst, TCP steht, Handschlag, Authentifizierung, Kanal offen, mit Zeiten
-— wäre vermutlich nützlicher und ist vollständig in eigener Hand. Es
-beantwortet „woran hängt es?" genauer als ein Traceroute, weil es die
-Schichten zeigt, die dieses Programm tatsächlich durchläuft.
+**What does "trace" mean?** Tracing a path through the network is again
+a privilege matter. A log of what **macSCP's own connection setup**
+does — name resolved, TCP up, handshake, authentication, channel open,
+with timings — would presumably be more useful and is fully within its
+own control. It answers "what's it hanging on?" more precisely than a
+traceroute, because it shows the layers this program actually goes
+through.
 
-**Wo lebt das?** Ein eigenes Fenster, ein Bereich im Tab, oder ein Weg vom
-Details-Dialog der Fehlerfläche aus. Der letzte hätte den Vorzug, dass man
-dort landet, wo die Frage entsteht.
+**Where does this live?** A dedicated window, an area in the tab, or a
+path from the error surface's details dialog. The last one would have
+the advantage of landing where the question arises.
 
-**Und pro Protokoll verschieden?** Für SSH ist der Handschlag interessant,
-für S3 und WebDAV eher die HTTP-Antwort. Falls die Werkzeuge sich
-unterscheiden, gilt dieselbe Regel wie beim Tab-Menü: **Beiträge über den
-`BackendDescriptor`, kein `switch` über die Art.**
+**And different per protocol?** For SSH the handshake is interesting,
+for S3 and WebDAV more the HTTP response. If the tools differ, the same
+rule applies as for the tab menu: **contributions through the
+`BackendDescriptor`, no `switch` over the kind.**
 
-## Zwei Auflagen, die von Anfang an gelten
+## Two conditions that hold from the start
 
-**Kein Geheimnis in der Ausgabe.** Ein Verbindungsprotokoll ist genau die
-Sorte Fläche, auf der ein Passwort landet, wenn niemand hinsieht — dieser
-Zweig hat drei solche Lecks geschlossen, zwei davon in Texten, die als
-harmlose Diagnose galten. Was das Werkzeug ausgibt, ist von Anfang an so zu
-bauen, dass ein Geheimnis dort keinen Platz hat, statt es hinterher
-herauszufiltern.
+**No secret in the output.** A connection log is exactly the kind of
+surface where a password ends up when nobody's looking — this branch
+closed three such leaks, two of them in texts considered harmless
+diagnostics. What the tool outputs needs to be built from the start so a
+secret has no place there, rather than filtering it out afterward.
 
-**Und es bleibt ein Werkzeug.** Ein Feld für eine beliebige Adresse ist ein
-Weg, Verbindungen zu beliebigen Hosts aufzubauen. Was es tun darf, gehört
-eng gefasst: nachsehen, ob dort jemand antwortet — nicht sich anmelden,
-nichts speichern, nichts anheften. Insbesondere darf ein Versuch aus diesem
-Feld **keine Vertrauensentscheidung schreiben**; genau diese Verwechslung
-war der schwerste Fund dieses Zweigs.
+**And it stays a tool.** A field for an arbitrary address is a way to
+open connections to arbitrary hosts. What it's allowed to do needs to be
+narrowly scoped: check whether someone answers there — not log in, not
+save anything, not pin anything. In particular, an attempt from this
+field must **not write any trust decision**; exactly this mix-up was the
+most serious finding of this branch.

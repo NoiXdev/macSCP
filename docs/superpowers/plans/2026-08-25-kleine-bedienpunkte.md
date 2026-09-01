@@ -1,90 +1,90 @@
-# Drei kleine Bedienpunkte — Umsetzungsplan
+# Three small usability points — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Drei unabhängige Ärgernisse aus dem Backlog beseitigen, jedes einzeln prüfbar und sofort spürbar.
+**Goal:** Eliminate three independent backlog annoyances, each individually testable and immediately noticeable.
 
-**Grundlage:** `docs/superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md` (C1, D4) und `2026-08-20-backlog-verwaltungs-sheets.md` (Punkt 3).
+**Basis:** `docs/superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md` (C1, D4) and `2026-08-20-backlog-verwaltungs-sheets.md` (item 3).
 
-**Reihenfolge:** von der kleinsten Wirkfläche zur größten. Die drei Aufgaben hängen nicht voneinander ab; jede kann für sich zurückgestellt werden.
+**Order:** from smallest blast radius to largest. The three tasks do not depend on each other; each can be deferred on its own.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **nur Englisch**; Katalogwerte sind Übersetzungen, Deutsch duzt.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- Alle vier Kataloge bei neuen Zeichenketten, gleiche Schlüsselmengen.
-- Keine Zeilennummern, keine Ortsangaben in Kommentaren; jede Zahl im selben Durchgang gezählt.
-- **Kein Test erreicht echten Keychain, Sitzungs-Store oder Konfiguration.** `ContentView` nimmt eingespeiste Ablagen.
-- Wächter: **Mutationstests belegen die Empfindlichkeit, nie den Geltungsbereich.** Vor der Wahl eines Ankers fragen, *woher* die Eigenschaft verletzt werden könnte.
-- Die App wird nicht gestartet, nichts gepusht.
+- Code, comments, identifiers, test names, commit messages: **English only**; catalog values are translations, German uses "du".
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- All four catalogs for new strings, same key sets.
+- No line numbers, no location references in comments; every number counted in the same pass.
+- **No test reaches a real keychain, session store, or configuration.** `ContentView` takes injected stores.
+- Guards: **mutation tests prove sensitivity, never scope.** Before choosing an anchor, ask *where* the property could be violated from.
+- The app is not launched, nothing is pushed.
 
 ---
 
-### Task 1: Einfachklick wählt aus, Doppelklick verbindet
+### Task 1: Single click selects, double click connects
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SessionSidebar.swift`
 - Test: `Tests/macSCPAppKitTests/`
 
-**Der gemessene Ist-Zustand:** die Zeile hängt an `.onTapGesture { if !isRenaming { onSelect() } }`, und `onSelect` reicht über `ContentView+Detail.swift` an `connectFromSidebar(stored)` weiter — **ein Klick baut eine Verbindung auf.**
+**The measured current state:** the row hangs off `.onTapGesture { if !isRenaming { onSelect() } }`, and `onSelect` passes through `ContentView+Detail.swift` to `connectFromSidebar(stored)` — **one click establishes a connection.**
 
-**Was den Weg rettet:** das Kontextmenü derselben Zeile trägt bereits einen Eintrag **„Verbinden"**. Der Verbindungsweg geht also nicht verloren, wenn der Tipp zur Auswahl wird.
+**What saves the path:** the same row's context menu already carries an entry **"Verbinden"**. So the connect path is not lost when the tap becomes selection.
 
-- [x] **Step 1 (beantwortet 2026-08-26):** Die Seitenleiste kennt **keine**
-  Auswahl. `selection` in `SessionSidebar.swift` gehört ausschließlich dem
-  Tag-Filter (`HostTagFilterRow`); eine Sitzungszeile hat nur `onSelect`, und
-  das führt direkt ins Verbinden.
+- [x] **Step 1 (answered 2026-08-26):** The sidebar knows **no**
+  selection. `selection` in `SessionSidebar.swift` belongs exclusively to
+  the tag filter (`HostTagFilterRow`); a session row has only `onSelect`,
+  and that leads straight into connecting.
 
-  **Folge für den Zuschnitt:** Die Auswahl ist der eigentliche Anteil dieser
-  Aufgabe, nicht die Geste. Nur den Einfachklick zu entschärfen, ohne etwas
-  an seine Stelle zu setzen, macht ihn zur toten Geste — das wäre schlechter
-  als heute. Diese Aufgabe umfasst deshalb:
+  **Consequence for scoping:** the selection is the actual substance of
+  this task, not the gesture. Merely defusing the single click without
+  putting anything in its place turns it into a dead gesture — that would
+  be worse than today. This task therefore covers:
 
-  1. einen Auswahlzustand für die Zeile (welche Sitzung ist gemeint),
-  2. seine sichtbare Hervorhebung,
-  3. Doppelklick und Eingabetaste als Verbindungswege,
-  4. das bestehende Kontextmenü bleibt der dritte Weg.
+  1. a selection state for the row (which session is meant),
+  2. its visible highlight,
+  3. double click and the Return key as connect paths,
+  4. the existing context menu stays the third path.
 
-  Punkt 3 ist der Grund, warum Punkt 1 überhaupt trägt: eine Auswahl, auf die
-  keine Taste wirkt, ist bloß eine Einfärbung.
-- [ ] **Step 2:** Test zuerst: ein Einfachklick verbindet **nicht**, ein Doppelklick schon. Wo das nicht ohne Rendering-Umgebung geht, den entscheidbaren Teil in einen prüfbaren Wert ziehen und die Ansicht nur darauf zeigen lassen.
-- [ ] **Step 3:** Rot. — [ ] **Step 4:** Umsetzen. — [ ] **Step 5:** Volle Suite grün.
+  Point 3 is the reason point 1 carries any weight at all: a selection
+  that no key acts on is just a coloring.
+- [ ] **Step 2:** Test first: a single click does **not** connect, a double click does. Where that is not possible without a rendering environment, pull the decidable part into a testable value and let the view only display it.
+- [ ] **Step 3:** Red. — [ ] **Step 4:** Implement. — [ ] **Step 5:** Full suite green.
 - [ ] **Step 6: Commit** — `fix(sidebar): connect on double-click, select on single`
 
 ---
 
-### Task 2: Seitenleistenbreite ziehen und merken
+### Task 2: Drag and remember the sidebar width
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/ContentView+Detail.swift`, `Sources/macSCPCore/Settings/SettingsStore.swift`
 - Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift`
 
-**Der gemessene Ist-Zustand:** `.frame(minWidth: 170, idealWidth: 190, maxWidth: 260)`. Die **Obergrenze 260** ist der Grund, warum sich die Leiste nicht nach rechts ziehen lässt; gespeichert wird nichts.
+**The measured current state:** `.frame(minWidth: 170, idealWidth: 190, maxWidth: 260)`. The **upper bound 260** is why the bar cannot be dragged further right; nothing is saved.
 
-- [ ] **Step 1:** Test zuerst, nach dem Muster von `autoRefreshIntervalSeconds`: **Getter und Setter klemmen beide**, damit eine von Hand editierte `settings.json` keine unbrauchbare Breite erzeugt. Die Grenzen benennen und begründen.
-- [ ] **Step 2:** Rot. — [ ] **Step 3:** Eigenschaft ergänzen, Klammer im View lösen, Breite lesen und schreiben.
-- [ ] **Step 4:** Volle Suite grün.
+- [ ] **Step 1:** Test first, following the pattern of `autoRefreshIntervalSeconds`: **both getter and setter clamp**, so a hand-edited `settings.json` cannot produce an unusable width. Name and justify the bounds.
+- [ ] **Step 2:** Red. — [ ] **Step 3:** Add the property, wire the binding in the view, read and write the width.
+- [ ] **Step 4:** Full suite green.
 - [ ] **Step 5: Commit** — `feat(sidebar): remember how wide you dragged it`
 
 ---
 
-### Task 3: Spaltensortierung bei den bekannten Hosts
+### Task 3: Column sorting on the known-hosts sheet
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/KnownHostsSheet.swift`
 - Test: `Tests/macSCPAppKitTests/`
 
-**Warum das der billigste Punkt ist:** das Sheet ist bereits eine `Table` mit sechs Spalten. SwiftUI liefert die Sortierung über eine `sortOrder`-Bindung und `KeyPathComparator` — kein Core-Anteil nötig.
+**Why this is the cheapest point:** the sheet is already a `Table` with six columns. SwiftUI provides sorting via a `sortOrder` binding and `KeyPathComparator` — no Core involvement needed.
 
-- [ ] **Step 1:** Entscheiden und im Bericht begründen, ob die Sortierung über Sitzungen hinweg gemerkt wird. Wenn ja, kommt ein Feld im `SettingsStore` dazu und Task 2s Muster gilt hier genauso; wenn nein, sagen warum.
-- [ ] **Step 2:** Test zuerst auf den **entscheidbaren** Anteil — welche Vergleichsregel zu welcher Spalte gehört —, nicht auf das Zeichnen. Besonders: ein Feld, das fehlen kann, darf beim Sortieren nicht an eine willkürliche Stelle rutschen.
-- [ ] **Step 3:** Rot. — [ ] **Step 4:** Umsetzen. — [ ] **Step 5:** Volle Suite grün.
+- [ ] **Step 1:** Decide, and justify in the report, whether the sort order is remembered across sessions. If yes, a field is added to `SettingsStore` and Task 2's pattern applies here too; if no, say why.
+- [ ] **Step 2:** Test first on the **decidable** part — which comparison rule belongs to which column —, not on the drawing. In particular: a field that can be missing must not slide to an arbitrary spot when sorting.
+- [ ] **Step 3:** Red. — [ ] **Step 4:** Implement. — [ ] **Step 5:** Full suite green.
 - [ ] **Step 6: Commit** — `feat(knownhosts): sort the table by its columns`
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What explicitly does not belong here
 
-- Kein Umbau von Logins oder SSH-Schlüsseln auf `Table` — vom Maintainer am 2026-08-20 **verworfen**.
-- Kein Schnellfilter, kein Drei-Punkte-Menü, keine verschachtelten Ordner: eigene Einträge, eigene Entscheidungen.
-- Keine Änderung an der Sortierung der Dateitabelle.
+- No conversion of Logins or SSH keys to `Table` — **rejected** by the maintainer on 2026-08-20.
+- No quick filter, no three-dot menu, no nested folders: separate entries, separate decisions.
+- No change to the file table's sorting.

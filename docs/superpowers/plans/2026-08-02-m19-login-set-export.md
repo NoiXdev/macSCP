@@ -1,37 +1,37 @@
-# M19 — Login-Set Import/Export + einheitliche Konfliktlösung Implementation Plan
+# M19 — Login Set Import/Export + Unified Conflict Resolution Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Login-Sets lassen sich exportieren und importieren — optional mit Geheimnissen und eingebetteten verwalteten Schlüsseln — und **alle** Import-Wege benutzen denselben Konfliktdialog.
+**Goal:** Login sets can be exported and imported — optionally with secrets and embedded managed keys — and **all** import paths use the same conflict dialog.
 
-**Architecture:** Der gehärtete Envelope-/Krypto-Kern des Session-Exports wird über den Payload-Typ generisch; `SessionExportCodec` bleibt als dünne Fassade mit unveränderter öffentlicher API darüber, ein `LoginSetExportCodec` kommt daneben. Eine geteilte Konflikt-Maschinerie (Resolution/Conflict/Decider nach dem Vorbild der Transfer-Queue) wird von beiden Import-Planern benutzt; die App zeigt für beide dasselbe Sheet.
+**Architecture:** The hardened envelope/crypto core of the session export becomes generic over the payload type; `SessionExportCodec` remains a thin façade with an unchanged public API on top of it, and a `LoginSetExportCodec` sits alongside it. A shared conflict machinery (Resolution/Conflict/Decider, modeled on the transfer queue) is used by both import planners; the App shows the same sheet for both.
 
-**Tech Stack:** Swift (SwiftPM, `.swiftLanguageMode(.v5)`), Swift Testing, CryptoKit/CommonCrypto (vorhanden), SwiftUI + AppKit, macOS 15+.
+**Tech Stack:** Swift (SwiftPM, `.swiftLanguageMode(.v5)`), Swift Testing, CryptoKit/CommonCrypto (existing), SwiftUI + AppKit, macOS 15+.
 
 ## Global Constraints
 
-- Swift `.swiftLanguageMode(.v5)`, minimum macOS 15; **keine neue externe Dependency**.
-- **Geheimnisse und Schlüsselmaterial nur bei ausdrücklichem Opt-in**; unverschlüsselter Export davon nur nach **zweistufiger** Bestätigung.
-- **Externe Schlüsseldateien werden nie gelesen** — nur Pfade, die `ManagedKeyStore.key(forPath:)` als verwalteten Schlüssel auflöst. `~/.ssh` bleibt tabu.
-- Importierte Schlüssel: Datei **0600**, Verzeichnis explizit auf **0700** härten (`createDirectory` härtet ein *bestehendes* Verzeichnis NICHT — die Foundation-Falle aus M17/M18), Passphrase ausschließlich im Keychain unter der **neuen** Key-ID, Aufräumen von Datei **und** Keychain-Slot bei jedem Fehlschlag nach dem Schreiben.
-- **`replace` überschreibt bewusst auch das Keychain-Geheimnis**, der Eintrag behält seine `id`. Der Dialog benennt das.
-- **Kein Schlüsselmaterial und keine Geheimnisse in Logs oder Fehlertexten.**
-- Die bestehenden Session-Codec-Tests laufen **unverändert** weiter — sie sind der Regressionsschutz des generischen Umbaus.
-- Code, Kommentare, Testnamen: **Englisch**. UI-Strings EN/DE/FR/PL, typografische Zeichen in nicht-englischen Werten (kein ASCII `"`).
-- Conventional Commits; Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- Swift `.swiftLanguageMode(.v5)`, minimum macOS 15; **no new external dependency**.
+- **Secrets and key material only on explicit opt-in**; unencrypted export of them only after **two-step** confirmation.
+- **External key files are never read** — only paths that `ManagedKeyStore.key(forPath:)` resolves as a managed key. `~/.ssh` stays off-limits.
+- Imported keys: file **0600**, directory explicitly hardened to **0700** (`createDirectory` does NOT harden an *existing* directory — the Foundation trap from M17/M18), passphrase exclusively in the Keychain under the **new** key ID, clean up file **and** Keychain slot on every failure after the write.
+- **`replace` deliberately also overwrites the Keychain secret**, the entry keeps its `id`. The dialog names this.
+- **No key material and no secrets in logs or error texts.**
+- The existing session codec tests run **unchanged** — they are the regression protection for the generic rebuild.
+- Code, comments, test names: **English**. UI strings EN/DE/FR/PL, typographic characters in non-English values (no ASCII `"`).
+- Conventional Commits; footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
-**Verankerte Fakten (verifiziert am Code):** `SessionExportCodec` (`Sources/macSCPCore/Sessions/SessionExportCodec.swift`) ist ein `public enum` mit `static let formatName = "macscp-sessions"` (:128), `static let currentVersion = 1` (:129), `private struct Envelope: Codable` (:134), `public static func encode(_:password:)` (:144), `probe(_:)` (:167), `decode(_:password:)` (:171), `private struct EnvelopeHeader: Decodable` (:205), `private static func envelope(from:)` (:210) und `derivedKey(password:salt:iterations:)` (:224). Fehler: `public enum SessionExportError: Error, Equatable` (:110). `SessionImportPlanner.plan(existing:existingGroups:incoming:) -> SessionImportPlan` (`SessionImportPlanner.swift:39`) ist **synchron und rein**; `SessionImportPlan` hat `groupsToCreate`/`sessionsToImport`/`skipped`. `LoginSet` **und** `LoginSetStore` liegen beide in `Sources/macSCPCore/Sessions/LoginSetStore.swift` (Store: `all()`, `upsert(_:)`, `delete(id:)`). `ManagedKeyStore` (`Sources/macSCPCore/SSH/ManagedKeyStore.swift`): `keyDirectory`, `all()`, `add(_:)`, `remove(id:secrets:)`, `key(forPath:)`. `UTType.macscpSessions` wird in `Sources/MacSCPApp/SessionExportImportSheets.swift:16-18` per `exportedAs: "dev.noix.macscp.sessions"` deklariert; das gepackte `.app` deklariert denselben Identifier zusätzlich in `Info.plist` (`UTExportedTypeDeclarations`, erzeugt von `scripts/package-app`).
+**Anchored facts (verified against the code):** `SessionExportCodec` (`Sources/macSCPCore/Sessions/SessionExportCodec.swift`) is a `public enum` with `static let formatName = "macscp-sessions"` (:128), `static let currentVersion = 1` (:129), `private struct Envelope: Codable` (:134), `public static func encode(_:password:)` (:144), `probe(_:)` (:167), `decode(_:password:)` (:171), `private struct EnvelopeHeader: Decodable` (:205), `private static func envelope(from:)` (:210), and `derivedKey(password:salt:iterations:)` (:224). Errors: `public enum SessionExportError: Error, Equatable` (:110). `SessionImportPlanner.plan(existing:existingGroups:incoming:) -> SessionImportPlan` (`SessionImportPlanner.swift:39`) is **synchronous and pure**; `SessionImportPlan` has `groupsToCreate`/`sessionsToImport`/`skipped`. `LoginSet` **and** `LoginSetStore` both live in `Sources/macSCPCore/Sessions/LoginSetStore.swift` (store: `all()`, `upsert(_:)`, `delete(id:)`). `ManagedKeyStore` (`Sources/macSCPCore/SSH/ManagedKeyStore.swift`): `keyDirectory`, `all()`, `add(_:)`, `remove(id:secrets:)`, `key(forPath:)`. `UTType.macscpSessions` is declared in `Sources/MacSCPApp/SessionExportImportSheets.swift:16-18` via `exportedAs: "dev.noix.macscp.sessions"`; the packaged `.app` additionally declares the same identifier in `Info.plist` (`UTExportedTypeDeclarations`, generated by `scripts/package-app`).
 
-**Kein App-Testtarget:** `Package.swift` hat nur `macSCPCoreTests`. App-Tasks sind build-verifiziert; alle testbare Logik gehört nach Core.
+**No App test target:** `Package.swift` only has `macSCPCoreTests`. App tasks are build-verified; all testable logic belongs in Core.
 
 ---
 
-## Task 1: Generischer Envelope-/Krypto-Kern (Core)
+## Task 1: Generic envelope/crypto core (Core)
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/ExportEnvelopeCodec.swift`
 - Modify: `Sources/macSCPCore/Sessions/SessionExportCodec.swift`
-- Test: `Tests/macSCPCoreTests/ExportEnvelopeCodecTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/ExportEnvelopeCodecTests.swift` (new)
 
 **Interfaces:**
 - Produces:
@@ -42,12 +42,12 @@
       public static func decode<P: Codable>(_ data: Data, as: P.Type, format: String, currentVersion: Int, password: String?) throws -> P
   }
   ```
-  Fehler bleiben `SessionExportError` (der Typ wird von beiden Formaten geteilt; **nicht** umbenennen — das wäre eine API-Änderung ohne Nutzen).
-- `SessionExportCodec`s öffentliche API bleibt **byte-identisch**: `encode(_:password:)`, `probe(_:)`, `decode(_:password:)`, `formatName`, `currentVersion`.
+  Errors stay `SessionExportError` (the type is shared between both formats; do **not** rename it — that would be an API change with no benefit).
+- `SessionExportCodec`'s public API stays **byte-identical**: `encode(_:password:)`, `probe(_:)`, `decode(_:password:)`, `formatName`, `currentVersion`.
 
-- [ ] **Step 1: Failing-Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-Neue Datei `Tests/macSCPCoreTests/ExportEnvelopeCodecTests.swift`. Der Test beweist, dass der Kern **formatunabhängig** funktioniert und Formate sich gegenseitig abweisen:
+New file `Tests/macSCPCoreTests/ExportEnvelopeCodecTests.swift`. The test proves the core works **format-independently** and that formats reject each other:
 
 ```swift
 import Foundation
@@ -99,24 +99,24 @@ struct ExportEnvelopeCodecTests {
 }
 ```
 
-Den genauen Fehlerfall (`notAnExportFile` / `unsupportedVersion`) aus `SessionExportError` ablesen und die beiden Abweis-Tests auf den **konkreten** Fall verschärfen, statt nur auf den Typ zu prüfen.
+Read off the exact error case (`notAnExportFile` / `unsupportedVersion`) from `SessionExportError` and tighten the two rejection tests to the **concrete** case, rather than only checking the type.
 
-- [ ] **Step 2: Test rot**
+- [ ] **Step 2: Test red**
 
 Run: `swift test --filter ExportEnvelopeCodec`
-Expected: FAIL — `ExportEnvelopeCodec` existiert nicht.
+Expected: FAIL — `ExportEnvelopeCodec` does not exist.
 
-- [ ] **Step 3: Kern extrahieren**
+- [ ] **Step 3: Extract the core**
 
-`ExportEnvelopeCodec.swift` bekommt den **unveränderten** Envelope-/Krypto-Code aus `SessionExportCodec`: `Envelope` (Payload jetzt generisch bzw. als `Data` transportiert), `EnvelopeHeader`, `envelope(from:)`, `derivedKey(password:salt:iterations:)`, PBKDF2 mit 600 000 Iterationen, AES-GCM, und **die Iterationsklemme `> 0 && <= 10_000_000` vor dem CommonCrypto-Aufruf** — diese Härtung ist sicherheitsrelevant und muss wortgleich mitwandern.
+`ExportEnvelopeCodec.swift` gets the **unchanged** envelope/crypto code from `SessionExportCodec`: `Envelope` (payload now generic resp. carried as `Data`), `EnvelopeHeader`, `envelope(from:)`, `derivedKey(password:salt:iterations:)`, PBKDF2 with 600,000 iterations, AES-GCM, and **the iteration clamp `> 0 && <= 10_000_000` before the CommonCrypto call** — this hardening is security-relevant and must move over verbatim.
 
-Der bestehende `Envelope` trägt `payload: SessionExportPayload?` konkret. Beim Generischmachen entscheidet der Implementierer zwischen zwei Wegen und **begründet die Wahl im Bericht**:
-- `Envelope<P: Codable>` generisch über den Payload, oder
-- der Payload wird als bereits kodiertes `Data`/Base64 im Envelope geführt und in einer zweiten Runde de-/kodiert.
+The existing `Envelope` carries `payload: SessionExportPayload?` concretely. When making it generic, the implementer chooses between two routes and **justifies the choice in the report**:
+- `Envelope<P: Codable>` generic over the payload, or
+- the payload is carried as already-encoded `Data`/base64 inside the envelope and de-/encoded in a second round.
 
-Maßgeblich ist: **die erzeugten Bytes eines Session-Exports müssen bitgleich zu vorher bleiben**, sonst brechen bestehende Dateien. Prüfe das ausdrücklich (bestehende Session-Tests plus, falls nötig, ein eigener Vergleich gegen einen vor dem Umbau erzeugten Blob).
+What matters: **the bytes produced by a session export must stay bit-identical to before**, or existing files break. Check this explicitly (existing session tests plus, if needed, a dedicated comparison against a blob generated before the rebuild).
 
-`SessionExportCodec` wird zur Fassade:
+`SessionExportCodec` becomes a façade:
 
 ```swift
 public enum SessionExportCodec {
@@ -138,11 +138,11 @@ public enum SessionExportCodec {
 }
 ```
 
-**Die bestehenden Session-Codec-Tests werden NICHT angefasst.** Bleiben sie grün, ist der Umbau bewiesen. Muss doch einer angepasst werden, ist das ein Signal, dass die Fassade nicht äquivalent ist — dann melden statt den Test umschreiben.
+**The existing session codec tests are NOT touched.** If they stay green, the rebuild is proven. If one has to be adjusted after all, that is a signal that the façade is not equivalent — then report it instead of rewriting the test.
 
-- [ ] **Step 4: Grün + volle Suite**
+- [ ] **Step 4: Green + full suite**
 
-Run: `swift test --filter "ExportEnvelopeCodec|SessionExportCodec"` → PASS, dann `swift build && swift test` → 0 Warnungen, alle grün.
+Run: `swift test --filter "ExportEnvelopeCodec|SessionExportCodec"` → PASS, then `swift build && swift test` → 0 warnings, all green.
 
 - [ ] **Step 5: Commit**
 
@@ -155,17 +155,17 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 2: Login-Set-Format (Core)
+## Task 2: Login set format (Core)
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/LoginSetExportCodec.swift`
-- Test: `Tests/macSCPCoreTests/LoginSetExportCodecTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/LoginSetExportCodecTests.swift` (new)
 
 **Interfaces:**
 - Consumes: `ExportEnvelopeCodec` (Task 1).
-- Produces: `LoginSetExportPayload`, `ExportedLoginSet`, `EmbeddedKey`, `LoginSetExportCodec` mit `formatName = "macscp-logins"`, `currentVersion = 1`, `encode/probe/decode` analog zur Session-Fassade.
+- Produces: `LoginSetExportPayload`, `ExportedLoginSet`, `EmbeddedKey`, `LoginSetExportCodec` with `formatName = "macscp-logins"`, `currentVersion = 1`, `encode/probe/decode` analogous to the session façade.
 
-- [ ] **Step 1: Failing-Test**
+- [ ] **Step 1: Failing test**
 
 ```swift
 import Foundation
@@ -224,22 +224,22 @@ struct LoginSetExportCodecTests {
 }
 ```
 
-Die konkreten Fehlerfälle (falsches Passwort, fremdes Format) aus `SessionExportError` ablesen und die Erwartungen darauf verschärfen. `KeyType`/`StoredSession.AuthKind`/`ConnectionKind` sind vorhanden — reale Fälle verwenden.
+Read off the concrete error cases (wrong password, foreign format) from `SessionExportError` and tighten the expectations to those. `KeyType`/`StoredSession.AuthKind`/`ConnectionKind` already exist — use real cases.
 
-- [ ] **Step 2: Test rot**
+- [ ] **Step 2: Test red**
 
 Run: `swift test --filter LoginSetExportCodec`
-Expected: FAIL — `LoginSetExportPayload` existiert nicht.
+Expected: FAIL — `LoginSetExportPayload` does not exist.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
-Payload-Typen exakt wie in der Spec (`docs/superpowers/specs/2026-08-02-m19-login-set-export-design.md`, Abschnitt „Payload"): `LoginSetExportPayload { includesSecrets, includesKeyFiles, sets }`, `ExportedLoginSet { id, name, kind, username, authKind, keyPath, accessKeyID, secret, embeddedKey }`, `EmbeddedKey { fileContents: Data, name, comment, type: KeyType, fingerprint, hasPassphrase, passphrase }`. Alle `Codable, Equatable, Sendable`, mit `public init`. Doc-Kommentare an `secret`/`passphrase`/`embeddedKey` halten fest, **wann** sie überhaupt gefüllt sein dürfen.
+Payload types exactly as in the spec (`docs/superpowers/specs/2026-08-02-m19-login-set-export-design.md`, section "Payload"): `LoginSetExportPayload { includesSecrets, includesKeyFiles, sets }`, `ExportedLoginSet { id, name, kind, username, authKind, keyPath, accessKeyID, secret, embeddedKey }`, `EmbeddedKey { fileContents: Data, name, comment, type: KeyType, fingerprint, hasPassphrase, passphrase }`. All `Codable, Equatable, Sendable`, with `public init`. Doc comments on `secret`/`passphrase`/`embeddedKey` should record **when** they may be populated at all.
 
-`LoginSetExportCodec` ist die zweite dünne Fassade über `ExportEnvelopeCodec` — dieselbe Form wie `SessionExportCodec`, nur mit `formatName = "macscp-logins"`.
+`LoginSetExportCodec` is the second thin façade over `ExportEnvelopeCodec` — the same shape as `SessionExportCodec`, just with `formatName = "macscp-logins"`.
 
-- [ ] **Step 4: Grün + volle Suite**
+- [ ] **Step 4: Green + full suite**
 
-Run: `swift test --filter LoginSetExportCodec` → PASS; `swift build && swift test` → grün, 0 Warnungen.
+Run: `swift test --filter LoginSetExportCodec` → PASS; `swift build && swift test` → green, 0 warnings.
 
 - [ ] **Step 5: Commit**
 
@@ -252,7 +252,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 3: Geteilte Konflikt-Maschinerie (Core)
+## Task 3: Shared conflict machinery (Core)
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/ImportConflict.swift`
@@ -260,11 +260,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `ImportConflictResolution`, `ImportConflict`, `ImportConflictDecider`, `ImportConflictArbiter`.
 
-Reine Typen plus ein kleiner Zustandshalter für „Für alle übernehmen" — ohne den müsste jeder Planer die Regel selbst mitschleppen, und genau dort schleicht sich die Abweichung ein.
+Plain types plus a small state holder for "apply to all" — without it, every planner would have to carry the rule itself, and that is exactly where drift would creep in.
 
-- [ ] **Step 1: Failing-Test**
+- [ ] **Step 1: Failing test**
 
-In `Tests/macSCPCoreTests/ImportConflictTests.swift` (neu):
+In `Tests/macSCPCoreTests/ImportConflictTests.swift` (new):
 
 ```swift
 import Foundation
@@ -310,12 +310,12 @@ private actor Counter {
 }
 ```
 
-- [ ] **Step 2: Test rot**
+- [ ] **Step 2: Test red**
 
 Run: `swift test --filter ImportConflictArbiter`
-Expected: FAIL — die Typen existieren nicht.
+Expected: FAIL — the types do not exist.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
 ```swift
 public enum ImportConflictResolution: Equatable, Sendable { case skip, replace, rename }
@@ -340,11 +340,11 @@ public actor ImportConflictArbiter {
 }
 ```
 
-`resolve` fragt den Decider nur, solange keine Regel gesetzt und nicht abgebrochen wurde; `applyToAll == true` merkt die Antwort; `nil` setzt `isCancelled` und liefert ab dann ohne Rückfrage `nil`.
+`resolve` only asks the decider as long as no rule has been set and no cancellation happened; `applyToAll == true` remembers the answer; `nil` sets `isCancelled` and from then on returns `nil` without asking again.
 
-- [ ] **Step 4: Grün + Suite**
+- [ ] **Step 4: Green + suite**
 
-Run: `swift test --filter ImportConflictArbiter` → PASS; `swift build && swift test` → grün.
+Run: `swift test --filter ImportConflictArbiter` → PASS; `swift build && swift test` → green.
 
 - [ ] **Step 5: Commit**
 
@@ -357,11 +357,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 4: Schlüssel-Einbettung und -Materialisierung (Core, sicherheitskritisch)
+## Task 4: Key embedding and materialization (Core, security-critical)
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/EmbeddedKeyPorter.swift`
-- Test: `Tests/macSCPCoreTests/EmbeddedKeyPorterTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/EmbeddedKeyPorterTests.swift` (new)
 
 **Interfaces:**
 - Consumes: `EmbeddedKey` (Task 2), `ManagedKeyStore`, `ManagedKey`, `SecretStore`.
@@ -380,9 +380,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   }
   ```
 
-- [ ] **Step 1: Failing-Tests**
+- [ ] **Step 1: Failing tests**
 
-Muster: wie die M17/M18-Key-Tests echte Schlüssel per `ssh-keygen` erzeugen (siehe `Tests/macSCPCoreTests/SSHKeyGeneratorTests.swift` und `SSHKeyImporterTests.swift` — Aufbau von dort übernehmen, inklusive Temp-Verzeichnis und Aufräumen).
+Pattern: like the M17/M18 key tests, generate real keys via `ssh-keygen` (see `Tests/macSCPCoreTests/SSHKeyGeneratorTests.swift` and `SSHKeyImporterTests.swift` — take the setup from there, including temp directory and cleanup).
 
 ```swift
     @Test func embedsOnlyManagedKeys() throws {
@@ -406,22 +406,22 @@ Muster: wie die M17/M18-Key-Tests echte Schlüssel per `ssh-keygen` erzeugen (si
     @Test func materializeCleansUpTheFileAndKeychainSlotWhenAStepFails() throws { … }
 ```
 
-Für den Aufräum-Test einen `SecretStore`-Double verwenden, dessen `savePassword` wirft (die bestehenden Tests haben ein solches Muster — nachsehen und wiederverwenden, nicht neu erfinden).
+For the cleanup test, use a `SecretStore` double whose `savePassword` throws (the existing tests have such a pattern — look it up and reuse it, don't invent a new one).
 
-- [ ] **Step 2: Tests rot**
+- [ ] **Step 2: Tests red**
 
 Run: `swift test --filter EmbeddedKeyPorter`
-Expected: FAIL — Typ existiert nicht.
+Expected: FAIL — the type does not exist.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
-`embed`: `guard let keyPath`, dann `store.key(forPath: keyPath)`. Ist das `nil` → **`nil` zurückgeben, ohne die Datei anzufassen** (das ist die Invariante „externe Pfade werden nie gelesen"; im Doc-Kommentar festhalten). Sonst Dateiinhalt von `keyDirectory/fileName` lesen und `EmbeddedKey` aus den `ManagedKey`-Metadaten bauen; `passphrase` nur bei `includePassphrase && key.hasPassphrase` aus dem Keychain unter `key.id`.
+`embed`: `guard let keyPath`, then `store.key(forPath: keyPath)`. If that is `nil` → **return `nil` without touching the file** (this is the invariant "external paths are never read"; record it in the doc comment). Otherwise read the file contents from `keyDirectory/fileName` and build an `EmbeddedKey` from the `ManagedKey` metadata; `passphrase` only when `includePassphrase && key.hasPassphrase`, from the Keychain under `key.id`.
 
-`materialize`: frische `UUID`, Verzeichnis anlegen **und** explizit auf `0700` setzen (`setAttributes`, nicht `createDirectory(attributes:)` — die Falle aus M17/M18), Datei unter der neuen ID schreiben und explizit auf `0600` setzen, `ManagedKey` mit der neuen ID in den Store, Passphrase (falls vorhanden) unter der neuen ID in den Keychain, neuen Pfad zurückgeben. **Jeder** Fehlschlag nach dem Schreiben räumt Datei und Keychain-Slot wieder ab (`do/catch` mit Cleanup, wie der manuelle Import in `SSHKeysSheet`). Schlüsselbytes niemals loggen oder in Fehlertexte aufnehmen.
+`materialize`: a fresh `UUID`, create the directory **and** explicitly set it to `0700` (`setAttributes`, not `createDirectory(attributes:)` — the trap from M17/M18), write the file under the new id and explicitly set it to `0600`, put a `ManagedKey` with the new id into the store, put the passphrase (if any) into the Keychain under the new id, return the new path. **Every** failure after the write cleans up both the file and the Keychain slot again (`do/catch` with cleanup, like the manual import in `SSHKeysSheet`). Never log key bytes or put them into error texts.
 
-- [ ] **Step 4: Grün + Suite**
+- [ ] **Step 4: Green + suite**
 
-Run: `swift test --filter EmbeddedKeyPorter` → PASS; `swift build && swift test` → grün, 0 Warnungen.
+Run: `swift test --filter EmbeddedKeyPorter` → PASS; `swift build && swift test` → green, 0 warnings.
 
 - [ ] **Step 5: Commit**
 
@@ -434,11 +434,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 5: Login-Set-Import-Planer (Core)
+## Task 5: Login set import planner (Core)
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/LoginSetImportPlanner.swift`
-- Test: `Tests/macSCPCoreTests/LoginSetImportPlannerTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/LoginSetImportPlannerTests.swift` (new)
 
 **Interfaces:**
 - Consumes: `LoginSetExportPayload` (T2), `ImportConflictArbiter` (T3).
@@ -467,9 +467,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   }
   ```
 
-Planer ist **rein** (kein Store-, Keychain- oder Dateizugriff) — das Anwenden macht die App.
+The planner is **pure** (no store, Keychain, or file access) — applying it is the App's job.
 
-- [ ] **Step 1: Failing-Tests**
+- [ ] **Step 1: Failing tests**
 
 ```swift
     @Test func importsNonCollidingSetsUnchanged() async { … }
@@ -508,24 +508,24 @@ Planer ist **rein** (kein Store-, Keychain- oder Dateizugriff) — das Anwenden 
     }
 ```
 
-- [ ] **Step 2: Tests rot**
+- [ ] **Step 2: Tests red**
 
 Run: `swift test --filter LoginSetImportPlanner`
-Expected: FAIL — Planer existiert nicht.
+Expected: FAIL — the planner does not exist.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
-Über `incoming.sets` iterieren; Kollision gegen `existing` **und** gegen die bereits in diesem Lauf vergebenen Namen (sonst kollidieren zwei umbenannte Sets miteinander). Bei Kollision `arbiter.resolve(ImportConflict(itemName: set.name, kindLabel: …))`; `nil` → sofort abbrechen und einen Plan mit `cancelled = true` und leerem `setsToImport` zurückgeben.
+Iterate over `incoming.sets`; check collisions against `existing` **and** against the names already assigned in this run (otherwise two renamed sets could collide with each other). On collision, `arbiter.resolve(ImportConflict(itemName: set.name, kindLabel: …))`; `nil` → cancel immediately and return a plan with `cancelled = true` and an empty `setsToImport`.
 
-`kindLabel` ist ein **Schlüssel**, kein übersetzter Text — Core kennt die UI-Sprache nicht. Verwende einen stabilen Bezeichner (z. B. `"loginSet"`), den die App auf ihren lokalisierten Text abbildet; halte das im Doc-Kommentar fest.
+`kindLabel` is a **key**, not translated text — Core does not know the UI language. Use a stable identifier (e.g. `"loginSet"`), which the App maps to its localized text; record this in the doc comment.
 
-`replace` → geplantes Set trägt die **bestehende** `id`, `replacesExisting = true`. `rename` → eindeutiger Name mit Suffix, **frische** `id`. `skip` → verwerfen, Name nach `skipped`.
+`replace` → the planned set carries the **existing** `id`, `replacesExisting = true`. `rename` → a unique name with a suffix, **fresh** `id`. `skip` → discard, name goes to `skipped`.
 
-`secret`/`embeddedKey` werden **nur** übernommen, wenn `includesSecrets` bzw. `includesKeyFiles` im Payload gesetzt sind — eine handbearbeitete Datei darf nichts einschmuggeln.
+`secret`/`embeddedKey` are carried over **only** when `includesSecrets` resp. `includesKeyFiles` is set in the payload — a hand-edited file must not be able to smuggle anything in.
 
-- [ ] **Step 4: Grün + Suite**
+- [ ] **Step 4: Green + suite**
 
-Run: `swift test --filter LoginSetImportPlanner` → PASS; `swift build && swift test` → grün.
+Run: `swift test --filter LoginSetImportPlanner` → PASS; `swift build && swift test` → green.
 
 - [ ] **Step 5: Commit**
 
@@ -538,24 +538,24 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 6: Session-Import fragt statt still zu überspringen (Core + minimale App-Anpassung)
+## Task 6: Session import asks instead of silently skipping (Core + minimal App change)
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/SessionImportPlanner.swift`
 - Modify: `Tests/macSCPCoreTests/SessionImportPlannerTests.swift`
-- Modify: die Aufrufstelle in `Sources/MacSCPApp/` (per Grep finden — vermutlich `ContentView.swift`s `applyImport`)
+- Modify: the call site in `Sources/MacSCPApp/` (find via grep — presumably `ContentView.swift`'s `applyImport`)
 
 **Interfaces:**
 - Consumes: `ImportConflictArbiter` (T3).
-- Produces: `SessionImportPlanner.plan(existing:existingGroups:incoming:arbiter:) async -> SessionImportPlan`, `SessionImportPlan` zusätzlich mit `replaced: [String]`, `renamed: [String]`, `cancelled: Bool`.
+- Produces: `SessionImportPlanner.plan(existing:existingGroups:incoming:arbiter:) async -> SessionImportPlan`, `SessionImportPlan` additionally with `replaced: [String]`, `renamed: [String]`, `cancelled: Bool`.
 
-**Bewusste Verhaltensänderung:** Duplikate werden nicht mehr still übersprungen. „Überspringen + Für alle" stellt das alte Verhalten mit einem Klick her.
+**Deliberate behavior change:** Duplicates are no longer silently skipped. "Skip + apply to all" restores the old behavior with one click.
 
-- [ ] **Step 1: Tests anpassen und ergänzen**
+- [ ] **Step 1: Adjust and extend the tests**
 
-Die bestehenden Tests in `SessionImportPlannerTests.swift` **anpassen, nicht löschen**: Wo bisher „Duplikat wird still übersprungen" geprüft wurde, wird jetzt ein Arbiter mit `{ _ in (.skip, true) }` übergeben und **dieselbe** Erwartung geprüft (`skipped` enthält den Eintrag, `sessionsToImport` nicht). Das erhält die Aussage und beweist die Rückwärtskompatibilität des Standardwegs.
+Adjust the existing tests in `SessionImportPlannerTests.swift` **, don't delete them:** where "duplicate gets silently skipped" was previously checked, now pass an arbiter with `{ _ in (.skip, true) }` and check **the same** expectation (`skipped` contains the entry, `sessionsToImport` does not). This preserves the claim and proves the backward compatibility of the default path.
 
-Neu dazu:
+New additions:
 ```swift
     @Test func replaceKeepsTheExistingSessionID() async { … }
     @Test func renameGivesTheImportedSessionAUniqueNameAndFreshID() async { … }
@@ -566,22 +566,22 @@ Neu dazu:
     }
 ```
 
-Der letzte ist wichtig: die bestehende Ghost-Group-Logik (M9a Finding 2 — `groupsToCreate` wird am Ende auf tatsächlich referenzierte Gruppen gefiltert) muss auch im Abbruchfall halten.
+The last one matters: the existing ghost-group logic (M9a Finding 2 — `groupsToCreate` gets filtered at the end to groups that are actually referenced) must also hold in the cancellation case.
 
-- [ ] **Step 2: Tests rot**
+- [ ] **Step 2: Tests red**
 
 Run: `swift test --filter SessionImportPlanner`
-Expected: FAIL — `plan` nimmt keinen `arbiter` entgegen.
+Expected: FAIL — `plan` does not accept an `arbiter`.
 
-- [ ] **Step 3: Planer umbauen**
+- [ ] **Step 3: Rebuild the planner**
 
-`plan` wird `async` und bekommt `arbiter: ImportConflictArbiter`. Der Duplikatschlüssel `(host, port, username)` bleibt **unverändert** — nur die Behandlung wechselt. Kollisions-`itemName` ist der Session-Name, `kindLabel` der stabile Bezeichner (z. B. `"session"`).
+`plan` becomes `async` and receives `arbiter: ImportConflictArbiter`. The duplicate key `(host, port, username)` stays **unchanged** — only the handling changes. Collision `itemName` is the session name, `kindLabel` the stable identifier (e.g. `"session"`).
 
-Die Gruppenauflösung und die Ghost-Group-Filterung bleiben, wie sie sind; nur der Session-Zweig wird um `replace`/`rename`/Abbruch erweitert. `replace` behält die `id` der bestehenden Session (Referenzen bleiben gültig), `rename` vergibt einen eindeutigen Namen und eine frische `id`.
+Group resolution and ghost-group filtering stay as they are; only the session branch is extended with `replace`/`rename`/cancel. `replace` keeps the `id` of the existing session (references stay valid), `rename` assigns a unique name and a fresh `id`.
 
-- [ ] **Step 4: App zum Kompilieren bringen — ohne Sheet**
+- [ ] **Step 4: Get the App to compile — without the sheet**
 
-Die eine Aufrufstelle im App-Layer bekommt vorläufig einen Arbiter, der das **bisherige** Verhalten exakt reproduziert:
+The one call site in the App layer temporarily gets an arbiter that reproduces the **previous** behavior exactly:
 
 ```swift
 // M19/T6: the real dialog lands in the conflict-sheet task; until then this
@@ -589,11 +589,11 @@ Die eine Aufrufstelle im App-Layer bekommt vorläufig einen Arbiter, der das **b
 let arbiter = ImportConflictArbiter { _ in (.skip, true) }
 ```
 
-Nicht mehr — die echte Verdrahtung ist Task 8.
+Nothing more — the real wiring is Task 8.
 
-- [ ] **Step 5: Grün + Suite**
+- [ ] **Step 5: Green + suite**
 
-Run: `swift test --filter SessionImportPlanner` → PASS; `swift build && swift test` → grün, 0 Warnungen.
+Run: `swift test --filter SessionImportPlanner` → PASS; `swift build && swift test` → green, 0 warnings.
 
 - [ ] **Step 6: Commit**
 
@@ -606,7 +606,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 7: Geteiltes Konflikt-Sheet (App)
+## Task 7: Shared conflict sheet (App)
 
 **Files:**
 - Create: `Sources/MacSCPApp/ImportConflictSheet.swift`
@@ -614,17 +614,17 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `ImportConflict`, `ImportConflictResolution` (T3).
-- Produces: `ImportConflictSheet` — ein Sheet, das **beide** Import-Flüsse benutzen.
+- Produces: `ImportConflictSheet` — a sheet that **both** import flows use.
 
-Vorlage ist das Transfer-Konflikt-Sheet aus M5b: Aufbau, Knopf-Reihenfolge und „Für alle übernehmen"-Kontrollkästchen von dort übernehmen (Datei per Grep nach `ConflictResolution` finden), damit sich Importe wie Transfers anfühlen.
+The template is the transfer conflict sheet from M5b: take the layout, button order, and "apply to all" checkbox from there (find the file via grep for `ConflictResolution`), so imports feel like transfers.
 
-- [ ] **Step 1: Sheet bauen**
+- [ ] **Step 1: Build the sheet**
 
-Anzeige: Name des kollidierenden Eintrags, was kollidiert (aus `kindLabel` auf den lokalisierten Text abgebildet), drei Aktionen (Überspringen / Ersetzen / Umbenennen) und ein Kontrollkästchen „Für alle weiteren übernehmen". `Ersetzen` ist destruktiv zu kennzeichnen, und der Text **muss** benennen, dass dabei auch das gespeicherte Geheimnis überschrieben wird. Abbruch (Esc / „Abbrechen") liefert `nil` — der Import wendet dann nichts an, was der Text ebenfalls sagt.
+Display: name of the colliding entry, what is colliding (from `kindLabel` mapped to localized text), three actions (Skip / Replace / Rename), and a checkbox "Apply to all remaining". `Replace` must be marked as destructive, and the text **must** state that this also overwrites the stored secret. Cancel (Esc / "Cancel") returns `nil` — the import then applies nothing, which the text also states.
 
 - [ ] **Step 2: L10n**
 
-Neue Keys in **allen vier** Katalogen, typografisch:
+New keys in **all four** catalogs, typographic:
 
 EN:
 ```
@@ -640,7 +640,7 @@ EN:
 "import.conflict.cancel" = "Cancel Import";
 "import.conflict.cancelNote" = "Cancelling imports nothing.";
 ```
-DE (typografisch „ "):
+DE (typographic „ "):
 ```
 "import.conflict.title" = "Name bereits vorhanden";
 "import.conflict.message" = "„%@" ist bereits vorhanden.";
@@ -683,10 +683,10 @@ PL („ "):
 "import.conflict.cancelNote" = "Anulowanie nic nie importuje.";
 ```
 
-- [ ] **Step 3: Build + Parität**
+- [ ] **Step 3: Build + parity**
 
 Run: `swift build && swift test --filter Localizable`
-Expected: 0 neue Warnungen, Parität grün. Zusätzlich per Grep prüfen, dass **jeder** neue Key in allen vier Katalogen steht — der Paritätstest diffed nur gegen `en.lproj` und sieht einen überall fehlenden Key nicht.
+Expected: 0 new warnings, parity green. In addition, check via grep that **every** new key is present in all four catalogs — the parity test only diffs against `en.lproj` and does not see a key missing everywhere.
 
 - [ ] **Step 4: Commit**
 
@@ -699,21 +699,21 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 8: Export/Import verdrahten (App)
+## Task 8: Wire up export/import (App)
 
 **Files:**
-- Modify: `Sources/MacSCPApp/SessionExportImportSheets.swift` (UTType, Document, Login-Set-Export-Sheet)
-- Modify: `Sources/MacSCPApp/LoginSetsSheet.swift` (Knöpfe, Kontextmenü, „Schlüssel fehlt")
+- Modify: `Sources/MacSCPApp/SessionExportImportSheets.swift` (UTType, Document, login-set export sheet)
+- Modify: `Sources/MacSCPApp/LoginSetsSheet.swift` (buttons, context menu, "key missing")
 - Modify: `Sources/MacSCPApp/ContentView.swift`, `Sources/MacSCPApp/MacSCPApp.swift`
-- Modify: `scripts/package-app` (Info.plist-Typdeklaration)
+- Modify: `scripts/package-app` (Info.plist type declaration)
 - Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 
 **Interfaces:**
-- Consumes: alles aus T2–T7.
+- Consumes: everything from T2–T7.
 
 - [ ] **Step 1: UTType + Document**
 
-In `SessionExportImportSheets.swift` neben `macscpSessions` (:16-18):
+In `SessionExportImportSheets.swift`, alongside `macscpSessions` (:16-18):
 
 ```swift
 extension UTType {
@@ -721,44 +721,44 @@ extension UTType {
 }
 ```
 
-Dazu ein `LoginSetExportDocument` nach dem Muster von `SessionExportDocument` (write-only, leere `readableContentTypes`, werfender `init(configuration:)` — der Import liest `Data` direkt von der URL). In `scripts/package-app` die `UTExportedTypeDeclarations` um denselben Identifier mit der Dateiendung `macscplogins` erweitern; die bestehende Session-Deklaration als Vorlage nehmen und den `defaultFilename` im `fileExporter` entsprechend setzen.
+Add a `LoginSetExportDocument` on the pattern of `SessionExportDocument` (write-only, empty `readableContentTypes`, a throwing `init(configuration:)` — the import reads `Data` directly from the URL). In `scripts/package-app`, extend `UTExportedTypeDeclarations` with the same identifier and the `macscplogins` file extension; use the existing session declaration as the template and set `defaultFilename` in the `fileExporter` accordingly.
 
-- [ ] **Step 2: Export-Sheet**
+- [ ] **Step 2: Export sheet**
 
-Nach dem Vorbild des Session-Export-Sheets in derselben Datei: Schalter **„Passwörter einschließen"** und **„Schlüsseldateien einbetten"**, Auswahl verschlüsselt/unverschlüsselt, Passwort + Wiederholung, und die **zweistufige** Klartext-Bestätigung (`isConfirmingPlaintext`-Muster), sobald Geheimnisse **oder** Schlüssel unverschlüsselt hinausgingen. Der Warntext benennt beides.
+Following the pattern of the session export sheet in the same file: toggles **"Include passwords"** and **"Embed key files"**, encrypted/unencrypted choice, password + confirmation, and the **two-step** plaintext confirmation (`isConfirmingPlaintext` pattern) whenever secrets **or** keys would go out unencrypted. The warning text names both.
 
-Beim Bauen des Payloads: Geheimnisse nur bei aktivem Schalter aus dem Keychain unter `set.id`; `embeddedKey` nur bei aktivem Schlüssel-Schalter über `EmbeddedKeyPorter.embed(...)` (liefert für externe Pfade `nil`, ohne die Datei anzufassen). `includesSecrets`/`includesKeyFiles` im Payload müssen zu dem passen, was tatsächlich drinsteht.
+When building the payload: secrets only when the toggle is on, from the Keychain under `set.id`; `embeddedKey` only when the key toggle is on, via `EmbeddedKeyPorter.embed(...)` (returns `nil` for external paths, without touching the file). `includesSecrets`/`includesKeyFiles` in the payload must match what is actually inside.
 
-- [ ] **Step 3: Knöpfe und Menü**
+- [ ] **Step 3: Buttons and menu**
 
-In `LoginSetsSheet`: „Exportieren…" (alle Sets; bei getroffener Auswahl nur die markierten) und „Importieren…" in der Fußzeile, „Exportieren…" zusätzlich im Zeilen-Kontextmenü (einzelnes Set) neben den Einträgen aus M18. Im Sessions-Menü (`MacSCPApp.swift`, neben den bestehenden Import/Export-Punkten) „Logins importieren…".
+In `LoginSetsSheet`: "Export…" (all sets; if a selection was made, only the marked ones) and "Import…" in the footer, "Export…" additionally in the row context menu (single set) alongside the entries from M18. In the sessions menu (`MacSCPApp.swift`, next to the existing import/export items), "Import Logins…".
 
-- [ ] **Step 4: Import-Fluss**
+- [ ] **Step 4: Import flow**
 
-Datei wählen → `LoginSetExportCodec.probe` → bei verschlüsselt das bestehende `ImportPasswordSheet` → `decode` → `LoginSetImportPlanner.plan(existing:incoming:arbiter:)` mit einem Arbiter, dessen Decider das Sheet aus Task 7 zeigt → Plan anwenden:
-- `PlannedLoginSet.embeddedKey` (falls vorhanden) über `EmbeddedKeyPorter.materialize` einspielen und den `keyPath` des Sets auf den zurückgegebenen Pfad setzen;
+Choose file → `LoginSetExportCodec.probe` → for encrypted, the existing `ImportPasswordSheet` → `decode` → `LoginSetImportPlanner.plan(existing:incoming:arbiter:)` with an arbiter whose decider shows the sheet from Task 7 → apply the plan:
+- feed `PlannedLoginSet.embeddedKey` (if present) through `EmbeddedKeyPorter.materialize` and set the set's `keyPath` to the returned path;
 - `LoginSetStore.upsert`;
-- `secret` (falls vorhanden) in den Keychain unter der `id` des geplanten Sets — bei `replacesExisting` überschreibt das bewusst das vorhandene Geheimnis;
-- Zusammenfassung anzeigen („X importiert, Y ersetzt, Z übersprungen"), plus Hinweis auf Sets, deren `keyPath` am Zielrechner nicht existiert.
+- `secret` (if present) into the Keychain under the planned set's `id` — for `replacesExisting`, this deliberately overwrites the existing secret;
+- show a summary ("X imported, Y replaced, Z skipped"), plus a note about sets whose `keyPath` does not exist on the target machine.
 
-Fehlerbehandlung wie beim Session-Import: eine verständliche Meldung, **kein** Schlüsselmaterial und keine Geheimnisse im Text.
+Error handling like the session import: an understandable message, **no** key material and no secrets in the text.
 
-- [ ] **Step 5: Session-Import auf das echte Sheet umstellen**
+- [ ] **Step 5: Switch session import to the real sheet**
 
-Den Platzhalter-Arbiter aus Task 6 Step 4 durch denselben Decider ersetzen, der auch den Login-Import bedient — es gibt genau **eine** Sheet-Implementierung und einen Weg, sie zu zeigen. Die Zusammenfassung des Session-Imports um „ersetzt"/„umbenannt" erweitern.
+Replace the placeholder arbiter from Task 6 Step 4 with the same decider that also serves the login import — there is exactly **one** sheet implementation and one way to show it. Extend the session import's summary with "replaced"/"renamed".
 
-- [ ] **Step 6: „Schlüssel fehlt"-Markierung**
+- [ ] **Step 6: "Key missing" marker**
 
-In der Login-Set-Liste bekommen Sets mit `authKind == .privateKey`, deren `keyPath` am Zielrechner nicht existiert, einen sichtbaren Hinweis (Symbol + Kurztext). Reiner Anzeigezustand, keine Datenänderung.
+In the login set list, sets with `authKind == .privateKey` whose `keyPath` does not exist on the target machine get a visible indicator (icon + short text). Pure display state, no data change.
 
 - [ ] **Step 7: L10n**
 
-Alle neuen Keys dieser Task in **allen vier** Katalogen, typografisch. Nach dem Vorbild der bestehenden `sessions.export.*`-Keys benennen (`logins.export.*`, `logins.import.*`), damit die Kataloge lesbar gruppiert bleiben. Auch hier per Grep prüfen, dass jeder Key in allen vier Dateien steht.
+All new keys for this task in **all four** catalogs, typographic. Name them following the existing `sessions.export.*` keys (`logins.export.*`, `logins.import.*`), so the catalogs stay readably grouped. Here too, check via grep that every key is present in all four files.
 
-- [ ] **Step 8: Build + Parität + Idle-CPU**
+- [ ] **Step 8: Build + parity + idle CPU**
 
 Run: `swift build && swift test`
-Expected: 0 neue Warnungen, Suite grün, Parität grün. Danach Dev-Build starten und Idle-CPU messen (~0 %) — Pflicht für neue Sheets (M11n-Lektion).
+Expected: 0 new warnings, suite green, parity green. Afterward start a dev build and measure idle CPU (~0%) — mandatory for new sheets (M11n lesson).
 
 - [ ] **Step 9: Commit**
 
@@ -771,32 +771,33 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 9: Abschluss
+## Task 9: Close-out
 
-- [ ] **Step 1: Volle Suite + 0 Warnungen**
+- [ ] **Step 1: Full suite + 0 warnings**
 
 Run: `swift build && swift test && swift test --filter Localizable`
 
-- [ ] **Step 2: Secret-Hygiene an der echten Datei**
+- [ ] **Step 2: Secret hygiene on the real file**
 
-Einen Export **ohne** beide Opt-ins erzeugen und die Datei durchsuchen: kein Passwort, kein `PRIVATE KEY`, keine Passphrase. Danach einen Export **mit** beiden Schaltern, verschlüsselt — die Datei darf im Klartext nichts davon zeigen.
+Produce an export **without** either opt-in and search the file: no password, no `PRIVATE KEY`, no passphrase. Then an export **with** both toggles, encrypted — the file must show none of that in plaintext.
 
-- [ ] **Step 3: Roundtrip von Hand**
+- [ ] **Step 3: Manual round trip**
 
-Export mit eingebettetem verwalteten Schlüssel → Store und Keychain-Eintrag lokal entfernen → Import → das Set verbindet wieder, die Schlüsseldatei liegt mit 0600 im verwalteten Verzeichnis, das Verzeichnis ist 0700.
+Export with an embedded managed key → remove the store and Keychain entry locally → import → the set connects again, the key file sits at 0600 in the managed directory, the directory is 0700.
 
-- [ ] **Step 4: Whole-Milestone-Review**
+- [ ] **Step 4: Whole-milestone review**
 
-Opus-Review über den gesamten Zweig ab dem M19-Spec-Commit. Fokus: die Krypto-Härtungen sind beim Generischmachen **vollständig** mitgewandert (Iterationsklemme!), erzeugte Session-Dateien sind bitgleich zu vorher, Opt-ins sind wirksam, externe Schlüsseldateien werden nie gelesen, `replace` überschreibt das Keychain-Geheimnis nur bewusst, Aufräumen bei Fehlschlag, Konfliktverhalten identisch zwischen beiden Import-Wegen, Katalog-Parität per Grep (nicht nur per Test).
+Opus review over the entire branch from the M19 spec commit. Focus: the crypto hardening fully carried over during the genericization (iteration clamp!), generated session files are bit-identical to before, opt-ins are effective, external key files are never read, `replace` overwrites the Keychain secret only deliberately, cleanup on failure, conflict behavior identical between both import paths, catalog parity via grep (not just via test).
 
-- [ ] **Step 5: Push + Dev-Build (auf Maintainer-Anordnung)**
+- [ ] **Step 5: Push + dev build (on maintainer instruction)**
 
 ---
 
 ## Self-Review
 
-**1. Spec coverage:** Generischer Codec + `macscp-logins` → T1, T2 ✅ · Payload-Typen → T2 ✅ · geteilte Konfliktlösung (Typen, Decider, applyToAll, Abbruch) → T3 ✅ · Login-Set-Planer mit Name-Kollision, replace/rename/skip-Semantik → T5 ✅ · Session-Import auf denselben Dialog → T6, T8 Step 5 ✅ · Schlüssel-Einbettung/Materialisierung inkl. 0600/0700/Keychain/Rollback → T4 ✅ · Export-UI mit beiden Schaltern und zweistufiger Warnung → T8 ✅ · Import-UI inkl. Zusammenfassung → T8 ✅ · „Schlüssel fehlt" → T8 Step 6 ✅ · eigener UTType inkl. Info.plist → T8 Step 1 ✅ · alle Tests der Spec → T1–T5, T9 ✅ · Sicherheits-Invarianten → Global Constraints + T4 + T9 ✅
+**1. Spec coverage:** Generic codec + `macscp-logins` → T1, T2 ✅ · payload types → T2 ✅ · shared conflict resolution (types, decider, applyToAll, cancel) → T3 ✅ · login set planner with name collision, replace/rename/skip semantics → T5 ✅ · session import onto the same dialog → T6, T8 Step 5 ✅ · key embedding/materialization incl. 0600/0700/Keychain/rollback → T4 ✅ · export UI with both toggles and two-step warning → T8 ✅ · import UI incl. summary → T8 ✅ · "key missing" → T8 Step 6 ✅ · own UTType incl. Info.plist → T8 Step 1 ✅ · all tests from the spec → T1–T5, T9 ✅ · security invariants → Global Constraints + T4 + T9 ✅
 
-**2. Placeholder scan:** Bewusst offen, jeweils mit „reale Namen aus dem Code übernehmen": die konkreten `SessionExportError`-Fälle, das Testmuster der M17/M18-Key-Tests, der `SecretStore`-Double, die Session-Import-Aufrufstelle im App-Layer, die Transfer-Konflikt-Sheet-Vorlage. Kein „TBD/TODO".
+**2. Placeholder scan:** Deliberately open, each with "take real names from the code": the concrete `SessionExportError` cases, the M17/M18 key tests' test pattern, the `SecretStore` double, the session import call site in the App layer, the transfer conflict sheet template. No "TBD/TODO".
 
-**3. Type consistency:** `ExportEnvelopeCodec.encode/probe/decode`, `LoginSetExportPayload`/`ExportedLoginSet`/`EmbeddedKey`, `ImportConflictResolution`/`ImportConflict`/`ImportConflictDecider`/`ImportConflictArbiter`, `EmbeddedKeyPorter.embed/materialize`, `PlannedLoginSet`/`LoginSetImportPlan`/`LoginSetImportPlanner.plan`, `SessionImportPlanner.plan(…arbiter:)` — über alle Tasks gleich geschrieben. `SessionExportError` wird von beiden Formaten geteilt (bewusst, in T1 begründet).
+**3. Type consistency:** `ExportEnvelopeCodec.encode/probe/decode`, `LoginSetExportPayload`/`ExportedLoginSet`/`EmbeddedKey`, `ImportConflictResolution`/`ImportConflict`/`ImportConflictDecider`/`ImportConflictArbiter`, `EmbeddedKeyPorter.embed/materialize`, `PlannedLoginSet`/`LoginSetImportPlan`/`LoginSetImportPlanner.plan`, `SessionImportPlanner.plan(…arbiter:)` — written consistently across all tasks. `SessionExportError` is shared between both formats (deliberate, justified in T1).
+</content>

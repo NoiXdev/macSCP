@@ -1,98 +1,95 @@
-# Sitzung duplizieren — Entwurf
+# Duplicating a session — design
 
-**Stand:** 2026-08-29. Umsetzung von **Punkt 1** aus
+**Status:** 2026-08-29. Implementation of **item 1** from
 `docs/superpowers/specs/2026-08-20-backlog-verwaltungs-sheets.md`.
 
 ---
 
-## Was das Datenmodell schon beantwortet
+## What the data model already answers
 
-Der Eintrag stellt drei Fragen. Zwei davon beantwortet der Baum, wenn man
-nachsieht.
+The entry raises three questions. The tree answers two of them, if you look.
 
-**Das Geheimnis einer Sitzung liegt im SecretStore unter der Sitzungs-`id`
-selbst** — das Fach *ist* die Kennung. Eine Kopie mit frischer `id` hat
-deshalb kein Geheimnis; „auf denselben Eintrag zeigen" ist gar nicht
-ausdrückbar, ohne es aktiv zu **kopieren**.
+**A session's secret lives in SecretStore under the session's `id`
+itself** — the slot *is* the identifier. A copy with a fresh `id` therefore
+has no secret; "point at the same entry" is not even expressible without
+actively **copying** it.
 
-**Und die Namensregel existiert bereits:**
-`SessionNameCollision.freeName(basedOn:avoiding:)`, angelegt für die
-vorbefüllten Namen und geprüft — sie benutzt denselben Vergleich wie
-`SessionListViewModel.save`, was der Fallstrick an dieser Stelle war. Eine
-zweite Namensarithmetik daneben ist damit weder nötig noch erlaubt.
+**And the naming rule already exists:**
+`SessionNameCollision.freeName(basedOn:avoiding:)`, built for the
+pre-filled names and verified — it uses the same comparison as
+`SessionListViewModel.save`, which was the pitfall here. A second naming
+arithmetic beside it is therefore neither needed nor allowed.
 
-## Entscheidung des Maintainers (2026-08-29)
+## Maintainer decision (2026-08-29)
 
-**Nichts kopieren, Referenzen mitnehmen.**
+**Copy nothing, carry references along.**
 
-Die Kopie erbt alles, was ein **Verweis** ist — Gruppe, Tags,
-Login-Set-Bindung, Jump-Spezifikation — und nichts, was ein **Geheimnis**
-ist.
+The copy inherits everything that is a **reference** — group, tags,
+login-set binding, jump spec — and nothing that is a **secret**.
 
-Daraus folgt eine Asymmetrie, die kein Nachteil ist, sondern die Regel bei
-der Arbeit: **eine Sitzung an einem Login-Set funktioniert sofort**, weil
-ihr Kreditiv ohnehin am Set hängt und nicht an ihr. Eine Sitzung mit
-eigenem Passwort fragt beim ersten Verbinden einmal.
+That yields an asymmetry which is not a drawback but the rule at work:
+**a session on a login set works immediately**, because its credential
+hangs off the set anyway, not off it. A session with its own password asks
+once on first connect.
 
-Der Grund ist die Zusage, die dieses Projekt an einer Stelle hält: Geheimes
-liegt ausschließlich dort, wo der Nutzer es hingetan hat. Ein Passwort ohne
-sein Zutun zu vervielfachen erzeugt einen zweiten Keychain-Eintrag, von dem
-er beim Ändern oder Widerrufen wissen müsste — und genau das weiß man beim
-zweiten nie.
+The reason is the one promise this project keeps in one place: secret
+material lives only where the user put it. Multiplying a password without
+the user's involvement creates a second keychain entry the user would need
+to know about when changing or revoking it — and that is exactly what one
+never knows about the second one.
 
-## Der Entwurf
+## The design
 
-### Duplizieren ist ein reiner Wert
+### Duplication is a pure value
 
-Was die Kopie trägt und was nicht, hängt nur an der Vorlage und den
-vorhandenen Namen. Das gehört als prüfbare Funktion nach Core — nach dem
-Vorbild von `SessionNameCollision` und `SidebarOrdering` —, nicht in eine
-Menüaktion.
+What the copy carries and what it does not depends only on the template
+and the existing names. That belongs in Core as a testable function —
+following the model of `SessionNameCollision` and `SidebarOrdering` —, not
+in a menu action.
 
-Der Wert entscheidet; die Seitenleiste ruft ihn und speichert das Ergebnis.
+The value decides; the sidebar calls it and saves the result.
 
-### Was übernommen wird und was nicht
+### What is carried over and what is not
 
 | | |
 |---|---|
-| **Übernommen** | Protokollart und alle Verbindungsfelder, Gruppe, Tags, Login-Set-Bindung, Jump-Spezifikation |
-| **Frisch** | `id`, und damit ein leeres Geheimnis-Fach |
-| **Nicht übernommen** | jedes Geheimnis, in jedem Fach |
-| **Name** | `freeName(basedOn:avoiding:)` über den Namen der Vorlage |
+| **Carried over** | Protocol type and all connection fields, group, tags, login-set binding, jump spec |
+| **Fresh** | `id`, and with it an empty secret slot |
+| **Not carried over** | every secret, in every slot |
+| **Name** | `freeName(basedOn:avoiding:)` over the template's name |
 
-**Die Jump-Spezifikation ist der Fall, der Aufmerksamkeit braucht.** Sie
-trägt ein eigenes `secretID` — ein *anderes* Fach als das der Sitzung. Ein
-roh übernommenes `secretID` ließe die Kopie auf das Geheimnis der Vorlage
-zeigen, und dann wäre die Entscheidung oben genau an der Stelle umgangen,
-an der niemand hinsieht. **Die Kopie bekommt ein frisches `secretID`.**
+**The jump spec is the case that needs attention.** It carries its own
+`secretID` — a *different* slot than the session's. A raw carried-over
+`secretID` would leave the copy pointing at the template's secret, and
+then the decision above would be circumvented at exactly the point where
+nobody is looking. **The copy gets a fresh `secretID`.**
 
-Trägt der Jump dagegen eine `loginSetID` oder eine `sessionID`, sind das
-Verweise und wandern mit.
+If the jump instead carries a `loginSetID` or a `sessionID`, those are
+references and travel along.
 
-### Wo der Eintrag sitzt
+### Where the entry sits
 
-Im Kontextmenü der Seitenleiste, neben Umbenennen und Löschen. Die Kopie
-landet in derselben Gruppe wie die Vorlage und wird ausgewählt, damit
-sichtbar ist, was entstanden ist.
+In the sidebar's context menu, next to Rename and Delete. The copy lands
+in the same group as the template and is selected, so what was created is
+visible.
 
-**Nur zeigen, was möglich ist** — die stehende Regel; nichts wird
-ausgegraut.
+**Only show what is possible** — the standing rule; nothing is greyed
+out.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: dass Verweise wandern und Geheimnisse
-nicht, dass Sitzungs- **und** Jump-Fach frisch sind, dass der Name der
-vorhandenen Regel folgt, und dass eine Login-Set-Sitzung nach dem
-Duplizieren vollständig ist, eine mit eigenem Passwort dagegen nicht.
+Everything decidable is testable: that references travel and secrets do
+not, that the session slot **and** jump slot are fresh, that the name
+follows the existing rule, and that a login-set session is complete after
+duplication while one with its own password is not.
 
-**Nicht prüfbar** bleibt, dass der Nutzer die Kopie in der laufenden
-Seitenleiste an der erwarteten Stelle sieht.
+**Not testable** remains that the user sees the copy in the running
+sidebar at the expected spot.
 
-## Was ausdrücklich nicht dazugehört
+## What explicitly does not belong here
 
-- **Kein Kopieren irgendeines Geheimnisses**, auch nicht auf Nachfrage.
-- **Keine zweite Namensregel.** `freeName(basedOn:avoiding:)` oder gar
-  keine.
-- **Keine Änderung an `SessionListViewModel.save`** und seinem Upsert über
-  den Namen.
-- **Kein Mehrfach-Duplizieren einer Auswahl** — ein Eintrag, eine Sitzung.
+- **No copying of any secret**, not even on request.
+- **No second naming rule.** `freeName(basedOn:avoiding:)` or none at all.
+- **No change to `SessionListViewModel.save`** and its upsert over the
+  name.
+- **No multi-duplicating of a selection** — one entry, one session.

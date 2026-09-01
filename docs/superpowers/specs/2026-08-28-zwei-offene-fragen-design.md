@@ -1,87 +1,84 @@
-# Zwei offene Fragen aus der Abschlussdurchsicht — Entwurf
+# Two open questions from the closing review — design
 
-**Stand:** 2026-08-28. Umsetzung von
+**Status:** 2026-08-28. Implementation of
 `docs/superpowers/specs/2026-08-26-backlog-offene-fragen-durchsicht.md`.
 
-Der Eintrag führt zwei Punkte, die nichts miteinander zu tun haben außer
-ihrer Herkunft. Sie werden hier zusammen entworfen, weil sie zusammen
-notiert wurden — aber sie teilen keinen Quelltext, und die eine Hälfte ist
-heute noch **nicht entwerfbar**.
+The entry lists two items that have nothing to do with each other except
+their origin. They are designed here together because they were noted
+together — but they share no source code, and one half is **not yet
+designable** today.
 
 ---
 
-## Die Asymmetrie zuerst
+## The asymmetry first
 
-**M3 ist eine Entwurfsfrage.** Der Mechanismus ist gelesen, der falsche
-Zustand ist benannt, die Behebung ist eine Formfrage.
+**M3 is a design question.** The mechanism is read, the wrong state is
+named, the fix is a matter of form.
 
-**Die S3-Redirect-Frage ist keine.** Ob es überhaupt etwas zu bauen gibt,
-hängt an einer Messung, die niemand gemacht hat. Ein Entwurf davor wäre eine
-Behebung für einen Fehler, dessen Existenz unbekannt ist — und dieses Projekt
-hat heute dreimal erlebt, dass die Messung den Entwurf umgeworfen hat.
+**The S3 redirect question is not.** Whether there is anything to build at
+all hinges on a measurement nobody has taken. A design ahead of that would
+be a fix for a bug whose existence is unknown — and this project has already
+seen, three times, the measurement overturn the design.
 
-Deshalb: **M3 wird entworfen und umgesetzt. S3 wird gemessen, und der
-Entwurf für S3 entsteht danach oder gar nicht.**
+Hence: **M3 gets designed and implemented. S3 gets measured, and the design
+for S3 follows afterward or not at all.**
 
 ---
 
-## M3 — Der Ursprung gehört dem Versuch, nicht dem Reiter
+## M3 — The origin belongs to the attempt, not the tab
 
-### Der gemessene Ausgangszustand
+### The measured starting state
 
-`connect(in:stored:)` setzt `tab.dialingStoredSessionID = stored.id`
-**bevor** `await form.connect()` läuft. Der Kommentar an dieser Stelle
-begründet die Reihenfolge sorgfältig — eine `fillForm`-Ablehnung soll keinen
-Ursprung hinterlassen — und übersieht dabei den anderen Fall.
+`connect(in:stored:)` sets `tab.dialingStoredSessionID = stored.id`
+**before** `await form.connect()` runs. The comment at this spot carefully
+justifies the ordering — a `fillForm` rejection should not leave an origin
+behind — and in doing so overlooks the other case.
 
-`ConnectionViewModel.connect()` beginnt mit:
+`ConnectionViewModel.connect()` begins with:
 
 ```swift
 guard state != .connecting else { return nil }
 ```
 
-Ein abgelehnter zweiter Aufruf kehrt also zurück, **ohne den Zustand zu
-ändern**. Der Mirror räumt den Ursprung aber ausschließlich bei einem
-Zustandswechsel:
+A rejected second call therefore returns **without changing state**. But
+the mirror clears the origin only on a state change:
 
 ```swift
 if newState != .connecting { tab.dialingStoredSessionID = nil }
 ```
 
-Kein Wechsel, kein Räumen. Der Ursprung bleibt stehen und wird dem
-**ad-hoc**-Versuch angeheftet, der gleich darauf scheitert. Die Fläche bietet
-dann „Sitzung bearbeiten" für eine Sitzung an, die dieser Versuch nie
-gewählt hat.
+No change, no clearing. The origin stays in place and gets attached to the
+**ad-hoc** attempt that fails right after it. The surface then offers
+"Edit session" for a session this attempt never selected.
 
-Erreichbar ist das, weil der Verbinden-Knopf des Formulars
-`tab.isReconnecting` nicht nimmt und `sidebarConnectTarget` denselben Reiter
-zurückgibt, solange er nicht verbunden ist.
+This is reachable because the form's connect button does not take
+`tab.isReconnecting`, and `sidebarConnectTarget` returns the same tab as
+long as it is not connected.
 
-**Einordnung, unverändert aus dem Eintrag:** rein kosmetisch. Kein
-Sicherheitsproblem, keine Datenverwechslung über eine Fenstergrenze. Nur eine
-falsch beschriftete Fläche in einem schmalen Zeitfenster.
+**Classification, unchanged from the entry:** purely cosmetic. No security
+issue, no data mix-up across a window boundary. Just a mislabeled surface
+in a narrow time window.
 
-### Die Entscheidung (Maintainer, 2026-08-28)
+### The decision (maintainer, 2026-08-28)
 
-**Den Ursprung an den Versuch binden**, statt ihn nachträglich zu räumen.
+**Bind the origin to the attempt** instead of clearing it after the fact.
 
-Der Eintrag nannte zwei billigere Wege — beim Ablehnen miträumen, oder erst
-nach einer Alleinstellungsprüfung setzen. Beide funktionieren. Beide fügen
-eine **Aufräumregel** hinzu, und eine fehlende Aufräumregel ist genau das,
-was diesen Fehler erzeugt hat. Eine zweite daneben zu stellen behebt den
-Fall und lädt den nächsten ein.
+The entry named two cheaper routes — clear it on rejection too, or set it
+only after a uniqueness check. Both work. Both add a **cleanup rule**, and a
+missing cleanup rule is exactly what produced this bug. Placing a second one
+next to it fixes this case and invites the next one.
 
-`ConnectionViewModel` führt bereits `currentAttempt`, das am Kopf jedes
-`connect()` neu vergeben und von `cancelConnecting()` bedingungslos bewegt
-wird. Ein abgelehnter Aufruf kehrt **vor** dieser Vergabe zurück — er wird
-nie ein Versuch. Wird der Ursprung dort vergeben, wo der Versuch entsteht,
-kann ein abgelehnter Aufruf keinen beitragen. Der falsche Zustand ist danach
-nicht aufgeräumt, sondern nicht darstellbar.
+`ConnectionViewModel` already carries `currentAttempt`, freshly assigned at
+the top of every `connect()` and moved unconditionally by
+`cancelConnecting()`. A rejected call returns **before** this assignment —
+it never becomes an attempt. If the origin is assigned where the attempt is
+created, a rejected call cannot contribute one. The wrong state is then not
+cleaned up — it is unrepresentable.
 
-### Die Form
+### The form
 
-`connect()` nimmt den Ursprung entgegen und schreibt ihn **nach** dem
-Wächter, zusammen mit der Vergabe des Versuchs:
+`connect()` takes the origin and writes it **after** the guard, together
+with the assignment of the attempt:
 
 ```swift
 public func connect(origin: UUID? = nil) async -> (any RemoteFileSystem)? {
@@ -92,130 +89,130 @@ public func connect(origin: UUID? = nil) async -> (any RemoteFileSystem)? {
     attemptOrigin = origin
 ```
 
-Die Fehlerfläche liest danach den Ursprung **des Versuchs, der gescheitert
-ist**, statt einer Reiter-Eigenschaft, die überdauern kann.
+The error surface then reads the origin **of the attempt that failed**,
+instead of a tab property that can outlive it.
 
-**`tab.dialingStoredSessionID` entfällt damit ganz.** Das ist der eigentliche
-Gewinn: die Eigenschaft, die einen veralteten Wert halten konnte, hört auf zu
-existieren.
+**`tab.dialingStoredSessionID` is thereby dropped entirely.** That is the
+actual gain: the property that could hold a stale value stops existing.
 
-### Der Vorgabewert, und warum er hier anders liegt als in Task 1
+### The default value, and why it sits differently here than in Task 1
 
-`origin: UUID? = nil` trägt einen Vorgabewert, und dieselbe Woche hat drei
-Vorgabewerte aus `SessionListViewModel.init` entfernt, weil ein Weglassen
-still eine echte Nutzerdatei las.
+`origin: UUID? = nil` carries a default value, and the same week removed
+three default values from `SessionListViewModel.init` because omitting one
+silently read a real user file.
 
-**Der Unterschied ist, was das Weglassen bedeutet.** Dort zeigte der
-Vorgabewert auf einen realen Ort und ein Test, der ihn wegließ, schrieb in
-die Ablage des Maintainers. Hier bedeutet `nil` **ad-hoc** — der wahre und
-einzige richtige Wert für einen Aufruf, der keine gespeicherte Sitzung wählt.
-Es gibt nichts Reales, das ein Weglassen erreichen könnte.
+**The difference is what omission means.** There, the default value pointed
+at a real location, and a test that omitted it wrote into the maintainer's
+own storage. Here, `nil` means **ad-hoc** — the true and only correct value
+for a call that does not select a stored session. There is nothing real
+that an omission could reach.
 
-Gezählt in diesem Durchgang: **zwei** Produktivaufrufe von `form.connect()`
-(der Verbinden-Knopf in `ConnectionFormView` und der gespeicherte Weg in
-`ContentView`) und **64** Aufrufe unter `Tests/`. Ein Pflichtargument würde
-64 Teststellen ändern, um an zwei Produktivstellen etwas auszudrücken, das
-an 64 Stellen ohnehin `nil` heißt.
+Counted in this pass: **two** production call sites of `form.connect()`
+(the connect button in `ConnectionFormView` and the stored path in
+`ContentView`) and **64** call sites under `Tests/`. A required argument
+would change 64 test sites to express, at two production sites, something
+that at 64 sites already reads `nil` anyway.
 
-**Die Gegenrede, damit sie nicht verschwiegen ist:** ein Vorgabewert macht es
-möglich, den Ursprung an der gespeicherten Stelle zu **vergessen**, und dann
-verhält sich ein gespeicherter Wählvorgang wie ein ad-hoc. Das ist eine
-sichtbare Verschlechterung, keine stille — die Fläche böte dann kein
-„Sitzung bearbeiten" an, wo sie es sollte —, und es ist die Richtung, in die
-ein Fehler fallen soll.
+**The counterargument, so it is not left unsaid:** a default value makes it
+possible to **forget** the origin at the stored call site, after which a
+stored connection attempt behaves like an ad-hoc one. That is a visible
+degradation, not a silent one — the surface would then fail to offer "Edit
+session" where it should — and it is the direction a bug is supposed to
+fall in.
 
-### Was kein Test dieses Projekts sehen kann
+### What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: dass ein abgelehnter zweiter Aufruf keinen
-Ursprung hinterlässt, und dass ein gescheiterter Versuch den seinen trägt.
-Der Zeitfensterfall selbst ist aus dem Test heraus herstellbar, weil beide
-Wege auf dem Hauptakteur liegen.
+Everything decidable is checkable: that a rejected second call leaves no
+origin behind, and that a failed attempt carries its own. The time-window
+case itself can be produced from the test, because both paths sit on the
+main actor.
 
-**Nicht prüfbar** bleibt, dass die Fläche im laufenden Fenster die richtige
-Beschriftung zeigt. Wie bisher.
+**Not checkable** is that the surface, in the live window, shows the
+correct label. As before.
 
 ---
 
-## Die S3-Redirect-Frage — erst messen
+## The S3 redirect question — measure first
 
-### Was feststeht, ohne Messung
+### What stands without a measurement
 
-S3 setzt den `Authorization`-Header von Hand und fährt über
-`URLSessionHTTPTransport()`, dessen Vorgabe `URLSession.shared` ist.
-**`URLSession.shared` kann keinen Delegate haben** — es gibt im S3-Pfad also
-keine Redirect-Kontrolle, nicht weil sie weggelassen wurde, sondern weil
-diese Sitzung keine aufnehmen kann.
+S3 sets the `Authorization` header by hand and runs over
+`URLSessionHTTPTransport()`, whose default is `URLSession.shared`.
+**`URLSession.shared` cannot have a delegate** — so there is no redirect
+control on the S3 path, not because it was left out, but because this
+session cannot accept one.
 
-WebDAV macht es bereits anders: eigene `URLSession` aus
-`URLSessionConfiguration.ephemeral` mit `WebDAVSessionDelegate`, übergeben an
+WebDAV already does it differently: its own `URLSession` built from
+`URLSessionConfiguration.ephemeral` with `WebDAVSessionDelegate`, passed to
 `URLSessionHTTPTransport(session:)`.
 
-**Die Naht für eine Behebung existiert also schon.** Das ist der Grund, warum
-hier nichts entworfen werden muss, bevor gemessen wurde: fällt die Messung
-schlecht aus, ist die Behebung das Muster, das nebenan bereits läuft.
+**The seam for a fix therefore already exists.** That is the reason nothing
+needs to be designed here before it is measured: if the measurement comes
+back bad, the fix is the pattern already running next door.
 
-Der Header trägt nicht den Secret Key, wohl aber die Access-Key-ID und die
-Signatur. Eine mitgenommene Signatur an eine fremde Origin ist kein
-Klartext-Kreditiv-Leck, aber eine Anfrage-Fälschungs-Fläche.
+The header does not carry the secret key, but it does carry the access key
+ID and the signature. A signature carried along to a foreign origin is not
+a plaintext credential leak, but it is a request-forgery surface.
 
-### Der Messaufbau
+### The measurement setup
 
-Loopback, kein echter Host — die Auflage der Abschlussdurchsicht gilt weiter.
-`Tests/macSCPCoreTests/LoopbackHTTPStub.swift` liefert das Gerüst samt
-`seenRequests` und `waitForRequests(atLeast:within:)`.
+Loopback, no real host — the closing review's requirement still stands.
+`Tests/macSCPCoreTests/LoopbackHTTPStub.swift` supplies the scaffolding,
+including `seenRequests` and `waitForRequests(atLeast:within:)`.
 
-Zwei Origins entstehen auf Loopback auf zwei Arten, und **beide gehören
-gemessen**, weil sie verschieden ausgehen können:
+Two origins arise on loopback in two ways, and **both need measuring**,
+because they can come out differently:
 
-| Fall | erste Origin | zweite Origin | unterscheidet sich in |
+| Case | first origin | second origin | differs in |
 |---|---|---|---|
-| A | `127.0.0.1:<p1>` | `127.0.0.1:<p2>` | Port |
-| B | `127.0.0.1:<p1>` | `localhost:<p2>` | Hostname **und** Port |
+| A | `127.0.0.1:<p1>` | `127.0.0.1:<p2>` | port |
+| B | `127.0.0.1:<p1>` | `localhost:<p2>` | hostname **and** port |
 
-Eine Implementierung, die nur beim Hostwechsel abstreift, besteht Fall A und
-fällt in Fall B. Nur einen zu messen hieße, eine Aussage über beide zu
-treffen.
+An implementation that strips only on a hostname change passes case A and
+fails case B. Measuring only one would amount to making a claim about both.
 
-Gefahren wird die **echte** Anfrage von `S3FileSystem` über den
-Vorgabe-Transport — das ist der Gegenstand der Frage. Beobachtet wird, ob die
-Anfrage an der zweiten Origin einen `Authorization`-Header trägt.
+What gets fired is the **real** request from `S3FileSystem` over the
+default transport — that is the subject of the question. What gets observed
+is whether the request at the second origin carries an `Authorization`
+header.
 
-**Die Positivprüfung daneben ist Pflicht, nicht Kür.** „Kein
-`Authorization` an der zweiten Origin" ist eine negative Aussage, und eine
-negative Aussage über eine Anfrage, die gar nicht ankam, ist stumm wahr. Die
-Messung muss deshalb zuerst belegen, dass die Weiterleitung überhaupt
-stattfand und die zweite Origin eine Anfrage gesehen hat — sonst misst sie
-einen kaputten Stub und meldet Sicherheit. Genau diese Falle hat in dieser
-Woche schon einmal eine Sicherheitszusicherung stumm bestehen lassen.
+**The positive check alongside it is mandatory, not optional.** "No
+`Authorization` at the second origin" is a negative statement, and a
+negative statement about a request that never arrived is vacuously true.
+The measurement must therefore first prove that the redirect actually
+happened and that the second origin saw a request at all — otherwise it is
+measuring a broken stub and reporting safety. This exact trap already let a
+security assurance stand silently once this week.
 
-### Was die Messung entscheidet
+### What the measurement decides
 
-- **Header wird nicht mitgenommen:** die Frage wird geschlossen, mit der
-  gemessenen macOS-Version dabei. `„auf 26.x nicht mitgenommen"` ist nicht
-  dasselbe wie `„wird nicht mitgenommen"` — Foundations Verhalten hängt an
-  Version und Statuscode, und der Eintrag sagt das selbst. Ob daraus trotzdem
-  ein Delegate folgt, ist dann eine Entscheidung mit Daten statt ohne.
-- **Header wird mitgenommen:** S3 bekommt eine eigene Sitzung mit Delegate,
-  nach dem Vorbild von WebDAV. Der Entwurf dafür entsteht dann — mit der
-  Messung als Beleg und der Frage, ob die Weiterleitung über eine fremde
-  Origin abgelehnt oder nur der Header abgestreift wird.
+- **Header is not carried along:** the question is closed, together with
+  the measured macOS version. "Not carried along on 26.x" is not the same
+  as "is not carried along" — Foundation's behavior depends on version and
+  status code, and the entry says so itself. Whether a delegate follows
+  anyway is then a decision made with data instead of without.
+- **Header is carried along:** S3 gets its own session with a delegate,
+  modeled on WebDAV. The design for that follows then — with the
+  measurement as evidence, and the question of whether the redirect to a
+  foreign origin is rejected outright or only the header is stripped.
 
-### Was kein Test dieses Projekts sehen kann
+### What no test in this project can see
 
-Was ein **echter** S3-Anbieter bei einer Weiterleitung tut. Gemessen wird
-Foundations Verhalten gegen einen kontrollierten Stub, nicht das Verhalten von
-AWS, MinIO oder Ceph. Das genügt für die gestellte Frage — sie handelt von
-`URLSession`, nicht vom Gegenüber — und es genügt für nichts darüber hinaus.
+What a **real** S3 provider does on a redirect. What gets measured is
+Foundation's behavior against a controlled stub, not the behavior of AWS,
+MinIO, or Ceph. That is enough for the question as posed — it is about
+`URLSession`, not the counterpart — and it is enough for nothing beyond
+that.
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly out of scope
 
-- **Keine Änderung an `ConnectionViewModel`s Ablehnung des zweiten
-  Aufrufs.** `guard state != .connecting` bleibt, samt seinem Test.
-- **Keine Änderung an WebDAVs Delegate** und keine Verallgemeinerung von
-  Redirect-Regeln über beide Backends hinweg, bevor gemessen ist.
-- **Kein Umbau des HTTP-Transports.** Die Naht
-  `URLSessionHTTPTransport(session:)` genügt und wird benutzt, wie sie ist.
-- Kein Blockieren, keine neue Einstellung, keine sichtbare Änderung für den
-  Nutzer aus M3 heraus — außer der richtigen Beschriftung.
+- **No change to `ConnectionViewModel`'s rejection of the second call.**
+  `guard state != .connecting` stays, along with its test.
+- **No change to WebDAV's delegate**, and no generalizing of redirect rules
+  across both backends before it is measured.
+- **No rework of the HTTP transport.** The seam
+  `URLSessionHTTPTransport(session:)` is sufficient and is used as is.
+- No blocking, no new setting, no visible change for the user arising from
+  M3 — other than the correct label.

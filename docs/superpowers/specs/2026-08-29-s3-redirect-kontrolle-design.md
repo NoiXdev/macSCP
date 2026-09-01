@@ -1,126 +1,125 @@
-# S3-Weiterleitungen kontrollieren — Entwurf
+# Controlling S3 redirects — Design
 
-**Stand:** 2026-08-29. Umsetzung von
+**Status:** 2026-08-29. Implements
 `docs/superpowers/specs/2026-08-28-backlog-s3-weiterleitungen.md`.
 
-**Dieser Vorgang war bis heute nicht baubar.** S3 fuhr auf
-`URLSession.shared`, und die geteilte Session kann keinen Delegate tragen.
-Seit `36a68fe` hat S3 eine eigene Session — die Kontrolle ist damit
-überhaupt erst erreichbar geworden.
+**This change was not buildable until today.** S3 ran on
+`URLSession.shared`, and the shared session cannot carry a delegate. Since
+`36a68fe` S3 has had its own session — that is what made control reachable
+at all.
 
 ---
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-Aus der Messung vom 2026-08-28, zehn Fälle über zwei Origin-Formen und fünf
-Statuscodes:
+From the 2026-08-28 measurement, ten cases across two origin forms and five
+status codes:
 
 | | |
 |---|---|
-| `Authorization` über eine Weiterleitung | **wird nicht mitgenommen**, in keinem Fall |
-| andere handgesetzte Kopfzeilen (`x-amz-date`, `x-amz-content-sha256`, `Host`) | reisen mit |
-| Weiterleitung selbst | wird **gefolgt**, nicht verweigert |
-| gleiche Origin, nur anderer Pfad | Header wird **ebenfalls** abgestreift |
+| `Authorization` across a redirect | **is not carried over**, in any case |
+| other hand-set headers (`x-amz-date`, `x-amz-content-sha256`, `Host`) | do travel along |
+| the redirect itself | is **followed**, not refused |
+| same origin, only a different path | the header is **also** stripped |
 
-Daraus die drei Befunde, die der Backlog-Eintrag festhält: die fremde Origin
-erfährt Bucket-Pfad, Listenabfrage, Zeitstempel und — über den mitgereisten
-`Host` — den konfigurierten Endpunkt; der `Host` ist danach falsch; und eine
-**legitime** Weiterleitung käme unsigniert an und scheiterte.
+From this come the three findings the backlog entry records: the foreign
+origin learns the bucket path, the list request, the timestamp, and — via
+the `Host` that travels along — the configured endpoint; the `Host` is
+then wrong; and a **legitimate** redirect would arrive unsigned and fail.
 
-Der letzte Punkt ist eine Funktions-, keine Sicherheitsfrage — und er ist
-der Grund, warum „alles ablehnen" die falsche Antwort wäre.
+The last point is a functionality question, not a security one — and it is
+the reason "reject everything" would be the wrong answer.
 
-## Entscheidungen des Maintainers (2026-08-29)
+## Maintainer decisions (2026-08-29)
 
-### 1. Gleiche Origin: neu signieren und folgen. Fremde Origin: ablehnen.
+### 1. Same origin: re-sign and follow. Foreign origin: reject.
 
-Bei gleicher Origin wird die Anfrage **für das neue Ziel neu signiert** und
-gefolgt. Das behebt zugleich den Funktionsfehler: die Weiterleitung kommt
-signiert an statt nackt.
+For the same origin, the request is **re-signed for the new target** and
+followed. This also fixes the functional bug: the redirect arrives signed
+instead of bare.
 
-Eine fremde Origin wird **abgelehnt**, mit einer Meldung, die nennt, wohin
-der Endpunkt schicken wollte. Ihr Bucket-Pfad und Endpunkt preiszugeben ist
-genau die Anfrage-Fälschungs-Fläche, die der Eintrag benennt — und der
-Nutzer erfährt lieber, dass sein Endpunkt ihn woandershin schicken wollte,
-als dass es stillschweigend geschieht.
+A foreign origin is **rejected**, with a message that names where the
+endpoint tried to send it. Disclosing its bucket path and endpoint is
+exactly the request-forgery surface the entry names — and the user is
+better off learning that their endpoint tried to send them elsewhere than
+having it happen silently.
 
-### 2. „Fremd" heißt Schema, Host und Port
+### 2. "Foreign" means scheme, host and port
 
-Die Origin-Definition aus RFC 6454, ohne Ermessen. `https` → `http` ist
-damit fremd, ein Portwechsel auch.
+The origin definition from RFC 6454, with no discretion. `https` → `http`
+is therefore foreign, so is a port change.
 
-Das Herabstufen auf Klartext ist ausdrücklich der Fall, den das mit abdeckt:
-eine Weiterleitung, die die Verschlüsselung wegnimmt, ist die, der man am
-wenigsten folgen will.
+Downgrading to plaintext is explicitly the case this covers: a redirect
+that strips encryption is the one you least want to follow.
 
-## Der Entwurf
+## The design
 
-### Ein eigener Delegate, kein geteilter
+### A dedicated delegate, not a shared one
 
-`WebDAVSessionDelegate` ist bereits ein `URLSessionTaskDelegate`, beantwortet
-aber eine andere Frage (Zertifikate). Die beiden zusammenzulegen hieße, zwei
-Politiken in einen Typ zu ziehen, die nichts teilen außer der Protokollform.
+`WebDAVSessionDelegate` is already a `URLSessionTaskDelegate`, but answers
+a different question (certificates). Merging the two would pull two
+policies that share nothing but the protocol shape into one type.
 
-S3 bekommt einen eigenen, kleinen Delegate, der genau eine Frage beantwortet.
+S3 gets its own, small delegate that answers exactly one question.
 
-### Die Entscheidung ist ein reiner Wert
+### The decision is a pure value
 
-Ob eine Weiterleitung gefolgt, neu signiert oder abgelehnt wird, hängt nur
-an zwei URLs. Das gehört als prüfbarer Wert nach Core — nach dem Vorbild von
-`SessionNameCollision` und `SidebarOrdering` —, nicht in eine
-Delegate-Methode, in der es nur über eine echte Session erreichbar wäre.
+Whether a redirect is followed, re-signed, or rejected depends only on two
+URLs. That belongs in Core as a testable value — following the model of
+`SessionNameCollision` and `SidebarOrdering` — not inside a delegate
+method, where it would only be reachable via a real session.
 
-Der Delegate ruft den Wert und führt aus, was er sagt.
+The delegate calls the value and carries out what it says.
 
-### Neu signieren heißt: dieselbe Anfrage, neues Ziel
+### Re-signing means: the same request, a new target
 
-Die neue Anfrage wird **gebaut wie die erste**, mit dem Ziel der
-Weiterleitung: Methode, Körper und Kopfzeilen aus dem bestehenden
-Signierweg, nicht aus der von Foundation vorgeschlagenen Anfrage. Der
-falsche `Host` fällt damit von selbst weg — er wird für das neue Ziel neu
-gesetzt und mitsigniert.
+The new request is **built the same way as the first one**, targeting the
+redirect destination: method, body and headers from the existing signing
+path, not from the request Foundation proposes. The wrong `Host` therefore
+falls away on its own — it is re-set for the new target and signed along
+with everything else.
 
-**Gemessen und deshalb hier festgehalten:** der S3-Pfad kennt **keinen**
-Strom-Körper — jeder Anfragekörper liegt im Speicher oder fehlt. Eine
-Anfrage lässt sich deshalb originalgetreu wiederholen. Käme später ein
-Strom-Upload dazu, ist diese Annahme die erste, die nachzusehen wäre: ein
-Strom lässt sich nicht zweimal lesen.
+**Measured, and recorded here for that reason:** the S3 path has **no**
+streamed body — every request body is either in memory or absent. A
+request can therefore be replayed faithfully. If a streamed upload is
+added later, this assumption is the first thing to re-check: a stream
+cannot be read twice.
 
-### Ablehnen ist ein Fehler mit Inhalt
+### Rejecting is an error with content
 
-Eine abgelehnte Weiterleitung endet in einem Fehler, der sagt **wohin**
-geschickt werden sollte. „Verbindung fehlgeschlagen" wäre hier die falsche
-Ersparnis: der Nutzer kann daraus nicht schließen, dass sein Endpunkt ihn
-umzuleiten versucht, und genau das ist die Information, die zählt.
+A rejected redirect ends in an error that states **where** it was going to
+be sent. "Connection failed" would be the wrong economy here: the user
+could not conclude from it that their endpoint is trying to redirect them,
+and that is exactly the information that matters.
 
-Der Text geht durch alle vier Kataloge; das Deutsche duzt.
+The text goes through all four catalogs; the German uses du.
 
-### Was mit der Statuscode-Vielfalt geschieht
+### What happens with the variety of status codes
 
-Alle Weiterleitungscodes durchlaufen dieselbe Entscheidung. 301/302/303
-schreiben die Methode auf GET um, 307/308 erhalten sie — das ist Foundations
-Verhalten und bleibt es. Für das Neusignieren zählt die Methode der Anfrage,
-die tatsächlich gestellt wird.
+All redirect codes go through the same decision. 301/302/303 rewrite the
+method to GET, 307/308 preserve it — that is Foundation's behavior and it
+stays that way. For re-signing, what counts is the method of the request
+actually made.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: die Origin-Regel, dass gleiche Origin
-signiert ankommt, dass eine fremde abgelehnt wird und das Ziel in der
-Meldung steht, und dass der `Host` nach dem Neusignieren zum neuen Ziel
-passt. Der Loopback-Aufbau dafür steht bereits
+Everything decidable is testable: the origin rule, that a same-origin
+redirect arrives signed, that a foreign one is rejected and the target
+appears in the message, and that the `Host` after re-signing matches the
+new target. The loopback rig for this already exists
 (`S3RedirectAuthorizationMeasurementTests`, `LoopbackHTTPStub`).
 
-**Nicht prüfbar** bleibt, was ein echter S3-Anbieter tut. Gemessen wird
-Foundation gegen einen kontrollierten Stub — das genügt für diese Fragen und
-für nichts darüber hinaus.
+**Not testable** is what a real S3 provider does. Measurement is Foundation
+against a controlled stub — that suffices for these questions and for
+nothing beyond them.
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly excluded
 
-- **Keine Änderung an `WebDAVSessionDelegate`** und keine gemeinsame
-  Weiterleitungs-Politik über beide Backends.
-- **Keine Einstellung**, mit der sich das Ablehnen abschalten lässt. Wer
-  einem umgeleiteten Endpunkt trauen will, trägt ihn als Endpunkt ein.
-- **Keine Änderung am Signierweg selbst**, nur ein zweiter Aufruf davon.
-- Keine Behandlung von `x-amz-bucket-region`-Regionswechseln als eigener
-  Fall — ein Anbieter, der so umleitet, tut es innerhalb seiner eigenen
-  Origin oder wird abgelehnt wie jeder andere.
+- **No change to `WebDAVSessionDelegate`**, and no shared redirect policy
+  across both backends.
+- **No setting** to turn off the rejection. Anyone who wants to trust a
+  redirected endpoint enters it as the endpoint.
+- **No change to the signing path itself**, only a second call to it.
+- No handling of `x-amz-bucket-region` region changes as a separate case —
+  a provider that redirects that way does so within its own origin, or is
+  rejected like any other.

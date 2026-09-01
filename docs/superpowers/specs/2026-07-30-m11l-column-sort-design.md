@@ -1,102 +1,102 @@
-# M11l — Sortieren per Spaltenklick (Design)
+# M11l — Sorting by column click (Design)
 
-Datum: 2026-07-30 · Status: vom Maintainer freigegeben („passt so")
+Date: 2026-07-30 · Status: approved by the maintainer ("works as is")
 
-## Ziel
+## Goal
 
-Die Dateiliste nach Name, Größe oder Änderungsdatum sortieren — Klick auf die
-Spaltenüberschrift wählt den Schlüssel, erneuter Klick dreht die Richtung.
+Sort the file list by name, size or modification date — clicking the
+column header selects the key, clicking again reverses the direction.
 
-## Ausgangslage
+## Starting point
 
-- `RemoteBrowserViewModel.sortedForDisplay(_:)` ist heute die EINZIGE
-  Sortier-Autorität: Ordner zuerst, dann Name case-insensitiv. Kein Backend
-  sortiert. Aufgerufen in `displayItems(from:)` (nach dem Versteckt-Filter,
-  vor der M11k-Suche).
-- Die Tabelle (`RemoteFileTableView`) hat drei Spalten `name`/`size`/
-  `modified` mit `PolishedHeaderCell`; heute reagieren die Überschriften
-  nicht auf Klicks (keine `sortDescriptors`).
+- `RemoteBrowserViewModel.sortedForDisplay(_:)` is today the ONLY
+  sorting authority: folders first, then name case-insensitive. No backend
+  sorts. Called in `displayItems(from:)` (after the hidden-file filter,
+  before the M11k search).
+- The table (`RemoteFileTableView`) has three columns `name`/`size`/
+  `modified` with `PolishedHeaderCell`; today the headers don't
+  react to clicks (no `sortDescriptors`).
 
-## 1. Sortier-Autorität parametrisieren (Core)
+## 1. Parameterize the sorting authority (Core)
 
-- Neuer Typ `FileSortKey: Sendable` (`.name` / `.size` / `.modified`).
+- New type `FileSortKey: Sendable` (`.name` / `.size` / `.modified`).
 - `sortedForDisplay(_:key:ascending:)`:
-  - **Ordner bleiben immer zuerst** (Gruppierung, unabhängig vom Schlüssel):
-    Ordner tragen keine Größe und die Gruppierung ist das heutige Verhalten;
-    sie über die Datei-Sortierung zu mischen wäre eine stille
-    Verhaltensänderung und bei Größe sinnlos. Innerhalb jeder Gruppe (Ordner,
-    Nicht-Ordner) wird nach dem Schlüssel sortiert.
-  - `.name`: `localizedCaseInsensitiveCompare` (wie heute).
-  - `.size`: numerisch nach Bytegröße; fehlende Größe (z. B. Ordner-Gruppe
-    intern) deterministisch ans Ende der Sekundärordnung, dann Name als
-    Tiebreaker.
-  - `.modified`: nach Zeitstempel; fehlender Zeitstempel deterministisch,
-    Name als Tiebreaker.
-  - `ascending == false` kehrt die Ordnung INNERHALB der Gruppen um — die
-    Ordner-zuerst-Gruppierung bleibt (auch absteigend stehen Ordner oben).
-  - Der Name-Tiebreaker macht die Sortierung **stabil/deterministisch**
-    (gleiche Größe/gleiches Datum ⇒ immer dieselbe Reihenfolge).
-- Der bestehende Aufruf ohne Parameter bleibt als Standard `.name`
-  aufsteigend erhalten (Default-Argumente), damit nichts anderes bricht.
+  - **Folders always stay first** (grouping, independent of the key):
+    folders don't carry a size and this grouping is today's behavior;
+    mixing them into the file sort would be a silent
+    behavior change and meaningless for size. Within each group (folders,
+    non-folders), sorting follows the key.
+  - `.name`: `localizedCaseInsensitiveCompare` (as today).
+  - `.size`: numeric by byte size; a missing size (e.g. within the
+    folder group internally) deterministically goes to the end of the
+    secondary ordering, then name as the tiebreaker.
+  - `.modified`: by timestamp; a missing timestamp deterministic,
+    name as the tiebreaker.
+  - `ascending == false` reverses the order WITHIN the groups — the
+    folders-first grouping stays (folders stay on top even descending).
+  - The name tiebreaker makes the sort **stable/deterministic**
+    (same size/same date ⇒ always the same order).
+- The existing call with no parameters stays with the default `.name`
+  ascending (default arguments), so nothing else breaks.
 
-## 2. Sortierzustand im ViewModel
+## 2. Sort state in the view model
 
 - `sortKey: FileSortKey = .name`, `sortAscending: Bool = true`
-  (`@Observable`, `didSet` → `displayItems` neu ableiten wie bei der Suche).
-- `displayItems(from:)` reicht `sortKey`/`sortAscending` an
-  `sortedForDisplay` durch. Damit sortieren `load`, `refreshQuietly` UND die
-  M11k-Suche (die `displayedAll` daraus baut) konsistent nach demselben
-  Zustand.
-- Der Sortierzustand überlebt `refreshQuietly` und Verzeichniswechsel
-  (er ist eine Anzeige-Präferenz des Panes, kein Verzeichnis-Attribut) —
-  im Gegensatz zur Suche, die beim Wechsel zurückgesetzt wird.
+  (`@Observable`, `didSet` → re-derive `displayItems` as with search).
+- `displayItems(from:)` passes `sortKey`/`sortAscending` through to
+  `sortedForDisplay`. That way `load`, `refreshQuietly` AND the
+  M11k search (which builds `displayedAll` from it) sort consistently
+  by the same state.
+- The sort state survives `refreshQuietly` and directory changes
+  (it is a display preference of the pane, not a directory attribute) —
+  unlike search, which resets on a change.
 
-## 3. Bedienung (App)
+## 3. Operation (App)
 
-- Die drei Spalten bekommen `sortDescriptorPrototype`s
-  (`name`/`size`/`modified`); die Tabelle meldet Klicks über
-  `tableView(_:sortDescriptorsDidChange:)` an den Coordinator.
-- Ein Klick auf eine Überschrift: ist es eine ANDERE Spalte, wird sie zum
-  Sortierschlüssel (Standardrichtung: Name/Datum aufsteigend, Größe
-  absteigend — größte zuerst ist das Erwartbare); ist es die AKTIVE Spalte,
-  kippt nur die Richtung.
-- Die aktive Spalte zeigt das native Sortier-Dreieck (▲/▼) — AppKit macht
-  das über den gesetzten `sortDescriptor`; der `PolishedHeaderCell` muss den
-  Indikator durchzeichnen (prüfen, dass die M5g-Kopf-Optik erhalten bleibt
-  und das Dreieck sichtbar ist).
-- Die tatsächliche Sortierung macht NICHT AppKit auf den NSTableView-Zeilen,
-  sondern das ViewModel (die Reihenfolge kommt aus `items`) — der
-  `sortDescriptorsDidChange` setzt nur `viewModel.sortKey`/`sortAscending`,
-  und die neue `items`-Reihenfolge fließt über die bestehende
-  Reload-/Reconcile-Mechanik zurück. So bleibt die Sortier-Autorität an
-  EINER Stelle (Core), und Suche/Filter/Sortierung greifen widerspruchsfrei.
-- Beide Panes unabhängig (Zustand am jeweiligen ViewModel).
+- The three columns get `sortDescriptorPrototype`s
+  (`name`/`size`/`modified`); the table reports clicks via
+  `tableView(_:sortDescriptorsDidChange:)` to the coordinator.
+- Clicking a header: if it's a DIFFERENT column, it becomes the
+  sort key (default direction: name/date ascending, size
+  descending — largest first is what's expected); if it's the ACTIVE
+  column, only the direction flips.
+- The active column shows the native sort triangle (▲/▼) — AppKit does
+  this via the set `sortDescriptor`; `PolishedHeaderCell` must draw the
+  indicator through (check that the M5g header look is preserved
+  and the triangle is visible).
+- The actual sorting is NOT done by AppKit on the NSTableView rows,
+  but by the view model (the order comes from `items`) — the
+  `sortDescriptorsDidChange` only sets `viewModel.sortKey`/`sortAscending`,
+  and the new `items` order flows back through the existing
+  reload/reconcile mechanism. This way the sorting authority stays in
+  ONE place (Core), and search/filter/sort compose without conflicts.
+- Both panes independent (state on their respective view model).
 
-## 4. Bewusst NICHT in M11l
+## 4. Deliberately NOT in M11l
 
-- Keine „Ordner mischen"-Option (Ordner bleiben oben; ggf. später als
-  Einstellung).
-- Kein Sortieren nach Rechten/Besitzer (die Spalten gibt es noch nicht —
-  das ist der nächste Wunsch; wenn sie kommen, bekommen sie ihren
-  `FileSortKey`-Fall).
-- Kein Persistieren des Sortierzustands über App-Neustarts (Anzeige-
-  Präferenz pro Sitzung; ein späteres Settings-Thema).
-- Kein Audit-Eintrag.
+- No "mix folders in" option (folders stay on top; possibly later
+  as a setting).
+- No sorting by permissions/owner (those columns don't exist yet —
+  that's the next request; when they come, they get their
+  `FileSortKey` case).
+- No persisting the sort state across App restarts (a display
+  preference per session; a later settings topic).
+- No audit entry.
 
 ## 5. Tests
 
-- `sortedForDisplay(key:ascending:)` (rein, Core): Ordner-zuerst bei jedem
-  Schlüssel und in beiden Richtungen; `.name` auf/ab; `.size` numerisch
-  (nicht lexikografisch — „9" vor „10" nur bei numerischem Vergleich);
-  `.modified` auf/ab; Name-Tiebreaker bei gleicher Größe/gleichem Datum
-  (Stabilität); fehlende Größe/fehlendes Datum deterministisch.
-- VM: `sortKey`/`sortAscending` setzen ordnet `items` neu; überlebt
-  `refreshQuietly` und `load` auf ein neues Verzeichnis; wirkt zusammen mit
-  einem aktiven M11k-Filter (gefilterte Liste ist sortiert).
-- Die AppKit-Kopf-Anbindung hat kein Test-Target → Smoke.
+- `sortedForDisplay(key:ascending:)` (pure, Core): folders-first for every
+  key and in both directions; `.name` up/down; `.size` numeric
+  (not lexicographic — "9" before "10" only with a numeric comparison);
+  `.modified` up/down; name tiebreaker with equal size/equal date
+  (stability); missing size/missing date deterministic.
+- VM: setting `sortKey`/`sortAscending` re-orders `items`; survives
+  `refreshQuietly` and `load` on a new directory; works together with
+  an active M11k filter (the filtered list is sorted).
+- The AppKit header binding has no test target → smoke.
 
-## 6. Aufteilung
+## 6. Breakdown
 
-T1 Core (parametrisierte `sortedForDisplay` + VM-Sortierzustand, mit Tests)
-→ T2 App (Spalten-`sortDescriptor`s, Klick-Handler, Dreieck-Indikator,
-beide Panes) → T3 Abschluss. KEIN Release.
+T1 Core (parameterized `sortedForDisplay` + VM sort state, with tests)
+→ T2 App (column `sortDescriptor`s, click handler, triangle indicator,
+both panes) → T3 wrap-up. NO release.

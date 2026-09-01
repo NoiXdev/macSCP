@@ -1,136 +1,132 @@
-# Verschachtelte Ordner und freie Sortierung — Entwurf
+# Nested folders and free-form sorting — design
 
-**Stand:** 2026-08-29. Umsetzung von **D1 + D2** aus
+**As of:** 2026-08-29. Implementation of **D1 + D2** from
 `docs/superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md`,
-dort ausdrücklich als **ein** Vorgang geführt.
+which explicitly treats them there as **one** change.
 
 ---
 
-## Warum zusammen
+## Why together
 
-`StoredGroup` trägt heute **nur `id` und `name`**. Weder Verschachtelung noch
-Reihenfolge lassen sich ohne neue Felder ausdrücken. Getrennt gebaut ändert
-sich das Speicherformat zweimal, und jede Änderung zieht
-`SessionExportCodec` und den Import-Planer mit.
+`StoredGroup` today carries **only `id` and `name`**. Neither nesting nor
+ordering can be expressed without new fields. Built separately, the
+storage format would change twice, and each change drags in
+`SessionExportCodec` and the import planner.
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-| | heute |
+| | today |
 |---|---|
-| `StoredGroup` | `id`, `name` — sonst nichts |
-| Zuordnung Sitzung → Ordner | `StoredSession.groupID: UUID?` |
-| Ordner auflösen | `SessionStore.dissolveGroup(id:)` — Ordner weg, seine Sitzungen auf `groupID = nil` |
-| Reihenfolge | keine; die Anzeige sortiert selbst |
-| Format | `sessions-v2.json`; die pre-M23-Datei `sessions.json` bleibt als Rückschritt-Momentaufnahme liegen |
-| Export | `SessionExportCodec` mit eigenem `ExportedGroup` |
+| `StoredGroup` | `id`, `name` — nothing else |
+| Session-to-folder mapping | `StoredSession.groupID: UUID?` |
+| Dissolving a folder | `SessionStore.dissolveGroup(id:)` — folder gone, its sessions set to `groupID = nil` |
+| Order | none; the display sorts on its own |
+| Format | `sessions-v2.json`; the pre-M23 file `sessions.json` stays behind as a rollback snapshot |
+| Export | `SessionExportCodec` with its own `ExportedGroup` |
 
-## Entscheidungen des Maintainers (2026-08-29)
+## Maintainer decisions (2026-08-29)
 
-### 1. Additiv in `sessions-v2.json`, kein neuer Dateiname
+### 1. Additive in `sessions-v2.json`, no new filename
 
-Neue **optionale** Felder in die bestehende Datei. Eine ältere Fassung liest
-sie weiter, weil `JSONDecoder` unbekannte Schlüssel überspringt — und
-**verliert Verschachtelung und Reihenfolge, sobald sie selbst schreibt.**
+New **optional** fields in the existing file. An older build keeps reading
+it, because `JSONDecoder` skips unknown keys — and **loses nesting and
+ordering the moment it writes itself.**
 
-Das ist der Preis, und er wird hier benannt statt entdeckt: der Verlust ist
-**Ordnung, nie eine Sitzung**. Namen, Hosts, Ordnerzugehörigkeit und
-Zugangsdaten bleiben unberührt; nur wer wo einsortiert war, ist danach flach.
+That is the price, and it is named here rather than discovered: the loss
+is **organization, never a session**. Names, hosts, folder membership, and
+credentials stay untouched; only who was filed where goes flat afterward.
 
-Der Unterschied zu M23, das genau deshalb den Dateinamen wechselte: dort
-brach die ausgelieferte Fassung am fehlenden `host` **ab**. Ein
-Datenverlust gegen ein kaputtes Lesen — das ist nicht derselbe Fall.
+The difference from M23, which changed the filename for exactly this
+reason: there, the shipped build **aborted** on the missing `host`. Data
+loss versus a broken read — that is not the same case.
 
-### 2. Die Reihenfolge ist eine Ganzzahl am Element
+### 2. Order is an integer on the element
 
-`StoredGroup` und `StoredSession` tragen je eine Position, beim Schreiben
-durchnummeriert.
+`StoredGroup` and `StoredSession` each carry a position, numbered
+sequentially when written.
 
-**Nicht die Array-Reihenfolge der Datei.** `SessionListViewModel.save` sucht
-eine vorhandene Sitzung über den **Namen** und ändert sie an Ort und Stelle;
-Import und Filter bauen die Liste ohnehin neu auf. Eine Reihenfolge, die in
-der Array-Position steckt, hinge an einer Codepfad-Eigenschaft, die niemand
-zugesichert hat und kein Test bemerkt, wenn sie kippt.
+**Not the file's array order.** `SessionListViewModel.save` looks up an
+existing session by **name** and changes it in place; import and
+filtering rebuild the list from scratch anyway. An order embedded in
+array position would hang on a code-path property nobody guaranteed and
+no test would notice tipping over.
 
-**Und keine eigene Reihenfolgeliste.** Eine Liste von Kennungen neben den
-Elementen wäre eine zweite Wahrheit, die auseinanderläuft — dieselbe
-Fehlerklasse, die dieses Projekt bei doppelten Namen bereits bezahlt hat.
+**And no separate order list.** A list of identifiers alongside the
+elements would be a second truth that drifts apart — the same class of
+bug this project has already paid for with duplicate names.
 
-### 3. Beliebig tief, über `parentID`
+### 3. Arbitrarily deep, via `parentID`
 
-`StoredGroup.parentID: UUID?`. Keine künstliche Grenze.
+`StoredGroup.parentID: UUID?`. No artificial limit.
 
-Der Preis ist eine **Zyklenprüfung**: ein Ordner darf nicht sein eigener
-Vorfahre werden. Die gehört als reiner Wert nach Core, prüfbar ohne
-Oberfläche — und sie muss auch den Import abdecken, wo eine fremde Datei
-einen Zyklus mitbringen kann.
+The price is a **cycle check**: a folder must not become its own
+ancestor. That belongs in Core as a pure value, checkable without a UI —
+and it must also cover import, where a foreign file can bring in a cycle.
 
-## Der Entwurf
+## The design
 
-### Auflösen verallgemeinert, was es schon tut
+### Dissolving generalizes what it already does
 
-`dissolveGroup` hebt heute die Sitzungen eines Ordners auf `groupID = nil` —
-für einen Ordner der obersten Ebene ist das **eine Ebene hoch**.
+`dissolveGroup` today lifts a folder's sessions to `groupID = nil` — for a
+top-level folder, that is **one level up**.
 
-Verschachtelt gilt dieselbe Regel wörtlich: Sitzungen *und* Unterordner
-wandern zum **Elternteil** des aufgelösten Ordners. Keine neue Semantik, nur
-dieselbe fortgeschrieben. Nichts wird mitgelöscht.
+Nested, the same rule holds literally: sessions *and* subfolders move to
+the **parent** of the dissolved folder. No new semantics, just the same
+one carried forward. Nothing gets deleted along with it.
 
-### Ziehen leitet sein Ziel aus Identitäten ab, nie aus einem Index
+### Dragging derives its target from identities, never from an index
 
-Das Reiter-Umordnen dieser Woche hat die Form bereits: `move(tabID:to:)` und
-`move(tabID:onto:)`. Der Grund war kein Geschmack — der Index in der Ansicht
-**war** die Fehlerklasse, und ihn zu entfernen hat sie geschlossen.
+This week's tab reordering already has the shape: `move(tabID:to:)` and
+`move(tabID:onto:)`. The reason was not taste — the index in the view
+**was** the bug class, and removing it closed it.
 
-Hier trägt dieselbe Form beides:
+Here the same shape carries both:
 
-| Geste | Wirkung |
+| Gesture | Effect |
 |---|---|
-| zwischen zwei Geschwister ziehen | umordnen |
-| auf einen Ordner ziehen | hineinverschieben, ans Ende |
+| drag between two siblings | reorder |
+| drag onto a folder | move into it, at the end |
 
-Beide Wege enden in **einer** Kernfunktion, die aus zwei Identitäten eine
-neue Ordnung errechnet. Die Ansicht rechnet nichts.
+Both paths end in **one** core function that computes a new order from two
+identities. The view computes nothing.
 
-### Einmaliges Sortieren pro Ordner
+### One-off sorting per folder
 
-Ein Kontextmenü-Eintrag am Ordner, der seine unmittelbaren Unterelemente
-**einmalig** nach Namen ordnet und die Positionen neu schreibt.
+A context-menu entry on the folder that sorts its immediate children by
+name **once** and rewrites the positions.
 
-Ausdrücklich **kein Dauerzustand**: es gibt keine gespeicherte
-Sortier-Einstellung pro Ordner, nur eine Aktion, die die freie Ordnung
-überschreibt. Zum Aufräumen, nicht als Modus. Wirkt nur eine Ebene tief —
-alles andere wäre eine Massenänderung hinter einem Menüpunkt.
+Explicitly **not persistent state**: there is no stored sort setting per
+folder, only an action that overwrites the free-form order. For tidying
+up, not as a mode. Acts only one level deep — anything more would be a
+mass change hidden behind one menu item.
 
-### Export und Import ziehen mit
+### Export and import carry it along
 
-`SessionExportCodec` und der Import-Planer tragen `parentID` und die
-Positionen. Beide müssen mit einer Datei umgehen, die sie **nicht** trägt —
-eine ältere Ausfuhr — und mit einer, die einen **Zyklus** oder einen
-**fehlenden Elternteil** mitbringt.
+`SessionExportCodec` and the import planner carry `parentID` and the
+positions. Both must handle a file that does **not** carry them — an
+older export — and one that brings in a **cycle** or a **missing
+parent**.
 
-Die Regel für beide Schäden ist dieselbe und folgt der Hausregel „additiv,
-nie zerstörend": ein Ordner, dessen Elternteil fehlt oder einen Zyklus
-schlösse, landet auf der obersten Ebene. **Nichts wird verworfen**, und der
-Import meldet, was er begradigt hat.
+The rule for both defects is the same and follows the house rule
+"additive, never destructive": a folder whose parent is missing or would
+close a cycle lands at the top level. **Nothing gets discarded**, and the
+import reports what it straightened out.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: die Zyklenprüfung, das Verallgemeinern des
-Auflösens, die Ordnungsberechnung aus zwei Identitäten, das einmalige
-Sortieren, und dass Ausfuhr und Einfuhr die neuen Felder tragen und beschädigte
-überstehen.
+Everything decidable is checkable: the cycle check, generalizing the
+dissolve, computing order from two identities, one-off sorting, and that
+export and import carry the new fields and survive damaged ones.
 
-**Nicht prüfbar** bleibt, dass sich der Baum in der laufenden Seitenleiste
-angenehm ziehen lässt. Das bleibt ein Blick des Maintainers.
+**Not checkable** is whether the tree drags pleasantly in the live
+sidebar. That stays a matter of the maintainer's own look.
 
-## Was ausdrücklich nicht dazugehört
+## What is expressly not included
 
-- **Keine gespeicherte Sortier-Einstellung pro Ordner.** Nur die einmalige
-  Aktion.
-- **Kein neuer Dateiname**, keine zweite Datei, kein Versionsschlüssel.
-- **Keine Änderung an `SessionListViewModel.save`** und seinem Upsert über
-  den Namen.
-- **Kein Löschen von Sitzungen beim Auflösen eines Ordners** — heute nicht,
-  verschachtelt erst recht nicht.
-- Keine Suche im Baum (D3). Sie kommt nach diesem Vorgang, weil die
-  Verschachtelung ihre Darstellung mitbestimmt.
+- **No stored sort setting per folder.** Only the one-off action.
+- **No new filename**, no second file, no version key.
+- **No change to `SessionListViewModel.save`** and its upsert by name.
+- **No deleting sessions when a folder is dissolved** — not today, and
+  certainly not nested.
+- No search in the tree (D3). That comes after this change, because
+  nesting shapes how it would be displayed.

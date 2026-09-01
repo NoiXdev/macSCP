@@ -1,70 +1,70 @@
-# Gescheiterter Verbindungsaufbau — Umsetzungsplan
+# Failed connection setup — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein fehlgeschlagener Verbindungsaufbau bleibt im Tab stehen und bietet einen Weg weiter, statt kommentarlos aufs Formular zurückzufallen.
+**Goal:** A failed connection attempt stays in its tab and offers a way forward, instead of falling back to the form without comment.
 
-**Architecture:** Eine eigene Fläche neben der Abriss-Fläche, gespeist aus einem prüfbaren Wert; vier Handlungen, dazu ein Dialog mit der vollständigen Meldung.
+**Architecture:** A dedicated surface next to the lost-connection surface, fed from a checkable value; four actions, plus a dialog with the full message.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-gescheiterter-aufbau-design.md`
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **nur Englisch**; Katalogwerte sind Übersetzungen. Alle vier Kataloge, Deutsch von Hand.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- **„Erneut versuchen" läuft durch denselben Verbindungspfad wie ein frischer Aufbau.** TOFU bleibt ein harter Stopp. Die Erlaubnisliste in `ReconnectWiringGuardTests` muss die neue Aufrufstelle erfassen.
-- **Kein Geheimnis** in Protokoll, Export, Fehlermeldung, Testfehlertext — und ab jetzt auch nicht im Details-Dialog.
-- Keine Zeilennummern, keine Ortsangaben in Kommentaren; jede Zahl im selben Durchgang gezählt.
-- **Kein Versuch darf an echten Keychain, Sitzungs-Store oder Konfiguration reichen.** `ContentView` nimmt eingespeiste Ablagen — benutzen.
-- Wächter: **Mutationstests belegen die Empfindlichkeit, nie den Geltungsbereich.** Vor der Wahl eines Ankers fragen, *woher* die Eigenschaft verletzt werden könnte. Kommentar- und zeichenkettenfreien Quelltext scannen.
-- Die App wird nicht gestartet, nichts gepusht.
+- Code, comments, identifiers, test names, commit messages: **English only**; catalog values are translations. All four catalogs, German by hand.
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- **"Retry" runs through the same connection path as a fresh setup.** TOFU stays a hard stop. The allowlist in `ReconnectWiringGuardTests` must cover the new call site.
+- **No secret** in log, export, error message, test failure text — and from now on also not in the details dialog.
+- No line numbers, no location references in comments; every number counted in the same pass.
+- **No attempt may reach the real keychain, session store, or configuration.** `ContentView` takes injected stores — use them.
+- Guard: **Mutation tests prove sensitivity, never scope.** Before choosing an anchor, ask *where* the property could be violated from. Scan source free of comments and string literals.
+- The app doesn't get launched, nothing gets pushed.
 
 ---
 
-### Task 1: Kann im Details-Text ein Geheimnis stehen?
+### Task 1: Can the details text carry a secret?
 
-**Files:** Test in `Tests/macSCPCoreTests/`; Korrekturen dort, wo ein Fehler entsteht — **nicht** an der Anzeige.
+**Files:** Test in `Tests/macSCPCoreTests/`; corrections wherever an error originates — **not** in the display.
 
-**Der Befund, der diese Aufgabe auslöst:** `ConnectionViewModel` erzeugt seine `state = .failed(message:field:)` fast überall aus aufbereiteten, lokalisierten Texten. **Eine** Stelle bettet einen rohen Fehler ein: `String(format: CoreL10n.string("core.error.unexpected %@"), String(describing: error))`.
+**The finding that triggers this task:** `ConnectionViewModel` produces its `state = .failed(message:field:)` almost everywhere from processed, localized texts. **One** spot embeds a raw error: `String(format: CoreL10n.string("core.error.unexpected %@"), String(describing: error))`.
 
-Bisher war das folgenlos, weil der Text nur im Formular stand. Der Details-Dialog macht ihn prominent.
+So far this had no consequence, because the text only appeared in the form. The details dialog makes it prominent.
 
-- [ ] **Step 1: Zählen, welche Fehler dort ankommen können.** Jeden Typ aufzählen, der in diesen `catch` laufen kann — eigene Fehler von macSCP, Citadel, NIOSSH, Foundation. Die Zahl in den Bericht, nicht in einen Kommentar, außer sie wird im selben Durchgang gezählt.
-- [ ] **Step 2: Für jeden prüfen, ob seine Textdarstellung ein Geheimnis tragen kann** — Passwort, Passphrase, Schlüsselmaterial. macSCPs eigene Fehler sind es per Projektregel nicht; **das ist zu belegen, nicht anzunehmen.** Fremde Typen einzeln ansehen.
-- [ ] **Step 3: Einen Test schreiben, der das festnagelt.** Gegen echte Fehlerwerte, nicht erfundene. Findet sich ein Typ, der ein Geheimnis tragen *kann*, wird **er** korrigiert — der Wert gehört gar nicht erst in den Fehler.
-- [ ] **Step 4: Volle Suite grün.** — [ ] **Step 5: Commit** — `test(core): pin that a connect failure carries no secret`
+- [ ] **Step 1: Count which errors can arrive there.** Enumerate every type that can run into this `catch` — macSCP's own errors, Citadel, NIOSSH, Foundation. The number goes in the report, not in a comment, unless it's counted in the same pass.
+- [ ] **Step 2: For each, check whether its text representation can carry a secret** — password, passphrase, key material. macSCP's own errors don't, by project rule; **that needs proving, not assuming.** Look at third-party types individually.
+- [ ] **Step 3: Write a test that pins this down.** Against real error values, not made-up ones. If a type is found that *can* carry a secret, **it** gets fixed — the value shouldn't end up in the error in the first place.
+- [ ] **Step 4: Full suite green.** — [ ] **Step 5: Commit** — `test(core): pin that a connect failure carries no secret`
 
 ---
 
-### Task 2: Der prüfbare Wert
+### Task 2: The checkable value
 
-**Files:** Neben `LostConnectionPlan` in `Sources/MacSCPAppKit/ContentView+Detail.swift`; Test in `Tests/macSCPAppKitTests/`.
+**Files:** Next to `LostConnectionPlan` in `Sources/MacSCPAppKit/ContentView+Detail.swift`; test in `Tests/macSCPAppKitTests/`.
 
-**Interfaces produced:** `ConnectFailurePlan.content(hasStoredSession:)` → allgemeine Meldung plus die sichtbaren Handlungen.
+**Interfaces produced:** `ConnectFailurePlan.content(hasStoredSession:)` → a generic message plus the visible actions.
 
-- [ ] **Step 1: Test zuerst.** Vier Handlungen; **„Sitzung bearbeiten" erscheint nur** bei gespeicherter Sitzung, die drei anderen immer. Die Meldung ist allgemein und trägt keine Einzelheiten — dieselbe bauliche Sicherheit wie `LostConnectionContent`: nur `(Schlüssel, Rückfalltext)`-Paare, kein Feld, in das ein Hostname passen würde.
-- [ ] **Step 2: Rot laufen lassen.** — [ ] **Step 3: Umsetzen.** — [ ] **Step 4: Grün.**
+- [ ] **Step 1: Test first.** Four actions; **"Edit session" appears only** for a stored session, the other three always. The message is generic and carries no details — the same structural safety as `LostConnectionContent`: only `(key, fallback text)` pairs, no field a hostname could fit into.
+- [ ] **Step 2: Run it red.** — [ ] **Step 3: Implement.** — [ ] **Step 4: Green.**
 - [ ] **Step 5: Commit** — `feat(app): decide what a failed connect offers`
 
 ---
 
-### Task 3: Die Fläche, der Dialog, die Verdrahtung
+### Task 3: The surface, the dialog, the wiring
 
-**Files:** `ContentView+Detail.swift` (`ConnectionSurfacePlan` und die Fläche), alle vier Kataloge, Wächtertest.
+**Files:** `ContentView+Detail.swift` (`ConnectionSurfacePlan` and the surface), all four catalogs, guard test.
 
-**Interfaces consumed:** Task 1 (Sicherheit belegt), Task 2 (`ConnectFailurePlan`).
+**Interfaces consumed:** Task 1 (safety proved), Task 2 (`ConnectFailurePlan`).
 
-- [ ] **Step 1: Katalogschlüssel** in allen vier Sprachen, Deutsch von Hand. Wächtertest für gleiche Schlüsselmengen grün.
-- [ ] **Step 2: `ConnectionSurfacePlan` um den gescheiterten Aufbau erweitern.** Heute bildet er `.connected`, `.degraded` und `nil` alle auf `.form` ab; der gescheiterte Versuch braucht seine eigene Antwort. Eine offene Host-Schlüssel-Abfrage überschreibt weiterhin alles.
-- [ ] **Step 3: Die Fläche zeichnen** und die vier Handlungen verdrahten. „Erneut versuchen" ruft **dieselbe** Verbindungsfunktion wie ein Klick in der Seitenleiste. „Bearbeiten" führt aufs vorausgefüllte Formular, „Sitzung bearbeiten" in den Sitzungs-Editor, „Schließen" schließt den Tab.
-- [ ] **Step 4: Der Details-Dialog** mit der vollständigen Meldung.
-- [ ] **Step 5: Wächter.** Die Erlaubnisliste über Wähl- und Übergabestellen muss die neue „Erneut versuchen"-Stelle erfassen — **durch Mutation belegen**, dass ein direkter Wählvorgang dort rot wird.
-- [ ] **Step 6: Volle Suite mehrfach grün.** — [ ] **Step 7: Commit** — `feat(app): keep a failed connect in its tab`
+- [ ] **Step 1: Catalog keys** in all four languages, German by hand. Guard test for matching key sets, green.
+- [ ] **Step 2: Extend `ConnectionSurfacePlan` for the failed setup.** Today it maps `.connected`, `.degraded`, and `nil` all onto `.form`; the failed attempt needs its own response. An open host-key prompt still overrides everything.
+- [ ] **Step 3: Draw the surface** and wire up the four actions. "Retry" calls the **same** connection function as a click in the sidebar. "Edit" leads to the pre-filled form, "Edit session" into the session editor, "Close" closes the tab.
+- [ ] **Step 4: The details dialog** with the full message.
+- [ ] **Step 5: Guard.** The allowlist over dial and hand-off sites must cover the new "Retry" site — **prove it by mutation**, that a direct dial there turns red.
+- [ ] **Step 6: Full suite green, multiple times.** — [ ] **Step 7: Commit** — `feat(app): keep a failed connect in its tab`
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly not part of this
 
-- Der Abriss-Fall (`.lost`) und seine Texte bleiben unverändert.
-- Ein Aufbau, der an einer Frage scheitert, die nur ein Mensch beantworten kann, hat seinen eigenen Weg und wird nicht angefasst.
-- Kein Umbau des Formulars und keine Änderung daran, wo sein Fehlertext lebt.
+- The lost-connection case (`.lost`) and its texts stay unchanged.
+- A setup that fails on a question only a human can answer has its own path and is not touched.
+- No rework of the form and no change to where its error text lives.

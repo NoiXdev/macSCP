@@ -1,127 +1,121 @@
-# Gescheiterter Verbindungsaufbau: eigene Fläche statt Rückfall aufs Formular
+# Failed connection setup: its own surface instead of falling back to the form
 
-**Stand:** Entwurf, vom Maintainer abgenommen 2026-08-25 (Sichtprüfung am
-gebauten Bundle).
+**Status:** Design, approved by the maintainer 2026-08-25 (visual check on
+the built bundle).
 
-## Der Befund
+## The finding
 
-Ein **Abriss** zeigt seit dem Verbindungszustands-Zweig eine Fehleransicht
-im Tab. Ein **gescheiterter Aufbau** tut das nicht: `ConnectionSurfacePlan`
-bildet nur den Zustand ab, und ein fehlgeschlagener Versuch hinterlässt
-`liveness == nil`, was auf `.form` abbildet. Der Tab fällt also aufs
-Formular zurück, als sei nichts gewesen.
+A **teardown** has shown an error view in the tab since the connection-state
+branch. A **failed setup** does not: `ConnectionSurfacePlan` only maps the
+state, and a failed attempt leaves `liveness == nil`, which maps to `.form`.
+The tab therefore falls back to the form, as if nothing had happened.
 
-Maintainer-Wortlaut: *„wenn dann gleich verbinden wieder kommt ist man eher
-verwirrt."* Man wollte verbinden, es ging nicht, und statt einer Auskunft
-steht wieder die Eingabemaske da.
+Maintainer's own words: *„wenn dann gleich verbinden wieder kommt ist man
+eher verwirrt."* ("if Connect just comes right back up, it's more
+confusing than anything") One wanted to connect, it didn't work, and
+instead of an answer the input mask is there again.
 
-**Das ist meine Entscheidung aus Task 6 gewesen**, begründet damit, dass der
-Fehlertext „schon immer" im Formular gewohnt habe. Die Begründung stimmt und
-trägt trotzdem nicht: sie erklärt, wo der Text liegt, nicht warum die Fläche
-wechseln soll.
+**That was my own decision from Task 6**, justified on the grounds that the
+error text had "always" lived in the form. The justification is correct and
+still doesn't carry the weight: it explains where the text sits, not why
+the surface should switch.
 
-## Die Fläche
+## The surface
 
-Eigene Meldung, nicht dieselbe wie beim Abriss — „Verbindung verloren" wäre
-falsch, es bestand nie eine. Vorschlag: **„Keine Verbindung möglich"**, dazu
-ein allgemeiner Satz ohne technische Einzelheiten.
+Its own message, not the same one as for a teardown — "Connection lost"
+would be wrong, none ever existed. Proposal: **"Could not connect"**, plus
+a general sentence with no technical detail.
 
-Vier Handlungen:
+Four actions:
 
-| Handlung | Wirkung | Sichtbar |
+| Action | Effect | Visible |
 |---|---|---|
-| **Erneut versuchen** | derselbe Verbindungspfad wie ein frischer Aufbau | nur bei gespeicherter Sitzung (siehe Nachtrag) |
-| **Bearbeiten** | Formular, mit den Werten vorausgefüllt | immer |
-| **Sitzung bearbeiten** | der Sitzungs-Editor, dauerhafte Änderung | nur bei gespeicherter Sitzung |
-| **Schließen** | Tab schließen | immer |
+| **Retry** | the same connection path as a fresh setup | only for a saved session (see addendum) |
+| **Edit** | the form, pre-filled with the values | always |
+| **Edit Session** | the session editor, a persistent change | only for a saved session |
+| **Close** | close the tab | always |
 
-Dazu ein **Details-Dialog** mit der vollständigen technischen Meldung —
-Maintainer-Entscheidung: allgemeine Meldung auf der Fläche, alles Genaue in
-einem Dialog fürs Debuggen.
+Plus a **details dialog** with the full technical message — maintainer's
+decision: the general message on the surface, everything exact in a dialog
+for debugging.
 
-### Nachtrag, 2026-08-25 (Maintainer): zwei Sätze statt einem
+### Addendum, 2026-08-25 (maintainer): two sentences instead of one
 
-Der Entwurf oben sagt „ein allgemeiner Satz ohne technische Einzelheiten",
-für beide Fälle derselbe. Das wird hier **bewusst aufgeweicht**, mit
-Zustimmung des Maintainers, und zwar aus einem Grund, der sich erst bei der
-Umsetzung gezeigt hat.
+The design above says "a general sentence with no technical detail", the
+same one for both cases. That is **deliberately softened** here, with the
+maintainer's agreement, for a reason that only showed up during
+implementation.
 
-Zwei Änderungen hängen zusammen:
+Two changes are linked:
 
-1. **„Erneut versuchen" entfällt beim einmaligen Versuch.** Ein ad-hoc
-   eingetippter Aufbau hat keine gespeicherte Sitzung zum Wählen, und es
-   gibt auf diesem Zweig absichtlich **keine zweite Wählstelle**, mit der
-   man ihn trotzdem wählen könnte: die Werte leben im Formular, und dessen
-   eigener Verbinden-Knopf ist die eine Stelle, an der ein ad-hoc-Aufbau
-   passiert. Die erste Umsetzung hat den Knopf trotzdem angeboten und ihn
-   aufs vorausgefüllte Formular zurückführen lassen — also kein Wählen,
-   kein „Verbinden…", genau das Verhalten, über das sich der Maintainer
-   ursprünglich beschwert hat, unter einem Knopf, der das Gegenteil
-   verspricht. Ein Knopf, der nicht handeln kann, ist schlechter als ein
-   Knopf, den es nicht gibt.
-2. **Der Satz darunter wird deshalb fallabhängig.** Bleibt „Bearbeiten" der
-   einzige Weg nach vorn, dann muss die Fläche auch sagen, warum
-   Bearbeiten der Weg zum erneuten Versuch ist — sonst sucht man nach einem
-   Knopf, den es nicht gibt. Bei gespeicherter Sitzung bleibt die
-   allgemeine Zeile unverändert: „Erneut versuchen" steht direkt daneben
-   und erklärt sich selbst.
+1. **"Retry" drops out for a one-off attempt.** An ad-hoc, typed-in setup
+   has no saved session to dial, and this branch deliberately has **no
+   second dial point** that could dial it anyway: the values live in the
+   form, and its own Connect button is the one place an ad-hoc setup
+   happens. The first implementation offered the button anyway and routed
+   it back to the pre-filled form — so no dialing, no "Connecting…", exactly
+   the behavior the maintainer originally complained about, under a button
+   that promises the opposite. A button that cannot act is worse than a
+   button that does not exist.
+2. **The sentence underneath therefore becomes case-dependent.** If "Edit"
+   remains the only way forward, the surface also has to say why Edit is
+   the path to retrying — otherwise one looks for a button that isn't
+   there. For a saved session the general line stays unchanged: "Retry"
+   sits right next to it and explains itself.
 
-Konkret zwei Katalogschlüssel, ausgewählt durch **dieselbe** Tatsache, die
-schon über die beiden Knöpfe entscheidet:
+Concretely two catalog keys, selected by the **same** fact that already
+decides between the two buttons:
 
-| Fall | Schlüssel | Deutsch |
+| Case | Key | German |
 |---|---|---|
-| gespeicherte Sitzung | `connection.failed.body` | „macSCP konnte den Host nicht erreichen." |
+| saved session | `connection.failed.body` | „macSCP konnte den Host nicht erreichen." |
 | ad hoc | `connection.failed.body.adHoc` | „macSCP konnte den Host nicht erreichen. Bearbeite die Verbindung, um die Angaben zu prüfen und erneut zu verbinden." |
 
-**Was dabei ausdrücklich NICHT aufgeweicht wird:** die Fläche trägt weiter
-ausschließlich feste Katalogschlüssel. Aufgeweicht ist nur, *welcher* von
-zwei festen Schlüsseln gilt — nie der Text selbst. Die Prüfung, die einen
-interpolierten Hostnamen fängt (`ConnectFailurePlanTests
-.everyReachableMessageComesFromTheFixedCatalogKeySet`), umfasst beide Arme
-und wurde beim Hinzufügen des zweiten Schlüssels nachweislich rot, bis der
-Schlüssel eingetragen war.
+**What is explicitly NOT softened here:** the surface still carries
+exclusively fixed catalog keys. What is softened is only *which* of two
+fixed keys applies — never the text itself. The check that catches an
+interpolated hostname
+(`ConnectFailurePlanTests.everyReachableMessageComesFromTheFixedCatalogKeySet`)
+covers both arms and was demonstrably red when the second key was added,
+until the key was entered.
 
-Warum beide Bearbeiten-Wege: ein einmaliger Tippversuch („liegt es am
-Port?") soll die gespeicherte Sitzung nicht verändern; ein echter Fehler in
-der Sitzung soll dauerhaft korrigierbar sein. Das sind zwei Absichten, und
-eine Fläche, die nur eine anbietet, zwingt zur falschen.
+Why both edit paths exist: a one-off typing attempt ("is it the port?")
+should not change the saved session; a real mistake in the session should
+be permanently correctable. Those are two different intents, and a surface
+that offers only one forces the wrong one.
 
-## Auflage für den Details-Dialog
+## Requirement for the details dialog
 
-Der Dialog zeigt die Meldung der darunterliegenden Schicht. Er darf
-enthalten, was der Nutzer selbst eingegeben oder gespeichert hat — Host,
-Port, Benutzername — und **niemals ein Geheimnis**: kein Passwort, keine
-Passphrase, kein Schlüsselmaterial, auch nicht in einem eingebetteten
-Fehlertext einer Bibliothek.
+The dialog shows the message from the layer underneath. It may contain what
+the user themselves entered or saved — host, port, username — and
+**never a secret**: no password, no passphrase, no key material, not even
+inside a library's embedded error text.
 
-Das ist keine Formsache: die Projektregel „kein Geheimnis in Protokoll,
-Export, Fehlermeldung oder Testfehlertext" gilt hier zum ersten Mal für eine
-Fläche, die einen **rohen** Fehlertext zeigt. Alle bisherigen Flächen des
-Zweigs waren baulich sicher, weil sie nur feste Schlüssel trugen. Diese ist
-es nicht — sie braucht eine geprüfte Bereinigung.
+This is not a formality: the project rule "no secret in a log, export,
+error message, or test failure text" applies here for the first time to a
+surface that shows a **raw** error text. Every earlier surface on this
+branch was structurally safe because it carried only fixed keys. This one
+is not — it needs a verified sanitization step.
 
-## Was unverändert bleibt
+## What stays unchanged
 
-- **Erneut versuchen** läuft durch **denselben** Verbindungspfad wie ein
-  frischer Aufbau. TOFU bleibt ein harter Stopp, die Keychain-Regeln bleiben.
-  Der Wächter des Zweigs deckt das bereits ab und muss die neue Aufrufstelle
-  mit erfassen.
-- Der Abriss-Fall (`.lost`) und seine Texte bleiben, wie sie sind. Diese
-  Fläche kommt daneben, nicht an seine Stelle.
-- Eine offene Host-Schlüssel-Abfrage überschreibt weiterhin jede Fläche.
+- **Retry** runs through **the same** connection path as a fresh setup.
+  TOFU remains a hard stop, the Keychain rules remain. The branch's guard
+  already covers this and must be extended to cover the new call site.
+- The teardown case (`.lost`) and its texts stay as they are. This surface
+  comes alongside it, not in its place.
+- An open host-key prompt continues to override every surface.
 
-## Abgrenzung
+## Boundary
 
-Ein Aufbau, der an einer **Frage** scheitert, die nur ein Mensch beantworten
-kann (geänderter Host-Schlüssel, fehlende Passphrase), hat bereits einen
-eigenen Weg und wird davon nicht berührt. Diese Fläche ist für das, was
-`lastFailureKind == .other` bedeutet: Zeitüberschreitung, Namensauflösung,
-abgewiesen.
+A setup that fails on a **question** only a human can answer (a changed
+host key, a missing passphrase) already has its own path and is not
+touched by this. This surface is for what `lastFailureKind == .other`
+means: timeout, name resolution, rejected.
 
-## Prüfbarkeit
+## Testability
 
-Welche Handlungen bei welchem Zustand erscheinen und welche Meldung gilt,
-gehört in einen prüfbaren Wert neben `LostConnectionPlan` — die Fläche
-selbst zeichnet nur. Die Bereinigung des Details-Textes gehört gegen echte
-Fehlerwerte geprüft, nicht gegen erfundene.
+Which actions appear for which state, and which message applies, belongs
+in a testable value alongside `LostConnectionPlan` — the surface itself
+only renders. The sanitization of the details text must be checked against
+real error values, not invented ones.

@@ -1,56 +1,55 @@
-# Backlog: Keep-alive als zwei Einstellungen statt einer
+# Backlog: keep-alive as two settings instead of one
 
-**Angelegt:** 2026-08-25, aus einem Prüfbefund zu Task 9 des
-Verbindungszustands. Klein, klar umrissen — und die Ursache war eine falsche
-Vorgabe von mir, nicht ein Umsetzungsfehler.
+**Created:** 2026-08-25, from a review finding on Task 9 of the
+connection-state work. Small, clearly scoped — and the cause was a wrong
+directive of mine, not an implementation error.
 
-## Was heute gilt
+## What holds today
 
-`SettingsStore.keepAliveIntervalSeconds` ist **ein** gespeicherter `Int`:
-`0` heißt „aus", jeder andere Wert wird auf 15…600 geklemmt. Die Oberfläche
-bildet das über einen Schalter plus Intervallfeld ab, mit einem
-**ansichtslokalen, nicht gespeicherten** Merker für das zuletzt benutzte
-Intervall.
+`SettingsStore.keepAliveIntervalSeconds` is **one** stored `Int`: `0`
+means "off", any other value gets clamped to 15…600. The UI represents
+this via a toggle plus interval field, with a **view-local, unsaved**
+memory of the last-used interval.
 
-## Der Preis, gemessen
+## The cost, measured
 
-Keep-alive ausschalten, App beenden, neu starten, wieder einschalten — das
-selbst gewählte Intervall ist weg und steht wieder auf 60. Der Merker lebt
-nur in der Ansicht, und der gespeicherte Wert wurde beim Ausschalten mit der
-`0` überschrieben.
+Turn keep-alive off, quit the app, restart, turn it on again — the
+self-chosen interval is gone and back at 60. The memory lives only in
+the view, and the stored value got overwritten with `0` on turning it
+off.
 
-Das ist offengelegt (die Erläuterung im Einstellungsbereich sagt es), aber
-es ist kein gutes Verhalten.
+This is disclosed (the explanatory text in the settings section says
+so), but it's not good behavior.
 
-## Warum es so kam
+## Why it happened this way
 
-**Die Auflage „ein gespeicherter Wert, keine zweite Einstellung" stammt aus
-meinem Auftrag und war falsch.** Als Muster hatte ich ausdrücklich den
-Auto-Refresh-Abschnitt derselben Datei genannt — und der besteht aus
-**zwei** Einstellungen:
+**The directive "one stored value, no second setting" came from my own
+brief and was wrong.** As a pattern I had explicitly named the
+auto-refresh section of the same file — and that consists of **two**
+settings:
 
 ```
 autoRefreshEnabled          Bool
 autoRefreshIntervalSeconds  Int, geklemmt 2…300
 ```
 
-Dort ist das Intervall immer gültig, es gibt keinen magischen Wert, und ein
-Neustart verliert nichts. Ich habe gegen den Hausbrauch entschieden, den ich
-selbst zitiert hatte.
+There the interval is always valid, there's no magic value, and a
+restart loses nothing. I decided against the house convention that I had
+myself cited.
 
-## Was zu tun wäre
+## What would need doing
 
-`keepAliveEnabled: Bool` einführen, `keepAliveIntervalSeconds` auf 15…600
-klemmen ohne Sonderfall `0`, und den ansichtslokalen Merker ersatzlos
-streichen.
+Introduce `keepAliveEnabled: Bool`, clamp `keepAliveIntervalSeconds` to
+15…600 without the `0` special case, and drop the view-local memory
+entirely.
 
-**Nicht mehr in Task 9 gemacht, mit Begründung:** der `0`-Sonderfall ist
-bereits in Core ausgeliefert und wird von der Sonde gelesen — beides
-geprüft und abgeschlossen. Die Core-API am Ende eines langen Zweigs zu
-ändern kauft eine kleine Verbesserung für ein echtes Regressionsrisiko in
-Code, den gerade niemand mehr ansieht.
+**Not done in Task 9, with reason:** the `0` special case is already
+shipped in Core and is read by the probe — both checked and closed.
+Changing the Core API at the end of a long branch buys a small
+improvement for a real regression risk, in code nobody's currently
+looking at.
 
-Beim Anfassen zu beachten: eine Migration ist nötig, aber trivial — ein
-gespeichertes `0` wird zu `enabled: false` plus dem Vorgabeintervall. Und
-die Klemmung gehört wie beim Nachbarn in **Getter und Setter**, damit eine
-von Hand editierte Datei weder Spam noch einen toten Zeitgeber erzeugt.
+When touching it: a migration is needed, but trivial — a stored `0`
+becomes `enabled: false` plus the default interval. And the clamping
+belongs, like its neighbor, in **both getter and setter**, so a
+hand-edited file produces neither spam nor a dead timer.

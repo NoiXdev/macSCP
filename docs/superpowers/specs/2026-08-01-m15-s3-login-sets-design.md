@@ -1,66 +1,64 @@
-# M15 — S3-Login-Sets komplettieren (Design/Spec)
+# M15 — Complete S3 login sets (design/spec)
 
-**Datum:** 2026-08-01
-**Status:** freigegeben (Brainstorm), bereit für writing-plans
+**Date:** 2026-08-01
+**Status:** approved (brainstorm), ready for writing-plans
 **Branch:** `develop`
-**Vorgänger:** M12 T6 (Login-Set-Fundament: `kind`+`accessKeyID`, Store,
-Export/Import, `LoginResolveError.kindMismatch`), M14 (presigned URLs).
+**Predecessor:** M12 T6 (login set foundation: `kind`+`accessKeyID`, store,
+export/import, `LoginResolveError.kindMismatch`), M14 (presigned URLs).
 
-## Ziel
+## Goal
 
-Ein S3-Login-Set (wiederverwendbare Access Key ID + Secret) lässt sich
-anlegen, an eine S3-Session/Verbindung binden und beim Verbinden korrekt
-auflösen — symmetrisch zu SSH-Login-Sets. Damit schließt M15 die drei in
-M12 T6 bewusst offen gelassenen Lücken (Resolver, Editor-UI,
-Formular-Integration).
+An S3 login set (a reusable access key ID + secret) can be created, bound
+to an S3 session/connection, and resolved correctly on connect —
+symmetric to SSH login sets. This closes the three gaps M12 T6
+deliberately left open (resolver, editor UI, form integration).
 
-## Ausgangslage (Ist)
+## Starting point (as-is)
 
-- **Core-Fundament vorhanden:** `LoginSet.kind`(ssh/s3) + `accessKeyID`
-  (`LoginSetStore.swift`), Store persistiert beide, Secret in Keychain unter
-  `set.id`, Export/Import trägt `kind`+S3, `LoginResolveError.kindMismatch`
-  existiert.
-- **Lücke 1 (Core):** `LoginResolver.resolve(session:sets:secrets:)` liefert
-  nur `ResolvedLogin` (username/authKind/keyPath/secret) — kein `accessKeyID`.
-  Eine an ein S3-Set gebundene S3-Session bekommt beim Connect **keine**
-  Zugangsdaten.
-- **Lücke 2 (App):** `LoginSetEditorView` (`LoginSetsSheet.swift`) ist
-  SSH-only (Auth-Picker + Username/KeyPath/Secret). Kein ssh/s3-Umschalter,
-  keine S3-Felder → **kein S3-Login-Set anlegbar**.
-- **Lücke 3 (App):** Der `Login`-Umschalter (Login set / Manuell) sitzt nur im
-  SSH-Zweig von `ConnectionFormView`. Die S3-Sektion ist reine
-  Manuell-Eingabe → **S3-Session kann kein Set nutzen**.
-- **Persistenz-Lücke:** Die S3-`save(...)`-Verzweigung in
-  `ContentView.swift` (~1893) übergibt **kein** `loginSetID` → eine
-  set-gebundene S3-Session könnte die Bindung gar nicht speichern.
+- **Core foundation present:** `LoginSet.kind`(ssh/s3) + `accessKeyID`
+  (`LoginSetStore.swift`), the store persists both, secret in Keychain
+  under `set.id`, export/import carries `kind`+S3, `LoginResolveError.kindMismatch`
+  exists.
+- **Gap 1 (Core):** `LoginResolver.resolve(session:sets:secrets:)` only
+  returns `ResolvedLogin` (username/authKind/keyPath/secret) — no `accessKeyID`.
+  An S3 session bound to an S3 set gets **no** credentials on connect.
+- **Gap 2 (App):** `LoginSetEditorView` (`LoginSetsSheet.swift`) is
+  SSH-only (auth picker + username/keyPath/secret). No ssh/s3 switch,
+  no S3 fields → **no S3 login set can be created**.
+- **Gap 3 (App):** The `Login` switch (login set / manual) only sits in
+  the SSH branch of `ConnectionFormView`. The S3 section is manual-entry
+  only → **an S3 session cannot use a set**.
+- **Persistence gap:** The S3 `save(...)` branch in
+  `ContentView.swift` (~1893) passes **no** `loginSetID` → a
+  set-bound S3 session could not even save the binding.
 
-## Entscheidungen (Maintainer, 2026-08-01)
+## Decisions (maintainer, 2026-08-01)
 
-1. **Set-Inhalt:** Ein S3-Login-Set trägt **nur Access Key ID + Secret**.
-   Region/Endpoint/Bucket bleiben an der Session (das „Wohin"). Spiegelt SSH
-   (Login = Credentials, Session = Adresse); der M12-Store hat auch nur
-   `accessKeyID`.
-2. **Resolver-Form:** **Eigener `ResolvedS3Login`-Typ** + eigene
-   `resolveS3`-Methode, nicht `ResolvedLogin` erweitern. Der Connect-Pfad
-   kennt den `kind` schon (`switch kind`), ruft also gezielt die passende
-   Methode. Skaliert sauber auf spätere Backends (jede Verbindungsart bringt
-   ihren eigenen `Resolved…`-Typ mit).
-3. **Picker-Filter:** Der Set-Picker im Formular zeigt **nur kind-passende
-   Sets** (S3-Session → nur S3-Sets). `kindMismatch` bleibt der harte Schutz
-   dahinter.
-4. **Volle SSH-Parität im Formular:** Der S3-Manuell-Modus bekommt denselben
-   „Als neues Login-Set speichern"-Weg wie SSH.
+1. **Set contents:** An S3 login set carries **only access key ID +
+   secret**. Region/endpoint/bucket stay on the session (the "where to").
+   Mirrors SSH (login = credentials, session = address); the M12 store
+   also only has `accessKeyID`.
+2. **Resolver shape:** **Own `ResolvedS3Login` type** + own
+   `resolveS3` method, rather than extending `ResolvedLogin`. The connect
+   path already knows the `kind` (`switch kind`), so it calls the matching
+   method directly. Scales cleanly to later backends (each connection
+   type brings its own `Resolved…` type).
+3. **Picker filter:** The set picker in the form shows **only kind-matching
+   sets** (S3 session → S3 sets only). `kindMismatch` remains the hard
+   safeguard behind it.
+4. **Full SSH parity in the form:** S3 manual mode gets the same
+   "save as new login set" path as SSH.
 
-## Architektur
+## Architecture
 
 ### Core
 
-**Neuer Typ** (parallel zu `ResolvedLogin`, `LoginResolver.swift`):
+**New type** (parallel to `ResolvedLogin`, `LoginResolver.swift`):
 
 ```swift
-/// S3-Zugangsdaten, aufgelöst aus einem Login-Set (M15). Parallel zu
-/// `ResolvedLogin`; `secretAccessKey` ist der Keychain-Eintrag des Sets
-/// (unter `set.id`), nil wenn keiner gespeichert ist.
+/// S3 credentials, resolved from a login set (M15). Parallel to
+/// `ResolvedLogin`; `secretAccessKey` is the set's Keychain entry
+/// (under `set.id`), nil if none is stored.
 public struct ResolvedS3Login: Equatable, Sendable {
     public var accessKeyID: String
     public var secretAccessKey: String?
@@ -72,7 +70,7 @@ public struct ResolvedS3Login: Equatable, Sendable {
 }
 ```
 
-**Neue Resolver-Methode** (`LoginResolver`), spiegelbildlich zu `resolve`:
+**New resolver method** (`LoginResolver`), mirroring `resolve`:
 
 ```swift
 public static func resolveS3(
@@ -80,19 +78,19 @@ public static func resolveS3(
 ) throws -> ResolvedS3Login?
 ```
 
-Verhalten:
+Behavior:
 
-| Fall | Ergebnis |
+| Case | Result |
 |------|----------|
-| `session.loginSetID == nil` | `nil` (manuelle S3-Session, nutzt eigene Daten) |
-| gebunden, `set.kind == .s3` | `ResolvedS3Login(accessKeyID: set.accessKeyID ?? "", secretAccessKey: (try? secrets.password(for: set.id)) ?? nil)` |
-| gebunden, `set.kind == .ssh` | wirft `LoginResolveError.kindMismatch` |
-| `loginSetID` verweist auf kein Set | wirft `LoginResolveError.missingSet` |
+| `session.loginSetID == nil` | `nil` (manual S3 session, uses its own data) |
+| bound, `set.kind == .s3` | `ResolvedS3Login(accessKeyID: set.accessKeyID ?? "", secretAccessKey: (try? secrets.password(for: set.id)) ?? nil)` |
+| bound, `set.kind == .ssh` | throws `LoginResolveError.kindMismatch` |
+| `loginSetID` points to no set | throws `LoginResolveError.missingSet` |
 
-Der bestehende `resolve` (SSH) bleibt **unverändert** und wirft weiterhin
-`kindMismatch`, wenn eine SSH-Session ein S3-Set bindet (Symmetrie).
+The existing `resolve` (SSH) stays **unchanged** and keeps throwing
+`kindMismatch` when an SSH session binds an S3 set (symmetry).
 
-**VM-Wrapper** (`SessionListViewModel`), dünn wie `resolvedLogin(for:)`:
+**VM wrapper** (`SessionListViewModel`), thin like `resolvedLogin(for:)`:
 
 ```swift
 public func resolvedS3Login(for session: StoredSession) throws -> ResolvedS3Login? {
@@ -104,117 +102,118 @@ public func resolvedS3Login(for session: StoredSession) throws -> ResolvedS3Logi
 
 **A) `LoginSetEditorView` (`LoginSetsSheet.swift`):**
 
-- Neuer **kind-Umschalter** (segmented, ganz oben): `SSH` / `S3`. Beim
-  Editieren initial auf `existing.kind`.
-- `kind == .ssh` → heutiger Block unverändert (Username + Auth +
-  Secret/KeyPath).
-- `kind == .s3` → nur **Access Key ID** (TextField) + **Secret Access Key**
-  (`SecureField`). Kein username/keyPath/authKind.
-- Set-Name bleibt für beide.
-- `Save` baut je nach `kind` ein SSH- oder S3-`LoginSet`
-  (`LoginSet(kind: .s3, accessKeyID: …)`, username/authKind auf ihren
-  Defaults) und ruft dasselbe `onSave(set, secret)`. Die bestehende
-  Edit-Regel „leeres Secret = unverändert" gilt für beide.
-- `isSaveDisabled` je kind: SSH wie heute; S3 verlangt nicht-leere Access Key
-  ID (Secret bei Neuanlage erforderlich, bei Edit optional — gleiche Logik
-  wie SSH-Secret).
+- New **kind switch** (segmented, at the top): `SSH` / `S3`. When
+  editing, initialized to `existing.kind`.
+- `kind == .ssh` → today's block unchanged (username + auth +
+  secret/keyPath).
+- `kind == .s3` → only **access key ID** (TextField) + **secret access
+  key** (`SecureField`). No username/keyPath/authKind.
+- Set name stays for both.
+- `Save` builds an SSH or S3 `LoginSet` depending on `kind`
+  (`LoginSet(kind: .s3, accessKeyID: …)`, username/authKind at their
+  defaults) and calls the same `onSave(set, secret)`. The existing
+  edit rule "empty secret = unchanged" applies to both.
+- `isSaveDisabled` per kind: SSH as today; S3 requires a non-empty
+  access key ID (secret required on new creation, optional on edit —
+  same logic as the SSH secret).
 
-**Badge/Liste** (`LoginSetsSheet.swift`, `authKindBadge`/`badgeStyle`,
-Zeilenlabel): S3-Sets bekommen einen **`S3`-Badge** (eigenes Token-Paar wie
-`KEY`/`AGENT`/`PASS`). Zeilenlabel bei S3: `name — accessKeyID` statt
-`name — username`.
+**Badge/list** (`LoginSetsSheet.swift`, `authKindBadge`/`badgeStyle`,
+row label): S3 sets get an **`S3` badge** (its own token pair like
+`KEY`/`AGENT`/`PASS`). Row label for S3: `name — accessKeyID` instead
+of `name — username`.
 
-**B) `ConnectionFormView.swift` — S3-Sektion:**
+**B) `ConnectionFormView.swift` — S3 section:**
 
-- Der `Login`-Umschalter (Login set / Manuell, segmented) rückt in die
-  S3-Sektion (heute nur SSH-Zweig).
-- **Set-Modus** → Set-Picker `ForEach(sessionList.loginSets.filter { $0.kind == .s3 })`,
-  Zeilenlabel `name — accessKeyID`, daneben „Logins verwalten…"-Knopf.
-- **Manuell-Modus** → heutige S3-Felder + „Als neues Login-Set speichern"-Toggle
-  (SSH-Parität).
-- **region/endpoint/bucket** bleiben in **beiden** Modi sichtbare
-  Session-Felder.
+- The `Login` switch (login set / manual, segmented) moves into the
+  S3 section (currently SSH branch only).
+- **Set mode** → set picker `ForEach(sessionList.loginSets.filter { $0.kind == .s3 })`,
+  row label `name — accessKeyID`, next to it a "Manage logins…" button.
+- **Manual mode** → today's S3 fields + "Save as new login set" toggle
+  (SSH parity).
+- **region/endpoint/bucket** stay visible session fields in **both**
+  modes.
 
-**C) Füll-Pfade (`ContentView.swift`):**
+**C) Fill paths (`ContentView.swift`):**
 
-1. `fillForm(_:from:)` (~1601) bekommt einen S3-Zweig: ist das gewählte Set
-   `kind == .s3`, fülle `form.s3AccessKeyID = set.accessKeyID ?? ""` und
-   `form.s3SecretAccessKey` aus dem Keychain (synthetische `StoredSession`
-   unter `set.id`, wie der SSH-Zweig). `resolveSelectedLoginSet(in:)` ruft
-   ihn dann für S3-Sessions genauso.
-2. Gespeicherte-Session-Connect (`stored.kind == .s3`-Block, ~2008): wenn
-   `stored.loginSetID != nil`, über `resolvedS3Login(for:)` auflösen und
-   `s3AccessKeyID`/`s3SecretAccessKey` daraus füllen; region/endpoint/bucket
-   weiter aus `stored.s3`. `kindMismatch`/`missingSet` landen im bestehenden
-   `loginSets.missingSet`-Fehlerpfad (Formular zeigen statt verbinden).
-   `form.loginMode`/`selectedLoginSetID` aus `stored.loginSetID` setzen.
+1. `fillForm(_:from:)` (~1601) gets an S3 branch: if the chosen set's
+   `kind == .s3`, fill `form.s3AccessKeyID = set.accessKeyID ?? ""` and
+   `form.s3SecretAccessKey` from the Keychain (synthetic `StoredSession`
+   under `set.id`, like the SSH branch). `resolveSelectedLoginSet(in:)`
+   then calls it the same way for S3 sessions.
+2. Saved session connect (`stored.kind == .s3` block, ~2008): if
+   `stored.loginSetID != nil`, resolve via `resolvedS3Login(for:)` and
+   fill `s3AccessKeyID`/`s3SecretAccessKey` from it; region/endpoint/bucket
+   continue from `stored.s3`. `kindMismatch`/`missingSet` land in the
+   existing `loginSets.missingSet` error path (show the form instead of
+   connecting). Set `form.loginMode`/`selectedLoginSetID` from
+   `stored.loginSetID`.
 
-**D) Persistenz-Lücke schließen (`ContentView.swift`, S3-`save`, ~1893):**
-`loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID`
-übergeben (heute fehlt der Parameter ganz). `maybeCreateNewLoginSet(from:)`
-bekommt einen S3-Zweig, der ein `LoginSet(kind: .s3, accessKeyID: …)` +
-Secret (Keychain) anlegt.
+**D) Close the persistence gap (`ContentView.swift`, S3 `save`, ~1893):**
+Pass `loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID`
+(currently the parameter is missing entirely). `maybeCreateNewLoginSet(from:)`
+gets an S3 branch that creates a `LoginSet(kind: .s3, accessKeyID: …)` +
+secret (Keychain).
 
-## Sicherheit / Invarianten
+## Security / invariants
 
-- Secret ausschließlich Keychain, adressiert über `set.id`; nie in JSON,
-  Logs oder URLs.
-- `kindMismatch` bleibt harter Stopp — **kein** Fallback auf falsch-typige
-  Credentials.
-- Kein `if kind == .s3`-Sonderpfad im Signer/Transport: die Auflösung endet
-  im bestehenden `S3ConnectionConfig`-Bau (`connectS3`), der unverändert
-  bleibt.
-- Keine neue externe Dependency.
+- Secret exclusively in the Keychain, addressed via `set.id`; never in
+  JSON, logs or URLs.
+- `kindMismatch` remains a hard stop — **no** fallback to
+  wrongly-typed credentials.
+- No `if kind == .s3` special path in the signer/transport: resolution
+  ends up in the existing `S3ConnectionConfig` construction
+  (`connectS3`), which stays unchanged.
+- No new external dependency.
 
 ## Tests
 
-**Core-Unit (Swift Testing, TDD rot→grün):**
+**Core unit (Swift Testing, TDD red→green):**
 
-1. `resolveS3` Happy-Path: set-gebundene S3-Session → `accessKeyID` aus Set +
-   Secret aus Keychain.
-2. `resolveS3` manuell (`loginSetID == nil`) → `nil`.
-3. `resolveS3` `kindMismatch`: S3-Session bindet SSH-Set → wirft.
-4. `resolveS3` `missingSet`: dangling `loginSetID` → wirft.
-5. Regressions-Guard: SSH-Session mit SSH-Set liefert weiter unverändert
-   `ResolvedLogin`.
-6. Symmetrie-Guard: `resolve` (SSH) wirft weiter `kindMismatch` bei
-   SSH-Session + S3-Set.
+1. `resolveS3` happy path: set-bound S3 session → `accessKeyID` from set +
+   secret from Keychain.
+2. `resolveS3` manual (`loginSetID == nil`) → `nil`.
+3. `resolveS3` `kindMismatch`: S3 session binds SSH set → throws.
+4. `resolveS3` `missingSet`: dangling `loginSetID` → throws.
+5. Regression guard: SSH session with SSH set still returns
+   `ResolvedLogin` unchanged.
+6. Symmetry guard: `resolve` (SSH) still throws `kindMismatch` for
+   SSH session + S3 set.
 
-**Gated MinIO (`MACSCP_ITEST=1`, aus dem Haupt-Checkout):**
+**Gated MinIO (`MACSCP_ITEST=1`, from the main checkout):**
 
-- S3-Login-Set anlegen → S3-Session daran binden → verbinden → Bucket listen
-  gelingt. Beweist, dass die set-aufgelösten Credentials tatsächlich gegen
-  MinIO authentifizieren (nicht nur im Fake).
+- Create an S3 login set → bind an S3 session to it → connect → list
+  bucket succeeds. Proves that the set-resolved credentials actually
+  authenticate against MinIO (not just against a fake).
 
-**Runtime-Smoke (Maintainer):** Im Dev-Build ein S3-Set anlegen, Session
-binden, verbinden — Sicht-Check.
+**Runtime smoke (maintainer):** In the dev build, create an S3 set,
+bind a session, connect — visual check.
 
 ## L10n
 
-Neue nutzer-sichtbare Strings (Editor-kind-Umschalter „SSH"/„S3",
-S3-Feld-Labels falls neu, `S3`-Badge, ggf. Picker-Platzhalter) in EN/DE/FR/PL,
-typografische Anführungszeichen, FR/PL KI-generiert (Native-Review vor
-Release). Bestehende S3-Feld-Labels (Access Key ID, Secret Access Key) werden
-wiederverwendet, wo vorhanden.
+New user-visible strings (editor kind switch "SSH"/"S3", S3 field
+labels if new, `S3` badge, picker placeholder if any) in EN/DE/FR/PL,
+typographic quotes, FR/PL AI-generated (native review before release).
+Existing S3 field labels (Access Key ID, Secret Access Key) are reused
+where present.
 
-## Nicht in M15
+## Not in M15
 
-- Cross-Backend-Transfer S3↔SSH (→ M16).
-- „Öffnen mit" S3-CLI-Tool, Verbindungs-Diagnose, SSH-Key-Manager,
-  SSH-Terminal-Snippets (eigene spätere Meilensteine).
+- Cross-backend transfer S3↔SSH (→ M16).
+- "Open with" S3 CLI tool, connection diagnostics, SSH key manager,
+  SSH terminal snippets (own later milestones).
 
-## Betroffene Dateien
+## Files affected
 
 - `Sources/macSCPCore/Sessions/LoginResolver.swift` — `ResolvedS3Login`,
   `resolveS3`.
 - `Sources/macSCPCore/Presentation/SessionListViewModel.swift` —
   `resolvedS3Login(for:)`.
-- `Sources/MacSCPApp/LoginSetsSheet.swift` — kind-Umschalter, S3-Felder,
-  S3-Badge, S3-Zeilenlabel, kind-abhängiges Save/Disable.
-- `Sources/MacSCPApp/ConnectionFormView.swift` — Login-Umschalter +
-  gefilterter Picker + „als neues Set speichern"-Toggle in der S3-Sektion.
-- `Sources/MacSCPApp/ContentView.swift` — `fillForm` S3-Zweig,
-  Gespeicherte-Session-Connect S3-Resolve, S3-`save` `loginSetID`,
-  `maybeCreateNewLoginSet` S3-Zweig.
-- `Tests/macSCPCoreTests/…` — `resolveS3`-Unit-Tests + gated MinIO.
-- String-Kataloge (App + Core) EN/DE/FR/PL.
+- `Sources/MacSCPApp/LoginSetsSheet.swift` — kind switch, S3 fields,
+  S3 badge, S3 row label, kind-dependent save/disable.
+- `Sources/MacSCPApp/ConnectionFormView.swift` — login switch +
+  filtered picker + "save as new set" toggle in the S3 section.
+- `Sources/MacSCPApp/ContentView.swift` — `fillForm` S3 branch,
+  saved session connect S3 resolve, S3 `save` `loginSetID`,
+  `maybeCreateNewLoginSet` S3 branch.
+- `Tests/macSCPCoreTests/…` — `resolveS3` unit tests + gated MinIO.
+- String catalogs (App + Core) EN/DE/FR/PL.

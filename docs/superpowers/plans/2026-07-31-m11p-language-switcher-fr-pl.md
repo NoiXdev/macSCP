@@ -1,25 +1,31 @@
-# M11p — Sprachumschalter + FR/PL-Übersetzung Implementation Plan
+# M11p — Language Switcher + FR/PL Translation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein app-eigener Sprachumschalter in den Einstellungen (via `AppleLanguages`-Override, angewandt beim Start, Relaunch-Knopf zum Übernehmen) plus vollständige FR- und PL-Übersetzung für App + Core, mit auf alle Sprachen verallgemeinertem Katalog-Wächter.
+**Goal:** An app-own language switcher in Settings (via `AppleLanguages` override, applied at launch, a relaunch button to take effect) plus complete FR and PL translation for App + Core, with the catalog guard generalized to all languages.
 
-**Architecture:** Core bekommt ein `AppLanguage`-Enum + persistiertes `SettingsStore.selectedLanguage`. `MacSCPApp.init` liest es früh und setzt `AppleLanguages` (kein Eingriff in `L10n`/`CoreL10n` — die respektieren den Override beim nächsten Start). Zwei neue Katalogpaare (fr, pl) je Schicht; der Test-Wächter prüft Parität+Parsebarkeit über alle Sprachen. Ein Sprach-Picker + Relaunch-Knopf im `GeneralSettingsTab`.
+**Architecture:** Core gets an `AppLanguage` enum + persisted `SettingsStore.selectedLanguage`. `MacSCPApp.init` reads it early and sets `AppleLanguages` (no intervention in `L10n`/`CoreL10n` — those honor the override on the next launch). Two new catalog pairs (fr, pl) per layer; the test guard checks parity+parseability across all languages. A language picker + relaunch button in `GeneralSettingsTab`.
 
-**Tech Stack:** SwiftUI + AppKit, Swift 6 (`.swiftLanguageMode(.v5)`), Swift Testing, macOS 15, SPM-Ressourcen (`.lproj`).
+**Tech Stack:** SwiftUI + AppKit, Swift 6 (`.swiftLanguageMode(.v5)`), Swift Testing, macOS 15, SPM resources (`.lproj`).
 
 ## Global Constraints
 
-- Swift-tools 6.0, alle Targets `.swiftLanguageMode(.v5)`, min. macOS 15.
-- Code/Kommentare **English only**.
-- UI-Strings über `.strings`-Kataloge, jetzt EN/DE/FR/PL. **Kein ASCII-`"` im Wert** eines nicht-englischen Katalogs — ein einziges zerbricht den ganzen Katalog (Plist-Parse schlägt fehl, Sprache fällt still auf EN zurück; `LocalizableStringsTests` bewacht das).
-- Format-Platzhalter (`%@`, `%lld`, `%1$@` …) in Übersetzungen **exakt** übernehmen — Anzahl, Reihenfolge, Typ.
-- Sprachauswahl persistiert in `SettingsStore` (Core); Anwendung nur früh in `MacSCPApp.init` über `AppleLanguages`. **Kein** Eingriff in `L10n`/`CoreL10n`.
-- FR/PL sind **KI-generiert**, per Kopfkommentar gekennzeichnet, vor Release muttersprachlich zu prüfen.
-- **M11n-Lektion / Runtime-Rauchtest:** neue GUI-Wege vor Auslieferung per Idle-CPU-Rauchtest prüfen — hier zusätzlich in einer Nicht-EN-Sprache starten.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- Baseline: **900 Tests / 62 Suiten** grün.
-- Kein Release/Tag ohne ausdrückliche Maintainer-Anordnung.
+- Swift-tools 6.0, all targets `.swiftLanguageMode(.v5)`, min. macOS 15.
+- Code/comments **English only**.
+- UI strings via `.strings` catalogs, now EN/DE/FR/PL. **No ASCII `"`** in a value
+  of a non-English catalog — a single one breaks the whole catalog (plist parse fails, language
+  silently falls back to EN; `LocalizableStringsTests` guards that).
+- Format placeholders (`%@`, `%lld`, `%1$@` …) in translations carried over
+  **exactly** — count, order, type.
+- Language selection persists in `SettingsStore` (Core); applied only early in
+  `MacSCPApp.init` via `AppleLanguages`. **No** intervention in `L10n`/`CoreL10n`.
+- FR/PL are **AI-generated**, marked via a header comment, to be reviewed by a
+  native speaker before release.
+- **M11n lesson / runtime smoke test:** new GUI paths must be checked via idle-CPU
+  smoke test before shipping — here additionally launched in a non-EN language.
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- Baseline: **900 tests / 62 suites** green.
+- No release/tag without explicit maintainer instruction.
 
 ---
 
@@ -28,13 +34,13 @@
 **Files:**
 - Create: `Sources/macSCPCore/Settings/AppLanguage.swift`
 - Modify: `Sources/macSCPCore/Settings/SettingsStore.swift` (`Keys`/`Defaults`/computed var)
-- Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift` (drei Fälle anhängen)
+- Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift` (append three cases)
 
 **Interfaces:**
-- Consumes (verifiziert): `SettingsStore` Enum-Muster — `terminalTarget` (Key in `enum Keys`, computed var mit `guard case .string(let value)? = raw[Keys.x]` + `X(rawValue:) ?? fallback` + `persist()`); `TerminalTarget`-Enum-File als Vorlage.
-- Produces (für Task 4): `AppLanguage` (public, `String`/`Codable`/`CaseIterable`/`Sendable`, cases `system,en,de,fr,pl`, `localeCode: String?`); `SettingsStore.selectedLanguage: AppLanguage` (default `.system`).
+- Consumes (verified): `SettingsStore` enum pattern — `terminalTarget` (key in `enum Keys`, computed var with `guard case .string(let value)? = raw[Keys.x]` + `X(rawValue:) ?? fallback` + `persist()`); `TerminalTarget` enum file as the template.
+- Produces (for Task 4): `AppLanguage` (public, `String`/`Codable`/`CaseIterable`/`Sendable`, cases `system,en,de,fr,pl`, `localeCode: String?`); `SettingsStore.selectedLanguage: AppLanguage` (default `.system`).
 
-- [x] **Step 1: Failing test.** In `Tests/macSCPCoreTests/SettingsStoreTests.swift` anhängen (Muster wie `menuBarEnabledDefaultsTrue`/`…Roundtrips`):
+- [x] **Step 1: Failing test.** Append to `Tests/macSCPCoreTests/SettingsStoreTests.swift` (pattern as in `menuBarEnabledDefaultsTrue`/`…Roundtrips`):
 
 ```swift
     @Test func selectedLanguageDefaultsToSystem() {
@@ -70,10 +76,10 @@
     }
 ```
 
-- [x] **Step 2: Rot.** `swift test --filter SettingsStore`
-  Expected: FAIL — `AppLanguage` und `selectedLanguage` existieren nicht.
+- [x] **Step 2: Red.** `swift test --filter SettingsStore`
+  Expected: FAIL — `AppLanguage` and `selectedLanguage` do not exist.
 
-- [x] **Step 3: Enum-File.** Neue Datei `Sources/macSCPCore/Settings/AppLanguage.swift`:
+- [x] **Step 3: Enum file.** New file `Sources/macSCPCore/Settings/AppLanguage.swift`:
 
 ```swift
 /// The app's UI language, chosen in Settings independent of the system
@@ -101,8 +107,8 @@ public enum AppLanguage: String, Codable, CaseIterable, Sendable {
 ```
 
 - [x] **Step 4: Setting.** In `Sources/macSCPCore/Settings/SettingsStore.swift`:
-  - In `enum Keys` (nach `menuBarEnabled`): `static let appLanguage = "appLanguage"`.
-  - Neue computed var bei den anderen (Muster `terminalTarget`):
+  - In `enum Keys` (after `menuBarEnabled`): `static let appLanguage = "appLanguage"`.
+  - New computed var next to the others (pattern from `terminalTarget`):
 
 ```swift
     /// The UI language chosen in Settings (M11p). `.system` (default) means
@@ -122,8 +128,8 @@ public enum AppLanguage: String, Codable, CaseIterable, Sendable {
     }
 ```
 
-- [x] **Step 5: Grün + Suite.** `swift test --filter SettingsStore` → PASS; dann `swift test`
-  Expected: 900 + 3 = **903 Tests** grün.
+- [x] **Step 5: Green + suite.** `swift test --filter SettingsStore` → PASS; then `swift test`
+  Expected: 900 + 3 = **903 tests** green.
 
 - [x] **Step 6: Commit.**
 
@@ -134,27 +140,27 @@ git commit -m "feat: add AppLanguage and the persisted selectedLanguage setting"
 
 ---
 
-### Task 2: FR-Kataloge + Package.swift + Test-Wächter verallgemeinern
+### Task 2: FR catalogs + Package.swift + generalize the test guard
 
 **Files:**
-- Create: `Sources/MacSCPApp/Resources/fr.lproj/Localizable.strings` (407 Keys)
-- Create: `Sources/macSCPCore/Resources/fr.lproj/Localizable.strings` (52 Keys)
-- Modify: `Package.swift` (Core-Ressourcen)
-- Modify: `Tests/macSCPCoreTests/LocalizableStringsTests.swift` (auf Sprachliste umstellen, FR aufnehmen)
+- Create: `Sources/MacSCPApp/Resources/fr.lproj/Localizable.strings` (407 keys)
+- Create: `Sources/macSCPCore/Resources/fr.lproj/Localizable.strings` (52 keys)
+- Modify: `Package.swift` (Core resources)
+- Modify: `Tests/macSCPCoreTests/LocalizableStringsTests.swift` (switch to a language list, include FR)
 
 **Interfaces:**
-- Consumes: die EN-Kataloge als Übersetzungsquelle (`…/en.lproj/Localizable.strings`, App 407 / Core 52 Keys); die DE-Kataloge als Vorbild für typografische Anführungszeichen.
-- Produces (für Task 3): die verallgemeinerte Test-Struktur mit einer Sprachliste je Schicht, an die Task 3 nur `"pl"` anhängt.
+- Consumes: the EN catalogs as the translation source (`…/en.lproj/Localizable.strings`, App 407 / Core 52 keys); the DE catalogs as the model for typographic quotation marks.
+- Produces (for Task 3): the generalized test structure with a language list per layer, to which Task 3 only appends `"pl"`.
 
-- [x] **Step 1: FR App-Katalog.** `Sources/MacSCPApp/Resources/fr.lproj/Localizable.strings` erzeugen: JEDEN Key aus `en.lproj/Localizable.strings` übernehmen (identische Key-Namen, `;`-Struktur), den Wert nach **Französisch** übersetzen. Regeln:
-  - Format-Platzhalter (`%@`, `%lld`, `%1$@`, `⌘⇧.` u.ä.) unverändert lassen.
-  - Anführungszeichen im Wert: französische Guillemets « … » (nie ASCII-`"`; ASCII-`"` nur als String-Delimiter). Wo der EN/DE-Wert kein Zitat enthält, keins einführen.
-  - Tastenkürzel-Symbole (⌘⇧Y etc.) unverändert.
-  - Kopfzeile als Kommentar: `/* AI-generated French translation (M11p) — review by a native speaker before release. */`
+- [x] **Step 1: FR App catalog.** Produce `Sources/MacSCPApp/Resources/fr.lproj/Localizable.strings`: carry over EVERY key from `en.lproj/Localizable.strings` (identical key names, `;` structure), translate the value into **French**. Rules:
+  - Leave format placeholders (`%@`, `%lld`, `%1$@`, `⌘⇧.` etc.) unchanged.
+  - Quotation marks in the value: French guillemets « … » (never ASCII `"`; ASCII `"` only as the string delimiter). Where the EN/DE value contains no quotation, introduce none.
+  - Keyboard-shortcut symbols (⌘⇧Y etc.) unchanged.
+  - Header line as a comment: `/* AI-generated French translation (M11p) — review by a native speaker before release. */`
 
-- [x] **Step 2: FR Core-Katalog.** `Sources/macSCPCore/Resources/fr.lproj/Localizable.strings` analog aus dem Core-EN-Katalog (52 Keys) erzeugen.
+- [x] **Step 2: FR Core catalog.** Produce `Sources/macSCPCore/Resources/fr.lproj/Localizable.strings` analogously from the Core EN catalog (52 keys).
 
-- [x] **Step 3: Package.swift.** Im **Core**-Target die `resources`-Liste erweitern:
+- [x] **Step 3: Package.swift.** Extend the `resources` list in the **Core** target:
 
 ```swift
             resources: [
@@ -164,9 +170,9 @@ git commit -m "feat: add AppLanguage and the persisted selectedLanguage setting"
             ],
 ```
 
-(App-Target unverändert — `.process("Resources")` zieht `fr.lproj` automatisch.)
+(App target unchanged — `.process("Resources")` picks up `fr.lproj` automatically.)
 
-- [x] **Step 4: Test-Wächter verallgemeinern.** `Tests/macSCPCoreTests/LocalizableStringsTests.swift` so umbauen, dass es je Schicht die EN-Referenz gegen eine Sprachliste prüft und alle Kataloge parst. Ersetze die vier `@Test`/`assertIdenticalKeys`-Blöcke (ab `@Test(arguments:)`) durch:
+- [x] **Step 4: Generalize the test guard.** Restructure `Tests/macSCPCoreTests/LocalizableStringsTests.swift` so that, per layer, it checks the EN reference against a language list and parses all catalogs. Replace the four `@Test`/`assertIdenticalKeys` blocks (starting at `@Test(arguments:)`) with:
 
 ```swift
     /// Non-English languages per layer. Task 3 appends "pl".
@@ -219,18 +225,18 @@ git commit -m "feat: add AppLanguage and the persisted selectedLanguage setting"
     }
 ```
 
-(Die vier Pfad-Konstanten `appEnPath`/`appDePath`/`coreEnPath`/`coreDePath` und `parse`/`repoRoot` bleiben; `appDePath`/`coreDePath` werden nicht mehr direkt referenziert — sie dürfen bleiben oder entfernt werden, je nach Compiler-Warnung „unused". Bei Warnung entfernen.)
+(The four path constants `appEnPath`/`appDePath`/`coreEnPath`/`coreDePath` and `parse`/`repoRoot` stay; `appDePath`/`coreDePath` are no longer referenced directly — they may stay or be removed, depending on the compiler's "unused" warning. On a warning, remove them.)
 
-- [x] **Step 5: plutil + Suite.**
+- [x] **Step 5: plutil + suite.**
 
 ```bash
 plutil -lint Sources/MacSCPApp/Resources/fr.lproj/Localizable.strings
 plutil -lint Sources/macSCPCore/Resources/fr.lproj/Localizable.strings
 swift test --filter Localizable
 ```
-  Expected: plutil beide OK; `Localizable`-Suite PASS (Parität EN↔{DE,FR} + Parse aller sechs Dateien). Bei einem Paritäts-Fehler fehlende/überzählige Keys nachziehen, bei Parse-Fehler das (ASCII-)Anführungszeichen im Wert finden und ersetzen.
+  Expected: plutil both OK; `Localizable` suite PASS (parity EN↔{DE,FR} + parse of all six files). On a parity failure, add the missing/extra keys; on a parse failure, find the (ASCII) quotation mark in the value and replace it.
 
-- [x] **Step 6: Build + volle Suite.** `swift build` (sauber) und `swift test` → **903** grün.
+- [x] **Step 6: Build + full suite.** `swift build` (clean) and `swift test` → **903** green.
 
 - [x] **Step 7: Commit.**
 
@@ -241,22 +247,22 @@ git commit -m "feat: add French catalogs and generalize the localization guard"
 
 ---
 
-### Task 3: PL-Kataloge + Test auf PL
+### Task 3: PL catalogs + test on PL
 
 **Files:**
-- Create: `Sources/MacSCPApp/Resources/pl.lproj/Localizable.strings` (407 Keys)
-- Create: `Sources/macSCPCore/Resources/pl.lproj/Localizable.strings` (52 Keys)
-- Modify: `Package.swift` (Core-Ressourcen)
-- Modify: `Tests/macSCPCoreTests/LocalizableStringsTests.swift` (`"pl"` an beide Sprachlisten)
+- Create: `Sources/MacSCPApp/Resources/pl.lproj/Localizable.strings` (407 keys)
+- Create: `Sources/macSCPCore/Resources/pl.lproj/Localizable.strings` (52 keys)
+- Modify: `Package.swift` (Core resources)
+- Modify: `Tests/macSCPCoreTests/LocalizableStringsTests.swift` (`"pl"` on both language lists)
 
 **Interfaces:**
-- Consumes: die EN-Kataloge als Quelle; die Task-2-Test-Struktur (`appLangs`/`coreLangs`-Listen).
+- Consumes: the EN catalogs as the source; the Task 2 test structure (`appLangs`/`coreLangs` lists).
 
-- [x] **Step 1: PL App-Katalog.** `Sources/MacSCPApp/Resources/pl.lproj/Localizable.strings` aus dem EN-App-Katalog (407 Keys) nach **Polnisch** erzeugen. Regeln wie Task 2, aber Anführungszeichen im polnischen Stil „ … " (wie DE; nie ASCII-`"`). Kopfkommentar `/* AI-generated Polish translation (M11p) — review by a native speaker before release. */`
+- [x] **Step 1: PL App catalog.** Produce `Sources/MacSCPApp/Resources/pl.lproj/Localizable.strings` from the EN App catalog (407 keys) into **Polish**. Rules as in Task 2, but quotation marks in the Polish style „ … " (as with DE; never ASCII `"`). Header comment `/* AI-generated Polish translation (M11p) — review by a native speaker before release. */`
 
-- [x] **Step 2: PL Core-Katalog.** `Sources/macSCPCore/Resources/pl.lproj/Localizable.strings` aus dem Core-EN-Katalog (52 Keys).
+- [x] **Step 2: PL Core catalog.** `Sources/macSCPCore/Resources/pl.lproj/Localizable.strings` from the Core EN catalog (52 keys).
 
-- [x] **Step 3: Package.swift.** Im **Core**-Target `.process("Resources/pl.lproj")` anhängen:
+- [x] **Step 3: Package.swift.** In the **Core** target append `.process("Resources/pl.lproj")`:
 
 ```swift
             resources: [
@@ -267,23 +273,23 @@ git commit -m "feat: add French catalogs and generalize the localization guard"
             ],
 ```
 
-- [x] **Step 4: Test-Listen.** In `Tests/macSCPCoreTests/LocalizableStringsTests.swift` beide Listen erweitern:
+- [x] **Step 4: Test lists.** In `Tests/macSCPCoreTests/LocalizableStringsTests.swift` extend both lists:
 
 ```swift
     private static let appLangs = ["de", "fr", "pl"]
     private static let coreLangs = ["de", "fr", "pl"]
 ```
 
-- [x] **Step 5: plutil + Suite.**
+- [x] **Step 5: plutil + suite.**
 
 ```bash
 plutil -lint Sources/MacSCPApp/Resources/pl.lproj/Localizable.strings
 plutil -lint Sources/macSCPCore/Resources/pl.lproj/Localizable.strings
 swift test --filter Localizable
 ```
-  Expected: plutil OK; `Localizable`-Suite PASS (Parität EN↔{DE,FR,PL} + Parse aller acht Dateien).
+  Expected: plutil OK; `Localizable` suite PASS (parity EN↔{DE,FR,PL} + parse of all eight files).
 
-- [x] **Step 6: Build + volle Suite.** `swift build` sauber; `swift test` → **903** grün.
+- [x] **Step 6: Build + full suite.** `swift build` clean; `swift test` → **903** green.
 
 - [x] **Step 7: Commit.**
 
@@ -294,19 +300,19 @@ git commit -m "feat: add Polish catalogs and extend the localization guard"
 
 ---
 
-### Task 4: App-Switcher — Picker, AppleLanguages, Relaunch, package-app
+### Task 4: App switcher — picker, AppleLanguages, relaunch, package-app
 
 **Files:**
 - Create: `Sources/MacSCPApp/AppRelauncher.swift`
-- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (`AppleLanguages`-Anwendung in `init`, `launchLanguage` durchreichen)
-- Modify: `Sources/MacSCPApp/SettingsView.swift` (`SettingsView` + `GeneralSettingsTab` bekommen `launchLanguage`; Sprach-`Section`)
-- Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` (neue UI-Keys in ALLEN vier)
-- Modify: `scripts/package-app` (Marker + `CFBundleLocalizations`)
+- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (apply `AppleLanguages` in `init`, pass `launchLanguage` through)
+- Modify: `Sources/MacSCPApp/SettingsView.swift` (`SettingsView` + `GeneralSettingsTab` get `launchLanguage`; language `Section`)
+- Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` (new UI keys in ALL four)
+- Modify: `scripts/package-app` (marker + `CFBundleLocalizations`)
 
 **Interfaces:**
-- Consumes (Task 1): `AppLanguage` (`localeCode`), `SettingsStore.selectedLanguage`. Bestehend: `MacSCPApp.init` (baut `settingsStore` um Zeile 106); `SettingsView(store:updateModel:)` in der `Settings`-Szene; `GeneralSettingsTab` (`@Bindable var store`, `Form`); `L10n.string`; Enum-Picker-Muster (`Picker(..., selection: $store.x) { Text(...).tag(EnumCase) }`).
+- Consumes (Task 1): `AppLanguage` (`localeCode`), `SettingsStore.selectedLanguage`. Existing: `MacSCPApp.init` (builds `settingsStore` around line 106); `SettingsView(store:updateModel:)` in the `Settings` scene; `GeneralSettingsTab` (`@Bindable var store`, `Form`); `L10n.string`; enum picker pattern (`Picker(..., selection: $store.x) { Text(...).tag(EnumCase) }`).
 
-- [x] **Step 1: Relaunch-Helfer.** Neue Datei `Sources/MacSCPApp/AppRelauncher.swift`:
+- [x] **Step 1: Relaunch helper.** New file `Sources/MacSCPApp/AppRelauncher.swift`:
 
 ```swift
 import AppKit
@@ -329,9 +335,9 @@ enum AppRelauncher {
 }
 ```
 
-- [x] **Step 2: AppleLanguages anwenden + launchLanguage.** In `Sources/MacSCPApp/MacSCPApp.swift`:
-  - Property hinzufügen: `let launchLanguage: AppLanguage`.
-  - In `init()`, direkt NACH `let store = SettingsStore(directory: SettingsStore.defaultDirectory)` (Zeile 106) und VOR `menuBarController = …`:
+- [x] **Step 2: Apply AppleLanguages + launchLanguage.** In `Sources/MacSCPApp/MacSCPApp.swift`:
+  - Add a property: `let launchLanguage: AppLanguage`.
+  - In `init()`, directly AFTER `let store = SettingsStore(directory: SettingsStore.defaultDirectory)` (line 106) and BEFORE `menuBarController = …`:
 
 ```swift
         // Apply the chosen UI language before any localized lookup (M11p).
@@ -348,7 +354,7 @@ enum AppRelauncher {
         launchLanguage = language
 ```
 
-  - Die `Settings`-Szene um den Parameter erweitern:
+  - Extend the `Settings` scene by the parameter:
 
 ```swift
         Settings {
@@ -358,11 +364,11 @@ enum AppRelauncher {
         }
 ```
 
-- [x] **Step 3: SettingsView + GeneralSettingsTab durchreichen.** In `Sources/MacSCPApp/SettingsView.swift`:
-  - `SettingsView` bekommt `let launchLanguage: AppLanguage` und reicht es an `GeneralSettingsTab(store:updateModel:launchLanguage:)` durch (der Tab wird in `SettingsView.body`s `TabView` gebaut).
-  - `GeneralSettingsTab` bekommt `let launchLanguage: AppLanguage`.
+- [x] **Step 3: Pass through SettingsView + GeneralSettingsTab.** In `Sources/MacSCPApp/SettingsView.swift`:
+  - `SettingsView` gets `let launchLanguage: AppLanguage` and passes it through to `GeneralSettingsTab(store:updateModel:launchLanguage:)` (the tab is built in `SettingsView.body`'s `TabView`).
+  - `GeneralSettingsTab` gets `let launchLanguage: AppLanguage`.
 
-- [x] **Step 4: Sprach-Section.** In `GeneralSettingsTab.body` (im `Form`, z.B. als erste `Section`) einfügen:
+- [x] **Step 4: Language section.** Insert into `GeneralSettingsTab.body` (inside the `Form`, e.g. as the first `Section`):
 
 ```swift
             Section {
@@ -390,7 +396,7 @@ enum AppRelauncher {
             }
 ```
 
-- [x] **Step 5: UI-Strings in EN + DE.** In `en.lproj` und `de.lproj` je vier Keys anfügen. EN:
+- [x] **Step 5: UI strings in EN + DE.** Append four keys each in `en.lproj` and `de.lproj`. EN:
 
 ```
 "settings.general.language.header" = "Language";
@@ -399,7 +405,7 @@ enum AppRelauncher {
 "settings.general.language.relaunch" = "Relaunch macSCP";
 ```
 
-DE (typografisch, kein ASCII-`"` im Wert):
+DE (typographic, no ASCII `"` in the value):
 
 ```
 "settings.general.language.header" = "Sprache";
@@ -408,7 +414,7 @@ DE (typografisch, kein ASCII-`"` im Wert):
 "settings.general.language.relaunch" = "macSCP neu starten";
 ```
 
-- [x] **Step 6: UI-Strings in FR + PL.** Dieselben vier Keys in `fr.lproj` und `pl.lproj` (FR Guillemets/kein ASCII-`"`; PL „ "):
+- [x] **Step 6: UI strings in FR + PL.** The same four keys in `fr.lproj` and `pl.lproj` (FR guillemets/no ASCII `"`; PL „ "):
 
 FR:
 
@@ -429,14 +435,14 @@ PL:
 ```
 
 - [x] **Step 7: package-app.** In `scripts/package-app`:
-  - Marker-Zeile (aktuell `mkdir "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/de.lproj"`) um `fr.lproj`/`pl.lproj` erweitern:
+  - Extend the marker line (currently `mkdir "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/de.lproj"`) by `fr.lproj`/`pl.lproj`:
 
 ```bash
 mkdir "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/de.lproj" \
       "$APP/Contents/Resources/fr.lproj" "$APP/Contents/Resources/pl.lproj"
 ```
 
-  - Im Info.plist-Heredoc nach `CFBundleDevelopmentRegion` einfügen:
+  - Insert into the Info.plist heredoc after `CFBundleDevelopmentRegion`:
 
 ```
     <key>CFBundleLocalizations</key>
@@ -448,22 +454,22 @@ mkdir "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/de.lproj" \
     </array>
 ```
 
-  - Die Verifikations-Zeile erweitern:
+  - Extend the verification line:
 
 ```bash
 test -d "$APP/Contents/Resources/en.lproj" -a -d "$APP/Contents/Resources/de.lproj" \
      -a -d "$APP/Contents/Resources/fr.lproj" -a -d "$APP/Contents/Resources/pl.lproj"
 ```
 
-- [x] **Step 8: Katalog-Lint + Parität.**
+- [x] **Step 8: Catalog lint + parity.**
 
 ```bash
 for l in en de fr pl; do plutil -lint "Sources/MacSCPApp/Resources/$l.lproj/Localizable.strings"; done
 swift test --filter Localizable
 ```
-  Expected: alle OK; Suite PASS (die vier neuen Keys sind in allen vier App-Katalogen → Parität bleibt).
+  Expected: all OK; suite PASS (the four new keys are in all four App catalogs → parity holds).
 
-- [x] **Step 9: Build + volle Suite + Idle-CPU-Rauchtest (Nicht-EN).**
+- [x] **Step 9: Build + full suite + idle-CPU smoke test (non-EN).**
 
 ```bash
 swift build
@@ -488,9 +494,9 @@ ps -o pid,%cpu,state -p "$(pgrep -f 'dist/macSCP.app/Contents/MacOS/macSCP' | he
 pkill -f 'dist/macSCP.app/Contents/MacOS/macSCP'
 cp /tmp/macscp-settings.bak "$SETTINGS" 2>/dev/null || true
 ```
-  Expected: `Build complete` (keine neuen Warnungen); `swift test` **903** grün; App startet in FR ohne Crash, `%CPU` nahe 0, state `S`. Falls Spin (>50%) oder Crash: STOP, BLOCKED melden. (Die eigene settings.json am Ende wiederherstellen.)
+  Expected: `Build complete` (no new warnings); `swift test` **903** green; app launches in FR without crashing, `%CPU` near 0, state `S`. On a spin (>50%) or crash: STOP, report BLOCKED. (Restore your own settings.json at the end.)
 
-- [x] **Step 10: Trace-Verifikation.** Bestätigen: `AppleLanguages`-Anwendung steht in `init` VOR jedem Lookup; `.system` entfernt den Override; Relaunch-Knopf nur bei `selectedLanguage != launchLanguage`; `AppRelauncher.relaunch` startet losgelöst + `NSApp.terminate`; Picker-Tags decken alle `AppLanguage`-Fälle.
+- [x] **Step 10: Trace verification.** Confirm: the `AppleLanguages` application sits in `init` BEFORE any lookup; `.system` removes the override; the relaunch button appears only when `selectedLanguage != launchLanguage`; `AppRelauncher.relaunch` launches detached + `NSApp.terminate`; the picker tags cover every `AppLanguage` case.
 
 - [x] **Step 11: Commit.**
 
@@ -501,11 +507,11 @@ git commit -m "feat: add an in-app language switcher with a relaunch button"
 
 ---
 
-### Task 5: Abschluss-Verifikation (Koordinator)
+### Task 5: Final verification (coordinator)
 
-- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips (Docker-Rig aus dem Haupt-Checkout).
-- [x] `swift build` sauber; `plutil -lint` alle acht Kataloge OK; `LocalizableStringsTests` grün (Parität EN↔{DE,FR,PL} + Parse).
-- [x] Runtime-Idle-CPU-Rauchtest in einer Nicht-EN-Sprache bestanden (Task 4 Step 9).
-- [x] Whole-Milestone Opus-Review über `review-package <base> HEAD`: Fokus auf (a) `AppleLanguages`-Timing (vor erstem Lookup, `.system` entfernt Override); (b) Relaunch-Sichtbarkeit + Helfer korrekt; (c) FR/PL Parität + KEIN ASCII-`"` im Wert (stichprobenartig, der Test deckt den Rest) + Format-Platzhalter erhalten; (d) Package.swift/package-app/CFBundleLocalizations vollständig für fr+pl; (e) Test-Wächter erfasst wirklich alle vier Sprachen. Fix-Runden bis „Ready to merge: Yes".
-- [ ] Visueller Smoke — Maintainer (Picker System/EN/DE/FR/PL; Umschalten zeigt Relaunch-Knopf; Neustart wendet die Sprache an; App-UI + Menüs erscheinen übersetzt; `.system` folgt wieder dem System; hell/dunkel).
-- [x] Plan-Checkboxen, Ledger, Push develop, `gh run watch`, Dev-Build deployen, Memory. **KEIN Release** (FR/PL vor Release muttersprachlich prüfen lassen).
+- [x] Gated suites: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → green, zero skips (Docker rig from the main checkout).
+- [x] `swift build` clean; `plutil -lint` all eight catalogs OK; `LocalizableStringsTests` green (parity EN↔{DE,FR,PL} + parse).
+- [x] Runtime idle-CPU smoke test in a non-EN language passed (Task 4 Step 9).
+- [x] Whole-milestone Opus review via `review-package <base> HEAD`: focus on (a) `AppleLanguages` timing (before the first lookup, `.system` removes the override); (b) relaunch visibility + helper correct; (c) FR/PL parity + NO ASCII `"` in the value (spot-checked, the test covers the rest) + format placeholders preserved; (d) Package.swift/package-app/CFBundleLocalizations complete for fr+pl; (e) test guard really covers all four languages. Fix rounds until "Ready to merge: Yes".
+- [ ] Visual smoke — maintainer (picker System/EN/DE/FR/PL; switching shows the relaunch button; restart applies the language; app UI + menus appear translated; `.system` follows the system again; light/dark).
+- [x] Plan checkboxes, ledger, push develop, `gh run watch`, deploy dev build, memory. **NO release** (have FR/PL reviewed by a native speaker before release).

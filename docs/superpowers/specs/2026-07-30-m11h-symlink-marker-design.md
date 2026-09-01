@@ -1,111 +1,112 @@
-# M11h — Symlinks kennzeichnen (Design)
+# M11h — Mark symlinks (Design)
 
-Datum: 2026-07-30 · Status: vom Maintainer freigegeben
+Date: 2026-07-30 · Status: approved by the maintainer
 
-## Ziel
+## Goal
 
-Symlinks in der Dateiliste sind erkennbar, und ein Doppelklick auf einen
-Symlink, der auf ein Verzeichnis zeigt, öffnet es.
+Symlinks in the file list are recognizable, and double-clicking a
+symlink that points to a directory opens it.
 
-**Maintainer-Entscheidungen (2026-07-30):**
+**Maintainer decisions (2026-07-30):**
 
-1. **Nur Symlinks** bekommen ein Symbol — Ordner und Dateien bleiben
-   unverändert. Das eingefrorene Listen-Layout aus M5g wird so minimal
-   berührt, und das Symbol steht genau dort, wo bisher keine Information war.
-2. **Der Doppelklick zieht nach**: er versucht hineinzugehen, wie es
-   `navigate(to:)` seit M11g tut.
+1. **Only symlinks** get a symbol — folders and files stay
+   unchanged. That way the frozen list layout from M5g is touched
+   minimally, and the symbol sits exactly where there was previously no
+   information.
+2. **The double-click follows suit**: it tries to go into it, the way
+   `navigate(to:)` has done since M11g.
 
-## Ausgangslage
+## Starting point
 
-- Die Dateiliste hat **überhaupt keine Icons**. Ordner erkennt man nur am
-  angehängten `/` aus `FileListFormatter.displayName(for:)`
+- The file list has **no icons at all**. A folder is recognizable only by
+  the appended `/` from `FileListFormatter.displayName(for:)`
   (`item.isDirectory ? item.name + "/" : item.name`).
-- Ein Symlink sieht damit **exakt wie eine gewöhnliche Datei** aus.
-- Die Zellen entstehen in `RemoteFileTableView`s
-  `tableView(_:viewFor:row:)`: pro Spalte ein `NSTableCellView` mit genau
-  einem `NSTextField`, das über Auto-Layout mit 12 pt Einzug links und
-  12 pt rechts an der Zelle hängt.
-- `doubleClicked(_:)` ruft `onOpen` für Verzeichnisse, `onOpenFile` für
-  Dateien — Symlinks und `.other` sind ausdrücklich ein No-op.
-- `RemoteBrowserViewModel.navigate(to:)` (M11g) prüft genau den Fall, um
-  den es hier geht: meldet `stat` einen Symlink, wird ein `list()` versucht;
-  gelingt es, ist das Ziel begehbar.
+- A symlink therefore looks **exactly like a regular file**.
+- The cells are produced in `RemoteFileTableView`'s
+  `tableView(_:viewFor:row:)`: one `NSTableCellView` per column with exactly
+  one `NSTextField`, attached to the cell via Auto Layout with a 12pt left
+  and 12pt right inset.
+- `doubleClicked(_:)` calls `onOpen` for directories, `onOpenFile` for
+  files — symlinks and `.other` are deliberately a no-op.
+- `RemoteBrowserViewModel.navigate(to:)` (M11g) checks exactly the case at
+  issue here: if `stat` reports a symlink, a `list()` is attempted;
+  if it succeeds, the target is browsable.
 
-## 1. Das Symbol (App)
+## 1. The symbol (App)
 
-In der Namensspalte erhält eine Zeile mit `kind == .symlink` ein
-vorangestelltes `NSImageView` mit dem SF-Symbol **`arrow.up.forward`**
-(derselbe Pfeil, den macOS selbst für Alias-Verweise verwendet), in
-`inkTertiary`, auf der Textgröße der Zeile.
+In the name column, a row with `kind == .symlink` gets a
+leading `NSImageView` with the SF Symbol **`arrow.up.forward`**
+(the same arrow macOS itself uses for alias references), in
+`inkTertiary`, at the row's text size.
 
-- Das Symbol sitzt **im Einzug**, den die Zeile schon hat: das Textfeld
-  bleibt bei 12 pt, das Symbol steht links davor im vorhandenen
-  Innenabstand. **Die Zeilenhöhe und die Textposition ändern sich nicht** —
-  M5g hat beide gegen das Mockup abgeglichen, und eine Verschiebung wäre
-  eine stille Design-Regression in einer Liste, die sonst unangetastet
-  bleibt.
-- Alle anderen Zeilen (`.file`, `.directory`, `.other`) sehen aus wie heute:
-  kein Symbol, kein Platzhalter, keine Einrückung.
-- Zellen werden wiederverwendet (`makeView(withIdentifier:)`): das Symbol
-  muss bei jeder Wiederverwendung **explizit** ein- oder ausgeblendet
-  werden, sonst wandert es auf eine falsche Zeile — der klassische
-  Recycling-Fehler.
-- Ein Tooltip auf der Zeile nennt den Sachverhalt („Symlink"), damit das
-  Symbol auch ohne Vorwissen deutbar ist, und dient gleichzeitig als
-  Accessibility-Beschreibung.
+- The symbol sits **within the inset** the row already has: the text field
+  stays at 12pt, the symbol sits to its left within the existing
+  inner spacing. **The row height and text position do not change** —
+  M5g matched both against the mockup, and a shift would be
+  a silent design regression in a list that is otherwise untouched.
+- All other rows (`.file`, `.directory`, `.other`) look as they do today:
+  no symbol, no placeholder, no indentation.
+- Cells are reused (`makeView(withIdentifier:)`): the symbol
+  must be **explicitly** shown or hidden on every reuse,
+  otherwise it drifts onto the wrong row — the classic
+  recycling bug.
+- A tooltip on the row names the fact ("Symlink"), so the
+  symbol is interpretable even without prior knowledge, and it doubles
+  as the accessibility description.
 
-**Kein angehängtes `/` für Symlinks**, auch wenn sie auf ein Verzeichnis
-zeigen: ohne `stat` pro Eintrag ist das nicht feststellbar (dieselbe
-Zurückhaltung wie bei der Vervollständigung in M11g §5). Das Symbol sagt
-„das ist ein Verweis", nicht „das ist ein Ordner" — und behauptet damit
-nichts, was macSCP nicht weiß.
+**No appended `/` for symlinks**, even when they point to a directory:
+without a `stat` per entry that cannot be determined (the same
+restraint as with completion in M11g §5). The symbol says
+"this is a reference", not "this is a folder" — and thereby
+claims nothing macSCP doesn't know.
 
-## 2. Der Doppelklick (App)
+## 2. The double-click (App)
 
-`doubleClicked(_:)` bekommt einen dritten Fall: bei `kind == .symlink`
-wird der Pfad des Eintrags an denselben Weg gegeben, den die Pfadeingabe
-nutzt (`navigate(to:)`). Das heißt konkret:
+`doubleClicked(_:)` gets a third case: with `kind == .symlink`
+the entry's path is handed to the same path the path input
+uses (`navigate(to:)`). Concretely, that means:
 
-- Zeigt der Symlink auf ein begehbares Verzeichnis, wechselt das Pane
-  hinein — mit dem **Symlink-Pfad** als neuem Ort, nicht mit dem
-  aufgelösten Ziel. `navigate(to:)` verhält sich schon so, und ein
-  aufgelöster Pfad würde `goUp()` an eine Stelle führen, von der der
-  Benutzer nie gekommen ist.
-- Zeigt er auf eine Datei oder ist er defekt, erscheint die Meldung aus
-  `navigate(to:)` — dieselbe, die die Pfadeingabe zeigt. Kein stilles
-  No-op mehr.
-- `.other` bleibt ein No-op wie bisher.
+- If the symlink points to a browsable directory, the pane switches
+  into it — with the **symlink path** as the new location, not the
+  resolved target. `navigate(to:)` already behaves this way, and a
+  resolved path would lead `goUp()` to a place the user never
+  came from.
+- If it points to a file or is broken, the message from
+  `navigate(to:)` appears — the same one the path input shows. No more
+  silent no-op.
+- `.other` stays a no-op as before.
 
-Damit verschwindet die Unstimmigkeit, die der M11g-Review benannt hat:
-Tippen folgte einem Symlink, Klicken nicht.
+That removes the inconsistency the M11g review named:
+typing followed a symlink, clicking did not.
 
-## 3. Was bewusst NICHT passiert
+## 3. What deliberately does NOT happen
 
-- Kein `stat` pro Listeneintrag, um Symlink-Ziele vorab aufzulösen: das
-  wäre eine zusätzliche Abfrage pro Zeile über die Verbindung, für einen
-  kosmetischen Gewinn.
-- Kein Anzeigen des Ziels („aktuell → /var/www/releases/2026-07"): dafür
-  bräuchte es ein `readlink`, das das FS-Protokoll heute nicht hat.
-- Keine Icons für Ordner und Dateien (Maintainer-Entscheid).
-- Die Vervollständigung bietet weiterhin keine Symlinks an (M11g §5 bleibt
-  unverändert gültig) — sie bekommt kein `stat`-Budget.
-- Kein Audit-Eintrag (Navigation ist keine Änderung).
+- No `stat` per list entry to resolve symlink targets ahead of time: that
+  would be an extra request per row over the connection, for a
+  cosmetic gain.
+- No display of the target ("current → /var/www/releases/2026-07"): that
+  would need a `readlink`, which the FS protocol does not have today.
+- No icons for folders and files (maintainer's decision).
+- Completion continues to offer no symlinks (M11g §5 stays
+  valid unchanged) — it gets no `stat` budget.
+- No audit entry (navigation is not a change).
 
 ## 4. Tests
 
-- `FileListFormatter`: ein Symlink bekommt **kein** angehängtes `/`, auch
-  wenn er „aktuell" heißt; Ordner und Dateien unverändert (Regression).
-- Menü-/Verhaltensmodell: das bestehende `BrowserContextMenu`-Verhalten für
-  Symlinks bleibt unangetastet (kein Übertragen, kein Editor, keine Rechte)
-  — durch Test gepinnt, damit diese Runde es nicht versehentlich aufweicht.
-- Der Doppelklick-Weg ist in der App-Schicht und hat kein Test-Target; die
-  Kern-Logik dahinter (`navigate(to:)` inklusive Symlink-Zweig) ist aus
-  M11g bereits abgedeckt, inklusive gated Rig-Test.
-- Gated: ein Symlink auf ein Verzeichnis und einer auf eine Datei im Rig,
-  über `navigate(to:)` — der erste gelingt, der zweite liefert die Meldung.
+- `FileListFormatter`: a symlink gets **no** appended `/`, even
+  when it's named "current"; folders and files unchanged (regression).
+- Menu/behavior model: the existing `BrowserContextMenu` behavior for
+  symlinks stays untouched (no transfer, no editor, no permissions)
+  — pinned by a test, so this round doesn't accidentally soften it.
+- The double-click path is in the App layer and has no test target; the
+  core logic behind it (`navigate(to:)` including the symlink branch) is
+  already covered from M11g, including the gated rig test.
+- Gated: a symlink to a directory and one to a file in the rig,
+  via `navigate(to:)` — the first succeeds, the second returns the
+  message.
 
-## 5. Aufteilung
+## 5. Breakdown
 
-T1 App (Symbol in der Namensspalte inkl. Recycling-Hygiene, Doppelklick,
-Tooltip, EN/DE) + Core-Kleinigkeit (kein `/` für Symlinks, mit Test) →
-T2 Abschluss. KEIN Release.
+T1 App (symbol in the name column incl. recycling hygiene, double-click,
+tooltip, EN/DE) + a small Core piece (no `/` for symlinks, with a test) →
+T2 wrap-up. NO release.

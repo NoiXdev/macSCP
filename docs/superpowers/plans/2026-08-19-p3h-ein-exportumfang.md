@@ -1,53 +1,53 @@
-# P3h — Ein Exportumfang für beide Sheets
+# P3h — One export scope for both sheets
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** „Exportieren" in der Fußzeile bedeutet in beiden Sheets dasselbe —
-die Auswahl, falls sie auf dem Schirm ist, sonst alles auf dem Schirm — und
-sagt vorher, wie viele Einträge geschrieben werden.
+**Goal:** "Export" in the footer means the same thing in both sheets —
+the selection, if it is on screen, otherwise everything on screen — and
+predicts how many entries will be written.
 
-**Architecture:** Aus der P3f-Gesamtprüfung, Maintainer-Entscheidung. Heute
-verzweigen die beiden Fußzeilen unterschiedlich: `LoginSetsSheet` beachtet
-die Auswahl und nennt die Anzahl in seinem Export-Sheet, `SnippetsSheet`
-exportiert immer die sichtbare Menge und öffnet sofort den Speichern-Dialog.
+**Architecture:** From the P3f overall review, maintainer decision. Today
+the two footers branch differently: `LoginSetsSheet` respects the
+selection and names the count in its export sheet, `SnippetsSheet`
+always exports the visible set and opens the save dialog immediately.
 
-Die Regel wandert deshalb in den Core, als **eine** Implementierung, die
-beide Sheets rufen — bisher steht sie als private Methode nur in einem der
-beiden. Und der Snippet-Export bekommt den Schritt, der die Verengung
-sichtbar macht: ohne ihn wäre „nur die Auswahl" genau die unsichtbare
-Bedeutungsänderung, vor der die Spec warnt.
+The rule therefore moves into Core, as **one** implementation that both
+sheets call — so far it sits as a private method in only one of the two.
+And the snippet export gets the step that makes the narrowing visible:
+without it, "only the selection" would be exactly the invisible change
+in meaning the spec warns against.
 
-**Kein Optionen-Sheet für Snippets.** `SnippetExportCodec` kennt weder
-Optionen noch Passwort; ein Sheet wie das der Login-Sets hätte nichts zu
-zeigen. Es wird eine Bestätigung mit der Anzahl, nicht mehr.
+**No options sheet for snippets.** `SnippetExportCodec` knows neither
+options nor a password; a sheet like the login sets' would have nothing
+to show. It gets a confirmation with the count, nothing more.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, Swift Testing.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen: **ausschließlich Englisch.**
-- Nutzer-sichtbare Strings über `L10n.string`; die vier Kataloge
-  (en/de/fr/pl) behalten identische Schlüsselmengen — Wächter prüfen das.
-- Nie eine Zeilennummer in einen Kommentar schreiben.
-- Kein Kommentar behauptet etwas, das der Code nicht tut.
-- Tests: TDD rot→grün. `swift test` am Ende jeder Task grün.
-- Conventional Commits, Footer:
+- Code, comments, identifiers, test names: **English only.**
+- User-facing strings via `L10n.string`; the four catalogs
+  (en/de/fr/pl) keep identical key sets — guards check that.
+- Never write a line number into a comment.
+- No comment claims something the code does not do.
+- Tests: TDD red→green. `swift test` green at the end of every task.
+- Conventional Commits, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 
 ---
 
-### Task 1: Die Umfangsregel in den Core
+### Task 1: The scope rule in Core
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/ExportScope.swift`
-- Test: `Tests/macSCPCoreTests/ExportScopeTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/ExportScopeTests.swift` (new)
 
 **Interfaces:**
-- Produces: `ExportScope.resolve(selectedID:from:)`. Task 2 ruft es zweimal.
+- Produces: `ExportScope.resolve(selectedID:from:)`. Task 2 calls it twice.
 
 - [ ] **Step 1: Write the failing tests**
 
-Neue Datei `Tests/macSCPCoreTests/ExportScopeTests.swift`:
+New file `Tests/macSCPCoreTests/ExportScopeTests.swift`:
 
 ```swift
 import Foundation
@@ -91,7 +91,7 @@ Expected: FAIL — `cannot find 'ExportScope' in scope`.
 
 - [ ] **Step 3: Implement**
 
-Neue Datei `Sources/macSCPCore/Sessions/ExportScope.swift`:
+New file `Sources/macSCPCore/Sessions/ExportScope.swift`:
 
 ```swift
 import Foundation
@@ -120,8 +120,8 @@ public enum ExportScope {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `swift test --filter "ExportScope"` → PASS (4 Tests).
-Danach `swift test` — grün.
+Run: `swift test --filter "ExportScope"` → PASS (4 tests).
+Then `swift test` — green.
 
 - [ ] **Step 5: Commit**
 
@@ -132,51 +132,51 @@ git commit -m "feat(core): define one export scope rule for list footers"
 
 ---
 
-### Task 2: Beide Fußzeilen auf die Regel, Snippets mit Anzahl
+### Task 2: Both footers on the rule, snippets with a count
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/LoginSetsSheet.swift`
 - Modify: `Sources/MacSCPAppKit/SnippetsSheet.swift`
 - Modify: `Sources/MacSCPAppKit/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
-- Test: `Tests/macSCPAppKitTests/SnippetExportConfirmGuardTests.swift` (neu)
+- Test: `Tests/macSCPAppKitTests/SnippetExportConfirmGuardTests.swift` (new)
 
 **Interfaces:**
-- Consumes: `ExportScope.resolve(selectedID:from:)` aus Task 1.
+- Consumes: `ExportScope.resolve(selectedID:from:)` from Task 1.
 
-**Kontext, den du nicht raten musst:**
-- `LoginSetsSheet` hat heute eine private Methode `exportScope(within:)` mit
-  genau dieser Regel, aufgerufen an seinem Fußzeilen-Knopf. Ersetze den
-  Aufruf durch `ExportScope.resolve(selectedID: selectedID, from: visibleSets)`
-  und **lösche die private Methode**. Ihr Doc-Kommentar erklärt die Regel —
-  der Kern davon steht jetzt am Core-Typ; lass an der Aufrufstelle nur
-  stehen, was dort noch etwas erklärt, und wiederhole nichts doppelt.
-  Das Verhalten bleibt unverändert; das ist der Punkt.
-- `SnippetsSheet`s Fußzeile ruft heute `performExport(visibleSnippets)`.
-  Sie soll stattdessen den aufgelösten Umfang **bestätigen lassen** und erst
-  nach der Bestätigung exportieren.
-- `snippetsCanExport` schaltet den Knopf ab, solange `visibleSnippets` leer
-  ist — der aufgelöste Umfang kann daher nie leer sein. Halte das in einem
-  kurzen Kommentar fest, statt einen unerreichbaren Zweig zu bauen.
-- Das **Zeilen**-Kontextmenü bleibt unverändert: es exportiert weiterhin
-  genau seine Zeile, ohne Bestätigung. Es gibt dort nichts zu verengen und
-  nichts zu zählen — die Zeile, auf die geklickt wurde, ist die Aussage.
+**Context you don't have to guess:**
+- `LoginSetsSheet` today has a private method `exportScope(within:)` with
+  exactly this rule, called at its footer button. Replace the call
+  with `ExportScope.resolve(selectedID: selectedID, from: visibleSets)`
+  and **delete the private method**. Its doc comment explains the rule —
+  the core of it now lives on the Core type; leave at the call site only
+  what still explains something there, and don't repeat anything twice.
+  The behavior stays unchanged; that is the point.
+- `SnippetsSheet`'s footer today calls `performExport(visibleSnippets)`.
+  It should instead **have the resolved scope confirmed** and only
+  export after confirmation.
+- `snippetsCanExport` disables the button as long as `visibleSnippets` is
+  empty — so the resolved scope can never be empty. Note that in a
+  short comment instead of building an unreachable branch.
+- The **row** context menu stays unchanged: it continues to export
+  exactly its row, without confirmation. There is nothing to narrow and
+  nothing to count there — the row that was clicked is the statement.
 
 - [ ] **Step 1: Write the failing test**
 
-Neue Datei `Tests/macSCPAppKitTests/SnippetExportConfirmGuardTests.swift`.
-Baue sie im Idiom der Nachbarn — sieh dir
-`Tests/macSCPAppKitTests/SnippetRowExportMenuGuardTests.swift` an und
-übernimm dessen Block-Isolierung und Fail-Closed-Verhalten. Sie pinnt:
+New file `Tests/macSCPAppKitTests/SnippetExportConfirmGuardTests.swift`.
+Build it in the idiom of its neighbor — look at
+`Tests/macSCPAppKitTests/SnippetRowExportMenuGuardTests.swift` and
+adopt its block isolation and fail-closed behavior. It pins:
 
-1. der Fußzeilen-Knopf ruft **nicht mehr** direkt `performExport(` mit
-   `visibleSnippets`, sondern setzt den Bestätigungszustand;
-2. der bestätigende Knopf ruft `performExport(` mit dem aufgelösten Umfang;
-3. `ExportScope.resolve(` kommt in der Datei vor;
-4. das Zeilenmenü ruft weiterhin unbestätigt `performExport([snippet])`.
+1. the footer button **no longer** calls `performExport(` directly with
+   `visibleSnippets`, but sets the confirmation state;
+2. the confirming button calls `performExport(` with the resolved scope;
+3. `ExportScope.resolve(` appears in the file;
+4. the row menu continues to call `performExport([snippet])` without confirmation.
 
-Formuliere die Zusicherungen gegen die Anker, die du nach Step 3 tatsächlich
-im Code hast — schreibe den Test zuerst gegen deinen geplanten Code, lass
-ihn rot laufen, und passe nur die Anker an, nie die geprüfte Eigenschaft.
+Phrase the assertions against the anchors you actually have in the code
+after Step 3 — write the test first against your planned code, run it
+red, and adjust only the anchors, never the property under test.
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -193,7 +193,7 @@ In `SnippetsSheet`:
     @State private var pendingExport: [Snippet]?
 ```
 
-Fußzeilen-Knopf:
+Footer button:
 
 ```swift
                 Button(L10n.string("snippets.export", "Export…")) {
@@ -205,7 +205,7 @@ Fußzeilen-Knopf:
                 }
 ```
 
-Und ein Alert am Sheet-Körper, im Stil der vorhandenen Alerts dieser Datei:
+And an alert on the sheet body, in the style of this file's existing alerts:
 
 ```swift
         .alert(
@@ -231,16 +231,16 @@ Und ein Alert am Sheet-Körper, im Stil der vorhandenen Alerts dieser Datei:
         }
 ```
 
-**Prüfe den Abbrechen-Schlüssel:** `"cancel"` ist geraten. Suche in den
-Katalogen nach dem Schlüssel, den die anderen Alerts dieser App für
-„Abbrechen" verwenden, und nimm **genau den**. Lege keinen neuen an. Nenne
-im Bericht, welchen du gefunden hast.
+**Check the cancel key:** `"cancel"` is a guess. Search the catalogs
+for the key the other alerts in this app use for "Cancel", and use
+**exactly that one**. Do not create a new one. Name in the report which
+one you found.
 
-- [ ] **Step 4: Kataloge**
+- [ ] **Step 4: Catalogs**
 
-Zwei neue Schlüssel in allen vier Katalogen, neben die vorhandenen
-`snippets.*`-Blöcke. Formuliere die Anzahl-Meldung parallel zu
-`"logins.export.summary %lld"`, damit beide Sheets gleich klingen:
+Two new keys in all four catalogs, next to the existing
+`snippets.*` blocks. Phrase the count message in parallel to
+`"logins.export.summary %lld"`, so both sheets sound alike:
 
 ```
 en: "snippets.export.confirm.title" = "Export snippets?";
@@ -249,14 +249,14 @@ de: "snippets.export.confirm.title" = "Snippets exportieren?";
     "snippets.export.confirm.message %lld" = "%lld Snippets werden in die Datei geschrieben.";
 ```
 
-Für **fr** und **pl** formuliere selbst, parallel zur jeweiligen Fassung von
-`logins.export.summary %lld` in derselben Datei — übernimm deren Satzbau und
-Wortwahl, statt neu zu erfinden.
+For **fr** and **pl**, phrase them yourself, in parallel to the respective
+version of `logins.export.summary %lld` in the same file — adopt their
+sentence structure and word choice instead of reinventing it.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `swift test --filter "SnippetExportConfirm"` → PASS.
-Danach `swift test` — grün, einschließlich der Katalog-Wächter.
+Then `swift test` — green, including the catalog guards.
 
 - [ ] **Step 6: Commit**
 

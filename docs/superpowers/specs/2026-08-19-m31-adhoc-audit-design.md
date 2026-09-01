@@ -1,82 +1,80 @@
-# M31 — Ad-hoc-Verbindungen protokollieren (Design)
+# M31 — Logging ad-hoc connections (design)
 
-Stand 2026-08-19. Aus dem M27-Backlog, nie beauftragt.
+Status 2026-08-19. From the M27 backlog, never commissioned.
 
-## Der Befund, gemessen
+## The finding, measured
 
-Der gesamte Speicher-und-Protokoll-Block im Submit-Pfad hängt an einer
-Bedingung: `if form.shouldSaveSession { … }` (`ContentView`). Steht der
-Speichern-Schalter aus, entsteht keine `StoredSession`, damit kein
-`AuditRecorder` — und damit **kein einziger Eintrag**: kein `connected`,
-keine Transfers, kein `disconnected`.
+The entire store-and-log block in the submit path hangs off one
+condition: `if form.shouldSaveSession { … }` (`ContentView`). If the
+save toggle is off, no `StoredSession` is created, therefore no
+`AuditRecorder` — and therefore **not a single entry**: no `connected`,
+no transfers, no `disconnected`.
 
-Der vierte fehlende Eintrag ist der ernste: `attachAuditRecorder` schreibt
-auch die **M21-Klartext-Notiz** (`plaintextConfirmed`, „connected without TLS
-after an explicit confirmation"). Sie fehlt ausgerechnet dann, wenn die
-Verbindung nicht gespeichert wird. Nachgemessen im Quelltext, nicht aus dem
-Kommentar übernommen.
+The fourth missing entry is the serious one: `attachAuditRecorder` also
+writes the **M21 plaintext note** (`plaintextConfirmed`, "connected
+without TLS after an explicit confirmation"). It is missing precisely
+when the connection is not saved. Remeasured in the source, not taken
+from the comment.
 
-**Der eigentliche Defekt ist die Verschachtelung.** Protokollieren steckt
-innerhalb von Speichern. Das Log hängt damit nicht daran, ob eine Verbindung
-stattfindet, sondern daran, ob sie gespeichert wird.
+**The actual defect is the nesting.** Logging sits inside saving. The log
+therefore does not depend on whether a connection happens, but on whether
+it is saved.
 
-## Die Entscheidung
+## The decision
 
-Maintainer-Entscheidung 2026-08-19: Ad-hoc-Verbindungen protokollieren unter
-**einer festen Pseudo-Sitzung**, lesbar im bestehenden Audit-Sheet,
-aufbewahrt wie jedes andere Log.
+Maintainer decision 2026-08-19: log ad-hoc connections under **one fixed
+pseudo-session**, readable in the existing audit sheet, retained like any
+other log.
 
-Verworfen wurden: je Verbindung eine eigene ID (bräuchte eine Liste, über die
-man diese Logs überhaupt findet — sonst schreiben ohne lesen, genau die
-Lücke, die M27 benannt hat), nur die Klartext-Notiz, und den Punkt als
-Nicht-Befund zu schließen.
+Rejected: a separate ID per connection (would need a list through which
+to find these logs at all — otherwise writing without reading, exactly
+the gap M27 named), only the plaintext note, and closing the point as a
+non-finding.
 
-## Der Entwurf
+## The design
 
-**Un-Verschachteln.** Das Anhängen des Recorders wandert aus dem
-Speicher-Zweig heraus: mit `stored.id`, wenn gespeichert wurde, sonst mit der
-Ad-hoc-ID. Die Klartext-Notiz kommt damit von selbst mit, weil sie in
-`attachAuditRecorder` sitzt.
+**Un-nesting.** Attaching the recorder moves out of the save branch:
+with `stored.id` if it was saved, otherwise with the ad-hoc ID. The
+plaintext note thereby comes along automatically, because it sits inside
+`attachAuditRecorder`.
 
-**Die Pseudo-Sitzung.** Eine Konstante in Core mit fester UUID, damit jede
-ungespeicherte Verbindung in *dasselbe* Log schreibt. Sie ist ein Wert, kein
-Datensatz: kein Eintrag in `sessions.json`, keine Sidebar-Zeile, nichts, das
-sich verbinden, umbenennen, löschen oder exportieren lässt.
+**The pseudo-session.** A constant in Core with a fixed UUID, so every
+unsaved connection writes into *the same* log. It is a value, not a
+record: no entry in `sessions.json`, no sidebar row, nothing that can be
+connected to, renamed, deleted, or exported.
 
-**Lesbarkeit.** Ein Eintrag im Sessions-Menü öffnet das bestehende
-`AuditLogSheet` mit einer synthetischen `StoredSession` aus dieser ID und
-einem lokalisierten Namen. Das Menü führt bereits Known Hosts,
-Serverzertifikate, Logins und SSH-Schlüssel — nachgesehen, das Muster für
-app-weite Sheets existiert und wird nur fortgesetzt. Das Sheet selbst ändert
-sich nicht.
+**Readability.** An entry in the Sessions menu opens the existing
+`AuditLogSheet` with a synthetic `StoredSession` built from this ID and a
+localized name. The menu already lists Known Hosts, server certificates,
+logins, and SSH keys — checked, the pattern for app-wide sheets exists
+and is simply continued. The sheet itself does not change.
 
-**Unterscheidbarkeit.** Alle Ad-hoc-Verbindungen teilen ein Log. Das trägt,
-weil `recordConnected(summary:)` Host und Nutzer schon heute in den
-Detailtext schreibt; die Zeilen bleiben ohne neue Maschinerie
-auseinanderzuhalten.
+**Distinguishability.** All ad-hoc connections share one log. That works
+because `recordConnected(summary:)` already writes host and user into the
+detail text today; the rows stay distinguishable without new machinery.
 
-**Aufbewahrung** wie bei jeder anderen Sitzung. Der Löschknopf des Sheets
-samt Bestätigung gilt unverändert.
+**Retention** as for any other session. The sheet's delete button with
+confirmation applies unchanged.
 
-## Testbarkeit
+## Testability
 
-Das Anhängen liegt in `ContentView`, also im ungetesteten Teil der
-App-Schicht. Nach dem M29-Muster wandert deshalb nicht der Aufruf, sondern
-die **Entscheidung** heraus in einen kleinen, getesteten Typ: „unter welcher
-Sitzungs-ID protokolliert dieser Connect?" — gespeicherte Sitzung → ihre ID,
-sonst die Ad-hoc-ID.
+The attaching sits in `ContentView`, i.e. in the untested part of the app
+layer. Following the M29 pattern, it is therefore not the call that
+moves out but the **decision**: "under which session ID does this
+connect get logged?" — saved session → its ID, otherwise the ad-hoc ID —
+into a small, tested type.
 
-Beide Richtungen bekommen einen Test. Die **Konstant-Rückgabe-Probe** ist
-damit erfüllt: eine Funktion, die immer die Ad-hoc-ID liefert, macht den
-ersten Test rot; eine, die immer die Sitzungs-ID liefert, den zweiten. Dazu
-ein Test, dass die Ad-hoc-ID über Aufrufe hinweg **stabil** ist — sonst
-zerfiele das eine Log in viele unerreichbare.
+Both directions get a test. This satisfies the **constant-return probe**:
+a function that always returns the ad-hoc ID makes the first test red; one
+that always returns the session ID makes the second test red. Plus a
+test that the ad-hoc ID is **stable** across calls — otherwise the one log
+would fall apart into many unreachable ones.
 
-## Was nicht dazugehört
+## What does not belong here
 
-- Keine globale Audit-Ansicht. Die bleibt bewusst aus (M27), und dieser
-  Entwurf braucht sie nicht: er nutzt die vorhandene Sitzungs-Ansicht.
-- Keine Änderung an `AuditLogSheet`, `AuditRecorder` oder `AuditLogStore`.
-- Keine Einstellung zum Abschalten. Eine Option, die das Protokollieren
-  ausschaltet, wäre selbst eine sicherheitsrelevante Entscheidung und
-  gehörte, wenn überhaupt, in eine eigene Runde.
+- No global audit view. That stays deliberately out (M27), and this
+  design does not need it: it uses the existing session view.
+- No change to `AuditLogSheet`, `AuditRecorder`, or `AuditLogStore`.
+- No setting to turn logging off. An option that disables logging would
+  itself be a security-relevant decision and would belong, if at all, in
+  its own round.

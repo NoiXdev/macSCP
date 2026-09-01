@@ -1,186 +1,185 @@
-# M28 — Die zwei löschenden Binder (Design)
+# M28 — The two deleting binders (design)
 
-**Stand:** 2026-08-09. Vorgänger: der am selben Tag zurückgenommene
-Login-Set-Slot-Fix (`479d018`). Dieser Meilenstein greift das Problem an der
-Stelle an, die vier Anläufe verfehlt haben.
+**As of:** 2026-08-09. Predecessor: the login-set slot fix retracted the
+same day (`479d018`). This milestone attacks the problem at the point that
+four previous attempts missed.
 
-## Wie dieser Meilenstein zu seinem Ziel kam
+## How this milestone arrived at its goal
 
-Der zurückgenommene Fix wollte den **veralteten Slot** beseitigen: eine
-Sitzung, die an ein Login-Set gebunden wird, behält ihr altes Passwort im
-Schlüsselbund, und beim Zurückschalten auf manuell greift es wieder. Vier
-adversariale Reviews, vier Wege, auf denen dabei die **einzige** Kopie eines
-Secrets verschwand. Zurückgenommen.
+The retracted fix wanted to get rid of the **stale slot**: a session that
+gets bound to a login set keeps its old password in the keychain, and it
+takes effect again when switching back to manual. Four adversarial
+reviews, four paths on which the **only** copy of a secret disappeared in
+the process. Retracted.
 
-Die Aufklärung danach hat die Zielsetzung widerlegt:
+The follow-up investigation refuted the goal itself:
 
-> **Der veraltete Slot ist der milde Zustand.** Es geht nichts verloren, und
-> für SSH-Passwort und S3 verweigert der Connect ehrlich
-> („Password must not be empty." / „Fill in all required S3 fields.").
+> **The stale slot is the mild condition.** Nothing is lost, and for SSH
+> password and S3 the connect honestly refuses
+> ("Password must not be empty." / "Fill in all required S3 fields.").
 >
-> **Gefährlich sind zwei Stellen, die der zurückgenommene Fix nie berührt
-> hat** — und die schon vorher da waren.
+> **Dangerous are two spots the retracted fix never touched** — and that
+> were already there before it.
 
-Fünf Stellen binden eine Sitzung oder einen Jump an ein Login-Set. **Genau
-zwei davon löschen dabei einen Schlüsselbund-Slot, und keine von beiden fragt
-heute irgendeine Bedingung ab.**
+Five spots bind a session or a jump to a login set. **Exactly two of them
+delete a keychain slot while doing so, and neither of the two checks any
+condition today.**
 
-| # | Binder | löscht? |
+| # | Binder | deletes? |
 |---|---|---|
-| 1 | Formular „Speichern & verbinden" (`save`) | nein — der Secret-Block ist bei gesetztem `loginSetID` komplett übersprungen |
-| 2 | Edit-Save (`validateForEditSave`) | nein — reine Wertberechnung |
-| 3 | **`applyMerge`** | **ja** — löscht den eigenen Slot jeder zusammengeführten Sitzung |
-| 4 | „Als neues Set sichern" (`onSaveEdited`) | nur mittelbar, und nur für Agent-Sitzungen |
-| 5 | **Jump-Bindung (`buildJumpSpec` → `cleanOrphanedJumpSlot`)** | **ja** — löscht den bisherigen manuellen Jump-Slot, *weil* der neue Jump im Set-Modus ist |
+| 1 | form "Save & Connect" (`save`) | no — the secret block is entirely skipped once `loginSetID` is set |
+| 2 | edit-save (`validateForEditSave`) | no — pure value computation |
+| 3 | **`applyMerge`** | **yes** — deletes each merged session's own slot |
+| 4 | "Save as new set" (`onSaveEdited`) | only indirectly, and only for agent sessions |
+| 5 | **jump binding (`buildJumpSpec` → `cleanOrphanedJumpSlot`)** | **yes** — deletes the previous manual jump slot, *because* the new jump is in set mode |
 
-## Die zwei Defekte
+## The two defects
 
-### `applyMerge` verwechselt „kein Secret" mit „nicht lesbar"
+### `applyMerge` confuses "no secret" with "not readable"
 
-Die Quell-Secrets werden mit `try?` gelesen. Liefern alle Reads `nil` — der
-Slot ist leer **oder die Keychain antwortet nicht** —, bleibt `carryError`
-leer, **kein Rollback greift**, das Set entsteht ohne Secret, jede Sitzung
-wird daran gebunden, und im selben Schleifendurchlauf wird jeder eigene Slot
-gelöscht.
+The source secrets are read with `try?`. If all reads return `nil` — the
+slot is empty **or the keychain isn't answering** —, `carryError` stays
+empty, **no rollback fires**, the set is created without a secret, every
+session gets bound to it, and in the same loop pass each own slot gets
+deleted.
 
-`LoginMergePlanner` verengt das, schließt es aber nicht: ein
-`.credential`-Secret, das nicht lesbar ist, fällt bei der Kandidatenbildung
-raus — zur *Planzeit* hatte also mindestens ein Mitglied ein lesbares Secret.
-`applyMerge` liest jedoch **erneut**, und zwischen beiden Reads liegt ein
-Bestätigungsdialog. Ein `.passphrase`-Secret wird zur Planzeit ohnehin nie
-gelesen.
+`LoginMergePlanner` narrows this but does not close it: a `.credential`
+secret that isn't readable drops out during candidate formation — so at
+*plan time* at least one member had a readable secret. `applyMerge`,
+however, reads **again**, and a confirmation dialog sits between the two
+reads. A `.passphrase` secret is never read at plan time in the first
+place.
 
-### Die Jump-Bindung löscht wegen des Modus, nicht wegen der Deckung
+### The jump binding deletes because of the mode, not because of coverage
 
-`cleanOrphanedJumpSlot` löscht den Slot des bisherigen manuellen Jumps, sobald
-der neue Jump eine `loginSetID` trägt. Ob dieses Set ein Secret hält, wird
-nicht gefragt. Ein gewöhnlicher Nutzerweg: Jump von „Manuell" auf ein
-secretloses Set umstellen ⇒ Bastion-Passwort weg, Jump nicht mehr anmeldbar.
+`cleanOrphanedJumpSlot` deletes the slot of the previous manual jump as
+soon as the new jump carries a `loginSetID`. Whether this set holds a
+secret is never asked. An ordinary user path: switch the jump from
+"Manual" to a secret-less set ⇒ bastion password gone, jump no longer able
+to log in.
 
-### Wie ein secretloses Set überhaupt entsteht — leichter als gedacht
+### How a secret-less set even comes about — easier than expected
 
-Der Login-Set-**Export hat Secrets standardmäßig aus**, und der **Import sagt
-kein Wort darüber**, dass die Sets ohne Passwort ankommen: die Ergebnismeldung
-hat Zeilen für umbenannt, Schlüssel importiert, fehlende Pfade, Secret-Fehler —
-aber keine für „diese Sets kamen ohne Passwort". Die Exportseite meldet es
-(„Exported without a password: %lld"), die Importseite nicht.
+Login-set **export has secrets off by default**, and **import says not a
+word** about the sets arriving without a password: the result message has
+lines for renamed, keys imported, missing paths, secret failures — but
+none for "these sets arrived without a password." The export side reports
+it ("Exported without a password: %lld"), the import side does not.
 
-## Die Regel
+## The rule
 
-**Ein Binder, der löscht, stellt dieselbe Frage wie der Verbindungspfad:**
+**A binder that deletes asks the same question as the connection path:**
 
-> Deklariert sich das **derzeit sichtbare Secret-Feld** dieses Sets als
-> **erforderlich**?
+> Does this set's **currently visible secret field** declare itself
+> **required**?
 
-Nicht `LoginSet.authKind`. Genau daran ist der letzte Anlauf gescheitert:
-`authKind` und `kind` sind unabhängige Spalten, die der Login-Set-Import
-wörtlich aus der Datei kopiert — ein `.s3`-Set mit `authKind: agent` kürzt
-jeden darauf gebauten Wächter ab.
+Not `LoginSet.authKind`. That is precisely where the last attempt failed:
+`authKind` and `kind` are independent columns that the login-set import
+copies verbatim from the file — an `.s3` set with `authKind: agent` cuts
+short every guard built on that assumption.
 
-Die Schema-Frage existiert bereits und unterscheidet im Verbindungspfad alle
-fünf Konfigurationen korrekt:
+The schema question already exists and correctly distinguishes all five
+configurations in the connection path:
 
-| Konfiguration | sichtbares Secret-Feld | erforderlich? | Set ohne Secret ist… |
+| Configuration | visible secret field | required? | a set without a secret is… |
 |---|---|---|---|
-| SSH Passwort | `password` | ja | **nicht gedeckt** |
-| SSH privater Schlüssel | `passphrase` | nein | gedeckt (unverschlüsselter Schlüssel) |
-| SSH Agent | keines sichtbar | — | gedeckt |
-| S3 | `secretAccessKey` | ja | **nicht gedeckt** |
-| WebDAV | `password` | nein | gedeckt (anonyme Freigabe — Maintainer-Entscheidung aus M23) |
+| SSH password | `password` | yes | **not covered** |
+| SSH private key | `passphrase` | no | covered (unencrypted key) |
+| SSH agent | none visible | — | covered |
+| S3 | `secretAccessKey` | yes | **not covered** |
+| WebDAV | `password` | no | covered (anonymous share — maintainer decision from M23) |
 
-Dazu der Sonderfall, den das Schema **nicht** beantworten kann: ein
-Schlüssel-Set, dessen Passphrase unter der **eigenen ID des verwalteten
-Schlüssels** liegt. Dafür gibt es die vorhandene Probe, und sie **wirft**
-statt `false` zu liefern, wenn sie nicht antworten kann. Diese Eigenschaft
-bleibt erhalten.
+Plus the special case the schema **cannot** answer: a key set whose
+passphrase sits under the **managed key's own ID**. There is an existing
+probe for that, and it **throws** instead of returning `false` when it
+cannot answer. That property is preserved.
 
-### Und die zweite Hälfte, an der vier Runden gescheitert sind
+### And the second half, where four rounds failed
 
-**Ein werfender Read bricht ab. Ein `try?`-Read entscheidet nie über eine
-Löschung.** Eine gesperrte Keychain sieht aus wie ein leeres Set; wer daraus
-„nicht gedeckt" ableitet und trotzdem löscht, vernichtet ein intaktes
-Secret. Wer daraus „gedeckt" ableitet, ebenso.
+**A throwing read aborts. A `try?` read never decides on a deletion.** A
+locked keychain looks like an empty set; deriving "not covered" from that
+and deleting anyway destroys an intact secret. Deriving "covered" from
+that does too.
 
-Dieselbe Regel gilt für die Deckungsprüfung selbst: kann sie nicht beantwortet
-werden, wird **nicht gelöscht**.
+The same rule applies to the coverage check itself: if it cannot be
+answered, **nothing is deleted**.
 
-## Was passiert, wenn nicht gedeckt ist
+## What happens when it isn't covered
 
-**Die Bindung findet statt, der Slot bleibt, der Nutzer erfährt es.**
+**The binding takes place, the slot stays, the user is told.**
 
-Nicht verweigern: die Aufklärung hat gezeigt, dass eine Verweigerung Nutzer in
-den Login-Set-Editor schickt — und der verlangt beim **Bearbeiten** das Secret
-erneut, bevor Speichern freigeschaltet wird, selbst wenn nur der Name geändert
-wird. Wer dorthin verweist, verweist in diese Reibung.
+Not refusal: the investigation showed that a refusal sends users into the
+login-set editor — and that editor demands the secret again on **edit**,
+before saving is unlocked, even if only the name is changed. Pointing
+there points into that friction.
 
-Nicht stillschweigend: bei `applyMerge` ist der Unterschied gravierend — statt
-alle Slots zu löschen und ein leeres Set zu hinterlassen, bleibt jede Sitzung
-verbindungsfähig.
+Not silent: for `applyMerge` the difference is severe — instead of deleting
+all slots and leaving behind an empty set, every session stays able to
+connect.
 
-Für `applyMerge` gilt zusätzlich das Muster, das dort bereits für den
-Carry-Fehler existiert: **Set zurückrollen, nichts umhängen, nichts löschen,
-melden.** Ein Merge, der die Secrets nicht übertragen kann, darf nicht die
-halbe Arbeit tun.
+For `applyMerge` the pattern that already exists there for the carry error
+additionally applies: **roll the set back, reassign nothing, delete
+nothing, report it.** A merge that cannot carry over the secrets must not
+do half the work.
 
-## Zweiter Teil: der Import sagt es
+## Second part: the import says so
 
-Kommen beim Login-Set-Import Sets ohne Passwort an, nennt die Ergebnismeldung
-ihre Anzahl — dieselbe Form, die die Exportseite bereits benutzt. Das ist die
-Stelle, an der der Zustand entsteht; dass er heute unbemerkt entsteht, ist der
-Grund, warum ihn später niemand erwartet.
+If sets without a password arrive during login-set import, the result
+message names their count — the same form the export side already uses.
+That is the spot where the condition arises; that it arises unnoticed
+today is the reason nobody expects it later.
 
-## Was ausdrücklich **nicht** dazugehört
+## What explicitly does **not** belong here
 
-- **Der veraltete Slot einer set-gebundenen Sitzung wird nicht gelöscht.**
-  Das war das Ziel des zurückgenommenen Fixes. Vier Anläufe haben gezeigt,
-  dass genau die Löschung das Risiko trägt, und die Aufklärung hat gezeigt,
-  dass der Zustand mild ist. Wer ihn später angeht, hat mit diesem Meilenstein
-  die Bedingung, die er dafür braucht — aber es ist ein eigener Durchgang mit
-  eigener Entscheidung.
-- **Die drei nicht löschenden Binder bleiben unberührt.** Sie zu bewachen war
-  der Fehler der vier Runden: dort ist nichts zu verlieren.
-- **Bestehende Waisen einsammeln.** Braucht eine Keychain-Enumeration; zwei
-  Meilensteine haben sie bewusst abgelehnt.
-- **Die Editor-Reibung** (Secret erneut eintippen, um einen Namen zu ändern).
-  Echter Befund, eigener Fix.
+- **The stale slot of a set-bound session is not deleted.** That was the
+  goal of the retracted fix. Four attempts showed that exactly this
+  deletion carries the risk, and the investigation showed that the
+  condition is mild. Whoever tackles it later has, with this milestone,
+  the precondition they need for it — but it is its own pass with its own
+  decision.
+- **The three non-deleting binders stay untouched.** Guarding them was the
+  mistake of the four rounds: there is nothing to lose there.
+- **Collecting existing orphans.** Needs a keychain enumeration; two
+  milestones have deliberately rejected it.
+- **The editor friction** (retyping a secret to change a name). A real
+  finding, its own fix.
 
-## Erfolgskriterien
+## Success criteria
 
-| # | Kriterium | Nachweis |
+| # | Criterion | Proof |
 |---|---|---|
-| 1 | `applyMerge` löscht keinen Slot, wenn das Set das Secret nicht hält | Test: Set ohne Secret, Merge läuft, `storedIDs` aller Mitglieder unverändert |
-| 2 | `applyMerge` bricht ab, statt bei nicht lesbarer Keychain zu löschen | Test mit werfendem Read: Set zurückgerollt, **kein** Slot angefasst, Fehler gemeldet |
-| 3 | Die Jump-Bindung löscht den alten Jump-Slot nur bei gedecktem Set | Test je Deckungsfall |
-| 4 | Alle fünf Konfigurationen werden korrekt unterschieden | ein Test je Zeile der Tabelle oben |
-| 5 | Ein `.s3`-Set mit `authKind: agent` gilt **nicht** als gedeckt | der Test, der den letzten Anlauf gekippt hätte |
-| 6 | Die Deckungsfrage stellt nie `LoginSet.authKind` | Review; im Code als Doc-Zusage |
-| 7 | Ein unbeantwortbarer Deckungstest löscht nicht | Test mit werfender Probe |
-| 8 | Der Import nennt die Zahl der Sets ohne Passwort | Test über den erzeugten Text |
-| 9 | Kein Secret-Wert in Meldung, Log oder Testfehlertext | Review |
-| 10 | Alle vier Kataloge tragen die neuen Schlüssel | der vorhandene Wächtertest |
+| 1 | `applyMerge` deletes no slot when the set does not hold the secret | test: set without secret, merge runs, `storedIDs` of all members unchanged |
+| 2 | `applyMerge` aborts instead of deleting on an unreadable keychain | test with a throwing read: set rolled back, **no** slot touched, error reported |
+| 3 | The jump binding deletes the old jump slot only for a covered set | test per coverage case |
+| 4 | All five configurations are distinguished correctly | one test per row of the table above |
+| 5 | An `.s3` set with `authKind: agent` counts **as not** covered | the test that would have caught the last attempt |
+| 6 | The coverage question never asks `LoginSet.authKind` | review; in the code as a doc commitment |
+| 7 | An unanswerable coverage check does not delete | test with a throwing probe |
+| 8 | The import names the count of sets without a password | test on the generated text |
+| 9 | No secret value in message, log, or test failure text | review |
+| 10 | All four catalogs carry the new keys | the existing guard test |
 
-## Test-Hinweise
+## Test notes
 
-- **Jede Löschung muss unter Mutation sichtbar verschwinden.** Wächter
-  entfernen ⇒ der Test zeigt das Credential als weg, nicht bloß ein
-  abweichendes Flag. Die vier gescheiterten Runden hatten Tests, die grün
-  blieben, während der Verlustweg offen war.
-- Die vorhandenen Doubles reichen: das In-Memory-Double mit seiner
-  Mengen-Aufzählung für „nirgends ist etwas verschwunden", die
-  fehlschlagenden Varianten für werfende Reads und Deletes.
-- **Kriterium 5 ist der wichtigste Test des Meilensteins.** Er baut ein Set,
-  dessen `kind` und `authKind` sich widersprechen — genau die Form, die der
-  Import ungeprüft durchlässt.
+- **Every deletion must visibly disappear under mutation.** Remove the
+  guard ⇒ the test shows the credential as gone, not merely a deviating
+  flag. The four failed rounds had tests that stayed green while the loss
+  path was open.
+- The existing doubles suffice: the in-memory double with its set
+  enumeration for "nothing has disappeared anywhere," the failing variants
+  for throwing reads and deletes.
+- **Criterion 5 is the most important test of the milestone.** It builds a
+  set whose `kind` and `authKind` contradict each other — exactly the
+  shape that import lets through unchecked.
 
-## Für die Release-Notes
+## For the release notes
 
-**Ein Satz.** Ein gespeichertes Passwort wird nicht mehr entfernt, wenn eine
-Verbindung oder ein Sprungserver auf ein Login umgestellt wird, das selbst
-keines hinterlegt hat.
+**One sentence.** A stored password is no longer removed when a connection
+or a jump host is switched to a login that itself has none stored.
 
-## Offen, bewusst nicht Teil von M28
+## Open, deliberately not part of M28
 
-- Der veraltete Slot der set-gebundenen Sitzung (siehe oben).
-- Die Editor-Reibung beim Bearbeiten eines Sets.
-- Der app-weite Audit-Bereich.
-- Der Release-Stau.
+- The stale slot of the set-bound session (see above).
+- The editor friction when editing a set.
+- The app-wide audit area.
+- The release backlog.

@@ -1,118 +1,118 @@
-# macSCP — Design-Spec
+# macSCP — Design Spec
 
-**Datum:** 2026-07-09
-**Status:** Entwurf, vom Maintainer freigegeben (Brainstorming-Session)
-**Lizenz des Projekts:** MIT
+**Date:** 2026-07-09
+**Status:** Draft, approved by the maintainer (brainstorming session)
+**Project license:** MIT
 
-## Ziel
+## Goal
 
-Ein nativer Open-Source-Client für macOS im Geist von WinSCP. Ein echter Port ist
-unmöglich (WinSCP ist C++ Builder/VCL, rein Windows-gebunden) — macSCP ist eine
-Neuentwicklung, die das WinSCP-Bedienkonzept auf den Mac bringt:
+A native open-source client for macOS in the spirit of WinSCP. A real port is
+impossible (WinSCP is C++ Builder/VCL, purely Windows-bound) — macSCP is a
+new build that brings the WinSCP interaction model to the Mac:
 
-- Zwei-Fenster-Dateibrowser (lokal ↔ remote) über SFTP
-- Integriertes SSH-Terminal pro Verbindung
-- Session-Manager mit macOS-Keychain-Anbindung
-- Transfer-Queue mit Resume und Editor-Integration
+- Two-pane file browser (local ↔ remote) over SFTP
+- Integrated SSH terminal per connection
+- Session manager with macOS Keychain integration
+- Transfer queue with resume and editor integration
 
-**Zielgruppe:** Mac-Nutzer, die von Windows/WinSCP kommen oder einen nativen,
-freien SFTP-Client vermissen. Alleinstellungsmerkmal gegenüber Cyberduck (Java),
-FileZilla (wxWidgets) und Electron-Clients: fühlt sich wie eine echte Mac-App an.
+**Target audience:** Mac users coming from Windows/WinSCP, or missing a
+native, free SFTP client. Differentiator against Cyberduck (Java),
+FileZilla (wxWidgets) and Electron clients: feels like a real Mac app.
 
-## Rahmenentscheidungen
+## Framework decisions
 
-| Entscheidung | Wahl | Begründung |
+| Decision | Choice | Rationale |
 |---|---|---|
-| Sprache/UI | Swift + SwiftUI, AppKit wo nötig | Natives Feeling ist das Alleinstellungsmerkmal; eine Sprache/Codebasis statt Rust+TS (Tauri wurde verworfen) |
-| SSH/SFTP | [Citadel](https://github.com/orlandos-nl/Citadel) (auf SwiftNIO SSH) | Aktiv gepflegt (Stand 04/2026), High-Level-SFTP-API; hinter Abstraktionsschicht austauschbar |
-| Terminal | [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) | Ausgereift, AppKit-Frontend, produktiv in Secure ShellFish, La Terminal, CodeEdit |
-| Fallback SSH | libssh2 via C-Interop | Nur falls Citadel Lücken zeigt; ermöglicht durch Protokoll-Abstraktion |
-| Mindest-macOS | 15 (Sequoia) | Citadels Shell-API (`withPTY`, M4-Terminal) erfordert macOS 15; Anhebung von 14 vom Maintainer bestätigt (2026-07-09) |
-| Lizenz | MIT | Niedrigste Contributor-Hürde, üblich im Swift-Ökosystem |
-| Tests | Swift Testing | Unit gegen Mock-FS, Integration gegen Docker-SSH-Server |
-| Distribution | GitHub Releases (DMG) + später Homebrew Cask | Üblicher Weg für Open-Source-Mac-Tools; kein App Store in v1 |
+| Language/UI | Swift + SwiftUI, AppKit where needed | Native feel is the differentiator; one language/codebase instead of Rust+TS (Tauri was ruled out) |
+| SSH/SFTP | [Citadel](https://github.com/orlandos-nl/Citadel) (on SwiftNIO SSH) | Actively maintained (as of 04/2026), high-level SFTP API; swappable behind an abstraction layer |
+| Terminal | [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) | Mature, AppKit frontend, in production use in Secure ShellFish, La Terminal, CodeEdit |
+| SSH fallback | libssh2 via C interop | Only if Citadel shows gaps; enabled by the protocol abstraction |
+| Minimum macOS | 15 (Sequoia) | Citadel's shell API (`withPTY`, M4 terminal) requires macOS 15; raise from 14 confirmed by the maintainer (2026-07-09) |
+| License | MIT | Lowest contributor barrier, common in the Swift ecosystem |
+| Tests | Swift Testing | Unit against mock FS, integration against a Docker SSH server |
+| Distribution | GitHub Releases (DMG) + later Homebrew Cask | Usual path for open-source Mac tools; no App Store in v1 |
 
-## Architektur
+## Architecture
 
-Vier Kern-Module (Swift Package `macSCPCore`, UI-unabhängig, headless testbar)
-plus die App:
+Four core modules (Swift package `macSCPCore`, UI-independent, testable
+headless) plus the app:
 
-### 1. `Core/RemoteFS` — Protokoll-Abstraktion
+### 1. `Core/RemoteFS` — protocol abstraction
 
-Ein Swift-Protocol `RemoteFileSystem` definiert alle Dateioperationen:
+A Swift protocol `RemoteFileSystem` defines all file operations:
 
 - `list(path)`, `stat(path)`
-- `readStream(path)` / `writeStream(path)` (Streams, kein Voll-Puffern)
+- `readStream(path)` / `writeStream(path)` (streams, no full buffering)
 - `rename`, `delete`, `mkdir`, `chmod`
 
-v1-Implementierung: `CitadelFileSystem`. Die UI und die Transfer-Queue arbeiten
-ausschließlich gegen das Protocol. Damit sind libssh2-Fallback sowie spätere
-Backends (FTP, S3, WebDAV) reine Zusatzimplementierungen.
+v1 implementation: `CitadelFileSystem`. The UI and the transfer queue work
+exclusively against the protocol. That makes the libssh2 fallback, as well
+as later backends (FTP, S3, WebDAV), pure add-on implementations.
 
-### 2. `Core/SSH` — Verbindungs-Schicht
+### 2. `Core/SSH` — connection layer
 
-`SSHConnection` = eine authentifizierte SSH-Verbindung pro Server. SFTP-Channel
-und Shell-Channel (Terminal) laufen gemultiplext über dieselbe Verbindung — ein
-Login, beides verfügbar (wie WinSCP mit integrierter Konsole).
+`SSHConnection` = one authenticated SSH connection per server. SFTP channel
+and shell channel (terminal) run multiplexed over the same connection — one
+login, both available (like WinSCP with its integrated console).
 
-Verantwortlich für:
+Responsible for:
 
-- Host-Key-Verifikation (TOFU: beim ersten Verbinden bestätigen, Fingerprint
-  speichern, bei Änderung deutlich warnen)
-- Auth: Passwort, Public Key (inkl. Passphrase), ssh-agent
-- Reconnect mit exponentiellem Backoff bei Verbindungsabbruch
-- Kapselung der NIO-Welt: nach außen ausschließlich async/await
+- Host key verification (TOFU: confirm on first connect, store the
+  fingerprint, warn clearly on change)
+- Auth: password, public key (including passphrase), ssh-agent
+- Reconnect with exponential backoff on connection loss
+- Encapsulating the NIO world: exclusively async/await outward
 
-### 3. `Core/Sessions` — Session-Verwaltung
+### 3. `Core/Sessions` — session management
 
-- Gespeicherte Verbindungen (Name, Host, Port, User, Auth-Methode,
-  Start-Verzeichnisse) als lokale Konfigurationsdatei (JSON) in
+- Stored connections (name, host, port, user, auth method, starting
+  directories) as a local configuration file (JSON) in
   `~/Library/Application Support/macSCP/`
-- Geheimnisse (Passwörter, Key-Passphrasen) **ausschließlich** in der
-  macOS-Keychain, nie in der Konfigurationsdatei
-- Lesender Import aus `~/.ssh/config` (Host, HostName, User, Port,
-  IdentityFile) — bestehende Hosts erscheinen ohne Neuanlage
+- Secrets (passwords, key passphrases) **exclusively** in the macOS
+  Keychain, never in the configuration file
+- Read-only import from `~/.ssh/config` (Host, HostName, User, Port,
+  IdentityFile) — existing hosts appear without having to recreate them
 
-### 4. `Core/Transfer` — Transfer-Queue
+### 4. `Core/Transfer` — transfer queue
 
-- Warteschlange mit konfigurierbarer Parallelität (Default: 3 gleichzeitig)
-- Fortschritt pro Datei und gesamt (Bytes, Rate, ETA)
-- Resume abgebrochener Transfers (SFTP-Offset-Fortsetzung)
-- Konfliktregeln: überschreiben / überspringen / umbenennen — pro Fall fragen
-  oder als Regel für die Queue setzen
-- Rekursive Verzeichnis-Transfers
+- Queue with configurable parallelism (default: 3 concurrent)
+- Progress per file and overall (bytes, rate, ETA)
+- Resume of interrupted transfers (SFTP offset continuation)
+- Conflict rules: overwrite / skip / rename — ask per case or set as a
+  rule for the queue
+- Recursive directory transfers
 
-**Editor-Integration** (setzt auf der Queue auf): Remote-Datei → Download in
-Temp-Verzeichnis → Öffnen mit Standard-App → Datei-Watcher (DispatchSource)
-erkennt Speichern → automatischer Upload. Aufräumen der Temp-Dateien beim
-Schließen der Session.
+**Editor integration** (builds on top of the queue): remote file →
+download to a temp directory → open with the default app → file watcher
+(DispatchSource) detects the save → automatic upload. Temp files are
+cleaned up when the session closes.
 
-### 4b. `Core/Settings` — zentrale Einstellungen (vom Maintainer ergänzt, 2026-07-10)
+### 4b. `Core/Settings` — central settings (added by the maintainer, 2026-07-10)
 
-Ein zentrales, erweiterbares Einstellungs-Element statt verstreuter Schalter:
+A central, extensible settings element instead of scattered switches:
 
-- `SettingsStore` im Application-Support-Verzeichnis (JSON, Muster wie
-  `SessionStore`); typisierte Zugriffe mit Defaults, unbekannte Schlüssel
-  bleiben beim Laden erhalten (vorwärtskompatibel).
-- Natives macOS-Einstellungsfenster (SwiftUI `Settings`-Scene, ⌘,) mit
-  Tab-Struktur — ausgelegt darauf, dass künftig weitere Bereiche dazukommen.
-- Erste Einstellungen (landen mit M5c, wo ihre Konsumenten entstehen):
-  - **Maximale gleichzeitige Übertragungen** (1–8, Default 3) — steuert die
-    Queue-Parallelität über die EINE Verbindung des Fensters. Hinweis: Zahl
-    paralleler *Server-Verbindungen* ist ein v2-Thema (Tabs/Fenster).
-  - **Bandbreiten-Limit** Upload/Download (KB/s, 0 = unbegrenzt) — Drossel in
-    der TransferEngine (Chunk-Takt).
-- **Bereich „Öffnen mit" (vom Maintainer ergänzt, 2026-07-10, landet mit
-  M5e):** Standard-Editor für Dateien (App-Auswahl; leer = System-Standard)
-  plus Regeln pro Datei-Endung → App (z. B. `php` → PhpStorm). Die
-  Editor-Integration (M5e) löst die Ziel-App in dieser Reihenfolge auf:
-  Endungs-Regel → Standard-Editor → macOS-Systemzuordnung.
-- Vorgemerkt für später (nicht v1-bindend): Standard-Terminal-Schriftgröße,
-  Standard-Lokalpfad, Queue-Verhalten bei Konflikten als Voreinstellung.
+- `SettingsStore` in the Application Support directory (JSON, same pattern
+  as `SessionStore`); typed access with defaults, unknown keys are
+  preserved on load (forward-compatible).
+- Native macOS settings window (SwiftUI `Settings` scene, ⌘,) with a tab
+  structure — designed so further sections can be added later.
+- First settings (land with M5c, where their consumers appear):
+  - **Maximum concurrent transfers** (1–8, default 3) — controls queue
+    parallelism over the window's ONE connection. Note: the number of
+    parallel *server connections* is a v2 topic (tabs/windows).
+  - **Bandwidth limit** upload/download (KB/s, 0 = unlimited) — throttle in
+    the TransferEngine (chunk pacing).
+- **"Open with" section (added by the maintainer, 2026-07-10, lands with
+  M5e):** default editor for files (app picker; empty = system default)
+  plus rules per file extension → app (e.g. `php` → PhpStorm). Editor
+  integration (M5e) resolves the target app in this order: extension
+  rule → default editor → macOS system association.
+- Noted for later (not v1-binding): default terminal font size, default
+  local path, queue conflict behavior as a default preference.
 
-### 5. App/UI (SwiftUI + gezielt AppKit)
+### 5. App/UI (SwiftUI + targeted AppKit)
 
-Hauptfenster-Layout:
+Main window layout:
 
 ```
 ┌───────────┬──────────────────────┬──────────────────────┐
@@ -125,69 +125,71 @@ Hauptfenster-Layout:
 └───────────┴─────────────────────────────────────────────┘
 ```
 
-- Dateilisten: AppKit-`NSTableView` via `NSViewRepresentable` — reine
-  SwiftUI-Listen brechen bei Verzeichnissen mit tausenden Einträgen ein
-- Drag & Drop: Finder → Remote-Liste (Upload), Remote-Liste → Finder (Download)
-- Terminal: SwiftTerms AppKit-View eingebettet, pro Session ein Terminal
-- ViewModels mit `@Observable`, Core-Aufrufe via async/await
+- File lists: AppKit `NSTableView` via `NSViewRepresentable` — pure
+  SwiftUI lists break down on directories with thousands of entries
+- Drag & drop: Finder → remote list (upload), remote list → Finder
+  (download)
+- Terminal: SwiftTerm's AppKit view embedded, one terminal per session
+- ViewModels with `@Observable`, Core calls via async/await
 
-## Fehlerbehandlung
+## Error handling
 
-- Jede Core-Schicht wirft typisierte Fehler (`RemoteFSError`, `SSHError`,
+- Every Core layer throws typed errors (`RemoteFSError`, `SSHError`,
   `TransferError`)
-- UI übersetzt in verständliche Meldungen mit Handlungsoption
-  („Verbindung verloren — erneut verbinden?")
-- Transfers überleben Reconnects (Queue pausiert, setzt nach Reconnect fort)
-- Host-Key-Änderung ist ein harter Stopp mit deutlicher Warnung, kein Dialog
-  zum Wegklicken
+- UI translates into understandable messages with an action option
+  ("Connection lost — reconnect?")
+- Transfers survive reconnects (queue pauses, resumes after reconnect)
+- A host key change is a hard stop with a clear warning, not a dialog you
+  can dismiss
 
 ## Testing
 
-- **Unit:** Core-Logik (Queue, Konfliktregeln, ssh-config-Parser,
-  Session-Store) gegen ein `MockRemoteFileSystem`
-- **Integration:** komplette SFTP-Schicht gegen einen lokalen
-  OpenSSH-Docker-Container (z.B. `linuxserver/openssh-server`)
-- **CI:** GitHub Actions auf macOS-Runnern: Build + Unit-Tests bei jedem PR;
-  Integrationstests, soweit Docker auf dem Runner verfügbar
-- UI: manuelle Smoke-Tests je Meilenstein; UI-Automation nicht in v1
+- **Unit:** Core logic (queue, conflict rules, ssh-config parser,
+  session store) against a `MockRemoteFileSystem`
+- **Integration:** the complete SFTP layer against a local OpenSSH Docker
+  container (e.g. `linuxserver/openssh-server`)
+- **CI:** GitHub Actions on macOS runners: build + unit tests on every PR;
+  integration tests where Docker is available on the runner
+- UI: manual smoke tests per milestone; UI automation not in v1
 
-## Meilensteine
+## Milestones
 
-1. **M1 — Kern-Beweis:** Verbinden, Auth, Remote-Verzeichnis auflisten
-   (Core-Package + minimaler CLI-Treiber, noch keine App)
-2. **M2 — Browser:** App-Fenster mit Zwei-Fenster-Browser, Download/Upload
-   einzelner Dateien, Drag & Drop
-3. **M3 — Sessions:** Session-Manager, Keychain, ssh-config-Import
-4. **M4 — Terminal:** SwiftTerm-Panel je Verbindung
-5. **M5 — Queue:** Transfer-Queue mit Resume + Editor-Integration
-6. **M6 — Release:** App-Icon, Onboarding, README/Docs, notarisierte DMG,
-   GitHub-Release
+1. **M1 — Core proof:** connect, auth, list a remote directory
+   (Core package + minimal CLI driver, no app yet)
+2. **M2 — Browser:** app window with two-pane browser, download/upload of
+   single files, drag & drop
+3. **M3 — Sessions:** session manager, Keychain, ssh-config import
+4. **M4 — Terminal:** SwiftTerm panel per connection
+5. **M5 — Queue:** transfer queue with resume + editor integration
+6. **M6 — Release:** app icon, onboarding, README/docs, notarized DMG,
+   GitHub release
 
-## Bewusst NICHT in v1
+## Deliberately NOT in v1
 
-- SCP-Protokoll-Fallback, FTP/FTPS, S3, WebDAV
-- Verzeichnis-Synchronisation („Sync Browsing" / Ordnervergleich)
-- Mehrfach-Fenster / Tabs für mehrere gleichzeitige Server — v1 verwaltet
-  genau **eine aktive Verbindung pro Fenster**; Session-Wechsel trennt die
-  vorherige Verbindung (nach Rückfrage bei laufenden Transfers)
-- App Store / Sandbox
-- Skripting/CLI-Automatisierung
+- SCP protocol fallback, FTP/FTPS, S3, WebDAV
+- Directory synchronization ("sync browsing" / folder comparison)
+- Multiple windows / tabs for several simultaneous servers — v1 manages
+  exactly **one active connection per window**; switching sessions
+  disconnects the previous connection (after confirmation if transfers
+  are running)
+- App Store / sandbox
+- Scripting/CLI automation
 
-## Vorgemerkt für v2
+## Noted for v2
 
-- **Mehrere gleichzeitige Server über Tabs/Fenster** — vom Maintainer bestätigt
-  (2026-07-09). Architektur-Hinweis für v1: nichts bauen, was eine einzige
-  globale Verbindung annimmt — Verbindung/Session gehört an das Fenster- bzw.
-  Tab-Objekt, nicht in einen App-weiten Singleton.
+- **Multiple simultaneous servers via tabs/windows** — confirmed by the
+  maintainer (2026-07-09). Architecture note for v1: build nothing that
+  assumes a single global connection — connection/session belongs on the
+  window or tab object, not in an app-wide singleton.
 
-## Offene Punkte
+## Open items
 
-- **Notarisierung:** braucht Apple-Developer-Account (99 €/Jahr). Bis M6
-  unsignierte Dev-Builds; Entscheidung beim Release-Meilenstein.
-- **Konkurrenz-Check:** Web-Recherche, ob ein vergleichbares natives
-  Open-Source-Projekt existiert, steht noch aus (Such-Dienst war während der
-  Session nicht verfügbar; Stand Januar 2026: nichts Nennenswertes in der
-  Nische).
-- **README-Konvention:** Projektbeschreibung/Tagline nutzenorientiert ohne
-  Stack-Details; technische Details ab dem Contributing-Teil (Auslegung der
-  globalen Konvention des Maintainers).
+- **Notarization:** needs an Apple Developer account (€99/year). Unsigned
+  dev builds until M6; decision at the release milestone.
+- **Competitor check:** web research on whether a comparable native
+  open-source project exists is still outstanding (the search service was
+  unavailable during the session; as of January 2026: nothing notable in
+  the niche).
+- **README convention:** project description/tagline benefit-oriented
+  without stack details; technical details starting from the Contributing
+  section (interpretation of the maintainer's global convention).

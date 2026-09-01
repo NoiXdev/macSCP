@@ -1,33 +1,33 @@
-# macSCP M5d — Resume + Reconnect-Überleben Implementation Plan
+# macSCP M5d — Resume + reconnect survival implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Abgebrochene/unterbrochene Transfers setzen per SFTP-Offset fort statt neu zu beginnen; ein Verbindungsverlust markiert offene Items als „unterbrochen" (statt rot-fehlgeschlagen), und nach dem Wiederverbinden setzt EIN Klick alle unterbrochenen Transfers fort — byte-identisches Ergebnis.
+**Goal:** Aborted/interrupted transfers continue from the SFTP offset instead of starting over; a connection loss marks open items as "interrupted" (instead of failed-red), and after reconnecting, ONE click continues all interrupted transfers — byte-identical result.
 
-**Architektur:** Drei neue FS-Fähigkeiten (`readStream(path:fromOffset:)`, append-fähiges `write`, `delete(path:)`). Die Engine bekommt einen Resume-Modus (Ziel-Größe statten → ab Offset lesen → anhängen → Progress ab Offset). Die Queue unterscheidet Verbindungsverlust (`connectionFailed` → neuer Status `.interrupted`, Items behalten ihre Metadaten) von echten Fehlern; sie überlebt Session-Wechsel (Queue wird NICHT mehr pro Session neu erzeugt) und `retryInterrupted(...)` reiht unterbrochene Items mit den NEUEN FS-Referenzen und `resume: true` wieder ein. UI: Status „unterbrochen" + Banner-Button „Unterbrochene fortsetzen" nach Reconnect.
+**Architecture:** Three new FS capabilities (`readStream(path:fromOffset:)`, append-capable `write`, `delete(path:)`). The engine gets a resume mode (stat destination size → read from offset → append → progress from offset). The queue distinguishes connection loss (`connectionFailed` → new status `.interrupted`, items keep their metadata) from real errors; it survives session changes (the queue is NO LONGER recreated per session) and `retryInterrupted(...)` re-enqueues interrupted items with the NEW FS references and `resume: true`. UI: status "interrupted" + banner button "Resume interrupted" after reconnect.
 
-**Scope-Abgrenzung (bewusst):** KEIN automatischer Reconnect mit Backoff in M5d (Spec-Punkt bleibt im Backlog — der manuelle Reconnect-Flow existiert und die Queue überlebt ihn; Auto-Backoff ist ein eigener SSH-Schicht-Baustein). Resume ist größenbasiert (Standard bei SFTP-Clients); kein Checksummen-Vergleich des vorhandenen Teils.
+**Scope boundary (deliberate):** NO automatic reconnect with backoff in M5d (the spec point stays in the backlog — the manual reconnect flow exists and the queue survives it; auto-backoff is a separate SSH-layer building block). Resume is size-based (the default for SFTP clients); no checksum comparison of the existing part.
 
 ## Global Constraints
 
-- swift-tools 6.0; ALLE Targets `.swiftLanguageMode(.v5)`; macOS 15; Swift Testing, TDD rot→grün.
-- SPRACH-POLICY (CLAUDE.md): Kommentare/Identifier ENGLISCH; neue UI-Strings über `L10n`/`CoreL10n` mit EN-Quelle + DE-Übersetzung in BEIDEN `.strings`-Dateien; `reason:`-Strings englisch.
-- Alle Queue-Invarianten bleiben: exactly-once-Waiter, cancelAll-Fenster (queued/resolving/running), Gruppen-Buchhaltung, FIFO-Start, Konfliktregel-Reset, Slot-Modell.
-- Resume-Semantik (bindend): `.cancelled`- und `.interrupted`-Teil-Dateien BLEIBEN am Ziel liegen (Resume-Futter). `resume: true` in der Engine überspringt die Konfliktprüfung bewusst NICHT — sie findet in der QUEUE statt und `retryInterrupted` setzt sie außer Kraft (dokumentiert): Fortsetzen IST die Konfliktentscheidung.
-- Gated Tests: `MACSCP_ITEST=1` (Rig aus Haupt-Checkout), `MACSCP_KEYCHAIN=1`.
-- Conventional Commits, Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`. Implementierer pushen nicht.
+- swift-tools 6.0; ALL targets `.swiftLanguageMode(.v5)`; macOS 15; Swift Testing, TDD red→green.
+- LANGUAGE POLICY (CLAUDE.md): comments/identifiers ENGLISH; new UI strings via `L10n`/`CoreL10n` with EN source + DE translation in BOTH `.strings` files; `reason:` strings in English.
+- All queue invariants remain: exactly-once waiter, cancelAll window (queued/resolving/running), group bookkeeping, FIFO start, conflict-rule reset, slot model.
+- Resume semantics (binding): `.cancelled` and `.interrupted` partial files STAY at the destination (resume fodder). `resume: true` in the engine does deliberately NOT skip the conflict check — that happens in the QUEUE, and `retryInterrupted` overrides it (documented): resuming IS the conflict decision.
+- Gated tests: `MACSCP_ITEST=1` (rig from the main checkout), `MACSCP_KEYCHAIN=1`.
+- Conventional Commits, footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`. Implementers do not push.
 
-**Abhängigkeitsgraph:** `T1 (FS-APIs) → T2 (Engine-Resume) → T3 (Queue interrupted/retry) → T4 (UI) → T5 (Abschluss)` — sequentiell (jede Schicht konsumiert die vorige).
+**Dependency graph:** `T1 (FS APIs) → T2 (engine resume) → T3 (queue interrupted/retry) → T4 (UI) → T5 (closeout)` — sequential (each layer consumes the previous one).
 
 ---
 
-### Task 1: FS-Fähigkeiten — Offset-Read, Append-Write, Delete
+### Task 1: FS capabilities — offset read, append write, delete
 
 **Files:**
 - Modify: `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift`, `LocalFileSystem.swift`, `Sources/macSCPCore/SSH/CitadelFileSystem.swift`, `Tests/macSCPCoreTests/MockRemoteFileSystem.swift` (+ QueueTestFS minimal)
 - Test: `LocalFileSystemTests.swift`, gated `CitadelFileSystemIntegrationTests.swift`
 
-**Interfaces (bindend für T2):**
+**Interfaces (binding for T2):**
 
 ```swift
 /// Streams the file starting at `offset` (bytes). Offset 0 behaves exactly
@@ -43,26 +43,26 @@ func write(path: String, mode: WriteMode, stream: AsyncThrowingStream<[UInt8], E
 func delete(path: String) async throws
 ```
 
-Bestehendes `readStream(path:)`/`write(path:stream:)` bleibt als Konvenienz (default offset 0 / .overwrite) — Protokoll-Extension, damit alle Konformitäten schlank bleiben.
+Existing `readStream(path:)`/`write(path:stream:)` stays as a convenience (default offset 0 / .overwrite) — protocol extension, so all conformances stay lean.
 
-**Bindend:**
-- Citadel: Offset-Read via `SFTPFile.read(from:)`-Schleife ab Offset (bestehendes unfolding-Muster erweitern); Append via OpenFlags ohne `.truncate` + Schreiben ab Datei-Ende (Größe vorab statten; falls Citadel `.append`-Flag hat: nutzen, sonst Offset-Write ab Ende); Delete via `sftp.remove`/äquivalent (API im Checkout nachschlagen: `.build/checkouts/Citadel/Sources/Citadel/SFTP/`).
-- Local: FileHandle `seek(toOffset:)` fürs Lesen; Append via FileHandle `seekToEnd` (kein O_TRUNC); Delete via FileManager (Datei-Kollision: Verzeichnis am Pfad → `protocolError`).
-- Mock/QueueTestFS: offset-fähig (Slice des Contents), append (an vorhandene Daten anhängen), delete (aus Tree entfernen) — Aufzeichnung für T2/T3-Tests.
-- Unit-Tests (Local + Mock): offset mitten/0/hinter EOF; append an bestehende Datei + auf nicht-existente (=create); delete existiert/fehlt/Verzeichnis.
-- Gated (Docker, /config): Datei schreiben → ab Offset lesen → Bytes stimmen; overwrite dann append → Gesamtinhalt korrekt (md5 gegen lokal konstruierte Referenz); delete entfernt (list bestätigt) + zweites delete → notFound; Offset hinter EOF → leer.
+**Binding:**
+- Citadel: offset read via an `SFTPFile.read(from:)` loop from the offset (extending the existing unfolding pattern); append via OpenFlags without `.truncate` + writing from the file's end (stat the size upfront; if Citadel has an `.append` flag: use it, otherwise offset-write from the end); delete via `sftp.remove`/equivalent (look up the API in the checkout: `.build/checkouts/Citadel/Sources/Citadel/SFTP/`).
+- Local: FileHandle `seek(toOffset:)` for reading; append via FileHandle `seekToEnd` (no O_TRUNC); delete via FileManager (file collision: directory at path → `protocolError`).
+- Mock/QueueTestFS: offset-capable (slice of contents), append (onto existing data), delete (remove from tree) — recording for T2/T3 tests.
+- Unit tests (Local + Mock): offset mid-file/0/past EOF; append onto existing file + onto a non-existent one (=create); delete exists/missing/directory.
+- Gated (Docker, /config): write file → read from offset → bytes match; overwrite then append → total content correct (md5 against a locally constructed reference); delete removes (list confirms) + second delete → notFound; offset past EOF → empty.
 
-- [x] Rot → implementieren → grün (Unit + gated) → Commit `feat: add offset reads, append writes and delete to file systems` (mit Footer).
+- [x] Red → implement → green (unit + gated) → Commit `feat: add offset reads, append writes and delete to file systems` (with footer).
 
 ---
 
-### Task 2: Engine-Resume
+### Task 2: Engine resume
 
 **Files:**
 - Modify: `Sources/macSCPCore/RemoteFS/TransferEngine.swift`
-- Test: `Tests/macSCPCoreTests/TransferEngineTests.swift`, gated `CitadelFileSystemIntegrationTests.swift` (ergänzen)
+- Test: `Tests/macSCPCoreTests/TransferEngineTests.swift`, gated `CitadelFileSystemIntegrationTests.swift` (extend)
 
-**Interfaces (bindend für T3):**
+**Interfaces (binding for T3):**
 
 ```swift
 /// resume: if true and the destination already exists SMALLER than the
@@ -74,23 +74,23 @@ Bestehendes `readStream(path:)`/`write(path:stream:)` bleibt als Konvenienz (def
 static func copyFile(..., resume: Bool = false, bytesPerSecondLimit: Int = 0, ...) async throws
 ```
 
-**Bindend:**
-- resume=false: Verhalten UNVERÄNDERT (alle 219 Tests bleiben ohne Anpassung grün).
-- resume=true-Pfad: dest-stat (notFound → frischer Transfer); destSize >= sourceSize → sofortiges Erfolgs-Progress-Event (bytes=total) und Return; sonst readStream(fromOffset: destSize) + write(mode: .append), Progress ab destSize, Drossel/Cancellation wirken unverändert (Post-Write-Gate bleibt!).
-- Unit (Mock): resume mitten (5 Chunks, 2 vorhanden → nur 3 gelesen ab Offset, append aufgezeichnet, Progress startet bei 2*chunk); dest fehlt → frisch; dest komplett → Sofort-Erfolg ohne Read; dest größer als Quelle → Sofort-Erfolg (dokumentierte Heuristik); Cancellation mitten im Resume → CancellationError, Teil bleibt.
-- Gated (der Kerntest): 32-MiB-Random-Upload starten, nach erstem Progress canceln (Teil-Datei bleibt, Größe < Quelle — Muster aus M5c-T2), dann copyFile resume:true → md5 remote == md5 lokal (BYTE-IDENTISCH nach Resume!). Zweiter gated: Resume auf bereits kompletter Datei → kein Write (mtime/Größe unverändert via docker stat).
+**Binding:**
+- resume=false: behavior UNCHANGED (all 219 tests stay green without adjustment).
+- resume=true path: dest stat (notFound → fresh transfer); destSize >= sourceSize → immediate success progress event (bytes=total) and return; otherwise readStream(fromOffset: destSize) + write(mode: .append), progress from destSize, throttle/cancellation act unchanged (post-write gate stays!).
+- Unit (Mock): resume mid-file (5 chunks, 2 present → only 3 read from offset, append recorded, progress starts at 2*chunk); dest missing → fresh; dest complete → immediate success without read; dest larger than source → immediate success (documented heuristic); cancellation mid-resume → CancellationError, partial stays.
+- Gated (the core test): start a 32 MiB random upload, cancel after the first progress event (partial file stays, size < source — pattern from M5c-T2), then copyFile resume:true → md5 remote == md5 local (BYTE-IDENTICAL after resume!). Second gated: resume on an already complete file → no write (mtime/size unchanged via docker stat).
 
-- [x] Rot → implementieren → grün → Commit `feat: resume interrupted transfers from the destination offset` (mit Footer).
+- [x] Red → implement → green → Commit `feat: resume interrupted transfers from the destination offset` (with footer).
 
 ---
 
-### Task 3: Queue — interrupted-Status, Session-überdauernde Queue, retryInterrupted
+### Task 3: Queue — interrupted status, session-surviving queue, retryInterrupted
 
 **Files:**
-- Modify: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift`, `Sources/macSCPCore/Resources/{en,de}.lproj/Localizable.strings` (+1 Key), `Sources/MacSCPApp/TransferQueueBar.swift` (Status-Zweig), `Sources/MacSCPApp/ContentView.swift` (NUR: transferQueue nicht mehr pro Session neu erzeugen)
+- Modify: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift`, `Sources/macSCPCore/Resources/{en,de}.lproj/Localizable.strings` (+1 key), `Sources/MacSCPApp/TransferQueueBar.swift` (status branch), `Sources/MacSCPApp/ContentView.swift` (ONLY: no longer recreate transferQueue per session)
 - Test: `TransferQueueViewModelTests.swift`
 
-**Interfaces (bindend für T4):**
+**Interfaces (binding for T4):**
 
 ```swift
 // Item.Status gains:
@@ -107,38 +107,38 @@ public func retryInterrupted(
     source: any RemoteFileSystem, destination: any RemoteFileSystem)
 ```
 
-**Bindend:**
-1. Fehler-Klassifikation im Worker: `RemoteFSError.connectionFailed` (und nur diese) → `.interrupted` statt `.failed`; Waiter wirft weiterhin (Promise-Kontrakt), onCompleted feuert nicht. Alle anderen Fehler unverändert `.failed`.
-2. **Queue überlebt Sessions:** ContentView erzeugt `transferQueue` EINMAL (bestehendes `@State`-Init reicht — die Neu-Erzeugung in `startSession` ENTFÄLLT). `teardownSession` ruft weiter `cancelAll` — ABER: laufende/queued Items, die durch den Teardown gecancelt werden, bleiben `.cancelled` (User-Aktion); NUR echte Verbindungsverluste erzeugen `.interrupted`. Historie (finished/failed/cancelled/interrupted) bleibt über den Session-Wechsel in der Leiste sichtbar.
-3. `retryInterrupted`: nimmt die neuen FS-Refs (Richtung entscheidet, welches source/destination ist — Item kennt seine direction; Upload: source=localFS destination=remoteFS, Download umgekehrt — die Methode bekommt BEIDE und wählt pro Item), setzt Status zurück auf `.queued`, hängt die Jobs mit resume:true ans Ende der order (FIFO in Original-Reihenfolge), kickt den Worker. Exactly-once-Waiter: unterbrochene enqueueAndWait-Waiter wurden beim Interrupt bereits geworfen — Retry-Items haben KEINE Waiter (dokumentiert; ein erneuter Promise-Drop erzeugt ein frisches Item).
-4. Neuer Core-Key `core.transfer.interrupted` = EN "Connection lost — transfer interrupted." / DE „Verbindung verloren — Übertragung unterbrochen." (falls eine Message gebraucht wird) + App-Key `transfers.status.interrupted` = "interrupted"/„unterbrochen" für die Leiste (oranger Sekundärtext).
-5. Tests (bindend): connectionFailed→`.interrupted` (anderer Fehler→`.failed` als Kontrast); retryInterrupted re-enqueued FIFO mit resume:true (Mock zeichnet resume-Flag auf → Engine-Aufruf-Assertions via aufgezeichnetem append/offset-Read) und flippt Status; interrupted überlebt cancelAll NICHT rückwirkend (cancelAll cancelt nur queued/running — interrupted bleibt interrupted); Queue-Persistenz über simuliertes teardown+neue-FS (Items-Liste bleibt, retry nutzt neue Refs — Mock-Identität prüfen); hasInterrupted-Flag; Rename-Items retried unter effectiveFileName.
+**Binding:**
+1. Error classification in the worker: `RemoteFSError.connectionFailed` (and only that) → `.interrupted` instead of `.failed`; the waiter still throws (promise contract), onCompleted does not fire. All other errors stay `.failed` unchanged.
+2. **The queue survives sessions:** ContentView creates `transferQueue` ONCE (the existing `@State` init suffices — the recreation in `startSession` IS REMOVED). `teardownSession` keeps calling `cancelAll` — BUT: running/queued items cancelled by the teardown stay `.cancelled` (user action); ONLY real connection losses produce `.interrupted`. History (finished/failed/cancelled/interrupted) stays visible in the bar across the session change.
+3. `retryInterrupted`: takes the new FS refs (direction decides which is source/destination — the item knows its direction; upload: source=localFS destination=remoteFS, download reversed — the method gets BOTH and chooses per item), resets status back to `.queued`, appends the jobs with resume:true at the end of the order (FIFO in original order), kicks the worker. Exactly-once waiter: interrupted enqueueAndWait waiters were already thrown at interrupt time — retry items have NO waiters (documented; a repeated promise drop produces a fresh item).
+4. New Core key `core.transfer.interrupted` = EN "Connection lost — transfer interrupted." / DE "Verbindung verloren — Übertragung unterbrochen." (if a message is needed) + App key `transfers.status.interrupted` = "interrupted"/"unterbrochen" for the bar (orange secondary text).
+5. Tests (binding): connectionFailed→`.interrupted` (a different error→`.failed` as contrast); retryInterrupted re-enqueues FIFO with resume:true (mock records the resume flag → engine call assertions via recorded append/offset-read) and flips status; interrupted does NOT retroactively survive cancelAll (cancelAll only cancels queued/running — interrupted stays interrupted); queue persistence across simulated teardown+new-FS (items list stays, retry uses new refs — check mock identity); hasInterrupted flag; renamed items retried under effectiveFileName.
 
-- [x] Rot → implementieren → grün (Filter + Gesamt) → Commit `feat: keep interrupted transfers resumable across reconnects` (mit Footer).
+- [x] Red → implement → green (filter + overall) → Commit `feat: keep interrupted transfers resumable across reconnects` (with footer).
 
 ---
 
-### Task 4: UI — Banner „Unterbrochene fortsetzen"
+### Task 4: UI — "Resume interrupted" banner
 
 **Files:**
-- Modify: `Sources/MacSCPApp/ContentView.swift`, `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings` (+2 Keys)
+- Modify: `Sources/MacSCPApp/ContentView.swift`, `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings` (+2 keys)
 
-**Bindend:**
-1. In der verbundenen Ansicht, wenn `transferQueue.hasInterrupted`: dezenter Banner über der Queue-Leiste (Sekundär-Hintergrund): Text `transfers.interrupted.banner` = EN "Interrupted transfers can be resumed." / DE „Unterbrochene Übertragungen können fortgesetzt werden." + Button `transfers.interrupted.resume` = "Resume"/„Fortsetzen" → `transferQueue.retryInterrupted(source:/destination: je Richtung — Methode nimmt localFS+remoteFS der AKTUELLEN Session; Signatur aus T3 exakt bedienen)`.
-2. Banner nur bei bestehender Session (Formular-Ansicht zeigt ihn nicht; die Items bleiben aber in der Leiste sichtbar, die auch im Formular-Zustand... — die Leiste lebt im Session-Zweig: dann zeigt der Formular-Zustand nichts; AKZEPTIERT, dokumentieren).
-3. Headless-Launch + Suite grün; visuell in T5.
+**Binding:**
+1. In the connected view, when `transferQueue.hasInterrupted`: subtle banner above the queue bar (secondary background): text `transfers.interrupted.banner` = EN "Interrupted transfers can be resumed." / DE "Unterbrochene Übertragungen können fortgesetzt werden." + button `transfers.interrupted.resume` = "Resume"/"Fortsetzen" → `transferQueue.retryInterrupted(source:/destination: per direction — method takes localFS+remoteFS of the CURRENT session; serve the T3 signature exactly)`.
+2. Banner only with an existing session (the form view does not show it; but the items stay visible in the bar, which is also present in the form state... — the bar lives in the session branch: so the form state shows nothing; ACCEPTED, document it).
+3. Headless launch + suite green; visual in T5.
 
-- [x] Implementieren → grün → Commit `feat: offer resuming interrupted transfers after reconnect` (mit Footer).
+- [x] Implement → green → Commit `feat: offer resuming interrupted transfers after reconnect` (with footer).
 
 ---
 
-### Task 5: Abschluss-Verifikation
+### Task 5: Closeout verification
 
-- [x] `swift test` gesamt; Rig hoch, `MACSCP_ITEST=1` voll (inkl. neuer gated), `MACSCP_KEYCHAIN=1` 2/2.
-- [x] **Visueller Kill-Test (der Money-Shot; Bildschirm frei):** großen Upload starten (≥ 64 MiB, Limit z. B. 500 KB/s für Sichtbarkeit) → mitten drin `docker stop macscp-test-sshd` → Item wird „unterbrochen" (orange, nicht rot), App bleibt stabil → `docker start` → in der App neu verbinden (gleiche Session) → Banner erscheint → „Fortsetzen" → Transfer läuft ab Offset weiter (Progress startet nicht bei 0!) → fertig → `md5` remote == lokal BYTE-IDENTISCH. Zusätzlich: Kill während MEHRERER paralleler Transfers → alle drei „unterbrochen", ein Fortsetzen-Klick reiht alle wieder ein.
-- [x] Kurz-Check Teil-Datei-Semantik: nach Cancel bleibt Teil-Datei liegen; erneuter normaler Upload derselben Datei zeigt Konflikt-Dialog (kein stilles Resume außerhalb retryInterrupted).
-- [x] Checkboxen, Commit `docs: mark M5d plan tasks as completed` (mit Footer).
+- [x] `swift test` full suite; rig up, `MACSCP_ITEST=1` full (incl. new gated), `MACSCP_KEYCHAIN=1` 2/2.
+- [x] **Visual kill test (the money shot; keep the screen free):** start a large upload (≥ 64 MiB, limit e.g. 500 KB/s for visibility) → mid-transfer `docker stop macscp-test-sshd` → item goes "interrupted" (orange, not red), app stays stable → `docker start` → reconnect in the app (same session) → banner appears → "Resume" → transfer continues from the offset (progress does not start at 0!) → done → `md5` remote == local BYTE-IDENTICAL. Also: kill during MULTIPLE parallel transfers → all three "interrupted", one Resume click re-enqueues all of them.
+- [x] Quick check of partial-file semantics: after cancel the partial file stays; a repeated normal upload of the same file shows the conflict dialog (no silent resume outside retryInterrupted).
+- [x] Checkboxes, Commit `docs: mark M5d plan tasks as completed` (with footer).
 
-## Ausblick
+## Outlook
 
-M5e: Editor-Integration (Temp-Download, Watcher, Auto-Upload). M6: Release — dort u. a. DMG mit lproj-Markern + SPM-Bundles, Auto-Reconnect-Backoff (Backlog), globaler Drossel-Bucket, applyToAll-Recheck.
+M5e: editor integration (temp download, watcher, auto-upload). M6: release — among other things, DMG with lproj markers + SPM bundles, auto-reconnect backoff (backlog), global throttle bucket, applyToAll recheck.

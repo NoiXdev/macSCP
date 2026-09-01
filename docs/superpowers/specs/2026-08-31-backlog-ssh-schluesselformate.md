@@ -1,153 +1,152 @@
-# Backlog: SSH-Schlüsselformate, und eine Meldung, die ihr Gegenteil sagt
+# Backlog: SSH key formats, and a message that says its own opposite
 
-**Angelegt:** 2026-08-31, aus einem Fehlerbericht von außen (v1.3.0).
-Gemeldet wurde eins, beim Nachsehen sind es **zwei** Dinge.
+**Created:** 2026-08-31, from an external bug report (v1.3.0).
+One thing was reported; on closer inspection there are **two** things.
 
-## Der Bericht
+## The report
 
-> „it looks it doesn't support the SSH key in ed25519 format"
+> "it looks it doesn't support the SSH key in ed25519 format"
 
-Gezeigt wurde dabei:
+What was shown:
 
 > SSH key format is not supported (currently: OpenSSH ed25519).
 
-## Befund 1 — die Meldung liest sich als ihr eigenes Gegenteil
+## Finding 1 — the message reads as its own opposite
 
-**Gemessen:** `SSHPrivateKeyLoader.authentication` versucht **ausschließlich**
-`Curve25519.Signing.PrivateKey(sshEd25519:)`. Ed25519 ist also der **einzige**
-Typ, der verbindet — der Kommentar am Lader sagt das auch so, und
-`ManagedKey.canConnect` ist nur für ed25519 wahr.
+**Measured:** `SSHPrivateKeyLoader.authentication` attempts
+**exclusively** `Curve25519.Signing.PrivateKey(sshEd25519:)`. So ed25519 is
+the **only** type that connects — the loader's comment says so too, and
+`ManagedKey.canConnect` is true only for ed25519.
 
-Die Meldung meint demnach „unterstützt wird derzeit: OpenSSH ed25519". Der
-Tester hat sie gelesen als „dein ed25519 wird nicht unterstützt" — und diese
-Lesart ist die naheliegendere, weil der Satz mit „is not supported" beginnt
-und die Klammer wie eine Beschreibung *des vorgelegten Schlüssels* wirkt.
+The message therefore means "currently supported: OpenSSH ed25519". The
+tester read it as "your ed25519 is not supported" — and that reading is
+the more obvious one, because the sentence starts with "is not supported"
+and the parenthetical reads like a description *of the key that was
+presented*.
 
-**Das ist der billigste und wahrscheinlich wirksamste Teil dieses Eintrags.**
-Ein Satz, der sagt, was der Schlüssel ist und was gebraucht wird, statt beides
-in eine Klammer zu legen. Vier Kataloge.
+**This is the cheapest and probably most effective part of this entry.**
+A sentence that says what the key is and what is needed, instead of
+putting both into one parenthetical. Four catalogs.
 
-## Befund 2 — RSA und ecdsa verbinden gar nicht
+## Finding 2 — RSA and ECDSA do not connect at all
 
-`ManagedKey` kann rsa- und ecdsa-Schlüssel **verwalten**, aber nicht mit ihnen
-verbinden. Das war eine bewusste YAGNI-Entscheidung aus M3b und steht so im
-Quelltext.
+`ManagedKey` can **manage** RSA and ECDSA keys, but cannot connect with
+them. That was a deliberate YAGNI decision from M3b and stands as such in
+the source.
 
-**Was daran heute nicht mehr trägt:** RSA ist auf älteren Servern weiterhin
-der Normalfall, und der Tester ist genau darüber gestolpert. Ein Programm,
-das einen Schlüssel importieren lässt und ihn dann nicht benutzen kann, hat
-die Entscheidung an die falsche Stelle gelegt.
+**What no longer holds up about that today:** RSA is still the normal case
+on older servers, and that is exactly what the tester tripped over. A
+program that lets a key be imported and then cannot use it has put the
+decision in the wrong place.
 
-**Zu klären, bevor jemand das angeht:**
+**To clarify before anyone tackles this:**
 
-1. **Welcher der beiden Fälle war es beim Tester?** Der Bericht sagt es nicht,
-   und die Meldung unterscheidet sie nicht — ein RSA-Schlüssel und ein
-   ed25519-Schlüssel, der aus einem anderen Grund nicht las (PEM-Umhüllung,
-   Passphrase-Fehler, der auf `unsupportedFormat` abgebildet wird), erzeugen
-   **denselben Satz**. Befund 1 zu beheben beantwortet also auch diese Frage
-   für den nächsten Bericht.
-2. **Kann Citadel RSA überhaupt?** Vor jedem Entwurf nachsehen, statt es
-   anzunehmen. Der Lader benutzt Citadels Parser; was der kann, entscheidet
-   den Umfang.
-3. **ssh-agent als Ausweg.** `AgentBackedPrivateKey` kennt bereits
-   `ssh-ed25519`, `ecdsa-sha2-nistp256/384` und die RSA-SHA2-Kennungen. Wer
-   seinen Schlüssel im Agenten hat, verbindet also womöglich schon heute —
-   das gehört gemessen, denn falls ja, ist es die Antwort, die ohne neuen
-   Parser auskommt.
+1. **Which of the two cases was it for the tester?** The report does not
+   say, and the message does not distinguish them — an RSA key and an
+   ed25519 key that failed to read for a different reason (PEM wrapping, a
+   passphrase error that maps onto `unsupportedFormat`) produce **the same
+   sentence**. Fixing finding 1 therefore also answers this question for
+   the next report.
+2. **Can Citadel even do RSA?** Check before any design, rather than
+   assume it. The loader uses Citadel's parser; what it can do decides the
+   scope.
+3. **ssh-agent as a way out.** `AgentBackedPrivateKey` already knows
+   `ssh-ed25519`, `ecdsa-sha2-nistp256/384` and the RSA-SHA2 identifiers.
+   Someone with their key in the agent may therefore already be able to
+   connect today — that belongs measured, because if so, it is the answer
+   that needs no new parser.
 
-## Was das nicht ist
+## What this is not
 
-- **Keine Änderung an TOFU** oder am harten Stopp bei einem Fingerabdruck-
-  Konflikt.
-- **Kein eigener Schlüsselparser.** Was Citadel nicht liest, liest macSCP
-  nicht.
+- **No change to TOFU** or to the hard stop on a fingerprint conflict.
+- **No custom key parser.** What Citadel cannot read, macSCP does not
+  read.
 
 ---
 
-## Gemessen 2026-08-31 — und Befund 2 sieht danach anders aus
+## Measured 2026-08-31 — and finding 2 looks different afterward
 
-Fünf Wegwerf-Schlüssel, eigener `ssh-agent` auf einem Scratch-Socket, gegen
-das Rig gefahren.
+Five throwaway keys, a dedicated `ssh-agent` on a scratch socket, run
+against the rig.
 
-| | aus der **Datei** | über den **Agenten** |
+| | from a **file** | via the **agent** |
 |---|---|---|
-| ed25519 | **ja** | ja |
-| RSA | **nein** — parst, authentifiziert nicht | **ja** |
-| ECDSA P-256/384/521 | **nein** — kein Parser | **ja, alle drei** |
+| ed25519 | **yes** | yes |
+| RSA | **no** — parses, does not authenticate | **yes** |
+| ECDSA P-256/384/521 | **no** — no parser | **yes, all three** |
 
-### Warum RSA aus der Datei scheitert
+### Why RSA from a file fails
 
-Nicht am Parsen. Der Schlüssel wird gelesen und die Anmeldung fällt danach:
+Not at parsing. The key is read and the login then fails:
 
 ```
 rsa/openssh/file: PARSED
 rsa/openssh/file: AUTH FAILED: allAuthenticationOptionsFailed
 ```
 
-Isoliert durch Ausführen — derselbe Schlüssel, derselbe Server, nur der
-Signaturalgorithmus variiert:
+Isolated by running — the same key, the same server, only the signature
+algorithm varying:
 
 ```
 -o PubkeyAcceptedAlgorithms=ssh-rsa       → Permission denied
 -o PubkeyAcceptedAlgorithms=rsa-sha2-512  → RSA_SHA2_OK
 ```
 
-**Citadels dateibasierter RSA-Signierer kann nur SHA-1** (`ssh-rsa`), und
-OpenSSH hat das seit 8.8 aus den Vorgaben genommen. Der Agent-Weg umgeht
-den Signierer und signiert `rsa-sha2-512` — deshalb funktioniert RSA dort.
+**Citadel's file-based RSA signer can only do SHA-1** (`ssh-rsa`), and
+OpenSSH removed that from its defaults as of 8.8. The agent path bypasses
+the signer and signs `rsa-sha2-512` — which is why RSA works there.
 
-**Damit ist „RSA ist reine Verdrahtung" widerlegt.** Diese Aussage stammte
-aus dem Lesen der Abhängigkeit und war zweimal behauptet, bevor sie gemessen
-wurde.
+**This refutes "RSA is just wiring."** That claim came from reading the
+dependency and was asserted twice before it was measured.
 
-### Was der Agent-Weg schon konnte
+### What the agent path already could do
 
-`agentAuthConnectsECDSA` existiert seit `387dd9b` — ECDSA über den Agenten
-war **nie** unmessbar, nur P-384 und P-521 hatten keine Abdeckung. Beide
-verbinden.
+`agentAuthConnectsECDSA` has existed since `387dd9b` — ECDSA over the
+agent was **never** unmeasured, only P-384 and P-521 had no coverage. Both
+connect.
 
-### Weitere Funde
+### Further findings
 
-- **PEM-RSA** (`-----BEGIN RSA PRIVATE KEY-----`) scheitert bereits am
-  Parser (`invalidOpenSSHBoundary`), also **anders** als OpenSSH-RSA. Nutzer
-  haben beide Formen auf der Platte, und sie scheitern verschieden.
-- Ein **verschlüsselter** RSA-Schlüssel parst über `decryptionKey:`
-  problemlos; ohne Passphrase kommt `missingDecryptionKey`, was der
-  bestehende Fehler-Abbilder schon behandelt.
-- **Nebenbefund, kein Sicherheitsproblem:** die gegatete Suite lässt
-  Agent-Sockets in `~/.ssh/agent/` liegen — `spawnAgent` beendet den Prozess,
-  räumt den Eintrag aber nicht. Zwei Altlasten vom 21. und 28.08. gefunden.
-- `AgentPrivateKeyFactory` führt dieselben fünf Typen als **zwei** Literale
-  (`supportedKeyTypes` und der `switch`). Heute deckungsgleich, gezählt —
-  eine Umbenennung kann sie still auseinanderziehen.
+- **PEM RSA** (`-----BEGIN RSA PRIVATE KEY-----`) already fails at the
+  parser (`invalidOpenSSHBoundary`), so **differently** from OpenSSH RSA.
+  Users have both forms on disk, and they fail differently.
+- An **encrypted** RSA key parses fine via `decryptionKey:`; without a
+  passphrase it produces `missingDecryptionKey`, which the existing error
+  mapper already handles.
+- **Side finding, not a security issue:** the gated suite leaves agent
+  sockets behind in `~/.ssh/agent/` — `spawnAgent` terminates the process
+  but does not clean up the entry. Two leftovers found, from 08-21 and
+  08-28.
+- `AgentPrivateKeyFactory` carries the same five types as **two**
+  literals (`supportedKeyTypes` and the `switch`). Identical today,
+  counted — a rename can silently pull them apart.
 
-## Upstream (geprüft 2026-08-31)
+## Upstream (checked 2026-08-31)
 
-Beide Lücken sind bei Citadel bekannt, beide haben Code, **keine ist
-gemerged**:
+Both gaps are known at Citadel, both have code, **neither is merged**:
 
-| PR | Inhalt | Stand |
+| PR | Content | Status |
 |---|---|---|
-| **#135** | `rsa-sha2-256`/`-512` in neuer `RSASHA2.swift`, plus `rsaSHA2()` an `SSHAuthenticationMethod` | offen, **ohne Review**, letzte Aktivität 2026-07-26 |
-| **#131** | dasselbe, schmaler (nur SHA-256) | offen seit Juni |
-| **#136** | OpenSSH-Parsen für ECDSA P-256/384/521 | offen |
+| **#135** | `rsa-sha2-256`/`-512` in a new `RSASHA2.swift`, plus `rsaSHA2()` on `SSHAuthenticationMethod` | open, **no review**, last activity 2026-07-26 |
+| **#131** | the same, narrower (SHA-256 only) | open since June |
+| **#136** | OpenSSH parsing for ECDSA P-256/384/521 | open |
 
-#135 begründet sich wortgleich mit unserem Befund: OpenSSH 8.8 hat `ssh-rsa`
-aus den Vorgaben genommen.
+#135's rationale matches our finding word for word: OpenSSH 8.8 removed
+`ssh-rsa` from its defaults.
 
-**Die Abwägung, die daran hängt:** `swift-nio-ssh` kommt bereits über
-`Wellz26/swift-nio-ssh` herein — den Fork eines Fremden, und der offene
-Befund des Abhängigkeits-Eintrags. Eine zweite Fremdquelle darüber
-verlängert dieselbe Kette. Warten, bis #135 landet, kostet nichts außer
-Zeit; forken kostet die Kette.
+**The trade-off riding on this:** `swift-nio-ssh` already comes in via
+`Wellz26/swift-nio-ssh` — a stranger's fork, and the open finding of the
+dependency entry. A second outside source on top of that extends the same
+chain. Waiting for #135 to land costs nothing but time; forking costs the
+chain.
 
-## Was daraus für die Meldung folgt
+## What follows from this for the message
 
-Sie darf **nicht** auf „RSA aus einer Datei" zeigen — das funktioniert
-nicht. Sie soll den erkannten Typ nennen (`SSHKeyType` kann das) und für RSA
-und ECDSA auf den **ssh-agent** verweisen, den einzigen gemessenen Weg.
+It must **not** point at "RSA from a file" — that does not work. It should
+name the detected type (`SSHKeyType` can do this) and, for RSA and ECDSA,
+point at the **ssh-agent**, the only measured path.
 
-**Mit einem benannten Vorbehalt:** der RSA-Agent-Blob gilt als inkompatibel
-mit Go-Servern (Gitea, Forgejo, SFTPGo, `gitlab-sshd`). **Nicht gemessen** —
-gelesen. Wer die Meldung schreibt, sollte das entweder messen oder nicht
-behaupten.
+**With one named caveat:** the RSA agent blob is reportedly incompatible
+with Go servers (Gitea, Forgejo, SFTPGo, `gitlab-sshd`). **Not measured**
+— read. Whoever writes the message should either measure that or not
+claim it.

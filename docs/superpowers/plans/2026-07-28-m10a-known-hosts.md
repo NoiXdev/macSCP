@@ -1,26 +1,26 @@
-# M10a — Known-Hosts-Verwaltung Implementation Plan
+# M10a — Known Hosts Management Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Alle per TOFU gemerkten Host-Keys einsehen und verwalten (Tabelle, Suche, Fingerprint kopieren, Entfernen mit Rückfrage) — erreichbar über ein neues „Sessions"-Menü (⌘⇧K), das Sidebar-Hintergrund-Menü und eine TOFU-Prompt-Fußnote.
+**Goal:** View and manage all host keys remembered via TOFU (table, search, copy fingerprint, remove with confirmation) — reachable via a new "Sessions" menu (⌘⇧K), the sidebar background menu, and a TOFU prompt footnote.
 
-**Architecture:** `KnownHostKey.addedAt: Date?` (decode-kompatibel über den bestehenden normalisierenden Custom-Decoder) + `allKeys()`/`remove(host:port:)` im Store (Core, TDD); `KnownHostsSheet` exakt nach Mockup; das neue „Sessions"-Menü über die vorhandene `TabCommands`-Brücke.
+**Architecture:** `KnownHostKey.addedAt: Date?` (decode-compatible via the existing normalizing custom decoder) + `allKeys()`/`remove(host:port:)` in the store (Core, TDD); `KnownHostsSheet` exactly per mockup; the new "Sessions" menu via the existing `TabCommands` bridge.
 
 **Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, SwiftUI, NSPasteboard.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-28-m10a-known-hosts-design.md` — bindend. Mockup: `docs/design/assets/m10-mockups.html` Abschnitte 1+4. Branch: **develop**.
-- TOFU-INVARIANTEN UNANGETASTET: find/upsert/Validator unverändert, Mismatch bleibt harter Stopp; KEIN Bearbeiten/Hinzufügen von Einträgen — `remove` ist der einzige neue Schreibweg.
-- `addedAt` optional + decode-kompatibel (`decodeIfPresent`; Legacy liest nil ⇒ Anzeige „—"); der Custom-Decoder bleibt der EINZIGE Decode-Pfad (M3d-Regel); `upsert` stempelt `Date()` auch beim Ersetzen.
-- Alle neuen UI-Texte EN/DE; Code + Kommentare NUR Englisch; keine neuen Dependencies.
-- Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` + volle `swift test` nach jedem Task grün (Ausgangslage 470 Tests / 37 Suiten); gated Suiten nur in T3; Tests SYNCHRON im Vordergrund.
-- TDD für Core; App-Target untestbar → T2 liefert Build + Verhaltensbeschreibung.
+- Spec: `docs/superpowers/specs/2026-07-28-m10a-known-hosts-design.md` — binding. Mockup: `docs/design/assets/m10-mockups.html` sections 1+4. Branch: **develop**.
+- TOFU INVARIANTS UNTOUCHED: find/upsert/validator unchanged, mismatch remains a hard stop; NO editing/adding entries — `remove` is the only new write path.
+- `addedAt` optional + decode-compatible (`decodeIfPresent`; legacy reads nil ⇒ display "—"); the custom decoder remains the ONLY decode path (M3d rule); `upsert` stamps `Date()` on replacement too.
+- All new UI text EN/DE; code + comments ONLY English; no new dependencies.
+- Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` + full `swift test` green after every task (starting point 470 tests / 37 suites); gated suites only in T3; tests SYNCHRONOUS in the foreground.
+- TDD for Core; App target untestable → T2 delivers a build + behavior description.
 
 ## Schedule
 
-T1 (Core: addedAt + allKeys + remove) → T2 (App: Sheet + Sessions-Menü + Sidebar + TOFU-Fußnote) → T3 Abschluss (Koordinator).
+T1 (Core: addedAt + allKeys + remove) → T2 (App: sheet + Sessions menu + sidebar + TOFU footnote) → T3 wrap-up (coordinator).
 
 ---
 
@@ -28,37 +28,38 @@ T1 (Core: addedAt + allKeys + remove) → T2 (App: Sheet + Sessions-Menü + Side
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/KnownHostsStore.swift`
-- Test: `Tests/macSCPCoreTests/KnownHostsStoreTests.swift` (bestehende Datei — Muster übernehmen)
+- Test: `Tests/macSCPCoreTests/KnownHostsStoreTests.swift` (existing file — follow its pattern)
 
 **Interfaces:**
-- Produces (T2 verlässt sich exakt hierauf):
-  - `KnownHostKey.addedAt: Date?` (public let; Init-Parameter mit Default `Date()`; Decoder `decodeIfPresent`)
-  - `KnownHostsStore.allKeys() throws -> [KnownHostKey]` (sortiert host, dann port)
-  - `KnownHostsStore.remove(host: String, port: Int) throws` (lowercased-Match; No-op wenn absent; atomar persistiert)
+- Produces (T2 relies on this exactly):
+  - `KnownHostKey.addedAt: Date?` (public let; init parameter with default `Date()`; decoder `decodeIfPresent`)
+  - `KnownHostsStore.allKeys() throws -> [KnownHostKey]` (sorted host, then port)
+  - `KnownHostsStore.remove(host: String, port: Int) throws` (lowercased match; no-op when absent; persisted atomically)
 
-- [x] **Step 1: Failing Tests** (in `KnownHostsStoreTests.swift`, Fixture-Muster der Datei — Temp-Verzeichnis + Beispiel-Keys übernehmen):
+- [x] **Step 1: Failing tests** (in `KnownHostsStoreTests.swift`, following the file's fixture pattern — reuse temp directory + example keys):
 
 ```swift
-    // allKeysListsSorted: drei upserts (b.example:22, a.example:2222, a.example:22)
-    //   -> allKeys() liefert [a.example:22, a.example:2222, b.example:22].
+    // allKeysListsSorted: three upserts (b.example:22, a.example:2222, a.example:22)
+    //   -> allKeys() returns [a.example:22, a.example:2222, b.example:22].
     // removeDeletesExactMatchOnly: upsert a:22 + a:2222; remove(host:"A.EXAMPLE",
-    //   port:22) -> allKeys() enthält nur noch a:2222 (Case-insensitiv via
-    //   lowercased-Match); remove(host:"missing", port:9) wirft nicht, ändert nichts.
-    // upsertStampsAddedAt: frischer upsert -> allKeys().first?.addedAt != nil;
-    //   zweiter upsert desselben Hosts mit anderem Key-Blob -> addedAt neu
-    //   gestempelt (>= erster Wert; einfacher Nil-Check + Ungleichheit über
-    //   injizierten Sleep vermeiden — stattdessen: erster addedAt merken,
-    //   kurz Task.sleep(50ms), erneut upserten, #expect(neuer > alter)).
-    // legacyEntriesReadWithNilAddedAt: Raw-JSON OHNE addedAt-Feld direkt in
-    //   known_hosts.json schreiben (Format der Datei nachstellen) ->
-    //   allKeys().first?.addedAt == nil; fingerprintSHA256 weiterhin ableitbar.
-    // roundtripKeepsAddedAt: upsert -> neues Store-Objekt aufs selbe
-    //   Verzeichnis -> addedAt bleibt (Codable-Roundtrip).
+    //   port:22) -> allKeys() contains only a:2222 (case-insensitive via
+    //   lowercased match); remove(host:"missing", port:9) does not throw, changes
+    //   nothing.
+    // upsertStampsAddedAt: fresh upsert -> allKeys().first?.addedAt != nil;
+    //   second upsert of the same host with a different key blob -> addedAt
+    //   re-stamped (>= first value; avoid a simple nil check + inequality via
+    //   an injected sleep — instead: remember the first addedAt, briefly
+    //   Task.sleep(50ms), upsert again, #expect(newer > older)).
+    // legacyEntriesReadWithNilAddedAt: write raw JSON WITHOUT the addedAt field
+    //   directly into known_hosts.json (matching the file's format) ->
+    //   allKeys().first?.addedAt == nil; fingerprintSHA256 still derivable.
+    // roundtripKeepsAddedAt: upsert -> new store object on the same
+    //   directory -> addedAt survives (Codable roundtrip).
 ```
 
-- [x] **Step 2: Rot beweisen.** `swift test --filter KnownHostsStoreTests` → FAIL.
+- [x] **Step 2: Prove red.** `swift test --filter KnownHostsStoreTests` → FAIL.
 
-- [x] **Step 3: Implementierung.**
+- [x] **Step 3: Implementation.**
 
 ```swift
     // In KnownHostKey:
@@ -70,8 +71,8 @@ T1 (Core: addedAt + allKeys + remove) → T2 (App: Sheet + Sessions-Menü + Side
     public init(host: String, port: Int, keyType: String,
                 publicKeyBase64: String, addedAt: Date? = Date()) { … }
 
-    // Decoder: addedAt via container.decodeIfPresent(Date.self, forKey: .addedAt)
-    // durch den normalisierenden Init reichen; CodingKeys um .addedAt ergänzen.
+    // Decoder: pass addedAt via container.decodeIfPresent(Date.self, forKey: .addedAt)
+    // through the normalizing init; add .addedAt to CodingKeys.
 
     // In KnownHostsStore:
     /// All remembered keys, host-then-port sorted — the management sheet's
@@ -92,37 +93,37 @@ T1 (Core: addedAt + allKeys + remove) → T2 (App: Sheet + Sessions-Menü + Side
     }
 ```
 
-  `upsert` unverändert lassen (der Init-Default stempelt) — ABER prüfen, wo `KnownHostKey` im TOFU-Validator konstruiert wird (grep `KnownHostKey(`): bestehende Aufrufer kompilieren durch den Default weiter; keiner darf explizit `addedAt: nil` setzen.
+  Leave `upsert` unchanged (the init default does the stamping) — BUT check where `KnownHostKey` is constructed in the TOFU validator (grep `KnownHostKey(`): existing callers keep compiling via the default; none may set `addedAt: nil` explicitly.
 
-- [x] **Step 4: Grün + volle Suite.** `swift test` → 470 + 5 (echte Zahl festhalten).
+- [x] **Step 4: Green + full suite.** `swift test` → 470 + 5 (record the actual number).
 
 - [x] **Step 5: Commit.** `feat: list, date and remove known host keys`
 
 ---
 
-### Task 2: Sheet + Sessions-Menü + Sidebar + TOFU-Fußnote (App)
+### Task 2: Sheet + Sessions menu + sidebar + TOFU footnote (App)
 
 **Files:**
 - Create: `Sources/MacSCPApp/KnownHostsSheet.swift`
-- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (Sessions-Menü), `Sources/MacSCPApp/ContentView.swift` (Sheet-State + TabCommands-Closure + Sidebar-Callback), `Sources/MacSCPApp/SessionSidebar.swift` (Hintergrund-Menü-Eintrag), `Sources/MacSCPApp/ConnectionFormView.swift` (TOFU-Prompt-Fußnote), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
-- Test: keiner (App-Target; Smoke in T3)
+- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (Sessions menu), `Sources/MacSCPApp/ContentView.swift` (sheet state + TabCommands closure + sidebar callback), `Sources/MacSCPApp/SessionSidebar.swift` (background menu entry), `Sources/MacSCPApp/ConnectionFormView.swift` (TOFU prompt footnote), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
+- Test: none (App target; smoke in T3)
 
 **Interfaces:**
-- Consumes: `allKeys()`/`remove(host:port:)`/`addedAt` (T1), `KnownHostsStore(directory: SessionStore.defaultDirectory)` (derselbe Ort wie der Connector in ContentView ihn nutzt — nachschlagen), `TabCommands`-Brücke (M8a; um eine Closure `showKnownHosts: (() -> Void)?` erweitern), Sidebar-Callback-Muster, TOFU-Prompt-View in `ConnectionFormView` (die Trust-Entscheidung aus M3c — Stelle suchen).
+- Consumes: `allKeys()`/`remove(host:port:)`/`addedAt` (T1), `KnownHostsStore(directory: SessionStore.defaultDirectory)` (the same location the connector in ContentView uses it from — look it up), `TabCommands` bridge (M8a; extend with a closure `showKnownHosts: (() -> Void)?`), sidebar callback pattern, TOFU prompt view in `ConnectionFormView` (the trust decision from M3c — find the spot).
 
-**Verhaltens-Anforderungen (Spec §2/§3, bindend):**
-1. `KnownHostsSheet(store:)` nach Mockup Abschnitt 1 (~720 pt): Tabelle Host/Port/Keytyp-Badge/Fingerprint (monospaced, inkSecondary)/Hinzugefügt (`dd.MM.yyyy`, „—" bei nil); Mehrfachauswahl (SwiftUI `Table` mit `selection: Set<…>` ODER List — Wahl dokumentieren); Suche case-insensitiv über host+fingerprint; Fußzeile Zähler („%lld Hosts" / „%lld von %lld"), „Fingerprint kopieren" (Einzelauswahl; `NSPasteboard.general.clearContents()` + `setString`), „Entfernen…" (destruktiv, confirmationDialog: EN "The host will be treated as unknown on the next connect (new trust prompt)." / DE „Beim nächsten Verbinden wird der Host wie ein unbekannter behandelt (neuer Vertrauens-Prompt)."; Mehrfachauswahl nennt Anzahl), „Schließen". Laden bei onAppear; Ladefehler ⇒ rote Meldung im Sheet. Nach remove: neu laden, Auswahl leeren.
-2. Sessions-Menü in `MacSCPApp.commands`: `CommandMenu(L10n.string("menu.sessions", "Sessions"))` mit „Known Hosts…" ⌘⇧K (`tabCommands.showKnownHosts?()`, Key-Window-Guard wie die übrigen), Divider, „Export All Sessions…" und „Import Sessions…" — dieselben Handler wie die Sidebar-Einträge (über neue TabCommands-Closures `exportAllSessions`/`importSessions`, die ContentView auf die BESTEHENDEN Handler bindet; Sidebar-Einträge bleiben unverändert).
-3. Sidebar-Hintergrund-Menü: „Known Hosts…" mit Separator über den Export/Import-Einträgen (Callback `onShowKnownHosts` nach Muster).
-4. TOFU-Prompt (`ConnectionFormView`, M3c-Trust-View): dezente Fußnote/Link-Zeile „Manage known hosts…"/„Bekannte Hosts verwalten…" unter den Buttons — öffnet das Sheet ÜBER dem Formular (eigener Sheet-State in ConnectionFormView mit direktem Store-Zugriff ODER Callback nach oben — die kleinere Lösung wählen und dokumentieren); der Prompt bleibt offen und funktional.
-5. Keys EN/DE (Vorschlag): `menu.sessions`, `menu.knownHosts`, `knownHosts.title`, `knownHosts.search`, `knownHosts.column.host/port/keyType/fingerprint/added`, `knownHosts.count %lld`, `knownHosts.countFiltered %lld %lld`, `knownHosts.copyFingerprint`, `knownHosts.remove`, `knownHosts.remove.title`, `knownHosts.remove.message`, `knownHosts.remove.messageMany %lld`, `knownHosts.remove.confirm`, `knownHosts.empty`, `knownHosts.loadError %@`, `tofu.manageKnownHosts`. Grep-Gegenprobe beide Kataloge.
+**Behavior requirements (Spec §2/§3, binding):**
+1. `KnownHostsSheet(store:)` per mockup section 1 (~720 pt): table Host/Port/key-type badge/fingerprint (monospaced, inkSecondary)/Added (`dd.MM.yyyy`, "—" when nil); multi-selection (SwiftUI `Table` with `selection: Set<…>` OR List — document the choice); case-insensitive search over host+fingerprint; footer counter ("%lld Hosts" / "%lld of %lld"), "Copy Fingerprint" (single selection; `NSPasteboard.general.clearContents()` + `setString`), "Remove…" (destructive, confirmationDialog: EN "The host will be treated as unknown on the next connect (new trust prompt)." / DE „Beim nächsten Verbinden wird der Host wie ein unbekannter behandelt (neuer Vertrauens-Prompt)."; multi-selection states the count), "Close". Load on onAppear; load error ⇒ red message in the sheet. After remove: reload, clear selection.
+2. Sessions menu in `MacSCPApp.commands`: `CommandMenu(L10n.string("menu.sessions", "Sessions"))` with "Known Hosts…" ⌘⇧K (`tabCommands.showKnownHosts?()`, key-window guard like the other entries), divider, "Export All Sessions…" and "Import Sessions…" — the same handlers as the sidebar entries (via new TabCommands closures `exportAllSessions`/`importSessions`, which ContentView binds to the EXISTING handlers; sidebar entries remain unchanged).
+3. Sidebar background menu: "Known Hosts…" with a separator above the export/import entries (callback `onShowKnownHosts` following the pattern).
+4. TOFU prompt (`ConnectionFormView`, M3c trust view): a subtle footnote/link line "Manage known hosts…"/„Bekannte Hosts verwalten…" under the buttons — opens the sheet OVER the form (own sheet state in ConnectionFormView with direct store access OR callback upward — pick the smaller solution and document it); the prompt stays open and functional.
+5. Keys EN/DE (suggested): `menu.sessions`, `menu.knownHosts`, `knownHosts.title`, `knownHosts.search`, `knownHosts.column.host/port/keyType/fingerprint/added`, `knownHosts.count %lld`, `knownHosts.countFiltered %lld %lld`, `knownHosts.copyFingerprint`, `knownHosts.remove`, `knownHosts.remove.title`, `knownHosts.remove.message`, `knownHosts.remove.messageMany %lld`, `knownHosts.remove.confirm`, `knownHosts.empty`, `knownHosts.loadError %@`, `tofu.manageKnownHosts`. Cross-check both catalogs by grep.
 
-- [x] **Step 1:** Sheet. **Step 2:** Menü + TabCommands. **Step 3:** Sidebar + TOFU-Fußnote. **Step 4:** Keys + Gegenprobe. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T1). **Step 6:** Commit `feat: manage known host keys from a dedicated sheet`.
+- [x] **Step 1:** Sheet. **Step 2:** Menu + TabCommands. **Step 3:** Sidebar + TOFU footnote. **Step 4:** Keys + cross-check. **Step 5:** `swift build` (0 errors, no new warnings) + full `swift test` (T1 state). **Step 6:** Commit `feat: manage known host keys from a dedicated sheet`.
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Final verification (coordinator)
 
-- [x] Gated Suiten: 475/475 zero skips (Final-Reviewer unabhängig wiederholt).
-- [ ] Visueller Smoke — **an den Maintainer delegiert** (Checkliste in der Zusammenfassung).
-- [x] Plan-Checkboxen, Ledger, Opus-Final-Review („Ready to merge: Yes" im ersten Anlauf; zwei Pre-Push-Politur-Punkte gefolgt), Push, CI, Rig stop, Memory, Zusammenfassung.
+- [x] Gated suites: 475/475 zero skips (final reviewer repeats independently).
+- [ ] Visual smoke test — **delegated to the maintainer** (checklist in the summary).
+- [x] Plan checkboxes, ledger, Opus final review ("Ready to merge: Yes" on the first pass; two pre-push polish points followed), push, CI, rig stop, memory, summary.

@@ -1,28 +1,28 @@
-# macSCP M3a — Session-Store, Schlüsselbund & Sidebar Implementation Plan
+# macSCP M3a — Session Store, Keychain & Sidebar Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Gespeicherte Verbindungen (Passwort-Auth) mit Sessions-Sidebar: speichern beim Verbinden, Passwort ausschließlich im macOS-Schlüsselbund, Ein-Klick-Reconnect, Löschen per Kontextmenü.
+**Goal:** Stored connections (password auth) with a sessions sidebar: save on connect, password exclusively in the macOS Keychain, one-click reconnect, delete via context menu.
 
-**Architecture:** `StoredSession` (Codable, OHNE Geheimnisse) + `SessionStore` (JSON in `~/Library/Application Support/macSCP/sessions.json`, injizierbares Verzeichnis, atomare Writes). Geheimnisse hinter dem `SecretStore`-Protocol: `KeychainSecretStore` (Security.framework) in Produktion, `InMemorySecretStore` in Tests. `SessionListViewModel` (`@Observable @MainActor`) verbindet beides. `ConnectionViewModel` bekommt `shouldSaveSession`/`saveName` (+ Feld-Validierung), das Formular den Speichern-Toggle. `ContentView` erhält die Sessions-Sidebar (HSplitView links, Phosphor-Punkt für die aktive Session) — Klick füllt das Formular aus dem Store + Schlüsselbund und verbindet.
+**Architecture:** `StoredSession` (Codable, WITHOUT secrets) + `SessionStore` (JSON in `~/Library/Application Support/macSCP/sessions.json`, injectable directory, atomic writes). Secrets sit behind the `SecretStore` protocol: `KeychainSecretStore` (Security.framework) in production, `InMemorySecretStore` in tests. `SessionListViewModel` (`@Observable @MainActor`) connects both. `ConnectionViewModel` gets `shouldSaveSession`/`saveName` (+ field validation), the form gets the save toggle. `ContentView` gets the sessions sidebar (HSplitView on the left, phosphor dot for the active session) — clicking fills the form from the store + Keychain and connects.
 
-**Abhängigkeitsgraph (Parallel-Phasen für den Koordinator):**
+**Dependency graph (parallel phases for the coordinator):**
 
 ```
 Task 0 ─→ [ Task 1 (SessionStore) ∥ Task 2 (SecretStore/Keychain) ∥ Task 3 (ConnectionViewModel v3 + Form) ]
         ─→ Task 4 (SessionListViewModel) ─→ Task 5 (Sidebar + ContentView) ─→ Task 6 (Abschluss)
 ```
-(Tasks 1/2/3 sind dateidisjunkt — drei parallele Worktrees möglich.)
+(Tasks 1/2/3 are file-disjoint — three parallel worktrees possible.)
 
 ## Global Constraints
 
-- swift-tools-version 6.0, Language Mode v5; macOS 14; UI-Texte Deutsch; Conventional Commits mit Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; niemals pushen (macht der Koordinator)
-- **Geheimnisse NIEMALS in der JSON-Datei** — nur Session-Metadaten; Passwörter ausschließlich über `SecretStore`
-- YAGNI für M3a: NUR Passwort-Auth (`AuthKind.password`; Key/Agent → M3b), KEIN Session-Editor-Dialog (Speichern nur beim Verbinden), KEINE Start-Verzeichnisse, KEIN Umbenennen, KEINE Rückfrage-Dialoge (Session-Wechsel während Transfer wird per `.disabled` blockiert)
-- Schlüsselbund-Tests sind gated hinter `MACSCP_KEYCHAIN=1` (CI-Runner-Keychains sind unzuverlässig); Unit-Suite bleibt ohne Gate grün
-- Nach jedem Task: `swift test` grün
+- swift-tools-version 6.0, Language Mode v5; macOS 14; UI text German; Conventional Commits with footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; never push (the coordinator does that)
+- **Secrets NEVER in the JSON file** — only session metadata; passwords exclusively via `SecretStore`
+- YAGNI for M3a: password auth ONLY (`AuthKind.password`; key/agent → M3b), NO session editor dialog (save only on connect), NO start directories, NO renaming, NO confirmation dialogs (session switching during a transfer is blocked via `.disabled`)
+- Keychain tests are gated behind `MACSCP_KEYCHAIN=1` (CI runner keychains are unreliable); the unit suite stays green without the gate
+- After every task: `swift test` green
 
-## Datei-Landkarte (Delta M3a)
+## File map (delta M3a)
 
 ```
 Sources/macSCPCore/
@@ -48,16 +48,16 @@ Tests/macSCPCoreTests/
 
 ---
 
-### Task 0: M3-Auftakt-Nits (aus M2d-Abschluss-Review)
+### Task 0: M3 kickoff nits (from the M2d closeout review)
 
 **Files:**
 - Modify: `Sources/MacSCPApp/ContentView.swift`
 - Modify: `Sources/MacSCPApp/BrowserPane.swift`
 
-Keine neuen Tests (reine Hygiene); Verifikation: Build + Suite (67) grün.
+No new tests (pure hygiene); verification: build + suite (67) green.
 
-- [x] **Step 1:** In `ContentView.swift`, im Remote-`pasteboardWriter`: `to: LocalFileSystem(),` ersetzen durch `to: session.localFS,` (Instanz-Wiederverwendung statt Neubau).
-- [x] **Step 2:** In `ContentView.swift`: den 9-zeiligen Promise-Closure-Body in eine private Methode extrahieren und an der Aufrufstelle nutzen:
+- [x] **Step 1:** In `ContentView.swift`, in the remote `pasteboardWriter`: replace `to: LocalFileSystem(),` with `to: session.localFS,` (reuse the instance instead of building a new one).
+- [x] **Step 2:** In `ContentView.swift`: extract the 9-line promise closure body into a private method and use it at the call site:
 
 ```swift
     /// Promise-Einlösung: Remote-Datei direkt über die Engine an die
@@ -78,16 +78,16 @@ Keine neuen Tests (reine Hygiene); Verifikation: Build + Suite (67) grün.
     }
 ```
 
-Aufrufstelle: `pasteboardWriter: { item in item.kind == .file ? remotePromiseProvider(for: item, session: session) : nil }`.
+Call site: `pasteboardWriter: { item in item.kind == .file ? remotePromiseProvider(for: item, session: session) : nil }`.
 
-- [x] **Step 3:** In `BrowserPane.swift`: `.overlay(...)`- und `.onDrop(...)`-Modifier nur anwenden, wenn `onDropURLs != nil` (kein Streu-Highlight auf dem lokalen Pane). Da Modifier nicht bedingt sein können, das Highlight über die Bedingung im Stroke lösen und den Drop im Closure ablehnen (bereits vorhanden) — konkret: die `strokeBorder`-Zeile ändern zu
+- [x] **Step 3:** In `BrowserPane.swift`: only apply the `.overlay(...)` and `.onDrop(...)` modifiers when `onDropURLs != nil` (no stray highlight on the local pane). Since modifiers cannot be conditional, resolve the highlight via the condition in the stroke and reject the drop in the closure (already in place) — concretely: change the `strokeBorder` line to
 
 ```swift
                     .strokeBorder(tint, lineWidth: isDropTargeted && onDropURLs != nil ? 2.5 : 0)
 ```
 
-- [x] **Step 4:** In `BrowserPane.swift`: `extension NSItemProvider` → `fileprivate extension NSItemProvider` (Methode nur hier genutzt).
-- [x] **Step 5:** `swift build && swift test` — 67 grün. Commit:
+- [x] **Step 4:** In `BrowserPane.swift`: `extension NSItemProvider` → `fileprivate extension NSItemProvider` (method used only here).
+- [x] **Step 5:** `swift build && swift test` — 67 green. Commit:
 
 ```bash
 git add Sources/MacSCPApp/
@@ -106,7 +106,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `Tests/macSCPCoreTests/SessionStoreTests.swift`
 
 **Interfaces:**
-- Produces (für Task 4/5):
+- Produces (for Task 4/5):
 
 ```swift
 public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
@@ -130,9 +130,9 @@ public struct SessionStore: Sendable {
 }
 ```
 
-**Parallel-Hinweis:** disjunkt zu Task 2 und Task 3 — Worktree.
+**Parallel note:** disjoint from Task 2 and Task 3 — worktree.
 
-- [x] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Failing tests**
 
 `Tests/macSCPCoreTests/SessionStoreTests.swift`:
 
@@ -205,9 +205,9 @@ struct SessionStoreTests {
 }
 ```
 
-- [x] **Step 2: Rot verifizieren** — `swift test --filter SessionStoreTests` → Compile-Fehler `cannot find 'SessionStore' in scope`
+- [x] **Step 2: Verify red** — `swift test --filter SessionStoreTests` → compile error `cannot find 'SessionStore' in scope`
 
-- [x] **Step 3: Implementieren**
+- [x] **Step 3: Implement**
 
 `Sources/macSCPCore/Sessions/StoredSession.swift`:
 
@@ -304,7 +304,7 @@ public struct SessionStore: Sendable {
 }
 ```
 
-- [x] **Step 4: Grün** — `swift test --filter SessionStoreTests` (6 PASS), dann `swift test` (73 im Merge-Endstand; auf dem eigenen Branch 67 + 6).
+- [x] **Step 4: Green** — `swift test --filter SessionStoreTests` (6 PASS), then `swift test` (73 in the merged end state; 67 + 6 on its own branch).
 
 - [x] **Step 5: Commit**
 
@@ -317,7 +317,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: SecretStore-Protocol + KeychainSecretStore
+### Task 2: SecretStore protocol + KeychainSecretStore
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/SecretStore.swift`
@@ -325,7 +325,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `Tests/macSCPCoreTests/KeychainSecretStoreTests.swift` (gated)
 
 **Interfaces:**
-- Produces (für Task 4/5):
+- Produces (for Task 4/5):
 
 ```swift
 public protocol SecretStore: Sendable {
@@ -339,11 +339,11 @@ public struct KeychainSecretStore: SecretStore {
 }
 ```
 
-- Test-Double (internal, Test-Target): `InMemorySecretStore` (final class, NSLock, `@unchecked Sendable`).
+- Test double (internal, test target): `InMemorySecretStore` (final class, NSLock, `@unchecked Sendable`).
 
-**Parallel-Hinweis:** disjunkt zu Task 1 und Task 3 — Worktree.
+**Parallel note:** disjoint from Task 1 and Task 3 — worktree.
 
-- [x] **Step 1: Gated Tests (Rot via Compile-Fehler)**
+- [x] **Step 1: Gated tests (red via compile error)**
 
 `Tests/macSCPCoreTests/KeychainSecretStoreTests.swift`:
 
@@ -410,9 +410,9 @@ final class InMemorySecretStore: SecretStore, @unchecked Sendable {
 }
 ```
 
-- [x] **Step 2: Rot verifizieren** — `swift build --build-tests` bzw. `swift test --filter KeychainSecretStoreTests` → Compile-Fehler `cannot find 'SecretStore'/'KeychainSecretStore' in scope`
+- [x] **Step 2: Verify red** — `swift build --build-tests` or `swift test --filter KeychainSecretStoreTests` → compile error `cannot find 'SecretStore'/'KeychainSecretStore' in scope`
 
-- [x] **Step 3: Implementieren**
+- [x] **Step 3: Implement**
 
 `Sources/macSCPCore/Sessions/SecretStore.swift`:
 
@@ -484,7 +484,7 @@ public struct KeychainSecretStore: SecretStore {
 }
 ```
 
-- [x] **Step 4: Grün** — `MACSCP_KEYCHAIN=1 swift test --filter KeychainSecretStoreTests` (2 PASS — lokal möglich; falls der Schlüsselbund im Sandbox-Kontext blockiert: als NICHT lokal verifiziert kennzeichnen, der Koordinator übernimmt das in Task 6). Ohne Gate: `swift test` unverändert grün (Suite wird übersprungen).
+- [x] **Step 4: Green** — `MACSCP_KEYCHAIN=1 swift test --filter KeychainSecretStoreTests` (2 PASS — locally possible; if the Keychain blocks in the sandbox context: mark as NOT verified locally, the coordinator picks it up in Task 6). Without the gate: `swift test` stays green unchanged (the suite is skipped).
 
 - [x] **Step 5: Commit**
 
@@ -497,19 +497,19 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: ConnectionViewModel v3 (Speichern-Toggle) + Formular
+### Task 3: ConnectionViewModel v3 (save toggle) + form
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/ConnectionViewModel.swift`
-- Modify: `Tests/macSCPCoreTests/ConnectionViewModelTests.swift` (+2 Tests)
+- Modify: `Tests/macSCPCoreTests/ConnectionViewModelTests.swift` (+2 tests)
 - Modify: `Sources/MacSCPApp/ConnectionFormView.swift`
 
 **Interfaces:**
-- Produces (für Task 5): `ConnectionViewModel.shouldSaveSession: Bool` (default false), `saveName: String` (default ""), neuer `Field`-Case `.saveName`; Validierung: Toggle an + leerer (getrimmter) Name → `failed(message: "Name für die gespeicherte Session angeben.", field: .saveName)` VOR dem Verbindungsaufbau.
+- Produces (for Task 5): `ConnectionViewModel.shouldSaveSession: Bool` (default false), `saveName: String` (default ""), new `Field` case `.saveName`; validation: toggle on + empty (trimmed) name → `failed(message: "Name für die gespeicherte Session angeben.", field: .saveName)` BEFORE the connection is established.
 
-**Parallel-Hinweis:** disjunkt zu Task 1 und Task 2 — Worktree.
+**Parallel note:** disjoint from Task 1 and Task 2 — worktree.
 
-- [x] **Step 1: Fehlschlagende Tests** — in `ConnectionViewModelTests` ergänzen:
+- [x] **Step 1: Failing tests** — add to `ConnectionViewModelTests`:
 
 ```swift
     @Test func saveRequestedWithEmptyNameFlagsSaveNameField() async {
@@ -534,12 +534,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
     }
 ```
 
-Run: `swift test --filter ConnectionViewModelTests` → Compile-Fehler (`shouldSaveSession` unbekannt).
+Run: `swift test --filter ConnectionViewModelTests` → compile error (`shouldSaveSession` unknown).
 
-- [x] **Step 2: ViewModel erweitern** — in `ConnectionViewModel`:
+- [x] **Step 2: Extend the view model** — in `ConnectionViewModel`:
 
-1. `Field` um `case saveName` ergänzen.
-2. Properties ergänzen:
+1. Add `case saveName` to `Field`.
+2. Add properties:
 
 ```swift
     /// Session nach erfolgreichem Verbinden speichern (Store + Schlüsselbund)?
@@ -547,7 +547,7 @@ Run: `swift test --filter ConnectionViewModelTests` → Compile-Fehler (`shouldS
     public var saveName: String = ""
 ```
 
-3. In `connect()` nach dem Passwort-Guard ergänzen:
+3. In `connect()`, add after the password guard:
 
 ```swift
         if shouldSaveSession,
@@ -558,7 +558,7 @@ Run: `swift test --filter ConnectionViewModelTests` → Compile-Fehler (`shouldS
         }
 ```
 
-- [x] **Step 3: Formular erweitern** — in `ConnectionFormView`, innerhalb der `Form` nach dem `SecureField`:
+- [x] **Step 3: Extend the form** — in `ConnectionFormView`, inside the `Form` after the `SecureField`:
 
 ```swift
                 Toggle("Als Session speichern", isOn: $viewModel.shouldSaveSession)
@@ -569,7 +569,7 @@ Run: `swift test --filter ConnectionViewModelTests` → Compile-Fehler (`shouldS
                 }
 ```
 
-- [x] **Step 4: Grün** — `swift test --filter ConnectionViewModelTests` (10 PASS), `swift build && swift test` (auf dem eigenen Branch 69).
+- [x] **Step 4: Green** — `swift test --filter ConnectionViewModelTests` (10 PASS), `swift build && swift test` (69 on its own branch).
 
 - [x] **Step 5: Commit**
 
@@ -589,8 +589,8 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: Task 1 (`SessionStore`, `StoredSession`) + Task 2 (`SecretStore`, im Test `InMemorySecretStore`)
-- Produces (für Task 5):
+- Consumes: Task 1 (`SessionStore`, `StoredSession`) + Task 2 (`SecretStore`, in tests `InMemorySecretStore`)
+- Produces (for Task 5):
 
 ```swift
 @Observable @MainActor
@@ -607,7 +607,7 @@ public final class SessionListViewModel {
 }
 ```
 
-- [x] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Failing tests**
 
 `Tests/macSCPCoreTests/SessionListViewModelTests.swift`:
 
@@ -674,9 +674,9 @@ struct SessionListViewModelTests {
 }
 ```
 
-- [x] **Step 2: Rot verifizieren** — Compile-Fehler `cannot find 'SessionListViewModel' in scope`
+- [x] **Step 2: Verify red** — compile error `cannot find 'SessionListViewModel' in scope`
 
-- [x] **Step 3: Implementieren**
+- [x] **Step 3: Implement**
 
 `Sources/macSCPCore/Presentation/SessionListViewModel.swift`:
 
@@ -745,7 +745,7 @@ public final class SessionListViewModel {
 }
 ```
 
-- [x] **Step 4: Grün** — `swift test --filter SessionListViewModelTests` (5 PASS), dann `swift test` komplett: **80 Tests grün** (67 + 6 T1 + 2 T3 + 5 T4; Keychain-Suite übersprungen).
+- [x] **Step 4: Green** — `swift test --filter SessionListViewModelTests` (5 PASS), then full `swift test`: **80 tests green** (67 + 6 T1 + 2 T3 + 5 T4; Keychain suite skipped).
 
 - [x] **Step 5: Commit**
 
@@ -758,17 +758,17 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Sessions-Sidebar + ContentView-Verdrahtung
+### Task 5: Sessions sidebar + ContentView wiring
 
 **Files:**
 - Create: `Sources/MacSCPApp/SessionSidebar.swift`
 - Modify: `Sources/MacSCPApp/DesignTokens.swift` (+ statusPhosphor)
-- Modify (vollständig ersetzen): `Sources/MacSCPApp/ContentView.swift`
-- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (Mindestbreite)
+- Modify (replace entirely): `Sources/MacSCPApp/ContentView.swift`
+- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (minimum width)
 
-**Interfaces:** Consumes Tasks 1–4. Produces die benutzbare Sidebar (Neue Verbindung, Session-Klick = Reconnect mit Schlüsselbund-Passwort, Kontextmenü Löschen, Phosphor-Punkt für aktiv).
+**Interfaces:** Consumes Tasks 1–4. Produces the usable sidebar (new connection, session click = reconnect with Keychain password, context menu delete, phosphor dot for active).
 
-- [x] **Step 1: Design-Token ergänzen** — in `DesignTokens.swift`:
+- [x] **Step 1: Add design token** — in `DesignTokens.swift`:
 
 ```swift
     /// Phosphor aus docs/design/ci.md: Verbunden-Status, Terminal-Grün.
@@ -843,9 +843,9 @@ struct SessionSidebar: View {
 }
 ```
 
-- [x] **Step 3: ContentView ersetzen**
+- [x] **Step 3: Replace ContentView**
 
-`Sources/MacSCPApp/ContentView.swift` — Datei komplett ersetzen (übernimmt ALLE bestehenden privaten Methoden `uploadDropped`, `remotePromiseProvider`, `uploadButton`, `downloadButton` unverändert aus dem aktuellen Stand; hier NUR die veränderten Teile gezeigt — der Implementierer fügt die unveränderten Methoden aus dem bestehenden File ein):
+`Sources/MacSCPApp/ContentView.swift` — replace the file entirely (carries over ALL existing private methods `uploadDropped`, `remotePromiseProvider`, `uploadButton`, `downloadButton` unchanged from the current state; only the changed parts are shown here — the implementer inserts the unchanged methods from the existing file):
 
 ```swift
 import AppKit
@@ -1012,11 +1012,11 @@ struct ContentView: View {
 }
 ```
 
-Hinweis: Ein per Sidebar gestarteter Connect, der FEHLSCHLÄGT (z.B. Passwort im Schlüsselbund fehlt), landet im Formular mit vorbefüllten Feldern und roter Meldung — gewünschtes Verhalten, nichts extra bauen.
+Note: A connect started via the sidebar that FAILS (e.g. the password is missing from the Keychain) lands on the form with pre-filled fields and a red message — this is the desired behavior, nothing extra to build.
 
-- [x] **Step 4: Mindestbreite** — in `MacSCPApp.swift`: `.frame(minWidth: 930, minHeight: 460)`
+- [x] **Step 4: Minimum width** — in `MacSCPApp.swift`: `.frame(minWidth: 930, minHeight: 460)`
 
-- [x] **Step 5: Grün** — `swift build && swift test` (80 Tests)
+- [x] **Step 5: Green** — `swift build && swift test` (80 tests)
 
 - [x] **Step 6: Commit**
 
@@ -1029,14 +1029,14 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 6: Abschluss-Verifikation
+### Task 6: Final verification
 
-- [x] **Step 1:** `swift test` — 80 Tests grün (Keychain-Suite übersprungen)
-- [x] **Step 2:** `MACSCP_KEYCHAIN=1 swift test --filter KeychainSecretStoreTests` — 2/2 (lokal; falls Task 2 das nicht verifizieren konnte, hier nachholen)
-- [x] **Step 3:** Docker-Rig hoch, `MACSCP_ITEST=1 swift test --filter CitadelFileSystem` — 6/6
-- [x] **Step 4: Visueller Smoke-Test** (Koordinator): Verbinden mit Toggle „Als Session speichern" + Name → Sidebar zeigt Session mit Phosphor-Punkt; Trennen → Punkt aus; Sidebar-Klick → verbindet OHNE Passworteingabe (Schlüsselbund); Kontextmenü → Löschen entfernt Eintrag; „Neue Verbindung" → leeres Formular; Toggle an + leerer Name → rotes Feld
-- [x] **Step 5:** Rig runter, Checkboxen abhaken, Commit `docs: mark M3a plan tasks as completed` (mit Footer)
+- [x] **Step 1:** `swift test` — 80 tests green (Keychain suite skipped)
+- [x] **Step 2:** `MACSCP_KEYCHAIN=1 swift test --filter KeychainSecretStoreTests` — 2/2 (locally; if Task 2 could not verify this, catch up here)
+- [x] **Step 3:** Bring up the Docker rig, `MACSCP_ITEST=1 swift test --filter CitadelFileSystem` — 6/6
+- [x] **Step 4: Visual smoke test** (coordinator): connect with the "Als Session speichern" toggle + name → sidebar shows the session with a phosphor dot; disconnect → dot off; sidebar click → connects WITHOUT entering a password (Keychain); context menu → delete removes the entry; "Neue Verbindung" → empty form; toggle on + empty name → red field
+- [x] **Step 5:** Bring the rig down, check off the checkboxes, commit `docs: mark M3a plan tasks as completed` (with footer)
 
-## Ausblick (eigene Pläne)
+## Outlook (separate plans)
 
-**M3b** Key-/Agent-Auth (AuthMethod-Erweiterung, Citadel-Wiring, Auth-Picker im Formular, Passphrasen im Schlüsselbund) · **M3c** TOFU-Host-Keys (KnownHosts-Store, eigener hostKeyValidator, Bestätigungs-UI, harter Stopp bei Änderung) · **M3d** ssh-config-Import (purer Parser, Merge in die Sidebar).
+**M3b** key/agent auth (AuthMethod extension, Citadel wiring, auth picker in the form, passphrases in the Keychain) · **M3c** TOFU host keys (KnownHosts store, dedicated hostKeyValidator, confirmation UI, hard stop on change) · **M3d** ssh-config import (pure parser, merge into the sidebar).

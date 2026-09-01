@@ -1,16 +1,16 @@
-# M32 — Teilerfolge, die trotzdem löschen: Implementierungsplan
+# M32 — Partial successes that still delete: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Ein fehlgeschlagener Store-Write in `applyMerge` darf das
-Geheimnis der betroffenen Sitzung nicht mehr löschen.
+**Goal:** A failed store write in `applyMerge` must no longer delete the
+secret of the affected session.
 
-**Architecture:** `try? store.upsert` wird zu `do/catch`; die Löschung des
-Slots hängt am Erfolg des Writes. Die Schleife läuft für die übrigen
-Mitglieder weiter, und eine Meldung sagt, dass Sitzungen ihr eigenes
-Passwort behalten haben.
+**Architecture:** `try? store.upsert` becomes `do/catch`; deletion of the
+slot hangs on the success of the write. The loop continues for the
+remaining members, and a message says that sessions kept their own
+password.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, macOS 15+,
 Swift Testing.
@@ -19,49 +19,48 @@ Swift Testing.
 
 ## Global Constraints
 
-- Code, Kommentare, Testnamen, Commit-Messages **Englisch**; Doku Deutsch.
-- Conventional Commits, Footer:
+- Code, comments, test names, commit messages **English**; docs German.
+- Conventional Commits, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- Nutzer-sichtbare Strings über `CoreL10n.string`, in **allen vier**
-  Sprachen unter `Sources/macSCPCore/Resources/<lang>.lproj/`.
-- **Kein Geheimnis in einer Meldung**, auch nicht in einer Test-Meldung:
-  erst in ein `Bool` heben, dann prüfen.
-- TDD rot→grün. Suite: `swift test`.
-- **Die Prosa dieses Plans ist eine zu prüfende Behauptung.** Stimmt etwas
-  nicht: melden, nicht still umbauen.
+- User-visible strings via `CoreL10n.string`, in **all four** languages
+  under `Sources/macSCPCore/Resources/<lang>.lproj/`.
+- **No secret in a message**, not even a test message: lift it into a
+  `Bool` first, then check.
+- TDD red→green. Suite: `swift test`.
+- **This plan's prose is a claim to be verified.** If something is wrong:
+  report it, do not quietly rework it.
 
-## Was der Test wissen muss
+## What the test needs to know
 
-Zwei gemessene Eigenschaften, ohne die der Test nicht funktioniert:
+Two measured properties, without which the test does not work:
 
-1. **`SessionStore.persist` schreibt mit `options: .atomic`.** Ein
-   schreibgeschütztes `sessions.json` nützt deshalb nichts — der atomare
-   Write legt eine Temp-Datei an und benennt sie um, wofür nur das
-   **Verzeichnis** beschreibbar sein muss. Gesperrt wird also das
-   Verzeichnis.
-2. **`applyMerge` schreibt ZUERST das Login-Set.** Läge es im selben
-   gesperrten Verzeichnis, schlüge dieser Write zuerst fehl und die Funktion
-   kehrte zurück, bevor die Schleife läuft. Der Test gibt den beiden Stores
-   deshalb **getrennte Verzeichnisse**.
+1. **`SessionStore.persist` writes with `options: .atomic`.** A
+   read-only `sessions.json` is therefore useless — the atomic write
+   creates a temp file and renames it, which only requires the
+   **directory** to be writable. So it is the directory that gets locked.
+2. **`applyMerge` writes the login set FIRST.** If it lived in the same
+   locked directory, this write would fail first and the function would
+   return before the loop runs. The test therefore gives the two stores
+   **separate directories**.
 
 ---
 
-### Task 1: Die Löschung an den Erfolg des Writes koppeln
+### Task 1: Tie deletion to the success of the write
 
 **Files:**
-- Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift` (Rewire-Schleife in `applyMerge`, plus deren Doc-Kommentar)
+- Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift` (rewire loop in `applyMerge`, plus its doc comment)
 - Modify: `Sources/macSCPCore/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift`
 
 **Interfaces:**
 - Consumes: `SessionListViewModel.applyMerge(_:name:)`, `InMemorySecretStore`
-- Produces: nichts
+- Produces: nothing
 
-- [ ] **Step 1: Die zwei Tests schreiben**
+- [ ] **Step 1: Write the two tests**
 
-Ans Ende von `SessionListViewModelTests`. Der zweite ist die
-Positivkontrolle: ohne ihn bliebe der erste auch dann grün, wenn
-`applyMerge` überhaupt nichts mehr löscht.
+At the end of `SessionListViewModelTests`. The second is the positive
+control: without it the first would stay green even if `applyMerge`
+deleted nothing at all anymore.
 
 ```swift
     /// M32: a failed session write must not take the session's secret with
@@ -137,19 +136,19 @@ Positivkontrolle: ohne ihn bliebe der erste auch dann grün, wenn
     }
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Rot bestätigen**
+- [ ] **Step 2: Run the tests, confirm red**
 
 ```bash
 swift test --filter "aFailedRewireKeepsTheSessionsOwnSecret"
 ```
 
-Erwartet: FAIL — das Geheimnis ist weg, obwohl der Write scheiterte.
+Expected: FAIL — the secret is gone even though the write failed.
 
-Schlägt der Test **nicht** fehl, ist die Annahme falsch, dass ein
-schreibgeschütztes Verzeichnis `upsert` scheitern lässt: dann misst der Test
-nichts und die Ursache gehört gemeldet, nicht umgangen.
+If the test does **not** fail, the assumption that a read-only directory
+makes `upsert` fail is wrong: then the test measures nothing and the cause
+belongs reported, not worked around.
 
-- [ ] **Step 3: Die Schleife umbauen**
+- [ ] **Step 3: Rework the loop**
 
 ```swift
         var unlinkedCount = 0
@@ -176,7 +175,7 @@ nichts und die Ursache gehört gemeldet, nicht umgangen.
         }
 ```
 
-Und im Doc-Kommentar der Funktion den Satz
+And in the function's doc comment, the sentence
 
 ```
     /// is rewired and has its own secret deleted in the same iteration —
@@ -184,7 +183,7 @@ Und im Doc-Kommentar der Funktion den Satz
     /// stop that session's secret from being deleted.
 ```
 
-ersetzen durch
+replaced with
 
 ```
     /// is rewired and, ONLY if that write succeeded, has its own secret
@@ -193,9 +192,9 @@ ersetzen durch
     /// merge.
 ```
 
-- [ ] **Step 4: Die Meldung in allen vier Sprachen anlegen**
+- [ ] **Step 4: Add the message in all four languages**
 
-In `Sources/macSCPCore/Resources/<lang>.lproj/Localizable.strings`, neben
+In `Sources/macSCPCore/Resources/<lang>.lproj/Localizable.strings`, next to
 `core.login.mergeFailed`:
 
 ```
@@ -205,20 +204,20 @@ fr: "core.login.mergePartial" = "Certaines sessions n’ont pas pu être liées 
 pl: "core.login.mergePartial" = "Niektórych sesji nie udało się powiązać z nowym zestawem logowania. Zachowały własne hasło.";
 ```
 
-- [ ] **Step 5: Tests laufen lassen, Grün bestätigen**
+- [ ] **Step 5: Run the tests, confirm green**
 
 ```bash
 swift test --filter "SessionListViewModelTests"
 ```
 
-- [ ] **Step 6: Volle Suite**
+- [ ] **Step 6: Full suite**
 
 ```bash
 swift test
 ```
 
-Erwartet: PASS. Ein rot werdender Bestandstest ist ein Befund über den
-Umfang der Regel und gehört gemeldet.
+Expected: PASS. An existing test turning red is a finding about the scope
+of the rule and belongs reported.
 
 - [ ] **Step 7: Commit**
 
@@ -231,39 +230,40 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Abschluss
+### Task 2: Close-out
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-19-m32-abschluss.md`
 
-- [ ] **Step 1: Volle Suite, Ausgabe lesen BEVOR committet wird**
+- [ ] **Step 1: Full suite, read the output BEFORE committing**
 
 ```bash
 swift test
 ```
 
-- [ ] **Step 2: Prüfen, dass kein `try?`-Paar mehr in der Schleife steht**
+- [ ] **Step 2: Check that no `try?` pair remains in the loop**
 
 ```bash
 awk '/for session in groupSessions/,/^        \}$/' Sources/macSCPCore/Presentation/SessionListViewModel.swift | grep -c "try? store.upsert"
 ```
 
-Erwartet: `0`. Positivkontrolle, damit ein leerer `awk`-Ausschnitt nicht als
-Erfolg durchgeht:
+Expected: `0`. Positive control, so an empty `awk` excerpt does not pass as
+success:
 
 ```bash
 awk '/for session in groupSessions/,/^        \}$/' Sources/macSCPCore/Presentation/SessionListViewModel.swift | grep -c "deletePassword"
 ```
 
-Erwartet: mindestens 1 — sonst hat der Ausschnitt die Schleife nicht
-getroffen und die erste Zahl bedeutet nichts.
+Expected: at least 1 — otherwise the excerpt missed the loop and the first
+number means nothing.
 
-- [ ] **Step 3: Abschlussbericht schreiben**
+- [ ] **Step 3: Write the close-out report**
 
-`docs/superpowers/specs/2026-08-19-m32-abschluss.md`, Deutsch: was umgesetzt
-wurde, das Ergebnis von Step 2, die Suite-Zahlen, und ausdrücklich, dass
-drei der fünf geerbten Backlog-Punkte sich bei der Messung auflösten —
-einer davon erst, nachdem die Spec ihn bereits als offen geführt hatte.
+`docs/superpowers/specs/2026-08-19-m32-abschluss.md`, German: what was
+implemented, the result of Step 2, the suite numbers, and explicitly that
+three of the five inherited backlog items resolved themselves during
+measurement — one of them only after the spec had already listed it as
+open.
 
 - [ ] **Step 4: Commit**
 

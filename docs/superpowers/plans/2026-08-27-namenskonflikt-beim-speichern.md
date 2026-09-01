@@ -1,36 +1,37 @@
-# Namenskonflikt beim Speichern — Umsetzungsplan
+# Name conflict when saving — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein vorbefüllter Sitzungsname überschreibt keine fremde Sitzung mehr, und ein getippter tut es nur noch sichtbar.
+**Goal:** A prefilled session name no longer overwrites a different session, and a typed one only does so visibly.
 
-**Grundlage:** `docs/superpowers/specs/2026-08-27-namenskonflikt-beim-speichern-design.md`
+**Basis:** `docs/superpowers/specs/2026-08-27-namenskonflikt-beim-speichern-design.md`
 
-**Architektur:** Zwei reine Werte in `macSCPCore` — „kollidiert dieser Name?" und „welcher Name ist frei?" — plus ihre Verdrahtung. `SessionListViewModel.save` wird **nicht** angefasst; sein Upsert über den Namen bleibt.
+**Architecture:** Two pure values in `macSCPCore` — "does this name collide?" and "which name is free?" — plus their wiring. `SessionListViewModel.save` is **not** touched; its upsert by name stays.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **nur Englisch**;
-  Katalogwerte sind Übersetzungen, das Deutsche duzt.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- **Alle vier Kataloge** (`en`, `de`, `fr`, `pl` unter
-  `Sources/MacSCPAppKit/Resources/`), gleiche Schlüsselmengen.
-- **Was der Nutzer tippt, wird nie verändert.** Ein Vorschlag darf ausweichen,
-  eine Eingabe nicht.
-- **Die Ausweich-Regel muss denselben Vergleich benutzen wie `save`.** `save`
-  sucht mit `sessions.first(where: { $0.name == name })`, also exakt und mit
-  Groß-/Kleinschreibung. Ein anderer Vergleich in der Regel erzeugt genau den
-  Fehler, den dieser Vorgang beseitigen soll.
-- **Kein Test erreicht echten Keychain, Sitzungs-Store oder Konfiguration.**
-- Alle sechs Targets stehen auf `.swiftLanguageMode(.v6)`; **CI wird rot, sobald
-  die Zahl eindeutiger Warnorte über 1 liegt.**
-- **Keine Zeilennummern, keine Ortsangaben in Kommentaren.** Jede Zahl und jede
-  Aufzählung wird in dem Durchgang gezählt, der sie schreibt.
-- Die App wird nicht gestartet, nichts gepusht.
+- Code, comments, identifiers, test names, commit messages: **English
+  only**; catalog values are translations, the German addresses the
+  user as *du*.
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- **All four catalogs** (`en`, `de`, `fr`, `pl` under
+  `Sources/MacSCPAppKit/Resources/`), same key sets.
+- **What the user types is never altered.** A suggestion may step aside,
+  an input may not.
+- **The step-aside rule must use the same comparison as `save`.** `save`
+  looks up with `sessions.first(where: { $0.name == name })`, so exact
+  and case sensitive. A different comparison in the rule produces
+  exactly the bug this work is meant to remove.
+- **No test reaches the real keychain, session store, or configuration.**
+- All six targets are on `.swiftLanguageMode(.v6)`; **CI goes red as soon
+  as the number of distinct warning sites is above 1.**
+- **No line numbers, no location references in comments.** Every number
+  and every enumeration is counted in the pass that writes it.
+- The app is not launched, nothing is pushed.
 
 ---
 
-### Task 1: Die zwei Regeln in Core
+### Task 1: The two rules in Core
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/SessionNameCollision.swift`
@@ -39,16 +40,16 @@
 **Interfaces:**
 - Produces:
   `SessionNameCollision.collides(_ name: String, with existing: [StoredSession], excluding: UUID?) -> StoredSession?`
-  und
+  and
   `SessionNameCollision.freeName(basedOn desired: String, avoiding existing: [StoredSession]) -> String`.
-  Task 2 ruft beide.
+  Task 2 calls both.
 
-**Warum ein eigener Typ und nicht zwei Zeilen an den Aufrufstellen:** es gibt
-zwei Wege, die einen Namen erfinden. Zwei Kopien der Regel weichen früher oder
-später verschieden aus, und die Falle oben (derselbe Vergleich wie `save`) muss
-an genau einer Stelle stimmen, nicht an zweien.
+**Why its own type and not two lines at the call sites:** there are two
+paths that invent a name. Two copies of the rule diverge sooner or
+later, and the trap above (same comparison as `save`) must hold in
+exactly one place, not two.
 
-- [ ] **Step 1: Den Test zuerst schreiben.**
+- [ ] **Step 1: Write the test first.**
 
 ```swift
 import Foundation
@@ -120,12 +121,12 @@ struct SessionNameCollisionTests {
 }
 ```
 
-- [ ] **Step 2: Rot laufen lassen.**
+- [ ] **Step 2: Run it red.**
 
 Run: `swift test --filter SessionNameCollision`
-Erwartet: FAIL, `cannot find 'SessionNameCollision' in scope`.
+Expected: FAIL, `cannot find 'SessionNameCollision' in scope`.
 
-- [ ] **Step 3: Umsetzen.**
+- [ ] **Step 3: Implement.**
 
 ```swift
 import Foundation
@@ -171,56 +172,56 @@ public enum SessionNameCollision {
 }
 ```
 
-- [ ] **Step 4: Grün laufen lassen.** `swift test --filter SessionNameCollision`
-- [ ] **Step 5:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 4: Run it green.** `swift test --filter SessionNameCollision`
+- [ ] **Step 5:** Full suite green, no new warning.
 - [ ] **Step 6: Commit** — `feat(sessions): decide when a session name collides`
 
 ---
 
-### Task 2: Verdrahten
+### Task 2: Wiring
 
 **Files:**
-- Modify: `Sources/MacSCPAppKit/ContentView+Lifecycle.swift` (Vorbefüllung
-  „Als Sitzung speichern"), `Sources/MacSCPAppKit/ContentView.swift`
-  (Vorbefüllung ssh-config-Import), `Sources/MacSCPAppKit/ConnectionFormView.swift`
-  (die Warnung)
-- Modify: alle vier `Localizable.strings`
+- Modify: `Sources/MacSCPAppKit/ContentView+Lifecycle.swift` (prefill for
+  "Save as session"), `Sources/MacSCPAppKit/ContentView.swift` (prefill
+  for ssh-config import), `Sources/MacSCPAppKit/ConnectionFormView.swift`
+  (the warning)
+- Modify: all four `Localizable.strings`
 
 **Interfaces:**
-- Consumes: beide Funktionen aus Task 1.
+- Consumes: both functions from Task 1.
 
-**Der gemessene Ist-Zustand:** `saveName` wird an drei Stellen gesetzt — beim
-Bearbeiten aus `stored.name` (**bleibt unangetastet**, das *ist* diese
-Sitzung), bei „Als Sitzung speichern" aus `tab.displayTitle`, und beim
-ssh-config-Import aus `host.alias`. Die letzten beiden erfinden einen Namen.
-`ConnectionViewModel.mode` ist `FormMode.edit(sessionID: UUID)` im
-Bearbeiten-Fall und liefert die auszunehmende ID.
+**Measured current state:** `saveName` is set in three places — when
+editing, from `stored.name` (**stays untouched**, that *is* this
+session), for "Save as session" from `tab.displayTitle`, and for the
+ssh-config import from `host.alias`. The last two invent a name.
+`ConnectionViewModel.mode` is `FormMode.edit(sessionID: UUID)` in the
+edit case and delivers the ID to exclude.
 
-- [ ] **Step 1: Die zwei erfundenen Namen ausweichen lassen.** Beide Stellen
-  setzen künftig `SessionNameCollision.freeName(basedOn:avoiding:)` statt des
-  rohen Namens. **Die dritte Stelle nicht anfassen** — beim Bearbeiten würde
-  ein Ausweichen die Sitzung umbenennen, statt sie zu aktualisieren.
-- [ ] **Step 2: Die Warnung.** Das Formular zeigt, wenn der eingetragene Name
-  eine vorhandene Sitzung trifft, welche das ist — und dass Speichern sie
-  ersetzt. Die auszunehmende ID kommt aus `mode`; im `.new`-Fall ist sie `nil`.
-  **Die Warnung blockiert nicht** — kein `.disabled` am Speichern-Knopf.
-- [ ] **Step 3: Der Text.** Ein Schlüssel in alle vier Kataloge, der die
-  betroffene Sitzung benennt. Das Deutsche duzt. Trägt der Text die Zahl der
-  Sitzungen nicht, genügt eine `.strings`-Zeile; trägt er einen Namen, ist das
-  ein Argument und der Schlüssel bekommt seinen Platzhalter im Namen, wie es
-  die bestehenden Schlüssel dieses Projekts tun.
-- [ ] **Step 4:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 1: Make the two invented names step aside.** Both spots will
+  from now on set `SessionNameCollision.freeName(basedOn:avoiding:)`
+  instead of the raw name. **Do not touch the third spot** — while
+  editing, stepping aside would rename the session instead of updating it.
+- [ ] **Step 2: The warning.** The form shows, when the entered name
+  matches an existing session, which one that is — and that saving will
+  replace it. The ID to exclude comes from `mode`; in the `.new` case it
+  is `nil`. **The warning does not block** — no `.disabled` on the save
+  button.
+- [ ] **Step 3: The text.** One key into all four catalogs that names
+  the affected session. The German addresses the user as *du*. If the
+  text does not carry the session's name, one `.strings` line suffices;
+  if it does carry a name, that is an argument and the key gets its
+  placeholder in the name, the way this project's existing keys do.
+- [ ] **Step 4:** Full suite green, no new warning.
 - [ ] **Step 5: Commit** — `feat(sessions): say when saving would replace another session`
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly out of scope
 
-- **Keine Änderung an `SessionListViewModel.save`.** Das Upsert über den Namen
-  bleibt, einschließlich der Protokollkonvertierung, die sein Kommentar
-  beschreibt.
-- **Kein Blockieren** des Speicherns auf einen vorhandenen Namen.
-- **Kein Umbenennen bestehender Sitzungen**, und kein Ausweichen bei einem
-  Namen, den der Nutzer selbst getippt hat.
-- Keine Eindeutigkeitsregel im Store: zwei Sitzungen dürfen weiterhin denselben
-  Namen tragen, wenn sie anders dorthin gelangt sind.
+- **No change to `SessionListViewModel.save`.** The upsert by name
+  stays, including the protocol conversion its comment describes.
+- **No blocking** of saving on an existing name.
+- **No renaming of existing sessions**, and no stepping aside for a
+  name the user typed themselves.
+- No uniqueness rule in the store: two sessions may still carry the same
+  name if they got there by different paths.

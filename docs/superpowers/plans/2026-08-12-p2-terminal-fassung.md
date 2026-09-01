@@ -1,84 +1,83 @@
-# P2: Terminal-Fassung — Implementation Plan
+# P2: Terminal edition — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Das Terminal bekommt den Rand, den der Rest der App schon
-benutzt, und beide Fensterhälften — Dateien und Terminal — werden in der
-Toolbar unabhängig schaltbar, mit einem Zustand, der die Sitzung überlebt.
+**Goal:** The terminal gets the edge the rest of the app already uses, and
+both window halves — files and terminal — become independently switchable
+from the toolbar, with a state that survives the session.
 
-**Architecture:** Die Entscheidung, welche Hälften sichtbar sind und
-welcher Schalter gesperrt ist, liegt als testbarer Typ in Core; die Toolbar
-und das Layout lesen daraus. Der Zustand wandert als optionales Feld an
-`StoredSession` — neben `groupID`, nicht in den Backend-Feldbeutel, weil er
-keine Verbindungseigenschaft ist.
+**Architecture:** The decision of which halves are visible and which switch
+is locked lives as a testable type in Core; the toolbar and the layout read
+from it. The state moves as an optional field onto `StoredSession` —
+alongside `groupID`, not into the backend field bag, because it is not a
+connection property.
 
 **Tech Stack:** Swift 6, `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+,
-SwiftUI, Swift Testing, zwei Testtargets.
+SwiftUI, Swift Testing, two test targets.
 
 ## Global Constraints
 
-- **Code, Kommentare, Testnamen: Englisch.** Interne Doku (`docs/`) Deutsch.
-- **Jeder neue L10n-Schlüssel in allen vier Katalogen** (en/de/fr/pl),
-  identische Schlüsselmengen; Nachweis per Wächtertest und
+- **Code, comments, test names: English.** Internal docs (`docs/`) German.
+- **Every new L10n key in all four catalogs** (en/de/fr/pl), identical key
+  sets; proved via a guard test and
   `for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done`.
-- **Nie eine Zeilennummer in einen Kommentar.**
-- **Kein Secret in Log, Fehler oder Testfehlermeldung.**
-- **Die Prosa dieses Plans ist eine zu prüfende Behauptung.** In der
-  Vorphase steckte in fünf von elf Tasks ein echter Fehler im Brief.
-- **Zwei Proben vor jedem Commit**, nicht eine:
-  1. Bliebe ein Test grün, wenn die Funktion konstant zurückgäbe?
-  2. **Welche Behauptung meines Doc-Kommentars beobachtet kein Test?**
-     Die zweite hat in P1 sieben echte Lücken gefunden, die erste keine
-     davon.
-- **Die GUI wird nicht gestartet.** `scripts/package-app` ist erlaubt.
-- Conventional Commits, Englisch, Footer:
+- **Never a line number in a comment.**
+- **No secret in a log, error, or test failure message.**
+- **This plan's prose is a claim to be checked.** In the previous phase,
+  five of eleven tasks had a real error in the brief.
+- **Two probes before every commit**, not one:
+  1. Would a test stay green if the function returned a constant?
+  2. **Which claim in my doc comment does no test observe?**
+     The second found seven real gaps in P1, the first found none of them.
+- **The GUI is not started.** `scripts/package-app` is allowed.
+- Conventional Commits, English, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- Volle Suite grün vor jedem Commit. Ausgangsstand: **1881 Tests in 159
-  Suiten** — neu messen, nie abschreiben.
+- Full suite green before every commit. Starting point: **1881 tests in 159
+  suites** — remeasure, never copy from elsewhere.
 
 ---
 
-### Task 1: Der Rand — ein Wert, zwei Leser
+### Task 1: The edge — one value, two readers
 
-**Gemessener Ist-Zustand:** `SSHTerminalView` bekommt in `terminalPanel`
-**gar keinen** Rand und sitzt bündig an der Kante. Der `.ended`-Textblock im
-selben Panel benutzt `.padding(.vertical, 8).padding(.horizontal, 14)`. Die
-in P1 gebaute `TerminalPanelHeader` benutzt `12/6`.
+**Measured current state:** `SSHTerminalView` gets **no** inset at all in
+`terminalPanel` and sits flush against the edge. The `.ended` text block in
+the same panel uses `.padding(.vertical, 8).padding(.horizontal, 14)`. The
+`TerminalPanelHeader` built in P1 uses `12/6`.
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/DesignTokens.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView+Detail.swift`
 - Create: `Tests/macSCPAppKitTests/TerminalPanelInsetTests.swift`
 
-- [ ] **Schritt 1: Nachmessen, nicht glauben**
+- [ ] **Step 1: Remeasure, don't believe**
 
-Prüfe die drei Werte oben selbst am Code. Weicht einer ab, ist **der Plan**
-falsch — melden, nicht anpassen.
+Check the three values above yourself against the code. If one deviates,
+**the plan** is wrong — report it, don't adjust it silently.
 
-- [ ] **Schritt 2: Den Wert benennen**
+- [ ] **Step 2: Name the value**
 
-Ein Paar benannter Konstanten in `DesignTokens` (die Datei hält heute nur
-Farben — der Doc-Kommentar muss also sagen, warum jetzt auch ein Maß darin
-steht: weil zwei Views sich darauf einigen müssen).
+A pair of named constants in `DesignTokens` (the file today holds only
+colors — so the doc comment must say why a dimension now lives there too:
+because two views have to agree on it).
 
-- [ ] **Schritt 3: Den Test, der etwas wert ist**
+- [ ] **Step 3: The test that is worth something**
 
-Ein Test auf „die Zahl ist 14" prüft nur, dass jemand 14 getippt hat. Der
-Test, der trägt, ist die **Kopplung**: Kopfzeile und Terminalfläche lesen
-denselben Wert. Schreibe ihn so, dass er rot wird, wenn eine der beiden
-Stellen wieder eine eigene Zahl bekommt.
+A test on "the number is 14" only checks that someone typed 14. The test
+that carries weight is the **coupling**: header and terminal surface read
+the same value. Write it so it goes red if either of the two spots gets its
+own number again.
 
-Geht das nicht ohne View-Instanziierung: sag das, und pinne stattdessen
-das, was geht — z. B. dass es genau **eine** Quelle gibt (Wächtertest über
-den Quelltext, wie der Kürzel-Wächter aus P1).
+If that isn't possible without view instantiation: say so, and pin instead
+what is possible — e.g. that there is exactly **one** source (a guard test
+over the source, like P1's shortcut guard).
 
-- [ ] **Schritt 4: Anwenden**
+- [ ] **Step 4: Apply**
 
-Terminalfläche und Kopfzeile lesen die Konstanten. **Der `.ended`-Block
-bleibt, wie er ist** — er hat die Werte schon; wenn du ihn umstellst, dann
-nur auf dieselbe Konstante, ohne die Zahl zu ändern.
+Terminal surface and header read the constants. **The `.ended` block stays
+as it is** — it already has the values; if you switch it over, only to the
+same constant, without changing the number.
 
-- [ ] **Schritt 5: Volle Suite, Commit**
+- [ ] **Step 5: Full suite, commit**
 
 ```bash
 swift test
@@ -87,7 +86,7 @@ git commit -m "feat(app): give the terminal the inset the rest of the panel alre
 
 ---
 
-### Task 2: `PaneVisibility` (Core) — die Entscheidung
+### Task 2: `PaneVisibility` (Core) — the decision
 
 **Files:**
 - Create: `Sources/macSCPCore/Presentation/PaneVisibility.swift`
@@ -105,11 +104,11 @@ public struct PaneToggleState: Equatable, Sendable {
     public let isEnabled: Bool
 }
 ```
-plus eine Funktion, die aus `PaneVisibility` **und** der Frage, ob das
-Backend eine Shell hat, für jeden der beiden Schalter einen
-`PaneToggleState` liefert, und eine, die einen Klick anwendet.
+plus a function that, from `PaneVisibility` **and** whether the backend has
+a shell, produces a `PaneToggleState` for each of the two switches, and one
+that applies a click.
 
-- [ ] **Schritt 1: Die fehlschlagenden Tests**
+- [ ] **Step 1: The failing tests**
 
 ```swift
 /// Both halves visible is the ordinary state, and both toggles are live.
@@ -135,17 +134,16 @@ Backend eine Shell hat, für jeden der beiden Schalter einen
 @Test func aStoredStateWithNothingVisibleIsRepaired() { … }
 ```
 
-Der letzte ist der wichtige: dieselbe Bauart wie die Zeilenumbruch-Regel
-am `Snippet` — **die Reparatur gehört ins Modell**, nicht in die View, weil
-eine von Hand bearbeitete Datei sonst daran vorbeikommt.
+The last one is the important one: the same shape as the line-break rule on
+`Snippet` — **the repair belongs in the model**, not in the view, because a
+hand-edited file would otherwise bypass it.
 
-- [ ] **Schritt 2: Rot, implementieren, grün**
+- [ ] **Step 2: Red, implement, green**
 
-- [ ] **Schritt 3: Beide Proben, dann Commit**
+- [ ] **Step 3: Both probes, then commit**
 
-Beantworte im Bericht: welcher Test wird rot, wenn `isEnabled` konstant
-`true` ist? Und: welche Behauptung deiner Doc-Kommentare beobachtet kein
-Test?
+Answer in the report: which test goes red if `isEnabled` is constantly
+`true`? And: which claim in your doc comments does no test observe?
 
 ```bash
 git commit -m "feat(core): decide pane visibility and which toggle is locked"
@@ -153,36 +151,36 @@ git commit -m "feat(core): decide pane visibility and which toggle is locked"
 
 ---
 
-### Task 3: Die Toolbar und das Layout
+### Task 3: The toolbar and the layout
 
 **Files:**
-- Modify: `Sources/MacSCPAppKit/ContentView+Lifecycle.swift` (Toolbar)
+- Modify: `Sources/MacSCPAppKit/ContentView+Lifecycle.swift` (toolbar)
 - Modify: `Sources/MacSCPAppKit/ContentView+Detail.swift` (`detail`)
-- Modify: `Sources/MacSCPAppKit/SessionTab.swift` (Zustand am Tab)
-- Modify: die vier Kataloge
+- Modify: `Sources/MacSCPAppKit/SessionTab.swift` (state on the tab)
+- Modify: the four catalogs
 
-**Gemessener Ist-Zustand:** In der Toolbar sitzen zwei Schalter — „Terminal"
-(⌘T, deaktiviert bei `!activeTabSupportsShell`) und „Übertragungen". In
-`detail` steht ein `VSplitView` mit einem `HSplitView` aus zwei
-`BrowserPane` und darunter `if session.terminal.isVisible { terminalPanel(session) }`.
+**Measured current state:** The toolbar has two switches — "Terminal"
+(⌘T, disabled when `!activeTabSupportsShell`) and "Transfers". `detail`
+holds a `VSplitView` with an `HSplitView` of two `BrowserPane`, and below
+it `if session.terminal.isVisible { terminalPanel(session) }`.
 
-- [ ] **Schritt 1: Nachmessen**
+- [ ] **Step 1: Remeasure**
 
-- [ ] **Schritt 2: Der zweite Schalter**
+- [ ] **Step 2: The second switch**
 
-„Dateien" neben „Terminal", beide lesen ihren `PaneToggleState` aus Task 2.
-**Kein neues Tastenkürzel** — ⌘T bleibt beim Terminal, „Dateien" bekommt
-keins, solange niemand eines verlangt.
+"Files" next to "Terminal", both reading their `PaneToggleState` from
+Task 2. **No new keyboard shortcut** — ⌘T stays with the terminal, "Files"
+gets none as long as nobody asks for one.
 
-- [ ] **Schritt 3: Das Layout**
+- [ ] **Step 3: The layout**
 
-Der `HSplitView` mit den zwei Panes wird an `showsFiles` gehängt, wie das
-Terminal schon an seiner Sichtbarkeit hängt. **Die vorhandene
-Terminal-Sichtbarkeit ist die Quelle für `showsTerminal`** — baue keinen
-zweiten Zustand daneben, der damit auseinanderlaufen kann. Wenn sich das
-nicht sauber zusammenführen lässt, ist das ein Befund: melden.
+The `HSplitView` with the two panes gets hooked up to `showsFiles`, the way
+the terminal already hooks into its own visibility. **The existing
+terminal visibility is the source for `showsTerminal`** — don't build a
+second piece of state alongside it that can drift out of sync. If that
+can't be cleanly merged, that is a finding: report it.
 
-- [ ] **Schritt 4: Suite, Kataloge, Commit**
+- [ ] **Step 4: Suite, catalogs, commit**
 
 ```bash
 git commit -m "feat(app): switch both window halves from the toolbar"
@@ -190,45 +188,44 @@ git commit -m "feat(app): switch both window halves from the toolbar"
 
 ---
 
-### Task 4: Der Zustand überlebt die Sitzung
+### Task 4: The state survives the session
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/StoredSession.swift`
-- Modify: den Session-Export/-Import-Pfad
-- Modify/Create: die zugehörigen Tests
+- Modify: the session export/import path
+- Modify/Create: the associated tests
 
-**Gemessener Ist-Zustand:** `StoredSession.init(from:)` benutzt für alle
-optionalen Felder `decodeIfPresent` — ein neues optionales Feld ist damit
-migrationsfrei. `groupID` ist der Präzedenzfall für ein Feld, das zur
-Sitzung gehört, aber **keine Verbindungseigenschaft** ist. Die
-Panes-Sichtbarkeit gehört in dieselbe Kategorie, **nicht** in den
-Backend-Feldbeutel (`FieldValues`, keyed `"<namespace>.<fieldID>"`), der
-Schema-Felder eines Protokolls trägt.
+**Measured current state:** `StoredSession.init(from:)` uses
+`decodeIfPresent` for all optional fields — a new optional field is thus
+migration-free. `groupID` is the precedent for a field that belongs to the
+session but is **not a connection property**. Pane visibility belongs in
+the same category, **not** in the backend field bag (`FieldValues`, keyed
+`"<namespace>.<fieldID>"`), which carries a protocol's schema fields.
 
-- [ ] **Schritt 1: Dem Präzedenzfall folgen, nicht raten**
+- [ ] **Step 1: Follow the precedent, don't guess**
 
-Sieh nach, was der Export/Import mit `groupID` macht — ob es mitgeführt,
-weggelassen oder umgeschrieben wird — und **mach es genauso**. Schreib in
-den Bericht, was du vorgefunden hast. Falls `groupID` beim Export
-absichtlich fällt (etwa weil Gruppen zielseitig neu aufgelöst werden), dann
-gilt dieselbe Absicht hier, und das ist dann die Antwort — kein Grund, für
-die Sichtbarkeit eine Extrawurst zu bauen.
+Look at what export/import does with `groupID` — whether it is carried
+along, dropped, or rewritten — and **do the same**. Write in the report
+what you found. If `groupID` is deliberately dropped on export (say,
+because groups are resolved anew on the target side), then the same intent
+applies here, and that is the answer — no reason to build a special case
+for visibility.
 
-- [ ] **Schritt 2: Das Feld**
+- [ ] **Step 2: The field**
 
-Optional, `decodeIfPresent` mit einem Standard, der „beide sichtbar"
-bedeutet — eine Datei ohne das Feld verhält sich exakt wie heute.
+Optional, `decodeIfPresent` with a default that means "both visible" — a
+file without the field behaves exactly as it does today.
 
-- [ ] **Schritt 3: Die Tests**
+- [ ] **Step 3: The tests**
 
-- Eine `sessions.json` **ohne** das Feld lädt und ergibt „beide sichtbar".
-  Gegen eine wörtliche Alt-Datei, nicht gegen etwas neu Kodiertes.
-- Ein Export-Roundtrip führt den Wert mit (oder lässt ihn bewusst fallen —
-  je nachdem, was Schritt 1 ergeben hat; pinne, was gilt).
-- Eine Datei, die „nichts sichtbar" behauptet, wird repariert (Task 2s
-  Regel greift auch hier — prüfe, dass sie es tut, statt es anzunehmen).
+- A `sessions.json` **without** the field loads and yields "both visible".
+  Against a literal legacy file, not against something freshly encoded.
+- An export round trip carries the value along (or deliberately drops it —
+  depending on what step 1 found; pin whichever applies).
+- A file that claims "nothing visible" is repaired (Task 2's rule applies
+  here too — check that it does, rather than assuming it).
 
-- [ ] **Schritt 4: Suite, Commit**
+- [ ] **Step 4: Suite, commit**
 
 ```bash
 git commit -m "feat(core): remember which window halves a saved session shows"
@@ -236,33 +233,32 @@ git commit -m "feat(core): remember which window halves a saved session shows"
 
 ---
 
-### Task 5: Phasenabschluss
+### Task 5: Phase completion
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-12-p2-abschluss.md`
 
-- [ ] **Schritt 1: Messen**
+- [ ] **Step 1: Measure**
 
 ```bash
 swift test 2>&1 | tail -3
 for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done
 MACSCP_VERSION="1.2.0-dev" MACSCP_BUILD="$(git rev-list --count HEAD)" ./scripts/package-app
 ```
-Der Build läuft mehrere Minuten — **im Hintergrund starten und
-weiterarbeiten**, danach prüfen (`lipo -archs` auf beide Binaries, beide
-Ressourcen-Bundles, alle vier `.lproj`, `plutil -lint` auf die Info.plist).
-**Die App wird nicht gestartet.**
+The build takes several minutes — **start it in the background and keep
+working**, then check afterward (`lipo -archs` on both binaries, both
+resource bundles, all four `.lproj`, `plutil -lint` on the Info.plist).
+**The app is not started.**
 
-- [ ] **Schritt 2: Bericht**
+- [ ] **Step 2: Report**
 
-Er nennt die gemessenen Zahlen; was durch Tests gehalten wird und was nur
-durch Review; was der Export mit dem neuen Feld tut und warum; und
-**ausdrücklich**, dass die GUI nicht gestartet wurde — mit der Liste dessen,
-was der Maintainer ansehen muss: der neue Rand, die zwei Schalter, der
-gesperrte letzte Schalter, und ob eine wiedergeöffnete Sitzung tatsächlich
-so aufgeht, wie sie zuletzt stand.
+It states the measured numbers; what is held by tests and what is only by
+review; what export does with the new field and why; and **explicitly**
+that the GUI was not started — with the list of what the maintainer must
+look at: the new edge, the two switches, the locked last switch, and
+whether a reopened session actually comes up the way it last stood.
 
-- [ ] **Schritt 3: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git commit -m "docs(app): record the terminal chrome phase"
@@ -270,17 +266,17 @@ git commit -m "docs(app): record the terminal chrome phase"
 
 ---
 
-## Selbstreview dieses Plans
+## Self-review of this plan
 
-**Spec-Abdeckung:** Rand 14/8 → Task 1. Zwei Schalter + Riegel → Tasks 2/3.
-Ohne Shell kein Terminal-Schalter → Task 2 (Regel) und Task 3 (Anzeige).
-Zustand pro gespeicherter Sitzung inkl. Export → Task 4.
+**Spec coverage:** Edge 14/8 → Task 1. Two switches + lock → Tasks 2/3.
+No terminal switch without a shell → Task 2 (rule) and Task 3 (display).
+State per saved session including export → Task 4.
 
-**Drei Stellen, an denen dieser Plan bewusst nicht rät**, sondern messen
-lässt: die drei Randwerte (Task 1, Schritt 1), ob sich die vorhandene
-Terminal-Sichtbarkeit sauber als Quelle verwenden lässt (Task 3, Schritt 3),
-und was der Export heute mit `groupID` macht (Task 4, Schritt 1). Alle drei
-sind mit „melden statt anpassen" versehen.
+**Three places where this plan deliberately does not guess**, but has
+things measured instead: the three edge values (Task 1, step 1), whether
+the existing terminal visibility can cleanly serve as the source (Task 3,
+step 3), and what export currently does with `groupID` (Task 4, step 1).
+All three are marked "report rather than adjust".
 
-**Nicht Teil davon:** Host-Tags, Sidebar-Filter, Import/Export der Snippets
-(P3); der Massen-Runner; mehrzeilige Kommandos; Mehrfenster (v2).
+**Not part of this:** host tags, sidebar filter, import/export of snippets
+(P3); the bulk runner; multi-line commands; multi-window (v2).

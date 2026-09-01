@@ -1,19 +1,19 @@
-# Backlog: Snippet-Probelauf und der Ausstieg aus der Prüfung
+# Backlog: snippet dry run and the escape hatch from the check
 
-**Angelegt:** 2026-08-20, aus Maintainer-Zuruf. Gesicherte Ideen, **kein Design**.
-Zwei Wünsche, die zusammengehören — und meines Erachtens zu **einer** Sache
-werden sollten.
+**Filed:** 2026-08-20, from a maintainer note. Secured ideas, **not a
+design**. Two wishes that belong together — and in my view should become
+**one** thing.
 
-## Ausgangslage
+## Starting point
 
-Nach acht Prüfrunden ist das Tor eine Erlaubnisliste: ein `{{PLATZHALTER}}`
-wird nur aufgelöst, wenn `SnippetCommandSurvey` seine Stelle positiv als
-oberstes, unquotiertes Argument erkennt und der Befehlsname nicht zu den
-Namen gehört, bei denen eine Shell den Wert erneut als Code liest. Die
-Haltung ist die Vereinigung über bash 3.2/4.4/5.x und zsh — **wenn irgendeine
-plausible Shell den Wert aufhebt, wird abgelehnt.**
+After eight review rounds the gate is an allowlist: a `{{PLACEHOLDER}}` is
+only resolved when `SnippetCommandSurvey` positively recognizes its spot as
+the topmost, unquoted argument and the command name isn't among the ones
+where a shell re-reads the value as code. The stance is the union across
+bash 3.2/4.4/5.x and zsh — **if any plausible shell picks the value back
+up, it's rejected.**
 
-Bewusst in Kauf genommener Preis (Maintainer, 2026-08-20):
+Price knowingly accepted (maintainer, 2026-08-20):
 
 ```
 [ -f {{PATH}} ]          abgelehnt
@@ -21,102 +21,101 @@ printf '%s' {{X}}        abgelehnt
 export FOO={{VALUE}}     abgelehnt
 ```
 
-Das sind gewöhnliche Formen. Es ist absehbar, dass sie jemand vermisst — daher
-die beiden Wünsche unten.
+These are ordinary forms. It's foreseeable that someone will miss them —
+hence the two wishes below.
 
-## A. Probelauf: zeigen, was tatsächlich gesendet würde
+## A. Dry run: show what would actually be sent
 
-Vor dem Senden anzeigen, wie der fertige Befehl aussieht. Das ist mehr als
-Bequemlichkeit: es macht eine eingeschleuste Konstruktion **sichtbar**, statt
-sie zu einer Vertrauensfrage zu machen.
+Show, before sending, what the finished command looks like. That is more
+than convenience: it makes an injected construction **visible**, instead of
+turning it into a matter of trust.
 
-Was die Anzeige umfassen muss, damit sie die Wahrheit sagt:
+What the display must cover to tell the truth:
 
-- Den **aufgelösten Befehl** mit eingesetzten Werten, so wie er auf die
-  Leitung geht — nicht die Vorlage.
-- Das Ergebnis des **Sendeplans** (`SnippetSendPlan`), nicht nur den Text:
-  einzeilig, geklammert eingefügt, zeilenweise ausgeführt, oder abgelehnt.
-  Bei einem mehrzeiligen Snippet ohne Klammerungsmodus entscheidet das über
-  etwas ganz anderes als der Wortlaut.
-- **Syntaxfärbung.** `SnippetHighlighter` existiert bereits und ist von der
-  Prüfung strukturell abgeschnitten — Anzeige ist genau seine Aufgabe. Ein
-  eingeschleustes `$(…)` fällt gefärbt sofort auf.
+- The **resolved command** with the values substituted, exactly as it goes
+  on the wire — not the template.
+- The result of the **send plan** (`SnippetSendPlan`), not just the text:
+  single-line, inserted bracketed, executed line-by-line, or rejected. For
+  a multi-line snippet with no bracketing mode, that decides something
+  entirely different from the wording.
+- **Syntax highlighting.** `SnippetHighlighter` already exists and is
+  structurally cut off from the check — display is exactly its job. An
+  injected `$(…)` stands out immediately once colored.
 
-**Auflage:** der eingesetzte Wert erscheint auf dem Bildschirm dessen, der ihn
-getippt hat — das ist in Ordnung. Er darf von dort **nicht** ins Audit-Log,
-in einen Export oder in eine Fehlermeldung wandern. Das Audit-Log führt die
-Vorlage, und dabei bleibt es.
+**Requirement:** the substituted value appears on the screen of the person
+who typed it — that's fine. From there it must **not** travel into the
+audit log, into an export, or into an error message. The audit log carries
+the template, and that stays the case.
 
-## B. Ausstieg pro Snippet (Maintainer-Präzisierung, 2026-08-20)
+## B. Per-snippet opt-out (maintainer clarification, 2026-08-20)
 
-Nicht ein Schalter in den Einstellungen, sondern ein **Kennzeichen am
-einzelnen Snippet**. Das ist die deutlich bessere Form: es wirkt nur dort, wo
-jemand es bewusst gesetzt hat, statt für alles zu gelten, was danach noch
-importiert wird.
+Not a toggle in settings, but a **flag on the individual snippet**. That is
+the clearly better form: it takes effect only where someone has
+deliberately set it, instead of applying to everything imported afterward
+too.
 
-**Eine Auflage, ohne die es das Gegenteil bewirkt:** das Kennzeichen ist
-Daten und reist damit durch Export und Import. `SnippetImportPlanner` trägt
-seit dieser Runde die Deklarationen mit — trüge er auch dieses Kennzeichen,
-könnte ein geteiltes Snippet **mit bereits abgeschalteter Prüfung**
-ankommen. Das ist genau die Lieferketten-Form, gegen die der ganze Zweig
-gebaut ist.
+**One requirement, without which it does the opposite:** the flag is data
+and therefore travels through export and import. `SnippetImportPlanner` has
+carried the declarations along since this round — if it also carried this
+flag, a shared snippet could arrive **with the check already turned off**.
+That is exactly the supply-chain shape this whole branch is built against.
 
-> **Ein importiertes Snippet kommt immer mit eingeschalteter Prüfung an.**
-> Das Kennzeichen wird beim Import verworfen, nicht übernommen; wer es
-> will, setzt es selbst — nachdem er den Befehl gelesen hat.
+> **An imported snippet always arrives with the check turned on.** The flag
+> is discarded on import, not carried over; anyone who wants it sets it
+> themselves — after reading the command.
 
-## B2. Der andere Weg: Werte als Umgebung übergeben
+## B2. The other path: pass values as environment
 
-Statt `{{PLATZHALTER}}` die Platzierung `.environment` benutzen. Der Wert
-geht dann als Zuweisung mit und wird nie in den Befehlstext eingesetzt — die
-Positionsprüfung stellt sich damit gar nicht.
+Instead of `{{PLACEHOLDER}}`, use the `.environment` placement. The value
+then travels along as an assignment and is never substituted into the
+command text — the position check doesn't even come into play.
 
-**Das trägt, aber nicht überall.** Gemessen gegen `bash`:
+**This carries, but not everywhere.** Measured against `bash`:
 
-| Form | Ergebnis |
+| Form | Result |
 |---|---|
-| `P=neu ./skript.sh` — Programm liest selbst | Skript sieht `neu` |
-| mehrzeilig, Zuweisung als eigene Zeile | `[neu]` |
-| `P=neu echo "$P"` — Befehlstext nennt `$P` | **`alt`** bzw. leer |
+| `P=neu ./skript.sh` — program reads it itself | script sees `neu` |
+| multi-line, assignment as its own line | `[neu]` |
+| `P=neu echo "$P"` — command text names `$P` | **`alt`** resp. empty |
 
-Die dritte Zeile ist die Falle: bei einer **einzeiligen** Zuweisung als
-Präfix expandiert die Shell `$P` **bevor** die Zuweisung greift. Wer als
-Ausweg für ein abgelehntes `[ -f {{PATH}} ]` ein `P='…' [ -f "$P" ]`
-schreibt, bekommt still den alten oder gar keinen Wert.
+The third line is the trap: for a **single-line** assignment used as a
+prefix, the shell expands `$P` **before** the assignment takes effect.
+Anyone who writes `P='…' [ -f "$P" ]` as a workaround for a rejected
+`[ -f {{PATH}} ]` silently gets the old value or none at all.
 
-Der Code trifft die Unterscheidung bereits richtig: bei mehrzeiligem Rumpf
-wird die Zuweisung eine **eigene Zeile** (sonst gölte sie nur für die erste),
-und dort greift sie wie erwartet. Der Präfix-Fall bleibt.
+The code already makes the distinction correctly: for a multi-line body the
+assignment becomes its **own line** (otherwise it would only apply to the
+first one), and there it takes effect as expected. The prefix case remains.
 
-**Folge für den Probelauf:** genau das ist ein Fall, den er sichtbar machen
-soll. Der aufgelöste Text zeigt `P=neu echo "$P"`, und wer ihn liest, sieht
-das Problem — heute merkt man es erst am falschen Ergebnis auf der
-Gegenseite.
+**Consequence for the dry run:** that is exactly a case it should make
+visible. The resolved text shows `P=neu echo "$P"`, and anyone reading it
+sees the problem — today you only notice it from the wrong result on the
+remote side.
 
-## Der Vorschlag: A **ist** der Ausstieg, nicht B
+## The proposal: A **is** the escape hatch, not B
 
-A liefert die Evidenz, die B voraussetzt. Statt eines Schalters, der die
-Prüfung dauerhaft entfernt:
+A supplies the evidence B presupposes. Instead of a toggle that removes the
+check permanently:
 
-> Wird ein Snippet abgelehnt, zeigt der Probelauf den Befehl **so, wie er
-> aufgelöst würde**, gefärbt, mit dem Grund der Ablehnung — und darunter
-> „trotzdem senden".
+> If a snippet is rejected, the dry run shows the command **as it would be
+> resolved**, colored, with the reason for the rejection — and below it,
+> "send anyway".
 
-Das ist dieselbe Freiheit, aber **pro Auslösung statt dauerhaft**, und mit dem
-tatsächlichen Text vor Augen statt auf Zusicherung. Wer `[ -f {{PATH}} ]`
-braucht, bekommt es; wer ein importiertes Snippet auslöst, sieht das `$(…)`,
-bevor es läuft.
+That's the same freedom, but **per trigger instead of permanent**, and with
+the actual text in front of you instead of on trust. Anyone who needs
+`[ -f {{PATH}} ]` gets it; anyone triggering an imported snippet sees the
+`$(…)` before it runs.
 
-Zu entscheiden, wenn es an den Entwurf geht:
+To decide once this moves to a design:
 
-1. Reicht das, oder soll es den dauerhaften Schalter **zusätzlich** geben?
-2. Ist der Probelauf ein eigener Knopf im Snippet-Editor („Testen"), der Weg
-   beim Auslösen, oder beides?
-3. Was passiert bei mehreren Platzhaltern und `remembersLastValue` — zeigt
-   der Probelauf gemerkte Werte, oder verlangt er neue Eingabe?
+1. Is that enough, or should the permanent toggle exist **in addition**?
+2. Is the dry run its own button in the snippet editor ("Test"), the path
+   taken on trigger, or both?
+3. What happens with multiple placeholders and `remembersLastValue` — does
+   the dry run show remembered values, or does it demand fresh input?
 
-## Reihenfolge
+## Order
 
-A zuerst und allein. Wenn A steht, lässt sich B ehrlich beantworten — dann
-weiß man, ob der Schalter noch fehlt oder nur die Ablehnung ohne Ausweg das
-Problem war.
+A first and alone. Once A stands, B can be answered honestly — then it's
+known whether the toggle is still missing or whether the rejection with no
+way out was the whole problem.

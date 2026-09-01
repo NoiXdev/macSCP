@@ -1,71 +1,71 @@
-# Backlog: S3 ohne Bucket verbinden
+# Backlog: connecting S3 without a bucket
 
-**Angelegt:** 2026-08-31, aus einem Fehlerbericht von außen (v1.3.0), mit
-einem Vorschlag des Maintainers.
+**Created:** 2026-08-31, from an external bug report (v1.3.0), with a
+suggestion from the maintainer.
 
-## Der Bericht
+## The report
 
 > „I tried to connect without providing bucket and region and it doesn't
 > allows me. When I fill using slash then the connection has been failed."
 
-Anbieter war Servinga (S3-kompatibel).
+The provider was Servinga (S3-compatible).
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-- `S3ConnectionConfig` trägt `region` und `bucket` als nicht-optionale
-  `String`, und das Feldschema führt beide als Pflicht.
-- **`ListBuckets` gibt es im Baum nicht** — nachgesehen, kein Vorkommen. S3
-  listet heute ausschließlich *innerhalb* eines Buckets.
-- Ein Bucket namens `/` ist kein Bucket; dass das Verbinden damit scheitert,
-  ist richtig und nicht der Fehler.
+- `S3ConnectionConfig` carries `region` and `bucket` as non-optional
+  `String`, and the field schema marks both as required.
+- **There is no `ListBuckets` in the tree** — checked, no occurrence. S3
+  today lists only *inside* a bucket.
+- A bucket named `/` is not a bucket; that connecting with it fails is
+  correct and is not the bug.
 
-## Der Vorschlag des Maintainers
+## The maintainer's suggestion
 
-> Sind beide leer, soll macSCP die Buckets laden und sie als Startpunkt im
-> Dateibrowser zeigen — oder ein Schalter „Buckets als Startpunkt holen", der
-> die beiden Felder dann entfernt.
+> If both are empty, macSCP should load the buckets and show them as the
+> starting point in the file browser — or a toggle "fetch buckets as
+> starting point" that then removes the two fields.
 
-Das ist die richtige Richtung: der Bucket ist für den Nutzer kein
-Verbindungsparameter, sondern das erste Verzeichnis.
+That's the right direction: for the user, the bucket is not a connection
+parameter, it's the first directory.
 
-## Was vor einem Entwurf zu klären ist
+## What needs clarifying before a design
 
-1. **Die Region kann nicht einfach leer bleiben.** SigV4 **signiert mit ihr** —
-   sie geht in den Credential-Scope ein. „Leer" heißt also nicht „weglassen",
-   sondern „einen Vorgabewert wählen" (`us-east-1` ist der übliche, den viele
-   S3-kompatible Anbieter akzeptieren, weil sie die Region nicht prüfen). Das
-   ist eine Annahme über fremde Server und gehört benannt, nicht versteckt.
-2. **Nicht jeder Anbieter kann `ListBuckets`.** Es ist ein Konto-weiter
-   Aufruf und verlangt eine eigene Berechtigung (`s3:ListAllMyBuckets`). Ein
-   Zugangsschlüssel, der auf einen Bucket beschränkt ist — der übliche Fall
-   bei geteilten Zugängen — darf das nicht. **Dann muss das Feld zurück**, und
-   zwar mit einer Meldung, die sagt warum, statt einer leeren Liste.
-3. **Zwei leere Felder als Schalter oder ein echter Schalter?** Der Vorschlag
-   nennt beides. Ein Zustand, der aus *zwei* leeren Feldern erschlossen wird,
-   ist schwerer zu erklären als ein Ankreuzfeld, das die Felder ausblendet —
-   und dieses Projekt hat diese Woche mehrfach die sichtbare Form der
-   erschlossenen vorgezogen.
-4. **Was zeigt der Browser auf der Bucket-Ebene?** Buckets sind keine Ordner:
-   sie haben kein Änderungsdatum im Listing, keine Größe, keine Rechte. Die
-   Tabelle müsste damit umgehen, und `RemoteFileItem` trägt heute Felder, die
-   dort alle leer wären.
-5. **Was tun Übertragungen und Prüfsummen auf dieser Ebene?** Ein Bucket
-   lässt sich nicht herunterladen. „Nur zeigen, was möglich ist" heißt hier,
-   dass die halbe Werkzeugleiste auf dieser Ebene nichts zu tun hat.
+1. **The region can't simply stay empty.** SigV4 **signs with it** — it
+   goes into the credential scope. So "empty" doesn't mean "omit", it
+   means "pick a default value" (`us-east-1` is the common one that many
+   S3-compatible providers accept because they don't check the region).
+   That's an assumption about third-party servers and belongs named, not
+   hidden.
+2. **Not every provider can do `ListBuckets`.** It's an account-wide call
+   and requires its own permission (`s3:ListAllMyBuckets`). An access key
+   scoped to one bucket — the usual case with shared access — isn't
+   allowed to. **Then the field has to come back**, with a message that
+   says why, instead of an empty list.
+3. **Two empty fields as a toggle, or a real toggle?** The suggestion
+   names both. A state inferred from *two* empty fields is harder to
+   explain than a checkbox that hides the fields — and this project has,
+   this week, repeatedly preferred the visible form over the inferred one.
+4. **What does the browser show at the bucket level?** Buckets aren't
+   folders: they have no modification date in the listing, no size, no
+   permissions. The table would have to handle that, and `RemoteFileItem`
+   today carries fields that would all be empty there.
+5. **What do transfers and checksums do at this level?** A bucket can't be
+   downloaded. "Only show what's possible" here means that half the
+   toolbar has nothing to do at this level.
 
-## Warum das kein kleiner Vorgang ist
+## Why this isn't a small change
 
-Die Punkte 4 und 5 machen daraus mehr als ein Feld weniger: es ist eine
-**zweite Art von Verzeichnis** im Dateibrowser, mit anderen Spalten und
-anderen möglichen Aktionen. Das ist machbar und sinnvoll — aber es ist zu
-entwerfen, nicht nebenbei zu bauen.
+Points 4 and 5 make this more than one fewer field: it's a **second kind
+of directory** in the file browser, with different columns and different
+possible actions. That's doable and sensible — but it needs to be
+designed, not built on the side.
 
-**Der billige Teil davon, falls jemand nur den Bericht schließen will:** eine
-Vorgabe für die Region und eine Fehlermeldung, die sagt, dass der Bucket
-gebraucht wird und warum. Das behebt „es lässt mich nicht", ohne die zweite
-Verzeichnisart.
+**The cheap part of it, if someone just wants to close the report:** a
+default for the region and an error message that says the bucket is
+needed and why. That fixes "it won't let me", without the second
+directory kind.
 
-## Was das nicht ist
+## What this is not
 
-- **Keine Änderung an der Signatur.** Die Region bleibt Teil des Scopes.
-- **Kein Erraten der Region** aus dem Endpunkt.
+- **No change to the signature.** The region stays part of the scope.
+- **No guessing the region** from the endpoint.

@@ -1,69 +1,67 @@
-# PV + P0: View-Testbarkeit prüfen und `ContentView` entkernen — Implementation Plan
+# PV + P0: Check view testability and tear down `ContentView` — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Feststellen, ob SwiftUI-Views in diesem Paket testbar sind, und
-`ContentView` (3464 Zeilen, ~3330 in einer `View`-Struktur) so entkernen,
-dass die Entscheidungslogik in geprüften Typen liegt und die Datei in
-lesbare Stücke zerfällt.
+**Goal:** Determine whether SwiftUI views in this package are testable, and
+tear down `ContentView` (3464 lines, ~3330 in a single `View` struct) so
+that the decision logic lives in tested types and the file breaks into
+readable pieces.
 
-**Architecture:** Zwei Sorten Arbeit, klar getrennt. **Herausziehen:**
-reine Entscheidungsfunktionen werden zu eigenen Typen mit Tests — das ist
-die Linie aus M29-P2. **Aufteilen:** die `@ViewBuilder`-Blöcke wandern als
-`extension ContentView` in eigene Dateien, **ohne dass ein einziges
-`@State` den Besitzer wechselt** — Zustandsbesitz zu verschieben ist die
-riskanteste Operation in SwiftUI und die einzige, die kein Test hier
-abfangen kann.
+**Architecture:** Two kinds of work, clearly separated. **Extraction:**
+pure decision functions become their own types with tests — that is the
+line from M29-P2. **Splitting:** the `@ViewBuilder` blocks move as
+`extension ContentView` into their own files, **without a single `@State`
+changing owner** — moving state ownership is the riskiest operation in
+SwiftUI, and the only one no test here can catch.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, macOS 15+,
-SwiftUI, Swift Testing (`@Test`/`#expect`), zwei Testtargets
+SwiftUI, Swift Testing (`@Test`/`#expect`), two test targets
 (`macSCPCoreTests`, `macSCPAppKitTests`).
 
 ## Global Constraints
 
-- **Code, Kommentare, Testnamen, `reason:`-Strings: Englisch.** Keine
-  deutschen Bezeichner oder Kommentare in Quelldateien.
-- **Nutzer-sichtbare Strings** gehen über `L10n.string(_:_:)` bzw.
-  `String(localized:)`; nie hartkodiert. Neue Schlüssel in **allen vier**
-  Katalogen (en/de/fr/pl), Prüfung mit dem vorhandenen Wächtertest und
+- **Code, comments, test names, `reason:` strings: English.** No German
+  identifiers or comments in source files.
+- **User-facing strings** go through `L10n.string(_:_:)` or
+  `String(localized:)`; never hardcoded. New keys in **all four**
+  catalogs (en/de/fr/pl), verified with the existing guard test and
   `plutil -lint`.
-- **Nie eine Zeilennummer in einen Kommentar schreiben.** Das Ding
-  benennen, nicht die Zeile.
-- **Ein Kommentar, der etwas über den Code behauptet, braucht dieselbe
-  Prüfung wie ein Test.** Die Prosa in diesem Plan ist eine zu prüfende
-  Behauptung, keine Wahrheit: stimmt sie nicht mit dem Code überein, ist
-  **der Plan** falsch — melden, nicht still umbauen.
-- **Kein Secret wird geloggt, gedruckt oder in eine Fehlermeldung
-  geschrieben** — auch nicht in eine Testfehlermeldung. `#expect` expandiert
-  seinen Ausdruck in die Meldung; einen geheimnistragenden Wert vorher in
-  ein `Bool` heben.
-- **Kein `try?` entscheidet über eine Löschung.**
-- **Commit/Push nur auf ausdrückliche Anfrage** des Koordinators. Kein
-  `scripts/release` — das veröffentlicht.
-- **Die GUI wird nicht gestartet.** `scripts/package-app` (Build) ist
-  erlaubt, `open dist/macSCP.app` nicht.
-- Commit-Footer auf jedem Commit:
+- **Never write a line number into a comment.** Name the thing, not the
+  line.
+- **A comment that claims something about the code needs the same
+  scrutiny as a test.** The prose in this plan is a claim to verify, not a
+  truth: if it does not match the code, **the plan** is wrong — report it,
+  don't silently rework it.
+- **No secret gets logged, printed, or written into an error message** —
+  not even into a test failure message. `#expect` expands its expression
+  into the message; lift a value carrying a secret into a `Bool` first.
+- **No `try?` decides a deletion.**
+- **Commit/push only on explicit request** from the coordinator. No
+  `scripts/release` — that publishes.
+- **The GUI is not launched.** `scripts/package-app` (build) is allowed,
+  `open dist/macSCP.app` is not.
+- Commit footer on every commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- Conventional Commits, Commit-Messages auf Englisch.
-- Volle Suite vor jedem Commit: `swift test`. Erwartet grün:
-  **1756 Tests in 144 Suiten** (Stand vor diesem Plan; die Zahl wächst mit
-  jedem Task und wird im Bericht neu gemessen, nie aus dem Plan abgeschrieben).
+- Conventional Commits, commit messages in English.
+- Full suite before every commit: `swift test`. Expected green:
+  **1756 tests in 144 suites** (state before this plan; the number grows with
+  every task and is measured freshly in the report, never copied from the plan).
 
-## Dateistruktur
+## File structure
 
-**Neu (Herausziehen — je Datei ein Typ, je Typ eine Testdatei):**
+**New (extraction — one type per file, one test file per type):**
 
-| Datei | Verantwortung |
+| File | Responsibility |
 |---|---|
-| `Sources/MacSCPAppKit/TabCloseWarning.swift` | Warntext beim Schließen eines Tabs |
-| `Sources/MacSCPAppKit/SubmitRefusalText.swift` | `SubmitRefusal` → lokalisierter Text |
-| `Sources/macSCPCore/Sessions/SessionSecretPolicy.swift` | Welcher Wert in den eigenen Secret-Slot einer Sitzung geschrieben wird |
-| `Sources/MacSCPAppKit/CrossSessionTargets.swift` | Ableitung der Ziel-Sitzungen aus den Tabs |
-| `Sources/MacSCPAppKit/ImportFeedbackText.swift` | Fehler- und Ergebnistexte für Session-Import/-Export |
+| `Sources/MacSCPAppKit/TabCloseWarning.swift` | Warning text when closing a tab |
+| `Sources/MacSCPAppKit/SubmitRefusalText.swift` | `SubmitRefusal` → localized text |
+| `Sources/macSCPCore/Sessions/SessionSecretPolicy.swift` | Which value gets written into a session's own secret slot |
+| `Sources/MacSCPAppKit/CrossSessionTargets.swift` | Deriving target sessions from the tabs |
+| `Sources/MacSCPAppKit/ImportFeedbackText.swift` | Error and result text for session import/export |
 
-**Neu (Aufteilen — `extension ContentView`, kein Zustandsumzug):**
+**New (splitting — `extension ContentView`, no state relocation):**
 
-| Datei | Inhalt |
+| File | Contents |
 |---|---|
 | `Sources/MacSCPAppKit/ContentView+Sheets.swift` | `sheetsAndAlerts` |
 | `Sources/MacSCPAppKit/ContentView+Lifecycle.swift` | `lifecycleAndToolbar`, `performWindowSetup`, `handleWindowWillClose`, `updateMainWindowPresence`, `wireMenuBarBridge` |
@@ -71,145 +69,142 @@ SwiftUI, Swift Testing (`@Test`/`#expect`), zwei Testtargets
 | `Sources/MacSCPAppKit/ContentView+Transfers.swift` | `uploadButton`, `downloadButton`, `transferSelection`, `transferToSession`, `uploadDropped`, `remotePromiseProvider`, `copyPaths`, `openInEditor` |
 | `Sources/MacSCPAppKit/ContentView+ExportImport.swift` | `performExport`, `handleExportResult`, `handleImportFileSelection`, `decodeImport`, `applyImport` |
 
-**Geändert:** `Sources/MacSCPAppKit/ContentView.swift` (schrumpft),
-`Tests/macSCPAppKitTests/` (neue Testdateien),
-`Sources/MacSCPAppKit/Resources/Localizable.xcstrings` + die drei anderen
-Kataloge, falls ein Task Schlüssel verschiebt (er verschiebt sie
-unverändert — **kein neuer Schlüssel entsteht in P0**).
+**Changed:** `Sources/MacSCPAppKit/ContentView.swift` (shrinks),
+`Tests/macSCPAppKitTests/` (new test files),
+`Sources/MacSCPAppKit/Resources/Localizable.xcstrings` + the three other
+catalogs, in case a task relocates keys (it relocates them unchanged —
+**no new key is created in P0**).
 
 ---
 
-# PV — Der Vorversuch
+# PV — The pilot trial
 
-### Task 1: Sind SwiftUI-Views in diesem Paket testbar?
+### Task 1: Are SwiftUI views in this package testable?
 
-**Zeitbudget: höchstens ein Arbeitsgang.** Dieser Task liefert eine
-Antwort, kein Produkt. Es wird **kein Produktionscode** geändert.
+**Time budget: at most one work session.** This task delivers an answer,
+not a product. **No production code** is changed.
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-10-pv-view-testbarkeit-bericht.md`
-- Ggf. temporär: `Tests/macSCPAppKitTests/ViewTestabilitySpike.swift` (wird
-  am Ende entweder behalten oder gelöscht — siehe Schritt 6)
-- Ggf. temporär: `Package.swift` (nur falls eine Abhängigkeit probiert wird)
+- Possibly temporary: `Tests/macSCPAppKitTests/ViewTestabilitySpike.swift` (will
+  either be kept or deleted at the end — see step 6)
+- Possibly temporary: `Package.swift` (only if a dependency is tried)
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: den Bericht. Nachfolgende Tasks hängen **nicht** davon ab.
+- Consumes: nothing.
+- Produces: the report. Subsequent tasks do **not** depend on it.
 
-- [ ] **Schritt 1: Den Ist-Zustand feststellen**
+- [ ] **Step 1: Establish the current state**
 
-Es gibt bereits ein App-Testtarget. Sieh nach, was dort heute geht:
+There is already an app test target. Check what already works there:
 
 ```bash
 ls Tests/macSCPAppKitTests/ && swift test --filter macSCPAppKitTests 2>&1 | tail -5
 ```
 
-Notiere im Bericht, welche Typen dort schon getestet werden — es sind
-ausschließlich Nicht-View-Typen. Das ist die Ausgangslage.
+Note in the report which types are already tested there — they are
+exclusively non-view types. That is the starting point.
 
-- [ ] **Schritt 2: Den billigsten Versuch zuerst — geht es ohne jede neue Abhängigkeit?**
+- [ ] **Step 2: The cheapest attempt first — does it work without any new dependency?**
 
-Schreibe in `Tests/macSCPAppKitTests/ViewTestabilitySpike.swift` einen
-Test, der einen echten View dieses Projekts baut und etwas über ihn
-behauptet. `SheetSearchField` ist der kleinste Kandidat; sieh dir seine
-Signatur an und instanziiere ihn. Probiere in dieser Reihenfolge:
+Write a test in `Tests/macSCPAppKitTests/ViewTestabilitySpike.swift` that
+builds a real view from this project and asserts something about it.
+`SheetSearchField` is the smallest candidate; look at its signature and
+instantiate it. Try in this order:
 
-1. Reines Instanziieren — compiliert das überhaupt aus dem Testtarget?
-2. `ImageRenderer` (SwiftUI, ab macOS 13) auf den View anwenden und
-   prüfen, ob ein `NSImage` mit einer Größe größer null herauskommt.
-3. Falls (2) trägt: denselben View mit zwei verschiedenen Eingaben
-   rendern und prüfen, dass sich die erzeugten Bitmaps **unterscheiden**.
+1. Pure instantiation — does that even compile from the test target?
+2. Apply `ImageRenderer` (SwiftUI, from macOS 13) to the view and check
+   whether an `NSImage` with a size greater than zero comes out.
+3. If (2) holds: render the same view with two different inputs and check
+   that the resulting bitmaps **differ**.
 
-Punkt 3 ist der eigentliche Test: ein Renderer, der für jede Eingabe
-dasselbe liefert, beweist nichts. **Ein Vorversuch ohne Positivkontrolle
-kann seinen eigenen Ausfall nicht von Erfolg unterscheiden.**
+Point 3 is the real test: a renderer that produces the same output for
+every input proves nothing. **A pilot trial without a positive control
+cannot distinguish its own failure from success.**
 
-- [ ] **Schritt 3: Verträgt es sich mit Swift Testing?**
+- [ ] **Step 3: Does it get along with Swift Testing?**
 
-Schreibe den Versuch als `@Test`-Funktion, nicht als `XCTestCase`. Falls
-das scheitert, notiere die genaue Fehlermeldung — sie ist das Ergebnis.
+Write the trial as a `@Test` function, not as an `XCTestCase`. If that
+fails, note the exact error message — it is the result.
 
-- [ ] **Schritt 4: Läuft es ohne GUI-Sitzung?**
+- [ ] **Step 4: Does it run without a GUI session?**
 
 ```bash
 swift test --filter ViewTestabilitySpike 2>&1 | tail -20
 ```
 
-Prüfe zusätzlich, ob der Test eine laufende Fensterserver-Sitzung braucht.
-Ein Weg, das festzustellen, ohne CI zu bemühen: sieh nach, ob der Test
-`NSApplication` anfasst oder eine Ausnahme über einen fehlenden
-Fensterserver wirft. Notiere, was du tatsächlich beobachtet hast — nicht,
-was du erwartest.
+Also check whether the test needs a running window server session. One
+way to establish that without involving CI: check whether the test
+touches `NSApplication` or throws an exception about a missing window
+server. Note what you actually observed — not what you expect.
 
-- [ ] **Schritt 5: Nur falls Schritt 2 scheitert — eine Abhängigkeit prüfen**
+- [ ] **Step 5: Only if step 2 fails — examine a dependency**
 
-Erst jetzt, und nur dann. Sieh nach, welche SwiftUI-Testbibliotheken es
-gibt, ob sie Swift 6 und Swift Testing unterstützen und was sie an die
-Toolchain binden. **Füge nichts zu `Package.swift` hinzu, ohne es im
-Bericht zu begründen**, und mache die Änderung rückgängig, falls sie
-scheitert.
+Only now, and only then. Check which SwiftUI test libraries exist,
+whether they support Swift 6 and Swift Testing, and what they tie to the
+toolchain. **Do not add anything to `Package.swift` without justifying it
+in the report**, and revert the change if it fails.
 
-- [ ] **Schritt 6: Bericht schreiben und committen**
+- [ ] **Step 6: Write and commit the report**
 
-Der Bericht beantwortet genau diese fünf Fragen, jede mit dem, was du
-gemessen hast:
+The report answers exactly these five questions, each with what you
+measured:
 
-1. Lässt sich ein View aus `MacSCPAppKit` im Testtarget instanziieren?
-2. Lässt sich sein Inhalt prüfen — und **unterscheidet** sich das Ergebnis
-   für unterschiedliche Eingaben?
-3. Verträgt es sich mit Swift Testing?
-4. Läuft es ohne GUI-Sitzung?
-5. Was kostet es an Abhängigkeiten?
+1. Can a view from `MacSCPAppKit` be instantiated in the test target?
+2. Can its content be checked — and does the result **differ** for
+   different inputs?
+3. Does it get along with Swift Testing?
+4. Does it run without a GUI session?
+5. What does it cost in dependencies?
 
-Am Ende steht eine **Empfehlung mit einem Satz** und, falls positiv, der
-lauffähige Beispieltest. Falls negativ: `ViewTestabilitySpike.swift`
-löschen, `Package.swift` zurücksetzen, und der Bericht nennt den Grund.
+At the end stands a **one-sentence recommendation** and, if positive, the
+runnable example test. If negative: delete `ViewTestabilitySpike.swift`,
+reset `Package.swift`, and the report states the reason.
 
-**„Geht wahrscheinlich" ist kein Ergebnis.** Wenn du es nicht messen
-konntest, schreibe hin, was dich daran gehindert hat.
+**"Probably works" is not a result.** If you could not measure it, write
+down what stopped you.
 
 ```bash
 git add docs/superpowers/specs/2026-08-10-pv-view-testbarkeit-bericht.md
 git commit -m "docs(app): record whether SwiftUI views in this package can be tested"
 ```
 
-**STOP.** Nach diesem Task entscheidet der Koordinator zusammen mit dem
-Maintainer, ob View-Tests in P0 gehören. Die folgenden Tasks laufen
-unabhängig vom Ergebnis weiter.
+**STOP.** After this task, the coordinator decides together with the
+maintainer whether view tests belong in P0. The following tasks proceed
+independently of the result.
 
 ---
 
-# P0 — Entkernung
+# P0 — Teardown
 
-## Teil A: Herausziehen (Logik + Tests)
+## Part A: Extraction (logic + tests)
 
 ### Task 2: `TabCloseWarning`
 
-Der Warntext beim Schließen eines Tabs entscheidet, welche zwei Gründe
-genannt werden und in welcher Reihenfolge. Das ist reine Logik in einer
-View-Datei.
+The warning text shown when closing a tab decides which two reasons are
+named and in what order. That is pure logic sitting in a view file.
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/TabCloseWarning.swift`
 - Create: `Tests/macSCPAppKitTests/TabCloseWarningTests.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView.swift` (`hasIncomingTransfers`,
-  `closeWarningMessage` und ihre Aufrufer)
+  `closeWarningMessage`, and their callers)
 
 **Interfaces:**
-- Consumes: `SessionTab` (App-seitig, hat `id`, `transferQueue`).
+- Consumes: `SessionTab` (app-side, has `id`, `transferQueue`).
 - Produces:
   - `enum TabCloseWarning { static func hasIncomingTransfers(for tabID: UUID, in tabs: [SessionTab]) -> Bool }`
   - `static func message(activeTransfers: Bool, incomingTransfers: Bool) -> String`
 
-- [ ] **Schritt 1: Den vorhandenen Code lesen**
+- [ ] **Step 1: Read the existing code**
 
-Sieh dir `closeWarningMessage(for:)` und `hasIncomingTransfers(for:)` in
-`ContentView.swift` an, dazu ihre Aufrufer (`requestClose` und die
-Bestätigungs-Schranke). **Der Text darf sich nicht ändern** — die
-L10n-Schlüssel `tabs.close.activeTransfers` und
-`tabs.close.incomingTransfers` werden unverändert übernommen.
+Look at `closeWarningMessage(for:)` and `hasIncomingTransfers(for:)` in
+`ContentView.swift`, plus their callers (`requestClose` and the
+confirmation gate). **The text must not change** — the L10n keys
+`tabs.close.activeTransfers` and `tabs.close.incomingTransfers` carry over
+unchanged.
 
-- [ ] **Schritt 2: Den fehlschlagenden Test schreiben**
+- [ ] **Step 2: Write the failing test**
 
 ```swift
 import Foundation
@@ -247,12 +242,12 @@ struct TabCloseWarningTests {
 }
 ```
 
-- [ ] **Schritt 3: Test rot laufen lassen**
+- [ ] **Step 3: Run the test red**
 
 Run: `swift test --filter TabCloseWarning`
-Erwartet: FAIL, `cannot find 'TabCloseWarning' in scope`.
+Expected: FAIL, `cannot find 'TabCloseWarning' in scope`.
 
-- [ ] **Schritt 4: Den Typ anlegen**
+- [ ] **Step 4: Create the type**
 
 `Sources/MacSCPAppKit/TabCloseWarning.swift`:
 
@@ -289,15 +284,15 @@ enum TabCloseWarning {
 }
 ```
 
-- [ ] **Schritt 5: Test grün laufen lassen**
+- [ ] **Step 5: Run the test green**
 
 Run: `swift test --filter TabCloseWarning`
-Erwartet: PASS, drei Tests.
+Expected: PASS, three tests.
 
-- [ ] **Schritt 6: `ContentView` auf den neuen Typ umstellen**
+- [ ] **Step 6: Switch `ContentView` over to the new type**
 
-Lösche `closeWarningMessage(for:)` und `hasIncomingTransfers(for:)` aus
-`ContentView` und ersetze **jeden** Aufrufer. `requestClose` ruft dann:
+Delete `closeWarningMessage(for:)` and `hasIncomingTransfers(for:)` from
+`ContentView` and replace **every** caller. `requestClose` then calls:
 
 ```swift
 let incoming = TabCloseWarning.hasIncomingTransfers(for: tab.id, in: tabsModel.tabs)
@@ -305,15 +300,15 @@ closeWarningText = TabCloseWarning.message(
     activeTransfers: tab.transferQueue.isActive, incomingTransfers: incoming)
 ```
 
-Prüfe mit dem Compiler, nicht mit `grep`, dass keine Aufrufer übrig sind:
-ein Build ohne Fehler ist der Nachweis.
+Verify with the compiler, not with `grep`, that no callers remain: a
+build without errors is the proof.
 
-- [ ] **Schritt 7: Volle Suite**
+- [ ] **Step 7: Full suite**
 
 Run: `swift test`
-Erwartet: alles grün, drei Tests mehr als vorher.
+Expected: everything green, three more tests than before.
 
-- [ ] **Schritt 8: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add Sources/MacSCPAppKit/TabCloseWarning.swift Tests/macSCPAppKitTests/TabCloseWarningTests.swift Sources/MacSCPAppKit/ContentView.swift
@@ -324,9 +319,9 @@ git commit -m "refactor(app): hold the tab-close warning text in a tested type"
 
 ### Task 3: `SubmitRefusalText`
 
-`message(for refusal:)` bildet die acht `SubmitRefusal`-Fälle auf Text ab.
-M29-P2 hat den Refusal-Typ nach Core geholt; seine Übersetzung in Text ist
-in `ContentView` liegen geblieben und ungeprüft.
+`message(for refusal:)` maps the eight `SubmitRefusal` cases to text.
+M29-P2 moved the refusal type into Core; its translation into text stayed
+behind in `ContentView`, untested.
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/SubmitRefusalText.swift`
@@ -334,23 +329,23 @@ in `ContentView` liegen geblieben und ungeprüft.
 - Modify: `Sources/MacSCPAppKit/ContentView.swift`
 
 **Interfaces:**
-- Consumes: `SubmitRefusal` aus `macSCPCore` mit den Fällen
+- Consumes: `SubmitRefusal` from `macSCPCore` with the cases
   `targetSetMissing`, `targetSetKindMismatch`, `jumpSetMissing`,
   `jumpSetNotSSH`, `jumpSessionMissing`, `jumpChainNotSupported`,
   `jumpSessionNotSSH`, `jumpSessionLoginUnresolvable`.
 - Produces: `enum SubmitRefusalText { static func message(for refusal: SubmitRefusal) -> String }`
 
-- [ ] **Schritt 1: Den vorhandenen Code lesen**
+- [ ] **Step 1: Read the existing code**
 
-`message(for refusal:)` in `ContentView.swift`. Übernimm **jeden**
-L10n-Schlüssel und jeden Default-Text unverändert. Manche Fälle setzen
-Werte in den Text ein — übernimm auch die Formatierung wörtlich.
+`message(for refusal:)` in `ContentView.swift`. Carry over **every**
+L10n key and every default text unchanged. Some cases interpolate values
+into the text — carry over that formatting verbatim too.
 
-- [ ] **Schritt 2: Den fehlschlagenden Test schreiben**
+- [ ] **Step 2: Write the failing test**
 
-Der wertvolle Test ist nicht „Fall X ergibt Text Y" — das schreibt die
-Implementierung ab. Wertvoll ist die **Vollständigkeit**: kein Fall darf
-leer oder mit einem anderen identisch sein.
+The valuable test is not "case X yields text Y" — that just copies the
+implementation. What's valuable is **completeness**: no case may be empty
+or identical to another.
 
 ```swift
 import Foundation
@@ -407,14 +402,14 @@ struct SubmitRefusalTextTests {
 }
 ```
 
-- [ ] **Schritt 3: Test rot laufen lassen**
+- [ ] **Step 3: Run the test red**
 
 Run: `swift test --filter SubmitRefusalText`
-Erwartet: FAIL, `cannot find 'SubmitRefusalText' in scope`.
+Expected: FAIL, `cannot find 'SubmitRefusalText' in scope`.
 
-- [ ] **Schritt 4: Den Typ anlegen**
+- [ ] **Step 4: Create the type**
 
-Verschiebe den Rumpf von `message(for refusal:)` **wörtlich** in
+Move the body of `message(for refusal:)` **verbatim** into
 
 ```swift
 enum SubmitRefusalText {
@@ -422,22 +417,21 @@ enum SubmitRefusalText {
 }
 ```
 
-in `Sources/MacSCPAppKit/SubmitRefusalText.swift`. Ändere keinen Text und
-keinen Schlüssel. Falls der vorhandene Code auf `self` oder auf
-`ContentView`-Zustand zugreift, **halte an und melde es** — dann ist er
-nicht rein und dieser Plan hat sich geirrt.
+in `Sources/MacSCPAppKit/SubmitRefusalText.swift`. Change no text and no
+key. If the existing code accesses `self` or `ContentView` state,
+**stop and report it** — then it is not pure, and this plan was wrong.
 
-- [ ] **Schritt 5: Test grün laufen lassen**
+- [ ] **Step 5: Run the test green**
 
 Run: `swift test --filter SubmitRefusalText`
-Erwartet: PASS.
+Expected: PASS.
 
-- [ ] **Schritt 6: `ContentView` umstellen**
+- [ ] **Step 6: Switch `ContentView` over**
 
-`message(for:)` löschen, Aufrufer auf `SubmitRefusalText.message(for:)`
-umstellen. Build als Nachweis.
+Delete `message(for:)`, switch callers to `SubmitRefusalText.message(for:)`.
+Build as proof.
 
-- [ ] **Schritt 7: Volle Suite und Commit**
+- [ ] **Step 7: Full suite and commit**
 
 ```bash
 swift test
@@ -449,10 +443,10 @@ git commit -m "refactor(app): hold every submit refusal's text in a tested mappi
 
 ### Task 4: `SessionSecretPolicy` (Core)
 
-Welcher Wert in den eigenen Secret-Slot einer Sitzung geschrieben wird,
-entscheidet heute eine `private func` in einer View-Datei, die sich ihre
-beiden Stores selbst baut — deshalb ist sie nicht testbar. Das ist die
-Sorte Entscheidung, an der dieses Projekt schon Datenverlust hatte.
+Which value gets written into a session's own secret slot is today
+decided by a `private func` in a view file that builds its own two
+stores — which is why it cannot be tested. This is the kind of decision
+this project has already lost data over.
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/SessionSecretPolicy.swift`
@@ -474,20 +468,20 @@ Sorte Entscheidung, an der dieses Projekt schon Datenverlust hatte.
   }
   ```
 
-- [ ] **Schritt 1: Den vorhandenen Code lesen**
+- [ ] **Step 1: Read the existing code**
 
-`isManagedKeyWithStoredPassphrase(_:)` und `passwordToPersist(for:)` in
-`ContentView.swift`, samt ihrer Doc-Kommentare. Beachte insbesondere den
-`catch`-Zweig: er gibt **`true`** zurück, also „nicht persistieren". Das
-ist Absicht — ein Fehler beim Nachsehen darf nicht dazu führen, dass eine
-Passphrase ein zweites Mal geschrieben wird. **Diese Richtung nicht
-umdrehen.**
+`isManagedKeyWithStoredPassphrase(_:)` and `passwordToPersist(for:)` in
+`ContentView.swift`, along with their doc comments. Pay particular
+attention to the `catch` branch: it returns **`true`**, i.e. "do not
+persist". That is intentional — an error while looking it up must not
+cause a passphrase to be written a second time. **Do not flip this
+direction.**
 
-- [ ] **Schritt 2: Den fehlschlagenden Test schreiben**
+- [ ] **Step 2: Write the failing test**
 
-Beachte die Secret-Regel: **kein Test darf einen geheimen Wert in eine
-Fehlermeldung tragen.** `#expect` expandiert seinen Ausdruck — deshalb
-wird unten erst in ein `Bool` gehoben.
+Mind the secret rule: **no test may carry a secret value into a failure
+message.** `#expect` expands its expression — that's why the code below
+lifts into a `Bool` first.
 
 ```swift
 import Foundation
@@ -556,30 +550,30 @@ struct SessionSecretPolicyTests {
 }
 ```
 
-- [ ] **Schritt 3: Test rot laufen lassen**
+- [ ] **Step 3: Run the test red**
 
 Run: `swift test --filter SessionSecretPolicy`
-Erwartet: FAIL, `cannot find 'SessionSecretPolicy' in scope`.
+Expected: FAIL, `cannot find 'SessionSecretPolicy' in scope`.
 
-- [ ] **Schritt 4: Den Typ anlegen**
+- [ ] **Step 4: Create the type**
 
-Der Rumpf ist der vorhandene, nur mit hereingereichten Stores statt
-selbstgebauten. **Der `catch`-Zweig bleibt `true`.** Schreibe den Grund als
-Doc-Kommentar an die Funktion, nicht als Wiederholung dieses Plans.
+The body is the existing one, just with stores passed in instead of
+self-built. **The `catch` branch stays `true`.** Write the reason as a
+doc comment on the function, not as a repetition of this plan.
 
-- [ ] **Schritt 5: Test grün laufen lassen**
+- [ ] **Step 5: Run the test green**
 
 Run: `swift test --filter SessionSecretPolicy`
-Erwartet: PASS, vier Tests.
+Expected: PASS, four tests.
 
-- [ ] **Schritt 6: `ContentView` umstellen**
+- [ ] **Step 6: Switch `ContentView` over**
 
-Beide `private func` löschen; die Aufrufer reichen
-`ManagedKeyStore(directory: SessionStore.defaultDirectory)` und
-`KeychainSecretStore()` herein — dieselben Werte wie bisher, jetzt nur
-sichtbar am Aufrufort.
+Delete both `private func`; the callers pass in
+`ManagedKeyStore(directory: SessionStore.defaultDirectory)` and
+`KeychainSecretStore()` — the same values as before, just now visible at
+the call site.
 
-- [ ] **Schritt 7: Volle Suite und Commit**
+- [ ] **Step 7: Full suite and commit**
 
 ```bash
 swift test
@@ -591,9 +585,9 @@ git commit -m "refactor(core): move the session secret-slot decision out of the 
 
 ### Task 5: `CrossSessionTargets`
 
-Welche anderen Tabs als Transferziel angeboten werden, ist eine Ableitung
-über die Tab-Liste — heute in `ContentView`, ungeprüft, obwohl sie
-entscheidet, wohin Dateien wandern.
+Which other tabs get offered as a transfer target is a derivation over
+the tab list — today it sits in `ContentView`, untested, even though it
+decides where files go.
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/CrossSessionTargets.swift`
@@ -601,22 +595,23 @@ entscheidet, wohin Dateien wandern.
 - Modify: `Sources/MacSCPAppKit/ContentView.swift`
 
 **Interfaces:**
-- Consumes: `SessionTab` (mit `id`, `displayTitle`, `session`,
-  `connectionViewModel.kind`), `CrossSessionTarget` aus `macSCPCore`
+- Consumes: `SessionTab` (with `id`, `displayTitle`, `session`,
+  `connectionViewModel.kind`), `CrossSessionTarget` from `macSCPCore`
   (`init(id:title:remotePath:kind:)`).
 - Produces:
   `enum CrossSessionTargets { static func targets(excluding tabID: UUID, in tabs: [SessionTab]) -> [CrossSessionTarget] }`
 
-- [ ] **Schritt 1: Den vorhandenen Code lesen**
+- [ ] **Step 1: Read the existing code**
 
-`crossSessionTargets(for:)` in `ContentView.swift`. Zwei Regeln stecken
-darin: der eigene Tab fällt weg, und ein Tab **ohne** Sitzung fällt weg.
+`crossSessionTargets(for:)` in `ContentView.swift`. Two rules live inside
+it: the tab's own entry drops out, and a tab **without** a session drops
+out.
 
-- [ ] **Schritt 2: Den fehlschlagenden Test schreiben**
+- [ ] **Step 2: Write the failing test**
 
-Sieh dir zuerst `Tests/macSCPAppKitTests/SessionTabTests.swift` an — dort
-steht, wie ein `SessionTab` in einem Test gebaut wird. Benutze denselben
-Weg; erfinde keinen zweiten.
+First look at `Tests/macSCPAppKitTests/SessionTabTests.swift` — it shows
+how a `SessionTab` is built in a test. Use the same approach; don't
+invent a second one.
 
 ```swift
 import Foundation
@@ -649,18 +644,17 @@ struct CrossSessionTargetsTests {
 }
 ```
 
-**Falls `SessionTab()` so nicht baubar ist oder eine verbundene Sitzung im
-Test nicht herstellbar ist:** halte an und melde es. Schreibe **keinen**
-Test, der nur die beiden leeren Fälle prüft und so tut, als sei das die
-ganze Regel — melde stattdessen, was fehlt, damit der Koordinator
-entscheidet.
+**If `SessionTab()` cannot be built this way, or a connected session
+cannot be produced in a test:** stop and report it. Write **no** test
+that checks only the two empty cases and pretends that is the whole
+rule — instead report what is missing, so the coordinator can decide.
 
-- [ ] **Schritt 3: Test rot laufen lassen**
+- [ ] **Step 3: Run the test red**
 
 Run: `swift test --filter CrossSessionTargets`
-Erwartet: FAIL, `cannot find 'CrossSessionTargets' in scope`.
+Expected: FAIL, `cannot find 'CrossSessionTargets' in scope`.
 
-- [ ] **Schritt 4: Den Typ anlegen, Test grün, `ContentView` umstellen**
+- [ ] **Step 4: Create the type, run the test green, switch `ContentView` over**
 
 ```swift
 enum CrossSessionTargets {
@@ -677,9 +671,9 @@ enum CrossSessionTargets {
 ```
 
 Run: `swift test --filter CrossSessionTargets` → PASS.
-Dann `crossSessionTargets(for:)` löschen und die Aufrufer umstellen.
+Then delete `crossSessionTargets(for:)` and switch the callers over.
 
-- [ ] **Schritt 5: Volle Suite und Commit**
+- [ ] **Step 5: Full suite and commit**
 
 ```bash
 swift test
@@ -691,9 +685,9 @@ git commit -m "refactor(app): derive cross-session transfer targets in a tested 
 
 ### Task 6: `ImportFeedbackText`
 
-Drei Textabbildungen für Session-Import und -Export liegen als
-`private func` in `ContentView`: `readErrorMessage(_:)`,
-`importErrorText(for:)` und `importResultText(…)`.
+Three text mappings for session import and export sit as `private func`
+in `ContentView`: `readErrorMessage(_:)`, `importErrorText(for:)`, and
+`importResultText(…)`.
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/ImportFeedbackText.swift`
@@ -701,21 +695,21 @@ Drei Textabbildungen für Session-Import und -Export liegen als
 - Modify: `Sources/MacSCPAppKit/ContentView.swift`
 
 **Interfaces:**
-- Consumes: `SessionExportError` aus `macSCPCore`.
-- Produces: `enum ImportFeedbackText` mit den drei Funktionen unter
-  denselben Namen und Signaturen, die sie heute in `ContentView` haben.
+- Consumes: `SessionExportError` from `macSCPCore`.
+- Produces: `enum ImportFeedbackText` with the three functions under the
+  same names and signatures they have today in `ContentView`.
 
-- [ ] **Schritt 1: Die drei Funktionen lesen und ihre genauen Signaturen notieren**
+- [ ] **Step 1: Read the three functions and note their exact signatures**
 
 `readErrorMessage(_:)`, `importErrorText(for:)`, `importResultText(…)` in
-`ContentView.swift`. Notiere die Parameterliste von `importResultText`
-wörtlich — sie hat mehrere Parameter und der Plan schreibt sie bewusst
-nicht ab, damit hier keine erfundene Signatur entsteht.
+`ContentView.swift`. Note `importResultText`'s parameter list verbatim —
+it has several parameters, and the plan deliberately does not copy it, so
+that no invented signature results here.
 
-- [ ] **Schritt 2: Den fehlschlagenden Test schreiben**
+- [ ] **Step 2: Write the failing test**
 
-Derselbe Zuschnitt wie in Task 3: nicht Text gegen Text, sondern
-Vollständigkeit und Unterscheidbarkeit.
+The same shape as in Task 3: not text against text, but completeness and
+distinguishability.
 
 ```swift
 import Foundation
@@ -746,22 +740,22 @@ struct ImportFeedbackTextTests {
 }
 ```
 
-`SessionExportError.allTestCases` existiert noch nicht. Lege sie im
-**Testtarget** an (nicht in Core), als `extension SessionExportError` mit
-einer von Hand gepflegten Liste plus einem erschöpfenden `switch`, der
-den Compiler einen neuen Fall melden lässt — genau wie in Task 3.
+`SessionExportError.allTestCases` does not exist yet. Create it in the
+**test target** (not in Core), as an `extension SessionExportError` with
+a hand-maintained list plus an exhaustive `switch` that makes the
+compiler flag a new case — exactly as in Task 3.
 
-- [ ] **Schritt 3: Test rot laufen lassen**
+- [ ] **Step 3: Run the test red**
 
 Run: `swift test --filter ImportFeedbackText`
-Erwartet: FAIL.
+Expected: FAIL.
 
-- [ ] **Schritt 4: Typ anlegen, Test grün, `ContentView` umstellen**
+- [ ] **Step 4: Create the type, run the test green, switch `ContentView` over**
 
-Rümpfe wörtlich verschieben, keine Texte ändern, Aufrufer umstellen,
-Build als Nachweis.
+Move the bodies verbatim, change no text, switch the callers over, build
+as proof.
 
-- [ ] **Schritt 5: Volle Suite und Commit**
+- [ ] **Step 5: Full suite and commit**
 
 ```bash
 swift test
@@ -771,38 +765,37 @@ git commit -m "refactor(app): hold import and export feedback text in a tested m
 
 ---
 
-## Teil B: Aufteilen (kein Zustandsumzug)
+## Part B: Splitting (no state relocation)
 
-**Für alle Tasks in Teil B gilt dieselbe Zusicherung und dasselbe
-Verfahren.** Lies das hier einmal; die Tasks wiederholen es nicht.
+**The same guarantee and the same procedure apply to every task in Part
+B.** Read this once here; the tasks do not repeat it.
 
-**Die Zusicherung: kein Verhalten ändert sich.** Nichts wird umbenannt,
-nichts wird umsortiert, kein `@State` wechselt den Besitzer, keine
-Reihenfolge von Modifikatoren ändert sich.
+**The guarantee: no behavior changes.** Nothing is renamed, nothing is
+reordered, no `@State` changes owner, no modifier order changes.
 
-**Das Verfahren:** Der Block wandert als `extension ContentView` in eine
-neue Datei desselben Moduls. Weil `private` in Swift **dateiweit** gilt,
-verlieren verschobene Mitglieder den Zugriff auf die in `ContentView.swift`
-verbliebenen `private`-Mitglieder. Deshalb:
+**The procedure:** The block moves as an `extension ContentView` into a
+new file of the same module. Because `private` in Swift applies
+**file-wide**, moved members lose access to the `private` members that
+remain in `ContentView.swift`. Therefore:
 
-- Ein verschobenes Mitglied wird von `private` auf **modulweit** (kein
-  Zugriffsmodifikator) gesetzt.
-- Ein in `ContentView.swift` verbliebenes Mitglied, das ein verschobenes
-  Mitglied braucht, wird ebenfalls modulweit.
-- **Nichts wird `public`.** Die Sichtbarkeit endet an `MacSCPAppKit`.
+- A moved member is changed from `private` to **module-wide** (no access
+  modifier).
+- A member that remains in `ContentView.swift` and needs a moved member
+  also becomes module-wide.
+- **Nothing becomes `public`.** Visibility ends at `MacSCPAppKit`.
 
-**Warum kein echter eigener View-Typ:** Ein neuer `struct SomeView: View`
-verlangt, dass jeder Zustand, den er liest, explizit hereingereicht wird —
-und genau dabei entstehen die Fehler, die kein Test hier abfängt. Eine
-`extension` löst das Lesbarkeitsproblem, ohne den Zustandsbesitz
-anzufassen. Wo ein eigener Typ leicht möglich ist, sagt der Task es
-ausdrücklich.
+**Why not a genuine, separate view type:** A new `struct SomeView: View`
+would require every piece of state it reads to be passed in explicitly —
+and that is exactly where the errors that no test here can catch would
+arise. An `extension` solves the readability problem without touching
+state ownership. Where a separate type is easily possible, the task says
+so explicitly.
 
-**Der Nachweis je Task:** `swift build` ohne Fehler **und** ohne neue
-Warnungen, `swift test` vollständig grün, und `git diff --stat` zeigt für
-`ContentView.swift` fast nur Löschungen. Zeigt der Diff Änderungen an
-Zeilen, die du nur verschieben wolltest, ist das ein Befund — nachsehen,
-nicht durchwinken.
+**The proof for each task:** `swift build` without errors **and** without
+new warnings, `swift test` fully green, and `git diff --stat` shows
+almost only deletions for `ContentView.swift`. If the diff shows changes
+to lines you only meant to move, that is a finding — look into it, don't
+wave it through.
 
 ---
 
@@ -812,40 +805,40 @@ nicht durchwinken.
 - Create: `Sources/MacSCPAppKit/ContentView+Detail.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView.swift`
 
-- [ ] **Schritt 1: Die Blöcke identifizieren**
+- [ ] **Step 1: Identify the blocks**
 
 `detail`, `mainContent`, `splitLayout`, `windowChrome(_:)`,
-`terminalPanel(_:)`, `tabIDs`. Notiere **vor** dem Verschieben die
-Zeilenzahl von `ContentView.swift`:
+`terminalPanel(_:)`, `tabIDs`. Note the line count of `ContentView.swift`
+**before** moving anything:
 
 ```bash
 wc -l Sources/MacSCPAppKit/ContentView.swift
 ```
 
-- [ ] **Schritt 2: Verschieben**
+- [ ] **Step 2: Move**
 
-Neue Datei mit `import SwiftUI`, `import macSCPCore` und
-`extension ContentView { … }`. Die sechs Mitglieder wörtlich hinein,
-`private` entfernen. Weitere `private`-Mitglieder in `ContentView.swift`,
-die dadurch unerreichbar werden, ebenfalls modulweit machen — der Compiler
-zeigt dir genau, welche.
+New file with `import SwiftUI`, `import macSCPCore`, and
+`extension ContentView { … }`. Move the six members in verbatim, remove
+`private`. Any other `private` members in `ContentView.swift` that become
+unreachable as a result also become module-wide — the compiler tells you
+exactly which.
 
-- [ ] **Schritt 3: Build und Suite**
+- [ ] **Step 3: Build and suite**
 
 ```bash
 swift build 2>&1 | tail -20 && swift test
 ```
-Erwartet: Build ohne Fehler und ohne neue Warnungen, Suite vollständig grün.
+Expected: build without errors and without new warnings, suite fully green.
 
-- [ ] **Schritt 4: Den Diff prüfen**
+- [ ] **Step 4: Check the diff**
 
 ```bash
 git diff --stat Sources/MacSCPAppKit/ContentView.swift
 ```
-Erwartet: fast ausschließlich Löschungen. Änderungen an Zeilen, die
-bleiben sollten, sind ein Befund.
+Expected: almost exclusively deletions. Changes to lines that were
+supposed to stay are a finding.
 
-- [ ] **Schritt 5: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Sources/MacSCPAppKit/ContentView+Detail.swift Sources/MacSCPAppKit/ContentView.swift
@@ -860,22 +853,21 @@ git commit -m "refactor(app): move the detail pane builders into their own file"
 - Create: `Sources/MacSCPAppKit/ContentView+Sheets.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView.swift`
 
-Derselbe Ablauf wie Task 7, mit `sheetsAndAlerts(_:)` sowie den
-Bindings, die nur dort benutzt werden (`passwordHintPresented`,
-`externalTerminalErrorPresented`) und den Sheet-Präsentationsfunktionen
-`presentSnippets`, `presentLoginSetsFromSettings`,
-`presentServerCertificatesFromSettings`, `presentHiddenImportsFromSettings`.
+Same procedure as Task 7, with `sheetsAndAlerts(_:)` plus the bindings
+used only there (`passwordHintPresented`, `externalTerminalErrorPresented`)
+and the sheet presentation functions `presentSnippets`,
+`presentLoginSetsFromSettings`, `presentServerCertificatesFromSettings`,
+`presentHiddenImportsFromSettings`.
 
-Dies ist der größte Block. Prüfe nach dem Verschieben besonders, dass die
-**Reihenfolge** der `.sheet`- und `.alert`-Modifikatoren unverändert ist:
-bei mehreren Sheets am selben View entscheidet die Reihenfolge, welches
-gewinnt.
+This is the largest block. After moving it, check especially that the
+**order** of the `.sheet` and `.alert` modifiers is unchanged: with
+several sheets on the same view, order decides which one wins.
 
-- [ ] Schritt 1: Zeilenzahl notieren, Blöcke identifizieren
-- [ ] Schritt 2: Verschieben, `private` → modulweit
-- [ ] Schritt 3: `swift build` und `swift test` — beides grün
-- [ ] Schritt 4: `git diff --stat` prüfen — fast nur Löschungen
-- [ ] Schritt 5: Commit
+- [ ] Step 1: Note the line count, identify the blocks
+- [ ] Step 2: Move, `private` → module-wide
+- [ ] Step 3: `swift build` and `swift test` — both green
+- [ ] Step 4: Check `git diff --stat` — almost only deletions
+- [ ] Step 5: Commit
 
 ```bash
 git add Sources/MacSCPAppKit/ContentView+Sheets.swift Sources/MacSCPAppKit/ContentView.swift
@@ -890,23 +882,23 @@ git commit -m "refactor(app): move the sheet and alert wiring into its own file"
 - Create: `Sources/MacSCPAppKit/ContentView+Lifecycle.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView.swift`
 
-Inhalt: `lifecycleAndToolbar(_:)`, `performWindowSetup`,
+Contents: `lifecycleAndToolbar(_:)`, `performWindowSetup`,
 `handleWindowWillClose(_:)`, `updateMainWindowPresence`,
 `wireMenuBarBridge`, `handleCloseActiveTabCommand`, `resizeWindow(toWidth:height:)`,
 `shrinkIfPristine`, `makeTab`, `attachAuditRecorder(…)`, `teardown(_:)`,
 `activate(_:)`, `selectTab(atIndex:)`, `requestClose(_:)`, `performClose(_:)`.
 
-Hier hängt die Reihenfolge der Aufräumschritte an einer Projektinvariante:
-**`cancelAll` → `shutdown` → `disconnect`** in `teardown`. Wird dabei
-etwas umsortiert, ist das kein Verschieben mehr.
+Here the order of the cleanup steps hangs on a project invariant:
+**`cancelAll` → `shutdown` → `disconnect`** in `teardown`. If anything
+gets reordered here, this is no longer just a move.
 
-- [ ] Schritt 1: Zeilenzahl notieren, Blöcke identifizieren
-- [ ] Schritt 2: Verschieben, `private` → modulweit
-- [ ] Schritt 3: `swift build` und `swift test` — beides grün
-- [ ] Schritt 4: `git diff --stat` prüfen; zusätzlich die Reihenfolge in
-      `teardown` gegen den Stand vor dem Verschieben halten
+- [ ] Step 1: Note the line count, identify the blocks
+- [ ] Step 2: Move, `private` → module-wide
+- [ ] Step 3: `swift build` and `swift test` — both green
+- [ ] Step 4: Check `git diff --stat`; additionally hold the order in
+      `teardown` against the state before the move
       (`git show HEAD:Sources/MacSCPAppKit/ContentView.swift`)
-- [ ] Schritt 5: Commit
+- [ ] Step 5: Commit
 
 ```bash
 git add Sources/MacSCPAppKit/ContentView+Lifecycle.swift Sources/MacSCPAppKit/ContentView.swift
@@ -921,15 +913,15 @@ git commit -m "refactor(app): move tab lifecycle and window setup into their own
 - Create: `Sources/MacSCPAppKit/ContentView+Transfers.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView.swift`
 
-Inhalt: `uploadButton(in:session:)`, `downloadButton(in:session:)`,
+Contents: `uploadButton(in:session:)`, `downloadButton(in:session:)`,
 `transferSelection(…)`, `transferToSession(…)`, `uploadDropped(_:in:)`,
 `remotePromiseProvider(…)`, `copyPaths(of:)`, `openInEditor(…)`.
 
-- [ ] Schritt 1: Zeilenzahl notieren, Blöcke identifizieren
-- [ ] Schritt 2: Verschieben, `private` → modulweit
-- [ ] Schritt 3: `swift build` und `swift test` — beides grün
-- [ ] Schritt 4: `git diff --stat` prüfen — fast nur Löschungen
-- [ ] Schritt 5: Commit
+- [ ] Step 1: Note the line count, identify the blocks
+- [ ] Step 2: Move, `private` → module-wide
+- [ ] Step 3: `swift build` and `swift test` — both green
+- [ ] Step 4: Check `git diff --stat` — almost only deletions
+- [ ] Step 5: Commit
 
 ```bash
 git add Sources/MacSCPAppKit/ContentView+Transfers.swift Sources/MacSCPAppKit/ContentView.swift
@@ -944,21 +936,21 @@ git commit -m "refactor(app): move the transfer actions into their own file"
 - Create: `Sources/MacSCPAppKit/ContentView+ExportImport.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView.swift`
 
-Inhalt: `performExport(…)`, `handleExportResult(_:)`,
+Contents: `performExport(…)`, `handleExportResult(_:)`,
 `handleImportFileSelection(_:)`, `decodeImport(data:password:)`,
 `applyImport(_:)`.
 
-**Achtung:** In diesem Bereich liegen Secret-Pfade. Beim Verschieben darf
-kein Wert in eine Log- oder Fehlerausgabe geraten, der vorher nicht dort
-war — und keiner, der dort war, wird stillschweigend entfernt (das wäre
-ebenfalls eine Verhaltensänderung; falls dir einer auffällt, **melde ihn,
-statt ihn zu beheben** — das ist ein eigener Befund).
+**Caution:** secret paths live in this area. When moving code, no value
+may end up in a log or error output that wasn't there before — and none
+that was there is silently removed (that would also be a behavior
+change; if you notice one, **report it instead of fixing it** — that is
+its own finding).
 
-- [ ] Schritt 1: Zeilenzahl notieren, Blöcke identifizieren
-- [ ] Schritt 2: Verschieben, `private` → modulweit
-- [ ] Schritt 3: `swift build` und `swift test` — beides grün
-- [ ] Schritt 4: `git diff --stat` prüfen — fast nur Löschungen
-- [ ] Schritt 5: Commit
+- [ ] Step 1: Note the line count, identify the blocks
+- [ ] Step 2: Move, `private` → module-wide
+- [ ] Step 3: `swift build` and `swift test` — both green
+- [ ] Step 4: Check `git diff --stat` — almost only deletions
+- [ ] Step 5: Commit
 
 ```bash
 git add Sources/MacSCPAppKit/ContentView+ExportImport.swift Sources/MacSCPAppKit/ContentView.swift
@@ -967,47 +959,46 @@ git commit -m "refactor(app): move session export and import wiring into their o
 
 ---
 
-## Teil C: Abschluss
+## Part C: Closeout
 
-### Task 12: Phasenabschluss
+### Task 12: Phase closeout
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-10-p0-entkernung-abschluss.md`
 
-- [ ] **Schritt 1: Neu messen**
+- [ ] **Step 1: Measure again**
 
 ```bash
 wc -l Sources/MacSCPAppKit/*.swift | sort -rn | head -12
 swift test 2>&1 | tail -5
 ```
 
-Schreibe die **gemessenen** Zahlen in den Bericht. Der Ausgangswert war
-`ContentView.swift` mit 3464 Zeilen und die Suite mit 1756 Tests in 144
-Suiten; beide Zahlen sind Messwerte von vor diesem Plan und werden nicht
-abgeschrieben, sondern gegen das Ergebnis gehalten.
+Write the **measured** numbers into the report. The starting value was
+`ContentView.swift` at 3464 lines and the suite at 1756 tests in 144
+suites; both numbers are measurements from before this plan and are not
+copied down, but held against the result.
 
-- [ ] **Schritt 2: Dev-Build**
+- [ ] **Step 2: Dev build**
 
 ```bash
 MACSCP_VERSION="1.2.0-dev" MACSCP_BUILD="$(git rev-list --count HEAD)" ./scripts/package-app
 ```
 
-Erwartet: `wrote dist/macSCP.app`. **Die App wird nicht gestartet.**
+Expected: `wrote dist/macSCP.app`. **The app is not launched.**
 
-- [ ] **Schritt 3: Den Bericht schreiben**
+- [ ] **Step 3: Write the report**
 
-Er nennt:
+It states:
 
-1. Die gemessenen Zeilenzahlen vorher/nachher und die neue Testzahl.
-2. Welche Entscheidungslogik jetzt durch Tests gehalten wird und welche
-   noch nicht.
-3. **Ausdrücklich:** dass die Zusicherung „kein Verhalten geändert" durch
-   Build und Suite gestützt ist, **nicht** durch eine Sichtprüfung — die
-   GUI wurde nicht gestartet, und die Sichtprüfung liegt beim Maintainer.
-4. Das Ergebnis von PV und was daraus für die Views folgt.
-5. Was offen bleibt.
+1. The measured line counts before/after and the new test count.
+2. Which decision logic is now held by tests and which is not yet.
+3. **Explicitly:** that the guarantee "no behavior changed" is backed by
+   the build and the suite, **not** by a visual check — the GUI was not
+   launched, and the visual check is the maintainer's job.
+4. The result of PV and what follows from it for the views.
+5. What remains open.
 
-- [ ] **Schritt 4: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-08-10-p0-entkernung-abschluss.md
@@ -1016,23 +1007,23 @@ git commit -m "docs(app): record the ContentView teardown"
 
 ---
 
-## Selbstreview dieses Plans
+## Self-review of this plan
 
-**Spec-Abdeckung.** PV → Task 1. P0 „Aufteilen" → Tasks 7–11. P0
-„Herausziehen mit Tests" → Tasks 2–6. „Kleine, einzeln committete
-Schritte" → jeder Task committet einzeln, Teil B zusätzlich mit
-Diff-Prüfung. „Dev-Build am Ende der Phase ist Pflicht" → Task 12
-Schritt 2. „Nur `ContentView`" → keine andere große Datei kommt vor.
+**Spec coverage.** PV → Task 1. P0 "splitting" → Tasks 7–11. P0
+"extraction with tests" → Tasks 2–6. "Small, individually committed
+steps" → every task commits individually, Part B additionally with a
+diff check. "A dev build at the end of the phase is mandatory" → Task 12
+step 2. "Only `ContentView`" → no other large file appears.
 
-**Bewusste Lücke.** Die Spec nennt als Kandidaten auch „welcher Weg zum
-externen Terminal genommen wird". `ExternalTerminalLauncher` ist seit
-M29-P1 **bereits** ein eigener getesteter Typ; was in `ContentView` bleibt
-(`requestExternalTerminal`, `performExternalOpen`), ist Verdrahtung und
-wandert in Task 9 mit. Kein eigener Task nötig.
+**Deliberate gap.** The spec also names "which path is taken to the
+external terminal" as a candidate. `ExternalTerminalLauncher` has
+**already** been its own tested type since M29-P1; what remains in
+`ContentView` (`requestExternalTerminal`, `performExternalOpen`) is
+wiring and moves along with Task 9. No separate task needed.
 
-**Zwei Stellen, an denen dieser Plan raten könnte** — beide sind als
-Anhalten-und-melden markiert statt als Vorgabe: die genaue Signatur von
-`importResultText` (Task 6, Schritt 1) und die Frage, ob ein `SessionTab`
-mit verbundener Sitzung im Test überhaupt herstellbar ist (Task 5,
-Schritt 2). Ein Plan, der beides erfunden hätte, hätte Implementierer in
-falsche Tests geschickt.
+**Two places where this plan could have guessed** — both are marked as
+stop-and-report rather than as a prescription: the exact signature of
+`importResultText` (Task 6, step 1) and the question of whether a
+`SessionTab` with a connected session can even be produced in a test
+(Task 5, step 2). A plan that had invented both would have sent
+implementers into the wrong tests.

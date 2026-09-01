@@ -1,10 +1,10 @@
-# M11h — Symlinks kennzeichnen: Implementierungsplan
+# M11h — Mark symlinks: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Symlinks sind in der Dateiliste an einem Symbol erkennbar, und ein Doppelklick auf einen Symlink, der auf ein Verzeichnis zeigt, öffnet es.
+**Goal:** Symlinks are recognizable in the file list by an icon, and double-clicking a symlink that points to a directory opens it.
 
-**Architecture:** Ein `NSImageView` im Namens-Zellenaufbau von `RemoteFileTableView`, sichtbar nur bei `kind == .symlink`; der Doppelklick-Handler bekommt einen dritten Fall, der denselben Weg nutzt wie die Pfadeingabe (`navigate(to:)` aus M11g).
+**Architecture:** An `NSImageView` in `RemoteFileTableView`'s name-cell setup, visible only when `kind == .symlink`; the double-click handler gets a third case that uses the same path as path entry (`navigate(to:)` from M11g).
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftUI + AppKit, Swift Testing.
 
@@ -12,155 +12,156 @@
 
 ## Global Constraints
 
-- Code und Kommentare **nur Englisch**; Anzeigetexte über die Kataloge
-  (EN Default + DE), niemals hartkodiert. Deutsche Texte nur mit
-  typografischen Anführungszeichen („…“) — ein ASCII-`"` macht die ganze
-  deutsche Datei ungültig (M11d-Blocker).
-- **Zeilenhöhe und Textposition der Liste ändern sich NICHT.** M5g hat
-  beide gegen ein eingefrorenes Mockup abgeglichen; eine Verschiebung wäre
-  eine stille Design-Regression.
-- Nur `.symlink` bekommt ein Symbol. `.file`, `.directory`, `.other` sehen
-  aus wie heute — kein Symbol, kein Platzhalter, keine Einrückung.
-- Symlinks bekommen **kein** angehängtes `/`, auch wenn sie auf ein
-  Verzeichnis zeigen: ohne `stat` pro Eintrag ist das nicht feststellbar.
-- Kein zusätzliches `stat`/`readlink` pro Listeneintrag.
-- Kein Audit-Eintrag.
-- Tests: Swift Testing, TDD rot→grün. Baseline vor T1: **775 Tests / 55 Suiten**.
-- Kein Release, kein Merge auf `main`, kein Tag.
+- Code and comments **English only**; display text via the catalogs
+  (EN default + DE), never hardcoded. German text only with
+  typographic quotation marks („…") — an ASCII `"` invalidates the entire
+  German file (M11d blocker).
+- **Row height and text position of the list do NOT change.** M5g matched
+  both against a frozen mockup; a shift would be a silent design
+  regression.
+- Only `.symlink` gets an icon. `.file`, `.directory`, `.other` look
+  as they do today — no icon, no placeholder, no indentation.
+- Symlinks get **no** appended `/`, even when they point to a
+  directory: without a `stat` per entry, that cannot be determined.
+- No extra `stat`/`readlink` per list entry.
+- No audit entry.
+- Tests: Swift Testing, TDD red→green. Baseline before T1: **775 tests / 55 suites**.
+- No release, no merge to `main`, no tag.
 
 ---
 
-### Task 1: Symbol, Doppelklick, Tooltip (App + Core-Kleinigkeit)
+### Task 1: Icon, double-click, tooltip (App + small Core piece)
 
 **Files:**
-- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (Namens-Zelle + `doubleClicked`), `Sources/MacSCPApp/BrowserPane.swift` (Weiterleitung, falls nötig), `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`
-- Modify (nur falls der Test es verlangt): `Sources/macSCPCore/Presentation/FileListFormatter.swift`
-- Test: `Tests/macSCPCoreTests/FileListFormatterTests.swift`, `Tests/macSCPCoreTests/BrowserContextMenuTests.swift` (pinnen)
+- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (name cell + `doubleClicked`), `Sources/MacSCPApp/BrowserPane.swift` (forwarding, if needed), `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`
+- Modify (only if the test requires it): `Sources/macSCPCore/Presentation/FileListFormatter.swift`
+- Test: `Tests/macSCPCoreTests/FileListFormatterTests.swift`, `Tests/macSCPCoreTests/BrowserContextMenuTests.swift` (pin)
 
 **Interfaces:**
-- Consumes: `RemoteFileItem.kind` (`.file`/`.directory`/`.symlink`/`.other`), `RemoteBrowserViewModel.navigate(to:) async -> String?` (M11g), `DesignTokens.inkTertiaryNS`, das bestehende `onOpen`/`onOpenFile`-Muster.
-- Produces: nichts für spätere Tasks.
+- Consumes: `RemoteFileItem.kind` (`.file`/`.directory`/`.symlink`/`.other`), `RemoteBrowserViewModel.navigate(to:) async -> String?` (M11g), `DesignTokens.inkTertiaryNS`, the existing `onOpen`/`onOpenFile` pattern.
+- Produces: nothing for later tasks.
 
-- [x] **Step 1: Failing test — kein `/` für Symlinks.**
-  In `FileListFormatterTests` (oder wo `displayName` heute getestet wird):
-  ein Eintrag mit `kind == .symlink` und Namen `current` muss als `current`
-  formatiert werden, NICHT als `current/`. Dazu zwei Regressionsfälle:
-  ein Verzeichnis behält sein `/`, eine Datei bekommt keins.
-  Prüfe zuerst, ob `displayName` heute schon so arbeitet — es liest
-  `item.isDirectory`, und `isDirectory` ist `kind == .directory`, also
-  ist das Verhalten vermutlich bereits richtig. **Ist der Test sofort grün,
-  dann sage das im Report und lasse ihn als Regressionswächter stehen** —
-  keine Änderung an `FileListFormatter` erfinden, nur um etwas zu ändern.
+- [x] **Step 1: Failing test — no `/` for symlinks.**
+  In `FileListFormatterTests` (or wherever `displayName` is currently
+  tested): an entry with `kind == .symlink` and name `current` must be
+  formatted as `current`, NOT as `current/`. Add two regression cases
+  alongside it: a directory keeps its `/`, a file gets none.
+  First check whether `displayName` already behaves this way — it reads
+  `item.isDirectory`, and `isDirectory` is `kind == .directory`, so
+  the behavior is presumably already correct. **If the test is green
+  immediately, say so in the report and leave it standing as a
+  regression guard** — do not invent a change to `FileListFormatter`
+  just to change something.
 
-- [x] **Step 2: Kontextmenü-Verhalten pinnen.**
-  In `BrowserContextMenuTests` sicherstellen, dass für einen Symlink
-  weiterhin KEIN Übertragen-, Editor- und Rechte-Eintrag erscheint (M7b-
-  Regel). Falls es diesen Test schon gibt, nichts doppeln — nur prüfen und
-  im Report festhalten.
+- [x] **Step 2: Pin the context-menu behavior.**
+  In `BrowserContextMenuTests`, make sure that a symlink still shows
+  NO transfer, editor, or permissions entry (M7b rule). If this test
+  already exists, do not duplicate it — just verify and record it in
+  the report.
 
-- [x] **Step 3: Symbol in der Namensspalte.**
-  In `tableView(_:viewFor:row:)` erhält der `"name"`-Zellaufbau neben dem
-  bestehenden `NSTextField` ein `NSImageView` mit
+- [x] **Step 3: Icon in the name column.**
+  In `tableView(_:viewFor:row:)`, the `"name"` cell setup gets, next to
+  the existing `NSTextField`, an `NSImageView` with
   `NSImage(systemSymbolName: "arrow.up.forward", accessibilityDescription:)`,
-  `contentTintColor` = `DesignTokens.inkTertiaryNS`, Symbolgröße passend zu
-  12,5 pt Text.
+  `contentTintColor` = `DesignTokens.inkTertiaryNS`, icon size matched to
+  12.5 pt text.
 
-  Layout: das Symbol sitzt im vorhandenen linken Innenabstand, das
-  Textfeld bleibt bei **12 pt** Einzug. Das heißt: das Symbol wird links
-  neben dem Text platziert, ohne den Text zu verschieben, und die
-  Zeilenhöhe bleibt unverändert. Prüfe die bestehenden Constraints, bevor
-  du neue hinzufügst — es gibt bereits `leadingAnchor +12`,
+  Layout: the icon sits within the existing left inset, the text field
+  stays at **12 pt** indent. That is: the icon is placed to the left of
+  the text without shifting the text, and the row height stays
+  unchanged. Check the existing constraints before adding new ones —
+  there are already `leadingAnchor +12`,
   `trailingAnchor -12`, `centerYAnchor`.
 
-  **Recycling-Hygiene (kritisch):** Zellen kommen aus
-  `makeView(withIdentifier:)`. Das Symbol muss bei JEDER Zuweisung
-  explizit ein- oder ausgeblendet werden (`isHidden`), sonst erscheint es
-  auf einer falschen Zeile, sobald gescrollt wird. Der bestehende Code
-  setzt `stringValue` und Font/Color unbedingt bei jeder Wiederverwendung —
-  folge genau diesem Muster.
+  **Recycling hygiene (critical):** cells come from
+  `makeView(withIdentifier:)`. The icon must be explicitly shown or
+  hidden (`isHidden`) on EVERY assignment, otherwise it appears on the
+  wrong row as soon as scrolling happens. The existing code
+  unconditionally sets `stringValue` and font/color on every reuse —
+  follow exactly that pattern.
 
 - [x] **Step 4: Tooltip.**
-  Die Namens-Zelle einer Symlink-Zeile bekommt einen `toolTip` mit einem
-  lokalisierten Text („Symbolic link" / „Symbolischer Link"), der
-  gleichzeitig die Accessibility-Beschreibung des Symbols ist. Andere
-  Zeilen bekommen `toolTip = nil` (Recycling!).
+  The name cell of a symlink row gets a `toolTip` with a localized
+  text ("Symbolic link" / „Symbolischer Link"), which also serves as
+  the icon's accessibility description. Other rows get
+  `toolTip = nil` (recycling!).
 
-- [x] **Step 5: Doppelklick.**
-  `doubleClicked(_:)` bekommt einen dritten Zweig: bei `kind == .symlink`
-  wird der Pfad des Eintrags an einen neuen Closure-Parameter gegeben
-  (Muster wie `onOpenFile`), den `BrowserPane`/`ContentView` an
-  `viewModel.navigate(to: item.path)` weiterreichen. Gelingt es, wechselt
-  das Pane hinein — mit dem **Symlink-Pfad**, nicht dem aufgelösten Ziel
-  (`navigate(to:)` verhält sich schon so, und ein aufgelöster Pfad würde
-  `goUp()` an eine Stelle führen, von der der Benutzer nie gekommen ist).
-  Schlägt es fehl, wird die Meldung aus `navigate(to:)` angezeigt — nutze
-  die Stelle, an der das Pane schon Fehler zeigt, statt eine neue zu
-  erfinden. `.other` bleibt No-op.
+- [x] **Step 5: Double-click.**
+  `doubleClicked(_:)` gets a third branch: for `kind == .symlink`,
+  the entry's path is passed to a new closure parameter (pattern like
+  `onOpenFile`), which `BrowserPane`/`ContentView` forward to
+  `viewModel.navigate(to: item.path)`. On success, the pane switches
+  into it — with the **symlink's path**, not the resolved target
+  (`navigate(to:)` already behaves this way, and a resolved path would
+  send `goUp()` to a place the user never came from). On failure, the
+  message from `navigate(to:)` is shown — use the spot where the pane
+  already shows errors, rather than inventing a new one. `.other`
+  stays a no-op.
 
 - [x] **Step 6: EN/DE.**
-  Neue Keys in BEIDE App-Kataloge, Englisch zuerst. `plutil -lint` auf
-  alle vier Kataloge OK, `LocalizableStringsTests` grün.
+  New keys in BOTH app catalogs, English first. `plutil -lint` on
+  all four catalogs OK, `LocalizableStringsTests` green.
 
-- [x] **Step 7: Verifikation.**
-  `swift build` aus einem SAUBEREN Build-Verzeichnis (ein inkrementeller
-  Lauf zeigt keine Warnungen, weil nichts neu übersetzt wird — nur der
-  saubere Lauf ist eine ehrliche Aussage): keine NEUEN Warnungen; die vier
-  vorbestehenden sind erwartet (`BrowserPane` redundantes `_`,
-  `TransferEngine:137`, zwei Citadel-Sendable). Volle `swift test`.
+- [x] **Step 7: Verification.**
+  `swift build` from a CLEAN build directory (an incremental run shows
+  no warnings because nothing gets recompiled — only the clean run is
+  an honest statement): no NEW warnings; the four pre-existing ones are
+  expected (`BrowserPane` redundant `_`,
+  `TransferEngine:137`, two Citadel Sendable). Full `swift test`.
 
 - [x] **Step 8: Commit.** `feat: mark symlinks in the file list and follow them on double-click`
 
 ---
 
-### Task 2: „Jetzt prüfen" in den Einstellungen (App)
+### Task 2: "Check now" in settings (App)
 
-Maintainer-Wunsch 2026-07-30: „in den einstellungen gerne auch noch einen
-check for updates einbauen". Die Update-Prüfung existiert seit M11b — der
-Schalter „Automatisch nach Updates suchen" steht im Tab **Allgemein**, die
-manuelle Prüfung im Menü **macSCP ▸ Nach Updates suchen…**. Was in den
-Einstellungen fehlt, ist der sofortige Weg samt Zustandsanzeige.
+Maintainer request 2026-07-30: "would also like a check for updates in the
+settings". Update checking has existed since M11b — the "Automatically
+check for updates" toggle sits in the **General** tab, the manual check
+in the menu **macSCP ▸ Check for Updates…**. What is missing from
+settings is the immediate path plus a status display.
 
 **Files:**
-- Modify: `Sources/MacSCPApp/SettingsView.swift` (Abschnitt Update-Prüfung im Tab „Allgemein"), `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`
-- Ggf. modify: `Sources/macSCPCore/Settings/SettingsStore.swift` (nur falls der Zeitstempel noch nicht lesbar ist), `Sources/MacSCPApp/UpdateCheckModel.swift`
+- Modify: `Sources/MacSCPApp/SettingsView.swift` (update-check section in the "General" tab), `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`
+- Modify if needed: `Sources/macSCPCore/Settings/SettingsStore.swift` (only if the timestamp is not yet readable), `Sources/MacSCPApp/UpdateCheckModel.swift`
 
 **Interfaces:**
-- Consumes: `UpdateCheckModel` (M11b, treibt schon die manuelle Prüfung aus dem Menü), `SettingsStore.updateCheckEnabled` und den dort bereits gespeicherten Zeitstempel der letzten Prüfung, `AppVersion`.
+- Consumes: `UpdateCheckModel` (M11b, already drives the manual check from the menu), `SettingsStore.updateCheckEnabled` and the last-check timestamp already stored there, `AppVersion`.
 
-- [x] **Step 1: Bestand lesen, nicht neu bauen.** `UpdateCheckModel` und
-  der Menüeintrag machen die Arbeit bereits. Finde heraus, wie der
-  Menüeintrag die Prüfung auslöst und wie das Ergebnis dargestellt wird,
-  und benutze exakt denselben Weg — kein zweiter Prüfpfad, keine zweite
-  Ergebnisdarstellung. Halte im Report fest, welchen Weg du gefunden hast.
+- [x] **Step 1: Read what exists, don't rebuild.** `UpdateCheckModel` and
+  the menu entry already do the work. Find out how the menu entry
+  triggers the check and how the result is displayed, and use exactly
+  that same path — no second check path, no second result display.
+  Record in the report which path you found.
 
-- [x] **Step 2: Der Abschnitt.** Unter dem bestehenden Schalter im Tab
-  „Allgemein":
-  - die laufende Version (aus dem Bundle, wie „Über macSCP" sie liest),
-  - der Zeitpunkt der letzten Prüfung, oder ein Satz, dass noch nie geprüft
-    wurde,
-  - ein Knopf „Jetzt prüfen" im `PolishedButtonStyle`, deaktiviert während
-    eine Prüfung läuft.
-  Der bestehende Schalter und sein Fußtext bleiben unverändert — der Text
-  über „höchstens einmal täglich, keine Daten über dich" ist eine Zusage,
-  die dieser Task nicht aufweichen darf.
+- [x] **Step 2: The section.** Below the existing toggle in the
+  "General" tab:
+  - the running version (from the bundle, the way "About macSCP" reads it),
+  - the time of the last check, or a sentence saying it has never been
+    checked,
+  - a "Check Now" button in `PolishedButtonStyle`, disabled while a
+    check is running.
+  The existing toggle and its footer text stay unchanged — the text
+  about "at most once daily, no data about you" is a commitment this
+  task must not water down.
 
-- [x] **Step 3: Ergebnis ehrlich.** Erfolg ohne Fund, Erfolg mit Fund
-  (Version + Link, wie das Menü es zeigt) und Fehlschlag (kein Netz,
-  Rate-Limit) sind drei unterschiedliche Zustände mit je eigenem Text.
-  Kein stilles Nichts nach einem Klick.
+- [x] **Step 3: Honest result.** Success with no update found, success
+  with an update found (version + link, as the menu shows it), and
+  failure (no network, rate limit) are three distinct states, each with
+  its own text. No silent nothing after a click.
 
-- [x] **Step 4: EN/DE + Verifikation.** Neue Keys in BEIDE Kataloge,
-  `plutil -lint` OK, `LocalizableStringsTests` grün, `swift build` aus
-  einem sauberen Build-Verzeichnis ohne neue Warnungen, volle `swift test`.
-  **Kein Test darf das Netz benutzen** — M11b erzwingt das bereits mit
-  einem lauten Stub-Fehlschlag; wenn du Tests ergänzt, halte dich daran.
+- [x] **Step 4: EN/DE + verification.** New keys in BOTH catalogs,
+  `plutil -lint` OK, `LocalizableStringsTests` green, `swift build` from
+  a clean build directory with no new warnings, full `swift test`.
+  **No test may use the network** — M11b already enforces this with
+  a loud stub failure; if you add tests, follow the same rule.
 
 - [x] **Step 5: Commit.** `feat: check for updates from the settings window`
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Closing verification (coordinator)
 
-- [x] Gated Suiten am finalen Stand: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips. Dazu ein gated Rig-Test: ein Symlink auf ein Verzeichnis und einer auf eine Datei, über `navigate(to:)` — der erste gelingt, der zweite liefert die Meldung.
-- [x] Visueller Smoke — an den Maintainer delegiert (Checkliste: das Symbol erscheint NUR bei Symlinks; Zeilenhöhe und Textkante sehen aus wie vorher; beim Scrollen durch eine lange Liste wandert kein Symbol auf eine falsche Zeile; Tooltip erscheint; Doppelklick auf einen Ordner-Symlink öffnet ihn und die Pfadzeile zeigt den Symlink-Pfad; Doppelklick auf einen Datei-Symlink zeigt eine Meldung statt nichts zu tun; hell und dunkel).
-- [x] Plan-Checkboxen, Ledger, Opus-Final-Review, Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory. KEIN Release.
+- [x] Gated suites at the final state: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → all green, zero skips. Plus a gated rig test: a symlink to a directory and one to a file, via `navigate(to:)` — the first succeeds, the second returns the message.
+- [x] Visual smoke — delegated to the maintainer (checklist: the icon appears ONLY on symlinks; row height and text edge look as before; scrolling through a long list never moves an icon to the wrong row; tooltip appears; double-clicking a directory symlink opens it and the path bar shows the symlink's path; double-clicking a file symlink shows a message instead of doing nothing; light and dark).
+- [x] Plan checkboxes, ledger, Opus final review, fix rounds until "Yes", push develop, `gh run watch`, memory. NO release.

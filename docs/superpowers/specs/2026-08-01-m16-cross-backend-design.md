@@ -1,74 +1,76 @@
-# M16 — Cross-Backend-Transfer S3↔SSH (Design/Spec)
+# M16 — Cross-backend transfer S3↔SSH (Design/Spec)
 
-**Datum:** 2026-08-01
-**Status:** freigegeben (Brainstorm), bereit für writing-plans
+**Date:** 2026-08-01
+**Status:** approved (brainstorm), ready for writing-plans
 **Branch:** `develop`
-**Vorgänger:** M8b (Cross-Session-Transfer), M12–M15 (S3-Backend + Login-Sets).
+**Predecessors:** M8b (cross-session transfer), M12–M15 (S3 backend + login sets).
 
-## Ziel
+## Goal
 
-S3↔SSH-Transfers in beide Richtungen gated verifizieren und die UI so
-erweitern, dass Cross-Backend-Transfers sichtbar werden (Ziel-Session +
-Backend-Kennzeichnung, passive Warnung bei S3-Zielen ohne Resume). Die
-Transfer-Engine bleibt unverändert — sie ist bereits backend-agnostisch.
+Gated-verify S3↔SSH transfers in both directions and extend the UI so
+cross-backend transfers become visible (destination session + backend
+label, passive warning for S3 destinations without resume). The transfer
+engine stays unchanged — it is already backend-agnostic.
 
-## Ausgangslage (verifiziert)
+## Starting point (verified)
 
-Die Erkundung des Cross-Session-Pfads (M8b) ergab: `TransferEngine.copyFile`
-(`Sources/macSCPCore/RemoteFS/TransferEngine.swift:93-189`) liest/schreibt
-**rein über das `RemoteFileSystem`-Protokoll** — kein `if S3`, kein
-`as? CitadelFileSystem`/`as? S3FileSystem`. Die gesamte M8b-Verkabelung
-(`ContentView.transferToSession` ~2596, `TransferQueueViewModel` crossRemote-
-Zweig ~825, `BandwidthLimiter`, `TabsViewModel`) ist reine Protokoll-
-Delegation. Ordner-Rekursion (`expandTree` ~1044, S3-0-Byte-Marker in
-`S3ListParser` versteckt), Resume-Guard (`effectiveResume` ~108, S3-Ziel →
-Overwrite), stat/Konflikt (~944) und Größe/Fortschritt (~101) laufen alle
-generisch. **S3↔SSH kopiert technisch bereits durch.**
+Exploring the cross-session path (M8b) found: `TransferEngine.copyFile`
+(`Sources/macSCPCore/RemoteFS/TransferEngine.swift:93-189`) reads/writes
+**purely through the `RemoteFileSystem` protocol** — no `if S3`, no
+`as? CitadelFileSystem`/`as? S3FileSystem`. The entire M8b wiring
+(`ContentView.transferToSession` ~2596, `TransferQueueViewModel` crossRemote
+branch ~825, `BandwidthLimiter`, `TabsViewModel`) is pure protocol
+delegation. Folder recursion (`expandTree` ~1044, S3 0-byte marker hidden in
+`S3ListParser`), the resume guard (`effectiveResume` ~108, S3 destination →
+overwrite), stat/conflict (~944), and size/progress (~101) all run
+generically. **S3↔SSH already copies through, technically.**
 
-Zwei echte Lücken:
-1. **Test:** Kein gated S3↔SSH-Integrationstest (nur SSH↔SSH aus M8b,
-   `CitadelFileSystemIntegrationTests.swift:1195`). Das Rig kann es —
-   `docker/test-server/compose.yml` startet sshd:2222, sshd2:2223,
-   minio:19000/19001 gemeinsam, gemeinsames Gate `MACSCP_ITEST=1`.
-2. **UI-Transparenz:** `TransferQueueBar.row(_:)` zeigt nur Pfeil + Dateiname
-   + Status — keine Ziel-/Backend-Kennzeichnung, keine Resume-Warnung. Der
-   Queue-`Item` (`TransferQueueViewModel.swift:49`) trägt nur `destinationTabID`
-   (opak), keinen Ziel-Namen/Backend.
+Two real gaps:
+1. **Test:** No gated S3↔SSH integration test (only SSH↔SSH from M8b,
+   `CitadelFileSystemIntegrationTests.swift:1195`). The rig can do it —
+   `docker/test-server/compose.yml` starts sshd:2222, sshd2:2223,
+   minio:19000/19001 together, common gate `MACSCP_ITEST=1`.
+2. **UI transparency:** `TransferQueueBar.row(_:)` shows only arrow +
+   filename + status — no destination/backend label, no resume warning. The
+   queue `Item` (`TransferQueueViewModel.swift:49`) carries only
+   `destinationTabID` (opaque), no destination name/backend.
 
-## Entscheidungen (Maintainer, 2026-08-01)
+## Decisions (maintainer, 2026-08-01)
 
-- **Scope:** primär Verifikation + Härtung + UI-Transparenz; keine neue
-  Engine-Mechanik. UI-Verbesserungen: alle drei (Ziel/Backend im Eintrag,
-  Resume-Warnung, besseres Ziel-Submenü), aber **schlank** gebaut.
-- **Resume-Warnung:** **passiver Hinweis** am Transfer-Eintrag (⚠-Symbol +
-  Tooltip), kein Bestätigungsdialog.
+- **Scope:** primarily verification + hardening + UI transparency; no new
+  engine mechanics. UI improvements: all three (destination/backend on the
+  entry, resume warning, better destination submenu), but built **lean**.
+- **Resume warning:** **passive hint** on the transfer entry (⚠ symbol +
+  tooltip), no confirmation dialog.
 
-## Architektur
+## Architecture
 
-### 1. Gated S3↔SSH-Test + Härtung (Tests)
+### 1. Gated S3↔SSH test + hardening (Tests)
 
-Neuer gated Test (`Tests/macSCPCoreTests/`, Suite mit
-`.enabled(if: ProcessInfo…["MACSCP_ITEST"] == "1")`, nutzt die bestehende
-Compose-Datei, connectet S3 auf 19000 und Citadel auf 2222 gleichzeitig):
+New gated test (`Tests/macSCPCoreTests/`, suite with
+`.enabled(if: ProcessInfo…["MACSCP_ITEST"] == "1")`, uses the existing
+compose file, connects S3 on 19000 and Citadel on 2222 simultaneously):
 
-- **SSH→S3:** Datei auf sshd → `TransferEngine.copyFile(source: Citadel,
-  destination: S3)` → Objekt in MinIO byte-identisch (Range-GET zurücklesen).
-- **S3→SSH:** Objekt in MinIO → `copyFile(source: S3, destination: Citadel)`
-  → Datei auf sshd byte-identisch.
-- **Ordner-Baum cross-backend** (min. eine Richtung): rekursiver Transfer
-  eines Verzeichnisses (Unterordner + Datei); prüft, dass S3-„Ordner"
-  (0-Byte-Marker/CommonPrefix) als `.directory` erkannt und via
-  `createDirectory` auf der Gegenseite angelegt werden.
-- **Resume-Guard:** SSH→S3 mit gesetztem `resume` bekommt `.overwrite` (nie
-  `.append`) — beweist den M13-Guard live über die Backend-Grenze.
+- **SSH→S3:** file on sshd → `TransferEngine.copyFile(source: Citadel,
+  destination: S3)` → object in MinIO byte-identical (read back via range
+  GET).
+- **S3→SSH:** object in MinIO → `copyFile(source: S3, destination:
+  Citadel)` → file on sshd byte-identical.
+- **Cross-backend folder tree** (at least one direction): recursive
+  transfer of a directory (subfolder + file); verifies that S3 "folders"
+  (0-byte marker/CommonPrefix) are recognized as `.directory` and created
+  on the other side via `createDirectory`.
+- **Resume guard:** SSH→S3 with `resume` set gets `.overwrite` (never
+  `.append`) — proves the M13 guard live across the backend boundary.
 
-Härtung: Deckt die kniffligen Fälle ab (S3-Marker-Ordner, Resume-Guard,
-stat/Konflikt auf S3-Ziel). Deckt der Live-Test einen Bug auf (wie der
-M13-Trailing-Slash-Fund, den nur echtes MinIO fand), wird er in M16 gefixt.
+Hardening: covers the tricky cases (S3 marker folders, resume guard,
+stat/conflict on an S3 destination). If the live test uncovers a bug (like
+the M13 trailing-slash finding, which only real MinIO caught), it is fixed
+in M16.
 
-### 2. Cross-Backend-Metadaten im Queue-`Item` (Core)
+### 2. Cross-backend metadata in the queue `Item` (Core)
 
-Additiv zu `Item` (und `Job`, gleich gefädelt wie `destinationTabID`/
+Additive to `Item` (and `Job`, threaded the same way as `destinationTabID`/
 `crossRemote`/`isEditUpload`):
 
 ```swift
@@ -84,7 +86,7 @@ public let destinationSupportsResume: Bool   // default true
 public let crossBackendTarget: CrossBackendTarget?   // default nil
 ```
 
-Neuer Core-Wert:
+New Core value:
 
 ```swift
 public struct CrossBackendTarget: Equatable, Sendable {
@@ -93,104 +95,109 @@ public struct CrossBackendTarget: Equatable, Sendable {
 }
 ```
 
-- `destinationSupportsResume`: **kein** neuer Aufrufer-Parameter — die Queue
-  liest `destination.supportsAppendResume` beim `Item`-/`Job`-Bau selbst.
-- `crossBackendTarget`: neuer optionaler `enqueue`/`enqueueTree`-Parameter
-  (`crossBackendTarget: CrossBackendTarget? = nil`), gesetzt in
-  `ContentView.transferToSession` (dort liegen Ziel-Session-Name und `kind`
-  vor).
-- Beide durch **jede** `Item`-Rekonstruktionsstelle gefädelt (retry,
-  interrupt-retain) — exakt wie `isEditUpload`/`destinationDirectory` heute.
+- `destinationSupportsResume`: **no** new caller parameter — the queue
+  itself reads `destination.supportsAppendResume` when building the
+  `Item`/`Job`.
+- `crossBackendTarget`: new optional `enqueue`/`enqueueTree` parameter
+  (`crossBackendTarget: CrossBackendTarget? = nil`), set in
+  `ContentView.transferToSession` (destination session name and `kind` are
+  available there).
+- Both threaded through **every** `Item` reconstruction site (retry,
+  interrupt-retain) — exactly like `isEditUpload`/`destinationDirectory`
+  today.
 
-**Test (Core-Unit):**
-- cross-remote enqueue auf S3-Ziel → `destinationSupportsResume == false`,
-  `crossBackendTarget == CrossBackendTarget(name:…, kind: .s3)`.
-- cross-remote enqueue auf SSH-Ziel → `destinationSupportsResume == true`,
-  `crossBackendTarget?.kind == .ssh`.
-- same-session lokal→S3-Upload → `destinationSupportsResume == false`,
+**Test (Core unit):**
+- cross-remote enqueue to an S3 destination → `destinationSupportsResume ==
+  false`, `crossBackendTarget == CrossBackendTarget(name:…, kind: .s3)`.
+- cross-remote enqueue to an SSH destination → `destinationSupportsResume ==
+  true`, `crossBackendTarget?.kind == .ssh`.
+- same-session local→S3 upload → `destinationSupportsResume == false`,
   `crossBackendTarget == nil`.
-- retry/interrupt-retain eines solchen Items behält beide Felder (kein
-  Reset auf Default).
+- retry/interrupt-retain of such an item keeps both fields (no reset to
+  default).
 
-### 3. Transfer-Zeile — Ziel/Backend-Badge + passive Resume-Warnung (App)
+### 3. Transfer row — destination/backend badge + passive resume warning (App)
 
-`TransferQueueBar.row(_:)` (heute Pfeil + Dateiname + Status) bekommt zwei
-additive, bedingte Elemente in derselben `HStack`:
+`TransferQueueBar.row(_:)` (today: arrow + filename + status) gets two
+additive, conditional elements in the same `HStack`:
 
-- **Ziel-Badge (cross-backend):** wenn `item.crossBackendTarget != nil`, ein
-  kleines Backend-Badge (`SSH`/`S3`, Small-Label-Typo wie die Sidebar-/Tab-
-  Badges aus M12) + Ziel-Session-Name (z. B. `→ prod-bucket`). Same-Session-
-  Transfers unverändert.
-- **Passive Resume-Warnung:** wenn `item.destinationSupportsResume == false`
-  **und** Status aktiv (queued/running), ein dezentes ⚠ mit Tooltip „Bei
-  Abbruch startet der Upload neu". Kein Dialog, kein Klick. Verschwindet bei
-  Abschluss. Gilt für jedes S3-Ziel.
+- **Destination badge (cross-backend):** when `item.crossBackendTarget !=
+  nil`, a small backend badge (`SSH`/`S3`, small-label typography like the
+  sidebar/tab badges from M12) + destination session name (e.g.
+  `→ prod-bucket`). Same-session transfers unchanged.
+- **Passive resume warning:** when `item.destinationSupportsResume ==
+  false` **and** status is active (queued/running), a subdued ⚠ with a
+  tooltip "Upload restarts from scratch on interruption." No dialog, no
+  click. Disappears on completion. Applies to every S3 destination.
 
-Rein additiv, keine Layout-Umbauten/neuen Zeilenhöhen. Reine SwiftUI-View
-(build-verifiziert + Idle-CPU-Rauchtest); die Datenlogik ist in Abschnitt 2
-getestet.
+Purely additive, no layout rework/new row heights. Plain SwiftUI view
+(build-verified + idle-CPU smoke test); the data logic is tested in
+section 2.
 
-**L10n:** Tooltip-String + ggf. „→"-Ziel-Präfix-Format in EN/DE/FR/PL
-(typografische Zeichen, FR/PL KI-generiert). Backend-Badge-Labels „SSH"/„S3"
-existieren aus M12.
+**L10n:** tooltip string + possibly a "→" destination-prefix format in
+EN/DE/FR/PL (typographic characters, FR/PL AI-generated). Backend badge
+labels "SSH"/"S3" already exist from M12.
 
-### 4. Ziel-Session-Submenü verbessern (App)
+### 4. Improve the destination session submenu (App)
 
-Das M8b-„An Session übertragen"-Submenü (`crossSessionTargets(for:)`
-~ContentView:2579 + Rendering) ergänzt:
+The M8b "Transfer to session" submenu (`crossSessionTargets(for:)`
+~ContentView:2579 + rendering) gains:
 
-- **Backend-Badge pro Ziel:** `CrossSessionTarget` bekommt ein `kind`-Feld
-  (aus der Ziel-Session); jeder Menüeintrag zeigt `SSH`/`S3` neben dem Namen.
-- **Klarere Ziel-Pfad-Anzeige:** der vorhandene `CrossSessionTarget.remotePath`
-  wird im Eintrag mit angezeigt. Trägt das Menü-Widget keinen zweizeiligen
-  Eintrag sauber, wird der Pfad kompakt in den Titel gefaltet
-  (`prod-bucket — /uploads`).
+- **Backend badge per destination:** `CrossSessionTarget` gets a `kind`
+  field (from the destination session); every menu entry shows `SSH`/`S3`
+  next to the name.
+- **Clearer destination path display:** the existing
+  `CrossSessionTarget.remotePath` is also shown in the entry. If the menu
+  widget cannot cleanly carry a two-line entry, the path is folded compactly
+  into the title (`prod-bucket — /uploads`).
 
-Rein additiv, keine Verhaltensänderung am Transfer.
+Purely additive, no behavior change to the transfer.
 
-**L10n:** ggf. ein Format-String fürs Titel/Pfad-Zusammensetzen (EN/DE/FR/PL);
-Badge-Labels aus M12.
+**L10n:** possibly a format string for assembling title/path (EN/DE/FR/PL);
+badge labels from M12.
 
-## Sicherheit / Invarianten
+## Security / invariants
 
-- Keine Änderung an Signer/Transport/Engine-Kopierlogik — nur additive
-  Metadaten + View.
-- Kein `if kind == .s3`-Sonderpfad in der Kopierlogik; die Backend-Kennung im
-  `Item` ist reine Anzeige-Metadaten.
-- Keine neue externe Dependency.
-- Resume-Guard (M13) bleibt unangetastet — der Test verifiziert ihn nur über
-  die Backend-Grenze.
+- No change to signer/transport/engine copy logic — only additive metadata
+  + view.
+- No `if kind == .s3` special path in the copy logic; the backend label in
+  the `Item` is pure display metadata.
+- No new external dependency.
+- The resume guard (M13) is left untouched — the test only verifies it
+  across the backend boundary.
 
 ## Tests
 
-- **Core-Unit:** Queue-Item-Metadaten (Abschnitt 2, vier Fälle inkl. retry).
-- **Gated MinIO+sshd (`MACSCP_ITEST=1`, aus dem Haupt-Checkout):** SSH→S3,
-  S3→SSH, Ordner-Baum cross-backend, Resume-Guard über die Grenze
-  (Abschnitt 1).
-- **Runtime-Smoke (Maintainer + Koordinator-Idle-CPU):** Transfer-Leiste mit
-  Cross-Backend-Badge + Resume-⚠, Ziel-Submenü mit Backend-Badge.
+- **Core unit:** queue item metadata (section 2, four cases including
+  retry).
+- **Gated MinIO+sshd (`MACSCP_ITEST=1`, from the main checkout):** SSH→S3,
+  S3→SSH, cross-backend folder tree, resume guard across the boundary
+  (section 1).
+- **Runtime smoke (maintainer + coordinator idle-CPU):** transfer bar with
+  cross-backend badge + resume ⚠, destination submenu with backend badge.
 
-## Nicht in M16
+## Not in M16
 
-- Neue Engine-/Kopiermechanik (nicht nötig).
-- Aktiver Resume-Bestätigungsdialog (bewusst verworfen — passiv gewählt).
-- „Öffnen mit" S3-CLI, Verbindungs-Diagnose, SSH-Key-Manager, SSH-Terminal-
-  Snippets, MCP-Server, macSCP-CLI (eigene spätere Meilensteine).
+- New engine/copy mechanics (not needed).
+- Active resume confirmation dialog (deliberately dropped — passive was
+  chosen).
+- "Open with" S3 CLI, connection diagnostics, SSH key manager, SSH terminal
+  snippets, MCP server, macSCP CLI (own later milestones).
 
-## Betroffene Dateien
+## Files affected
 
-- `Tests/macSCPCoreTests/…` — neuer gated S3↔SSH-Test (ggf. eigene Datei
-  `CrossBackendTransferIntegrationTests.swift`); Core-Unit-Test für die
-  Item-Metadaten.
+- `Tests/macSCPCoreTests/…` — new gated S3↔SSH test (possibly its own file
+  `CrossBackendTransferIntegrationTests.swift`); Core unit test for the item
+  metadata.
 - `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift` — `Item`/
-  `Job` um `destinationSupportsResume` + `crossBackendTarget`; `enqueue`/
-  `enqueueTree` um den optionalen Parameter; alle Rekonstruktionsstellen.
-- `Sources/macSCPCore/…` — neuer `CrossBackendTarget`-Typ (eigene kleine
-  Datei oder bei `TransferQueueViewModel`).
-- `Sources/MacSCPApp/TransferQueueBar.swift` — Ziel-Badge + Resume-⚠ in
-  `row(_:)`.
-- `Sources/MacSCPApp/ContentView.swift` — `transferToSession` gibt
-  `crossBackendTarget` mit; `crossSessionTargets(for:)` + Submenü-Rendering
-  um `kind`/Pfad.
+  `Job` gain `destinationSupportsResume` + `crossBackendTarget`; `enqueue`/
+  `enqueueTree` gain the optional parameter; all reconstruction sites.
+- `Sources/macSCPCore/…` — new `CrossBackendTarget` type (own small file or
+  alongside `TransferQueueViewModel`).
+- `Sources/MacSCPApp/TransferQueueBar.swift` — destination badge + resume ⚠
+  in `row(_:)`.
+- `Sources/MacSCPApp/ContentView.swift` — `transferToSession` passes along
+  `crossBackendTarget`; `crossSessionTargets(for:)` + submenu rendering gain
+  `kind`/path.
 - `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` —
-  Tooltip + Menü-Format-Strings.
+  tooltip + menu format strings.

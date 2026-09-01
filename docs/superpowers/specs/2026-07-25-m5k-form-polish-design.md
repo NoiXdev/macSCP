@@ -1,98 +1,98 @@
-# macSCP M5k — Design-Polish Formular & Buttons (Design-Spec)
+# macSCP M5k — Design polish form & buttons (design spec)
 
-**Datum:** 2026-07-25
-**Status:** vom Maintainer freigegeben (Runde 4 — letzte der gestaffelten Polish-Runden)
-**Referenz:** `docs/design/assets/macscp-ci-mockup.html` (bindende Blaupause);
-Vorgänger M5g/M5h/M5j.
+**Date:** 2026-07-25
+**Status:** approved by the maintainer (round 4 — last of the staged polish rounds)
+**Reference:** `docs/design/assets/macscp-ci-mockup.html` (binding blueprint);
+predecessors M5g/M5h/M5j.
 
-## Ziel
+## Goal
 
-Das Verbindungsformular (Neu/Bearbeiten/Fingerprint-Prompt) übernimmt das
-Feld-Grid und den Button-Stil aus dem CI-Mockup. Reiner View-Layer, null
-Verhaltensänderung. Danach ist die Design-Polish-Serie komplett → M6.
+The connection form (New/Edit/fingerprint prompt) adopts the field grid
+and button style from the CI mockup. Pure view layer, zero behavior
+change. After this, the design polish series is complete → M6.
 
-## Mockup-Werte (bindend)
+## Mockup values (binding)
 
-| Element | Wert |
+| Element | Value |
 |---|---|
-| Feld-Grid | Label-Spalte fest 110 pt, rechtsbündig, 12,5 pt, `inkSecondary`; Gap Label→Feld 10 pt; Zeilenabstand 10 pt |
-| Button | Radius 7, Padding 5 pt vertikal / 14 pt horizontal, 12,5 pt |
-| Button sekundär | Grund `card`, 1-pt-Rand `hairline`, Text `inkSecondary` |
-| Button primär | Füllung `remoteBlue`, Text Weiß semibold; gedrückt leicht abgedunkelt (Opacity ~0.85) |
+| Field grid | Label column fixed 110 pt, right-aligned, 12.5 pt, `inkSecondary`; gap label→field 10 pt; line spacing 10 pt |
+| Button | Radius 7, padding 5 pt vertical / 14 pt horizontal, 12.5 pt |
+| Button secondary | Ground `card`, 1-pt border `hairline`, text `inkSecondary` |
+| Button primary | Fill `remoteBlue`, text white semibold; pressed slightly darkened (opacity ~0.85) |
 
-## Umsetzung
+## Implementation
 
-### 1. `PolishedButtonStyle` (neue Datei `Sources/MacSCPApp/PolishedButtonStyle.swift`)
+### 1. `PolishedButtonStyle` (new file `Sources/MacSCPApp/PolishedButtonStyle.swift`)
 
-- `struct PolishedButtonStyle: ButtonStyle` mit `let prominent: Bool`:
-  Radius-7-RoundedRectangle, Padding 5×14, `font(.system(size: 12.5,
-  weight: prominent ? .semibold : .regular))`; prominent: Füllung
-  `DesignTokens.remoteBlue`, Text `.white`, `opacity(configuration.isPressed
-  ? 0.85 : 1)`; sekundär: Füllung `DesignTokens.card`, `strokeBorder`
-  `DesignTokens.hairline` 1 pt, Text `DesignTokens.inkSecondary`, gedrückt
-  Opacity 0.85. Disabled-Darstellung über `.opacity` via Environment
-  `\.isEnabled` (0.5). Convenience: `static` Zugriffe
-  `.polished` / `.polishedProminent` über eine `ButtonStyle`-Extension.
+- `struct PolishedButtonStyle: ButtonStyle` with `let prominent: Bool`:
+  radius-7 RoundedRectangle, padding 5×14, `font(.system(size: 12.5,
+  weight: prominent ? .semibold : .regular))`; prominent: fill
+  `DesignTokens.remoteBlue`, text `.white`, `opacity(configuration.isPressed
+  ? 0.85 : 1)`; secondary: fill `DesignTokens.card`, `strokeBorder`
+  `DesignTokens.hairline` 1 pt, text `DesignTokens.inkSecondary`, pressed
+  opacity 0.85. Disabled rendering via `.opacity` through environment
+  `\.isEnabled` (0.5). Convenience: `static` accessors
+  `.polished` / `.polishedProminent` via a `ButtonStyle` extension.
 
-### 2. Formular-Grid (`Sources/MacSCPApp/ConnectionFormView.swift`)
+### 2. Form grid (`Sources/MacSCPApp/ConnectionFormView.swift`)
 
-- Private Helper-View `FormRow<Content: View>`:
+- Private helper view `FormRow<Content: View>`:
   `FormRow(label: String) { content }` → `HStack(alignment: .firstTextBaseline,
-  spacing: 10)` mit `Text(label).font(.system(size: 12.5))
+  spacing: 10)` with `Text(label).font(.system(size: 12.5))
   .foregroundStyle(DesignTokens.inkSecondary).frame(width: 110,
-  alignment: .trailing)` + Content.
-- Die `Form { … }` wird zu `VStack(alignment: .leading, spacing: 10)` mit
-  `FormRow`-Zeilen (Host, Port, Benutzername, Authentifizierung [Segmented-
-  Picker als Content], Passwort/Key-Pfad/Passphrase, Session-Name, Gruppe
-  [Picker], Speichern-Toggle [`FormRow(label: "")` — der Toggle fluchtet
-  auf der Feldspalte]). Labels kommen aus den bestehenden
-  Katalog-Strings (heutige TextField-Label-Parameter werden zu
-  `FormRow`-Labels; die TextFields behalten ihre Prompts/Placeholder).
-- `errorHighlight` wird auf die jeweilige `FormRow` angewendet (Rahmen um
-  Label+Feld, bestehende Außen-Padding-Optik aus dem Design-Review 6e03c7a
-  bleibt unverändert).
-- Tab-Reihenfolge/Fokus: TextFields bleiben System-Controls in
-  Hierarchie-Reihenfolge — KEINE Verhaltensänderung (Tab-Kette
-  Host→Port→Benutzer→Passwort[…] muss identisch funktionieren).
-- Der Fingerprint-Prompt behält sein Layout; nur seine Buttons wechseln
-  auf den neuen Stil.
-- `.disabled(isConnecting)`-Gruppierung, fileImporter, Alert, Edit-Modus-
-  Zweige, Callbacks: unverändert.
+  alignment: .trailing)` + content.
+- The `Form { … }` becomes a `VStack(alignment: .leading, spacing: 10)`
+  with `FormRow` rows (Host, Port, Username, Authentication [segmented
+  picker as content], Password/key path/passphrase, session name, group
+  [picker], save toggle [`FormRow(label: "")` — the toggle aligns on the
+  field column]). Labels come from the existing catalog strings (today's
+  TextField label parameters become `FormRow` labels; the TextFields keep
+  their prompts/placeholders).
+- `errorHighlight` is applied to the respective `FormRow` (border around
+  label+field, the existing outer-padding look from design review
+  `6e03c7a` stays unchanged).
+- Tab order/focus: TextFields remain system controls in hierarchy order —
+  NO behavior change (the Host→Port→User→Password[…] tab chain must
+  function identically).
+- The fingerprint prompt keeps its layout; only its buttons switch to the
+  new style.
+- `.disabled(isConnecting)` grouping, fileImporter, alert, edit-mode
+  branches, callbacks: unchanged.
 
-### 3. Button-Anwendung (nur ConnectionFormView)
+### 3. Button application (ConnectionFormView only)
 
-- Primär (`.polishedProminent`): „Verbinden" (New), „Speichern & verbinden"
-  (Edit), „Vertrauen & verbinden" (Prompt). Der bisherige
-  `.buttonStyle(.borderedProminent)` entfällt zugunsten des neuen Stils.
-- Sekundär (`.polished`): „Zurück", „Speichern", „…"-Browse.
-- `keyboardShortcut(.defaultAction)`-Zuordnungen und `disabled`-Logik
-  bleiben exakt.
-- NICHT umgestellt: Toolbar (native macOS-Toolbar), Alerts, Sheets,
-  Settings-Fenster, Sidebar — System-Chrome bleibt System (M5f-Linie).
+- Primary (`.polishedProminent`): "Verbinden" (New), "Speichern &
+  verbinden" (Edit), "Vertrauen & verbinden" (Prompt). The previous
+  `.buttonStyle(.borderedProminent)` is dropped in favor of the new
+  style.
+- Secondary (`.polished`): "Zurück", "Speichern", "…" browse.
+- `keyboardShortcut(.defaultAction)` assignments and `disabled` logic
+  stay exactly as they are.
+- NOT converted: toolbar (native macOS toolbar), alerts, sheets, settings
+  window, sidebar — system chrome stays system (M5f line).
 
-## Invarianten
+## Invariants
 
-- KEINE Verhaltensänderung: Validierung/Alert, Edit-Modus-Semantik
-  (Passwort „unverändert"), TOFU-Fluss, fileImporter, Shortcuts,
-  Disabled-Zustände.
-- Beide Appearances über vorhandene Tokens; keine neuen statischen Farben
-  (Weiß auf remoteBlue ist bewusst statisch — Mockup `#fff` auf Markenblau,
-  in beiden Appearances korrekt).
-- CI-Regeln: Blau = Primäraktion; Bernstein taucht im Formular nicht auf.
-- Lokalisierung unangetastet (Label-Keys identisch).
+- NO behavior change: validation/alert, edit-mode semantics (password
+  "unchanged"), TOFU flow, fileImporter, shortcuts, disabled states.
+- Both appearances via existing tokens; no new static colors (white on
+  remoteBlue is deliberately static — mockup `#fff` on brand blue, correct
+  in both appearances).
+- CI rules: blue = primary action; amber does not appear in the form.
+- Localization untouched (label keys identical).
 
 ## Tests
 
-- Keine neuen Unit-Tests (View-Layer); bestehende 295 bleiben grün.
-- Visueller Smoke hell UND dunkel: Grid-Fluchtung (110-pt-Labels bündig),
-  Validierungsfehler (leer verbinden → Alert + Rahmen um Zeile),
-  Edit-Modus (Buttons Zurück/Speichern/Speichern & verbinden im neuen
-  Stil), TOFU-Prompt (Pin löschen → Prompt mit neuen Buttons, Trust-Fluss
-  funktioniert), **Tab-Ketten-Regression** Host→Port→Benutzer→Passwort,
-  „…"-Browse öffnet Panel.
+- No new unit tests (view layer); existing 295 stay green.
+- Visual smoke, light AND dark: grid alignment (110-pt labels flush),
+  validation error (connect with empty fields → alert + border around
+  row), edit mode (buttons Zurück/Speichern/Speichern & verbinden in the
+  new style), TOFU prompt (delete pin → prompt with new buttons, trust
+  flow works), **tab-chain regression** Host→Port→User→Password, "…"
+  browse opens panel.
 
-## Bewusst NICHT in M5k
+## Deliberately NOT in M5k
 
-- Settings-Fenster-Restyling (System-Form bleibt).
-- Toolbar-/Sheet-/Alert-Buttons (System-Chrome).
-- Eigene TextField-Optik (System-Felder bleiben — Fokus-Ring/Tab nativ).
+- Settings window restyling (system form stays).
+- Toolbar/sheet/alert buttons (system chrome).
+- Custom TextField look (system fields stay — focus ring/tab native).

@@ -1,220 +1,216 @@
-# Snippet-Syntax-Highlighting — Abschluss
+# Snippet Syntax Highlighting — Completion
 
-**Stand:** fertig. Suite 2197 Tests in 196 Suiten, grün (`swift test`,
-lokale Laufzeit ca. 5 s für die schnelle Mehrheit, Transfer-/Queue-Tests
-ziehen wie gewohnt je ~4,8–5,2 s).
+**Status:** done. Suite 2197 tests in 196 suites, green (`swift test`,
+local runtime approx. 5 s for the fast majority, transfer/queue tests
+pull as usual around ~4.8–5.2 s each).
 
-## Was umgesetzt wurde
+## What was implemented
 
-Vier Commits für das Vorhaben selbst, alle auf `develop` (dieser
-Abschlussbericht ist der fünfte; die beiden Korrekturwellen aus dem
-Schluss-Review stehen unten):
+Four commits for the effort itself, all on `develop` (this completion
+report is the fifth; the two correction waves from the final review are
+below):
 
-- `c63be88` — Plan-Dokument für dieses Vorhaben.
-- `0920bf5` — Core: `SnippetHighlighter.tokens(in:language:)`, ein reiner
-  Shell-Tokenizer, der `.command/.option/.string/.variable/.comment/
-  .operator/.plain`-Bereiche liefert, ohne Farben — `SnippetLanguage` ist
-  ein Parameter, kein gespeichertes Feld. Dazu
-  `SnippetCommandInput.sanitized(_:)`: jeder Zeilenumbruch wird zu einem
-  Leerzeichen, bevor er das Binding erreicht. 13 Tests.
-- `8d99797` — Doc-Korrektur an `SnippetHighlighter.tokens(in:language:)`
-  (siehe „Review-Befunde" unten).
-- `b37d3cf` — App: `SnippetCommandEditor`, ein `NSTextView` in einem
-  `NSViewRepresentable`, das während des Tippens einfärbt, plus der
-  Austausch des bisherigen einfachen `TextField` im Snippet-Editor-Sheet.
+- `c63be88` — plan document for this effort.
+- `0920bf5` — Core: `SnippetHighlighter.tokens(in:language:)`, a pure
+  shell tokenizer that returns `.command/.option/.string/.variable/.comment/
+  .operator/.plain` ranges, without colors — `SnippetLanguage` is a
+  parameter, not a stored field. Along with it,
+  `SnippetCommandInput.sanitized(_:)`: every line break becomes a
+  space before it reaches the binding. 13 tests.
+- `8d99797` — doc correction on `SnippetHighlighter.tokens(in:language:)`
+  (see "Review findings" below).
+- `b37d3cf` — App: `SnippetCommandEditor`, an `NSTextView` inside an
+  `NSViewRepresentable` that colors while typing, plus the
+  replacement of the previous plain `TextField` in the snippet editor sheet.
 
-Die Farbzuordnung (Tokenart → `NSColor`) sitzt ausschließlich im
-`Coordinator` der App-Komponente (`SnippetCommandEditor.swift:100–111`);
-Core kennt nur Tokenarten, keine Farben — siehe Verifikation unten.
+The color mapping (token kind → `NSColor`) sits exclusively in the
+`Coordinator` of the App component (`SnippetCommandEditor.swift:100–111`);
+Core knows only token kinds, no colors — see verification below.
 
-## Suite-Zahlen (selbst gemessen)
+## Suite numbers (self-measured)
 
 ```
 swift test
 ```
 
-**2183 Tests in 195 Suiten, alle grün.** Darunter die 13 neuen Core-Tests
-für `SnippetHighlighter.tokens(in:language:)` und
+**2183 tests in 195 suites, all green.** Among them the 13 new Core
+tests for `SnippetHighlighter.tokens(in:language:)` and
 `SnippetCommandInput.sanitized(_:)` (`Tests/macSCPCoreTests/SnippetHighlighterTests.swift`).
 
-## Verifikation: Core kennt keine Farben
+## Verification: Core knows no colors
 
 ```
 grep -c "NSColor\|Color\|import AppKit\|import SwiftUI" Sources/macSCPCore/Terminal/SnippetHighlighter.swift
 ```
 
-Ergebnis: **`0`** — wie erwartet.
+Result: **`0`** — as expected.
 
-Positivkontrolle, damit ein leerer Treffer nicht fälschlich als Erfolg
-durchgeht:
+Positive control, so an empty match doesn't falsely pass as success:
 
 ```
 grep -c "SnippetToken" Sources/macSCPCore/Terminal/SnippetHighlighter.swift
 ```
 
-Ergebnis: **`12`** (≥ 1 wie gefordert) — der erste Befehl hat also
-tatsächlich die richtige Datei gelesen und ist nicht an einer leeren Datei
-vorbeigerutscht.
+Result: **`12`** (≥ 1 as required) — so the first command did in fact
+read the right file and didn't slip past an empty one.
 
-## Review-Befunde
+## Review findings
 
-**Task 1 (Core), ein Important-Befund, im selben Task behoben:** Der
-Doc-Kommentar von `tokens(in:language:)` behauptete zunächst, „jedes Zeichen
-landet in genau einem Token" — das ist falsch, Whitespace wird nicht
-tokenisiert und übersprungen. Der Satz stammte aus dem Implementierungsplan,
-nicht vom Implementierer selbst. Commit `8d99797` korrigiert die Formulierung
-auf „jedes Nicht-Whitespace-Zeichen landet in genau einem Token, Whitespace
-wird nicht tokenisiert" (`SnippetHighlighter.swift:31–34`).
+**Task 1 (Core), one Important finding, fixed in the same task:** The
+doc comment for `tokens(in:language:)` initially claimed "every character
+lands in exactly one token" — that's wrong, whitespace is not tokenized
+and is skipped. The sentence came from the implementation plan, not from
+the implementer themselves. Commit `8d99797` corrects the wording to
+"every non-whitespace character lands in exactly one token, whitespace
+is not tokenized" (`SnippetHighlighter.swift:31–34`).
 
-**Zwei zurückgestellte Minor-Befunde am Tokenizer:**
-- Nur `&&` und `||` verschmelzen zu einem Operator-Token; `>>`, `<<` und
-  `;;` bleiben zwei Einzeltoken.
-- Ein alleinstehendes `-` wird als `.option` eingeordnet, nicht als `.plain`.
+**Two deferred minor findings on the tokenizer:**
+- Only `&&` and `||` merge into a single operator token; `>>`, `<<` and
+  `;;` remain two separate tokens.
+- A standalone `-` is classified as `.option`, not as `.plain`.
 
-**Zwei zurückgestellte Minor-Befunde an der App-Schicht:**
-- `Coordinator.parent` wird in `updateNSView` nie aufgefrischt, anders als
-  das Vorbild in `PathBar.swift`. Heute harmlos, weil `text` ein `@Binding`
-  über `@State` ist; würde latent, sobald `parent` je ein Feld bekäme, das
-  kein Binding ist.
-- Der Abschlussbericht des Implementierers nannte die Datei mit 117 Zeilen;
-  tatsächlich sind es 113 (`wc -l Sources/MacSCPAppKit/SnippetCommandEditor.swift`
-  selbst nachgezählt).
+**Two deferred minor findings on the App layer:**
+- `Coordinator.parent` is never refreshed in `updateNSView`, unlike
+  the model in `PathBar.swift`. Harmless today because `text` is a
+  `@Binding` over `@State`; would become latent as soon as `parent`
+  ever got a field that isn't a binding.
+- The implementer's completion report named the file as 117 lines;
+  it's actually 113 (`wc -l Sources/MacSCPAppKit/SnippetCommandEditor.swift`
+  recounted by hand).
 
-**Ein Punkt, den der Prüfer aus dem Diff allein nicht beurteilen konnte:**
-Wechselt das Systemtheme, während das Editor-Sheet offen und unberührt ist,
-färben sich die Token-Farben möglicherweise nicht nach — Neueinfärbung läuft
-nur bei einem Tastendruck (`recolour` wird ausschließlich aus
-`textDidChange` und `apply` heraus aufgerufen). Die Grundfarbe passt sich
-dagegen an. Als kosmetisch eingestuft und in die ausstehende Sichtprüfung
-unten aufgenommen statt als eigener Befund geführt.
+**One point the reviewer couldn't assess from the diff alone:**
+If the system theme changes while the editor sheet is open and untouched,
+the token colors may not recolor — recoloring only runs on a keystroke
+(`recolour` is only called from `textDidChange` and `apply`). The base
+color, by contrast, does adapt. Classified as cosmetic and rolled into
+the pending visual check below rather than tracked as its own finding.
 
-## Ausstehende Sichtprüfung — ausdrücklich, keine Fußnote
+## Pending visual check — explicit, not a footnote
 
-**Kein Test dieses Projekts zeichnet `NSViewRepresentable`.** Die
-13 Core-Tests decken den Tokenizer und die Sanitisierung ab, nicht das
-`NSTextView`-Verhalten selbst. Folgendes ist ausschließlich durch Hinsehen
-in der laufenden App zu prüfen, nicht durch die Suite belegt:
+**No test in this project records `NSViewRepresentable`.** The
+13 Core tests cover the tokenizer and the sanitization, not the
+`NSTextView` behavior itself. The following can only be verified by
+eye in the running app, not proved by the suite:
 
-- **Caret-Verhalten beim Tippen in der Mitte** eines bereits gefärbten
-  Befehls — landet die Einfügemarke nach dem Neueinfärben wirklich an der
-  erwarteten Stelle, nicht am Textende.
-- **⌘Z** — hebt Undo wirklich nur Textänderungen auf, nicht die
-  Farbattribute (Hazard 2 im Doc-Kommentar der Komponente).
-- **Einfügen eines mehrzeiligen Befehls** (Paste) — werden alle
-  Zeilenumbrüche zu Leerzeichen, auch bei Multi-Line-Clipboard-Inhalt, und
-  bleibt der Caret danach sinnvoll positioniert.
-- **Der Fokusring** — sieht die Komponente im fokussierten Zustand aus wie
-  ein natives Formularfeld, oder wirkt der `NSScrollView`-Rahmen anders als
-  erwartet.
-- **Ähnlichkeit zum Namensfeld daneben** — wirkt das neue `NSTextView`-
-  basierte Feld optisch wie ein gleichwertiges Geschwister des bisherigen
-  `TextField` für den Snippet-Namen (Höhe, Innenabstand, Rahmenfarbe), oder
-  fällt der Bruch auf.
-- Zusätzlich, aus dem Review übernommen: **Theme-Wechsel bei offenem,
-  unberührtem Sheet** — färben sich Tokens nach, wenn nicht, ob das im
-  laufenden Betrieb auffällt.
+- **Caret behavior when typing in the middle** of an already-colored
+  command — does the insertion point really land where expected after
+  recoloring, not at the end of the text.
+- **⌘Z** — does undo really only undo text changes, not the
+  color attributes (Hazard 2 in the component's doc comment).
+- **Pasting a multi-line command** — do all line breaks become
+  spaces, even for multi-line clipboard content, and does the caret
+  end up in a sensible position afterwards.
+- **The focus ring** — does the component in focused state look like
+  a native form field, or does the `NSScrollView` frame look different
+  than expected.
+- **Similarity to the name field next to it** — does the new `NSTextView`-
+  based field look like a visually equal sibling of the previous
+  `TextField` for the snippet name (height, padding, border color), or
+  does the break stand out.
+- Also, carried over from the review: **theme change with the sheet
+  open and untouched** — do tokens recolor, and if not, whether that's
+  noticeable in daily use.
 
-Die `.frame(height: 24)` an der Einbindungsstelle in `SnippetsSheet.swift`
-ist ein erster Schätzwert; die Sichtprüfung entscheidet, ob er passt oder
-angepasst werden muss. (Der frühere Zeilenverweis an dieser Stelle war
-binnen zweier Commits falsch — ein Beleg für die Hausregel, keine
-Zeilennummern in Fließtext über Code zu schreiben.)
+The `.frame(height: 24)` at the embedding point in `SnippetsSheet.swift`
+is an initial estimate; the visual check decides whether it fits or
+needs adjusting. (The earlier line reference at this spot was wrong
+within two commits — evidence for the house rule against writing
+line numbers in prose about code.)
 
-## Korrekturwellen aus dem Schluss-Review
+## Correction waves from the final review
 
-Das Schluss-Review über den ganzen Zweig kam mit „nicht mergefähig"
-zurück: fünf wichtige Befunde, alle in der Naht zwischen dem getesteten
-Core-Teil und der ungetesteten View. `401cbc2` hat sie in einem Zug
-behoben, `11fd0b0` zwei Reste aus der Nachprüfung.
+The final review across the whole branch came back "not mergeable":
+five important findings, all in the seam between the tested Core part
+and the untested view. `401cbc2` fixed them in one pass, `11fd0b0`
+fixed two leftovers from the follow-up check.
 
-- **Automatische Ersetzungen.** `NSTextView` ließ alle fünf auf
-  Vorgabe: „intelligente" Anführungszeichen hätten `echo "hi"` in
-  typografische Zeichen verwandelt, `--` in einen Halbgeviertstrich — der
-  Befehl wäre still verfälscht in `snippets.json` gelandet. Das ersetzte
-  `NSTextField` hatte das Problem nie, weil sein Field Editor die
-  Ersetzungen von sich aus abschaltet. Jetzt explizit abgeschaltet.
-- **Tabulator.** Tab fügte ein `\t` ein, statt den Fokus
-  weiterzureichen. `\t` ist kein `Character.isNewline`, überlebte also
-  Sanitizer, `Snippet.init?` und Tokenizer — unsichtbar gespeichert und
-  später an die Shell geschickt. Tab und Umschalt-Tab wandern jetzt.
-- **Umbruch.** Die Ansicht brach im 24-pt-Kasten um, ohne Scroller; lange
-  Befehle verschwanden aus dem Blick. Entscheidung des Maintainers:
-  einzeilig erzwingen und waagerecht scrollen, wie es das ersetzte
-  `TextField` tat.
-- **Bedienhilfen-Beschriftung.** Ging beim Austausch verloren. `FormRow`
-  blendet die sichtbare Beschriftung genau deshalb aus, weil das
-  eingebettete Steuerelement seine eigene trägt (Invariante aus M6a).
-  Wiederhergestellt aus derselben lokalisierten Zeichenkette.
-- **Toter Fehlerpfad.** Der Sanitizer behält recht: die Prüfung auf
-  mehrzeilige Eingabe beim Speichern war unerreichbar geworden. Pfad und
-  Schlüssel `snippets.editor.error.multiline` sind aus allen vier
-  Katalogen entfernt.
+- **Automatic substitutions.** `NSTextView` left all five on
+  default: "smart" quotes would have turned `echo "hi"` into
+  typographic characters, `--` into an en dash — the command would
+  have landed silently corrupted in `snippets.json`. The replaced
+  `NSTextField` never had the problem because its field editor turns
+  substitutions off on its own. Now explicitly turned off.
+- **Tab.** Tab inserted a `\t` instead of passing focus along. `\t`
+  is not `Character.isNewline`, so it survived the sanitizer,
+  `Snippet.init?` and the tokenizer — stored invisibly and later
+  sent to the shell. Tab and shift-tab now move focus.
+- **Wrapping.** The view wrapped inside the 24-pt box, without a
+  scroller; long commands disappeared from view. Maintainer decision:
+  force single-line and scroll horizontally, as the replaced
+  `TextField` did.
+- **Accessibility label.** Was lost in the swap. `FormRow` hides its
+  visible label precisely because the embedded control carries its
+  own (invariant from M6a). Restored from the same localized string.
+- **Dead error path.** The sanitizer turns out to be right: the check
+  for multi-line input on save had become unreachable. The path and
+  key `snippets.editor.error.multiline` were removed from all four
+  catalogs.
 
-**Die offene Frage, die offen bleibt.** Wer die Eingabetaste bekommt — das
-Textfeld oder der Speichern-Knopf mit `.keyboardShortcut(.defaultAction)` —
-ließ sich hier nicht beobachten, weil die App in dieser Umgebung nicht
-gestartet wird. Statt die Frage mit einer plausibel klingenden Behauptung
-zu schließen, ist das Verhalten von ihr unabhängig gemacht: der
-`Coordinator` beansprucht `insertNewline(_:)` und fügt nichts ein. Bekommt
-das Textfeld die Taste, passiert nichts; bekommt sie der Knopf, wird
-gespeichert. Beides ist für ein einzeiliges Feld richtig. Der
-Doc-Kommentar nennt beide Möglichkeiten und sagt ausdrücklich, dass
-ungeprüft ist, welche eintritt.
+**The open question that stays open.** Which control gets the Return
+key — the text field or the Save button with
+`.keyboardShortcut(.defaultAction)` — could not be observed here,
+because the app is not started in this environment. Instead of
+closing the question with a plausible-sounding claim, the behavior
+was made independent of it: the `Coordinator` claims
+`insertNewline(_:)` and inserts nothing. If the text field gets the
+key, nothing happens; if the button gets it, it saves. Either is
+correct for a single-line field. The doc comment names both
+possibilities and states explicitly that which one occurs is
+unverified.
 
-**Neue Tests.** Der Einwand des Prüfers gegen den Satz „hier ist nichts
-testbar" war berechtigt: für diese Sheet-Familie gibt es bereits
-quelltext-prüfende Wächter. `SnippetCommandEditorGuardTests` folgt dem
-Muster und nagelt die Ersetzungssperre, die Tab-Behandlung, die
-Bedienhilfen-Beschriftung und den `insertNewline`-Anspruch fest — jeweils
-fail-closed und durch Mutation rot geprüft.
+**New tests.** The reviewer's objection to the sentence "nothing here
+is testable" was warranted: for this sheet family, source-scanning
+guards already exist. `SnippetCommandEditorGuardTests` follows the
+pattern and pins down the substitution lockout, the tab handling,
+the accessibility label, and the `insertNewline` claim — each
+fail-closed and mutation-tested red.
 
-## Sichtprüfung durchgeführt (Maintainer, 2026-08-19)
+## Visual check performed (maintainer, 2026-08-19)
 
-Am laufenden Build geprüft und bestätigt: Einfärbung, runde Umrandung
-passend zu den Nachbarfeldern, und waagerechtes Scrollen bei einem
-Befehl, der breiter ist als das Feld.
+Checked and confirmed against the running build: coloring, rounded
+border matching the neighboring fields, and horizontal scrolling for
+a command wider than the field.
 
-Der Weg dorthin ging über zwei weitere Fehler, beide aus der
-Härtungswelle, beide erst durch Hinsehen gefunden:
+Getting there involved two more bugs, both from the hardening wave,
+both found only by looking:
 
-1. **Der Scroller fraß die Zeile.** `hasHorizontalScroller = true` ohne
-   Autohide blendet den Balken dauerhaft ein; in einer 24-pt-Zeile nimmt
-   er rund zwei Drittel der Höhe und zeichnet sich als dunkle Kapsel quer
-   durchs leere Feld. Das Feld sah aus wie ein kaputtes Steuerelement.
-   Balken entfernt — die Clip-Ansicht folgt der Einfügemarke auch ohne
-   ihn, genau wie beim ersetzten `TextField`.
-2. **Die Breite war festgenagelt.** `autoresizingMask` enthielt `.width`,
-   band also die Breite der Textansicht an die der Clip-Ansicht. Ihr
-   Rahmen konnte nie über die sichtbare Breite hinauswachsen, und wo
-   nichts breiter ist, gibt es nichts zu scrollen: der Befehl endete am
-   rechten Rand, der Rest war unerreichbar. Dazu fehlte `maxSize`. Jetzt
-   trackt nur die Höhe die Zeile.
+1. **The scroller ate the line.** `hasHorizontalScroller = true`
+   without autohide keeps the bar permanently visible; in a 24-pt row
+   it takes up roughly two thirds of the height and draws as a dark
+   capsule across the empty field. The field looked like a broken
+   control. Bar removed — the clip view follows the insertion point
+   just fine without it, exactly as with the replaced `TextField`.
+2. **The width was pinned.** `autoresizingMask` included `.width`,
+   tying the text view's width to the clip view's. Its frame could
+   never grow past the visible width, and where nothing is wider than
+   the field, there is nothing to scroll: the command ended at the
+   right edge, the rest unreachable. `maxSize` was also missing. Now
+   only the height tracks the row.
 
-**Die Lektion dahinter.** Beide Fehler standen in derselben Änderung, die
-den Umbruch abschalten sollte, und beide waren aus dem Diff nicht zu
-sehen — das Schluss-Review hat den Umbruch korrekt als Befund erkannt,
-und der Fix hat ihn durch zwei neue Fehler ersetzt, die *ebenfalls*
-plausibel aussahen. Für `NSViewRepresentable` gilt in diesem Projekt
-weiterhin: der Beweis ist der Blick auf die laufende App, nicht die
-grüne Suite und nicht das Review.
+**The lesson behind it.** Both bugs were in the same change that was
+meant to turn off wrapping, and neither was visible in the diff — the
+final review correctly flagged the wrapping as a finding, and the fix
+replaced it with two new bugs that *also* looked plausible. For
+`NSViewRepresentable`, this project's rule still holds: the proof is
+looking at the running app, not the green suite and not the review.
 
-**Weiterhin ungeprüft:** wer die Eingabetaste bekommt (siehe oben) und
-der Theme-Wechsel bei offenem, unberührtem Sheet.
+**Still unverified:** which control gets the Return key (see above)
+and the theme change with the sheet open and untouched.
 
-## Lektion: eine Zahl im Review-Befund ist auch ein Prüfauftrag
+## Lesson: a number in a review finding is also a task to verify
 
-Die falschen Zahlen im Farb-Kommentar („sechs Arten … vier Farben"; es sind
-sieben und sechs) stammten nicht vom Implementierer. Sie standen im Befund
-des Schluss-Reviews, wanderten ungeprüft in das Ledger des Koordinators und
-von dort wörtlich in den Fix-Auftrag — bis sie als Behauptung im Quelltext
-standen.
+The wrong numbers in the color comment ("six kinds … four colors"; it's
+actually seven and six) did not come from the implementer. They stood
+in the final review's finding, moved unverified into the coordinator's
+ledger, and from there verbatim into the fix instruction — until they
+stood as a claim in the source.
 
-Die Hausregel in `CLAUDE.md` sagt bisher: wer eine Zahl in einen Kommentar
-schreibt, zählt sie im selben Moment nach. Dieser Durchgang erweitert sie um
-die Gegenrichtung: **auch eine Zahl in einem Review-Befund ist ein
-Prüfauftrag.** Wer sie weiterreicht, ohne zu zählen, ist das Transportmittel
-des Fehlers — der Befund klingt beim Weitergeben genauso plausibel wie der
-Kommentar beim Schreiben.
+The house rule in `CLAUDE.md` has so far said: whoever writes a number
+into a comment counts it again in that same moment. This round extends
+it to the reverse direction: **a number in a review finding is also a
+task to verify.** Whoever passes it along without counting is the
+vehicle of the error — the finding sounds just as plausible when passed
+along as the comment did when written.
 
-Es ist der vierte Fall derselben Klasse in dieser Sitzung. Alle vier saßen
-in einer Zahl oder einer Aufzählung; keiner in Fließtext ohne Kardinalität.
+This is the fourth case of the same class in this session. All four sat
+in a number or an enumeration; none in prose without cardinality.

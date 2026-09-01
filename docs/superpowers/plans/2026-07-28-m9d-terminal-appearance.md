@@ -1,45 +1,45 @@
-# M9d — Terminal-Darstellung + Remote-Home Implementation Plan
+# M9d — Terminal Appearance + Remote Home Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Einstellbarer Terminal-Font/-Größe/-Cursor mit Live-Anwendung (Farben bleiben CI) + das Remote-Pane startet beim Connect im Remote-Home statt `/`.
+**Goal:** Configurable terminal font/size/cursor with live application (colors stay CI) + the remote pane starts in the remote home on connect instead of `/`.
 
-**Architecture:** Vier vorwärtskompatible SettingsStore-Properties + `TerminalCursorStyle`-Enum (Core, getestet); `SSHTerminalView` liest sie in `makeNSView` und appliziert Änderungen in `updateNSView` nur bei echter Differenz; neuer Settings-Tab „Terminal" mit Monospace-Font-Popup und Vorschau; `RemoteFileSystem.homeDirectoryPath()` (Citadel `realpath "."`, Local `NSHomeDirectory()`, Mock konfigurierbar) — `startSession` löst das Home einmal auf.
+**Architecture:** Four forward-compatible SettingsStore properties + a `TerminalCursorStyle` enum (Core, tested); `SSHTerminalView` reads them in `makeNSView` and applies changes in `updateNSView` only on an actual difference; new Settings tab "Terminal" with a monospace font popup and a preview; `RemoteFileSystem.homeDirectoryPath()` (Citadel `realpath "."`, Local `NSHomeDirectory()`, Mock configurable) — `startSession` resolves the home once.
 
-**Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, SwiftTerm (font/caret/cursorStyle-APIs), NSFontManager (Fixed-Pitch-Liste).
+**Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, SwiftTerm (font/caret/cursorStyle APIs), NSFontManager (fixed-pitch list).
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-28-m9d-terminal-appearance-design.md` — bindend. Branch: **develop**.
-- Farben/Theme UNVERÄNDERT (DesignTokens Tiefsee/Phosphor); nur Font, Größe (9…24 geklemmt beim Setzen UND Lesen), Cursor-Stil (block Default/bar/underline; unbekannter RawValue liest als block) + Blinken (Default true).
-- Live-Anwendung in `updateNSView` NUR bei tatsächlicher Änderung (Vergleich) — reguläre Re-Renders dürfen das Terminal nicht anfassen; Font-Fallback: Name nicht auflösbar ⇒ System-Monospace, nie ein kaputtes Terminal.
-- Remote-Home: EINMAL beim Connect via `homeDirectoryPath()`; Fehler ⇒ stiller Fallback `/`; kein erneutes Auflösen später.
-- Alle neuen UI-Texte EN/DE; Code + Kommentare NUR Englisch; keine neuen Dependencies.
-- Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` + volle `swift test` nach jedem Task grün (Ausgangslage 456 Tests / 36 Suiten); gated Suiten in T1 (Implementer, Rig nötig für den Citadel-Home-Test) und T3; Tests SYNCHRON im Vordergrund.
-- TDD für Core; App-Target untestbar → T2 liefert Build + Verhaltensbeschreibung.
+- Spec: `docs/superpowers/specs/2026-07-28-m9d-terminal-appearance-design.md` — binding. Branch: **develop**.
+- Colors/theme UNCHANGED (DesignTokens Tiefsee/Phosphor); only font, size (9…24 clamped on both set AND read), cursor style (block default/bar/underline; unknown raw value reads as block) + blink (default true).
+- Live application in `updateNSView` ONLY on an actual change (comparison) — regular re-renders must not touch the terminal; font fallback: name not resolvable ⇒ system monospace, never a broken terminal.
+- Remote home: resolved ONCE on connect via `homeDirectoryPath()`; error ⇒ silent fallback to `/`; no re-resolving later.
+- All new UI text EN/DE; code + comments English ONLY; no new dependencies.
+- Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` + full `swift test` green after every task (starting point 456 tests / 36 suites); gated suites in T1 (implementer, rig needed for the Citadel home test) and T3; tests run SYNCHRONOUSLY in the foreground.
+- TDD for Core; App target untestable → T2 delivers a build + behavior description.
 
 ## Schedule
 
-T1 (Core: Settings + Cursor-Enum + FS-Home, inkl. gated Test) → T2 (App: Terminal-Tab + SSHTerminalView + Home-Verdrahtung) → T3 Abschluss (Koordinator).
+T1 (Core: settings + cursor enum + FS home, incl. gated test) → T2 (App: terminal tab + SSHTerminalView + home wiring) → T3 wrap-up (coordinator).
 
 ---
 
-### Task 1: Settings-Properties, TerminalCursorStyle, homeDirectoryPath (Core)
+### Task 1: Settings properties, TerminalCursorStyle, homeDirectoryPath (Core)
 
 **Files:**
 - Create: `Sources/macSCPCore/Settings/TerminalCursorStyle.swift`
 - Modify: `Sources/macSCPCore/Settings/SettingsStore.swift`, `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift`, `Sources/macSCPCore/SSH/CitadelFileSystem.swift`, `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift`, `Tests/macSCPCoreTests/MockRemoteFileSystem.swift`
-- Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift`, `Tests/macSCPCoreTests/TerminalCursorStyleTests.swift` (neu), `Tests/macSCPCoreTests/CitadelFileSystemIntegrationTests.swift` (gated), `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift` bzw. Mock-Tests (Mock-Home)
+- Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift`, `Tests/macSCPCoreTests/TerminalCursorStyleTests.swift` (new), `Tests/macSCPCoreTests/CitadelFileSystemIntegrationTests.swift` (gated), `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift` or the mock tests (mock home)
 
 **Interfaces:**
-- Produces (T2 verlässt sich exakt hierauf):
+- Produces (T2 relies on this exactly):
   - `public enum TerminalCursorStyle: String, Codable, CaseIterable, Sendable { case block, bar, underline }`
-  - `SettingsStore.terminalFontName: String?` (Default nil), `terminalFontSize: Int` (13, geklemmt 9…24 Setter+Getter), `terminalCursorStyle: TerminalCursorStyle` (block; unbekannter Raw liest block), `terminalCursorBlink: Bool` (true)
-  - `RemoteFileSystem.homeDirectoryPath() async throws -> String` (Protocol-Erweiterung; ALLE Konformen implementieren)
-  - `MockRemoteFileSystem`: konfigurierbares Home (Default `/`) + optionaler Fehlermodus
+  - `SettingsStore.terminalFontName: String?` (default nil), `terminalFontSize: Int` (13, clamped 9…24 setter+getter), `terminalCursorStyle: TerminalCursorStyle` (block; unknown raw reads block), `terminalCursorBlink: Bool` (true)
+  - `RemoteFileSystem.homeDirectoryPath() async throws -> String` (protocol extension; ALL conformers implement it)
+  - `MockRemoteFileSystem`: configurable home (default `/`) + optional error mode
 
-- [x] **Step 1: Failing Tests.** `TerminalCursorStyleTests.swift` (neu):
+- [x] **Step 1: Failing tests.** `TerminalCursorStyleTests.swift` (new):
 
 ```swift
 import Testing
@@ -69,11 +69,11 @@ struct TerminalCursorStyleTests {
 }
 ```
 
-`SettingsStoreTests`-Erweiterung (Datei-Muster): Defaults (nil/13/block/true), Größen-Klemmung Setter (8→9, 99→24) UND Getter (Raw-JSON 0→9, 1000→24), unbekannter Cursor-Raw (`"weird"` in Raw-JSON) liest als `.block`, Roundtrip aller vier, alte settings.json ⇒ Defaults. VM/Mock: Test, dass ein konfiguriertes Mock-Home von `homeDirectoryPath()` geliefert wird und der Fehlermodus wirft.
+`SettingsStoreTests` extension (file pattern): defaults (nil/13/block/true), size clamping on the setter (8→9, 99→24) AND the getter (raw JSON 0→9, 1000→24), unknown cursor raw (`"weird"` in raw JSON) reads as `.block`, roundtrip of all four, old settings.json ⇒ defaults. VM/Mock: test that a configured mock home is returned by `homeDirectoryPath()` and that the error mode throws.
 
-- [x] **Step 2: Rot beweisen**, dann implementieren: Enum trivial; Settings nach `showHiddenFiles`/`autoRefreshIntervalSeconds`-Muster (String-Optional-Helfer für `terminalFontName` nachschlagen bzw. analog `stringValue/setString` ergänzen, falls nicht vorhanden — Muster `fileAssociations`/`defaultEditorPath` prüfen); `terminalCursorStyle` speichert RawValue-String, Getter `TerminalCursorStyle(rawValue:) ?? .block`.
-- [x] **Step 3: FS-API.** Protocol-Doku-Kommentar: „Resolves the connection's home directory (login landing point). Used once at session start; callers fall back to "/" on failure." Citadel: die SFTP-`realpath`-Fähigkeit existiert (Citadel `SFTPClient` — exakten Methodennamen nachschlagen, ~`getRealPath(atPath: ".")`); Fehler-Mapping wie die übrigen Citadel-Methoden. Local: `NSHomeDirectory()`. Mock: `var homePath: String = "/"` + Fehler-Flag, Konstruktions-kompatibel für alle Bestandstests (Defaults!).
-- [x] **Step 4: Gated Test** (in der Docker-Suite, deren Konventionen folgen; Rig aus dem HAUPT-Checkout starten, `docker compose -f docker/test-server/compose.yml start`, danach LAUFEN LASSEN):
+- [x] **Step 2: Prove red**, then implement: enum trivial; settings follow the `showHiddenFiles`/`autoRefreshIntervalSeconds` pattern (look up the string-optional helper for `terminalFontName`, or add a `stringValue/setString` analog if it doesn't exist — check the `fileAssociations`/`defaultEditorPath` pattern); `terminalCursorStyle` stores the raw-value string, getter `TerminalCursorStyle(rawValue:) ?? .block`.
+- [x] **Step 3: FS API.** Protocol doc comment: „Resolves the connection's home directory (login landing point). Used once at session start; callers fall back to "/" on failure." Citadel: the SFTP `realpath` capability exists (Citadel `SFTPClient` — look up the exact method name, ~`getRealPath(atPath: ".")`); error mapping like the other Citadel methods. Local: `NSHomeDirectory()`. Mock: `var homePath: String = "/"` + error flag, construction-compatible for all existing tests (defaults!).
+- [x] **Step 4: Gated test** (in the Docker suite, following its conventions; start the rig from the MAIN checkout, `docker compose -f docker/test-server/compose.yml start`, then LEAVE IT RUNNING):
 
 ```swift
     @Test func homeDirectoryPathResolvesAbsoluteAndListable() async throws {
@@ -84,32 +84,32 @@ struct TerminalCursorStyleTests {
     }
 ```
 
-- [x] **Step 5: Grün + volle Suite (inkl. `MACSCP_ITEST=1 swift test`) + Commit.** `swift test` → 456 + ~10 (echte Zahl festhalten). Commit `feat: add terminal appearance settings and remote home resolution`
+- [x] **Step 5: Green + full suite (incl. `MACSCP_ITEST=1 swift test`) + commit.** `swift test` → 456 + ~10 (record the actual number). Commit `feat: add terminal appearance settings and remote home resolution`
 
 ---
 
-### Task 2: Terminal-Tab, SSHTerminalView-Live-Anwendung, Home-Start (App)
+### Task 2: Terminal tab, SSHTerminalView live application, home start (App)
 
 **Files:**
-- Modify: `Sources/MacSCPApp/SSHTerminalView.swift`, `Sources/MacSCPApp/SettingsView.swift`, `Sources/MacSCPApp/ContentView.swift` (startSession: Home auflösen + Terminal-View-Aufrufstelle um settingsStore erweitern), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
-- Test: keiner (App-Target; Smoke in T3)
+- Modify: `Sources/MacSCPApp/SSHTerminalView.swift`, `Sources/MacSCPApp/SettingsView.swift`, `Sources/MacSCPApp/ContentView.swift` (startSession: resolve home + extend the terminal-view call site with settingsStore), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
+- Test: none (App target; smoke in T3)
 
 **Interfaces:**
-- Consumes: alles aus T1; `SSHTerminalView(viewModel:)`-Aufrufstelle in `ContentView.terminalPanel`; `startSession(in:with:storedName:)`.
+- Consumes: everything from T1; the `SSHTerminalView(viewModel:)` call site in `ContentView.terminalPanel`; `startSession(in:with:storedName:)`.
 
-**Verhaltens-Anforderungen:**
-1. `SSHTerminalView` bekommt `let settingsStore: SettingsStore`. `makeNSView`: Font via privater Helfer `resolvedFont()` (`terminalFontName` → `NSFont(name:size:)`, sonst `NSFont.monospacedSystemFont(ofSize:weight:.regular)`; Größe = `terminalFontSize`), Cursor via Mapping (style, blink) → SwiftTerm-Cursor-API (die konkrete SwiftTerm-API nachschlagen: `TerminalView`/`Terminal` bietet Cursor-Stil-Setter — z. B. `setCursorStyle` auf dem `Terminal`; im Report dokumentieren). Farben/Replay/FirstResponder-Zeilen UNVERÄNDERT.
-2. `updateNSView`: aktuellen Soll-Font + Soll-Cursor berechnen; NUR wenn `terminal.font` (Name+Größe) bzw. der gemerkte Cursor-Zustand (im Coordinator gespeichert) abweicht, neu setzen. Kommentar: reguläre Re-Renders dürfen das Terminal nicht anfassen.
-3. Settings-Tab „Terminal" (nach „Öffnen mit"): Font-Popup — Einträge: „System (SF Mono)" (nil) + alle Fixed-Pitch-Familien (`NSFontManager.shared.availableFontNames(with: .fixedPitchFontMask)` auf Familien reduziert, alphabetisch); Größe-Stepper 9…24; Cursor-Picker (3 Stile, lokalisierte Labels) + Toggle „Blinken"; darunter Vorschau: `Text("deploy@web-01:~ $ ls -la")` im gewählten Font/Größe auf `DesignTokens.terminalBackground` mit Phosphor-Textfarbe, r6-Ecken.
-4. Home-Start in `startSession`: VOR der `BrowserSession`-Erzeugung `let home = (try? await fs.homeDirectoryPath()) ?? "/"` und `RemoteBrowserViewModel(fs: fs, startPath: home)`. (`startSession` ist bereits async-fähig? Prüfen — sie wird aus async-Kontexten gerufen; falls sync, den Home-Lookup in den connect-Fluss davor ziehen. Lösung im Report dokumentieren.)
-5. Keys EN/DE (Vorschlag): `settings.tab.terminal` „Terminal"/„Terminal", `settings.terminal.font` „Font"/„Schrift", `settings.terminal.systemFont` „System (SF Mono)"/„System (SF Mono)", `settings.terminal.size %lld` „Size: %lld pt"/„Größe: %lld pt", `settings.terminal.cursor` „Cursor"/„Cursor", `settings.terminal.cursor.block/bar/underline` „Block"/„Balken"/„Unterstrich" (EN Block/Bar/Underline), `settings.terminal.cursorBlink` „Blinking"/„Blinken", `settings.terminal.preview` (Vorschau-Zeile bleibt unlokalisierter Beispieltext — KEIN Key nötig, im Report vermerken). Grep-Gegenprobe beide Kataloge.
+**Behavior requirements:**
+1. `SSHTerminalView` gets `let settingsStore: SettingsStore`. `makeNSView`: font via a private helper `resolvedFont()` (`terminalFontName` → `NSFont(name:size:)`, otherwise `NSFont.monospacedSystemFont(ofSize:weight:.regular)`; size = `terminalFontSize`), cursor via mapping (style, blink) → the SwiftTerm cursor API (look up the concrete SwiftTerm API: `TerminalView`/`Terminal` offers a cursor-style setter — e.g. `setCursorStyle` on `Terminal`; document in the report). Colors/replay/first-responder lines UNCHANGED.
+2. `updateNSView`: compute the current target font + target cursor; ONLY reset if `terminal.font` (name+size) or the remembered cursor state (stored in the coordinator) differs. Comment: regular re-renders must not touch the terminal.
+3. Settings tab "Terminal" (after "Open with"): font popup — entries: "System (SF Mono)" (nil) + all fixed-pitch families (`NSFontManager.shared.availableFontNames(with: .fixedPitchFontMask)` reduced to families, alphabetical); size stepper 9…24; cursor picker (3 styles, localized labels) + toggle "Blink"; below it a preview: `Text("deploy@web-01:~ $ ls -la")` in the chosen font/size on `DesignTokens.terminalBackground` with the phosphor text color, r6 corners.
+4. Home start in `startSession`: BEFORE `BrowserSession` creation, `let home = (try? await fs.homeDirectoryPath()) ?? "/"` and `RemoteBrowserViewModel(fs: fs, startPath: home)`. (Is `startSession` already async-capable? Check — it's called from async contexts; if sync, move the home lookup into the connect flow before it. Document the solution in the report.)
+5. Keys EN/DE (proposal): `settings.tab.terminal` "Terminal"/"Terminal", `settings.terminal.font` "Font"/"Schrift", `settings.terminal.systemFont` "System (SF Mono)"/"System (SF Mono)", `settings.terminal.size %lld` "Size: %lld pt"/„Größe: %lld pt", `settings.terminal.cursor` "Cursor"/"Cursor", `settings.terminal.cursor.block/bar/underline` "Block"/"Bar"/"Underline" (DE Block/Balken/Unterstrich), `settings.terminal.cursorBlink` "Blinking"/"Blinken", `settings.terminal.preview` (preview line stays unlocalized sample text — NO key needed, note in the report). Grep cross-check both catalogs.
 
-- [x] **Step 1:** SSHTerminalView. **Step 2:** Settings-Tab + Keys. **Step 3:** Home-Start. **Step 4:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T1). **Step 5:** Commit `feat: make the terminal appearance configurable and start in the remote home`.
+- [x] **Step 1:** SSHTerminalView. **Step 2:** Settings tab + keys. **Step 3:** Home start. **Step 4:** `swift build` (0 errors, no new warnings) + full `swift test` (T1 state). **Step 5:** Commit `feat: make the terminal appearance configurable and start in the remote home`.
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Final verification (coordinator)
 
-- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips (470/470; Final-Reviewer lief zusätzlich zweimal).
-- [ ] Visueller Smoke — **an den Maintainer delegiert** (Wrapper läuft; Checkliste in der Milestone-Zusammenfassung): Verbinden → Remote-Pane startet im HOME (Rig: testuser-Home) statt `/`; Terminal öffnen → Settings: Font wechseln (z. B. Menlo), Größe ändern, Cursor Balken/blinkend → offenes Terminal übernimmt LIVE ohne Inhalt-Verlust; ungültige Größe klemmt; Vorschau folgt; Neustart behält Werte; Regressionen: ⌘T-Replay, Resize→window-change, CI-Farben unverändert.
-- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1; „No" mit einem Important [Double-Connect-Leak durch async-Handoff, empirisch belegt] → Fix-Commit dfe19ea → Re-Review „Ready to merge: Yes"), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ M10-Reihenfolge Known Hosts → Login-Sets → Jump-Host als Nächstes; M9e ssh-agent ggf. in M10b-Design einbeziehen — Login-Set-Auth-Art „Agent"; Release-Bündelung weiter offen).
+- [x] Gated suites: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ fully green, zero skips (470/470; the final reviewer additionally ran twice).
+- [ ] Visual smoke — **delegated to the maintainer** (wrapper is running; checklist in the milestone summary): connect → remote pane starts in HOME (rig: testuser home) instead of `/`; open terminal → settings: switch font (e.g. Menlo), change size, cursor bar/blinking → open terminal picks it up LIVE without losing content; invalid size clamps; preview follows; restart retains the values; regressions: ⌘T replay, resize→window-change, CI colors unchanged.
+- [x] Plan checkboxes, ledger, Opus whole-branch final review (base = commit before T1; "No" with one Important [double-connect leak via async handoff, proved empirically] → fix commit dfe19ea → re-review "Ready to merge: Yes"), fixes, push develop, CI, rig `stop`, memory update, milestone summary (+ M10 order Known Hosts → Login Sets → Jump Host next; M9e ssh-agent possibly folded into the M10b design — login-set auth kind "Agent"; release bundling still open).

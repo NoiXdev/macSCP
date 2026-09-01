@@ -1,18 +1,17 @@
-# M31 — Ad-hoc-Verbindungen protokollieren: Implementierungsplan
+# M31 — Logging ad-hoc connections: implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Eine Verbindung, die nicht gespeichert wird, schreibt trotzdem
-einen Audit-Eintrag — unter einer festen Pseudo-Sitzung, lesbar im
-bestehenden Audit-Sheet.
+**Goal:** A connection that is not saved still writes an audit entry —
+under a fixed pseudo-session, readable in the existing audit sheet.
 
-**Architecture:** Das Anhängen des `AuditRecorder` wandert aus dem
-Speicher-Zweig heraus; die Sitzungs-ID kommt aus einem kleinen, getesteten
-Core-Typ statt aus der Verschachtelung. Ein Menüeintrag öffnet das
-vorhandene Sheet mit einer synthetischen `StoredSession`.
+**Architecture:** Attaching the `AuditRecorder` moves out of the save
+branch; the session id comes from a small, tested Core type instead of
+from the nesting. A menu entry opens the existing sheet with a synthetic
+`StoredSession`.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, macOS 15+,
 Swift Testing.
@@ -21,44 +20,44 @@ Swift Testing.
 
 ## Global Constraints
 
-- Code, Kommentare, Testnamen, Commit-Messages: **Englisch**. Interne Doku
-  (`docs/`) Deutsch.
-- Conventional Commits, Footer:
+- Code, comments, test names, commit messages: **English**. Internal docs
+  (`docs/`) German.
+- Conventional Commits, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- **Nutzer-sichtbare Strings gehen durch `L10n.string`** und existieren in
-  **allen vier** Sprachen (`en`, `de`, `fr`, `pl`) unter
-  `Sources/MacSCPAppKit/Resources/<lang>.lproj/Localizable.strings`. Ein
-  Wächter-Test hält die Schlüsselmengen gleich.
-- Kein Geheimnis in einer Meldung, auch nicht in einer Test-Fehlermeldung.
-- TDD rot→grün. Suite: `swift test`.
-- **Die Prosa dieses Plans ist eine zu prüfende Behauptung.** Stimmt eine
-  Signatur oder ein Feldname nicht: melden, nicht still umbauen.
+- **User-visible strings go through `L10n.string`** and exist in **all
+  four** languages (`en`, `de`, `fr`, `pl`) under
+  `Sources/MacSCPAppKit/Resources/<lang>.lproj/Localizable.strings`. A
+  guard test keeps the key sets equal.
+- No secret in any message, not even a test failure message.
+- TDD red→green. Suite: `swift test`.
+- **The prose of this plan is a claim to be checked.** If a signature or a
+  field name is wrong: report it, don't silently rebuild around it.
 
-## Dateien
+## Files
 
-| Datei | Rolle |
+| File | Role |
 |---|---|
-| `Sources/macSCPCore/Sessions/AdHocAudit.swift` (neu) | feste Pseudo-Sitzungs-ID + die Wahl der Log-ID |
-| `Tests/macSCPCoreTests/AdHocAuditTests.swift` (neu) | drei Tests dazu |
-| `Sources/MacSCPAppKit/ContentView.swift` | Recorder aus dem Speicher-Zweig heben |
-| `Sources/MacSCPAppKit/MacSCPApp.swift` | `TabCommands.showAdHocAuditLog` + Menüeintrag |
-| `Sources/MacSCPAppKit/ContentView+Detail.swift` | Brücke `showAdHocAuditLog` verdrahten |
-| `Sources/MacSCPAppKit/Resources/*.lproj/Localizable.strings` | zwei Schlüssel × vier Sprachen |
+| `Sources/macSCPCore/Sessions/AdHocAudit.swift` (new) | fixed pseudo-session id + the choice of log id |
+| `Tests/macSCPCoreTests/AdHocAuditTests.swift` (new) | three tests for it |
+| `Sources/MacSCPAppKit/ContentView.swift` | lift the recorder out of the save branch |
+| `Sources/MacSCPAppKit/MacSCPApp.swift` | `TabCommands.showAdHocAuditLog` + menu entry |
+| `Sources/MacSCPAppKit/ContentView+Detail.swift` | wire up the `showAdHocAuditLog` bridge |
+| `Sources/MacSCPAppKit/Resources/*.lproj/Localizable.strings` | two keys × four languages |
 
 ---
 
-### Task 1: Die Pseudo-Sitzung und die Wahl der Log-ID (Core)
+### Task 1: The pseudo-session and the choice of log id (Core)
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/AdHocAudit.swift`
 - Test: `Tests/macSCPCoreTests/AdHocAuditTests.swift`
 
 **Interfaces:**
-- Consumes: nichts
-- Produces: `AdHocAudit.sessionID: UUID` und
-  `AdHocAudit.logSessionID(storedID: UUID?) -> UUID` — Task 2 ruft beide
+- Consumes: nothing
+- Produces: `AdHocAudit.sessionID: UUID` and
+  `AdHocAudit.logSessionID(storedID: UUID?) -> UUID` — Task 2 calls both
 
-- [ ] **Step 1: Die drei fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the three failing tests**
 
 ```swift
 import Foundation
@@ -92,15 +91,15 @@ struct AdHocAuditTests {
 }
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Rot bestätigen**
+- [ ] **Step 2: Run the tests, confirm red**
 
 ```bash
 swift test --filter "AdHocAuditTests"
 ```
 
-Erwartet: FAIL, `cannot find 'AdHocAudit' in scope`.
+Expected: FAIL, `cannot find 'AdHocAudit' in scope`.
 
-- [ ] **Step 3: Den Typ anlegen**
+- [ ] **Step 3: Create the type**
 
 ```swift
 import Foundation
@@ -132,13 +131,13 @@ public enum AdHocAudit {
 }
 ```
 
-- [ ] **Step 4: Tests laufen lassen, Grün bestätigen**
+- [ ] **Step 4: Run the tests, confirm green**
 
 ```bash
 swift test --filter "AdHocAuditTests"
 ```
 
-Erwartet: PASS (3 Tests).
+Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -151,33 +150,33 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Recorder un-verschachteln, Menüeintrag, L10n (App)
+### Task 2: Un-nest the recorder, menu entry, L10n (App)
 
 **Files:**
-- Modify: `Sources/MacSCPAppKit/ContentView.swift` (im Submit-Pfad, am Block `if form.shouldSaveSession { … }`)
-- Modify: `Sources/MacSCPAppKit/MacSCPApp.swift` (Sessions-Menü, nach „Hidden Imports…")
-- Modify: `Sources/MacSCPAppKit/ContentView+Detail.swift` (Brücke verdrahten)
+- Modify: `Sources/MacSCPAppKit/ContentView.swift` (in the submit path, at the `if form.shouldSaveSession { … }` block)
+- Modify: `Sources/MacSCPAppKit/MacSCPApp.swift` (Sessions menu, after "Hidden Imports…")
+- Modify: `Sources/MacSCPAppKit/ContentView+Detail.swift` (wire up the bridge)
 - Modify: `Sources/MacSCPAppKit/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 
 **Interfaces:**
-- Consumes: `AdHocAudit.sessionID`, `AdHocAudit.logSessionID(storedID:)` aus Task 1
-- Produces: nichts
+- Consumes: `AdHocAudit.sessionID`, `AdHocAudit.logSessionID(storedID:)` from Task 1
+- Produces: nothing
 
-- [ ] **Step 1: Den Recorder aus dem Speicher-Zweig heben**
+- [ ] **Step 1: Lift the recorder out of the save branch**
 
-Heute steht das Anhängen INNERHALB von `if form.shouldSaveSession { … }`, in
-einem `if let stored { … }`. Das ist der Defekt: protokolliert wird, weil
-gespeichert wurde. `stored` wandert vor den Block, das Anhängen dahinter.
+Today the attaching sits INSIDE `if form.shouldSaveSession { … }`, in an
+`if let stored { … }`. That is the defect: it logs because it saved. `stored`
+moves ahead of the block, the attaching after it.
 
-Die Zusammenfassung bleibt für die gespeicherte Sitzung **wortgleich**, damit
-sich am Log einer gespeicherten Verbindung nichts ändert; nur der Ad-hoc-Fall
-liest sie aus dem Formular, das dort die einzige Quelle ist.
+The summary stays **word-for-word** for the saved session, so nothing
+changes in the log of a saved connection; only the ad-hoc case reads it
+from the form, which is the only source there.
 
 ```swift
         var titleName = storedName
         var storedSession: StoredSession?
         if form.shouldSaveSession {
-            // … unverändert bis einschließlich `let stored = sessionListViewModel.save(…)` …
+            // … unchanged up to and including `let stored = sessionListViewModel.save(…)` …
             storedSession = stored
             tab.activeStoredSessionID = stored?.id
             form.shouldSaveSession = false
@@ -209,16 +208,16 @@ liest sie aus dem Formular, das dort die einzige Quelle ist.
             viaJumpHost: form.jumpEnabled ? form.jumpHost : nil)
 ```
 
-- [ ] **Step 2: Bauen**
+- [ ] **Step 2: Build**
 
 ```bash
 swift build
 ```
 
-Erwartet: keine Fehler. Bei einem Namens- oder Signaturfehler gilt die
-Global-Constraint: melden, nicht danebengreifen.
+Expected: no errors. On a name or signature mismatch, the Global Constraint
+applies: report it, don't guess around it.
 
-- [ ] **Step 3: Die zwei Strings in allen vier Sprachen anlegen**
+- [ ] **Step 3: Add the two strings in all four languages**
 
 In `Sources/MacSCPAppKit/Resources/<lang>.lproj/Localizable.strings`:
 
@@ -240,10 +239,10 @@ pl:
 "audit.adhoc.name" = "Połączenia doraźne";
 ```
 
-- [ ] **Step 4: Die Brücke deklarieren und verdrahten**
+- [ ] **Step 4: Declare and wire up the bridge**
 
-Zuerst die Eigenschaft, sonst hat Step 5 nichts zum Aufrufen. In
-`MacSCPApp.swift`, in `final class TabCommands`, neben `showSSHKeys`:
+The property first, otherwise Step 5 has nothing to call. In
+`MacSCPApp.swift`, in `final class TabCommands`, next to `showSSHKeys`:
 
 ```swift
     /// Opens the ad-hoc connection log (M31). Its own entry rather than a
@@ -252,10 +251,10 @@ Zuerst die Eigenschaft, sonst hat Step 5 nichts zum Aufrufen. In
     var showAdHocAuditLog: (() -> Void)?
 ```
 
-`ContentView+Detail.swift` setzt sie
-(dort steht bereits `onShowAuditLog: { stored in auditLogSession = stored }`).
-Eine neue Closure `showAdHocAuditLog` setzt dieselbe `@State`-Variable auf die
-synthetische Sitzung:
+`ContentView+Detail.swift` sets it
+(it already has `onShowAuditLog: { stored in auditLogSession = stored }`).
+A new closure `showAdHocAuditLog` sets the same `@State` variable to the
+synthetic session:
 
 ```swift
         // M31: the ad-hoc log is reached from the menu rather than from a
@@ -270,10 +269,10 @@ synthetische Sitzung:
         }
 ```
 
-- [ ] **Step 5: Den Menüeintrag ergänzen**
+- [ ] **Step 5: Add the menu entry**
 
-In `MacSCPApp.swift`, im `CommandMenu` „Sessions", direkt nach dem
-„Hidden Imports…"-Eintrag und VOR dem `Divider()`:
+In `MacSCPApp.swift`, in the "Sessions" `CommandMenu`, directly after the
+"Hidden Imports…" entry and BEFORE the `Divider()`:
 
 ```swift
                 // "Ad-hoc Connection Log…" (M31): the audit trail of every
@@ -284,14 +283,14 @@ In `MacSCPApp.swift`, im `CommandMenu` „Sessions", direkt nach dem
                 }
 ```
 
-- [ ] **Step 6: Volle Suite**
+- [ ] **Step 6: Full suite**
 
 ```bash
 swift test
 ```
 
-Erwartet: PASS. Der L10n-Wächter fällt aus, wenn ein Schlüssel in einer der
-vier Sprachen fehlt — das ist genau sein Zweck.
+Expected: PASS. The L10n guard fails if a key is missing in any of the
+four languages — that is exactly its purpose.
 
 - [ ] **Step 7: Commit**
 
@@ -304,46 +303,47 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Abschluss
+### Task 3: Close-out
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-19-m31-abschluss.md`
 
 **Interfaces:**
-- Consumes: die Commits aus Task 1 und 2
-- Produces: nichts
+- Consumes: the commits from Task 1 and 2
+- Produces: nothing
 
-- [ ] **Step 1: Volle Suite, Ausgabe lesen BEVOR committet wird**
+- [ ] **Step 1: Full suite, read the output BEFORE committing**
 
 ```bash
 swift test
 ```
 
-Test- und Suitenzahl notieren.
+Note the test and suite count.
 
-- [ ] **Step 2: Prüfen, dass das Anhängen nicht mehr im Speicher-Zweig hängt**
+- [ ] **Step 2: Verify the attaching no longer sits in the save branch**
 
 ```bash
-awk '/if form.shouldSaveSession \{/,/^        \}$/' Sources/MacSCPAppKit/ContentView.swift | grep -c "attachAuditRecorder" | sed 's/^0$/0 (nicht mehr im Zweig)/'
+awk '/if form.shouldSaveSession \{/,/^        \}$/' Sources/MacSCPAppKit/ContentView.swift | grep -c "attachAuditRecorder" | sed 's/^0$/0 (no longer in the branch)/'
 ```
 
-Erwartet: `0 (nicht mehr im Zweig)`. Positivkontrolle gegen ein Werkzeug, das
-seinen eigenen Ausfall nicht bemerkt: derselbe Befehl ohne den
-`awk`-Ausschnitt muss `attachAuditRecorder` sehr wohl finden —
+Expected: `0 (no longer in the branch)`. Positive control against a tool
+that does not notice its own failure: the same command without the
+`awk` excerpt must very well find `attachAuditRecorder` —
 
 ```bash
 grep -c "attachAuditRecorder" Sources/MacSCPAppKit/ContentView.swift
 ```
 
-Erwartet: mindestens 1. Ist diese Zahl 0, misst der erste Befehl nichts und
-sein „Erfolg" ist wertlos.
+Expected: at least 1. If this number is 0, the first command is measuring
+nothing and its "success" is worthless.
 
-- [ ] **Step 3: Abschlussbericht schreiben**
+- [ ] **Step 3: Write the close-out report**
 
-`docs/superpowers/specs/2026-08-19-m31-abschluss.md`, Deutsch: was umgesetzt
-wurde, das Ergebnis von Step 2, die Suite-Zahlen, und ausdrücklich, was
-offen bleibt (keine globale Audit-Ansicht; die Sichtprüfung des Menüeintrags
-und des Sheets steht beim Maintainer aus, weil kein Test die GUI startet).
+`docs/superpowers/specs/2026-08-19-m31-abschluss.md`, German: what was
+implemented, the result of Step 2, the suite counts, and explicitly what
+remains open (no global audit view; the visual check of the menu entry
+and the sheet is pending with the maintainer, because no test starts the
+GUI).
 
 - [ ] **Step 4: Commit**
 

@@ -1,40 +1,40 @@
-# macSCP M5a — Transfer-Queue-Kern Implementation Plan
+# macSCP M5a — Transfer Queue Core Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** ALLE drei Transferwege (Buttons, Drop, Finder-Promise) laufen durch EINE Warteschlange mit sichtbarer Queue-Leiste — Drops und Klicks während laufender Transfers werden eingereiht statt verworfen.
+**Goal:** ALL three transfer paths (buttons, drop, Finder promise) run through ONE queue with a visible queue bar — drops and clicks while transfers are running get enqueued instead of discarded.
 
-**Architektur:** Neues `TransferQueueViewModel` (@Observable @MainActor) mit Item-Liste und seriellem Worker-Loop (Parallelität 1 in M5a — die Abstraktion trägt N Worker, aber gleichzeitige Transfers über EINEN SFTP-Channel werden erst in M5c empirisch validiert und hochgedreht; Spec-Default 3 kommt dann). `enqueue` reiht ein und weckt den Worker; `enqueueAndWait` (für den Promise-Pfad) wartet per Continuation auf den Abschluss GENAU dieses Items. `TransferBar` wird durch `TransferQueueBar` (Item-Liste) ersetzt; das alte Ein-Transfer-`TransferViewModel` wird am Ende gelöscht.
+**Architecture:** A new `TransferQueueViewModel` (@Observable @MainActor) with an item list and a serial worker loop (concurrency 1 in M5a — the abstraction carries N workers, but concurrent transfers over ONE SFTP channel are only empirically validated and turned up in M5c; the spec default of 3 comes then). `enqueue` enqueues and wakes the worker; `enqueueAndWait` (for the promise path) waits via continuation for the completion of EXACTLY that item. `TransferBar` is replaced by `TransferQueueBar` (item list); the old single-transfer `TransferViewModel` is deleted at the end.
 
-**Tech Stack:** Bestehende `TransferEngine.copyFile` (unverändert), `TransferProgress`/`TransferDirection`, MockRemoteFileSystem für Tests.
+**Tech Stack:** Existing `TransferEngine.copyFile` (unchanged), `TransferProgress`/`TransferDirection`, MockRemoteFileSystem for tests.
 
 ## Global Constraints
 
-- swift-tools 6.0; ALLE Targets `.swiftLanguageMode(.v5)`; macOS 15; Swift Testing, TDD rot→grün.
-- Duo-Farben semantisch: ↑ Bernstein (`DesignTokens.localAmber`) = Upload, ↓ Ozeanblau (`DesignTokens.remoteBlue`) = Download; Fehler System-Rot. Deutsche UI-Texte.
-- Gated Tests: `MACSCP_ITEST=1` (Rig NUR aus dem Haupt-Checkout), `MACSCP_KEYCHAIN=1`.
-- Die UI besitzt Lebenszyklen explizit: `teardownSession` räumt die Queue VOR dem Disconnect (Muster: Terminal-Shutdown M4).
-- Kein Verhalten des Terminals/TOFU anfassen (außer Task 0a, der gezielt den Terminal-Screen-Erhalt fixt).
-- Conventional Commits, Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`. Implementierer pushen nicht.
+- swift-tools 6.0; ALL targets `.swiftLanguageMode(.v5)`; macOS 15; Swift Testing, TDD red→green.
+- Duo colors semantic: ↑ amber (`DesignTokens.localAmber`) = upload, ↓ ocean blue (`DesignTokens.remoteBlue`) = download; errors system red. German UI texts.
+- Gated tests: `MACSCP_ITEST=1` (rig ONLY from the main checkout), `MACSCP_KEYCHAIN=1`.
+- The UI owns lifecycles explicitly: `teardownSession` cleans up the queue BEFORE the disconnect (pattern: terminal shutdown M4).
+- Do not touch terminal/TOFU behavior (except Task 0a, which specifically fixes the terminal screen retention).
+- Conventional Commits, footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`. Implementers do not push.
 
-**Abhängigkeitsgraph:** `[ Task 0 (M5-Openings) ∥ Task 1 (Queue-VM, Core) ] → Task 2 (Queue-Leiste, UI) → Task 3 (ContentView-Umbau) → Task 4 (Abschluss)` — T0/T1 dateidisjunkt (Worktree-parallel).
+**Dependency graph:** `[ Task 0 (M5 openings) ∥ Task 1 (queue VM, core) ] → Task 2 (queue bar, UI) → Task 3 (ContentView rebuild) → Task 4 (wrap-up)` — T0/T1 file-disjoint (worktree-parallel).
 
 ---
 
-### Task 0: M5-Openings — Terminal-Screen-Erhalt + Cancellation-Fast-Path-Test
+### Task 0: M5 Openings — Terminal Screen Retention + Cancellation Fast-Path Test
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/TerminalPanelViewModel.swift`
 - Modify: `Sources/MacSCPApp/SSHTerminalView.swift`
-- Test: `Tests/macSCPCoreTests/TerminalPanelViewModelTests.swift` (ergänzen)
-- Test: `Tests/macSCPCoreTests/ConnectionViewModelTests.swift` (ergänzen)
+- Test: `Tests/macSCPCoreTests/TerminalPanelViewModelTests.swift` (extend)
+- Test: `Tests/macSCPCoreTests/ConnectionViewModelTests.swift` (extend)
 
 **Interfaces:**
-- Produces: `TerminalPanelViewModel.replayBuffer: [[UInt8]]` (public read) — von der View beim Mount abgespielt.
+- Produces: `TerminalPanelViewModel.replayBuffer: [[UInt8]]` (public read) — played back by the view on mount.
 
-**Hintergrund (Final-Review M4, Minor 1):** ⌘T-Ausblenden bei laufender Shell unmountet die `TerminalView`; `onOutput`s weak-Ref wird nil, der Lese-Loop verwirft alle Chunks; beim Wiedereinblenden startet eine leere Konsole. Fix: Der VM puffert die letzten Output-Chunks und die View spielt sie in `makeNSView` ab.
+**Background (Final Review M4, Minor 1):** ⌘T hiding while a shell is running unmounts the `TerminalView`; `onOutput`'s weak ref goes nil, the read loop discards all chunks; on re-showing, an empty console starts. Fix: the VM buffers the last output chunks and the view plays them back in `makeNSView`.
 
-- [x] **Step 1: Fehlschlagender Test — Replay-Puffer**
+- [x] **Step 1: Failing test — replay buffer**
 
 ```swift
 @Test func outputIsBufferedForReplayWhileHidden() async throws {
@@ -54,7 +54,7 @@
 }
 ```
 
-Zweiter Test: Puffer ist gedeckelt (ältestes fliegt raus) — Konstante `maxReplayBytes = 256 * 1024`:
+Second test: the buffer is capped (oldest gets dropped) — constant `maxReplayBytes = 256 * 1024`:
 
 ```swift
 @Test func replayBufferIsBounded() async throws {
@@ -70,11 +70,11 @@ Zweiter Test: Puffer ist gedeckelt (ältestes fliegt raus) — Konstante `maxRep
 }
 ```
 
-- [x] **Step 2: Rot** — `replayBuffer` unbekannt.
+- [x] **Step 2: Red** — `replayBuffer` unknown.
 
-- [x] **Step 3: Implementieren**
+- [x] **Step 3: Implement**
 
-Im VM: privater Puffer, im Lese-Loop VOR dem `onOutput`-Aufruf füllen; bei `shutdown()` und beim Neu-Öffnen (`openIfNeeded` nach `.ended`) leeren:
+In the VM: private buffer, filled in the read loop BEFORE the `onOutput` call; cleared on `shutdown()` and on reopening (`openIfNeeded` after `.ended`):
 
 ```swift
 /// Zuletzt empfangene Output-Chunks (max. 256 KiB) — Replay beim Wieder-
@@ -92,9 +92,9 @@ private func bufferForReplay(_ chunk: [UInt8]) {
 }
 ```
 
-Im Lese-Loop (`readTask`): `self?.bufferForReplay(chunk)` vor `self?.onOutput?(chunk)`. In `openIfNeeded` (vor dem Öffnen) und `shutdown()`: `replayBuffer = []; replayBytes = 0`.
+In the read loop (`readTask`): `self?.bufferForReplay(chunk)` before `self?.onOutput?(chunk)`. In `openIfNeeded` (before opening) and `shutdown()`: `replayBuffer = []; replayBytes = 0`.
 
-In `SSHTerminalView.makeNSView`, direkt nach dem Setzen von `viewModel.onOutput`:
+In `SSHTerminalView.makeNSView`, directly after setting `viewModel.onOutput`:
 
 ```swift
 for chunk in viewModel.replayBuffer {
@@ -102,10 +102,10 @@ for chunk in viewModel.replayBuffer {
 }
 ```
 
-- [x] **Step 4: Cancellation-Fast-Path-Test** (Final-Review Minor 2) — in `ConnectionViewModelTests.swift`: Connector, dessen `onUnknownHostKey`-Aufruf erst NACH dem Cancel kommt (Connector wartet auf ein Signal; Test cancelt die connect-Task, gibt dann das Signal frei) → `presentHostKeyPrompt` läuft mit bereits gesetzter Cancellation in `withCheckedContinuation` und muss über den `Task.isCancelled`-Fast-Path sofort `false` liefern; Assertion: connect kehrt zurück (Timeout-Race-Muster der Datei wiederverwenden), kein Hänger. Falls der Fast-Path nach ehrlichem Versuch nicht deterministisch erreichbar ist (onCancel-Handler feuert immer zuerst), den Test als deterministischen Nachweis des GESAMTVERHALTENS (cancel-vor-Prompt → kein Hänger) formulieren und im Report dokumentieren, welcher Pfad greift.
+- [x] **Step 4: Cancellation fast-path test** (Final Review Minor 2) — in `ConnectionViewModelTests.swift`: a connector whose `onUnknownHostKey` call only comes AFTER the cancel (connector waits for a signal; test cancels the connect task, then releases the signal) → `presentHostKeyPrompt` runs with cancellation already set inside `withCheckedContinuation` and must return `false` immediately via the `Task.isCancelled` fast path; assertion: connect returns (reuse the file's timeout-race pattern), no hang. If the fast path is not deterministically reachable after an honest attempt (the onCancel handler always fires first), formulate the test as a deterministic proof of the OVERALL BEHAVIOR (cancel-before-prompt → no hang) and document in the report which path actually applies.
 
-- [x] **Step 5: Grün** — Filter-Suiten + Gesamtsuite (145 + 3 neue = 148 erwartet).
-- [x] **Step 6: Commit** — `fix: preserve terminal screen across panel toggle` (mit Footer).
+- [x] **Step 5: Green** — filter suites + full suite (145 + 3 new = 148 expected).
+- [x] **Step 6: Commit** — `fix: preserve terminal screen across panel toggle` (with footer).
 
 ---
 
@@ -116,8 +116,8 @@ for chunk in viewModel.replayBuffer {
 - Test: `Tests/macSCPCoreTests/TransferQueueViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: `TransferEngine.copyFile(from:sourcePath:to:destinationDirectory:fileName:onProgress:)` (unverändert), `TransferProgress`, `TransferDirection`.
-- Produces (für T2/T3 bindend):
+- Consumes: `TransferEngine.copyFile(from:sourcePath:to:destinationDirectory:fileName:onProgress:)` (unchanged), `TransferProgress`, `TransferDirection`.
+- Produces (binding for T2/T3):
 
 ```swift
 @Observable @MainActor
@@ -171,7 +171,7 @@ public final class TransferQueueViewModel {
 }
 ```
 
-**Kernpunkte der Implementierung:**
+**Key implementation points:**
 
 ```swift
 // Privater Zustand:
@@ -202,30 +202,30 @@ private func kickWorker() {
 }
 ```
 
-`process(_:)` setzt Status `.running(TransferProgress(bytesTransferred: 0, totalBytes: nil))`, nutzt das GEORDNETE AsyncStream-Consumer-Muster aus dem alten `TransferViewModel` (ein Konsument aktualisiert `items[...] .status = .running(progress)`), führt `TransferEngine.copyFile` in einer eigenen `runningTransferTask` aus (damit `cancelAll` sie canceln kann), setzt am Ende `.finished`/`.failed(message)`, ruft `onCompleted` (nur bei Erfolg), und resumed den Waiter (`waiters.removeValue(forKey:)`: Erfolg → `resume()`, Fehler → `resume(throwing:)`).
+`process(_:)` sets status `.running(TransferProgress(bytesTransferred: 0, totalBytes: nil))`, uses the ORDERED AsyncStream consumer pattern from the old `TransferViewModel` (one consumer updates `items[...] .status = .running(progress)`), runs `TransferEngine.copyFile` inside its own `runningTransferTask` (so `cancelAll` can cancel it), sets `.finished`/`.failed(message)` at the end, calls `onCompleted` (only on success), and resumes the waiter (`waiters.removeValue(forKey:)`: success → `resume()`, error → `resume(throwing:)`).
 
-Fehlertexte: `Self.message(for:)` — die switch-Fälle 1:1 aus `TransferViewModel.message(for:)` übernehmen (die Datei existiert bis T3 noch als Referenz).
+Error texts: `Self.message(for:)` — take over the switch cases 1:1 from `TransferViewModel.message(for:)` (the file still exists as a reference until T3).
 
-`cancelAll()`: alle queued-IDs aus `order` → Status `.cancelled`, deren Waiter mit `CancellationError()` resumen; `runningTransferTask?.cancel()`; `await workerTask?.value` (Worker beendet sich, weil `nextQueuedID()` nichts mehr liefert und das laufende copyFile mit CancellationError endet → Status des aktiven Items `.cancelled`, nicht `.failed`); erst dann zurückkehren. `CancellationError` in `process` gesondert behandeln (`catch is CancellationError` → `.cancelled`).
+`cancelAll()`: all queued IDs from `order` → status `.cancelled`, resume their waiters with `CancellationError()`; `runningTransferTask?.cancel()`; `await workerTask?.value` (worker terminates because `nextQueuedID()` no longer returns anything and the running copyFile ends with CancellationError → the active item's status becomes `.cancelled`, not `.failed`); only then return. Handle `CancellationError` separately in `process` (`catch is CancellationError` → `.cancelled`).
 
-**Achtung Reentrancy:** `enqueue` während der Worker läuft hängt nur an `order`/`jobs`/`items` an — der laufende `while`-Loop nimmt es im nächsten Durchlauf mit. KEIN zweiter Worker (Guard `workerTask == nil`).
+**Watch out for reentrancy:** an `enqueue` while the worker is running only appends to `order`/`jobs`/`items` — the running `while` loop picks it up on the next pass. NO second worker (guard `workerTask == nil`).
 
-- [x] **Step 1: Fehlschlagende Tests** — `TransferQueueViewModelTests.swift`, Mock-Muster aus `TransferViewModelTests.swift` übernehmen (MockRemoteFileSystem mit read/write-Streams existiert dort; ggf. gemeinsame Helfer kopieren statt teilen). Bindende Verhaltens-Zusicherungen:
+- [x] **Step 1: Failing tests** — `TransferQueueViewModelTests.swift`, take over the mock pattern from `TransferViewModelTests.swift` (MockRemoteFileSystem with read/write streams exists there; copy shared helpers rather than sharing them if needed). Binding behavioral assertions:
 
-  1. `enqueueRunsTransferAndFinishes` — ein Item, Status-Verlauf queued→running→finished, `onCompleted` genau 1×, Datei beim Ziel-Mock angekommen.
-  2. `secondEnqueueDuringRunningIsQueuedNotDropped` — zwei enqueues direkt nacheinander (Mock-Read mit Verzögerung/Signal), Item 2 hat Status `.queued` WÄHREND Item 1 läuft, danach laufen BEIDE fertig (das pinnt den alten isRunning-Drop als tot).
-  3. `itemsRunInFIFOOrder` — drei Items, Abschluss-Reihenfolge == Einreihungs-Reihenfolge (Mock protokolliert Schreib-Reihenfolge).
-  4. `failedItemDoesNotBlockQueue` — Item 1 wirft (Mock-Fehler `RemoteFSError.notFound`), Status `.failed` mit deutscher Meldung, Item 2 läuft trotzdem und finisht.
-  5. `enqueueAndWaitReturnsAfterCompletion` — kehrt erst nach `.finished` zurück (Task + Signal-Mock beweisen die Ordnung).
-  6. `enqueueAndWaitThrowsOnFailure` — Mock wirft → `enqueueAndWait` wirft.
-  7. `cancelAllCancelsQueuedAndRunning` — Item 1 läuft (Mock blockiert auf Signal), Item 2 queued; `cancelAll()`; Item 2 `.cancelled` sofort, Item 1 `.cancelled` (nicht `.failed`), ein wartender `enqueueAndWait` auf Item 2 wirft; danach `isActive == false`; neues `enqueue` läuft wieder an (Worker-Neustart nach cancelAll).
-  8. `clearCompletedRemovesOnlyDone` — finished+failed+cancelled fliegen, queued/running bleiben.
-  9. `isActiveReflectsPendingWork` — false initial, true nach enqueue, false nach Abschluss.
+  1. `enqueueRunsTransferAndFinishes` — one item, status progression queued→running→finished, `onCompleted` exactly once, file arrived at the destination mock.
+  2. `secondEnqueueDuringRunningIsQueuedNotDropped` — two enqueues in direct succession (mock read with delay/signal), item 2 has status `.queued` WHILE item 1 is running, afterward BOTH complete (this pins the old isRunning drop as dead).
+  3. `itemsRunInFIFOOrder` — three items, completion order == enqueue order (mock logs write order).
+  4. `failedItemDoesNotBlockQueue` — item 1 throws (mock error `RemoteFSError.notFound`), status `.failed` with a German message, item 2 still runs and finishes.
+  5. `enqueueAndWaitReturnsAfterCompletion` — returns only after `.finished` (task + signal mock prove the ordering).
+  6. `enqueueAndWaitThrowsOnFailure` — mock throws → `enqueueAndWait` throws.
+  7. `cancelAllCancelsQueuedAndRunning` — item 1 running (mock blocks on signal), item 2 queued; `cancelAll()`; item 2 `.cancelled` immediately, item 1 `.cancelled` (not `.failed`), a waiting `enqueueAndWait` on item 2 throws; afterward `isActive == false`; a new `enqueue` starts up again (worker restart after cancelAll).
+  8. `clearCompletedRemovesOnlyDone` — finished+failed+cancelled get removed, queued/running stay.
+  9. `isActiveReflectsPendingWork` — false initially, true after enqueue, false after completion.
 
-- [x] **Step 2: Rot** — Compile-Fehler.
-- [x] **Step 3: Implementieren** (wie oben skizziert; Code-Layout an `TransferViewModel` orientieren).
-- [x] **Step 4: Grün** — Filter-Suite (9), Gesamtsuite (Basis + 9).
-- [x] **Step 5: Commit** — `feat: add transfer queue view model with fifo worker` (mit Footer).
+- [x] **Step 2: Red** — compile errors.
+- [x] **Step 3: Implement** (as sketched above; base code layout on `TransferViewModel`).
+- [x] **Step 4: Green** — filter suite (9), full suite (base + 9).
+- [x] **Step 5: Commit** — `feat: add transfer queue view model with fifo worker` (with footer).
 
 ---
 
@@ -235,12 +235,12 @@ Fehlertexte: `Self.message(for:)` — die switch-Fälle 1:1 aus `TransferViewMod
 - Create: `Sources/MacSCPApp/TransferQueueBar.swift`
 
 **Interfaces:**
-- Consumes: `TransferQueueViewModel` (API aus Task 1 — liegt nach dem Merge auf dem Basis-Commit vor).
-- Produces: `struct TransferQueueBar: View { let viewModel: TransferQueueViewModel }` — T3 bettet sie statt `TransferBar` ein.
+- Consumes: `TransferQueueViewModel` (API from Task 1 — present on the base commit after the merge).
+- Produces: `struct TransferQueueBar: View { let viewModel: TransferQueueViewModel }` — T3 embeds it instead of `TransferBar`.
 
-Kein Unit-Test (SwiftUI-Darstellung); Verifikation Build + visuell in T4.
+No unit test (SwiftUI rendering); verification via build + visual check in T4.
 
-- [x] **Step 1: Implementieren**
+- [x] **Step 1: Implement**
 
 ```swift
 import SwiftUI
@@ -331,18 +331,18 @@ struct TransferQueueBar: View {
 }
 ```
 
-Dazu im VM-Konsum nötig (Task 1 liefert): `Item.Status` braucht ein Helper-Property `isRunning: Bool` (in Core, `public var isRunning: Bool { if case .running = self { return true }; return false }`) — falls Task 1 es nicht ohnehin anlegt, hier als Extension in der Datei ergänzen.
+Also needed for the VM consumption (Task 1 provides it): `Item.Status` needs a helper property `isRunning: Bool` (in Core, `public var isRunning: Bool { if case .running = self { return true }; return false }`) — if Task 1 does not already add it, add it here as an extension in the file.
 
-- [x] **Step 2: Grün** — `swift build && swift test` (Basis unverändert).
-- [x] **Step 3: Commit** — `feat: add transfer queue bar listing queued items` (mit Footer).
+- [x] **Step 2: Green** — `swift build && swift test` (base unchanged).
+- [x] **Step 3: Commit** — `feat: add transfer queue bar listing queued items` (with footer).
 
 ---
 
-### Task 3: ContentView-Umbau — alles durch die Queue
+### Task 3: ContentView rebuild — everything through the queue
 
 **Files:**
 - Modify: `Sources/MacSCPApp/ContentView.swift`
-- Modify: `Sources/MacSCPApp/RemoteFilePromise.swift` (nur falls Signatur-Anpassung nötig)
+- Modify: `Sources/MacSCPApp/RemoteFilePromise.swift` (only if a signature adjustment is needed)
 - Delete: `Sources/MacSCPApp/TransferBar.swift`
 - Delete: `Sources/macSCPCore/Presentation/TransferViewModel.swift`
 - Delete: `Tests/macSCPCoreTests/TransferViewModelTests.swift`
@@ -350,13 +350,13 @@ Dazu im VM-Konsum nötig (Task 1 liefert): `Item.Status` braucht ein Helper-Prop
 **Interfaces:**
 - Consumes: `TransferQueueViewModel` (T1), `TransferQueueBar` (T2).
 
-- [x] **Step 1: State umstellen** — `@State private var transferViewModel = TransferViewModel()` → `@State private var transferQueue = TransferQueueViewModel()`; in `startSession` neu instanziieren (`transferQueue = TransferQueueViewModel()`) wie bisher.
+- [x] **Step 1: Switch state** — `@State private var transferViewModel = TransferViewModel()` → `@State private var transferQueue = TransferQueueViewModel()`; reinstantiate in `startSession` (`transferQueue = TransferQueueViewModel()`) as before.
 
-- [x] **Step 2: Gates neu ziehen**
-  - `sidebarDisabled`: `transferViewModel.isRunning` → `transferQueue.isActive` (Session-Wechsel während laufender Queue bleibt gesperrt — bewusste M5a-Entscheidung, Abbruch-Dialog kommt mit M5c/Reconnect).
-  - Upload-/Download-Button: `.disabled(... || transferViewModel.isRunning)` → das isRunning-Kriterium ENTFERNEN (nur noch `selected == nil || kind != .file`) — Klicks reihen ein.
-  - „Trennen"-Button: `.disabled(transferViewModel.isRunning)` → `.disabled(transferQueue.isActive)`.
-  - `uploadDropped`: den `guard !transferViewModel.isRunning`-Drop-Guard ENTFERNEN (Kommentar dazu ebenfalls); die awaited-for-Schleife wird zu direkten `enqueue`-Aufrufen (kein Task nötig):
+- [x] **Step 2: Redraw gates**
+  - `sidebarDisabled`: `transferViewModel.isRunning` → `transferQueue.isActive` (switching sessions while the queue is running stays locked — a deliberate M5a decision, an abort dialog comes with M5c/reconnect).
+  - Upload/download button: `.disabled(... || transferViewModel.isRunning)` → REMOVE the isRunning criterion (only `selected == nil || kind != .file` remains) — clicks get enqueued.
+  - "Disconnect" button: `.disabled(transferViewModel.isRunning)` → `.disabled(transferQueue.isActive)`.
+  - `uploadDropped`: REMOVE the `guard !transferViewModel.isRunning` drop guard (its comment too); the awaited-for loop becomes direct `enqueue` calls (no task needed):
 
 ```swift
 private func uploadDropped(_ urls: [URL], session: BrowserSession) {
@@ -373,9 +373,9 @@ private func uploadDropped(_ urls: [URL], session: BrowserSession) {
 }
 ```
 
-  - Buttons analog: `Task { await transferViewModel.run(...) }` → `transferQueue.enqueue(...)` (synchron, kein Task).
+  - Buttons analogously: `Task { await transferViewModel.run(...) }` → `transferQueue.enqueue(...)` (synchronous, no task).
 
-- [x] **Step 3: Promise-Pfad durch die Queue** — in `remotePromiseProvider`:
+- [x] **Step 3: Promise path through the queue** — in `remotePromiseProvider`:
 
 ```swift
 RemoteFilePromiseProvider(item: item) { item, url in
@@ -389,24 +389,24 @@ RemoteFilePromiseProvider(item: item) { item, url in
 }
 ```
 
-(Der Provider-Callback ist bereits `async throws` — Signatur in `RemoteFilePromise.swift` prüfen; falls der Callback bisher `@Sendable` ohne MainActor ist, den `enqueueAndWait`-Aufruf in `await MainActor.run { ... }` heben bzw. die Closure-Signatur minimal anpassen. Promise-Downloads erscheinen damit in der Leiste und serialisieren sich mit allen anderen Transfers — der alte Gate-Bypass ist tot.)
+(The provider callback is already `async throws` — check the signature in `RemoteFilePromise.swift`; if the callback was previously `@Sendable` without MainActor, lift the `enqueueAndWait` call into `await MainActor.run { ... }` or adjust the closure signature minimally. Promise downloads thus appear in the bar and serialize with all other transfers — the old gate bypass is dead.)
 
-- [x] **Step 4: Teardown** — in `teardownSession()` VOR `session.terminal.shutdown()`: `await transferQueue.cancelAll()`.
+- [x] **Step 4: Teardown** — in `teardownSession()` BEFORE `session.terminal.shutdown()`: `await transferQueue.cancelAll()`.
 
-- [x] **Step 5: TransferBar ersetzen** — `TransferBar(viewModel: transferViewModel)` → `TransferQueueBar(viewModel: transferQueue)`; Datei `TransferBar.swift` löschen; `TransferViewModel.swift` + dessen Testdatei löschen. `grep -rn "TransferViewModel\|TransferBar" Sources/ Tests/` muss leer sein (bis auf TransferQueue*).
+- [x] **Step 5: Replace TransferBar** — `TransferBar(viewModel: transferViewModel)` → `TransferQueueBar(viewModel: transferQueue)`; delete the `TransferBar.swift` file; delete `TransferViewModel.swift` and its test file. `grep -rn "TransferViewModel\|TransferBar" Sources/ Tests/` must be empty (except for TransferQueue*).
 
-- [x] **Step 6: Grün + Headless-Launch** — `swift build && swift test` (Gesamtsuite = Basis − alte TransferVM-Tests); Headless-Launch-Check (Bundle-Wrapper-Muster).
-- [x] **Step 7: Commit** — `feat: route all transfers through the queue` (mit Footer).
+- [x] **Step 6: Green + headless launch** — `swift build && swift test` (full suite = base − old TransferVM tests); headless-launch check (bundle wrapper pattern).
+- [x] **Step 7: Commit** — `feat: route all transfers through the queue` (with footer).
 
 ---
 
-### Task 4: Abschluss-Verifikation
+### Task 4: Wrap-up verification
 
-- [x] **Step 1:** `swift test` — Gesamtsuite grün (erwartet ≈ 148 + 9 − 4 alte TransferVM-Tests; exakte Zahl im Report).
-- [x] **Step 2:** Rig hoch (HAUPT-Checkout), `MACSCP_ITEST=1` 15/15, `MACSCP_KEYCHAIN=1` 2/2, Rig runter (bzw. für Step 3 anlassen).
-- [x] **Step 3: Visueller Smoke-Test** (Koordinator, Rig läuft): Verbinden; 3+ Dateien per Multi-Drop ins Remote-Pane → ALLE erscheinen in der Queue-Leiste (wartet/laufend), arbeiten FIFO ab, ↑ bernstein; WÄHREND ein Transfer läuft einen Download-Klick einreihen → wird queued, nicht verworfen; Remote-Datei in den Finder ziehen (Promise) WÄHREND die Queue arbeitet → erscheint als Item und landet byte-identisch (diff); Fehlerfall (nicht lesbare Datei o.ä.) blockiert die Queue nicht; „Aufräumen" leert Erledigte; ⌘T-Terminal kurz ein/aus während Queue läuft (Screen bleibt erhalten — Task-0-Fix); Trennen erst nach Queue-Ende möglich (Button disabled solange aktiv).
-- [x] **Step 4:** Checkboxen, Commit `docs: mark M5a plan tasks as completed` (mit Footer).
+- [x] **Step 1:** `swift test` — full suite green (expected ≈ 148 + 9 − 4 old TransferVM tests; exact number in the report).
+- [x] **Step 2:** rig up (MAIN checkout), `MACSCP_ITEST=1` 15/15, `MACSCP_KEYCHAIN=1` 2/2, rig down (or leave running for step 3).
+- [x] **Step 3: Visual smoke test** (coordinator, rig running): connect; multi-drop 3+ files into the remote pane → ALL appear in the queue bar (waiting/running), work off FIFO, ↑ amber; WHILE a transfer is running, enqueue a download click → gets queued, not discarded; drag a remote file into the Finder (promise) WHILE the queue is working → appears as an item and lands byte-identical (diff); an error case (unreadable file or similar) does not block the queue; "Clean up" clears finished items; briefly toggle the ⌘T terminal on/off while the queue is running (screen stays intact — Task 0 fix); disconnect only possible after the queue ends (button disabled while active).
+- [x] **Step 4:** checkboxes, commit `docs: mark M5a plan tasks as completed` (with footer).
 
-## Ausblick
+## Outlook
 
-M5b: Konfliktregeln (überschreiben/überspringen/umbenennen) + rekursive Verzeichnis-Transfers. M5c: Resume (SFTP-Offset), Rate/ETA, Reconnect-Überleben (Queue pausiert), Parallelität → Spec-Default 3 nach empirischer Ein-Channel-Validierung. M5d: Editor-Integration (Temp-Download, DispatchSource-Watcher, Auto-Upload, Session-Cleanup). Danach M6 Release.
+M5b: conflict rules (overwrite/skip/rename) + recursive directory transfers. M5c: resume (SFTP offset), rate/ETA, reconnect survival (queue pauses), concurrency → spec default 3 after empirical single-channel validation. M5d: editor integration (temp download, DispatchSource watcher, auto-upload, session cleanup). Then M6 release.

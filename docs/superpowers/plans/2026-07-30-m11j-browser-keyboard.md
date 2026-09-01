@@ -1,10 +1,10 @@
-# M11j — Tastatursteuerung im Dateibrowser: Implementierungsplan
+# M11j — Keyboard control in the file browser: implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** Die Dateiliste per Tastatur bedienen (Finder-Stil), über dieselben Aktionen und dieselbe Gültigkeit wie das Kontextmenü.
+**Goal:** Drive the file list from the keyboard (Finder-style), through the same actions and the same validity as the context menu.
 
-**Architecture:** Eine reine, testbare Core-Funktion bildet `(Taste, Auswahl, Pane-Seite)` auf eine Aktion oder „nichts" ab und teilt die Gültigkeit mit `BrowserContextMenu.entries`. Eine `NSTableView`-Unterklasse fängt die Tasten ab und leitet zulässige Aktionen an genau die Closures, die Doppelklick und Kontextmenü schon nutzen.
+**Architecture:** A pure, testable Core function maps `(key, selection, pane side)` to an action or "nothing" and shares its validity with `BrowserContextMenu.entries`. An `NSTableView` subclass intercepts the keys and routes permitted actions to exactly the closures double-click and the context menu already use.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), AppKit, Swift Testing.
 
@@ -12,24 +12,24 @@
 
 ## Global Constraints
 
-- Code und Kommentare **nur Englisch**; Anzeigetexte über die Kataloge.
-- Tastatur und Kontextmenü teilen die Gültigkeit (`BrowserContextMenu.entries`) —
-  kein zweiter Gültigkeitsweg.
-- Beide Panes identisch; Übertragen-Richtung aus `side`.
-- **⌘-Tasten laufen durch `performKeyEquivalent`, modifierlose durch
-  `keyDown`** — nicht verwechseln.
-- Plain ⌫ bleibt unbelegt (kein versehentliches Löschen); nicht zulässige
-  Tasten fallen an `super` (Type-Select bleibt).
-- Selektion BY VALUE zum Tastendruck lesen (kein Stale-Index).
-- Kollisions-Check gegen bestehende App-Menü-Kürzel; Kollision melden, nicht
-  still umbelegen.
-- `swift build` immer aus SAUBEREM Build-Verzeichnis prüfen.
-- Tests: Swift Testing, TDD. Baseline: **786 Tests / 56 Suiten**.
-- Kein Release, kein Merge auf `main`, kein Tag.
+- Code and comments **English only**; display text via the catalogs.
+- Keyboard and context menu share validity (`BrowserContextMenu.entries`) —
+  no second validity path.
+- Both panes identical; transfer direction comes from `side`.
+- **⌘ keys run through `performKeyEquivalent`, modifier-less ones through
+  `keyDown`** — do not mix these up.
+- Plain ⌫ stays unassigned (no accidental delete); disallowed keys fall
+  through to `super` (type-select is preserved).
+- Read the selection BY VALUE at keypress time (no stale index).
+- Collision check against existing app menu shortcuts; report a collision,
+  do not silently reassign.
+- Always verify `swift build` from a CLEAN build directory.
+- Tests: Swift Testing, TDD. Baseline: **786 tests / 56 suites**.
+- No release, no merge to `main`, no tag.
 
 ---
 
-### Task 1: Reine Tasten-Auflösung (Core)
+### Task 1: Pure key resolution (Core)
 
 **Files:**
 - Create: `Sources/macSCPCore/Presentation/BrowserKeyCommand.swift`
@@ -37,91 +37,92 @@
 
 **Interfaces:**
 - Consumes: `RemoteFileItem`, `BrowserPaneSide`, `BrowserContextMenu.entries(for:side:)`.
-- Produces (T2 verlässt sich wörtlich darauf):
+- Produces (T2 relies on this verbatim):
   - `public enum BrowserKey: Sendable { case returnKey, commandDown, commandO, commandUp, commandDelete, commandI, space, escape }`
   - `public enum BrowserKeyAction: Equatable, Sendable { case open(RemoteFileItem); case goUp; case rename(RemoteFileItem); case info(RemoteFileItem); case delete([RemoteFileItem]); case transfer([RemoteFileItem]); case clearSelection }`
   - `public enum BrowserKeyCommand { public static func resolve(key: BrowserKey, selection: [RemoteFileItem], side: BrowserPaneSide) -> BrowserKeyAction? }`
 
 - [x] **Step 1: Failing tests** (`BrowserKeyCommandTests`):
-  - `.returnKey` + Einzelauswahl ⇒ `.rename(item)`; + Mehrfachauswahl ⇒ `nil`; + leere Auswahl ⇒ `nil`.
-  - `.commandDown` und `.commandO` + Einzelauswahl ⇒ `.open(item)`; + Mehrfachauswahl ⇒ `nil`; + leer ⇒ `nil`.
-  - `.commandUp` ⇒ `.goUp` (immer, auch bei leerer Auswahl).
-  - `.commandDelete` + nicht-leerer Auswahl ⇒ `.delete(selection)`; + leer ⇒ `nil`.
-  - `.commandI` + einzelner Datei ⇒ `.info(item)`; + einzelnem SYMLINK ⇒ `nil`; + Mehrfachauswahl ⇒ `nil`.
-  - `.space` + übertragbarer Auswahl (mind. ein nicht-Symlink) ⇒ `.transfer(selection)`; + reiner Symlink-Auswahl ⇒ `nil` (Menü bietet Übertragen dort auch nicht); + leer ⇒ `nil`. `side` beeinflusst NUR die spätere Richtung, nicht die Auflösung hier — beide Seiten liefern `.transfer`.
-  - `.escape` ⇒ `.clearSelection` (immer).
+  - `.returnKey` + single selection ⇒ `.rename(item)`; + multi-selection ⇒ `nil`; + empty selection ⇒ `nil`.
+  - `.commandDown` and `.commandO` + single selection ⇒ `.open(item)`; + multi-selection ⇒ `nil`; + empty ⇒ `nil`.
+  - `.commandUp` ⇒ `.goUp` (always, even with an empty selection).
+  - `.commandDelete` + non-empty selection ⇒ `.delete(selection)`; + empty ⇒ `nil`.
+  - `.commandI` + a single file ⇒ `.info(item)`; + a single SYMLINK ⇒ `nil`; + multi-selection ⇒ `nil`.
+  - `.space` + a transferable selection (at least one non-symlink) ⇒ `.transfer(selection)`; + a selection of symlinks only ⇒ `nil` (the menu doesn't offer Transfer there either); + empty ⇒ `nil`. `side` affects ONLY the later direction, not the resolution here — both sides yield `.transfer`.
+  - `.escape` ⇒ `.clearSelection` (always).
 
-- [x] **Step 2: Rot beweisen.** `swift test --filter BrowserKeyCommand` → FAIL.
+- [x] **Step 2: Prove red.** `swift test --filter BrowserKeyCommand` → FAIL.
 
-- [x] **Step 3: Implementierung.** `resolve` fragt für die
-  auswahl-abhängigen Fälle `BrowserContextMenu.entries(for: selection,
-  side: side)` und leitet nur ab, wenn der passende `BrowserMenuEntry`
-  enthalten ist: `.rename` → `.rename`, `.infoAndPermissions` → `.info`,
-  `.delete` → `.delete`, `.transferToOtherPane` → `.transfer`. `.open`
-  gilt bei genau EINER Auswahl (der fokussierten Zeile); `.goUp` und
-  `.clearSelection` sind immer gültig. Doc-Kommentar: warum die Gültigkeit
-  über `entries` geteilt wird (Menü und Tastatur dürfen nie auseinander).
+- [x] **Step 3: Implementation.** `resolve` asks
+  `BrowserContextMenu.entries(for: selection, side: side)` for the
+  selection-dependent cases and only derives an action when the matching
+  `BrowserMenuEntry` is present: `.rename` → `.rename`,
+  `.infoAndPermissions` → `.info`, `.delete` → `.delete`,
+  `.transferToOtherPane` → `.transfer`. `.open` applies for exactly ONE
+  selected item (the focused row); `.goUp` and `.clearSelection` are always
+  valid. Doc comment: why validity is shared via `entries` (menu and
+  keyboard must never diverge).
 
-- [x] **Step 4: Grün.** `swift test --filter BrowserKeyCommand` → PASS, dann volle `swift test`.
+- [x] **Step 4: Green.** `swift test --filter BrowserKeyCommand` → PASS, then full `swift test`.
 
 - [x] **Step 5: Commit.** `feat: resolve browser keyboard commands against the menu model`
 
 ---
 
-### Task 2: NSTableView-Unterklasse + Dispatch (App)
+### Task 2: NSTableView subclass + dispatch (App)
 
 **Files:**
-- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (Unterklasse + Coordinator-Dispatch + Verdrahtung), ggf. `Sources/MacSCPApp/BrowserPane.swift` / `Sources/MacSCPApp/ContentView.swift` (goUp-/Transfer-Closure, falls nicht vorhanden)
+- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (subclass + coordinator dispatch + wiring), possibly `Sources/MacSCPApp/BrowserPane.swift` / `Sources/MacSCPApp/ContentView.swift` (goUp/transfer closure, if not already present)
 
 **Interfaces:**
-- Consumes: `BrowserKey`/`BrowserKeyAction`/`BrowserKeyCommand.resolve` (T1); die bestehenden Closures `onOpen`, `onOpenFile`, `onOpenSymlink` (M11h), `onMenuAction`, `onSelect`; `viewModel.goUp()`.
+- Consumes: `BrowserKey`/`BrowserKeyAction`/`BrowserKeyCommand.resolve` (T1); the existing closures `onOpen`, `onOpenFile`, `onOpenSymlink` (M11h), `onMenuAction`, `onSelect`; `viewModel.goUp()`.
 
-- [x] **Step 1: `NSTableView`-Unterklasse** (privat in
-  `RemoteFileTableView.swift`) mit schwacher Referenz auf den Coordinator.
-  `makeNSView` instanziiert diese Unterklasse statt `NSTableView()`.
+- [x] **Step 1: `NSTableView` subclass** (private in
+  `RemoteFileTableView.swift`) with a weak reference to the coordinator.
+  `makeNSView` instantiates this subclass instead of `NSTableView()`.
 
-- [x] **Step 2: `performKeyEquivalent(_:)`** für die ⌘-Tasten
-  (⌘↓/⌘O/⌘↑/⌘⌫/⌘I). Modifier und `charactersIgnoringModifiers` /
-  `keyCode` (Pfeile ⌘↓/⌘↑ über `keyCode` 125/126) auf `BrowserKey`
-  abbilden, `BrowserKeyCommand.resolve` mit der aktuellen Auswahl (BY VALUE)
-  rufen, bei Aktion dispatchen und `true` zurück; sonst `super`/`false`.
+- [x] **Step 2: `performKeyEquivalent(_:)`** for the ⌘ keys
+  (⌘↓/⌘O/⌘↑/⌘⌫/⌘I). Map modifiers and `charactersIgnoringModifiers` /
+  `keyCode` (arrows ⌘↓/⌘↑ via `keyCode` 125/126) onto `BrowserKey`, call
+  `BrowserKeyCommand.resolve` with the current selection (BY VALUE),
+  dispatch on an action and return `true`; otherwise `super`/`false`.
 
-- [x] **Step 3: `keyDown(_:)`** für Return / Leertaste / Esc. Gleiche
-  Auflösung; nicht-verarbeitete Tasten an `super` (Type-Select bleibt).
+- [x] **Step 3: `keyDown(_:)`** for Return / space / Esc. Same resolution;
+  unhandled keys go to `super` (type-select is preserved).
 
-- [x] **Step 4: Dispatch.** Eine Coordinator-Methode
+- [x] **Step 4: Dispatch.** A coordinator method
   `perform(_ action: BrowserKeyAction)`:
-  - `.open(item)` → **exakt derselbe Weg wie `doubleClicked`** (Ordner →
-    `onOpen`, Datei → `onOpenFile`, Symlink → `onOpenSymlink`, `.other`
-    No-op) — nicht duplizieren, die vorhandene Verzweigung
-    wiederverwenden/teilen.
-  - `.goUp` → `viewModel.goUp()` (oder die dafür vorhandene Closure).
+  - `.open(item)` → **exactly the same path as `doubleClicked`** (folder →
+    `onOpen`, file → `onOpenFile`, symlink → `onOpenSymlink`, `.other`
+    no-op) — do not duplicate, reuse/share the existing branching.
+  - `.goUp` → `viewModel.goUp()` (or the closure that already exists for
+    it).
   - `.rename(item)` → `onMenuAction(.rename, [item])`.
   - `.info(item)` → `onMenuAction(.infoAndPermissions, [item])`.
   - `.delete(sel)` → `onMenuAction(.delete, sel)`.
-  - `.transfer(sel)` → `onMenuAction(.transferToOtherPane, sel)` (die
-    Richtung ergibt sich dort bereits aus dem Pane).
-  - `.clearSelection` → `onSelect([])` und die Tabellen-Auswahl leeren.
+  - `.transfer(sel)` → `onMenuAction(.transferToOtherPane, sel)` (the
+    direction already follows from the pane there).
+  - `.clearSelection` → `onSelect([])` and clear the table selection.
 
-- [x] **Step 5: Kollisions-Check.** Prüfen, dass ⌘↓/⌘↑/⌘O/⌘I/⌘⌫ mit keinem
-  App-Menü-Kürzel kollidieren (⌘N/W/1–9, ⌘⇧., ⌘⇧K/L/I, ⌘T, ⌘,). Im Report
-  festhalten. (⌘A/Select-All und Pfeile bleiben nativ.)
+- [x] **Step 5: Collision check.** Verify that ⌘↓/⌘↑/⌘O/⌘I/⌘⌫ collide with
+  no app menu shortcut (⌘N/W/1–9, ⌘⇧., ⌘⇧K/L/I, ⌘T, ⌘,). Record it in the
+  report. (⌘A/select-all and arrows remain native.)
 
-- [x] **Step 6: Verifikation.** `swift build` aus sauberem Verzeichnis
-  (keine neuen Warnungen; vier vorbestehende erwartet), volle `swift test`.
+- [x] **Step 6: Verification.** `swift build` from a clean directory (no
+  new warnings; four pre-existing expected), full `swift test`.
 
 - [x] **Step 7: Commit.** `feat: drive the file browser from the keyboard`
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Final verification (coordinator)
 
-- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips.
-- [x] Visueller Smoke — Maintainer (Checkliste: Return benennt um; ⌘↓/⌘O
-  öffnet Ordner/Datei/folgt Symlink; ⌘↑ hoch; ⌘⌫ löscht mit Rückfrage;
-  ⌘I Info, nicht bei Symlink; Leertaste überträgt in die richtige Richtung
-  je Pane; ⌘A alles, Esc leert; plain ⌫ tut nichts; nicht zulässige Tasten
-  bei falscher Auswahl tun nichts; Type-Select durch Tippen bleibt; beide
-  Panes).
-- [x] Plan-Checkboxen, Ledger, Opus-Final-Review, Fix-Runden bis „Yes",
-  Push develop, `gh run watch`, Memory. KEIN Release.
+- [x] Gated suites: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → green, zero skips.
+- [x] Visual smoke test — maintainer (checklist: Return renames; ⌘↓/⌘O
+  opens folder/file/follows symlink; ⌘↑ goes up; ⌘⌫ deletes with
+  confirmation; ⌘I info, not for a symlink; space transfers in the correct
+  direction per pane; ⌘A selects all, Esc clears; plain ⌫ does nothing;
+  disallowed keys with the wrong selection do nothing; type-select by
+  typing is preserved; both panes).
+- [x] Plan checkboxes, ledger, Opus final review, fix rounds until "Yes",
+  push to develop, `gh run watch`, memory. NO release.

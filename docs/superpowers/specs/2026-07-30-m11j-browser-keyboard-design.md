@@ -1,107 +1,107 @@
-# M11j — Tastatursteuerung im Dateibrowser (Design)
+# M11j — Keyboard control in the file browser (Design)
 
-Datum: 2026-07-30 · Status: vom Maintainer freigegeben (Finder-Stil,
-Übertragen richtungs-nach-Pane)
+Date: 2026-07-30 · Status: approved by the maintainer (Finder style,
+transfer direction-by-pane)
 
-## Ziel
+## Goal
 
-Die Dateiliste per Tastatur bedienen: navigieren, öffnen, umbenennen,
-löschen, Informationen, übertragen — ohne zur Maus greifen zu müssen.
+Operate the file list by keyboard: navigate, open, rename,
+delete, info, transfer — without needing to reach for the mouse.
 
-## Ausgangslage
+## Starting point
 
-- Die Liste ist ein schlichtes `NSTableView` (nicht abgeleitet) im
-  `RemoteFileTableView`-Coordinator; **kein** Tastatur-Handler. Nur die
-  native Pfeiltasten-Auswahl wirkt; Tippen tut nichts.
-- Alle Aktionen laufen heute schon durch EIN Modell: `onOpen`,
-  `onOpenFile`, und `onMenuAction(BrowserMenuEntry, [RemoteFileItem])` für
-  Rename/Info/NewFolder/Delete/Transfer, dazu `viewModel.goUp()`. Die
-  Gültigkeit (welche Aktion für welche Auswahl erlaubt ist) liegt in der
-  reinen Core-Funktion `BrowserContextMenu.entries(for:side:)`.
+- The list is a plain `NSTableView` (not subclassed) in the
+  `RemoteFileTableView` coordinator; **no** keyboard handler. Only the
+  native arrow-key selection works; typing does nothing.
+- All actions already go through ONE model today: `onOpen`,
+  `onOpenFile`, and `onMenuAction(BrowserMenuEntry, [RemoteFileItem])` for
+  Rename/Info/NewFolder/Delete/Transfer, plus `viewModel.goUp()`. Validity
+  (which action is allowed for which selection) lives in the
+  pure Core function `BrowserContextMenu.entries(for:side:)`.
 
-## Tastenbelegung (Finder-Stil, Maintainer-Entscheid)
+## Key bindings (Finder style, maintainer's decision)
 
-| Taste | Aktion |
+| Key | Action |
 |---|---|
-| **Return** | Umbenennen (nur bei genau einer Auswahl) |
-| **⌘↓** / **⌘O** | Öffnen: Ordner → hinein (`onOpen`), Datei → Editor (`onOpenFile`, nur Remote) |
-| **⌘↑** | Eine Ebene hoch (`goUp`) |
-| **⌘⌫** | Löschen mit Rückfrage (`delete`) |
-| **⌘I** | Informationen & Rechte (nur einzeln, NIE Symlink) |
-| **Leertaste** | Übertragen — lokales Pane lädt hoch, Remote lädt herunter |
-| **⌘A** | Alles auswählen (nativ) |
-| **Esc** | Auswahl aufheben |
+| **Return** | Rename (only with exactly one selection) |
+| **⌘↓** / **⌘O** | Open: folder → go in (`onOpen`), file → editor (`onOpenFile`, remote only) |
+| **⌘↑** | Up one level (`goUp`) |
+| **⌘⌫** | Delete with confirmation (`delete`) |
+| **⌘I** | Info & permissions (single item only, NEVER a symlink) |
+| **Space** | Transfer — the local pane uploads, remote downloads |
+| **⌘A** | Select all (native) |
+| **Esc** | Clear selection |
 
-- **Plain ⌫ bleibt unbelegt** — kein versehentliches Löschen; Finder löscht
-  damit auch nichts.
-- Pfeiltasten (Auswahl bewegen) bleiben die native Tabellen-Funktion.
-- Beide Panes identisch; die Übertragen-Richtung ergibt sich aus `side`.
+- **Plain ⌫ stays unbound** — no accidental deletion; Finder doesn't
+  delete with it either.
+- Arrow keys (moving the selection) stay the native table function.
+- Both panes identical; the transfer direction follows from `side`.
 
-## Gültigkeit = Kontextmenü, kein zweiter Weg
+## Validity = context menu, no second path
 
-Eine Taste löst eine Aktion nur aus, wenn dieselbe Aktion auch im
-Kontextmenü für die aktuelle Auswahl erscheinen würde. Konkret: die
-Tastatur befragt `BrowserContextMenu.entries(for:side:)` (oder eine dünne
-Ableitung daraus) und leitet nur zulässige Aktionen an genau die Closures
-weiter, die das Kontextmenü schon nutzt. So können Menü und Tastatur nie
-auseinanderlaufen:
+A key triggers an action only if the same action would also appear in the
+context menu for the current selection. Concretely: the
+keyboard consults `BrowserContextMenu.entries(for:side:)` (or a thin
+derivative of it) and forwards only permitted actions to exactly the
+closures the context menu already uses. That way the menu and the
+keyboard can never drift apart:
 
-- Umbenennen/Info nur bei Einzelauswahl; Info nie bei Symlink.
-- Löschen nur bei nicht-leerer Auswahl.
-- Editor nur remote und nur für Dateien.
-- Übertragen nur bei übertragbarer Auswahl.
+- Rename/Info only with a single selection; Info never on a symlink.
+- Delete only with a non-empty selection.
+- Editor only remote and only for files.
+- Transfer only with a transferable selection.
 
-Ist eine Taste für die aktuelle Auswahl nicht zulässig, passiert **nichts**
-(kein Fehler, kein Piepsen unterdrückt — der Tastendruck fällt an `super`,
-damit native Funktionen wie Type-Select erhalten bleiben).
+If a key is not permitted for the current selection, **nothing** happens
+(no error, no suppressed beep — the keypress falls through to `super`,
+so native functions like type-select are preserved).
 
-## AppKit-Verdrahtung
+## AppKit wiring
 
-- `RemoteFileTableView` bekommt eine **`NSTableView`-Unterklasse** mit:
-  - `override func keyDown(_:)` für die **modifierlosen** Tasten: **Return**
-    (Umbenennen), **Leertaste** (Übertragen), **Esc** (Auswahl leeren).
-  - `override func performKeyEquivalent(_:) -> Bool` für die
-    **⌘-kombinierten** Tasten (⌘↓/⌘O/⌘↑/⌘⌫/⌘I): Command-Events laufen in
-    AppKit durch `performKeyEquivalent`, NICHT durch `keyDown` — die
-    klassische Falle. Rückgabe `true` nur, wenn wir die Taste wirklich
-    verarbeiten; sonst `false`, damit App-Menü-Kürzel und Fokuswechsel
-    unberührt bleiben.
-  - Beide prüfen zuerst, dass eine passende Auswahl da ist und die Aktion
-    laut Menü-Modell zulässig ist; sonst `super`/`false`.
-- Der Coordinator (schon `NSTableViewDelegate`/`NSMenuDelegate`) bekommt die
-  Dispatch-Methoden; die Unterklasse hält eine schwache Referenz auf ihn
-  und ruft sie. Die Selektion wird BY VALUE zum Zeitpunkt des Tastendrucks
-  gelesen (dasselbe Muster wie `MenuActionBox` beim Menü-Bau, gegen
-  Stale-Index).
-- **Kollisions-Prüfung:** vor der Umsetzung sicherstellen, dass ⌘↓/⌘↑/⌘O/
-  ⌘I/⌘⌫ mit keinem bestehenden App-Menü-Kürzel kollidieren (belegt sind
-  ⌘N/W/1–9, ⌘⇧., ⌘⇧K/L/I, ⌘T, ⌘,). Kollidiert eines, im Report melden,
-  nicht still umbelegen.
+- `RemoteFileTableView` gets an **`NSTableView` subclass** with:
+  - `override func keyDown(_:)` for the **modifier-free** keys: **Return**
+    (rename), **Space** (transfer), **Esc** (clear selection).
+  - `override func performKeyEquivalent(_:) -> Bool` for the
+    **⌘-combined** keys (⌘↓/⌘O/⌘↑/⌘⌫/⌘I): command events in
+    AppKit flow through `performKeyEquivalent`, NOT through `keyDown` — the
+    classic trap. Return `true` only when we actually handle the key;
+    otherwise `false`, so App menu shortcuts and focus changes
+    stay untouched.
+  - Both check first that a matching selection exists and that the action
+    is permitted per the menu model; otherwise `super`/`false`.
+- The coordinator (already `NSTableViewDelegate`/`NSMenuDelegate`) gets the
+  dispatch methods; the subclass holds a weak reference to it
+  and calls them. The selection is read BY VALUE at the moment of the
+  keypress (the same pattern as `MenuActionBox` in menu building, against
+  stale indices).
+- **Collision check:** before implementation, make sure ⌘↓/⌘↑/⌘O/
+  ⌘I/⌘⌫ don't collide with any existing App menu shortcut (taken are
+  ⌘N/W/1–9, ⌘⇧., ⌘⇧K/L/I, ⌘T, ⌘,). If one collides, report it,
+  don't silently rebind it.
 
-## Bewusst NICHT in M11j
+## Deliberately NOT in M11j
 
-- Keine Type-to-Select-Änderung (bleibt nativ).
-- Kein Quick-Look / Leertaste-Vorschau (Leertaste ist Übertragen).
-- Keine Pfeiltasten-Navigation der Kandidatenliste in der Pfadzeile (das ist
-  M11i/PathBar, unberührt).
-- Kein neuer Audit-Eintrag (die ausgelösten Aktionen auditieren sich schon
-  selbst, wo relevant — Delete etc.).
+- No change to type-to-select (stays native).
+- No Quick Look / space-bar preview (space bar is transfer).
+- No arrow-key navigation of the candidate list in the path bar (that is
+  M11i/PathBar, untouched).
+- No new audit entry (the triggered actions already audit themselves
+  where relevant — delete etc.).
 
 ## Tests
 
-- **Reine Gültigkeits-Ableitung** (Core, testbar): eine Funktion, die aus
-  `(Taste, Auswahl, Pane-Seite)` die auszulösende `BrowserMenuEntry` bzw.
-  Öffnen/Hoch/Übertragen-Absicht ODER „nichts" liefert — abgekoppelt vom
-  `NSEvent`. Fälle: Return bei Einzel- vs. Mehrfachauswahl; ⌘I bei Symlink
-  (nichts) vs. Datei; ⌘⌫ bei leerer vs. nicht-leerer Auswahl; Leertaste
-  Richtung nach `side`; ⌘O Ordner vs. Datei vs. Datei-im-lokalen-Pane
-  (kein Editor). Diese Funktion ist der automatisierte Kern; sie stellt
-  sicher, dass Tastatur und Menü dieselbe Gültigkeit teilen.
-- Die AppKit-Anbindung (`keyDown`/`performKeyEquivalent`) hat kein
-  Test-Target → Smoke-Checkliste.
+- **Pure validity derivation** (Core, testable): a function that, from
+  `(key, selection, pane side)`, returns the `BrowserMenuEntry` to trigger
+  or the open/up/transfer intent, OR "nothing" — decoupled from the
+  `NSEvent`. Cases: Return with single vs. multiple selection; ⌘I on a
+  symlink (nothing) vs. a file; ⌘⌫ with an empty vs. non-empty selection;
+  space direction by `side`; ⌘O folder vs. file vs. file-in-the-local-pane
+  (no editor). This function is the automated core; it ensures
+  the keyboard and the menu share the same validity.
+- The AppKit binding (`keyDown`/`performKeyEquivalent`) has no
+  test target → smoke checklist.
 
-## Aufteilung
+## Breakdown
 
-T1 Core (reine `BrowserKeyCommand`-Ableitung + Test) → T2 App
-(`NSTableView`-Unterklasse, Dispatch, Kollisions-Check, beide Panes) →
-T3 Abschluss. KEIN Release.
+T1 Core (pure `BrowserKeyCommand` derivation + test) → T2 App
+(`NSTableView` subclass, dispatch, collision check, both panes) →
+T3 wrap-up. NO release.

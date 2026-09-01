@@ -1,78 +1,81 @@
-# M9d — Terminal-Darstellung + Remote-Home-Start (Design)
+# M9d — Terminal appearance + remote-home start (design)
 
-Datum: 2026-07-28 · Status: vom Maintainer freigegeben (Design in einem Block bestätigt, „direkt los")
+Date: 2026-07-28 · Status: approved by the maintainer (design confirmed
+as one block, "go ahead directly")
 
-## Ziel
+## Goal
 
-Einstellbare Terminal-Darstellung (Monospace-Font, Schriftgröße, Cursor-Stil)
-mit Live-Anwendung auf offene Terminals; Farben bleiben festes CI (Tiefsee/
-Phosphor). Eingefalteter Mini-Fix: das Remote-Pane öffnet beim Connect das
-Remote-HOME (SFTP `realpath "."`) statt `/`.
+Configurable terminal appearance (monospace font, font size, cursor
+style) with live application to open terminals; colors stay fixed CI
+(deep sea/phosphor). Folded-in mini-fix: the remote pane opens the
+remote HOME (SFTP `realpath "."`) on connect instead of `/`.
 
-**Maintainer-Entscheidungen (2026-07-28):** Umfang = Font + Größe +
-Cursor-Stil; Farben/Theme fest (CI). Remote-Home-Fix in diesem Meilenstein.
+**Maintainer decisions (2026-07-28):** scope = font + size + cursor
+style; colors/theme fixed (CI). Remote-home fix in this milestone.
 
 ## 1. Settings (Core)
 
-`SettingsStore`, vorwärtskompatibel wie gehabt:
+`SettingsStore`, forward-compatible as before:
 
-- `terminalFontName: String?` — nil (Default) = System-Monospace (SF Mono).
-- `terminalFontSize: Int` — Default 13, geklemmt 9…24 beim Setzen UND Lesen.
-- `terminalCursorStyle: TerminalCursorStyle` — Enum (String-RawValue) mit
-  `block` (Default), `bar`, `underline`; unbekannte gespeicherte Werte lesen
-  als Default.
-- `terminalCursorBlink: Bool` — Default `true`.
-- `TerminalCursorStyle` liegt in Core (testbar) und liefert zusammen mit dem
-  Blink-Flag das Mapping auf SwiftTerms sechs Cursor-Modi (blink/steady ×
-  block/underline/bar) — als reine Funktion `swiftTermStyleName`-artig bzw.
-  direkt im App-Layer gemappt; das MAPPING (6 Kombinationen) ist Core-seitig
-  als Enum+Flag-Paar getestet.
+- `terminalFontName: String?` — nil (default) = system monospace (SF
+  Mono).
+- `terminalFontSize: Int` — default 13, clamped 9…24 on set AND read.
+- `terminalCursorStyle: TerminalCursorStyle` — enum (string raw value)
+  with `block` (default), `bar`, `underline`; unknown stored values read
+  as the default.
+- `terminalCursorBlink: Bool` — default `true`.
+- `TerminalCursorStyle` lives in Core (testable) and, together with the
+  blink flag, provides the mapping onto SwiftTerm's six cursor modes
+  (blink/steady × block/underline/bar) — as a pure function along the
+  lines of `swiftTermStyleName`, or mapped directly in the app layer;
+  the MAPPING (6 combinations) is tested Core-side as an enum+flag pair.
 
-## 2. Anwendung (App, SSHTerminalView)
+## 2. Application (App, SSHTerminalView)
 
-- `makeNSView` liest Font/Größe/Cursor aus dem SettingsStore (injiziert als
-  Parameter, kein Singleton) statt der harten 13-pt-Zeile.
-- `updateNSView` (heute leer) appliziert Änderungen LIVE: Font-Objekt neu
-  auflösen und setzen (SwiftTerm reflowt; Resize→SSH window-change läuft über
-  den bestehenden Delegate), Cursor-Stil setzen. Nur bei tatsächlicher
-  Änderung anfassen (Vergleich), damit reguläre SwiftUI-Re-Renders das
-  Terminal nicht stören.
-- Font-Auflösung: gespeicherter Name → `NSFont(name:size:)`; nicht (mehr)
-  vorhanden → System-Monospace-Fallback. Nie ein leeres/kaputtes Terminal.
-- Farben/Theme: UNVERÄNDERT (DesignTokens Tiefsee/Phosphor).
+- `makeNSView` reads font/size/cursor from `SettingsStore` (injected as
+  a parameter, no singleton) instead of the hardcoded 13-pt line.
+- `updateNSView` (empty today) applies changes LIVE: re-resolve and set
+  the font object (SwiftTerm reflows; resize→SSH window-change runs
+  through the existing delegate), set the cursor style. Touch it only on
+  an actual change (comparison), so regular SwiftUI re-renders do not
+  disturb the terminal.
+- Font resolution: stored name → `NSFont(name:size:)`; no longer present
+  → system monospace fallback. Never a blank/broken terminal.
+- Colors/theme: UNCHANGED (DesignTokens deep sea/phosphor).
 
-## 3. Settings-UI
+## 3. Settings UI
 
-- Neuer Tab „Terminal" (nach „Öffnen mit"): Font-Popup (nur Fixed-Pitch-
-  Fonts des Systems, oberster Eintrag „System (SF Mono)" = nil), Größe-
-  Stepper 9–24, Cursor-Picker (Block/Balken/Unterstrich) + Toggle „Blinken",
-  darunter eine kleine Live-Vorschau-Zeile im Tiefsee-Look (statisch
-  gerenderter Beispieltext mit gewähltem Font/Größe).
+- New tab "Terminal" (after "Öffnen mit"): font popup (fixed-pitch
+  system fonts only, top entry "System (SF Mono)" = nil), size stepper
+  9–24, cursor picker (Block/Balken/Unterstrich) + toggle "Blinken",
+  below it a small live preview line in the deep-sea look (statically
+  rendered example text with the chosen font/size).
 - Keys EN/DE.
 
-## 4. Remote-Home beim Connect
+## 4. Remote home on connect
 
-- `RemoteFileSystem`-Protocol: `homeDirectoryPath() async throws -> String`.
+- `RemoteFileSystem` protocol: `homeDirectoryPath() async throws ->
+  String`.
   - `CitadelFileSystem`: SFTP `realpath "."` (Citadel `getRealPath`).
   - `LocalFileSystem`: `NSHomeDirectory()`.
-  - `MockRemoteFileSystem`: konfigurierbar (Default `/`).
-- `startSession` löst das Home EINMAL beim Connect auf und erzeugt das
-  Remote-VM mit diesem `startPath`; Fehler ⇒ stiller Fallback `/` (Verhalten
-  wie bisher). Kein erneutes Auflösen bei Refresh/Navigation.
+  - `MockRemoteFileSystem`: configurable (default `/`).
+- `startSession` resolves the home ONCE on connect and creates the
+  remote VM with this `startPath`; on error ⇒ silent fallback to `/`
+  (behavior as before). No re-resolving on refresh/navigation.
 
 ## 5. Tests
 
-- Store: Defaults, Klemmung 9–24 (Setzen/Lesen, Raw-JSON), unbekannter
-  Cursor-RawValue liest als `block`, Roundtrip, alte settings.json ohne
-  Keys ⇒ Defaults.
-- Cursor-Mapping: 6 Kombinationen (3 Stile × Blink an/aus) eindeutig.
-- FS: Mock-`homeDirectoryPath` (konfiguriert + Fehlerfall); gated
-  Citadel-Test: `homeDirectoryPath()` liefert absoluten Pfad (beginnt mit
-  `/`) und `list` darauf funktioniert.
-- App (Popup, Live-Anwendung, Vorschau): visueller Smoke (T3).
+- Store: defaults, clamping 9–24 (set/read, raw JSON), unknown cursor
+  raw value reads as `block`, round trip, old settings.json without
+  keys ⇒ defaults.
+- Cursor mapping: 6 combinations (3 styles × blink on/off) unambiguous.
+- FS: mock `homeDirectoryPath` (configured + error case); gated Citadel
+  test: `homeDirectoryPath()` returns an absolute path (starts with `/`)
+  and `list` on it works.
+- App (popup, live application, preview): visual smoke (T3).
 
-## 6. Bewusst NICHT in M9d
+## 6. Deliberately NOT in M9d
 
-- Keine Farb-/Theme-Auswahl (CI bleibt fest); keine ANSI-Palette-Settings.
-- Kein Zeilenabstand/Padding-Setting.
-- Keine Pro-Session-Terminal-Settings (global genügt).
+- No color/theme selection (CI stays fixed); no ANSI palette settings.
+- No line-spacing/padding setting.
+- No per-session terminal settings (global suffices).

@@ -1,341 +1,341 @@
-# P1 — Abschlussbericht (Snippets erreichbar)
+# P1 — close-out report (snippets reachable)
 
-**Status:** abgeschlossen 2026-08-11. HEAD vor diesem Bericht: `df081be`.
+**Status:** completed 2026-08-11. HEAD before this report: `df081be`.
 
-Neun Tasks: vier am Core-Modell (Flag raus, Tags rein, Bytes, Vorschlagsliste,
-`SnippetMenuModel`), fünf an der App (Verwaltungs-Sheet, Menüleiste,
-Host-Kontextmenü, Terminal-Kopfzeile, Rechtsklick), dazu dieser Abschluss.
-Spec: `2026-08-10-snippets-runde-2-design.md`, Abschnitt „P1". Plan:
+Nine tasks: four on the Core model (flag out, tags in, bytes, suggestion
+list, `SnippetMenuModel`), five on the App (management sheet, menu bar,
+host context menu, terminal header, right-click), plus this close-out.
+Spec: `2026-08-10-snippets-runde-2-design.md`, section "P1". Plan:
 `../plans/2026-08-11-p1-snippets-erreichbar.md`. Ledger:
 `.superpowers/sdd/2026-08-11-p1-snippets-erreichbar/progress.md`.
 
 ## Commits
 
-Basis des Plans: `7247685` (Planungs-Doc, letzter Commit vor Task 1).
+Plan base: `7247685` (planning doc, last commit before Task 1).
 
-| Commit | Inhalt |
+| Commit | Content |
 |---|---|
-| `7247685` | Plan (= Basis) |
-| `e9b52ac` | Task 1 — Modell: `runsImmediately` raus, `tags` rein |
+| `7247685` | Plan (= base) |
+| `e9b52ac` | Task 1 — model: `runsImmediately` out, `tags` in |
 | `2cede3e` | Task 2 — `SnippetKeystrokes.bytes(for:execute:)` |
-| `a7cc2b4` / `a346516` | Task 3 — Vorschlagsliste, Fixrunde (case-insensitive Exclude/Count unpinned) |
-| `942ce69` / `82876b3` | Task 4 — `SnippetMenuModel`, Fixrunde (Sortierreihenfolge unpinned) |
-| `18b0741` / `f63d124` | Task 5 — Verwaltungs-Sheet: Häkchen raus, Tag-Feld + Filter, Fixrunde (toter L10n-Schlüssel, Highlight-Clamp unpinned) |
-| `f60ffc5` / `371c2bb` | Task 6 — Menüleiste auf das Modell, Fixrunde (Shortcut-Wächter für Execute) |
-| `62c9cf6` | Task 7 — Kontextmenü am Host |
-| `2d59a30` | Task 8 — Terminal-Kopfzeile mit Popover |
-| `df081be` | Task 9 — Rechtsklick im Terminal |
+| `a7cc2b4` / `a346516` | Task 3 — suggestion list, fix round (case-insensitive exclude/count unpinned) |
+| `942ce69` / `82876b3` | Task 4 — `SnippetMenuModel`, fix round (sort order unpinned) |
+| `18b0741` / `f63d124` | Task 5 — management sheet: checkbox out, tag field + filter, fix round (dead L10n key, highlight clamp unpinned) |
+| `f60ffc5` / `371c2bb` | Task 6 — menu bar onto the model, fix round (shortcut guard for Execute) |
+| `62c9cf6` | Task 7 — context menu on the host |
+| `2d59a30` | Task 8 — terminal header with popover |
+| `df081be` | Task 9 — right-click in the terminal |
 
-**Unversendet:** `git rev-list --count origin/develop..develop` → **47** vor
-diesem Bericht-Commit. **Release-Stau:**
+**Unpushed:** `git rev-list --count origin/develop..develop` → **47**
+before this report commit. **Release backlog:**
 `git rev-list --count origin/main..develop` → **457**.
 
-## 1. Gemessene Zahlen
+## 1. Measured numbers
 
-Nicht aus Plan oder Brief abgeschrieben. Die Vorher-Zahl wurde in dieser
-Sitzung in einem eigenen `git worktree` auf dem Plan-Basiscommit (`7247685`)
-neu gemessen und der Worktree danach entfernt; die Nachher-Zahl im
-Hauptbaum auf `df081be`.
+Not copied from the plan or the brief. The before number was re-measured
+in this session in a dedicated `git worktree` on the plan's base commit
+(`7247685`), and the worktree removed afterward; the after number in the
+main tree on `df081be`.
 
-| | vorher (`7247685`, isolierter Worktree) | nachher (`df081be`, dieser Baum) |
+| | before (`7247685`, isolated worktree) | after (`df081be`, this tree) |
 |---|---|---|
-| `swift test` | **1786 Tests / 150 Suiten, grün** | **1880 Tests / 159 Suiten, grün** |
+| `swift test` | **1786 tests / 150 suites, green** | **1880 tests / 159 suites, green** |
 
-Zuwachs: **+94 Tests, +9 Suiten**, verteilt über die neun Tasks (jeweils vor
-und nach ihrer eigenen Fixrunde aus den Task-Berichten nachvollziehbar):
-1786→1792 (T1, +6) →1795 (T2, +3) →1801 (T3, +6, neue Suite
-`SnippetTagSuggestionsTests`) →1803 (T3-Fix, +2) →1811 (T4, +8, neue Suite
-`SnippetMenuModelTests`) →1814 (T4-Fix, +3) →1837 (T5, +23, neue Suite
-`SnippetTagFieldTests`) →1843 (T5-Fix, +6) →1853 (T6, +10, neue Suite
-`SnippetMenuItemsTests`) →1859 (T6-Fix, +6, neue Suite
-`SnippetMenuItemsKeyboardShortcutGuardTests`) →1865 (T7, +6, neue Suite
-`SessionRowSnippetMenuPlanTests`) →1871 (T8, +6, neue Suite
-`TerminalSnippetSearchTests`) →1880 (T9, +9, neue Suite
-`TerminalContextMenuTests`). Kein bestehender Test hat in dieser Phase
-seinen Status geändert.
+Growth: **+94 tests, +9 suites**, spread across the nine tasks
+(traceable before and after each task's own fix round from the task
+reports): 1786→1792 (T1, +6) →1795 (T2, +3) →1801 (T3, +6, new suite
+`SnippetTagSuggestionsTests`) →1803 (T3 fix, +2) →1811 (T4, +8, new suite
+`SnippetMenuModelTests`) →1814 (T4 fix, +3) →1837 (T5, +23, new suite
+`SnippetTagFieldTests`) →1843 (T5 fix, +6) →1853 (T6, +10, new suite
+`SnippetMenuItemsTests`) →1859 (T6 fix, +6, new suite
+`SnippetMenuItemsKeyboardShortcutGuardTests`) →1865 (T7, +6, new suite
+`SessionRowSnippetMenuPlanTests`) →1871 (T8, +6, new suite
+`TerminalSnippetSearchTests`) →1880 (T9, +9, new suite
+`TerminalContextMenuTests`). No existing test changed status during this
+phase.
 
-**Katalog-Wächter, acht Kataloge.** Das Projekt hat keine `.xcstrings`-Dateien
-(`git ls-files '*.xcstrings'` → leer) — Lokalisierung läuft über klassische
-`Localizable.strings` je vier Sprachen (en/de/fr/pl) in zwei Ressourcen-
-Verzeichnissen (`Sources/MacSCPAppKit/Resources`,
-`Sources/macSCPCore/Resources`), macht acht Dateien. `plutil -lint` auf allen
-acht: **`OK`**, ausnahmslos. `LocalizableStringsTests` (der bestehende
-Wächter für Schlüsselmengen-Parität über die vier Sprachen je Layer) blieb
-bei jedem Task grün — kein L10n-Schlüssel wurde in einer Sprache vergessen.
+**Catalog guard, eight catalogs.** The project has no `.xcstrings` files
+(`git ls-files '*.xcstrings'` → empty) — localization runs through
+classic `Localizable.strings`, four languages each (en/de/fr/pl) in two
+resource directories (`Sources/MacSCPAppKit/Resources`,
+`Sources/macSCPCore/Resources`), making eight files. `plutil -lint` on
+all eight: **`OK`**, without exception. `LocalizableStringsTests` (the
+existing guard for key-set parity across the four languages per layer)
+stayed green on every task — no L10n key was forgotten in any language.
 
-## 2. Der Dev-Build
+## 2. The dev build
 
 ```
 MACSCP_VERSION="1.2.0-dev" MACSCP_BUILD="$(git rev-list --count HEAD)" ./scripts/package-app
 ```
 
-| Lauf | Ergebnis |
+| Run | Result |
 |---|---|
-| `swift build -c release --triple arm64-apple-macosx` + `--triple x86_64-apple-macosx` | `Build complete!` (zweimal, je Architektur) |
-| `lipo -archs` auf `dist/macSCP.app/Contents/MacOS/macSCP` | `x86_64 arm64` |
-| `lipo -archs` auf `dist/macSCP.app/Contents/MacOS/macscp-cli` | `x86_64 arm64` |
-| Resource-Bundles | `macSCP_MacSCPAppKit.bundle`, `macSCP_macSCPCore.bundle` — beide vorhanden |
-| `en/de/fr/pl.lproj`-Marker unter `Contents/Resources` | alle vier vorhanden |
+| `swift build -c release --triple arm64-apple-macosx` + `--triple x86_64-apple-macosx` | `Build complete!` (twice, once per architecture) |
+| `lipo -archs` on `dist/macSCP.app/Contents/MacOS/macSCP` | `x86_64 arm64` |
+| `lipo -archs` on `dist/macSCP.app/Contents/MacOS/macscp-cli` | `x86_64 arm64` |
+| Resource bundles | `macSCP_MacSCPAppKit.bundle`, `macSCP_macSCPCore.bundle` — both present |
+| `en/de/fr/pl.lproj` markers under `Contents/Resources` | all four present |
 | `plutil -lint dist/macSCP.app/Contents/Info.plist` | `OK` |
-| `CFBundleShortVersionString` / `CFBundleVersion` | `1.2.0-dev` / `925` — `925` deckt sich mit `git rev-list --count HEAD` auf `df081be` |
-| `scripts/release` | **nicht ausgeführt** (veröffentlicht) |
-| GUI | **nicht gestartet** |
+| `CFBundleShortVersionString` / `CFBundleVersion` | `1.2.0-dev` / `925` — `925` matches `git rev-list --count HEAD` on `df081be` |
+| `scripts/release` | **not run** (published) |
+| GUI | **not started** |
 
-Der Build lief einmal, im Hintergrund, während die Testmessungen liefen; kein
-Commit kam danach hinzu, der ihn veralten könnte.
+The build ran once, in the background, while the test measurements were
+running; no commit was added afterward that could make it stale.
 
-## 3. Die Erfolgskriterien der Spec, einzeln
+## 3. The spec's success criteria, one by one
 
-| # | Kriterium | Nachweis | Ergebnis |
+| # | Criterion | Evidence | Result |
 |---|---|---|---|
-| 1 | Eine `snippets.json` aus Runde 1 lädt; `runsImmediately` verschwindet, `tags` leer | **Test** | `aRoundOneStoreFileLoadsWithoutTags` (Task 1) |
-| 2 | Einfügen hängt nie ein Zeilenende an, Ausführen genau eines (`0x0D`) | **Test** | `insertingNeverAppendsATerminator`, `executingAppendsExactlyOneCarriageReturn`, `theTwoCallsDifferByTheTerminatorAlone` (Task 2) |
-| 3 | Tag getrimmt, leer abgelehnt, exakte Dubletten fallen weg, Groß/Klein bleibt | **Test** | `SnippetTests` (Task 1), inkl. dem Fall der von Hand bearbeiteten Datei |
-| 4 | Vorschlagsliste findet `Docker` bei Eingabe `doc` | **Test** | `aLowercasePrefixFindsADifferentlyCasedTag` (Task 3) |
-| 5 | `SnippetMenuModel` gruppiert nach Tags, Untagged zuletzt, liefert Deaktiviert-Grund | **Test** | `SnippetMenuModelTests`, 11 Tests nach Fixrunde (Task 4) |
-| 6 | Unlesbarer Store sieht nicht wie leerer aus | **Test** | `SnippetsLoad` unverändert, bestehender Test bleibt grün |
-| 7 | Alle vier Auslöseflächen zeigen dieselben Einträge | **Review — Nachweis im Code** | alle vier rendern `SnippetMenuItems` über dieselbe `SnippetMenuModel`; siehe Abschnitt 4 |
-| 8 | Ohne verbundene Sitzung bzw. ohne Shell sind Einträge deaktiviert | **Review** | App-seitige Verdrahtung (`!isActiveTabConnected \|\| !activeTabSupportsShell` bzw. `BackendDescriptor…supportsShell`), Drawing selbst ungeprüft |
-| 9 | P0 ändert kein Verhalten | **Test + Build je Schritt** | betrifft P0, nicht diese Phase — bereits im P0-Abschlussbericht behandelt |
-| 10 | Alle vier Kataloge tragen die neuen Schlüssel | **Test + `plutil -lint`** | `LocalizableStringsTests` grün, acht Kataloge `OK` (Abschnitt 1) |
-| 11 | Shortcuts-Katalog nennt die Kürzel korrekt | **Review** | `KeyboardShortcutsCatalog.swift`: Eintrag „Insert snippet 1–3" / `⌃⌘1–3`, kein Execute-Kürzel behauptet — siehe Abschnitt 4 |
-| 12 | PV endet mit lauffähigem Beispieltest oder belegtem Nein | **Test** | betrifft PV, nicht diese Phase — bereits im PV/P0-Abschlussbericht behandelt |
+| 1 | A `snippets.json` from round 1 loads; `runsImmediately` disappears, `tags` empty | **Test** | `aRoundOneStoreFileLoadsWithoutTags` (Task 1) |
+| 2 | Inserting never appends a line ending, executing exactly one (`0x0D`) | **Test** | `insertingNeverAppendsATerminator`, `executingAppendsExactlyOneCarriageReturn`, `theTwoCallsDifferByTheTerminatorAlone` (Task 2) |
+| 3 | Tag trimmed, empty rejected, exact duplicates dropped, case preserved | **Test** | `SnippetTests` (Task 1), including the case of a hand-edited file |
+| 4 | Suggestion list finds `Docker` on typing `doc` | **Test** | `aLowercasePrefixFindsADifferentlyCasedTag` (Task 3) |
+| 5 | `SnippetMenuModel` groups by tags, untagged last, provides a disabled reason | **Test** | `SnippetMenuModelTests`, 11 tests after the fix round (Task 4) |
+| 6 | An unreadable store does not look like an empty one | **Test** | `SnippetsLoad` unchanged, existing test stays green |
+| 7 | All four trigger surfaces show the same entries | **Review — evidence in code** | all four render `SnippetMenuItems` via the same `SnippetMenuModel`; see section 4 |
+| 8 | Without a connected session or without a shell, entries are disabled | **Review** | app-side wiring (`!isActiveTabConnected \|\| !activeTabSupportsShell` resp. `BackendDescriptor…supportsShell`), the drawing itself unchecked |
+| 9 | P0 changes no behavior | **Test + build per step** | concerns P0, not this phase — already covered in the P0 close-out report |
+| 10 | All four catalogs carry the new keys | **Test + `plutil -lint`** | `LocalizableStringsTests` green, eight catalogs `OK` (section 1) |
+| 11 | The shortcuts catalog names the shortcuts correctly | **Review** | `KeyboardShortcutsCatalog.swift`: entry "Insert snippet 1–3" / `⌃⌘1–3`, no Execute shortcut claimed — see section 4 |
+| 12 | PV ends with a runnable example test or a proven no | **Test** | concerns PV, not this phase — already covered in the PV/P0 close-out report |
 
-Kriterien 7, 8 und 11 sind **Review-Punkte, keine Tests** — wie die Spec es
-selbst vorschreibt. Die Unterscheidung wird hier nicht verwischt: „im Code
-nachweisbar" (7) heißt, dass alle vier Flächen denselben Typ instanziieren,
-nicht dass ein Test das Rendering prüft; „Review" (8, 11) heißt gelesen, nicht
-ausgeführt.
+Criteria 7, 8 and 11 are **review points, not tests** — as the spec
+itself prescribes. The distinction is not blurred here: "provable in
+code" (7) means all four surfaces instantiate the same type, not that a
+test checks the rendering; "review" (8, 11) means read, not run.
 
-## 4. Der Nachweis für Kriterium 7 — ein Modell, vier Flächen
+## 4. The evidence for criterion 7 — one model, four surfaces
 
-`SnippetMenuModel.build(snippets:isConnected:supportsShell:)` (Core) ist die
-einzige Stelle, die entscheidet: Gruppierung nach Tag, Untagged zuletzt,
-Deaktiviert-Grund. Die Präzedenz bei gleichzeitigem `!isConnected` und
-`!supportsShell`: `backendHasNoShell` gewinnt, dokumentiert und gepinnt in
-`SnippetMenuModel.swift` — Shell-Losigkeit ist eine dauerhafte
-Backend-Eigenschaft, „nicht verbunden" verspräche fälschlich, dass Verbinden
-das Problem behebt.
+`SnippetMenuModel.build(snippets:isConnected:supportsShell:)` (Core) is
+the single place that decides: grouping by tag, untagged last, the
+disabled reason. Precedence when both `!isConnected` and
+`!supportsShell` hold: `backendHasNoShell` wins, documented and pinned in
+`SnippetMenuModel.swift` — being shell-less is a permanent backend
+property, "not connected" would falsely promise that connecting fixes
+the problem.
 
-Alle vier Flächen instanziieren `SnippetMenuItems` (App, `SnippetMenuItems.swift`)
-über diese eine `SnippetMenuModel` — keine hat ihre eigene Kopie der
-Menülogik:
+All four surfaces instantiate `SnippetMenuItems` (App, `SnippetMenuItems.swift`)
+via this one `SnippetMenuModel` — none has its own copy of the menu
+logic:
 
-| Fläche | Datei | Ruft |
+| Surface | File | Calls |
 |---|---|---|
-| Menüleiste „Terminal" | `MacSCPApp.swift` | `SnippetMenuItems` direkt |
-| Kontextmenü am Host | `SessionSidebar.swift` | `SnippetMenuItems` über `SessionRowSnippetMenuPlan` |
-| Terminal-Kopfzeile/Popover | `ContentView+Detail.swift` | `SnippetMenuItems` mit `TerminalSnippetSearch`-gefilterter Liste |
-| Rechtsklick im Terminal | `SSHTerminalView.swift` | `SnippetMenuItems` über `NSHostingMenu` |
+| "Terminal" menu bar | `MacSCPApp.swift` | `SnippetMenuItems` directly |
+| Context menu on the host | `SessionSidebar.swift` | `SnippetMenuItems` via `SessionRowSnippetMenuPlan` |
+| Terminal header/popover | `ContentView+Detail.swift` | `SnippetMenuItems` with a `TerminalSnippetSearch`-filtered list |
+| Right-click in the terminal | `SSHTerminalView.swift` | `SnippetMenuItems` via `NSHostingMenu` |
 
-Das ist der Nachweis im Code, keine Laufzeitmessung: eine Änderung an
-`SnippetMenuItems` wirkt zwangsläufig auf alle vier Flächen gleichzeitig, weil
-keine Fläche ihre Einträge selbst baut.
+That is the evidence in code, not a runtime measurement: a change to
+`SnippetMenuItems` necessarily affects all four surfaces at once, because
+no surface builds its own entries.
 
-**Shortcuts-Katalog (Kriterium 11), Review.**
-`KeyboardShortcutsCatalog.swift` führt die Gruppe „Snippets" mit einer Zeile:
-Titel „Insert snippet 1–3", Kürzel `⌃⌘1–3`. Der Datei-Kopfkommentar nennt sich
-selbst einen von Hand gepflegten Spiegel ohne zentrales Register und verlangt
-ausdrücklich, ihn bei jeder Kürzeländerung mitzuführen. Kein Eintrag behauptet
-ein Execute-Kürzel — im Gegenteil, der Kommentar in `MacSCPApp.swift`
-begründet ausdrücklich, warum Execute nie eines bekommt: ein Tastendruck, der
-sofort auf einem entfernten Host läuft, hat keinen guten Fehlerfall. Der
-tatsächliche Katalogeintrag stimmt mit dem echten Verhalten überein — geprüft
-durch Lesen, nicht durch einen Test (dafür gibt es einen anderen, engeren
-Test: siehe Abschnitt 6, `SnippetMenuItemsKeyboardShortcutGuardTests` schützt
-nur, dass Execute *im Code* kein `.keyboardShortcut` bekommt, nicht dass der
-Katalogtext dazu stimmt).
+**Shortcuts catalog (criterion 11), review.**
+`KeyboardShortcutsCatalog.swift` carries the "Snippets" group with one
+line: title "Insert snippet 1–3", shortcut `⌃⌘1–3`. The file's header
+comment names itself a hand-maintained mirror with no central registry
+and explicitly requires that it be kept in step with every shortcut
+change. No entry claims an Execute shortcut — on the contrary, the
+comment in `MacSCPApp.swift` explicitly explains why Execute never gets
+one: a keystroke that runs immediately on a remote host has no good
+error case. The actual catalog entry matches the real behavior — checked
+by reading, not by a test (there is a different, narrower test for that:
+see section 6, `SnippetMenuItemsKeyboardShortcutGuardTests` only protects
+that Execute gets no `.keyboardShortcut` *in code*, not that the catalog
+text matches it).
 
-## 5. Die zwei „zu messen statt anzunehmen"-Punkte der Spec
+## 5. The spec's two "measure, don't assume" points
 
-**Rechtsklick im Terminal (Task 9).** Die Spec verlangte, festzustellen, ob
-SwiftTerms `TerminalView` den Rechtsklick bereits belegt, statt es aus dem
-Fehlen von `rightMouseDown`-Overrides zu folgern. Gemessen, nicht gefolgert,
-mit zwei unabhängigen, dauerhaft im Baum verbliebenen Tests
-(`TerminalContextMenuTests.swift`):
+**Right-click in the terminal (Task 9).** The spec required establishing
+whether SwiftTerm's `TerminalView` already claims the right-click, rather
+than inferring it from the absence of `rightMouseDown` overrides.
+Measured, not inferred, with two independent tests that stayed in the
+tree permanently (`TerminalContextMenuTests.swift`):
 
-- **Objective-C-Laufzeit, ohne Instanz:** `class_getMethodImplementation` für
-  `rightMouseDown(with:)`, `menu(for:)` und den `menu`-Getter zeigt: die IMP,
-  die `TerminalView` erbt, ist die von `NSView`, nicht überschrieben, und
-  `NSView`s IMP unterscheidet sich wiederum echt von `NSResponder`s Default.
-- **Echte Instanz:** ein frisches `TerminalView` hat `menu == nil`; nach
-  `terminal.menu = someMenu` liefert `terminal.menu(for: event)` exakt dieses
-  Objekt (Identität); keine der drei Subviews (`NSScroller`,
-  `TerminalProgressBarView`, `CaretView`) fängt den Klick ab.
+- **Objective-C runtime, without an instance:** `class_getMethodImplementation`
+  for `rightMouseDown(with:)`, `menu(for:)` and the `menu` getter shows:
+  the IMP `TerminalView` inherits is `NSView`'s, not overridden, and
+  `NSView`'s IMP is in turn genuinely different from `NSResponder`'s
+  default.
+- **Real instance:** a fresh `TerminalView` has `menu == nil`; after
+  `terminal.menu = someMenu`, `terminal.menu(for: event)` returns exactly
+  that object (identity); none of the three subviews (`NSScroller`,
+  `TerminalProgressBarView`, `CaretView`) intercepts the click.
 
-**Ergebnis: der Rechtsklick trägt.** Er verdrängt nichts — SwiftTerm sieht die
-rechte Maustaste heute gar nicht (nur `mouseDown`/`mouseUp`/`mouseDragged`
-sind überschrieben), Selektion ist linksklick-only, kein eingebautes Menü
-existiert, kein Vorfahre trägt einen `.contextMenu`. Verdrahtet über
-`NSHostingMenu` auf `SnippetMenuItems` — nicht neu gebaut. **Offen bleibt eine
-Sichtprüfung:** dass AppKit das aufgebaute `NSMenu` tatsächlich auf dem
-Bildschirm zeigt, wenn der Nutzer rechtsklickt, braucht ein echtes Fenster
-und eine laufende Modal-Tracking-Loop — nicht im Prozess ohne Hänger-Risiko
-zu prüfen, und die GUI wurde nicht gestartet.
+**Result: the right-click holds.** It displaces nothing — SwiftTerm does
+not see the right mouse button at all today (only `mouseDown`/`mouseUp`/
+`mouseDragged` are overridden), selection is left-click-only, no built-in
+menu exists, no ancestor carries a `.contextMenu`. Wired via
+`NSHostingMenu` onto `SnippetMenuItems` — not rebuilt. **What remains
+open is a visual check:** that AppKit actually shows the built `NSMenu`
+on screen when the user right-clicks needs a real window and a running
+modal tracking loop — not checkable in-process without risk of hanging,
+and the GUI was not started.
 
-**Terminal-Panel-Rand (Task 8).** In `ContentView+Detail.swift`, aktueller
-Stand, gegengemessen für diesen Bericht:
+**Terminal panel edge (Task 8).** In `ContentView+Detail.swift`, current
+state, re-measured for this report:
 
-- Höhe des Terminalstreifens: `.frame(minHeight: 120, idealHeight: 220)` am
-  `terminalPanel(session)`-Aufruf in `detail`.
-- Der einzige Innenabstand innerhalb von `terminalPanel` selbst:
-  `.padding(.vertical, 8).padding(.horizontal, 14)` am Textblock des
-  `.ended`-Zustands.
+- Height of the terminal strip: `.frame(minHeight: 120, idealHeight: 220)`
+  at the `terminalPanel(session)` call in `detail`.
+- The only inner padding inside `terminalPanel` itself:
+  `.padding(.vertical, 8).padding(.horizontal, 14)` on the text block of
+  the `.ended` state.
 
-Beide Werte sind **bewusst unverändert** — der Rand ist P2, nicht P1. Die
-neue Kopfzeile trägt eigenen, neuen Innenabstand
-(`.padding(.horizontal, 12).padding(.vertical, 6)`), der nichts an der
-bestehenden Fläche ändert, sondern hinzukommt.
+Both values are **deliberately unchanged** — the edge is P2, not P1. The
+new header carries its own, new inner padding
+(`.padding(.horizontal, 12).padding(.vertical, 6)`), which changes
+nothing on the existing area, only adds to it.
 
-## 6. Eine echte Verschiebung dessen, was prüfbar ist
+## 6. A real shift in what is checkable
 
-Bis Task 9 war die ehrliche Position dieses Projekts: Views in
-`MacSCPAppKit` sind ungetestet, `SnippetMenuItems`s Rumpf eingeschlossen —
-Task 6 und 7 mussten das in ihren eigenen Berichten so festhalten
-(„no view-testing tool in this project sees AppKit-backed menu content").
+Up to Task 9, the honest position of this project was: views in
+`MacSCPAppKit` are untested, `SnippetMenuItems`'s body included — Task 6
+and 7 had to record that in their own reports ("no view-testing tool in
+this project sees AppKit-backed menu content").
 
-`NSHostingMenu` ändert das für **diesen einen Fall**. Ein `NSHostingMenu`
-über `SnippetMenuItems` erzeugt ein echtes `NSMenu` im Testprozess, ohne
-Fenster, ohne laufende `NSApplication` — und dieses `NSMenu` lässt sich
-abfragen: `TerminalContextMenuTests` feuert die entstandenen `NSMenuItem`s
-und prüft dabei die gerenderte Struktur der geteilten Komponente selbst, zum
-ersten Mal in diesem Projekt — Untermenü je Tag, Insert-/Execute-Titel pro
-Snippet mit den lokalisierten Texten, und das `execute`-Flag jedes Eintrags,
-verifiziert dadurch, dass beide Aktionen tatsächlich gefeuert und die
-übergebenen Werte (`false`/`true`) geprüft wurden. Die Mutationsprobe aus
-Task 9 bestätigt, dass die Suite tatsächlich reagiert: mit entfernter
-Divider-Logik und Leer-Guard gingen 6 von 9 Tests in 5 Fällen rot.
+`NSHostingMenu` changes that for **this one case**. An `NSHostingMenu`
+over `SnippetMenuItems` produces a real `NSMenu` in the test process,
+without a window, without a running `NSApplication` — and this `NSMenu`
+can be queried: `TerminalContextMenuTests` fires the resulting
+`NSMenuItem`s and, in doing so, checks the rendered structure of the
+shared component itself, for the first time in this project — submenu
+per tag, insert/execute titles per snippet with the localized texts, and
+the `execute` flag of every entry, verified by actually firing both
+actions and checking the passed-in values (`false`/`true`). The mutation
+probe from Task 9 confirms that the suite actually reacts: with the
+divider logic and the empty guard removed, 6 of 9 tests went red across
+5 cases.
 
-**Was das nicht ändert:** `NSHostingMenu` trägt nur, weil ein Menü letztlich
-eine flache Liste von `NSMenuItem`s ist, die AppKit selbst aus der
-SwiftUI-Beschreibung baut — die Technik überträgt sich nicht auf beliebiges
-SwiftUI. Layoutfragen, `TextField`/`Toggle`/Tabellen-Inhalte, Popover-
-Positionierung, tatsächliches Zeichnen: nichts davon wird durch diesen Fund
-prüfbar. Der letzte Schritt bleibt ungeprüft, wie in Abschnitt 5 genannt:
-dass AppKit das Menü wirklich auf den Bildschirm bringt, wenn die rechte
-Maustaste tatsächlich gedrückt wird, ist eine Frage der Modal-Tracking-Loop,
-nicht der Menüstruktur — dafür bräuchte es ein laufendes Fenster.
+**What this does not change:** `NSHostingMenu` holds only because a menu
+is ultimately a flat list of `NSMenuItem`s that AppKit itself builds from
+the SwiftUI description — the technique does not carry over to arbitrary
+SwiftUI. Layout questions, `TextField`/`Toggle`/table content, popover
+positioning, actual drawing: none of that becomes checkable through this
+finding. The last step remains unchecked, as named in section 5: that
+AppKit truly brings the menu onto the screen when the right mouse button
+is actually pressed is a question of the modal tracking loop, not of the
+menu structure — that would need a running window.
 
-## 7. Die GUI wurde nicht gestartet
+## 7. The GUI was not started
 
-Ausdrücklich: kein `open`, kein Aufruf, der ein Fenster zeigt, in dieser
-gesamten Phase. Alles, was oben steht, stützt sich auf `swift test`,
-`swift build`, den Dev-Build und Quelltext-Lesen. Folgende Stellen sind reine
-Sichtprüfungen, die beim Maintainer liegen:
+Explicitly: no `open`, no call that shows a window, in this entire phase.
+Everything above rests on `swift test`, `swift build`, the dev build, and
+reading source. The following spots are pure visual checks, which sit
+with the maintainer:
 
-1. **Das Tag-Token-Feld** (`SnippetTagField.swift`) — Chips mit
-   Entfernen-Knopf, die Vorschlagsliste beim Tippen mit dem „*x* als neuen
-   Tag anlegen"-Eintrag zuletzt, Return/Komma/Backspace-Verhalten, der
-   Zeilenumbruch der Chips (`TagFlowLayout`).
-2. **Die Filterzeile** im Verwaltungs-Sheet — „Alle", je ein Chip pro Tag mit
-   Anzahl, „ohne Tag", einwertige Auswahl.
-3. **Die Terminal-Kopfzeile und ihr Popover** — Host links, Snippet-Knopf
-   rechts, das Popover mit Suchfeld und Gruppen, ob es sich optisch von der
-   neuen Kopfzeile absetzt.
-4. **Das Kontextmenü am Host** — das Untermenü „Snippet" in der Sidebar, der
-   sichtbare Grund „Nur für den aktiven Tab verfügbar", wenn die Zeile nicht
-   der aktive Tab ist.
-5. **Der Rechtsklick im Terminal, der eine Ebene tiefer als alles andere
-   liegt:** dass AppKit das aufgebaute `NSMenu` tatsächlich auf dem
-   Bildschirm zeigt. Alles bis zu diesem Punkt ist gemessen (Abschnitt 5);
-   dieser eine Schritt ist der einzige, der ein laufendes Fenster mit
-   Modal-Tracking braucht und den niemand ohne GUI-Start feststellen konnte.
+1. **The tag token field** (`SnippetTagField.swift`) — chips with a
+   remove button, the suggestion list while typing with the "create *x*
+   as a new tag" entry last, Return/comma/backspace behavior, the
+   chip wrapping (`TagFlowLayout`).
+2. **The filter row** in the management sheet — "All", one chip per tag
+   with count, "no tag", single-value selection.
+3. **The terminal header and its popover** — host on the left, snippet
+   button on the right, the popover with search field and groups,
+   whether it stands out visually from the new header.
+4. **The context menu on the host** — the "Snippet" submenu in the
+   sidebar, the visible reason "Only available for the active tab" when
+   the row is not the active tab.
+5. **The right-click in the terminal, which sits one level below
+   everything else:** that AppKit actually shows the built `NSMenu` on
+   screen. Everything up to this point is measured (section 5); this one
+   step is the only one that needs a running window with modal tracking,
+   and nobody could establish it without starting the GUI.
 
-## 8. Was aus dem Ledger vorgetragen wird — offene Minderbefunde
+## 8. What is carried forward from the ledger — open minor findings
 
-Fünf Einträge, keiner in dieser Phase behoben, weil jeder außerhalb des
-jeweiligen Task-Umfangs lag:
+Five entries, none fixed in this phase because each fell outside the
+scope of its respective task:
 
-1. **Der Orphan-Key-Wächter aus Task 5 sieht nur literale Schlüssel in
-   `Sources/MacSCPAppKit`.** Variable-Schlüssel-Aufrufstellen
-   (`ConnectionFormView`, `SchemaFormView`, ~13 weitere Stellen) und Core’s
-   eigener Katalog liegen außerhalb seines Blicks. Nützlich, aber nicht
-   erschöpfend — diese Einschränkung darf nicht als Vollständigkeitsbeweis
-   verkauft werden.
-2. **`TagFlowLayout`s Zeilenumbruch-Platzierung ist ungetestet.** Reines
-   SwiftUI, laut PV-Ergebnis grundsätzlich mit dem Pixel-Harness
-   (`ViewTestabilitySpike`) pinnbar — kein Test wurde ergänzt. Eine echte
-   Lücke, keine behauptete Unmöglichkeit.
-3. **Der Shortcut-Wächter aus Task 6 hat zwei offengelegte blinde Flecken.**
-   `SnippetMenuItemsKeyboardShortcutGuardTests` ist ein Quelltext-Scan von
-   `SnippetMenuItems.swift`: eine Umbenennung von `insertButton`, die den
-   Execute-Button einschließt, würde still bestehen bleiben, ebenso ein
-   Modifikator, der aus einer anderen Datei injiziert würde. Bedrohungsmodell
-   ist ein lokaler Hand-Edit an genau dieser Datei — dokumentiert in seinem
-   eigenen Doc-Kommentar.
-4. **`SnippetMenuItems` rendert einen führenden `Divider()` per Default,
-   sobald es Gruppen hat.** In der Menüleiste sinnvoll (trennt von den
-   bestehenden Terminal-Einträgen darüber). Betroffen sind aber ZWEI Flächen,
-   nicht nur eine: im Host-Kontextmenü-Untermenü (Task 7) ist er die erste
-   Zeile des Untermenüs, und in der Terminal-Kopfzeilen-Popover
-   (`TerminalPanelHeader.snippetPopover`, Task 8) zieht `SnippetMenuItems`
-   dort ebenfalls den Default `leadingDivider: true`, sodass die Zeile direkt
-   unter dem Suchfeld eine Trennlinie zieht — seit Task 9 über den
-   `leadingDivider`-Parameter grundsätzlich abschaltbar (genutzt vom
-   Rechtsklick), in Task 7 UND Task 8 aber ursprünglich nicht abgeschaltet.
-   **Nachtrag (Review-Fixrunde, siehe `final-fix-report.md`):** in Task 7s
-   Sidebar-Untermenü behoben (`leadingDivider: false`) — dort ist die
-   Trennlinie reiner Kopf-Artefakt, nichts steht in diesem Untermenü darüber.
-   In Task 8s Popover bewusst NICHT angetastet: dort trennt die Linie
-   tatsächlich das Suchfeld von der Ergebnisliste, ist also kein Artefakt
-   ohne Bezugspunkt, sondern eine plausible visuelle Trennung — eine
-   Geschmacksfrage, keine der drei feststehenden Musterantworten dieser
-   Phase, deshalb unverändert gelassen statt geraten.
-5. **Die offene Sichtprüfung aus Task 9** (Abschnitt 5/7): dass AppKit das
-   Rechtsklick-Menü wirklich zeigt.
+1. **Task 5's orphan-key guard only sees literal keys in
+   `Sources/MacSCPAppKit`.** Variable-key call sites
+   (`ConnectionFormView`, `SchemaFormView`, ~13 more spots) and Core's
+   own catalog sit outside its view. Useful, but not exhaustive — this
+   limitation must not be sold as proof of completeness.
+2. **`TagFlowLayout`'s line-wrap placement is untested.** Pure SwiftUI,
+   pinnable in principle with the pixel harness (`ViewTestabilitySpike`)
+   per the PV result — no test was added. A real gap, not a claimed
+   impossibility.
+3. **Task 6's shortcut guard has two disclosed blind spots.**
+   `SnippetMenuItemsKeyboardShortcutGuardTests` is a source-text scan of
+   `SnippetMenuItems.swift`: a rename of `insertButton` that includes the
+   Execute button would silently keep passing, likewise a modifier
+   injected from a different file. The threat model is a local hand-edit
+   to exactly this file — documented in its own doc comment.
+4. **`SnippetMenuItems` renders a leading `Divider()` by default as soon
+   as it has groups.** Sensible in the menu bar (separates it from the
+   existing terminal entries above). But TWO surfaces are affected, not
+   just one: in the host context-menu submenu (Task 7) it is the first
+   line of the submenu, and in the terminal-header popover
+   (`TerminalPanelHeader.snippetPopover`, Task 8) `SnippetMenuItems`
+   likewise pulls the default `leadingDivider: true` there, so the row
+   directly under the search field draws a separator — switchable off in
+   principle since Task 9 via the `leadingDivider` parameter (used by
+   the right-click), but originally not switched off in EITHER Task 7 OR
+   Task 8.
+   **Addendum (review fix round, see `final-fix-report.md`):** fixed in
+   Task 7's sidebar submenu (`leadingDivider: false`) — there, the
+   separator is a pure head artifact, nothing sits above it in this
+   submenu. Deliberately NOT touched in Task 8's popover: there, the
+   line genuinely separates the search field from the results list, so
+   it is not an artifact without a reference point but a plausible
+   visual separation — a matter of taste, not one of this phase's three
+   established sample answers, therefore left unchanged rather than
+   guessed at.
+5. **The open visual check from Task 9** (sections 5/7): that AppKit
+   really shows the right-click menu.
 
-## 9. Was offen bleibt
+## 9. What remains open
 
-- Die fünf Minderbefunde aus Abschnitt 8.
-- **Die Sichtprüfungen durch den Maintainer** (Abschnitt 7) — noch nicht
-  erfolgt, GUI in dieser Phase nicht gestartet.
-- **Der Release-Stau:** 47 Commits vor `origin/develop`, 457 vor
-  `origin/main` (Abschnitt „Commits") — weiter gewachsen.
-- **P2 aus der Spec** — Terminal-Fassung: der jetzt gemessene Rand
-  (Abschnitt 5) wird erst hier geändert, dazu ein eigener
-  Terminal-Tab-Typ ohne SFTP-Panes und ein Umschalter, der die Dateipanes
-  im normalen Tab ausblendet. Nicht Teil dieser Phase.
-- **P3 aus der Spec** — Host-Tags am `StoredSession` mit Sidebar-Filter,
-  Import/Export der Snippets über die Envelope-Maschinerie aus M19. Nicht
-  Teil dieser Phase; P1 wurde bewusst zuerst gebaut, damit sich zeigt, wie
-  Tags sich anfühlen, bevor sie ein zweites Mal an ein anderes Modell
-  wandern.
-- **Ausdrücklich nicht Teil des ursprünglichen Maintainer-Feedbacks, das
-  diese Phase abdeckt:**
-  - der **Massen-Runner** über gefilterte Hosts samt Ausgabe-Ansicht —
-    eigenes Brainstorming, eigener Meilenstein, braucht eine eigene
-    Auswahlmechanik (die P3s Host-Filter erst liefert).
-  - **mehrzeilige Kommandos und Syntax-Hervorhebung** — ergeben laut Spec
-    erst mit dem Massen-Runner einen ehrlichen Ort, solange „einfügen" der
-    Normalfall bleibt.
-  - **Host-Tags und Import/Export der Snippets** — P3, siehe oben.
-  - **der Terminal-Rand und ein reines Terminal-Fenster** — P2, siehe oben.
-- **Platzhalter** (`{{pfad}}`, aktuelles Verzeichnis), **Bindung von
-  Snippets an Hosts/Gruppen/Protokolle**, **Agent-Forwarding**,
-  **Mehrfenster** — von der Spec ausdrücklich ausgeschlossen, unverändert.
+- The five minor findings from section 8.
+- **The maintainer's visual checks** (section 7) — not yet done, GUI not
+  started in this phase.
+- **The release backlog:** 47 commits ahead of `origin/develop`, 457
+  ahead of `origin/main` (section "Commits") — kept growing.
+- **P2 from the spec** — terminal version: the now-measured edge
+  (section 5) only changes here, plus its own terminal-tab type without
+  SFTP panes and a switcher that hides the file panes in the normal tab.
+  Not part of this phase.
+- **P3 from the spec** — host tags on `StoredSession` with sidebar
+  filter, import/export of snippets via the envelope machinery from M19.
+  Not part of this phase; P1 was deliberately built first, so it becomes
+  clear how tags feel before they migrate a second time to a different
+  model.
+- **Explicitly not part of the original maintainer feedback that this
+  phase covers:**
+  - the **bulk runner** across filtered hosts with an output view — its
+    own brainstorming, its own milestone, needs its own selection
+    mechanism (which only P3's host filter delivers).
+  - **multi-line commands and syntax highlighting** — per the spec these
+    only get an honest place once the bulk runner exists, as long as
+    "insert" stays the normal case.
+  - **host tags and snippet import/export** — P3, see above.
+  - **the terminal edge and a pure terminal window** — P2, see above.
+- **Placeholders** (`{{path}}`, current directory), **binding snippets to
+  hosts/groups/protocols**, **agent forwarding**, **multiple windows** —
+  explicitly excluded by the spec, unchanged.
 
-## Für die Release-Notes
+## For the release notes
 
-**Ein Satz**, wie von der Spec vorgesehen: Snippets lassen sich mit Tags
-ordnen und direkt am Host oder im Terminal einfügen oder ausführen.
+**One sentence**, as the spec intends: snippets can be organized with
+tags and inserted or executed directly at the host or in the terminal.
 
-## Nachtrag: ein geparkter Befund aus der Fix-Wellen-Re-Review
+## Addendum: a parked finding from the fix-wave re-review
 
-Die abschließende Re-Review fand einen Punkt, der **nicht** aus dieser Phase
-stammt, aber hier festgehalten gehört, damit er nicht mit dem
-Arbeitsverzeichnis verschwindet:
+The final re-review found a point that does **not** originate from this
+phase but belongs recorded here, so it does not disappear along with the
+working directory:
 
-**Das Kontextmenü am Host kann „keine Snippets" nicht von „Store unlesbar"
-unterscheiden.** Die Sidebar bekommt `snippetsLoad.snippets`, also die
-bereits flachgeklopfte Liste, und nie `SnippetsLoad` selbst — ihr fehlt das
-`isUnreadable`-Signal. Sie zeigt deshalb in beiden Fällen „Noch keine
-Snippets". Die Menüleiste unterscheidet korrekt und zeigt einen eigenen
-Hinweis, das Terminal-Popover ebenso.
+**The context menu on the host cannot distinguish "no snippets" from
+"store unreadable".** The sidebar receives `snippetsLoad.snippets`, i.e.
+the already-flattened list, and never `SnippetsLoad` itself — it lacks
+the `isUnreadable` signal. It therefore shows "No snippets yet" in both
+cases. The menu bar distinguishes correctly and shows its own notice, as
+does the terminal popover.
 
-**Einordnung:** derselbe Fehlerklasse wie der Whole-Branch-Befund aus Runde 1
-— ein unlesbarer Store darf nie wie ein leerer aussehen. Hier trifft er
-**eine von vier Flächen**, und die Ursache ist die Parameterform, die älter
-ist als diese Phase. **Geparkt, nicht behoben:** die Behebung ändert eine
-Schnittstelle, auf der drei weitere Aufrufer sitzen, und gehört damit in
-einen eigenen Task mit eigenen Tests — nicht in eine Fix-Welle nach dem
-Ship-Verdikt.
+**Classification:** the same bug class as the whole-branch finding from
+round 1 — an unreadable store must never look like an empty one. Here it
+hits **one of four surfaces**, and the cause is the parameter shape,
+which predates this phase. **Parked, not fixed:** fixing it changes an
+interface that three other callers sit on, and therefore belongs in its
+own task with its own tests — not in a fix wave after the ship verdict.

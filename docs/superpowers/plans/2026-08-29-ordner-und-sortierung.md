@@ -1,47 +1,47 @@
-# Verschachtelte Ordner und freie Sortierung — Umsetzungsplan
+# Nested folders and free sorting — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ordner lassen sich ineinander legen und alles lässt sich frei
-sortieren — ohne dass ein Rückschritt auf eine ältere Fassung mehr verliert
-als die Ordnung selbst.
+**Goal:** Folders can be nested inside one another and everything can be
+freely sorted — without a rollback to an older version losing more than the
+ordering itself.
 
-**Grundlage:** `docs/superpowers/specs/2026-08-29-ordner-und-sortierung-design.md`
+**Foundation:** `docs/superpowers/specs/2026-08-29-ordner-und-sortierung-design.md`
 
-**Architektur:** Die Regeln sind reine Werte in `macSCPCore` — Baumaufbau,
-Zyklenprüfung, Ordnungsberechnung, Reparatur beschädigter Einfuhr. Der Store
-schreibt, die Seitenleiste zeigt. **Keine Ansicht rechnet eine Position aus.**
+**Architecture:** The rules are pure values in `macSCPCore` — tree
+construction, cycle checking, ordering computation, repair of a damaged
+import. The store writes, the sidebar displays. **No view computes a
+position.**
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **nur Englisch**.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- **Migrationen additiv, nie zerstörend.** Neue Felder sind optional; eine
-  Datei ohne sie bleibt lesbar und verliert nichts.
-- **Kein neuer Dateiname**, keine zweite Datei, kein Versionsschlüssel.
-  `sessions-v2.json` bleibt.
-- **Keine Änderung an `SessionListViewModel.save`** und seinem Upsert über
-  den Namen.
-- **Kein Löschen von Sitzungen.** Auflösen hebt hoch, es entfernt nie.
-- **Kein Test erreicht echten Keychain, Sitzungs-Store oder Konfiguration.**
-  Jeder Store zeigt auf ein temporäres Verzeichnis — `SessionListViewModel
-  .init` hat seit `ab97f2a` keine Vorgabewerte mehr, das ist Absicht.
-- **Nutzer-sichtbare Texte gehen durch alle vier Kataloge** (`en`, `de`,
-  `fr`, `pl` unter `Sources/MacSCPAppKit/Resources/<locale>.lproj/
-  Localizable.strings`), erreicht über `L10n.string(_:_:)` / `L10n.text(_:_:)`.
-  **Kein String Catalog, kein `String(localized:)`, kein `Bundle.module`** —
-  das steht so in `CLAUDE.md`, aber ältere Kontextabzüge behaupten das
-  Gegenteil. Das Deutsche **duzt**; `GermanAddressFormTests` erzwingt es.
-- **Keine Zeilennummern, keine Ortsangaben in Kommentaren.** Jede Zahl und
-  jede Aufzählung wird in dem Durchgang gezählt, der sie schreibt.
-- Alle sechs Targets stehen auf `.swiftLanguageMode(.v6)`; **CI wird rot,
-  sobald die Zahl eindeutiger Warnorte über 1 liegt.**
-- Ein Scratch-Pfad je Agent, nach Gebrauch gelöscht.
-- Die App wird nicht gestartet, nichts gepusht.
+- Code, comments, identifiers, test names, commit messages: **English only**.
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- **Migrations additive, never destructive.** New fields are optional; a
+  file without them stays readable and loses nothing.
+- **No new filename**, no second file, no version key.
+  `sessions-v2.json` stays.
+- **No change to `SessionListViewModel.save`** and its upsert by name.
+- **No deleting of sessions.** Dissolving lifts up, it never removes.
+- **No test reaches the real keychain, session store, or configuration.**
+  Every store points at a temporary directory — `SessionListViewModel
+  .init` has had no default values since `ab97f2a`, and that is intentional.
+- **User-visible text goes through all four catalogs** (`en`, `de`,
+  `fr`, `pl` under `Sources/MacSCPAppKit/Resources/<locale>.lproj/
+  Localizable.strings`), reached through `L10n.string(_:_:)` / `L10n.text(_:_:)`.
+  **No String Catalog, no `String(localized:)`, no `Bundle.module`** —
+  that is what `CLAUDE.md` says, but older context extracts claim the
+  opposite. The German **uses du**; `GermanAddressFormTests` enforces it.
+- **No line numbers, no location references in comments.** Every number and
+  every enumeration is counted in the pass that writes it.
+- All six targets are on `.swiftLanguageMode(.v6)`; **CI turns red as soon
+  as the number of distinct warning sites exceeds 1.**
+- One scratch path per agent, deleted after use.
+- The app is not launched, nothing is pushed.
 
 ---
 
-### Task 1: Die Felder und der Baum
+### Task 1: The fields and the tree
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/StoredGroup.swift`,
@@ -51,15 +51,15 @@ schreibt, die Seitenleiste zeigt. **Keine Ansicht rechnet eine Position aus.**
 
 **Interfaces:**
 - Produces: `StoredGroup.parentID: UUID?`, `StoredGroup.position: Int`,
-  `StoredSession.position: Int`, und den Namensraum `GroupTree` mit
-  `wouldCycle(moving:under:in:)`, `repaired(_:)` und `children(of:in:)`.
-  Tasks 2, 3 und 4 rufen daraus.
+  `StoredSession.position: Int`, and the namespace `GroupTree` with
+  `wouldCycle(moving:under:in:)`, `repaired(_:)` and `children(of:in:)`.
+  Tasks 2, 3 and 4 call into it.
 
-**Der gemessene Ist-Zustand:** `StoredGroup` trägt `id` und `name`,
-`StoredSession` unter anderem `groupID: UUID?`. Beide sind `Codable`,
+**The measured status quo:** `StoredGroup` carries `id` and `name`,
+`StoredSession` among other things `groupID: UUID?`. Both are `Codable`,
 `Equatable`, `Sendable`.
 
-- [ ] **Step 1: Den Test zuerst schreiben.**
+- [ ] **Step 1: Write the test first.**
 
 ```swift
 import Foundation
@@ -135,144 +135,138 @@ struct GroupTreeTests {
 }
 ```
 
-- [ ] **Step 2: Rot laufen lassen.**
+- [ ] **Step 2: Run it red.**
 
 Run: `swift test --filter GroupTree`
-Erwartet: FAIL — `StoredGroup` hat keinen solchen Initialisierer, `GroupTree`
-gibt es nicht.
+Expected: FAIL — `StoredGroup` has no such initializer, `GroupTree`
+does not exist.
 
-- [ ] **Step 3: Die Felder ergänzen.** `parentID: UUID?` und `position: Int`
-  an `StoredGroup`, `position: Int` an `StoredSession`. **Beide mit
-  Vorgabewert im Initialisierer und beim Dekodieren**, damit eine Datei ohne
-  sie unverändert lesbar bleibt — das ist die additive Migration, und sie ist
-  der Grund, warum kein neuer Dateiname nötig ist. `position` als
-  Vorgabe `0`; `Codable` synthetisiert das nicht von selbst für einen
-  fehlenden Schlüssel, also braucht es einen expliziten `decode`-Pfad oder
-  einen optionalen Speicher mit nicht-optionalem Zugriff. **Welchen Weg du
-  wählst, begründe im Kommentar — und prüfe ihn mit einem Test, der echtes
-  JSON ohne die neuen Schlüssel dekodiert.**
-- [ ] **Step 4: `GroupTree` umsetzen.** `wouldCycle(moving:under:in:)`,
-  `hasCycle(_:)`, `repaired(_:)`, `children(of:in:)`. Alles rein, kein
-  Dateizugriff. `repaired` verwirft **nie** einen Ordner.
-- [ ] **Step 5: Grün laufen lassen**, plus ein Dekodier-Test für die alte
-  Dateiform.
-- [ ] **Step 6:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 3: Add the fields.** `parentID: UUID?` and `position: Int`
+  on `StoredGroup`, `position: Int` on `StoredSession`. **Both with a
+  default value in the initializer and on decode**, so a file without them
+  stays readable unchanged — that is the additive migration, and it is why
+  no new filename is needed. `position` defaults to `0`; `Codable`
+  does not synthesize that on its own for a missing key, so it needs an
+  explicit `decode` path or optional storage with non-optional access.
+  **Whichever way you choose, justify it in the comment — and verify it
+  with a test that decodes real JSON without the new keys.**
+- [ ] **Step 4: Implement `GroupTree`.** `wouldCycle(moving:under:in:)`,
+  `hasCycle(_:)`, `repaired(_:)`, `children(of:in:)`. All pure, no file
+  access. `repaired` **never** discards a folder.
+- [ ] **Step 5: Run it green**, plus a decode test for the old file form.
+- [ ] **Step 6:** Full suite green, no new warning.
 - [ ] **Step 7: Commit** — `feat(sessions): give groups a parent and a position`
 
 ---
 
-### Task 2: Die Ordnung berechnen und schreiben
+### Task 2: Computing and writing the ordering
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/SidebarOrdering.swift`
 - Modify: `Sources/macSCPCore/Sessions/SessionStore.swift`,
   `Sources/macSCPCore/Presentation/SessionListViewModel.swift`
-- Test: `Tests/macSCPCoreTests/SidebarOrderingTests.swift`, plus die
-  bestehenden Store-Suiten
+- Test: `Tests/macSCPCoreTests/SidebarOrderingTests.swift`, plus the
+  existing store suites
 
 **Interfaces:**
-- Consumes: `GroupTree` aus Task 1.
-- Produces: eine Verschiebefunktion, die aus **zwei Identitäten** eine neue
-  Ordnung errechnet, und ein einmaliges Sortieren. Task 4 ruft beide.
+- Consumes: `GroupTree` from Task 1.
+- Produces: a move function that computes a new ordering from **two
+  identities**, and a one-shot sort. Task 4 calls both.
 
-**Das Vorbild, und es ist verbindlich:** `TabsViewModel.move(tabID:to:)` und
-`move(tabID:onto:)` aus dieser Woche. Sie leiten das Ziel aus zwei
-Identitäten ab statt aus einem Index — **weil der Index in der Ansicht die
-Fehlerklasse war.** Lies beide, bevor du anfängst, und bau dieselbe Form.
+**The model, and it is binding:** `TabsViewModel.move(tabID:to:)` and
+`move(tabID:onto:)` from this week. They derive the target from two
+identities rather than an index — **because the index in the view was the
+error class.** Read both before starting, and build the same shape.
 
-- [ ] **Step 1: Rot zuerst.** Tests für: zwischen zwei Geschwister ziehen
-  ordnet um; auf einen Ordner ziehen hängt ans Ende von dessen Kindern; ein
-  Zug, der einen Zyklus schlösse, **ändert nichts** (und meldet das, statt
-  still zu scheitern); Positionen sind nach jedem Zug lückenlos und eindeutig
-  je Elternteil.
-- [ ] **Step 2: Umsetzen.** Beim Schreiben werden die Geschwister des
-  betroffenen Elternteils **durchnummeriert** — das ist die Zusicherung, an
-  der jeder spätere Leser hängt, also gehört sie in einen Test und nicht in
-  einen Kommentar.
-- [ ] **Step 3: Das einmalige Sortieren.** Ordnet die **unmittelbaren**
-  Unterelemente eines Ordners nach Namen und schreibt die Positionen neu.
-  Wirkt genau eine Ebene tief. Kein gespeicherter Zustand, keine Einstellung.
-  Der Namensvergleich folgt dem, was die Seitenleiste heute zum Sortieren
-  benutzt — **schlag nach, statt einen neuen zu erfinden**, und nenn im
-  Kommentar, welchen du gefunden hast.
-- [ ] **Step 4: `dissolveGroup` verallgemeinern.** Sitzungen **und**
-  Unterordner des aufgelösten Ordners wandern zu dessen `parentID`. Der
-  bestehende Test für den flachen Fall muss unverändert grün bleiben — wird
-  er es nicht, ist das ein Fund und gehört in den Bericht, nicht in eine
-  angepasste Zusicherung.
-- [ ] **Step 5:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 1: Red first.** Tests for: dragging between two siblings
+  reorders them; dragging onto a folder appends to the end of its children;
+  a move that would close a cycle **changes nothing** (and reports that,
+  instead of failing silently); positions are gapless and unique per parent
+  after every move.
+- [ ] **Step 2: Implement.** On write, the siblings of the affected parent
+  get **renumbered** — that is the guarantee every later reader depends on,
+  so it belongs in a test and not in a comment.
+- [ ] **Step 3: The one-shot sort.** Orders the **immediate** children of a
+  folder by name and rewrites their positions. Acts exactly one level deep.
+  No stored state, no setting. The name comparison follows whatever the
+  sidebar uses for sorting today — **look it up instead of inventing a new
+  one**, and name in the comment which one you found.
+- [ ] **Step 4: Generalize `dissolveGroup`.** Sessions **and** subfolders
+  of the dissolved folder move to its `parentID`. The existing test for the
+  flat case must stay green unchanged — if it does not, that is a finding
+  and belongs in the report, not in an adjusted expectation.
+- [ ] **Step 5:** Full suite green, no new warning.
 - [ ] **Step 6: Commit** — `feat(sessions): reorder and nest by identity, never by index`
 
 ---
 
-### Task 3: Ausfuhr und Einfuhr ziehen mit
+### Task 3: Export and import carry it along
 
 **Files:**
-- Modify: `Sources/macSCPCore/Sessions/SessionExportCodec.swift` und der
-  Import-Planer
-- Test: die bestehenden Export-/Import-Suiten, plus neue Fälle
+- Modify: `Sources/macSCPCore/Sessions/SessionExportCodec.swift` and the
+  import planner
+- Test: the existing export/import suites, plus new cases
 
 **Interfaces:**
-- Consumes: `GroupTree.repaired(_:)` aus Task 1.
+- Consumes: `GroupTree.repaired(_:)` from Task 1.
 
-**Der gemessene Ist-Zustand:** `ExportedGroup` trägt `id` und `name`; sein
-Kommentar sagt, die Kennung sei nur dateilokal und der Planer vergebe frische.
-**Das ist die Falle dieses Tasks:** ein `parentID` verweist auf eine
-dateilokale Kennung, die beim Import neu vergeben wird. Die Zuordnung muss
-also **beim Umschlüsseln mitwandern** — ein roh übernommenes `parentID` zeigte
-nach dem Import ins Leere.
+**The measured status quo:** `ExportedGroup` carries `id` and `name`; its
+comment says the identifier is file-local only and the planner assigns
+fresh ones on import. **That is this task's trap:** a `parentID` refers to
+a file-local identifier that gets reassigned on import. The mapping must
+therefore **travel along during the re-keying** — a `parentID` carried over
+raw pointed at nothing after import.
 
-- [ ] **Step 1: Rot zuerst.** Drei Fälle, jeder ein eigener Test: eine
-  Ausfuhr **ohne** die neuen Felder importiert unverändert (die alte Form
-  bleibt lesbar); ein `parentID` überlebt den Wechsel der Kennungen; eine
-  Datei mit **Zyklus** oder **fehlendem Elternteil** importiert vollständig,
-  mit den betroffenen Ordnern oben.
-- [ ] **Step 2: Umsetzen.** `repaired(_:)` läuft auf der eingelesenen Datei,
-  **bevor** irgendetwas übernommen wird.
-- [ ] **Step 3: Der Import meldet, was er begradigt hat.** Der Planer hat
-  bereits eine Fläche für seinen Bericht — **finde sie und benutze sie**,
-  statt eine neue zu bauen. Nenn im Bericht, welche du gefunden hast.
-- [ ] **Step 4:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 1: Red first.** Three cases, each its own test: an export
+  **without** the new fields imports unchanged (the old form stays
+  readable); a `parentID` survives the change of identifiers; a file with
+  a **cycle** or a **missing parent** imports completely, with the
+  affected folders at the top.
+- [ ] **Step 2: Implement.** `repaired(_:)` runs on the file as read,
+  **before** anything is adopted.
+- [ ] **Step 3: The import reports what it straightened out.** The planner
+  already has a surface for its report — **find it and use it**, instead
+  of building a new one. Name in the report which one you found.
+- [ ] **Step 4:** Full suite green, no new warning.
 - [ ] **Step 5: Commit** — `feat(sessions): carry nesting through export and import`
 
 ---
 
-### Task 4: Die Seitenleiste
+### Task 4: The sidebar
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SessionSidebar.swift`
-- Modify: alle vier `Localizable.strings`
+- Modify: all four `Localizable.strings`
 - Test: `Tests/macSCPAppKitTests/`
 
 **Interfaces:**
-- Consumes: alles aus Tasks 1–3.
+- Consumes: everything from Tasks 1–3.
 
-**Auflage:** die Ansicht rechnet **keine** Position aus. Jede Geste endet in
-einer Kernfunktion aus Task 2, mit zwei Identitäten als Argumenten. Wenn du
-in der Ansicht einen Index brauchst, ist der Entwurf verletzt — melde das,
-statt ihn einzubauen.
+**Requirement:** the view computes **no** position. Every gesture ends in
+a core function from Task 2, with two identities as arguments. If you need
+an index in the view, the design has been violated — report that, instead
+of building it in.
 
-- [ ] **Step 1: Verschachtelt anzeigen.** Ordner in Ordnern, in
-  Positionsreihenfolge über `GroupTree.children(of:in:)`.
-- [ ] **Step 2: Ziehen.** Zwischen Geschwister ordnet um, auf einen Ordner
-  verschiebt hinein. **Sichtbares Ziel beim Ziehen**, nach dem Vorbild von
-  `TabStripView`s `dropTarget` — die Form ist da, sie hebt das Ziel hervor,
-  statt eine Einfügemarke zwischen Elementen zu rechnen.
-- [ ] **Step 3: Das Ordner-Kontextmenü.** Ein Eintrag „nach Namen sortieren",
-  der Task 2s einmaliges Sortieren auslöst. **Nur zeigen, was möglich ist** —
-  stehende Regel dieses Projekts, nichts wird ausgegraut.
-- [ ] **Step 4: Die Texte.** In alle vier Kataloge, gleiche Schlüsselmenge,
-  das Deutsche duzt.
-- [ ] **Step 5:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 1: Display nested.** Folders inside folders, in position
+  order via `GroupTree.children(of:in:)`.
+- [ ] **Step 2: Dragging.** Between siblings reorders, onto a folder moves
+  inside. **Visible target while dragging**, following the model of
+  `TabStripView`'s `dropTarget` — the shape already exists, it highlights
+  the target instead of computing an insertion mark between items.
+- [ ] **Step 3: The folder context menu.** An entry "sort by name" that
+  triggers Task 2's one-shot sort. **Only show what is possible** —
+  a standing rule of this project, nothing is greyed out.
+- [ ] **Step 4: The text.** In all four catalogs, matching key sets, the
+  German uses du.
+- [ ] **Step 5:** Full suite green, no new warning.
 - [ ] **Step 6: Commit** — `feat(sidebar): nest folders and drag them into order`
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly out of scope
 
-- **Keine Suche im Baum (D3).** Sie kommt danach, weil die Verschachtelung
-  ihre Darstellung mitbestimmt.
-- **Keine gespeicherte Sortier-Einstellung pro Ordner.**
-- **Kein neuer Dateiname und keine zweite Datei.**
-- **Keine Änderung an den Tags** (E1/E2) — dieselbe Seitenleiste, anderer
-  Vorgang.
+- **No search in the tree (D3).** It comes afterward, because the nesting
+  determines how it is displayed.
+- **No stored sort setting per folder.**
+- **No new filename and no second file.**
+- **No change to the tags** (E1/E2) — same sidebar, different task.

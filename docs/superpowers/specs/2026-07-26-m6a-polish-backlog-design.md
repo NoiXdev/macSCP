@@ -1,156 +1,154 @@
-# macSCP M6a — Polish-Backlog (Design-Spec)
+# macSCP M6a — Polish backlog (design spec)
 
-**Datum:** 2026-07-26
-**Status:** vom Maintainer freigegeben (Block A + Block B)
-**Kontext:** Erster Teil des Release-Meilensteins M6 (Aufteilung A: M6a Polish →
-M6b Release). Arbeitet den kompletten offenen Ledger-Backlog ab. Nach M6a folgt
-M6b (Icon, DMG, Signierung + Notarisierung, README).
+**Date:** 2026-07-26
+**Status:** approved by the maintainer (block A + block B)
+**Context:** First part of the release milestone M6 (split A: M6a polish →
+M6b release). Works through the entire open ledger backlog. After M6a comes
+M6b (icon, DMG, signing + notarization, README).
 
-## Ziel
+## Goal
 
-Alle offenen Backlog-Punkte aus den M5-Reviews schließen: globales
-Bandbreiten-Limit (geteilter Token-Bucket), Ordner-Abbruch im Konflikt-Dialog,
-Edit-Integrations-Fixes, Formular-/Session-Aufräumarbeiten, a11y-Punkte der
-neuen Formular-Optik und Code-Hygiene. Danach ist der Code release-fertig.
+Close every open backlog item from the M5 reviews: a global bandwidth limit
+(shared token bucket), folder cancellation in the conflict dialog, edit
+integration fixes, form/session cleanup work, a11y items in the new form
+visuals, and code hygiene. After this the code is release-ready.
 
-## Entscheidungen (Maintainer, 2026-07-26)
+## Decisions (maintainer, 2026-07-26)
 
-- Backlog-Scope: **kompletter** offener Ledger-Backlog (nicht kuratiert).
-- Drossel: **geteilter Token-Bucket** pro Richtung, echte injizierbare Uhr.
-- Konflikt-„Abbrechen" bei Ordner-Transfers: **bricht die ganze Gruppe ab**.
-- Totes `paper`-Token: **löschen** (YAGNI), nicht als Fenstergrund einführen.
-- Edit-Uploads: vom Resume-Banner **ausschließen** (kein Re-Download-Pfad).
+- Backlog scope: the **complete** open ledger backlog (not curated).
+- Throttle: a **shared token bucket** per direction, a real injectable
+  clock.
+- Conflict "cancel" on folder transfers: **cancels the whole group**.
+- Dead `paper` token: **delete it** (YAGNI), do not introduce it as a
+  window background.
+- Edit uploads: **excluded** from the resume banner (no re-download path).
 
-## Block A — Verhaltensänderungen
+## Block A — behavior changes
 
-### 1. Globaler Bandbreiten-Bucket (ersetzt die virtuelle Uhr)
+### 1. Global bandwidth bucket (replaces the virtual clock)
 
-- Neuer Core-Actor `BandwidthBucket`:
-  - Konfiguration: `bytesPerSecond` (Rate) — Burst-Kapazität = 1 Sekunde
-    Rate (Standard-Token-Bucket).
-  - `consume(_ bytes: Int) async throws` — wartet (kooperativ cancelbar),
-    bis genug Tokens vorhanden sind, dann Abzug. Refill kontinuierlich
-    anhand der verstrichenen echten Zeit seit dem letzten Refill.
-  - `setRate(bytesPerSecond: Int)` — Laufzeit-Update bei
-    Settings-Änderung (vorhandenes onChange-Wiring der Queue).
-  - Uhr und Schlafen injizierbar (Instant-Provider auf
-    `ContinuousClock`-Basis + Sleep-Hook) → Tests deterministisch ohne
-    echtes Schlafen; Default = echte Uhr/`Task.sleep`.
-- `TransferEngine.copyFile`: Parameter `bytesPerSecondLimit: Int` +
-  injizierter `sleep`-Hook entfallen; stattdessen `throttle:
-  BandwidthBucket?` (nil = ungedrosselt). Vor jedem Chunk-Write:
+- New Core actor `BandwidthBucket`:
+  - Configuration: `bytesPerSecond` (rate) — burst capacity = 1 second of
+    rate (standard token bucket).
+  - `consume(_ bytes: Int) async throws` — waits (cooperatively
+    cancellable) until enough tokens are available, then deducts. Refills
+    continuously based on real elapsed time since the last refill.
+  - `setRate(bytesPerSecond: Int)` — runtime update on a settings change
+    (the queue's existing onChange wiring).
+  - Clock and sleep are injectable (an instant provider on a
+    `ContinuousClock` basis + a sleep hook) → tests deterministic without
+    real sleeping; default = the real clock/`Task.sleep`.
+- `TransferEngine.copyFile`: the `bytesPerSecondLimit: Int` parameter +
+  the injected `sleep` hook are dropped; instead `throttle:
+  BandwidthBucket?` (nil = unthrottled). Before every chunk write:
   `try await throttle?.consume(chunk.count)`.
-- `TransferQueueViewModel` besitzt **zwei** Buckets (Upload / Download,
-  getrennte Settings wie bisher; Limit 0 ⇒ kein Bucket / nil) und reicht
-  den richtungspassenden Bucket an jeden Transfer durch. Alle parallelen
-  Transfers einer Richtung teilen sich damit exakt das Limit.
-- Entfall ersatzlos: die virtuelle Drossel-Uhr inkl. Over-Throttling
-  (real ≈ Limit/2 auf Links nahe dem Limit) und der dokumentierte
-  M5d-Resume-Sonderfall („virtuelle Uhr startet bei 0") — der Bucket
-  kennt nur Bytes, keine Transfer-Historie.
-- Kooperative Cancellation bleibt: `consume` wirft bei Task-Cancellation;
-  der bestehende Post-Write-Check bleibt das Gate.
+- `TransferQueueViewModel` owns **two** buckets (upload / download,
+  separate settings as before; limit 0 ⇒ no bucket / nil) and passes the
+  direction-matching bucket to every transfer. All parallel transfers in
+  one direction thereby share exactly one limit.
+- Dropped with no replacement: the virtual throttle clock including its
+  over-throttling (real ≈ limit/2 on links near the limit) and the
+  documented M5d resume special case ("virtual clock starts at 0") — the
+  bucket knows only bytes, no transfer history.
+- Cooperative cancellation stays: `consume` throws on task cancellation;
+  the existing post-write check stays the gate.
 
-### 2. Ordner-Abbruch im Konflikt-Dialog
+### 2. Folder cancellation in the conflict dialog
 
-- „Abbrechen" im Konflikt-Dialog eines **Gruppen-Items** (rekursiver
-  Ordner-Transfer) bricht die ganze Gruppe ab:
-  - Das konfliktbehaftete Item wird `.cancelled`.
-  - Alle noch nicht gestarteten Items derselben Gruppe werden aus der
-    Queue gefegt → `.cancelled`.
-  - Bereits laufende Transfers derselben Gruppe werden kooperativ
-    abgebrochen (`.cancelled`).
-  - Bereits fertig kopierte Dateien bleiben liegen — es wird nichts
-    gelöscht.
-- Invarianten unverändert: Gruppen-`onCompleted` feuert exakt einmal,
-  nachdem alle Items terminal sind; kein Item wird doppelt terminalisiert;
-  exactly-once-Waiter bleiben.
-- Einzeldatei-Konflikt: „Abbrechen" bricht wie bisher nur dieses Item ab.
+- "Cancel" in the conflict dialog of a **group item** (a recursive folder
+  transfer) cancels the whole group:
+  - The conflicting item becomes `.cancelled`.
+  - All not-yet-started items of the same group are swept out of the
+    queue → `.cancelled`.
+  - Already-running transfers of the same group are cancelled
+    cooperatively (`.cancelled`).
+  - Files already copied stay put — nothing is deleted.
+- Invariants unchanged: the group's `onCompleted` fires exactly once,
+  after all items are terminal; no item is terminalized twice;
+  exactly-once waiters stay.
+- Single-file conflict: "Cancel" still cancels only that one item, as
+  before.
 
-## Block B — Fixes, a11y, Hygiene
+## Block B — fixes, a11y, hygiene
 
-### 3. Edit-Integration
+### 3. Edit integration
 
-- **Startup-Sweep:** Beim App-Start wird das Wurzelverzeichnis
-  `tmp/macscp-edit/` komplett geleert (zu diesem Zeitpunkt läuft kein
-  Edit; Single-Instance-App). Verwaiste Verzeichnisse von Hard-Kills
-  verschwinden zuverlässig.
-- **Resume-Banner:** Unterbrochene **Edit-Uploads** erscheinen nicht mehr
-  im Fortsetzen-Banner (ihre Temp-Quelle löscht `stopAll` beim Trennen —
-  ein Resume schlüge sichtbar fehl). Sie enden als normaler Fehler; der
-  nächste Editor-Save stößt ohnehin einen frischen Upload an.
-- **Lokalisierte Fehlertexte:** Das Edit-Banner zeigt statt
-  `String(describing:)` die bestehende lokalisierte Fehlerabbildung des
-  Core-Layers (`RemoteFSError`-Fälle + generischer Fallback). Ein
-  Abbruch (`CancellationError`) zeigt bewusst KEIN Banner: der einzige
-  Abbruch-Pfad ist der Session-Teardown, und ein danach gesetzter Banner
-  würde fälschlich in der nächsten Session auftauchen.
+- **Startup sweep:** on app launch, the root directory `tmp/macscp-edit/`
+  is fully cleared (no edit is running at this point; single-instance
+  app). Orphaned directories from hard kills disappear reliably.
+- **Resume banner:** interrupted **edit uploads** no longer appear in the
+  resume banner (their temp source is deleted by `stopAll` on disconnect —
+  a resume would visibly fail). They end as a normal error; the next
+  editor save kicks off a fresh upload anyway.
+- **Localized error text:** instead of `String(describing:)` the edit
+  banner shows the existing localized error mapping from the Core layer
+  (`RemoteFSError` cases + a generic fallback). A cancellation
+  (`CancellationError`) deliberately shows NO banner: the only
+  cancellation path is session teardown, and a banner set after that
+  would wrongly reappear in the next session.
 
-### 4. Formular / Session
+### 4. Form / session
 
-- „Neue Verbindung" nach dem Edit-Modus leert die Felder (Reset in
-  `onNew`).
-- `endEditing()` / `exitEditMode()` werden zu einer Methode konsolidiert.
-- Der dichte Orphan-Cleanup-Ausdruck in `SessionStore.load()` wird lesbar
-  umgeschrieben. Beides reine Refaktorierungen — bestehende Tests bleiben
-  unverändert grün.
+- "New connection" after edit mode clears the fields (reset in `onNew`).
+- `endEditing()` / `exitEditMode()` are consolidated into one method.
+- The dense orphan-cleanup expression in `SessionStore.load()` is
+  rewritten to be readable. Both are pure refactorings — existing tests
+  stay green unchanged.
 
-### 5. a11y (M5k-Minors)
+### 5. a11y (M5k minors)
 
-- `FormRow`-Label: `.accessibilityHidden(true)` — VoiceOver nennt jede
-  Zeile nur noch einmal (Controls behalten ihre a11y-Titel); die leere
-  Toggle-Zeile emittiert kein leeres Static-Text-Element mehr.
-- `FormRow`-Labels dimmen mit, wenn das Formular während des Verbindens
-  disabled ist (`\.isEnabled`-Environment, Opacity 0.5 wie die Buttons).
-- `PolishedButtonStyle`: sichtbarer Fokus-Ring für Full Keyboard Access
-  (Ring in `remoteBlue`).
+- `FormRow` label: `.accessibilityHidden(true)` — VoiceOver now names each
+  row only once (controls keep their a11y titles); the empty toggle row no
+  longer emits an empty static-text element.
+- `FormRow` labels dim along with the form when it is disabled during a
+  connect (`\.isEnabled` environment, opacity 0.5 like the buttons).
+- `PolishedButtonStyle`: a visible focus ring for Full Keyboard Access
+  (ring in `remoteBlue`).
 
-### 6. Kosmetik / Hygiene
+### 6. Cosmetics / hygiene
 
-- Totes `paper`-Token löschen; stale Kommentare in `DesignTokens`
-  (staged-Hinweise) und am `errorHighlight` („4pt outside") korrigieren.
-- L10n-Doppelaufrufe im Formular (Label + Control-Titel, 8×) einmal pro
-  Zeile binden.
-- Konfliktmeldung: Symlink/Sonstiges nicht mehr fälschlich als „existiert
-  als Datei" melden.
-- `applyToAll`-Recheck nach Gate-Acquire in der Konflikt-Maschinerie
-  (verhindert einen überflüssigen Prompt, wenn die Regel gesetzt wurde,
-  während das Item am FIFO-Gate wartete).
+- Delete the dead `paper` token; correct stale comments in `DesignTokens`
+  (staged notes) and on `errorHighlight` ("4pt outside").
+- Bind duplicate L10n calls in the form (label + control title, 8×) once
+  per row.
+- Conflict message: stop wrongly reporting a symlink/other as "exists as
+  a file".
+- `applyToAll` recheck after gate acquisition in the conflict machinery
+  (prevents a superfluous prompt when the rule was set while the item was
+  waiting at the FIFO gate).
 
-## Invarianten
+## Invariants
 
-- Sicherheits- und Architektur-Invarianten unangetastet: TOFU-Härte,
-  Secrets nur im Keychain, UI-owned Lifecycles, FIFO-Startordnung,
-  exactly-once-Waiter/onCompleted.
-- Sprache: Code + Kommentare Englisch; neue UI-/Fehlertexte katalogisiert
-  EN/DE.
-- Keine neuen Settings; die bestehenden Up-/Down-Limits ändern nur ihre
-  Wirkung (global statt pro Transfer) — Settings-UI unverändert.
+- Security and architecture invariants untouched: TOFU hardness, secrets
+  only in the keychain, UI-owned lifecycles, FIFO start order,
+  exactly-once waiters/onCompleted.
+- Language: code + comments English; new UI/error text cataloged EN/DE.
+- No new settings; the existing up/down limits only change their effect
+  (global instead of per-transfer) — settings UI unchanged.
 
 ## Tests
 
-- `BandwidthBucket`: TDD mit injizierter Uhr — Rate eingehalten, Burst
-  begrenzt, `setRate` wirkt, Cancellation wirft, mehrere Konsumenten
-  teilen sich das Limit deterministisch.
-- Engine/Queue: Drossel-Tests von virtueller Uhr auf Bucket-Stub
-  migriert; Richtungs-Zuordnung (Upload-Bucket vs. Download-Bucket)
-  getestet.
-- Gruppen-Abbruch: neue Queue-Tests — Sweep erfasst genau die
-  Gruppen-Items, `onCompleted` exactly-once, Einzeldatei-Fall unverändert,
-  laufende Gruppen-Transfers kooperativ abgebrochen.
-- Fehlertext-Mapper: Katalog-Lookup-Tests (locale-fest) für die
-  `RemoteFSError`-Fälle + Abbruch + generisch.
-- Startup-Sweep & Resume-Ausschluss: Unit-Tests auf Manager-/Queue-Ebene.
-- Bestehende Suite (295) bleibt grün; gated Suiten (`MACSCP_ITEST`,
-  `MACSCP_KEYCHAIN`) vor Abschluss.
-- Visueller Smoke: Drossel live mit 2 parallelen Transfers gegen ein
-  Limit (aggregiert ≈ Limit statt 2×), Ordner-Konflikt → Abbrechen stoppt
-  die Gruppe, VoiceOver-Stichprobe Formular, Fokus-Ring per Tab,
-  „Neue Verbindung" nach Edit leer.
+- `BandwidthBucket`: TDD with an injected clock — rate honored, burst
+  bounded, `setRate` takes effect, cancellation throws, multiple consumers
+  share the limit deterministically.
+- Engine/queue: throttle tests migrated from the virtual clock to a bucket
+  stub; direction assignment (upload bucket vs. download bucket) tested.
+- Group cancellation: new queue tests — the sweep catches exactly the
+  group's items, `onCompleted` exactly-once, the single-file case
+  unchanged, running group transfers cancelled cooperatively.
+- Error-text mapper: catalog lookup tests (locale-pinned) for the
+  `RemoteFSError` cases + cancellation + generic.
+- Startup sweep & resume exclusion: unit tests at the manager/queue level.
+- The existing suite (295) stays green; gated suites (`MACSCP_ITEST`,
+  `MACSCP_KEYCHAIN`) before wrap-up.
+- Visual smoke test: throttle live with 2 parallel transfers against a
+  limit (aggregate ≈ limit instead of 2×), folder conflict → cancel stops
+  the group, VoiceOver spot check of the form, focus ring via tab, "New
+  connection" after edit is empty.
 
-## Bewusst NICHT in M6a
+## Deliberately NOT in M6a
 
-- Icon, DMG, Signierung, Notarisierung, README → M6b.
-- Auto-Reconnect-Backoff (Backlog bleibt).
-- Multi-Server/Multi-Fenster (v2).
-- Settings-Fenster-Restyling (System-Chrome-Linie).
+- Icon, DMG, signing, notarization, README → M6b.
+- Auto-reconnect backoff (stays backlog).
+- Multi-server/multi-window (v2).
+- Settings-window restyling (the system-chrome line).

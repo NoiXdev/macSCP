@@ -1,83 +1,83 @@
-# M28 — Die zwei löschenden Binder: Implementierungsplan
+# M28 — The Two Deleting Binders: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die zwei Stellen, die beim Binden an ein Login-Set einen
-Schlüsselbund-Slot löschen, hören auf, das ohne Bedingung zu tun.
+**Goal:** The two places that delete a Keychain slot when binding to a login
+set stop doing that unconditionally.
 
-**Architecture:** Eine Deckungsfrage in Core beantwortet „hält dieses Set,
-was ein daran gebundener Login braucht" über das Schema. Die Jump-Bindung
-stellt sie vor dem Löschen. `applyMerge` braucht sie **nicht** — dort ist der
-Defekt ein anderer (siehe unten). Dazu meldet der Login-Set-Import, wenn Sets
-ohne Passwort ankommen.
+**Architecture:** A coverage question in Core answers "does this set hold
+what a login bound to it needs" via the schema. The jump binding asks it
+before deleting. `applyMerge` does **not** need it — there the defect is a
+different one (see below). In addition, login-set import reports when sets
+arrive without a password.
 
 **Tech Stack:** Swift 6, `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+,
 Swift Testing, SwiftUI.
 
 Spec: `../specs/2026-08-09-m28-loeschende-binder-design.md`
 
-## Abweichung von der Spec, ausgewiesen statt geglättet
+## Deviation from the spec, flagged rather than smoothed over
 
-Die Spec formuliert **eine** Regel für beide Binder. Beim Planen hält das
-nicht: die zwei Defekte sind verschieden.
+The spec states **one** rule for both binders. It does not hold up during
+planning: the two defects are different.
 
-- **Die Jump-Bindung** löscht einen Slot, den **nichts überträgt** — der alte
-  Bastion-Slot ist die einzige Kopie. Dort ist die Deckungsfrage die richtige:
-  hält das neue Set etwas, oder braucht es nichts?
-- **`applyMerge`** überträgt sehr wohl — es liest ein Mitglieds-Secret und
-  schreibt es aufs Set. Sein Defekt ist nicht die fehlende Frage, sondern der
-  **verschluckte Read**: `try?` macht aus „nicht lesbar" ein „nichts da", und
-  danach wird gelöscht. Die Deckungsfrage würde daran nichts verbessern; ein
-  **werfender** Read schon: nicht lesbar ⇒ Abbruch, wirklich leer ⇒ es gibt
-  nichts zu verlieren, und das Löschen leerer Slots ist folgenlos.
+- **The jump binding** deletes a slot that **nothing carries** — the old
+  bastion slot is the only copy. There, the coverage question is the right
+  one: does the new set hold something, or does it need nothing?
+- **`applyMerge`** does in fact carry — it reads a member's secret and writes
+  it onto the set. Its defect is not the missing question but the
+  **swallowed read**: `try?` turns "not readable" into "nothing there", and
+  the deletion follows. The coverage question would not improve anything
+  here; a **throwing** read would: not readable ⇒ abort, genuinely empty ⇒
+  there is nothing to lose, and deleting empty slots is consequence-free.
 
-Beide Fixes stehen im Plan, mit ihrer je eigenen Begründung. Die Spec bleibt
-in der Sache richtig — ihre Verallgemeinerung war eine Ebene zu grob.
+Both fixes are in the plan, each with its own justification. The spec
+remains correct in substance — its generalization was one level too coarse.
 
-**Zweite Abweichung — und ihre Korrektur nach der Task-1-Review.** Die Spec
-nennt die Managed-Key-Probe als Sonderfall, den das Schema nicht beantworten
-kann. Der Plan hat daraus zunächst geschlossen, sie werde gar nicht gebraucht.
-**Das war zu breit, und die Task-1-Review hat es gefangen:**
+**Second deviation — and its correction after the Task 1 review.** The spec
+names the managed-key probe as a special case the schema cannot answer. The
+plan initially concluded from that, that it was not needed at all. **That
+was too broad, and the Task 1 review caught it:**
 
-- Für die **Deckungsfrage selbst** stimmt es: ein `.privateKey`-Set zeigt
-  `passphrase`, das Feld ist nicht `isRequired`, der „nicht erforderlich ⇒
-  gedeckt"-Zweig trägt den Fall. Task 1 braucht keine
-  `ManagedKeyStore`-Abhängigkeit und hat keine.
-- Für die **Löschentscheidung** stimmt es **nicht**. Ein Binder, der allein auf
-  dieser Antwort löscht, entfernt den Passphrase-Slot einer Sitzung, deren
-  Schlüssel verschlüsselt ist und deren Set nichts hält — die Passphrase ist
-  dann nirgends mehr. Die Deckungsfrage sagt „braucht das Set ein Secret", nicht
-  „verliert der Login etwas, das er braucht".
+- For the **coverage question itself** it holds: a `.privateKey` set shows
+  `passphrase`, the field is not `isRequired`, and the "not required ⇒
+  covered" branch carries the case. Task 1 needs no `ManagedKeyStore`
+  dependency and has none.
+- For the **deletion decision** it does **not** hold. A binder that deletes
+  based solely on this answer removes the passphrase slot of a session whose
+  key is encrypted and whose set holds nothing — the passphrase is then
+  nowhere at all. The coverage question says "does the set need a secret",
+  not "does the login lose something it needs".
 
-**Task 3 kombiniert deshalb beide Fragen**, und die Probe wirft weiterhin,
-statt zu raten. Task 2 ist davon unberührt: dort wird übertragen, nicht
-gedeckt.
+**Task 3 therefore combines both questions**, and the probe keeps throwing
+instead of guessing. Task 2 is unaffected by this: there, something is
+carried, not covered.
 
 ## Global Constraints
 
-- **Code, Kommentare, Bezeichner, Testnamen: nur Englisch.** Interne Doku
-  Deutsch.
-- **Ein Secret-Wert wird nie gedruckt, geloggt oder in einen Fehler
-  eingebettet — auch nicht in eine Testfehlermeldung.**
-- **Kein `try?`-Read entscheidet über eine Löschung.** Ein werfender Read
-  bricht ab. Eine unbeantwortbare Deckungsfrage löscht nicht.
-- **Die Deckungsfrage stellt nie `LoginSet.authKind`.** `authKind` und `kind`
-  sind unabhängig und werden vom Import wörtlich übernommen.
-- Das `SecretStore`-Protokoll bekommt **kein** neues Mitglied.
-- Der veraltete Slot einer set-gebundenen Sitzung wird **nicht** gelöscht;
-  die drei nicht löschenden Binder bleiben unberührt.
-- App-UI über alle vier Kataloge en/de/fr/pl mit identischen Schlüsselmengen.
-- Conventional Commits, englische Nachricht, Footer auf jedem Commit:
+- **Code, comments, identifiers, test names: English only.** Internal docs
+  German.
+- **A secret value is never printed, logged, or embedded in an error — not
+  even in a test failure message.**
+- **No `try?` read decides a deletion.** A throwing read aborts. An
+  unanswerable coverage question does not delete.
+- **The coverage question never asks `LoginSet.authKind`.** `authKind` and
+  `kind` are independent and are copied verbatim by the import.
+- The `SecretStore` protocol gets **no** new member.
+- The stale slot of a set-bound session is **not** deleted; the three
+  non-deleting binders stay untouched.
+- App UI across all four catalogs en/de/fr/pl with identical key sets.
+- Conventional Commits, English message, footer on every commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- **Nicht pushen.** Die GUI nicht starten. `scripts/release` nicht ausführen.
-- Testzahl-Basis: **1640**.
+- **Do not push.** Do not start the GUI. Do not run `scripts/release`.
+- Test-count baseline: **1640**.
 
 ---
 
-### Task 1: Die Deckungsfrage
+### Task 1: The coverage question
 
 **Files:**
 - Modify: `Sources/macSCPCore/Capabilities/BackendDescriptor.swift`
@@ -87,15 +87,15 @@ gedeckt.
 
 **Interfaces:**
 - Produces: `BackendDescriptor.visibleSecretField(for set: LoginSet) -> ConnectionField?`
-  — der Zwilling zur vorhandenen `StoredSession`-Fassung, über
-  `loginSetValues(_:)` statt `sessionValues(_:)`.
+  — the twin of the existing `StoredSession` version, via
+  `loginSetValues(_:)` instead of `sessionValues(_:)`.
 - Produces: `SessionListViewModel.setCoversItsLogin(_ set: LoginSet) throws -> Bool`
-  — `true`, wenn das Set kein Secret braucht **oder** eines hält. **Wirft**,
-  wenn der Schlüsselbund nicht antwortet.
+  — `true` when the set needs no secret at all **or** holds one. **Throws**
+  when the Keychain does not answer.
 
-- [ ] **Step 1: Die Tests schreiben**
+- [ ] **Step 1: Write the tests**
 
-Für den Zwilling, in `BackendDescriptorTests`:
+For the twin, in `BackendDescriptorTests`:
 
 ```swift
 /// The LoginSet twin of the StoredSession question. Both ask
@@ -105,8 +105,8 @@ Für den Zwilling, in `BackendDescriptorTests`:
 @Test func aPrivateKeyLoginSetShowsAnOptionalPassphraseField() throws { … }
 ```
 
-Für die Deckungsfrage, in `SessionListViewModelTests` — **eine je Zeile der
-Spec-Tabelle**, das ist Erfolgskriterium 4:
+For the coverage question, in `SessionListViewModelTests` — **one per row
+of the spec table**, that is success criterion 4:
 
 ```swift
 @Test func aPasswordSetWithoutASecretIsNotCovered() throws { … }
@@ -117,10 +117,10 @@ Spec-Tabelle**, das ist Erfolgskriterium 4:
 @Test func aWebDAVSetIsCoveredWithoutASecret() throws { … }
 ```
 
-Dazu die zwei, an denen der letzte Anlauf gescheitert wäre:
+Plus the two that the last attempt would have failed on:
 
 ```swift
-/// Erfolgskriterium 5, der wichtigste Test dieses Meilensteins. `kind` and
+/// Success criterion 5, the most important test of this milestone. `kind` and
 /// `authKind` are independent columns and the login-set importer copies both
 /// verbatim, so a set can declare S3 storage with agent auth. Asking
 /// `authKind` would call this covered and delete a session's only secret
@@ -132,20 +132,21 @@ Dazu die zwei, an denen der letzte Anlauf gescheitert wäre:
 @Test func anUnreadableKeychainMakesCoverageThrowRatherThanFalse() throws { … }
 ```
 
-`anAgentSetIsCoveredWithoutReadingTheKeychain` braucht ein Double, dessen
-`password(for:)` den Test scheitern lässt — das Muster steht mehrfach im Repo.
+`anAgentSetIsCoveredWithoutReadingTheKeychain` needs a double whose
+`password(for:)` fails the test — the pattern occurs several times in the
+repo.
 
-- [ ] **Step 2: Rot sehen**
+- [ ] **Step 2: See red**
 
 ```bash
 swift test --filter Covered
 swift test --filter LoginSetShows
 ```
-Erwartet: FAIL, die Member existieren nicht.
+Expected: FAIL, the members do not exist.
 
-- [ ] **Step 3: Den Zwilling umsetzen**
+- [ ] **Step 3: Implement the twin**
 
-In `BackendDescriptor`, neben `visibleSecretField(for session:)`:
+In `BackendDescriptor`, next to `visibleSecretField(for session:)`:
 
 ```swift
 /// The login set's currently visible secret field, or nil when the set needs
@@ -163,7 +164,7 @@ public func visibleSecretField(for set: LoginSet) -> ConnectionField? {
 }
 ```
 
-- [ ] **Step 4: Die Deckungsfrage umsetzen**
+- [ ] **Step 4: Implement the coverage question**
 
 In `SessionListViewModel`:
 
@@ -187,27 +188,25 @@ func setCoversItsLogin(_ set: LoginSet) throws -> Bool {
 }
 ```
 
-- [ ] **Step 5: Grün sehen und die Gegenprobe fahren**
+- [ ] **Step 5: See green and run the counter-check**
 
 ```bash
 swift test --filter Covered
 swift test --filter LoginSetShows
 ```
 
-Dann, nacheinander, jeweils zurücknehmen:
+Then, one at a time, revert each:
 
-1. `descriptor.visibleSecretField(for: set)?.isRequired == true` durch
-   `set.authKind != .agent` ersetzen → `anS3SetDeclaringAgentAuthIsStillNotCovered`
-   muss rot werden. **Das ist der Fehler des letzten Anlaufs**, hiermit
-   festgenagelt.
-2. `try secrets.password` durch `(try? secrets.password(for: set.id)) ?? nil`
-   ersetzen → `anUnreadableKeychainMakesCoverageThrowRatherThanFalse` muss rot
-   werden.
+1. Replace `descriptor.visibleSecretField(for: set)?.isRequired == true` with
+   `set.authKind != .agent` → `anS3SetDeclaringAgentAuthIsStillNotCovered`
+   must go red. **This is the previous attempt's bug**, pinned down here.
+2. Replace `try secrets.password` with `(try? secrets.password(for: set.id)) ?? nil`
+   → `anUnreadableKeychainMakesCoverageThrowRatherThanFalse` must go red.
 
-Beide Rot-Zustände wörtlich in den Bericht, dann sauber zurücknehmen und
-`git status --porcelain` als leer nachweisen.
+Put both red states verbatim into the report, then revert cleanly and prove
+`git status --porcelain` is empty.
 
-- [ ] **Step 6: Committen**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add Sources/macSCPCore Tests/macSCPCoreTests
@@ -216,16 +215,16 @@ git commit -m "feat(core): ask the schema whether a login set holds what it need
 
 ---
 
-### Task 2: `applyMerge` hört auf, „nicht lesbar" für „leer" zu halten
+### Task 2: `applyMerge` stops treating "not readable" as "empty"
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift`
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: nichts aus Task 1 — siehe die Abweichungsnotiz oben.
+- Consumes: nothing from Task 1 — see the deviation note above.
 
-- [ ] **Step 1: Die Tests schreiben**
+- [ ] **Step 1: Write the tests**
 
 ```swift
 /// The merge carries one member's secret onto the set and then deletes every
@@ -246,18 +245,18 @@ git commit -m "feat(core): ask the schema whether a login set holds what it need
 @Test func aReadableMemberSecretIsCarriedAndTheOwnSlotsGo() throws { … }
 ```
 
-- [ ] **Step 2: Rot sehen**
+- [ ] **Step 2: See red**
 
 ```bash
 swift test --filter Merge
 ```
-Erwartet: der erste Test rot — heute wird gelöscht statt abgebrochen.
+Expected: the first test red — today it deletes instead of aborting.
 
-- [ ] **Step 3: Umsetzen**
+- [ ] **Step 3: Implement**
 
-Die beiden `try?`-Reads werfen lassen und den Wurf in denselben
-Rollback-Zweig führen, den es für den Carry-Fehler schon gibt. Der Kommentar
-muss sagen, **warum**, nicht nur was:
+Make the two `try?` reads throw and route the throw into the same rollback
+branch that already exists for the carry error. The comment must say
+**why**, not just what:
 
 ```swift
 // Both reads throw rather than swallowing: a Keychain that will not answer
@@ -267,21 +266,21 @@ muss sagen, **warum**, nicht nur was:
 // and still merges -- there is nothing to carry and nothing to lose.
 ```
 
-Der Rollback-Zweig bleibt, wie er ist: Set löschen, nichts umhängen, nichts
-löschen, melden.
+The rollback branch stays as it is: delete the set, reassign nothing, delete
+nothing, report.
 
-- [ ] **Step 4: Grün sehen und die Gegenprobe fahren**
+- [ ] **Step 4: See green and run the counter-check**
 
 ```bash
 swift test --filter Merge
 ```
 
-Gegenprobe: die Reads wieder auf `try?` stellen → der erste Test muss rot
-werden, und zwar mit **verschwundenem Credential** (`storedIDs` leer), nicht
-bloß mit einem abweichenden Flag. Rot-Ausgabe in den Bericht, zurücknehmen,
-`git status --porcelain` leer.
+Counter-check: put the reads back on `try?` → the first test must go red,
+and specifically with a **vanished credential** (`storedIDs` empty), not just
+a deviating flag. Put the red output in the report, revert,
+`git status --porcelain` empty.
 
-- [ ] **Step 5: Committen**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Sources/macSCPCore Tests/macSCPCoreTests
@@ -290,7 +289,7 @@ git commit -m "fix(core): abort the merge on an unreadable secret instead of del
 
 ---
 
-### Task 3: Die Jump-Bindung fragt, bevor sie löscht
+### Task 3: The jump binding asks before it deletes
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift`
@@ -298,9 +297,9 @@ git commit -m "fix(core): abort the merge on an unreadable secret instead of del
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: `setCoversItsLogin(_:)` aus Task 1.
+- Consumes: `setCoversItsLogin(_:)` from Task 1.
 
-- [ ] **Step 1: Die Tests schreiben**
+- [ ] **Step 1: Write the tests**
 
 ```swift
 /// Switching a jump from manual to a login set deletes the old bastion slot
@@ -314,33 +313,33 @@ git commit -m "fix(core): abort the merge on an unreadable secret instead of del
 @Test func switchingAJumpWhileTheKeychainIsSilentKeepsTheBastionSlot() throws { … }
 ```
 
-Die bestehenden `cleanOrphanedJumpSlot`-Tests müssen **unverändert grün
-bleiben** — der Manual-zu-Manual-Fall ändert sich nicht.
+The existing `cleanOrphanedJumpSlot` tests must stay **green unchanged** —
+the manual-to-manual case does not change.
 
-- [ ] **Step 2: Rot sehen**
+- [ ] **Step 2: See red**
 
 ```bash
 swift test --filter Jump
 ```
 
-- [ ] **Step 3: Umsetzen**
+- [ ] **Step 3: Implement**
 
-`cleanOrphanedJumpSlot` bekommt vor dem Löschen die Deckungsfrage. Ist der
-neue Jump set-gebunden und das Set **nicht** gedeckt — oder ist die Frage
-nicht beantwortbar —, bleibt der Slot.
+`cleanOrphanedJumpSlot` gets the coverage question before the delete. If the
+new jump is set-bound and the set is **not** covered — or the question
+cannot be answered — the slot stays.
 
-Die Funktion ist heute wurffrei und wird von `save` und `updateSession`
-gerufen; sie bleibt wurffrei. Ein unbeantwortbarer Read heißt hier **nicht
-löschen**, nicht **abbrechen**: die Bindung selbst ist in Ordnung, nur die
-Aufräumarbeit unterbleibt. Das ist die konservative Richtung, und der
-Kommentar muss sagen, dass sie bewusst gewählt ist.
+The function is currently throw-free, called by `save` and `updateSession`;
+it stays throw-free. An unanswerable read means **do not delete** here, not
+**abort**: the binding itself is fine, only the cleanup is skipped. That is
+the conservative direction, and the comment must say it was chosen
+deliberately.
 
-- [ ] **Step 4: Grün sehen und die Gegenprobe fahren**
+- [ ] **Step 4: See green and run the counter-check**
 
-Wächter entfernen → `switchingAJumpToASetWithoutASecretKeepsTheBastionSlot`
-muss rot werden mit weg gelöschtem Slot. Zurücknehmen, Baum sauber nachweisen.
+Remove the guard → `switchingAJumpToASetWithoutASecretKeepsTheBastionSlot`
+must go red with the slot deleted. Revert, prove the tree clean.
 
-- [ ] **Step 5: Committen**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Sources/macSCPCore Tests/macSCPCoreTests
@@ -349,22 +348,22 @@ git commit -m "fix(core): keep the bastion secret when the jump's set holds none
 
 ---
 
-### Task 4: Der Import sagt, wenn Sets ohne Passwort ankommen
+### Task 4: The import reports when sets arrive without a password
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift`
-  (das Login-Set-Import-Ergebnis)
+  (the login-set import result)
 - Modify: `Sources/MacSCPApp/LoginSetsSheet.swift` (`importResultText`)
 - Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift`
 
-- [ ] **Step 1: Die Zählung ergänzen**
+- [ ] **Step 1: Add the count**
 
-Das Ergebnis des Login-Set-Imports bekommt ein Feld für „ohne Passwort
-angekommen", gezählt beim Anlegen. **Nur zählen, nicht lesen** — die Zahl
-kommt aus dem geplanten Secret, nicht aus einem Schlüsselbund-Read.
+The login-set import result gets a field for "arrived without a password",
+counted at creation time. **Only count, do not read** — the number comes
+from the planned secret, not from a Keychain read.
 
-- [ ] **Step 2: Den Test schreiben**
+- [ ] **Step 2: Write the test**
 
 ```swift
 /// The export leaves secrets out by default and the import said nothing, so
@@ -372,28 +371,28 @@ kommt aus dem geplanten Secret, nicht aus einem Schlüsselbund-Read.
 @Test func importingSetsWithoutSecretsReportsTheirNumber() throws { … }
 ```
 
-- [ ] **Step 3: Die vier Kataloge ergänzen**
+- [ ] **Step 3: Add the four catalogs**
 
-Englisch als Referenz, im Stil der Nachbarzeilen:
+English as reference, in the style of the neighboring lines:
 
 ```
 "loginSets.import.withoutPassword %lld" = "Arrived without a password: %lld";
 ```
 
-Deutsch:
+German:
 
 ```
 "loginSets.import.withoutPassword %lld" = "Ohne Passwort angekommen: %lld";
 ```
 
-FR und PL sinngemäß — dieselbe Schlüsselmenge, das erzwingt der vorhandene
-Wächtertest.
+FR and PL correspondingly — the same key set, enforced by the existing
+guard test.
 
-- [ ] **Step 4: In die Ergebnismeldung einhängen**
+- [ ] **Step 4: Hook into the result message**
 
-Neben den vorhandenen Zeilen, nur wenn die Zahl größer null ist.
+Next to the existing lines, only when the count is greater than zero.
 
-- [ ] **Step 5: Prüfen und committen**
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 for f in Sources/MacSCPApp/Resources/*.lproj/Localizable.strings; do plutil -lint "$f"; done
@@ -409,19 +408,19 @@ git commit -m "feat(app): say when imported logins arrived without a password"
 
 ---
 
-### Task 5: Meilenstein-Abschluss
+### Task 5: Milestone close-out
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-09-m28-abschluss.md`
 
-- [ ] **Step 1: Volle Verifikation**
+- [ ] **Step 1: Full verification**
 
 ```bash
 swift build
 swift test
 ```
 
-Docker-Rig **aus dem Haupt-Checkout**, nie aus einem Worktree:
+Docker rig **from the main checkout**, never from a worktree:
 
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
@@ -429,37 +428,37 @@ MACSCP_ITEST=1 swift test
 MACSCP_KEYCHAIN=1 swift test --filter Keychain
 ```
 
-Bleibt ein Lauf bei 0 % CPU stehen, ist das der seit M20 bekannte Hänger —
-abbrechen, neu starten, vermerken, **nicht** als M28-Befund zählen. Danach
+If a run stalls at 0% CPU, that is the hang known since M20 — abort, restart,
+note it, do **not** count it as an M28 finding. Afterward
 `pgrep -fl swiftpm-testing-helper`.
 
-Kataloge:
+Catalogs:
 
 ```bash
 for f in Sources/MacSCPApp/Resources/*.lproj/Localizable.strings Sources/macSCPCore/Resources/*.lproj/Localizable.strings; do plutil -lint "$f"; done
 ```
 
-- [ ] **Step 2: Die Gegenprobe zum Verlustweg**
+- [ ] **Step 2: The counter-check for the loss path**
 
-Den Test aus Task 1, der den letzten Anlauf gekippt hätte
-(`anS3SetDeclaringAgentAuthIsStillNotCovered`), gegen die **damalige**
-Formulierung fahren: Deckungsfrage probeweise auf `set.authKind != .agent`
-umstellen, Test rot sehen, zurücknehmen. Das Ergebnis kommt in den Bericht —
-es ist der Beleg, dass M28 den Fehler seines Vorgängers wirklich abfängt und
-nicht nur anders schreibt.
+Run the test from Task 1 that would have caught the last attempt
+(`anS3SetDeclaringAgentAuthIsStillNotCovered`) against the **then-current**
+formulation: switch the coverage question to `set.authKind != .agent` as a
+trial, see the test go red, revert. The result goes in the report — it is
+the evidence that M28 genuinely catches its predecessor's bug rather than
+just writing it differently.
 
-- [ ] **Step 3: Den Bericht schreiben**
+- [ ] **Step 3: Write the report**
 
-Form von `2026-08-08-m26-abschluss.md`. Muss enthalten: die Verifikation mit
-Zahlen; die zehn Erfolgskriterien der Spec mit **Beleg statt Behauptung**; die
-Rot-Zustände aller drei Gegenproben im Wortlaut; die **Abweichung von der
-Spec** (eine Regel wurde zwei) mit dem, was sie über das Verallgemeinern
-sagt; die Vorgeschichte in einem Absatz (vier zurückgenommene Runden, und
-warum das Ziel verschoben wurde); was offen bleibt (der veraltete Slot, die
-Editor-Reibung, der app-weite Audit-Bereich, der Release-Stau); und die Zahl
-der unversendeten Commits.
+Shape of `2026-08-08-m26-abschluss.md`. Must contain: the verification with
+numbers; the ten success criteria of the spec with **evidence rather than
+claims**; the red states of all three counter-checks verbatim; the
+**deviation from the spec** (one rule became two) and what it says about
+generalizing; the backstory in one paragraph (four reverted rounds, and why
+the goal shifted); what remains open (the stale slot, the editor friction,
+the app-wide audit area, the release backlog); and the number of unpushed
+commits.
 
-- [ ] **Step 4: Committen, nicht pushen**
+- [ ] **Step 4: Commit, do not push**
 
 ```bash
 git add docs/superpowers/specs/2026-08-09-m28-abschluss.md
@@ -468,34 +467,33 @@ git commit -m "docs(m28): record the milestone close"
 
 ---
 
-## Selbstreview des Plans
+## Plan self-review
 
-**Spec-Abdeckung.** Kriterium 1–2 → T2; 3 → T3; 4 → T1/Step 1 (sechs Tests,
-einer je Tabellenzeile); 5 → T1 (`anS3SetDeclaringAgentAuthIsStillNotCovered`)
-und T5/Step 2; 6 → T1/Step 5, Gegenprobe 1; 7 → T1
-(`anUnreadableKeychainMakesCoverageThrowRatherThanFalse`) und T3; 8 → T4;
-9 → Review; 10 → T4/Step 5.
+**Spec coverage.** Criteria 1–2 → T2; 3 → T3; 4 → T1/Step 1 (six tests,
+one per table row); 5 → T1 (`anS3SetDeclaringAgentAuthIsStillNotCovered`)
+and T5/Step 2; 6 → T1/Step 5, counter-check 1; 7 → T1
+(`anUnreadableKeychainMakesCoverageThrowRatherThanFalse`) and T3; 8 → T4;
+9 → review; 10 → T4/Step 5.
 
-**Typkonsistenz.** `BackendDescriptor.loginSetValues(_:)` und
-`credentialSchema.visibleSecretField(in:namespace:)` existieren beide und sind
-oben mit ihren echten Signaturen zitiert; `ConnectionField.isRequired` ist das
-Feld, das `StoredSessionConnectionConfig` bereits in derselben Komposition
-abfragt.
+**Type consistency.** `BackendDescriptor.loginSetValues(_:)` and
+`credentialSchema.visibleSecretField(in:namespace:)` both exist and are
+quoted above with their real signatures; `ConnectionField.isRequired` is the
+field that `StoredSessionConnectionConfig` already queries in the same
+composition.
 
-**Zwei bewusste Unschärfen, ausgewiesen statt versteckt:**
+**Two deliberate imprecisions, flagged rather than hidden:**
 
-1. **Die Testrümpfe in T2 und T3 sind Namen plus Doc-Kommentar**, kein
-   fertiger Code. Was jeder Test beweisen muss, steht fest; der Aufbau —
-   Merge-Gruppe, Jump-Spec, passendes Double — ist mehrfach im Repo vorhanden
-   und beim Implementierer besser aufgehoben als in einer Planzeile, die ich
-   nicht ausgeführt habe.
-2. **Die genaue Gestalt der Import-Zählung in T4 ist offen.** Ich weiß, dass
-   das Ergebnis Zählfelder hat und die Meldung sie zeilenweise ausgibt; welches
-   Feld wie heißt und wo genau gezählt wird, sieht der Implementierer im Code
-   nach. Eine Planzeile, die ich nicht geprüft habe, ist eine Hypothese — und
-   diese ist als solche markiert.
+1. **The test bodies in T2 and T3 are names plus doc comment**, not finished
+   code. What each test must prove is fixed; the setup — merge group, jump
+   spec, matching double — occurs repeatedly in the repo and is better left
+   to the implementer than to a plan line I have not executed.
+2. **The exact shape of the import count in T4 is open.** I know the result
+   has count fields and the message prints them line by line; which field is
+   named what and exactly where it is counted, the implementer looks up in
+   the code. A plan line I have not verified is a hypothesis — and this one
+   is marked as such.
 
-**Was dieser Plan bewusst nicht tut.** Er fasst die drei nicht löschenden
-Binder nicht an und löscht den veralteten Slot nicht. Vier Runden haben genau
-dort gearbeitet und jedes Mal einen Verlustweg hinterlassen. Wer das später
-angeht, hat mit T1 die Bedingung, die dafür nötig ist.
+**What this plan deliberately does not do.** It does not touch the three
+non-deleting binders and does not delete the stale slot. Four rounds have
+worked exactly there and each time left behind a loss path. Whoever tackles
+that later has, with T1, the precondition it needs.

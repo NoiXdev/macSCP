@@ -1,131 +1,130 @@
-# M11a — Zwischenhost aus gespeicherter Verbindung (Design)
+# M11a — Jump host from a saved connection (design)
 
-Datum: 2026-07-29 · Status: vom Maintainer freigegeben („dann los")
+Date: 2026-07-29 · Status: approved by the maintainer ("go ahead then")
 
-## Ziel
+## Goal
 
-Im Jump-Block des Verbindungsformulars eine gespeicherte Verbindung als
-Zwischenhost auswählen können, statt Host/Port/Login erneut einzutippen.
-Die Auswahl wird als REFERENZ persistiert: ändert sich die Bastion-
-Verbindung, gilt das überall.
+In the jump block of the connection form, be able to select a saved
+connection as the jump host instead of retyping host/port/login. The
+selection is persisted as a REFERENCE: if the bastion connection changes,
+that applies everywhere.
 
-**Maintainer-Entscheidungen (2026-07-29):**
+**Maintainer decisions (2026-07-29):**
 
-1. REFERENZ, nicht Kopie — und ausdrücklich NICHT die laufende Verbindung
-   eines anderen Tabs mitbenutzen (das würde die Invariante „eine
-   Verbindung pro Tab" brechen und Lebenszyklen koppeln).
-2. Löschen einer referenzierten Verbindung stellt die betroffenen Jumps
-   zurück (Werte + Secret kopieren, Referenz lösen) — dasselbe Muster wie
-   das Login-Set-Löschen aus M10b. Nie kaputte Verbindungen.
+1. REFERENCE, not a copy — and explicitly NOT reusing another tab's live
+   connection (that would break the "one connection per tab" invariant
+   and couple lifecycles).
+2. Deleting a referenced connection resets the affected jumps (copy the
+   values + secret, detach the reference) — the same pattern as the
+   login-set deletion from M10b. Never broken connections.
 
-## 1. Modell
+## 1. Model
 
-- `StoredSession.JumpSpec.sessionID: UUID?` — non-nil = Session-Modus;
-  die eigenen Felder (`host`, `port`, `username`, `authKind`, `keyPath`,
-  `loginSetID`) sind dann inaktiv (bleiben als Datenträger für die
-  Rückstellung erhalten). Optional OHNE Custom-Decoder (Muster
-  `groupID`/`loginSetID`/`jump`) — alte `sessions.json` lesen nil.
-- `secretID` bleibt unverändert: im Session-Modus ungenutzt, wird beim
-  Wechsel in den Session-Modus wie beim Set-Wechsel aufgeräumt
-  (Slot-Hygiene aus M10c/M10d).
+- `StoredSession.JumpSpec.sessionID: UUID?` — non-nil = session mode;
+  its own fields (`host`, `port`, `username`, `authKind`, `keyPath`,
+  `loginSetID`) are then inactive (kept as a data carrier for the reset).
+  Optional WITHOUT a custom decoder (pattern
+  `groupID`/`loginSetID`/`jump`) — an old `sessions.json` reads nil.
+- `secretID` stays unchanged: unused in session mode, cleaned up on
+  switching to session mode the same way as on a set switch (slot hygiene
+  from M10c/M10d).
 
-## 2. Auflösung beim Verbinden
+## 2. Resolution on connect
 
-- `LoginResolver.resolveJump` bekommt zusätzlich die Session-Liste (und
-  die ID der referenzierenden Session, um Selbstreferenz zu erkennen).
-- Session-Modus: Session anhand `sessionID` suchen.
-  - **nicht gefunden** ⇒ `LoginResolveError.missingJumpSession`
-  - **referenzierte Session hat selbst einen Jump** ⇒
-    `LoginResolveError.jumpChainNotSupported` (EIN Hop bleibt die Regel;
-    der Picker filtert das vorher weg, aber die Referenz kann später
-    kaputtgehen, wenn die Bastion nachträglich einen Jump bekommt)
-  - **Selbstreferenz** (`sessionID == referencing session id`) ⇒
-    ebenfalls `jumpChainNotSupported`
-  - sonst: Host/Port aus der referenzierten Session; das LOGIN über den
-    BESTEHENDEN `LoginResolver.resolve(session:sets:secrets:)` — damit
-    funktionieren Login-Set, manuelles Passwort/Key und Agent am Jump
-    automatisch, ohne neuen Codepfad. Ein fehlendes Login-Set der
-    referenzierten Session propagiert als `missingSet` (unverändert).
-- Kein stiller Fallback in irgendeinem Fall (M10b/M10c-Prinzip).
-- Eligibility als reine Core-Funktion:
+- `LoginResolver.resolveJump` additionally gets the session list (and the
+  ID of the referencing session, to detect self-reference).
+- Session mode: look up the session by `sessionID`.
+  - **not found** ⇒ `LoginResolveError.missingJumpSession`
+  - **the referenced session itself has a jump** ⇒
+    `LoginResolveError.jumpChainNotSupported` (ONE hop remains the rule;
+    the picker filters this out beforehand, but the reference can later
+    break if the bastion is subsequently given a jump)
+  - **self-reference** (`sessionID == referencing session id`) ⇒
+    likewise `jumpChainNotSupported`
+  - otherwise: host/port from the referenced session; the LOGIN via the
+    EXISTING `LoginResolver.resolve(session:sets:secrets:)` — so login
+    set, manual password/key, and agent all work automatically at the
+    jump, with no new code path. A missing login set on the referenced
+    session propagates as `missingSet` (unchanged).
+- No silent fallback in any case (M10b/M10c principle).
+- Eligibility as a pure Core function:
   `JumpSessionEligibility.eligible(for editingSessionID: UUID?, in sessions: [StoredSession]) -> [StoredSession]`
-  — schließt die gerade bearbeitete Session und alle Sessions mit eigenem
-  Jump aus; sortiert wie die Sidebar (name, case-insensitiv).
+  — excludes the session currently being edited and any session with its
+  own jump; sorted like the sidebar (name, case-insensitive).
 
-## 3. Formular
+## 3. Form
 
-- Im Jump-Block über der Host-Zeile ein Umschalter
-  `Gespeicherte Verbindung | Manuell` (Default Manuell — Bestandsverhalten).
-- **Session-Modus:** Picker über die eligiblen Sessions; darunter eine
-  nicht editierbare Zusammenfassung des aufgelösten Ziels
-  (`host:port · user · Auth-Kurzform`, Auth-Kurzform wie im
-  Login-Sets-Sheet). KEINE Host/Port/Login-Felder, KEIN Login-Dreiweg,
-  kein „Als neues Login-Set speichern".
-- **Manuell-Modus:** exakt das heutige Verhalten (Host/Port + Dreiweg).
-- Validierung: Session-Modus verlangt eine Auswahl; die referenzierte
-  Session muss eligibel sein (Ketten/Selbstreferenz werden schon beim
-  Speichern abgelehnt, mit derselben Meldung wie beim Connect).
-- Edit-Prefill: `sessionID` gesetzt ⇒ Session-Modus mit Vorauswahl.
-- Neue `ConnectionViewModel`-Felder: `jumpSourceMode`
+- In the jump block above the host row, a toggle
+  `Saved connection | Manual` (default manual — existing behavior).
+- **Session mode:** a picker over the eligible sessions; below it a
+  non-editable summary of the resolved target
+  (`host:port · user · auth short form`, auth short form as in the
+  login-sets sheet). NO host/port/login fields, NO login three-way, no
+  "Save as new login set".
+- **Manual mode:** exactly today's behavior (host/port + three-way).
+- Validation: session mode requires a selection; the referenced session
+  must be eligible (chains/self-reference are already rejected at save
+  time, with the same message as at connect time).
+- Edit prefill: `sessionID` set ⇒ session mode with a preselection.
+- New `ConnectionViewModel` fields: `jumpSourceMode`
   (`enum JumpSourceMode: String, CaseIterable, Sendable { case session, manual }`,
-  Default `.manual`), `jumpSessionID: UUID?`. Beide werden in
-  `exitEditMode()`/`endEditing()` mitzurückgesetzt (M10b-Lektion).
+  default `.manual`), `jumpSessionID: UUID?`. Both get reset along with
+  `exitEditMode()`/`endEditing()` (M10b lesson).
 
-## 4. Löschen = Rückstellung
+## 4. Deletion = reset
 
-- `SessionListViewModel.delete(_:)` prüft vor dem Löschen, welche
-  Sessions die zu löschende als Jump referenzieren; die Lösch-Rückfrage
-  nennt die Anzahl (App-Ebene).
-- Beim Bestätigen: pro betroffener Session werden Host/Port/Username/
-  authKind/keyPath der GELÖSCHTEN Session in deren JumpSpec kopiert und
-  ihr aufgelöstes Secret (aus dem Session-Slot bzw. dem Login-Set der
-  gelöschten Session) in den `secretID`-Slot des Jumps geschrieben;
-  `sessionID` wird genullt. Agent-Logins übertragen kein Secret
-  (M10d-Regel). Keychain-Fehler zählen, brechen nicht ab
-  (`restored`/`secretFailures` wie `LoginSetDeleteResult`).
-- Ein referenzierender Jump im SET-Modus der gelöschten Session behält
-  seine Set-Referenz nicht — die Rückstellung schreibt genau die
-  aufgelösten Werte, damit die Verbindung ohne die gelöschte Session
-  weiterfunktioniert.
+- `SessionListViewModel.delete(_:)` checks before deletion which sessions
+  reference the one being deleted as a jump; the delete confirmation
+  names the count (App layer).
+- On confirming: for each affected session, host/port/username/
+  authKind/keyPath of the DELETED session get copied into its JumpSpec
+  and its resolved secret (from the session slot or the login set of the
+  deleted session) gets written into the jump's `secretID` slot;
+  `sessionID` gets nulled. Agent logins carry over no secret (M10d rule).
+  Keychain errors get counted, not aborted on
+  (`restored`/`secretFailures` like `LoginSetDeleteResult`).
+- A referencing jump in SET mode of the deleted session does not keep its
+  set reference — the reset writes exactly the resolved values, so the
+  connection keeps working without the deleted session.
 
-## 5. Export/Import
+## 5. Export/import
 
-- Der Export löst einen Session-Jump zu konkreten Werten auf (Muster
-  M10c: `jumpHost`/`jumpPort`/`jumpUsername`/`jumpAuthKind`/`jumpKeyPath`
-  + `jumpPassword` nur bei `includePasswords`); die Referenz-UUID wandert
-  NICHT mit (importierte Sessions bekommen ohnehin frische IDs).
-- Fehlende/kaputte Referenz ⇒ Export exportiert die Spec-Eigenwerte und
-  bricht nie ab (fehlendes Secret zählt wie gehabt in
+- Export resolves a session jump to concrete values (M10c pattern:
+  `jumpHost`/`jumpPort`/`jumpUsername`/`jumpAuthKind`/`jumpKeyPath`
+  + `jumpPassword` only with `includePasswords`); the reference UUID does
+  NOT travel along (imported sessions get fresh IDs anyway).
+- Missing/broken reference ⇒ export exports the spec's own values and
+  never aborts (a missing secret counts as before in
   `missingPasswordCount`).
-- Import: unverändert — es entsteht immer ein manueller Jump.
+- Import: unchanged — it always produces a manual jump.
 
 ## 6. Tests
 
-- Decode-Kompatibilität (`sessions.json` ohne `sessionID` ⇒ nil),
-  Roundtrip.
-- Auflösung über alle drei Login-Arten der referenzierten Session
-  (Passwort, Key, Agent) inkl. Login-Set der referenzierten Session.
-- Die drei Fehlerfälle: `missingJumpSession`, Kette, Selbstreferenz.
-- Eligibility-Funktion (Ketten und die bearbeitete Session gefiltert,
-  Sortierung).
-- Rückstellung beim Löschen: Werte + Secret kopiert, Referenz genullt,
-  Agent überträgt kein Secret, Keychain-Fehler zählt statt bricht.
-- Export: Session-Jump aufgelöst; kaputte Referenz ⇒ Eigenwerte,
-  kein Abbruch.
-- Gated: Verbindung über einen SESSION-referenzierten Jump
-  (Container 1 als gespeicherte Bastion → sshd2), plus der
-  Ketten-Riegel gegen eine Bastion mit eigenem Jump.
+- Decode compatibility (`sessions.json` without `sessionID` ⇒ nil),
+  roundtrip.
+- Resolution across all three login kinds of the referenced session
+  (password, key, agent) including a login set of the referenced session.
+- The three error cases: `missingJumpSession`, chain, self-reference.
+- Eligibility function (chains and the session being edited filtered
+  out, sorting).
+- Reset on deletion: values + secret copied, reference nulled, agent
+  carries over no secret, keychain error counts instead of aborting.
+- Export: session jump resolved; broken reference ⇒ own values, no
+  abort.
+- Gated: a connection via a SESSION-referenced jump
+  (container 1 as a saved bastion → sshd2), plus the chain guard against
+  a bastion with its own jump.
 
-## 7. Aufteilung
+## 7. Breakdown
 
-T1 Core (JumpSpec.sessionID + Resolver + Eligibility) → T2 VM
-(Rückstellung + Export) → T3 App (Umschalter, Picker, Anzeige,
-Fehlermeldungen, L10n) → T4 Abschluss (gated Rig-Test, Final-Review).
-KEIN Release.
+T1 Core (JumpSpec.sessionID + resolver + eligibility) → T2 VM
+(reset + export) → T3 App (toggle, picker, display,
+error messages, L10n) → T4 closeout (gated rig test, final review).
+NO release.
 
-## 8. Bewusst NICHT in M11a
+## 8. Deliberately NOT in M11a
 
-Keine Nutzung der LAUFENDEN Verbindung eines anderen Tabs; keine Ketten
-(mehr als ein Hop); kein Session-Picker für den ZIEL-Host (die Session
-IST das Ziel); kein Export der Referenz; keine automatische Umstellung
-bestehender manueller Jumps auf passende gespeicherte Verbindungen.
+No use of another tab's LIVE connection; no chains (more than one hop);
+no session picker for the TARGET host (the session IS the target); no
+export of the reference; no automatic switching of existing manual jumps
+to matching saved connections.

@@ -1,80 +1,80 @@
 # macSCP — Backlog
 
-**Stand:** 2026-08-29. Ein Index über die Einträge unter
-`docs/superpowers/specs/`, damit sie nicht einzeln gesucht werden müssen.
-Jeder Eintrag dort ist eine **gesicherte Idee oder ein gemessener Befund**,
-kein Entwurf — die Entwürfe entstehen erst beim Angehen.
+**Status:** 2026-08-29. An index over the entries under
+`docs/superpowers/specs/`, so they do not have to be searched for one by
+one. Every entry there is a **secured idea or a measured finding**, not a
+design — the designs are created only when the work is taken on.
 
-Diese Datei enthält keine Inhalte, nur Zeiger. Wer etwas ändert, ändert es
-im Eintrag und zieht hier höchstens die Zeile nach.
+This file contains no content, only pointers. Whoever changes something
+changes it in the entry and at most updates the line here to match.
 
 ---
 
-## Fehler
+## Bugs
 
-| | Eintrag | Kern |
+| | Entry | Core |
 |---|---|---|
-| **B-1** | [Fehlerliste](superpowers/specs/2026-08-20-bugs.md) | Verbinden zu einem toten Host blockiert die App. Ursache gemessen: Citadels Frist steht auf 30 s und wurde nie übergeben. **Teilweise behoben** — die Frist wird inzwischen übergeben und der Aufbau ist abbrechbar; offen bleibt, ob der Hauptthread tatsächlich blockiert. |
-| **B-2** | [SSH-Schlüsselformate](superpowers/specs/2026-08-31-backlog-ssh-schluesselformate.md) | Aus einem Fehlerbericht zu v1.3.0, und es sind **zwei** Dinge. Die Meldung „SSH key format is not supported (currently: OpenSSH ed25519)" meint „unterstützt wird ed25519" und liest sich als „dein ed25519 wird nicht unterstützt" — billig zu beheben und beantwortet zugleich, welcher Fall beim nächsten Bericht vorliegt. Dahinter: der Lader kann **nur** ed25519, RSA und ecdsa lassen sich verwalten, aber nicht verbinden. |
-| **B-3** | [S3 ohne Bucket verbinden](superpowers/specs/2026-08-31-backlog-s3-ohne-bucket.md) | Aus demselben Bericht: ohne Bucket und Region lässt macSCP nicht verbinden. Vorschlag des Maintainers: beide leer → Buckets laden und als Startpunkt zeigen. **`ListBuckets` gibt es im Baum nicht**, die Region kann nicht leer bleiben (SigV4 signiert mit ihr), und eine Bucket-Ebene ist eine **zweite Art Verzeichnis** — andere Spalten, andere mögliche Aktionen. Der billige Teil (Regions-Vorgabe + erklärende Meldung) ist davon abtrennbar. |
+| **B-1** | [Bug list](superpowers/specs/2026-08-20-bugs.md) | Connecting to a dead host blocks the app. Cause measured: Citadel's deadline is set to 30 s and was never passed through. **Partially fixed** — the deadline is now passed through and the connection attempt is cancellable; whether the main thread actually blocks remains open. |
+| **B-2** | [SSH key formats](superpowers/specs/2026-08-31-backlog-ssh-schluesselformate.md) | From a bug report on v1.3.0, and it is **two** things. The message "SSH key format is not supported (currently: OpenSSH ed25519)" means "ed25519 is what's supported" and reads as "your ed25519 is not supported" — cheap to fix and simultaneously answers which case is present on the next report. Behind it: the loader can **only** do ed25519, RSA and ecdsa can be managed but not connected with. |
+| **B-3** | [Connecting to S3 without a bucket](superpowers/specs/2026-08-31-backlog-s3-ohne-bucket.md) | From the same report: without a bucket and region, macSCP will not connect. Maintainer's suggestion: both empty → load buckets and show them as a starting point. **`ListBuckets` does not exist in the tree**, the region cannot stay empty (SigV4 signs with it), and a bucket level is a **second kind of directory** — different columns, different possible actions. The cheap part (region default + explanatory message) is separable from this. |
 
-## Sicherheit und Prüfbarkeit
+## Security and testability
 
-| Eintrag | Kern |
+| Entry | Core |
 |---|---|
-| [Fähigkeitsgrenze statt Wächter](superpowers/specs/2026-08-22-backlog-verbindungs-fähigkeit.md) | **Umgesetzt 2026-08-28.** Entscheider sind Typen, der Wählvorgang ist modulintern — beides von außen gepflanzt und die Compile-Fehler belegt. Offen und benannt: `import Citadel` kompiliert in der App-Schicht (SwiftPM-Suchpfad), diese Lücke liegt unterhalb der Typen und hält Scan plus Import-Allow-List am Leben. |
-| [Tests, die an echte Ablagen kommen](superpowers/specs/2026-08-22-backlog-testisolation.md) | `ContentView` verdrahtete Keychain und Sitzungs-Store fest. Ein Test hat dadurch in den echten Keychain geschrieben. Naht ist inzwischen da; der Eintrag hält die Regel und die Restfälle. |
-| [Wie weit lässt sich die Oberfläche prüfen?](superpowers/specs/2026-08-21-backlog-ui-testabdeckung.md) | **Entschieden 2026-08-28: XCUITest vorerst gestrichen** — ein zweites Bausystem einzuziehen, solange das erste nicht ausgeliefert hat, verschiebt das Problem. Die Abwägung (Wächter / ViewInspector / XCUITest) bleibt nachlesbar; zurück holt es ein Fehler dieser Klasse, der einen Nutzer erreicht. |
-| [Abbau gegen eine eingefrorene Gegenseite](superpowers/specs/2026-08-25-backlog-abbau-bei-eingefrorenem-peer.md) | **Erledigt 2026-08-29.** `disconnect()` kam gegen einen schweigenden Peer nie zurück; genau `sftp.close()` hing. Drei der vier Abbau-Stufen sind jetzt begrenzt — die vierte (`cancelAll`) wurde gemessen und die Frist darum wieder zurückgenommen, weil sie nichts fing und den synchronen Sweep kostete. Mit offener Shell: ≥31 s ohne Rückkehr vorher, 10,3 s und `.lost` nachher. Der unbegrenzte Aufruf ist zusätzlich **strukturell ausgeschlossen** (`BoundedSFTPSession`). |
-| [Unbegrenzte Dateischlüsse](superpowers/specs/2026-08-28-backlog-unbegrenzte-dateischluesse.md) | Nebenbefund zweier Abbau-Messungen: **8** `SFTPFile.close()`-Stellen, keine begrenzt, mehrere auf einem Abbau-Pfad. **Kein bestätigter Fehler** — dieselbe Form wie zwei Aufrufe, die nachweislich hingen, aber der eine Pfad dorthin ist gemessen und kommt zurück. Zuerst messen, erst dann begrenzen. |
-| [Zwei offene Fragen aus der Abschlussdurchsicht](superpowers/specs/2026-08-26-backlog-offene-fragen-durchsicht.md) | **S3-Hälfte gemessen und entwarnt 2026-08-28:** `Authorization` reist über keine Weiterleitung mit (10 Fälle, 2 Origin-Formen, 5 Statuscodes). Offen bleibt **M3** — ein noch nicht gewählter Sitzungsursprung wird einem ad-hoc-Fehlschlag zugeschrieben; entworfen in [2026-08-28-zwei-offene-fragen-design.md](superpowers/specs/2026-08-28-zwei-offene-fragen-design.md). |
-| [S3 fährt auf der geteilten URL-Session](superpowers/specs/2026-08-29-backlog-s3-teilt-die-url-session.md) | **Erledigt 2026-08-29.** S3 hat eine eigene `ephemeral`-Session und gibt sie in `disconnect()` frei; der `.shared`-Vorgabewert an `URLSessionHTTPTransport.init` ist weg, vier Aufrufstellen nennen ihre Session. Die offene Messung ist beantwortet, und zwar ungünstig: `sendStreaming` cacht **identisch** — eine `max-age`-Antwort wurde einem zweiten Prozess samt Körper von Platte ausgeliefert. |
-| [S3 folgt Weiterleitungen ohne Kontrolle](superpowers/specs/2026-08-28-backlog-s3-weiterleitungen.md) | **Erledigt 2026-08-29** (`9e96025`), erst baubar geworden, seit S3 eine eigene Session hat. Gleiche Origin wird neu signiert und gefolgt — was zugleich den Funktionsfehler behebt, dass eine legitime Weiterleitung unsigniert ankam; eine fremde Origin (Schema, Host **und** Port) wird abgelehnt, und die Meldung nennt beide Origins ohne Pfad. Der falsche `Host` fällt durch das Neusignieren weg. |
+| [Capability boundary instead of a guard](superpowers/specs/2026-08-22-backlog-verbindungs-fähigkeit.md) | **Implemented 2026-08-28.** Deciders are types, the dialing happens module-internal — both proved from outside by planting compile errors. Open and named: `import Citadel` compiles in the app layer (SwiftPM search path), this gap sits below the types and keeps the scan plus the import allow-list alive. |
+| [Tests reaching real stores](superpowers/specs/2026-08-22-backlog-testisolation.md) | `ContentView` hard-wired the keychain and the session store. A test consequently wrote into the real keychain. A seam now exists; the entry holds the rule and the remaining cases. |
+| [How far can the UI be tested?](superpowers/specs/2026-08-21-backlog-ui-testabdeckung.md) | **Decided 2026-08-28: XCUITest struck for now** — pulling in a second build system while the first has not yet shipped just defers the problem. The trade-off (guard / ViewInspector / XCUITest) stays readable; a bug of this class reaching a user is what brings it back. |
+| [Teardown against a frozen peer](superpowers/specs/2026-08-25-backlog-abbau-bei-eingefrorenem-peer.md) | **Done 2026-08-29.** `disconnect()` never returned against a silent peer; specifically `sftp.close()` hung. Three of the four teardown stages are now bounded — the fourth (`cancelAll`) was measured and its deadline was reverted, because it caught nothing and cost the synchronous sweep. With an open shell: ≥31 s with no return before, 10.3 s and `.lost` after. The unbounded call is additionally **structurally excluded** (`BoundedSFTPSession`). |
+| [Unbounded file closes](superpowers/specs/2026-08-28-backlog-unbegrenzte-dateischluesse.md) | Side finding from two teardown measurements: **8** `SFTPFile.close()` sites, none bounded, several on a teardown path. **Not a confirmed bug** — the same shape as two calls that demonstrably hung, but the one path leading there is measured and returns. Measure first, only then bound it. |
+| [Two open questions from the closing review](superpowers/specs/2026-08-26-backlog-offene-fragen-durchsicht.md) | **S3 half measured and cleared 2026-08-28:** `Authorization` is not carried along across any redirect (10 cases, 2 origin forms, 5 status codes). **M3** stays open — an as-yet-unselected session origin gets attributed to an ad-hoc failure; designed in [2026-08-28-zwei-offene-fragen-design.md](superpowers/specs/2026-08-28-zwei-offene-fragen-design.md). |
+| [S3 runs on the shared URL session](superpowers/specs/2026-08-29-backlog-s3-teilt-die-url-session.md) | **Done 2026-08-29.** S3 now has its own `ephemeral` session and releases it in `disconnect()`; the `.shared` default in `URLSessionHTTPTransport.init` is gone, four call sites name their session. The open measurement is answered, and unfavorably so: `sendStreaming` caches **identically** — a `max-age` response was served to a second process, body and all, from disk. |
+| [S3 follows redirects without control](superpowers/specs/2026-08-28-backlog-s3-weiterleitungen.md) | **Done 2026-08-29** (`9e96025`), only buildable once S3 had its own session. Same origin gets re-signed and followed — which at the same time fixes the functional bug that a legitimate redirect arrived unsigned; a foreign origin (scheme, host **and** port) is refused, and the message names both origins without the path. The wrong `Host` disappears through the re-signing. |
 
-## Oberfläche
+## Interface
 
-| Eintrag | Kern |
+| Entry | Core |
 |---|---|
-| [Sitzungen, Tabs, Seitenleiste](superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md) | **Vollständig erledigt** (elf von elf, abgeschlossen 2026-08-29). Zeiger bleibt, weil die Begründungen und die gemessenen Ausgangszustände darin gelten. |
-| [Verwaltungs-Sheets](superpowers/specs/2026-08-20-backlog-verwaltungs-sheets.md) | **Vollständig erledigt** (2026-08-29): Punkte 1, 2, 3 und 5 umgesetzt, Punkt 4 verworfen. Der Facetten-Filter ist ein Steuerelement für drei Sheets, verkettet mit der Suche über einen prüfbaren Wert; die Werte kommen aus den Zeilen, und unter zwei Werten erscheint keine Auswahl. Nebenbei gefunden: **alle drei** Sheets trugen dieselbe stille Lüge — „ungefiltert" hieß „Suchfeld leer". Zeiger bleibt wegen der Begründungen, besonders Punkt 4. |
-| [Feinschliff an den Reitern](superpowers/specs/2026-08-27-backlog-reiter-feinschliff.md) | **Erledigt 2026-08-27/28**, nachgeprüft am 2026-08-29: die Einfügemarke hebt den Zielreiter hervor (`TabStripView.dropTarget`), und das Umschalten Terminal ↔ Dateien hängt als `TabMenuEntry.pane(_:_:)` im Reiter-Menü, mit `PaneToggleState` als der einen Wahrheit. Zeiger bleibt, weil die Begründungen darin gelten. |
-| [Snippet-Editor: Bedienung](superpowers/specs/2026-08-21-backlog-snippet-editor-bedienung.md) | **Erledigt 2026-08-30.** Variablen falten ohne gemerkten Zustand; eine fehlerhafte lässt sich nicht zuklappen, womit „alle zu" zu „zeig mir nur die Probleme" wird. Einfügen, Vervollständigung bei `{{`, und der Hinweis auf ein undeklariertes `{{NAME}}` — als **Anzeige**, nicht als Sendeverbot. **Offen geblieben:** ein `{{DB}}` für eine Umgebungsvariable ist genauso stumm und wird nicht gemeldet — ein Klick vom behobenen Fall entfernt, braucht einen eigenen Satz. |
-| [Prüfsummen für Dateien](superpowers/specs/2026-08-27-backlog-datei-hashes.md) | **Punkte 1 und 2 erledigt 2026-08-31** (vier Aufgaben). Core bekam **keinen** `exec(String)`, sondern „berechne die Prüfsumme dieser Datei": `ChecksumCommandLine` hat einen `fileprivate init` und zwei Konstruktionsstellen im ganzen Paket. Ein Ergebnis ohne **Herkunft** ist nicht konstruierbar — belegt, indem die schwächere Bauart gepflanzt wurde und mit grüner Suite durchging. Ein Mehrteil-ETag sagt ausdrücklich, dass er **nicht** die Prüfsumme der Datei ist. **Offen: Punkt 3** (Tabellenspalte), dessen Frage 3 unbeantwortet ist, sowie kein Fortschritt innerhalb einer Datei und kein eigener Fall für „dieses Verfahren gibt es hier nicht". |
-| [Snippet-Probelauf](superpowers/specs/2026-08-20-backlog-snippet-probelauf.md) | **Erledigt 2026-08-30** (vier Aufgaben). Der Probelauf zeigt den aufgelösten Befehl, die Sendeform, den Ablehnungsgrund und die Färbung — aus **einem** Wert, den beide Zugänge rufen (Ablehnung beim Auslösen, „Testen" im Editor). Das Kennzeichen pro Snippet gibt es zusätzlich; es kann **nicht** exportiert werden, weil die Ausfuhr einen eigenen Typ bekam, bevor das Feld existierte. Der eingesetzte Wert erreicht kein Protokoll, keinen Export und keine Fehlermeldung — auch keine Testfehlermeldung. |
+| [Sessions, tabs, sidebar](superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md) | **Fully done** (eleven of eleven, completed 2026-08-29). The pointer stays because the justifications and measured starting states in it still apply. |
+| [Management sheets](superpowers/specs/2026-08-20-backlog-verwaltungs-sheets.md) | **Fully done** (2026-08-29): items 1, 2, 3 and 5 implemented, item 4 dropped. The facet filter is one control for three sheets, chained with the search via a testable value; the values come from the rows, and with fewer than two values no picker appears. Found along the way: **all three** sheets carried the same silent lie — "unfiltered" meant "search field empty". The pointer stays because of the justifications, especially item 4. |
+| [Fine polish on the tabs](superpowers/specs/2026-08-27-backlog-reiter-feinschliff.md) | **Done 2026-08-27/28**, re-verified 2026-08-29: the insertion marker highlights the target tab (`TabStripView.dropTarget`), and switching terminal ↔ files hangs off `TabMenuEntry.pane(_:_:)` in the tab menu, with `PaneToggleState` as the single source of truth. The pointer stays because the justifications in it apply. |
+| [Snippet editor: usability](superpowers/specs/2026-08-21-backlog-snippet-editor-bedienung.md) | **Done 2026-08-30.** Variables fold without remembered state; a variable with an error cannot be collapsed, which turns "collapse all" into "show me only the problems". Insertion, autocomplete on `{{`, and the hint for an undeclared `{{NAME}}` — as a **display**, not a send block. **Left open:** a `{{DB}}` for an environment variable is just as silent and is not reported — one click away from the fixed case, needs its own pass. |
+| [Checksums for files](superpowers/specs/2026-08-27-backlog-datei-hashes.md) | **Items 1 and 2 done 2026-08-31** (four tasks). Core did not get a generic `exec(String)`, but "compute this file's checksum": `ChecksumCommandLine` has a `fileprivate init` and two construction sites in the whole package. A result without **provenance** cannot be constructed — proved by planting the weaker construction and watching it pass with a green suite. A multipart ETag explicitly says it is **not** the file's checksum. **Open: item 3** (table column), whose question 3 remains unanswered, plus no progress within a file and no dedicated case for "this algorithm does not exist here". |
+| [Snippet dry run](superpowers/specs/2026-08-20-backlog-snippet-probelauf.md) | **Done 2026-08-30** (four tasks). The dry run shows the resolved command, the send form, the rejection reason and the coloring — from **one** value that both entry points call (rejection on trigger, "Test" in the editor). The per-snippet marker exists in addition; it **cannot** be exported, because export got its own type before the field existed. The inserted value reaches no log, no export, and no error message — not even a test failure message. |
 
-## Neue Funktionen
+## New features
 
-| Eintrag | Kern |
+| Entry | Core |
 |---|---|
-| [FTP und SMB/AFP](superpowers/specs/2026-08-25-backlog-weitere-protokolle.md) | Zwei sehr verschiedene Hälften unter einem Wort. SMB/AFP spricht macOS bereits — es ginge um eine Einbindung, und die gewohnten TOFU-Zusagen haben dort keine Entsprechung. FTP bräuchte zuerst eine Entscheidung über Bibliothek und Spielart, denn nacktes FTP überträgt Zugangsdaten im Klartext. **Nicht zusammen angehen.** |
-| [Werkzeuge zum Untersuchen einer Verbindung](superpowers/specs/2026-08-25-backlog-verbindungswerkzeuge.md) | Ping und Trace pro Verbindung, auch ohne gespeicherten Host. Die offene Frage ist, was beides hier heißen soll — ein Protokoll von macSCPs eigenem Aufbau ist vermutlich nützlicher als ein Traceroute und braucht keine erhöhten Rechte. |
+| [FTP and SMB/AFP](superpowers/specs/2026-08-25-backlog-weitere-protokolle.md) | Two very different halves under one word. macOS already speaks SMB/AFP — it would be about integration, and the usual TOFU guarantees have no counterpart there. FTP would first need a decision on library and variant, since bare FTP transmits credentials in plaintext. **Do not take on together.** |
+| [Tools for inspecting a connection](superpowers/specs/2026-08-25-backlog-verbindungswerkzeuge.md) | Ping and trace per connection, even without a saved host. The open question is what both should mean here — a log of macSCP's own connection setup is probably more useful than a traceroute and needs no elevated privileges. |
 
-## Werkzeug und Wartung
+## Tooling and maintenance
 
-| Eintrag | Kern |
+| Entry | Core |
 |---|---|
-| [CLI: Vervollständigung, Hilfe, Host-Liste](superpowers/specs/2026-08-20-backlog-cli-completion-hosts.md) | Die Host-Auflistung fehlt ganz und ist zugleich die Datenquelle für die Vervollständigung — deshalb zuerst. Auflage: die Liste fasst den Keychain nicht an. |
-| [Abhängigkeiten](superpowers/specs/2026-08-20-backlog-abhaengigkeiten.md) | swift-nio-ssh kommt als **Fremd-Fork** über Citadel herein — der eigentliche Befund. Dazu: SwiftTerm hängt an einer nackten Revision, swift-crypto ist zwei Hauptversionen zurück. |
-| [Keep-alive als zwei Einstellungen](superpowers/specs/2026-08-25-backlog-keepalive-zwei-einstellungen.md) | Ein gespeicherter Wert trägt „aus" und „Intervall" zugleich; das Intervall überlebt keinen Neustart. Ursache war eine falsche Vorgabe im Auftrag, nicht die Umsetzung. |
-| [Import-Planer](superpowers/specs/2026-08-19-backlog-import-planer.md) | Halb gefüllte Feldtaschen beim Import. Vor dem Angehen prüfen, wie viel davon der Snippet-Zweig bereits erledigt hat. |
+| [CLI: completion, help, host list](superpowers/specs/2026-08-20-backlog-cli-completion-hosts.md) | The host listing is entirely missing and is at the same time the data source for completion — hence first. Constraint: the listing must not touch the keychain. |
+| [Dependencies](superpowers/specs/2026-08-20-backlog-abhaengigkeiten.md) | swift-nio-ssh comes in as a **foreign fork** via Citadel — the actual finding. Also: SwiftTerm hangs off a bare revision, swift-crypto is two major versions behind. |
+| [Keep-alive as two settings](superpowers/specs/2026-08-25-backlog-keepalive-zwei-einstellungen.md) | One stored value carries "off" and "interval" at once; the interval does not survive a restart. Cause was a wrong default in the task spec, not the implementation. |
+| [Import planner](superpowers/specs/2026-08-19-backlog-import-planer.md) | Half-filled field bags on import. Before taking this on, check how much of it the snippet branch has already handled. |
 
 ---
 
-## Erledigt (Zeiger bleiben, damit die Begründungen auffindbar sind)
+## Done (pointers stay so the justifications stay findable)
 
-| Eintrag | |
+| Entry | |
 |---|---|
-| [Swift-6-Warnungen](superpowers/specs/2026-08-19-backlog-swift6-warnungen.md) | erledigt 2026-08-26: alle sechs Targets auf `.v6`, warnungsfrei, CI-Schranke bewiesen rot und grün |
-| [Snippet-Editor Teil 3: deklarierte Variablen](superpowers/specs/2026-08-19-backlog-snippet-teil-3.md) | umgesetzt, zehn Prüfrunden |
-| [M6a Polish-Backlog](superpowers/specs/2026-07-26-m6a-polish-backlog-design.md) | Meilenstein abgeschlossen |
-| [M11e Backlog-Sweep](superpowers/specs/2026-07-29-m11e-backlog-sweep-design.md) | Meilenstein abgeschlossen |
+| [Swift 6 warnings](superpowers/specs/2026-08-19-backlog-swift6-warnungen.md) | done 2026-08-26: all six targets on `.v6`, warning-free, CI gate proved red and green |
+| [Snippet editor part 3: declared variables](superpowers/specs/2026-08-19-backlog-snippet-teil-3.md) | implemented, ten review rounds |
+| [M6a polish backlog](superpowers/specs/2026-07-26-m6a-polish-backlog-design.md) | milestone completed |
+| [M11e backlog sweep](superpowers/specs/2026-07-29-m11e-backlog-sweep-design.md) | milestone completed |
 
 ---
 
-## Wenn du nicht weißt, womit anfangen
+## If you don't know where to start
 
-Drei Kandidaten, aus unterschiedlichen Gründen:
+Three candidates, for different reasons:
 
-1. **Einfachklick verbindet nicht mehr** — eine Zeile, spürbar bei jeder Benutzung, und das Kontextmenü hat den Weg schon.
-2. **Known-Hosts-Spaltensortierung** — fast geschenkt, weil das Sheet bereits eine `Table` ist.
-3. **Die Fähigkeitsgrenze** — der einzige Eintrag, der eine wiederkehrende Fehlerklasse beendet statt ihren nächsten Fall zu behandeln.
+1. **Single click no longer connects** — one line, felt on every use, and the context menu already has the path.
+2. **Known-hosts column sorting** — almost free, because the sheet is already a `Table`.
+3. **The capability boundary** — the only entry that ends a recurring bug class instead of handling its next instance.

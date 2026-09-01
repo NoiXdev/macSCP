@@ -1,59 +1,59 @@
-# M29-P1 — Das App-Target prüfbar machen: Fundament (Design)
+# M29-P1 — Making the App Target Testable: Foundation (Design)
 
-**Stand:** 2026-08-09. Vorgänger: M28, dessen Whole-Branch-Review einen
-**Critical** fand, den kein Test halten kann.
+**As of:** 2026-08-09. Predecessor: M28, whose whole-branch review found
+a **Critical** that no test could catch.
 
-## Warum es diesen Meilenstein gibt
+## Why this milestone exists
 
-M28 schloss einen Pfad, auf dem ein WebDAV- oder S3-Passwort einen
-SSH-Bastion-Host erreichte. Zur Absicherung wurde der neue `kind`-Wächter
-probeweise **ganz entfernt** — die volle Suite blieb **grün**.
+M28 closed a path on which a WebDAV or S3 password could reach an
+SSH bastion host. As a safeguard, the new `kind` guard was experimentally
+**removed entirely** — the full suite stayed **green**.
 
-Der Grund ist strukturell, nicht nachlässig: `Tests/` enthält genau ein
-Verzeichnis, `macSCPCoreTests`. `MacSCPApp` ist ein `executableTarget` ohne
-Testtarget. Was dort liegt, kann kein Test erreichen. Dazu kommt, dass die
-betroffene Logik `private func` **auf der `ContentView`-Struct** ist: selbst
-mit Testtarget müsste man eine SwiftUI-View samt ihrer Umgebung
-konstruieren, um sie zu befragen.
+The reason is structural, not carelessness: `Tests/` contains exactly one
+directory, `macSCPCoreTests`. `MacSCPApp` is an `executableTarget` without
+a test target. Nothing there can be reached by a test. On top of that,
+the affected logic is a `private func` **on the `ContentView` struct**:
+even with a test target, you would have to construct a SwiftUI view along
+with its environment just to query it.
 
-**Ein Testtarget allein hätte M28s Critical also nicht gefangen.** Beides
-wird gebraucht: ein Ort, an dem App-Code prüfbar ist, **und** Logik, die
-nicht in einer View wohnt.
+**A test target alone would therefore not have caught M28's Critical.** Both
+are needed: a place where app code is testable, **and** logic that
+does not live inside a view.
 
-## Zerlegung: warum P1 nur das Fundament ist
+## Breakdown: why P1 is only the foundation
 
-Der Gesamtwunsch — Testtarget, Entkernung von `ContentView` (3540 Zeilen, 65
-Funktionen), Aufteilung in kleinere Views — hat die Größenordnung von M22
-oder M23, die beide in Phasen liefen. Zerlegung, mit dem Maintainer am
-2026-08-09 festgelegt:
+The overall wish — a test target, gutting `ContentView` (3540 lines, 65
+functions), splitting it into smaller views — is on the order of M22
+or M23, both of which ran in phases. Breakdown, fixed with the
+maintainer on 2026-08-09:
 
-| Phase | Inhalt |
+| Phase | Content |
 |---|---|
-| **P1 (dieser Meilenstein)** | Library-Split, dünnes `@main`-Target, zweites Testtarget, L10n-Härtung, Tests für die vorhandene Nicht-View-Logik. **Keine Verhaltensänderung.** |
-| P2 | Der Submit-Pfad (Ziel-Set-, Jump-Set-, Jump-Sitzungs-Auflösung und ihre Reihenfolge) nach Core, als Entscheidungsfunktion mit Fehlerfall statt Text. Schließt M28s Lücke. |
-| P3 | Restliche Nicht-View-Logik aus `ContentView`; die View in benannte Unter-Views zerlegt. |
+| **P1 (this milestone)** | Library split, thin `@main` target, second test target, L10n hardening, tests for the existing non-view logic. **No behavior change.** |
+| P2 | The submit path (target-set, jump-set, jump-session resolution and their order) moved to Core, as a decision function with an error case instead of text. Closes M28's gap. |
+| P3 | Remaining non-view logic out of `ContentView`; the view broken into named subviews. |
 
-**P1 zuerst**, weil P2 und P3 ihre Ergebnisse sonst nicht festnageln können.
+**P1 first**, because P2 and P3 could not otherwise pin down their results.
 
-### Eine Klarstellung, die den Zuschnitt geprägt hat
+### A clarification that shaped the scope
 
-Kleine Unter-Views machen **nichts testbar**. Eine Unter-View ist wieder eine
-View und hat ohne Rendering keine Zusicherungsfläche; dafür bräuchte es
-XCUITest oder ViewInspector, beides in diesem Projekt bewusst nicht im
-Einsatz. Das Aufteilen zahlt auf **Lesbarkeit** ein, die Entkernung auf
-**Prüfbarkeit**. Beides lohnt, aber auf verschiedene Konten — deshalb sitzen
-sie zusammen in P3 und nicht in P1.
+Small subviews make **nothing** testable. A subview is again a view and
+has no assertion surface without rendering; that would need XCUITest or
+ViewInspector, both deliberately not in use in this project. Splitting
+pays into **readability**, gutting pays into **testability**. Both are
+worthwhile, but on different accounts — that is why they sit together in
+P3 and not in P1.
 
-## Zielaufbau
+## Target structure
 
-`MacSCPApp` wird zur Library **`MacSCPAppKit`**; alle heutigen Quellen und
-Ressourcen ziehen unverändert mit, das Verzeichnis wird zu
-`Sources/MacSCPAppKit/` umbenannt (statt den alten Pfad per `path:`
-festzuhalten — ein Target, dessen Verzeichnis anders heißt als es selbst,
-ist genau die Art stiller Abweichung, die dieser Meilenstein abschafft).
+`MacSCPApp` becomes the library **`MacSCPAppKit`**; all current sources
+and resources move over unchanged, the directory is renamed to
+`Sources/MacSCPAppKit/` (rather than keeping the old path via `path:`
+— a target whose directory is named differently from the target itself
+is exactly the kind of silent divergence this milestone abolishes).
 
-Daneben ein neues Executable-Target **`MacSCPMain`** unter
-`Sources/MacSCPMain/` mit genau einer Datei:
+Alongside it, a new executable target **`MacSCPMain`** under
+`Sources/MacSCPMain/` with exactly one file:
 
 ```swift
 import MacSCPAppKit
@@ -64,47 +64,47 @@ struct Main {
 }
 ```
 
-Das `App`-Protokoll bringt `static func main()` mit, das Executable braucht
-also keine eigene Szene. `MacSCPApp: App` bleibt als `public struct` im Kit.
-Dazu ein zweites Testtarget **`macSCPAppKitTests`**.
+The `App` protocol brings `static func main()` along, so the executable
+needs no scene of its own. `MacSCPApp: App` stays a `public struct` in the
+kit. Alongside that, a second test target **`macSCPAppKitTests`**.
 
-**Das Produkt heißt weiter `macSCP`.** Damit bleibt der Binärname, und
-`scripts/package-app` findet sein `$BIN` unverändert.
+**The product keeps the name `macSCP`.** That keeps the binary name, so
+`scripts/package-app` finds its `$BIN` unchanged.
 
-### Was der Umbau an Zugriffsebenen verlangt
+### What the restructuring requires in terms of access levels
 
-Innerhalb eines Moduls ist `internal` sichtbar, die 36 App-Dateien brauchen
-also **keine** Anpassung untereinander. `public` wird genau an einer Stelle
-gebraucht: `MacSCPApp` selbst, damit das Executable es aufrufen kann. Wer
-darüber hinaus `public` setzt, hat einen Fehler gemacht.
+Within a module, `internal` is visible, so the 36 app files need
+**no** adjustment among themselves. `public` is needed at exactly one
+place: `MacSCPApp` itself, so the executable can call it. Whoever sets
+`public` beyond that has made a mistake.
 
-Das Testtarget nutzt `@testable import MacSCPAppKit` und sieht damit auch
-`internal` — dieselbe Mechanik wie in `macSCPCoreTests`.
+The test target uses `@testable import MacSCPAppKit` and thereby also
+sees `internal` — the same mechanism as in `macSCPCoreTests`.
 
-## Der Bundle-Name: die stille Falle
+## The bundle name: the silent trap
 
-`L10n.bundle` sucht **einen fest verdrahteten Namen**, `macSCP_MacSCPApp.
-bundle`, von SwiftPM aus `<Paket>_<Target>` gebildet. Nach der Umbenennung
-heißt das Bundle `macSCP_MacSCPAppKit.bundle`. Findet die Suche nichts,
-fällt sie auf `Bundle.main` zurück, und `NSLocalizedString` liefert den
-`defaultValue` — **jeden App-String auf Englisch, ohne Absturz und ohne
-roten Test.** In einem englischen Screenshot sähe alles korrekt aus.
+`L10n.bundle` looks for **one hardcoded name**, `macSCP_MacSCPApp.
+bundle`, formed by SwiftPM from `<package>_<target>`. After the rename,
+the bundle is named `macSCP_MacSCPAppKit.bundle`. If the lookup finds
+nothing, it falls back to `Bundle.main`, and `NSLocalizedString` returns
+the `defaultValue` — **every app string in English, with no crash and no
+red test.** In an English screenshot, everything would look correct.
 
-Drei Stellen hängen am Namen, und sie verhalten sich unterschiedlich:
+Three places depend on the name, and they behave differently:
 
-| Stelle | Verhalten bei falschem Namen |
+| Place | Behavior on a wrong name |
 |---|---|
-| `scripts/package-app` | **laut** — `test -d` schlägt fehl |
-| `scripts/release` | **laut** — `cp` bricht ab |
-| `Sources/MacSCPApp/L10n.swift` | **still** — Fallback auf Englisch |
+| `scripts/package-app` | **loud** — `test -d` fails |
+| `scripts/release` | **loud** — `cp` aborts |
+| `Sources/MacSCPApp/L10n.swift` | **silent** — falls back to English |
 
-Der Maintainer hat sich am 2026-08-09 für Umbenennen **und** Härten
-entschieden, nachdem die stille Klasse benannt war.
+The maintainer decided on 2026-08-09 to rename **and** harden,
+once the silent class was identified.
 
-## Die L10n-Härtung — und warum sie mehr ist als Namenspflege
+## The L10n hardening — and why it is more than name maintenance
 
-In einer Wegwerfsonde gegen die laufende Suite gemessen (2026-08-09,
-Sonde danach gelöscht, `git status --porcelain` leer):
+In a throwaway probe against the running suite (measured 2026-08-09,
+probe deleted afterward, `git status --porcelain` clean):
 
 ```
 xctest bundleURL:  .build/arm64-apple-macosx/debug/macSCPPackageTests.xctest
@@ -114,116 +114,115 @@ localized:         "they store different credentials"
 CoreL10n today:    core.login.mergeConflictingSecrets
 ```
 
-Das Ressourcen-Bundle liegt **neben** dem Testbundle und lässt sich unter
-`swift test` einwandfrei laden. Die heutige Suche findet es nicht, weil sie
-`Bundle(for:).resourceURL` fragt — also **in** das `.xctest` hinein — statt
-`Bundle(for:).bundleURL.deletingLastPathComponent()`, also **daneben**. Ein
-einziger fehlender Kandidat.
+The resource bundle sits **next to** the test bundle and loads just fine
+under `swift test`. Today's lookup does not find it because it asks
+`Bundle(for:).resourceURL` — i.e. **inside** the `.xctest` — instead of
+`Bundle(for:).bundleURL.deletingLastPathComponent()`, i.e. **next to** it. A
+single missing candidate.
 
-**Beide Schichten bekommen diesen Kandidaten**, `L10n` wie `CoreL10n`. Damit
-löst die Lokalisierung unter Tests erstmals echt auf, und darauf lässt sich
-ein Wächter setzen: ein Test, der für einen bekannten Schlüssel den
-**übersetzten Text** erwartet — nicht den Schlüssel, nicht den Fallback. Er
-geht rot bei Umbenennung, bei fehlendem Schlüssel und wenn jemand den
-Kandidaten wieder entfernt.
+**Both layers get this candidate**, `L10n` as well as `CoreL10n`. That
+makes localization resolve for real under tests for the first time, and
+that lets us set a guard: a test that, for a known key, expects the
+**translated text** — not the key, not the fallback. It goes red on
+rename, on a missing key, and if someone removes the candidate again.
 
-Damit schließt P1 den `CoreL10n`-Befund aus M28s Abschnitt 5, der bisher
-eigener Backlog-Punkt war — samt seines falschen Doc-Kommentars, der genau
-diese Eigenschaft schon behauptete.
+This closes the `CoreL10n` finding from M28's section 5, which until now
+was its own backlog item — including its incorrect doc comment, which
+already claimed exactly this property.
 
-### Der Nebeneffekt, der Arbeit macht
+### The side effect that creates work
 
-Dutzende bestehende `#expect(error == CoreL10n.string(…))` vergleichen heute
-**Schlüssel mit Schlüssel** und können nicht scheitern. Nach dem Fix
-vergleichen sie Text mit Text. **Einige davon werden rot** — nicht weil der
-Fix falsch ist, sondern weil sie bisher nichts geprüft haben. Diese
-Reparatur gehört zu P1 und ist ausdrücklich eingeplant.
+Dozens of existing `#expect(error == CoreL10n.string(…))` today compare
+**key with key** and cannot fail. After the fix, they compare
+text with text. **Some of them will go red** — not because the fix is
+wrong, but because they previously checked nothing. This repair belongs
+to P1 and is deliberately planned for.
 
-Jeder so gefundene Fall wird im Abschlussbericht **einzeln benannt**: er ist
-der Beleg, dass der Wächter greift.
+Every case found this way is named **individually** in the wrap-up
+report: it is the proof that the guard works.
 
-## Was P1 an Tests mitbringt
+## What P1 brings in terms of tests
 
-Der Maintainer hat entschieden, die vorhandene Nicht-View-Logik gleich mit
-festzunageln. **Nicht jede Datei verdient das**, und die Auslassungen werden
-begründet statt verschwiegen — dieses Projekt hat zweimal notiert, dass ein
-Test, dessen Zusicherung trivial erfüllt ist, kein Regressionsschutz ist.
+The maintainer decided to pin down the existing non-view logic at the
+same time. **Not every file deserves this**, and the omissions are
+justified rather than kept quiet — this project has twice noted that a
+test whose assertion is trivially satisfied is not regression protection.
 
-| Datei | Zeilen | Tests? | Begründung |
+| File | Lines | Tests? | Reason |
 |---|---|---|---|
-| `EditorResolver` | 63 | **ja** | Endungs-/Regelauflösung, reine Funktion |
-| `ExternalTerminalLauncher` | 160 | **ja** | Kommandobau; `LaunchError` ist bereits `Equatable` |
-| `KeyboardShortcutsCatalog` | 71 | **ja** | Datenkatalog — Dubletten, Vollständigkeit, L10n-Schlüssel |
-| `MenuBarStatusModel` | 30 | **ja** | Aggregation über Sitzungszustände |
-| `SessionTab` | 153 | **ja** | `BrowserSession` + Tab-Zustand, ohne UI konstruierbar |
-| `UpdateCheckModel` | 197 | **ja** | `UpdateAlertContent`-Ableitung, Versionsvergleich |
-| `AppRelauncher` | 18 | **nein** | Startet einen Prozess; testbar wäre nur der Pfadbau, und der ist eine Zeile |
-| `RemoteFilePromise` | 53 | **nein** | `NSFilePromiseProvider`-Unterklasse, von AppKit getrieben |
-| `MenuBarController` | 219 | **nein** | `NSStatusItem`-Verdrahtung; braucht eine laufende App |
-| `DesignTokens`, `PolishedButtonStyle` | 98 / 54 | **nein** | Konstanten und Stil — ein Test prüfte, dass eine Zahl dasteht |
-| `L10n` | — | über den Wächter | siehe oben |
-| `MacSCPApp` | 334 | **nein** | Einstiegspunkt und Szene |
+| `EditorResolver` | 63 | **yes** | Extension/rule resolution, pure function |
+| `ExternalTerminalLauncher` | 160 | **yes** | Command construction; `LaunchError` is already `Equatable` |
+| `KeyboardShortcutsCatalog` | 71 | **yes** | Data catalog — duplicates, completeness, L10n keys |
+| `MenuBarStatusModel` | 30 | **yes** | Aggregation over session states |
+| `SessionTab` | 153 | **yes** | `BrowserSession` + tab state, constructible without UI |
+| `UpdateCheckModel` | 197 | **yes** | `UpdateAlertContent` derivation, version comparison |
+| `AppRelauncher` | 18 | **no** | Starts a process; only the path construction would be testable, and that's one line |
+| `RemoteFilePromise` | 53 | **no** | `NSFilePromiseProvider` subclass, driven by AppKit |
+| `MenuBarController` | 219 | **no** | `NSStatusItem` wiring; needs a running app |
+| `DesignTokens`, `PolishedButtonStyle` | 98 / 54 | **no** | Constants and style — a test would just check that a number is there |
+| `L10n` | — | via the guard | see above |
+| `MacSCPApp` | 334 | **no** | Entry point and scene |
 
-**Korrektur zur Erkundung:** eine frühere Zählung führte 14 Dateien „ohne
-View". `ImportConflictSheet` enthält sehr wohl eine (`private struct … :
-View`) und fiel nur durch die Erkennung. Die belastbare Zahl testwürdiger
-Dateien ist **sechs**.
+**Correction to the exploration:** an earlier count listed 14 files
+"without a view". `ImportConflictSheet` does in fact contain one
+(`private struct … : View`) and slipped through only due to the
+detection. The reliable count of test-worthy files is **six**.
 
-## Was P1 ausdrücklich **nicht** ist
+## What P1 explicitly is **not**
 
-- **Keine Verhaltensänderung.** Die App tut danach exakt dasselbe. Jede
-  beobachtete Abweichung ist ein Fehler, nicht ein Ergebnis.
-- **Keine Entkernung von `ContentView`.** Das ist P2 und P3.
-- **Keine View-Aufteilung.** P3.
-- **Kein UI-Testing.** Weder XCUITest noch ViewInspector kommen ins Projekt;
-  wenn P1 fertig ist, ist SwiftUI-Code weiterhin nicht per Test prüfbar, und
-  das ist so gewollt.
+- **No behavior change.** The app does exactly the same thing afterward. Any
+  observed deviation is a bug, not a result.
+- **No gutting of `ContentView`.** That's P2 and P3.
+- **No view splitting.** P3.
+- **No UI testing.** Neither XCUITest nor ViewInspector enter the project;
+  when P1 is done, SwiftUI code remains untestable, and
+  that's intentional.
 
-## Risiken
+## Risks
 
-- **Ressourcen-Bundling.** `.process("Resources")` zieht mit dem Kit um.
-  Bricht das, sind Icons, Kataloge und der Shader betroffen. `package-app`
-  prüft laut, aber erst am Ende.
-- **Signierung und Verpackung.** `scripts/release` und `scripts/package-app`
-  kennen den Bundle-Namen an drei Zeilen. **Nicht ausführen** — `release`
-  veröffentlicht. Die Anpassung wird gelesen und gegen einen `package-app`-
-  Lauf ohne Veröffentlichung geprüft.
-- **Der stille Fallback.** Größtes Risiko des Meilensteins, und der Grund,
-  warum der Wächter im selben Durchgang entsteht statt danach.
-- **Rot werdende Bestandstests.** Erwartet, siehe oben. Ein Test, der nach
-  dem Fix rot ist, wird **repariert, nicht zurückgedreht** — die Zusicherung
-  war vorher wertlos.
-- **CI.** Zwei Testtargets statt einem; die Laufzeit steigt. `timeout-minutes:
-  20` bleibt.
+- **Resource bundling.** `.process("Resources")` moves along with the kit.
+  If that breaks, icons, catalogs, and the shader are affected. `package-app`
+  checks loudly, but only at the end.
+- **Signing and packaging.** `scripts/release` and `scripts/package-app`
+  know the bundle name in three places. **Do not run** — `release`
+  publishes. The adjustment is read and checked against a `package-app`
+  run without publishing.
+- **The silent fallback.** The milestone's biggest risk, and the reason
+  the guard is created in the same pass rather than afterward.
+- **Existing tests going red.** Expected, see above. A test that is red
+  after the fix gets **repaired, not reverted** — the assertion
+  was worthless before.
+- **CI.** Two test targets instead of one; the run time increases. `timeout-minutes:
+  20` stays.
 
-## Erfolgskriterien
+## Success criteria
 
-| # | Kriterium | Nachweis |
+| # | Criterion | Proof |
 |---|---|---|
-| 1 | Die App startet und verhält sich unverändert | `package-app`-Lauf, danach Sichtprüfung durch den Maintainer (die GUI startet **nicht** aus Reviews oder CI) |
-| 2 | `MacSCPAppKit` ist eine Library, das Executable enthält nur den Einstieg | Die Executable-Quelle ist eine Datei mit `@main` und einem Aufruf |
-| 3 | Genau ein Typ ist neu `public` | Review; mehr `public` heißt, der Split wurde falsch gezogen |
-| 4 | `macSCPAppKitTests` existiert und läuft unter `swift test` | Testausgabe nennt beide Suiten-Mengen |
-| 5 | Die Lokalisierung löst unter `swift test` echt auf | Ein Test erwartet den **übersetzten Text**, nicht den Schlüssel — für App- und Core-Schicht je einer |
-| 6 | Der Wächter geht bei Umbenennung rot | Mutation: Bundle-Namen im Code verfälschen, Rot-Ausgabe wörtlich in den Bericht |
-| 7 | Bestehende, bisher wirkungslose L10n-Zusicherungen sind repariert | Jeder rot gewordene Fall im Bericht **einzeln benannt** |
-| 8 | Die sechs Nicht-View-Dateien haben Tests | Je Datei mindestens ein Test, der ohne die Logik rot würde |
-| 9 | Die **sechs** ausgelassenen Dateien sind begründet, nicht vergessen | Dieser Abschnitt, im Bericht wiederholt: `AppRelauncher`, `RemoteFilePromise`, `MenuBarController`, `DesignTokens`, `PolishedButtonStyle`, `MacSCPApp` |
-| 10 | Verpackung und Signierung funktionieren mit dem neuen Namen | `package-app`-Lauf grün, `release` **nur gelesen** |
-| 11 | Kein Secret-Wert in Meldung, Log oder Testfehlertext | Review |
+| 1 | The app launches and behaves unchanged | `package-app` run, then a visual check by the maintainer (the GUI does **not** launch from reviews or CI) |
+| 2 | `MacSCPAppKit` is a library, the executable contains only the entry point | The executable source is one file with `@main` and one call |
+| 3 | Exactly one type is newly `public` | Review; more `public` means the split was drawn wrong |
+| 4 | `macSCPAppKitTests` exists and runs under `swift test` | Test output names both suite sets |
+| 5 | Localization resolves for real under `swift test` | A test expects the **translated text**, not the key — one each for the app and core layers |
+| 6 | The guard goes red on rename | Mutation: corrupt the bundle name in the code, red output verbatim in the report |
+| 7 | Existing, previously ineffective L10n assertions are repaired | Every case that went red is named **individually** in the report |
+| 8 | The six non-view files have tests | At least one test per file that would go red without the logic |
+| 9 | The **six** omitted files are justified, not forgotten | This section, repeated in the report: `AppRelauncher`, `RemoteFilePromise`, `MenuBarController`, `DesignTokens`, `PolishedButtonStyle`, `MacSCPApp` |
+| 10 | Packaging and signing work with the new name | `package-app` run green, `release` **only read** |
+| 11 | No secret value in a message, log, or test failure text | Review |
 
-## Für die Release-Notes
+## For the release notes
 
-**Keine Zeile.** P1 ändert nichts, was ein Nutzer sieht. Das ist die
-Erfolgsbedingung, nicht ein Mangel.
+**No line.** P1 changes nothing a user sees. That is the
+success condition, not a shortcoming.
 
-## Offen, bewusst nicht Teil von P1
+## Open, deliberately not part of P1
 
-- P2 (Submit-Pfad nach Core) und P3 (Entkernung + View-Aufteilung).
-- Der veraltete Slot einer set-gebundenen Sitzung.
-- Die Editor-Reibung beim Bearbeiten eines Login-Sets.
-- Der Ziel-Picker ohne `kind`-Wächter — heute nur durch einen
-  Namensraum-Zufall harmlos.
-- Ein app-weiter Audit-Bereich.
-- Der Release-Stau: 385 Commits vor `origin/main`.
-- Der 0-%-CPU-Testsuite-Hänger.
+- P2 (submit path moved to Core) and P3 (gutting + view splitting).
+- The stale slot of a set-bound session.
+- The editor friction when editing a login set.
+- The target picker without the `kind` guard — today harmless only
+  by a namespace coincidence.
+- An app-wide audit area.
+- The release backlog: 385 commits ahead of `origin/main`.
+- The 0% CPU test suite hang.

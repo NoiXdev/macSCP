@@ -1,156 +1,155 @@
-# M10c — Jump-Host (Design)
+# M10c — Jump host (design)
 
-Datum: 2026-07-28 · Status: vom Maintainer freigegeben („ja passt"; Mockup
-eingefroren: `docs/design/assets/m10-mockups.html` Abschnitt 2)
+Date: 2026-07-28 · Status: approved by the maintainer ("yes, that works"; mockup
+frozen: `docs/design/assets/m10-mockups.html` section 2)
 
-## Ziel
+## Goal
 
-Verbindungen über einen Zwischenhost (ProxyJump): optionaler Jump-Block im
-Verbindungsformular mit eigener Login-Wahl (Login-Set aus M10b ODER
-Manuell), eigener TOFU-Fluss für BEIDE Hops, gespeicherte Sessions merken
-sich die Jump-Konfiguration. Bewusst EIN Hop — Ketten sind Backlog.
+Connections via an intermediate host (ProxyJump): an optional jump block in
+the connection form with its own login choice (a login set from M10b OR
+manual), its own TOFU flow for BOTH hops, saved sessions remember their
+jump configuration. Deliberately ONE hop — chains are backlog.
 
-**Maintainer-Entscheidungen (2026-07-28):**
+**Maintainer decisions (2026-07-28):**
 
-1. Export (M9a): Jump-Konfiguration wird AUFGELÖST mit exportiert
-   (Login-Sets → Klartext-Werte wie in M10b; Passwort nur bei aktivierter
-   Passwort-Option). Alte App-Versionen ignorieren die neuen Felder.
-2. Ein Hop; Merge-Erkennung bleibt Ziel-only (Jump-Logins nehmen nicht an
-   der Gleichheits-Erkennung teil — Backlog).
+1. Export (M9a): the jump configuration is exported RESOLVED (login sets →
+   plaintext values as in M10b; password only when the password option is
+   enabled). Old app versions ignore the new fields.
+2. One hop; merge detection stays target-only (jump logins do not
+   participate in equality detection — backlog).
 
-## 1. Verbindungsaufbau (Core, RISK)
+## 1. Connection setup (Core, RISK)
 
-- Machbarkeit verifiziert: die gepinnte Citadel-Version hat
-  `SSHClient.jump(to: SSHClientSettings)` — öffnet einen
-  direct-tcpip-Kanal über den bestehenden Client und fährt darüber eine
-  volle SSH-Session mit EIGENER Auth und EIGENEM Host-Key-Validator
+- Feasibility verified: the pinned Citadel version has
+  `SSHClient.jump(to: SSHClientSettings)` — opens a direct-tcpip channel
+  over the existing client and drives a full SSH session over it with its
+  OWN auth and its OWN host-key validator
   (`.build/checkouts/Citadel/Sources/Citadel/Client.swift:197`).
 - `SSHConnectionConfig.jump: Jump?` — `struct Jump: Equatable, Sendable`
-  mit `host/port/username/auth` (gleiche Validierungsregeln wie das Ziel:
-  Host/Username nicht-leer getrimmt, Port 1…65535; Prüfung im
-  Config-Init).
-- `CitadelFileSystem.connect` zweistufig: (1) Jump-Client via
-  `SSHClient.connect` mit TOFU-Validator + Box für den JUMP-Host, (2)
-  `jumpClient.jump(to:)` mit Ziel-Settings, TOFU-Validator + Box für das
-  ZIEL, (3) `openSFTP()` auf dem Ziel-Client.
-- TOFU-Retry-Semantik: die bisherige „unknown → Decider → upsert → genau
-  EIN Retry"-Logik wird zu einer begrenzten Schleife mit **max. zwei
-  Accept-Retries (einer pro Hop)**. Jeder Accept upserted den Key; derselbe
-  Key prompted nie zweimal. Mismatch bleibt auf JEDEM Hop der harte Stopp
-  (Decider wird nie gefragt); alle bestehenden TOFU-Invarianten
-  unangetastet.
-- Lebenszyklus: `CitadelFileSystem` hält den Jump-Client; `disconnect`
-  schließt Ziel-Client, DANN Jump-Client; jeder Fehlpfad im Connect
-  schließt einen bereits offenen Jump-Client (kein Leak). SFTP und
-  Terminal (withPTY) multiplexen unverändert über den ZIEL-Client — die
-  „eine Verbindung pro Tab"-Invariante bleibt.
-- Fehler-Ehrlichkeit: `HostKeyError` trägt den Host (Prompt/Mismatch
-  zeigen, welcher Hop). Auth-Fehler der Stufe 1 werden als NEUER Fall
-  `RemoteFSError.jumpAuthenticationFailed` surfaced (additiv; bestehende
-  Switches haben default-Zweige), damit das Formular die JUMP-Felder
-  markiert statt irreführend das Ziel-Passwort; übrige Stufe-1-Fehler
-  tragen einen Jump-Kontext im reason-String
+  with `host/port/username/auth` (same validation rules as the target:
+  host/username non-empty trimmed, port 1…65535; checked in the config
+  init).
+- `CitadelFileSystem.connect` in two stages: (1) a jump client via
+  `SSHClient.connect` with a TOFU validator + box for the JUMP host, (2)
+  `jumpClient.jump(to:)` with the target settings, TOFU validator + box
+  for the TARGET, (3) `openSFTP()` on the target client.
+- TOFU retry semantics: the previous "unknown → decider → upsert → exactly
+  ONE retry" logic becomes a bounded loop with **at most two accept
+  retries (one per hop)**. Every accept upserts the key; the same key
+  never prompts twice. A mismatch stays the hard stop on EVERY hop (the
+  decider is never asked); all existing TOFU invariants untouched.
+- Lifecycle: `CitadelFileSystem` holds the jump client; `disconnect`
+  closes the target client, THEN the jump client; every failure path in
+  connect closes an already-open jump client (no leak). SFTP and terminal
+  (withPTY) continue to multiplex unchanged over the TARGET client — the
+  "one connection per tab" invariant stays.
+- Error honesty: `HostKeyError` carries the host (prompt/mismatch show
+  which hop). Auth failures at stage 1 are surfaced as a NEW case
+  `RemoteFSError.jumpAuthenticationFailed` (additive; existing switches
+  have default branches), so the form marks the JUMP fields instead of
+  misleadingly marking the target password; the remaining stage-1 errors
+  carry a jump context in the reason string
   (`connectionFailed(reason: "jump host: …")`).
-- Gated-Integrationstest am Rig: Container 1 (2222) als Jump zu
-  Container 2 — Ziel-Adresse aus Sicht des Jump-Containers (compose-
-  interner Servicename; Fallback Host-Gateway). T1 verifiziert die
-  Erreichbarkeit empirisch, bevor der Test festgeschrieben wird.
+- Gated integration test against the rig: container 1 (2222) as a jump to
+  container 2 — target address as seen from the jump container (an
+  internal compose service name; fallback host gateway). T1 verifies
+  reachability empirically before the test is committed.
 
-## 2. Modell + Persistenz
+## 2. Model + persistence
 
-- `StoredSession.jump: JumpSpec?` — verschachteltes
-  `struct JumpSpec: Codable, Equatable, Sendable` mit `host: String`,
+- `StoredSession.jump: JumpSpec?` — a nested
+  `struct JumpSpec: Codable, Equatable, Sendable` with `host: String`,
   `port: Int`, `username: String`, `authKind: StoredSession.AuthKind`,
   `keyPath: String?`, `loginSetID: UUID?`, `secretID: UUID`. Optional
-  OHNE Custom-Decoder (groupID/loginSetID-Muster): Legacy-JSON liest nil.
-- Keychain: manuelle Jump-Secrets liegen unter `secretID` (eigener Slot —
-  der Session-Slot gehört dem Ziel); `secretID` wird beim Anlegen der
-  JumpSpec generiert. Jump im Set-Modus nutzt den Set-Slot (M10b).
-- Session-Löschen löscht auch den Jump-Slot. Session-Update, das den
-  Jump entfernt oder auf Set-Modus wechselt, räumt den verwaisten
-  `secretID`-Slot auf.
-- **Login-Set-Löschen (M10b-Rückstellung) stellt AUCH Jump-Referenzen
-  zurück**: Sessions, deren `jump.loginSetID` auf das Set zeigt, bekommen
-  username/authKind/keyPath in die JumpSpec kopiert und das Set-Secret in
-  ihren `secretID`-Slot; Zählung/Fehlertoleranz wie die bestehende
-  Rückstellung (Keychain-Fehler zählt, bricht nicht). Die Lösch-Rückfrage
-  zählt Jump-Referenzen mit.
-- Merge-Erkennung (LoginMergePlanner) bleibt unverändert Ziel-only.
-- Auflösung beim Connect: Jump-Login analog `LoginResolver` (Set →
-  Werte + Set-Secret; fehlendes referenziertes Set ⇒ ehrliche Meldung,
-  kein stiller Fallback — wie M10b fürs Ziel).
+  WITHOUT a custom decoder (the groupID/loginSetID pattern): legacy JSON
+  reads nil.
+- Keychain: manual jump secrets live under `secretID` (its own slot — the
+  session slot belongs to the target); `secretID` is generated when the
+  JumpSpec is created. Jump in set mode uses the set's slot (M10b).
+- Deleting a session also deletes the jump slot. A session update that
+  removes the jump or switches to set mode cleans up the orphaned
+  `secretID` slot.
+- **Deleting a login set (the M10b fallback) ALSO restores jump
+  references**: sessions whose `jump.loginSetID` points at the set get
+  username/authKind/keyPath copied into the JumpSpec and the set's secret
+  into their `secretID` slot; counting/error tolerance as with the
+  existing fallback (a keychain error counts, does not abort). The delete
+  confirmation counts jump references too.
+- Merge detection (LoginMergePlanner) stays target-only, unchanged.
+- Resolution on connect: jump login analogous to `LoginResolver` (set →
+  values + set secret; a missing referenced set ⇒ an honest message, no
+  silent fallback — as with M10b for the target).
 
-**Bekannte Einschränkung (Final-Review M-5, KnownHosts):** Der bekannte
-Schlüssel des ZIELS wird ausschließlich über dessen eigene literale
-Adresse (`host`/`port`) verwaltet — `CitadelFileSystem` reicht beim
-Zwei-Hop-Connect `config.host`/`config.port` unverändert an den
-Ziel-`TOFUHostKeyValidator` durch, ohne den benutzten Jump in den
-Schlüssel einzubeziehen. Zwei verschiedene Maschinen, die zufällig unter
-derselben literalen Ziel-Adresse über unterschiedliche Bastions erreicht
-werden, teilen sich dadurch EINEN KnownHosts-Eintrag. Das ist bewusst
-fail-closed: ein abweichender Schlüssel löst weiterhin den harten Stop
-(`HostKeyError.mismatch`, kein Decider-Aufruf) aus statt eines stillen
-Falls — die Sicherheitseigenschaft bleibt gewahrt, nur die Fehlermeldung
-nennt aktuell nicht den Jump-Kontext ("über welchen Bastion"). Ein
-jump-bewusster Schlüssel (z. B. `host@via-jump-host`) ist Backlog, kein
-M10c-Scope.
+**Known limitation (final review M-5, KnownHosts):** the TARGET's known
+key is managed exclusively via its own literal address (`host`/`port`) —
+on the two-hop connect, `CitadelFileSystem` passes `config.host`/
+`config.port` through unchanged to the target `TOFUHostKeyValidator`,
+without folding the jump used into the key. Two different machines that
+happen to be reachable under the same literal target address via
+different bastions therefore share ONE KnownHosts entry. This is
+deliberately fail-closed: a differing key still triggers the hard stop
+(`HostKeyError.mismatch`, no decider call) instead of a silent pass-through
+— the security property is preserved, only the error message currently
+does not name the jump context ("via which bastion"). A jump-aware key
+(e.g. `host@via-jump-host`) is backlog, not M10c scope.
 
-## 3. Formular (exakt Mockup Abschnitt 2)
+## 3. Form (exactly mockup section 2)
 
-- Toggle „Über einen Zwischenhost verbinden (ProxyJump)", Default AUS.
-- Eingeschaltet: Bastion-Host + Port + die M10b-Dreiweg-Bausteine fürs
-  Jump-Login (Login-Set-Picker ODER Manuell mit User + Passwort/Key).
-  Bastion und Ziel dürfen verschiedene Sets nutzen; „Als neues Login-Set
-  speichern" gibt es NUR am Ziel (Jump bietet Set/Manuell — YAGNI).
-- Validierung: Toggle an ⇒ Jump-Host nicht-leer, Port numerisch, Login
-  gewählt (Set) bzw. User+Passwort/Key ausgefüllt (Manuell).
-- Edit-Modus zeigt den gemerkten Zustand (JumpSpec ⇒ Toggle an +
-  Set-Vorauswahl bzw. Manuell-Prefill; Passwortfeld „unverändert"-Prompt).
-- Beim Erstkontakt bis zu ZWEI TOFU-Prompts nacheinander (erst Bastion,
-  dann Ziel) über den bestehenden Prompt-Mechanismus — der Prompt zeigt
-  den jeweiligen Host.
-- ConnectionViewModel-Felder (Core, reine stored properties):
+- Toggle "Connect via an intermediate host (ProxyJump)", default OFF.
+- Switched on: bastion host + port + the M10b three-way building blocks
+  for the jump login (login-set picker OR manual with user +
+  password/key). The bastion and the target may use different sets; "Save
+  as a new login set" exists ONLY for the target (the jump offers
+  set/manual — YAGNI).
+- Validation: toggle on ⇒ jump host non-empty, port numeric, a login
+  chosen (set) or user+password/key filled in (manual).
+- Edit mode shows the remembered state (JumpSpec ⇒ toggle on + set
+  preselection or manual prefill; password field "unchanged" prompt).
+- On first contact, up to TWO TOFU prompts in sequence (bastion first,
+  then target) via the existing prompt mechanism — the prompt shows the
+  respective host.
+- ConnectionViewModel fields (Core, plain stored properties):
   `jumpEnabled: Bool`, `jumpHost/jumpPort/jumpUsername/jumpPassword/
   jumpKeyPath: String`, `jumpAuthChoice`, `jumpLoginMode`,
   `jumpSelectedLoginSetID: UUID?`.
 
-## 4. Export/Import (M9a-Erweiterung)
+## 4. Export/import (M9a extension)
 
-- `ExportedSession` bekommt OPTIONALE Jump-Felder (Host/Port/User/
-  authKind/keyPath + `jumpPassword` nur bei `includePasswords`);
-  Login-Sets werden beim Export aufgelöst (M10b-Muster); fehlendes
-  Jump-Set exportiert die Session mit ihren Jump-Eigenwerten, Export
-  bricht nie ab. Fehlende Jump-Secrets zählen im missingPasswordCount.
-- Format bleibt v1 (additive optionale Felder): alte App-Versionen
-  ignorieren sie und importieren die Session ohne Jump.
-- Import legt für mitgelieferte Jump-Passwörter frische `secretID`-Slots
-  an; Keychain-Fehler zählen wie gehabt.
-- ssh-config-ProxyJump-Import: Backlog (Mockup-Entscheid).
+- `ExportedSession` gets OPTIONAL jump fields (host/port/user/authKind/
+  keyPath + `jumpPassword` only with `includePasswords`); login sets are
+  resolved on export (M10b pattern); a missing jump set exports the
+  session with its own jump values, export never aborts. Missing jump
+  secrets count in missingPasswordCount.
+- The format stays v1 (additive optional fields): old app versions ignore
+  them and import the session without a jump.
+- Import creates fresh `secretID` slots for supplied jump passwords;
+  keychain errors count as before.
+- ssh-config ProxyJump import: backlog (mockup decision).
 
 ## 5. Tests
 
-- Config: Jump-Validierung (leerer Host/User, Port-Grenzen), Equatable.
-- JumpSpec: Decode-Kompat alter sessions.json (nil), Roundtrip.
-- TOFU-Zweistufigkeit mock-seitig: Accept je Hop (zwei Retries), Mismatch
-  auf Hop 1 und Hop 2 = harter Stopp, Reject speichert nichts.
-- Secret-Lebenszyklus: Save legt `secretID`-Slot an, Session-Delete räumt
-  ihn, Jump-Entfernen/Set-Wechsel räumt ihn, Set-Lösch-Rückstellung
-  kopiert Werte+Secret in die JumpSpec.
-- Resolver: Jump-Set-Auflösung inkl. fehlendem Set (typisierter Fehler).
-- Export: aufgelöster Jump, Passwort-Gating, Import-Roundtrip mit
-  frischer secretID; Alt-Datei ohne Jump-Felder liest nil.
-- Gated: Jump-Integrationstest Container 1 → Container 2 (SFTP-Listing
-  über den Hop, byte-echter Transfer optional).
-- UI: visueller Smoke (T4-Checkliste an den Maintainer).
+- Config: jump validation (empty host/user, port bounds), Equatable.
+- JumpSpec: decode compatibility with old sessions.json (nil), roundtrip.
+- TOFU two-stage-ness, mock-side: accept per hop (two retries), mismatch
+  on hop 1 and hop 2 = hard stop, reject saves nothing.
+- Secret lifecycle: save creates the `secretID` slot, session delete
+  cleans it up, jump removal/set switch cleans it up, set-delete fallback
+  copies values+secret into the JumpSpec.
+- Resolver: jump-set resolution including a missing set (typed error).
+- Export: resolved jump, password gating, import roundtrip with a fresh
+  secretID; an old file without jump fields reads nil.
+- Gated: jump integration test container 1 → container 2 (SFTP listing
+  over the hop, byte-exact transfer optional).
+- UI: visual smoke test (T4 checklist for the maintainer).
 
-## 6. Aufteilung
+## 6. Breakdown
 
-T1 Config + zweistufiger Connect + Rig-Test (RISK) → T2 JumpSpec + VM
-(Save/Edit/Delete/Rückstellung/Resolver/Export) → T3 App (Formular-Block,
-Wiring, Edit, L10n) → T4 Abschluss. KEIN Release (stehende Regel).
+T1 config + two-stage connect + rig test (RISK) → T2 JumpSpec + VM
+(save/edit/delete/fallback/resolver/export) → T3 App (form block, wiring,
+edit, L10n) → T4 wrap-up. NO release (standing rule).
 
-## 7. Bewusst NICHT in M10c
+## 7. Deliberately NOT in M10c
 
-- Keine Jump-Ketten (ein Hop), kein ssh-config-ProxyJump-Import, keine
-  Merge-Erkennung für Jump-Logins, kein „Als neues Set speichern" im
-  Jump-Block, kein ssh-agent (M10d).
+- No jump chains (one hop), no ssh-config ProxyJump import, no merge
+  detection for jump logins, no "save as a new set" in the jump block, no
+  ssh-agent (M10d).

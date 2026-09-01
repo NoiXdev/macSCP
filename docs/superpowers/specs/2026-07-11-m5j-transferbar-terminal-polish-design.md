@@ -1,81 +1,85 @@
-# macSCP M5j — Design-Polish Transfer-Leiste & Terminal-Strip (Design-Spec)
+# macSCP M5j — Design polish transfer bar & terminal strip (design spec)
 
-**Datum:** 2026-07-11
-**Status:** vom Maintainer freigegeben (Runde 3 der gestaffelten Polish-Runden)
-**Referenz:** `docs/design/assets/macscp-ci-mockup.html` (bindende Blaupause);
-Vorgänger `…-m5g-browser-polish-design.md`, `…-m5h-sidebar-polish-design.md`.
+**Date:** 2026-07-11
+**Status:** approved by the maintainer (round 3 of the staged polish rounds)
+**Reference:** `docs/design/assets/macscp-ci-mockup.html` (binding blueprint);
+predecessors `…-m5g-browser-polish-design.md`, `…-m5h-sidebar-polish-design.md`.
 
-## Ziel
+## Goal
 
-Transfer-Leiste und Terminal-Panel übernehmen Maße, Typo und die
-Pillen-Progress-Form aus dem CI-Mockup. Reiner View-Layer, null
-Verhaltensänderung. Dritte von vier Runden (danach: Formular & Buttons).
+The transfer bar and terminal panel adopt dimensions, typography, and the
+pill progress shape from the CI mockup. Pure view layer, zero behavior
+change. Third of four rounds (followed by: form & buttons).
 
-## Mockup-Werte (bindend)
+## Mockup values (binding)
 
-| Element | Wert |
+| Element | Value |
 |---|---|
-| Transferbar | `border-top` 1 pt Hairline, Padding 8 pt vertikal / 14 pt seitlich, Schrift 12 pt, Text `ink-2`, Gap 12 pt |
-| Progress-Pille | Höhe 5 pt, Radius 99 (Capsule), Track in `line` (Hairline-Farbe), Füllung Capsule |
-| Terminal-Strip | `border-top` 1 pt Hairline, Padding 8 pt vertikal / 14 pt seitlich, Schrift 12 pt |
+| Transfer bar | `border-top` 1 pt hairline, padding 8 pt vertical / 14 pt sides, font 12 pt, text `ink-2`, gap 12 pt |
+| Progress pill | height 5 pt, radius 99 (capsule), track in `line` (hairline color), capsule fill |
+| Terminal strip | `border-top` 1 pt hairline, padding 8 pt vertical / 14 pt sides, font 12 pt |
 
-**Farbentscheidung (Maintainer/CI-Regel):** Die Pillen-Füllung bleibt
-SEMANTISCH in der Richtungsfarbe (Bernstein `localAmber` = Upload, Ozeanblau
-`remoteBlue` = Download) — das Mockup-Beispiel zeigt Blau, aber die CI-Regel
-(`docs/design/ci.md`) ist bindend; nur die FORM (5-pt-Capsule r99) kommt vom
-Mockup.
+**Color decision (maintainer/CI rule):** The pill fill stays SEMANTIC in
+the direction color (amber `localAmber` = upload, ocean blue `remoteBlue`
+= download) — the mockup example shows blue, but the CI rule
+(`docs/design/ci.md`) is binding; only the SHAPE (5-pt capsule r99) comes
+from the mockup.
 
-## Umsetzung
+## Implementation
 
-### 1. Transfer-Leiste (`Sources/MacSCPApp/TransferQueueBar.swift`)
+### 1. Transfer bar (`Sources/MacSCPApp/TransferQueueBar.swift`)
 
 - `Divider()` → `Rectangle().fill(DesignTokens.hairline).frame(height: 1)`.
-- Kopfzeile: Padding 14 pt horizontal / 8 pt vertikal (statt 12/4); Titel
-  12 pt semibold in `inkSecondary` (statt `.caption`/`.secondary`).
-- Zeilen-Container: Padding 14 pt horizontal, 8 pt unten (statt 12/6);
-  Zeilen-HStack-Gap 12 pt (statt 8).
-- Zeilen-Typo: Basis `font(.system(size: 12))` (statt `.callout`); Dateiname
-  `DesignTokens.ink`; Status-/Rate-Texte `inkSecondary` statt `.secondary`
-  (Fehler bleiben System-Rot, „interrupted" bleibt `.orange` — M5d-Semantik).
-- **PillProgress** (neue private View in derselben Datei):
-  `PillProgress(fraction: Double, fill: Color)` — 5 pt hohe Capsule als Track
-  in `DesignTokens.hairline`, Füllung als Capsule in `fill` mit Breite
-  `fraction × Gesamtbreite` (GeometryReader), `animation(.linear(duration:
-  0.2))` auf Fraction-Änderungen; Gesamtbreite 120 pt wie der heutige
-  `ProgressView`. Ersetzt den determinate `ProgressView(value:)`-Zweig;
-  der indeterminate Zweig (`ProgressView().controlSize(.small)`) bleibt.
-- Icon-/Checkmark-Farben (amber/blau je Richtung) und alle Status-Zweige
-  inhaltlich unverändert.
+- Header row: padding 14 pt horizontal / 8 pt vertical (instead of 12/4);
+  title 12 pt semibold in `inkSecondary` (instead of `.caption`/
+  `.secondary`).
+- Row container: padding 14 pt horizontal, 8 pt bottom (instead of 12/6);
+  row HStack gap 12 pt (instead of 8).
+- Row typography: base `font(.system(size: 12))` (instead of `.callout`);
+  filename `DesignTokens.ink`; status/rate texts `inkSecondary` instead
+  of `.secondary` (errors stay system red, "interrupted" stays `.orange`
+  — M5d semantics).
+- **PillProgress** (new private view in the same file):
+  `PillProgress(fraction: Double, fill: Color)` — 5 pt tall capsule as
+  track in `DesignTokens.hairline`, fill as a capsule in `fill` with
+  width `fraction × total width` (GeometryReader), `animation(.linear(
+  duration: 0.2))` on fraction changes; total width 120 pt as with
+  today's `ProgressView`. Replaces the determinate
+  `ProgressView(value:)` branch; the indeterminate branch
+  (`ProgressView().controlSize(.small)`) stays.
+- Icon/checkmark colors (amber/blue per direction) and all status
+  branches content-wise unchanged.
 
-### 2. Terminal-Panel (`Sources/MacSCPApp/ContentView.swift`, `terminalPanel`)
+### 2. Terminal panel (`Sources/MacSCPApp/ContentView.swift`, `terminalPanel`)
 
-- 1-pt-Hairline als obere Kante des Panels:
+- 1-pt hairline as the panel's top edge:
   `.overlay(alignment: .top) { Rectangle().fill(DesignTokens.hairline)
-  .frame(height: 1).allowsHitTesting(false) }` auf dem Panel-ZStack.
-- „Shell beendet"-Zustand: Schrift 12 pt (`font(.system(size: 12))`),
-  Padding 8 pt vertikal / 14 pt seitlich um den Inhalt; Farben unverändert
-  (Phosphor auf Tiefsee).
-- SwiftTerm-View, Terminal-Lifecycle, ⌘T, Replay: unangetastet.
+  .frame(height: 1).allowsHitTesting(false) }` on the panel ZStack.
+- "Shell beendet" state: font 12 pt (`font(.system(size: 12))`), padding
+  8 pt vertical / 14 pt sides around the content; colors unchanged
+  (phosphor on deep sea).
+- SwiftTerm view, terminal lifecycle, ⌘T, replay: untouched.
 
-## Invarianten
+## Invariants
 
-- KEINE Verhaltensänderung: Queue-Status-Semantik, Aufräumen-Button,
-  Resume-Banner, Konflikt-Sheet, Terminal-Lifecycle — exakt wie heute.
-- Beide Appearances über dynamische Tokens; keine statischen Farben neu.
-- CI-Regeln: Bernstein nur Upload, Blau nur Download/Remote, Phosphor nur
-  Status/Terminal, Fehler System-Rot, Orange nur „interrupted".
+- NO behavior change: queue status semantics, cleanup button, resume
+  banner, conflict sheet, terminal lifecycle — exactly as today.
+- Both appearances via dynamic tokens; no new static colors.
+- CI rules: amber upload only, blue download/remote only, phosphor
+  status/terminal only, errors system red, orange "interrupted" only.
 
 ## Tests
 
-- Keine neuen Unit-Tests (View-Layer); bestehende 295 bleiben grün.
-- Visueller Smoke: hell UND dunkel; laufender Transfer mit niedrigem
-  Bandbreiten-Limit, damit die Pille sichtbar füllt (Track/Füllung/5 pt/
-  Capsule-Form, Upload amber + Download blau); Hairline über Leiste und
-  Terminal-Panel; „Shell beendet"-Maße; Verhaltens-Regression: Transfer
-  läuft durch, Aufräumen, ⌘T auf/zu.
+- No new unit tests (view layer); existing 295 stay green.
+- Visual smoke: light AND dark; a running transfer with a low bandwidth
+  limit so the pill visibly fills (track/fill/5 pt/capsule shape, upload
+  amber + download blue); hairline over the bar and terminal panel;
+  "Shell beendet" dimensions; behavior regression: transfer runs to
+  completion, cleanup, ⌘T open/close.
 
-## Bewusst NICHT in M5j
+## Deliberately NOT in M5j
 
-- Formular-Grid & Button-Radien (Runde 4).
-- Kein Umbau der Queue-Zeilen-Struktur (Reihenfolge der Elemente bleibt).
-- Terminal-Innen-Padding des SwiftTerm-Inhalts (Renderer-intern, nicht anfassen).
+- Form grid & button radii (round 4).
+- No restructuring of the queue row layout (element order stays).
+- Terminal inner padding of the SwiftTerm content (renderer-internal,
+  do not touch).

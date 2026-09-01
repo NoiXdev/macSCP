@@ -1,15 +1,15 @@
-# M25 — Die letzten Platzhalter-Leser Implementation Plan
+# M25 — The Last Placeholder Readers Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die fünf ungeschützten Leser von `StoredSession.host`/`port`/
-`username`/`authKind` in `SessionListViewModel` abräumen und anschließend per
-Compiler-Probe entscheiden, ob die vier Accessoren gelöscht werden können.
+**Goal:** Clear out the five unguarded readers of `StoredSession.host`/`port`/
+`username`/`authKind` in `SessionListViewModel`, and then use a compiler probe
+to decide whether the four accessors can be deleted.
 
-**Architecture:** Eine der drei Stellen ist gar kein Protokollproblem (`delete`
-rechnet Werte aus, die es bei leerem `affected` nie benutzt — hochziehen). Die
-beiden anderen stellen dieselbe Frage in SSH-Vokabular; die bekommt ein
-Mitglied am `BackendDescriptor`, das drei Aufrufstellen bedient.
+**Architecture:** One of the three sites isn't a protocol problem at all
+(`delete` computes values it never uses when `affected` is empty — hoist it
+out). The other two ask the same question in SSH vocabulary; that gets a
+member on `BackendDescriptor` that serves three call sites.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, macOS 15+,
 Swift Testing (`@Test`/`#expect`).
@@ -18,87 +18,85 @@ Swift Testing (`@Test`/`#expect`).
 
 ## Global Constraints
 
-- **Code und Kommentare: nur Englisch.** Bezeichner, Doc-Kommentare,
-  Inline-Kommentare, Testnamen. Kein Deutsch in Quelldateien.
-- **Commit-Messages: Englisch, Conventional Commits.** Footer auf jedem Commit:
+- **Code and comments: English only.** Identifiers, doc comments, inline
+  comments, test names. No German in source files.
+- **Commit messages: English, Conventional Commits.** Footer on every commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- **Commit/Push nur auf ausdrückliche Anfrage.** Kein `scripts/release`.
-- **Ein Secret-Wert darf nie geloggt, gedruckt oder in einen Fehler eingebettet
-  werden.** Secrets leben ausschließlich im Keychain; JSON-Stores nie.
-- **Die GUI-App nicht starten.** Kein Schlüsselmaterial committen.
-- `swift build` bleibt sauber **inklusive App-Target**. Testzahl **≥ 1587**.
-- **Keine neuen Localization-Schlüssel.** Die vier App-Kataloge behalten
-  identische Schlüsselmengen (`LocalizableStringsTests` erzwingt es).
-- Sitzungen in Tests **nur** über die Fixtures aus
-  `Tests/macSCPCoreTests/SessionFixtures.swift` bauen (`sshSession`,
-  `s3Session`, `webdavSession`), nie `StoredSession` direkt.
-- **M25 ist eine reine Innenumstellung.** Jede beobachtete Verhaltensänderung
-  ist ein Befund und gehört gemeldet, nicht weggeschrieben.
+- **Commit/push only on explicit request.** No `scripts/release`.
+- **A secret value must never be logged, printed, or embedded in an error.**
+  Secrets live exclusively in the Keychain; never in JSON stores.
+- **Do not start the GUI app.** Never commit key material.
+- `swift build` stays clean **including the App target**. Test count **≥ 1587**.
+- **No new localization keys.** The four app catalogs keep identical key sets
+  (`LocalizableStringsTests` enforces it).
+- Build sessions in tests **only** via the fixtures in
+  `Tests/macSCPCoreTests/SessionFixtures.swift` (`sshSession`,
+  `s3Session`, `webdavSession`), never `StoredSession` directly.
+- **M25 is a pure internal restructuring.** Any observed behavior change is a
+  finding and belongs in the report, not silently written away.
 
 ---
 
 ## File Structure
 
-| Datei | Verantwortung | Task |
+| File | Responsibility | Task |
 |---|---|---|
-| `Sources/macSCPCore/Presentation/SessionListViewModel.swift` | `delete` hochziehen; `updateSession`/`exportPayload` auf das neue Mitglied | 1, 3 |
+| `Sources/macSCPCore/Presentation/SessionListViewModel.swift` | hoist `delete`; `updateSession`/`exportPayload` onto the new member | 1, 3 |
 | `Sources/macSCPCore/Capabilities/BackendDescriptor.swift` | `visibleSecretField(for:)` | 2 |
-| `Sources/macSCPCore/Connection/StoredSessionConnectionConfig.swift` | ausgeschriebene Kopie auf das Mitglied falten | 2 |
-| `Sources/macSCPCore/Sessions/StoredSession.swift` | ggf. die vier Accessoren löschen | 4 |
-| `docs/superpowers/specs/2026-08-08-m25-abschluss.md` | Abschlussbericht | 4 |
+| `Sources/macSCPCore/Connection/StoredSessionConnectionConfig.swift` | fold the spelled-out copy onto the member | 2 |
+| `Sources/macSCPCore/Sessions/StoredSession.swift` | delete the four accessors if applicable | 4 |
+| `docs/superpowers/specs/2026-08-08-m25-abschluss.md` | closing report | 4 |
 
-Neue Tests gehören in die bestehende Suite des geprüften Typs
-(`SessionListViewModelTests`, `BackendDescriptorTests`). **Keine neue
-Testdatei.**
+New tests belong in the existing suite of the type under test
+(`SessionListViewModelTests`, `BackendDescriptorTests`). **No new test file.**
 
-## Warum die Tests als Tabelle stehen
+## Why the tests are laid out as a table
 
-M23 und M24 haben zusammen vierzehn Defekte gefunden, die **im Plan** steckten
-und nicht in der Umsetzung — fast alle in nie ausgeführtem Testcode.
-Produktionscode steht deshalb unten wörtlich, Tests als Tabelle aus (Name,
-Aufbau, Erwartung) plus Zeiger auf die zu kopierende Form. Wer den Test
-schreibt, führt ihn auch aus.
+M23 and M24 together found fourteen defects that were sitting **in the
+plan** and not in the implementation — almost all in never-executed test
+code. Production code therefore stands below verbatim, tests as a table
+(name, setup, expectation) plus a pointer to the shape to copy. Whoever
+writes the test also runs it.
 
 ---
 
-## Task 1: `delete` rechnet nur noch, wenn es etwas zu restaurieren gibt
+## Task 1: `delete` only computes when there is something to restore
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift:244-290`
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift`
 
 **Interfaces:**
-- Produces: nichts Neues. `delete(_:) -> JumpRestoreResult` behält Signatur
-  und Semantik.
+- Produces: nothing new. `delete(_:) -> JumpRestoreResult` keeps its
+  signature and semantics.
 
-**Warum das kein Descriptor-Fall ist:** `bastionUsername`, `bastionAuthKind`,
-`bastionKeyPath` und `bastionSecret` werden **ausschließlich** in der Schleife
-über `affected` gelesen. Seit M24 ist `affected` für jede Nicht-SSH-Sitzung
-leer. Die Berechnung ist also toter Aufwand — inklusive eines Keychain-Zugriffs,
-der bei einer S3-Sitzung deren **Secret Access Key** holt und verwirft.
+**Why this is not a descriptor case:** `bastionUsername`, `bastionAuthKind`,
+`bastionKeyPath` and `bastionSecret` are read **exclusively** in the loop
+over `affected`. Since M24, `affected` is empty for every non-SSH session.
+The computation is therefore dead work — including a Keychain access that,
+for an S3 session, fetches its **Secret Access Key** and discards it.
 
-- [ ] **Step 1: Den Test schreiben (rot)**
+- [ ] **Step 1: Write the test (red)**
 
-Anfügen an `SessionListViewModelTests`. Für den lesefeindlichen Store die Form
-kopieren, die am Ende von `Tests/macSCPCoreTests/LoginMergePlannerTests.swift`
-steht (ein `SecretStore`, dessen `password(for:)` per `Issue.record` den Test
-scheitern lässt).
+Append to `SessionListViewModelTests`. For the read-hostile store, copy the
+shape at the end of `Tests/macSCPCoreTests/LoginMergePlannerTests.swift`
+(a `SecretStore` whose `password(for:)` fails the test via `Issue.record`).
 
-| Test | Aufbau | Erwartung |
+| Test | Setup | Expectation |
 |---|---|---|
-| `deletingANonSSHSessionNeverReadsTheKeychain` | eine `s3Session`, gespeichert, **keine** verweisende Sitzung; ViewModel mit lesefeindlichem `SecretStore`; `delete(bucket)` | kein einziger `password(for:)`-Aufruf; `result.restored == 0`; die Sitzung ist gelöscht. **Ohne die Verlagerung schlägt er fehl**, weil `bastionSecret` heute unbedingt gelesen wird |
+| `deletingANonSSHSessionNeverReadsTheKeychain` | one `s3Session`, stored, **no** referencing session; ViewModel with a read-hostile `SecretStore`; `delete(bucket)` | not a single `password(for:)` call; `result.restored == 0`; the session is deleted. **Without the hoist it fails**, because `bastionSecret` is read unconditionally today |
 
-- [ ] **Step 2: Rot bestätigen**
+- [ ] **Step 2: Confirm red**
 
 Run: `swift test --filter SessionListViewModel`
-Expected: `deletingANonSSHSessionNeverReadsTheKeychain` scheitert mit dem
-`Issue.record` des Stores.
+Expected: `deletingANonSSHSessionNeverReadsTheKeychain` fails with the
+store's `Issue.record`.
 
-- [ ] **Step 3: Die Berechnung und die Schleife in einen Guard ziehen**
+- [ ] **Step 3: Pull the computation and the loop into a guard**
 
-Den Block ab `// The deleted session's effective login, …` bis zum Ende der
-`for referencing in affected`-Schleife ersetzen. `var secretFailures = 0`
-bleibt **außerhalb**, weil der Rückgabewert es braucht:
+Replace the block from `// The deleted session's effective login, …` through
+the end of the `for referencing in affected` loop. `var secretFailures = 0`
+stays **outside**, because the return value needs it:
 
 ```swift
         var secretFailures = 0
@@ -159,13 +157,12 @@ bleibt **außerhalb**, weil der Rückgabewert es braucht:
         }
 ```
 
-- [ ] **Step 4: Grün bestätigen**
+- [ ] **Step 4: Confirm green**
 
 Run: `swift test --filter SessionListViewModel`
-Expected: PASS — **einschließlich der bestehenden `delete`-Tests, unverändert.**
-Muss ein bestehender `delete`-Test angefasst werden, hat die Verlagerung
-Verhalten verschoben: das ist ein **Befund** für den Task-Bericht, keine
-Testanpassung.
+Expected: PASS — **including the existing `delete` tests, unchanged.**
+If an existing `delete` test needs touching, the hoist shifted behavior:
+that is a **finding** for the task report, not a test adjustment.
 
 - [ ] **Step 5: Commit**
 
@@ -176,39 +173,39 @@ git commit -m "perf(core): compute a bastion's login only when something referen
 
 ---
 
-## Task 2: Die Schema-Frage bekommt einen Namen
+## Task 2: The schema question gets a name
 
 **Files:**
-- Modify: `Sources/macSCPCore/Capabilities/BackendDescriptor.swift` (neues Mitglied neben `hasStoredConfiguration`)
+- Modify: `Sources/macSCPCore/Capabilities/BackendDescriptor.swift` (new member next to `hasStoredConfiguration`)
 - Modify: `Sources/macSCPCore/Connection/StoredSessionConnectionConfig.swift:108-112`
 - Test: `Tests/macSCPCoreTests/BackendDescriptorTests.swift`
 
 **Interfaces:**
 - Produces: `BackendDescriptor.visibleSecretField(for session: StoredSession) -> ConnectionField?`
-  — Task 3 ruft es zweimal auf.
+  — Task 3 calls it twice.
 
-- [ ] **Step 1: Die Tests schreiben (rot)**
+- [ ] **Step 1: Write the tests (red)**
 
-Anfügen an `BackendDescriptorTests`. Sitzungen über die Fixtures; für SSH die
-Auth-Art über `sshSession(..., authKind:)` setzen.
+Append to `BackendDescriptorTests`. Sessions via the fixtures; for SSH set
+the auth kind via `sshSession(..., authKind:)`.
 
-| Test | Aufbau | Erwartung |
+| Test | Setup | Expectation |
 |---|---|---|
 | `sshAgentSessionShowsNoSecretField` | `sshSession(authKind: .agent)` | `visibleSecretField(for:) == nil` |
-| `sshPasswordSessionShowsItsPasswordField` | `sshSession(authKind: .password)` | Feld-`id` ist `SSHField.password.rawValue` |
-| `sshPrivateKeySessionShowsItsPassphraseField` | `sshSession(authKind: .privateKey, keyPath: "/k")` | Feld-`id` ist `SSHField.passphrase.rawValue` |
-| `s3SessionAlwaysShowsItsSecretField` | `s3Session(name:)` | Feld-`id` ist `S3Field.secretAccessKey.rawValue` |
-| `webdavSessionAlwaysShowsItsPasswordField` | `webdavSession(name:)` | Feld-`id` ist `WebDAVField.password.rawValue` |
-| `anSSHSessionWithoutItsBlockStillShowsAPasswordField` | eine `.ssh`-Sitzung **ohne** SSH-Block — dafür `StoredSession(id:name:groupID:loginSetID:kind:)` **direkt** bauen (die einzige zulässige Ausnahme von der Fixture-Regel, weil keine Fixture einen blocklosen Zustand erzeugt; im Test kommentieren, warum) | Feld-`id` ist `SSHField.password.rawValue` — pinnt die Äquivalenztabelle der Spec: `sessionValues` liest durch die Rückfälle in einen gefüllten Beutel, das Ergebnis ist dasselbe wie heute |
+| `sshPasswordSessionShowsItsPasswordField` | `sshSession(authKind: .password)` | field `id` is `SSHField.password.rawValue` |
+| `sshPrivateKeySessionShowsItsPassphraseField` | `sshSession(authKind: .privateKey, keyPath: "/k")` | field `id` is `SSHField.passphrase.rawValue` |
+| `s3SessionAlwaysShowsItsSecretField` | `s3Session(name:)` | field `id` is `S3Field.secretAccessKey.rawValue` |
+| `webdavSessionAlwaysShowsItsPasswordField` | `webdavSession(name:)` | field `id` is `WebDAVField.password.rawValue` |
+| `anSSHSessionWithoutItsBlockStillShowsAPasswordField` | an `.ssh` session **without** its SSH block — build it **directly** via `StoredSession(id:name:groupID:loginSetID:kind:)` for this (the one allowed exception to the fixture rule, because no fixture produces a blockless state; comment in the test why) | field `id` is `SSHField.password.rawValue` — pins the spec's equivalence table: `sessionValues` reads through the fallbacks into a populated bag, the result is the same as today |
 
-- [ ] **Step 2: Rot bestätigen**
+- [ ] **Step 2: Confirm red**
 
 Run: `swift test --filter BackendDescriptor`
-Expected: Kompilierfehler — das Mitglied existiert nicht.
+Expected: compile error — the member doesn't exist.
 
-- [ ] **Step 3: Das Mitglied anlegen**
+- [ ] **Step 3: Add the member**
 
-In `BackendDescriptor.swift`, direkt **nach** `hasStoredConfiguration(_:)`:
+In `BackendDescriptor.swift`, right **after** `hasStoredConfiguration(_:)`:
 
 ```swift
     /// The secret field this stored session currently shows, or nil when it
@@ -234,32 +231,32 @@ In `BackendDescriptor.swift`, direkt **nach** `hasStoredConfiguration(_:)`:
     }
 ```
 
-- [ ] **Step 4: Die ausgeschriebene Kopie im CLI-Pfad falten**
+- [ ] **Step 4: Fold the spelled-out copy in the CLI path**
 
-In `StoredSessionConnectionConfig.build`, die zwei Zeilen
+In `StoredSessionConnectionConfig.build`, replace the two lines
 
 ```swift
         let secretField = descriptor.credentialSchema.visibleSecretField(
             in: values, namespace: descriptor.fieldNamespace)
 ```
 
-ersetzen durch
+with
 
 ```swift
         let secretField = descriptor.visibleSecretField(for: session)
 ```
 
-Der lange Kommentarblock darüber bleibt **unverändert** — er erklärt die
-Secret-Regel, nicht die Schreibweise. Das Mitglied rechnet `sessionValues`
-dabei ein zweites Mal aus (`values` steht schon da); das ist ein reiner
-Wörterbuchaufbau ohne Seiteneffekt, und eine Regel an einer Stelle ist es wert.
+The long comment block above it stays **unchanged** — it explains the
+secret rule, not the spelling. The member recomputes `sessionValues` a
+second time in the process (`values` is already there); that is a pure
+dictionary build with no side effect, and one rule in one place is worth it.
 
-- [ ] **Step 5: Grün bestätigen**
+- [ ] **Step 5: Confirm green**
 
 Run: `swift test --filter "BackendDescriptor|StoredSessionConnectionConfig"`
 Expected: PASS.
 Run: `swift build`
-Expected: sauber inklusive App-Target.
+Expected: clean including the App target.
 
 - [ ] **Step 6: Commit**
 
@@ -270,45 +267,45 @@ git commit -m "feat(core): let the descriptor say whether a session carries a se
 
 ---
 
-## Task 3: Die beiden Aufrufstellen im ViewModel
+## Task 3: The two call sites in the ViewModel
 
 **Files:**
-- Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift:336` (`updateSession`) und `:772` + `:791` (`exportPayload`)
+- Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift:336` (`updateSession`) and `:772` + `:791` (`exportPayload`)
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: `BackendDescriptor.visibleSecretField(for:)` aus Task 2.
+- Consumes: `BackendDescriptor.visibleSecretField(for:)` from Task 2.
 
-**Die Falle dieses Tasks** steht in der Spec und wird hier wiederholt, weil sie
-der einzige Weg ist, den Task falsch zu machen: in `exportPayload` kommt die
-Agent-Eigenschaft einer **set-gebundenen** Sitzung aus dem SET
-(`resolved?.authKind`), nicht aus der Sitzung. Wer die ganze Zeile durch eine
-Schema-Frage an die Sitzungswerte ersetzt, lässt eine Sitzung an einem
-Agent-Set plötzlich ein Secret suchen und im nutzer-sichtbaren „N Passwörter
-fehlen" mitzählen. **Nur der Rückfall-Zweig wird ersetzt.**
+**This task's trap** is in the spec and is repeated here because it's the
+only way to get the task wrong: in `exportPayload`, the agent-ness of a
+**set-bound** session comes from the SET (`resolved?.authKind`), not from
+the session. Anyone who replaces the whole line with a schema question
+against the session's own values suddenly has a session behind an
+agent set looking for a secret, and it gets counted in the user-visible
+"N passwords missing". **Only the fallback branch is replaced.**
 
-- [ ] **Step 1: Die Tests schreiben (rot)**
+- [ ] **Step 1: Write the tests (red)**
 
-| Test | Aufbau | Erwartung |
+| Test | Setup | Expectation |
 |---|---|---|
-| `updateSessionClearsALeftoverSlotWhenSwitchingToAgent` | `sshSession(authKind: .password)` gespeichert, Secret unter der Sitzungs-ID; dieselbe Sitzung mit `authKind: .agent` durch `updateSession(_:newSecret: nil)` | unter der Sitzungs-ID liegt kein Secret mehr |
-| `updateSessionKeepsAnS3SessionsSecret` | `s3Session` gespeichert, Secret unter der Sitzungs-ID; `updateSession(_:newSecret: nil)` mit umbenannter Sitzung | das Secret liegt unverändert da. **Ohne die richtige Umstellung fällt es weg**, wenn jemand die Frage falsch herum stellt |
-| `updateSessionKeepsAWebDAVSessionsSecret` | wie oben mit `webdavSession` | dito |
-| `exportingASessionBoundToAnAgentLoginSetCarriesNoPasswordAndCountsNone` | ein `LoginSet` mit `authKind: .agent`, eine `sshSession(loginSetID:)` daran gebunden, Export mit `includePasswords: true` | die exportierte Sitzung hat kein Passwort **und** `missingPasswordCount == 0`. **Das ist Erfolgskriterium 4** — der Test, den eine pauschale Umstellung rot machen würde |
-| `exportingAManualAgentSessionCarriesNoPasswordAndCountsNone` | `sshSession(authKind: .agent)`, nicht set-gebunden, Export mit `includePasswords: true` | dito — hier greift der neue Schema-Zweig |
+| `updateSessionClearsALeftoverSlotWhenSwitchingToAgent` | `sshSession(authKind: .password)` stored, secret under the session ID; the same session with `authKind: .agent` via `updateSession(_:newSecret: nil)` | no secret sits under the session ID anymore |
+| `updateSessionKeepsAnS3SessionsSecret` | `s3Session` stored, secret under the session ID; `updateSession(_:newSecret: nil)` with the session renamed | the secret is still sitting there unchanged. **Without the right restructuring it disappears** if someone asks the question the wrong way round |
+| `updateSessionKeepsAWebDAVSessionsSecret` | as above with `webdavSession` | ditto |
+| `exportingASessionBoundToAnAgentLoginSetCarriesNoPasswordAndCountsNone` | a `LoginSet` with `authKind: .agent`, an `sshSession(loginSetID:)` bound to it, export with `includePasswords: true` | the exported session carries no password **and** `missingPasswordCount == 0`. **This is success criterion 4** — the test a blanket restructuring would turn red |
+| `exportingAManualAgentSessionCarriesNoPasswordAndCountsNone` | `sshSession(authKind: .agent)`, not set-bound, export with `includePasswords: true` | ditto — this is where the new schema branch applies |
 
-Aufbau der Export-Tests von den vorhandenen `exportPayload`-Tests in derselben
-Datei kopieren (Suchbegriff `includePasswords`).
+Copy the export tests' setup from the existing `exportPayload` tests in the
+same file (search term `includePasswords`).
 
-- [ ] **Step 2: Rot bestätigen**
+- [ ] **Step 2: Confirm red**
 
 Run: `swift test --filter SessionListViewModel`
-Expected: die Agent-Export-Tests und mindestens einer der Secret-Erhalt-Tests
-scheitern noch nicht — sie beschreiben teils heutiges Verhalten. **Das ist in
-Ordnung und der Punkt:** sie sind die Regressionsklammer für Step 3. Welche rot
-und welche schon grün sind, gehört in den Task-Bericht.
+Expected: the agent export tests and at least one of the secret-preservation
+tests do not fail yet — they partly describe today's behavior. **That is
+fine and is the point:** they are the regression clamp for Step 3. Which
+ones are red and which are already green belongs in the task report.
 
-- [ ] **Step 3: `updateSession` umstellen**
+- [ ] **Step 3: Restructure `updateSession`**
 
 ```swift
             if BackendDescriptor.descriptor(for: updated.kind)
@@ -323,18 +320,18 @@ und welche schon grün sind, gehört in den Task-Bericht.
             } else if let newSecret, !newSecret.isEmpty {
 ```
 
-- [ ] **Step 4: `exportPayload` umstellen**
+- [ ] **Step 4: Restructure `exportPayload`**
 
-Die Bindung
+The binding
 
 ```swift
             let authKind = resolved?.authKind ?? session.authKind
 ```
 
-**ersatzlos streichen** — sie wird in dieser Funktion an genau einer Stelle
-gelesen, nämlich der Wache unten (nachgeprüft: die beiden anderen
-`authKind`-Vorkommen sind `resolved.authKind.rawValue` für die Feldablage und
-der eigene `authKind` des Jumps). Stattdessen:
+**gets removed outright without replacement** — within this function it is
+read at exactly one place, namely the guard below (double-checked: the other
+two `authKind` occurrences are `resolved.authKind.rawValue` for the field
+bag, and the jump's own `authKind`). Instead:
 
 ```swift
             // Whether a secret can be fetched at all. The two branches are NOT
@@ -352,25 +349,24 @@ der eigene `authKind` des Jumps). Stattdessen:
                         .visibleSecretField(for: session) != nil)
 ```
 
-und in der Wache `authKind != .agent` durch `needsSecret` ersetzen:
+and in the guard replace `authKind != .agent` with `needsSecret`:
 
 ```swift
             if includePasswords, needsSecret, session.kind != .s3,
                 session.kind != .webdav || session.webdav != nil {
 ```
 
-Die beiden `session.kind`-Bedingungen bleiben **unangetastet** (Spec: sie sind
-Format-Logik, und M23/P3 hat sie nach einem Befund absichtlich
-wiederhergestellt).
+The two `session.kind` conditions stay **untouched** (spec: they are format
+logic, and M23/P3 deliberately restored them after a finding).
 
-- [ ] **Step 5: Grün bestätigen**
+- [ ] **Step 5: Confirm green**
 
 Run: `swift test --filter SessionListViewModel`
 Expected: PASS.
 Run: `swift test`
-Expected: alles grün, ≥ 1587.
+Expected: everything green, ≥ 1587.
 Run: `swift build`
-Expected: sauber inklusive App-Target.
+Expected: clean including the App target.
 
 - [ ] **Step 6: Commit**
 
@@ -381,53 +377,54 @@ git commit -m "refactor(core): ask the schema, not authKind, whether a session h
 
 ---
 
-## Task 4: Die Probe und der Abschluss
+## Task 4: The probe and the close-out
 
 **Files:**
-- Modify: ggf. `Sources/macSCPCore/Sessions/StoredSession.swift` (die vier Accessoren)
+- Modify: possibly `Sources/macSCPCore/Sessions/StoredSession.swift` (the four accessors)
 - Create: `docs/superpowers/specs/2026-08-08-m25-abschluss.md`
 
-- [ ] **Step 1: Die Probe fahren**
+- [ ] **Step 1: Run the probe**
 
-An die vier Accessoren `host`, `port`, `username`, `authKind` in
-`StoredSession.swift` vorübergehend anhängen:
+Temporarily attach to the four accessors `host`, `port`, `username`,
+`authKind` in `StoredSession.swift`:
 
 ```swift
     @available(*, deprecated, message: "M25 probe — every reader must be SSH-guarded")
 ```
 
-Dann `swift build 2>&1 | grep -A 2 deprecated`. **Ein Compiler-Lauf, kein
-`grep` auf `.host`** — M24 hat gezeigt, dass der Grep 241 Treffer liefert, von
-denen die meisten URLs und fremde Typen sind.
+Then `swift build 2>&1 | grep -A 2 deprecated`. **One compiler run, not a
+`grep` on `.host`** — M24 showed that the grep returns 241 hits, most of
+which are URLs and unrelated types.
 
-- [ ] **Step 2: Jeden Treffer beurteilen**
+- [ ] **Step 2: Judge every hit**
 
-Für jeden gemeldeten Leser entscheiden: **geschützt** (steht hinter
-`kind == .ssh`, oder ist `SSHFieldSchema.values(from:)`, der sanktionierte
-Leser) oder **ungeschützt**. Die vollständige Liste mit Datei und Zeile kommt
-in den Bericht — auch wenn sie leer ist.
+For each reported reader, decide: **guarded** (sits behind
+`kind == .ssh`, or is `SSHFieldSchema.values(from:)`, the sanctioned
+reader) or **unguarded**. The full list with file and line goes into the
+report — even if it is empty.
 
-- [ ] **Step 3: Entscheiden und ausführen**
+- [ ] **Step 3: Decide and act**
 
-- **Alle geschützt** → die vier Accessoren **und** das `@available` löschen,
-  dann `swift test` und `swift build` erneut. Bricht etwas, war ein Leser doch
-  nicht geschützt: zurücknehmen und wie im anderen Fall berichten.
-- **Mindestens einer ungeschützt** → das `@available` wieder entfernen, die
-  Accessoren bleiben, und **jeder ungeschützte Leser wird namentlich mit Datei
-  und Zeile im Bericht genannt**.
+- **All guarded** → delete the four accessors **and** the `@available`,
+  then `swift test` and `swift build` again. If something breaks, a reader
+  wasn't guarded after all: revert and report it the same way as the other
+  case.
+- **At least one unguarded** → remove the `@available` again, the
+  accessors stay, and **every unguarded reader is named by file and line
+  in the report**.
 
-Beides ist ein zulässiges Ergebnis. Die Spec verspricht die Prüfung, nicht die
-Löschung — den Ausgang nicht erzwingen.
+Either is a valid outcome. The spec promises the check, not the deletion —
+don't force the outcome.
 
-- [ ] **Step 4: Volle Verifikation**
+- [ ] **Step 4: Full verification**
 
 ```bash
 swift build
 swift test
 ```
-Testzahl notieren (≥ 1587).
+Note the test count (≥ 1587).
 
-Das Docker-Rig aus dem **Haupt-Checkout** starten, nie aus einem Worktree:
+Start the Docker rig from the **main checkout**, never from a worktree:
 
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
@@ -435,54 +432,55 @@ MACSCP_ITEST=1 swift test
 MACSCP_KEYCHAIN=1 swift test --filter Keychain
 ```
 
-Bleibt ein Lauf bei 0 % CPU stehen, ist das der seit M20 bekannte Hänger
+If a run stalls at 0% CPU, that is the hang known since M20
 (`docs/superpowers/specs/2026-08-08-testsuite-haenger-untersuchung.md`) —
-abbrechen, neu starten, im Bericht vermerken, **nicht** als M25-Befund zählen.
-Danach prüfen, dass kein Waisenprozess zurückblieb: `pgrep -fl swiftpm-testing-helper`.
+abort, restart, note it in the report, **do not** count it as an M25
+finding. Afterward check that no orphan process was left behind:
+`pgrep -fl swiftpm-testing-helper`.
 
-Kataloge:
+Catalogs:
 ```bash
 for f in Sources/MacSCPApp/Resources/*.lproj/Localizable.strings Sources/macSCPCore/Resources/*.lproj/Localizable.strings; do plutil -lint "$f"; done
 ```
 
-- [ ] **Step 5: Den Abschlussbericht schreiben**
+- [ ] **Step 5: Write the closing report**
 
-`docs/superpowers/specs/2026-08-08-m25-abschluss.md`, Form von
-`2026-08-08-m24-abschluss.md` kopieren. Muss enthalten: die Verifikation
-(Testzahlen, gegatete Läufe, Kataloge); die sieben Erfolgskriterien der Spec
-mit **Beleg statt Behauptung**; das vollständige Ergebnis der Probe; jeden
-Befund aus Task 1 Step 4 und Task 3 Step 2; was offen bleibt; und die Zahl der
-unversendeten Commits (`git rev-list --count origin/develop..develop`).
+`docs/superpowers/specs/2026-08-08-m25-abschluss.md`, copy the shape of
+`2026-08-08-m24-abschluss.md`. Must contain: the verification (test counts,
+gated runs, catalogs); the spec's seven success criteria with **evidence,
+not assertion**; the full result of the probe; every finding from Task 1
+Step 4 and Task 3 Step 2; what remains open; and the count of unpushed
+commits (`git rev-list --count origin/develop..develop`).
 
-- [ ] **Step 6: Commit, nicht pushen**
+- [ ] **Step 6: Commit, do not push**
 
 ```bash
 git add docs/superpowers/specs/2026-08-08-m25-abschluss.md
 git commit -m "docs(m25): record the milestone close"
 ```
 
-Der Push erfolgt ausschließlich auf ausdrückliche Anordnung des Maintainers.
+The push happens only on the maintainer's explicit order.
 
 ---
 
-## Selbstreview des Plans
+## Plan self-review
 
-**Spec-Abdeckung.** Kriterium 1 → T1; 2 → T1/Step 4 (Regressionsklammer);
-3 → T3; 4 → T3 (der set-gebundene Agent-Export); 5 → T2/Step 4; 6 → T4;
-7 → T4/Step 4. Das neue Descriptor-Mitglied → T2. Die bewusst nicht
-angetasteten Format-Wachen sind eine Unterlassung und stehen als solche in
+**Spec coverage.** Criterion 1 → T1; 2 → T1/Step 4 (regression clamp);
+3 → T3; 4 → T3 (the set-bound agent export); 5 → T2/Step 4; 6 → T4;
+7 → T4/Step 4. The new descriptor member → T2. The format guards
+deliberately left untouched are an omission and stand as such in
 T3/Step 4.
 
-**Typkonsistenz.** `visibleSecretField(for session: StoredSession) ->
-ConnectionField?` wird in T2 definiert und in T2/Step 4, T3/Step 3 und
-T3/Step 4 genau so aufgerufen. `BackendDescriptor.descriptor(for:)` ist die
-bestehende Registry-Funktion.
+**Type consistency.** `visibleSecretField(for session: StoredSession) ->
+ConnectionField?` is defined in T2 and called exactly the same way in
+T2/Step 4, T3/Step 3 and T3/Step 4. `BackendDescriptor.descriptor(for:)` is
+the existing registry function.
 
-**Eine bewusste Abweichung von der Skill-Vorgabe:** Testcode steht als Tabelle
-statt als Quelltext, mit Zeiger auf die zu kopierende Form. Begründung oben im
-eigenen Abschnitt.
+**One deliberate deviation from the skill directive:** test code stands as
+a table instead of as source, with a pointer to the shape to copy.
+Rationale above in its own section.
 
-**Eine bewusste Ausnahme von einer eigenen Regel:** der Test
-`anSSHSessionWithoutItsBlockStillShowsAPasswordField` baut `StoredSession`
-direkt statt über eine Fixture, weil keine Fixture einen blocklosen Zustand
-erzeugt. Der Test kommentiert das.
+**One deliberate exception to a rule of its own:** the test
+`anSSHSessionWithoutItsBlockStillShowsAPasswordField` builds `StoredSession`
+directly instead of via a fixture, because no fixture produces a blockless
+state. The test comments on that.

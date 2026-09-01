@@ -1,179 +1,182 @@
-# M11o — Transfer-Leiste ein-/ausblendbar Design
+# M11o — Transfer bar show/hide design
 
-**Status:** freigegeben (Brainstorming 2026-07-31)
-**Meilenstein:** M11o
-**Sprache:** Design-Doc DE; Code/Kommentare/Strings EN (App-UI lokalisiert EN+DE)
+**Status:** approved (brainstorming 2026-07-31)
+**Milestone:** M11o
+**Language:** design doc EN; code/comments/strings EN (app UI localized EN+DE)
 
-## Ziel
+## Goal
 
-Die Transfer-Leiste (aktive + abgeschlossene Übertragungen) soll per
-Toolbar-Icon **neben dem Terminal-Icon** — plus Menüeintrag und Tastenkürzel —
-ein- und ausgeblendet werden können. Heute blendet sich die Leiste nur
-automatisch ein/aus (an `items.isEmpty`); es gibt keinen manuellen Schalter.
+The transfer bar (active + completed transfers) should be shown/hidden via
+a toolbar icon **next to the terminal icon** — plus a menu item and a
+keyboard shortcut. Today the bar only shows/hides itself automatically
+(on `items.isEmpty`); there is no manual switch.
 
-Maintainer-Entscheidungen aus dem Brainstorming:
-- **Verhalten:** Auto-Einblenden bleibt; das Icon kann die Leiste zusätzlich
-  **auch leer** öffnen (Leerzustand „Keine Übertragungen"), um Abgeschlossene
-  zu prüfen/aufzuräumen. Das Icon hat immer einen sichtbaren Effekt.
-- **Auto-Einblenden:** **jede** neu eingereihte Übertragung klappt die Leiste
-  wieder auf (auch nach manuellem Wegklappen).
-- **Bedienelemente:** Toolbar-Icon **+** Menüeintrag **+** Tastenkürzel.
-- **Icon:** `tray.full`. **Kürzel:** ⌘⇧Y. **Menü-Ort:** bei den
-  Ansichts-Umschaltern (dieselbe Gruppe wie „Versteckte Dateien ein-/ausblenden").
-- Das neue Kürzel ist später in die geplante **Tastenkürzel-Übersicht in den
-  Einstellungen** (eigener Meilenstein) mit aufzunehmen; diese Übersicht ist
-  **nicht** Teil von M11o.
+Maintainer decisions from the brainstorming:
+- **Behavior:** auto-show stays; the icon can additionally open the bar
+  **even when empty** (empty state "No transfers"), to review/clean up
+  completed ones. The icon always has a visible effect.
+- **Auto-show:** **every** newly enqueued transfer re-expands the bar
+  (even after it was manually collapsed).
+- **Controls:** toolbar icon **+** menu item **+** keyboard shortcut.
+- **Icon:** `tray.full`. **Shortcut:** ⌘⇧Y. **Menu location:** with the
+  view toggles (same group as "Show/Hide Hidden Files").
+- The new shortcut is to be added later to the planned **keyboard-shortcut
+  overview in settings** (its own milestone); that overview is **not**
+  part of M11o.
 
-## Kontext / Ist-Zustand
+## Context / current state
 
-- **`TransferQueueBar`** (`Sources/MacSCPApp/TransferQueueBar.swift`): zeigt
-  aktive + abgeschlossene Übertragungen. Wird in `ContentView` als letztes
-  Element des Pro-Tab-`VStack(spacing: 0)` gerendert (unten im Fenster,
-  volle Breite). **Aktuelle Sichtbarkeitsbedingung:** `if
-  viewModel.items.isEmpty { EmptyView() }` — reines Auto-Ausblenden, kein
-  Bool. `items` enthält aktive **und** abgeschlossene Einträge; „Aufräumen"
-  (`clearCompleted()`) leert sie.
-- **Terminal-Toggle (Vorlage):**
-  - Toolbar-Icon in `ContentView`s nativer `.toolbar`,
-    `ToolbarItemGroup(placement: .primaryAction)` — Kinder: Upload → Download
-    → **Terminal-Button** → Disconnect. Die Gruppe rendert **nur bei aktiver
-    Session** (`if let session = activeTab.session`). SF-Symbol `"terminal"`,
-    `.keyboardShortcut("t", modifiers: .command)`, Hilfetext.
-  - Menüeintrag in `MacSCPApp` `.commands`, `CommandMenu("Terminal")`,
+- **`TransferQueueBar`** (`Sources/MacSCPApp/TransferQueueBar.swift`): shows
+  active + completed transfers. Rendered in `ContentView` as the last
+  element of the per-tab `VStack(spacing: 0)` (at the bottom of the
+  window, full width). **Current visibility condition:** `if
+  viewModel.items.isEmpty { EmptyView() }` — pure auto-hide, no bool.
+  `items` contains active **and** completed entries; "clean up"
+  (`clearCompleted()`) empties them.
+- **Terminal toggle (model):**
+  - Toolbar icon in `ContentView`'s native `.toolbar`,
+    `ToolbarItemGroup(placement: .primaryAction)` — children: Upload →
+    Download → **terminal button** → disconnect. The group renders
+    **only with an active session** (`if let session = activeTab.session`).
+    SF Symbol `"terminal"`,
+    `.keyboardShortcut("t", modifiers: .command)`, help text.
+  - Menu item in `MacSCPApp` `.commands`, `CommandMenu("Terminal")`,
     `tabCommands.toggleTerminal?()`, disabled unless
     `tabCommands.isActiveTabConnected`.
-  - **Zustand:** `session.terminal.isVisible` (`var` auf
-    `TerminalPanelViewModel`), **pro Tab**, **nicht persistiert**.
-- **Ansichts-Umschalter-Menügruppe:** `CommandGroup(after: .sidebar)` in
-  `MacSCPApp` enthält „Show/Hide Hidden Files" ⌘⇧. — hier kommt der neue
-  Eintrag dazu.
-- **`TabCommands`** (App-weite Menü-Brücke): `MacSCPApp` baut die Menüs ohne
-  `ContentView`-Referenz; `ContentView` setzt die Closures in `.task` und
-  spiegelt Zustand (`isActiveTabConnected`) per `.onChange`. Vorlage für einen
-  neuen `toggleTransfers`-Closure + gespiegelten Aktiv-Zustand.
-- **`SessionTab`** (`@Observable`): hält `session`, `transferQueue:
-  TransferQueueViewModel` (pro Tab). Natürlicher Ort für das neue
-  Sichtbarkeits-Bool.
-- **L10n:** `L10n.string(key, "English default")`; Kataloge
+  - **State:** `session.terminal.isVisible` (`var` on
+    `TerminalPanelViewModel`), **per tab**, **not persisted**.
+- **View-toggle menu group:** `CommandGroup(after: .sidebar)` in
+  `MacSCPApp` contains "Show/Hide Hidden Files" ⌘⇧. — the new entry goes
+  here.
+- **`TabCommands`** (app-wide menu bridge): `MacSCPApp` builds the menus
+  without a `ContentView` reference; `ContentView` sets the closures in
+  `.task` and mirrors state (`isActiveTabConnected`) via `.onChange`.
+  Model for a new `toggleTransfers` closure + mirrored active state.
+- **`SessionTab`** (`@Observable`): holds `session`, `transferQueue:
+  TransferQueueViewModel` (per tab). Natural place for the new visibility
+  bool.
+- **L10n:** `L10n.string(key, "English default")`; catalogs
   `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`,
-  typografische Anführungszeichen/`…`, kein ASCII-`"` in DE-Werten. Vorlage:
+  typographic quotation marks/`…`, no ASCII `"` in DE values. Model:
   `"browser.terminalToggle"`, `"browser.terminalToggleHelp"`,
   `"menu.terminal.toggle"`.
 
-## Architektur
+## Architecture
 
-Rein App-Schicht; keine Core-Änderung.
+Pure app layer; no Core change.
 
-### Zustand (pro Tab, nicht persistiert)
+### State (per tab, not persisted)
 
-- Neues `var transfersPanelVisible = false` auf `SessionTab` — spiegelt das
-  Muster von `TerminalPanelViewModel.isVisible` (pro Tab, in-memory, kein
-  `SettingsStore`-Key).
+- New `var transfersPanelVisible = false` on `SessionTab` — mirrors the
+  pattern of `TerminalPanelViewModel.isVisible` (per tab, in-memory, no
+  `SettingsStore` key).
 
-### Sichtbarkeit der Leiste
+### Visibility of the bar
 
-- `TransferQueueBar` wird gerendert, wenn `activeTab.transfersPanelVisible ==
-  true` — **unabhängig** vom Inhalt. Die bisherige
-  `items.isEmpty`-Selbstausblendung entfällt als alleinige Bedingung.
-- Sichtbar **und** leer ⇒ Leerzustand: eine schlanke Zeile „Keine
-  Übertragungen" (gleiche Kopfzeilen-Höhe/-Optik wie sonst, nur ohne Liste).
-- Der Umschalt-Ort in `ContentView` (letztes `VStack`-Element) bleibt; nur die
-  Bedingung wechselt von „nicht leer" auf „Bool sichtbar".
+- `TransferQueueBar` is rendered when `activeTab.transfersPanelVisible ==
+  true` — **independent** of content. The previous
+  `items.isEmpty` self-hiding no longer stands alone as the condition.
+- Visible **and** empty ⇒ empty state: a slim row "No transfers" (same
+  header height/look as otherwise, just without a list).
+- The toggle site in `ContentView` (last `VStack` element) stays; only the
+  condition changes from "not empty" to "bool visible."
 
-### Auto-Einblenden
+### Auto-show
 
-- `ContentView` beobachtet `activeTab.transferQueue.items.count` per
-  `.onChange`; **steigt** der Wert (neue Übertragung eingereiht), setzt es
-  `activeTab.transfersPanelVisible = true`. Das reproduziert das heutige
-  „erscheint, sobald etwas übertragen wird" und deckt „jede neue Übertragung
-  klappt wieder auf" ab.
-- Nur der aktive Tab wird so beobachtet (die Leiste zeigt ohnehin den aktiven
-  Tab). Cross-Tab-Ziel-Transfers (M8b) in einen Hintergrund-Tab klappen dessen
-  Leiste nicht auf — bewusst außerhalb v1.
+- `ContentView` observes `activeTab.transferQueue.items.count` via
+  `.onChange`; if the value **increases** (a new transfer enqueued), it
+  sets `activeTab.transfersPanelVisible = true`. This reproduces today's
+  "appears as soon as something is transferring" and covers "every new
+  transfer re-expands it."
+- Only the active tab is observed this way (the bar shows the active tab
+  anyway). Cross-tab destination transfers (M8b) into a background tab do
+  not re-expand that tab's bar — deliberately outside v1.
 
 ### Toggle
 
-- Toolbar-Icon und Menüeintrag rufen dieselbe Aktion: `activeTab
+- The toolbar icon and the menu item call the same action: `activeTab
   .transfersPanelVisible.toggle()`.
 
 ## UI
 
-### Toolbar-Icon
+### Toolbar icon
 
-- Neuer `Button`/`Label` in derselben `ToolbarItemGroup(.primaryAction)`,
-  **direkt neben dem Terminal-Button** (verbindungs-gated, erscheint also nur
-  bei aktiver Session).
-- SF-Symbol **`tray.full`**. Zeigt den Ein-/Aus-Zustand an (aktiv
-  hervorgehoben, wenn `activeTab.transfersPanelVisible`), analog zum
-  Terminal-Knopf.
+- New `Button`/`Label` in the same `ToolbarItemGroup(.primaryAction)`,
+  **directly next to the terminal button** (connection-gated, so it only
+  appears with an active session).
+- SF Symbol **`tray.full`**. Shows the on/off state (highlighted active
+  when `activeTab.transfersPanelVisible`), analogous to the terminal
+  button.
 - `.keyboardShortcut("y", modifiers: [.command, .shift])`.
-- Hilfetext (localized): „Show/hide transfers (⌘⇧Y)".
+- Help text (localized): "Show/hide transfers (⌘⇧Y)".
 
-### Menüeintrag
+### Menu item
 
-- In `MacSCPApp` `.commands`, `CommandGroup(after: .sidebar)` (bei „Show/Hide
-  Hidden Files"): „Show/Hide Transfers", `tabCommands.toggleTransfers?()`,
+- In `MacSCPApp` `.commands`, `CommandGroup(after: .sidebar)` (next to
+  "Show/Hide Hidden Files"): "Show/Hide Transfers",
+  `tabCommands.toggleTransfers?()`,
   `.keyboardShortcut("y", modifiers: [.command, .shift])`, disabled unless
   `tabCommands.isActiveTabConnected`.
-- `TabCommands` bekommt `var toggleTransfers: (() -> Void)?`; `ContentView`
-  setzt sie in `.task` auf `{ activeTab.transfersPanelVisible.toggle() }`.
+- `TabCommands` gains `var toggleTransfers: (() -> Void)?`; `ContentView`
+  sets it in `.task` to `{ activeTab.transfersPanelVisible.toggle() }`.
 
-### Lokalisierung (neue Keys, EN + DE)
+### Localization (new keys, EN + DE)
 
-- `"browser.transfersToggle"` = „Transfers" / „Übertragungen"
-- `"browser.transfersToggleHelp"` = „Show/hide transfers (⌘⇧Y)" /
-  „Übertragungen ein-/ausblenden (⌘⇧Y)"
-- `"menu.transfers.toggle"` = „Show/Hide Transfers" / „Übertragungen
+- `"browser.transfersToggle"` = "Transfers" / "Übertragungen"
+- `"browser.transfersToggleHelp"` = "Show/hide transfers (⌘⇧Y)" /
+  "Übertragungen ein-/ausblenden (⌘⇧Y)"
+- `"menu.transfers.toggle"` = "Show/Hide Transfers" / "Übertragungen
   ein-/ausblenden"
-- `"transfers.empty"` = „No transfers" / „Keine Übertragungen"
+- `"transfers.empty"` = "No transfers" / "Keine Übertragungen"
 
-## Randfälle
+## Edge cases
 
-- **Nicht verbunden:** Toolbar-Gruppe fehlt → kein Icon; Menüpunkt deaktiviert
-  (wie Terminal). Pro-Tab-Zustand belanglos.
-- **Tab-Wechsel:** jeder Tab hat sein eigenes `transfersPanelVisible`;
-  Umschalten zeigt den Zustand des jeweiligen Tabs.
-- **„Aufräumen" bei sichtbarer Leiste:** Liste wird leer, Leiste bleibt im
-  Leerzustand sichtbar, bis manuell weggeklappt.
-- **Weggeklappt + neue Übertragung:** klappt wieder auf (Auto-Einblenden).
-- **Teardown/Disconnect:** Tab wird abgebaut, Zustand verfällt mit ihm.
+- **Not connected:** the toolbar group is absent → no icon; the menu item
+  is disabled (like terminal). Per-tab state is moot.
+- **Tab switch:** each tab has its own `transfersPanelVisible`; switching
+  shows the state of that particular tab.
+- **"Clean up" while the bar is visible:** the list becomes empty, the
+  bar stays visible in its empty state until manually collapsed.
+- **Collapsed + new transfer:** it re-expands (auto-show).
+- **Teardown/disconnect:** the tab is torn down, the state goes with it.
 
 ## Tests
 
-- Reine App-Schicht-Verdrahtung ohne Core-Logik ⇒ wie alle App-only-Meilensteine
-  **kein** App-Test-Target. Verifikation:
-  - `swift build` sauber (keine neuen Warnungen).
-  - EN/DE-Katalog-Parität + `plutil -lint` OK; `LocalizableStringsTests` grün.
-  - Volle `swift test` unverändert grün (keine neue/geänderte Core-Logik).
-  - Lesen/Trace der Verdrahtung (Toolbar-Button, Menüeintrag+Kürzel,
-    `TabCommands`-Closure, `.onChange`-Auto-Einblenden, Sichtbarkeitsbedingung
-    + Leerzustand).
-- **Runtime-Rauchtest (feste Gewohnheit nach dem M11n-Vorfall):** Dev-Build
-  starten und Idle-CPU prüfen (muss ~0% sein), bevor er ausgeliefert wird —
-  fängt SwiftUI-Layout-Stürme ab, die Reviews/CI nicht sehen.
+- Pure app-layer wiring with no Core logic ⇒ like all app-only milestones,
+  **no** app test target. Verification:
+  - `swift build` clean (no new warnings).
+  - EN/DE catalog parity + `plutil -lint` OK; `LocalizableStringsTests` green.
+  - Full `swift test` unchanged and green (no new/changed Core logic).
+  - Read/trace the wiring (toolbar button, menu item+shortcut,
+    `TabCommands` closure, `.onChange` auto-show, visibility condition
+    + empty state).
+- **Runtime smoke test (fixed habit since the M11n incident):** launch
+  the dev build and check idle CPU (must be ~0%) before shipping it —
+  catches SwiftUI layout storms that reviews/CI don't see.
 
-## Dateien
+## Files
 
-- Ändern: `Sources/MacSCPApp/SessionTab.swift` (`transfersPanelVisible`).
-- Ändern: `Sources/MacSCPApp/TransferQueueBar.swift` (Leerzustand statt
-  `EmptyView` bei leerer Liste — die Sichtbarkeit selbst steuert jetzt
-  `ContentView`).
-- Ändern: `Sources/MacSCPApp/ContentView.swift` (Sichtbarkeitsbedingung,
-  `.onChange`-Auto-Einblenden, Toolbar-Button, `toggleTransfers`-Closure in
+- Modify: `Sources/MacSCPApp/SessionTab.swift` (`transfersPanelVisible`).
+- Modify: `Sources/MacSCPApp/TransferQueueBar.swift` (empty state instead
+  of `EmptyView` for an empty list — visibility itself is now controlled
+  by `ContentView`).
+- Modify: `Sources/MacSCPApp/ContentView.swift` (visibility condition,
+  `.onChange` auto-show, toolbar button, `toggleTransfers` closure in
   `.task`).
-- Ändern: `Sources/MacSCPApp/MacSCPApp.swift` (Menüeintrag + Kürzel).
-- Ändern: `Sources/macSCPCore/…`? **Nein** — `TabCommands` lebt in der
-  App-Schicht (`MacSCPApp.swift`); dort kommt `toggleTransfers` dazu.
-- Ändern: `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`.
+- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (menu item + shortcut).
+- Modify: `Sources/macSCPCore/…`? **No** — `TabCommands` lives in the
+  app layer (`MacSCPApp.swift`); `toggleTransfers` is added there.
+- Modify: `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`.
 
 ## Global Constraints
 
-- Swift 6, `.swiftLanguageMode(.v5)`, min. macOS 15; Swift Testing, TDD wo
-  Logik entsteht (hier: keine neue Core-Logik).
-- Code/Kommentare/`reason:`-Strings EN; UI-Strings über die `.strings`-Kataloge
-  EN-Default + DE, typografische Anführungszeichen; kein ASCII-`"` in DE-Werten.
-- Sichtbarkeit ist **pro Tab** (kein app-weites Singleton), spiegelt das
-  Terminal-`isVisible`-Muster; nicht persistiert.
-- **AppKit-/SwiftUI-Menüleisten-Lektion (M11n):** keine neue `MenuBarExtra`;
-  dieses Feature berührt sie nicht. Runtime-Idle-CPU vor Auslieferung prüfen.
-- Kein Release/Tag ohne ausdrückliche Maintainer-Anordnung.
+- Swift 6, `.swiftLanguageMode(.v5)`, min. macOS 15; Swift Testing, TDD
+  where logic is created (here: no new Core logic).
+- Code/comments/`reason:` strings EN; UI strings via the `.strings`
+  catalogs EN default + DE, typographic quotation marks; no ASCII `"` in
+  DE values.
+- Visibility is **per tab** (no app-wide singleton), mirroring the
+  terminal `isVisible` pattern; not persisted.
+- **AppKit/SwiftUI menu-bar lesson (M11n):** no new `MenuBarExtra`; this
+  feature does not touch it. Check runtime idle CPU before shipping.
+- No release/tag without explicit maintainer instruction.

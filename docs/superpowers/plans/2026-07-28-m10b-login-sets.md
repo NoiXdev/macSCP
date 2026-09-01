@@ -1,29 +1,29 @@
-# M10b — Login-Sets Implementation Plan
+# M10b — Login Sets Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Wiederverwendbare, benannte Logins (Username + Passwort ODER Key), referenzierbar aus Verbindungen, mit Verwaltungs-Sheet (⌘⇧L), Dreiweg-Auswahl im Formular und Merge-Vorschlag für gleiche bestehende Logins; Set-Löschen stellt betroffene Verbindungen verlustfrei auf Manuell zurück.
+**Goal:** Reusable, named logins (username + password OR key), referenceable from connections, with a management sheet (⌘⇧L), a three-way choice in the form, and a merge suggestion for identical existing logins; deleting a set losslessly restores affected connections to Manual.
 
-**Architecture:** `LoginSet` (Core) mit eigenem `LoginSetStore` (`logins.json`, Record-basiert für Vorwärtskompatibilität), `StoredSession.loginSetID` (decode-kompatibel wie `groupID`), `LoginResolver` als reine Auflösungsfunktion, `LoginMergePlanner` als reine Gruppierungsfunktion; alle mutierenden Abläufe (CRUD, Lösch-Rückstellung, Merge-Anwendung, Export-Auflösung) leben in `SessionListViewModel`, das bereits SessionStore + SecretStore besitzt. Die App verdrahtet Sheet, Menü und Dreiweg-Formular.
+**Architecture:** `LoginSet` (Core) with its own `LoginSetStore` (`logins.json`, record-based for forward compatibility), `StoredSession.loginSetID` (decode-compatible like `groupID`), `LoginResolver` as a pure resolution function, `LoginMergePlanner` as a pure grouping function; all mutating flows (CRUD, delete restoration, merge application, export resolution) live in `SessionListViewModel`, which already owns SessionStore + SecretStore. The app wires up the sheet, the menu, and the three-way form.
 
-**Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, SwiftUI, macOS Keychain via bestehendem `SecretStore`.
+**Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, SwiftUI, macOS Keychain via the existing `SecretStore`.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-28-m10b-login-sets-design.md` — bindend. Mockup: `docs/design/assets/m10-mockups.html` Abschnitte 3+4. Branch: **develop**.
-- Secrets NIE in JSON — Set-Passwort/Passphrase liegt im Keychain UNTER DER SET-UUID über den bestehenden `SecretStore` (`savePassword/password/deletePassword` sind UUID-adressiert; keine Protokoll-Änderung).
-- Vorwärtskompatibilität `logins.json`: ein Record mit unbekanntem `authKind`-Raw (künftiges `agent`, M10d) wird von `all()` NIE geliefert (nie als Passwort-Set fehlinterpretiert), bleibt aber über upsert/delete ANDERER Einträge in der Datei erhalten.
-- `StoredSession.loginSetID: UUID?` optional OHNE Custom-Decoder (exakt das `groupID`-Muster) — Legacy-JSON liest nil.
-- Fehlendes referenziertes Set beim Connect = EHRLICHER Fehler, kein stiller Fallback.
-- Merge-Ignorieren persistiert NUR Session-ID-Mengen — nie Passwörter, Hashes oder Ableitungen davon.
-- Alle neuen UI-Texte EN/DE (`L10n.string`, beide Kataloge); Code + Kommentare NUR Englisch; keine neuen Dependencies.
-- Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` + volle `swift test` nach jedem Task grün (Ausgangslage 475 Tests / 37 Suiten); gated Suiten nur in T4; Tests SYNCHRON im Vordergrund; TDD rot→grün für Core.
-- KEIN Release, kein Merge nach main — der Meilenstein endet mit Push auf develop.
+- Spec: `docs/superpowers/specs/2026-07-28-m10b-login-sets-design.md` — binding. Mockup: `docs/design/assets/m10-mockups.html` sections 3+4. Branch: **develop**.
+- Secrets NEVER in JSON — the set's password/passphrase lives in the keychain UNDER THE SET UUID via the existing `SecretStore` (`savePassword/password/deletePassword` are UUID-addressed; no protocol change).
+- Forward compatibility for `logins.json`: a record with an unknown `authKind` raw value (future `agent`, M10d) is NEVER delivered by `all()` (never misread as a password set), but survives upsert/delete of OTHER entries in the file.
+- `StoredSession.loginSetID: UUID?` optional WITHOUT a custom decoder (exactly the `groupID` pattern) — legacy JSON reads as nil.
+- A missing referenced set at connect time = HONEST error, no silent fallback.
+- Ignoring a merge persists ONLY sets of session IDs — never passwords, hashes, or anything derived from them.
+- All new UI text EN/DE (`L10n.string`, both catalogs); code + comments English ONLY; no new dependencies.
+- Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` + the full `swift test` green after every task (starting point 475 tests / 37 suites); gated suites only in T4; tests run SYNCHRONOUSLY in the foreground; TDD red→green for Core.
+- NO release, no merge to main — the milestone ends with a push to develop.
 
 ## Schedule
 
-T1 (Core: LoginSet + Store + loginSetID + Resolver) → T2 (Core: MergePlanner + SessionListViewModel-APIs + Export-Auflösung) → T3 (App: Sheets + Menü + Dreiweg + Connect-Wiring) → T4 Abschluss (Koordinator).
+T1 (Core: LoginSet + Store + loginSetID + Resolver) → T2 (Core: MergePlanner + SessionListViewModel APIs + export resolution) → T3 (App: sheets + menu + three-way + connect wiring) → T4 wrap-up (coordinator).
 
 ---
 
@@ -33,68 +33,68 @@ T1 (Core: LoginSet + Store + loginSetID + Resolver) → T2 (Core: MergePlanner +
 - Create: `Sources/macSCPCore/Sessions/LoginSetStore.swift`
 - Create: `Sources/macSCPCore/Sessions/LoginResolver.swift`
 - Modify: `Sources/macSCPCore/Sessions/StoredSession.swift`
-- Test: `Tests/macSCPCoreTests/LoginSetStoreTests.swift` (neu), `Tests/macSCPCoreTests/LoginResolverTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/LoginSetStoreTests.swift` (new), `Tests/macSCPCoreTests/LoginResolverTests.swift` (new)
 
 **Interfaces:**
-- Consumes: `StoredSession.AuthKind` (bestehend), `SecretStore`-Protokoll (bestehend, UUID-adressiert), `InMemorySecretStore` (bestehender Test-Double in `Tests/macSCPCoreTests/InMemorySecretStore.swift`).
-- Produces (T2/T3 verlassen sich exakt hierauf):
-  - `LoginSet` (`id: UUID`, `name: String`, `username: String`, `authKind: StoredSession.AuthKind`, `keyPath: String?`; Init mit Defaults `id: UUID = UUID()`, `authKind: .password`, `keyPath: nil`)
-  - `LoginSetStore(directory: URL)`: `all() throws -> [LoginSet]` (name-sortiert, case-insensitiv), `upsert(_:) throws`, `delete(id:) throws`, `ignoredMergeGroups() throws -> [Set<UUID>]`, `addIgnoredMergeGroup(_: Set<UUID>) throws`
-  - `StoredSession.loginSetID: UUID?` (public var, Init-Parameter mit Default nil)
+- Consumes: `StoredSession.AuthKind` (existing), `SecretStore` protocol (existing, UUID-addressed), `InMemorySecretStore` (existing test double in `Tests/macSCPCoreTests/InMemorySecretStore.swift`).
+- Produces (T2/T3 rely on this exactly):
+  - `LoginSet` (`id: UUID`, `name: String`, `username: String`, `authKind: StoredSession.AuthKind`, `keyPath: String?`; init with defaults `id: UUID = UUID()`, `authKind: .password`, `keyPath: nil`)
+  - `LoginSetStore(directory: URL)`: `all() throws -> [LoginSet]` (name-sorted, case-insensitive), `upsert(_:) throws`, `delete(id:) throws`, `ignoredMergeGroups() throws -> [Set<UUID>]`, `addIgnoredMergeGroup(_: Set<UUID>) throws`
+  - `StoredSession.loginSetID: UUID?` (public var, init parameter with default nil)
   - `ResolvedLogin` (`username: String`, `authKind: StoredSession.AuthKind`, `keyPath: String?`, `secret: String?`)
-  - `LoginResolver.resolve(session:sets:secrets:) throws -> ResolvedLogin?` und `LoginResolveError.missingSet`
+  - `LoginResolver.resolve(session:sets:secrets:) throws -> ResolvedLogin?` and `LoginResolveError.missingSet`
 
-- [x] **Step 1: Failing Tests schreiben** (`LoginSetStoreTests.swift` + `LoginResolverTests.swift`; Fixture-Muster von `KnownHostsStoreTests` übernehmen — Temp-Verzeichnis pro Test):
+- [x] **Step 1: Write failing tests** (`LoginSetStoreTests.swift` + `LoginResolverTests.swift`; adopt the fixture pattern from `KnownHostsStoreTests` — temp directory per test):
 
 ```swift
     // LoginSetStoreTests:
-    // upsertAndAllRoundtrip: zwei Sets upserten ("Web", "Admin") ->
-    //   all() liefert beide, name-sortiert case-insensitiv ["Admin", "Web"];
-    //   Feldwerte (username/authKind/keyPath) bleiben erhalten.
-    // upsertReplacesById: Set upserten, Namen ändern, erneut upserten ->
-    //   all().count == 1, neuer Name.
-    // deleteRemovesOnlyMatch: zwei Sets, delete(id: erstes.id) ->
-    //   nur das zweite bleibt; delete unbekannter id wirft nicht.
-    // emptyDirectoryReadsEmpty: all() auf leerem Verzeichnis == [].
-    // unknownAuthKindIsHiddenButPreserved: Raw-JSON mit drei Records
-    //   direkt in logins.json schreiben (Format der Datei nachstellen),
-    //   einer davon mit "authKind": "agent" -> all() liefert nur die zwei
-    //   bekannten; danach ein NEUES Set upserten und eines der bekannten
-    //   löschen -> Roh-JSON der Datei enthält den "agent"-Record IMMER NOCH
-    //   (String-Contains-Check auf "agent" reicht).
+    // upsertAndAllRoundtrip: upsert two sets ("Web", "Admin") ->
+    //   all() returns both, name-sorted case-insensitively ["Admin", "Web"];
+    //   field values (username/authKind/keyPath) are preserved.
+    // upsertReplacesById: upsert a set, change the name, upsert again ->
+    //   all().count == 1, new name.
+    // deleteRemovesOnlyMatch: two sets, delete(id: first.id) ->
+    //   only the second remains; delete of an unknown id does not throw.
+    // emptyDirectoryReadsEmpty: all() on an empty directory == [].
+    // unknownAuthKindIsHiddenButPreserved: write raw JSON with three records
+    //   directly to logins.json (reproducing the file format),
+    //   one of them with "authKind": "agent" -> all() returns only the two
+    //   known ones; afterwards upsert a NEW set and delete
+    //   one of the known ones -> the file's raw JSON still contains
+    //   the "agent" record (a string-contains check on "agent" suffices).
     // ignoredMergeGroupsRoundtrip: addIgnoredMergeGroup([a, b]) ->
-    //   ignoredMergeGroups() == [Set([a, b])]; zweite Gruppe anhängen ->
-    //   beide vorhanden; leeres Verzeichnis -> [].
+    //   ignoredMergeGroups() == [Set([a, b])]; append a second group ->
+    //   both present; empty directory -> [].
     //
     // LoginResolverTests:
     // manualSessionResolvesNil: session.loginSetID == nil ->
-    //   resolve(...) == nil (Aufrufer nutzt Session-eigene Daten).
-    // setSessionResolvesFromSet: Set (user "deploy", .privateKey,
-    //   keyPath "/k"), Secret "pp" im InMemorySecretStore unter set.id;
-    //   Session mit loginSetID = set.id -> ResolvedLogin(username: "deploy",
+    //   resolve(...) == nil (caller uses the session's own data).
+    // setSessionResolvesFromSet: set (user "deploy", .privateKey,
+    //   keyPath "/k"), secret "pp" in InMemorySecretStore under set.id;
+    //   session with loginSetID = set.id -> ResolvedLogin(username: "deploy",
     //   authKind: .privateKey, keyPath: "/k", secret: "pp").
-    // missingSecretResolvesNilSecret: kein Keychain-Eintrag -> secret == nil,
-    //   übrige Felder aus dem Set.
-    // missingSetThrows: loginSetID zeigt auf unbekannte UUID ->
+    // missingSecretResolvesNilSecret: no keychain entry -> secret == nil,
+    //   remaining fields come from the set.
+    // missingSetThrows: loginSetID points at an unknown UUID ->
     //   #expect(throws: LoginResolveError.missingSet).
-    // legacySessionJSONDecodesNilLoginSetID: Raw-sessions.json OHNE
-    //   loginSetID-Feld (Format nachstellen) über SessionStore laden ->
-    //   loginSetID == nil. (Gehört logisch zu StoredSession; hier
-    //   mit-testen statt einer dritten Datei.)
+    // legacySessionJSONDecodesNilLoginSetID: load a raw sessions.json WITHOUT
+    //   a loginSetID field (reproducing the format) through SessionStore ->
+    //   loginSetID == nil. (Belongs logically to StoredSession; test it
+    //   here alongside instead of in a third file.)
 ```
 
-- [x] **Step 2: Rot beweisen.** `swift test --filter LoginSetStoreTests` und `--filter LoginResolverTests` → FAIL (Typen existieren nicht).
+- [x] **Step 2: Prove red.** `swift test --filter LoginSetStoreTests` and `--filter LoginResolverTests` → FAIL (types do not exist).
 
-- [x] **Step 3: Implementierung.**
+- [x] **Step 3: Implementation.**
 
-`StoredSession.swift` — exakt das `groupID`-Muster (kein Custom-Decoder):
+`StoredSession.swift` — exactly the `groupID` pattern (no custom decoder):
 
 ```swift
     /// The login set this session's credentials come from, if any (M10b).
     /// Optional so legacy JSON without this field keeps decoding as `nil`
     /// (nil = the session carries its own credentials, "manual" mode).
     public var loginSetID: UUID?
-    // Init: loginSetID: UUID? = nil als letzter Parameter, zuweisen.
+    // Init: loginSetID: UUID? = nil as the last parameter, assign it.
 ```
 
 `LoginSetStore.swift`:
@@ -242,85 +242,85 @@ public enum LoginResolver {
 }
 ```
 
-- [x] **Step 4: Grün + volle Suite.** `swift test` → 475 + neue (echte Zahl festhalten), 0 Failures.
+- [x] **Step 4: Green + full suite.** `swift test` → 475 + new (record the real number), 0 failures.
 
 - [x] **Step 5: Commit.** `feat: add login sets with store, session reference and resolver`
 
 ---
 
-### Task 2: LoginMergePlanner + SessionListViewModel-APIs + Export-Auflösung (Core)
+### Task 2: LoginMergePlanner + SessionListViewModel APIs + export resolution (Core)
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/LoginMergePlanner.swift`
 - Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift`
-- Test: `Tests/macSCPCoreTests/LoginMergePlannerTests.swift` (neu), `Tests/macSCPCoreTests/SessionListViewModelTests.swift` (erweitern)
+- Test: `Tests/macSCPCoreTests/LoginMergePlannerTests.swift` (new), `Tests/macSCPCoreTests/SessionListViewModelTests.swift` (extend)
 
 **Interfaces:**
-- Consumes (T1): `LoginSet`, `LoginSetStore` (Signaturen s. T1), `StoredSession.loginSetID`, `LoginResolver.resolve(session:sets:secrets:)`, `ResolvedLogin`, `LoginResolveError.missingSet`; bestehend: `SecretStore`, `SessionListViewModel` (store/secrets/reload/exportPayload), `InMemorySecretStore`.
-- Produces (T3 verlässt sich exakt hierauf):
+- Consumes (T1): `LoginSet`, `LoginSetStore` (signatures see T1), `StoredSession.loginSetID`, `LoginResolver.resolve(session:sets:secrets:)`, `ResolvedLogin`, `LoginResolveError.missingSet`; existing: `SecretStore`, `SessionListViewModel` (store/secrets/reload/exportPayload), `InMemorySecretStore`.
+- Produces (T3 relies on this exactly):
   - `LoginMergeCandidate` (`username: String`, `authKind: StoredSession.AuthKind`, `keyPath: String?`, `sessionIDs: [UUID]`)
   - `LoginMergePlanner.candidates(sessions:ignoredGroups:secrets:) -> [LoginMergeCandidate]`
-  - `SessionListViewModel`: `loginSets: [LoginSet]` (published, in `reload()` mitgeladen), `saveLoginSet(_ set: LoginSet, secret: String?)`, `usageCount(of setID: UUID) -> Int`, `sessionsUsing(setID: UUID) -> [StoredSession]`, `deleteLoginSet(_ set: LoginSet) -> LoginSetDeleteResult`, `mergeCandidates() -> [LoginMergeCandidate]`, `applyMerge(_ candidate: LoginMergeCandidate, name: String) -> LoginSet?`, `ignoreMerge(_ candidate: LoginMergeCandidate)`, `resolvedLogin(for session: StoredSession) throws -> ResolvedLogin?`, `suggestedSetName(forUsername username: String) -> String`, erweitertes `save(... loginSetID: UUID? = nil)`
+  - `SessionListViewModel`: `loginSets: [LoginSet]` (published, loaded along in `reload()`), `saveLoginSet(_ set: LoginSet, secret: String?)`, `usageCount(of setID: UUID) -> Int`, `sessionsUsing(setID: UUID) -> [StoredSession]`, `deleteLoginSet(_ set: LoginSet) -> LoginSetDeleteResult`, `mergeCandidates() -> [LoginMergeCandidate]`, `applyMerge(_ candidate: LoginMergeCandidate, name: String) -> LoginSet?`, `ignoreMerge(_ candidate: LoginMergeCandidate)`, `resolvedLogin(for session: StoredSession) throws -> ResolvedLogin?`, `suggestedSetName(forUsername username: String) -> String`, extended `save(... loginSetID: UUID? = nil)`
   - `LoginSetDeleteResult` (`restored: Int`, `secretFailures: Int`, Equatable)
 
-**Verhaltens-Anforderungen (Spec §3/§4/§5, bindend):**
-1. Planner: NUR Sessions mit `loginSetID == nil` nehmen teil. privateKey-Gruppen: gleiche (username, keyPath). password-Gruppen: gleicher username UND identischer Keychain-Passwort-WERT (In-Memory-Vergleich; Session ohne gespeichertes Passwort nimmt nicht teil). Nur Gruppen ≥ 2. Kandidat unterdrückt, wenn seine Session-ID-Menge TEILMENGE einer ignorierten Gruppe ist (neues Mitglied ⇒ keine Teilmenge mehr ⇒ reaktiviert). Deterministische Reihenfolge (username-sortiert; sessionIDs in Session-Reihenfolge der Eingabe).
-2. `deleteLoginSet`: pro betroffener Session username/authKind/keyPath aus dem Set zurückkopieren, Set-Secret in den Session-Keychain-Eintrag kopieren (nur wenn vorhanden), `loginSetID = nil`, upsert; Keychain-Fehler einer Session zählt (`secretFailures`) statt abzubrechen — die Session wird TROTZDEM zurückgestellt (Werte + nil-Referenz), nur das Secret fehlt. Danach Set + Set-Secret löschen, `reload()`.
-3. `applyMerge`: Set anlegen (Name-Parameter; Kollisionsbehandlung liefert `suggestedSetName` VOR dem Aufruf, s. u.), Secret der ERSTEN Gruppen-Session unter die Set-ID kopieren (bei .password; bei .privateKey Passphrase ebenso), auf allen Gruppen-Sessions `loginSetID` setzen, Session-Secrets nach erfolgreicher Umstellung löschen (throw-frei via `try?` — ein Lösch-Fehler ist ein harmloser Rest, nie ein Abbruch), `reload()`. Store-Fehler beim Set-Anlegen ⇒ nil + `errorMessage`, nichts umgestellt.
-4. `suggestedSetName(forUsername:)`: Basis = username; kollidiert der Name case-insensitiv mit einem bestehenden Set, „(2)", „(3)" … anhängen (Muster der Datei-Konflikt-Namen).
-5. `save(... loginSetID:)`: non-nil ⇒ Session referenziert das Set und es wird KEIN Session-Secret geschrieben (das `password`-Argument wird ignoriert); nil ⇒ heutiges Verhalten unverändert.
-6. `exportPayload`: für Sessions mit Set werden Username/authKind/keyPath und (bei `includePasswords`) das Passwort aus dem SET aufgelöst exportiert; fehlendes Set-Secret zählt in `missingPasswordCount`; ein fehlendes SET exportiert die Session mit ihren (leeren) Eigenwerten — Export bricht nie ab. Exportformat unverändert v1.
-7. `reload()` lädt `loginSets` mit (Store-Fehler ⇒ leere Liste, bestehendes errorMessage-Muster).
+**Behavioral requirements (spec §3/§4/§5, binding):**
+1. Planner: ONLY sessions with `loginSetID == nil` participate. privateKey groups: same (username, keyPath). password groups: same username AND identical keychain password VALUE (in-memory comparison; a session without a stored password does not participate). Only groups ≥ 2. A candidate is suppressed when its session-ID set is a SUBSET of an ignored group (a new member ⇒ no longer a subset ⇒ reactivated). Deterministic order (username-sorted; sessionIDs in the input session order).
+2. `deleteLoginSet`: for each affected session, copy back username/authKind/keyPath from the set, copy the set's secret into the session's keychain entry (only when present), `loginSetID = nil`, upsert; a keychain failure for one session counts (`secretFailures`) instead of aborting — the session is STILL restored (values + nil reference), only its secret is missing. Afterwards delete the set + the set's secret, `reload()`.
+3. `applyMerge`: create a set (name parameter; collision handling supplies `suggestedSetName` BEFORE the call, see below), copy the secret of the FIRST group session under the set ID (for `.password`; for `.privateKey` the passphrase likewise), set `loginSetID` on all group sessions, delete the session secrets after the successful switch-over (throw-free via `try?` — a deletion failure is a harmless leftover, never an abort), `reload()`. A store failure when creating the set ⇒ nil + `errorMessage`, nothing switched over.
+4. `suggestedSetName(forUsername:)`: base = username; if the name collides case-insensitively with an existing set, append " (2)", " (3)" … (the pattern of the file-conflict names).
+5. `save(... loginSetID:)`: non-nil ⇒ the session references the set and NO session secret is written (the `password` argument is ignored); nil ⇒ today's behavior unchanged.
+6. `exportPayload`: for sessions with a set, username/authKind/keyPath and (when `includePasswords`) the password are exported resolved from the SET; a missing set secret counts in `missingPasswordCount`; a missing SET exports the session with its (empty) own values — export never aborts. Export format unchanged v1.
+7. `reload()` loads `loginSets` along with everything else (store failure ⇒ empty list, existing errorMessage pattern).
 
-- [x] **Step 1: Failing Tests** (Planner-Datei neu; VM-Tests im bestehenden Muster mit Temp-SessionStore + InMemorySecretStore + LoginSetStore auf demselben Temp-Verzeichnis):
+- [x] **Step 1: Failing tests** (planner file new; VM tests in the existing pattern with temp SessionStore + InMemorySecretStore + LoginSetStore on the same temp directory):
 
 ```swift
     // LoginMergePlannerTests:
-    // groupsByUsernameAndKeyPath: 3 Key-Sessions (2x deploy//k1, 1x deploy//k2)
-    //   -> genau ein Kandidat (deploy, .privateKey, /k1) mit 2 IDs.
-    // groupsByUsernameAndPasswordValue: 3 Passwort-Sessions user "root",
-    //   Secrets "a"/"a"/"b" -> ein Kandidat mit den beiden "a"-Sessions.
-    // sessionWithoutStoredPasswordExcluded: Session ohne Keychain-Eintrag
-    //   -> nimmt nicht teil (kein Kandidat aus ihr).
-    // sessionWithSetExcluded: Session mit loginSetID != nil -> nimmt nicht teil.
-    // singletonGroupsSuppressed: nur 1 Session pro Schlüssel -> [].
-    // ignoredGroupSuppressesSubset: Kandidat {a,b}; ignoredGroups [{a,b}]
-    //   -> []; ignoredGroups [{a,b,c}] (Obermenge) -> ebenfalls unterdrückt.
-    // newMemberReactivates: ignoredGroups [{a,b}], Kandidat {a,b,c}
-    //   -> Kandidat erscheint.
+    // groupsByUsernameAndKeyPath: 3 key sessions (2x deploy//k1, 1x deploy//k2)
+    //   -> exactly one candidate (deploy, .privateKey, /k1) with 2 IDs.
+    // groupsByUsernameAndPasswordValue: 3 password sessions user "root",
+    //   secrets "a"/"a"/"b" -> one candidate with the two "a" sessions.
+    // sessionWithoutStoredPasswordExcluded: session without a keychain entry
+    //   -> does not participate (no candidate from it).
+    // sessionWithSetExcluded: session with loginSetID != nil -> does not participate.
+    // singletonGroupsSuppressed: only 1 session per key -> [].
+    // ignoredGroupSuppressesSubset: candidate {a,b}; ignoredGroups [{a,b}]
+    //   -> []; ignoredGroups [{a,b,c}] (superset) -> also suppressed.
+    // newMemberReactivates: ignoredGroups [{a,b}], candidate {a,b,c}
+    //   -> candidate appears.
     //
-    // SessionListViewModelTests (Ergänzungen):
+    // SessionListViewModelTests (additions):
     // saveWithLoginSetSkipsSessionSecret: save(..., loginSetID: set.id)
-    //   -> Session hat loginSetID, secrets.password(for: session.id) == nil.
-    // deleteLoginSetRestoresSessions: Set (user/key + Passphrase "pp"),
-    //   2 Sessions referenzieren es -> deleteLoginSet: beide Sessions
-    //   tragen username/authKind/keyPath des Sets, loginSetID == nil,
-    //   Session-Secret == "pp", Set weg, Set-Secret weg,
-    //   Ergebnis restored == 2, secretFailures == 0.
-    // deleteLoginSetCountsSecretFailure: SecretStore-Double, dessen
-    //   savePassword für eine bestimmte Session-ID wirft (kleines lokales
-    //   Double im Test, InMemory-basiert) -> restored == 2,
-    //   secretFailures == 1, BEIDE Sessions sind trotzdem zurückgestellt.
-    // applyMergeCreatesSetAndRewires: 2 Passwort-Sessions "root"/"a" ->
-    //   applyMerge(candidate, name: "root"): Set existiert (user root,
-    //   .password), Set-Secret == "a", beide Sessions loginSetID == set.id,
-    //   Session-Secrets gelöscht.
-    // suggestedSetNameAvoidsCollision: Sets "root", "root (2)" existieren
+    //   -> the session has loginSetID, secrets.password(for: session.id) == nil.
+    // deleteLoginSetRestoresSessions: set (user/key + passphrase "pp"),
+    //   2 sessions reference it -> deleteLoginSet: both sessions
+    //   carry the set's username/authKind/keyPath, loginSetID == nil,
+    //   session secret == "pp", set gone, set secret gone,
+    //   result restored == 2, secretFailures == 0.
+    // deleteLoginSetCountsSecretFailure: SecretStore double whose
+    //   savePassword throws for one specific session ID (small local
+    //   double in the test, InMemory-based) -> restored == 2,
+    //   secretFailures == 1, BOTH sessions are still restored.
+    // applyMergeCreatesSetAndRewires: 2 password sessions "root"/"a" ->
+    //   applyMerge(candidate, name: "root"): the set exists (user root,
+    //   .password), set secret == "a", both sessions loginSetID == set.id,
+    //   session secrets deleted.
+    // suggestedSetNameAvoidsCollision: sets "root", "root (2)" exist
     //   -> suggestedSetName(forUsername: "root") == "root (3)";
-    //   ohne Kollision == "root".
+    //   without collision == "root".
     // ignoreMergePersists: ignoreMerge(candidate) -> mergeCandidates()
-    //   liefert ihn nicht mehr (über LoginSetStore.ignoredMergeGroups).
-    // exportResolvesLoginSet: Session mit Set (user "deploy", Passwort "s")
+    //   no longer returns it (via LoginSetStore.ignoredMergeGroups).
+    // exportResolvesLoginSet: session with a set (user "deploy", password "s")
     //   -> exportPayload(all, includePasswords: true): ExportedSession
-    //   trägt username "deploy", password "s"; fehlendes Set-Secret zählt
-    //   in missingPasswordCount.
-    // resolvedLoginMissingSetThrows: Session mit dangling loginSetID ->
-    //   #expect(throws:) auf resolvedLogin(for:).
+    //   carries username "deploy", password "s"; a missing set secret
+    //   counts in missingPasswordCount.
+    // resolvedLoginMissingSetThrows: session with a dangling loginSetID ->
+    //   #expect(throws:) on resolvedLogin(for:).
 ```
 
-- [x] **Step 2: Rot beweisen.** `swift test --filter LoginMergePlannerTests` und `--filter SessionListViewModelTests` → FAIL.
+- [x] **Step 2: Prove red.** `swift test --filter LoginMergePlannerTests` and `--filter SessionListViewModelTests` → FAIL.
 
-- [x] **Step 3: Implementierung.**
+- [x] **Step 3: Implementation.**
 
 `LoginMergePlanner.swift`:
 
@@ -343,30 +343,30 @@ public enum LoginMergePlanner {
     public static func candidates(
         sessions: [StoredSession], ignoredGroups: [Set<UUID>], secrets: any SecretStore
     ) -> [LoginMergeCandidate] {
-        // Gruppieren in ein Dictionary mit einem Struct-Key
+        // Group into a dictionary with a struct key
         //   GroupKey { username; kind; keyPath: String?; password: String? }
-        // (Hashable, file-privat):
-        //   .privateKey -> keyPath gesetzt, password nil
+        // (Hashable, file-private):
+        //   .privateKey -> keyPath set, password nil
         //   .password   -> password = (try? secrets.password(for: id)),
-        //                  bei nil TEILNAHME ÜBERSPRINGEN
-        // Nur Gruppen mit count >= 2. Unterdrücken, wenn
+        //                  SKIP PARTICIPATION on nil
+        // Only groups with count >= 2. Suppress when
         //   ignoredGroups.contains(where: { Set(ids).isSubset(of: $0) }).
-        // Ergebnis username-sortiert (bei Gleichheit keyPath, dann Anzahl);
-        // sessionIDs in Eingabe-Reihenfolge der Sessions.
+        // Result username-sorted (on ties keyPath, then count);
+        // sessionIDs in the input order of the sessions.
     }
 }
 ```
 
-`SessionListViewModel`-Ergänzungen (bestehende Muster: `do/catch` + `reload()` + `errorMessage` via `CoreL10n`; drei neue CoreL10n-Keys nach Bestand anlegen, z. B. `core.login.saveFailed %@`, `core.login.deleteFailed %@`, `core.login.mergeFailed %@`, EN/DE in beiden Core-Katalogen):
+`SessionListViewModel` additions (existing pattern: `do/catch` + `reload()` + `errorMessage` via `CoreL10n`; add three new CoreL10n keys following the existing style, e.g. `core.login.saveFailed %@`, `core.login.deleteFailed %@`, `core.login.mergeFailed %@`, EN/DE in both Core catalogs):
 
 ```swift
-    // Neue stored property + Init-Parameter (defaulted, kein Bruch der Aufrufer):
+    // New stored property + init parameter (defaulted, no breakage for callers):
     public private(set) var loginSets: [LoginSet] = []
     private let loginSetStore: LoginSetStore
-    // Init-Parameter (defaulted wie auditStore):
+    // Init parameter (defaulted like auditStore):
     //   loginSetStore: LoginSetStore =
     //     LoginSetStore(directory: SessionStore.defaultDirectory)
-    // reload(): loginSets = (try? loginSetStore.all()) ?? [] ergänzen.
+    // reload(): add loginSets = (try? loginSetStore.all()) ?? [].
 
     public struct LoginSetDeleteResult: Equatable {
         public var restored: Int
@@ -404,47 +404,47 @@ public enum LoginMergePlanner {
     public func resolvedLogin(for session: StoredSession) throws -> ResolvedLogin? {
         try LoginResolver.resolve(session: session, sets: loginSets, secrets: secrets)
     }
-    // save(...): Parameter loginSetID: UUID? = nil ergänzen; in beiden
-    // Zweigen zuweisen; Secret-Schreiben nur im nil-Fall.
-    // exportPayload: pro Session zuerst try? resolvedLogin(for:) —
-    // ResolvedLogin ersetzt username/authKind/keyPath und (bei
-    // includePasswords) das Passwort; nil/throw => heutiger Weg.
+    // save(...): add parameter loginSetID: UUID? = nil; assign it in
+    // both branches; only write the secret in the nil case.
+    // exportPayload: for each session, first try? resolvedLogin(for:) —
+    // a non-nil ResolvedLogin replaces username/authKind/keyPath and (when
+    // includePasswords) the password; nil/throw => today's path.
 ```
 
-- [x] **Step 4: Grün + volle Suite.** `swift test` → Stand T1 + neue, 0 Failures.
+- [x] **Step 4: Green + full suite.** `swift test` → T1 state + new, 0 failures.
 
 - [x] **Step 5: Commit.** `feat: add login merge planning and set lifecycle to the session view model`
 
 ---
 
-### Task 3: Logins-Sheet + Editor + Menü + Dreiweg-Formular + Connect-Wiring (App)
+### Task 3: Logins sheet + editor + menu + three-way form + connect wiring (App)
 
 **Files:**
-- Create: `Sources/MacSCPApp/LoginSetsSheet.swift` (Liste + Merge-Banner + Editor-Sub-Sheet)
-- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (Sessions-Menü: „Logins…" ⌘⇧L), `Sources/MacSCPApp/ContentView.swift` (Sheet-State + TabCommands-Closure + Connect-Auflösung + Save-Pfad), `Sources/MacSCPApp/SessionSidebar.swift` (Hintergrund-Menü-Eintrag), `Sources/MacSCPApp/ConnectionFormView.swift` (Dreiweg-Auth-Block), `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` (Formular-Felder), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
-- Test: keiner (App-Target; Smoke in T4). Die ConnectionViewModel-Felder sind reine stored properties — kein eigener Test nötig.
+- Create: `Sources/MacSCPApp/LoginSetsSheet.swift` (list + merge banner + editor sub-sheet)
+- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (Sessions menu: "Logins…" ⌘⇧L), `Sources/MacSCPApp/ContentView.swift` (sheet state + TabCommands closure + connect resolution + save path), `Sources/MacSCPApp/SessionSidebar.swift` (background menu entry), `Sources/MacSCPApp/ConnectionFormView.swift` (three-way auth block), `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` (form fields), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
+- Test: none (app target; smoke test in T4). The ConnectionViewModel fields are plain stored properties — no dedicated test needed.
 
 **Interfaces:**
-- Consumes (T1/T2, exakt): `SessionListViewModel.loginSets/saveLoginSet/deleteLoginSet/usageCount/sessionsUsing/mergeCandidates/applyMerge/ignoreMerge/suggestedSetName/resolvedLogin/save(... loginSetID:)`, `LoginSet`, `LoginMergeCandidate`, `LoginSetDeleteResult`, `LoginResolveError.missingSet`; bestehend: `TabCommands`-Brücke (M8a/M10a-Muster `showKnownHosts`), `KnownHostsSheet` als Gestalt-Vorlage, `ConnectionViewModel`-Formularfelder, `connect(in:stored:)` in ContentView.
+- Consumes (T1/T2, exactly): `SessionListViewModel.loginSets/saveLoginSet/deleteLoginSet/usageCount/sessionsUsing/mergeCandidates/applyMerge/ignoreMerge/suggestedSetName/resolvedLogin/save(... loginSetID:)`, `LoginSet`, `LoginMergeCandidate`, `LoginSetDeleteResult`, `LoginResolveError.missingSet`; existing: `TabCommands` bridge (M8a/M10a pattern `showKnownHosts`), `KnownHostsSheet` as the shape template, `ConnectionViewModel` form fields, `connect(in:stored:)` in ContentView.
 
-**Verhaltens-Anforderungen (Spec §2/§3/§5 + Mockup Abschnitt 3, bindend):**
-1. `LoginSetsSheet(sessionList: SessionListViewModel)` (~720 pt, Gestalt wie `KnownHostsSheet`): Zeilen nach Mockup — KEY/PASS-Badge (Badge-Optik von `keyTypeBadge` übernehmen), Set-Name, `user · SSH-Key (~/pfad)` bzw. `user · Passwort`-Kurzform, rechts Nutzungszähler `L10n` „%lld connections"/„%lld Verbindungen" (Singular „1 connection" über zwei Keys `loginSets.usage.one`/`loginSets.usage.many %lld`). Fußzeile: „New…", „Edit…" (Einzelauswahl), „Delete…" (destruktiv), „Close". Merge-Banner OBEN, wenn `mergeCandidates()` nicht leer: Text nennt username + Anzahl („N connections use the same login ‚user'"), Buttons „Ignore" (ignoreMerge, Banner verschwindet) und „Merge…" — Bestätigungsdialog listet die Session-NAMEN (über sessionIDs aufgelöst) + Ziel-Set-Name (`suggestedSetName`), Bestätigen ruft `applyMerge`. Mehrere Kandidaten: den ersten anzeigen, Rest nach Aktion nachrücken lassen.
-2. Editor-Sub-Sheet (Neu/Bearbeiten): Name, Benutzername, Segmente Passwort|SSH-Key (Muster des Verbindungsformulars: SecureField mit „leave empty to keep"-Prompt beim Bearbeiten, Key-Pfad + „Choose…" fileImporter + Passphrase-SecureField). „Save" disabled bis Name+Benutzername nicht-leer (getrimmt). Speichern → `saveLoginSet(set, secret: eingabe.isEmpty ? nil : eingabe)`.
-3. Löschen: `confirmationDialog`, Botschaft nennt `usageCount` und dass betroffene Verbindungen ihre Daten direkt zurückbekommen (EN „%lld connections will keep these credentials stored directly again." / DE „%lld Verbindungen erhalten diese Zugangsdaten wieder direkt hinterlegt."); `secretFailures > 0` ⇒ rote Meldung im Sheet (Muster `knownHosts.removeError`).
-4. Menü + Einstiege: Sessions-Menü-Eintrag „Logins…" ⌘⇧L (TabCommands-Closure `showLogins`, Key-Window-Guard wie `showKnownHosts`); Sidebar-Hintergrund-Menü „Logins…" direkt unter „Known Hosts…"; im Formular-Set-Modus ein „Manage logins…"-Link (öffnet dasselbe Sheet lokal, Muster der TOFU-Fußnote aus M10a).
-5. Dreiweg im Formular (Mockup Abschnitt 3 unteres Sheet): Über dem heutigen Auth-Block ein Segment-Umschalter `Login set | Manual`. Set-Modus: Picker über `sessionList.loginSets` (Anzeige „Name — user"), ersetzt Username/Passwort/Key-Felder komplett; darunter der „Manage logins…"-Link. Manual-Modus: heutige Felder + Toggle „Save as new login set" + Namensfeld (Prompt = `suggestedSetName(forUsername:)` live). Neue `ConnectionViewModel`-Felder: `loginMode` (`enum LoginMode: String, CaseIterable, Sendable { case set, manual }`, Default `.manual`), `selectedLoginSetID: UUID?`, `saveAsNewLoginSet: Bool = false`, `newLoginSetName: String = ""`. Formular-Validierung: Set-Modus verlangt `selectedLoginSetID != nil` statt Username/Passwort.
-6. Connect-Wiring in ContentView:
-   - Formular-Connect im Set-Modus: vor `form.connect()` das Set auflösen (`loginSets` + Keychain über `resolvedLogin` einer synthetischen Session ODER direkt: Set aus `sessionList.loginSets`, Secret via `sessionList` — die kleinere Lösung: eine kleine Hilfsfunktion `fillForm(from set: LoginSet)` setzt username/authChoice/keyPath/password aus Set + Keychain-Read). Save-Pfad: `save(..., loginSetID: form.selectedLoginSetID)` im Set-Modus; im Manual-Modus mit aktivem „Save as new login set" ZUERST `saveLoginSet` (Name aus Feld, leer ⇒ `suggestedSetName`), dann `save(..., loginSetID: neuesSet.id)`.
-   - `connect(in:stored:)`: `try sessionList.resolvedLogin(for: stored)` — non-nil ⇒ Formular aus `ResolvedLogin` füllen (statt Session-Eigenwerten); `LoginResolveError.missingSet` ⇒ NICHT verbinden, Formular zeigen mit Fehlermeldung `loginSets.missingSet` (EN „The stored login for this connection was not found. Choose a login or enter credentials." / DE „Das hinterlegte Login dieser Verbindung wurde nicht gefunden. Login wählen oder Zugangsdaten eingeben.") — über das bestehende Fehlerfeld des Formulars.
-   - Edit-Modus des Formulars: `loginSetID` gesetzt ⇒ `loginMode = .set` + Vorauswahl; sonst `.manual` (heutiges Prefill).
-7. Alle neuen Keys EN/DE in BEIDEN Katalogen; Grep-Gegenprobe. Vorschlag: `menu.logins`, `loginSets.title`, `loginSets.usage.one`, `loginSets.usage.many %lld`, `loginSets.new`, `loginSets.edit`, `loginSets.delete`, `loginSets.delete.title`, `loginSets.delete.message %lld`, `loginSets.delete.confirm`, `loginSets.deleteError %lld`, `loginSets.empty`, `loginSets.merge.banner %lld %@`, `loginSets.merge.ignore`, `loginSets.merge.action`, `loginSets.merge.confirmTitle`, `loginSets.merge.confirm`, `loginSets.editor.titleNew`, `loginSets.editor.titleEdit`, `loginSets.editor.name`, `loginSets.editor.username`, `loginSets.editor.keepSecret`, `loginSets.missingSet`, `form.loginMode.set`, `form.loginMode.manual`, `form.selectLogin`, `form.manageLogins`, `form.saveAsSet`, `form.saveAsSet.name` (endgültige Liste beim Implementieren festhalten).
+**Behavioral requirements (spec §2/§3/§5 + mockup section 3, binding):**
+1. `LoginSetsSheet(sessionList: SessionListViewModel)` (~720 pt, shaped like `KnownHostsSheet`): rows per mockup — KEY/PASS badge (badge look taken from `keyTypeBadge`), set name, `user · SSH key (~/path)` or `user · password` short form, on the right the usage count `L10n` "%lld connections"/"%lld Verbindungen" (singular "1 connection" via two keys `loginSets.usage.one`/`loginSets.usage.many %lld`). Footer: "New…", "Edit…" (single selection), "Delete…" (destructive), "Close". Merge banner AT THE TOP when `mergeCandidates()` is non-empty: text names the username + count ("N connections use the same login 'user'"), buttons "Ignore" (ignoreMerge, banner disappears) and "Merge…" — confirmation dialog lists the session NAMES (resolved via sessionIDs) + target set name (`suggestedSetName`), confirming calls `applyMerge`. Multiple candidates: show the first, let the rest advance after an action.
+2. Editor sub-sheet (new/edit): name, username, segments Password|SSH key (pattern of the connection form: SecureField with a "leave empty to keep" prompt when editing, key path + "Choose…" fileImporter + passphrase SecureField). "Save" disabled until name+username are non-empty (trimmed). Saving → `saveLoginSet(set, secret: input.isEmpty ? nil : input)`.
+3. Deletion: `confirmationDialog`, message names `usageCount` and states that affected connections get their data stored directly again (EN "%lld connections will keep these credentials stored directly again." / DE "%lld Verbindungen erhalten diese Zugangsdaten wieder direkt hinterlegt."); `secretFailures > 0` ⇒ red message in the sheet (pattern `knownHosts.removeError`).
+4. Menu + entry points: Sessions menu entry "Logins…" ⌘⇧L (TabCommands closure `showLogins`, key-window guard like `showKnownHosts`); sidebar background menu "Logins…" directly under "Known Hosts…"; in the form's set mode a "Manage logins…" link (opens the same sheet locally, pattern of the TOFU footnote from M10a).
+5. Three-way in the form (mockup section 3, lower sheet): above today's auth block, a segmented control `Login set | Manual`. Set mode: picker over `sessionList.loginSets` (display "Name — user"), replaces the username/password/key fields entirely; below it the "Manage logins…" link. Manual mode: today's fields + toggle "Save as new login set" + name field (prompt = `suggestedSetName(forUsername:)` live). New `ConnectionViewModel` fields: `loginMode` (`enum LoginMode: String, CaseIterable, Sendable { case set, manual }`, default `.manual`), `selectedLoginSetID: UUID?`, `saveAsNewLoginSet: Bool = false`, `newLoginSetName: String = ""`. Form validation: set mode requires `selectedLoginSetID != nil` instead of username/password.
+6. Connect wiring in ContentView:
+   - Form connect in set mode: before `form.connect()`, resolve the set (`loginSets` + keychain via `resolvedLogin` for a synthetic session OR directly: the set from `sessionList.loginSets`, secret via `sessionList` — the smaller solution: a small helper function `fillForm(from set: LoginSet)` sets username/authChoice/keyPath/password from the set + a keychain read). Save path: `save(..., loginSetID: form.selectedLoginSetID)` in set mode; in manual mode with "Save as new login set" active, FIRST `saveLoginSet` (name from the field, empty ⇒ `suggestedSetName`), then `save(..., loginSetID: newSet.id)`.
+   - `connect(in:stored:)`: `try sessionList.resolvedLogin(for: stored)` — non-nil ⇒ fill the form from `ResolvedLogin` (instead of the session's own values); `LoginResolveError.missingSet` ⇒ do NOT connect, show the form with the error message `loginSets.missingSet` (EN "The stored login for this connection was not found. Choose a login or enter credentials." / DE "Das hinterlegte Login dieser Verbindung wurde nicht gefunden. Login wählen oder Zugangsdaten eingeben.") — via the form's existing error field.
+   - Form edit mode: `loginSetID` set ⇒ `loginMode = .set` + preselection; otherwise `.manual` (today's prefill).
+7. All new keys EN/DE in BOTH catalogs; cross-check with grep. Suggestion: `menu.logins`, `loginSets.title`, `loginSets.usage.one`, `loginSets.usage.many %lld`, `loginSets.new`, `loginSets.edit`, `loginSets.delete`, `loginSets.delete.title`, `loginSets.delete.message %lld`, `loginSets.delete.confirm`, `loginSets.deleteError %lld`, `loginSets.empty`, `loginSets.merge.banner %lld %@`, `loginSets.merge.ignore`, `loginSets.merge.action`, `loginSets.merge.confirmTitle`, `loginSets.merge.confirm`, `loginSets.editor.titleNew`, `loginSets.editor.titleEdit`, `loginSets.editor.name`, `loginSets.editor.username`, `loginSets.editor.keepSecret`, `loginSets.missingSet`, `form.loginMode.set`, `form.loginMode.manual`, `form.selectLogin`, `form.manageLogins`, `form.saveAsSet`, `form.saveAsSet.name` (finalize the list during implementation).
 
-- [x] **Step 1:** ConnectionViewModel-Felder + Dreiweg-UI im Formular. **Step 2:** LoginSetsSheet + Editor + Merge-Banner. **Step 3:** Menü/Sidebar/TabCommands + ContentView-Wiring (Connect-Auflösung, Save-Pfade, missingSet-Fehler). **Step 4:** Lokalisierungs-Keys + Grep-Gegenprobe beide Kataloge. **Step 5:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T2). **Step 6:** Commit `feat: add reusable login sets with form picker and merge suggestions`.
+- [x] **Step 1:** ConnectionViewModel fields + three-way UI in the form. **Step 2:** LoginSetsSheet + editor + merge banner. **Step 3:** menu/sidebar/TabCommands + ContentView wiring (connect resolution, save paths, missingSet error). **Step 4:** localization keys + grep cross-check both catalogs. **Step 5:** `swift build` (0 errors, no new warnings) + full `swift test` (T2 state). **Step 6:** commit `feat: add reusable login sets with form picker and merge suggestions`.
 
 ---
 
-### Task 4: Abschluss-Verifikation (Koordinator)
+### Task 4: Final verification (coordinator)
 
-- [x] Gated Suiten: Docker-Rig `start` (Haupt-Checkout), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle Tests, zero skips; Rig `stop`.
-- [ ] Visueller Smoke — an den Maintainer delegiert (Checkliste in der Zusammenfassung: Sheet ⌘⇧L, Set anlegen/bearbeiten, Dreiweg im Formular, Merge-Banner mit zwei gleichen Logins, Set löschen ⇒ Verbindungen funktionieren weiter, Connect über Set).
-- [x] Plan-Checkboxen, Ledger, Opus-Final-Review (Review-Package über `git merge-base`), Fix-Runde falls nötig, Push develop, `gh run watch`, Memory-Update, Zusammenfassung. KEIN Release.
+- [x] Gated suites: Docker rig `start` (main checkout), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → all tests, zero skips; rig `stop`.
+- [ ] Visual smoke — delegated to the maintainer (checklist in the summary: sheet ⌘⇧L, create/edit a set, three-way in the form, merge banner with two identical logins, delete a set ⇒ connections keep working, connect via a set).
+- [x] Plan checkboxes, ledger, Opus final review (review package via `git merge-base`), a fix round if needed, push develop, `gh run watch`, memory update, summary. NO release.

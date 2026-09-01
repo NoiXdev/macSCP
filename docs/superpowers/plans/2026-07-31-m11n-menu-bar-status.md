@@ -1,43 +1,43 @@
-# M11n — Menüleisten-Status Implementation Plan
+# M11n — Menu Bar Status Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein app-weites Menüleisten-Symbol (`MenuBarExtra`, Panel-Stil), das aktive SSH-Verbindungen und pro Verbindung gruppierte Übertragungs-Aktivität zeigt; ein Klick holt das Hauptfenster nach vorn und aktiviert den Tab.
+**Goal:** An app-wide menu bar icon (`MenuBarExtra`, panel style) that shows active SSH connections and per-connection grouped transfer activity; a click brings the main window forward and activates the tab.
 
-**Architecture:** Die getestete Aggregations-Logik (Items eines Tabs → kompakte Summe) liegt in Core (`TransferActivitySummary` + `TransferQueueViewModel.activitySummary`). Die App-Schicht rendert über eine app-weite `@Observable`-Brücke (`MenuBarStatusModel`) nach dem bestehenden `TabCommands`-Muster: `ContentView` spiegelt `tabsModel.tabs` hinein und setzt die Fenster-holen-Closures; Panel und Icon lesen die `@Observable`-Tab-Member direkt, sodass SwiftUI live aktualisiert.
+**Architecture:** The tested aggregation logic (a tab's items → a compact summary) lives in Core (`TransferActivitySummary` + `TransferQueueViewModel.activitySummary`). The App layer renders via an app-wide `@Observable` bridge (`MenuBarStatusModel`) following the existing `TabCommands` pattern: `ContentView` mirrors `tabsModel.tabs` into it and sets the window-raising closures; the panel and icon read the `@Observable` tab members directly, so SwiftUI updates live.
 
-**Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftUI `MenuBarExtra` (`.window`-Stil), Swift Testing, macOS 15.
+**Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftUI `MenuBarExtra` (`.window` style), Swift Testing, macOS 15.
 
 ## Global Constraints
 
-- Swift-tools 6.0, alle Targets `.swiftLanguageMode(.v5)`, min. macOS 15.
-- Tests: Swift Testing (`@Test`/`#expect`), TDD red→green; neue Logik kommt mit Tests.
-- Code/Kommentare/`reason:`-Strings **English only**.
-- UI-Strings über die `.strings`-Kataloge `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`, EN-Default + DE, Lookup via `L10n.string(key, "English default")` / `L10n.text(...)`.
-- **Typografische Anführungszeichen `„ "` und `…` in Strings; ein ASCII-`"` in einer deutschen Zeile macht den ganzen DE-Katalog ungültig** (`plutil -lint` + `LocalizableStringsTests` bewachen das).
-- Keine app-weiten Singletons für Session-State: der Menüleisten-Eintrag hält **keinen** eigenen Verbindungszustand, nur die Brücke zu `tabsModel.tabs`.
-- Kein Release/Tag ohne ausdrückliche Maintainer-Anordnung.
-- Baseline vor M11n: **891 Tests / 61 Suiten** grün.
+- Swift tools 6.0, all targets `.swiftLanguageMode(.v5)`, min. macOS 15.
+- Tests: Swift Testing (`@Test`/`#expect`), TDD red→green; new logic ships with tests.
+- Code/comments/`reason:` strings **English only**.
+- UI strings via the `.strings` catalogs `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`, EN default + DE, lookup via `L10n.string(key, "English default")` / `L10n.text(...)`.
+- **Typographic quotes `„ "` and `…` in strings; an ASCII `"` in a German line invalidates the entire DE catalog** (`plutil -lint` + `LocalizableStringsTests` guard against this).
+- No app-wide singletons for session state: the menu bar item holds **no** connection state of its own, only the bridge to `tabsModel.tabs`.
+- No release/tag without the maintainer's explicit order.
+- Baseline before M11n: **891 tests / 61 suites** green.
 
 ---
 
-### Task 1: Core — TransferActivitySummary + activitySummary + Settings-Flag
+### Task 1: Core — TransferActivitySummary + activitySummary + Settings flag
 
 **Files:**
 - Create: `Sources/macSCPCore/Presentation/TransferActivitySummary.swift`
-- Modify: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift` (computed `activitySummary` + internes statisches Fold)
+- Modify: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift` (computed `activitySummary` + internal static fold)
 - Modify: `Sources/macSCPCore/Settings/SettingsStore.swift` (`menuBarEnabled`)
 - Test: `Tests/macSCPCoreTests/TransferActivitySummaryTests.swift`
-- Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift` (zwei Fälle anhängen)
+- Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift` (append two cases)
 
 **Interfaces:**
-- Consumes (bestehend, verifiziert): `TransferQueueViewModel.Item` mit `status: Item.Status` (`.queued`, `.running(TransferProgress)`, terminal) und `direction: TransferDirection`; `Item.Status.isRunning: Bool`; `TransferProgress { bytesTransferred: UInt64; totalBytes: UInt64?; bytesPerSecond: Double?; fraction: Double? }`; `TransferQueueViewModel.displayDirection: TransferDirection?`; `TransferDirection { .upload, .download }`; `Item`s interner memberwise-Init (via `@testable import`). `SettingsStore`-Bool-Muster: `boolValue(for:default:)` / `setBool(_:for:)`, `enum Keys`, `enum Defaults`.
-- Produces (für Task 2):
-  - `public struct TransferActivitySummary: Equatable, Sendable` mit `runningCount: Int`, `pendingCount: Int`, `fraction: Double?`, `bytesPerSecond: Double?`, `direction: TransferDirection?` und public memberwise-Init.
+- Consumes (existing, verified): `TransferQueueViewModel.Item` with `status: Item.Status` (`.queued`, `.running(TransferProgress)`, terminal) and `direction: TransferDirection`; `Item.Status.isRunning: Bool`; `TransferProgress { bytesTransferred: UInt64; totalBytes: UInt64?; bytesPerSecond: Double?; fraction: Double? }`; `TransferQueueViewModel.displayDirection: TransferDirection?`; `TransferDirection { .upload, .download }`; `Item`'s internal memberwise init (via `@testable import`). `SettingsStore` bool pattern: `boolValue(for:default:)` / `setBool(_:for:)`, `enum Keys`, `enum Defaults`.
+- Produces (for Task 2):
+  - `public struct TransferActivitySummary: Equatable, Sendable` with `runningCount: Int`, `pendingCount: Int`, `fraction: Double?`, `bytesPerSecond: Double?`, `direction: TransferDirection?` and a public memberwise init.
   - `TransferQueueViewModel.activitySummary: TransferActivitySummary?` (computed, public).
   - `SettingsStore.menuBarEnabled: Bool` (default `true`).
 
-- [x] **Step 1: Failing test für das Fold.** Neue Datei `Tests/macSCPCoreTests/TransferActivitySummaryTests.swift`. Das Fold ist eine interne statische Funktion `TransferQueueViewModel.activitySummary(for:direction:)`, die `[Item]` faltet — testbar ohne die Queue zu treiben. Ein lokaler `makeItem`-Helfer baut `Item`s über den (via `@testable`) sichtbaren memberwise-Init.
+- [x] **Step 1: Failing test for the fold.** New file `Tests/macSCPCoreTests/TransferActivitySummaryTests.swift`. The fold is an internal static function `TransferQueueViewModel.activitySummary(for:direction:)` that folds `[Item]` — testable without driving the queue. A local `makeItem` helper builds `Item`s via the (via `@testable`) visible memberwise init.
 
 ```swift
 import Foundation
@@ -134,10 +134,10 @@ struct TransferActivitySummaryTests {
 }
 ```
 
-- [x] **Step 2: Rot.** `swift test --filter TransferActivitySummary`
-  Expected: FAIL — `TransferActivitySummary` und `activitySummary(for:direction:)` existieren nicht (Compile-Fehler).
+- [x] **Step 2: Red.** `swift test --filter TransferActivitySummary`
+  Expected: FAIL — `TransferActivitySummary` and `activitySummary(for:direction:)` do not exist (compile error).
 
-- [x] **Step 3: Struct anlegen.** Neue Datei `Sources/macSCPCore/Presentation/TransferActivitySummary.swift`:
+- [x] **Step 3: Create the struct.** New file `Sources/macSCPCore/Presentation/TransferActivitySummary.swift`:
 
 ```swift
 import Foundation
@@ -179,7 +179,7 @@ public struct TransferActivitySummary: Equatable, Sendable {
 }
 ```
 
-- [x] **Step 4: Fold + computed property.** In `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift`, direkt nach der bestehenden `displayDirection`-computed-Property (um Zeile 177) einfügen:
+- [x] **Step 4: Fold + computed property.** In `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift`, insert directly after the existing `displayDirection` computed property (around line 177):
 
 ```swift
     /// A compact roll-up of this queue's activity for the menu-bar panel
@@ -239,10 +239,10 @@ public struct TransferActivitySummary: Equatable, Sendable {
     }
 ```
 
-- [x] **Step 5: Grün.** `swift test --filter TransferActivitySummary`
+- [x] **Step 5: Green.** `swift test --filter TransferActivitySummary`
   Expected: PASS (7/7).
 
-- [x] **Step 6: Failing test für `menuBarEnabled`.** In `Tests/macSCPCoreTests/SettingsStoreTests.swift` zwei `@Test`-Fälle anhängen (Muster wie `defaultsWithoutFile` / `persistenceRoundtrips`):
+- [x] **Step 6: Failing test for `menuBarEnabled`.** In `Tests/macSCPCoreTests/SettingsStoreTests.swift` append two `@Test` cases (pattern like `defaultsWithoutFile` / `persistenceRoundtrips`):
 
 ```swift
     @Test func menuBarEnabledDefaultsTrue() {
@@ -262,13 +262,13 @@ public struct TransferActivitySummary: Equatable, Sendable {
     }
 ```
 
-- [x] **Step 7: Rot.** `swift test --filter SettingsStore`
-  Expected: FAIL — `menuBarEnabled` existiert nicht (Compile-Fehler).
+- [x] **Step 7: Red.** `swift test --filter SettingsStore`
+  Expected: FAIL — `menuBarEnabled` does not exist (compile error).
 
-- [x] **Step 8: `menuBarEnabled` implementieren.** In `Sources/macSCPCore/Settings/SettingsStore.swift`:
-  - In `enum Keys` (nach `visibleColumns`): `static let menuBarEnabled = "menuBarEnabled"`.
-  - In `enum Defaults` (nach `updateCheckEnabled`): `static let menuBarEnabled = true`.
-  - Bei den anderen Bool-Vars (z.B. direkt nach `updateCheckEnabled` um Zeile 263):
+- [x] **Step 8: Implement `menuBarEnabled`.** In `Sources/macSCPCore/Settings/SettingsStore.swift`:
+  - In `enum Keys` (after `visibleColumns`): `static let menuBarEnabled = "menuBarEnabled"`.
+  - In `enum Defaults` (after `updateCheckEnabled`): `static let menuBarEnabled = true`.
+  - Beside the other bool vars (e.g. directly after `updateCheckEnabled` around line 263):
 
 ```swift
     /// Whether the app shows its menu-bar status item (M11n). Default on.
@@ -278,8 +278,8 @@ public struct TransferActivitySummary: Equatable, Sendable {
     }
 ```
 
-- [x] **Step 9: Grün + volle Suite.** `swift test --filter SettingsStore` → PASS; dann `swift test`
-  Expected: 891 bestehende + 9 neue = **900 Tests** grün, keine neuen Build-Warnungen.
+- [x] **Step 9: Green + full suite.** `swift test --filter SettingsStore` → PASS; then `swift test`
+  Expected: 891 existing + 9 new = **900 tests** green, no new build warnings.
 
 - [x] **Step 10: Commit.**
 
@@ -294,24 +294,24 @@ git commit -m "feat: roll up transfer activity and add the menu-bar toggle"
 
 ---
 
-### Task 2: App — MenuBarExtra-Panel, Brücke, Settings-Toggle, L10n
+### Task 2: App — MenuBarExtra panel, bridge, Settings toggle, L10n
 
 **Files:**
 - Create: `Sources/MacSCPApp/MenuBarStatusModel.swift`
-- Create: `Sources/MacSCPApp/MenuBarStatusPanel.swift` (Panel + Label + Zeilen-Views)
-- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (`@State menuBarModel` + `MenuBarExtra`-Szene)
-- Modify: `Sources/MacSCPApp/ContentView.swift` (Brücke füttern in `.task` + `.onChange`)
-- Modify: `Sources/MacSCPApp/SettingsView.swift` (Toggle in „Allgemein")
+- Create: `Sources/MacSCPApp/MenuBarStatusPanel.swift` (panel + label + row views)
+- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (`@State menuBarModel` + `MenuBarExtra` scene)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (feed the bridge in `.task` + `.onChange`)
+- Modify: `Sources/MacSCPApp/SettingsView.swift` (toggle in "General")
 - Modify: `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings`
 - Modify: `Sources/MacSCPApp/Resources/de.lproj/Localizable.strings`
 
 **Interfaces:**
 - Consumes (Task 1): `TransferActivitySummary`, `TransferQueueViewModel.activitySummary`, `SettingsStore.menuBarEnabled`.
-- Consumes (bestehend, verifiziert): `SessionTab` (`@Observable`) mit `id: UUID`, `displayTitle: String`, `isConnected: Bool`, `connectionViewModel: ConnectionViewModel`, `transferQueue: TransferQueueViewModel`; `ConnectionViewModel.state: State` (`.idle`/`.connecting`/`.failed`); `TabsViewModel.tabs: [SessionTab]`, `.activeTabID`, `activate(_:)`; `TabCommands`-Muster in `MacSCPApp`/`ContentView`; `L10n.string`/`L10n.text`; `TransferRateFormatting.compactLabel(bytesPerSecond:etaSeconds:)`.
+- Consumes (existing, verified): `SessionTab` (`@Observable`) with `id: UUID`, `displayTitle: String`, `isConnected: Bool`, `connectionViewModel: ConnectionViewModel`, `transferQueue: TransferQueueViewModel`; `ConnectionViewModel.state: State` (`.idle`/`.connecting`/`.failed`); `TabsViewModel.tabs: [SessionTab]`, `.activeTabID`, `activate(_:)`; the `TabCommands` pattern in `MacSCPApp`/`ContentView`; `L10n.string`/`L10n.text`; `TransferRateFormatting.compactLabel(bytesPerSecond:etaSeconds:)`.
 
-> **Hinweis App-Tests:** Es gibt (wie in allen bisherigen App-only-Tasks) **kein** App-Test-Target. „Verifikation" heißt hier `swift build` ohne neue Warnungen + Lesen/Trace der Verdrahtung. Die riskante Logik ist in Task 1 Core-getestet.
+> **App test note:** As with all prior App-only tasks, there is **no** App test target. "Verification" here means `swift build` without new warnings + reading/tracing the wiring. The risky logic is Core-tested in Task 1.
 
-- [x] **Step 1: `MenuBarStatusModel` anlegen.** Neue Datei `Sources/MacSCPApp/MenuBarStatusModel.swift`:
+- [x] **Step 1: Create `MenuBarStatusModel`.** New file `Sources/MacSCPApp/MenuBarStatusModel.swift`:
 
 ```swift
 import SwiftUI
@@ -346,7 +346,7 @@ final class MenuBarStatusModel {
 }
 ```
 
-- [x] **Step 2: Panel + Label + Zeile.** Neue Datei `Sources/MacSCPApp/MenuBarStatusPanel.swift`. Nutzt Design-Tokens/`L10n` wie der Rest der App. Status-Punkt-Farbe: grün (verbunden) / gelb (`.connecting`) / rot (`.failed`) / sekundär (bereit).
+- [x] **Step 2: Panel + label + row.** New file `Sources/MacSCPApp/MenuBarStatusPanel.swift`. Uses design tokens/`L10n` like the rest of the app. Status-dot color: green (connected) / yellow (`.connecting`) / red (`.failed`) / secondary (idle).
 
 ```swift
 import SwiftUI
@@ -471,10 +471,10 @@ struct MenuBarConnectionRow: View {
 }
 ```
 
-- [x] **Step 3: Szene + Brücke in `MacSCPApp`.** In `Sources/MacSCPApp/MacSCPApp.swift`:
-  - Neben den bestehenden `@State`-Objekten (`settingsStore`, `bandwidthLimiter`, …): `@State private var menuBarModel = MenuBarStatusModel()`.
-  - `menuBarModel` an `ContentView` durchreichen (neuer Parameter, siehe Step 4).
-  - Nach der `WindowGroup { … }`-Szene und der `Settings { … }`-Szene eine dritte Szene anfügen. `settingsStore` ist `@Observable`; für das Binding `@Bindable var settingsStore` lokal in einer computed `body`-Hilfsvariable oder via `@Bindable` an der Property. Muster:
+- [x] **Step 3: Scene + bridge in `MacSCPApp`.** In `Sources/MacSCPApp/MacSCPApp.swift`:
+  - Beside the existing `@State` objects (`settingsStore`, `bandwidthLimiter`, …): `@State private var menuBarModel = MenuBarStatusModel()`.
+  - Pass `menuBarModel` through to `ContentView` (new parameter, see Step 4).
+  - After the `WindowGroup { … }` scene and the `Settings { … }` scene, append a third scene. `settingsStore` is `@Observable`; for the binding, use `@Bindable var settingsStore` locally in a computed `body` helper, or via `@Bindable` on the property. Pattern:
 
 ```swift
         MenuBarExtra(isInserted: menuBarInserted) {
@@ -485,7 +485,7 @@ struct MenuBarConnectionRow: View {
         .menuBarExtraStyle(.window)   // scene modifier — NOT on the content view
 ```
 
-  Für das `isInserted:`-Binding braucht es ein `Binding<Bool>`. Da `SettingsStore` `@Observable` ist: in `MacSCPApp` `@Bindable var settingsStore`-Zugriff über eine kleine computed Property herstellen, z.B.:
+  For the `isInserted:` binding a `Binding<Bool>` is needed. Since `SettingsStore` is `@Observable`: in `MacSCPApp`, obtain `@Bindable var settingsStore` access via a small computed property, e.g.:
 
 ```swift
     private var menuBarInserted: Binding<Bool> {
@@ -494,11 +494,11 @@ struct MenuBarConnectionRow: View {
     }
 ```
 
-  und dann `MenuBarExtra(isInserted: menuBarInserted) { … }`. (Explizites `Binding` vermeidet `@Bindable`-Feinheiten auf `@State`-`@Observable` in der `App`-`body`.)
+  and then `MenuBarExtra(isInserted: menuBarInserted) { … }`. (An explicit `Binding` avoids `@Bindable` subtleties on a `@State`-`@Observable` in the `App`'s `body`.)
 
-- [x] **Step 4: Brücke in `ContentView` füttern.** In `Sources/MacSCPApp/ContentView.swift`:
-  - Neuen Parameter `let menuBarModel: MenuBarStatusModel` aufnehmen (analog wie `tabCommands` hereinkommt) und im `MacSCPApp`-Aufrufort übergeben.
-  - Im bestehenden `.task { … }` (wo `tabCommands`-Closures gesetzt werden) ergänzen:
+- [x] **Step 4: Feed the bridge in `ContentView`.** In `Sources/MacSCPApp/ContentView.swift`:
+  - Add a new parameter `let menuBarModel: MenuBarStatusModel` (analogous to how `tabCommands` comes in) and pass it in at the `MacSCPApp` call site.
+  - In the existing `.task { … }` (where the `tabCommands` closures are set), add:
 
 ```swift
             menuBarModel.tabs = tabsModel.tabs
@@ -513,7 +513,7 @@ struct MenuBarConnectionRow: View {
             }
 ```
 
-  - Neben den bestehenden `.onChange`-Spiegelungen (wie `isActiveTabConnected`) eine für die Tab-Liste:
+  - Beside the existing `.onChange` mirrors (like `isActiveTabConnected`), add one for the tab list:
 
 ```swift
         .onChange(of: tabsModel.tabs) { _, newTabs in
@@ -521,18 +521,18 @@ struct MenuBarConnectionRow: View {
         }
 ```
 
-  Falls `tabsModel.tabs` nicht direkt `Equatable`-`onChange`-fähig ist, stattdessen auf `tabsModel.tabs.map(\.id)` beobachten und im Handler `menuBarModel.tabs = tabsModel.tabs` setzen.
+  If `tabsModel.tabs` is not directly `Equatable`-`onChange`-capable, observe `tabsModel.tabs.map(\.id)` instead and set `menuBarModel.tabs = tabsModel.tabs` in the handler.
 
-- [x] **Step 5: Settings-Toggle.** In `Sources/MacSCPApp/SettingsView.swift`, im „Allgemein"-Tab bei den anderen Togglen (`updateCheckEnabled`/`showHiddenFiles`), mit `@Bindable`-Zugriff auf den `settingsStore`:
+- [x] **Step 5: Settings toggle.** In `Sources/MacSCPApp/SettingsView.swift`, in the "General" tab beside the other toggles (`updateCheckEnabled`/`showHiddenFiles`), with `@Bindable` access to `settingsStore`:
 
 ```swift
                 Toggle(L10n.string("settings.general.menubar", "Show menu bar icon"),
                        isOn: $settings.menuBarEnabled)
 ```
 
-  (`$settings` = der im View bereits vorhandene `@Bindable`-Store; denselben Namen wie die anderen Toggles im selben Block verwenden.)
+  (`$settings` = the `@Bindable` store already present in the view; use the same name as the other toggles in the same block.)
 
-- [x] **Step 6: Strings EN.** In `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` anfügen:
+- [x] **Step 6: EN strings.** Append to `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings`:
 
 ```
 "menubar.connections.count" = "%d connections";
@@ -547,7 +547,7 @@ struct MenuBarConnectionRow: View {
 "settings.general.menubar" = "Show menu bar icon";
 ```
 
-- [x] **Step 7: Strings DE.** In `Sources/MacSCPApp/Resources/de.lproj/Localizable.strings` anfügen (typografische `…`, nur ASCII-`"` als Delimiter, keine im Wert):
+- [x] **Step 7: DE strings.** Append to `Sources/MacSCPApp/Resources/de.lproj/Localizable.strings` (typographic `…`, only ASCII `"` as delimiters, none inside the value):
 
 ```
 "menubar.connections.count" = "%d Verbindungen";
@@ -562,21 +562,21 @@ struct MenuBarConnectionRow: View {
 "settings.general.menubar" = "Menüleisten-Symbol anzeigen";
 ```
 
-- [x] **Step 8: Katalog-Lint + Parität.** 
+- [x] **Step 8: Catalog lint + parity.**
 
 ```bash
 plutil -lint Sources/MacSCPApp/Resources/en.lproj/Localizable.strings
 plutil -lint Sources/MacSCPApp/Resources/de.lproj/Localizable.strings
 ```
-  Expected: beide „OK". Dann `swift test --filter Localizable` (die `LocalizableStringsTests` prüfen EN/DE-Schlüssel-Parität) → PASS.
+  Expected: both "OK". Then `swift test --filter Localizable` (the `LocalizableStringsTests` check EN/DE key parity) → PASS.
 
-- [x] **Step 9: Build + volle Suite.** `swift build` (Expected: `Build complete`, keine neuen Warnungen außer den vier vorbestehenden Citadel/`_`-Warnungen). Dann `swift test` → **900 Tests** grün.
+- [x] **Step 9: Build + full suite.** `swift build` (Expected: `Build complete`, no new warnings besides the four pre-existing Citadel/`_` warnings). Then `swift test` → **900 tests** green.
 
-- [x] **Step 10: Trace-Verifikation (kein App-Test-Target).** Lesen und bestätigen:
-  - `MacSCPApp` erzeugt genau eine `MenuBarStatusModel`-Instanz und reicht sie an `ContentView` **und** die `MenuBarExtra`-Szene.
-  - `isInserted`-Binding liest/schreibt `settingsStore.menuBarEnabled`.
-  - `ContentView.task` setzt `focusTab`/`showMainWindow` und Initial-`tabs`; `.onChange` hält `menuBarModel.tabs` synchron.
-  - Panel/Row lesen nur `@Observable`-Member (`displayTitle`, `isConnected`, `connectionViewModel.state`, `transferQueue.activitySummary`) → Live-Update.
+- [x] **Step 10: Trace verification (no App test target).** Read and confirm:
+  - `MacSCPApp` creates exactly one `MenuBarStatusModel` instance and passes it to `ContentView` **and** the `MenuBarExtra` scene.
+  - The `isInserted` binding reads/writes `settingsStore.menuBarEnabled`.
+  - `ContentView.task` sets `focusTab`/`showMainWindow` and the initial `tabs`; `.onChange` keeps `menuBarModel.tabs` in sync.
+  - The panel/row read only `@Observable` members (`displayTitle`, `isConnected`, `connectionViewModel.state`, `transferQueue.activitySummary`) → live update.
 
 - [x] **Step 11: Commit.**
 
@@ -593,10 +593,10 @@ git commit -m "feat: add a menu-bar status item for connections and transfers"
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Close-out verification (coordinator)
 
-- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips (Docker-Rig aus dem Haupt-Checkout, nicht aus einem Worktree).
-- [x] `swift build` sauber (keine neuen Warnungen).
-- [x] Whole-Milestone Opus-Review über `review-package <base> HEAD`: Fokus auf (a) `activitySummary`-Fold korrekt bei gemischten/unbekannten Totals und nur-wartenden Items; (b) Brücken-Synchronisation ohne app-weites Session-Singleton (spiegelt nur `tabsModel.tabs`); (c) `isInserted`-Binding blendet ohne Neustart; (d) Live-Update ohne Timer (nur `@Observable`-Reads); (e) `focusTab` holt Fenster + Tab robust auch bei minimiert/versteckt; (f) L10n-Parität + `plutil` + keine ASCII-`"` in DE. Fix-Runden bis „Ready to merge: Yes".
-- [ ] Visueller Smoke — Maintainer (Checkliste: Icon in der Menüleiste sichtbar; Klick öffnet Panel; verbundene/verbindende/fehlgeschlagene Tabs mit richtigem Statuspunkt; laufende Übertragung zeigt gruppierte Zeile mit ↑/↓/%/Rate; Klick auf Zeile holt Fenster + Tab; „macSCP anzeigen" holt Fenster; Settings-Toggle blendet das Icon aus/ein ohne Neustart; hell/dunkel; DE ↔ EN).
-- [x] Plan-Checkboxen, Ledger, Push develop, `gh run watch`, Dev-Build (`MACSCP_VERSION=1.2.0-dev MACSCP_BUILD=<commit> scripts/package-app` → codesign → xattr → `~/Desktop/macSCP-dev.app`), Memory. **KEIN Release.**
+- [x] Gated suites: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → green, zero skips (Docker rig from the main checkout, not from a worktree).
+- [x] `swift build` clean (no new warnings).
+- [x] Whole-milestone Opus review via `review-package <base> HEAD`: focus on (a) the `activitySummary` fold is correct for mixed/unknown totals and pending-only items; (b) bridge synchronization without an app-wide session singleton (mirrors only `tabsModel.tabs`); (c) the `isInserted` binding toggles without a restart; (d) live update without a timer (only `@Observable` reads); (e) `focusTab` reliably brings the window + tab forward even when minimized/hidden; (f) L10n parity + `plutil` + no ASCII `"` in DE. Fix rounds until "Ready to merge: Yes".
+- [ ] Visual smoke — maintainer (checklist: icon visible in the menu bar; click opens the panel; connected/connecting/failed tabs show the correct status dot; a running transfer shows the grouped line with ↑/↓/%/rate; clicking a row brings the window + tab forward; "Show macSCP" brings the window forward; the Settings toggle shows/hides the icon without a restart; light/dark; DE ↔ EN).
+- [x] Plan checkboxes, ledger, push develop, `gh run watch`, dev build (`MACSCP_VERSION=1.2.0-dev MACSCP_BUILD=<commit> scripts/package-app` → codesign → xattr → `~/Desktop/macSCP-dev.app`), memory. **NO release.**

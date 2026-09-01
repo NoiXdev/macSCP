@@ -2,72 +2,72 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Der komplette Bestand erfüllt die Sprach-Policy aus CLAUDE.md: Quellcode-Kommentare nur Englisch; ALLE nutzer-sichtbaren Strings laufen über Lokalisierung mit Englisch als Default und funktionierender deutscher Übersetzung (App startet auf Deutsch → deutsche UI).
+**Goal:** The complete tree satisfies the language policy from CLAUDE.md: source-code comments English only; ALL user-visible strings go through localization with English as the default and a working German translation (app starts in German → German UI).
 
-**Architektur:** Klassische `.lproj`-Lokalisierung statt `.xcstrings` (SwiftPM verarbeitet `en.lproj/Localizable.strings` + `de.lproj/Localizable.strings` nativ — der M5c-Fund: xcstrings werden verbatim kopiert, nie kompiliert). Zwei Ressourcen-Bundles: App-Target (UI-Strings) und Core-Target (Fehler-/Statusmeldungen, die in Core entstehen: `message(for:)`, ConnectionViewModel-Validierung, Host-Key-Warntexte). Beide nutzen einen Bundle-Helfer nach dem Muster von `SettingsResources` (SwiftPMs generierter `Bundle.module`-Accessor fatalErrort ohne danebenliegendes Bundle — Muster liegt in `SettingsView.swift`).
+**Architecture:** Classic `.lproj` localization instead of `.xcstrings` (SwiftPM processes `en.lproj/Localizable.strings` + `de.lproj/Localizable.strings` natively — the M5c finding: xcstrings gets copied verbatim, never compiled). Two resource bundles: the App target (UI strings) and the Core target (error/status messages that originate in Core: `message(for:)`, ConnectionViewModel validation, host-key warning texts). Both use a bundle helper following the pattern of `SettingsResources` (SwiftPM's generated `Bundle.module` accessor fatalErrors when there's no bundle beside it — the pattern lives in `SettingsView.swift`).
 
-**Tech Stack:** Nur Foundation-Lokalisierung; keine neuen Dependencies.
+**Tech Stack:** Foundation localization only; no new dependencies.
 
 ## Global Constraints
 
-- swift-tools 6.0; ALLE Targets `.swiftLanguageMode(.v5)`; macOS 15; Swift Testing.
-- KEINE Verhaltensänderung außer der Sprach-/Lookup-Schicht: Alle 219 Tests bleiben grün (angepasste Assertions prüfen über denselben Lookup, nie über hartkodierte Sprachliteral-Duplikate).
-- Kommentar-Sweep ist REIN mechanisch: Bedeutung 1:1 übersetzen, Fachbegriffe/Invarianten-Formulierungen präzise erhalten (z. B. „exactly-once", „Hard-Stop"), KEINE Umformulierung von Logik, keine Code-Änderungen im selben Hunk außer dem Kommentar.
-- Sicherheitskritische Texte (Host-Key-Mismatch-Warnung!) müssen in BEIDEN Sprachen die volle Schärfe behalten („Möglicher Man-in-the-Middle" / "Possible man-in-the-middle attack").
-- Gated Tests: `MACSCP_ITEST=1` (Rig aus Haupt-Checkout), `MACSCP_KEYCHAIN=1`.
-- Conventional Commits, Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`. Implementierer pushen nicht.
+- swift-tools 6.0; ALL targets `.swiftLanguageMode(.v5)`; macOS 15; Swift Testing.
+- NO behavior change other than the language/lookup layer: all 219 tests stay green (adjusted assertions check through the same lookup, never through hardcoded language-literal duplicates).
+- The comment sweep is PURELY mechanical: translate meaning 1:1, preserve technical terms/invariant phrasing precisely (e.g. "exactly-once", "hard stop"), NO rewording of logic, no code changes in the same hunk besides the comment.
+- Security-critical texts (host-key mismatch warning!) must keep their full sharpness in BOTH languages ("Möglicher Man-in-the-Middle" / "Possible man-in-the-middle attack").
+- Gated tests: `MACSCP_ITEST=1` (rig from the main checkout), `MACSCP_KEYCHAIN=1`.
+- Conventional Commits, footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`. Implementers do not push.
 
-**Abhängigkeitsgraph:** `[ T1 (App-Layer) ∥ T2 (Core-Layer + Tests) ] → T3 (Abschluss)` — dateidisjunkt bis auf `Package.swift` (T1 ändert nur den MacSCPApp-Block [xcstrings→lproj im selben Resources-Ordner: KEINE Manifest-Änderung nötig], T2 ergänzt `resources` NUR am macSCPCore-Target — Merge konfliktfrei bzw. trivial).
+**Dependency graph:** `[ T1 (App layer) ∥ T2 (Core layer + tests) ] → T3 (wrap-up)` — file-disjoint except for `Package.swift` (T1 only changes the MacSCPApp block [xcstrings→lproj in the same Resources folder: NO manifest change needed], T2 only adds `resources` to the macSCPCore target — merge is conflict-free, or trivial).
 
 ---
 
-### Task 1: App-Layer — UI-Strings in `.lproj` (EN/DE) + Kommentare Englisch
+### Task 1: App layer — UI strings in `.lproj` (EN/DE) + comments to English
 
 **Files:**
 - Create: `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings`, `Sources/MacSCPApp/Resources/de.lproj/Localizable.strings`
 - Delete: `Sources/MacSCPApp/Resources/Localizable.xcstrings`
-- Modify: ALLE Dateien unter `Sources/MacSCPApp/` (Strings + Kommentare): `ContentView.swift`, `ConnectionFormView.swift`, `SessionSidebar.swift`, `TransferQueueBar.swift`, `SettingsView.swift`, `SSHTerminalView.swift`, `RemoteFileTableView.swift`, `RemoteFilePromise.swift`, `BrowserPane.swift`, `TransferRateFormatting.swift`(nur Kommentare), `DesignTokens.swift`, `MacSCPApp.swift`, `FileListFormatter`-Konsumenten falls App-seitig.
+- Modify: ALL files under `Sources/MacSCPApp/` (strings + comments): `ContentView.swift`, `ConnectionFormView.swift`, `SessionSidebar.swift`, `TransferQueueBar.swift`, `SettingsView.swift`, `SSHTerminalView.swift`, `RemoteFileTableView.swift`, `RemoteFilePromise.swift`, `BrowserPane.swift`, `TransferRateFormatting.swift` (comments only), `DesignTokens.swift`, `MacSCPApp.swift`, `FileListFormatter` consumers if on the App side.
 
-**Bindend:**
-1. **Inventar zuerst** (im Report dokumentieren): `grep -n` über alle App-Dateien nach String-Literalen in `Text(`, `Label(`, `Button(`, `.help(`, `placeholder`, `Toggle(`, `TabItem`, Alert/Sheet-Texten, Fenstertiteln. Jeder nutzer-sichtbare String bekommt einen Key.
-2. Key-Konvention: flach, prefix-gruppiert, Englisch als Key-Sprache NICHT verwenden — Keys sind stabile Bezeichner (`connection.title`, `connection.field.host`, `transfers.pending %lld`, `conflict.title`, `conflict.overwrite`, `terminal.ended`, `sidebar.imported`, `settings.tab.transfers`, …). EN-`.strings` = Default-Texte (die bisherigen deutschen Texte sinnvoll ins Englische übersetzt), DE-`.strings` = die bisherigen deutschen Texte.
-3. Lookup: einen kleinen App-weiten Helfer `L10n.string(_ key:)`/`L10n.text(_ key:)` (Umbenennung/Verallgemeinerung von `SettingsResources` — EINE Quelle, `SettingsView` zieht mit um). SwiftUI-Views nutzen `Text(L10n…)`/`String(localized:bundle:)`-Formen; Format-Strings (z. B. „%lld ausstehend") über `String(format: L10n.string(…), n)` bzw. `String(localized:)`-Interpolation.
-4. Die 5 Settings-Strings aus dem xcstrings-Katalog wandern 1:1 in die `.strings`-Dateien; xcstrings wird gelöscht. `Package.swift` bleibt unverändert (Resources-Ordner ist schon deklariert; `.process` verarbeitet lproj korrekt).
-5. **Kommentar-Sweep App-Layer:** jeder deutsche Kommentar (auch MARK-Zeilen) → präzises Englisch.
-6. **DE-Render-Beweis (bindend, headless):** kleiner ausführbarer Check — z. B. `swift test` mit einem NEUEN Unit-Test im App-… App hat kein Testtarget → stattdessen: Mini-Verifikation via `swift run`?? Nicht nötig kompliziert: BINDEND ist ein Bundle-Lookup-Test im CORE-Testtarget geht nicht (App-Bundle). Stattdessen: Verifikations-Skript im Report — `defaults`-freier Direkt-Check: das gebaute `.build/debug/macSCP_MacSCPApp.bundle` MUSS `de.lproj/Localizable.strings` und `en.lproj/Localizable.strings` enthalten (ls im Report) UND ein 10-Zeilen-Swift-Schnipsel (swiftc, temporär, nicht committen) lädt das Bundle und assertet `localizedString(forKey: "connection.title", …, table: nil)` in beiden lprojs unterschiedlich/korrekt. Visueller App-auf-Deutsch-Beweis folgt in T3.
-7. Kein String bleibt hartkodiert (Suche im Report: `grep -rn '"' Sources/MacSCPApp --include='*.swift'` gefiltert auf verbliebene sichtbare Literale — begründete Ausnahmen: reine Symbole, SF-Symbol-Namen, Format-Konstanten, Bundle-IDs).
+**Binding:**
+1. **Inventory first** (document in the report): `grep -n` across all App files for string literals in `Text(`, `Label(`, `Button(`, `.help(`, `placeholder`, `Toggle(`, `TabItem`, alert/sheet texts, window titles. Every user-visible string gets a key.
+2. Key convention: flat, prefix-grouped, do NOT use English as the key language — keys are stable identifiers (`connection.title`, `connection.field.host`, `transfers.pending %lld`, `conflict.title`, `conflict.overwrite`, `terminal.ended`, `sidebar.imported`, `settings.tab.transfers`, …). EN `.strings` = default texts (the previous German texts translated sensibly into English), DE `.strings` = the previous German texts.
+3. Lookup: one small app-wide helper `L10n.string(_ key:)`/`L10n.text(_ key:)` (rename/generalization of `SettingsResources` — ONE source, `SettingsView` moves along with it). SwiftUI views use `Text(L10n…)`/`String(localized:bundle:)` forms; format strings (e.g. "%lld pending") go through `String(format: L10n.string(…), n)` or `String(localized:)` interpolation.
+4. The 5 Settings strings from the xcstrings catalog move 1:1 into the `.strings` files; xcstrings gets deleted. `Package.swift` stays unchanged (the Resources folder is already declared; `.process` handles lproj correctly).
+5. **App-layer comment sweep:** every German comment (MARK lines included) → precise English.
+6. **DE render proof (binding, headless):** a small executable check — e.g. `swift test` with a NEW unit test in the App… the App has no test target → instead: mini-verification via `swift run`?? Not needed, too complicated: BINDING is a bundle-lookup test in the CORE test target — doesn't work (App bundle). Instead: verification script in the report — a `defaults`-free direct check: the built `.build/debug/macSCP_MacSCPApp.bundle` MUST contain `de.lproj/Localizable.strings` and `en.lproj/Localizable.strings` (`ls` in the report) AND a 10-line Swift snippet (swiftc, temporary, not committed) loads the bundle and asserts `localizedString(forKey: "connection.title", …, table: nil)` differs correctly between the two lprojs. Visual proof of the app running in German follows in T3.
+7. No string stays hardcoded (search in the report: `grep -rn '"' Sources/MacSCPApp --include='*.swift'` filtered for remaining visible literals — justified exceptions: pure symbols, SF Symbol names, format constants, bundle IDs).
 
-- [x] Inventar → `.strings` EN+DE anlegen → Views umstellen → Kommentare EN → Bundle-Beweis → `swift build && swift test` (219 grün, keine neuen Tests nötig) → Headless-Launch-Check → Commit `refactor: localize app ui strings and translate comments to english` (mit Footer).
+- [x] Inventory → create `.strings` EN+DE → convert views → comments EN → bundle proof → `swift build && swift test` (219 green, no new tests needed) → headless launch check → commit `refactor: localize app ui strings and translate comments to english` (with footer).
 
 ---
 
-### Task 2: Core-Layer — Meldungen lokalisieren + Kommentare Englisch + Tests locale-fest
+### Task 2: Core layer — localize messages + comments to English + locale-stable tests
 
 **Files:**
-- Create: `Sources/macSCPCore/Resources/en.lproj/Localizable.strings`, `Sources/macSCPCore/Resources/de.lproj/Localizable.strings`, `Sources/macSCPCore/Resources/CoreL10n.swift`(Bundle-Helfer)
-- Modify: `Package.swift` (NUR macSCPCore-Target: `resources: [.process("Resources")]`)
-- Modify: ALLE Dateien unter `Sources/macSCPCore/` und `Sources/MacSCPCLI/` (Kommentare; Meldungs-Erzeuger auf Lookup), alle `Tests/macSCPCoreTests/*` (Kommentare + Assertions).
+- Create: `Sources/macSCPCore/Resources/en.lproj/Localizable.strings`, `Sources/macSCPCore/Resources/de.lproj/Localizable.strings`, `Sources/macSCPCore/Resources/CoreL10n.swift` (bundle helper)
+- Modify: `Package.swift` (macSCPCore target ONLY: `resources: [.process("Resources")]`)
+- Modify: ALL files under `Sources/macSCPCore/` and `Sources/MacSCPCLI/` (comments; message producers onto lookup), all `Tests/macSCPCoreTests/*` (comments + assertions).
 
-**Bindend:**
-1. **Meldungs-Inventar** (Report): alle nutzer-sichtbaren Strings, die in Core entstehen — `TransferQueueViewModel.message(for:)` (4 Fälle + Fallback), Konflikt-/Rename-Fehler („Kein freier Name…"), `ConnectionViewModel`-Validierungen („Port muss eine Zahl sein." usw.) + Host-Key-Texte (Erst-Verbindung/Mismatch-Warnung — VOLLE Schärfe in beiden Sprachen), Terminal-Meldungen („Shell beendet…", „…unterstützt kein Terminal."), `RemoteFSError`-reasons die durchscheinen? — reasons sind laut Policy ENGLISCH (Log-Charakter): reasons werden NICHT lokalisiert, sondern auf Englisch normalisiert; die UI-Meldung drumherum ist lokalisiert.
-2. Gleiches Key-Schema (`core.transfer.notFound %@`, `core.connect.portNumeric`, `core.hostkey.mismatch %@ %@ %@`, …); EN = Default-Text, DE = bisheriger deutscher Text. Lookup via `CoreL10n` (Bundle-Probing-Muster wie `SettingsResources`, aber für das Core-Bundle `macSCP_macSCPCore.bundle`; in Tests funktioniert `Bundle.module` regulär — Helfer probiert `Bundle.module`-Pfade defensiv OHNE fatalError).
-3. **Test-Anpassung (kritisch, bindend):** Tests, die exakte deutsche Meldungen asserten, prüfen künftig gegen DENSELBEN Lookup (`CoreL10n`-Aufruf im Test) — nie gegen neu hartkodierte Literale. Damit sind die Tests locale-unabhängig und pinnen die Key-Verdrahtung. UI-Statuslabels („übersprungen"/„abgebrochen"/„wartet") sind APP-Strings (T1) — Core-Status bleibt Enum.
-4. **Kommentar-Sweep Core+Tests+CLI:** priorisiert die drei Misch-Dateien (`TransferEngine`, `TransferQueueViewModel`, `CitadelFileSystem`), dann alle übrigen (RemoteFS/, SSH/, Sessions/, Presentation/, Settings/, CLI, alle Tests). MARK-Zeilen inklusive. Deutsche IDENTIFIER (falls vorhanden — grep nach Umlauten/`ae|oe|ue`-Verdacht) mitziehen, sofern nicht public-API-brechend; public API ist bereits englisch.
-5. Die zwei Doc-Notes aus dem M5c-Final-Review einarbeiten (englisch): Post-Write-Check-Kommentar um den benignen cancel-nach-letztem-Chunk-Fall ergänzen; das ist Kommentararbeit, hier miterledigt.
-6. `RemoteFSError`-reason-Strings, die heute deutsch sind (z. B. „Pfad existiert als Datei: …", „known_hosts nicht lesbar: …", „Shell konnte nicht geöffnet werden…", „Diese Verbindung unterstützt kein Terminal.") → ENGLISCH normalisieren (Policy: reasons = englische Log-Strings); wo eine UI sie heute 1:1 zeigt, entsteht die deutsche Fassung über die lokalisierte Hüll-Meldung (`message(for:)`-Pfad). Tests, die reasons prüfen, ziehen auf die englischen reasons um.
+**Binding:**
+1. **Message inventory** (report): all user-visible strings originating in Core — `TransferQueueViewModel.message(for:)` (4 cases + fallback), conflict/rename errors ("No free name available…"), `ConnectionViewModel` validations ("Port must be a number." etc.) + host-key texts (first-connection/mismatch warning — FULL sharpness in both languages), terminal messages ("Shell ended…", "…does not support a terminal."), do `RemoteFSError` reasons leak through? — per policy reasons are ENGLISH (log-like character): reasons are NOT localized, they get normalized to English; the surrounding UI message is localized.
+2. Same key schema (`core.transfer.notFound %@`, `core.connect.portNumeric`, `core.hostkey.mismatch %@ %@ %@`, …); EN = default text, DE = previous German text. Lookup via `CoreL10n` (bundle-probing pattern like `SettingsResources`, but for the Core bundle `macSCP_macSCPCore.bundle`; in tests `Bundle.module` works normally — the helper defensively probes `Bundle.module` paths WITHOUT fatalError).
+3. **Test adjustment (critical, binding):** tests that assert exact German messages will henceforth check against the SAME lookup (a `CoreL10n` call in the test) — never against newly hardcoded literals. This makes the tests locale-independent and pins the key wiring. UI status labels ("skipped"/"cancelled"/"waiting") are APP strings (T1) — Core status stays an enum.
+4. **Core+Tests+CLI comment sweep:** prioritize the three mixed files (`TransferEngine`, `TransferQueueViewModel`, `CitadelFileSystem`), then all the rest (RemoteFS/, SSH/, Sessions/, Presentation/, Settings/, CLI, all tests). MARK lines included. Bring along German IDENTIFIERS (if any — grep for umlaut suspicion/`ae|oe|ue`) as long as it doesn't break the public API; the public API is already English.
+5. Incorporate the two doc notes from the M5c final review (in English): extend the post-write-check comment to cover the benign cancel-after-last-chunk case; that's comment work, handled here too.
+6. `RemoteFSError` reason strings that are German today (e.g. "Pfad existiert als Datei: …", "known_hosts nicht lesbar: …", "Shell konnte nicht geöffnet werden…", "Diese Verbindung unterstützt kein Terminal.") → normalize to ENGLISH (policy: reasons = English log strings); wherever a UI shows them 1:1 today, the German rendering now comes through the localized wrapper message (`message(for:)` path). Tests that check reasons move over to the English reasons.
 
-- [x] Inventar → Resources+Helfer → Meldungs-Erzeuger umstellen → reasons EN → Tests auf Lookup/EN-reasons → Kommentar-Sweep → `swift build && swift test` (219 grün) → gated NICHT nötig (T3) → Commit `refactor: localize core messages and translate comments to english` (mit Footer).
+- [x] Inventory → resources+helper → convert message producers → reasons EN → tests onto lookup/EN reasons → comment sweep → `swift build && swift test` (219 green) → gated NOT needed (T3) → commit `refactor: localize core messages and translate comments to english` (with footer).
 
 ---
 
-### Task 3: Abschluss-Verifikation
+### Task 3: Final verification
 
-- [x] `swift test` gesamt (219 erwartet) + Rig hoch, `MACSCP_ITEST=1` voll (219-Äquivalent gated), `MACSCP_KEYCHAIN=1` 2/2 — die gated Suiten beweisen, dass die reason-Normalisierung keine Integrationspfade bricht.
-- [x] **Rest-Grep-Nachweis:** `grep -rn` über `Sources/ Tests/` nach verbliebenen deutschen Kommentaren/Strings (Umlaut-Suche `[äöüÄÖÜß]` + Stichproben häufiger Wörter) — Ergebnis LEER bis auf `de.lproj`-Dateien und begründete Ausnahmen (im Commit dokumentiert).
-- [x] **Visueller Sprach-Beweis** (Bildschirm frei): App normal starten → UI ENGLISCH (Default, da System… System ist deutsch → App folgt System: DEUTSCH! Also: normal starten → DEUTSCH sichtbar (Formular „Neue Verbindung" etc. aus de.lproj — jetzt ECHT aus dem Katalog); dann mit erzwungenem Englisch starten (`defaults write dev.noidee.macscp.dev AppleLanguages '("en")'` bzw. Launch-Argument `-AppleLanguages "(en)"` via `open --args`) → UI ENGLISCH. Beide Screenshots im Ledger vermerken; danach das defaults-Override wieder ENTFERNEN.
-- [x] Kurzer Funktions-Smoke (verbinden, ein Transfer, ein Konflikt-Sheet in der aktiven Sprache).
-- [x] Checkboxen, Commit `docs: mark M5i plan tasks as completed` (mit Footer).
+- [x] `swift test` overall (219 expected) + rig up, `MACSCP_ITEST=1` full (219-equivalent gated), `MACSCP_KEYCHAIN=1` 2/2 — the gated suites prove that the reason normalization doesn't break any integration paths.
+- [x] **Remaining-grep proof:** `grep -rn` across `Sources/ Tests/` for remaining German comments/strings (umlaut search `[äöüÄÖÜß]` + spot checks of common words) — result EMPTY except for `de.lproj` files and justified exceptions (documented in the commit).
+- [x] **Visual language proof** (screen free): start the app normally → UI ENGLISH (default, since the system… the system is German → the app follows the system: GERMAN! So: start normally → GERMAN visible (form "Neue Verbindung" etc. from de.lproj — now REALLY from the catalog); then start with English forced (`defaults write dev.noidee.macscp.dev AppleLanguages '("en")'` or launch argument `-AppleLanguages "(en)"` via `open --args`) → UI ENGLISH. Note both screenshots in the ledger; then REMOVE the defaults override again.
+- [x] Brief functional smoke test (connect, one transfer, one conflict sheet in the active language).
+- [x] Check the boxes, commit `docs: mark M5i plan tasks as completed` (with footer).
 
-## Ausblick
+## Outlook
 
-Danach M5d (Resume + Reconnect + Teil-Datei-Aufräumen), M5e (Editor-Integration), M6 (Release; dort: DMG-Packaging muss beide lproj mitnehmen, applyToAll-Recheck-Einzeiler, globaler Drossel-Bucket, Sheet-Default-Action-Review).
+After that: M5d (resume + reconnect + partial-file cleanup), M5e (editor integration), M6 (release; there: DMG packaging must carry both lprojs along, the applyToAll recheck one-liner, the global throttle bucket, the sheet default-action review).

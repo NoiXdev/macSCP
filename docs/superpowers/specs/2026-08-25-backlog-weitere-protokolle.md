@@ -1,71 +1,69 @@
-# Backlog: FTP und SMB/AFP als weitere Protokolle
+# Backlog: FTP and SMB/AFP as further protocols
 
-**Angelegt:** 2026-08-25, aus Maintainer-Zuruf. Gesicherte Idee, **kein
-Entwurf** — und ein Eintrag, bei dem der Preis stärker auseinandergeht als
-der Wunsch vermuten lässt.
+**Created:** 2026-08-25, from a maintainer note. A solid idea, **not a
+design** — and an entry where the cost diverges more than the wish
+suggests.
 
-## Ausgangslage, gemessen
+## Starting point, measured
 
-`ConnectionKind` hat heute **drei** Fälle: `ssh`, `s3`, `webdav`. Dazu
-gehören drei `BackendDescriptor`-Instanzen mit je **13 Pflichtfeldern** —
-Fähigkeiten, Verbindungs- und Zugangsschema, `makeConfig`, `connect`,
-Abzeichen, Geheimnis-Umgebungsvariable, Dateiaktionen und weitere.
+`ConnectionKind` today has **three** cases: `ssh`, `s3`, `webdav`. Each
+comes with a `BackendDescriptor` instance carrying **13 required
+fields** — capabilities, connection and credential schema, `makeConfig`,
+`connect`, badge, secret environment variable, file actions, and more.
 
-**Das ist der Erweiterungspunkt, und er ist gut gebaut:** ein Kommentar am
-Verbindungspfad hält fest, dass genau diese Bauform „den letzten
-`ConnectionKind`-switch auf dem Verbindungspfad auflöste". Ein viertes
-Backend heißt also: einen Descriptor schreiben, nicht zwanzig Stellen
-anfassen. `ConnectionKind` kommt zwar in 22 Dateien vor, aber überwiegend als
-Wert, nicht als Verzweigung — vor dem Anfangen ist zu zählen, wie viele
-davon **echte Fallunterscheidungen** sind.
+**That's the extension point, and it's well built:** a comment on the
+connection path notes that exactly this shape "resolved the last
+`ConnectionKind` switch on the connection path". So a fourth backend
+means: write a descriptor, not touch twenty places. `ConnectionKind` does
+appear in 22 files, but mostly as a value, not as a branch — before
+starting, it needs counting how many of those are **real case
+distinctions**.
 
-## Die zwei Hälften sind sehr verschieden
+## The two halves are very different
 
 ### FTP
 
-Ein eigenes Protokoll, das macSCP selbst sprechen müsste. Zu klären, bevor
-etwas entworfen wird:
+A separate protocol that macSCP would have to speak itself. To clarify
+before anything gets designed:
 
-- **Womit?** Apples URL-Ladesystem hat seine FTP-Unterstützung aufgegeben;
-  es bräuchte also eine Bibliothek oder eine eigene Implementierung über
-  NIO. Das ist die Entscheidung, an der alles Weitere hängt.
-- **Welche Spielart?** Nacktes FTP überträgt Zugangsdaten im Klartext. Für
-  ein Programm, das gerade drei Geheimnis-Lecks geschlossen hat, ist das
-  keine Nebensache: FTPS und SFTP-über-SSH (letzteres kann macSCP schon)
-  sind die sicheren Verwandten. Ob nacktes FTP überhaupt angeboten werden
-  soll — und wenn ja, mit welcher Warnung — gehört entschieden, nicht
-  nebenbei implementiert.
-- Aktiv oder passiv, Wiederaufnahme, Verzeichnislisten in ihren zahlreichen
-  Server-Dialekten: FTP ist alt und uneinheitlich.
+- **With what?** Apple's URL loading system has dropped its FTP support;
+  so this would need a library or a from-scratch implementation over
+  NIO. That's the decision everything else hangs on.
+- **Which variant?** Bare FTP transmits credentials in plaintext. For a
+  program that just closed three secret leaks, that's not a side issue:
+  FTPS and SFTP-over-SSH (the latter macSCP can already do) are the safe
+  relatives. Whether bare FTP should be offered at all — and if so, with
+  what warning — needs to be decided, not implemented on the side.
+- Active or passive, resumption, directory listings in their many
+  server dialects: FTP is old and inconsistent.
 
-### SMB und AFP
+### SMB and AFP
 
-**Grundsätzlich anders gelagert:** macOS spricht beides bereits selbst.
-Realistisch geht es hier nicht darum, ein Protokoll zu implementieren,
-sondern eine **Einbindung** anzusprechen — mounten und dann über das
-Dateisystem arbeiten.
+**Fundamentally different territory:** macOS already speaks both itself.
+Realistically this isn't about implementing a protocol, it's about
+addressing an **integration** — mounting and then working through the
+filesystem.
 
-Damit verschiebt sich alles:
+That shifts everything:
 
-- Der `connect`-Anteil wäre ein Mount, kein Verbindungsaufbau.
-- Der Geheimnis-Weg liefe womöglich über die System-Anmeldung statt über
-  macSCPs eigenen `SecretStore` — was die Frage aufwirft, wer dann was
-  besitzt.
-- **TOFU und die Host-Schlüssel-Prüfung haben hier keine Entsprechung.**
-  Die Sicherheitszusagen dieses Projekts sind auf SSH zugeschnitten; für
-  eine Einbindung gelten die des Betriebssystems. Das ist kein Hindernis,
-  aber es gehört benannt, bevor jemand annimmt, die gewohnten Garantien
-  gälten weiter.
-- AFP ist von Apple abgekündigt. Ob es sich noch lohnt, ist eine eigene
-  Frage.
+- The `connect` part would be a mount, not a connection setup.
+- The secret path might run through the system login instead of macSCP's
+  own `SecretStore` — which raises the question of who then owns what.
+- **TOFU and host-key checking have no equivalent here.** This project's
+  security guarantees are tailored to SSH; for an integration, the
+  operating system's guarantees apply. That's not a blocker, but it needs
+  to be named before anyone assumes the usual guarantees still hold.
+- AFP has been deprecated by Apple. Whether it's still worth it is a
+  separate question.
 
-## Empfehlung zur Reihenfolge
+## Recommendation on ordering
 
-Die beiden Hälften **nicht zusammen angehen**. Sie teilen nur das Wort
-„Protokoll" — technisch, sicherheitlich und im Aufwand haben sie fast nichts
-gemeinsam. Wer sie in einen Plan packt, entwirft für den Durchschnitt zweier
-sehr verschiedener Dinge.
+**Don't tackle the two halves together.** They only share the word
+"protocol" — technically, security-wise, and in effort they have almost
+nothing in common. Whoever packs them into one plan is designing for the
+average of two very different things.
 
-Wenn eines zuerst: **SMB**, weil die Einbindung existiert und der Descriptor
-das meiste bereits vorgibt. FTP braucht zuerst die Entscheidung über
-Bibliothek und Spielart, und die ist keine Umsetzungsfrage.
+If one goes first: **SMB**, because the integration already exists and
+the descriptor already prescribes most of it. FTP first needs the
+decision on library and variant, and that isn't an implementation
+question.

@@ -1,247 +1,254 @@
-# Backlog: Verbindungszustand, Tabs, Seitenleiste, Tags
+# Backlog: connection state, tabs, sidebar, tags
 
-**Angelegt:** 2026-08-20, aus Maintainer-Zuruf. Elf Punkte, gesicherte Ideen,
-**kein Design**. Der Ist-Zustand unten ist am Code gemessen, nicht vermutet.
+**Created:** 2026-08-20, from a maintainer call-out. Eleven points, backed
+ideas, **no design**. The current state below is measured against the
+code, not assumed.
 
 ---
 
-## A. Verbindungszustand
+## A. Connection state
 
-### A1. Zeitüberschreitung sichtbar machen — **erledigt 2026-08-25**
+### A1. Make the timeout visible — **done 2026-08-25**
 
-> Umgesetzt über `docs/superpowers/plans/2026-08-25-gescheiterter-aufbau.md`.
-
-
-Statt einer toten Ansicht: eine Fehlerdarstellung im Tab, verständlich
-formuliert, mit **„Erneut verbinden"**. Im Tab-Reiter ein Warnsymbol, und ein
-grünes Symbol, solange alles steht.
-
-Was das voraussetzt: ein **Verbindungszustand am Tab**, den es heute nicht
-gibt. `SessionTab` trägt Sitzung und Panes; „verbunden / gestört / getrennt"
-ist kein Wert, den jemand ablesen könnte. Vor dem Entwurf zu klären: woran
-merkt macSCP den Abriss überhaupt — am fehlgeschlagenen nächsten Aufruf, oder
-aktiv (siehe A2)? Ohne A2 erfährt die App den Abriss erst, wenn der Nutzer
-etwas tut, und das Warnsymbol käme immer zu spät.
-
-### A2. Keep-alive — **erledigt 2026-08-26**
-
-> Umgesetzt über `docs/superpowers/plans/2026-08-21-verbindungszustand.md`.
+> Implemented via `docs/superpowers/plans/2026-08-25-gescheiterter-aufbau.md`.
 
 
-**Es gibt heute keins** — kein Treffer auf `keepalive` oder
-`ServerAliveInterval` im ganzen Quellbaum. Regelmäßige Lebenszeichen, damit
-Sitzung und Tunnel nicht wegbrechen, als Einstellung mit Intervall.
+Instead of a dead view: an error display in the tab, phrased
+understandably, with **"Reconnect"**. A warning symbol in the tab
+strip, and a green symbol as long as everything stands.
 
-Vor dem Entwurf zu prüfen: auf welcher Ebene das geht. SSH kennt ein
-Keep-alive auf Transportebene; ob Citadel/NIOSSH das anbietet oder ob es ein
-harmloser Kanal-Verkehr sein muss, ist **Machbarkeit und gehört gemessen**,
-bevor eine Einstellung dafür entworfen wird. Für Jump-Hosts gilt die Frage
-doppelt.
+What this requires: a **connection state on the tab**, which does not
+exist today. `SessionTab` carries the session and the panes; "connected
+/ disrupted / disconnected" is not a value anyone could read off. To
+clarify before designing: how does macSCP even notice the drop — from
+the next call failing, or actively (see A2)? Without A2 the app only
+learns about the drop when the user does something, and the warning
+symbol would always come too late.
 
-**A2 vor A1.** A2 ist das, was den Abriss überhaupt bemerkt; A1 ist, wie er
-aussieht.
+### A2. Keep-alive — **done 2026-08-26**
+
+> Implemented via `docs/superpowers/plans/2026-08-21-verbindungszustand.md`.
+
+
+**There is none today** — no hit for `keepalive` or
+`ServerAliveInterval` anywhere in the source tree. Regular signs of
+life, so the session and tunnel don't drop, as a setting with an
+interval.
+
+To check before designing: at which layer this works. SSH has a
+transport-level keep-alive; whether Citadel/NIOSSH offers it or whether
+it has to be harmless channel traffic is a **feasibility question and
+needs to be measured**, before a setting is designed for it. For jump
+hosts the question applies twice.
+
+**A2 before A1.** A2 is what notices the drop in the first place; A1 is
+what it looks like.
 
 ---
 
 ## B. Tabs
 
-### B1. Kontextmenü am Reiter — **erledigt 2026-08-27**
+### B1. Context menu on the tab — **done 2026-08-27**
 
-> Zusammen mit B2 über `docs/superpowers/plans/2026-08-27-tab-kontextmenue-und-umordnen.md`.
-
-
-Schließen, bei Ad-hoc-Verbindungen **als Sitzung speichern**, nach links /
-nach rechts schieben. `TabStripView.swift` hat heute **kein** `contextMenu`.
-
-### B2. Reihenfolge per Ziehen — **erledigt 2026-08-27**
-
-> Zusammen mit B1, wie der Eintrag es verlangte. Die Wurf-Rückmeldung kam nach, siehe `2026-08-27-backlog-reiter-feinschliff.md` Abschnitt A.
+> Together with B2 via `docs/superpowers/plans/2026-08-27-tab-kontextmenue-und-umordnen.md`.
 
 
-Ebenfalls nichts vorhanden — kein `onMove`, kein `draggable` in den
-Tab-Dateien. B1s „nach links / nach rechts" und B2 sind dieselbe zugrunde
-liegende Fähigkeit (Tabs umordnen), nur zwei Bedienwege. **Zusammen bauen**,
-sonst entsteht die Umordnung zweimal.
+Close, for ad-hoc connections **save as a session**, move left / move
+right. `TabStripView.swift` today has **no** `contextMenu`.
 
-### B3. Woher die Einträge kommen (Maintainer, 2026-08-25)
+### B2. Reorder by dragging — **done 2026-08-27**
 
-**Kein `switch` über `ConnectionKind`.** Ein Tab-Menü kann pro Protokoll
-anders aussehen, und dieses Projekt hat dafür bereits ein Muster:
-`BackendDescriptor.fileActions: [FileActionContribution]` — jedes Backend
-**beiträgt** seine Aktionen, statt dass eine Stelle über die Art verzweigt.
-Am Verbindungs-Einstieg steht der Grund im Quelltext: dort zu leben „löste
-den letzten `ConnectionKind`-switch auf dem Verbindungspfad auf".
+> Together with B1, as the entry demanded. The drop feedback came later, see `2026-08-27-backlog-reiter-feinschliff.md` section A.
 
-Gegenprobe beim Anlegen dieses Eintrags: die verbliebenen `switch …kind` im
-Baum laufen über **Ereignis**- und **Element**-Arten, nicht über
-`ConnectionKind`. Das Muster hält also; ein neuer switch wäre ein Rückschritt.
 
-**Die Unterscheidung, die beim Bauen leicht verlorengeht:** das Menü mischt
-zwei Herkünfte.
+Also nothing present — no `onMove`, no `draggable` in the tab files.
+B1's "move left / move right" and B2 are the same underlying capability
+(reordering tabs), just two ways to operate it. **Build together**,
+otherwise the reordering gets built twice.
 
-| Eintrag | Woher |
+### B3. Where the entries come from (maintainer, 2026-08-25)
+
+**No `switch` over `ConnectionKind`.** A tab menu can look different per
+protocol, and this project already has a pattern for that:
+`BackendDescriptor.fileActions: [FileActionContribution]` — every
+backend **contributes** its actions, instead of one spot branching on
+the kind. At the connection entry point, the reason is stated in the
+source: living there "dissolved the last `ConnectionKind` switch on the
+connection path".
+
+Cross-check when creating this entry: the remaining `switch …kind` in
+the tree run over **event** and **element** kinds, not over
+`ConnectionKind`. So the pattern holds; a new switch would be a
+regression.
+
+**The distinction that's easily lost when building this:** the menu
+mixes two origins.
+
+| Entry | Where from |
 |---|---|
-| protokollabhängige Aktionen | Beitrag des Backends, wie `fileActions` |
-| Schließen, nach links / nach rechts | Eigenschaft des **Tabs**, für jedes Protokoll gleich |
-| Als Sitzung speichern | Eigenschaft des **Tab-Zustands** — nur bei einer Ad-hoc-Verbindung, unabhängig vom Backend |
+| protocol-dependent actions | the backend's contribution, like `fileActions` |
+| Close, move left / move right | a property of the **tab**, the same for every protocol |
+| Save as session | a property of the **tab state** — only for an ad-hoc connection, independent of the backend |
 
-Alles durch den Descriptor zu zwingen wäre genauso falsch wie ein switch:
-drei Backends müssten dann dieselbe Schließen-Aktion beitragen. Die Trennlinie
-ist nicht „welches Menü", sondern **wovon der Eintrag abhängt**.
-
----
-
-## C. Sitzung starten
-
-### C1. Einfachklick soll nicht verbinden — **erledigt 2026-08-26**
-
-> Umgesetzt über `docs/superpowers/plans/2026-08-25-kleine-bedienpunkte.md`. Beim Angehen zeigte sich: die Seitenleiste kannte gar keine Auswahl, die Geste war der kleinere Teil.
-
-
-Gemessen: `SessionSidebar.swift` hängt am Zeilentipp `onSelect()`, und
-`ContentView+Detail.swift` reicht das an `connectFromSidebar(stored)` weiter
-— **ein Klick baut heute eine Verbindung auf.** Gewünscht: Auswahl beim
-Einfachklick, Verbindung erst beim Doppelklick.
-
-Erfreulich: das Kontextmenü derselben Zeile hat bereits einen Eintrag
-**„Verbinden"**. Der Weg geht also nicht verloren, wenn der Tipp zur Auswahl
-wird. Das ist der kleinste Punkt der ganzen Liste.
-
-### C2. Sitzung ist schon offen — **erledigt 2026-08-29** (`71b86c0`)
-
-Entworfen in `2026-08-29-sitzung-schon-offen-design.md`. Identität ist
-`activeStoredSessionID`, eine Ad-hoc-Verbindung zählt nicht, es wird jedes
-Mal gefragt. Bei mehreren Haltern gewinnt der erste in Reiter-Reihenfolge;
-der aktive Reiter zählt wie jeder andere. Der Panel-Wunsch aus „Terminal
-öffnen" reist in der Abfrage mit, damit eine beantwortete Abfrage daraus
-nicht stillschweigend ein gewöhnliches Verbinden macht.
-
-*Die ursprüngliche Notiz, als Beleg der offenen Fragen:*
-
-Beim Starten einer bereits offenen Sitzung fragen: **neu öffnen** oder **zur
-bestehenden springen**. Zu entscheiden: merkt sich macSCP die Antwort
-(„nicht mehr fragen"), und was zählt als „dieselbe" — dieselbe gespeicherte
-Sitzung, oder auch dasselbe Ziel über eine Ad-hoc-Verbindung?
+Forcing everything through the descriptor would be just as wrong as a
+switch: three backends would then have to contribute the same close
+action. The dividing line is not "which menu", but **what the entry
+depends on**.
 
 ---
 
-## D. Seitenleiste
+## C. Starting a session
 
-### D1. Verschachtelte Ordner + D2. Freie Sortierung — **erledigt 2026-08-29**
+### C1. A single click shouldn't connect — **done 2026-08-26**
 
-Entworfen in `2026-08-29-ordner-und-sortierung-design.md`, umgesetzt in vier
-Schritten (`6a7a1be`, `5afdfa5`, `8ade149`, `22da6a9`). Additiv in
-`sessions-v2.json`, Ganzzahl-Position am Element, beliebige Tiefe über
-`parentID` mit Zyklenprüfung in Core. Die Ansicht rechnet keine Position —
-geprüft von einem Scanner, dem vier positive Wächter zur Seite stehen.
-
-**Zwei Befunde beim Bauen, beide festgehalten:** `SidebarVisibility` warf
-Ordner weg, die keine eigene Treffersitzung trugen — flach richtig,
-verschachtelt verlor es Treffer, bis eine Sitzung zwei Ebenen tiefer auf
-keinem Weg mehr erreichbar war. Und die **Ausfuhr** trägt jetzt die Vorfahren
-eines ausgeführten Ordners mit, sonst überlebt Verschachtelung keinen
-Rundlauf.
-
-**Offen und Maintainer-Sache:** ein Ordner lässt sich nicht direkt **vor**
-einen anderen ziehen — auf einen Ordner fallen heißt „hinein". Jede Anordnung
-bleibt erreichbar, aber die Geste fehlt. Die Behebung ist ausdrücklich
-**keine** Einfügemarke: eine zweite Zielzone auf der Ordnerzeile wäre wieder
-eine Koordinate.
-
-*Die ursprüngliche Notiz:*
-
-`StoredGroup` trägt heute **nur `id` und `name`**. Kein Elternteil, keine
-Reihenfolge. Beides — Verschachtelung *und* freie Sortierung — braucht neue
-Felder im Sitzungs-Store.
-
-**Deshalb gehören sie zusammen.** Getrennt gebaut ändert sich das
-Speicherformat zweimal, und jede Änderung zieht `SessionExportCodec` und den
-Import-Planer mit. Projektregel: Migrationen additiv, nie zerstörend.
-
-Dazu gehört D2s zweiter Teil: ein Kontextmenü **pro Ordner**, das seine
-Unterelemente einmalig sortiert (nach Name o. Ä.) — zum schnellen Aufräumen,
-nicht als Dauerzustand.
-
-### D3. Suche im Sitzungsbaum — **erledigt 2026-08-29** (`7052e1b`)
-
-Entworfen in `2026-08-29-suche-im-sitzungsbaum-design.md`. Die offene Frage
-„filtern oder hervorheben" hat sich durch D1+D2 selbst beantwortet: die
-Filterregel für einen Baum war schon da, Hervorheben wäre neue Maschinerie
-gewesen. Verschachtelung stellte dafür eine neue: ein Treffer in einem
-zugeklappten Ordner ist gefiltert und trotzdem unsichtbar. Entschieden:
-während der Suche aufklappen, den gemerkten Zustand dabei **nie schreiben**.
-
-Gesucht wird über Name, Host, Benutzer und Tags; Ordnernamen zählen nicht.
-Suche und Tag-Filter gelten zusammen. `SheetSearchField` samt Regex kam
-unverändert dazu; ein ungültiges Muster zeigt seinen Fehler und filtert
-nichts.
-
-*Die ursprüngliche Notiz:*
-
-In der Seitenleiste gibt es **keine Suche** (kein `searchText`,
-kein `SheetSearchField`). Der Baustein existiert aber schon aus M18 und wird
-in vier Verwaltungs-Sheets benutzt; hier wäre er wiederzuverwenden statt neu
-zu bauen. Offen: filtert die Suche den Baum, oder hebt sie Treffer hervor —
-bei verschachtelten Ordnern (D1) ist das ein Unterschied.
-
-### D4. Breite verändern und merken — **erledigt 2026-08-26**
-
-> Umgesetzt über `docs/superpowers/plans/2026-08-25-kleine-bedienpunkte.md`, Grenzen 170…340.
+> Implemented via `docs/superpowers/plans/2026-08-25-kleine-bedienpunkte.md`. Tackling it revealed: the sidebar had no notion of selection at all, the gesture was the smaller part.
 
 
-Gemessen: `ContentView+Detail.swift` klemmt die Seitenleiste auf
-`minWidth: 170, idealWidth: 190, maxWidth: 260`. Die **Obergrenze 260** ist
-der Grund, warum sie sich nicht nach rechts ziehen lässt, und persistiert
-wird nichts. Zu tun: Klammer lösen und die Breite im `SettingsStore` ablegen.
+Measured: `SessionSidebar.swift` hangs `onSelect()` off a row tap, and
+`ContentView+Detail.swift` passes it on to `connectFromSidebar(stored)`
+— **a click builds a connection today.** Wanted: selection on a single
+click, connection only on a double click.
+
+Fortunately: the context menu of the same row already has an entry
+**"Connect"**. So the path isn't lost when the tap becomes a selection.
+This is the smallest point on the whole list.
+
+### C2. Session is already open — **done 2026-08-29** (`71b86c0`)
+
+Designed in `2026-08-29-sitzung-schon-offen-design.md`. Identity is
+`activeStoredSessionID`, an ad-hoc connection does not count, it asks
+every time. With several holders the first one in tab order wins; the
+active tab counts like any other. The panel wish from "Open Terminal"
+travels along in the query, so that an answered query doesn't silently
+turn into an ordinary connect.
+
+*The original note, as evidence of the open questions:*
+
+Ask when starting a session that is already open: **open new** or
+**jump to the existing one**. To decide: does macSCP remember the
+answer ("don't ask again"), and what counts as "the same" — the same
+stored session, or also the same destination via an ad-hoc connection?
 
 ---
 
-## E. Tags — **erledigt 2026-08-29** (`4e6ee36`)
+## D. Sidebar
 
-Entworfen in `2026-08-29-tags-filter-design.md`, zusammen wie hier verlangt.
-E1 blendet die **Filterleiste** aus, nie die Tags; ein aktiver Filter wird
-beim Abschalten geräumt. E2: Schwelle **6** als benannte Konstante in Core,
-Verknüpfung wählbar zwischen „alle" und „irgendeines".
+### D1. Nested folders + D2. Free-form sorting — **done 2026-08-29**
 
-Die Antwort auf beide offenen Fragen kam aus einer Entscheidung, die keine
-der beiden stellte: **der Filter ist immer eine Menge plus eine
-Verknüpfung**, die Leiste nur eine kompakte Darstellung davon. Sonst wären
-„ein Tag aus der Leiste" und „mehrere aus dem Dialog" zwei Zustände, die beim
-Überschreiten der Schwelle ineinander übersetzt werden müssten — und jede
-solche Übersetzung verliert irgendwann still eine Auswahl.
+Designed in `2026-08-29-ordner-und-sortierung-design.md`, implemented in
+four steps (`6a7a1be`, `5afdfa5`, `8ade149`, `22da6a9`). Additive in
+`sessions-v2.json`, integer position on the element, arbitrary depth via
+`parentID` with cycle checking in Core. The view computes no position —
+checked by a scanner, backed by four positive guards.
 
-Die Verknüpfung erscheint erst ab zwei gewählten Tags und überlebt das
-Zurückfallen darunter.
+**Two findings while building, both recorded:** `SidebarVisibility`
+discarded folders that carried no matching session of their own — flat,
+correct; nested, it lost matches, until a session two levels deeper was
+no longer reachable by any path. And **export** now carries along the
+ancestors of an exported folder, otherwise nesting doesn't survive a
+round trip.
 
-*Die ursprünglichen Notizen:*
+**Open, and a maintainer matter:** a folder cannot be dragged directly
+**in front of** another one — dropping onto a folder means "into it".
+Every arrangement stays reachable, but the gesture is missing. The fix
+is explicitly **not** an insertion marker: a second drop zone on the
+folder row would again be a coordinate.
 
-### E1. Tag-Suche abschaltbar
+*The original note:*
 
-Über die Einstellungen ausblendbar, weil sie nicht jedem gefällt. Zu
-entscheiden: verschwindet nur die Anzeige, oder auch die Zuweisung von Tags?
+`StoredGroup` today carries **only `id` and `name`**. No parent, no
+order. Both — nesting *and* free-form sorting — need new fields in the
+session store.
 
-### E2. Filter-Beutel statt Leiste
+**That's why they belong together.** Built separately, the storage
+format changes twice, and every change drags `SessionExportCodec` and
+the import planner along with it. Project rule: migrations additive,
+never destructive.
 
-Ab mehr als einer Handvoll Tags soll die Auswahl zu einem Filter zusammen-
-klappen, den man in einem Dialog zusammenstellt. Vor dem Entwurf zu
-entscheiden: **ab wie vielen** kippt die Darstellung, und ist der Filter eine
-Und- oder eine Oder-Verknüpfung — heute setzt die Leiste eine einzelne
-Auswahl (`selection = tag`), was die Frage bisher nicht stellte.
+D2's second part belongs here too: a context menu **per folder** that
+sorts its sub-items once (by name or similar) — for a quick tidy-up, not
+as a standing state.
 
-E1 und E2 berühren dieselbe Stelle in der Seitenleiste und sollten zusammen
-entworfen werden.
+### D3. Search in the session tree — **done 2026-08-29** (`7052e1b`)
+
+Designed in `2026-08-29-suche-im-sitzungsbaum-design.md`. The open
+question "filter or highlight" answered itself via D1+D2: the filter
+rule for a tree was already there, highlighting would have been new
+machinery. Nesting raised a new one in exchange: a match inside a
+collapsed folder is filtered and still invisible. Decided: expand while
+searching, **never write** the remembered state while doing so.
+
+Search covers name, host, user and tags; folder names don't count.
+Search and tag filter apply together. `SheetSearchField` including
+regex was added unchanged; an invalid pattern shows its error and
+filters nothing.
+
+*The original note:*
+
+The sidebar has **no search** (no `searchText`, no `SheetSearchField`).
+The building block already exists from M18 though and is used in four
+management sheets; it would be reused here rather than built again.
+Open: does the search filter the tree, or highlight matches — with
+nested folders (D1) that is a difference.
+
+### D4. Resize and remember the width — **done 2026-08-26**
+
+> Implemented via `docs/superpowers/plans/2026-08-25-kleine-bedienpunkte.md`, bounds 170…340.
+
+
+Measured: `ContentView+Detail.swift` clamps the sidebar to
+`minWidth: 170, idealWidth: 190, maxWidth: 260`. The **upper bound of
+260** is why it can't be dragged wider, and nothing is persisted. To do:
+release the clamp and store the width in `SettingsStore`.
 
 ---
 
-## Reihenfolge
+## E. Tags — **done 2026-08-29** (`4e6ee36`)
 
-1. **C1** — kleinster Eingriff, größte tägliche Wirkung, Kontextmenü-Weg
-   existiert bereits.
-2. **D4** — eine Klammer und ein Store-Feld.
-3. **A2 → A1** — erst bemerken, dann anzeigen.
-4. **B1 + B2** — zusammen, eine Fähigkeit.
-5. **C2** — unabhängig, jederzeit.
-6. **D1 + D2** — zusammen, der teuerste Punkt: Formatmigration mit Export und
-   Import im Schlepptau.
-7. **D3** — nach D1, weil Verschachtelung die Suchdarstellung mitbestimmt.
-8. **E1 + E2** — zusammen.
+Designed in `2026-08-29-tags-filter-design.md`, together as required
+here. E1 hides the **filter bar**, never the tags; an active filter is
+cleared when it's turned off. E2: threshold **6** as a named constant in
+Core, the connective selectable between "all" and "any".
+
+The answer to both open questions came from a decision that neither of
+them posed: **the filter is always a set plus a connective**, the bar
+just a compact display of it. Otherwise "one tag from the bar" and
+"several from the dialog" would be two states that would have to be
+translated into each other when crossing the threshold — and every such
+translation eventually loses a selection silently.
+
+The connective appears only from two selected tags onward and survives
+falling back below that.
+
+*The original notes:*
+
+### E1. Tag search can be switched off
+
+Hideable via settings, because not everyone likes it. To decide: does
+only the display disappear, or the assignment of tags too?
+
+### E2. Filter pouch instead of a bar
+
+From more than a handful of tags on, the selection should collapse into
+a filter that's assembled in a dialog. To decide before designing: **at
+how many** does the display flip over, and is the filter an and or an
+or connective — today the bar sets a single selection (`selection =
+tag`), which never raised the question so far.
+
+E1 and E2 touch the same spot in the sidebar and should be designed
+together.
+
+---
+
+## Order
+
+1. **C1** — smallest intervention, biggest daily effect, the context-menu
+   path already exists.
+2. **D4** — one clamp and one store field.
+3. **A2 → A1** — notice first, then display.
+4. **B1 + B2** — together, one capability.
+5. **C2** — independent, any time.
+6. **D1 + D2** — together, the most expensive point: a format migration
+   with export and import in tow.
+7. **D3** — after D1, because nesting co-determines the search display.
+8. **E1 + E2** — together.

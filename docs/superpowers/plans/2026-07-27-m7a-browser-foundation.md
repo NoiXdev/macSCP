@@ -1,47 +1,47 @@
-# M7a — Browser-Fundament Implementation Plan
+# M7a — Browser Foundation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Drei neue FS-APIs (`rename`, `setPermissions`, rekursives `deleteTree`), Finder-artige Mehrfachauswahl und der „Versteckte Dateien"-Schalter — das Fundament, auf dem M7b das Kontextmenü baut.
+**Goal:** Three new FS APIs (`rename`, `setPermissions`, recursive `deleteTree`), Finder-like multi-select, and the "hidden files" switch — the foundation M7b builds the context menu on.
 
-**Architecture:** Protokoll-Erweiterung in `RemoteFileSystem` mit Implementierungen in `LocalFileSystem` (FileManager) und `CitadelFileSystem` (SFTP rename/setstat + Bottom-up-Walk); alle Test-Doubles ziehen mit. Multi-Select ersetzt `selectedItem` durch ein geordnetes `selectedItems`-Array (mit `selectedItem` als abgeleiteter Convenience). Der Hidden-Filter lebt als Anzeige-Filter im `RemoteBrowserViewModel`, gespeist aus einem neuen `SettingsStore`-Feld; ⌘⇧. kommt als App-Command (View-Menü).
+**Architecture:** Protocol extension on `RemoteFileSystem` with implementations in `LocalFileSystem` (FileManager) and `CitadelFileSystem` (SFTP rename/setstat + bottom-up walk); all test doubles follow along. Multi-select replaces `selectedItem` with an ordered `selectedItems` array (with `selectedItem` as a derived convenience). The hidden-files filter lives as a display filter in `RemoteBrowserViewModel`, fed from a new `SettingsStore` field; ⌘⇧. arrives as an app command (View menu).
 
-**Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, Citadel-SFTP (`rename(at:to:)`, `setAttributes(at:to:)`), AppKit-`NSTableView` im Representable.
+**Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, Citadel SFTP (`rename(at:to:)`, `setAttributes(at:to:)`), AppKit `NSTableView` in the representable.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-27-m7a-browser-foundation-design.md` — bindend. Branch: **develop**.
-- `rename(from:to:)`: `to` ist der VOLLE Zielpfad; existierendes Ziel ⇒ Fehler, KEIN stilles Überschreiben.
-- `setPermissions`: nur die unteren 12 Bits (`permissions & 0o7777`), Typ-Bits nie schreiben.
-- `deleteTree`: Symlinks werden GELÖSCHT, NIE gefolgt; kooperativ cancelbar (`Task.checkCancellation` pro Eintrag); Abbruch hinterlässt einen teilgelöschten Baum (dokumentiert).
-- Versteckt-Filter: Anzeige-Schicht (ViewModel), Kriterium `name.hasPrefix(".")`; `SettingsStore.showHiddenFiles` Default `false`.
-- Sicherheits-/Architektur-/Queue-Invarianten unangetastet; Code + Kommentare NUR Englisch; neue UI-Texte katalogisiert EN/DE (App: `Sources/MacSCPApp/Resources/*/Localizable.strings`).
-- Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` + volle `swift test` nach jedem Task grün (Ausgangslage 317 Tests / 28 Suiten); gated Suiten (`MACSCP_ITEST=1`, Docker-Rig aus dem Haupt-Checkout) NUR beim Abschluss.
-- TDD: neue Logik erst rot beweisen.
-- Umgebungs-Hinweis: Bash-Fehler „claude-opus-4-8 is temporarily unavailable … cannot determine the safety" sind KEINE Permission-Denials — warten und identisch wiederholen.
+- Spec: `docs/superpowers/specs/2026-07-27-m7a-browser-foundation-design.md` — binding. Branch: **develop**.
+- `rename(from:to:)`: `to` is the FULL destination path; an existing destination ⇒ error, NO silent overwrite.
+- `setPermissions`: only the low 12 bits (`permissions & 0o7777`), never write the type bits.
+- `deleteTree`: symlinks are DELETED, NEVER followed; cooperatively cancellable (`Task.checkCancellation` per entry); a cancellation leaves a partially deleted tree (documented).
+- Hidden filter: display layer (ViewModel), criterion `name.hasPrefix(".")`; `SettingsStore.showHiddenFiles` default `false`.
+- Security/architecture/queue invariants untouched; code + comments English ONLY; new UI text cataloged EN/DE (app: `Sources/MacSCPApp/Resources/*/Localizable.strings`).
+- Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` + full `swift test` green after every task (starting point 317 tests / 28 suites); gated suites (`MACSCP_ITEST=1`, Docker rig from the main checkout) ONLY at close-out.
+- TDD: prove new logic red first.
+- Environment note: bash errors "claude-opus-4-8 is temporarily unavailable … cannot determine the safety" are NOT permission denials — wait and retry identically.
 
 ## Schedule
 
-T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koordinator).
+T1 → T2 (core FS, T2 RISK) → T3 → T4 (app layer) → T5 close-out (coordinator).
 
 ---
 
-### Task 1: FS-APIs `rename` + `setPermissions`
+### Task 1: FS APIs `rename` + `setPermissions`
 
 **Files:**
-- Modify: `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift` (Protocol, nach `delete` Zeile 34)
-- Modify: `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift` (nach `delete`, Zeilen ~108–123 als Muster)
-- Modify: `Sources/macSCPCore/SSH/CitadelFileSystem.swift` (nach `delete` Zeile ~290)
-- Modify: `Tests/macSCPCoreTests/MockRemoteFileSystem.swift` (nach `createDirectory` Zeile ~104) und JEDES weitere `RemoteFileSystem`-konforme Test-Double: grep `git grep -ln ": RemoteFileSystem" Tests` — aktuell `TransferQueueViewModelTests.swift` (`QueueTestFS`), `TransferEngineTests.swift`, `EditSessionManagerTests.swift`, `RemoteBrowserViewModelTests.swift` (Konformitäts-Stubs analog `delete`)
+- Modify: `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift` (protocol, after `delete` line 34)
+- Modify: `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift` (after `delete`, lines ~108–123 as pattern)
+- Modify: `Sources/macSCPCore/SSH/CitadelFileSystem.swift` (after `delete` line ~290)
+- Modify: `Tests/macSCPCoreTests/MockRemoteFileSystem.swift` (after `createDirectory` line ~104) and EVERY other `RemoteFileSystem`-conforming test double: grep `git grep -ln ": RemoteFileSystem" Tests` — currently `TransferQueueViewModelTests.swift` (`QueueTestFS`), `TransferEngineTests.swift`, `EditSessionManagerTests.swift`, `RemoteBrowserViewModelTests.swift` (conformance stubs analogous to `delete`)
 - Test: `Tests/macSCPCoreTests/LocalFileSystemTests.swift`, `Tests/macSCPCoreTests/CitadelFileSystemIntegrationTests.swift` (gated)
 
 **Interfaces:**
-- Produces (T2/M7b verlassen sich exakt hierauf):
+- Produces (T2/M7b rely on this exactly):
   - `func rename(from: String, to: String) async throws`
   - `func setPermissions(path: String, permissions: UInt32) async throws`
 
-- [x] **Step 1: Protocol erweitern** — in `RemoteFileSystem.swift` nach `delete`:
+- [x] **Step 1: Extend the protocol** — in `RemoteFileSystem.swift` after `delete`:
 
 ```swift
     /// Renames/moves the entry at `from` to the FULL destination path `to`.
@@ -56,7 +56,7 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
     func setPermissions(path: String, permissions: UInt32) async throws
 ```
 
-- [x] **Step 2: Failing Unit-Tests (Local)** — in `LocalFileSystemTests.swift` (bestehende tmp-Dir-Muster der Datei wiederverwenden):
+- [x] **Step 2: Failing unit tests (local)** — in `LocalFileSystemTests.swift` (reuse the file's existing tmp-dir pattern):
 
 ```swift
     @Test func renameMovesFileAndRefusesExistingDestination() async throws {
@@ -98,10 +98,10 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
     }
 ```
 
-(Existiert in der Datei kein `makeTempDir`-Helper, den vorhandenen tmp-Setup-Stil der Datei übernehmen — Assertions unverändert.)
+(If the file has no `makeTempDir` helper, take over the file's existing tmp-setup style — assertions unchanged.)
 
-- [x] **Step 3: Rot beweisen** — `swift test --filter LocalFileSystemTests` ⇒ Compile-Fehler (Protokoll-Konforme unvollständig) = rot.
-- [x] **Step 4: Local implementieren** — in `LocalFileSystem.swift` (Fehler über das vorhandene `Self.map(error, path:)`):
+- [x] **Step 3: Prove red** — `swift test --filter LocalFileSystemTests` ⇒ compile error (protocol conformers incomplete) = red.
+- [x] **Step 4: Implement local** — in `LocalFileSystem.swift` (errors via the existing `Self.map(error, path:)`):
 
 ```swift
     /// Renames/moves to the FULL destination path. Refuses an existing
@@ -135,7 +135,7 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
     }
 ```
 
-- [x] **Step 5: Citadel implementieren** — in `CitadelFileSystem.swift` (Fehler über `Self.mapSFTPError(_:path:)`; Kollisionscheck explizit, weil OpenSSH-Rename je nach Server überschreiben kann):
+- [x] **Step 5: Implement Citadel** — in `CitadelFileSystem.swift` (errors via `Self.mapSFTPError(_:path:)`; explicit collision check because OpenSSH rename may overwrite depending on the server):
 
 ```swift
     /// Renames/moves to the FULL destination path. The explicit existence
@@ -164,10 +164,13 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
     }
 ```
 
-(Prüfen: hat `SFTPFileAttributes` keinen argumentlosen `public init`, dann `SFTPFileAttributes(size: nil, uidgid: nil, permissions: permissions & 0o7777, accessModificationTime: nil)` bzw. die tatsächlich vorhandene Init-Form verwenden — Verhalten identisch, im Report vermerken.)
+(Check: if `SFTPFileAttributes` has no argument-less `public init`, use
+`SFTPFileAttributes(size: nil, uidgid: nil, permissions: permissions & 0o7777, accessModificationTime: nil)`
+or whichever init form actually exists — behavior identical, note it in the
+report.)
 
-- [x] **Step 6: Doubles nachziehen** — `MockRemoteFileSystem` bekommt funktionierende In-Memory-Varianten (Dateien-Dictionary verschieben; permissions in einem `var permissionsByPath: [String: UInt32]` ablegen), die übrigen Test-Doubles minimale Stubs im Stil ihres vorhandenen `delete` (z. B. `throw RemoteFSError.protocolError(reason: "unsupported in this test double")` wo nie aufgerufen).
-- [x] **Step 7: Gated Integration-Tests** — in `CitadelFileSystemIntegrationTests.swift` (Muster der Datei: `MACSCP_ITEST`-Gate, eigener UUID-Pfad unter `/config`, Cleanup per docker-exec):
+- [x] **Step 6: Carry the doubles along** — `MockRemoteFileSystem` gets working in-memory variants (move the files dictionary; keep permissions in a `var permissionsByPath: [String: UInt32]`), the remaining test doubles get minimal stubs in the style of their existing `delete` (e.g. `throw RemoteFSError.protocolError(reason: "unsupported in this test double")` where it is never called).
+- [x] **Step 7: Gated integration tests** — in `CitadelFileSystemIntegrationTests.swift` (file pattern: `MACSCP_ITEST` gate, own UUID path under `/config`, cleanup via docker-exec):
 
 ```swift
     @Test func renameAndSetPermissionsRoundtrip() async throws {
@@ -177,9 +180,12 @@ T1 → T2 (Core-FS, T2 RISK) → T3 → T4 (App-Schicht) → T5 Abschluss (Koord
     }
 ```
 
-Der Test wird VOLL ausformuliert (kein Kommentar-Gerüst) nach dem Vorbild der bestehenden `delete`-Integrationstests in derselben Datei; Assertions: Liste vorher/nachher, `#expect(throws:)` für die Kollision, `stat`-Permissions-Vergleich.
+The test is spelled out IN FULL (no comment scaffold) following the existing
+`delete` integration tests in the same file; assertions: listing
+before/after, `#expect(throws:)` for the collision, `stat` permissions
+comparison.
 
-- [x] **Step 8: Grün** — volle `swift test` (ungated; die gated Tests kompilieren, laufen aber erst in T5).
+- [x] **Step 8: Green** — full `swift test` (ungated; the gated tests compile but only run in T5).
 - [x] **Step 9: Commit** — `feat: add rename and setPermissions to the file-system protocol`.
 
 ---
@@ -187,14 +193,14 @@ Der Test wird VOLL ausformuliert (kein Kommentar-Gerüst) nach dem Vorbild der b
 ### Task 2: `deleteTree` (RISK)
 
 **Files:**
-- Modify: `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift`, `LocalFileSystem.swift`, `CitadelFileSystem.swift`, alle Test-Doubles (wie T1)
+- Modify: `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift`, `LocalFileSystem.swift`, `CitadelFileSystem.swift`, all test doubles (as in T1)
 - Test: `Tests/macSCPCoreTests/LocalFileSystemTests.swift`, `Tests/macSCPCoreTests/MockRemoteFileSystemTests.swift`, `CitadelFileSystemIntegrationTests.swift` (gated)
 
 **Interfaces:**
-- Consumes: T1 gemergt (Protokollstand).
-- Produces: `func deleteTree(at path: String) async throws` — M7b ruft genau diesen Namen.
+- Consumes: T1 merged (protocol state).
+- Produces: `func deleteTree(at path: String) async throws` — M7b calls exactly this name.
 
-- [x] **Step 1: Protocol** — nach `setPermissions`:
+- [x] **Step 1: Protocol** — after `setPermissions`:
 
 ```swift
     /// Recursively deletes the entry at `path` (file, symlink, or directory
@@ -205,7 +211,7 @@ Der Test wird VOLL ausformuliert (kein Kommentar-Gerüst) nach dem Vorbild der b
     func deleteTree(at path: String) async throws
 ```
 
-- [x] **Step 2: Failing Tests** — Local (`LocalFileSystemTests.swift`):
+- [x] **Step 2: Failing tests** — local (`LocalFileSystemTests.swift`):
 
 ```swift
     @Test func deleteTreeRemovesNestedDirectoryButNeverFollowsSymlinks() async throws {
@@ -230,9 +236,11 @@ Der Test wird VOLL ausformuliert (kein Kommentar-Gerüst) nach dem Vorbild der b
     }
 ```
 
-Mock (`MockRemoteFileSystemTests.swift`): Baum im In-Memory-Mock anlegen, `deleteTree`, `list` des Parents zeigt den Eintrag nicht mehr; plus ein Cancellation-Test gegen den CITADEL-Walk gehört in die gated Suite (Step 5).
+Mock (`MockRemoteFileSystemTests.swift`): build a tree in the in-memory mock,
+`deleteTree`, `list` of the parent no longer shows the entry; plus a
+cancellation test against the CITADEL walk belongs in the gated suite (Step 5).
 
-- [x] **Step 3: Rot beweisen**, dann **Local implementieren** (Symlink-Check VOR removeItem entfällt — `removeItem` folgt Symlinks nicht, löscht den Link; genau das dokumentieren):
+- [x] **Step 3: Prove red**, then **implement local** (a symlink check BEFORE removeItem is unnecessary — `removeItem` does not follow symlinks, it deletes the link; document exactly that):
 
 ```swift
     /// Recursive delete. `FileManager.removeItem` is natively recursive and
@@ -253,9 +261,11 @@ Mock (`MockRemoteFileSystemTests.swift`): Baum im In-Memory-Mock anlegen, `delet
     }
 ```
 
-(Hinweis für den Implementer: `fileExists` folgt Symlinks — der `attributesOfItem`-Zweitcheck fängt dangling Symlinks, die trotzdem löschbar sein müssen.)
+(Note for the implementer: `fileExists` follows symlinks — the secondary
+`attributesOfItem` check catches dangling symlinks, which must still be
+deletable.)
 
-- [x] **Step 4: Citadel implementieren** — Bottom-up-Walk:
+- [x] **Step 4: Implement Citadel** — bottom-up walk:
 
 ```swift
     /// Recursive delete via bottom-up walk: SFTP has no recursive remove.
@@ -301,27 +311,32 @@ Mock (`MockRemoteFileSystemTests.swift`): Baum im In-Memory-Mock anlegen, `delet
     }
 ```
 
-WICHTIG: Die Datei hat bereits eine `list`-Implementierung, die Komponenten zu `RemoteFileItem` mappt — deren vorhandenen Mapping-Helper wiederverwenden statt `Self.item(fromComponent:parent:)` neu zu erfinden (exakten Namen aus der Datei übernehmen; existiert kein separater Helper, `list(path:)` selbst aufrufen). `rmdir`-Signatur aus Citadel prüfen (`rmdir(at:)` — tatsächliche Parameter-Labels übernehmen). Abweichungen im Report dokumentieren.
+IMPORTANT: the file already has a `list` implementation that maps components
+to `RemoteFileItem` — reuse its existing mapping helper instead of
+reinventing `Self.item(fromComponent:parent:)` (take the exact name from the
+file; if no separate helper exists, call `list(path:)` itself). Check the
+`rmdir` signature against Citadel (`rmdir(at:)` — take over the actual
+parameter labels). Document any deviations in the report.
 
-- [x] **Step 5: Gated Tests** (`CitadelFileSystemIntegrationTests.swift`): (a) verschachtelter Baum (2 Ebenen, Dateien + leeres Unterverzeichnis + Symlink AUF eine Datei außerhalb, per docker-exec `ln -s` angelegt) → `deleteTree` → Baum weg, Symlink-ZIEL existiert weiter (docker-exec `test -f`); (b) Cancellation: großen Baum anlegen (docker-exec, ~50 Dateien), `deleteTree` in Task starten, sofort canceln → wirft `CancellationError` (oder endet regulär, wenn der Walk schneller war — Assertion tolerant wie die bestehenden Cancel-Tests der Datei) und der Server-Zustand ist konsistent (Rest lässt sich mit zweitem `deleteTree` aufräumen).
-- [x] **Step 6: Doubles nachziehen** (Mock: rekursiv aus dem Dictionary; übrige Stubs wie T1).
-- [x] **Step 7: Grün** — volle `swift test`.
+- [x] **Step 5: Gated tests** (`CitadelFileSystemIntegrationTests.swift`): (a) nested tree (2 levels, files + empty subdirectory + symlink POINTING at a file outside the tree, created via docker-exec `ln -s`) → `deleteTree` → tree gone, symlink TARGET still exists (docker-exec `test -f`); (b) cancellation: build a large tree (docker-exec, ~50 files), start `deleteTree` in a task, cancel immediately → throws `CancellationError` (or completes normally if the walk was faster — assertion tolerant like the file's existing cancel tests) and server state is consistent (the remainder can be cleaned up with a second `deleteTree`).
+- [x] **Step 6: Carry the doubles along** (mock: recursive from the dictionary; remaining stubs as in T1).
+- [x] **Step 7: Green** — full `swift test`.
 - [x] **Step 8: Commit** — `feat: add recursive deleteTree to the file-system protocol`.
 
 ---
 
-### Task 3: Multi-Select
+### Task 3: Multi-select
 
 **Files:**
-- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (Zeile 30 `allowsMultipleSelection`, Selektions-Callback Zeilen 12, 68, 86–94, 179–180)
-- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (Zeilen 19–21, `load()` Zeile 32)
-- Modify: `Sources/MacSCPApp/ContentView.swift` (`uploadButton`/`downloadButton`, `pasteboardWriter`-Callsites bleiben — NSTableView liefert Multi-Drag automatisch pro Zeile)
+- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (line 30 `allowsMultipleSelection`, selection callback lines 12, 68, 86–94, 179–180)
+- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (lines 19–21, `load()` line 32)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (`uploadButton`/`downloadButton`, `pasteboardWriter` call sites stay — NSTableView delivers multi-drag automatically per row)
 - Test: `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift`
 
 **Interfaces:**
-- Produces: `RemoteBrowserViewModel.selectedItems: [RemoteFileItem]` (geordnet, Quelle der Wahrheit) und `selectedItem: RemoteFileItem?` als abgeleitete Convenience (`selectedItems.count == 1 ? selectedItems[0] : nil`) — M7b nutzt BEIDE.
+- Produces: `RemoteBrowserViewModel.selectedItems: [RemoteFileItem]` (ordered, source of truth) and `selectedItem: RemoteFileItem?` as a derived convenience (`selectedItems.count == 1 ? selectedItems[0] : nil`) — M7b uses BOTH.
 
-- [x] **Step 1: Failing VM-Test:**
+- [x] **Step 1: Failing VM test:**
 
 ```swift
     @Test @MainActor func selectedItemDerivesFromSelectedItems() async {
@@ -337,7 +352,7 @@ WICHTIG: Die Datei hat bereits eine `list`-Implementierung, die Komponenten zu `
     }
 ```
 
-- [x] **Step 2: Rot, dann VM umbauen:**
+- [x] **Step 2: Red, then rework the VM:**
 
 ```swift
     /// Currently selected entries, in table order (M7a multi-select).
@@ -351,39 +366,42 @@ WICHTIG: Die Datei hat bereits eine `list`-Implementierung, die Komponenten zu `
     }
 ```
 
-`load()` setzt `selectedItems = []` (statt `selectedItem = nil`). ACHTUNG: `selectedItem` war bisher gesetzt-bar (`public var`) — grep alle Zuweisungen (`git grep -n "selectedItem =" Sources Tests`) und stelle sie auf `selectedItems` um.
+`load()` sets `selectedItems = []` (instead of `selectedItem = nil`).
+ATTENTION: `selectedItem` used to be settable (`public var`) — grep all
+assignments (`git grep -n "selectedItem =" Sources Tests`) and switch them
+over to `selectedItems`.
 
-- [x] **Step 3: Tabelle** — `allowsMultipleSelection = true` (Zeile 30); Callback-Typ wird `onSelect: ([RemoteFileItem]) -> Void`; in `tableViewSelectionDidChange`:
+- [x] **Step 3: Table** — `allowsMultipleSelection = true` (line 30); the callback type becomes `onSelect: ([RemoteFileItem]) -> Void`; in `tableViewSelectionDidChange`:
 
 ```swift
             let rows = table.selectedRowIndexes
             onSelect(rows.compactMap { $0 < items.count ? items[$0] : nil })
 ```
 
-Callsites in `BrowserPane`/`ContentView` binden `viewModel.selectedItems = $0`.
+Call sites in `BrowserPane`/`ContentView` bind `viewModel.selectedItems = $0`.
 
-- [x] **Step 4: Toolbar-Buttons** (`ContentView.uploadButton`/`downloadButton`): statt `selected == nil || kind == .symlink`-Disable gilt: enabled, wenn `session.local.selectedItems.contains { $0.kind != .symlink }` (bzw. remote); die Action iteriert über `selectedItems`, Datei → `enqueue`, Ordner → `enqueueTree`, Symlink → überspringen (still). `onCompleted`-Refresh wie bisher pro Item.
-- [x] **Step 5: Grün** — volle Suite; `swift build` warnungsfrei bzgl. der geänderten Dateien.
+- [x] **Step 4: Toolbar buttons** (`ContentView.uploadButton`/`downloadButton`): instead of the `selected == nil || kind == .symlink` disable, the rule becomes: enabled when `session.local.selectedItems.contains { $0.kind != .symlink }` (and the remote equivalent); the action iterates over `selectedItems`, file → `enqueue`, folder → `enqueueTree`, symlink → skip (silently). `onCompleted` refresh per item as before.
+- [x] **Step 5: Green** — full suite; `swift build` warning-free with respect to the changed files.
 - [x] **Step 6: Commit** — `feat: multi-select in both file panes`.
 
 ---
 
-### Task 4: Versteckte Dateien
+### Task 4: Hidden files
 
 **Files:**
-- Modify: `Sources/macSCPCore/Settings/SettingsStore.swift` (neues Feld nach `downloadLimitKBs` Zeile ~121, gleiches didSet/persist-Muster)
-- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (Filter in `load()`)
-- Modify: `Sources/MacSCPApp/SettingsView.swift` (neuer Tab „Allgemein" VOR „Transfers", Zeilen 14–27)
-- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (Commands-Block für ⌘⇧.)
-- Modify: `Sources/MacSCPApp/ContentView.swift` (Wiring Store→VMs, onChange + Session-Start, analog der Limit-Verdrahtung Zeilen ~248–256/474–476)
+- Modify: `Sources/macSCPCore/Settings/SettingsStore.swift` (new field after `downloadLimitKBs` line ~121, same didSet/persist pattern)
+- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (filter in `load()`)
+- Modify: `Sources/MacSCPApp/SettingsView.swift` (new "General" tab BEFORE "Transfers", lines 14–27)
+- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (commands block for ⌘⇧.)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (wiring store→VMs, onChange + session start, analogous to the limit wiring lines ~248–256/474–476)
 - Modify: `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
 - Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift`, `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: T3 (`selectedItems`-Reset in `load()`).
-- Produces: `SettingsStore.showHiddenFiles: Bool` (Default `false`, persistiert); `RemoteBrowserViewModel.showHiddenFiles: Bool` (Default `false`; Änderung erfordert `refresh()` durch den Aufrufer).
+- Consumes: T3 (`selectedItems` reset in `load()`).
+- Produces: `SettingsStore.showHiddenFiles: Bool` (default `false`, persisted); `RemoteBrowserViewModel.showHiddenFiles: Bool` (default `false`; changing it requires the caller to call `refresh()`).
 
-- [x] **Step 1: Failing Tests:**
+- [x] **Step 1: Failing tests:**
 
 ```swift
     // SettingsStoreTests: defaults false, persists, survives reload.
@@ -412,11 +430,14 @@ Callsites in `BrowserPane`/`ContentView` binden `viewModel.selectedItems = $0`.
     }
 ```
 
-(Mock-Zugriff auf die Einträge dem tatsächlichen `MockRemoteFileSystem`-API anpassen — Assertions unverändert; Sortierung: Verzeichnisse zuerst, dann case-insensitiv — `.env` vor `visible.txt`.)
+(Adapt the mock's entry access to the actual `MockRemoteFileSystem` API —
+assertions unchanged; sort order: directories first, then case-insensitive —
+`.env` before `visible.txt`.)
 
-- [x] **Step 2: Rot, dann implementieren:**
+- [x] **Step 2: Red, then implement:**
 
-SettingsStore (Muster von `uploadLimitKBs` kopieren — Feld, didSet→persist, Encode/Decode vorwärtskompatibel):
+SettingsStore (copy the pattern from `uploadLimitKBs` — field, didSet→persist,
+forward-compatible encode/decode):
 
 ```swift
     /// Show dotfiles in both panes (M7a). Default OFF — the Finder-like
@@ -426,7 +447,7 @@ SettingsStore (Muster von `uploadLimitKBs` kopieren — Feld, didSet→persist, 
     }
 ```
 
-VM in `load()` nach dem `list`:
+VM in `load()` after the `list`:
 
 ```swift
             let visible = showHiddenFiles
@@ -435,7 +456,7 @@ VM in `load()` nach dem `list`:
             items = Self.sortedForDisplay(visible)
 ```
 
-plus Property:
+plus property:
 
 ```swift
     /// Display filter for dotfiles (M7a). The caller re-`load()`s after
@@ -443,7 +464,7 @@ plus Property:
     public var showHiddenFiles = false
 ```
 
-- [x] **Step 3: Settings-Tab „Allgemein"** — in `SettingsView.swift` neuer erster Tab:
+- [x] **Step 3: "General" settings tab** — in `SettingsView.swift`, new first tab:
 
 ```swift
             GeneralSettingsTab(store: store)
@@ -477,7 +498,7 @@ private struct GeneralSettingsTab: View {
 
 Keys EN: `"settings.tab.general" = "General"; "settings.general.showHidden" = "Show hidden files"; "settings.general.showHiddenHint" = "Applies to both panes. Shortcut: ⌘⇧.";` — DE: `"Allgemein"`, `"Versteckte Dateien anzeigen"`, `"Gilt für beide Seiten. Kürzel: ⌘⇧."`.
 
-- [x] **Step 4: ⌘⇧.-Command** — in `MacSCPApp.swift` am `WindowGroup`:
+- [x] **Step 4: ⌘⇧. command** — in `MacSCPApp.swift` on the `WindowGroup`:
 
 ```swift
         .commands {
@@ -492,14 +513,14 @@ Keys EN: `"settings.tab.general" = "General"; "settings.general.showHidden" = "S
 
 Keys: EN `"menu.toggleHidden" = "Show/Hide Hidden Files";` DE `"Versteckte Dateien ein-/ausblenden";`.
 
-- [x] **Step 5: Wiring** — in `ContentView`: bei `startSession` beide VMs setzen (`local.showHiddenFiles = settingsStore.showHiddenFiles`, remote ebenso) und ein `.onChange(of: settingsStore.showHiddenFiles)` neben den Limit-Observern, das beide VMs der AKTUELLEN Session setzt und `refresh()` beider Panes anstößt (`Task { await session.local.refresh(); await session.remote.refresh() }`; ohne Session no-op).
-- [x] **Step 6: Grün** — volle Suite.
+- [x] **Step 5: Wiring** — in `ContentView`: in `startSession` set both VMs (`local.showHiddenFiles = settingsStore.showHiddenFiles`, likewise remote) and add an `.onChange(of: settingsStore.showHiddenFiles)` next to the limit observers, which sets both VMs of the CURRENT session and triggers a `refresh()` of both panes (`Task { await session.local.refresh(); await session.remote.refresh() }`; no-op without a session).
+- [x] **Step 6: Green** — full suite.
 - [x] **Step 7: Commit** — `feat: hidden-files toggle with settings tab and shortcut`.
 
 ---
 
-### Task 5: Abschluss-Verifikation (Koordinator, kein Subagent)
+### Task 5: Close-out verification (coordinator, not a subagent)
 
-- [x] Docker-Rig starten (Haupt-Checkout!), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün (inkl. der neuen gated rename/chmod/deleteTree-Tests).
-- [x] Visueller Smoke (Dev-Wrapper neu bauen): Multi-Select per ⌘-Klick beide Panes; Übertragen einer 3er-Auswahl (Queue zeigt 3 Items); Symlink in Auswahl wird übersprungen; versteckte Dateien: Standard AUS (Home zeigt KEINE Dotfiles mehr — die augenfälligste Änderung), ⌘⇧. blendet ein/aus (beide Panes), Settings-Tab „Allgemein" DE/EN-Texte; Doppelklick-Editor (nutzt `selectedItem`) funktioniert weiter.
-- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1 auf develop), Fixes, Push develop, `gh run watch` (ci.yml läuft auch auf develop? prüfen — ci.yml triggert nur push auf main + PRs: dann `swift test`-Beleg lokal genügt bzw. ci.yml um develop erweitern als Teil dieses Tasks), Rig `stop`, Memory-Update, Milestone-Zusammenfassung.
+- [x] Start the Docker rig (main checkout!), `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ fully green (including the new gated rename/chmod/deleteTree tests).
+- [x] Visual smoke (rebuild the dev wrapper): multi-select via ⌘-click in both panes; transferring a selection of 3 (queue shows 3 items); a symlink in the selection is skipped; hidden files: default OFF (Home shows NO dotfiles anymore — the most noticeable change), ⌘⇧. toggles it on/off (both panes), "General" settings tab DE/EN text; double-click editor (uses `selectedItem`) still works.
+- [x] Plan checkboxes, ledger, Opus whole-branch final review (base = commit before T1 on develop), fixes, push develop, `gh run watch` (does ci.yml also run on develop? check — ci.yml only triggers on push to main + PRs: then a local `swift test` record is enough, or extend ci.yml to develop as part of this task), stop the rig, memory update, milestone summary.

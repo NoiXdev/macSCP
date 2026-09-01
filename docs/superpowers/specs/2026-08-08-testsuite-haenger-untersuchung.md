@@ -1,164 +1,167 @@
-# Der 0-%-CPU-Hänger der Testsuite — Untersuchungsstand
+# The test suite's 0% CPU hang — investigation status
 
-**Stand:** 2026-08-08. **Nicht behoben.** Was hier steht, ist das, was gesichert
-ist, damit die nächste Runde nicht bei null anfängt.
+**As of:** 2026-08-08. **Not fixed.** What is written here is what is
+secured, so the next round does not start from zero.
 
 ## Symptom
 
-`swift test` bleibt gelegentlich stehen und terminiert nie. Der Prozess lebt,
-verbraucht 0,0 % CPU, gibt nichts mehr aus. Seit M20 im Ledger, mehrfach
-gesehen: zweimal hintereinander in M21 (>10 min und >7 min, dritter Lauf
-derselben Arbeitskopie in 3,4 s grün), einmal während M21/T11, einmal isoliert
-auf `ImportConflictBridgeTests/aSecondAskResolvesTheStrandedFirstContinuation`
-über 14 Stunden.
+`swift test` occasionally comes to a stop and never terminates. The
+process lives, uses 0.0% CPU, prints nothing further. In the ledger
+since M20, seen multiple times: twice in a row in M21 (>10 min and
+>7 min, a third run of the same working copy green in 3.4 s), once
+during M21/T11, once in isolation on
+`ImportConflictBridgeTests/aSecondAskResolvesTheStrandedFirstContinuation`
+for over 14 hours.
 
-## Sofortmaßnahme (umgesetzt)
+## Immediate measure (implemented)
 
-`timeout-minutes: 20` auf dem CI-`test`-Job (`a75b0f5`). **Das ist das Netz,
-nicht der Fix.** Ohne es verbraucht ein Hänger das Sechs-Stunden-Budget des
-Runners und wird nie rot — er ist in der Lauf-Liste unsichtbar und teuer.
-Grüne Läufe brauchen drei bis vier Minuten.
+`timeout-minutes: 20` on the CI `test` job (`a75b0f5`). **That is the
+safety net, not the fix.** Without it, a hang consumes the runner's
+six-hour budget and never goes red — it is invisible in the run list and
+expensive. Green runs take three to four minutes.
 
-## Gesichert
+## Established
 
-**Der Hänger ist eine suspendierte Task, die nie fortgesetzt wird.**
-Zwei lebende Exemplare wurden auf der Maschine des Maintainers gefunden —
-Waisen aus einer Sitzung vom 2026-08-06, zum Zeitpunkt der Untersuchung seit
-46 Stunden am Leben — und ausgewertet, bevor sie angefasst wurden:
+**The hang is a suspended task that is never resumed.**
+Two live specimens were found on the maintainer's machine — orphans from
+a session on 2026-08-06, alive for 46 hours at the time of the
+investigation — and analyzed before being touched:
 
-- `sample` zeigt **drei Threads, alle im Leerlauf**: der Main-Thread in
-  `swift_task_asyncMainDrainQueue` → `CFRunLoopRun` → `mach_msg2_trap`, ein
-  CFNetwork-Runloop-Thread, ein leerer Workqueue-Thread. **Kein einziger
-  swift-testing- oder macSCP-Frame** auf irgendeinem Stack außer `main`.
-- `lldb`: `current_task = id:0, address = 0x0` — auf dem Main-Thread läuft
-  keine Task.
+- `sample` shows **three threads, all idle**: the main thread in
+  `swift_task_asyncMainDrainQueue` → `CFRunLoopRun` → `mach_msg2_trap`, a
+  CFNetwork run-loop thread, an empty workqueue thread. **Not a single
+  swift-testing or macSCP frame** on any stack except `main`.
+- `lldb`: `current_task = id:0, address = 0x0` — no task is running on
+  the main thread.
 
-Das ist kein Widerspruch, sondern der Fingerabdruck: **eine suspendierte Swift-
-Task hat keinen Thread**, sie liegt auf dem Heap. Der Async-Main-Task des
-Harness wird nie fertig, also verlässt der Drain-Loop nie den Prozess.
+This is not a contradiction but the fingerprint: **a suspended Swift
+task has no thread**, it sits on the heap. The harness's async main task
+never finishes, so the drain loop never leaves the process.
 
-**Folgerung fürs Werkzeug:** der Stack kann prinzipiell nicht sagen, WELCHER
-Test hängt. Nur die Ausgabe des Laufs kann es — swift-testing druckt jeden Test
-beim Abschluss, die letzte Zeile nennt den Kandidaten. Wer einen Hänger
-erwischt, muss deshalb **Log und `sample` sichern, bevor er den Prozess
-killt.** Dafür gibt es `scripts/hang-hunt`.
+**Consequence for tooling:** the stack cannot, in principle, say WHICH
+test is hanging. Only the run's output can — swift-testing prints every
+test on completion, so the last line names the candidate. Whoever
+catches a hang must therefore **capture the log and `sample` before
+killing the process.** That is what `scripts/hang-hunt` is for.
 
-## Widerlegt
+## Refuted
 
-**`aSecondAskResolvesTheStrandedFirstContinuation` kann so nicht verklemmen.**
-Der Test spult 50 `Task.yield()` ab und wartet dann mit `await first.value` auf
-eine Continuation, die eine zweite Task auflösen muss — das sah nach der
-Ursache aus. Es ist keine: `ImportConflictBridgeTests` ist `@MainActor`, und
-`await first.value` **gibt den MainActor frei**, sodass die zweite Task
-garantiert laufen und die erste erlösen kann. Die 50 Yields sind Gürtel und
-Hosenträger, nicht tragend.
+**`aSecondAskResolvesTheStrandedFirstContinuation` cannot deadlock this
+way.** The test spins through 50 `Task.yield()` calls and then waits
+with `await first.value` on a continuation that a second task must
+resolve — this looked like the cause. It is not:
+`ImportConflictBridgeTests` is `@MainActor`, and `await first.value`
+**releases the MainActor**, so the second task is guaranteed to run and
+free the first. The 50 yields are belt and braces, not load-bearing.
 
-Dass der einzige je isoliert beobachtete Hänger genau auf diesem Test stand,
-bleibt damit unerklärt — aber nicht durch diesen Mechanismus.
+That the one hang ever observed in isolation landed exactly on this test
+remains unexplained — but not through this mechanism.
 
-## Nicht reproduzierbar (zwei Runden, 280 Läufe)
+## Not reproducible (two rounds, 280 runs)
 
-| Runde | Aufbau | Ergebnis |
+| Round | Setup | Result |
 |---|---|---|
-| 1 | 40× volle Suite, sequenziell, ruhige Maschine, eigener Scratch-Path | 40/40 grün, 3,5–6,1 s |
-| 2 | 4 gleichzeitige Arbeiter × 60× `--filter ImportConflictBridge`, eigene Scratch-Paths | 240/240 grün |
+| 1 | 40× full suite, sequential, quiet machine, own scratch path | 40/40 green, 3.5–6.1 s |
+| 2 | 4 concurrent workers × 60× `--filter ImportConflictBridge`, own scratch paths | 240/240 green |
 
-Runde 2 hatte gezielt die beiden Bedingungen, die jedem dokumentierten Fall
-gemeinsam sind und Runde 1 fehlten: **Last** (alle Sichtungen fielen in
-Sitzungen mit parallel bauenden Subagenten) und **Isolation** (der eine
-zuordenbare Fall lief allein). Beides reicht nicht.
+Round 2 deliberately combined the two conditions common to every
+documented case and missing from round 1: **load** (every sighting fell
+in sessions with subagents building in parallel) and **isolation** (the
+one attributable case ran alone). Neither, nor both, sufficed.
 
-Die Häufigkeit liegt damit unter 1:280 unter diesen Bedingungen — oder sie
-hängt an etwas, das keine der beiden Runden hatte.
+The frequency is therefore below 1:280 under these conditions — or it
+depends on something neither round had.
 
-## Nebenbefund: abgeschossene Läufe hinterlassen Waisen
+## Side finding: killed runs leave orphans
 
-Wird ein hängendes `swift test` gekillt, **überlebt sein
-`swiftpm-testing-helper`-Kind**, wird zu `launchd` umgehängt und läuft weiter.
-Die beiden ausgewerteten Exemplare lagen so 46 Stunden herum. Das verursacht
-den Hänger nicht, macht ihn aber unsichtbar und leckt Prozesse und Speicher.
+When a hanging `swift test` is killed, **its `swiftpm-testing-helper`
+child survives**, gets reparented to `launchd`, and keeps running. The
+two analyzed specimens sat around like this for 46 hours. This does not
+cause the hang, but it makes it invisible and leaks processes and
+memory.
 
-Nach einem händischen Kill also immer:
+So, after a manual kill, always:
 
 ```
 pgrep -fl swiftpm-testing-helper
 ```
 
-## Nächster Schritt, wenn es wieder auftritt
+## Next step, should it recur
 
-Nicht versuchen, ihn zu provozieren — das hat 280 Läufe gekostet und nichts
-gebracht. Stattdessen beim nächsten echten Auftreten **sofort** sichern:
+Do not try to provoke it — that cost 280 runs and produced nothing.
+Instead, on the next genuine occurrence, capture **immediately**:
 
 ```
-sample <pid> 3 -mayDie -f /tmp/hang.txt   # vor dem Kill!
+sample <pid> 3 -mayDie -f /tmp/hang.txt   # before the kill!
 ```
 
-und die **letzte Zeile der Testausgabe** notieren. Das ist der eine Datenpunkt,
-der noch fehlt: der Name des Tests. Mit ihm wird aus der Untersuchung eine
-gezielte Frage statt einer Suche.
+and note the **last line of the test output**. That is the one data
+point still missing: the test's name. With it, the investigation
+becomes a targeted question instead of a search.
 
 ---
 
-## Nachtrag 2026-08-29: ein zweiter Flatterer — gemessen, und die erste Erklärung war falsch
+## Addendum 2026-08-29: a second flake — measured, and the first explanation was wrong
 
-**Erledigt und aufgeklärt.** Der Eintrag steht, weil die Aufklärung mehr wert
-ist als der Fehler.
+**Resolved and explained.** This entry stays, because the explanation is
+worth more than the bug.
 
-`S3RedirectAuthorizationMeasurementTests` fiel gelegentlich, zweimal
-unabhängig gesichtet. Die hier zuerst notierte Erklärung — knappe
-Wartezeiten unter Last — **ist widerlegt.** 80 volle Läufe in vier Runden:
+`S3RedirectAuthorizationMeasurementTests` occasionally failed, sighted
+independently twice. The explanation first noted here — tight wait
+times under load — **is refuted.** 80 full runs across four rounds:
 
-| Runde | Aufbau | S3-Suite rot |
+| Round | Setup | S3 suite red |
 |---|---|---|
-| 1 | vier parallele Builds als Last | 3 / 20 |
-| 2 | gleiche Last, instrumentiert | 3 / 20 |
-| 3 | **ohne jede Last** | **7 / 20** |
-| 4 | ohne Last, `URLCache.shared` je Fall geleert | **0 / 20** |
+| 1 | four parallel builds as load | 3 / 20 |
+| 2 | same load, instrumented | 3 / 20 |
+| 3 | **with no load at all** | **7 / 20** |
+| 4 | no load, `URLCache.shared` cleared per case | **0 / 20** |
 
-**Ohne Last war die Rate höher.** Last ist Zuschauer. Und die Wartezeit war
-es auch nicht: bei jedem der 13 Fehlschläge verstrichen danach noch
-**60 Sekunden ungenutzt** (`extra=60.01 s`), wo ein grüner Lauf dieselbe
-Wartezeit in Mikrosekunden durchläuft. Es gibt keine Schranke, die das
-abgedeckt hätte — eine größere hätte nur jeden roten Lauf verlängert.
+**Without load, the rate was higher.** Load is a bystander. And it was
+not the wait time either: in each of the 13 failures, another
+**60 seconds elapsed unused** afterward (`extra=60.01 s`), where a green
+run runs through the same wait in microseconds. There is no bound that
+would have covered that — a larger one would only have lengthened every
+red run.
 
-### Die Ursache: `URLCache.shared`
+### The cause: `URLCache.shared`
 
-`S3FileSystem` fährt über `URLSession.shared` und damit über
-`URLCache.shared` — einen **persistenten Platten-Cache, den alle Prozesse
-teilen**. Die 301- und 308-Antworten des Stubs sind cachebar und werden nach
-`http://127.0.0.1:<ephemerer Port>/bucket?…` verschlüsselt. Ephemere Ports
-kehren wieder: trifft ein Lauf einen Port, für den ein **früherer
-`swift test`-Prozess** einen Eintrag hinterlassen hat, beantwortet die Platte
-die signierte Anfrage, und der Stub sieht sie nie.
+`S3FileSystem` runs over `URLSession.shared` and therefore over
+`URLCache.shared` — a **persistent on-disk cache shared by all
+processes**. The stub's 301 and 308 responses are cacheable and get
+keyed to `http://127.0.0.1:<ephemeral port>/bucket?…`. Ephemeral ports
+recur: if a run hits a port for which an **earlier `swift test`
+process** has left an entry, the disk answers the signed request, and
+the stub never sees it.
 
-Belegt über zwei Prozesse: PROC1 setzt die Stubs, PROC2 — getrennt, ohne
-eigenen Listener — findet `cachedEntry=true status=308` und folgt dem
-Location, ohne die erste Origin je zu berühren. Gemessen wird gecacht bei
-**301 und 308**, nicht bei 302/303/307.
+Evidenced across two processes: PROC1 sets up the stubs, PROC2 —
+separate, with no listener of its own — finds `cachedEntry=true
+status=308` and follows the Location, without ever touching the first
+origin. Caching was measured for **301 and 308**, not for 302/303/307.
 
-Dass die Form meist harmlos aussah (zwei Issues), hat einen Grund: der zweite
-Stub wird zuerst angelegt, also gilt immer `p1 == p2 + 1`, und der veraltete
-Location zeigt auf den zweiten Stub des *laufenden* Falls.
+That the pattern usually looked harmless (two issues) has a reason: the
+second stub is created first, so `p1 == p2 + 1` always holds, and the
+stale Location points to the second stub of the *currently running*
+case.
 
-**Die Sicherheitszusicherung ist nie gefallen.** Gefallen ist jedes Mal eine
-**positive** Prüfung — „die erste Origin wurde nie erreicht" —, und sie fiel
-zu Recht. Genau dafür steht sie neben der negativen.
+**The security guarantee itself never failed.** What failed each time
+was a **positive** check — "the first origin was never reached" — and it
+failed correctly. That is exactly what it exists for, alongside the
+negative one.
 
-### Was daraus folgt
+### What follows from this
 
-- **Am Test:** der Cache-Schlüssel darf nicht wiederkehren. Ein je Lauf
-  einzigartiger Bucket-Name genügt und ändert keine Zusicherung — besser als
-  `removeAllCachedResponses()`, das den Cache des Entwicklers und fremder
-  Suiten mit leert.
-- **In der Produktion, und das ist der schwerere Teil:** siehe
+- **In the test:** the cache key must not recur. A bucket name unique
+  per run is enough and changes no guarantee — better than
+  `removeAllCachedResponses()`, which would also clear the developer's
+  cache and other suites'.
+- **In production, and this is the heavier part:** see
   `2026-08-29-backlog-s3-teilt-die-url-session.md`.
 
-### Eine Lehre über diesen Fall hinaus
+### A lesson beyond this case
 
-Die erste Erklärung war plausibel, passte zu den Beobachtungen und war
-falsch. Sie stammte aus einer **Korrelation** — beide Sichtungen traten
-während eines Builds auf — und wurde erst widerlegt, als jemand ohne Last
-maß und die Rate stieg. Eine Ursache, die man aus dem Zusammentreffen
-erschließt, ist eine Hypothese, bis eine Runde sie gezielt auszuschließen
-versucht hat.
-
+The first explanation was plausible, fit the observations, and was
+wrong. It came from a **correlation** — both sightings occurred during
+a build — and was only refuted once someone measured without load and
+the rate rose. A cause inferred from coincidence is a hypothesis until
+a round has deliberately tried to rule it out.

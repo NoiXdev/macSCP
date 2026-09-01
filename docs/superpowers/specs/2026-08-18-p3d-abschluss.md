@@ -1,6 +1,6 @@
-# P3d — Abschluss: die Snippet-Auswahl im Terminal wird flach
+# P3d — Closing: the snippet picker in the terminal goes flat
 
-Abgeschlossen 2026-08-18. Drei inhaltliche Commits:
+Completed 2026-08-18. Three substantive commits:
 
 ```
 dd7941c feat(app): project the snippet model into a flat list
@@ -8,210 +8,204 @@ dd7941c feat(app): project the snippet model into a flat list
 daf5c38 feat(app): flatten the terminal snippet picker
 ```
 
-## Bedienbarkeit, keine Sicherheitskorrektur
+## Usability, not a security fix
 
-Diese Phase behebt kein Loch. Die Popover-Auswahl hatte **nie** ein „ein
-Klick führt aus": jede Zeile war schon vor diesem Umbau ein Untermenü mit
-„Einfügen" und „Ausführen", genau deshalb so gebaut in Runde 2. Der
-tatsächliche Maintainer-Befund war ausschließlich die Untermenüs selbst —
-aufklappen, zur Seite fahren, treffen, im engen Popover unangenehm. Was sich
-ändert, ist der Weg zur Aktion, nicht ob eine Aktion beiläufig auslösbar
-wird.
+This phase does not fix a hole. The popover picker **never** had a
+"one click executes": every row was already a submenu with "Insert" and
+"Execute" before this rework — built that way in round 2 for exactly that
+reason. The actual maintainer finding was the submenus themselves —
+opening, sliding sideways, aiming, uncomfortable in the narrow popover.
+What changes is the path to the action, not whether an action can be
+triggered incidentally.
 
-## Wie sich Modell und Darstellung teilen
+## How the model and the presentation split
 
-`SnippetMenuModel` bleibt die einzige Quelle für alle vier Auslöseflächen
-(Popover, Rechtsklick im Terminal, Host-Kontextmenü, Menüzeile). Drei davon
-sind echte Menüs und rendern weiterhin `SnippetMenuItems` — **byte-unverändert**
-durch diese Phase, verifiziert per leerem Diff auf allen drei Dateien. Nur
-das Popover bekommt eine zweite Projektion:
+`SnippetMenuModel` remains the single source for all four trigger surfaces
+(popover, right-click in the terminal, host context menu, menu bar). Three
+of those are real menus and continue to render `SnippetMenuItems` —
+**byte-unchanged** through this phase, verified by an empty diff on all
+three files. Only the popover gets a second projection:
 `SnippetListPlan.build(model:)` (`Sources/macSCPCore/Terminal/SnippetListPlan.swift`,
-Task 1), reine Berechnung ohne SwiftUI-Bezug, deshalb in Core statt neben
-`SnippetMenuPlan` in `MacSCPAppKit`.
+Task 1), a pure computation with no SwiftUI dependency, hence in Core
+instead of next to `SnippetMenuPlan` in `MacSCPAppKit`.
 
-## Jedes Snippet einmal statt zweimal
+## Each snippet once instead of twice
 
-`SnippetMenuPlan` dupliziert ein Snippet mit zwei Tags bewusst — die zwei
-Vorkommen liegen dort in zwei verschiedenen Untermenüs, von denen nie beide
-gleichzeitig sichtbar sind. Eine flache, durchgehend sichtbare Liste hat
-diese Untermenü-Grenze nicht: derselbe Name zweimal im selben Bereich sähe
-wie ein Fehler aus, nicht wie Gruppierung, und würde die Pfeiltasten-
-Navigation unterlaufen — genau der Grund, aus dem ein einfacher Klick nur
-auswählt. `SnippetListPlan.build` zeigt deshalb jedes Snippet **höchstens
-einmal**, unter dem ersten Abschnitt, der es sonst produziert hätte; ein
-dadurch komplett leer gewordener Folgeabschnitt entfällt ganz.
+`SnippetMenuPlan` deliberately duplicates a snippet with two tags — the two
+occurrences there sit in two different submenus, of which both are never
+visible at the same time. A flat, continuously visible list has no such
+submenu boundary: the same name twice in the same area would look like a
+bug, not like grouping, and would undermine arrow-key navigation — exactly
+the reason a plain click only selects. `SnippetListPlan.build` therefore
+shows each snippet **at most once**, under the first section that would
+otherwise have produced it; a subsequent section left completely empty by
+this is dropped entirely.
 
-## Das Aktionsfenster und seine Tastenkürzel
+## The action sheet and its keyboard shortcuts
 
-Doppelklick auf eine Zeile öffnet `SnippetActionSheet`
-(`Sources/MacSCPAppKit/SnippetActionSheet.swift`, Task 2): Name, Befehl im
-Klartext (`.textSelection(.enabled)`, monospaced), drei Aktionen.
+Double-clicking a row opens `SnippetActionSheet`
+(`Sources/MacSCPAppKit/SnippetActionSheet.swift`, Task 2): name, command in
+plain text (`.textSelection(.enabled)`, monospaced), three actions.
 
-- **Esc** bricht ab (`role: .cancel`).
-- **Return** liegt auf **„Einfügen"** (`.keyboardShortcut(.defaultAction)`).
-- **⌘Return** führt aus (`.keyboardShortcut(.return, modifiers: .command)`).
+- **Esc** cancels (`role: .cancel`).
+- **Return** sits on **"Insert"** (`.keyboardShortcut(.defaultAction)`).
+- **⌘Return** executes (`.keyboardShortcut(.return, modifiers: .command)`).
 
-Begründung: Return löst in einem macOS-Dialog den Standardknopf aus. Läge
-er auf „Ausführen", startete Doppelklick + Return einen Befehl auf einem
-entfernten Rechner mit zwei Anschlägen — beiläufiger als der alte Weg über
-das Untermenü, obwohl dieser Umbau das Gegenteil erreichen soll. Ein neuer,
-gezielt kleiner Source-Text-Scan-Guard
-(`SnippetActionSheetKeyboardShortcutGuardTests`) pinnt die Zuordnung; live
-geprüft durch testweises Verschieben von `.defaultAction` auf Execute, das
-beide zentralen Tests rot schlagen ließ.
+Rationale: Return triggers the default button in a macOS dialog. If it sat
+on "Execute", a double-click plus Return would start a command on a remote
+machine with two keystrokes — more incidental than the old path through the
+submenu, even though this rework is meant to achieve the opposite. A new,
+deliberately narrow source-text scan guard
+(`SnippetActionSheetKeyboardShortcutGuardTests`) pins the mapping; verified
+live by test-moving `.defaultAction` onto Execute, which made both central
+tests fail.
 
-## ⌃⌘n: nichts verloren
+## ⌃⌘n: nothing lost
 
-Der Task-4-Auftrag behauptete, das Popover verliere ⌃⌘n durch den Umbau.
-Das ist widerlegt: `SnippetMenuItems.shortcutOrder` hat als Default `[]`,
-und **nur** `MacSCPApp.swift` (die Menüzeile) übergibt die echte
-Store-Reihenfolge. `SessionSidebar.swift` und die alte
-`ContentView+Detail.swift` taten das nie — das Kürzel lebt exklusiv an der
-Menüzeile, als global registrierter `NSMenuItem`, unabhängig davon ob ein
-Popover offen ist. Die flache Liste hat ohnehin keine Buttons mehr, an die
-ein `.keyboardShortcut` hängen könnte (Zeilen sind `Text` + Gesten). Nichts
-ging verloren, weil vorher nichts da war.
+The Task 4 brief claimed the popover would lose ⌃⌘n through the rework.
+That is refuted: `SnippetMenuItems.shortcutOrder` defaults to `[]`, and
+**only** `MacSCPApp.swift` (the menu bar) passes the real store order.
+`SessionSidebar.swift` and the old `ContentView+Detail.swift` never did —
+the shortcut lives exclusively on the menu bar, as a globally registered
+`NSMenuItem`, regardless of whether a popover is open. The flat list has no
+buttons left anyway for a `.keyboardShortcut` to attach to (rows are `Text`
++ gestures). Nothing was lost, because nothing was there before.
 
-## Die drei Wege im Popover (Task 3)
+## The three paths in the popover (Task 3)
 
-- **Rechtsklick auf die Zeile** → Ausführen, Einfügen, Vorschau — der
-  schnelle Weg, eine Geste, kein Fenster. „Vorschau" pinnt die Zeile in
-  dieselbe feste Befehlszeile, die auch beim Überfahren erscheint, statt
-  ein zweites Fenster zu öffnen — kostet keine neue Datei, keinen neuen
-  Fensterzustand.
-- **Doppelklick** → `SnippetActionSheet` mit dem angeklickten Snippet.
-- **Überfahren** → der Befehl steht in einer festen Zeile unten im Popover
-  (immer vorhanden, mit Hinweistext ohne Hover/Pin, sonst springt die
-  Popover-Höhe bei jedem Wechsel), gekürzt statt umgebrochen.
-- **Ein einfacher Klick wählt nur aus**, löst nichts aus — Voraussetzung für
-  Pfeiltasten-Bedienung. Die Geste dahinter (`TapGesture(...).exclusively(before:)`)
-  ist ohne Rendering-Harness nicht testbar; ein neunter Source-Scan-Guard
-  wurde bewusst nicht gebaut, weil die riskante Eigenschaft in einer
-  mehrzeiligen, verschachtelten Gesten-Komposition steckt, die ein
-  zeilenbasierter Scanner nicht zuverlässig anhand eines stabilen Musters
-  fassen kann — er würde falsche Sicherheit liefern statt echten Schutz.
+- **Right-click on the row** → Execute, Insert, Preview — the fast path,
+  one gesture, no window. "Preview" pins the row into the same fixed
+  command line that also appears on hover, instead of opening a second
+  window — costs no new file, no new window state.
+- **Double-click** → `SnippetActionSheet` with the clicked snippet.
+- **Hover** → the command appears in a fixed line at the bottom of the
+  popover (always present, with hint text absent hover/pin, otherwise the
+  popover height would jump on every change), truncated rather than
+  wrapped.
+- **A plain click only selects**, triggers nothing — a prerequisite for
+  arrow-key operation. The gesture behind it
+  (`TapGesture(...).exclusively(before:)`) is not testable without a
+  rendering harness; a ninth source-scan guard was deliberately not built,
+  because the risky property sits inside a multi-line, nested gesture
+  composition that a line-based scanner cannot reliably capture against a
+  stable pattern — it would deliver false confidence instead of real
+  protection.
 
-## GUI: nicht gestartet
+## GUI: not launched
 
-Die App wurde in dieser Phase **nicht** gestartet. Für den Maintainer, zur
-Verifikation von Hand — die vollständige Liste:
+The app was **not** launched during this phase. For the maintainer, for
+manual verification — the complete list:
 
-- Das Popover zeigt eine flache Liste ohne Untermenüs, Tag-Überschriften
-  bleiben als Gruppierung erhalten.
-- Rechtsklick auf eine Zeile öffnet ein Kontextmenü mit Ausführen, Einfügen,
-  Vorschau.
-- Doppelklick öffnet das Aktionsfenster mit Befehl im Klartext und den drei
-  Knöpfen Einfügen/Ausführen/Abbrechen.
-- Im Aktionsfenster: Esc bricht ab, Return fügt ein, ⌘Return führt aus.
-- Überfahren einer Zeile zeigt den Befehl in der festen Zeile unten im
-  Popover, nicht als Tooltip.
-- Eine gesperrte Zeile (nicht verbunden / Backend ohne Shell) ist sichtbar
-  deaktiviert.
-- Menüzeile und Rechtsklick im Terminal zeigen weiterhin die alten
-  Untermenüs mit Einfügen/Ausführen — unverändert.
+- The popover shows a flat list with no submenus; tag headers remain as
+  grouping.
+- Right-clicking a row opens a context menu with Execute, Insert, Preview.
+- Double-clicking opens the action sheet with the command in plain text and
+  the three buttons Insert/Execute/Cancel.
+- In the action sheet: Esc cancels, Return inserts, ⌘Return executes.
+- Hovering a row shows the command in the fixed line at the bottom of the
+  popover, not as a tooltip.
+- A locked row (not connected / backend without a shell) is visibly
+  disabled.
+- The menu bar and right-click in the terminal still show the old submenus
+  with Insert/Execute — unchanged.
 
-## Messung
-
-```
-swift test    → 2097 Tests in 181 Suiten, alle grün
-```
-
-Startstand vor dieser Phase (Task-1-Beginn): 2076/178. Zuwachs über die drei
-Tasks: 11 Tests (Task 1, `SnippetListPlan`) + 6 Tests (Task 2,
-`SnippetActionSheetKeyboardShortcutGuardTests`) + 4 Tests (Task 3,
-`SnippetPreviewLine`) = 21 neue Tests, deckungsgleich mit 2076 → 2097.
+## Measurement
 
 ```
-plutil -lint  → alle *.strings-Kataloge OK (alle vier Sprachen)
+swift test    → 2097 tests in 181 suites, all green
 ```
 
-## Build-Verifikation (`scripts/package-app`, im Hintergrund gestartet)
+Starting point before this phase (Task 1 start): 2076/178. Growth across
+the three tasks: 11 tests (Task 1, `SnippetListPlan`) + 6 tests (Task 2,
+`SnippetActionSheetKeyboardShortcutGuardTests`) + 4 tests (Task 3,
+`SnippetPreviewLine`) = 21 new tests, matching 2076 → 2097.
+
+```
+plutil -lint  → all *.strings catalogues OK (all four languages)
+```
+
+## Build verification (`scripts/package-app`, started in the background)
 
 ```
 lipo -archs dist/macSCP.app/Contents/MacOS/macSCP      → x86_64 arm64
 lipo -archs dist/macSCP.app/Contents/MacOS/macscp-cli  → x86_64 arm64
 Resources/*.bundle                                      → macSCP_MacSCPAppKit.bundle, macSCP_macSCPCore.bundle
-Resources/*.lproj                                        → de, en, fr, pl (alle vier)
+Resources/*.lproj                                        → de, en, fr, pl (all four)
 plutil -lint Info.plist                                  → OK
 UTExportedTypeDeclarations                                → 3 (dev.noix.macscp.sessions, .logins, .snippets)
 ```
 
-Die App wurde **nicht** gestartet; `scripts/release` wurde nicht ausgeführt.
+The app was **not** launched; `scripts/release` was not run.
 
-## Brief-Fehler
+## Brief errors
 
-Zwei eigene Brief-Fehler des Koordinators, beide von den jeweiligen Tasks
-selbst am Code widerlegt:
+Two of the coordinator's own brief errors, both refuted by the respective
+tasks against the code itself:
 
-- **Task 3:** der Brief behauptete, das Popover verliere ⌃⌘n durch den
-  Umbau. Es hatte das Kürzel nie — siehe oben.
-- **Task 3:** der Brief zitierte „sieben Source-Text-Scan-Wächter, ein
-  achter nur mit Begründung" aus dem übergeordneten Plan. Task 2 hatte
-  bereits einen achten gebaut; der Ausgangsstand für Task 3 war acht, nicht
-  sieben. Der Plan-Text war vor Task 2 geschrieben und seither nicht
-  nachgeführt worden.
+- **Task 3:** the brief claimed the popover would lose ⌃⌘n through the
+  rework. It never had the shortcut — see above.
+- **Task 3:** the brief quoted "seven source-text scan guards, an eighth
+  only with justification" from the parent plan. Task 2 had already built
+  an eighth one; the starting point for Task 3 was eight, not seven. The
+  plan text was written before Task 2 and had not been updated since.
 
-Alle übrigen zitierten Fakten in den drei Task-Briefs (Startzahlen,
-`SnippetMenuModel`/`SnippetMenuPlan`-Struktur, Duplizierungsregel der
-Menü-Projektion) stimmten mit dem Code überein.
+All other cited facts in the three task briefs (starting counts,
+`SnippetMenuModel`/`SnippetMenuPlan` structure, the menu projection's
+duplication rule) matched the code.
 
-## Fix-Runde nach Abschluss
+## Fix round after closing
 
-Zwei Nachbesserungen am bereits abgeschlossenen Phasenstand, vor der
-Gesamt-Review der Branch.
+Two follow-up corrections to the already-closed phase state, before the
+whole-branch review.
 
-**Fix 1 (Kontextmenü ungetestet).** Das per-Zeile-`.contextMenu` in
-`snippetRow(_:)` (`Sources/MacSCPAppKit/ContentView+Detail.swift`) hatte
-keinen Test, obwohl die Technik dafür im Projekt schon existiert:
-`Tests/macSCPAppKitTests/TerminalContextMenuTests.swift` rendert eine
-SwiftUI-Menü-Body per `NSHostingMenu` in ein echtes `NSMenu` und prüft
-dessen Struktur — bislang nur für `SnippetMenuItems` genutzt. Der
-Menü-Inhalt wurde aus der Closure herausgezogen in einen eigenen Typ,
-`SnippetRowContextMenu` (`View`, drei Buttons: Execute/Insert gated auf
-`!row.isDisabled`, Preview ungegated), damit `NSHostingMenu` ihn direkt
-rendern kann, ohne Zeilen-Gesten oder das Popover drumherum. Drei neue
-Tests in `TerminalContextMenuTests`: eine aktivierte Zeile bietet
-Execute/Insert/Preview; eine deaktivierte Zeile bietet nur Preview; jeder
-Menüpunkt erreicht seine eigene Closure. Mutation verifiziert: das
-`!row.isDisabled`-Gate testweise entfernt (nur Execute/Insert/Preview ohne
-Bedingung) ließ den deaktivierten-Zeile-Test rot schlagen (erwartet
-`["Preview"]`, bekam `["Execute", "Insert", "Preview"]`); Gate
-zurückgesetzt, wieder grün. Nebenbefund: `snippetPopover`'s eigener
-Doku-Kommentar behauptete, „die Kontextmenü-Einträge" seien nicht
-beobachtbar — das war seit dieser Fix-Runde nicht mehr wahr und wurde
-korrigiert.
+**Fix 1 (context menu untested).** The per-row `.contextMenu` in
+`snippetRow(_:)` (`Sources/MacSCPAppKit/ContentView+Detail.swift`) had no
+test, even though the technique for it already exists in the project:
+`Tests/macSCPAppKitTests/TerminalContextMenuTests.swift` renders a SwiftUI
+menu body via `NSHostingMenu` into a real `NSMenu` and checks its
+structure — used so far only for `SnippetMenuItems`. The menu content was
+pulled out of the closure into its own type, `SnippetRowContextMenu`
+(`View`, three buttons: Execute/Insert gated on `!row.isDisabled`, Preview
+ungated), so `NSHostingMenu` can render it directly, without the row
+gestures or the popover around it. Three new tests in
+`TerminalContextMenuTests`: an enabled row offers Execute/Insert/Preview; a
+disabled row offers only Preview; each menu item reaches its own closure.
+Mutation verified: test-removing the `!row.isDisabled` gate (only
+Execute/Insert/Preview with no condition) made the disabled-row test fail
+(expected `["Preview"]`, got `["Execute", "Insert", "Preview"]`); gate
+restored, green again. Side finding: `snippetPopover`'s own doc comment
+claimed "the context menu entries" were unobservable — that stopped being
+true as of this fix round and was corrected.
 
-**Fix 2 (Stale-Hover-Zeile, MINOR).** `hoveredRow` wurde nicht geräumt,
-wenn die Suche eine gerade gehoverte Zeile aus der Liste filtert —
-`onHover`s `else`-Zweig feuert nur, wenn die Zeilen-View noch existiert,
-und eine herausgefilterte Zeile bekommt diese Gelegenheit nie. Der lokale
-`let sections = ...`-Block in `snippetPopover` wurde in eine private
-Methode `filteredSections(text:isRegex:)` gezogen (gleiche Pipeline:
-Suchprädikat → `TerminalSnippetSearch.matching` →
-`SnippetMenuModel.build` → `SnippetListPlan.build`), damit eine zweite
-Stelle — `clearHoveredRowIfFilteredOut()` — sie ohne Duplikation erneut
-aufrufen kann. Zwei `.onChange`-Modifier (`searchText`, `searchIsRegex`)
-rufen diese Methode; sie räumt `hoveredRow`, wenn dessen Zeile im neu
-berechneten `sections` nicht mehr vorkommt. Bewusst KEIN zweites
-State-Feld (z. B. ein „isStale"-Flag) — die Weisung war, am
-Filterberechnungs-Ort selbst zu reparieren, nicht mit einem zweiten
-State-Stück daneben.
+**Fix 2 (stale hover row, MINOR).** `hoveredRow` was not cleared when a
+search filters a currently hovered row out of the list — `onHover`'s
+`else` branch only fires while the row view still exists, and a filtered-
+out row never gets that chance. The local `let sections = ...` block in
+`snippetPopover` was pulled into a private method
+`filteredSections(text:isRegex:)` (same pipeline: search predicate →
+`TerminalSnippetSearch.matching` → `SnippetMenuModel.build` →
+`SnippetListPlan.build`), so a second call site —
+`clearHoveredRowIfFilteredOut()` — can invoke it again without
+duplication. Two `.onChange` modifiers (`searchText`, `searchIsRegex`)
+call this method; it clears `hoveredRow` if its row no longer occurs in the
+newly computed `sections`. Deliberately NO second state field (e.g. an
+"isStale" flag) — the direction was to fix it at the point where the
+filter is computed, not with a second piece of state alongside it.
 
-**Zwei Proben vor dem Commit:**
-- Würde ein neuer Test gegen eine Konstante grün bleiben? Nein für Fix 1:
-  eine Attrappe, die immer alle drei Einträge zeigt, schlägt am
-  Disabled-Test fehl; eine Attrappe, die immer nur Preview zeigt, schlägt
-  am Enabled-Test fehl; No-Op-Closures schlagen am Wiring-Test fehl.
-- Welche Behauptung im Doc-Kommentar beobachtet kein Test? Fix 2 komplett:
-  das Räumen von `hoveredRow` bei Filterung ist SwiftUI-View-Zustand ohne
-  Rendering-Harness — dieselbe, im Projekt bereits mehrfach dokumentierte
-  Grenze wie bei `TerminalPanelHeader.body`, der Gesten-Aufteilung und der
-  Zeilen-Selektionshervorhebung. `clearHoveredRowIfFilteredOut()`s
-  Doc-Kommentar behauptet das Verhalten korrekt, aber ungeprüft.
+**Two checks before the commit:**
+- Would a new test stay green against a constant? No, for Fix 1: a stub
+  that always shows all three entries fails the disabled test; a stub that
+  always shows only Preview fails the enabled test; no-op closures fail the
+  wiring test.
+- Which claim in the doc comment is unobserved by any test? All of Fix 2:
+  clearing `hoveredRow` on filtering is SwiftUI view state with no
+  rendering harness — the same boundary already documented multiple times
+  in this project, as with `TerminalPanelHeader.body`, the gesture split,
+  and the row selection highlight. `clearHoveredRowIfFilteredOut()`'s doc
+  comment claims the behavior correctly, but unverified.
 
-**Messung:** Ausgangsstand 2097 Tests / 181 Suiten (selbst gemessen, deckt
-sich mit dem Ledger). Nach Fix 1 (+3 Tests): 2100/181. Fix 2 fügt keine
-Tests hinzu (Begründung oben). Endstand: **2100 Tests in 181 Suiten,
-alle grün.**
+**Measurement:** starting point 2097 tests / 181 suites (self-measured,
+matches the ledger). After Fix 1 (+3 tests): 2100/181. Fix 2 adds no tests
+(rationale above). Final: **2100 tests in 181 suites, all green.**
 
-Commits: siehe Ledger-Eintrag und Git-Log dieser Fix-Runde.
+Commits: see the ledger entry and the git log for this fix round.

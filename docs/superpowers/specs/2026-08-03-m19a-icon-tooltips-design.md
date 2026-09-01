@@ -1,118 +1,115 @@
-# M19a — Tooltips an Icon-Aktionen + Wächter (Design/Spec)
+# M19a — Tooltips on icon actions + a guard (Design/Spec)
 
-**Datum:** 2026-08-03
-**Status:** freigegeben (Maintainer), bereit für writing-plans
+**Date:** 2026-08-03
+**Status:** approved (maintainer), ready for writing-plans
 **Branch:** `develop`
-**Anlass:** Maintainer-Frage: „Icons für Aktionen sollten beim Überfahren einen Titel bekommen, damit man erkennt, was sie tun — oder?"
+**Trigger:** maintainer question: „Icons für Aktionen sollten beim Überfahren einen Titel bekommen, damit man erkennt, was sie tun — oder?" ("Icons for actions should get a title on hover so you can tell what they do — right?")
 
-## Ziel
+## Goal
 
-Jede anklickbare Fläche, die nur ein Symbol zeigt, sagt beim Überfahren, was
-sie tut — und ein Test sorgt dafür, dass das bei künftigen Symbolen nicht
-wieder dem Zufall überlassen bleibt.
+Every clickable area that shows only a symbol says, on hover, what it
+does — and a test makes sure this isn't again left to chance for future
+symbols.
 
-## Ausgangslage (im Code verifiziert)
+## Starting point (verified in the code)
 
-Die Vermutung stimmt als Regel, aber die Abdeckung ist bereits gut — das
-Beispiel des Maintainers ist sogar vollständig versorgt:
+The suspicion holds as a rule, but coverage is already good — the
+maintainer's own example is even fully covered:
 
-- **SSH-Schlüssel-Sheet: 6 von 6 Symbolen haben `.help`** (`SSHKeysSheet.swift`
-  :237/:243/:249/:255/:261 für Kopieren, Public exportieren, Privat
-  exportieren, Umbenennen, Löschen; :202 für das Schloss).
-- **Toolbar vollständig:** Terminal (`ContentView.swift:940`), Transfer-Leiste
-  (:951), Hochladen (:2689), Herunterladen (:2706).
-- **Tab-Leiste teilweise:** das `+` hat einen Hinweis mit Kürzel
-  (`TabStripView.swift:34`, „New tab (⌘N)"), das `×` nicht.
+- **SSH key sheet: 6 of 6 symbols have `.help`** (`SSHKeysSheet.swift`
+  :237/:243/:249/:255/:261 for copy, export public, export private,
+  rename, delete; :202 for the lock).
+- **Toolbar fully covered:** terminal (`ContentView.swift:940`), transfer
+  bar (:951), upload (:2689), download (:2706).
+- **Tab strip partially:** the `+` has a hint with a shortcut
+  (`TabStripView.swift:34`, "New tab (⌘N)"), the `×` does not.
 
-**Die zwei echten Lücken**, beide anklickbar:
+**The two real gaps**, both clickable:
 
-1. `TabStripView.swift:107-108` — `xmark`, schließt den Tab, erscheint beim
-   Überfahren der Zeile.
-2. `SettingsView.swift:511` — `minus.circle`, entfernt eine Dateizuordnung im
-   Bereich „Öffnen mit".
+1. `TabStripView.swift:107-108` — `xmark`, closes the tab, appears on
+   hovering the row.
+2. `SettingsView.swift:511` — `minus.circle`, removes a file association
+   in the "Open With" section.
 
-**Bewusst dekorativ** (Symbole, die keine Fläche zum Klicken sind):
-`TransferQueueBar.swift:77` (Richtungspfeil) und :128 (Häkchen bei
-„fertig"). Das ⚠ dort (:97) hat schon einen Hinweistext (:100), ebenso der
-Fehlerfall (:135).
+**Deliberately decorative** (symbols that are not a clickable area):
+`TransferQueueBar.swift:77` (direction arrow) and :128 (checkmark for
+"done"). The ⚠ there (:97) already has a hint text (:100), so does the
+error case (:135).
 
-## Umfang
+## Scope
 
-### 1. Die zwei fehlenden Hinweistexte
+### 1. The two missing hint texts
 
-`×` am Tab: „Tab schließen (⌘W)" — mit Kürzel, weil das `+` daneben es
-genauso hält. `−` in „Öffnen mit": „Zuordnung entfernen".
+`×` on the tab: "Close Tab (⌘W)" — with the shortcut, because the `+`
+next to it does the same. `−` in "Open With": "Remove Association".
 
-Zwei neue Schlüssel in **allen vier** Katalogen (`{en,de,fr,pl}.lproj`),
-typografische Zeichen in den nicht-englischen Werten.
+Two new keys in **all four** catalogs (`{en,de,fr,pl}.lproj`), typographic
+characters in the non-English values.
 
-### 2. Der Wächter
+### 2. The guard
 
-Es gibt **kein UI-Testtarget** (`Package.swift` hat nur `macSCPCoreTests`),
-also muss der Test den Quelltext lesen — dasselbe Mittel wie der
-`#filePath`-Lint aus M19 (`EmbeddedKeyPorterTests`), der dort einen Read vor
-dem Eigentums-Guard verhindert.
+There is **no UI test target** (`Package.swift` has only
+`macSCPCoreTests`), so the test has to read the source — the same means as
+the `#filePath` lint from M19 (`EmbeddedKeyPorterTests`), which there
+prevents a read ahead of the ownership guard.
 
-Der Test durchsucht `Sources/MacSCPApp/*.swift` nach jedem `Image(systemName:`
-und `systemImage:` und verlangt für jedes Vorkommen genau **eine** von zwei
-Antworten:
+The test searches `Sources/MacSCPApp/*.swift` for every occurrence of
+`Image(systemName:` and `systemImage:` and requires exactly **one** of two
+answers for each occurrence:
 
-- in der Nähe steht ein `.help(` — erledigt; **oder**
-- das Vorkommen steht auf einer ausdrücklichen Liste dekorativer Symbole,
-  jeder Eintrag mit Datei, Symbolname und **einer Zeile Begründung**.
+- a `.help(` sits nearby — done; **or**
+- the occurrence is on an explicit list of decorative symbols, each entry
+  with file, symbol name and **one line of rationale**.
 
-Ein neues Symbol, das in keiner der beiden Schubladen liegt, macht den Test
-rot.
+A new symbol that fits neither drawer turns the test red.
 
-**Was der Wächter leistet und was nicht** — das gehört so in den
-Doc-Kommentar, nicht schöner:
+**What the guard achieves and what it doesn't** — this belongs in the doc
+comment exactly as stated, not prettied up:
 
-- Er beweist **nicht**, dass ein Hinweistext gut oder überhaupt am richtigen
-  Element hängt. Ein `.help` am falschen Knopf in der Nähe geht durch.
-- Die Nähe-Heuristik ist grob; ungewöhnliche Formatierung kann sie täuschen.
-- Die Liste will gepflegt werden; sie ist bewusst eine Bremse, keine
-  Bequemlichkeit.
+- It does **not** prove that a hint text is good, or even attached to the
+  right element. A `.help` on the wrong button nearby passes through.
+- The proximity heuristic is coarse; unusual formatting can fool it.
+- The list wants maintaining; it is deliberately a brake, not a
+  convenience.
 
-Er erzwingt genau eine Sache: dass **jemand entschieden hat**. Das ist der
-Anspruch, und mehr kann eine Quelltextprüfung ohne UI-Test nicht leisten. In
-M19 hat ein solcher Lint zweimal echte Lücken gefangen — aber erst, nachdem
-ein Reviewer ihn selbst mit einem Zeilenumbruch ausgehebelt hatte. Die
-Schwäche ist belegt, nicht theoretisch; deshalb wird sie benannt statt
-weggeschrieben.
+It enforces exactly one thing: that **someone made a decision**. That is
+the claim, and a source-scanning check with no UI test can deliver no
+more. In M19, a lint like this caught real gaps twice — but only after a
+reviewer had already defeated it once with a line break. The weakness is
+documented, not theoretical; that is why it is named instead of written
+away.
 
 ## Tests
 
-- **Wächter (Core-Testtarget, liest App-Quellen):** grün gegen den
-  aufgeräumten Stand; rot, sobald ein Symbol ohne `.help` und ohne
-  Listeneintrag auftaucht. Der Nachweis erfolgt per Mutation — ein Symbol
-  ohne beides einfügen, Test muss rot werden, danach zurücknehmen.
-- **Katalog-Parität:** beide neuen Schlüssel in allen vier Katalogen, per
-  Grep geprüft (der Paritätstest diffed nur gegen `en.lproj` und sieht einen
-  überall fehlenden Schlüssel nicht — genau diese Lücke hat in M18 einen
-  Fehler ausgeliefert).
-- App-Änderungen sind build-verifiziert; für Tooltips gibt es keinen
-  Laufzeittest.
+- **Guard (Core test target, reads App sources):** green against the
+  cleaned-up state; red as soon as a symbol appears with no `.help` and
+  no list entry. Proof is by mutation — insert a symbol with neither,
+  the test must turn red, then revert it.
+- **Catalog parity:** both new keys in all four catalogs, checked by grep
+  (the parity test only diffs against `en.lproj` and does not see a key
+  missing everywhere — exactly this gap shipped a bug in M18).
+- App changes are build-verified; there is no runtime test for tooltips.
 
-## Invarianten
+## Invariants
 
-- Keine neue externe Dependency.
-- Code, Kommentare, Testnamen englisch; UI-Strings EN/DE/FR/PL, typografisch,
-  kein ASCII-`"` in nicht-englischen Werten.
-- Der Wächter darf nichts anderes prüfen als die Entscheidung pro Symbol —
-  kein schleichender Stil-Linter.
+- No new external dependency.
+- Code, comments, test names in English; UI strings EN/DE/FR/PL,
+  typographic, no ASCII `"` in non-English values.
+- The guard must check nothing other than the per-symbol decision — no
+  creeping style linter.
 
-## Nicht in M19a
+## Not in M19a
 
-- Dekorative Symbole mit Hinweistexten nachrüsten (Richtungspfeil, Häkchen,
-  Typ-Badges) — sie stehen auf der Liste und bleiben dort.
-- Ein UI-Testtarget einführen.
-- Hinweistexte an Flächen, die bereits sichtbaren Text tragen.
+- Retrofitting hint texts onto decorative symbols (direction arrow,
+  checkmark, type badges) — they stay on the list.
+- Introducing a UI test target.
+- Hint texts on areas that already carry visible text.
 
-## Betroffene Dateien
+## Files affected
 
-- `Sources/MacSCPApp/TabStripView.swift` — **modify** (Tooltip am `×`).
-- `Sources/MacSCPApp/SettingsView.swift` — **modify** (Tooltip am `−`).
+- `Sources/MacSCPApp/TabStripView.swift` — **modify** (tooltip on the `×`).
+- `Sources/MacSCPApp/SettingsView.swift` — **modify** (tooltip on the `−`).
 - `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` —
-  **modify** (zwei neue Schlüssel).
-- `Tests/macSCPCoreTests/IconTooltipLintTests.swift` — **create** (Wächter +
-  Liste dekorativer Symbole).
+  **modify** (two new keys).
+- `Tests/macSCPCoreTests/IconTooltipLintTests.swift` — **create** (guard +
+  list of decorative symbols).

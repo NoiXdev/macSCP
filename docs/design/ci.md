@@ -1,69 +1,73 @@
 # macSCP — Corporate Identity
 
-Stand: 2026-07-09 · vom Maintainer freigegebene Richtung („Zwei Welten, ein Fenster")
-Interaktiver Entwurf: Artifact „macSCP — Design & CI" (Session 2026-07-09)
+Status: 2026-07-09 · direction approved by the maintainer ("Zwei Welten, ein Fenster")
+Interactive draft: Artifact "macSCP — Design & CI" (session 2026-07-09)
 
-## Markenidee
+## Brand idea
 
-**Zwei Welten, ein Fenster.** Bernstein steht für alles Lokale (warm, nah),
-Ozeanblau für alles Entfernte (kühl, fern). Damit trägt jede Transferrichtung
-automatisch ihre Farbe: Upload = bernstein, Download = blau. Die App selbst
-bleibt macOS-nativ (Systemfarben, Standard-Controls, Vibrancy) — die
-Markenfarben arbeiten nur dort, wo sie Bedeutung tragen.
+**Two worlds, one window.** Amber stands for everything local (warm, near),
+ocean blue for everything remote (cool, far). That way every transfer
+direction automatically carries its color: upload = amber, download = blue.
+The app itself stays macOS-native (system colors, standard controls,
+vibrancy) — the brand colors only work where they carry meaning.
 
-## Farbwelt
+## Color palette
 
-| Name | Hell | Dunkel | Verwendung |
+| Name | Light | Dark | Use |
 |---|---|---|---|
-| Bernstein | `#DE9426` | `#E8A63C` | Lokal-Pane, Uploads |
-| Ozeanblau | `#2D71B8` | `#4E92D6` | Remote-Pane, Downloads, Primäraktion |
-| Tiefsee | `#16344C → #0F1E2B` (Verlauf) | ebenso | Icon-Grund, Terminal-Hintergrund |
-| Phosphor | `#7BD88F` | `#7BD88F` | Terminal-Text, Verbunden-Status |
-| Nebel | `#F4F7FA` | — | Heller Grund (Web/Docs) |
-| Tinte | `#14212E` | `#E8EFF5` (invertiert) | Text auf Grundflächen |
+| Amber | `#DE9426` | `#E8A63C` | local pane, uploads |
+| Ocean blue | `#2D71B8` | `#4E92D6` | remote pane, downloads, primary action |
+| Deep sea | `#16344C → #0F1E2B` (gradient) | same | icon background, terminal background |
+| Phosphor | `#7BD88F` | `#7BD88F` | terminal text, connected status |
+| Mist | `#F4F7FA` | — | light background (web/docs) |
+| Ink | `#14212E` | `#E8EFF5` (inverted) | text on background surfaces |
 
-Regeln:
+Rules:
 
-- Bernstein und Ozeanblau nie dekorativ mischen — sie sind semantisch
-  (lokal/remote), nicht ornamental.
-- Status-Grün (Phosphor) ist von den Markenfarben getrennt; Fehler nutzen
-  System-Rot.
-- In der App haben Systemfarben Vorrang; die Duo-Farben kommen als
-  Asset-Farben (`LocalAmber`, `RemoteBlue`) mit Hell/Dunkel-Varianten.
+- Never mix amber and ocean blue decoratively — they're semantic
+  (local/remote), not ornamental.
+- Status green (phosphor) is separate from the brand colors; errors use
+  the system red.
+- In the app, system colors take priority; the duo colors come in as
+  asset colors (`LocalAmber`, `RemoteBlue`) with light/dark variants.
 
-## App-Icon
+## App icon
 
-Gewählt: **Variante A „Zwei Panes"** — zwei umrandete Panes (bernstein/blau)
-auf Tiefsee-Squircle, Austauschpfeile in beiden Richtungen und beiden Farben.
-Master: [`assets/icon.svg`](assets/icon.svg). Für M6 (Release) daraus die
-`.icns`-Größen rendern (16–1024 px); bis dahin läuft die App ohne Bundle-Icon.
+Chosen: **Variant A "Two Panes"** — two outlined panes (amber/blue) on a
+deep-sea squircle, exchange arrows in both directions and both colors.
+Master: [`assets/icon.svg`](assets/icon.svg). For M6 (release), render the
+`.icns` sizes from it (16–1024 px); until then the app runs without a
+bundle icon.
 
-Verworfene Varianten: B „Auf & Ab" (nur Pfeile — Reserve fürs Menüleisten-Icon),
-C „Prompt" (zu terminal-lastig für einen Dateimanager).
+Discarded variants: B "Up & Down" (arrows only — held in reserve for the
+menu-bar icon), C "Prompt" (too terminal-heavy for a file manager).
 
-## Wortmarke & Typografie
+## Wordmark & typography
 
-- Wortmarke: `mac` in SF Pro Display Light (300), `SCP` in Bold (750),
-  Laufweite −2 %. Keine eigene Logo-Schrift.
-- Die Systemschrift **ist** die Markenschrift: SF Pro Text für UI und
-  Fließtext, SF Mono (`ui-monospace`) für Pfade, Terminal und Zahlenspalten
-  (tabellarische Ziffern).
-- Im Web/Docs: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica
-  Neue", sans-serif` bzw. `ui-monospace, "SF Mono", Menlo, monospace`.
+- Wordmark: `mac` in SF Pro Display Light (300), `SCP` in Bold (750),
+  tracking −2%. No custom logo typeface.
+- The system font **is** the brand font: SF Pro Text for UI and body
+  text, SF Mono (`ui-monospace`) for paths, terminal, and number columns
+  (tabular figures).
+- On web/docs: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica
+  Neue", sans-serif` and `ui-monospace, "SF Mono", Menlo, monospace`
+  respectively.
 
-## Sprache & öffentliche Texte
+## Language & public texts
 
 - Tagline: **„Dateien sicher zwischen Mac und Server bewegen — in einer App,
   die sich nach Mac anfühlt."**
-- Öffentliche Texte (Tagline, README-Einstieg, Landingpage) bleiben
-  nutzenorientiert und frei von Technik-/Stack-Begriffen; Protokoll- und
-  Werkzeugnamen erst ab dem Contributing-Teil (Konvention des Maintainers).
-- UI-Texte auf Deutsch, aktiv formuliert; Fehler nennen Ursache und nächsten
-  Schritt („Anmeldung fehlgeschlagen — Benutzername oder Passwort prüfen.").
+- Public texts (tagline, README intro, landing page) stay
+  benefit-oriented and free of tech-stack terms; protocol and tool names
+  appear only from the Contributing section onward (maintainer's
+  convention).
+- UI texts in German, worded actively; errors name the cause and the
+  next step ("Anmeldung fehlgeschlagen — Benutzername oder Passwort
+  prüfen.").
 
-## Roadmap-Bezug
+## Roadmap reference
 
-Das Zielbild (Sidebar, zwei Panes, Terminal, Transfer-Leiste) entsteht über
-die Meilensteine: Remote-Browser M2a · Lokal-Pane/Transfers M2b · Sessions M3 ·
-Terminal M4 · Warteschlange M5 · Icon/Release M6. Design-Tokens (Asset-Farben)
-werden mit M2b eingeführt.
+The target picture (sidebar, two panes, terminal, transfer bar) comes
+together across the milestones: remote browser M2a · local pane/transfers
+M2b · sessions M3 · terminal M4 · queue M5 · icon/release M6. Design
+tokens (asset colors) get introduced with M2b.

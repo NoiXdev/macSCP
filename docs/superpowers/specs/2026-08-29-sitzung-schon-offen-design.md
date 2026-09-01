@@ -1,108 +1,108 @@
-# „Sitzung ist schon offen" — Entwurf
+# "Session is already open" — Design
 
-**Stand:** 2026-08-29. Umsetzung von **C2** aus
+**As of:** 2026-08-29. Implementation of **C2** from
 `docs/superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md`.
 
 ---
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-**Es gibt heute keinerlei Erkennung.** Eine gespeicherte Sitzung ein zweites
-Mal zu starten öffnet wortlos einen zweiten Reiter auf dieselbe Sitzung.
+**Today there is no detection of any kind.** Starting a stored session a
+second time silently opens a second tab onto the same session.
 
-Zwei Dinge liegen dafür bereits im Baum, und beide sind der Grund, warum
-dieser Vorgang klein ist:
+Two things are already in the tree for this, and both are the reason
+this change is small:
 
-- **`SessionTab.activeStoredSessionID`** — die Kennung der gespeicherten
-  Sitzung, an der ein Reiter hängt. Ausschließlich bei einer *gespeicherten*
-  Verbindung gesetzt, nie ad-hoc, und in `teardown` wieder geräumt. Das ist
-  genau die Identität, die C2 braucht, und sie existiert schon.
+- **`SessionTab.activeStoredSessionID`** — the identifier of the stored
+  session a tab is attached to. Set exclusively for a *stored*
+  connection, never ad hoc, and cleared again in `teardown`. That is
+  exactly the identity C2 needs, and it already exists.
 - **`TabsViewModel.sidebarConnectTarget(activeTabIsConnected:makeTab:)`** —
-  eine reine Entscheidungsfunktion in Core, die heute schon bestimmt, in
-  welchem Reiter ein Start landet. Sie kennt nur ein `Bool` und ist deshalb
-  blind für die Frage; die Naht ist da, sie sieht zu wenig.
+  a pure decision function in Core that already determines today which
+  tab a start lands in. It only knows a `Bool` and is therefore
+  blind to the question; the seam is there, it just sees too little.
 
-`TabsViewModel.activate(_:)` gibt es ebenfalls — das Springen ist bereits
-ausdrückbar.
+`TabsViewModel.activate(_:)` also exists — jumping is already
+expressible.
 
-## Entscheidungen des Maintainers (2026-08-29)
+## Maintainer decisions (2026-08-29)
 
-### 1. „Dieselbe" heißt: dieselbe gespeicherte Sitzung
+### 1. "The same" means: the same stored session
 
-Ein Reiter mit derselben `activeStoredSessionID` zählt als offen.
+A tab with the same `activeStoredSessionID` counts as open.
 
-**Eine Ad-hoc-Verbindung zum selben Ziel löst nichts aus.** Das ist nicht
-Bequemlichkeit, sondern richtig: eine getippte Verbindung kann andere
-Zugangsdaten, einen anderen Schlüssel oder einen anderen Jump-Host tragen.
-Sie sieht gleich aus und ist es nicht. Host und Port zu vergleichen hieße,
-über eine Gleichheit zu raten, die das Programm nicht kennt.
+**An ad-hoc connection to the same target triggers nothing.** That is not
+a convenience shortcut, it is correct: a typed connection can carry
+different credentials, a different key, or a different jump host.
+It looks the same and isn't. Comparing host and port would mean
+guessing at an equality the program doesn't know.
 
-### 2. Es wird jedes Mal gefragt
+### 2. It asks every time
 
-**Kein „nicht mehr fragen", kein gespeicherter Wert, keine Einstellung.**
+**No "don't ask again", no stored value, no setting.**
 
-Ein Merken lässt sich später billig nachrüsten, wenn sich das Fragen als
-lästig erweist. Umgekehrt gilt das nicht: eine gespeicherte Antwort ohne
-sichtbaren Weg zurück ist eine Falle, und dieses Projekt hat die schon
-einmal bezahlt (Keep-alive: ein Wert, der „aus" und „Intervall" zugleich
-trug).
+A remembered choice can be retrofitted cheaply later, if asking turns
+out to be annoying. The reverse isn't true: a stored answer with no
+visible way back is a trap, and this project has already paid for that
+once (keep-alive: a value that carried "off" and "interval" at the same
+time).
 
-## Der Entwurf
+## The design
 
-### Die Entscheidung ist ein Wert in Core
+### The decision is a value in Core
 
-Nach dem Vorbild von `SessionNameCollision`: eine reine Funktion, die sagt,
-**welcher Reiter** die Sitzung bereits hält — nicht, was zu tun ist.
+Following the model of `SessionNameCollision`: a pure function that says
+**which tab** already holds the session — not what to do about it.
 
-`TabsViewModel` ist generisch über seinen `Tab`, kann also
-`activeStoredSessionID` nicht selbst lesen. Die App reicht die Projektion
-herein; die Regel bleibt in Core und damit prüfbar.
+`TabsViewModel` is generic over its `Tab`, so it cannot read
+`activeStoredSessionID` itself. The App passes the projection
+in; the rule stays in Core and thus testable.
 
-Die Funktion antwortet mit dem **ersten** Reiter in Reiter-Reihenfolge, der
-die Sitzung hält. Mehrere sind möglich, sobald jemand einmal „trotzdem
-öffnen" gewählt hat — dann ist die Reihenfolge die einzige Regel, die keine
-Vorliebe erfindet.
+The function answers with the **first** tab, in tab order, that
+holds the session. Several are possible once someone has chosen "open
+anyway" once — at that point tab order is the only rule that doesn't
+invent a preference.
 
-### Was die Fläche anbietet
+### What the surface offers
 
-Zwei Wege, und **nur die, die etwas tun**:
+Two paths, and **only the ones that do something**:
 
-| | Wirkung |
+| | Effect |
 |---|---|
-| **Zur bestehenden springen** | `activate(_:)` auf den gefundenen Reiter |
-| **Trotzdem neu öffnen** | genau das heutige Verhalten, unverändert |
+| **Jump to the existing one** | `activate(_:)` on the tab found |
+| **Open a new one anyway** | exactly today's behavior, unchanged |
 
-Abbrechen ist der dritte Ausgang und ist das Schließen der Abfrage.
+Cancel is the third outcome and is simply closing the prompt.
 
-**Hält der aktive Reiter die Sitzung selbst**, wird trotzdem gefragt.
-Springen ist dann folgenlos — und das ist die richtige Wirkung dieser Wahl,
-nicht ein Grund, die Frage zu unterdrücken. Die Alternative („noch einen
-öffnen") ist in diesem Fall genauso sinnvoll wie in jedem anderen.
+**If the active tab itself holds the session**, it still asks.
+Jumping is then a no-op — and that is the correct effect of this choice,
+not a reason to suppress the question. The alternative ("open one
+more") is just as sensible in this case as in any other.
 
-### Wo nicht gefragt wird
+### Where it does not ask
 
-- **Beim Wiederverbinden am Ort.** `isReconnecting` betrifft denselben
-  Reiter; da ist nichts doppelt.
-- **Bei einer Ad-hoc-Verbindung**, aus Entscheidung 1.
-- **Wenn kein Reiter die Sitzung hält** — dann bleibt es beim heutigen
-  Verhalten, einschließlich der Regel, dass ein unverbundener aktiver Reiter
-  wiederverwendet wird.
+- **When reconnecting in place.** `isReconnecting` concerns the same
+  tab; nothing is duplicated there.
+- **With an ad-hoc connection**, per decision 1.
+- **When no tab holds the session** — then today's behavior stays,
+  including the rule that an unconnected active tab is
+  reused.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: welcher Reiter als haltend gilt, dass eine
-Ad-hoc-Verbindung nicht zählt, dass bei mehreren der erste gewinnt, und dass
-beide Wege das Richtige auslösen.
+Testable is everything decidable: which tab counts as holding it, that an
+ad-hoc connection does not count, that with several the first wins, and
+that both paths trigger the right thing.
 
-**Nicht prüfbar** bleibt, dass die Abfrage im laufenden Fenster erscheint und
-lesbar steht — wie bei jeder Fläche dieses Projekts.
+**Not testable** remains that the prompt appears in the running window and
+sits legibly — as with every surface in this project.
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly not included
 
-- **Kein Merken der Antwort**, keine neue Einstellung, kein neuer
-  gespeicherter Wert.
-- **Keine Änderung an `sidebarConnectTarget`s heutiger Regel** für den Fall,
-  dass nichts doppelt ist.
-- **Keine Ad-hoc-Gleichheit** über Host/Port/Benutzer.
-- Kein Zusammenführen zweier Reiter, kein Schließen des einen beim Springen
-  auf den anderen.
+- **No remembering the answer**, no new setting, no new
+  stored value.
+- **No change to `sidebarConnectTarget`'s current rule** for the case
+  where nothing is duplicated.
+- **No ad-hoc equality** over host/port/user.
+- No merging of two tabs, no closing one when jumping
+  to the other.

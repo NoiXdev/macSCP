@@ -1,40 +1,40 @@
-# M5j — Design-Polish Transfer-Leiste & Terminal-Strip Implementation Plan
+# M5j — Design polish: transfer bar & terminal strip Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Transfer-Leiste und Terminal-Panel übernehmen Maße, Typo und die Pillen-Progress-Form aus dem CI-Mockup — reiner View-Layer, null Verhaltensänderung.
+**Goal:** The transfer bar and terminal panel adopt the dimensions, typography, and pill-progress shape from the CI mockup — pure view layer, zero behavior change.
 
-**Architecture:** `TransferQueueBar` bekommt Hairline-Top, 8×14-Maße, 12-pt-Typo mit ink/inkSecondary und eine neue private `PillProgress`-Capsule (Form vom Mockup, Füllung semantisch amber/blau per CI-Regel); das `terminalPanel` in `ContentView` bekommt eine Hairline-Oberkante und der „Shell beendet"-Zustand die Strip-Maße. Alle Tokens existieren bereits (M5g/M5h).
+**Architecture:** `TransferQueueBar` gets a hairline top edge, 8×14 dimensions, 12-pt typography with ink/inkSecondary, and a new private `PillProgress` capsule (shape from the mockup, fill semantically amber/blue per the CI rule); `terminalPanel` in `ContentView` gets a hairline top edge and the "shell ended" state gets the strip dimensions. All tokens already exist (M5g/M5h).
 
-**Tech Stack:** Swift 6 Toolchain / `.swiftLanguageMode(.v5)`, SwiftUI, macOS 15+. Keine neuen Unit-Tests (View-Layer); bestehende 295 bleiben grün.
+**Tech Stack:** Swift 6 toolchain / `.swiftLanguageMode(.v5)`, SwiftUI, macOS 15+. No new unit tests (view layer); the existing 295 stay green.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-11-m5j-transferbar-terminal-polish-design.md` — bindend, inkl. Wertetabelle und Farbentscheidung (Pillen-FÜLLUNG semantisch `localAmber` Upload / `remoteBlue` Download; nur die FORM — 5-pt-Capsule r99, Track in Hairline — kommt vom Mockup).
-- KEINE Verhaltensänderung: Queue-Status-Semantik (queued/running/finished/failed/cancelled/skipped/interrupted), Aufräumen-Button-Logik, Rate/ETA-Label-Logik, Resume-Banner, Konflikt-Sheet, Terminal-Lifecycle/⌘T/Replay — exakt wie heute. Fehler bleiben System-Rot, „interrupted" bleibt `.orange`.
-- Beide Appearances über vorhandene dynamische Tokens (`hairline`, `ink`, `inkSecondary`, `localAmber`, `remoteBlue`); keine neuen statischen Farben.
-- Code + Kommentare NUR Englisch; Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` und volle `swift test` (295) nach jedem Task grün.
-- Umgebungs-Hinweis: Bash-Fehler „claude-opus-4-8 is temporarily unavailable … cannot determine the safety" sind KEINE Permission-Denials — warten und identisch wiederholen.
+- Spec: `docs/superpowers/specs/2026-07-11-m5j-transferbar-terminal-polish-design.md` — binding, including the value table and color decision (pill FILL is semantic `localAmber` upload / `remoteBlue` download; only the SHAPE — 5-pt capsule r99, track in hairline — comes from the mockup).
+- NO behavior change: queue status semantics (queued/running/finished/failed/cancelled/skipped/interrupted), cleanup-button logic, rate/ETA label logic, resume banner, conflict sheet, terminal lifecycle/⌘T/replay — exactly as today. Errors stay system red, "interrupted" stays `.orange`.
+- Both appearances via existing dynamic tokens (`hairline`, `ink`, `inkSecondary`, `localAmber`, `remoteBlue`); no new static colors.
+- Code + comments English ONLY; Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` and the full `swift test` (295) green after every task.
+- Environment note: Bash errors "claude-opus-4-8 is temporarily unavailable … cannot determine the safety" are NOT permission denials — wait and retry identically.
 
 ## Schedule
 
-T1 → T2 → T3 sequenziell (T1 und T2 teilen keine Datei, sind aber je klein; sequenziell ist einfacher).
+T1 → T2 → T3 sequential (T1 and T2 share no file but are each small; sequential is simpler).
 
 ---
 
-### Task 1: Transfer-Leiste im Mockup-Rhythmus + PillProgress
+### Task 1: Transfer bar in the mockup rhythm + PillProgress
 
 **Files:**
-- Modify: `Sources/MacSCPApp/TransferQueueBar.swift` (aktuell 109 Zeilen; Struktur/Status-Zweige bleiben, nur Styling + der determinate Progress-Zweig ändern sich)
+- Modify: `Sources/MacSCPApp/TransferQueueBar.swift` (currently 109 lines; structure/status branches stay, only styling + the determinate progress branch change)
 
 **Interfaces:**
-- Consumes: `DesignTokens.hairline`, `.ink`, `.inkSecondary`, `.localAmber`, `.remoteBlue` (alle vorhanden).
-- Produces: private `PillProgress(fraction: Double, fill: Color)`-View in derselben Datei — kein API-Export.
+- Consumes: `DesignTokens.hairline`, `.ink`, `.inkSecondary`, `.localAmber`, `.remoteBlue` (all exist).
+- Produces: a private `PillProgress(fraction: Double, fill: Color)` view in the same file — no API export.
 
-- [x] **Step 1: Styling umstellen** — exakte Änderungen:
+- [x] **Step 1: Switch over the styling** — exact changes:
 
-a) `Divider()` (Zeile 18) →
+a) `Divider()` (line 18) →
 
 ```swift
                 Rectangle()
@@ -42,13 +42,13 @@ a) `Divider()` (Zeile 18) →
                     .frame(height: 1)
 ```
 
-b) Kopfzeile: Titel-Modifier `.font(.caption.weight(.semibold)).foregroundStyle(.secondary)` → `.font(.system(size: 12, weight: .semibold)).foregroundStyle(DesignTokens.inkSecondary)`; Kopf-Padding `.padding(.horizontal, 12).padding(.vertical, 4)` → `.padding(.horizontal, 14).padding(.vertical, 8)`.
+b) Header row: title modifier `.font(.caption.weight(.semibold)).foregroundStyle(.secondary)` → `.font(.system(size: 12, weight: .semibold)).foregroundStyle(DesignTokens.inkSecondary)`; header padding `.padding(.horizontal, 12).padding(.vertical, 4)` → `.padding(.horizontal, 14).padding(.vertical, 8)`.
 
-c) Listen-Container: `.padding(.horizontal, 12).padding(.bottom, 6)` → `.padding(.horizontal, 14).padding(.bottom, 8)`.
+c) List container: `.padding(.horizontal, 12).padding(.bottom, 6)` → `.padding(.horizontal, 14).padding(.bottom, 8)`.
 
-d) Zeile: `HStack(spacing: 8)` → `HStack(spacing: 12)`; am Zeilen-Ende `.font(.callout)` → `.font(.system(size: 12))`; Dateiname-`Text(item.fileName)` bekommt zusätzlich `.foregroundStyle(DesignTokens.ink)`; ALLE `.foregroundStyle(.secondary)`-Vorkommen in den Status-Zweigen (queued/Rate-Label/cancelled/skipped) → `.foregroundStyle(DesignTokens.inkSecondary)`; die `.font(.caption)`-Vorkommen in den Status-Zweigen bleiben `.caption` (11 pt — sekundär kleiner als die 12-pt-Zeile, wie im Mockup-Verhältnis). Fehler-Zweig (rot) und interrupted-Zweig (orange) NUR die Schriftgröße betreffend unverändert lassen.
+d) Row: `HStack(spacing: 8)` → `HStack(spacing: 12)`; at the end of the row `.font(.callout)` → `.font(.system(size: 12))`; the filename `Text(item.fileName)` additionally gets `.foregroundStyle(DesignTokens.ink)`; ALL `.foregroundStyle(.secondary)` occurrences in the status branches (queued/rate label/cancelled/skipped) → `.foregroundStyle(DesignTokens.inkSecondary)`; the `.font(.caption)` occurrences in the status branches stay `.caption` (11 pt — secondary, smaller than the 12-pt row, matching the mockup's proportion). Leave the error branch (red) and the interrupted branch (orange) unchanged, other than the font size.
 
-e) Determinate-Progress-Zweig (Zeilen 78–81) ersetzen:
+e) Replace the determinate progress branch (lines 78–81):
 
 ```swift
                 if let fraction = progress.fraction {
@@ -57,7 +57,7 @@ e) Determinate-Progress-Zweig (Zeilen 78–81) ersetzen:
                 } else {
 ```
 
-- [x] **Step 2: PillProgress anfügen** — am Dateiende:
+- [x] **Step 2: Append PillProgress** — at the end of the file:
 
 ```swift
 /// Mockup-style progress pill: 5pt capsule track in the hairline color,
@@ -83,23 +83,23 @@ private struct PillProgress: View {
 }
 ```
 
-  (Die `max(5, …)`-Untergrenze hält die Füll-Capsule rund, solange fraction > 0 klein ist; fraction wird defensiv auf 0…1 geklemmt.)
+  (The `max(5, …)` floor keeps the fill capsule round while fraction > 0 is small; fraction is defensively clamped to 0…1.)
 
-- [x] **Step 3: Build + volle Suite** — `swift build` fehlerfrei, `swift test` 295/295.
+- [x] **Step 3: Build + full suite** — `swift build` error-free, `swift test` 295/295.
 - [x] **Step 4: Commit** — `feat: restyle the transfer bar with the mockup pill progress`.
 
 ---
 
-### Task 2: Terminal-Panel — Hairline-Oberkante + ended-Maße
+### Task 2: Terminal panel — hairline top edge + ended dimensions
 
 **Files:**
 - Modify: `Sources/MacSCPApp/ContentView.swift:404-421` (`terminalPanel`)
 
 **Interfaces:**
-- Consumes: `DesignTokens.hairline` (vorhanden).
-- Produces: keine neuen APIs.
+- Consumes: `DesignTokens.hairline` (exists).
+- Produces: no new APIs.
 
-- [x] **Step 1: Implementieren** — `terminalPanel` wird zu:
+- [x] **Step 1: Implement** — `terminalPanel` becomes:
 
 ```swift
     @ViewBuilder
@@ -132,23 +132,23 @@ private struct PillProgress: View {
     }
 ```
 
-  (Einzige Änderungen gegenüber heute: die zwei Padding-Modifier + `font` im ended-Zweig und das Hairline-Overlay; Lifecycle/State-Switch identisch.)
+  (The only changes versus today: the two padding modifiers + `font` in the ended branch and the hairline overlay; lifecycle/state switch identical.)
 
-- [x] **Step 2: Build + volle Suite** — `swift build`, `swift test` 295/295.
+- [x] **Step 2: Build + full suite** — `swift build`, `swift test` 295/295.
 - [x] **Step 3: Commit** — `feat: add the mockup hairline edge to the terminal panel`.
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Final verification (coordinator)
 
-- [x] `swift test` gesamt; Rig hoch (`docker compose -f docker/test-server/compose.yml start` — `start`, nicht `up`/`down`, Host-Keys bleiben) und `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` voll grün.
-- [x] **Visueller Smoke in HELL und DUNKEL** (hell app-only via `NSRequiresAquaSystemAppearance`, danach ENTFERNEN):
-  - In den Einstellungen das Download-Limit auf ~200 KB/s stellen, eine ~8-MB-Datei remote→lokal ziehen (oder Download-Button) → die Pille füllt sichtbar: 5-pt-Capsule, Track in Hairline-Farbe, Füllung BLAU (Download); danach ein Upload → Füllung BERNSTEIN; Limit wieder auf 0.
-  - Hairline über der Transfer-Leiste und als Terminal-Oberkante (⌘T) sichtbar; Kopf-/Zeilen-Maße 8×14; Dateiname in ink, Sekundärtexte inkSecondary.
-  - „Shell beendet"-Zustand: im Terminal `exit` tippen → 12-pt-Text mit 8×14-Padding, Reopen funktioniert.
-  - Verhaltens-Regression: Transfer läuft durch (✓-Häkchen in Richtungsfarbe), Aufräumen leert, ⌘T auf/zu, Rate/ETA-Label erscheint.
-- [x] Checkboxen im Plan abhaken, Commit `docs: mark M5j plan tasks as completed` (+ Footer).
+- [x] `swift test` overall; rig up (`docker compose -f docker/test-server/compose.yml start` — `start`, not `up`/`down`, host keys stay) and `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` fully green.
+- [x] **Visual smoke in LIGHT and DARK** (light app-only via `NSRequiresAquaSystemAppearance`, then REMOVE it):
+  - In Settings, set the download limit to ~200 KB/s, drag an ~8 MB file remote→local (or the download button) → the pill visibly fills: 5-pt capsule, track in the hairline color, fill BLUE (download); then an upload → fill AMBER; limit back to 0.
+  - Hairline above the transfer bar and as the terminal top edge (⌘T) visible; header/row dimensions 8×14; filename in ink, secondary text in inkSecondary.
+  - "Shell ended" state: type `exit` in the terminal → 12-pt text with 8×14 padding, reopen works.
+  - Behavior regression: a transfer runs through (✓ checkmark in the direction color), cleanup empties it, ⌘T opens/closes, the rate/ETA label appears.
+- [x] Check off the plan's checkboxes, commit `docs: mark M5j plan tasks as completed` (+ footer).
 
-## Ausblick
+## Outlook
 
-Runde 4 (letzte): Formular-Grid (110-pt-Labels) & Button-Radien r7. Danach M6 — Release.
+Round 4 (last): form grid (110-pt labels) & button radii r7. After that, M6 — release.

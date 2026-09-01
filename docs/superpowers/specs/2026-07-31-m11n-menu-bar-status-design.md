@@ -1,100 +1,101 @@
-# M11n — Menüleisten-Status (NSStatusItem/MenuBarExtra) Design
+# M11n — Menu Bar Status (NSStatusItem/MenuBarExtra) Design
 
-**Status:** freigegeben (Brainstorming 2026-07-31)
-**Meilenstein:** M11n
-**Sprache:** Design-Doc DE; Code/Kommentare/Strings EN (App-UI lokalisiert EN+DE)
+**Status:** approved (brainstorming 2026-07-31)
+**Milestone:** M11n
+**Language:** design doc EN; code/comments/strings EN (app UI localized EN+DE)
 
-## Ziel
+## Goal
 
-Ein app-weites Menüleisten-Symbol, das außerhalb des Hauptfensters den Status
-der aktiven SSH-Verbindungen und laufenden Übertragungen zeigt. Ein Klick
-öffnet ein Panel; ein Klick auf eine Verbindung holt das Hauptfenster nach
-vorn und aktiviert deren Tab.
+An app-wide menu bar icon that shows the status of active SSH connections and
+running transfers outside the main window. A click opens a panel; clicking a
+connection brings the main window forward and activates its tab.
 
-Maintainer-Entscheidungen aus dem Brainstorming:
-- **Interaktivität:** Anzeige **+ Fenster-holen** (kein Abbrechen/Löschen aus
-  dem Panel in v1).
-- **Sichtbarkeit:** immer sichtbar, mit **Ausblend-Schalter** in den
-  Einstellungen (Default an). Icon signalisiert dezent laufende Übertragung.
-- **Transfer-Darstellung:** **pro Verbindung gruppiert**, eine kompakte
-  zusammengefasste Zeile je Tab (nicht jede Datei einzeln).
-- **Technik:** SwiftUI `MenuBarExtra` im Panel-Stil (`.window`), kein
-  AppKit-App-Delegate.
+Maintainer decisions from the brainstorming session:
+- **Interactivity:** display **+ bring window forward** (no cancel/delete
+  from the panel in v1).
+- **Visibility:** always visible, with a **hide toggle** in settings (default
+  on). The icon subtly signals a running transfer.
+- **Transfer display:** **grouped per connection**, one compact summary line
+  per tab (not every file individually).
+- **Technology:** SwiftUI `MenuBarExtra` in panel style (`.window`), no
+  AppKit app delegate.
 
-## Kontext / Ist-Zustand
+## Context / current state
 
-- Einzel-`WindowGroup`, mehrere Tabs (Multi-Window ist v2). Aller
-  Verbindungs-/Queue-Zustand lebt **pro Tab**, aggregiert nur in
-  `ContentView`s `@State tabsModel: TabsViewModel<SessionTab>`
-  (`ContentView.swift`). Es gibt **keinen** app-weiten Registry — Projektregel
-  (CLAUDE.md): Session-State gehört in den Fenster-Scope, kein app-weites
-  Singleton.
-- Kein `NSStatusItem`/`MenuBarExtra` vorhanden — Greenfield.
-- Präzedenz für „app-weites Observable, das aus Tab-Zustand gefüttert wird":
-  `TabCommands` (`MacSCPApp.swift`) — `MacSCPApp` baut Menüs, hält aber keine
-  `ContentView`-Referenz; `ContentView` setzt Closures in `.task` und spiegelt
-  Zustand per `.onChange`. `UpdateCheckModel` ist der Präzedenz für ein
-  bewusst app-globales `@Observable`.
-- Per-Tab-Daten (alle `@Observable`): `SessionTab.displayTitle`/`isConnected`,
+- Single `WindowGroup`, multiple tabs (multi-window is v2). All
+  connection/queue state lives **per tab**, aggregated only in
+  `ContentView`'s `@State tabsModel: TabsViewModel<SessionTab>`
+  (`ContentView.swift`). There is **no** app-wide registry — project rule
+  (CLAUDE.md): session state belongs in the window scope, no app-wide
+  singleton.
+- No `NSStatusItem`/`MenuBarExtra` exists — greenfield.
+- Precedent for "an app-wide Observable fed from tab state":
+  `TabCommands` (`MacSCPApp.swift`) — `MacSCPApp` builds menus but holds no
+  `ContentView` reference; `ContentView` sets closures in `.task` and mirrors
+  state via `.onChange`. `UpdateCheckModel` is the precedent for a
+  deliberately app-global `@Observable`.
+- Per-tab data (all `@Observable`): `SessionTab.displayTitle`/`isConnected`,
   `SessionTab.connectionViewModel.state` (`ConnectionViewModel.State`:
-  `.idle`/`.connecting`/`.failed`; „verbunden" = `isConnected`),
+  `.idle`/`.connecting`/`.failed`; "connected" = `isConnected`),
   `SessionTab.transferQueue: TransferQueueViewModel`.
 - `TransferQueueViewModel` (Core, `@Observable`): `items: [Item]`, `isActive`,
-  `pendingCount`, `displayDirection: TransferDirection?`. Per-Item-Fortschritt
-  in `Item.Status.running(TransferProgress)`; `TransferProgress` hat
+  `pendingCount`, `displayDirection: TransferDirection?`. Per-item progress
+  in `Item.Status.running(TransferProgress)`; `TransferProgress` has
   `bytesTransferred: UInt64`, `totalBytes: UInt64?`, `bytesPerSecond: Double?`,
-  `etaSeconds: Double?`, `fraction: Double?`. **Keine** app-weite oder
-  queue-weite Gesamtsumme vorhanden — die muss neu abgeleitet werden.
-- L10n: `.strings`-Dateien (nicht `.xcstrings`) unter
-  `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`; Lookup über
-  `L10n.string(key, "English default")` / `L10n.text(...)`. Typografische
-  Anführungszeichen `„ "` / `…` in Strings; ein ASCII-`"` in einer deutschen
-  Zeile macht den ganzen DE-Katalog ungültig.
-- Settings: `SettingsStore` (Core, `@Observable`, JSON, vorwärtskompatibel).
-  Bool-Muster: Key in `Keys`, Default in `Defaults`, computed `var` über
-  `boolValue(for:default:)`/`setBool(_:for:)` (z.B. `updateCheckEnabled`).
+  `etaSeconds: Double?`, `fraction: Double?`. **No** app-wide or
+  queue-wide total exists — it has to be newly derived.
+- L10n: `.strings` files (not `.xcstrings`) under
+  `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`; lookup via
+  `L10n.string(key, "English default")` / `L10n.text(...)`. Typographic
+  quotation marks `„ "` / `…` in strings; one ASCII `"` in a German line
+  invalidates the whole DE catalogue.
+- Settings: `SettingsStore` (Core, `@Observable`, JSON, forward-compatible).
+  Bool pattern: key in `Keys`, default in `Defaults`, computed `var` over
+  `boolValue(for:default:)`/`setBool(_:for:)` (e.g. `updateCheckEnabled`).
 
-## Architektur
+## Architecture
 
-Trennung nach Testbarkeit: die **Aggregations-Logik** (Items eines Tabs zu
-einer kompakten Summe verdichten) liegt in **Core** und wird dort per
-Unit-Test abgedeckt; die App-Schicht rendert nur und hält die Brücke aktuell.
+Split by testability: the **aggregation logic** (condensing a tab's items
+into a compact summary) lives in **Core** and is covered there by unit
+tests; the app layer only renders and keeps the bridge current.
 
-### Core (neu, getestet)
+### Core (new, tested)
 
 **`TransferActivitySummary`** — `Sendable` value type:
-- `runningCount: Int` — Anzahl laufender Items.
-- `pendingCount: Int` — Anzahl wartender (queued, noch nicht laufender) Items.
-- `fraction: Double?` — byte-gewichteter Gesamtfortschritt nur über **laufende**
-  Items mit bekanntem `totalBytes` (Σ `bytesTransferred` / Σ `totalBytes`);
-  `nil`, wenn kein laufendes Item eine Gesamtgröße kennt.
-- `bytesPerSecond: Double?` — Summe der `bytesPerSecond` über laufende Items,
-  die eine Rate melden; `nil`, wenn keines meldet.
-- `direction: TransferDirection?` — aus `displayDirection` der Queue.
+- `runningCount: Int` — number of running items.
+- `pendingCount: Int` — number of waiting (queued, not yet running) items.
+- `fraction: Double?` — byte-weighted overall progress over **running**
+  items with known `totalBytes` only (Σ `bytesTransferred` / Σ `totalBytes`);
+  `nil` if no running item knows a total size.
+- `bytesPerSecond: Double?` — sum of `bytesPerSecond` over running items
+  that report a rate; `nil` if none report one.
+- `direction: TransferDirection?` — from the queue's `displayDirection`.
 
 **`TransferQueueViewModel.activitySummary: TransferActivitySummary?`** —
 computed:
-- `nil`, wenn `!isActive` (weder laufend noch wartend).
-- sonst gefaltet aus `items` nach obigen Regeln.
+- `nil` when `!isActive` (neither running nor waiting).
+- otherwise folded from `items` per the rules above.
 
-### App (Brücke + Rendering)
+### App (bridge + rendering)
 
-**`MenuBarStatusModel`** (`@MainActor @Observable`, app-weit, `@State` in
+**`MenuBarStatusModel`** (`@MainActor @Observable`, app-wide, `@State` in
 `MacSCPApp`):
-- `var tabsSnapshot: [SessionTab]` — von `ContentView` synchron gehalten.
-- `var focusTab: (UUID) -> Void` — von `ContentView` in `.task` gesetzt.
-- `var showMainWindow: () -> Void` — Fenster nach vorn ohne Tab-Zwang (Fuß-Button).
-- abgeleitet: `var anyTransferActive: Bool` = `tabsSnapshot.contains {
-  $0.transferQueue.activitySummary?.runningCount ?? 0 > 0 }` (fürs Icon).
+- `var tabsSnapshot: [SessionTab]` — kept in sync by `ContentView`.
+- `var focusTab: (UUID) -> Void` — set by `ContentView` in `.task`.
+- `var showMainWindow: () -> Void` — bring the window forward without
+  forcing a tab (footer button).
+- derived: `var anyTransferActive: Bool` = `tabsSnapshot.contains {
+  $0.transferQueue.activitySummary?.runningCount ?? 0 > 0 }` (for the icon).
 
-**Live-Aktualisierung ohne Extra-Timer:** Panel und Icon sind SwiftUI-Views,
-die `tab.displayTitle`, `tab.connectionViewModel.state`, `tab.isConnected`,
-`tab.transferQueue.activitySummary` **direkt** lesen. Da alle `@Observable`
-sind, aktualisiert SwiftUI-Beobachtung Panel und Icon live während der
-Übertragung. Die Brücke muss nur bei Tab-hinzu/-zu/-umsortieren nachziehen
-(`.onChange` von `tabsModel.tabs`), nicht pro Fortschritts-Tick.
+**Live updates without an extra timer:** the panel and icon are SwiftUI
+views that read `tab.displayTitle`, `tab.connectionViewModel.state`,
+`tab.isConnected`, `tab.transferQueue.activitySummary` **directly**. Since
+all of these are `@Observable`, SwiftUI observation updates the panel and
+icon live during a transfer. The bridge only needs to catch up when a tab
+is added/removed/reordered (`.onChange` on `tabsModel.tabs`), not on every
+progress tick.
 
-**`MacSCPApp`** erhält eine zweite Szene neben `WindowGroup`:
+**`MacSCPApp`** gets a second scene alongside `WindowGroup`:
 ```
 MenuBarExtra(isInserted: $settingsStore.menuBarEnabled) {
     MenuBarStatusPanel(model: menuBarModel)  // .menuBarExtraStyle(.window)
@@ -102,124 +103,126 @@ MenuBarExtra(isInserted: $settingsStore.menuBarEnabled) {
     MenuBarStatusLabel(model: menuBarModel)
 }
 ```
-`isInserted` an `settingsStore.menuBarEnabled` gebunden → Ein-/Ausblenden
-ohne Neustart.
+`isInserted` bound to `settingsStore.menuBarEnabled` → show/hide without a
+restart.
 
-**`ContentView`** (bestehend, erweitert):
+**`ContentView`** (existing, extended):
 - in `.task`: `menuBarModel.focusTab = { id in … }`,
   `menuBarModel.showMainWindow = { … }`.
-- per `.onChange(of: tabsModel.tabs)`: `menuBarModel.tabsSnapshot = tabsModel.tabs`
-  (initial auch in `.task` einmal setzen).
+- via `.onChange(of: tabsModel.tabs)`: `menuBarModel.tabsSnapshot = tabsModel.tabs`
+  (also set once initially in `.task`).
 
 **`focusTab(id)`:** `NSApplication.shared.activate(ignoringOtherApps: true)`;
-Hauptfenster `makeKeyAndOrderFront(nil)`; `tabsModel.activate(id)`.
-**`showMainWindow()`:** identisch ohne den `activate(id)`-Schritt.
+main window `makeKeyAndOrderFront(nil)`; `tabsModel.activate(id)`.
+**`showMainWindow()`:** identical, without the `activate(id)` step.
 
 ## UI
 
-### Menüleisten-Icon (`MenuBarStatusLabel`)
+### Menu bar icon (`MenuBarStatusLabel`)
 
-Ein SF-Symbol mit zwei Zuständen, getrieben von `model.anyTransferActive`:
-- **Ruhe:** `arrow.up.arrow.down` (normaler Tint).
-- **Aktiv:** `arrow.up.arrow.down.circle.fill` (App-Tint). Kein Zappeln/keine
-  Animation — nur ruhiger Zustandswechsel.
+An SF Symbol with two states, driven by `model.anyTransferActive`:
+- **Idle:** `arrow.up.arrow.down` (normal tint).
+- **Active:** `arrow.up.arrow.down.circle.fill` (app tint). No jitter/no
+  animation — just a calm state change.
 
-### Panel (`MenuBarStatusPanel`, `.window`-Stil, Design-Tokens)
+### Panel (`MenuBarStatusPanel`, `.window` style, design tokens)
 
-- **Kopf:** Titel „macSCP", rechts dezent die Anzahl offener Verbindungen
-  (`tabsSnapshot.filter(\.isConnected).count`).
-- **Verbindungsliste**, eine Zeile/Karte je Tab in `tabsSnapshot`-Reihenfolge:
-  - Zeile 1: `displayTitle` + Status-Indikator:
-    - **verbunden** (`isConnected`) — grüner Punkt.
-    - **verbindet…** (`state == .connecting`) — gelb/Spinner.
-    - **fehlgeschlagen** (`state == .failed`) — roter Punkt.
-    - sonst (`.idle`, nicht verbunden) — neutraler Punkt („bereit"/leer).
-  - Zeile 2 (nur wenn `activitySummary != nil`): Richtungs-Pfeil (↑/↓ aus
-    `direction`) + kompakt: `runningCount>0` → „n überträgt · [x % ·] Rate"
-    (Prozent weggelassen, wenn `fraction == nil`), Rate/ETA über
-    `TransferRateFormatting.compactLabel(...)`; nur wartend → „n in
+- **Header:** title „macSCP", with the count of open connections shown
+  discreetly on the right (`tabsSnapshot.filter(\.isConnected).count`).
+- **Connection list**, one row/card per tab in `tabsSnapshot` order:
+  - Row 1: `displayTitle` + status indicator:
+    - **connected** (`isConnected`) — green dot.
+    - **connecting…** (`state == .connecting`) — yellow/spinner.
+    - **failed** (`state == .failed`) — red dot.
+    - otherwise (`.idle`, not connected) — neutral dot ("ready"/empty).
+  - Row 2 (only when `activitySummary != nil`): direction arrow (↑/↓ from
+    `direction`) + compact: `runningCount>0` → „n überträgt · [x % ·] Rate"
+    (percent omitted when `fraction == nil`), rate/ETA via
+    `TransferRateFormatting.compactLabel(...)`; waiting only → „n in
     Warteschlange".
-  - ganze Zeile klickbar → `model.focusTab(tab.id)`; Hover-Highlight.
-- **Leerzustand:** keine Tabs/Verbindungen → ruhige Zeile „Keine aktiven
+  - entire row clickable → `model.focusTab(tab.id)`; hover highlight.
+- **Empty state:** no tabs/connections → a calm row „Keine aktiven
   Verbindungen".
-- **Fuß:** Button „macSCP anzeigen" → `model.showMainWindow()`. Bewusst
-  **keine** Beenden-Aktion (App-Menü bleibt der Ort dafür).
+- **Footer:** button „macSCP anzeigen" → `model.showMainWindow()`.
+  Deliberately **no** quit action (the app menu remains the place for that).
 
-### Lokalisierung
+### Localization
 
-Neue Strings EN + DE, typografische Anführungszeichen/`…`:
-- Statuslabels: verbunden / verbindet… / fehlgeschlagen / bereit.
-- Transfer: „%d überträgt", „%d in Warteschlange", Header-Zähler
+New strings EN + DE, typographic quotation marks/`…`:
+- Status labels: connected / connecting… / failed / ready.
+- Transfer: „%d überträgt", „%d in Warteschlange", header counter
   („%d Verbindungen").
-- Leerzustand „Keine aktiven Verbindungen".
-- Fuß-Button „macSCP anzeigen".
-- Settings-Toggle „Menüleisten-Symbol anzeigen".
+- Empty state „Keine aktiven Verbindungen".
+- Footer button „macSCP anzeigen".
+- Settings toggle „Menüleisten-Symbol anzeigen".
 
-### Einstellung
+### Setting
 
-`SettingsStore.menuBarEnabled: Bool` (Default **true**), nach dem bestehenden
-Bool-Muster (`Keys`/`Defaults`/computed `var` über `boolValue`/`setBool`). In
-`SettingsView` ▸ Allgemein ein Toggle „Menüleisten-Symbol anzeigen". Der
-`SettingsStore` ist bereits sowohl an `ContentView` als auch an die
-`Settings`-Szene durchgereicht; `MacSCPApp` liest ihn für das
-`isInserted`-Binding.
+`SettingsStore.menuBarEnabled: Bool` (default **true**), following the
+existing Bool pattern (`Keys`/`Defaults`/computed `var` over
+`boolValue`/`setBool`). In `SettingsView` ▸ General a toggle „Menüleisten-
+Symbol anzeigen". The `SettingsStore` is already passed through to both
+`ContentView` and the `Settings` scene; `MacSCPApp` reads it for the
+`isInserted` binding.
 
-## Randfälle
+## Edge cases
 
-- **Kein Tab / keine Verbindung:** Panel-Leerzustand; Icon bleibt im
-  Ruhezustand (Default-an).
-- **Tab schließt bei offenem Panel:** `tabsSnapshot` zieht per `.onChange`
-  nach; Zeile verschwindet, kein Absturz.
-- **`.connecting`/`.failed`:** Statuslabel spiegelt `state`; kein Transfer-Zeile
-  für nicht verbundene Tabs.
-- **Fenster minimiert/versteckt beim Klick:** `activate` + `makeKeyAndOrderFront`
-  holt es nach vorn, dann Tab-Wechsel.
-- **Unterbrochene Transfers:** in v1 **nicht** gesondert im Panel markiert — die
-  bestehende Resume-Leiste im Fenster bleibt der Ort dafür (YAGNI).
+- **No tab / no connection:** panel empty state; icon stays idle
+  (default on).
+- **Tab closes while panel is open:** `tabsSnapshot` catches up via
+  `.onChange`; the row disappears, no crash.
+- **`.connecting`/`.failed`:** status label mirrors `state`; no transfer
+  row for unconnected tabs.
+- **Window minimized/hidden on click:** `activate` + `makeKeyAndOrderFront`
+  brings it forward, then switches tab.
+- **Interrupted transfers:** in v1 **not** separately marked in the panel —
+  the existing resume bar in the window remains the place for that (YAGNI).
 
 ## Tests
 
-- **Core (neu, red→green):** `TransferQueueViewModel.activitySummary` mit
-  gesäten Items:
-  - leer / `!isActive` ⇒ `nil`.
-  - ein laufendes mit bekanntem `totalBytes` ⇒ `runningCount==1`, `fraction`
-    == dessen `fraction`, `bytesPerSecond` == dessen Rate.
-  - mehrere laufende, alle mit Total ⇒ byte-gewichtete `fraction` (Σ/Σ),
-    summierte `bytesPerSecond`.
-  - laufendes ohne `totalBytes` ⇒ `fraction == nil`, `runningCount` zählt
-    trotzdem.
-  - laufendes ohne Rate ⇒ Rate zählt nur die meldenden; keins meldet ⇒ `nil`.
-  - nur wartende Items ⇒ `runningCount==0`, `pendingCount>0`, `fraction==nil`.
+- **Core (new, red→green):** `TransferQueueViewModel.activitySummary` with
+  seeded items:
+  - empty / `!isActive` ⇒ `nil`.
+  - one running item with known `totalBytes` ⇒ `runningCount==1`, `fraction`
+    == its `fraction`, `bytesPerSecond` == its rate.
+  - several running items, all with a total ⇒ byte-weighted `fraction`
+    (Σ/Σ), summed `bytesPerSecond`.
+  - running item without `totalBytes` ⇒ `fraction == nil`, `runningCount`
+    still counts it.
+  - running item without a rate ⇒ the rate only counts the ones reporting;
+    none reporting ⇒ `nil`.
+  - waiting items only ⇒ `runningCount==0`, `pendingCount>0`, `fraction==nil`.
   - `direction` == `displayDirection`.
-- **App:** wie bei allen App-only-Meilensteinen **kein** App-Test-Target — die
-  Brücken-Synchronisation (`ContentView` → `menuBarModel`), das
-  `isInserted`-Binding und die `focusTab`/`showMainWindow`-Verdrahtung werden
-  per Build + Lesen + Trace belegt. Die riskante Logik liegt in Core und ist
-  dort getestet.
+- **App:** as with all app-only milestones, **no** app test target — the
+  bridge synchronization (`ContentView` → `menuBarModel`), the
+  `isInserted` binding, and the `focusTab`/`showMainWindow` wiring are
+  evidenced by build + read + trace. The risky logic lives in Core and is
+  tested there.
 
-## Dateien
+## Files
 
-- Neu Core: `Sources/macSCPCore/Presentation/TransferActivitySummary.swift`
-  (oder in `TransferQueueViewModel.swift` einfügen — der computed `var` gehört
-  ohnehin dorthin; das Struct bekommt eine eigene kleine Datei).
-- Ändern Core: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift`
+- New Core: `Sources/macSCPCore/Presentation/TransferActivitySummary.swift`
+  (or added into `TransferQueueViewModel.swift` — the computed `var`
+  belongs there anyway; the struct gets its own small file).
+- Change Core: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift`
   (`activitySummary`), `Sources/macSCPCore/Settings/SettingsStore.swift`
   (`menuBarEnabled`).
-- Neu App: `Sources/MacSCPApp/MenuBarStatusModel.swift`,
-  `Sources/MacSCPApp/MenuBarStatusPanel.swift` (Panel + Label + Zeilen-Views).
-- Ändern App: `Sources/MacSCPApp/MacSCPApp.swift` (`MenuBarExtra`-Szene +
-  `@State menuBarModel`), `Sources/MacSCPApp/ContentView.swift` (Brücke füttern),
-  `Sources/MacSCPApp/SettingsView.swift` (Toggle),
+- New App: `Sources/MacSCPApp/MenuBarStatusModel.swift`,
+  `Sources/MacSCPApp/MenuBarStatusPanel.swift` (panel + label + row views).
+- Change App: `Sources/MacSCPApp/MacSCPApp.swift` (`MenuBarExtra` scene +
+  `@State menuBarModel`), `Sources/MacSCPApp/ContentView.swift` (feed the
+  bridge), `Sources/MacSCPApp/SettingsView.swift` (toggle),
   `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`.
-- Neu Tests: `Tests/macSCPCoreTests/TransferActivitySummaryTests.swift`.
+- New tests: `Tests/macSCPCoreTests/TransferActivitySummaryTests.swift`.
 
 ## Global Constraints
 
 - Swift 6, `.swiftLanguageMode(.v5)`, min. macOS 15; Swift Testing, TDD
   red→green.
-- Code/Kommentare/`reason:`-Strings EN; UI-Strings über die `.strings`-Kataloge
-  EN-Default + DE, typografische Anführungszeichen; kein ASCII-`"` in DE-Werten.
-- Keine app-weiten Singletons für Session-State: der Menüleisten-Eintrag hält
-  **keinen** eigenen Verbindungszustand, sondern spiegelt nur `tabsModel.tabs`
-  über die `TabCommands`-artige Brücke.
-- Kein Release/Tag ohne ausdrückliche Maintainer-Anordnung.
+- Code/comments/`reason:` strings EN; UI strings via the `.strings`
+  catalogues EN default + DE, typographic quotation marks; no ASCII `"` in
+  DE values.
+- No app-wide singletons for session state: the menu bar entry holds
+  **no** connection state of its own, only mirrors `tabsModel.tabs` via
+  the `TabCommands`-like bridge.
+- No release/tag without explicit maintainer direction.

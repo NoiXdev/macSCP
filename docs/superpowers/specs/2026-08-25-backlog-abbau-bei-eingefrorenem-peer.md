@@ -1,168 +1,169 @@
-# Backlog: Abbau gegen eine eingefrorene Gegenseite
+# Backlog: Teardown against a frozen peer
 
-**Angelegt:** 2026-08-25, aus einer Selbstmeldung in Task 10 des
-Verbindungszustands. Klein, aber die Lücke sitzt an einer unangenehmen
-Stelle.
+**Created:** 2026-08-25, from a self-report in Task 10 of the
+connection-state work. Small, but the gap sits in an uncomfortable
+spot.
 
-## Der Befund
+## The finding
 
-Der Integrationstest friert die Gegenseite ein (`docker pause`): die Sockets
-bestehen, sshd antwortet nie. Die Sonde erkennt das korrekt nach zwei
-Sieben-Sekunden-Fristen, gemessen 14,1–14,9 s.
+The integration test freezes the peer (`docker pause`): the sockets
+remain, sshd never answers. The probe correctly detects this after two
+seven-second deadlines, measured at 14.1–14.9 s.
 
-**Der Test taut vor dem Aufgabe-Lauf wieder auf — mit Absicht.** Denn
-`disconnect()` ruft `try? await sftp.close()`, und ob dieser Aufruf gegen
-eine nie antwortende Gegenseite **terminiert**, ist offen.
+**The test thaws before the teardown run — on purpose.** Because
+`disconnect()` calls `try? await sftp.close()`, and whether this call
+**terminates** against a peer that never answers is open.
 
-Gegen einen *getöteten* Container läuft der volle Abbau durch und ist in
-Millisekunden fertig. Nur der eingefrorene Fall ist ungeprüft.
+Against a *killed* container the full teardown runs through and finishes
+in milliseconds. Only the frozen case is unverified.
 
-## Warum das zählt
+## Why it matters
 
-Wenn `disconnect()` dort hängt, hängt `teardown` — und damit der Weg, über
-den `handleLivenessGiveUp` den Zustand `.lost` überhaupt erst schreibt. Die
-Erkennung wäre dann richtig und die Reaktion bliebe trotzdem aus.
+If `disconnect()` hangs there, `teardown` hangs — and with it the path
+through which `handleLivenessGiveUp` writes the `.lost` state in the
+first place. Detection would then be correct and the response would
+still not happen.
 
-Der eingefrorene Fall ist zudem der realistischere: ein Netz, das
-verschwindet, tötet selten den Socket. Es hört einfach auf zu antworten.
+The frozen case is also the more realistic one: a network that
+disappears rarely kills the socket. It simply stops answering.
 
-## Was zu tun wäre
+## What would need doing
 
-Den bestehenden Einfrier-Test um einen Abbau erweitern, **ohne** vorher
-aufzutauen, und messen, ob er zurückkommt. Kommt er nicht zurück, braucht
-`disconnect()` dieselbe Behandlung, die die Sonde schon hat: eine Frist, die
-hält, auch wenn der darunterliegende Aufruf es nicht tut — das Muster steht
-mit `LivenessProbeRace` bereits im Baum.
+Extend the existing freeze test with a teardown, **without** thawing
+first, and measure whether it returns. If it does not return,
+`disconnect()` needs the same treatment the probe already has: a deadline
+that holds even when the underlying call does not — the pattern already
+exists in the tree as `LivenessProbeRace`.
 
-Zu beachten: der Test muss den Container in jedem Fall wieder auftauen und
-entfernen, auch wenn er in eine Frist läuft. Task 10 löst das über `defer`
-und ein `docker rm -f`, das auch einen pausierten Container entfernt.
+To note: the test must thaw and remove the container in every case,
+even if it runs into a deadline. Task 10 solves this via `defer`
+and a `docker rm -f`, which also removes a paused container.
 
 ---
 
-## Gemessen und behoben (2026-08-28, `7ac7f7e`)
+## Measured and fixed (2026-08-28, `7ac7f7e`)
 
-**Die offene Frage ist beantwortet, und zwar mit „nein".** `disconnect()`
-terminiert gegen eine eingefrorene Gegenseite nicht.
+**The open question is answered, and the answer is "no".** `disconnect()`
+does not terminate against a frozen peer.
 
-Gemessen am realen Aufgabe-Pfad: betreten, nie verlassen — innerhalb zweier
-unabhängiger Schranken von 120 s und 30 s. Nach `docker unpause` kam derselbe
-aufgegebene Aufruf in 0,000491834 s zurück. Er war also nie langsam; er
-wartete auf eine Antwort.
+Measured on the real teardown path: entered, never left — within two
+independent bounds of 120 s and 30 s. After `docker unpause`, the same
+abandoned call returned in 0.000491834 s. So it was never slow; it
+was waiting for a response.
 
-Die Zuordnung, an einem Wegwerf-Gerüst direkt an den Citadel-Objekten:
+The attribution, on a throwaway rig directly against the Citadel objects:
 
-| Aufruf | kommt zurück, während der Peer eingefroren ist? | gemessen |
+| Call | returns while the peer is frozen? | measured |
 |---|---|---|
-| `SFTPClient.close()` | **nein** | 20,01678975 s gegen 20 s Schranke |
-| `SSHClient.close()` | **ja** | 0,051039125 s |
+| `SFTPClient.close()` | **no** | 20.01678975 s against a 20 s bound |
+| `SSHClient.close()` | **yes** | 0.051039125 s |
 
-Damit hängt genau eine Zeile, und der Weg daran vorbei war offen. `try?`
-verschluckt einen Fehler; es begrenzt keine Wartezeit.
+So exactly one line hangs, and the path around it was open. `try?`
+swallows an error; it does not bound a wait.
 
-**Die Behebung:** `BoundedClose` gibt diesem einen Aufruf eine Frist in der
-Form von `LivenessProbeRace`, außerhalb des Hauptakteurs, und gibt ihn auf,
-wenn die Frist gewinnt — wodurch `client.close()` und `jumpClient?.close()`
-überhaupt erst laufen. Die Abbau-Reihenfolge bleibt unberührt.
+**The fix:** `BoundedClose` gives this one call a deadline in the
+form of `LivenessProbeRace`, outside the main actor, and gives it up
+when the deadline wins — which is what lets `client.close()` and
+`jumpClient?.close()` run at all. The teardown order is unaffected.
 
-**Fünf Sekunden**, von beiden Seiten belegt: der langsamste von zehn gesunden
-`disconnect()`-Läufen gegen das Rig lag bei 0,001507583 s, und die Frist wird
-zusätzlich zu einer Erkennung ausgegeben, die bereits 14,1–14,9 s kostet.
+**Five seconds**, backed from both sides: the slowest of ten healthy
+`disconnect()` runs against the rig was 0.001507583 s, and the deadline
+is spent on top of a detection that already costs 14.1–14.9 s.
 
-| | vorher | nachher |
+| | before | after |
 |---|---|---|
-| eingefrorener Peer | 127,946259083 s, **kein** Rückkehren, Tab bleibt `.degraded` | **5,050603459 s**, Tab wird `.lost`, Sitzung `nil` |
-| getöteter Container | 0,006492291 s | 0,006294584 s |
+| frozen peer | 127.946259083 s, **no** return, tab stays `.degraded` | **5.050603459 s**, tab becomes `.lost`, session `nil` |
+| killed container | 0.006492291 s | 0.006294584 s |
 
-Der gegatete Test leitet seine eigene Schranke aus der Produktionskonstante
-ab, statt eine zweite Kopie der Zahl zu führen.
+The gated test derives its own bound from the production constant,
+instead of keeping a second copy of the number.
 
-## Nachtrag vom selben Tag: die Behebung greift nur ohne Terminal
+## Addendum from the same day: the fix only helps without a terminal
 
-**Die Zahlen oben sind richtig und beschreiben trotzdem den Ausnahmefall.**
-Der Test, der sie erzeugt hat, öffnet keine Shell — sein Platzhalter-Opener
-wirft, was eine bewusste Entscheidung aus einem anderen Test ist und keine
-Umgebungslücke.
+**The numbers above are correct and still describe the exceptional case.**
+The test that produced them opens no shell — its placeholder opener
+throws, which is a deliberate decision from another test and not an
+environment gap.
 
-Mit **offener Shell** gemessen, drei unabhängige Läufe:
+Measured **with an open shell**, three independent runs:
 
-| | mit offener Shell | Kontrolle ohne Shell |
+| | with an open shell | control without a shell |
 |---|---|---|
-| Abbau kommt zurück? | **nein**, ≥30 s (nicht abbrechende Frist) | ja, 5,340685209 s |
-| `disconnect()` betreten? | **nein** | ja |
-| Tab | `.degraded`, Sitzung bleibt gesetzt | `.lost`, Sitzung `nil` |
+| does teardown return? | **no**, ≥30 s (a deadline that does not abort) | yes, 5.340685209 s |
+| does `disconnect()` get entered? | **no** | yes |
+| Tab | `.degraded`, session stays set | `.lost`, session `nil` |
 
-Der einzige Unterschied ist das offene Terminal. Nach `docker unpause` kam
-der aufgegebene Abbau in 0,0022 / 0,0017 / 0,0019 s zurück.
+The only difference is the open terminal. After `docker unpause`, the
+abandoned teardown returned in 0.0022 / 0.0017 / 0.0019 s.
 
-**Die Ursache ist die Reihenfolge.** `teardown` wartet auf vier Stufen:
+**The cause is the ordering.** `teardown` waits on four stages:
 
 ```
 cancelAll → editManager.stopAll() → terminal.shutdown() → disconnect()
 ```
 
-Die Frist aus `7ac7f7e` sitzt in der **letzten**. `CitadelShell.close()` ist
-`pump.cancel(); await pump.value` — ein unbegrenztes Warten auf eine
-abgebrochene Aufgabe — und hängt in der dritten. Die Frist wird nie
-erreicht.
+The deadline from `7ac7f7e` sits in the **last** one. `CitadelShell.close()`
+is `pump.cancel(); await pump.value` — an unbounded wait on a
+cancelled task — and it hangs in the third. The deadline is never
+reached.
 
-Mindestens zwei weitere unbegrenzte Wartepunkte liegen davor: `cancelAll`
-Schritt 3 wartet auf laufende Transfers, und `editManager.stopAll()` ist
-nicht untersucht.
+At least two further unbounded wait points sit before it: `cancelAll`
+step 3 waits on running transfers, and `editManager.stopAll()` is
+not investigated.
 
-**Entscheidung des Maintainers (2026-08-28): jede Stufe einzeln begrenzen.**
-Nicht der Abbau als Ganzes — seine Reihenfolge ist eine Invariante dieses
-Projekts, und eine Frist darum würde sie mittendrin abbrechen und nicht
-sagen, welche Stufe hing.
+**Maintainer decision (2026-08-28): bound each stage individually.**
+Not the teardown as a whole — its ordering is an invariant of this
+project, and a deadline wrapped around it would abort mid-sequence and
+not say which stage hung.
 
-**Eine Lektion aus dem Messen selbst, die nichts mit SSH zu tun hat:** der
-erste Lauf war **grün, während der Defekt vorlag**. Seine Nachbedingungen
-lasen `enteredAt` und `liveness` erst **nach** dem Auftau-Block — also
-nachdem der Peer wieder antwortete und der Abbau nachgeholt hatte. Eine
-Prüfung, die nach der Heilung liest, ist keine Prüfung.
+**A lesson from the measuring itself, unrelated to SSH:** the
+first run was **green while the defect was present**. Its postconditions
+read `enteredAt` and `liveness` only **after** the thaw block — that is,
+after the peer answered again and teardown had caught up. A check
+that reads after the healing is not a check.
 
-## Was offen bleibt — und eine Maintainer-Frage
+## What remains open — and a question for the maintainer
 
-**Ungegatet hält nichts die Verdrahtung.** Dass `BoundedClose` das Richtige
-tut, ist ungegatet geprüft. Dass `disconnect()` es *benutzt*, hält allein der
-gegatete Integrationstest. Ein Rückbau auf `try? await sftp.close()` bliebe
-in einer CI ohne Docker grün.
+**Ungated, nothing holds the wiring in place.** That `BoundedClose` does
+the right thing is verified ungated. That `disconnect()` *uses* it is
+held only by the gated integration test. A regression to
+`try? await sftp.close()` would stay green in a CI without Docker.
 
-Ein Quelltext-Wächter wurde **bewusst nicht** gebaut: er müsste zwei Namen
-buchstabieren, die er nicht ableiten kann — genau die Sorte, vor der
-`CLAUDE.md` unter „Guards that name what they watch" warnt. Die Frage war
-damit nicht „welcher Wächter", sondern ob sich der ungebundene Aufruf
-**strukturell** ausschließen lässt, wie beim Verbinden geschehen.
+A source-scanning guard was **deliberately not** built: it would have
+to spell two names it cannot derive — exactly the kind `CLAUDE.md`
+warns about under "Guards that name what they watch". The question was
+therefore not "which guard" but whether the unbound call can be
+excluded **structurally**, as was done for connecting.
 
-**Beantwortet und gebaut (2026-08-28, `c71a7c3`): ja.** `BoundedSFTPSession`
-hält den rohen Client `private`, hat einen `private init` und eine
-`closeBounded()` **ohne Argumente**; die Frist ist eine Eigenschaft des
-Typs. Neun Weiterleitungen tragen die übrigen Operationen. **Null
-Teständerungen**, weil `init` ohnehin schon `private` war und kein Test
-`SFTPClient` nennt.
+**Answered and built (2026-08-28, `c71a7c3`): yes.** `BoundedSFTPSession`
+keeps the raw client `private`, has a `private init` and a
+`closeBounded()` **with no arguments**; the deadline is a property of
+the type. Nine forwards carry the remaining operations. **Zero
+test changes**, because `init` was already `private` and no test
+names `SFTPClient`.
 
-Sechs Verstöße gepflanzt, alle rot — darunter der, den ein Leser wirklich
-schreiben würde, der „nur eben den rohen Client braucht":
+Six violations planted, all red — including the one a reader would
+actually write who "just needs the raw client":
 
 ```swift
 extension BoundedSFTPSession { var unbounded: SFTPClient { raw } }
 // error: 'raw' is inaccessible due to 'private' protection level
 ```
 
-Dass das scheitert, hängt an `private` statt `fileprivate` — der Grund,
-warum der Typ in seiner eigenen Datei liegen muss. Zur Kontrolle wurde die
-Lücke am Stand davor bestätigt: dort kompiliert `try? await sftp.close()`.
+That this fails depends on `private` rather than `fileprivate` — the
+reason the type must live in its own file. As a control, the gap was
+confirmed at the prior state: there, `try? await sftp.close()` compiles.
 
-**Was die Grenze nicht verhindert**, beides ausgeführt und im Typ
-dokumentiert: den Schluss ganz zu **löschen** kompiliert, und
-`try? await client.openSFTP().close()` kompiliert ebenfalls — frischer
-Kanal, gespeicherte Sitzung unberührt (und weil `openSFTP()` selbst ein
-Umlauf ist, brächte es denselben Hänger zurück). Sie erzwingt das **Wie**,
-nie das **Ob**. Ein Quelltext-Wächter steht bewusst *nicht* daneben: einer
-neben einer strukturellen Garantie lässt den nächsten Leser der Suite mehr
-vertrauen, als sie verdient.
+**What the boundary does not prevent**, both executed and documented in
+the type: deleting the close call **entirely** compiles, and
+`try? await client.openSFTP().close()` also compiles — a fresh
+channel, the stored session untouched (and because `openSFTP()` itself
+is a round trip, it would bring back the same hang). It enforces the
+**how**, never the **whether**. A source-scanning guard deliberately does
+*not* sit beside it: one placed next to a structural guarantee would
+give the suite's next reader more confidence than it has earned.
 
-Weitere benannte Grenzen: die fünf Sekunden sind gegen Loopback bemessen;
-`client.close()` ist nur in *dieser* Reihenfolge schnell gemessen, mit einem
-aufgegebenen `sftp.close()` in der Luft; und `docker pause` ist ein Modell
-eines verschwundenen Netzes, nicht das Netz selbst.
+Further named boundaries: the five seconds are sized against loopback;
+`client.close()` was only measured fast in *this* ordering, with an
+abandoned `sftp.close()` still in flight; and `docker pause` is a model
+of a vanished network, not the network itself.

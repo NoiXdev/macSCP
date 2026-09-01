@@ -2,38 +2,38 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein Settings-Tab „SSH-Schlüssel", der ed25519/rsa/ecdsa-Schlüssel erzeugt, verwaltet (Liste/löschen/Public-Key kopieren+exportieren) und ed25519-Keys direkt in Formular/Login-Sets wählbar macht, mit zentraler Passphrase im Keychain.
+**Goal:** A settings tab "SSH Keys" that generates ed25519/rsa/ecdsa keys, manages them (list/delete/copy+export public key), and makes ed25519 keys directly selectable in the form/login sets, with a central passphrase in the Keychain.
 
-**Architecture:** Core-seitig `SSHKeyGenerator` (shellt `ssh-keygen`) + `ManagedKeyStore` (secret-freies JSON nach dem `KnownHostsStore`-Muster; private Dateien liegen 0600 in einem App-Unterordner). Die Referenz bleibt der bestehende `keyPath`-String — kein Modell-/Loader-Umbau; die Passphrase wird beim Connect über einen Pfad-Lookup automatisch aus dem Keychain gezogen.
+**Architecture:** on the Core side, `SSHKeyGenerator` (shells out to `ssh-keygen`) + `ManagedKeyStore` (secret-free JSON following the `KnownHostsStore` pattern; private files sit at 0600 in an app subdirectory). The reference stays the existing `keyPath` string — no model/loader rework; the passphrase is pulled automatically from the Keychain at connect time via a path lookup.
 
-**Tech Stack:** Swift (SwiftPM, `.swiftLanguageMode(.v5)`), Swift Testing, SwiftUI+AppKit, macOS 15+, System-`/usr/bin/ssh-keygen`, Keychain (`SecretStore`).
+**Tech Stack:** Swift (SwiftPM, `.swiftLanguageMode(.v5)`), Swift Testing, SwiftUI+AppKit, macOS 15+, system `/usr/bin/ssh-keygen`, Keychain (`SecretStore`).
 
 ## Global Constraints
 
-- Swift `.swiftLanguageMode(.v5)`, minimum macOS 15; **keine neue externe Dependency** (swift-crypto ist vorhanden; Erzeugung via System-`ssh-keygen`).
-- Tests: Swift Testing, TDD rot→grün.
-- Key-Bytes **nie** loggen; Passphrase **ausschließlich** Keychain unter `key.id`; JSON-Store **secret-frei**.
-- Privatdateien **0600**, Verzeichnis **0700**, im App-Support-Ordner — **kein** Schreiben nach `~/.ssh`.
-- `ssh-keygen` per **Argument-Array** (keine Shell-Injection).
-- `SSHPrivateKeyLoader` bleibt **unverändert** (bekommt weiter `keyPath` + `passphrase`); `ConnectionViewModel.connectSSH` unverändert.
-- **Nur ed25519** ist als macSCP-Login verbindbar; RSA/ECDSA sind erzeugbar + pub-exportierbar, im Login-Picker **nicht** angeboten und in der Liste als „nicht verbindbar" markiert.
-- Code/Kommentare/Tests **Englisch**; UI-Strings EN/DE/FR/PL mit **typografischen Zeichen** in nicht-englischen Werten, FR/PL KI-generiert.
-- gated Keychain-Tests via `MACSCP_KEYCHAIN=1`; ungated Alternative via `InMemorySecretStore`.
-- Conventional Commits (CI-Gate); Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- Swift `.swiftLanguageMode(.v5)`, minimum macOS 15; **no new external dependency** (swift-crypto is already present; generation goes via the system `ssh-keygen`).
+- Tests: Swift Testing, TDD red→green.
+- **Never** log key bytes; passphrase **exclusively** in the Keychain under `key.id`; JSON store **secret-free**.
+- Private files **0600**, directory **0700**, in the App Support folder — **no** writing to `~/.ssh`.
+- `ssh-keygen` via **argument array** (no shell injection).
+- `SSHPrivateKeyLoader` stays **unchanged** (still receives `keyPath` + `passphrase`); `ConnectionViewModel.connectSSH` unchanged.
+- **Only ed25519** can be used to connect as a macSCP login; RSA/ECDSA can be generated + their public key exported, are **not** offered in the login picker, and are marked "not connectable" in the list.
+- Code/comments/tests **in English**; UI strings EN/DE/FR/PL with **typographic characters** in non-English values, FR/PL AI-generated.
+- Keychain tests gated via `MACSCP_KEYCHAIN=1`; ungated alternative via `InMemorySecretStore`.
+- Conventional Commits (CI gate); footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
-**Verankerte Fakten (verifiziert):** `SessionStore.defaultDirectory` = `FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]`. Stores werden als `Store(directory: SessionStore.defaultDirectory)` instanziiert (App-Wiring inline, z. B. `KnownHostsStore(directory: SessionStore.defaultDirectory)`). Realer Secret-Store: `KeychainSecretStore()` (`ContentView.swift:334`). Loader-Signatur: `SSHPrivateKeyLoader.authentication(username: String, keyPath: String, passphrase: String?) throws -> SSHAuthenticationMethod`. `ssh-keygen`-Process-Vorlage: `Tests/macSCPCoreTests/SSHPrivateKeyLoaderTests.swift:14`. Fingerprint-Helfer: `HostKeyFingerprint.sha256(ofKeyBlobBase64:) -> String?`. `KnownHostsStore`-Store-Muster: `Sources/macSCPCore/Sessions/KnownHostsStore.swift` (`init(directory:)`, `fileURL = directory.appendingPathComponent("known_hosts.json")`, `all()`/`persist()` atomar). `SecretStore`: `savePassword(_:for:)` / `password(for:)` / `deletePassword(for:)` (alle `UUID`); Test-Helfer `InMemorySecretStore`.
+**Anchored facts (verified):** `SessionStore.defaultDirectory` = `FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]`. Stores are instantiated as `Store(directory: SessionStore.defaultDirectory)` (app wiring inline, e.g. `KnownHostsStore(directory: SessionStore.defaultDirectory)`). Real secret store: `KeychainSecretStore()` (`ContentView.swift:334`). Loader signature: `SSHPrivateKeyLoader.authentication(username: String, keyPath: String, passphrase: String?) throws -> SSHAuthenticationMethod`. `ssh-keygen` process template: `Tests/macSCPCoreTests/SSHPrivateKeyLoaderTests.swift:14`. Fingerprint helper: `HostKeyFingerprint.sha256(ofKeyBlobBase64:) -> String?`. `KnownHostsStore` store pattern: `Sources/macSCPCore/Sessions/KnownHostsStore.swift` (`init(directory:)`, `fileURL = directory.appendingPathComponent("known_hosts.json")`, `all()`/`persist()` atomic). `SecretStore`: `savePassword(_:for:)` / `password(for:)` / `deletePassword(for:)` (all `UUID`); test helper `InMemorySecretStore`.
 
 ---
 
 ## File Structure
 
 - `Sources/macSCPCore/SSH/ManagedKey.swift` — **create**: `ManagedKey` + `KeyType`.
-- `Sources/macSCPCore/SSH/SSHKeyGenerator.swift` — **create**: `ssh-keygen`-Wrapper.
-- `Sources/macSCPCore/SSH/ManagedKeyStore.swift` — **create**: JSON-Store + `key(forPath:)` + `remove`.
-- `Sources/macSCPCore/SSH/ManagedKeyPassphrase.swift` — **create**: reine Auflöse-Funktion (Task 3).
-- `Sources/MacSCPApp/SSHKeysSettingsTab.swift` — **create**; `Sources/MacSCPApp/SettingsView.swift` — **modify** (sechster Tab).
-- `Sources/MacSCPApp/ContentView.swift` — **modify** (Passphrase-Auflösung am Connect).
-- `Sources/MacSCPApp/ConnectionFormView.swift`, `Sources/MacSCPApp/LoginSetsSheet.swift` — **modify** (Key-Picker-Menü).
+- `Sources/macSCPCore/SSH/SSHKeyGenerator.swift` — **create**: `ssh-keygen` wrapper.
+- `Sources/macSCPCore/SSH/ManagedKeyStore.swift` — **create**: JSON store + `key(forPath:)` + `remove`.
+- `Sources/macSCPCore/SSH/ManagedKeyPassphrase.swift` — **create**: a pure resolution function (Task 3).
+- `Sources/MacSCPApp/SSHKeysSettingsTab.swift` — **create**; `Sources/MacSCPApp/SettingsView.swift` — **modify** (sixth tab).
+- `Sources/MacSCPApp/ContentView.swift` — **modify** (passphrase resolution at connect time).
+- `Sources/MacSCPApp/ConnectionFormView.swift`, `Sources/MacSCPApp/LoginSetsSheet.swift` — **modify** (key picker menu).
 - `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` — **modify**.
 - `Tests/macSCPCoreTests/SSHKeyGeneratorTests.swift`, `ManagedKeyStoreTests.swift`, `ManagedKeyPassphraseTests.swift` — **create**.
 
@@ -51,9 +51,9 @@
 - Produces:
   - `public enum KeyType: Equatable, Sendable, Codable { case ed25519; case rsa(bits: Int); case ecdsa; public var isConnectable: Bool }`
   - `public struct ManagedKey: Identifiable, Equatable, Sendable, Codable { id, name, comment, type, fingerprint, publicKeyOpenSSH, createdAt, hasPassphrase, fileName }`
-  - `public enum SSHKeyGenerator { public static func generate(type: KeyType, comment: String, passphrase: String?, into dir: URL) throws -> GeneratedKey }` mit `public struct GeneratedKey { public let privateKeyURL: URL; public let publicKeyOpenSSH: String; public let fingerprint: String }` und `public enum SSHKeyGenError: Error, Equatable { case keygenFailed(status: Int32); case publicKeyUnreadable; case toolMissing }`
+  - `public enum SSHKeyGenerator { public static func generate(type: KeyType, comment: String, passphrase: String?, into dir: URL) throws -> GeneratedKey }` with `public struct GeneratedKey { public let privateKeyURL: URL; public let publicKeyOpenSSH: String; public let fingerprint: String }` and `public enum SSHKeyGenError: Error, Equatable { case keygenFailed(status: Int32); case publicKeyUnreadable; case toolMissing }`
 
-- [ ] **Step 1: `ManagedKey` + `KeyType` schreiben**
+- [ ] **Step 1: Write `ManagedKey` + `KeyType`**
 
 `Sources/macSCPCore/SSH/ManagedKey.swift`:
 
@@ -108,7 +108,7 @@ public struct ManagedKey: Identifiable, Equatable, Sendable, Codable {
 }
 ```
 
-- [ ] **Step 2: Failing-Test für den Generator**
+- [ ] **Step 2: Failing test for the generator**
 
 `Tests/macSCPCoreTests/SSHKeyGeneratorTests.swift`:
 
@@ -178,12 +178,12 @@ struct SSHKeyGeneratorTests {
 }
 ```
 
-- [ ] **Step 3: Test rot**
+- [ ] **Step 3: Red test**
 
 Run: `swift test --filter SSHKeyGeneratorTests`
-Expected: FAIL — „cannot find 'SSHKeyGenerator'".
+Expected: FAIL — "cannot find 'SSHKeyGenerator'".
 
-- [ ] **Step 4: `SSHKeyGenerator` implementieren**
+- [ ] **Step 4: Implement `SSHKeyGenerator`**
 
 `Sources/macSCPCore/SSH/SSHKeyGenerator.swift`:
 
@@ -291,15 +291,15 @@ public enum SSHKeyGenerator {
 }
 ```
 
-- [ ] **Step 5: Test grün**
+- [ ] **Step 5: Green test**
 
 Run: `swift test --filter SSHKeyGeneratorTests`
-Expected: PASS — alle fünf Tests grün.
+Expected: PASS — all five tests green.
 
-- [ ] **Step 6: Volle Suite + 0 Warnungen**
+- [ ] **Step 6: Full suite + 0 warnings**
 
 Run: `swift build && swift test`
-Expected: Build 0 Warnungen; alle Tests grün.
+Expected: build 0 warnings; all tests green.
 
 - [ ] **Step 7: Commit**
 
@@ -319,11 +319,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `Tests/macSCPCoreTests/ManagedKeyStoreTests.swift`
 
 **Interfaces:**
-- Consumes: `ManagedKey` (Task 1), `any SecretStore` (`deletePassword(for:)`), `InMemorySecretStore` (Test).
+- Consumes: `ManagedKey` (Task 1), `any SecretStore` (`deletePassword(for:)`), `InMemorySecretStore` (test).
 - Produces:
   - `public struct ManagedKeyStore: Sendable { public init(directory: URL); public var keyDirectory: URL; public func all() throws -> [ManagedKey]; public func add(_ key: ManagedKey) throws; public func remove(id: UUID, secrets: any SecretStore) throws; public func key(forPath path: String) throws -> ManagedKey? }`
 
-- [ ] **Step 1: Failing-Test**
+- [ ] **Step 1: Failing test**
 
 `Tests/macSCPCoreTests/ManagedKeyStoreTests.swift`:
 
@@ -400,12 +400,12 @@ struct ManagedKeyStoreTests {
 }
 ```
 
-- [ ] **Step 2: Test rot**
+- [ ] **Step 2: Red test**
 
 Run: `swift test --filter ManagedKeyStoreTests`
-Expected: FAIL — „cannot find 'ManagedKeyStore'".
+Expected: FAIL — "cannot find 'ManagedKeyStore'".
 
-- [ ] **Step 3: `ManagedKeyStore` implementieren**
+- [ ] **Step 3: Implement `ManagedKeyStore`**
 
 `Sources/macSCPCore/SSH/ManagedKeyStore.swift`:
 
@@ -477,17 +477,17 @@ public struct ManagedKeyStore: Sendable {
 }
 ```
 
-Hinweis: den passenden `JSONDecoder().dateDecodingStrategy = .iso8601` in `all()` setzen (Symmetrie zum Encoder) — ergänze das im Decoder vor dem `decode`.
+Note: set the matching `JSONDecoder().dateDecodingStrategy = .iso8601` in `all()` (symmetry with the encoder) — add that to the decoder before the `decode`.
 
-- [ ] **Step 4: Test grün**
+- [ ] **Step 4: Green test**
 
 Run: `swift test --filter ManagedKeyStoreTests`
 Expected: PASS.
 
-- [ ] **Step 5: Volle Suite + 0 Warnungen**
+- [ ] **Step 5: Full suite + 0 warnings**
 
 Run: `swift build && swift test`
-Expected: Build 0 Warnungen; alle Tests grün.
+Expected: build 0 warnings; all tests green.
 
 - [ ] **Step 6: Commit**
 
@@ -500,18 +500,18 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 3: Core+App — Passphrase-Auflösung beim Connect
+## Task 3: Core+App — Passphrase Resolution at Connect Time
 
 **Files:**
 - Create: `Sources/macSCPCore/SSH/ManagedKeyPassphrase.swift`
-- Modify: `Sources/MacSCPApp/ContentView.swift` (Connect-Füll-Pfad, wo `form.password` gesetzt wird)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (the connect fill path, where `form.password` is set)
 - Test: `Tests/macSCPCoreTests/ManagedKeyPassphraseTests.swift`
 
 **Interfaces:**
 - Consumes: `ManagedKeyStore.key(forPath:)` (Task 2), `any SecretStore`.
-- Produces: `public enum ManagedKeyPassphrase { public static func resolve(keyPath: String, typed: String, store: ManagedKeyStore, secrets: any SecretStore) -> String }` — gibt die effektive Passphrase zurück: ist `typed` nicht-leer, gewinnt sie; sonst, wenn `keyPath` ein verwalteter Key mit `hasPassphrase` ist, die Keychain-Passphrase; sonst `typed` (leer).
+- Produces: `public enum ManagedKeyPassphrase { public static func resolve(keyPath: String, typed: String, store: ManagedKeyStore, secrets: any SecretStore) -> String }` — returns the effective passphrase: if `typed` is non-empty it wins; otherwise, if `keyPath` is a managed key with `hasPassphrase`, the Keychain passphrase; otherwise `typed` (empty).
 
-- [ ] **Step 1: Failing-Test**
+- [ ] **Step 1: Failing test**
 
 `Tests/macSCPCoreTests/ManagedKeyPassphraseTests.swift`:
 
@@ -569,12 +569,12 @@ struct ManagedKeyPassphraseTests {
 }
 ```
 
-- [ ] **Step 2: Test rot**
+- [ ] **Step 2: Red test**
 
 Run: `swift test --filter ManagedKeyPassphraseTests`
-Expected: FAIL — „cannot find 'ManagedKeyPassphrase'".
+Expected: FAIL — "cannot find 'ManagedKeyPassphrase'".
 
-- [ ] **Step 3: `ManagedKeyPassphrase` implementieren**
+- [ ] **Step 3: Implement `ManagedKeyPassphrase`**
 
 `Sources/macSCPCore/SSH/ManagedKeyPassphrase.swift`:
 
@@ -598,14 +598,14 @@ public enum ManagedKeyPassphrase {
 }
 ```
 
-- [ ] **Step 4: Test grün**
+- [ ] **Step 4: Green test**
 
 Run: `swift test --filter ManagedKeyPassphraseTests`
 Expected: PASS.
 
-- [ ] **Step 5: App-Verkabelung am Connect**
+- [ ] **Step 5: App wiring at connect time**
 
-In `Sources/MacSCPApp/ContentView.swift`, im gespeicherte-Session-Connect-Pfad (SSH-Zweig, direkt **nachdem** `form.password` aus `resolved.secret`/`password(for: stored)` gefüllt wurde, und ebenso im Formular-Connect-Handler, direkt **vor** `form.connect()`), die effektive Passphrase für den privateKey-Fall nachziehen:
+In `Sources/MacSCPApp/ContentView.swift`, in the saved-session connect path (SSH branch, directly **after** `form.password` is filled from `resolved.secret`/`password(for: stored)`, and likewise in the form connect handler, directly **before** `form.connect()`), pull in the effective passphrase for the privateKey case:
 
 ```swift
 // M17: if this key is a managed key with a stored passphrase and none was
@@ -619,12 +619,12 @@ if form.authChoice == .privateKey {
 }
 ```
 
-Die reale Quelle des `SecretStore` prüfen: `sessionListViewModel.secrets` bzw. `KeychainSecretStore()` (wie an `ContentView.swift:334` verdrahtet) — den vorhandenen Store verwenden, keinen neuen anlegen, falls schon einer im Scope ist. Beide Connect-Einstiege (gespeicherte Session + Formular) müssen die Zeile bekommen, analog dazu, wie beide heute `form.password` setzen.
+Check the real source of the `SecretStore`: `sessionListViewModel.secrets` or `KeychainSecretStore()` (as wired at `ContentView.swift:334`) — use the existing store, don't create a new one if one is already in scope. Both connect entry points (saved session + form) must get the line, the same way both already set `form.password` today.
 
-- [ ] **Step 6: Build + Behaviour-Check**
+- [ ] **Step 6: Build + behavior check**
 
 Run: `swift build`
-Expected: 0 Warnungen. Verhalten per Codelesen: ein verwalteter Key mit gespeicherter Passphrase verbindet ohne erneute Eingabe; ein externer keyPath oder eine getippte Passphrase verhält sich unverändert.
+Expected: 0 warnings. Behavior by code reading: a managed key with a stored passphrase connects without re-entry; an external keyPath or a typed passphrase behaves unchanged.
 
 - [ ] **Step 7: Commit**
 
@@ -637,29 +637,29 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 4: App — Settings-Tab „SSH-Schlüssel"
+## Task 4: App — Settings Tab "SSH Keys"
 
 **Files:**
 - Create: `Sources/MacSCPApp/SSHKeysSettingsTab.swift`
-- Modify: `Sources/MacSCPApp/SettingsView.swift` (sechster `.tabItem`)
+- Modify: `Sources/MacSCPApp/SettingsView.swift` (sixth `.tabItem`)
 - Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 
 **Interfaces:**
 - Consumes: `ManagedKeyStore` (Task 2), `SSHKeyGenerator` (Task 1), `ManagedKey`/`KeyType`, `KeychainSecretStore`, `SessionStore.defaultDirectory`, `L10n`, `DesignTokens`.
 - Produces: `struct SSHKeysSettingsTab: View`.
 
-Reine SwiftUI-View — build-verifiziert (kein Unit-Test; die Kernlogik ist in Task 1/2 getestet).
+A pure SwiftUI view — build-verified (no unit test; the core logic is tested in Task 1/2).
 
-- [ ] **Step 1: `SSHKeysSettingsTab` mit Liste + Aktionen**
+- [ ] **Step 1: `SSHKeysSettingsTab` with list + actions**
 
-Neuer `SSHKeysSettingsTab` nach dem Muster von `OpenWithSettingsTab` (`SettingsView.swift:382`). Ein `@State private var keys: [ManagedKey] = []`, geladen via `ManagedKeyStore(directory: SessionStore.defaultDirectory).all()` in `.onAppear` und nach jeder Mutation neu geladen. Elemente:
-- **Liste** (`List`/`ScrollView`): pro Key eine Zeile mit `name`, Typ-Badge (`ED25519`/`RSA`/`ECDSA` — Label aus `KeyType`), `fingerprint` (gekürzt), `comment`, `createdAt` (formatiert), Schloss-`Image(systemName: "lock")` bei `hasPassphrase`. Ist `!key.type.isConnectable`, ein dezenter `Text(L10n.string("keys.notConnectable", "Not usable as a macSCP login"))`.
-- **Erzeugen…**-Button → öffnet ein Sheet (`GenerateKeySheet`, eigener kleiner `struct` in derselben Datei): Felder `name`, `comment`, Typ-`Picker` (`.ed25519`/`.rsa`/`.ecdsa`), bei RSA ein Bitlängen-`Picker` (2048/3072/4096, Default 3072), `passphrase` (`SecureField`) + Bestätigungs-`SecureField` (müssen übereinstimmen). „Erzeugen" ruft `SSHKeyGenerator.generate(...)` in den `keyDirectory`; bei nicht-leerer Passphrase `KeychainSecretStore().savePassword(pp, for: newID)`; baut `ManagedKey` (mit `fileName = generated.privateKeyURL.lastPathComponent`, `id = newID`, `hasPassphrase`, `fingerprint`, `publicKeyOpenSSH`, `createdAt: Date()`) und `store.add(key)`.
-- **Kontextmenü pro Zeile** + Buttons: **Public-Key kopieren** (`NSPasteboard.general.clearContents(); NSPasteboard.general.setString(key.publicKeyOpenSSH, forType: .string)`), **Public-Key exportieren…** (`fileExporter`/`NSSavePanel` schreibt `key.publicKeyOpenSSH`), **Löschen** (Bestätigungsdialog → `store.remove(id: key.id, secrets: KeychainSecretStore())` → Liste neu laden).
+A new `SSHKeysSettingsTab` following the pattern of `OpenWithSettingsTab` (`SettingsView.swift:382`). A `@State private var keys: [ManagedKey] = []`, loaded via `ManagedKeyStore(directory: SessionStore.defaultDirectory).all()` in `.onAppear` and reloaded after every mutation. Elements:
+- **List** (`List`/`ScrollView`): one row per key with `name`, a type badge (`ED25519`/`RSA`/`ECDSA` — label derived from `KeyType`), `fingerprint` (shortened), `comment`, `createdAt` (formatted), a lock `Image(systemName: "lock")` when `hasPassphrase`. If `!key.type.isConnectable`, a subdued `Text(L10n.string("keys.notConnectable", "Not usable as a macSCP login"))`.
+- A **Generate…** button → opens a sheet (`GenerateKeySheet`, its own small `struct` in the same file): fields `name`, `comment`, a type `Picker` (`.ed25519`/`.rsa`/`.ecdsa`), for RSA a key-size `Picker` (2048/3072/4096, default 3072), `passphrase` (`SecureField`) + a confirmation `SecureField` (must match). "Generate" calls `SSHKeyGenerator.generate(...)` into `keyDirectory`; for a non-empty passphrase, `KeychainSecretStore().savePassword(pp, for: newID)`; builds a `ManagedKey` (with `fileName = generated.privateKeyURL.lastPathComponent`, `id = newID`, `hasPassphrase`, `fingerprint`, `publicKeyOpenSSH`, `createdAt: Date()`) and `store.add(key)`.
+- **Context menu per row** + buttons: **Copy public key** (`NSPasteboard.general.clearContents(); NSPasteboard.general.setString(key.publicKeyOpenSSH, forType: .string)`), **Export public key…** (`fileExporter`/`NSSavePanel` writes `key.publicKeyOpenSSH`), **Delete** (confirmation dialog → `store.remove(id: key.id, secrets: KeychainSecretStore())` → reload the list).
 
-**Nutzungs-Warnung beim Löschen:** vor dem Löschen eine Best-effort-Zählung der Sessions/Login-Sets, deren `keyPath` auf die Datei dieses Keys zeigt (analog zur `usageCount`-Anzeige bei Login-Sets). Ist die Zahl > 0, im Bestätigungsdialog erwähnen. Die Zählquelle (SessionStore/LoginSetStore-Zugriff) im App-Scope prüfen; ist sie hier nicht bequem erreichbar, den generischen Warntext ohne Zahl zeigen (kein Blocker).
+**Usage warning on delete:** before deleting, a best-effort count of the sessions/login sets whose `keyPath` points at this key's file (analogous to the `usageCount` display on login sets). If the count is > 0, mention it in the confirmation dialog. Check the count source (SessionStore/LoginSetStore access) in the app scope; if it isn't conveniently reachable here, show the generic warning text without a number (not a blocker).
 
-Grundgerüst:
+Skeleton:
 
 ```swift
 import SwiftUI
@@ -686,20 +686,20 @@ struct SSHKeysSettingsTab: View {
 }
 ```
 
-- [ ] **Step 2: Sechsten Tab in `SettingsView` einhängen**
+- [ ] **Step 2: Hook the sixth tab into `SettingsView`**
 
-In `Sources/MacSCPApp/SettingsView.swift`, im `TabView` nach dem `ShortcutsSettingsTab`-Block:
+In `Sources/MacSCPApp/SettingsView.swift`, in the `TabView` after the `ShortcutsSettingsTab` block:
 
 ```swift
             SSHKeysSettingsTab()
                 .tabItem { Label(L10n.string("settings.tab.sshKeys", "SSH Keys"), systemImage: "key") }
 ```
 
-Prüfen, ob die feste `.frame(width: 460, height: 460)` für Liste + Aktionen reicht; sonst die Liste in einen `ScrollView` fester Höhe setzen (Fenstergröße NICHT ohne Not ändern — die anderen Tabs teilen sie).
+Check whether the fixed `.frame(width: 460, height: 460)` is enough for the list + actions; otherwise put the list in a fixed-height `ScrollView` (do NOT change the window size without good reason — the other tabs share it).
 
 - [ ] **Step 3: L10n (EN/DE/FR/PL)**
 
-Neue Keys in alle vier Kataloge (Tab-Label, Spaltentitel/Labels, „nicht verbindbar", Generieren-Dialog-Felder, Typ-/Bitlängen-Optionen, Aktionen kopieren/exportieren/löschen, Lösch-/Nutzungs-Warnung). Beispiel-Kernkeys (EN gezeigt; DE/FR/PL analog, typografische Zeichen, kein ASCII-Quote in nicht-englischen Werten):
+New keys across all four catalogs (tab label, column titles/labels, "not connectable", generate-dialog fields, type/key-size options, copy/export/delete actions, delete/usage warning). Example core keys (EN shown; DE/FR/PL analogous, typographic characters, no ASCII quote in non-English values):
 
 ```
 "settings.tab.sshKeys" = "SSH Keys";
@@ -718,10 +718,10 @@ Neue Keys in alle vier Kataloge (Tab-Label, Spaltentitel/Labels, „nicht verbin
 "keys.empty" = "No keys yet. Generate one to get started.";
 ```
 
-- [ ] **Step 4: Build + Behaviour-Check**
+- [ ] **Step 4: Build + behavior check**
 
 Run: `swift build`
-Expected: 0 Warnungen. Katalog-Parität prüfen (`swift test --filter Localizable`). Verhalten per Codelesen: erzeugen → Liste zeigt neuen Key; kopieren legt die OpenSSH-Zeile in die Zwischenablage; löschen entfernt Key + Datei + Keychain.
+Expected: 0 warnings. Check catalog parity (`swift test --filter Localizable`). Behavior by code reading: generate → the list shows the new key; copy puts the OpenSSH line on the clipboard; delete removes the key + file + Keychain entry.
 
 - [ ] **Step 5: Commit**
 
@@ -734,22 +734,22 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 5: App — Key-Picker im Formular + Login-Set-Editor
+## Task 5: App — Key Picker in the Form + Login Set Editor
 
 **Files:**
-- Modify: `Sources/MacSCPApp/ConnectionFormView.swift` (keyPath-Block ~505–521; jump-keyPath analog optional)
-- Modify: `Sources/MacSCPApp/LoginSetsSheet.swift` (keyPath-Block ~401–412)
+- Modify: `Sources/MacSCPApp/ConnectionFormView.swift` (keyPath block ~505–521; jump-keyPath analogous, optional)
+- Modify: `Sources/MacSCPApp/LoginSetsSheet.swift` (keyPath block ~401–412)
 - Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 
 **Interfaces:**
-- Consumes: `ManagedKeyStore.all()` gefiltert auf `type.isConnectable`, `ManagedKey.name`/`fingerprint`/`fileName`, `ManagedKeyStore.keyDirectory`, `SessionStore.defaultDirectory`.
-- Produces: nichts Neues (füllt `viewModel.keyPath` / den Editor-`keyPath`-State).
+- Consumes: `ManagedKeyStore.all()` filtered to `type.isConnectable`, `ManagedKey.name`/`fingerprint`/`fileName`, `ManagedKeyStore.keyDirectory`, `SessionStore.defaultDirectory`.
+- Produces: nothing new (fills `viewModel.keyPath` / the editor's `keyPath` state).
 
-Reine SwiftUI/App — build-verifiziert.
+Pure SwiftUI/App — build-verified.
 
-- [ ] **Step 1: „Verwalteter Schlüssel"-Menü im Formular**
+- [ ] **Step 1: "Managed key" menu in the form**
 
-Im keyPath-`FormRow` von `ConnectionFormView.swift` (neben `TextField` + „…"-`Button`) additiv ein `Menu` einfügen, das die verbindbaren Keys listet und `viewModel.keyPath` mit dem App-Datei-Pfad füllt:
+In the keyPath `FormRow` of `ConnectionFormView.swift` (next to the `TextField` + "…" `Button`), additively insert a `Menu` that lists the connectable keys and fills `viewModel.keyPath` with the app file path:
 
 ```swift
 let connectableKeys = (try? ManagedKeyStore(
@@ -767,11 +767,11 @@ if !connectableKeys.isEmpty {
 }
 ```
 
-Plus ein „Schlüssel verwalten…"-Knopf, der das Settings-Fenster/den Tab öffnet (analog zum bestehenden „Logins verwalten…"-Muster — die reale Öffnen-Mechanik im Code übernehmen). `shortFingerprint` = die ersten ~12 Zeichen nach `SHA256:` (kleiner privater Helfer).
+Plus a "Manage keys…" button that opens the settings window/tab (analogous to the existing "Manage logins…" pattern — take over the real opening mechanism from the code). `shortFingerprint` = the first ~12 characters after `SHA256:` (a small private helper).
 
-- [ ] **Step 2: Dasselbe Menü im Login-Set-Editor**
+- [ ] **Step 2: Same menu in the login set editor**
 
-In `LoginSetsSheet.swift` im keyPath-Block (privateKey-Zweig, ~401–412) dasselbe Menü additiv einfügen, das den Editor-`keyPath`-State füllt.
+In `LoginSetsSheet.swift`, in the keyPath block (privateKey branch, ~401–412), additively insert the same menu, which fills the editor's `keyPath` state.
 
 - [ ] **Step 3: L10n**
 
@@ -779,12 +779,12 @@ In `LoginSetsSheet.swift` im keyPath-Block (privateKey-Zweig, ~401–412) dassel
 "keys.picker.managed" = "Managed key";
 "keys.picker.manage" = "Manage keys…";
 ```
-in alle vier Kataloge (DE/FR/PL typografisch).
+into all four catalogs (DE/FR/PL typographic).
 
-- [ ] **Step 4: Build + Behaviour-Check**
+- [ ] **Step 4: Build + behavior check**
 
 Run: `swift build`
-Expected: 0 Warnungen. Verhalten: nur ed25519-Keys erscheinen im Menü; Auswahl füllt `keyPath`; Freitext + „…" bleiben nutzbar. Sind keine verbindbaren Keys vorhanden, erscheint das Menü nicht (kein leeres Menü).
+Expected: 0 warnings. Behavior: only ed25519 keys appear in the menu; selecting one fills `keyPath`; free text + "…" stay usable. If no connectable keys exist, the menu does not appear (no empty menu).
 
 - [ ] **Step 5: Commit**
 
@@ -797,31 +797,31 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 6: Abschluss — Suite, Review, Push/Deploy
+## Task 6: Closeout — Suite, Review, Push/Deploy
 
-**Files:** keine (Verifikation + Closeout).
+**Files:** none (verification + closeout).
 
-- [ ] **Step 1: Volle Suite (inkl. Keychain-Pfade)**
+- [ ] **Step 1: Full suite (incl. Keychain paths)**
 
 Run: `MACSCP_KEYCHAIN=1 swift test`
-Expected: gesamte Suite grün, inkl. der neuen `SSHKeyGeneratorTests`/`ManagedKeyStoreTests`/`ManagedKeyPassphraseTests`.
+Expected: the entire suite green, including the new `SSHKeyGeneratorTests`/`ManagedKeyStoreTests`/`ManagedKeyPassphraseTests`.
 
-- [ ] **Step 2: Ungated Suite + 0 Warnungen**
+- [ ] **Step 2: Ungated suite + 0 warnings**
 
 Run: `swift build && swift test`
-Expected: Build 0 Warnungen; ungated Suite grün.
+Expected: build 0 warnings; ungated suite green.
 
-- [ ] **Step 3: Runtime-Idle-CPU-Smoke**
+- [ ] **Step 3: Runtime idle-CPU smoke test**
 
-Dev-Build starten, den neuen Settings-Tab öffnen, Idle-CPU prüfen (Lektion M11n) — statische Liste, kein Dauer-CPU/Layout-Sturm.
+Start the dev build, open the new settings tab, check idle CPU (lesson M11n) — a static list, no sustained CPU/layout storm.
 
-- [ ] **Step 4: Whole-Milestone-Review**
+- [ ] **Step 4: Whole-milestone review**
 
-Opus-Whole-Branch-Review über den gesamten M17-Diff (`git merge-base develop HEAD`..HEAD, Basis = M16-HEAD `8bae812`), Fokus auf die Global Constraints (Passphrase nur Keychain, JSON secret-frei, 0600/0700, kein `~/.ssh`-Schreiben, `ssh-keygen` Argument-Array, `SSHPrivateKeyLoader` unverändert, nur ed25519 verbindbar).
+An Opus whole-branch review over the entire M17 diff (`git merge-base develop HEAD`..HEAD, base = M16 HEAD `8bae812`), focused on the Global Constraints (passphrase Keychain-only, JSON secret-free, 0600/0700, no `~/.ssh` writes, `ssh-keygen` argument array, `SSHPrivateKeyLoader` unchanged, only ed25519 connectable).
 
-- [ ] **Step 5: Push + CI + Dev-Build (auf Maintainer-Anordnung)**
+- [ ] **Step 5: Push + CI + dev build (on maintainer instruction)**
 
-Nach grünem Review — auf Maintainer-Anordnung: Push nach `develop`, `gh run watch`, Dev-Build v1.7.0-dev nach `~/Desktop/macSCP-dev.app`. Kein Release/Tag.
+After a green review — on maintainer instruction: push to `develop`, `gh run watch`, dev build v1.7.0-dev to `~/Desktop/macSCP-dev.app`. No release/tag.
 
 ---
 
@@ -829,15 +829,15 @@ Nach grünem Review — auf Maintainer-Anordnung: Push nach `develop`, `gh run w
 
 **1. Spec coverage:**
 - Spec §Core `ManagedKey`/`KeyType` + `SSHKeyGenerator` → Task 1. ✅
-- Spec §Core `ManagedKeyStore` (all/add/remove-mit-Cleanup/key(forPath:)) → Task 2. ✅
-- Spec §Core Passphrase-Auflösung + `SSHPrivateKeyLoader` unverändert → Task 3. ✅
-- Spec §App Settings-Tab (Liste/Erzeugen/kopieren/exportieren/löschen/Kontextmenü/Nutzungs-Warnung) → Task 4. ✅
-- Spec §App Formular/Login-Set-Picker (nur ed25519, füllt keyPath, „verwalten"-Knopf) → Task 5. ✅
-- Spec §Tests (Store-CRUD, Generator gegen echtes ssh-keygen inkl. Roundtrip, Passphrase-Auflösung) → Task 1/2/3. ✅
-- Spec §Tests App build + Idle-CPU → Task 4/6. ✅
-- Spec §Sicherheit/Invarianten → Global Constraints + Task-6-Review. ✅
+- Spec §Core `ManagedKeyStore` (all/add/remove-with-cleanup/key(forPath:)) → Task 2. ✅
+- Spec §Core passphrase resolution + `SSHPrivateKeyLoader` unchanged → Task 3. ✅
+- Spec §App settings tab (list/generate/copy/export/delete/context menu/usage warning) → Task 4. ✅
+- Spec §App form/login-set picker (ed25519 only, fills keyPath, "manage" button) → Task 5. ✅
+- Spec §Tests (store CRUD, generator against real ssh-keygen incl. roundtrip, passphrase resolution) → Task 1/2/3. ✅
+- Spec §Tests app build + idle CPU → Task 4/6. ✅
+- Spec §Security/invariants → Global Constraints + Task 6 review. ✅
 - Spec §L10n → Task 4/5. ✅
 
-**2. Placeholder scan:** Offene Stellen mit klarer „realen Wert übernehmen"-Anweisung: die exakte `SecretStore`-Quelle + der zweite Connect-Einstieg in Task 3, die Nutzungs-Zählquelle + Settings-Öffnen-Mechanik in Task 4/5. Kein „TBD/TODO".
+**2. Placeholder scan:** Open spots with a clear "adopt the real value" instruction: the exact `SecretStore` source + the second connect entry point in Task 3, the usage-count source + the settings-opening mechanism in Task 4/5. No "TBD/TODO".
 
-**3. Type consistency:** `SSHKeyGenerator.generate(type:comment:passphrase:into:) -> GeneratedKey{privateKeyURL,publicKeyOpenSSH,fingerprint}`; `ManagedKey(id,name,comment,type,fingerprint,publicKeyOpenSSH,createdAt,hasPassphrase,fileName)`; `KeyType.isConnectable`; `ManagedKeyStore(directory:)` / `.keyDirectory` / `all()` / `add(_:)` / `remove(id:secrets:)` / `key(forPath:)`; `ManagedKeyPassphrase.resolve(keyPath:typed:store:secrets:)` — über alle Tasks konsistent. `SessionStore.defaultDirectory` als Store-Verzeichnis einheitlich.
+**3. Type consistency:** `SSHKeyGenerator.generate(type:comment:passphrase:into:) -> GeneratedKey{privateKeyURL,publicKeyOpenSSH,fingerprint}`; `ManagedKey(id,name,comment,type,fingerprint,publicKeyOpenSSH,createdAt,hasPassphrase,fileName)`; `KeyType.isConnectable`; `ManagedKeyStore(directory:)` / `.keyDirectory` / `all()` / `add(_:)` / `remove(id:secrets:)` / `key(forPath:)`; `ManagedKeyPassphrase.resolve(keyPath:typed:store:secrets:)` — consistent across all tasks. `SessionStore.defaultDirectory` used uniformly as the store directory.

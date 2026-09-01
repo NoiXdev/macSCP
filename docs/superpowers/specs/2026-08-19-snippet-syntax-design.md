@@ -1,105 +1,108 @@
-# Snippet-Editor Teil 1 — Syntax-Darstellung (Design)
+# Snippet editor part 1 — syntax display (Design)
 
-Stand 2026-08-19. Teil 1 von drei; die Zerlegung steht im Backlog
-(Maintainer-Wunsch 2026-08-19). Rein additiv: keine Modelländerung, kein
-Sicherheitsbezug.
+As of 2026-08-19. Part 1 of three; the breakdown is in the backlog
+(maintainer's wish, 2026-08-19). Purely additive: no model change, no
+security relevance.
 
-## Ausgangslage
+## Starting point
 
-Das Befehlsfeld im Snippet-Editor ist heute ein einzeiliges `TextField` über
-`@State private var command: String`. Die Liste zeigt den Befehl als
-schlichten `Text`. Nichts davon ist eingefärbt.
+The command field in the snippet editor is today a single-line `TextField`
+over `@State private var command: String`. The list shows the command as
+plain `Text`. None of it is colored.
 
-**SwiftUI kann ein `TextField` beim Tippen nicht einfärben.** Farbe pro
-Bereich gibt es nur über `AttributedString` in einem `Text` — also dort, wo
-gelesen statt getippt wird — oder über einen `NSTextView` als
-`NSViewRepresentable`. Maintainer-Entscheidung 2026-08-19: **auch im
-Eingabefeld**, also `NSTextView`.
+**SwiftUI cannot color a `TextField` while typing.** Color per
+region only exists via `AttributedString` in a `Text` — that is, where
+you read rather than type — or via an `NSTextView` as an
+`NSViewRepresentable`. Maintainer decision 2026-08-19: **in the
+input field too**, i.e. `NSTextView`.
 
-## Der Schnitt
+## The cut
 
-**Ein getesteter Tokenizer in Core, eine ungetestete Darstellung in der
-App-Schicht.** Das ist der einzige Schnitt, der überhaupt Testabdeckung
-bringt: kein Test dieses Projekts zeichnet `NSViewRepresentable` (gemessen
-in PV/P0 — Controls sind im Bitmap unsichtbar).
+**A tested tokenizer in Core, an untested presentation in the
+App layer.** That is the only cut that yields any test coverage at all:
+no test in this project renders an `NSViewRepresentable` (measured
+in PV/P0 — controls are invisible in the bitmap).
 
-## Core: der Tokenizer
+## Core: the tokenizer
 
-Eine reine Funktion. Befehlstext rein, benannte Bereiche raus — **kein
-AppKit, keine Farben**. Welche Farbe eine Art bekommt, entscheidet die
-App-Schicht über die vorhandenen Design-Tokens.
+A pure function. Command text in, named regions out — **no
+AppKit, no colors**. Which color a kind gets is decided by
+the App layer via the existing design tokens.
 
-Erkannt wird, was in einem Snippet wirklich vorkommt:
+What is recognized is what actually occurs in a snippet:
 
-| Art | Beispiel |
+| Kind | Example |
 |---|---|
-| Befehl (erstes Wort) | `docker` |
+| Command (first word) | `docker` |
 | Option | `-h`, `--follow` |
-| Zeichenkette | `'…'`, `"…"` |
+| String | `'…'`, `"…"` |
 | Variable | `$HOME`, `${TAG}` |
-| Kommentar | `# …` bis Zeilenende |
+| Comment | `# …` to end of line |
 | Operator | `\|`, `&&`, `\|\|`, `;`, `>`, `<` |
 
-Alles andere ist schlicht Text.
+Everything else is plain text.
 
-**Sprache als Parameter, nicht als gespeichertes Feld.** Die Funktion nimmt
-die Sprache entgegen (`tokens(in:language:)`), heute mit dem einen Fall
-`.shell`. Ein *gespeichertes* `type`-Feld am `Snippet` wird **nicht**
-angelegt: es hätte genau einen möglichen Wert, und diese Bauart hat sich in
-diesem Projekt schon den Vorwurf eingefangen, strukturell untestbar zu sein
-(siehe `LoginMergeCandidate.kind`, dessen Doc-Kommentar das einräumt).
-Kommt ein zweites Protokoll (Telnet o. Ä.), wird das Feld dann ergänzt und
-altes JSON dekodiert als `.shell` — dasselbe Optional-Muster, das
-`groupID` und `loginSetID` hier bereits benutzen. Durch das Warten geht
-nichts verloren.
+**Language as a parameter, not as a stored field.** The function takes
+the language (`tokens(in:language:)`), today with the single case
+`.shell`. A *stored* `type` field on `Snippet` is **not**
+added: it would have exactly one possible value, and this construction
+has already earned itself the accusation, in this project, of being
+structurally untestable
+(see `LoginMergeCandidate.kind`, whose doc comment admits this).
+When a second protocol arrives (Telnet or similar), the field is added
+then, and old JSON decodes as `.shell` — the same optional
+pattern that `groupID` and `loginSetID` already use here. Waiting loses
+nothing.
 
-## App: `NSTextView` im `NSViewRepresentable`
+## App: `NSTextView` in an `NSViewRepresentable`
 
-Vier bekannte Fallen, ausdrücklich als Aufgaben geführt statt später
-entdeckt:
+Four known traps, listed explicitly as tasks instead of being
+discovered later:
 
-1. **Cursor-Erhalt.** Neu-Einfärben setzt Attribute; ohne Vorkehrung
-   springt die Einfügemarke ans Ende. Position vorher sichern, nachher
-   zurücksetzen.
-2. **Undo.** Attributänderungen dürfen nicht in den Undo-Stack, sonst macht
-   ⌘Z Farben rückgängig statt Text.
-3. **Bindungs-Schleife.** Textänderung → Binding → View-Update →
-   Textänderung. Braucht eine Wächter-Bedingung, sonst rekursiert es.
-4. **Aussehen.** Das Feld steht neben schlichten `TextField`s in einem
-   Formular, an dem vier Runden Feinarbeit hängen (M5f/g/h/k). Rahmen,
-   Innenabstand, Fokusring und Schrift müssen den Nachbarn entsprechen.
+1. **Cursor preservation.** Re-coloring sets attributes; without a
+   safeguard, the insertion point jumps to the end. Save the position
+   beforehand, restore it afterward.
+2. **Undo.** Attribute changes must not go onto the undo stack, otherwise
+   ⌘Z undoes colors instead of text.
+3. **Binding loop.** Text change → binding → view update →
+   text change. Needs a guard condition, otherwise it recurses.
+4. **Appearance.** The field sits next to plain `TextField`s in a
+   form that has had four rounds of fine-tuning applied to it (M5f/g/h/k).
+   Border, inner spacing, focus ring and font must match its
+   neighbors.
 
-## Die Zeilenumbruch-Klemme
+## The line-break clamp
 
-`Snippet.init?` lehnt **jeden** Zeilenumbruch ab (absichtlich, siehe P3e) —
-und ein `NSTextView` nimmt Enter von Haus aus an. Das Feld muss Enter also
-abweisen, solange Teil 2 (mehrzeilig) nicht da ist.
+`Snippet.init?` rejects **every** line break (deliberately, see P3e) —
+and an `NSTextView` accepts Enter by default. The field must therefore
+reject Enter until part 2 (multi-line) exists.
 
-Diese Abweisung gehört in eine kleine, **getestete** Funktion und nicht in
-einen Delegate-Zweig, den kein Test sieht. Sonst baut Teil 1 stillschweigend
-Eingaben, die das Modell danach verwirft — und der Nutzer sieht nur, dass
-Speichern nicht geht.
+This rejection belongs in a small, **tested** function, not
+in a delegate branch no test sees. Otherwise part 1 silently builds
+input that the model then discards afterward — and the user only sees
+that saving doesn't work.
 
 ## Tests
 
-**Tokenizer, vollständig.** Je ein Fall pro erkannter Art, plus die Fallen:
+**Tokenizer, complete.** One case per recognized kind, plus the traps:
 
-- eine Zeichenkette, die nichts schließt (`echo "abc`)
-- ein `#` **innerhalb** einer Zeichenkette — kein Kommentar
-- ein `$` am Ende ohne Namen
-- ein Befehl ohne jedes Sonderzeichen — alles Text außer dem ersten Wort
+- a string that never closes (`echo "abc`)
+- a `#` **inside** a string — not a comment
+- a `$` at the end with no name
+- a command with no special characters at all — everything text except the
+  first word
 
-**Konstant-Rückgabe-Probe:** ein Tokenizer, der pauschal „Text" liefert,
-muss an mindestens einem dieser Tests scheitern. Der letzte Fall ist
-zugleich die Gegenrichtung — er scheitert an einem Tokenizer, der alles als
-Befehl markiert.
+**Constant-return probe:** a tokenizer that returns "text" across the
+board must fail at least one of these tests. The last case is
+also the reverse direction — it fails against a tokenizer that
+marks everything as a command.
 
-**Die Zeilenumbruch-Abweisung** bekommt ihren eigenen Test.
+**The line-break rejection** gets its own test.
 
-## Was ungeprüft bleibt
+## What stays unchecked
 
-Die Darstellung selbst: Cursor-Verhalten, Undo, Fokusring und die
-Ähnlichkeit zu den Nachbarfeldern sieht **nur eine Sichtprüfung beim
-Maintainer**. Kein Test dieses Projekts zeichnet `NSViewRepresentable`. Das
-ist der Preis der Entscheidung für ein einfärbendes Eingabefeld und gehört
-so in den Abschlussbericht.
+The presentation itself: cursor behavior, undo, focus ring and the
+resemblance to the neighboring fields is seen **only by a visual check with
+the maintainer**. No test in this project renders an `NSViewRepresentable`.
+That is the price of the decision for a coloring input field and
+belongs in the wrap-up report as such.

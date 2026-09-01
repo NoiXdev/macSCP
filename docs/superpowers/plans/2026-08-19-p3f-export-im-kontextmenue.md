@@ -1,88 +1,88 @@
-# P3f — Exportieren an der Snippet-Zeile
+# P3f — Export on the snippet row
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die Snippet-Liste bekommt „Exportieren…" in ihr
-Zeilen-Kontextmenü — mit derselben Bedeutung, die dieser Eintrag überall
-sonst in der App schon hat: genau diese eine Zeile.
+**Goal:** The snippet list gets "Export…" in its row context menu — with
+the same meaning this entry already has everywhere else in the app:
+exactly this one row.
 
-**Architecture:** Die Messung vor dem Planen hat den Umfang der Phase auf
-ein Fünftel geschrumpft und die offene Frage der Spec beantwortet, indem
-sie zeigte, dass der ausgelieferte Code sie längst beantwortet:
+**Architecture:** Measuring before planning shrank the phase's scope to
+a fifth of its original size and answered the spec's open question by
+showing that the shipped code had already answered it:
 
-| Liste | „Exportieren" in der Zeile |
+| List | "Export" on the row |
 |---|---|
-| Sitzung (Sidebar) | vorhanden (`export.menu.single`) |
-| Gruppe (Sidebar) | vorhanden (`export.menu.group`) |
-| Login-Sets | vorhanden (`logins.export.action`) |
-| SSH-Schlüssel | vorhanden (öffentlich und privat) |
-| **Snippets** | **fehlt** |
+| Session (sidebar) | present (`export.menu.single`) |
+| Group (sidebar) | present (`export.menu.group`) |
+| Login sets | present (`logins.export.action`) |
+| SSH keys | present (public and private) |
+| **Snippets** | **missing** |
 
-Die Spec fragte, ob „Exportieren" an der Zeile dasselbe meint wie im
-Sheet. `LoginSetsSheet` beantwortet das im Code, mit Kommentar: *„the
+The spec asked whether "Export" on the row means the same thing as in
+the sheet. `LoginSetsSheet` answers that in code, with a comment: *"the
 footer button covers 'all' (or whatever is selected); this one always
-means THIS row."* Der Zeileneintrag setzt außerdem vorher die Auswahl, damit
-sichtbare Auswahl und wirksamer Umfang nie auseinanderlaufen. Diese Phase
-überträgt genau dieses Muster — sie erfindet keine zweite Regel.
+means THIS row."* The row entry also sets the selection first, so the
+visible selection and the effective scope never drift apart. This phase
+carries over exactly that pattern — it invents no second rule.
 
-**Bewusst NICHT in dieser Phase:** die Fußzeilen der beiden Sheets meinen bei
-Auswahl vs. sichtbar Verschiedenes (Login-Sets: die Auswahl, sonst die
-sichtbaren; Snippets: immer die sichtbaren). Das ist vorbestehend, betrifft
-keinen Kontextmenü-Eintrag und ist eine Verhaltensänderung an ausgeliefertem
-Code — sie gehört in eine eigene Entscheidung, nicht in diese.
+**Deliberately NOT part of this phase:** the two sheets' footers mean
+different things for selection vs. visible (login sets: the selection,
+otherwise the visible ones; snippets: always the visible ones). That is
+pre-existing, affects no context-menu entry, and is a behavior change to
+shipped code — it belongs in its own decision, not in this one.
 
-Die Bestätigungsstufe unterscheidet sich dagegen bei BEIDEN Auslösern
-(Fußzeile und Zeile), nicht nur bei der Fußzeile: Login-Sets öffnet in
-beiden Fällen sein Export-Sheet (Optionen + Anzahl), Snippets geht in
-beiden Fällen direkt zum Sichern-Dialog. Das ist begründet und
-vorbestehend — `SnippetExportCodec` hat weder Optionen noch ein
-Passwort-Argument (siehe `performExport`s eigenen Kommentar dazu), ein
-Optionen-Sheet hätte dort also nichts zu zeigen.
+The confirmation level, by contrast, differs for BOTH triggers (footer
+and row), not just the footer: login sets opens its export sheet
+(options + count) in both cases, snippets goes straight to the save
+dialog in both cases. That is justified and pre-existing —
+`SnippetExportCodec` has neither options nor a password argument (see
+`performExport`'s own comment on this), so an options sheet would have
+nothing to show there.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, Swift Testing.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen: **ausschließlich Englisch.**
-- Nutzer-sichtbare Strings über `L10n.string`; die Schlüsselmengen der vier
-  Kataloge (en/de/fr/pl) bleiben identisch — ein Wächtertest prüft das.
-- Nie eine Zeilennummer in einen Kommentar schreiben.
-- Kein Kommentar behauptet etwas, das der Code nicht tut.
-- Tests: TDD rot→grün. `swift test` am Ende grün.
-- Conventional Commits, Footer:
+- Code, comments, identifiers, test names: **English only.**
+- User-visible strings via `L10n.string`; the key sets of the four
+  catalogs (en/de/fr/pl) stay identical — a guard test checks this.
+- Never write a line number into a comment.
+- No comment claims something the code does not do.
+- Tests: TDD red→green. `swift test` green at the end.
+- Conventional Commits, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 
 ---
 
-### Task 1: „Exportieren…" im Snippet-Zeilenmenü
+### Task 1: "Export…" in the snippet row menu
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SnippetsSheet.swift`
-- Test: `Tests/macSCPAppKitTests/SnippetRowExportMenuGuardTests.swift` (neu)
+- Test: `Tests/macSCPAppKitTests/SnippetRowExportMenuGuardTests.swift` (new)
 
-**Interfaces:** keine neuen öffentlichen APIs.
+**Interfaces:** no new public APIs.
 
-**Kontext, den du nicht raten musst:**
-- Das Zeilen-Kontextmenü existiert bereits und enthält heute genau zwei
-  Einträge: „Bearbeiten…" und „Löschen…". Beide setzen als erstes
-  `selectedID = snippet.id`. Der neue Eintrag folgt demselben Muster —
-  der Kommentar über dem Menü erklärt bereits, warum.
-- `performExport(_ snippets: [Snippet])` ist eine vorhandene private
-  Methode desselben Typs. Sie kodiert, legt das Dokument an und öffnet den
-  `fileExporter`. Der neue Eintrag ruft sie mit **genau einem** Snippet.
-- Der Schlüssel `snippets.export` (englisch „Export…") existiert bereits in
-  allen vier Katalogen — er ist die Beschriftung des Fußzeilen-Knopfs.
-  Verwende ihn wieder; **lege keinen neuen Schlüssel an.** Login-Sets machen
-  es an dieser Stelle genauso (ein Schlüssel, zwei Auslöser).
-- Der Eintrag gehört **zwischen** „Bearbeiten…" und „Löschen…", damit die
-  zerstörende Aktion die letzte im Menü bleibt (so ist es in allen anderen
-  Zeilenmenüs der App).
+**Context you don't need to guess:**
+- The row context menu already exists and currently holds exactly two
+  entries: "Edit…" and "Delete…". Both set `selectedID = snippet.id`
+  first. The new entry follows the same pattern — the comment above the
+  menu already explains why.
+- `performExport(_ snippets: [Snippet])` is an existing private method
+  on the same type. It encodes, builds the document, and opens the
+  `fileExporter`. The new entry calls it with **exactly one** snippet.
+- The key `snippets.export` (English "Export…") already exists in all
+  four catalogs — it is the footer button's label. Reuse it; **do not
+  create a new key.** Login sets do exactly this at the same spot (one
+  key, two triggers).
+- The entry belongs **between** "Edit…" and "Delete…", so the
+  destructive action stays last in the menu (as it is in every other row
+  menu in the app).
 
 - [ ] **Step 1: Write the failing test**
 
-Es gibt keinen SwiftUI-Renderer in dieser Suite. Prüfbar und wertvoll ist,
-dass der Eintrag im Menükörper überhaupt existiert und die vorhandene
-Beschriftung wiederverwendet. Neue Datei
+There is no SwiftUI renderer in this suite. What is testable and
+valuable is that the entry exists in the menu body at all and reuses
+the existing label. New file
 `Tests/macSCPAppKitTests/SnippetRowExportMenuGuardTests.swift`:
 
 ```swift
@@ -129,21 +129,21 @@ struct SnippetRowExportMenuGuardTests {
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `swift test --filter "Snippet row export menu"`
-Expected: FAIL — der erste und dritte Test, weil `performExport([snippet])`
-im Quelltext nicht vorkommt. (Der zweite Test ist bereits grün, weil der
-Fußzeilen-Knopf denselben Schlüssel nutzt — das ist beabsichtigt: er pinnt
-die Wiederverwendung, nicht die Neuheit. Sag im Bericht, dass dir das
-aufgefallen ist.)
+Expected: FAIL — the first and third tests, because
+`performExport([snippet])` does not occur in the source. (The second
+test is already green, because the footer button uses the same key —
+that is intentional: it pins the reuse, not the novelty. Say in the
+report that you noticed this.)
 
-Falls der Pfadaufbau über `#filePath` nicht trägt: sieh in den vorhandenen
-quelltextlesenden Wächtertests unter `Tests/macSCPAppKitTests/` nach
-(z. B. `PaneVisibilityWiringGuardTests.swift`) und übernimm **genau deren**
-Weg zur Datei.
+If the path construction via `#filePath` doesn't hold up: check the
+existing source-reading guard tests under `Tests/macSCPAppKitTests/`
+(e.g. `PaneVisibilityWiringGuardTests.swift`) and adopt **exactly their**
+way of locating the file.
 
 - [ ] **Step 3: Implement**
 
-In `Sources/MacSCPAppKit/SnippetsSheet.swift`, im Zeilen-Kontextmenü,
-zwischen „Bearbeiten…" und „Löschen…":
+In `Sources/MacSCPAppKit/SnippetsSheet.swift`, in the row context menu,
+between "Edit…" and "Delete…":
 
 ```swift
             Button(L10n.string("snippets.export", "Export…")) {
@@ -154,8 +154,8 @@ zwischen „Bearbeiten…" und „Löschen…":
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `swift test --filter "Snippet row export menu"` → PASS (3 Tests).
-Danach die volle Suite: `swift test` — muss grün sein.
+Run: `swift test --filter "Snippet row export menu"` → PASS (3 tests).
+Then the full suite: `swift test` — must be green.
 
 - [ ] **Step 5: Commit**
 

@@ -1,41 +1,41 @@
-# M17 — SSH-Key-Manager (Design/Spec)
+# M17 — SSH Key Manager (Design/Spec)
 
-**Datum:** 2026-08-02
-**Status:** freigegeben (Brainstorm), bereit für writing-plans
+**Date:** 2026-08-02
+**Status:** approved (brainstorm), ready for writing-plans
 **Branch:** `develop`
-**Vorgänger:** M3b (`SSHPrivateKeyLoader`, ed25519-Laden), M10a/M3c (Known-Hosts-Store-Muster), S3-Programm M12–M16 abgeschlossen.
+**Predecessors:** M3b (`SSHPrivateKeyLoader`, ed25519 loading), M10a/M3c (known-hosts store pattern), S3 program M12–M16 complete.
 
-## Ziel
+## Goal
 
-Ein eigener Settings-Tab „SSH-Schlüssel": ed25519/rsa/ecdsa-Schlüssel erzeugen
-(mit Name, Kommentar, optionaler Passphrase), auflisten, löschen, Public-Key
-kopieren/exportieren. Erzeugte **ed25519**-Keys sind direkt als Auth im
-Verbindungsformular und in Login-Sets wählbar; ihre Passphrase wird zentral im
-Keychain gehalten und beim Verbinden automatisch aufgelöst.
+A dedicated Settings tab „SSH-Schlüssel" (SSH Keys): generate ed25519/rsa/ecdsa
+keys (with name, comment, optional passphrase), list, delete, copy/export the
+public key. Generated **ed25519** keys are directly selectable as auth in the
+connection form and in login sets; their passphrase is held centrally in the
+Keychain and resolved automatically on connect.
 
-## Ausgangslage (verifiziert)
+## Starting point (verified)
 
-- **Laden heute:** `SSHPrivateKeyLoader` (`Sources/macSCPCore/SSH/SSHPrivateKeyLoader.swift:15`) lädt **nur ed25519** (OpenSSH-Format, optional passphrase-verschlüsselt) via Citadels `Curve25519.Signing.PrivateKey(sshEd25519:decryptionKey:)`. RSA/ECDSA-Laden existiert nicht.
-- **Referenz:** überall ein `keyPath: String?` (Dateipfad) — `StoredSession.keyPath`, `JumpSpec.keyPath`, `LoginSet.keyPath`, `ConnectionViewModel.keyPath`, `ResolvedLogin.keyPath`. Keine Key-Registry. Formular + Login-Set-Editor: `TextField` + `fileImporter`-„…"-Knopf, schreibt den rohen Pfad zurück.
-- **swift-crypto** (`Package.swift:12`, `from: "3.0.0"`) ist da; `Curve25519.Signing` wird schon genutzt. **Key-Erzeugung + OpenSSH-Serialisierung existieren nicht.**
-- **`ssh-keygen`-Vorlage:** die Tests erzeugen Keys via `/usr/bin/ssh-keygen` `Process()` (`Tests/macSCPCoreTests/SSHPrivateKeyLoaderTests.swift:14`, Flags `-t ed25519 -f <path> -N <pass> -q -C <comment>`).
-- **`SecretStore`:** UUID-adressiert (`savePassword`/`password`/`deletePassword` für eine `UUID`), `kSecAttrService="dev.noix.macSCP"`. Login-Set-Secrets liegen unter `set.id` — dasselbe Muster ist für einen Key nutzbar.
-- **Settings:** `SettingsView` (`Sources/MacSCPApp/SettingsView.swift:12`) ist ein `TabView` mit 5 Tabs; ein sechster `.tabItem` fügt sich gleich ein. Fenster fix 460×460.
-- **`~/.ssh`:** wird **nirgends geschrieben** (strikt nur-lesen; Known-Hosts liegen in einem App-Ordner). Ein Schreibpfad nach `~/.ssh` wäre der erste im Projekt.
+- **Loading today:** `SSHPrivateKeyLoader` (`Sources/macSCPCore/SSH/SSHPrivateKeyLoader.swift:15`) loads **only ed25519** (OpenSSH format, optionally passphrase-encrypted) via Citadel's `Curve25519.Signing.PrivateKey(sshEd25519:decryptionKey:)`. RSA/ECDSA loading does not exist.
+- **Reference:** a `keyPath: String?` (file path) everywhere — `StoredSession.keyPath`, `JumpSpec.keyPath`, `LoginSet.keyPath`, `ConnectionViewModel.keyPath`, `ResolvedLogin.keyPath`. No key registry. Form + login set editor: `TextField` + `fileImporter` "…" button, writes the raw path back.
+- **swift-crypto** (`Package.swift:12`, `from: "3.0.0"`) is present; `Curve25519.Signing` is already used. **Key generation + OpenSSH serialization do not exist.**
+- **`ssh-keygen` precedent:** the tests generate keys via `/usr/bin/ssh-keygen` `Process()` (`Tests/macSCPCoreTests/SSHPrivateKeyLoaderTests.swift:14`, flags `-t ed25519 -f <path> -N <pass> -q -C <comment>`).
+- **`SecretStore`:** UUID-addressed (`savePassword`/`password`/`deletePassword` for a `UUID`), `kSecAttrService="dev.noix.macSCP"`. Login set secrets live under `set.id` — the same pattern can be used for a key.
+- **Settings:** `SettingsView` (`Sources/MacSCPApp/SettingsView.swift:12`) is a `TabView` with 5 tabs; a sixth `.tabItem` slots right in. Window fixed at 460×460.
+- **`~/.ssh`:** is written **nowhere** (strictly read-only; known hosts live in an app folder). A write path to `~/.ssh` would be the first in the project.
 
-## Entscheidungen (Maintainer, 2026-08-02)
+## Decisions (maintainer, 2026-08-02)
 
-1. **Speicherort:** App-eigener Ordner, private Dateien 0600 (Verzeichnis 0700); **kein** `~/.ssh`-Schreiben.
-2. **Erzeugung:** `/usr/bin/ssh-keygen` shellen (Argument-Array, keine Shell-Injection).
-3. **Referenz:** pfadbasiert — `keyPath` zeigt auf die App-Key-Datei, **kein** Modell-/Export-Umbau. Der Picker füllt `keyPath`.
-4. **Passphrase:** zentral im Keychain unter `key.id`; beim Connect automatisch aufgelöst (Pfad-Lookup), sonst Fallback auf den bisherigen Formular-/Session-Flow.
-5. **Typ-Scope:** Generieren-Dialog bietet ed25519/rsa/ecdsa (+ RSA-Bitlänge). **Nur ed25519 ist als macSCP-Login verbindbar** (Lader-Grenze); RSA/ECDSA sind erzeugbar + pub-exportierbar, im Login-Picker **nicht** angeboten und in der Liste als „nicht verbindbar" markiert.
+1. **Storage location:** an app-owned folder, private files 0600 (directory 0700); **no** writing to `~/.ssh`.
+2. **Generation:** shell out to `/usr/bin/ssh-keygen` (argument array, no shell injection).
+3. **Reference:** path-based — `keyPath` points to the app's key file, **no** model/export rework. The picker fills `keyPath`.
+4. **Passphrase:** held centrally in the Keychain under `key.id`; resolved automatically on connect (path lookup), otherwise falls back to the existing form/session flow.
+5. **Type scope:** the generate dialog offers ed25519/rsa/ecdsa (+ RSA bit length). **Only ed25519 is connectable as a macSCP login** (loader boundary); RSA/ECDSA are generatable + pub-exportable, **not** offered in the login picker, and marked "not connectable" in the list.
 
-## Architektur
+## Architecture
 
 ### Core
 
-**`ManagedKey`** (Modell, Core):
+**`ManagedKey`** (model, Core):
 ```swift
 public struct ManagedKey: Identifiable, Equatable, Sendable {
     public let id: UUID
@@ -49,76 +49,76 @@ public struct ManagedKey: Identifiable, Equatable, Sendable {
     public var fileName: String        // relative to the key directory
 }
 ```
-`KeyType`: `enum` mit `.ed25519`, `.rsa(bits: Int)`, `.ecdsa`; `.isConnectable` → nur `.ed25519 == true`.
+`KeyType`: `enum` with `.ed25519`, `.rsa(bits: Int)`, `.ecdsa`; `.isConnectable` → true only for `.ed25519`.
 
-**`SSHKeyGenerator`** (Core, testbar):
+**`SSHKeyGenerator`** (Core, testable):
 ```swift
 func generate(type: KeyType, comment: String, passphrase: String?, into dir: URL)
     throws -> GeneratedKey   // { privateKeyURL: URL, publicKeyOpenSSH: String, fingerprint: String }
 ```
-- Ruft `ssh-keygen` mit Argument-Array: `-t <ed25519|rsa|ecdsa>`, `-b <bits>` (nur RSA), `-f <appfile>`, `-N <passphrase | "">`, `-C <comment>`, `-q`. Nichtnull-Exit → typisierter Fehler.
-- Liest die erzeugte `.pub` (OpenSSH-Zeile), stellt `chmod 0600` auf der Privatdatei sicher, leitet den Fingerprint ab (bestehender `HostKeyFingerprint`-Weg oder `ssh-keygen -lf`).
-- **Doku-Hinweis:** die Passphrase steht kurzzeitig in `argv` (nur same-user via `ps` sichtbar) — akzeptierter Minor; `ssh-keygen` bietet für die Generierung keinen stdin-Passphrase-Weg.
+- Calls `ssh-keygen` with an argument array: `-t <ed25519|rsa|ecdsa>`, `-b <bits>` (RSA only), `-f <appfile>`, `-N <passphrase | "">`, `-C <comment>`, `-q`. Non-zero exit → a typed error.
+- Reads the generated `.pub` (OpenSSH line), ensures `chmod 0600` on the private file, derives the fingerprint (existing `HostKeyFingerprint` path or `ssh-keygen -lf`).
+- **Documentation note:** the passphrase briefly appears in `argv` (visible only same-user via `ps`) — an accepted minor issue; `ssh-keygen` offers no stdin passphrase path for generation.
 
-**`ManagedKeyStore`** (Core): atomare JSON-Schreibweise wie `KnownHostsStore` (eigener App-Support-Ordner; der Key-Datei-Ordner ist ein Unterordner davon, 0700). **Secret-frei** (keine Passphrase, keine Privat-Bytes im JSON). API:
+**`ManagedKeyStore`** (Core): atomic JSON writing like `KnownHostsStore` (its own App Support folder; the key file folder is a subfolder of it, 0700). **Secret-free** (no passphrase, no private-key bytes in the JSON). API:
 - `all() -> [ManagedKey]`
 - `add(_ key: ManagedKey)`
-- `remove(id: UUID)` — löscht Metadaten **und** die Privat-/Pub-Datei **und** (über den SecretStore) den Keychain-Slot unter `id`
-- `key(forPath: String) -> ManagedKey?` — Pfad-Lookup (App-Key-Datei → verwalteter Key) für die Passphrase-Auflösung
+- `remove(id: UUID)` — deletes the metadata **and** the private/pub file **and** (via the SecretStore) the Keychain slot under `id`
+- `key(forPath: String) -> ManagedKey?` — path lookup (app key file → managed key) for passphrase resolution
 
-**Passphrase-Auflösung beim Connect:** eine Ergänzung im bestehenden Auflöse-Weg (dort, wo `keyPath` + Passphrase für den `SSHPrivateKeyLoader` bestimmt werden): bevor die Passphrase aus Formular/Session genommen wird, `ManagedKeyStore.key(forPath: resolvedKeyPath)` prüfen; existiert ein verwalteter Key mit `hasPassphrase`, die Passphrase aus `SecretStore.password(for: key.id)` verwenden. Sonst unverändert der bisherige Weg. **`SSHPrivateKeyLoader` bleibt unangetastet.**
+**Passphrase resolution on connect:** an addition to the existing resolution path (where `keyPath` + passphrase are determined for `SSHPrivateKeyLoader`): before taking the passphrase from the form/session, check `ManagedKeyStore.key(forPath: resolvedKeyPath)`; if a managed key with `hasPassphrase` exists, use the passphrase from `SecretStore.password(for: key.id)`. Otherwise, the existing path unchanged. **`SSHPrivateKeyLoader` stays untouched.**
 
 ### App
 
-**Settings-Tab „SSH-Schlüssel"** (sechster `.tabItem`, `systemImage: "key"`):
-- **Liste:** pro Key Name, Typ-Badge (`ED25519`/`RSA`/`ECDSA`), Fingerprint-Kurzform, Kommentar, Erstelldatum, Schloss-Symbol bei Passphrase. RSA/ECDSA mit dezentem Hinweis „nicht als macSCP-Login verbindbar".
-- **Erzeugen…** (Sheet): Name, Kommentar, Typ-Picker (ed25519/rsa/ecdsa), bei RSA Bitlängen-Picker (2048/3072/4096, Default 3072), optionale Passphrase (SecureField + Bestätigung). „Erzeugen" → `SSHKeyGenerator` → Datei anlegen, Passphrase (falls gesetzt) im Keychain unter neuer Key-ID, Metadaten in den Store.
-- **Public-Key kopieren** (NSPasteboard), **Public-Key exportieren…** (`fileExporter` → `.pub`).
-- **Löschen** (Bestätigung) → Store `remove(id:)` (Datei + `.pub` + Keychain). Warnhinweis mit Best-effort-Zählung, wenn Sessions/Login-Sets diesen `keyPath` referenzieren (wie die `usageCount`-Anzeige bei Login-Sets).
-- Aktionen als Buttons **und** pro-Zeile-Kontextmenü.
-- Fensterhöhe ggf. anpassen (heute fix 460×460); notfalls scrollbare Liste in fixer Höhe.
+**Settings tab „SSH-Schlüssel"** (sixth `.tabItem`, `systemImage: "key"`):
+- **List:** per key: name, type badge (`ED25519`/`RSA`/`ECDSA`), short fingerprint, comment, creation date, a lock icon when there's a passphrase. RSA/ECDSA carry a subtle „nicht als macSCP-Login verbindbar" (not connectable as a macSCP login) note.
+- **„Erzeugen…"** (Generate…) (sheet): name, comment, type picker (ed25519/rsa/ecdsa), for RSA a bit-length picker (2048/3072/4096, default 3072), optional passphrase (SecureField + confirmation). "Generate" → `SSHKeyGenerator` → creates the file, stores the passphrase (if set) in the Keychain under a new key ID, writes metadata to the store.
+- **„Public-Key kopieren"** (Copy Public Key) (NSPasteboard), **„Public-Key exportieren…"** (Export Public Key…) (`fileExporter` → `.pub`).
+- **„Löschen"** (Delete) (confirmation) → store `remove(id:)` (file + `.pub` + Keychain). A warning with a best-effort count when sessions/login sets reference this `keyPath` (like the `usageCount` display on login sets).
+- Actions as buttons **and** a per-row context menu.
+- Window height may need adjusting (currently fixed 460×460); failing that, a scrollable list at fixed height.
 
-**Formular + Login-Set-Editor:** der bestehende `keyPath`-Block bekommt additiv ein Menü „Verwalteter Schlüssel", das die **ed25519**-Keys des Stores listet (Name + Fingerprint-Kurzform) und bei Auswahl `keyPath` mit dem App-Datei-Pfad füllt. Freitext + „…"-Durchsuchen bleiben daneben. Ein „Schlüssel verwalten…"-Knopf öffnet den Settings-Tab (analog „Logins verwalten…").
+**Form + login set editor:** the existing `keyPath` block additively gets a „Verwalteter Schlüssel" (Managed Key) menu listing the store's **ed25519** keys (name + short fingerprint) that fills `keyPath` with the app file path on selection. Free text + "…" browse stay alongside it. A „Schlüssel verwalten…" (Manage Keys…) button opens the Settings tab (analogous to "Manage Logins…").
 
 ## Tests
 
 **Core (Swift Testing):**
-- `ManagedKeyStore`: CRUD, atomares secret-freies JSON, `key(forPath:)`, `remove` löscht Datei + Keychain-Slot (`MACSCP_KEYCHAIN=1`).
-- `SSHKeyGenerator` (echtes `/usr/bin/ssh-keygen`): ed25519 → Datei existiert + 0600, `.pub` OpenSSH-Format, Fingerprint parsebar; **Roundtrip:** erzeugter ed25519-Key lädt via `SSHPrivateKeyLoader`; passphrase-geschützter Key braucht die Passphrase; RSA/ECDSA erzeugbar.
-- Passphrase-Auflösung: verwalteter Key-Pfad mit Keychain-Passphrase liefert diese; Fremd-Pfad fällt auf den Formular-Flow zurück.
+- `ManagedKeyStore`: CRUD, atomic secret-free JSON, `key(forPath:)`, `remove` deletes the file + Keychain slot (`MACSCP_KEYCHAIN=1`).
+- `SSHKeyGenerator` (real `/usr/bin/ssh-keygen`): ed25519 → file exists + 0600, `.pub` in OpenSSH format, fingerprint parseable; **roundtrip:** a generated ed25519 key loads via `SSHPrivateKeyLoader`; a passphrase-protected key requires the passphrase; RSA/ECDSA generatable.
+- Passphrase resolution: a managed key path with a Keychain passphrase returns it; a foreign path falls back to the form flow.
 
-**App:** build-verifiziert + Runtime-Idle-CPU-Smoke (neuer Tab/Liste).
+**App:** build-verified + runtime idle-CPU smoke test (new tab/list).
 
-## Sicherheit / Invarianten
+## Security / invariants
 
-- Key-Bytes nie geloggt; Passphrase ausschließlich Keychain unter `key.id`; JSON-Store secret-frei.
-- Privatdateien 0600, Verzeichnis 0700, im App-Support-Ordner — **kein** `~/.ssh`-Schreiben.
-- `ssh-keygen` per Argument-Array (keine Shell-Injection).
-- `remove` räumt Privat-/Pub-Datei + Keychain-Slot auf.
-- Keine neue externe Dependency (swift-crypto ist bereits vorhanden; Erzeugung via System-`ssh-keygen`).
+- Key bytes never logged; passphrase exclusively in the Keychain under `key.id`; the JSON store is secret-free.
+- Private files 0600, directory 0700, in the App Support folder — **no** writing to `~/.ssh`.
+- `ssh-keygen` via argument array (no shell injection).
+- `remove` cleans up the private/pub file + Keychain slot.
+- No new external dependency (swift-crypto is already present; generation via the system `ssh-keygen`).
 
 ## L10n
 
-Alle neuen nutzer-sichtbaren Strings (Tab-Label, Listen-/Aktions-Labels,
-Generieren-Dialog, Typ-/Bitlängen-Optionen, „nicht verbindbar"-Hinweis,
-Lösch-/Nutzungs-Warnung, Formular-Menü) in EN/DE/FR/PL, typografische Zeichen,
-FR/PL KI-generiert (Native-Review vor Release).
+All new user-facing strings (tab label, list/action labels, generate dialog,
+type/bit-length options, "not connectable" note, delete/usage warning, form
+menu) in EN/DE/FR/PL, typographic characters, FR/PL AI-generated (native
+review before release).
 
-## Nicht in M17 (→ v2)
+## Not in M17 (→ v2)
 
-- Key-**Import** vorhandener Schlüssel.
-- `authorized_keys`-Ausrollen auf den Server.
-- RSA/ECDSA als **verbindbarer** macSCP-Login (Lader-Grenze — bräuchte RSA/ECDSA-Laden in `SSHPrivateKeyLoader`).
-- `managedKeyID`-Modellreferenz (der Pfad-Lookup genügt für v1).
-- Umschaltbares Secret-Backend (1Password-Vault) — eigener Future-Milestone mit Machbarkeitsrunde.
+- Key **import** of existing keys.
+- Rolling out `authorized_keys` to the server.
+- RSA/ECDSA as a **connectable** macSCP login (loader boundary — would need RSA/ECDSA loading in `SSHPrivateKeyLoader`).
+- `managedKeyID` model reference (the path lookup is enough for v1).
+- A switchable secret backend (1Password vault) — its own future milestone with a feasibility round.
 
-## Betroffene Dateien
+## Files affected
 
 - `Sources/macSCPCore/SSH/ManagedKey.swift` (+ `KeyType`) — **create**.
 - `Sources/macSCPCore/SSH/SSHKeyGenerator.swift` — **create**.
 - `Sources/macSCPCore/SSH/ManagedKeyStore.swift` — **create**.
-- Connect-Auflöse-Weg (Core, dort wo `keyPath`+Passphrase für `SSHPrivateKeyLoader` bestimmt werden — `ConnectionViewModel`/`LoginResolver`-Umfeld) — **modify** (Passphrase-Lookup).
-- `Sources/MacSCPApp/SettingsView.swift` + neuer `SSHKeysSettingsTab` — **modify/create**.
-- `Sources/MacSCPApp/ConnectionFormView.swift`, `Sources/MacSCPApp/LoginSetsSheet.swift` — **modify** (Key-Picker-Menü).
+- Connect resolution path (Core, where `keyPath`+passphrase are determined for `SSHPrivateKeyLoader` — `ConnectionViewModel`/`LoginResolver` area) — **modify** (passphrase lookup).
+- `Sources/MacSCPApp/SettingsView.swift` + new `SSHKeysSettingsTab` — **modify/create**.
+- `Sources/MacSCPApp/ConnectionFormView.swift`, `Sources/MacSCPApp/LoginSetsSheet.swift` — **modify** (key picker menu).
 - `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` — **modify**.
-- `Tests/macSCPCoreTests/…` — `ManagedKeyStoreTests`, `SSHKeyGeneratorTests`, Passphrase-Auflösungs-Test — **create**.
+- `Tests/macSCPCoreTests/…` — `ManagedKeyStoreTests`, `SSHKeyGeneratorTests`, passphrase resolution test — **create**.

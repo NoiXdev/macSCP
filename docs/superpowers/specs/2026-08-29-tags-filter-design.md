@@ -1,116 +1,114 @@
-# Tags: abschaltbar und als Filter — Entwurf
+# Tags: togglable and as a filter — Design
 
-**Stand:** 2026-08-29. Umsetzung von **E1 + E2** aus
+**Status:** 2026-08-29. Implements **E1 + E2** from
 `docs/superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md`,
-dort ausdrücklich als zusammen zu entwerfen geführt, weil sie dieselbe Stelle
-in der Seitenleiste berühren. Es sind die letzten beiden offenen Punkte des
-Eintrags.
+explicitly listed there as to be designed together, because they touch the
+same spot in the sidebar. These are the entry's last two open points.
 
 ---
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-`SessionSidebar` hält `activeTag: String?` — **genau einen** Tag, als
-Ansichtszustand — und reicht ihn an `SidebarVisibility.compute(activeTag:)`,
-die im Quelltext als die *eine* Stelle bezeichnet ist, die filtert.
+`SessionSidebar` holds `activeTag: String?` — **exactly one** tag, as view
+state — and passes it to `SidebarVisibility.compute(activeTag:)`, which the
+source names as the *one* place that filters.
 
-Daraus folgt beides: die Und/Oder-Frage konnte sich bisher nicht stellen, und
-es gibt keine Einstellung, die die Leiste ausblendet.
+Both of these follow from that: the and/or question could not previously
+arise, and there is no setting that hides the bar.
 
-Seit D3 filtert dieselbe Funktion zusätzlich auf einen Suchbegriff, und beide
-Kriterien gelten zusammen.
+Since D3 the same function additionally filters on a search term, and both
+criteria apply together.
 
-## Entscheidungen des Maintainers (2026-08-29)
+## Maintainer decisions (2026-08-29)
 
-### E1: abschaltbar heißt — die Leiste verschwindet, Tags bleiben
+### E1: togglable means — the bar disappears, tags remain
 
-Eine Einstellung blendet die **Filterleiste** aus. Tags bleiben zuweisbar und
-in der Sitzungs-Bearbeitung sichtbar.
+A setting hides the **filter bar**. Tags remain assignable and visible in
+session editing.
 
-Wer sie nicht als Filter mag, verliert damit nichts, und vorhandene Tags
-werden nicht unerreichbar — das wäre der Fall, an dem ein späteres
-Wiedereinschalten überrascht.
+Anyone who doesn't like it as a filter loses nothing by this, and existing
+tags don't become unreachable — that would be the case where a later
+re-enabling surprises someone.
 
-**Ein aktiver Filter wird beim Abschalten aufgehoben.** Sonst filterte etwas
-weiter, dessen Bedienelement nicht mehr da ist, und die Seitenleiste zeigte
-weniger, als sie hat, ohne dass irgendetwas das erklärt. Das ist keine
-Feinheit: eine unsichtbar filternde Liste ist von einer verlorenen Liste
-nicht zu unterscheiden.
+**An active filter is cleared when the bar is turned off.** Otherwise
+something would keep filtering whose control no longer exists, and the
+sidebar would show less than it has, with nothing explaining why. This
+isn't a nicety: a list that filters invisibly is indistinguishable from a
+lost list.
 
-### E2: Schwelle 6, Verknüpfung wählbar
+### E2: threshold six, linking selectable
 
-Ab **sechs** Tags klappt die Leiste zu einem Filter-Dialog zusammen. Die
-Zahl gehört als benannte Konstante nach Core, nicht in die Ansicht.
+At **six** tags and above, the bar collapses into a filter dialog. The
+number belongs in Core as a named constant, not in the view.
 
-Mehrere Tags lassen sich als **alle** (Schnittmenge) oder **irgendeines**
-(Vereinigung) verknüpfen; der Nutzer wählt.
+Multiple tags can be linked as **all** (intersection) or **any** (union);
+the user chooses.
 
-## Der Entwurf
+## The design
 
-### Ein Modell, zwei Darstellungen
+### One model, two representations
 
-**Der Filter ist immer eine Menge von Tags plus eine Verknüpfung.** Die
-Leiste ist eine kompakte Darstellung davon, kein zweites Modell.
+**The filter is always a set of tags plus a link mode.** The bar is a
+compact representation of it, not a second model.
 
-Das ist der Kern dieses Entwurfs. Ohne ihn gäbe es „einen Tag aus der Leiste"
-und „mehrere aus dem Dialog" als zwei Zustände, die beim Überschreiten der
-Schwelle ineinander übersetzt werden müssten — und jede solche Übersetzung
-ist eine Stelle, an der eine Auswahl still verlorengeht.
+That is the core of this design. Without it there would be "one tag from
+the bar" and "several from the dialog" as two states that would need
+translating into each other when crossing the threshold — and every such
+translation is a place where a selection can quietly get lost.
 
-`SidebarVisibility.compute` nimmt künftig den Filterwert statt eines
-einzelnen Tags. Sie bleibt die eine Stelle, die filtert.
+`SidebarVisibility.compute` will take the filter value going forward
+instead of a single tag. It remains the one place that filters.
 
-| Zustand | Darstellung |
+| State | Representation |
 |---|---|
-| weniger als sechs Tags | Leiste; Tags einzeln an- und abwählbar |
-| sechs oder mehr | ein Knopf, der den Dialog öffnet, mit der Zahl der gewählten Tags |
-| Leiste abgeschaltet (E1) | nichts, und der Filter ist leer |
+| fewer than six tags | the bar; tags individually selectable and deselectable |
+| six or more | a button that opens the dialog, showing the count of selected tags |
+| bar turned off (E1) | nothing, and the filter is empty |
 
-### Die Verknüpfung erscheint erst, wenn sie etwas bedeutet
+### The link mode appears only once it means something
 
-Bei **null oder einem** gewählten Tag ist „alle" und „irgendeines" dasselbe.
-Die Wahl wird deshalb erst gezeigt, wenn mindestens zwei Tags gewählt sind —
-in der Leiste wie im Dialog.
+With **zero or one** tag selected, "all" and "any" are the same thing. The
+choice is therefore shown only once at least two tags are selected — in
+the bar as in the dialog.
 
-Das ist die stehende Regel dieses Projekts, nur zeigen, was möglich ist,
-angewandt auf einen Fall, in dem ein sichtbarer Schalter ohne Wirkung
-besonders verwirrt: er stünde da, ließe sich umlegen und änderte nichts.
+That is this project's standing rule, show only what is possible, applied
+to a case where a visible control with no effect is especially confusing:
+it would sit there, be flippable, and change nothing.
 
-**Der gewählte Modus überlebt das Abwählen** und wird nicht auf einen
-Vorgabewert zurückgesetzt, wenn die Auswahl unter zwei fällt. Sonst
-verlöre man beim Entfernen eines Tags eine Einstellung, die man getroffen
-hat.
+**The chosen mode survives deselection** and is not reset to a default
+value when the selection drops below two. Otherwise removing a tag would
+lose a setting the user had made.
 
-### Was der Filter mit der Suche macht
+### What the filter does with search
 
-Nichts Neues: beide gelten **zusammen**, wie seit D3. Wer nach Tags filtert
-und dann tippt, sucht innerhalb des Gefilterten. Die Vorfahren-Regel aus
-D1+D2 gilt für beide Kriterien unverändert.
+Nothing new: both apply **together**, as since D3. Anyone filtering by
+tags and then typing searches within what's filtered. The ancestor rule
+from D1+D2 applies unchanged to both criteria.
 
-### Der Leerzustand nennt beide Verengungen
+### The empty state names both narrowings
 
-Seit D3 sagt der Leerzustand „Keine Verbindung passt zum Filter" und sein
-Knopf räumt Suche und Tag-Auswahl zusammen weg. Das bleibt so und deckt den
-neuen Fall mit ab — ein Filter aus mehreren Tags ist derselbe Fall, nur
-enger.
+Since D3 the empty state says "No connection matches the filter" and its
+button clears search and tag selection together. That stays as is and
+covers the new case too — a filter made of several tags is the same case,
+only narrower.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: dass die Schwelle greift, dass „alle" und
-„irgendeines" das Richtige tun, dass die Verknüpfung erst ab zwei Tags
-erscheint und den Modus dabei nicht vergisst, dass das Abschalten den Filter
-räumt, und dass Suche und Tag-Filter zusammen gelten.
+Everything decidable is testable: that the threshold takes effect, that
+"all" and "any" do the right thing, that the link mode appears only from
+two tags on and doesn't forget the mode while doing so, that turning it
+off clears the filter, and that search and tag filter apply together.
 
-**Nicht prüfbar** bleibt, ob die Schwelle bei sechs richtig sitzt. Das ist
-eine Zahl aus dem Wort „Handvoll" und wird sich am Gebrauch zeigen — sie
-steht deshalb als benannte Konstante an einer Stelle.
+**Not testable** is whether the threshold sitting at six is right. That's
+a number derived from the word "a handful" and will show itself in use —
+which is why it sits as a named constant in one place.
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly excluded
 
-- **Kein Verstecken der Tag-Zuweisung.** E1 blendet die Filterleiste aus,
-  nicht die Tags.
-- **Keine Änderung an `StoredSession.tags`** und nichts am Speicherformat.
-- **Keine Tag-Verwaltung** (umbenennen, zusammenlegen, löschen über alle
-  Sitzungen) — das wäre ein eigener Vorgang.
-- **Keine Änderung an der Suche** aus D3 und keine an der Vorfahren-Regel aus
+- **No hiding of tag assignment.** E1 hides the filter bar, not the tags.
+- **No change to `StoredSession.tags`** and nothing about the storage
+  format.
+- **No tag management** (rename, merge, delete across all sessions) — that
+  would be its own change.
+- **No change to the search** from D3 and none to the ancestor rule from
   D1+D2.

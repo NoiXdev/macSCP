@@ -1,95 +1,91 @@
-# M33 — Der eigene Slot einer gebundenen Sitzung (Design)
+# M33 — A bound session's own slot (design)
 
-Stand 2026-08-19. „Schaden 1" aus der M30-Spec, dort bewusst ausgeklammert.
+Status 2026-08-19. "Damage 1" from the M30 spec, deliberately carved out
+there.
 
-## Der Befund
+## The finding
 
-Eine Sitzung, die an ein Login-Set gebunden ist, behält ihren eigenen
-Schlüsselbund-Slot. Er ist unsichtbar (das Formular lädt Geheimnisse nie),
-unbenutzt (der Connect löst über das Set auf) und hat kein Verfallsdatum.
+A session bound to a login set keeps its own keychain slot. It is
+invisible (the form never loads secrets), unused (connect resolves via
+the set) and has no expiry.
 
-Seit M30 kann er nicht mehr stillschweigend wieder aktiv werden — beim
-Verlassen des Set-Modus verlangt der Validator ein neues Geheimnis. Was
-bleibt, ist ein Zugangsdatum, das der Nutzer für abgelöst hält und das
-trotzdem im Schlüsselbund liegt.
+Since M30 it can no longer silently become active again — leaving set
+mode requires the validator to demand a new secret. What remains is a
+credential the user believes superseded, and that still sits in the
+keychain.
 
-## Warum vier Anläufe gescheitert sind
+## Why four attempts failed
 
-Alle vier (2026-08-09, zurückgenommen in `479d018`) haben **beim Binden**
-gelöscht. Das ist der schlechteste denkbare Moment: in ihm weiß niemand, ob
-das Set überhaupt ein brauchbares Geheimnis hält. Ein Set aus einem Import
-ohne Secrets, ein Set, dessen eigener Slot leer ist, ein `authKind`, der
-nicht zum `kind` passt — jede Runde schloss einen dieser Wege und öffnete
-einen neuen, und jeder endete damit, die einzige Kopie eines Zugangsdatums
-zu vernichten.
+All four (2026-08-09, reverted in `479d018`) deleted **at bind time**.
+That is the worst possible moment: at that point nobody knows whether the
+set even holds a usable secret. A set from an import without secrets, a
+set whose own slot is empty, an `authKind` that does not match the
+`kind` — each round closed off one of these paths and opened a new one,
+and each ended by destroying the only copy of a credential.
 
-**Der Ausweg ist nicht ein besserer Wächter, sondern ein anderer Moment.**
-Ein späterer Durchgang kann prüfen, was zur Bindezeit unbekannt war: ob das
-Set für diese Sitzung tatsächlich ein Geheimnis auflöst.
+**The way out is not a better guard, but a different moment.** A later
+pass can check what was unknown at bind time: whether the set actually
+resolves a secret for this session.
 
-## Der Entwurf
+## The design
 
-**Ein Aufräum-Durchgang, vom Nutzer angestoßen**, in „Einstellungen › Daten
-verwalten" — derselbe Ort und dieselbe Bauart wie M27s Durchgang für
-verwaiste Jump-Slots.
+**A cleanup pass, triggered by the user**, in "Settings › Manage Data" —
+the same place and the same construction as M27's pass for orphaned jump
+slots.
 
-**Kandidaten.** Sitzungen mit `loginSetID != nil`, die einen nicht-leeren
-eigenen Slot halten. Abgeleitet aus `sessions.json`, nicht aus einer
-Aufzählung des Schlüsselbunds — `SecretStore` hat bewusst keine, und eine
-Kandidatenliste aus dem Bestand kann keine fremde ID treffen.
+**Candidates.** Sessions with `loginSetID != nil` that hold a non-empty
+own slot. Derived from `sessions.json`, not from an enumeration of the
+keychain — `SecretStore` deliberately has none, and a candidate list from
+the store can never hit a foreign ID.
 
-**Der Wächter, der allen vier Anläufen fehlte.** Ein Slot wird nur gelöscht,
-wenn das gebundene Set für diese Sitzung ein **nicht-leeres** Geheimnis
-auflöst. Löst es nichts auf — Set ohne Secret, Set gelöscht, Schema ohne
-sichtbares Geheimfeld —, bleibt der Slot liegen. Er ist dann nämlich
-möglicherweise die einzige Kopie.
+**The guard all four attempts lacked.** A slot is deleted only if the
+bound set resolves a **non-empty** secret for this session. If it
+resolves nothing — set without a secret, set deleted, schema without a
+visible secret field — the slot stays. It may then be the only copy.
 
-**Womit geprüft wird — nachgemessen 2026-08-19.**
-`SessionListViewModel.resolvedCredentials(for:)` ist genau dieser Wächter:
-sie löst über das Set auf, liefert die Werte samt Geheimnis und **wirft**
-bei einer baumelnden `loginSetID`, statt still auf die eigenen Daten der
-Sitzung zurückzufallen (Spec §2 aus M22/T9). Ein Fehlschlag ist damit
-strukturell von „das Set hält nichts" unterscheidbar — die Unterscheidung,
-an der alle vier Anläufe gescheitert sind. Ob das aufgelöste Geheimnis
-nicht-leer ist, beantwortet
-`BackendDescriptor.visibleSecretField(for: session)` über den zugehörigen
-Schlüssel im Feldbeutel.
+**What checks it — measured 2026-08-19.**
+`SessionListViewModel.resolvedCredentials(for:)` is exactly this guard:
+it resolves via the set, delivers the values including the secret, and
+**throws** on a dangling `loginSetID` instead of silently falling back to
+the session's own data (spec §2 from M22/T9). A failure is thereby
+structurally distinguishable from "the set holds nothing" — the
+distinction all four attempts failed on. Whether the resolved secret is
+non-empty is answered by
+`BackendDescriptor.visibleSecretField(for: session)` via the
+corresponding key in the field bag.
 
-**Fehlgeschlagene Lesevorgänge sind kein „nichts da".** Jeder Lesefehler
-führt zum Überspringen dieses Kandidaten, nie zu einer Löschung. Das ist
-dieselbe Regel, die M28/T2 für `applyMerge` durchgesetzt hat: ein
-Schlüsselbund, der nicht antwortet, sieht sonst aus wie eine Sammlung
-leerer Slots.
+**Failed reads are not "nothing there".** Every read error leads to
+skipping this candidate, never to a deletion. This is the same rule that
+M28/T2 enforced for `applyMerge`: a keychain that does not respond would
+otherwise look like a collection of empty slots.
 
-**Das Geheimnis des Sets wird nie angefasst.** Der Durchgang entfernt
-ausschließlich Slots von Sitzungen, und ausschließlich solche, für die
-nachweislich ein Ersatz existiert.
+**The set's secret is never touched.** The pass removes only sessions'
+own slots, and only those for which a replacement demonstrably exists.
 
-**Rückmeldung.** Der Durchgang liefert die Zahl entfernter Slots; die
-App-Schicht rendert sie über den vorhandenen Plural-Katalog, der dort
-existiert. Null entfernte Slots ist ein normales Ergebnis und wird als
-solches gemeldet, nicht als Fehler.
+**Feedback.** The pass returns the count of removed slots; the app layer
+renders it via the existing plural catalog that exists there. Zero
+removed slots is a normal result and is reported as such, not as an
+error.
 
 ## Tests
 
-Vier Fälle, die zusammen die Regel in beide Richtungen festnageln:
+Four cases that together pin down the rule in both directions:
 
-1. Gebundene Sitzung, Set löst ein Geheimnis auf → Slot ist weg.
-2. Gebundene Sitzung, Set löst **nichts** auf → Slot bleibt. **Das ist der
-   Test, den die vier Anläufe nicht bestanden hätten.**
-3. Ungebundene Sitzung mit eigenem Slot → unberührt.
-4. Lesefehler beim Set → Slot bleibt.
+1. Bound session, set resolves a secret → slot is gone.
+2. Bound session, set resolves **nothing** → slot stays. **This is the
+   test the four attempts would not have passed.**
+3. Unbound session with its own slot → untouched.
+4. Read error on the set → slot stays.
 
-Fall 1 ist zugleich die Positivkontrolle: ohne ihn wären 2–4 auch von einem
-Durchgang erfüllt, der überhaupt nichts löscht.
+Case 1 is also the positive control: without it, 2–4 would also be
+satisfied by a pass that deletes nothing at all.
 
-## Was nicht dazugehört
+## What does not belong here
 
-- **Kein automatisches Aufräumen.** Weder beim Binden noch beim Start. Der
-  Nutzer stößt es an und sieht das Ergebnis — bei einer Operation, die
-  Zugangsdaten entfernt, ist das keine Bequemlichkeitsfrage.
-- **Keine Änderung am Bindepfad.** Er bleibt genau so, wie M28 und M30 ihn
-  hinterlassen haben.
-- **Keine Aufzählungs-API für `SecretStore`.** Ihr Fehlen ist eine bewusste
-  Grenze und zugleich der Grund, warum die Kandidaten aus dem Bestand
-  kommen müssen.
+- **No automatic cleanup.** Neither at bind time nor at startup. The
+  user triggers it and sees the result — for an operation that removes
+  credentials, that is not a matter of convenience.
+- **No change to the bind path.** It stays exactly as M28 and M30 left
+  it.
+- **No enumeration API for `SecretStore`.** Its absence is a deliberate
+  boundary, and also the reason the candidates must come from the store.

@@ -1,17 +1,17 @@
-# M24 — Protokollgerechte Anmeldungen Implementation Plan
+# M24 — Protocol-Correct Logins Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Zwei Datenverlust- bzw. Fehlkonfigurationspfade schließen, die
-entstehen, weil eine SSH-geformte Schicht protokollfremde Sitzungen durchlässt:
-`LoginMergePlanner` (löscht S3-/WebDAV-Secrets) und `JumpSessionEligibility`
-(bietet einen Bucket als Bastion an).
+**Goal:** Close two data-loss resp. misconfiguration paths that arise because
+an SSH-shaped layer lets protocol-foreign sessions through:
+`LoginMergePlanner` (deletes S3/WebDAV secrets) and `JumpSessionEligibility`
+(offers a bucket as a bastion).
 
-**Architecture:** Der Merge-Planner leitet seinen Gruppierungsschlüssel aus dem
-`credentialSchema` des Backends ab statt aus SSH-Feldern; eine neue
-`SecretRole`-Deklaration trennt „das Secret **ist** die Anmeldung" von „das
-Secret **entsperrt** eine Anmeldung". Die Jump-Lücke wird am Resolver
-geschlossen, nicht nur im Picker — ein Picker-Filter schützt nur neue Daten.
+**Architecture:** The merge planner derives its grouping key from the
+backend's `credentialSchema` instead of from SSH fields; a new
+`SecretRole` declaration separates "the secret **is** the login" from "the
+secret **unlocks** a login". The jump gap is closed at the resolver, not
+just in the picker — a picker filter only protects new data.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, macOS 15+,
 Swift Testing (`@Test`/`#expect`).
@@ -20,65 +20,65 @@ Swift Testing (`@Test`/`#expect`).
 
 ## Global Constraints
 
-- **Code und Kommentare: nur Englisch.** Bezeichner, Doc-Kommentare,
-  Inline-Kommentare, Testnamen, `reason:`-Strings. Kein Deutsch in Quelldateien.
-- **Commit-Messages: Englisch, Conventional Commits** (CI erzwingt das).
-  Footer auf jedem Commit: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- **Commit/Push nur auf ausdrückliche Anfrage.** Kein `scripts/release`.
-- **Ein Secret-Wert darf nie geloggt, gedruckt oder in einen Fehler eingebettet
-  werden.** Secrets leben ausschließlich im Keychain (`SecretStore`); JSON-Stores
-  enthalten nie welche.
-- **Nie Schlüsselmaterial committen.**
-- **App-UI ist lokalisiert**, vier Kataloge mit identischen Schlüsselmengen:
+- **Code and comments: English only.** Identifiers, doc comments,
+  inline comments, test names, `reason:` strings. No German in source files.
+- **Commit messages: English, Conventional Commits** (enforced by CI).
+  Footer on every commit: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
+- **Commit/push only on explicit request.** No `scripts/release`.
+- **A secret value must never be logged, printed, or embedded in an error.**
+  Secrets live exclusively in the Keychain (`SecretStore`); JSON stores
+  never contain any.
+- **Never commit key material.**
+- **App UI is localized**, four catalogs with identical key sets:
   `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`.
-  `LocalizableStringsTests` erzwingt die Parität. **CLI-Ausgabe ist nicht
-  lokalisiert.**
-- **Die GUI-App nicht starten.**
-- Tests: `swift test`. Gegatet: `MACSCP_ITEST=1` (Docker-Rig) und
-  `MACSCP_KEYCHAIN=1` (echter Keychain).
-- Sitzungen in Tests **immer** über die Fixtures aus
-  `Tests/macSCPCoreTests/SessionFixtures.swift` bauen (`sshSession`,
-  `s3Session`, `webdavSession`) — nie `StoredSession` direkt.
+  `LocalizableStringsTests` enforces parity. **CLI output is not
+  localized.**
+- **Do not launch the GUI app.**
+- Tests: `swift test`. Gated: `MACSCP_ITEST=1` (Docker rig) and
+  `MACSCP_KEYCHAIN=1` (real keychain).
+- Build sessions in tests **always** via the fixtures from
+  `Tests/macSCPCoreTests/SessionFixtures.swift` (`sshSession`,
+  `s3Session`, `webdavSession`) — never `StoredSession` directly.
 
 ---
 
 ## File Structure
 
-| Datei | Verantwortung | Task |
+| File | Responsibility | Task |
 |---|---|---|
-| `Sources/macSCPCore/Capabilities/FieldVocabulary.swift` | `SecretRole` deklarieren | 1 |
-| `Sources/macSCPCore/Capabilities/ConnectionFieldSchema.swift` | `ConnectionField.secretRole` tragen | 1 |
-| `Sources/macSCPCore/{SSH,S3,WebDAV}/*FieldSchema.swift` | Rolle je Secret-Feld deklarieren | 1 |
-| `Sources/macSCPCore/Sessions/LoginMergePlanner.swift` | Schlüssel aus dem Schema; Kandidatenform | 2 |
-| `Sources/MacSCPApp/LoginSetsSheet.swift` | drei Lesestellen auf `displayLabel` | 2, 3 |
-| `Sources/macSCPCore/Presentation/SessionListViewModel.swift` | `applyMerge` generisch + Riegel; `suggestedSetName`; `delete`-Guard | 3, 5 |
-| `Sources/macSCPCore/Sessions/JumpSessionEligibility.swift` | `kind`-Filter | 4 |
-| `Sources/macSCPCore/Sessions/LoginResolver.swift` | harter Riegel + neuer Fehlerfall | 4 |
-| `Sources/MacSCPApp/{ContentView,ConnectionFormView}.swift` | drei `catch`-Arme | 4 |
-| `Sources/MacSCPApp/Resources/*.lproj/Localizable.strings` | ein neuer Schlüssel × 4 | 4 |
+| `Sources/macSCPCore/Capabilities/FieldVocabulary.swift` | declare `SecretRole` | 1 |
+| `Sources/macSCPCore/Capabilities/ConnectionFieldSchema.swift` | `ConnectionField.secretRole` field | 1 |
+| `Sources/macSCPCore/{SSH,S3,WebDAV}/*FieldSchema.swift` | declare a role per secret field | 1 |
+| `Sources/macSCPCore/Sessions/LoginMergePlanner.swift` | key from the schema; candidate shape | 2 |
+| `Sources/MacSCPApp/LoginSetsSheet.swift` | three read sites onto `displayLabel` | 2, 3 |
+| `Sources/macSCPCore/Presentation/SessionListViewModel.swift` | generic `applyMerge` + guard; `suggestedSetName`; `delete` guard | 3, 5 |
+| `Sources/macSCPCore/Sessions/JumpSessionEligibility.swift` | `kind` filter | 4 |
+| `Sources/macSCPCore/Sessions/LoginResolver.swift` | hard guard + new error case | 4 |
+| `Sources/MacSCPApp/{ContentView,ConnectionFormView}.swift` | three `catch` arms | 4 |
+| `Sources/MacSCPApp/Resources/*.lproj/Localizable.strings` | one new key × 4 | 4 |
 
-**Zu Testdateien:** Neue Tests gehören in die bestehende Suite des Typs, den sie
-prüfen (`LoginMergePlannerTests`, `JumpSessionEligibilityTests`,
+**On test files:** New tests belong in the existing suite for the type they
+test (`LoginMergePlannerTests`, `JumpSessionEligibilityTests`,
 `LoginResolverTests`, `SessionListViewModelTests`, `BackendDescriptorTests`).
-Keine neue Testdatei anlegen.
+Do not create a new test file.
 
 ---
 
-## Warum die Tests hier als Tabelle stehen und nicht als Code
+## Why the tests here stand as a table and not as code
 
-M23 hat zehn Defekte gefunden, die **im Plan** steckten und nicht in der
-Umsetzung; das Muster war stabil genug, um es zu benennen: *vom Planautor
-geschriebener, nie ausgeführter Testcode ist der unzuverlässigste Teil eines
-Plans.* Produktionscode steht deshalb unten wörtlich, Tests dagegen als Tabelle
-aus (Name, Aufbau, Erwartung) plus einem Zeiger auf die Datei, deren Form zu
-kopieren ist. Wer den Test schreibt, führt ihn auch aus.
+M23 found ten defects that sat **in the plan** and not in the
+implementation; the pattern was stable enough to name: *test code written by
+the plan author and never run is the least reliable part of a plan.*
+Production code therefore stands below verbatim, while tests instead stand as
+a table of (name, setup, expectation) plus a pointer to the file whose shape
+is to be copied. Whoever writes the test also runs it.
 
 ---
 
-## Task 1: `SecretRole` deklarieren
+## Task 1: Declare `SecretRole`
 
 **Files:**
-- Modify: `Sources/macSCPCore/Capabilities/FieldVocabulary.swift` (neues Enum ans Ende, neben `FieldIdentity`)
+- Modify: `Sources/macSCPCore/Capabilities/FieldVocabulary.swift` (new enum at the end, next to `FieldIdentity`)
 - Modify: `Sources/macSCPCore/Capabilities/ConnectionFieldSchema.swift:4-83` (`ConnectionField`)
 - Modify: `Sources/macSCPCore/SSH/SSHFieldSchema.swift:156-168` (`password`, `passphrase`)
 - Modify: `Sources/macSCPCore/S3/S3FieldSchema.swift:86-90` (`secretAccessKey`)
@@ -86,14 +86,14 @@ kopieren ist. Wer den Test schreibt, führt ihn auch aus.
 - Test: `Tests/macSCPCoreTests/BackendDescriptorTests.swift`
 
 **Interfaces:**
-- Produces: `SecretRole` mit den Fällen `.credential` und `.passphrase`;
-  `ConnectionField.secretRole: SecretRole?` (Default `nil`), gesetzt über den
-  neuen Init-Parameter `secretRole: SecretRole? = nil` **als letzter
-  Parameter**, damit kein bestehender Aufruf umgestellt werden muss.
+- Produces: `SecretRole` with the cases `.credential` and `.passphrase`;
+  `ConnectionField.secretRole: SecretRole?` (default `nil`), set via the
+  new init parameter `secretRole: SecretRole? = nil` **as the last
+  parameter**, so no existing call site needs to change.
 
-- [ ] **Step 1: `SecretRole` anlegen**
+- [ ] **Step 1: Create `SecretRole`**
 
-Ans Ende von `FieldVocabulary.swift`:
+At the end of `FieldVocabulary.swift`:
 
 ```swift
 /// What a secret field's value MEANS for the identity of a login (M24) — the
@@ -121,9 +121,9 @@ public enum SecretRole: Sendable, Equatable {
 }
 ```
 
-- [ ] **Step 2: `ConnectionField` trägt die Rolle**
+- [ ] **Step 2: `ConnectionField` carries the role**
 
-In `ConnectionFieldSchema.swift`, nach der `identity`-Property:
+In `ConnectionFieldSchema.swift`, after the `identity` property:
 
 ```swift
     /// For a `.secret` field: whether its value takes part in a login's
@@ -138,7 +138,7 @@ In `ConnectionFieldSchema.swift`, nach der `identity`-Property:
     public let secretRole: SecretRole?
 ```
 
-Init-Parameter **als letzter** ergänzen und zuweisen:
+Add and assign the init parameter **as the last one**:
 
 ```swift
     public init(id: String, labelKey: String, labelDefault: String,
@@ -153,40 +153,40 @@ Init-Parameter **als letzter** ergänzen und zuweisen:
     }
 ```
 
-- [ ] **Step 3: Den Wächter schreiben (rot)**
+- [ ] **Step 3: Write the guard (red)**
 
-In `Tests/macSCPCoreTests/BackendDescriptorTests.swift`, direkt nach
-`everyBackendDeclaresANonSecretIdentity` (Zeile 109–123) — dessen Form kopieren:
-Schleife über `ConnectionKind.allCases`, `#expect` mit
-`Comment(rawValue:)`-Begründung.
+In `Tests/macSCPCoreTests/BackendDescriptorTests.swift`, right after
+`everyBackendDeclaresANonSecretIdentity` (lines 109–123) — copy its shape:
+loop over `ConnectionKind.allCases`, `#expect` with a
+`Comment(rawValue:)` rationale.
 
-| Test | Aufbau | Erwartung |
+| Test | Setup | Expectation |
 |---|---|---|
-| `everySecretFieldDeclaresItsRole` | für jeden `kind` beide Schemas (`connectionSchema.fields + credentialSchema.fields`) durchgehen | jedes Feld mit `isSecret == true` hat `secretRole != nil`; die Begründung nennt `kind` und `field.id` und sagt, dass ein fehlender Wert als `.credential` gelesen wird |
-| `noNonSecretFieldDeclaresASecretRole` | dieselbe Schleife | jedes Feld mit `isSecret == false` hat `secretRole == nil` — verhindert eine Rolle an einem Feld, das nie als Secret gelesen wird |
+| `everySecretFieldDeclaresItsRole` | for each `kind` walk both schemas (`connectionSchema.fields + credentialSchema.fields`) | every field with `isSecret == true` has `secretRole != nil`; the rationale names `kind` and `field.id` and says that a missing value reads as `.credential` |
+| `noNonSecretFieldDeclaresASecretRole` | same loop | every field with `isSecret == false` has `secretRole == nil` — prevents a role on a field that is never read as a secret |
 
-- [ ] **Step 4: Rot bestätigen**
+- [ ] **Step 4: Confirm red**
 
 Run: `swift test --filter BackendDescriptor`
-Expected: `everySecretFieldDeclaresItsRole` schlägt fehl (vier Felder ohne Rolle).
+Expected: `everySecretFieldDeclaresItsRole` fails (four fields without a role).
 
-- [ ] **Step 5: Die vier Rollen deklarieren**
+- [ ] **Step 5: Declare the four roles**
 
-Jeweils als letztes Argument des betroffenen `ConnectionField(...)`:
+Each as the last argument of the affected `ConnectionField(...)`:
 
 - `SSHField.password` → `secretRole: .credential`
 - `SSHField.passphrase` → `secretRole: .passphrase`
 - `S3Field.secretAccessKey` → `secretRole: .credential`
 - `WebDAVField.password` → `secretRole: .credential`
 
-An `SSHField.passphrase` den vorhandenen Kommentar („The passphrase stays
-OPTIONAL…") um einen Satz ergänzen: die Rolle sagt, dass die Passphrase die
-Anmeldung nicht identifiziert — die Schlüsseldatei tut das über `keyPath`.
+Add a sentence to the existing comment on `SSHField.passphrase` ("The passphrase stays
+OPTIONAL…"): the role says the passphrase does not identify the
+login — the key file does, via `keyPath`.
 
-- [ ] **Step 6: Grün bestätigen**
+- [ ] **Step 6: Confirm green**
 
 Run: `swift test --filter BackendDescriptor`
-Expected: PASS. Danach `swift build` (inkl. App-Target) ohne neue Warnungen.
+Expected: PASS. Then `swift build` (including the App target) with no new warnings.
 
 - [ ] **Step 7: Commit**
 
@@ -197,68 +197,68 @@ git commit -m "feat(core): declare what a secret field means for login identity"
 
 ---
 
-## Task 2: Merge-Schlüssel aus dem Schema
+## Task 2: Merge key from the schema
 
 **Files:**
-- Modify: `Sources/macSCPCore/Sessions/LoginMergePlanner.swift` (ganze Datei)
-- Modify: `Sources/MacSCPApp/LoginSetsSheet.swift:515-535` (Banner) und `:541-553` (Bestätigungstext)
+- Modify: `Sources/macSCPCore/Sessions/LoginMergePlanner.swift` (whole file)
+- Modify: `Sources/MacSCPApp/LoginSetsSheet.swift:515-535` (banner) and `:541-553` (confirmation text)
 - Test: `Tests/macSCPCoreTests/LoginMergePlannerTests.swift`
 
 **Interfaces:**
-- Consumes: `ConnectionField.secretRole` aus Task 1.
+- Consumes: `ConnectionField.secretRole` from Task 1.
 - Produces: `LoginMergeCandidate(kind: ConnectionKind, values: FieldValues,
   displayLabel: String, sessionIDs: [UUID])`. `LoginMergePlanner.candidates(
-  sessions:ignoredGroups:secrets:)` behält seine Signatur.
+  sessions:ignoredGroups:secrets:)` keeps its signature.
 
-**Warum App und Core in EINEM Task:** die Kandidatenform ist `public` und wird
-von `LoginSetsSheet` gelesen. Getrennt committet wäre `swift build` zwischen
-den beiden Tasks rot — die Hausregel ist ein sauberer Build inklusive
-App-Target an jedem Task-Ende.
+**Why App and Core in ONE task:** the candidate shape is `public` and is
+read by `LoginSetsSheet`. Committed separately, `swift build` would be red
+between the two tasks — house rule is a clean build including the
+App target at the end of every task.
 
-- [ ] **Step 1: Die bestehenden SSH-Tests übersetzen (rot)**
+- [ ] **Step 1: Translate the existing SSH tests (red)**
 
-Nur die drei weggefallenen Properties umlesen, **nichts an Eingaben, an
-`sessionIDs` oder an der Kandidatenzahl ändern**:
+Only re-read the three properties that dropped away, **change nothing about
+inputs, `sessionIDs`, or the candidate count**:
 
-| vorher | nachher |
+| before | after |
 |---|---|
 | `candidate.username == "deploy"` | `candidate.displayLabel == "deploy"` |
 | `candidate.authKind == .privateKey` | `candidate.values[SSHField.authKind] == "privateKey"` |
 | `candidate.keyPath == "/k1"` | `candidate.values[SSHField.keyPath] == "/k1"` |
 
-Muss darüber hinaus etwas angefasst werden, ist das ein **Befund** und gehört
-in den Task-Bericht, nicht stillschweigend weggeschrieben (Spec, Kriterium 4).
+Should anything beyond that need touching, that is a **finding** and
+belongs in the task report, not silently written away (spec, criterion 4).
 
-- [ ] **Step 2: Die neuen Tests schreiben (rot)**
+- [ ] **Step 2: Write the new tests (red)**
 
-Anfügen an `LoginMergePlannerTests`. Aufbau der bestehenden Tests kopieren:
-`InMemorySecretStore`, Sitzungen über die Fixtures, `#expect` auf
-`candidates.count` und `sessionIDs`.
+Append to `LoginMergePlannerTests`. Copy the shape of the existing tests:
+`InMemorySecretStore`, sessions via the fixtures, `#expect` on
+`candidates.count` and `sessionIDs`.
 
-| Test | Aufbau | Erwartung |
+| Test | Setup | Expectation |
 |---|---|---|
-| `twoS3SessionsSharingACredentialPairAreOneCandidate` | zwei `s3Session`, identische `StoredS3Config` bis auf `bucket`, **gleicher** Secret unter beiden Sitzungs-IDs | ein Kandidat, `kind == .s3`, `sessionIDs == [a.id, b.id]`, `displayLabel == "AKIA"`, `values[S3Field.accessKeyID] == "AKIA"` |
-| `twoS3SessionsWithDifferentSecretsAreNotACandidate` | wie oben, aber **verschiedene** Secrets | `candidates.isEmpty` |
-| `twoS3SessionsWithDifferentAccessKeyIDsAreNotACandidate` | gleicher Secret, verschiedene `accessKeyID` | `candidates.isEmpty` |
-| `twoWebDAVSessionsWithDifferentPasswordsAreNotACandidate` | zwei `webdavSession`, gleicher `username`, verschiedene Secrets | `candidates.isEmpty` — **der Test, den die `isRequired`-Ableitung nicht bestanden hätte** |
-| `twoWebDAVSessionsSharingAPasswordAreOneCandidate` | gleicher `username`, gleicher Secret | ein Kandidat, `kind == .webdav`, `displayLabel` == der Benutzername |
+| `twoS3SessionsSharingACredentialPairAreOneCandidate` | two `s3Session`, identical `StoredS3Config` except for `bucket`, **the same** secret under both session IDs | one candidate, `kind == .s3`, `sessionIDs == [a.id, b.id]`, `displayLabel == "AKIA"`, `values[S3Field.accessKeyID] == "AKIA"` |
+| `twoS3SessionsWithDifferentSecretsAreNotACandidate` | as above, but **different** secrets | `candidates.isEmpty` |
+| `twoS3SessionsWithDifferentAccessKeyIDsAreNotACandidate` | same secret, different `accessKeyID` | `candidates.isEmpty` |
+| `twoWebDAVSessionsWithDifferentPasswordsAreNotACandidate` | two `webdavSession`, same `username`, different secrets | `candidates.isEmpty` — **the test the `isRequired` derivation would not have passed** |
+| `twoWebDAVSessionsSharingAPasswordAreOneCandidate` | same `username`, same secret | one candidate, `kind == .webdav`, `displayLabel` == the user name |
 
-`webdavSession` hat **keinen** `username:`-Parameter — der Benutzername kommt
-über `config: StoredWebDAVConfig(baseURL:username:useNextcloudPath:)`. Dasselbe
-gilt für S3: `s3Session(config: StoredS3Config(...))`.
-| `anS3AndAnSSHSessionNeverShareACandidate` | eine `sshSession` und eine `s3Session`, **derselbe** Secret unter beiden IDs | `candidates.isEmpty` — der `kind` steht im Schlüssel |
-| `privateKeySessionsGroupWithoutReadingTheKeychain` | zwei `sshSession` mit `authKind: .privateKey`, gleichem `keyPath`, und ein `SecretStore`, dessen `password(for:)` den Test scheitern lässt | ein Kandidat; der Store wurde nie gelesen. **Form kopieren von** dem lesefeindlichen Store, den `agentSetResolvesWithoutKeychainRead` in `LoginResolverTests` benutzt (am Ende von `LoginMergePlannerTests.swift` steht bereits ein solcher Test-Double) |
-| `anonymousWebDAVSessionsAreNeverACandidate` | zwei `webdavSession` mit leerem `username` und **ohne** Keychain-Eintrag | `candidates.isEmpty` |
+`webdavSession` has **no** `username:` parameter — the user name comes
+via `config: StoredWebDAVConfig(baseURL:username:useNextcloudPath:)`. The same
+applies to S3: `s3Session(config: StoredS3Config(...))`.
+| `anS3AndAnSSHSessionNeverShareACandidate` | one `sshSession` and one `s3Session`, **the same** secret under both IDs | `candidates.isEmpty` — `kind` sits in the key |
+| `privateKeySessionsGroupWithoutReadingTheKeychain` | two `sshSession` with `authKind: .privateKey`, the same `keyPath`, and a `SecretStore` whose `password(for:)` fails the test | one candidate; the store was never read. **Copy the shape from** the read-hostile store `agentSetResolvesWithoutKeychainRead` uses in `LoginResolverTests` (a matching test double already sits at the end of `LoginMergePlannerTests.swift`) |
+| `anonymousWebDAVSessionsAreNeverACandidate` | two `webdavSession` with an empty `username` and **no** Keychain entry | `candidates.isEmpty` |
 
-- [ ] **Step 3: Rot bestätigen**
+- [ ] **Step 3: Confirm red**
 
 Run: `swift test --filter LoginMergePlanner`
-Expected: Kompilierfehler (die neuen Properties existieren nicht) — das ist der
-rote Zustand für diesen Task.
+Expected: compile errors (the new properties do not exist) — that is the
+red state for this task.
 
-- [ ] **Step 4: Kandidat und Planner neu schreiben**
+- [ ] **Step 4: Rewrite the candidate and the planner**
 
-`LoginMergePlanner.swift` vollständig ersetzen:
+Replace `LoginMergePlanner.swift` in full:
 
 ```swift
 import Foundation
@@ -397,32 +397,32 @@ public enum LoginMergePlanner {
 }
 ```
 
-- [ ] **Step 5: Die App-Lesestellen nachziehen**
+- [ ] **Step 5: Follow through on the App read sites**
 
-In `LoginSetsSheet.swift`: `candidate.username` → `candidate.displayLabel` im
-Banner (`mergeBanner`) und `mergeCandidate.username` → `mergeCandidate.displayLabel`
-in `mergeConfirmMessage` und `applyMerge()`. Der Aufruf
-`suggestedSetName(forUsername:)` bleibt in diesem Task unverändert und bekommt
-`displayLabel` übergeben; umbenannt wird er in Task 3.
+In `LoginSetsSheet.swift`: `candidate.username` → `candidate.displayLabel` in
+the banner (`mergeBanner`) and `mergeCandidate.username` → `mergeCandidate.displayLabel`
+in `mergeConfirmMessage` and `applyMerge()`. The call
+`suggestedSetName(forUsername:)` stays unchanged in this task and gets
+`displayLabel` passed in; it is renamed in Task 3.
 
-Am Bannertext nichts ändern: „%lld connections use the same login “%@”." gilt
-für jedes Protokoll wörtlich weiter.
+Leave the banner text unchanged: "%lld connections use the same login "%@"." still
+holds verbatim for every protocol.
 
-- [ ] **Step 6: Grün bestätigen**
+- [ ] **Step 6: Confirm green**
 
 Run: `swift test --filter LoginMergePlanner`
 Expected: PASS.
 Run: `swift build`
-Expected: sauber inklusive App-Target.
+Expected: clean, including the App target.
 
-- [ ] **Step 7: Den Charakterisierungstest zur Zusage umschreiben**
+- [ ] **Step 7: Rewrite the characterization test into a commitment**
 
 `nonSSHSessionsSharingASecretAreStillOfferedAsAMergeCandidate` in
-`LoginMergePlannerTests.swift` ist jetzt falsch. **Nicht löschen** — umschreiben
-zu `twoS3SessionsSharingACredentialPairMergeIntoAnS3Set` (oder in Step 2 bereits
-so angelegt und hier nur den alten entfernen, wenn er inhaltlich vollständig
-darin aufgeht). Der Doc-Kommentar sagt künftig, was gilt, und nennt M24 als die
-Stelle, an der es sich geändert hat.
+`LoginMergePlannerTests.swift` is now wrong. **Do not delete** — rewrite
+into `twoS3SessionsSharingACredentialPairMergeIntoAnS3Set` (or already lay
+it out that way in Step 2 and here just remove the old one, if it is fully
+subsumed in substance). The doc comment henceforth states what now holds and
+names M24 as the point where it changed.
 
 - [ ] **Step 8: Commit**
 
@@ -433,40 +433,40 @@ git commit -m "fix(core): derive the merge key from the credential schema"
 
 ---
 
-## Task 3: `applyMerge` baut ein Set des richtigen Protokolls
+## Task 3: `applyMerge` builds a set of the right protocol
 
 **Files:**
-- Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift:597-644` (`applyMerge`) und `:651-659` (`suggestedSetName`)
-- Modify: `Sources/MacSCPApp/LoginSetsSheet.swift` (Aufrufe von `suggestedSetName`)
+- Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift:597-644` (`applyMerge`) and `:651-659` (`suggestedSetName`)
+- Modify: `Sources/MacSCPApp/LoginSetsSheet.swift` (calls to `suggestedSetName`)
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: `LoginMergeCandidate` aus Task 2.
-- Produces: `suggestedSetName(forLabel:) -> String` (umbenannt von
-  `forUsername:`); `applyMerge(_:name:) -> LoginSet?` unverändert in der
-  Signatur.
+- Consumes: `LoginMergeCandidate` from Task 2.
+- Produces: `suggestedSetName(forLabel:) -> String` (renamed from
+  `forUsername:`); `applyMerge(_:name:) -> LoginSet?` unchanged in
+  signature.
 
-- [ ] **Step 1: Die Tests schreiben (rot)**
+- [ ] **Step 1: Write the tests (red)**
 
-Anfügen an `SessionListViewModelTests`; Aufbau der vorhandenen Merge-Tests
-(um Zeile 1880) kopieren.
+Append to `SessionListViewModelTests`; copy the shape of the existing
+merge tests (around line 1880).
 
-| Test | Aufbau | Erwartung |
+| Test | Setup | Expectation |
 |---|---|---|
-| `mergingTwoS3SessionsCreatesAnS3SetCarryingTheAccessKeyID` | zwei `s3Session` mit gleichem `accessKeyID` und gleichem Secret, gespeichert; `mergeCandidates().first!` → `applyMerge(_:name: "acct")` | das zurückgegebene Set hat `kind == .s3` und trägt den `accessKeyID`; beide Sitzungen zeigen mit `loginSetID` darauf |
-| `mergingCarriesTheSecretOntoTheSetBeforeDeletingTheSessionSlots` | wie oben | unter `set.id` liegt genau der geteilte Secret; unter beiden Sitzungs-IDs liegt keiner mehr |
-| `applyMergeRefusesACandidateWhoseSessionsAreOfMixedKind` | einen `LoginMergeCandidate` **von Hand** bauen: `kind: .s3`, aber `sessionIDs` = eine S3- **und** eine SSH-Sitzung | Rückgabe `nil`; **kein** Set angelegt (`loginSets` unverändert), **kein** Secret gelöscht, beide Sitzungen unverändert. Der Riegel ist über den Planner nicht erreichbar — deshalb wird der Kandidat direkt konstruiert |
+| `mergingTwoS3SessionsCreatesAnS3SetCarryingTheAccessKeyID` | two `s3Session` with the same `accessKeyID` and the same secret, stored; `mergeCandidates().first!` → `applyMerge(_:name: "acct")` | the returned set has `kind == .s3` and carries the `accessKeyID`; both sessions point at it via `loginSetID` |
+| `mergingCarriesTheSecretOntoTheSetBeforeDeletingTheSessionSlots` | as above | under `set.id` sits exactly the shared secret; under both session IDs sits none anymore |
+| `applyMergeRefusesACandidateWhoseSessionsAreOfMixedKind` | build a `LoginMergeCandidate` **by hand**: `kind: .s3`, but `sessionIDs` = one S3 **and** one SSH session | returns `nil`; **no** set created (`loginSets` unchanged), **no** secret deleted, both sessions unchanged. The guard is unreachable through the planner — hence the candidate is built directly |
 
-- [ ] **Step 2: Rot bestätigen**
+- [ ] **Step 2: Confirm red**
 
 Run: `swift test --filter SessionListViewModel`
-Expected: die drei neuen Tests scheitern (`applyMerge` baut ein `.ssh`-Set).
+Expected: the three new tests fail (`applyMerge` builds a `.ssh` set).
 
-- [ ] **Step 3: `applyMerge` umbauen**
+- [ ] **Step 3: Rebuild `applyMerge`**
 
-Den Rumpf bis einschließlich der Set-Erzeugung ersetzen; **alles ab dem
-Secret-Transport bleibt wörtlich, wie es ist** (Quelle, Rollback, Löschen der
-Sitzungs-Slots — dieser Teil war nie das Problem):
+Replace the body up to and including set creation; **everything from the
+secret transport onward stays verbatim, as is** (source, rollback, deleting
+the session slots — this part was never the problem):
 
 ```swift
     public func applyMerge(_ candidate: LoginMergeCandidate, name: String) -> LoginSet? {
@@ -490,19 +490,19 @@ Sitzungs-Slots — dieser Teil war nie das Problem):
         } catch {
 ```
 
-- [ ] **Step 4: `suggestedSetName` umbenennen**
+- [ ] **Step 4: Rename `suggestedSetName`**
 
-`forUsername username: String` → `forLabel label: String`, Rumpf unverändert
-(nur die lokale Variable umbenennen). Doc-Kommentar: der Name kommt aus dem
-`displayLabel` des Kandidaten und ist bei S3 eine Access Key ID, kein
-Benutzername. Beide Aufrufstellen in `LoginSetsSheet.swift` nachziehen.
+`forUsername username: String` → `forLabel label: String`, body unchanged
+(only rename the local variable). Doc comment: the name comes from the
+candidate's `displayLabel` and for S3 is an access key ID, not a
+user name. Follow through on both call sites in `LoginSetsSheet.swift`.
 
-- [ ] **Step 5: Grün bestätigen**
+- [ ] **Step 5: Confirm green**
 
 Run: `swift test --filter SessionListViewModel`
 Expected: PASS.
 Run: `swift build`
-Expected: sauber inklusive App-Target.
+Expected: clean, including the App target.
 
 - [ ] **Step 6: Commit**
 
@@ -513,39 +513,39 @@ git commit -m "fix(core): merge into a login set of the candidate's own protocol
 
 ---
 
-## Task 4: Der Jump-Host-Riegel
+## Task 4: The jump-host guard
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/JumpSessionEligibility.swift:9-15`
-- Modify: `Sources/macSCPCore/Sessions/LoginResolver.swift:5-18` (Fehlerfall) und `:183-213` (`resolveJump`)
-- Modify: `Sources/MacSCPApp/ContentView.swift:2166` und `:2614` (je ein `catch`-Arm)
-- Modify: `Sources/MacSCPApp/ConnectionFormView.swift:231` (ein `catch`-Arm)
+- Modify: `Sources/macSCPCore/Sessions/LoginResolver.swift:5-18` (error case) and `:183-213` (`resolveJump`)
+- Modify: `Sources/MacSCPApp/ContentView.swift:2166` and `:2614` (one `catch` arm each)
+- Modify: `Sources/MacSCPApp/ConnectionFormView.swift:231` (one `catch` arm)
 - Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 - Test: `Tests/macSCPCoreTests/JumpSessionEligibilityTests.swift`, `Tests/macSCPCoreTests/LoginResolverTests.swift`
 
 **Interfaces:**
 - Produces: `LoginResolveError.jumpSessionNotSSH`.
 
-- [ ] **Step 1: Die Tests schreiben (rot)**
+- [ ] **Step 1: Write the tests (red)**
 
-| Test | Datei | Aufbau | Erwartung |
+| Test | File | Setup | Expectation |
 |---|---|---|---|
-| `onlySSHSessionsAreOfferedAsJumpHosts` | `JumpSessionEligibilityTests` | eine `sshSession` und eine `s3Session` | `eligible == [ssh]`. **Das ist der umgeschriebene** `nonSSHSessionsAreStillOfferedAsJumpHosts` — nicht löschen, umschreiben, Doc-Kommentar auf die neue Zusage drehen |
-| `resolveJumpRefusesANonSSHReferencedSession` | `LoginResolverTests` | `JumpSpec` mit `sessionID` = die ID einer `s3Session`, diese in `sessions` | wirft `LoginResolveError.jumpSessionNotSSH` |
-| `resolveJumpStillRefusesAMissingSessionFirst` | `LoginResolverTests` | `sessionID` zeigt auf eine **nicht** in `sessions` enthaltene ID | wirft `.missingJumpSession`, nicht `.jumpSessionNotSSH` — pinnt die Reihenfolge der Guards |
-| `resolveJumpAcceptsAnSSHReferencedSession` | `LoginResolverTests` | bestehender Positivfall | unverändert grün (Regressionsklammer) |
+| `onlySSHSessionsAreOfferedAsJumpHosts` | `JumpSessionEligibilityTests` | one `sshSession` and one `s3Session` | `eligible == [ssh]`. **This is the rewritten** `nonSSHSessionsAreStillOfferedAsJumpHosts` — do not delete, rewrite, turn the doc comment to the new commitment |
+| `resolveJumpRefusesANonSSHReferencedSession` | `LoginResolverTests` | `JumpSpec` with `sessionID` = the ID of an `s3Session`, that one in `sessions` | throws `LoginResolveError.jumpSessionNotSSH` |
+| `resolveJumpStillRefusesAMissingSessionFirst` | `LoginResolverTests` | `sessionID` points at an ID **not** contained in `sessions` | throws `.missingJumpSession`, not `.jumpSessionNotSSH` — pins the guard order |
+| `resolveJumpAcceptsAnSSHReferencedSession` | `LoginResolverTests` | existing positive case | stays green unchanged (regression clamp) |
 
-Aufbau der `JumpSpec`-Konstruktion aus den vorhandenen `resolveJump`-Tests in
-`LoginResolverTests` kopieren.
+Copy the `JumpSpec` construction shape from the existing `resolveJump`
+tests in `LoginResolverTests`.
 
-- [ ] **Step 2: Rot bestätigen**
+- [ ] **Step 2: Confirm red**
 
 Run: `swift test --filter "JumpSessionEligibility|LoginResolver"`
-Expected: die ersten beiden neuen Tests scheitern.
+Expected: the first two new tests fail.
 
-- [ ] **Step 3: Den Fehlerfall anlegen**
+- [ ] **Step 3: Create the error case**
 
-In `LoginResolver.swift`, in `LoginResolveError` nach `jumpChainNotSupported`:
+In `LoginResolver.swift`, in `LoginResolveError` after `jumpChainNotSupported`:
 
 ```swift
     /// A jump's `sessionID` points at a session that is not an SSH
@@ -559,7 +559,7 @@ In `LoginResolver.swift`, in `LoginResolveError` nach `jumpChainNotSupported`:
     case jumpSessionNotSSH
 ```
 
-- [ ] **Step 4: Den Picker filtern**
+- [ ] **Step 4: Filter the picker**
 
 ```swift
         sessions
@@ -567,14 +567,14 @@ In `LoginResolver.swift`, in `LoginResolveError` nach `jumpChainNotSupported`:
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 ```
 
-Den Doc-Kommentar des Typs um den `kind`-Grund ergänzen (nur SSH tunnelt) und
-darauf hinweisen, dass der Filter allein nicht reicht — der Riegel im Resolver
-deckt bereits gespeicherte Referenzen ab.
+Add the `kind` rationale to the type's doc comment (only SSH tunnels) and
+note that the filter alone is not enough — the guard in the resolver
+already covers references already stored.
 
-- [ ] **Step 5: Den Riegel setzen**
+- [ ] **Step 5: Set the guard**
 
-In `resolveJump(spec:sets:secrets:sessions:referencingSessionID:)`, **nach**
-dem `missingJumpSession`-Guard und **vor** dem Ketten-Guard:
+In `resolveJump(spec:sets:secrets:sessions:referencingSessionID:)`, **after**
+the `missingJumpSession` guard and **before** the chain guard:
 
 ```swift
         // The kind check comes before the chain check because it is the more
@@ -587,28 +587,28 @@ dem `missingJumpSession`-Guard und **vor** dem Ketten-Guard:
         }
 ```
 
-- [ ] **Step 6: Die drei `catch`-Stellen und die L10n**
+- [ ] **Step 6: The three `catch` sites and the L10n**
 
-Neuer Schlüssel `form.jump.session.notSSH`, englischer Default:
-`"Only SSH connections can be used as a jump host."` Der Schlüssel muss in
-**allen vier** Katalogen stehen (DE/FR/PL übersetzt).
+New key `form.jump.session.notSSH`, English default:
+`"Only SSH connections can be used as a jump host."` The key must sit in
+**all four** catalogs (DE/FR/PL translated).
 
-In `ContentView.swift` an beiden Stellen einen Arm nach
-`catch LoginResolveError.jumpChainNotSupported` einfügen, der Form der
-Nachbararme folgend (`form.showFailure(message:field: .jumpSession)`).
+In `ContentView.swift` at both sites, insert an arm after
+`catch LoginResolveError.jumpChainNotSupported`, following the shape
+of the neighboring arms (`form.showFailure(message:field: .jumpSession)`).
 
-In `ConnectionFormView.swift` einen Arm vor dem generischen `catch` einfügen —
-**ohne ihn fiele der neue Fehler in den Fallback** „The connection used as jump
-host no longer exists.", der hier die Unwahrheit sagen würde.
+In `ConnectionFormView.swift` insert an arm before the generic `catch` —
+**without it the new error would fall into the fallback** "The connection used as jump
+host no longer exists.", which would say the untrue thing here.
 
-- [ ] **Step 7: Grün bestätigen**
+- [ ] **Step 7: Confirm green**
 
 Run: `swift test --filter "JumpSessionEligibility|LoginResolver"`
 Expected: PASS.
 Run: `swift test --filter Localizable`
-Expected: PASS (Parität über alle vier Kataloge).
+Expected: PASS (parity across all four catalogs).
 Run: `swift build`
-Expected: sauber inklusive App-Target.
+Expected: clean, including the App target.
 
 - [ ] **Step 8: Commit**
 
@@ -619,30 +619,30 @@ git commit -m "fix(core): refuse a non-SSH session as a jump host"
 
 ---
 
-## Task 5: `delete` schreibt keinen Platzhalter-Host
+## Task 5: `delete` does not write a placeholder host
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift:230-278`
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: nichts aus früheren Tasks. `JumpRestoreResult` bleibt unverändert.
+- Consumes: nothing from earlier tasks. `JumpRestoreResult` stays unchanged.
 
-- [ ] **Step 1: Die Tests schreiben (rot)**
+- [ ] **Step 1: Write the tests (red)**
 
-| Test | Aufbau | Erwartung |
+| Test | Setup | Expectation |
 |---|---|---|
-| `deletingANonSSHBastionRestoresNothing` | eine `s3Session` als Bastion, eine `sshSession` mit `jump.sessionID` darauf; beide gespeichert; `delete(bucket)` | `result.restored == 0`; der `JumpSpec` der verweisenden Sitzung ist **unverändert** (`sessionID` steht noch, `host` ist **nicht** `""`); die S3-Sitzung ist gelöscht |
-| `deletingAnSSHBastionStillRestores` | bestehender Positivfall | unverändert grün — die Regressionsklammer für den Guard |
+| `deletingANonSSHBastionRestoresNothing` | an `s3Session` as bastion, an `sshSession` with `jump.sessionID` pointing at it; both stored; `delete(bucket)` | `result.restored == 0`; the referencing session's `JumpSpec` is **unchanged** (`sessionID` still there, `host` is **not** `""`); the S3 session is deleted |
+| `deletingAnSSHBastionStillRestores` | existing positive case | stays green unchanged — the regression clamp for the guard |
 
-- [ ] **Step 2: Rot bestätigen**
+- [ ] **Step 2: Confirm red**
 
 Run: `swift test --filter SessionListViewModel`
-Expected: `deletingANonSSHBastionRestoresNothing` scheitert (`host` ist `""`).
+Expected: `deletingANonSSHBastionRestoresNothing` fails (`host` is `""`).
 
-- [ ] **Step 3: Den Guard setzen**
+- [ ] **Step 3: Set the guard**
 
-In `delete(_:)`, direkt nach `let affected = sessionsUsingAsJump(session.id)`:
+In `delete(_:)`, right after `let affected = sessionsUsingAsJump(session.id)`:
 
 ```swift
         // Restoration copies the deleted session's host, port and login into
@@ -660,9 +660,9 @@ In `delete(_:)`, direkt nach `let affected = sessionsUsingAsJump(session.id)`:
         let affected = session.kind == .ssh ? sessionsUsingAsJump(session.id) : []
 ```
 
-(Die bestehende Zeile ersetzen, nicht eine zweite daneben setzen.)
+(Replace the existing line, do not put a second one beside it.)
 
-- [ ] **Step 4: Grün bestätigen**
+- [ ] **Step 4: Confirm green**
 
 Run: `swift test --filter SessionListViewModel`
 Expected: PASS.
@@ -676,72 +676,72 @@ git commit -m "fix(core): do not restore a jump from a non-SSH bastion"
 
 ---
 
-## Task 6: Meilenstein-Abschluss
+## Task 6: Milestone close
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-08-m24-abschluss.md`
-- Modify: ggf. `Sources/macSCPCore/Sessions/StoredSession.swift` (siehe Step 4)
+- Modify: possibly `Sources/macSCPCore/Sessions/StoredSession.swift` (see Step 4)
 
-- [ ] **Step 1: Die volle Suite**
+- [ ] **Step 1: The full suite**
 
 ```bash
 swift build
 swift test
 ```
-Expected: sauber, keine neuen Warnungen; Testzahl **über** dem Stand vor M24
-(1571) — kein Netto-Verlust an Testfunktionen. Zahl notieren.
+Expected: clean, no new warnings; test count **above** the pre-M24 baseline
+(1571) — no net loss of test functions. Note the number.
 
-- [ ] **Step 2: Die gegateten Suiten**
+- [ ] **Step 2: The gated suites**
 
-Das Rig aus dem **Haupt-Checkout** starten, nie aus einem Worktree:
+Start the rig from the **main checkout**, never from a worktree:
 
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
 ```
 
-Dann:
+Then:
 ```bash
 MACSCP_ITEST=1 swift test
 MACSCP_KEYCHAIN=1 swift test --filter Keychain
 ```
-Expected: beide grün. Bleibt ein Lauf bei 0 % CPU stehen, ist das der seit M20
-bekannte Hänger — abbrechen und neu starten, im Bericht vermerken, **nicht**
-als M24-Befund zählen.
+Expected: both green. If a run stalls at 0% CPU, that is the hang known
+since M20 — abort and restart, note it in the report, do **not**
+count it as an M24 finding.
 
-- [ ] **Step 3: Die Kataloge**
+- [ ] **Step 3: The catalogs**
 
 ```bash
 for f in Sources/MacSCPApp/Resources/*.lproj/Localizable.strings Sources/macSCPCore/Resources/*.lproj/Localizable.strings; do plutil -lint "$f"; done
 ```
-Expected: für jede Datei `OK`.
+Expected: `OK` for every file.
 
-- [ ] **Step 4: Die vier Accessoren prüfen (Ergebnis offen)**
+- [ ] **Step 4: Check the four accessors (result open)**
 
 ```bash
 grep -rn "\.host\b\|\.port\b\|\.username\b\|\.authKind\b" Sources/ --include=*.swift | grep -v "SSHFieldSchema\|StoredSSHConfig\|ssh\?\."
 ```
 
-Jeden verbleibenden Leser von `StoredSession.host`/`port`/`username`/`authKind`
-danach beurteilen, ob er SSH-geschützt ist. **Sind alle geschützt, die vier
-Accessoren löschen** und die Suite erneut fahren. Sind sie es nicht, die
-ungeschützten Leser im Abschlussbericht **namentlich** auflisten und die
-Accessoren stehen lassen. Beides ist ein zulässiges Ergebnis — die Spec sagt
-ausdrücklich, dass hier nichts zugesagt wurde.
+Judge every remaining reader of `StoredSession.host`/`port`/`username`/`authKind`
+by whether it is SSH-guarded. **If all are guarded, delete the four
+accessors** and run the suite again. If they are not, list the
+unguarded readers **by name** in the closing report and leave the
+accessors in place. Either is a valid outcome — the spec explicitly
+says nothing was committed here.
 
-- [ ] **Step 5: Den Abschlussbericht schreiben**
+- [ ] **Step 5: Write the closing report**
 
-`docs/superpowers/specs/2026-08-08-m24-abschluss.md`, Form von
-`2026-08-07-m23-abschluss.md` kopieren. Muss enthalten:
+`docs/superpowers/specs/2026-08-08-m24-abschluss.md`, copy the shape of
+`2026-08-07-m23-abschluss.md`. Must contain:
 
-- Verifikation zum Abschluss (Testzahlen, gegatete Läufe, Kataloge)
-- Die acht Erfolgskriterien aus der Spec mit Ergebnis — jedes mit dem Beleg,
-  nicht mit einer Behauptung
-- Das Ergebnis von Step 4
-- Die drei Release-Notes-Punkte aus der Spec, ergänzt um alles, was während der
-  Umsetzung dazukam
-- Jeden Befund aus Task 2, Step 1 (unzulässige Testanpassungen)
-- Was offen bleibt: der Testsuite-Hänger, verwaiste Jump-Keychain-Slots, die
-  acht toten Form-Shims
+- Closing verification (test counts, gated runs, catalogs)
+- The eight success criteria from the spec, each with its result — each with the evidence,
+  not with a claim
+- The result of Step 4
+- The three release-notes points from the spec, augmented with anything that
+  came up during implementation
+- Every finding from Task 2, Step 1 (impermissible test adjustments)
+- What remains open: the test-suite hang, orphaned jump Keychain slots, the
+  eight dead form shims
 
 - [ ] **Step 6: Commit**
 
@@ -750,28 +750,28 @@ git add docs/superpowers/specs/2026-08-08-m24-abschluss.md
 git commit -m "docs(m24): record the milestone close"
 ```
 
-- [ ] **Step 7: Push NICHT ausführen**
+- [ ] **Step 7: Do NOT push**
 
-Der Push erfolgt ausschließlich auf ausdrückliche Anordnung des Maintainers.
-Im Bericht vermerken, wie viele Commits unversendet auf `develop` liegen.
+Push happens only on explicit order from the maintainer.
+Note in the report how many commits sit unpushed on `develop`.
 
 ---
 
-## Selbstreview des Plans
+## Plan self-review
 
-**Spec-Abdeckung.** Alle acht Erfolgskriterien haben einen Task: 1 → T3, 2 →
+**Spec coverage.** All eight success criteria have a task: 1 → T3, 2 →
 T2, 3 → T3, 4 → T2/Step 1, 5 → T2 (`privateKeySessionsGroupWithoutReadingTheKeychain`),
-6 → T4, 7 → T5, 8 → T2/Step 7 und T4/Step 1. `SecretRole` → T1. Die
-Nicht-Migration ist eine Unterlassung und braucht keinen Task; dass sie
-beabsichtigt ist, steht im Kommentar aus T5/Step 3.
+6 → T4, 7 → T5, 8 → T2/Step 7 and T4/Step 1. `SecretRole` → T1. The
+non-migration is an omission and needs no task; that it is
+intentional stands in the comment from T5/Step 3.
 
-**Typkonsistenz.** `LoginMergeCandidate` wird in T2 mit
-`(kind:values:displayLabel:sessionIDs:)` definiert und in T3
-(`candidate.values`, `candidate.kind`) sowie in T2/Step 5
-(`candidate.displayLabel`) genau so gelesen. `suggestedSetName(forLabel:)` wird
-in T3 umbenannt und nur dort aufgerufen. `SecretRole` wird in T1 definiert und
-in T2 als `secretField.secretRole != .passphrase` gelesen.
+**Type consistency.** `LoginMergeCandidate` is defined in T2 with
+`(kind:values:displayLabel:sessionIDs:)` and is read in T3
+(`candidate.values`, `candidate.kind`) and in T2/Step 5
+(`candidate.displayLabel`) exactly the same way. `suggestedSetName(forLabel:)` is
+renamed in T3 and called only there. `SecretRole` is defined in T1 and
+read in T2 as `secretField.secretRole != .passphrase`.
 
-**Eine bewusste Abweichung von der Skill-Vorgabe:** Testcode steht als Tabelle
-statt als Quelltext, mit Zeiger auf die zu kopierende Form. Begründung oben im
-eigenen Abschnitt.
+**One deliberate deviation from the skill's prescription:** test code stands
+as a table instead of as source, with a pointer to the shape to copy. Rationale
+above in its own section.

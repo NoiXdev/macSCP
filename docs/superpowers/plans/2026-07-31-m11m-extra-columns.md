@@ -1,10 +1,10 @@
-# M11m — Zusätzliche Spalten: Implementierungsplan
+# M11m — Extra Columns: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** Zuschaltbare Spalten Rechte/Besitzer/Gruppe/Typ in der Dateiliste, in den Einstellungen ein-/ausschaltbar, jede sortierbar.
+**Goal:** Toggleable permissions/owner/group/type columns in the file list, switchable on/off in settings, each sortable.
 
-**Architecture:** `RemoteFileItem` bekommt `owner`/`group` (aus `longname` geparst, numerischer/`nil`-Rückfall); ein `FileColumn`-Modell + persistierte Sichtbarkeit im `SettingsStore`; `FileSortKey` (M11l) um die neuen Schlüssel erweitert; die Tabelle baut ihre Spalten dynamisch aus der Einstellung.
+**Architecture:** `RemoteFileItem` gets `owner`/`group` (parsed from `longname`, numeric/`nil` fallback); a `FileColumn` model + persisted visibility in `SettingsStore`; `FileSortKey` (M11l) extended with the new keys; the table builds its columns dynamically from the setting.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftUI + AppKit, Swift Testing.
 
@@ -12,105 +12,105 @@
 
 ## Global Constraints
 
-- Code und Kommentare **nur Englisch**; Anzeigetexte über die Kataloge
-  (EN Default + DE, typografische Anführungszeichen im Deutschen).
-- Besitzer/Gruppe: `longname`-Namen ZUERST, dann numerische `uidgid`, dann
-  `nil` — **nie eine geratene Falschanzeige**. Der Parser ist rein/testbar
-  und defensiv.
-- Kein zusätzlicher Server-Roundtrip zur Namensauflösung.
-- `name` ist immer sichtbar; `size`/`modified` standardmäßig an;
-  `permissions`/`owner`/`group`/`type` standardmäßig aus.
-- Vorwärtskompatibilität: altes `settings.json` ⇒ Standard-Spalten.
-- Recycling-Hygiene in den Zellen (Inhalt je Wiederverwendung setzen).
-- M5g-Optik der drei bestehenden Spalten unverändert.
-- `swift build` immer aus SAUBEREM Build-Verzeichnis prüfen.
-- Tests: Swift Testing, TDD. Baseline: **847 Tests / 59 Suiten**.
-- Kein Release, kein Merge auf `main`, kein Tag.
+- Code and comments **English only**; display text via the catalogs
+  (EN default + DE, typographic quotation marks in German).
+- Owner/group: `longname` names FIRST, then numeric `uidgid`, then
+  `nil` — **never a guessed, wrong display**. The parser is
+  pure/testable and defensive.
+- No extra server round trip for name resolution.
+- `name` is always visible; `size`/`modified` on by default;
+  `permissions`/`owner`/`group`/`type` off by default.
+- Forward compatibility: old `settings.json` ⇒ default columns.
+- Recycling hygiene in the cells (set content on every reuse).
+- M5g look of the three existing columns unchanged.
+- Always check `swift build` from a CLEAN build directory.
+- Tests: Swift Testing, TDD. Baseline: **847 tests / 59 suites**.
+- No release, no merge to `main`, no tag.
 
 ---
 
-### Task 1: Modell, longname-Parser, Mapper, Spalten-/Sortier-/Settings-Kern (Core)
+### Task 1: Model, longname parser, mapper, column/sort/settings core (Core)
 
 **Files:**
-- Modify: `Sources/macSCPCore/RemoteFS/RemoteFileItem.swift` (owner/group), `Sources/macSCPCore/SSH/SFTPAttributeMapper.swift`, `Sources/macSCPCore/SSH/CitadelFileSystem.swift` (longname durchreichen), `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift` (owner/group aus stat), `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (FileSortKey-Fälle), `Sources/macSCPCore/Settings/SettingsStore.swift` (sichtbare Spalten)
-- Create: `Sources/macSCPCore/Presentation/FileColumn.swift` (FileColumn + Formatierer + longname-Parser, oder aufgeteilt)
-- Test: `Tests/macSCPCoreTests/` — neue Dateien für Parser/Formatierer/Spalten, Erweiterungen an Mapper-/VM-/Settings-/Citadel-ITests
+- Modify: `Sources/macSCPCore/RemoteFS/RemoteFileItem.swift` (owner/group), `Sources/macSCPCore/SSH/SFTPAttributeMapper.swift`, `Sources/macSCPCore/SSH/CitadelFileSystem.swift` (pass longname through), `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift` (owner/group from stat), `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (FileSortKey cases), `Sources/macSCPCore/Settings/SettingsStore.swift` (visible columns)
+- Create: `Sources/macSCPCore/Presentation/FileColumn.swift` (FileColumn + formatters + longname parser, or split)
+- Test: `Tests/macSCPCoreTests/` — new files for parser/formatters/columns, extensions to the mapper/VM/settings/Citadel ITests
 
 **Interfaces:**
-- Consumes: `RemoteFileItem`, Citadels `SFTPPathComponent.longname`/`.attributes.uidgid`, `PosixPermissions` (M7b), `FileSortKey` (M11l).
-- Produces (T2 verlässt sich wörtlich darauf):
-  - `RemoteFileItem.owner: String?`, `.group: String?` (memberwise init erweitern, Defaults `nil`)
-  - `public enum FileColumn: String, Sendable, CaseIterable { case name, size, modified, permissions, owner, group, type }` mit `isToggleable`/`defaultVisible`
+- Consumes: `RemoteFileItem`, Citadel's `SFTPPathComponent.longname`/`.attributes.uidgid`, `PosixPermissions` (M7b), `FileSortKey` (M11l).
+- Produces (T2 relies on this literally):
+  - `RemoteFileItem.owner: String?`, `.group: String?` (extend memberwise init, defaults `nil`)
+  - `public enum FileColumn: String, Sendable, CaseIterable { case name, size, modified, permissions, owner, group, type }` with `isToggleable`/`defaultVisible`
   - `public enum LongnameParser { public static func ownerGroup(from longname: String) -> (owner: String, group: String)? }`
-  - Formatierer (rein): `FileColumn.text(for: RemoteFileItem) -> String?` bzw. je Spalte (Rechte rwx, Typ je kind — die lokalisierten Typ-/Platzhalter-Strings kommen aus der App-Schicht; Core liefert die rohen Bausteine)
-  - `FileSortKey` erweitert um `.permissions/.owner/.group/.type`
-  - `SettingsStore.visibleColumns: [FileColumn]` (oder Set), persistiert, vorwärtskompatibel
+  - Formatters (pure): `FileColumn.text(for: RemoteFileItem) -> String?` or per column (rwx permissions, type per kind — the localized type/placeholder strings come from the App layer; Core provides the raw building blocks)
+  - `FileSortKey` extended with `.permissions/.owner/.group/.type`
+  - `SettingsStore.visibleColumns: [FileColumn]` (or Set), persisted, forward compatible
 
-- [x] **Step 1: Failing tests für `LongnameParser`.** Standard-`ls -l`-Zeile
+- [x] **Step 1: Failing tests for `LongnameParser`.** Standard `ls -l` line
   `-rw-r--r-- 1 www-data staff 2454 Jul 30 14:22 config.php` ⇒
-  `(owner: "www-data", group: "staff")`; Mehrfach-Whitespace; Besitzer mit
-  Sonderzeichen; zu kurze/kaputte Zeile ⇒ `nil`; Ordner-Zeile `drwxr-xr-x`.
-- [x] **Step 2: Rot, dann Parser implementieren** (defensiv: nach den ersten
-  beiden Feldern — Perms, Linkzahl — kommen Besitzer und Gruppe; tolerant
-  gegen Whitespace; unsicher ⇒ `nil`).
-- [x] **Step 3: Modell + Mapper.** `owner`/`group` auf `RemoteFileItem`;
-  `SFTPAttributeMapper.item` bekommt `longname`/`uidgid` und setzt
-  owner/group nach der Rangfolge (longname-Name → numerisch → nil). Tests:
-  longname gewinnt; ohne longname numerisch; ohne beides nil.
-- [x] **Step 4: Citadel + Local durchreichen.** readdir-Pfad reicht
-  `component.longname` und `component.attributes.uidgid` an den Mapper; der
-  Einzel-`stat`-Pfad nur `uidgid` (kein longname). `LocalFileSystem` füllt
-  owner/group aus `stat` (getpwuid/getgrgid), numerischer Rückfall.
-- [x] **Step 5: `FileColumn` + Formatierer + `FileSortKey`-Fälle** mit Tests
-  (Rechte rwx, Typ je kind, Besitzer/Gruppe/nil; Sortier-Fälle inkl.
-  Name-Tiebreaker und nil-Position; die M11l-Regel „Tiebreaker bleibt
-  aufsteigend" gilt weiter).
-- [x] **Step 6: `SettingsStore.visibleColumns`** persistiert +
-  vorwärtskompatibel (altes JSON ⇒ name/size/modified). Roundtrip-Test.
-- [x] **Step 7: Gated Rig-Test.** Ein Listing gegen den Docker-Server
-  liefert owner/group (bekannte Rig-Werte). `MACSCP_ITEST=1`.
-- [x] **Step 8: Grün + volle Suite.** `swift test` → 847 + neue.
+  `(owner: "www-data", group: "staff")`; multiple whitespace; owner with
+  special characters; too-short/broken line ⇒ `nil`; directory line `drwxr-xr-x`.
+- [x] **Step 2: Red, then implement the parser** (defensive: after the first
+  two fields — perms, link count — come owner and group; tolerant
+  of whitespace; uncertain ⇒ `nil`).
+- [x] **Step 3: Model + mapper.** `owner`/`group` on `RemoteFileItem`;
+  `SFTPAttributeMapper.item` gets `longname`/`uidgid` and sets
+  owner/group by the priority order (longname name → numeric → nil). Tests:
+  longname wins; without longname numeric; without either nil.
+- [x] **Step 4: Pass through Citadel + Local.** The readdir path passes
+  `component.longname` and `component.attributes.uidgid` to the mapper; the
+  single-`stat` path only `uidgid` (no longname). `LocalFileSystem` fills
+  owner/group from `stat` (getpwuid/getgrgid), numeric fallback.
+- [x] **Step 5: `FileColumn` + formatters + `FileSortKey` cases** with tests
+  (rwx permissions, type per kind, owner/group/nil; sort cases including
+  the name tiebreaker and nil position; the M11l rule "tiebreaker stays
+  ascending" still applies).
+- [x] **Step 6: `SettingsStore.visibleColumns`** persisted +
+  forward compatible (old JSON ⇒ name/size/modified). Roundtrip test.
+- [x] **Step 7: Gated rig test.** A listing against the Docker server
+  returns owner/group (known rig values). `MACSCP_ITEST=1`.
+- [x] **Step 8: Green + full suite.** `swift test` → 847 + new.
 - [x] **Step 9: Commit.** `feat: carry owner/group and model selectable columns`
 
 ---
 
-### Task 2: Dynamische Spalten + Einstellungs-Kontrollkästchen (App)
+### Task 2: Dynamic columns + settings checkboxes (App)
 
 **Files:**
-- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (Spalten dynamisch aus der Einstellung, Zellen für die neuen Spalten, sortDescriptor/Indikator je Spalte), `Sources/MacSCPApp/SettingsView.swift` (Kontrollkästchen), `Sources/MacSCPApp/BrowserPane.swift`/`ContentView.swift` (Einstellung durchreichen), `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`
+- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (columns built dynamically from the setting, cells for the new columns, sortDescriptor/indicator per column), `Sources/MacSCPApp/SettingsView.swift` (checkboxes), `Sources/MacSCPApp/BrowserPane.swift`/`ContentView.swift` (pass the setting through), `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`
 
 **Interfaces:**
-- Consumes: `FileColumn`, die Formatierer, `SettingsStore.visibleColumns`, `FileSortKey` (T1); das M11l-Sortier-/Indikator-Muster.
+- Consumes: `FileColumn`, the formatters, `SettingsStore.visibleColumns`, `FileSortKey` (T1); the M11l sort/indicator pattern.
 
-- [x] **Step 1: Dynamische Spalten.** `makeNSView` baut die Spalten aus
-  `visibleColumns` in fester Reihenfolge (Name, Größe, Geändert, Rechte,
-  Besitzer, Gruppe, Typ — nur die sichtbaren); jede mit `PolishedHeaderCell`,
-  lokalisiertem Titel und `sortDescriptorPrototype`. Ändert sich die
-  Einstellung, werden die Spalten neu aufgebaut (in `updateNSView`,
-  idempotent — nur bei echter Änderung, kein Flackern).
-- [x] **Step 2: Zellen.** `tableView(_:viewFor:row:)` bekommt die neuen
-  Spalten-IDs: Rechte (rwx, monospaced), Besitzer/Gruppe (Text), Typ
-  (lokalisiert). Recycling-Hygiene: Inhalt UNBEDINGT je Wiederverwendung
-  setzen; Werte über die Core-Formatierer + App-L10n.
-- [x] **Step 3: Sortier-Indikator** je Spalte weiter wie M11l (selbst
-  gezeichnetes ▲/▼).
-- [x] **Step 4: Einstellungen.** Kontrollkästchen je zuschaltbarer Spalte
-  (Name fix, nicht abschaltbar). Bindet an `SettingsStore.visibleColumns`.
-- [x] **Step 5: EN/DE.** Spaltentitel + Typ-Strings + Platzhalter „—" in
-  BEIDE Kataloge. `plutil -lint` OK, `LocalizableStringsTests` grün.
-- [x] **Step 6: Verifikation.** `swift build` sauber (keine neuen
-  Warnungen), volle `swift test`.
+- [x] **Step 1: Dynamic columns.** `makeNSView` builds the columns from
+  `visibleColumns` in a fixed order (Name, Size, Modified, Permissions,
+  Owner, Group, Type — visible ones only); each with `PolishedHeaderCell`,
+  localized title and `sortDescriptorPrototype`. When the setting
+  changes, columns are rebuilt (in `updateNSView`, idempotent — only on an
+  actual change, no flicker).
+- [x] **Step 2: Cells.** `tableView(_:viewFor:row:)` gets the new
+  column IDs: permissions (rwx, monospaced), owner/group (text), type
+  (localized). Recycling hygiene: content MUST be set on every reuse;
+  values via the Core formatters + App L10n.
+- [x] **Step 3: Sort indicator** per column, continuing the M11l pattern (self-
+  drawn ▲/▼).
+- [x] **Step 4: Settings.** Checkbox for each toggleable column
+  (Name fixed, cannot be turned off). Binds to `SettingsStore.visibleColumns`.
+- [x] **Step 5: EN/DE.** Column titles + type strings + "—" placeholder in
+  BOTH catalogs. `plutil -lint` OK, `LocalizableStringsTests` green.
+- [x] **Step 6: Verification.** `swift build` clean (no new
+  warnings), full `swift test`.
 - [x] **Step 7: Commit.** `feat: show selectable file-list columns`
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Final verification (coordinator)
 
-- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips.
-- [ ] Visueller Smoke — Maintainer (Checkliste: Kontrollkästchen schalten
-  Spalten zu/ab; Besitzer/Gruppe zeigen echte Namen gegen den Rig, „—" wo
-  unbekannt; Rechte als rwx; Typ lokalisiert; neue Spalten sortierbar mit
-  Dreieck; Recycling ohne Schmieren beim Scrollen; M5g-Optik der Alt-Spalten
-  unverschoben; hell/dunkel; beide Panes).
-- [x] Plan-Checkboxen, Ledger, Opus-Final-Review, Fix-Runden bis „Yes",
-  Push develop, `gh run watch`, Memory. KEIN Release.
+- [x] Gated suites: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → green, zero skips.
+- [ ] Visual smoke test — maintainer (checklist: checkboxes toggle
+  columns on/off; owner/group show real names against the rig, "—" where
+  unknown; permissions as rwx; type localized; new columns sortable with
+  triangle; recycling without smearing while scrolling; M5g look of the old columns
+  unmoved; light/dark; both panes).
+- [x] Plan checkboxes, ledger, Opus final review, fix rounds until "Yes",
+  push develop, `gh run watch`, memory. NO release.

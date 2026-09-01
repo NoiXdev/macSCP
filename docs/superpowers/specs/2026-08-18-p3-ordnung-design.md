@@ -1,454 +1,443 @@
-# P3 — Ordnung: Host-Tags, Sidebar-Filter, Snippet-Austausch
+# P3 — Order: Host Tags, Sidebar Filter, Snippet Exchange
 
-Entschieden 2026-08-18. Hebt den Skizzen-Abschnitt „P3 — Ordnung" aus
-`2026-08-10-snippets-runde-2-design.md` auf entschieden. Die dortigen drei
-Festlegungen gelten unverändert weiter und werden hier nicht neu verhandelt:
-Gruppen bleiben die Ablage und Tags die Sicht darauf; Host-Tags und
-Snippet-Tags sind unabhängige Vokabulare; der Austausch bekommt keinen
-Krypto-Pfad.
+Decided 2026-08-18. Formally supersedes the sketch section "P3 — Order" from
+`2026-08-10-snippets-runde-2-design.md`. The three decisions made there
+continue to hold unchanged and are not renegotiated here: groups remain the
+storage, tags the view onto it; host tags and snippet tags are independent
+vocabularies; the exchange format gets no crypto path.
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-Nachgesehen, nicht angenommen:
+Checked, not assumed:
 
-- **Die Sidebar hat kein Suchfeld und keinen Filter.** `SessionSidebar`
-  läuft ungefiltert durch `SessionListViewModel.sessions(inGroup:)`. Weder
-  `searchText` noch eine Filterfunktion existiert. Ein Tag-Filter ist damit
-  nicht „ein Filter mehr", sondern das erste Filterelement überhaupt.
-- **Die Sidebar hat keinen Leer-Zustand.** Ist die Liste leer, rendert
-  nichts. Die vorhandenen roten Fehlerzeilen decken nur Fehlerfälle ab.
-- **Gruppen sind native `Section(isExpanded:)`-Blöcke**, eingeklappte
-  Gruppen liegen in einem `Set<UUID>` im View-Zustand.
-- **Der Bereich „IMPORTIERT"** (`~/.ssh/config`) ist eine eigene Section
-  neben den Gruppen.
-- **`StoredSession`** trägt heute `id`, `name`, `groupID`, `loginSetID`,
-  `kind`, die drei Backend-Konfigurationen und `paneVisibility`. Die beiden
-  Nicht-Verbindungsfelder `groupID` und `paneVisibility` werden beide über
-  `decodeIfPresent` gelesen und im Export mitgeführt
+- **The sidebar has no search field and no filter.** `SessionSidebar`
+  runs unfiltered through `SessionListViewModel.sessions(inGroup:)`. Neither
+  `searchText` nor a filter function exists. A tag filter is therefore not
+  "one more filter," it's the first filtering element at all.
+- **The sidebar has no empty state.** If the list is empty, nothing renders.
+  The existing red error lines only cover error cases.
+- **Groups are native `Section(isExpanded:)` blocks**, collapsed groups sit
+  in a `Set<UUID>` in view state.
+- **The "IMPORTED" section** (`~/.ssh/config`) is its own section next to
+  the groups.
+- **`StoredSession`** today carries `id`, `name`, `groupID`, `loginSetID`,
+  `kind`, the three backend configurations, and `paneVisibility`. The two
+  non-connection fields `groupID` and `paneVisibility` are both read via
+  `decodeIfPresent` and carried through export
   (`ExportedSession.paneVisibility`, `encodeIfPresent`).
-- **Die Snippet-Tag-Regel** steht in `Snippet.init`: trimmen, Leere
-  verwerfen, exakte Duplikate verwerfen (Groß/Klein bleibt erhalten),
-  Reihenfolge des ersten Auftretens.
-- **Die Envelope-Maschinerie** ist bereits generisch: `ExportEnvelopeCodec`
-  mit `encode/probe/decode` über einen beliebigen `Codable`-Payload, und
-  `password: String?` — bei `nil` entsteht ein Klartext-Payload mit
-  `encrypted: false`. Zwei Formate nutzen sie: `macscp-sessions` und
-  `macscp-logins`. Der Konflikt-Arbiter (`ImportConflict`,
-  `ImportConflictArbiter`) wird von beiden Planern geteilt.
-- **`SnippetStore`** schreibt `snippets.json` als **nacktes Array ohne
-  Versionsfeld**. Ein Export- oder Importpfad für Snippets existiert nicht.
+- **The snippet tag rule** lives in `Snippet.init`: trim, drop empties, drop
+  exact duplicates (case is preserved), order of first occurrence.
+- **The envelope machinery** is already generic: `ExportEnvelopeCodec`
+  with `encode/probe/decode` over an arbitrary `Codable` payload, and
+  `password: String?` — with `nil` the result is a plaintext payload with
+  `encrypted: false`. Two formats use it: `macscp-sessions` and
+  `macscp-logins`. The conflict arbiter (`ImportConflict`,
+  `ImportConflictArbiter`) is shared by both planners.
+- **`SnippetStore`** writes `snippets.json` as a **bare array with no
+  version field**. No export or import path for snippets exists.
 
-## Der Schnitt: zwei Teilphasen
+## The cut: two sub-phases
 
-P3 bündelt zwei Vorhaben, die außer dem Wort „Tag" nichts teilen. Sie werden
-getrennt gebaut und getrennt abgeschlossen.
+P3 bundles two efforts that share nothing but the word "tag." They are
+built and closed separately.
 
-| Phase | Inhalt | Warum getrennt |
+| Phase | Content | Why separate |
 |---|---|---|
-| **P3a** | Host-Tags am `StoredSession`, Formularfeld, Export/Import, Chip-Filter in der Sidebar, Leer-Zustand | eigener, in sich geschlossener Gegenstand |
-| **P3b** | Austauschformat `macscp-snippets`, Codec, Planer, Export-/Import-Sheets | teilt mit P3a keine Datei außer der Tag-Regel |
+| **P3a** | host tags on `StoredSession`, form field, export/import, chip filter in the sidebar, empty state | its own, self-contained subject |
+| **P3b** | exchange format `macscp-snippets`, codec, planner, export/import sheets | shares no file with P3a except the tag rule |
 
-Der Grund ist nicht Ordnungsliebe. Die Gesamt-Review am Phasenende hat in
-den letzten Durchgängen genau deshalb Befunde geliefert, die keine
-Task-Review sehen konnte, weil sie **eine** zusammenhängende Sache im Blick
-hatte. Zwei unverbundene Subsysteme in einem Durchgang schwächen den
-Prüfschritt, der hier am meisten liefert.
-
----
-
-## P3a — Host-Tags und Sidebar-Filter
-
-### Eine Regel, zwei Vokabulare
-
-Die Normalisierung aus `Snippet.init` wandert als **eine** Funktion nach
-Core. `Snippet` und `StoredSession` rufen dieselbe Funktion auf. Die
-Vokabulare bleiben getrennt — ein Host-Tag versteckt kein Snippet, die
-Bindung ist weiterhin ausdrücklich abgelehnt —, aber die *Regel* wird nicht
-zweimal hingeschrieben.
-
-Das ist keine Stilfrage. Zwei Kopien einer Regel, die auseinanderlaufen,
-ohne dass ein Test es merkt, ist der Fehler, für den dieses Projekt zuletzt
-mehrfach bezahlt hat: zuletzt in P2, wo eine wörtlich nachgebaute
-Sichtbarkeitsregel ein leeres Fenster erzeugen konnte.
-
-**Prüfbar:** ein Test, der beide Aufrufer gegen dieselben Eingaben laufen
-lässt und gleiches Ergebnis verlangt. Er muss rot werden, wenn eine der
-beiden Seiten die Regel selbst nachbaut.
-
-### Das Feld
-
-`tags: [String]` an `StoredSession`, oben neben `groupID` und
-`paneVisibility` — **nicht** im Backend-Feldbeutel `FieldValues`, denn ein
-Tag ist keine Verbindungseigenschaft, sondern eine Eigenschaft der
-gespeicherten Sitzung.
-
-- `decodeIfPresent` mit Standard `[]`. Eine vorhandene `sessions.json` ohne
-  das Feld lädt unverändert und verhält sich exakt wie heute.
-- Im Export mitgeführt, wie `paneVisibility` es vormacht.
-- Eingabe im Verbindungsformular über dasselbe Token-Feld wie bei Snippets
-  (`SnippetTagField`), sofern es sich ohne Verrenkung wiederverwenden lässt;
-  andernfalls ein gleich aussehendes Feld, das dieselbe Regel benutzt. Das
-  ist beim Bauen zu **messen**, nicht vorab zu behaupten.
-
-### Der Filter
-
-Eine Chip-Reihe über der Liste, gespeist aus den tatsächlich vergebenen
-Tags. Genau ein Tag ist aktiv oder keiner.
-
-- Ist ein Tag aktiv, **verschwinden Gruppen ohne Treffer vollständig**, und
-  der Bereich „IMPORTIERT" verschwindet ebenfalls — er kann nie treffen.
-  Die Liste zeigt dann genau die Hosts mit diesem Tag, sonst nichts.
-- Der Filterzustand wird **nicht gespeichert**. Er ist eine Sicht, keine
-  Einstellung, und startet bei jedem Programmstart leer.
-- Verschwindet der letzte Host mit dem aktiven Tag (umbenannt, gelöscht,
-  Tag entfernt), fällt der Filter auf „kein Tag" zurück, statt eine leere
-  Liste stehen zu lassen.
-
-### Der Leer-Zustand
-
-Die Sidebar bekommt einen Leer-Zustand, den sie heute nicht hat. Ohne ihn
-wäre ein Filter ohne Treffer ein wortlos leeres Fenster. Zwei
-unterscheidbare Fälle, nicht ein gemeinsamer Text:
-
-- **keine Sitzungen vorhanden** — der Zustand einer frischen Installation
-- **Filter aktiv, kein Treffer** — mit einem Weg zurück (Filter aufheben)
-
-Der zweite Fall ist der Grund für den ersten: er kommt ohnehin, sobald es
-den Filter gibt, und ein gemeinsamer Text für beides würde bei einer
-frischen Installation von einem Filter reden, den niemand gesetzt hat.
-
-### Die Entscheidungslogik gehört nach Core
-
-Welche Gruppen und welche Sitzungen bei aktivem Tag sichtbar sind, und
-welcher der beiden Leer-Zustände gilt, ist eine reine Funktion aus
-(Sitzungen, Gruppen, aktivem Tag) — und gehört als testbarer Typ nach Core,
-nicht in den View-Body. P2 hat gezeigt, wie teuer die andere Variante ist:
-eine Anzeigeentscheidung im View-Body war dort nur noch mit einem
-Quelltext-Wächter zu sichern.
+The reason is not tidiness for its own sake. The whole-phase review at the
+end has, in recent passes, delivered findings that no task review could see
+precisely because it was looking at **one** coherent thing. Two unrelated
+subsystems in one pass weaken the review step that delivers the most here.
 
 ---
 
-## P3b — Snippets exportieren und importieren
+## P3a — Host tags and sidebar filter
 
-### Das Format
+### One rule, two vocabularies
 
-`macscp-snippets` über `ExportEnvelopeCodec`, mit **`password: nil`,
-immer**. Die Signatur nimmt ein Passwort entgegen; dieser Codec übergibt
-nie eines, und das wird gepinnt statt kommentiert.
+The normalization from `Snippet.init` moves to Core as **one** function.
+`Snippet` and `StoredSession` both call the same function. The vocabularies
+stay separate — a host tag hides no snippet, the binding remains explicitly
+rejected — but the *rule* is not written down twice.
 
-Snippets enthalten keine Zugangsdaten — der Store ist JSON, Secrets leben
-ausschließlich im Schlüsselbund. Eine Verschlüsselung würde eine Sicherheit
-vortäuschen, die es nicht gibt. Das ist dieselbe Begründung wie in Runde 1
-und sie hat sich nicht geändert.
+This is not a style question. Two copies of a rule that drift apart without
+a test noticing is the mistake this project has paid for repeatedly of
+late: most recently in P2, where a literally re-implemented visibility rule
+could produce an empty window.
 
-Eigener UTType nach dem vorhandenen Muster
-(`dev.noix.macscp.snippets`, konform zu `.json`).
+**Checkable:** a test that runs both callers against the same inputs and
+requires the same result. It must turn red if either side reimplements the
+rule itself.
 
-### Der Planer
+### The field
 
-Eigener Planer auf dem **geteilten** `ImportConflictArbiter` — nicht ein
-zweiter Arbiter daneben. **Duplikat am Namen**, wie bei Login-Sets: ein
-importiertes „Docker aufräumen" trifft auf ein vorhandenes gleichen Namens,
-und der Nutzer entscheidet überschreiben, behalten oder beide.
+`tags: [String]` on `StoredSession`, up top next to `groupID` and
+`paneVisibility` — **not** in the backend field bag `FieldValues`, because a
+tag is not a connection property but a property of the stored session.
 
-Der Vergleich folgt derselben Trimm-Regel wie die Tags, damit
-„Docker aufräumen " und „Docker aufräumen" nicht als zwei Einträge landen.
+- `decodeIfPresent` with a default of `[]`. An existing `sessions.json`
+  without the field loads unchanged and behaves exactly as today.
+- Carried through export, the way `paneVisibility` demonstrates.
+- Entry in the connection form via the same token field used for snippets
+  (`SnippetTagField`), provided it can be reused without contortion;
+  otherwise a field that looks the same and uses the same rule. That is to
+  be **measured** while building, not asserted up front.
 
-### Die Oberfläche
+### The filter
 
-Export- und Import-Sheets nach dem Muster der Sitzungs-Sheets, inklusive
-Auswahl beim Export. Das geteilte Konflikt-Sheet aus M19 wird
-wiederverwendet.
+A chip row above the list, populated from the tags actually assigned.
+Exactly one tag is active, or none.
 
----
+- With a tag active, **groups with no match disappear entirely**, and the
+  "IMPORTED" section disappears too — it can never match. The list then
+  shows exactly the hosts with that tag, nothing else.
+- The filter state is **not persisted**. It is a view, not a setting, and
+  starts empty on every launch.
+- If the last host with the active tag disappears (renamed, deleted, tag
+  removed), the filter falls back to "no tag" instead of leaving an empty
+  list standing.
 
-## Was ausdrücklich nicht dazugehört
+### The empty state
 
-- **Der Massen-Runner** (ein Snippet auf n gefilterte Hosts, Ausgabe-Ansicht)
-  bleibt außen vor. Er ist ein eigenes Werkzeug — n parallele Verbindungen,
-  Teilfehler, Abbruch, n lesbare Ausgabeströme — und bekommt sein eigenes
-  Brainstorming. P3as Filter ist die Auswahlmechanik, auf der er aufsetzt.
-- **Ein Versionsfeld für `snippets.json`.** Der Store bleibt das nackte
-  Array. Die Austauschdatei bekommt ihre Version über die Envelope. Eine
-  Migration des Stores ist eine eigene Aufgabe.
-- **Jede Bindung zwischen Host-Tags und Snippet-Tags.**
-- **Mehrfachauswahl im Filter** (zwei Tags gleichzeitig). Ein Tag genügt für
-  den Zweck; die Mechanik lässt sich später erweitern, ohne dass jetzt
-  jemand die Und/Oder-Frage beantworten muss.
+The sidebar gets an empty state it does not have today. Without one, a
+filter with no matches would be a silently empty window. Two distinguishable
+cases, not one shared text:
 
-## Erfolgskriterien
+- **no sessions exist at all** — the state of a fresh install
+- **filter active, no match** — with a way back (clear the filter)
 
-1. Eine `sessions.json` ohne `tags` lädt unverändert und zeigt keine Tags.
-2. Ein Host mit Tag `docker` erscheint bei aktivem Filter `docker`; ein Host
-   ohne diesen Tag nicht; „IMPORTIERT" verschwindet.
-3. Tags überleben Export und Import.
-4. Beide Leer-Zustände sind unterscheidbar und im Filterfall wieder
-   verlassbar.
-5. Snippets lassen sich exportieren und wieder einlesen; ein gleichnamiges
-   Snippet erzeugt einen Konflikt, kein stilles Überschreiben.
-6. Die exportierte Snippet-Datei ist Klartext und enthält kein Feld, das
-   Verschlüsselung behauptet.
+The second case is the reason for the first: it arrives regardless as soon
+as the filter exists, and a shared text for both would talk about a filter
+on a fresh install that nobody set.
 
-## Prüfbarkeit, ehrlich
+### The decision logic belongs in Core
 
-Was Tests halten können: die Tag-Regel und ihre gemeinsame Nutzung, die
-Sichtbarkeitsberechnung samt Leer-Zustand als Core-Typ, Migration gegen eine
-wörtliche Alt-Datei, der Export-Roundtrip, die Duplikat-Regel des Planers,
-und dass der Snippet-Codec nie ein Passwort übergibt.
-
-Was Tests hier **nicht** halten: dass die Chip-Reihe im Fenster gut
-aussieht, dass das Token-Feld sich im Verbindungsformular richtig anfühlt,
-und dass die Sidebar bei aktivem Filter tatsächlich so aussetzt wie
-beschrieben. Das App-Target hat kein View-Instanziierungswerkzeug; in P2
-blieb dafür nur ein Quelltext-Wächter, dessen Grenzen dokumentiert sind.
-Diese Punkte gehören in die Sichtprüfung des Maintainers am Phasenende und
-werden dort namentlich aufgeführt, nicht stillschweigend übergangen.
+Which groups and which sessions are visible with an active tag, and which
+of the two empty states applies, is a pure function of (sessions, groups,
+active tag) — and belongs in Core as a testable type, not in the view body.
+P2 showed how expensive the other option is: a display decision in the view
+body there could only be secured with a source-scanning guard.
 
 ---
 
-## Nachtrag 2026-08-18: Terminal aus dem Host-Kontextmenü (P3c)
+## P3b — Exporting and importing snippets
 
-Maintainer-Feedback nach dem Dev-Build von P3a. **Nicht** Teil von P3b; eine
-eigene kleine Phase.
+### The format
 
-Das Kontextmenü einer gespeicherten Sitzung bekommt unter „Verbinden" zwei
-Einträge:
+`macscp-snippets` via `ExportEnvelopeCodec`, with **`password: nil`,
+always**. The signature accepts a password; this codec never passes one,
+and that is pinned, not merely commented.
 
-- **„Terminal öffnen"** — verbindet in macSCP und kommt **ohne Dateibrowser**
-  hoch, also nur das Terminal. Die Mechanik dafür steht seit P2: eine
-  Sitzung kann ihre sichtbaren Hälften selbst bestimmen.
-- **„In externem Terminal öffnen"** — übergibt an das eingestellte
-  Terminalprogramm; macSCP baut dabei **keine** eigene Verbindung auf.
+Snippets contain no credentials — the store is JSON, secrets live
+exclusively in the keychain. Encryption would fake a security that isn't
+there. This is the same rationale as in round 1 and it hasn't changed.
 
-**Beide sind eigene Einträge**, nicht ein Eintrag, der der Einstellung
-„Terminal-Ziel" folgt (Maintainer-Entscheidung): die Entscheidung fällt pro
-Klick, nicht vorab in den Einstellungen. Die Einstellung bleibt, wofür sie
-da ist — was der Terminal-Knopf in der Symbolleiste tut.
+Its own UTType following the existing pattern
+(`dev.noix.macscp.snippets`, conforming to `.json`).
 
-**Beide erscheinen nur, wenn die Sitzung eine Shell hat.** Für S3 und WebDAV
-sagt `BackendDescriptor.capabilities.supportsShell` nein, und dann gibt es
-die Einträge nicht — nicht ausgegraut, sondern gar nicht, weil ein
-dauerhaft toter Eintrag an einem S3-Bucket nichts erklärt.
+### The planner
 
-Offen bis zur Planung: ob „Terminal öffnen" einen neuen Tab aufmacht oder
-den aktiven benutzt, und was passiert, wenn die Sitzung bereits verbunden
-ist. Beides beim Planen am Code messen, nicht raten.
+Its own planner on the **shared** `ImportConflictArbiter` — not a second
+arbiter alongside it. **Duplicate by name**, as with login sets: an
+imported "Clean up Docker" collides with an existing entry of the same
+name, and the user decides overwrite, keep, or both.
 
-## Nachtrag 2026-08-18: Die Snippet-Auswahl im Terminal (P3d) — entschieden
+The comparison follows the same trim rule as the tags, so that
+"Clean up Docker " and "Clean up Docker" don't land as two entries.
 
-**Ist-Zustand, am Code gemessen (nicht aus dem Screenshot abgeleitet).** Das
-Popover in der Terminal-Kopfzeile (`ContentView+Detail.swift`) hat bereits
-ein Suchfeld mit Regex-Kästchen und rendert darunter `SnippetMenuItems`.
-Dort ist **jede Zeile ein Untermenü** mit „Einfügen" und „Ausführen":
+### The interface
+
+Export and import sheets following the pattern of the session sheets,
+including selection at export time. The shared conflict sheet from M19 is
+reused.
+
+---
+
+## What explicitly does not belong here
+
+- **The bulk runner** (one snippet against n filtered hosts, an output
+  view) stays out of scope. It's its own tool — n parallel connections,
+  partial failures, cancellation, n readable output streams — and gets its
+  own brainstorming session. P3a's filter is the selection mechanism it
+  will build on.
+- **A version field for `snippets.json`.** The store stays the bare array.
+  The exchange file gets its version through the envelope. Migrating the
+  store is a separate task.
+- **Any binding between host tags and snippet tags.**
+- **Multi-select in the filter** (two tags at once). One tag is enough for
+  the purpose; the mechanism can be extended later without anyone having
+  to answer the and/or question now.
+
+## Success criteria
+
+1. A `sessions.json` without `tags` loads unchanged and shows no tags.
+2. A host with tag `docker` appears with filter `docker` active; a host
+   without that tag does not; "IMPORTED" disappears.
+3. Tags survive export and import.
+4. Both empty states are distinguishable and, in the filter case, can be
+   left again.
+5. Snippets can be exported and read back in; a same-named snippet
+   produces a conflict, not a silent overwrite.
+6. The exported snippet file is plaintext and contains no field that
+   claims encryption.
+
+## Testability, honestly
+
+What tests can hold: the tag rule and its shared use, the visibility
+computation including the empty state as a Core type, migration against a
+literal legacy file, the export round trip, the planner's duplicate rule,
+and that the snippet codec never passes a password.
+
+What tests do **not** hold here: that the chip row looks good in the
+window, that the token field feels right in the connection form, and that
+the sidebar actually behaves as described with the filter active. The App
+target has no view-instantiation tooling; in P2 all that was left for this
+was a source-scanning guard, whose limits are documented. These points
+belong in the maintainer's visual review at the end of the phase and are
+listed there by name, not silently passed over.
+
+---
+
+## Addendum 2026-08-18: Terminal from the host context menu (P3c)
+
+Maintainer feedback after P3a's dev build. **Not** part of P3b; its own
+small phase.
+
+A stored session's context menu gets two entries under "Connect":
+
+- **"Open Terminal"** — connects within macSCP and comes up **without the
+  file browser**, i.e. terminal only. The mechanism for this has existed
+  since P2: a session can decide its own visible halves.
+- **"Open in External Terminal"** — hands off to the configured terminal
+  program; macSCP builds **no** connection of its own in the process.
+
+**Both are separate entries** (maintainer decision), not one entry that
+follows the "terminal target" setting: the decision is made per click, not
+in advance in settings. The setting stays what it's for — what the
+terminal button in the toolbar does.
+
+**Both appear only if the session has a shell.** For S3 and WebDAV,
+`BackendDescriptor.capabilities.supportsShell` says no, and then the
+entries don't exist — not greyed out, simply absent, because a
+permanently dead entry on an S3 bucket explains nothing.
+
+Open until planning: whether "Open Terminal" opens a new tab or uses the
+active one, and what happens if the session is already connected. Both are
+to be measured against the code when planning, not guessed.
+
+## Addendum 2026-08-18: Snippet selection in the terminal (P3d) — decided
+
+**Current state, measured against the code (not derived from the
+screenshot).** The popover in the terminal header bar
+(`ContentView+Detail.swift`) already has a search field with a regex
+checkbox and renders `SnippetMenuItems` below it. There, **every row is a
+submenu** with "Insert" and "Run":
 
 ```
-Snippet-Name  ▸  Einfügen
-                 Ausführen
+Snippet name  ▸  Insert
+                 Run
 ```
 
-**Ein Klick löst also heute schon nichts aus.** Die Beiläufigkeit, gegen die
-das ursprüngliche Feedback zielte, existiert in dieser Auswahl nicht — sie
-wurde in Runde 2 aus demselben Grund vermieden. Dieselbe Ansicht rendern
-vier Auslöseflächen: Popover, Rechtsklick im Terminal, Host-Kontextmenü,
-Menüzeile.
+**A click therefore already triggers nothing today.** The casualness the
+original feedback targeted does not exist in this selection — it was
+avoided in round 2 for the same reason. Four trigger surfaces render this
+same view: popover, right-click in the terminal, host context menu, menu
+bar.
 
-**Maintainer-Befund (2026-08-18):** das Problem sind die **Untermenüs** —
-aufklappen, zur Seite fahren, treffen, im engen Popover unangenehm.
+**Maintainer finding (2026-08-18):** the problem is the **submenus** —
+opening, moving sideways, hitting the target, uncomfortable in the narrow
+popover.
 
-**Diese Phase ist damit eine Bedienbarkeits-Verbesserung, keine
-Sicherheitskorrektur.** Das ist ausdrücklich festzuhalten, damit niemand
-später glaubt, hier sei ein Loch geschlossen worden.
+**This phase is therefore a usability improvement, not a security fix.**
+That is stated explicitly so nobody later assumes a hole was closed here.
 
-### Was gebaut wird
+### What gets built
 
-Die Liste wird **flach**. Die Untermenüs entfallen; die Tag-Gruppen bleiben
-als Überschriften innerhalb der flachen Liste.
+The list becomes **flat**. The submenus go away; the tag groups remain as
+headers within the flat list.
 
-Drei Wege zu einer Aktion, absichtlich unterschiedlich schnell:
+Three paths to an action, deliberately at different speeds:
 
-- **Rechtsklick auf die Zeile** → Ausführen, Einfügen, Vorschau. Der
-  schnelle Weg: eine Geste, kein Fenster.
-- **Doppelklick** → Aktionsfenster mit Einfügen, Ausführen, Abbrechen, und
-  dem Befehl im Klartext darüber.
-- **Überfahren** → der Befehl erscheint als **feste Zeile unten im
-  Popover**, nicht als Tooltip. Ein Tooltip kommt verzögert, schneidet
-  lange Befehle ab und lässt sich nicht lesen, während die Maus wandert.
+- **Right-click on the row** → Run, Insert, Preview. The fast path: one
+  gesture, no window.
+- **Double-click** → an action window with Insert, Run, Cancel, and the
+  command shown in plain text above them.
+- **Hover** → the command appears as a **fixed line at the bottom of the
+  popover**, not as a tooltip. A tooltip arrives with a delay, truncates
+  long commands, and can't be read while the mouse is moving.
 
-**Ein einfacher Klick wählt nur aus** und löst nichts aus — Voraussetzung
-dafür, dass die Liste mit den Pfeiltasten bedienbar ist.
+**A single click only selects** and triggers nothing — a precondition for
+the list being operable with the arrow keys.
 
-### Tastenkürzel im Aktionsfenster (Maintainer-Entscheidung)
+### Keyboard shortcuts in the action window (maintainer decision)
 
-- **Esc** bricht ab.
-- **Return** liegt auf **„Einfügen"**, nicht auf „Ausführen".
-- **⌘Return** führt aus.
+- **Esc** cancels.
+- **Return** sits on **"Insert,"** not "Run."
+- **⌘Return** runs.
 
-Begründung, die zur Entscheidung gehört: Return löst in einem
-macOS-Dialog den Standardknopf aus. Läge er auf „Ausführen", startete
-Doppelklick + Return einen Befehl auf einem entfernten Rechner mit zwei
-Anschlägen — beiläufiger als der heutige Weg über das Untermenü, obwohl
-dieser Umbau das Gegenteil erreichen soll. Auf „Einfügen" ist Return
-harmlos: der Text landet im Eingabefeld, und der Nutzer drückt selbst
-Return, nachdem er ihn gelesen hat.
+Rationale, which belongs to the decision: in a macOS dialog, Return
+triggers the default button. If it sat on "Run," a double-click plus
+Return would start a command on a remote machine with two keystrokes —
+more casual than today's path via the submenu, even though this rework is
+meant to achieve the opposite. On "Insert," Return is harmless: the text
+lands in the input field, and the user presses Return themselves after
+reading it.
 
-### Beim Planen zu klären
+### To clarify when planning
 
-Ob „Vorschau" im Kontextmenü dasselbe Fenster ohne Aktionen öffnet oder
-nur die Befehlszeile hervorhebt; wie sich die vier Auslöseflächen die neue
-Ansicht teilen (die Menüzeile **braucht** ein echtes `NSMenu` und kann
-keine flache Liste rendern — hier trennen sich die Wege vermutlich, und das
-ist am Code zu messen); und was mit dem ⌃⌘n-Kürzel geschieht, das heute nur
-am Einfügen-Eintrag hängt.
+Whether "Preview" in the context menu opens the same window without the
+actions, or just highlights the command line; how the four trigger
+surfaces share the new view (the menu bar **needs** a real `NSMenu` and
+cannot render a flat list — the paths presumably diverge here, and that is
+to be measured against the code); and what happens to the ⌃⌘n shortcut
+that today hangs only off the Insert entry.
 
 ---
 
-## Verworfen: die ursprüngliche Fassung dieses Nachtrags
+## Discarded: the original version of this addendum
 
-Maintainer-Feedback nach dem Dev-Build. **Nicht** Teil von P3b oder P3c.
+Maintainer feedback after the dev build. **Not** part of P3b or P3c.
 
-Die Auswahl im Terminal soll aufhören, eine Liste zu sein, die beim Klick
-sofort etwas tut. Stattdessen:
+The selection in the terminal should stop being a list that does something
+immediately on click. Instead:
 
-- **Doppelklick auf eine Zeile** öffnet ein Fenster mit den Aktionen
-  **Einfügen**, **Ausführen** und **Abbrechen** — die Entscheidung fällt
-  also nach dem Sehen, nicht davor.
-- **Beim Überfahren** zeigt die Zeile den Befehl, der laufen würde.
-- **Kontextmenü auf jeder Zeile** mit Ausführen, Einfügen, Vorschau.
+- **Double-click on a row** opens a window with the actions **Insert**,
+  **Run**, and **Cancel** — the decision is thus made after seeing, not
+  before.
+- **On hover** the row shows the command that would run.
+- **Context menu on every row** with Run, Insert, Preview.
 
-Der Grund dahinter ist derselbe wie bei „sofort ausführen" in Runde 2: ein
-Klick, der einen Befehl auf einem entfernten Rechner startet, darf keine
-Nebenwirkung eines Auswahlvorgangs sein.
+The reasoning behind this is the same as for "run immediately" in round 2:
+a click that starts a command on a remote machine must not be a side
+effect of a selection action.
 
-### Nachtrag: Tastaturbedienung im Aktionsfenster
+### Addendum: keyboard operation in the action window
 
-Das Kontextmenü der Zeile trägt **dieselben drei Möglichkeiten** wie das
-Fenster. Und das Fenster bekommt Tastenkürzel auf allen drei Aktionen, damit
-schnelles Arbeiten möglich bleibt — **Esc bricht ab**.
+The row's context menu carries **the same three options** as the window.
+And the window gets keyboard shortcuts on all three actions, so fast
+operation stays possible — **Esc cancels**.
 
-**Der Konflikt, der dabei zu entscheiden ist:** in einem macOS-Dialog löst
-Return den Standardknopf aus. Läge Return auf „Ausführen", startete
-Doppelklick + Return einen Befehl auf einem entfernten Rechner mit zwei
-Anschlägen — und genau die Beiläufigkeit soll dieser Umbau ja beseitigen.
-Ein Kürzel für „Ausführen" ist damit nicht ausgeschlossen, aber es sollte
-eines sein, das man nicht versehentlich trifft. Beim Brainstorming
-entscheiden, nicht im Vorbeigehen.
+**The conflict to be decided here:** in a macOS dialog, Return triggers the
+default button. If Return sat on "Run," a double-click plus Return would
+start a command on a remote machine with two keystrokes — and eliminating
+exactly that casualness is the point of this rework. A shortcut for "Run"
+is not thereby ruled out, but it should be one that isn't hit by accident.
+Decide during brainstorming, not in passing.
 
-**Vor der Planung zu klären** (nicht raten, am Code und mit dem Maintainer):
-was ein einfacher Klick dann noch tut; ob „Vorschau" dasselbe Fenster ohne
-Aktionen ist oder etwas Eigenes; ob der Befehl beim Überfahren als Tooltip
-oder als feste Zeile im Popover steht. Der Maintainer hat außerdem einen
-Screenshot der heutigen Auswahl geschickt (Suchfeld, „Regex"-Kästchen,
-Aufklappmenü) — der Ist-Zustand ist beim Planen **am Code zu messen**, nicht
-aus dem Bild abzuleiten.
+**To clarify before planning** (not guessed, against the code and with the
+maintainer): what a single click still does then; whether "Preview" is the
+same window without the actions or something of its own; whether the
+command on hover is shown as a tooltip or as a fixed line in the popover.
+The maintainer also sent a screenshot of today's selection (search field,
+"Regex" checkbox, expand menu) — the current state is to be **measured
+against the code** when planning, not derived from the image.
 
-## Nachtrag 2026-08-18: Terminal-Protokoll (P3e)
+## Addendum 2026-08-18: Terminal log (P3e)
 
-Maintainer-Feedback nach dem Dev-Build. Eigene Phase, **nach** P3b.
+Maintainer feedback after the dev build. Its own phase, **after** P3b.
 
-Das Protokoll aus M9b (`AuditEvent`, `AuditLogStore`, Sheet) bekommt
-Terminal-Ereignisse. Gemessen: `AuditEvent.Kind` kennt heute **keinen**
-Shell-Fall — es wird erweitert, nicht neu gebaut.
+The log from M9b (`AuditEvent`, `AuditLogStore`, sheet) gets terminal
+events. Measured: `AuditEvent.Kind` today knows **no** shell case — it is
+extended, not rebuilt.
 
-**Maintainer-Entscheidung:** protokolliert werden Snippet-Ausführungen
-**und** selbst getippte Befehle, letztere **über eine Einstellung
-zuschaltbar**.
+**Maintainer decision:** what gets logged is snippet execution **and**
+self-typed commands, the latter **toggleable via a setting**.
 
-**Der Schutz gegen mitgeschriebene Passwörter kommt nicht aus einem
-Textfilter**, sondern aus dem Zustand des Terminals: fordert die Gegenseite
-eine verdeckte Eingabe an (Echo aus, wie bei `sudo`), schreibt das Protokoll
-nur einen Vermerk („verdeckte Eingabe") und **den Inhalt gar nicht**.
+**Protection against logged passwords doesn't come from a text filter**,
+but from the terminal's state: if the remote side requests hidden input
+(echo off, as with `sudo`), the log writes only a note ("hidden input")
+and **not the content at all**.
 
-Das ist die bessere Konstruktion, weil sie ein Signal benutzt statt zu
-raten. Ein Muster-Filter, der 95 % erwischt, erzeugt Vertrauen, das die
-restlichen 5 % nicht rechtfertigen — und die 5 % sind genau die Fälle, in
-denen ein Passwort in einer Datei landet.
+That's the better construction because it uses a signal instead of
+guessing. A pattern filter that catches 95% builds trust the remaining 5%
+don't justify — and that 5% is exactly the case where a password ends up
+in a file.
 
-### Vor der Planung: Machbarkeit prüfen, nicht annehmen
+### Before planning: check feasibility, don't assume it
 
-**Offen und ausdrücklich ungeklärt:** ob die Client-Seite zuverlässig
-erkennt, dass die Gegenseite das Echo abgeschaltet hat. Bei SSH schaltet
-das entfernte PTY das Echo ab; der Client bekommt die Zeichen dann schlicht
-nicht zurück. Ob SwiftTerm daraus einen belastbaren Zustand ableitet — über
-die Terminal-Modi oder anders —, ist **am Code und an der Bibliothek zu
-messen**, bevor irgendetwas geplant wird.
+**Open and explicitly unresolved:** whether the client side can reliably
+detect that the remote side has turned echo off. With SSH, the remote PTY
+turns echo off; the client then simply doesn't get the characters back.
+Whether SwiftTerm derives a reliable state from that — via the terminal
+modes or otherwise — is **to be measured against the code and the
+library**, before anything is planned.
 
-Fällt die Prüfung negativ aus, ist die Entscheidung neu zu treffen, statt
-ersatzweise doch einen Musterfilter einzubauen. Die Rückfallmöglichkeiten
-wären dann: nur Snippets protokollieren, oder getippte Befehle nur mit
-einer ausdrücklichen Warnung im Einstellungstext.
+If the check comes out negative, the decision has to be made anew, rather
+than falling back to building a pattern filter after all. The fallback
+options would then be: log only snippets, or log typed commands only with
+an explicit warning in the settings text.
 
-Ebenfalls beim Planen zu klären: ob eine Zeile beim Absenden oder beim
-Abschluss protokolliert wird, was mit einer Zeile passiert, die nie mit
-Return endet, und ob das Protokoll pro Sitzung oder global gelesen wird.
+Also to clarify when planning: whether a line is logged on submission or
+on completion, what happens to a line that never ends with Return, and
+whether the log is read per session or globally.
 
-## Nachtrag 2026-08-18: Export aus dem Kontextmenü, überall (P3f)
+## Addendum 2026-08-18: Export from the context menu, everywhere (P3f)
 
-Maintainer-Feedback. Eigene Phase.
+Maintainer feedback. Its own phase.
 
-Exportieren soll nicht nur über Knöpfe in Sheets gehen, sondern **überall
-über das Kontextmenü** — an der Zeile, an der man ohnehin steht.
+Exporting should not only go through buttons in sheets, but **everywhere
+via the context menu** — at the row you're already standing on.
 
-**Vor der Planung am Code zu messen**, welche Listen heute exportierbare
-Dinge zeigen und was ihr Kontextmenü bereits kann: Sitzungen und Gruppen in
-der Sidebar, Login-Sets, Snippets, ggf. SSH-Schlüssel. Für jede Stelle ist
-zu klären, ob „Exportieren" dort dasselbe meint wie der vorhandene Knopf
-(Auswahl, Filter, Umfang) oder etwas Engeres — ein Kontextmenü an *einer*
-Zeile legt „nur dieses eine" nahe, der Knopf im Sheet exportiert heute die
-sichtbare Menge.
+**To be measured against the code before planning**, which lists today
+show exportable things and what their context menu can already do:
+sessions and groups in the sidebar, login sets, snippets, possibly SSH
+keys. For each location it must be clarified whether "Export" there means
+the same thing as the existing button (selection, filter, scope) or
+something narrower — a context menu on *one* row suggests "just this one,"
+while the button in the sheet today exports the visible set.
 
-Diese Uneinheitlichkeit ist der eigentliche Entwurfspunkt der Phase und
-gehört ins Brainstorming, nicht in einen Schnellschuss: „Exportieren" darf
-an zwei Stellen nicht zwei verschiedene Umfänge bedeuten, ohne dass man es
-sieht.
+This inconsistency is the actual design point of the phase and belongs in
+brainstorming, not a quick fix: "Export" must not mean two different
+scopes in two places without that being visible.
 
-## Nachtrag 2026-08-18: Der Passworthinweis hält eine aufgelöste Konfiguration (P3g)
+## Addendum 2026-08-18: The password hint holds a resolved configuration (P3g)
 
-Aus der Gesamtprüfung von P3c Task 2. **Eigene, kleine Phase.**
+From the whole-phase review of P3c task 2. **Its own, small phase.**
 
-`pendingPasswordHintRequest` hält eine `SSHConnectionConfig` — die ein
-Klartext-Passwort tragen kann —, solange der einmalige Passworthinweis
-offen steht. Beide Knöpfe des Hinweises löschen sie, ebenso jede
-SwiftUI-Auflösung des Dialogs. Aber `disconnect` und
-`clearRetainedSecrets` **erreichen sie nicht**.
+`pendingPasswordHintRequest` holds an `SSHConnectionConfig` — which can
+carry a plaintext password — for as long as the one-time password hint is
+open. Both of the hint's buttons clear it, as does every SwiftUI dismissal
+of the dialog. But `disconnect` and `clearRetainedSecrets` **do not reach
+it**.
 
-Das ist ein vorhandener Zustand aus M11d, kein neuer Fehler. P3c weitet ihn
-jedoch aus: bisher war der Weg nur aus einem **verbundenen** Tab
-erreichbar, jetzt auch für eine Sitzung, mit der sich macSCP **nie**
-verbunden hat.
+This is a pre-existing state from M11d, not a new bug. P3c broadens it,
+though: previously the path was only reachable from a **connected** tab,
+now also for a session macSCP has **never** connected to.
 
-Es ist außerdem genau das, wovor der Doc-Kommentar von
-`resolveConfigWithoutDialing` warnt: „a second property holding a resolved
-config would be a second place that clearing does not reach."
+It is also exactly what the doc comment of `resolveConfigWithoutDialing`
+warns about: "a second property holding a resolved config would be a
+second place that clearing does not reach."
 
-**Zu klären beim Planen:** ob die Aufräumwege sie mit erfassen sollen, ob
-der Hinweis die Konfiguration überhaupt halten muss (statt sie nach der
-Bestätigung neu aufzulösen), und ob ein Fenster, das während des Hinweises
-zugeht, einen eigenen Weg braucht. Kein Blocker — aber ein Ort, an dem ein
-Passwort länger liegt als nötig, und dieses Projekt räumt solche Orte auf,
-statt sie zu dokumentieren.
+**To clarify when planning:** whether the cleanup paths should cover it
+too, whether the hint needs to hold the configuration at all (instead of
+resolving it fresh after confirmation), and whether a window closing
+during the hint needs its own path. Not a blocker — but a place where a
+password sits longer than necessary, and this project cleans up such
+places instead of documenting them.
 
-## Nachtrag 2026-08-19: Machbarkeit „verdeckte Eingabe erkennen" (P3e) — beantwortet
+## Addendum 2026-08-19: Feasibility of "detect hidden input" (P3e) — answered
 
-Die offene Frage der P3e-Spec lautete: erkennt die Client-Seite überhaupt,
-dass die Gegenseite das Echo abgeschaltet hat (also ein Passwortprompt
-läuft)? **Antwort: nein, nicht verlässlich.**
+The open question from the P3e spec was: does the client side detect at
+all that the remote side has turned echo off (i.e., a password prompt is
+running)? **Answer: no, not reliably.**
 
-- SSH handelt Echo nicht aus (anders als Telnet). Ein `sudo`-Prompt schaltet
-  serverseitig das `ECHO`-Flag der Pty per `termios`-ioctl ab — auf der
-  Leitung unsichtbar. Der Client sieht nur, dass keine Ausgabebytes mehr
-  kommen.
-- SwiftTerm führt darüber nicht Buch: SRM (Modus 12, „Local Echo") ist im
-  `Terminal` ausdrücklich ein Stub, `setMode` hat den Zweig auskommentiert,
-  und es feuert kein `TerminalDelegate`-Rückruf. Selbst mit Implementierung
-  brächte es nichts: `sudo`/`login` schicken keine SRM-Sequenzen.
-- Ein „kommen meine Bytes zurück?"-Vergleich wäre eine Heuristik mit
-  geratener Zeitschranke — Banner, Tab-Vervollständigung und Prompt-Redraws
-  brechen jede naive Zuordnung. Also derselbe Mustervergleich, der schon
-  einmal verworfen wurde, nur als Timing verkleidet.
+- SSH does not negotiate echo (unlike Telnet). A `sudo` prompt turns off
+  the pty's `ECHO` flag server-side via a `termios` ioctl — invisible on
+  the wire. The client only sees that no more output bytes are coming.
+- SwiftTerm keeps no record of this: SRM (mode 12, "Local Echo") is
+  explicitly a stub in `Terminal`, `setMode` has that branch commented
+  out, and it fires no `TerminalDelegate` callback. Even implemented, it
+  would help nothing: `sudo`/`login` send no SRM sequences.
+- A "are my bytes coming back?" comparison would be a heuristic with a
+  guessed time threshold — banners, tab completion, and prompt redraws
+  break any naive correlation. So it's the same pattern matching already
+  rejected once, just dressed up as timing.
 
-**Folge für P3e:** freie Tastatureingabe kann nicht inhaltlich protokolliert
-werden, ohne genau das Leck zu bauen, das der Filter verhindern sollte.
-Zu entscheiden ist damit: Snippet-Ausführungen inhaltlich protokollieren
-(der Text ist bekannt und laut Regel geheimnisfrei), getippte Eingabe nur
-als Metadaten (Zeitpunkt, Umfang, kein Inhalt) — oder gar nicht.
-Das ist eine Produktentscheidung, keine technische mehr.
+**Consequence for P3e:** free keyboard input cannot be logged by content
+without building exactly the leak the filter was meant to prevent. What
+remains to decide: log snippet execution by content (the text is known
+and, by rule, secret-free), log typed input only as metadata (timestamp,
+extent, no content) — or not at all. That is now a product decision, not
+a technical one.

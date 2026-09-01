@@ -1,62 +1,62 @@
-# Tab-Kontextmenü und Umordnen — Umsetzungsplan
+# Tab Context Menu and Reordering — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Der Reiter bekommt ein Kontextmenü, und die Reihenfolge der Reiter lässt sich per Menü und per Ziehen ändern.
+**Goal:** The tab gets a context menu, and the order of the tabs can be changed both via the menu and by dragging.
 
-**Grundlage:** `docs/superpowers/specs/2026-08-27-tab-kontextmenue-und-umordnen-design.md`
+**Basis:** `docs/superpowers/specs/2026-08-27-tab-kontextmenue-und-umordnen-design.md`
 
-**Architektur:** Die entscheidbaren Anteile — welche Einträge erscheinen, was das Umordnen mit der Reihenfolge macht, was die Sammelwarnung sagt — liegen als reine Werte in `macSCPCore` und sind dort geprüft. Die Ansicht zeichnet nur und trifft keine eigene Entscheidung. Das Umordnen entsteht **einmal**, beide Bedienwege rufen dieselbe Funktion.
+**Architecture:** The decidable parts — which entries appear, what reordering does to the order, what the bulk warning says — live as pure values in `macSCPCore` and are tested there. The view only draws and makes no decision of its own. Reordering exists **once**; both ways of operating it call the same function.
 
-**Reihenfolge:** erst die Werte (prüfbar), dann die Verdrahtung (nicht prüfbar).
+**Order:** first the values (testable), then the wiring (not testable).
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **nur Englisch**;
-  Katalogwerte sind Übersetzungen, das Deutsche duzt.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- **Alle vier Kataloge** bei neuen Zeichenketten (`en`, `de`, `fr`, `pl` unter
-  `Sources/MacSCPAppKit/Resources/`), gleiche Schlüsselmengen.
-- Alle sechs Targets stehen auf `.swiftLanguageMode(.v6)`. **CI wird rot, sobald
-  die Zahl eindeutiger Warnorte über 1 liegt** — es darf keine neue Warnung
-  zurückbleiben.
-- **Lokal grün ist kein Beleg über CI.** Dieser Rechner hat Swift 6.3.3, CI eine
-  ältere Toolchain, deren Regionsanalyse ungenauer und damit in der Praxis
-  strenger ist. Eine Aussage über einen **Typ** (`Sendable`-Hülle) lesen beide
-  gleich; `nonisolated(unsafe)` auf einer Bindung sagt nichts darüber, was eine
-  Closure fängt.
-- **Keine Zeilennummern, keine Ortsangaben in Kommentaren.** Jede Zahl und jede
-  Aufzählung von Aufrufstellen wird in dem Durchgang gezählt, der sie schreibt.
-- **Kein Test erreicht echten Keychain, Sitzungs-Store oder Konfiguration.**
-- Abbau ausschließlich über `teardown(_ tab:reason:)` — die
-  Architektur-Invariante (Warteschlange abbrechen → Terminal herunterfahren →
-  trennen) darf nicht umgangen werden.
-- Die App wird nicht gestartet, nichts gepusht, `scripts/release` läuft nicht.
+- Code, comments, identifiers, test names, commit messages: **English only**;
+  catalog values are translations, the German addresses the user as "du".
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- **All four catalogs** for new strings (`en`, `de`, `fr`, `pl` under
+  `Sources/MacSCPAppKit/Resources/`), same key sets.
+- All six targets are set to `.swiftLanguageMode(.v6)`. **CI turns red as soon as
+  the count of distinct warning sites exceeds 1** — no new warning is allowed
+  to remain.
+- **Green locally is not evidence about CI.** This machine has Swift 6.3.3, CI has an
+  older toolchain whose region analysis is less precise and thus stricter in practice.
+  A statement about a **type** (`Sendable` wrapper) reads the same on both;
+  `nonisolated(unsafe)` on a binding says nothing about what a closure
+  captures.
+- **No line numbers, no location references in comments.** Every number and every
+  enumeration of call sites is counted in the pass that writes it.
+- **No test reaches the real keychain, session store, or configuration.**
+- Teardown exclusively via `teardown(_ tab:reason:)` — the
+  architecture invariant (cancel queue → shut down terminal →
+  disconnect) must not be bypassed.
+- The app is not launched, nothing is pushed, `scripts/release` does not run.
 
 ---
 
-### Task 1: Das Menü als prüfbarer Wert
+### Task 1: The menu as a testable value
 
 **Files:**
 - Create: `Sources/macSCPCore/Presentation/TabContextMenu.swift`
 - Test: `Tests/macSCPCoreTests/TabContextMenuTests.swift`
 
 **Interfaces:**
-- Produces: `TabMenuEntry` (Enum, `Equatable`, `Sendable`) und
+- Produces: `TabMenuEntry` (Enum, `Equatable`, `Sendable`) and
   `TabContextMenu.entries(atIndex:ofTabCount:supportsShell:isAdHoc:isConnected:) -> [TabMenuEntry]`.
-  Task 4 rendert daraus das Menü.
+  Task 4 renders the menu from it.
 
-**Vorbild:** `Sources/macSCPCore/Presentation/BrowserContextMenu.swift` — dieselbe
-Form (Enum in Anzeigereihenfolge, eine `static func entries`, Entscheidung in
-Core statt in der Ansicht). Lies die Datei, bevor du anfängst.
+**Model:** `Sources/macSCPCore/Presentation/BrowserContextMenu.swift` — the same
+shape (enum in display order, one `static func entries`, decision in
+Core instead of in the view). Read the file before you start.
 
-**Eine Festlegung, die aus dem Entwurf abgeleitet ist und die du im Bericht
-nennen sollst:** „Terminal öffnen" hängt an `supportsShell` **und**
-`isConnected`. Der Entwurf nennt für die Sichtbarkeit das Protokoll, führt
-`isConnected` aber als Eingabe — und ein Terminal ohne stehende Verbindung gibt
-es nicht.
+**One decision that is derived from the design and that you should name in
+the report:** "Open Terminal" is gated on `supportsShell` **and**
+`isConnected`. The design names the protocol for visibility, but carries
+`isConnected` as an input — and a terminal without a standing connection does
+not exist.
 
-- [ ] **Step 1: Den Test zuerst schreiben.**
+- [ ] **Step 1: Write the test first.**
 
 ```swift
 import Testing
@@ -134,12 +134,12 @@ struct TabContextMenuTests {
 }
 ```
 
-- [ ] **Step 2: Rot laufen lassen.**
+- [ ] **Step 2: Run red.**
 
 Run: `swift test --filter TabContextMenu`
-Erwartet: FAIL, `cannot find 'TabContextMenu' in scope`.
+Expected: FAIL, `cannot find 'TabContextMenu' in scope`.
 
-- [ ] **Step 3: Umsetzen.**
+- [ ] **Step 3: Implement.**
 
 ```swift
 import Foundation
@@ -188,37 +188,37 @@ public enum TabContextMenu {
 }
 ```
 
-- [ ] **Step 4: Grün laufen lassen.**
+- [ ] **Step 4: Run green.**
 
 Run: `swift test --filter TabContextMenu`
-Erwartet: PASS, acht Tests.
+Expected: PASS, eight tests.
 
-- [ ] **Step 5: Volle Suite grün, keine neue Warnung.**
+- [ ] **Step 5: Full suite green, no new warning.**
 
-Run: `swift test` und `swift build --build-tests`
+Run: `swift test` and `swift build --build-tests`
 
 - [ ] **Step 6: Commit** — `feat(tabs): model the tab context menu as a tested value`
 
 ---
 
-### Task 2: Umordnen in `TabsViewModel`
+### Task 2: Reordering in `TabsViewModel`
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/TabsViewModel.swift`
 - Test: `Tests/macSCPCoreTests/TabsViewModelTests.swift`
 
 **Interfaces:**
-- Produces: `TabsViewModel.move(tabID:to:)`. Task 4 ruft sie mit ±1 aus dem
-  Menü, Task 5 mit der Zielposition aus dem Ziehen.
+- Produces: `TabsViewModel.move(tabID:to:)`. Task 4 calls it with ±1 from
+  the menu, Task 5 with the drop position from dragging.
 
-**Der gemessene Ist-Zustand:** `TabsViewModel` ist `@MainActor`, `@Observable`,
-generisch über `Tab: Identifiable where Tab.ID == UUID`, und hält
-`tabs` sowie `activeTabID` als `private(set)`. `activeTab` schlägt über
-`activeTabID` nach — deshalb bleibt der aktive Tab aktiv, solange niemand
-`activeTabID` anfasst. **Fass es nicht an.**
+**The measured current state:** `TabsViewModel` is `@MainActor`, `@Observable`,
+generic over `Tab: Identifiable where Tab.ID == UUID`, and holds
+`tabs` as well as `activeTabID` as `private(set)`. `activeTab` looks up via
+`activeTabID` — that is why the active tab stays active as long as nobody
+touches `activeTabID`. **Do not touch it.**
 
-- [ ] **Step 1: Den Test zuerst schreiben.** Ergänze die bestehende Datei; halte
-  dich an ihren vorhandenen Testpayload-Typ, statt einen zweiten einzuführen.
+- [ ] **Step 1: Write the test first.** Extend the existing file; stick to
+  its existing test-payload type instead of introducing a second one.
 
 ```swift
     @Test func movingATabPutsItAtTheRequestedPosition() {
@@ -269,12 +269,12 @@ generisch über `Tab: Identifiable where Tab.ID == UUID`, und hält
     }
 ```
 
-- [ ] **Step 2: Rot laufen lassen.**
+- [ ] **Step 2: Run red.**
 
 Run: `swift test --filter TabsViewModel`
-Erwartet: FAIL, `value of type 'TabsViewModel<TestTab>' has no member 'move'`.
+Expected: FAIL, `value of type 'TabsViewModel<TestTab>' has no member 'move'`.
 
-- [ ] **Step 3: Umsetzen.** Direkt nach `addTab` einfügen:
+- [ ] **Step 3: Implement.** Insert directly after `addTab`:
 
 ```swift
     /// Moves a tab to another position. The only reordering there is —
@@ -295,36 +295,35 @@ Erwartet: FAIL, `value of type 'TabsViewModel<TestTab>' has no member 'move'`.
     }
 ```
 
-- [ ] **Step 4: Grün laufen lassen.**
+- [ ] **Step 4: Run green.**
 
 Run: `swift test --filter TabsViewModel`
-Erwartet: PASS.
+Expected: PASS.
 
-- [ ] **Step 5: Volle Suite grün, keine neue Warnung.**
+- [ ] **Step 5: Full suite green, no new warning.**
 - [ ] **Step 6: Commit** — `feat(tabs): reorder tabs through one rule in the view model`
 
 ---
 
-### Task 3: Die Sammelwarnung
+### Task 3: The bulk warning
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/TabCloseWarning.swift`
-- Modify: alle vier `Localizable.strings`
+- Modify: all four `Localizable.strings`
 - Test: `Tests/macSCPAppKitTests/TabCloseWarningTests.swift`
 
 **Interfaces:**
-- Consumes: nichts aus Task 1 und 2.
+- Consumes: nothing from Tasks 1 and 2.
 - Produces: `TabCloseWarning.bulkMessage(tabsClosing:transferring:incoming:) -> String`,
-  `TabCloseWarning.transferringCount(among:) -> Int` und
-  `TabCloseWarning.incomingCount(among:in:) -> Int`. Task 4 ruft alle drei.
+  `TabCloseWarning.transferringCount(among:) -> Int` and
+  `TabCloseWarning.incomingCount(among:in:) -> Int`. Task 4 calls all three.
 
-**Der gemessene Ist-Zustand:** `TabCloseWarning` hat heute zwei Funktionen —
-`hasIncomingTransfers(for:in:)` (`@MainActor`, weil `SessionTab` es ist) und
-`message(activeTransfers:incomingTransfers:)` (frei von Isolation, weil es sie
-nicht braucht). Halte diese Trennung ein: das Zählen ist `@MainActor`, das
-Formulieren nicht.
+**The measured current state:** `TabCloseWarning` currently has two functions —
+`hasIncomingTransfers(for:in:)` (`@MainActor`, because `SessionTab` is) and
+`message(activeTransfers:incomingTransfers:)` (free of isolation, because it does
+not need it). Keep that split: the counting is `@MainActor`, the wording is not.
 
-- [ ] **Step 1: Den Test zuerst schreiben.** In der bestehenden Datei ergänzen:
+- [ ] **Step 1: Write the test first.** Extend the existing file:
 
 ```swift
     @Test func theBulkMessageNamesHowManyTabsAreTransferring() {
@@ -353,12 +352,12 @@ Formulieren nicht.
     }
 ```
 
-- [ ] **Step 2: Rot laufen lassen.**
+- [ ] **Step 2: Run red.**
 
 Run: `swift test --filter TabCloseWarning`
-Erwartet: FAIL, `type 'TabCloseWarning' has no member 'bulkMessage'`.
+Expected: FAIL, `type 'TabCloseWarning' has no member 'bulkMessage'`.
 
-- [ ] **Step 3: Umsetzen.** In `TabCloseWarning` ergänzen:
+- [ ] **Step 3: Implement.** Add to `TabCloseWarning`:
 
 ```swift
     /// How many of `closing` hold a non-terminal item of their own.
@@ -402,120 +401,119 @@ Erwartet: FAIL, `type 'TabCloseWarning' has no member 'bulkMessage'`.
     }
 ```
 
-**Zu `isActive`, damit du nicht danach suchst:** `hasActiveItems` gibt es nur
-mit `destinationTabID:`; für „dieser Reiter überträgt selbst" liest
-`requestClose` in `ContentView+Lifecycle` genau `tab.transferQueue.isActive`.
-Dieselbe Quelle nehmen, damit Einzel- und Sammelwarnung nicht auseinanderlaufen.
+**About `isActive`, so you do not have to search for it:** `hasActiveItems` only exists
+with `destinationTabID:`; for "this tab is transferring itself"
+`requestClose` in `ContentView+Lifecycle` reads exactly `tab.transferQueue.isActive`.
+Use the same source, so the single and bulk warnings do not diverge.
 
-- [ ] **Step 4:** Die zwei neuen Schlüssel in **alle vier** Kataloge, gleiche
-  Schlüsselmenge. Das Deutsche duzt.
-- [ ] **Step 5: Grün laufen lassen.** `swift test --filter TabCloseWarning`
-- [ ] **Step 6:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 4:** The two new keys into **all four** catalogs, same
+  key set. The German addresses the user as "du".
+- [ ] **Step 5: Run green.** `swift test --filter TabCloseWarning`
+- [ ] **Step 6:** Full suite green, no new warning.
 - [ ] **Step 7: Commit** — `feat(tabs): ask once before closing several tabs`
 
 ---
 
-### Task 4: Das Menü verdrahten
+### Task 4: Wire the menu up
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/TabStripView.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView+Lifecycle.swift`
-- Modify: alle vier `Localizable.strings`
-- Test: `Tests/macSCPAppKitTests/` (neue Wächterdatei)
+- Modify: all four `Localizable.strings`
+- Test: `Tests/macSCPAppKitTests/` (new guard file)
 
 **Interfaces:**
 - Consumes: `TabContextMenu.entries(atIndex:ofTabCount:supportsShell:isAdHoc:isConnected:)`
-  aus Task 1, `TabsViewModel.move(tabID:to:)` aus Task 2,
-  `TabCloseWarning.bulkMessage(tabsClosing:transferring:incoming:)` aus Task 3.
+  from Task 1, `TabsViewModel.move(tabID:to:)` from Task 2,
+  `TabCloseWarning.bulkMessage(tabsClosing:transferring:incoming:)` from Task 3.
 
-**Der gemessene Ist-Zustand:** `TabStripView` hat heute **kein** `contextMenu`.
-`TabItemView` trägt bereits `.onTapGesture(perform: onActivate)` und einen
-Schließen-Knopf mit `onClose`.
+**The measured current state:** `TabStripView` currently has **no** `contextMenu`.
+`TabItemView` already carries `.onTapGesture(perform: onActivate)` and a
+close button with `onClose`.
 
-- [ ] **Step 1:** `TabItemView` bekommt `.contextMenu`, das **ausschließlich**
-  über das Ergebnis von `TabContextMenu.entries(…)` iteriert. Kein `if` in der
-  Ansicht darüber, ob ein Eintrag erscheint — diese Entscheidung ist in Task 1
-  getroffen und geprüft. Die Ansicht bildet `TabMenuEntry` auf Titel und
-  Aktion ab.
-- [ ] **Step 2:** Sechs Titel-Schlüssel in alle vier Kataloge:
+- [ ] **Step 1:** `TabItemView` gets a `.contextMenu` that **exclusively**
+  iterates over the result of `TabContextMenu.entries(…)`. No `if` in the
+  view about whether an entry appears — that decision was made and tested
+  in Task 1. The view maps `TabMenuEntry` to title and action.
+- [ ] **Step 2:** Six title keys into all four catalogs:
   `tabs.menu.close`, `tabs.menu.closeOthers`, `tabs.menu.moveLeft`,
   `tabs.menu.moveRight`, `tabs.menu.openTerminal`, `tabs.menu.saveAsSession`.
-- [ ] **Step 3: Die Handler in `ContentView+Lifecycle`.**
-  - `moveLeft`/`moveRight` rufen `tabsModel.move(tabID:to:)` mit Index ∓1.
-  - `closeOthers` schließt **alle außer dem angeklickten Tab** — nicht außer
-    dem aktiven. Vorher die Zählungen holen und, wenn `bulkMessage` nicht leer
-    ist, einmal fragen; bei Ablehnung passiert **nichts**. Jeder Tab geht
-    einzeln durch `teardown(_ tab:reason:)`. Ist der angeklickte Tab nicht der
-    aktive, wird er es danach.
-  - `openTerminal` — **hier ist eine Messung nötig, bevor du etwas baust.**
-    `openTerminalFromSidebar` ist NICHT der Weg: es ruft
-    `connect(in:stored:paneVisibility:)` und baut damit eine **neue**
-    Verbindung auf. Dieser Reiter ist bereits verbunden; gemeint ist, seinen
-    Terminalbereich einzublenden. Stelle fest, wie die Sichtbarkeit der
-    Bereiche an einem **laufenden** Reiter geändert wird, und benutze das.
-    **Gibt es keinen solchen Weg, halte an und melde es**, statt einen zweiten
-    Verbindungspfad zu bauen — ein Menüeintrag, der heimlich neu verbindet,
-    wäre schlimmer als ein fehlender.
-  - `saveAsSession` öffnet den bestehenden Speichern-Weg, vorbefüllt aus
-    `values` des `ConnectionViewModel` dieses Tabs — **nicht** aus
-    `lastConnectedConfig`, das ist ein `SSHConnectionConfig?` und trägt S3 und
-    WebDAV nicht.
-- [ ] **Step 4: Ein Wächter, der die Ansicht an den Wert bindet.** Er muss
-  belegen, dass das Menü seine Einträge aus `TabContextMenu.entries` bezieht
-  und nicht selbst entscheidet.
+- [ ] **Step 3: The handlers in `ContentView+Lifecycle`.**
+  - `moveLeft`/`moveRight` call `tabsModel.move(tabID:to:)` with index ∓1.
+  - `closeOthers` closes **everything except the clicked tab** — not except
+    the active one. First fetch the counts and, if `bulkMessage` is not
+    empty, ask once; on decline **nothing** happens. Each tab goes
+    through `teardown(_ tab:reason:)` individually. If the clicked tab is not the
+    active one, it becomes so afterward.
+  - `openTerminal` — **a measurement is needed here before you build anything.**
+    `openTerminalFromSidebar` is NOT the way: it calls
+    `connect(in:stored:paneVisibility:)` and thereby establishes a **new**
+    connection. This tab is already connected; what is meant is to
+    reveal its terminal pane. Determine how the visibility of the
+    panes is changed on a **running** tab, and use that.
+    **If there is no such way, stop and report it**, rather than building a
+    second connection path — a menu entry that secretly reconnects
+    would be worse than a missing one.
+  - `saveAsSession` opens the existing save path, prefilled from
+    `values` of that tab's `ConnectionViewModel` — **not** from
+    `lastConnectedConfig`, which is an `SSHConnectionConfig?` and does not carry S3 and
+    WebDAV.
+- [ ] **Step 4: A guard that binds the view to the value.** It must
+  prove that the menu draws its entries from `TabContextMenu.entries`
+  and does not decide on its own.
 
-  **Bevor du den Anker wählst, frag dich, von WO aus die Eigenschaft „die
-  Ansicht entscheidet nicht selbst über Sichtbarkeit" verletzt werden könnte,
-  und zähl diese Orte auf.** Ein Wächter, der nach der Umsetzung geschrieben
-  wird, ist auf die gerade geschriebenen Zeilen zugeschnitten; das ist der
-  häufigste Fehler in diesem Projekt. Der Wächter muss **fail-closed** sein und
-  eigene Selbsttests haben — Vorbilder sind die vier Wächter-Suiten unter
-  `Tests/macSCPAppKitTests/` mit `stripCommentsAndStrings`.
+  **Before choosing the anchor, ask yourself from WHERE the property "the
+  view does not decide visibility on its own" could be violated,
+  and enumerate those places.** A guard written after the
+  implementation is tailored to the lines just written; that is the
+  most common mistake in this project. The guard must be **fail-closed** and
+  have its own self-tests — models are the four guard suites under
+  `Tests/macSCPAppKitTests/` using `stripCommentsAndStrings`.
 
-  **Mutationsproben sind Pflicht:** pflanze für jeden aufgezählten Ort eine
-  Verletzung und belege, dass der Wächter rot wird. Entferne jede Probe und
-  prüfe `git status --porcelain` am Ende. Prüfe jede Probendatei vor dem Messen
-  darauf, dass sie das enthält, was du beabsichtigt hast — eine kaputte Probe,
-  die nicht kompiliert, sieht aus wie ein geschlossenes Loch.
-- [ ] **Step 5:** Volle Suite grün, keine neue Warnung.
+  **Mutation probes are mandatory:** for each enumerated place, plant a
+  violation and prove that the guard goes red. Remove every probe and
+  check `git status --porcelain` at the end. Check every probe file before
+  measuring for whether it contains what you intended — a broken probe
+  that does not compile looks like a closed hole.
+- [ ] **Step 5:** Full suite green, no new warning.
 - [ ] **Step 6: Commit** — `feat(tabs): give the tab a context menu`
 
 ---
 
-### Task 5: Ziehen
+### Task 5: Dragging
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/TabStripView.swift`
-- Test: `Tests/macSCPAppKitTests/` (Wächter aus Task 4 erweitern)
+- Test: `Tests/macSCPAppKitTests/` (extend the guard from Task 4)
 
 **Interfaces:**
-- Consumes: `TabsViewModel.move(tabID:to:)` aus Task 2 — **dieselbe** Funktion,
-  die das Menü ruft. Es entsteht keine zweite Umordnung.
+- Consumes: `TabsViewModel.move(tabID:to:)` from Task 2 — the **same** function
+  the menu calls. No second reordering comes into existence.
 
-- [ ] **Step 1:** `TabItemView` wird ziehbar und die Leiste nimmt einen Wurf an.
-  Getragen wird die Tab-`UUID`; der Wurf berechnet die Zielposition und ruft
+- [ ] **Step 1:** `TabItemView` becomes draggable and the strip accepts a drop.
+  The tab `UUID` is carried; the drop computes the target position and calls
   `move(tabID:to:)`.
-- [ ] **Step 2: Ein Wächter, dass das Ziehen dieselbe Funktion ruft.** Er muss
-  eine zweite, eigene Umordnungslogik in der Ansicht ausschließen — genau das
-  ist der Fehler, vor dem der Backlog-Eintrag warnt. Wieder mit Mutationsprobe
-  belegen.
-- [ ] **Step 3:** Ein Wurf außerhalb der Leiste lässt die Reihenfolge, wie sie
-  war. Kein Herausziehen in ein neues Fenster — Mehrfenster ist v2.
-- [ ] **Step 4:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 2: A guard that dragging calls the same function.** It must
+  rule out a second, own reordering logic in the view — that is exactly
+  the mistake the backlog entry warns about. Prove it again with a mutation
+  probe.
+- [ ] **Step 3:** A drop outside the strip leaves the order as it
+  was. No pulling out into a new window — multi-window is v2.
+- [ ] **Step 4:** Full suite green, no new warning.
 - [ ] **Step 5: Commit** — `feat(tabs): reorder tabs by dragging them`
 
-**Am Ende dieser Aufgabe ausdrücklich in den Bericht:** dass SwiftUI das Ziehen
-auslöst und den Reiter an der erwarteten Stelle einfügt, **kann kein Test dieses
-Projekts sehen**. Das ist eine Prüfung des Maintainers in der laufenden App und
-wird nicht als „grün" verbucht.
+**Explicitly state in the report at the end of this task:** that SwiftUI triggers the drag
+and inserts the tab at the expected place **cannot be seen by any test in this
+project**. This is a check by the maintainer in the running app and
+is not counted as "green".
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly out of scope
 
-- Kein Umbenennen eines Reiters, kein „Rechts schließen" — beides
-  Maintainer-Entscheidung vom 2026-08-27.
-- Kein Wiederherstellen von Reitern über einen Neustart.
-- Kein Herausziehen in ein neues Fenster — Mehrfenster ist v2.
-- Keine Änderung an `fileActions` oder am Browser-Kontextmenü.
-- Keine Antwort auf C2 („Sitzung ist schon offen") — eigener Backlog-Punkt.
+- No renaming a tab, no "close to the right" — both are
+  maintainer decisions from 2026-08-27.
+- No restoring tabs across a restart.
+- No pulling out into a new window — multi-window is v2.
+- No change to `fileActions` or to the browser context menu.
+- No answer to C2 ("session is already open") — separate backlog item.

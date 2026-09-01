@@ -1,103 +1,104 @@
-# P5 — Drei Nachzügler aus P3
+# P5 — Three Stragglers from P3
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Drei benannte Grenzen aus den P3-Abschlüssen schließen: stiller
-Historienverlust im Protokoll, falsche Pluralformen, und ein
-Protokolleintrag, der eine Ausführung behauptet, die nie stattfand.
+**Goal:** Close three named gaps from the P3 wrap-ups: silent history loss
+in the log, wrong plural forms, and a log entry that claims a delivery
+that never happened.
 
-**Architecture:** Drei unabhängige Aufgaben, nach Risiko geordnet.
-Task 1 verhindert Datenverlust und geht zuerst.
+**Architecture:** Three independent tasks, ordered by risk.
+Task 1 prevents data loss and goes first.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, Swift Testing.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen: **ausschließlich Englisch.**
-- Die vier Kataloge (en/de/fr/pl) behalten identische Schlüsselmengen.
-- Nie eine Zeilennummer in einen Kommentar schreiben.
-- **Kein Kommentar behauptet etwas, das der Code nicht tut.** Und: wer eine
-  Zahl oder Aufzählung von Aufrufstellen schreibt, zählt sie nach
-  (`CLAUDE.md`, Abschnitt „Kommentare über anderen Code").
-- Tests: TDD rot→grün. `swift test` am Ende jeder Task grün.
-- Conventional Commits, Footer:
+- Code, comments, identifiers, test names: **English only.**
+- The four catalogs (en/de/fr/pl) keep identical key sets.
+- Never write a line number into a comment.
+- **No comment claims something the code does not do.** And: whoever
+  writes a number or an enumeration of call sites counts them
+  (`CLAUDE.md`, section "Comments that describe other code").
+- Tests: TDD red→green. `swift test` green at the end of each task.
+- Conventional Commits, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 
 ---
 
-### Task 1: Ein kaputter Eintrag darf kein Protokoll löschen (Core)
+### Task 1: A broken entry must not erase a log (Core)
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/AuditLogStore.swift`
-- Test: `Tests/macSCPCoreTests/AuditLogStoreDecodingTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/AuditLogStoreDecodingTests.swift` (new)
 
-**Der Fehler, gemessen:** `loadIfNeeded` dekodiert das ganze Array auf
-einmal und schluckt jeden Fehler:
+**The bug, measured:** `loadIfNeeded` decodes the whole array in one
+go and swallows every error:
 
 ```swift
 cache[sessionID] = (try? JSONDecoder().decode([AuditEvent].self, from: data)) ?? []
 ```
 
-Ein einziger nicht dekodierbarer Eintrag macht daraus `[]`. Der nächste
-`append` schreibt die Datei mit **nur dem neuen Eintrag** neu — die ganze
-Historie dieser Sitzung ist weg, ohne Meldung.
+A single entry that fails to decode turns this into `[]`. The next
+`append` rewrites the file with **only the new entry** — the whole
+history of that session is gone, without a warning.
 
-Erreichbar durch jede Ereignisart, die eine ältere App-Version nicht kennt:
-`AuditEvent.Kind` ist ein `String`-Enum, und ein unbekannter `rawValue`
-wirft beim Dekodieren. Gilt für jede je hinzugefügte Art
+Reachable through any event kind an older app version does not know:
+`AuditEvent.Kind` is a `String` enum, and an unknown `rawValue` throws
+while decoding. Applies to every kind ever added
 (`crossSessionTransfer`, `plaintextConfirmed`, `snippetExecuted`).
 
-**Zwei Änderungen, beide nötig:**
+**Two changes, both necessary:**
 
-1. **Elementweise dekodieren.** Ein kaputter Eintrag kostet dann diesen
-   einen, nicht die anderen 999.
-2. **Ein unvollständig gelesenes Protokoll nicht überschreiben.** Sonst
-   schreibt die ältere Version die von der neueren erzeugten Einträge
-   beim nächsten `append` endgültig weg. Merke dir pro Sitzung, dass beim
-   Laden etwas verworfen wurde, und **überspringe das Persistieren** für
-   diese Sitzung, solange das gilt. Der Eintrag landet trotzdem im Cache,
-   die laufende Sitzung sieht ihn also — nur die Datei bleibt unangetastet.
+1. **Decode element-wise.** A broken entry then costs only that
+   one, not the other 999.
+2. **Do not overwrite an incompletely read log.** Otherwise the
+   older version permanently wipes out the entries the newer version
+   produced, on the next `append`. Remember, per session, that
+   something was discarded on load, and **skip persisting** for
+   that session for as long as that holds. The entry still lands in the
+   cache, so the running session does see it — only the file stays
+   untouched.
 
 - [ ] **Step 1: Write the failing tests**
 
-Neue Datei `Tests/macSCPCoreTests/AuditLogStoreDecodingTests.swift`. Sieh
-dir zuerst die vorhandenen `AuditLogStore`-Tests an (Namen und Aufbau des
-Temp-Verzeichnisses übernehmen). Die Tests:
+New file `Tests/macSCPCoreTests/AuditLogStoreDecodingTests.swift`. First
+look at the existing `AuditLogStore` tests (reuse the naming and temp-directory
+setup). The tests:
 
-1. **Ein unbekannter `kind` kostet nur seinen Eintrag.** Schreibe von Hand
-   eine JSON-Datei mit drei Einträgen, davon einer mit
-   `"kind": "somethingFromTheFuture"`. `events(for:)` liefert die anderen
-   zwei.
-2. **Ein teilweise gelesenes Protokoll wird nicht überschrieben.** Nach dem
-   Laden aus (1) ein `append`; danach die Datei erneut roh einlesen und
-   prüfen, dass der unbekannte Eintrag **noch drinsteht**.
-3. **Ein sauberes Protokoll verhält sich unverändert:** laden, anhängen,
-   Datei enthält alte plus neue Einträge.
+1. **An unknown `kind` costs only its own entry.** Write a JSON file by
+   hand with three entries, one of them with
+   `"kind": "somethingFromTheFuture"`. `events(for:)` returns the other
+   two.
+2. **A partially read log is not overwritten.** After loading from (1), an
+   `append`; then read the file raw again and check that the
+   unknown entry is **still there**.
+3. **A clean log behaves unchanged:** load, append, the file
+   contains the old plus the new entries.
 
-Baue die JSON-Datei aus einem `AuditEvent`-Array, das du kodierst, und
-ersetze danach im Text gezielt einen `kind`-Wert — dann bleibt der Rest des
-Formats garantiert echt, statt von Hand nachgebaut.
+Build the JSON file from an `AuditEvent` array that you encode, then
+replace a `kind` value in the text at a specific point — that way the
+rest of the format is guaranteed to be real, instead of hand-built.
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `swift test --filter "AuditLogStore"` — Test 1 und 2 rot.
+Run: `swift test --filter "AuditLogStore"` — tests 1 and 2 red.
 
 - [ ] **Step 3: Implement**
 
-In `loadIfNeeded`: statt `[AuditEvent].self` in einem Zug ein
-`[FailableEvent]` dekodieren, wobei `FailableEvent` ein privater Wrapper
-ist, dessen `init(from:)` `try? container.decode(AuditEvent.self)`
-speichert. Zähle die `nil`-Fälle. Setze den Cache auf die erfolgreichen und
-merke dir bei `nil > 0` die Sitzung in einem `Set<UUID>`
-(z. B. `partiallyRead`). In `persist` (bzw. an der Stelle, die schreibt)
-früh zurückkehren, wenn die Sitzung dort steht.
+In `loadIfNeeded`: instead of decoding `[AuditEvent].self` in one pass,
+decode a `[FailableEvent]`, where `FailableEvent` is a private wrapper
+whose `init(from:)` stores `try? container.decode(AuditEvent.self)`.
+Count the `nil` cases. Set the cache to the successes, and if `nil > 0`,
+remember the session in a `Set<UUID>`
+(e.g. `partiallyRead`). In `persist` (or wherever the write happens),
+return early if the session is in there.
 
-Kommentiere die zweite Hälfte so, dass klar wird, **warum** nicht
-geschrieben wird — sonst liest sich der frühe Rücksprung wie ein Bug.
+Comment the second half so that it is clear **why** nothing is
+written — otherwise the early return reads like a bug.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-`swift test --filter "AuditLogStore"` grün, danach `swift test` gesamt.
+`swift test --filter "AuditLogStore"` green, then the full `swift test`.
 
 - [ ] **Step 5: Commit**
 
@@ -108,59 +109,59 @@ git commit -m "fix(core): keep an audit log a bad entry cannot erase"
 
 ---
 
-### Task 2: Pluralformen für die beiden Anzahl-Meldungen
+### Task 2: Plural forms for the two count messages
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/Resources/{en,de,fr,pl}.lproj/Localizable.stringsdict`
-- Modify: dieselben vier `Localizable.strings`
-- Test: `Tests/macSCPAppKitTests/PluralCatalogTests.swift` (neu)
+- Modify: the same four `Localizable.strings`
+- Test: `Tests/macSCPAppKitTests/PluralCatalogTests.swift` (new)
 
-**Warum:** `"%lld snippets will be written to the file."` liest sich bei
-einer Auswahl als „1 snippets" — und seit P3h ist die Eins bei Snippets der
-**Regelfall** (Zeile auswählen → Exportieren). Betroffen sind zwei
-Schlüssel: `snippets.export.confirm.message %lld` und, gleicher Wortlaut,
+**Why:** `"%lld snippets will be written to the file."` reads as "1
+snippets" for a single selection — and since P3h, one is the
+**common case** for snippets (select a line → export). Two keys are
+affected: `snippets.export.confirm.message %lld` and, the same wording,
 `logins.export.summary %lld`.
 
-**Warum `.stringsdict` und nicht zwei Strings:** Polnisch hat drei
-Pluralkategorien (one/few/many), Französisch behandelt die Null wie den
-Singular. Eine Zwei-Wege-Verzweigung im Code wäre für zwei der vier
-Sprachen falsch.
+**Why `.stringsdict` and not two strings:** Polish has three
+plural categories (one/few/many), and French treats zero like the
+singular. A two-way branch in code would be wrong for two of the four
+languages.
 
-**Vorher zu prüfen (nicht raten):**
-- `L10n.string` ruft `NSLocalizedString(key, bundle:, value:, comment:)`.
-  Bestätige an einem Testfall, dass ein `.stringsdict`-Eintrag darüber
-  gefunden wird und `String(format:)` daraus die richtige Form wählt.
-- `Package.swift` deklariert `.process("Resources/<lang>.lproj")`. Prüfe,
-  dass eine dort abgelegte `.stringsdict` im Bundle landet.
-- Die vorhandenen Katalog-Wächter vergleichen `Localizable.strings`. Wenn
-  ein Schlüssel dorthin **nicht** mehr gehört, muss er aus allen vier
-  gleichermaßen verschwinden, sonst geht die Schlüsselgleichheit kaputt.
-  **Empfehlung: den Schlüssel in `.strings` belassen** (die `.stringsdict`
-  gewinnt zur Laufzeit) — dann bleiben alle Wächter unberührt und der
-  Rückfalltext existiert weiter. Entscheide nach deiner Messung und
-  begründe es im Bericht.
+**To check beforehand (do not guess):**
+- `L10n.string` calls `NSLocalizedString(key, bundle:, value:, comment:)`.
+  Confirm with a test case that a `.stringsdict` entry is found through
+  it, and that `String(format:)` picks the right form from it.
+- `Package.swift` declares `.process("Resources/<lang>.lproj")`. Check
+  that a `.stringsdict` placed there ends up in the bundle.
+- The existing catalog guards compare `Localizable.strings`. If a key
+  no longer belongs there, it has to disappear from all four
+  equally, otherwise key parity breaks.
+  **Recommendation: leave the key in `.strings`** (the `.stringsdict`
+  wins at runtime) — then all the guards stay unaffected and the
+  fallback text keeps existing. Decide based on your measurement and
+  justify it in the report.
 
 - [ ] **Step 1: Write the failing test**
 
-`Tests/macSCPAppKitTests/PluralCatalogTests.swift`: für beide Schlüssel und
-alle vier Sprachen die Formen für 1 und für 2 auflösen und prüfen, dass sie
-sich unterscheiden. Für Polnisch zusätzlich 5 (Kategorie *many*).
+`Tests/macSCPAppKitTests/PluralCatalogTests.swift`: for both keys and
+all four languages, resolve the forms for 1 and for 2 and check that they
+differ. For Polish, also 5 (category *many*).
 
-Wie du die Sprache im Test erzwingst, musst du an den vorhandenen
-L10n-Tests ablesen — falls sich eine Sprache dort nicht gezielt ansprechen
-lässt, prüfe stattdessen die `.stringsdict`-Dateien strukturell (enthält
-`NSStringPluralRuleType`, hat für `pl` die Schlüssel `one`/`few`/`many`)
-und sag im Bericht, dass die Laufzeitauflösung nicht testbar war.
+How you force the language in the test needs to be read off the
+existing L10n tests — if a language cannot be targeted specifically
+there, check the `.stringsdict` files structurally instead (contains
+`NSStringPluralRuleType`, has the keys `one`/`few`/`many` for `pl`)
+and say in the report that runtime resolution was not testable.
 
-- [ ] **Step 2: Run it to verify it fails** — die Dateien existieren nicht.
+- [ ] **Step 2: Run it to verify it fails** — the files do not exist.
 
 - [ ] **Step 3: Implement**
 
-Vier `.stringsdict` mit je beiden Schlüsseln. Englisch/Deutsch: `one`/`other`.
-Französisch: `one` (deckt 0 und 1) / `other`. Polnisch: `one`/`few`/`many`.
-Formuliere die Sätze parallel zu den heutigen Fassungen in `.strings`.
+Four `.stringsdict` files, each with both keys. English/German: `one`/`other`.
+French: `one` (covers 0 and 1) / `other`. Polish: `one`/`few`/`many`.
+Phrase the sentences in parallel with today's versions in `.strings`.
 
-- [ ] **Step 4: Run the tests** — Filter grün, dann `swift test` gesamt.
+- [ ] **Step 4: Run the tests** — filter green, then the full `swift test`.
 
 - [ ] **Step 5: Commit**
 
@@ -171,59 +172,58 @@ git commit -m "fix(app): give the two export counts real plural forms"
 
 ---
 
-### Task 3: Kein Protokolleintrag ohne Zustellung
+### Task 3: No log entry without delivery
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/TerminalPanelViewModel.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView.swift` (`triggerSnippet`)
-- Test: `Tests/macSCPCoreTests/TerminalPanelViewModelTests.swift` (erweitern)
+- Test: `Tests/macSCPCoreTests/TerminalPanelViewModelTests.swift` (extend)
 
-**Der Fehler, gemessen:** `send` ist fire-and-forget. Bei `state ==
-.opening` landen die Bytes in `pendingBytes`; scheitert das Öffnen, setzt
-der Fehlerzweig `pendingBytes = []` — die Bytes gehen nie raus. Der
-Audit-Eintrag „ran snippet …" steht trotzdem, weil `triggerSnippet` direkt
-nach dem `send`-Aufruf protokolliert. Realistisch bei einem Konto mit
-`ForceCommand`, das den Shell-Kanal ablehnt.
+**The bug, measured:** `send` is fire-and-forget. At `state ==
+.opening` the bytes land in `pendingBytes`; if opening fails, the error
+branch sets `pendingBytes = []` — the bytes never go out. The
+audit entry "ran snippet …" is still written, because `triggerSnippet` logs
+right after the `send` call. Realistic with an account that has
+`ForceCommand`, which rejects the shell channel.
 
-**Entwurf:** `send` bekommt einen optionalen Rückruf, der **nur** feuert,
-wenn die Bytes tatsächlich abgingen:
+**Design:** `send` gets an optional callback that fires **only**
+if the bytes actually went out:
 
 ```swift
 public func send(_ bytes: [UInt8], onDelivered: (@MainActor () -> Void)? = nil)
 ```
 
-Der Vorgabewert `nil` lässt jede vorhandene Aufrufstelle unverändert.
+The default value `nil` leaves every existing call site unchanged.
 
-- Bei vorhandenem `shell`: nach erfolgreichem `shell.send` feuern. Beim
-  heutigen `try?` also nur im Erfolgsfall — der geschluckte Fehler darf
-  **nicht** als Zustellung durchgehen.
-- Bei `state == .opening`: den Rückruf neben den gepufferten Bytes merken
-  (`pendingBytes` ist ein flaches Byte-Array, mehrere Sends verschmelzen —
-  du brauchst also eine parallele Liste von Rückrufen) und beim Ausspülen
-  feuern.
-- Auf **jedem** Weg, der `pendingBytes` verwirft, die gemerkten Rückrufe
-  mitverwerfen, ohne sie zu feuern. Zähle diese Stellen nach, statt dich
-  auf diese Beschreibung zu verlassen.
+- With an existing `shell`: fire after a successful `shell.send`. With
+  today's `try?`, that means only on success — the swallowed error must
+  **not** count as delivery.
+- At `state == .opening`: remember the callback alongside the buffered
+  bytes (`pendingBytes` is a flat byte array, multiple sends merge —
+  so you need a parallel list of callbacks) and fire it when flushing.
+- On **every** path that discards `pendingBytes`, discard the remembered
+  callbacks along with it, without firing them. Count these spots
+  yourself instead of relying on this description.
 
-In `ContentView.triggerSnippet` wandert die Aufzeichnung in den Rückruf.
-Der Kommentar dort behauptet derzeit ausdrücklich das Gegenteil („recorded
+In `ContentView.triggerSnippet`, the logging moves into the callback.
+The comment there currently claims exactly the opposite ("recorded
 after the send CALL … a shell that fails to open drops the bytes and leaves
-this entry standing") — er muss mit.
+this entry standing") — it has to go too.
 
 - [ ] **Step 1: Write the failing tests**
 
-In der vorhandenen `TerminalPanelViewModel`-Suite (Aufbau und Fake-Shell von
-dort übernehmen):
+In the existing `TerminalPanelViewModel` suite (reuse the setup and fake shell from
+there):
 
-1. Bei laufender Shell feuert der Rückruf genau einmal.
-2. Während `.opening` gepufferte Bytes: Rückruf feuert erst beim Ausspülen.
-3. Scheitert das Öffnen, feuert der Rückruf **nie**.
+1. With a running shell, the callback fires exactly once.
+2. Bytes buffered during `.opening`: the callback fires only when flushed.
+3. If opening fails, the callback **never** fires.
 
-- [ ] **Step 2: Run them to verify they fail** — die Signatur gibt es nicht.
+- [ ] **Step 2: Run them to verify they fail** — the signature does not exist yet.
 
-- [ ] **Step 3: Implement** — Core zuerst, dann die App-Seite.
+- [ ] **Step 3: Implement** — Core first, then the app side.
 
-- [ ] **Step 4: Run the tests** — Filter grün, dann `swift test` gesamt.
+- [ ] **Step 4: Run the tests** — filter green, then the full `swift test`.
 
 - [ ] **Step 5: Commit**
 

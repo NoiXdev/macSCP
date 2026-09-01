@@ -1,155 +1,157 @@
-# Tab-Kontextmenü und Umordnen — Entwurf
+# Tab context menu and reordering — design
 
-**Stand:** 2026-08-27. Grundlage:
+**As of:** 2026-08-27. Basis:
 `docs/superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md`,
-Punkte B1 (Kontextmenü), B2 (Umordnen) und B3 (woher die Einträge kommen).
+items B1 (context menu), B2 (reordering) and B3 (where the entries come
+from).
 
-Der Backlog verlangt, B1 und B2 **zusammen** zu bauen: „nach links / nach
-rechts" und das Ziehen sind dieselbe zugrunde liegende Fähigkeit, nur zwei
-Bedienwege. Getrennt gebaut entsteht die Umordnung zweimal.
+The backlog requires building B1 and B2 **together**: "move left / move
+right" and dragging are the same underlying capability, just two input
+methods. Built separately, the reordering logic would exist twice.
 
 ---
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
 | | |
 |---|---|
-| `TabStripView.swift` | kein `contextMenu`, kein `onMove`, kein `draggable` — beides ist neu |
-| Tabs über einen Neustart | **werden nicht wiederhergestellt**; es gibt keinen solchen Weg |
-| `TabsViewModel` | hält `tabs`, `activate`, `closeTab`, `addTab` — generisch über `Tab`, in Core |
-| `TabCloseWarning` | prüft pro Tab laufende **und** eingehende Übertragungen, liefert einen Text |
-| `teardown(_ tab:reason:)` | der eine Abbauweg: Warteschlange abbrechen → Terminal herunterfahren → trennen |
-| `ProtocolCapabilities` | trägt `supportsShell`: `true` bei SSH, `false` bei S3 und WebDAV |
-| `BrowserContextMenu.entries(…)` | Vorbild: Menü als reiner Wert in Core, mit eigener Testdatei |
-| „Speichern & verbinden" | existiert nur **im Formular vor dem Verbinden**; eine laufende Ad-hoc-Verbindung lässt sich heute nicht nachträglich sichern |
+| `TabStripView.swift` | no `contextMenu`, no `onMove`, no `draggable` — both are new |
+| Tabs across a restart | **are not restored**; there is no such path today |
+| `TabsViewModel` | holds `tabs`, `activate`, `closeTab`, `addTab` — generic over `Tab`, in Core |
+| `TabCloseWarning` | checks each tab for running **and** incoming transfers, produces a text |
+| `teardown(_ tab:reason:)` | the one teardown path: cancel the queue → shut down the terminal → disconnect |
+| `ProtocolCapabilities` | carries `supportsShell`: `true` for SSH, `false` for S3 and WebDAV |
+| `BrowserContextMenu.entries(…)` | precedent: the menu as a pure value in Core, with its own test file |
+| "Save & connect" | exists only **in the form before connecting**; a running ad-hoc connection cannot be saved after the fact today |
 
 ---
 
-## 1. Woher die Einträge kommen
+## 1. Where the entries come from
 
-B3 legt zwei Dinge fest. Das erste bleibt: **kein `switch` über
-`ConnectionKind`.** Beim zweiten — „stattdessen Beiträge wie `fileActions`" —
-weicht dieser Entwurf ab, und zwar gemessen.
+B3 settles two things. The first stays: **no `switch` over
+`ConnectionKind`.** On the second — "instead, contributions like
+`fileActions`" — this design deviates, and does so on measured grounds.
 
-| Herkunft | Einträge | Mechanismus |
+| Origin | Entries | Mechanism |
 |---|---|---|
-| Der Tab selbst | Schließen, Andere schließen, Nach links, Nach rechts | Position und Anzahl |
-| Der **Zustand** des Tabs | Als Sitzung speichern… | ad hoc **und** verbunden |
-| Das **Protokoll** | Terminal öffnen | `capabilities.supportsShell` |
+| The tab itself | Close, Close others, Move left, Move right | position and count |
+| The tab's **state** | Save as session… | ad hoc **and** connected |
+| The **protocol** | Open terminal | `capabilities.supportsShell` |
 
-**Warum keine Beiträge.** `FileActionContribution` hat heute genau einen
-Nutzer — S3s „Freigabe-Link". Sein Verhalten hängt an einem
-`if action.id == "s3.presignedURL"` an der Aufrufstelle; der Kommentar dort
-sagt, ein zweiter Beitrag brauche „nur ein weiteres `if`". Für das Tab-Menü
-hieße das: ein Mechanismus mit null Nutzern plus eine
-Zeichenketten-Verzweigung, um eine einzige Aktion zu zeigen, deren Bedingung
-bereits als Fähigkeitsflag vorliegt.
+**Why not contributions.** `FileActionContribution` today has exactly one
+user — S3's "share link". Its behavior hangs off an
+`if action.id == "s3.presignedURL"` at the call site; the comment there
+says a second contribution would need "just one more `if`". For the tab
+menu that would mean: a mechanism with zero users plus a string branch, to
+show a single action whose condition already exists as a capability flag.
 
-Die Trennlinie aus B3 selbst — *„nicht welches Menü, sondern wovon der
-Eintrag abhängt"* — führt hier zur Fähigkeitsabfrage. Ein Beitrag wird richtig,
-sobald ein Backend eine Aktion hat, die **kein anderes kennt und die kein Flag
-beschreibt**. Dann steht das Muster bereit und wird kopiert.
+The dividing line from B3 itself — *"not which menu, but what the entry
+depends on"* — leads here to the capability check. A contribution becomes
+right the moment a backend has an action that **no other backend knows and
+that no flag describes**. At that point the pattern is ready and gets
+copied.
 
-## 2. Das Menü als prüfbarer Wert
+## 2. The menu as a testable value
 
-Nach dem Vorbild von `BrowserContextMenu`: eine Funktion in Core, die aus
-Fakten eine Liste macht. Die Ansicht zeichnet nur, was herauskommt, und trifft
-keine eigene Entscheidung.
+Following the precedent of `BrowserContextMenu`: a function in Core that
+turns facts into a list. The view only draws what comes out, and makes no
+decision of its own.
 
-Fakten, die hineingehen: Position des Tabs, Anzahl der Tabs, `supportsShell`,
-ob die Verbindung ad hoc ist, ob sie steht.
+Facts that go in: the tab's position, the number of tabs, `supportsShell`,
+whether the connection is ad hoc, whether it is up.
 
-Sichtbarkeitsregeln, jede einzeln prüfbar:
+Visibility rules, each individually testable:
 
-- **Nach links** fehlt beim ersten Tab, **Nach rechts** beim letzten. Kein
-  ausgegrauter Eintrag, kein Fehler — der Eintrag erscheint dort nicht.
-- **Andere schließen** fehlt, wenn es keine anderen gibt.
-- **Terminal öffnen** erscheint bei SSH, fehlt bei S3 und WebDAV.
-- **Als Sitzung speichern…** nur bei ad hoc **und** verbunden. Bei einer
-  gespeicherten Sitzung ergibt der Eintrag keinen Sinn, bei einer
-  gescheiterten Verbindung auch nicht.
+- **Move left** is absent on the first tab, **Move right** on the last. No
+  greyed-out entry, no error — the entry simply does not appear there.
+- **Close others** is absent when there are no others.
+- **Open terminal** appears for SSH, is absent for S3 and WebDAV.
+- **Save as session…** only when ad hoc **and** connected. On a saved
+  session the entry makes no sense, nor does it on a failed connection.
 
-**Ausdrücklich nicht dabei:** *Umbenennen* (ein eigener Tab-Titel wäre neuer
-Zustand, der irgendwo leben müsste) und *Rechts schließen* (weniger Einträge
-sind hier besser). Beides Maintainer-Entscheidung vom 2026-08-27.
+**Explicitly not included:** *Rename* (a separate tab title would be new
+state that would have to live somewhere) and *Close to the right* (fewer
+entries is better here). Both are maintainer decisions from 2026-08-27.
 
-## 3. Umordnen
+## 3. Reordering
 
-**Eine Funktion in `TabsViewModel`**, dort wo `addTab`, `activate` und
-`closeTab` schon leben — in Core, ohne Ansicht prüfbar. Beide Bedienwege rufen
-sie: das Menü mit ±1, das Ziehen mit der Zielposition.
+**One function on `TabsViewModel`**, right where `addTab`, `activate` and
+`closeTab` already live — in Core, testable without a view. Both input
+methods call it: the menu with ±1, dragging with the target position.
 
-Drei Invarianten:
+Three invariants:
 
-1. **Der aktive Tab bleibt aktiv.** Seine Position ändert sich, seine
-   Identität nicht — auch wenn ein anderer Tab an ihm vorbeigeschoben wird.
-   `activeTab` hängt an einer ID, das trägt.
-2. **Keine Verbindung wird angefasst.** Umordnen ist reine Anzeigereihenfolge;
-   Sitzung, Warteschlange und Terminal bleiben unberührt.
-3. **Die Ränder tun nichts.** Eine Bewegung über den Rand hinaus ist kein
-   Fehler und keine Ausnahme, sondern lässt die Reihenfolge, wie sie war.
+1. **The active tab stays active.** Its position changes, its identity
+   does not — even when another tab is pushed past it. `activeTab` hangs
+   off an ID, which carries this.
+2. **No connection is touched.** Reordering is purely a display order;
+   session, queue and terminal stay untouched.
+3. **The edges do nothing.** A move past the edge is not an error and not
+   an exception — it simply leaves the order as it was.
 
-**Nicht dabei:** einen Tab aus der Leiste heraus in ein neues Fenster ziehen.
-Mehrfenster ist laut Architektur-Invarianten v2, und Verbindungszustände
-hängen am Fensterbereich. Ein Ziehen ins Leere lässt den Tab, wo er war.
+**Not included:** dragging a tab out of the strip into a new window.
+Multi-window is v2 per the architecture invariants, and connection state
+hangs off the window scope. A drag into empty space leaves the tab where
+it was.
 
-Weil Tabs keinen Neustart überleben, ist die Reihenfolge reiner
-Sitzungszustand: kein Speicher, keine Migration, keine `SettingsStore`-Frage.
+Because tabs do not survive a restart, the order is pure session state: no
+storage, no migration, no `SettingsStore` question.
 
-## 4. Schließen
+## 4. Closing
 
-**Ein Weg, nicht zwei.** „Andere schließen" ruft `teardown(_ tab:reason:)` pro
-Tab auf. Einen zweiten Abbauweg zu bauen würde die Reihenfolge-Invariante der
-Architektur unterlaufen (Warteschlange → Terminal → Verbindung).
+**One path, not two.** "Close others" calls `teardown(_ tab:reason:)` per
+tab. Building a second teardown path would undercut the architecture's
+ordering invariant (queue → terminal → connection).
 
-**„Andere" heißt: alle außer dem angeklickten Tab** — nicht alle außer dem
-aktiven. Das Menü hängt an einer bestimmten Zeile, und der Nutzer meint die,
-auf die er geklickt hat. Ist der angeklickte Tab nicht der aktive, wird er
-durch das Schließen zum aktiven, weil sonst kein Tab mehr da ist, der es sein
-könnte.
+**"Others" means: everyone except the clicked tab** — not everyone except
+the active one. The menu hangs off a specific row, and the user means the
+one they clicked. If the clicked tab is not the active one, closing makes
+it the active one, because otherwise there would be no tab left that could
+be.
 
-**Eine Sammelwarnung, nicht N.** `TabCloseWarning` prüft heute einen Tab; für
-das Sammelschließen kommt eine Fassung dazu, die über mehrere Tabs
-zusammenfasst und benennt, wie viele der betroffenen gerade übertragen.
-Einmal fragen, einmal entscheiden.
+**One combined warning, not N.** `TabCloseWarning` today checks one tab;
+for the bulk close a version is added that summarizes across several tabs
+and names how many of the affected ones are currently transferring. Ask
+once, decide once.
 
-**Ablehnen bricht alles ab**, nicht nur die übertragenden Tabs. Eine Frage,
-eine Antwort: wer „Abbrechen" wählt, will nicht, dass die Hälfte trotzdem
-zugeht. Die ruhigen Tabs teilweise zu schließen wäre ein drittes Verhalten,
-das niemand angefordert hat.
+**Declining cancels everything**, not just the transferring tabs. One
+question, one answer: whoever picks "Cancel" does not want half of them
+closing anyway. Partially closing the quiet tabs would be a third behavior
+nobody asked for.
 
-## 5. Als Sitzung speichern
+## 5. Save as session
 
-Der Eintrag mit dem echten Neuwert: heute gibt es keinen Weg, eine laufende
-Ad-hoc-Verbindung nachträglich zu sichern.
+The entry with the actual new value: today there is no way to save a
+running ad-hoc connection after the fact.
 
-**Er öffnet den bestehenden Speichern-Weg, vorbefüllt** mit den Werten der
-laufenden Verbindung, statt einen zweiten Speicher-Pfad zu bauen. Der Nutzer
-sieht Name und Felder vor dem Sichern und kann den Namen setzen; die Frage,
-ob das Geheimnis mitgeht, beantwortet das Formular wie sonst auch.
+**It opens the existing save path, pre-filled** with the running
+connection's values, instead of building a second save path. The user sees
+the name and fields before saving and can set the name; whether the secret
+comes along is answered by the form as always.
 
-Quelle der Werte ist `values` in `ConnectionViewModel` — die generische Karte,
-im Quelltext ausdrücklich als einzige Wahrheitsquelle geführt, aus der auch
-die Verbinden- und Speichern-Wege lesen. **Nicht** `lastConnectedConfig`: das
-ist ein `SSHConnectionConfig?` und trägt S3 und WebDAV nicht.
+The source of the values is `values` in `ConnectionViewModel` — the
+generic map, explicitly documented in the source as the single source of
+truth, which the connect and save paths also read from. **Not**
+`lastConnectedConfig`: that is an `SSHConnectionConfig?` and does not carry
+S3 and WebDAV.
 
-## 6. Was kein Test dieses Projekts sehen kann
+## 6. What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: welche Einträge erscheinen, was das
-Umordnen mit der Reihenfolge und dem aktiven Tab macht, was die Sammelwarnung
-sagt, und dass die Ansicht an die richtigen Funktionen verdrahtet ist.
+Everything decidable is testable: which entries appear, what reordering
+does to the order and the active tab, what the combined warning says, and
+that the view is wired to the right functions.
 
-**Nicht prüfbar** ist, dass SwiftUI das Ziehen auslöst und den Tab an der
-erwarteten Stelle einfügt — es gibt hier keine Rendering-Umgebung. Das
-entscheidet ein Blick in der laufenden App, wie zuletzt bei der
-Eingabetaste auf der Seitenleistenzeile. Das gehört beim Abschluss ausdrücklich
-als Maintainer-Prüfung benannt, nicht stillschweigend als „grün" verbucht.
+**Not testable** is that SwiftUI triggers the drag and inserts the tab at
+the expected spot — there is no rendering environment here. That is
+settled by a look at the running app, as was last done for the Return key
+on the sidebar row. This belongs, at wrap-up, explicitly named as a
+maintainer check, not silently booked as "green".
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly not included
 
-- Kein Wiederherstellen von Tabs über einen Neustart — eigener Vorgang.
-- Kein Tab in ein neues Fenster ziehen — Mehrfenster ist v2.
-- Keine Änderung an `fileActions` oder am Browser-Kontextmenü.
-- Keine Antwort auf C2 („Sitzung ist schon offen") — eigener Backlog-Punkt.
+- No restoring tabs across a restart — its own task.
+- No dragging a tab into a new window — multi-window is v2.
+- No change to `fileActions` or the browser context menu.
+- No answer to C2 ("session is already open") — its own backlog item.

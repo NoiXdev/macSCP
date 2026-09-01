@@ -1,27 +1,27 @@
-# M19a — Tooltips an Icon-Aktionen + Wächter Implementation Plan
+# M19a — Tooltips on icon actions + guard implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Jede anklickbare Fläche, die nur ein Symbol zeigt, sagt beim Überfahren, was sie tut — und ein Test erzwingt, dass das bei künftigen Symbolen eine bewusste Entscheidung bleibt.
+**Goal:** Every clickable area that shows only a symbol says, on hover, what it does — and a test enforces that this stays a deliberate decision for future symbols.
 
-**Architecture:** Zwei fehlende `.help`-Modifier in der App, plus ein Quelltext-Wächter im einzigen vorhandenen Testtarget (`macSCPCoreTests`), der die App-Quellen liest und für jedes Symbol entweder ein `.help` in der Nähe oder einen begründeten Eintrag auf einer Liste dekorativer Symbole verlangt.
+**Architecture:** Two missing `.help` modifiers in the app, plus a source-scanning guard in the only existing test target (`macSCPCoreTests`), which reads the app sources and requires, for every symbol, either a nearby `.help` or a justified entry on a list of decorative symbols.
 
 **Tech Stack:** Swift (SwiftPM, `.swiftLanguageMode(.v5)`), Swift Testing, SwiftUI, macOS 15+.
 
 ## Global Constraints
 
-- Swift `.swiftLanguageMode(.v5)`, minimum macOS 15; **keine neue externe Dependency**.
-- Code, Kommentare, Testnamen: **Englisch**. UI-Strings EN/DE/FR/PL, typografische Zeichen in nicht-englischen Werten (kein ASCII `"`).
-- Der Wächter prüft **ausschließlich**, ob pro Symbol entschieden wurde — er wird nicht zum schleichenden Stil-Linter.
-- Conventional Commits; Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- Swift `.swiftLanguageMode(.v5)`, minimum macOS 15; **no new external dependency**.
+- Code, comments, test names: **English**. UI strings EN/DE/FR/PL, typographic characters in non-English values (no ASCII `"`).
+- The guard checks **exclusively** whether a decision was made per symbol — it must not turn into a creeping style linter.
+- Conventional Commits; footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
-**Verankerte Fakten (im Code verifiziert):** Das Tab-`×` sitzt in `Sources/MacSCPApp/TabStripView.swift:107-113` (`Button(action: onClose)` mit `Image(systemName: "xmark")`, `.buttonStyle(.plain)`), sichtbar nur bei `isHovering`; das `+` daneben hat sein `.help` bei `:34` mit dem Schlüssel `tabs.newTabHelp` („New tab (⌘N)"). **⌘W ist als „Close Tab" bestätigt** (`MacSCPApp.swift:187-190`, und `KeyboardShortcutsCatalog.swift:36` führt es). Der `−`-Knopf sitzt in `Sources/MacSCPApp/SettingsView.swift:506-514` und trägt **bereits** `.accessibilityLabel(L10n.string("settings.openWith.rules.remove", "Remove"))` — der Schlüssel existiert also schon (`en.lproj:58`). Bewusst dekorativ: `TransferQueueBar.swift:77` (Richtungspfeil) und `:128` (Häkchen); das ⚠ (`:97`) hat sein `.help` bei `:100`, der Fehlerfall bei `:135`. Vorbild für den Wächter: der `#filePath`-Lint in `Tests/macSCPCoreTests/EmbeddedKeyPorterTests.swift` (Kommentare strippen → Leerzeichen strippen → whitespace-freie Nadeln).
+**Anchored facts (verified in the code):** The tab `×` sits in `Sources/MacSCPApp/TabStripView.swift:107-113` (`Button(action: onClose)` with `Image(systemName: "xmark")`, `.buttonStyle(.plain)`), visible only when `isHovering`; the `+` next to it has its `.help` at `:34` with the key `tabs.newTabHelp` ("New tab (⌘N)"). **⌘W is confirmed as "Close Tab"** (`MacSCPApp.swift:187-190`, and `KeyboardShortcutsCatalog.swift:36` lists it). The `−` button sits in `Sources/MacSCPApp/SettingsView.swift:506-514` and **already** carries `.accessibilityLabel(L10n.string("settings.openWith.rules.remove", "Remove"))` — so the key already exists (`en.lproj:58`). Deliberately decorative: `TransferQueueBar.swift:77` (direction arrow) and `:128` (checkmark); the ⚠ (`:97`) has its `.help` at `:100`, the error case at `:135`. Model for the guard: the `#filePath` lint in `Tests/macSCPCoreTests/EmbeddedKeyPorterTests.swift` (strip comments → strip whitespace → whitespace-free needles).
 
-**Kein App-Testtarget:** `Package.swift` hat nur `macSCPCoreTests`. Die App-Änderungen sind build-verifiziert; der Wächter liest Quelltext.
+**No app test target:** `Package.swift` has only `macSCPCoreTests`. The app changes are build-verified; the guard reads source text.
 
 ---
 
-## Task 1: Die zwei fehlenden Hinweistexte
+## Task 1: The two missing hover texts
 
 **Files:**
 - Modify: `Sources/MacSCPApp/TabStripView.swift`
@@ -29,31 +29,31 @@
 - Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 
 **Interfaces:**
-- Produces: ein neuer Schlüssel `tabs.closeTabHelp`. Der Einstellungen-Knopf bekommt **keinen** neuen Schlüssel.
+- Produces: a new key `tabs.closeTabHelp`. The settings button gets **no** new key.
 
-- [ ] **Step 1: Tab-`×`**
+- [ ] **Step 1: Tab `×`**
 
-An den `Button(action: onClose)`-Block in `TabStripView.swift` (nach `.foregroundStyle(...)`, in derselben Modifier-Kette wie beim `+`) anhängen:
+Append to the `Button(action: onClose)` block in `TabStripView.swift` (after `.foregroundStyle(...)`, in the same modifier chain as the `+`):
 
 ```swift
                 .help(L10n.string("tabs.closeTabHelp", "Close tab (⌘W)"))
 ```
 
-Das Kürzel gehört in den Text, weil das `+` daneben es genauso hält — nicht als Verzierung: ⌘W ist real gebunden (`MacSCPApp.swift:190`).
+The shortcut belongs in the text because the `+` next to it does the same — it's not decoration: ⌘W is really bound (`MacSCPApp.swift:190`).
 
-- [ ] **Step 2: Einstellungen-`−`**
+- [ ] **Step 2: Settings `−`**
 
-In `SettingsView.swift` an denselben Knopf, **zusätzlich** zum vorhandenen `.accessibilityLabel`:
+In `SettingsView.swift`, on the same button, **in addition to** the existing `.accessibilityLabel`:
 
 ```swift
                         .help(L10n.string("settings.openWith.rules.remove", "Remove"))
 ```
 
-Denselben Schlüssel wiederverwenden — er existiert bereits in allen vier Katalogen. `.accessibilityLabel` ist **kein** Ersatz für `.help`: es beschriftet für VoiceOver, erzeugt aber keinen Hinweis beim Überfahren. Halte genau das in einem knappen Kommentar fest, damit die Doppelung nicht später als Redundanz „aufgeräumt" wird.
+Reuse the same key — it already exists in all four catalogs. `.accessibilityLabel` is **not** a substitute for `.help`: it labels for VoiceOver but does not produce a hover hint. Record exactly that in a short comment, so the duplication doesn't later get "cleaned up" as redundancy.
 
 - [ ] **Step 3: L10n**
 
-`tabs.closeTabHelp` in **allen vier** Katalogen, direkt neben `tabs.newTabHelp` einsortiert:
+`tabs.closeTabHelp` in **all four** catalogs, sorted directly next to `tabs.newTabHelp`:
 
 EN:
 ```
@@ -72,12 +72,12 @@ PL:
 "tabs.closeTabHelp" = "Zamknij kartę (⌘W)";
 ```
 
-Der FR-Wert nutzt das typografische Apostroph U+2019, kein ASCII `'`.
+The FR value uses the typographic apostrophe U+2019, not an ASCII `'`.
 
-- [ ] **Step 4: Build + Parität**
+- [ ] **Step 4: Build + parity**
 
 Run: `swift build && swift test --filter Localizable`
-Expected: 0 neue Warnungen, Parität grün. Zusätzlich per Grep bestätigen, dass `tabs.closeTabHelp` in allen vier Dateien steht — der Paritätstest diffed nur gegen `en.lproj` und sieht einen überall fehlenden Schlüssel nicht.
+Expected: 0 new warnings, parity green. Additionally confirm via grep that `tabs.closeTabHelp` is present in all four files — the parity test only diffs against `en.lproj` and does not see a key missing everywhere.
 
 - [ ] **Step 5: Commit**
 
@@ -90,27 +90,27 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 2: Der Wächter
+## Task 2: The guard
 
 **Files:**
 - Create: `Tests/macSCPCoreTests/IconTooltipLintTests.swift`
 
 **Interfaces:**
-- Consumes: die App-Quellen unter `Sources/MacSCPApp/`, über einen aus `#filePath` abgeleiteten Pfad (wie der M19-Lint).
+- Consumes: the app sources under `Sources/MacSCPApp/`, via a path derived from `#filePath` (like the M19 lint).
 
-- [ ] **Step 1: Den Lint schreiben**
+- [ ] **Step 1: Write the lint**
 
-Aufbau, angelehnt an `EmbeddedKeyPorterTests`' Quelltext-Lint (dort nachlesen, insbesondere wie er den Pfad aus `#filePath` herleitet und wie er Kommentare entfernt, bevor er sucht):
+Structure, modeled on `EmbeddedKeyPorterTests`'s source lint (look it up there, in particular how it derives the path from `#filePath` and how it strips comments before searching):
 
-1. Alle `*.swift` unter `Sources/MacSCPApp/` einlesen.
-2. Zeilenkommentare entfernen, **bevor** gesucht wird (sonst zählt ein auskommentiertes Symbol mit).
-3. Jedes Vorkommen von `Image(systemName:` und `systemImage:` finden, mit Datei und Zeilennummer.
-4. Für jedes Vorkommen gilt es als entschieden, wenn **eines** zutrifft:
-   - innerhalb der nächsten **12 Zeilen** steht ein `.help(` — die Modifier-Kette eines Icon-Knopfes ist in diesem Code nie länger (längster Ist-Fall: `TabStripView` `+`, 8 Zeilen); oder
-   - Datei **und** Symbolname stehen auf `decorativeIcons`.
-5. Sonst: `Issue.record` mit Datei, Zeile, Symbolname und dem Hinweis, was zu tun ist (`.help` ergänzen **oder** mit Begründung auf die Liste setzen).
+1. Read all `*.swift` under `Sources/MacSCPApp/`.
+2. Strip line comments **before** searching (otherwise a commented-out symbol would be counted).
+3. Find every occurrence of `Image(systemName:` and `systemImage:`, with file and line number.
+4. For each occurrence, it counts as decided if **one** of these holds:
+   - within the next **12 lines** there is a `.help(` — the modifier chain of an icon button never runs longer than that in this code (longest actual case: `TabStripView` `+`, 8 lines); or
+   - file **and** symbol name are on `decorativeIcons`.
+5. Otherwise: `Issue.record` with file, line, symbol name, and a note on what to do (add `.help` **or** put it on the list with a justification).
 
-Die Liste als Konstante mit Begründung je Eintrag, ungefähr so:
+The list as a constant with a justification per entry, roughly like this:
 
 ```swift
     /// Icons that are deliberately decorative — they are not a hit target, so
@@ -124,11 +124,11 @@ Die Liste als Konstante mit Begründung je Eintrag, ungefähr so:
     ]
 ```
 
-Die realen Einträge aus dem Ist-Zustand ableiten, nicht raten: alles, was nach dem Ergänzen aus Task 1 noch ohne `.help` dasteht, gehört mit einer ehrlichen Begründung auf die Liste. Erwartet werden mindestens der Richtungspfeil und das Häkchen aus `TransferQueueBar`; prüfe die übrigen Dateien selbst und schreibe für jeden Fund eine eigene Begründung.
+Derive the real entries from the actual state, don't guess: everything that, after the additions from Task 1, is still without `.help` belongs on the list with an honest justification. Expected at minimum: the direction arrow and the checkmark from `TransferQueueBar`; check the remaining files yourself and write an individual justification for each finding.
 
-- [ ] **Step 2: Grenzen dokumentieren**
+- [ ] **Step 2: Document the limits**
 
-Doc-Kommentar am Test, der ohne Beschönigung sagt, was er leistet:
+Doc comment on the test that states plainly, without varnish, what it does:
 
 ```swift
 /// Guards ONE property: that every icon in the app target has been DECIDED
@@ -143,23 +143,23 @@ Doc-Kommentar am Test, der ohne Beschönigung sagt, was er leistet:
 /// thinking", nothing more.
 ```
 
-Ebenfalls festhalten: `.accessibilityLabel` zählt **nicht** als Erfüllung. Es beschriftet für VoiceOver und erzeugt keinen Hinweis beim Überfahren — der Einstellungen-Knopf aus Task 1 hatte genau das und brauchte trotzdem ein `.help`.
+Also record: `.accessibilityLabel` does **not** count as satisfying it. It labels for VoiceOver and does not produce a hover hint — the settings button from Task 1 had exactly that and still needed a `.help`.
 
-- [ ] **Step 3: Grün gegen den aufgeräumten Stand**
+- [ ] **Step 3: Green against the cleaned-up state**
 
 Run: `swift test --filter IconTooltipLint`
 Expected: PASS.
 
-- [ ] **Step 4: Rot per Mutation belegen**
+- [ ] **Step 4: Prove red by mutation**
 
-Ein Symbol ohne `.help` und ohne Listeneintrag in eine App-Datei einfügen (z. B. ein `Image(systemName: "star")` in einem Knopf), Test laufen lassen — **muss rot werden**, und die Meldung muss Datei, Zeile und Symbolnamen nennen. Ausgabe im Bericht festhalten, dann die Mutation zurücknehmen und erneut grün bestätigen.
+Insert a symbol without `.help` and without a list entry into an app file (e.g. an `Image(systemName: "star")` in a button), run the test — **must turn red**, and the message must name file, line, and symbol name. Record the output in the report, then revert the mutation and confirm green again.
 
-Zweite Mutation: einen der beiden in Task 1 ergänzten `.help`-Aufrufe entfernen — auch das muss rot werden. Danach zurücknehmen.
+Second mutation: remove one of the two `.help` calls added in Task 1 — that must also turn red. Then revert.
 
-- [ ] **Step 5: Volle Suite + Commit**
+- [ ] **Step 5: Full suite + commit**
 
 Run: `swift build && swift test`
-Expected: alles grün, 0 neue Warnungen.
+Expected: all green, 0 new warnings.
 
 ```bash
 git add Tests/macSCPCoreTests/IconTooltipLintTests.swift
@@ -170,28 +170,28 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 3: Abschluss
+## Task 3: Wrap-up
 
-- [ ] **Step 1: Volle Suite + Parität**
+- [ ] **Step 1: Full suite + parity**
 
 Run: `swift build && swift test && swift test --filter Localizable`
 
-- [ ] **Step 2: Sichtprüfung im Dev-Build**
+- [ ] **Step 2: Visual check in the dev build**
 
-Dev-Build bauen und starten, Zeiger über das `×` eines Tabs und über das `−` in „Öffnen mit" halten: beide zeigen ihren Text. Zusätzlich Idle-CPU messen (~0 %).
+Build and launch the dev build, hover the pointer over a tab's `×` and over the `−` in "Open with": both show their text. Also measure idle CPU (~0%).
 
 - [ ] **Step 3: Review**
 
-Review über `git merge-base develop HEAD`..HEAD. Fokus: der Wächter prüft nichts anderes als die Entscheidung; seine Grenzen stehen im Doc-Kommentar statt in einer Zusage, die er nicht hält; die Liste dekorativer Symbole hat je Eintrag eine echte Begründung; Katalog-Parität per Grep, nicht nur per Test.
+Review over `git merge-base develop HEAD`..HEAD. Focus: the guard checks nothing other than the decision; its limits are stated in the doc comment rather than in a promise it doesn't keep; the decorative-symbol list has a real justification per entry; catalog parity via grep, not only via test.
 
-- [ ] **Step 4: Push (auf Maintainer-Anordnung)**
+- [ ] **Step 4: Push (on maintainer instruction)**
 
 ---
 
 ## Self-Review
 
-**1. Spec coverage:** Die zwei Lücken → Task 1 ✅ · Wächter mit Liste → Task 2 ✅ · Grenzen benannt → Task 2 Step 2 ✅ · Mutationsnachweis → Task 2 Step 4 ✅ · Katalog-Parität per Grep → Task 1 Step 4 und Task 3 ✅ · dekorative Symbole bleiben ohne Tooltip → Task 2 Liste ✅
+**1. Spec coverage:** The two gaps → Task 1 ✅ · guard with list → Task 2 ✅ · limits stated → Task 2 Step 2 ✅ · mutation proof → Task 2 Step 4 ✅ · catalog parity via grep → Task 1 Step 4 and Task 3 ✅ · decorative symbols stay without tooltip → Task 2 list ✅
 
-**2. Placeholder scan:** Bewusst offen mit klarer Anweisung: die realen Einträge der `decorativeIcons`-Liste (aus dem Ist-Zustand ableiten, nicht raten) und die genaue Pfad-/Kommentar-Behandlung des M19-Lints (dort nachlesen). Kein „TBD/TODO".
+**2. Placeholder scan:** Deliberately open with a clear instruction: the real entries of the `decorativeIcons` list (derive from the actual state, don't guess) and the exact path/comment handling of the M19 lint (look it up there). No "TBD/TODO".
 
-**3. Type consistency:** `tabs.closeTabHelp` (neu, 4 Kataloge), `settings.openWith.rules.remove` (bestehend, wiederverwendet), `decorativeIcons` / `DecorativeIcon(file:symbol:reason:)` — über beide Tasks gleich geschrieben.
+**3. Type consistency:** `tabs.closeTabHelp` (new, 4 catalogs), `settings.openWith.rules.remove` (existing, reused), `decorativeIcons` / `DecorativeIcon(file:symbol:reason:)` — written consistently across both tasks.

@@ -1,120 +1,122 @@
-# Die App soll nicht selbst „ja" sagen können — Entwurf
+# The app must not be able to say "yes" to itself — Design
 
-**Stand:** 2026-08-28. Umsetzung von
-`docs/superpowers/specs/2026-08-22-backlog-verbindungs-fähigkeit.md`, dem
-Eintrag, den der Backlog selbst als den wichtigsten führt: nach sechs Runden,
-in denen jeweils eine neue Schreibweise einen Quelltext-Wächter geschlagen hat.
+**Status:** 2026-08-28. Implements
+`docs/superpowers/specs/2026-08-22-backlog-verbindungs-fähigkeit.md`, the
+entry the backlog itself lists as the most important one: after six
+rounds, in each of which a new way of writing it beat a source-scanning
+guard.
 
 ---
 
-## Was das Messen verschoben hat
+## What measuring moved
 
-Der Eintrag beschreibt das Ziel als „die App-Schicht kann eine Verbindung nicht
-herstellen, außer über einen Typ, den nur der gemeinsame Pfad ausgibt". Beim
-Nachmessen zeigt sich, dass das die **zweitwichtigere** Hälfte ist.
+The entry describes the goal as "the App layer cannot establish a
+connection except through a type that only the shared path emits". On
+re-measuring, this turns out to be the **secondary** half.
 
-**Die Gefahr ist nicht der zweite Wählpfad, sondern der frei erfundene
-Entscheider.** TOFU ist bereits sicher: der harte Stopp bei einem
-Fingerabdruck-Konflikt sitzt **im Backend**, nicht an der Aufrufstelle. Was ein
-Umgehungsaufruf tatsächlich umgeht, ist die Frage an den Nutzer — er beantwortet
-sie selbst:
+**The danger is not the second dial path, it's the freely invented
+decider.** TOFU is already secure: the hard stop on a fingerprint conflict
+sits **in the backend**, not at the call site. What a bypass call actually
+bypasses is the question to the user — it answers it itself:
 
 ```swift
 async let dialed = BackendDescriptor.descriptor(for: kind).connect(
     config, { _ in true }, { _ in true }, 30)
 ```
 
-Das war Runde 6. Möglich ist es, weil beide Entscheider **nackte Funktionstypen**
-sind:
+That was round 6. It's possible because both deciders are **bare function
+types**:
 
 ```swift
 public typealias HostKeyDecider = @Sendable (HostKeyCandidate) async -> Bool
 ```
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
 | | |
 |---|---|
-| Echte Aufrufer von `descriptor(…).connect(` außerhalb Core | **zwei**: `ContentView+Lifecycle` (App) und `SessionConnecting` (CLI) |
-| Tests, die darüber wählen | **keiner** — jeder Treffer in `Tests/` ist Probenmaterial in einem Wächter |
-| Core-Testdateien mit `@testable import macSCPCore` | **170** — sie behalten Zugriff auf Internes |
-| App-Testdateien | importieren `Foundation`/`Testing`; sie lesen Quelltext, sie rufen nicht |
-| TOFU-Konflikt | harter Stopp **im Backend**, unabhängig vom Entscheider |
+| Real callers of `descriptor(…).connect(` outside Core | **two**: `ContentView+Lifecycle` (App) and `SessionConnecting` (CLI) |
+| Tests that dial through it | **none** — every hit in `Tests/` is probe material inside a guard |
+| Core test files with `@testable import macSCPCore` | **170** — they keep access to internals |
+| App test files | import `Foundation`/`Testing`; they read source, they don't dial |
+| TOFU conflict | a hard stop **in the backend**, independent of the decider |
 
-`internal` auf dem Wählvorgang sperrt damit genau die zwei Ziele aus, die
-ausgesperrt gehören, und kostet die Testsuite nichts.
+`internal` on the dial operation therefore locks out exactly the two
+targets that need locking out, and costs the test suite nothing.
 
-## Der Entwurf
+## The design
 
-### 1. Ein Entscheider ist ein Typ, keine Closure
+### 1. A decider is a type, not a closure
 
-`HostKeyDecider` und der Zertifikats-Entscheider werden Typen mit
-**nicht-öffentlichem Initialisierer** und öffentlichen Fabriken in Core:
+`HostKeyDecider` and the certificate decider become types with a
+**non-public initializer** and public factories in Core:
 
-| Fabrik | Bedeutung | Nutzer |
+| Factory | Meaning | User |
 |---|---|---|
-| `.asking(_:)` | **zeigt** dem Nutzer den Kandidaten und gibt dessen Antwort zurück | App |
-| `.refusingUnknown` | lehnt jeden unbekannten Schlüssel ab, ohne zu fragen | CLI ohne Interaktion |
-| `.following(_:)` | die bestehende `HostKeyPolicy` der CLI | CLI |
+| `.asking(_:)` | **shows** the user the candidate and returns their answer | App |
+| `.refusingUnknown` | rejects every unknown key, without asking | CLI without interaction |
+| `.following(_:)` | the CLI's existing `HostKeyPolicy` | CLI |
 
-Damit ist `{ _ in true }` an einer Aufrufstelle **kein Entscheider mehr** — es
-kompiliert nicht. Runde 6 wäre nicht abzufangen gewesen, sondern nicht
-formulierbar.
+That makes `{ _ in true }` at a call site **no longer a decider** — it
+doesn't compile. Round 6 wouldn't have been caught, it wouldn't have been
+expressible.
 
-**Die ehrliche Grenze dieser Maßnahme, gleich hier statt im Kleingedruckten:**
-`.asking` nimmt weiterhin etwas entgegen, das antwortet. Wer
-`.asking { _ in true }` schreibt, hat wieder einen Ja-sager. Der Unterschied ist
-nicht Unmöglichkeit, sondern **Sichtbarkeit**: die Umgehung trägt jetzt einen
-Namen, steht an einer Fabrik, die „fragen" heißt, und ist damit genau das, was
-ein Wächter noch bewachen kann — im Gegensatz zu einer anonymen Closure in einem
-Argument, die sich in sechs Schreibweisen verstecken ließ.
+**The honest limit of this measure, stated here rather than in the fine
+print:** `.asking` still takes something that answers. Anyone who writes
+`.asking { _ in true }` has a yes-sayer again. The difference isn't
+impossibility, it's **visibility**: the bypass now carries a name, sits at
+a factory called "asking", and is thereby exactly the kind of thing a
+guard can still watch — unlike an anonymous closure in an argument, which
+could hide in six different spellings.
 
-### 2. Wählen ist keine Fähigkeit der App-Schicht
+### 2. Dialing is not a capability of the App layer
 
-`BackendDescriptor.connect` wird **`internal`**. Ein einziger öffentlicher
-Einstiegspunkt in Core gibt Verbindungen aus; App und CLI rufen ihn.
+`BackendDescriptor.connect` becomes **`internal`**. A single public entry
+point in Core emits connections; the App and the CLI call it.
 
-Das ist die Fähigkeitsgrenze aus dem Eintrag im Wortsinn: „am Pfad vorbei" ist
-danach kein Verstoß, den ein Test finden müsste, sondern etwas, das der Compiler
-nicht übersetzt. Und weil Core-Tests `@testable` importieren, verlieren sie
-nichts.
+That is the capability boundary from the entry, in the literal sense:
+"around the path" is no longer a violation a test would have to find, it's
+something the compiler doesn't compile. And because Core tests import
+`@testable`, they lose nothing.
 
-**Warum beides und nicht nur eines:** ohne den Entscheider-Typ verschiebt der
-Einstiegspunkt das Problem nur eine Ebene höher — er nähme weiterhin eine
-Closure entgegen. Ohne die Aussperrung bliebe der rohe Wählvorgang erreichbar
-und mit ihm jede künftige Schreibweise, ihn zu erreichen. Zusammen decken sie
-verschiedene Hälften ab: der Typ verhindert den **Ja-sager**, die Aussperrung
-den **zweiten Pfad**.
+**Why both and not just one:** without the decider type, the entry point
+only pushes the problem one level up — it would still accept a closure.
+Without the lockout, the raw dial operation would stay reachable, and with
+it every future way of writing a path to it. Together they cover different
+halves: the type prevents the **yes-sayer**, the lockout prevents the
+**second path**.
 
-### 3. Der Wächter schrumpft auf das, was Typen nicht ausdrücken
+### 3. The guard shrinks to what types can't express
 
-Was er heute prüft, wird überflüssig, sobald es nicht mehr kompiliert. **Jede
-Prüfung, die eine strukturelle Garantie doppelt, wird gelöscht**, nicht „für
-alle Fälle" behalten — ein Wächter neben einer Garantie lässt den nächsten Leser
-der Suite mehr vertrauen, als sie verdient.
+What it checks today becomes redundant the moment it no longer compiles.
+**Every check that duplicates a structural guarantee gets deleted**, not
+kept "just in case" — a guard standing next to a guarantee makes the next
+reader of the suite trust it more than it deserves.
 
-Übrig bleibt, was ein Typ nicht sagen kann:
+What remains is what a type can't say:
 
-- dass die App ihre `.asking`-Fabrik an die **echte** Abfrage hängt und nicht an
-  einen Ja-sager,
-- dass der Zertifikatsweg dasselbe tut.
+- that the App attaches its `.asking` factory to the **real** prompt and
+  not to a yes-sayer,
+- that the certificate path does the same.
 
-Diese Reste gehören ausdrücklich benannt — mit dem, was sie **nicht** sehen.
+These remainders need to be explicitly named — along with what they
+**cannot** see.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare, und der größere Teil wird zur Compile-Frage.
+Everything decidable is testable, and the larger part becomes a compile
+question.
 
-**Nicht prüfbar** bleibt, dass die Abfrage im laufenden Fenster tatsächlich
-erscheint und der Nutzer wirklich gefragt wird. Das war schon vorher so und
-ändert sich nicht.
+**Not testable** is that the prompt actually appears in the running window
+and the user is really asked. That was already the case before, and it
+doesn't change.
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly excluded
 
-- **Keine Änderung an TOFU selbst.** Der harte Stopp bleibt, wo er ist.
-- **Keine Änderung daran, was die CLI entscheidet** — sie lehnt unbekannte
-  Zertifikate weiterhin ab und folgt weiter ihrer `HostKeyPolicy`.
-- Keine neue Einstellung, kein neues Verhalten für den Nutzer. Diese Arbeit ist
-  von außen unsichtbar; sie verändert, was sich schreiben lässt.
+- **No change to TOFU itself.** The hard stop stays where it is.
+- **No change to what the CLI decides** — it continues to reject unknown
+  certificates and continues to follow its `HostKeyPolicy`.
+- No new setting, no new behavior for the user. This work is invisible
+  from outside; it changes what can be written.

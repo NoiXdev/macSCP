@@ -1,46 +1,46 @@
-# M18a — Browser-Fixes & „Neue Datei" Implementation Plan
+# M18a — Browser Fixes & "New File" Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Der Neuer-Ordner-Dialog hängt nicht mehr am Neuladen der Liste, Owner/Gruppe werden nur bei sichtbaren Spalten geholt, „Neue Datei…" kommt ins Kontextmenü, und eine außerhalb des Bildschirms wiederhergestellte Fenstergeometrie wird untersucht.
+**Goal:** The New Folder dialog no longer hangs on reloading the listing, owner/group are only fetched when the columns are visible, "New File…" lands in the context menu, and a window frame restored off-screen is investigated.
 
-**Architecture:** Kernänderung ist eine Trennung in Core: die Datei-Operation (schnell, fehlerbehaftet) und die anschließende Listen-Aktualisierung (langsam, reine Anzeige) werden zwei awaitbare Schritte; der Dialog wartet nur noch auf den ersten. Dazu ein Schalter am `LocalFileSystem`, der die teure Owner/Gruppe-Abfrage nur bei sichtbaren Spalten macht.
+**Architecture:** The core change is a split in Core: the file operation (fast, error-prone) and the subsequent listing refresh (slow, pure display) become two awaitable steps; the dialog now only waits on the first. Alongside that, a switch on `LocalFileSystem` makes the expensive owner/group lookup happen only when the columns are visible.
 
 **Tech Stack:** Swift (SwiftPM, `.swiftLanguageMode(.v5)`), Swift Testing, SwiftUI + AppKit, macOS 15+.
 
 ## Global Constraints
 
-- Swift `.swiftLanguageMode(.v5)`, minimum macOS 15; **keine neue externe Dependency**.
-- **Keine Protokolländerung** an `RemoteFileSystem` (kein neuer `list`-Parameter).
-- Fehlerverhalten unverändert: Kollisionen/Fehler erscheinen **im** Dialog, der dann offen bleibt.
-- Audit-Ereignisse bleiben erhalten (`newFolder`, `rename`) bzw. folgen demselben Muster (`newFile`).
-- Bestehende Tests werden **angepasst, nicht gelöscht** — jede bisher geprüfte Erwartung muss weiter geprüft werden (ggf. auf zwei Schritte verteilt).
-- UI-Strings EN/DE/FR/PL, typografische Zeichen in nicht-englischen Werten.
-- Conventional Commits; Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- Swift `.swiftLanguageMode(.v5)`, minimum macOS 15; **no new external dependency**.
+- **No protocol change** to `RemoteFileSystem` (no new `list` parameter).
+- Error behavior unchanged: collisions/errors appear **inside** the dialog, which then stays open.
+- Audit events are preserved (`newFolder`, `rename`) or follow the same pattern (`newFile`).
+- Existing tests are **adapted, not deleted** — every expectation checked so far must keep being checked (split across two steps where needed).
+- UI strings EN/DE/FR/PL, typographic characters in non-English values.
+- Conventional Commits; footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
-**Verankerte Fakten (verifiziert):** `RemoteBrowserViewModel.createFolder(named:)` liegt bei `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift:464`, `rename(_:to:)` direkt davor (~445); beide: Operation → `await load()` → Auswahl setzen → Audit → `return nil`. `LocalFileSystem.list(path:)` (`:59`) mappt jeden Eintrag durch `Self.item(for:)` (`:266`) → `ownerGroup(for:)` (`:302`, `FileManager.attributesOfItem` pro Eintrag). `LocalFileSystem()` wird erzeugt in `ContentView.swift:1908` und `:1910` sowie `EditSessionManager.swift:39`. `NameEntrySheet.confirm()` (`Sources/MacSCPApp/BrowserSheets.swift:47`) ruft `dismiss()` erst nach `await onConfirm(...)`. Menü-Auslöser `case .newFolder: showNewFolderSheet = true` (`Sources/MacSCPApp/BrowserPane.swift:191`), Sheet bei `:257`. `BrowserMenuEntry` (`Sources/macSCPCore/Presentation/BrowserContextMenu.swift`) hat u. a. `case newFolder` (:34); gerendert in `RemoteFileTableView.swift:852`. Fenster-`setFrame` bei `ContentView.swift:1565`.
+**Anchored facts (verified):** `RemoteBrowserViewModel.createFolder(named:)` sits at `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift:464`, `rename(_:to:)` right before it (~445); both: operation → `await load()` → set selection → audit → `return nil`. `LocalFileSystem.list(path:)` (`:59`) maps each entry through `Self.item(for:)` (`:266`) → `ownerGroup(for:)` (`:302`, `FileManager.attributesOfItem` per entry). `LocalFileSystem()` is created in `ContentView.swift:1908` and `:1910` as well as `EditSessionManager.swift:39`. `NameEntrySheet.confirm()` (`Sources/MacSCPApp/BrowserSheets.swift:47`) calls `dismiss()` only after `await onConfirm(...)`. Menu trigger `case .newFolder: showNewFolderSheet = true` (`Sources/MacSCPApp/BrowserPane.swift:191`), sheet at `:257`. `BrowserMenuEntry` (`Sources/macSCPCore/Presentation/BrowserContextMenu.swift`) has, among others, `case newFolder` (:34); rendered in `RemoteFileTableView.swift:852`. Window `setFrame` at `ContentView.swift:1565`.
 
 ---
 
-## Task 1: Core — Operation und Listen-Aktualisierung trennen
+## Task 1: Core — split operation and listing refresh
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift`
 - Test: `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift`
 
 **Interfaces:**
-- Produces: `public func refreshAndSelect(path: String) async`; `createFolder(named:)` und `rename(_:to:)` behalten ihre Signatur (`async -> String?`), laden aber **nicht** mehr selbst nach.
+- Produces: `public func refreshAndSelect(path: String) async`; `createFolder(named:)` and `rename(_:to:)` keep their signature (`async -> String?`), but no longer refresh the listing themselves.
 
-- [ ] **Step 1: Failing-Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-In `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift` ergänzen. Nutze den in dieser Datei vorhandenen Fake-FS (Name aus der Datei übernehmen — **nicht erfinden**) und zähle dessen `list`-Aufrufe; hat der Fake keinen Zähler, ergänze einen (`private(set) var listCallCount`).
+Add to `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift`. Use the fake FS already present in this file (take the name from the file — **do not invent one**) and count its `list` calls; if the fake has no counter, add one (`private(set) var listCallCount`).
 
 ```swift
     // MARK: - Operation does not wait on the listing (M18a)
 
     @Test func createFolderReturnsWithoutRefreshingTheListing() async {
-        let fs = /* Fake-FS dieser Datei, mit list-Zähler */
-        let vm = /* wie in den Nachbartests konstruiert */
+        let fs = /* Fake FS from this file, with a list counter */
+        let vm = /* constructed as in the neighboring tests */
         await vm.load()
         let listsAfterLoad = await fs.listCallCount
 
@@ -52,7 +52,7 @@ In `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift` ergänzen. Nutze de
     }
 
     @Test func refreshAndSelectRefreshesAndSelectsTheNewEntry() async {
-        let fs = /* Fake-FS */
+        let fs = /* Fake FS */
         let vm = /* … */
         await vm.load()
         _ = await vm.createFolder(named: "fresh")
@@ -63,16 +63,16 @@ In `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift` ergänzen. Nutze de
     }
 ```
 
-Den bestehenden Test `createFolderRefreshesAndSelects` **anpassen** (nicht löschen): er ruft künftig `createFolder` **und** `refreshAndSelect` und prüft dieselben Erwartungen wie bisher. Gleiches für einen etwaigen Rename-Pendant-Test.
+**Adapt** the existing test `createFolderRefreshesAndSelects` (do not delete it): going forward it calls `createFolder` **and** `refreshAndSelect` and checks the same expectations as before. Same for any rename counterpart test.
 
-- [ ] **Step 2: Test rot**
+- [ ] **Step 2: Test red**
 
 Run: `swift test --filter RemoteBrowserViewModelTests`
-Expected: FAIL — `createFolderReturnsWithoutRefreshingTheListing` schlägt fehl (die Liste wird noch geladen) bzw. `refreshAndSelect` existiert nicht.
+Expected: FAIL — `createFolderReturnsWithoutRefreshingTheListing` fails (the listing is still loaded) or `refreshAndSelect` does not exist.
 
-- [ ] **Step 3: Umbau in `RemoteBrowserViewModel`**
+- [ ] **Step 3: Rework `RemoteBrowserViewModel`**
 
-`createFolder(named:)` (~464): den Block nach erfolgreichem `createDirectory`
+`createFolder(named:)` (~464): replace the block after a successful `createDirectory`
 
 ```swift
         await load()
@@ -83,7 +83,7 @@ Expected: FAIL — `createFolderReturnsWithoutRefreshingTheListing` schlägt feh
         return nil
 ```
 
-ersetzen durch
+with
 
 ```swift
         // The directory exists once `createDirectory` returns; refreshing the
@@ -95,9 +95,9 @@ ersetzen durch
         return nil
 ```
 
-`rename(_:to:)` (~445) analog: `await load()` + Auswahl entfernen, Audit + `return nil` bleiben.
+`rename(_:to:)` (~445) analogously: remove `await load()` + selection, audit + `return nil` stay.
 
-Neue Methode ergänzen (neben `load()`):
+Add a new method (next to `load()`):
 
 ```swift
     /// Refreshes the listing and selects `path` when present. Called after a
@@ -110,10 +110,10 @@ Neue Methode ergänzen (neben `load()`):
     }
 ```
 
-- [ ] **Step 4: Test grün + volle Suite**
+- [ ] **Step 4: Test green + full suite**
 
 Run: `swift test --filter RemoteBrowserViewModelTests` → PASS.
-Dann `swift build && swift test` → Build 0 Warnungen, alle Tests grün.
+Then `swift build && swift test` → build 0 warnings, all tests green.
 
 - [ ] **Step 5: Commit**
 
@@ -126,7 +126,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 2: Core — Owner/Gruppe nur auf Anforderung
+## Task 2: Core — owner/group only on request
 
 **Files:**
 - Modify: `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift`
@@ -135,15 +135,15 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `LocalFileSystem.init(fetchesOwnerGroup: Bool = false)`.
 
-- [ ] **Step 1: Failing-Test**
+- [ ] **Step 1: Failing test**
 
-In `Tests/macSCPCoreTests/LocalFileSystemTests.swift` (Datei existiert; Muster der Nachbartests für Temp-Verzeichnisse übernehmen):
+In `Tests/macSCPCoreTests/LocalFileSystemTests.swift` (file exists; reuse the neighboring tests' temp-directory pattern):
 
 ```swift
     // MARK: - Owner/group is opt-in (M18a)
 
     @Test func listOmitsOwnerAndGroupByDefault() async throws {
-        let dir = /* Temp-Verzeichnis wie in den Nachbartests */
+        let dir = /* Temp directory as in the neighboring tests */
         defer { try? FileManager.default.removeItem(at: dir) }
         try Data("x".utf8).write(to: dir.appendingPathComponent("a.txt"))
 
@@ -155,7 +155,7 @@ In `Tests/macSCPCoreTests/LocalFileSystemTests.swift` (Datei existiert; Muster d
     }
 
     @Test func listIncludesOwnerAndGroupWhenRequested() async throws {
-        let dir = /* Temp-Verzeichnis */
+        let dir = /* Temp directory */
         defer { try? FileManager.default.removeItem(at: dir) }
         try Data("x".utf8).write(to: dir.appendingPathComponent("a.txt"))
 
@@ -166,32 +166,32 @@ In `Tests/macSCPCoreTests/LocalFileSystemTests.swift` (Datei existiert; Muster d
     }
 ```
 
-Die Feldnamen (`owner`/`group`) gegen `RemoteFileItem` prüfen und exakt übernehmen.
+Check the field names (`owner`/`group`) against `RemoteFileItem` and take them over exactly.
 
-- [ ] **Step 2: Test rot**
+- [ ] **Step 2: Test red**
 
 Run: `swift test --filter LocalFileSystemTests`
-Expected: FAIL — `listOmitsOwnerAndGroupByDefault` schlägt fehl (Owner/Gruppe sind gefüllt) bzw. der Initializer existiert nicht.
+Expected: FAIL — `listOmitsOwnerAndGroupByDefault` fails (owner/group are populated) or the initializer does not exist.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
-`LocalFileSystem` bekommt ein gespeichertes `let fetchesOwnerGroup: Bool` mit
-`init(fetchesOwnerGroup: Bool = false)`. Da `item(for:)` heute `static` ist,
-muss der Schalter bis dorthin durchgereicht werden — entweder `item(for:)` um
-einen Parameter erweitern (`static func item(for url: URL, fetchesOwnerGroup: Bool)`)
-und an allen Aufrufstellen (`list` ~59, `stat` ~71) mitgeben, oder `item` zu
-einer Instanzmethode machen. Wähle die Variante mit dem kleineren Diff und
-passe **alle** Aufrufstellen an.
+`LocalFileSystem` gets a stored `let fetchesOwnerGroup: Bool` with
+`init(fetchesOwnerGroup: Bool = false)`. Since `item(for:)` is `static` today,
+the switch has to be threaded through to it — either extend `item(for:)` with
+an extra parameter (`static func item(for url: URL, fetchesOwnerGroup: Bool)`)
+and pass it at every call site (`list` ~59, `stat` ~71), or turn `item` into
+an instance method. Pick whichever variant produces the smaller diff and
+adapt **all** call sites.
 
-In `ownerGroup(for:)` wird der `attributesOfItem`-Aufruf nur noch ausgeführt,
-wenn der Schalter an ist; sonst `(nil, nil)` ohne Syscall. Dokumentiere im
-Doc-Kommentar **warum**: pro Eintrag ein Syscall, und auf geschützten Ordnern
-(Schreibtisch/Dokumente/Downloads) löst er blockierende macOS-Berechtigungs-
-dialoge aus (M18a-Befund).
+In `ownerGroup(for:)`, run the `attributesOfItem` call only when the switch is
+on; otherwise `(nil, nil)` with no syscall. Document **why** in the doc
+comment: one syscall per entry, and on protected folders
+(Desktop/Documents/Downloads) it triggers blocking macOS permission dialogs
+(M18a finding).
 
-- [ ] **Step 4: Test grün + volle Suite**
+- [ ] **Step 4: Test green + full suite**
 
-Run: `swift test --filter LocalFileSystemTests` → PASS. Dann `swift build && swift test` → 0 Warnungen, grün.
+Run: `swift test --filter LocalFileSystemTests` → PASS. Then `swift build && swift test` → 0 warnings, green.
 
 - [ ] **Step 5: Commit**
 
@@ -208,20 +208,20 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift`
-- Modify: `Sources/macSCPCore/Presentation/BrowserContextMenu.swift` (Menüeintrag `newFile`)
+- Modify: `Sources/macSCPCore/Presentation/BrowserContextMenu.swift` (menu entry `newFile`)
 - Test: `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift`
 
 **Interfaces:**
 - Consumes: `refreshAndSelect(path:)` (Task 1), `RemoteFileSystem.write(path:mode:contents:)`.
 - Produces: `public func createFile(named name: String) async -> String?`; `BrowserMenuEntry.newFile`.
 
-- [ ] **Step 1: Failing-Test**
+- [ ] **Step 1: Failing test**
 
 ```swift
     // MARK: - createFile (M18a)
 
     @Test func createFileCreatesAnEmptyFileAndReportsSuccess() async {
-        let fs = /* Fake-FS */
+        let fs = /* Fake FS */
         let vm = /* … */
         await vm.load()
 
@@ -232,7 +232,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
     }
 
     @Test func createFileCollisionReturnsError() async {
-        let fs = /* Fake-FS mit vorhandenem Eintrag "taken.txt" */
+        let fs = /* Fake FS with an existing entry "taken.txt" */
         let vm = /* … */
         await vm.load()
         let error = await vm.createFile(named: "taken.txt")
@@ -240,18 +240,18 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
     }
 ```
 
-Ergänze zusätzlich einen Audit-Test analog zu `createFolderSuccessFiresNewFolderEventWithFullPath` (Muster aus derselben Datei übernehmen).
+Also add an audit test analogous to `createFolderSuccessFiresNewFolderEventWithFullPath` (take the pattern from the same file).
 
-- [ ] **Step 2: Test rot**
+- [ ] **Step 2: Test red**
 
 Run: `swift test --filter RemoteBrowserViewModelTests`
-Expected: FAIL — „value of type 'RemoteBrowserViewModel' has no member 'createFile'".
+Expected: FAIL — "value of type 'RemoteBrowserViewModel' has no member 'createFile'".
 
-- [ ] **Step 3: `createFile` implementieren**
+- [ ] **Step 3: Implement `createFile`**
 
-Direkt neben `createFolder`, mit **derselben** Kollisionsprüfung (`stat`-Probe,
-weil sie auch versteckte Einträge sieht) und demselben Fehlerkontrakt. Statt
-`createDirectory` wird eine leere Datei geschrieben:
+Right next to `createFolder`, with the **same** collision check (`stat` probe,
+because it also sees hidden entries) and the same error contract. Instead of
+`createDirectory`, an empty file is written:
 
 ```swift
     /// Creates an empty file in the current directory. Same collision probe
@@ -280,24 +280,24 @@ weil sie auch versteckte Einträge sieht) und demselben Fehlerkontrakt. Statt
     }
 ```
 
-Die exakte `write`-Signatur und den leeren Stream gegen `RemoteFileSystem` und
-bestehende Aufrufer prüfen (z. B. wie `EditSessionManager` schreibt) und
-übernehmen. `AuditEvent.Kind` braucht einen neuen Fall `newFile` — ergänze ihn
-und passe **alle** erschöpfenden `switch`-Stellen an (u. a.
-`Sources/MacSCPApp/AuditLogSheet.swift:229`, wo `.rename, .delete, .permissions, .newFolder`
-zusammen behandelt werden).
+Check the exact `write` signature and the empty stream against
+`RemoteFileSystem` and existing callers (e.g. how `EditSessionManager`
+writes) and take them over. `AuditEvent.Kind` needs a new case `newFile` —
+add it and adapt **all** exhaustive `switch` sites (among others
+`Sources/MacSCPApp/AuditLogSheet.swift:229`, where `.rename, .delete, .permissions, .newFolder`
+are handled together).
 
-- [ ] **Step 4: Menüeintrag im Modell**
+- [ ] **Step 4: Menu entry in the model**
 
-In `BrowserContextMenu.swift` `case newFile` neben `case newFolder` (:34)
-ergänzen — dieselbe Verfügbarkeitsregel (auch bei Klick auf den leeren
-Bereich). Die Stelle, die die Einträge zusammenstellt, entsprechend erweitern,
-und die zugehörigen Tests der Menü-Zusammenstellung mitziehen (Datei mit den
-`BrowserContextMenu`-Tests suchen und die vorhandenen Erwartungen ergänzen).
+In `BrowserContextMenu.swift` add `case newFile` next to `case newFolder` (:34)
+— the same availability rule (also on a click in the empty area). Extend the
+place that assembles the entries accordingly, and carry along the
+corresponding menu-assembly tests (find the file with the
+`BrowserContextMenu` tests and add to the existing expectations).
 
-- [ ] **Step 5: Test grün + volle Suite**
+- [ ] **Step 5: Test green + full suite**
 
-Run: `swift test` → alle grün, Build 0 Warnungen.
+Run: `swift test` → all green, build 0 warnings.
 
 - [ ] **Step 6: Commit**
 
@@ -310,7 +310,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 4: App — Dialog nicht warten lassen, „Neue Datei…", Owner/Gruppe-Flag
+## Task 4: App — stop the dialog from waiting, "New File…", owner/group flag
 
 **Files:**
 - Modify: `Sources/MacSCPApp/BrowserPane.swift`
@@ -321,12 +321,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `refreshAndSelect(path:)`, `createFile(named:)`, `BrowserMenuEntry.newFile` (Tasks 1–3), `LocalFileSystem(fetchesOwnerGroup:)` (Task 2).
 
-Reine App-Verkabelung — build-verifiziert.
+Pure app wiring — build-verified.
 
-- [ ] **Step 1: Neuer-Ordner-Sheet wartet nicht mehr**
+- [ ] **Step 1: New Folder sheet no longer waits**
 
-In `BrowserPane.swift` den `onConfirm` des Neuer-Ordner-Sheets (~257) so
-ändern, dass nach Erfolg **ohne Warten** aktualisiert wird:
+In `BrowserPane.swift`, change the New Folder sheet's `onConfirm` (~257) so
+that after success it refreshes **without waiting**:
 
 ```swift
                 onConfirm: { name in
@@ -341,40 +341,40 @@ In `BrowserPane.swift` den `onConfirm` des Neuer-Ordner-Sheets (~257) so
                 })
 ```
 
-Den Rename-Sheet (~250) analog anpassen (Zielpfad ist dort
+Adapt the rename sheet (~250) analogously (its target path is
 `RemotePath.join(viewModel.currentPath, newName)`).
 
-- [ ] **Step 2: „Neue Datei…"-Sheet + Auslöser**
+- [ ] **Step 2: "New File…" sheet + trigger**
 
-`@State private var showNewFileSheet = false` ergänzen; im Menü-Callback
-`case .newFile: showNewFileSheet = true` (neben `.newFolder`, ~191); ein
-weiteres `.sheet(isPresented: $showNewFileSheet)` mit `NameEntrySheet`
-(Titel `sheet.newFile.title`, Bestätigung `sheet.newFile.confirm`,
-Standardname `sheet.newFile.defaultName`) und demselben Nicht-Warten-Muster
-aus Step 1, aber `viewModel.createFile(named:)`.
+Add `@State private var showNewFileSheet = false`; in the menu callback add
+`case .newFile: showNewFileSheet = true` (next to `.newFolder`, ~191); a
+further `.sheet(isPresented: $showNewFileSheet)` with `NameEntrySheet`
+(title `sheet.newFile.title`, confirm `sheet.newFile.confirm`,
+default name `sheet.newFile.defaultName`) and the same non-waiting pattern
+from Step 1, but using `viewModel.createFile(named:)`.
 
-In `RemoteFileTableView.swift` den neuen Fall rendern (bei ~852 neben
-`.newFolder`), Titel `menu.newFile`.
+In `RemoteFileTableView.swift`, render the new case (at ~852 next to
+`.newFolder`), title `menu.newFile`.
 
-- [ ] **Step 3: Owner/Gruppe-Flag setzen**
+- [ ] **Step 3: Set the owner/group flag**
 
-In `ContentView.swift` an den beiden `LocalFileSystem()`-Stellen (:1908, :1910)
-den Schalter aus den sichtbaren Spalten ableiten, z. B.:
+In `ContentView.swift`, at both `LocalFileSystem()` sites (:1908, :1910),
+derive the switch from the visible columns, e.g.:
 
 ```swift
 let wantsOwnerGroup = settingsStore.visibleColumns.contains(.owner)
     || settingsStore.visibleColumns.contains(.group)
 ```
 
-und `LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup)` übergeben. Die
-realen Namen von Spalten-Enum und Settings-Zugriff aus dem Code übernehmen
-(`FileColumn`-Fälle prüfen). `EditSessionManager` (Core) bleibt beim Standard
-(kein Owner/Gruppe nötig).
+and pass `LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup)`. Take the real
+names of the column enum and the settings access from the code (check the
+`FileColumn` cases). `EditSessionManager` (Core) stays on the default
+(no owner/group needed).
 
 - [ ] **Step 4: L10n**
 
-Neue Keys in **allen vier** Katalogen (typografisch, kein ASCII-Quote in
-nicht-englischen Werten):
+New keys in **all four** catalogs (typographic, no ASCII quote in
+non-English values):
 
 EN:
 ```
@@ -405,12 +405,12 @@ PL:
 "sheet.newFile.defaultName" = "bez-nazwy.txt";
 ```
 
-- [ ] **Step 5: Build + Verhalten**
+- [ ] **Step 5: Build + behavior**
 
 Run: `swift build && swift test --filter Localizable`
-Expected: 0 (neue) Warnungen, Parität grün. Verhalten per Codelesen: Ordner/Datei
-anlegen schließt den Dialog sofort; Fehler halten ihn weiterhin offen; die Liste
-aktualisiert sich kurz danach.
+Expected: 0 (new) warnings, parity green. Behavior via code reading: creating a
+folder/file dismisses the dialog immediately; errors still keep it open; the
+listing refreshes shortly after.
 
 - [ ] **Step 6: Commit**
 
@@ -423,28 +423,28 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 5: Fenstergeometrie untersuchen (und nur bei eigener Ursache klemmen)
+## Task 5: Investigate the window frame (and clamp only if we caused it)
 
 **Files:**
 - Investigate/Modify: `Sources/MacSCPApp/ContentView.swift` (~1540–1570)
 
-- [ ] **Step 1: Ursache belegen**
+- [ ] **Step 1: Establish the cause**
 
-Beobachtet wurde ein wiederhergestellter Fensterrahmen bei `{-101, -1386}`
-(außerhalb aller Bildschirme). **Erst klären, wer den Rahmen setzt:**
-- Lies den Block um `window.setFrame(newFrame, display: true, animate: true)` (`ContentView.swift:1565`) samt der Herleitung von `newFrame` (M5c: Wachsen auf die gemerkte Browser-Größe). Kann daraus ein Rahmen außerhalb der sichtbaren Fläche entstehen (z. B. weil nur die Größe gemerkt wird, der Ursprung aber vom aktuellen Fenster stammt)?
-- Prüfe, ob die App eigene Fenster-Wiederherstellung macht oder ob das macOS' Restaurierung ist (Suche nach `frameAutosaveName`, `NSWindowRestoration`, `restorationClass`, gespeicherten Frame-Werten im SettingsStore).
+A restored window frame at `{-101, -1386}` was observed (off every screen).
+**First clarify who sets the frame:**
+- Read the block around `window.setFrame(newFrame, display: true, animate: true)` (`ContentView.swift:1565`), including how `newFrame` is derived (M5c: growing to the remembered browser size). Can that produce a frame outside the visible area (e.g. because only the size is remembered, while the origin comes from the current window)?
+- Check whether the app does its own window restoration or whether this is macOS' own restoration (search for `frameAutosaveName`, `NSWindowRestoration`, `restorationClass`, saved frame values in the SettingsStore).
 
-Halte im Bericht **fest, was du belegt hast**.
+Record in the report **what you established**.
 
-- [ ] **Step 2: Nur bei eigener Ursache klemmen**
+- [ ] **Step 2: Clamp only if we caused it**
 
-Ist es unser `setFrame`: den Zielrahmen vor dem Setzen auf die sichtbare Fläche
-klemmen — Bildschirm über `window.screen ?? NSScreen.main`, Fläche
-`visibleFrame`, Ursprung so verschieben, dass der Rahmen vollständig sichtbar
-liegt (und die Größe notfalls auf die Fläche begrenzen). Wenn die Logik in eine
-kleine reine Funktion passt (`func clamped(_ frame: NSRect, to visible: NSRect) -> NSRect`),
-lege sie so an und teste sie:
+If it is our `setFrame`: clamp the target frame to the visible area before
+setting it — screen via `window.screen ?? NSScreen.main`, area
+`visibleFrame`, shift the origin so the frame lies fully visible (and, if
+necessary, cap the size to the area). If the logic fits into a small pure
+function (`func clamped(_ frame: NSRect, to visible: NSRect) -> NSRect`),
+write it as such and test it:
 
 ```swift
     @Test func frameOutsideVisibleAreaIsMovedBack() {
@@ -455,13 +455,13 @@ lege sie so an und teste sie:
     }
 ```
 
-Ist es **macOS' eigene** Wiederherstellung: **nicht** umgehen — im Bericht
-dokumentieren und diesen Task ohne Codeänderung abschließen.
+If it is **macOS' own** restoration: **do not** work around it — document
+this in the report and close this task with no code change.
 
-- [ ] **Step 3: Build + Commit (falls geändert)**
+- [ ] **Step 3: Build + commit (if changed)**
 
 Run: `swift build && swift test`
-Expected: 0 Warnungen, grün.
+Expected: 0 warnings, green.
 
 ```bash
 git add Sources/MacSCPApp/ContentView.swift Tests/macSCPCoreTests
@@ -472,34 +472,34 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Task 6: Abschluss
+## Task 6: Close-out
 
-- [ ] **Step 1: Volle Suite + 0 Warnungen**
+- [ ] **Step 1: Full suite + 0 warnings**
 
 Run: `swift build && swift test && swift test --filter Localizable`
-Expected: alles grün, keine neuen Warnungen.
+Expected: everything green, no new warnings.
 
-- [ ] **Step 2: Runtime-Verifikation des Bugs**
+- [ ] **Step 2: Runtime verification of the bug**
 
-Dev-Build bauen (`MACSCP_VERSION=1.8.1-dev scripts/package-app`), starten,
-im **lokalen** Bereich einen Ordner **und** eine Datei anlegen: Der Dialog muss
-**sofort** schließen, der Eintrag danach in der Liste erscheinen. Zusätzlich
-Idle-CPU messen (~0 %).
+Build a dev build (`MACSCP_VERSION=1.8.1-dev scripts/package-app`), launch
+it, and in the **local** pane create a folder **and** a file: the dialog must
+close **immediately**, the entry then appears in the listing afterwards.
+Also measure idle CPU (~0 %).
 
-- [ ] **Step 3: Whole-Milestone-Review**
+- [ ] **Step 3: Whole-milestone review**
 
-Opus-Review über `git merge-base develop HEAD`..HEAD (Basis = `a496a66`),
-Fokus: Fehlerverhalten unverändert (Fehler halten den Dialog offen), Audit
-vollständig, keine Protokolländerung, Tests angepasst statt gelöscht.
+Opus review over `git merge-base develop HEAD`..HEAD (base = `a496a66`),
+focus: error behavior unchanged (errors keep the dialog open), audit
+complete, no protocol change, tests adapted rather than deleted.
 
-- [ ] **Step 4: Push + Dev-Build (auf Maintainer-Anordnung)**
+- [ ] **Step 4: Push + dev build (on maintainer instruction)**
 
 ---
 
 ## Self-Review
 
-**1. Spec coverage:** A (Dialog wartet nicht) → Task 1 + Task 4 Step 1 ✅ · B (Owner/Gruppe opt-in) → Task 2 + Task 4 Step 3 ✅ · C („Neue Datei") → Task 3 + Task 4 Steps 2/4 ✅ · D (Fenster) → Task 5 ✅ · Tests → in jedem Task ✅ · Invarianten → Global Constraints + Task 6 ✅
+**1. Spec coverage:** A (dialog does not wait) → Task 1 + Task 4 Step 1 ✅ · B (owner/group opt-in) → Task 2 + Task 4 Step 3 ✅ · C ("New File") → Task 3 + Task 4 Steps 2/4 ✅ · D (window) → Task 5 ✅ · Tests → in every task ✅ · Invariants → Global Constraints + Task 6 ✅
 
-**2. Placeholder scan:** Bewusst offen mit klarer „realen Namen übernehmen"-Anweisung: Fake-FS-Name und Konstruktion in den VM-Tests, `RemoteFileItem`-Feldnamen, `write`-Signatur/leerer Stream, Spalten-Enum-Fälle, die `AuditEvent.Kind`-switch-Stellen, und die reale Ursache in Task 5. Kein „TBD/TODO".
+**2. Placeholder scan:** Deliberately left open with a clear "take over the real names" instruction: fake-FS name and construction in the VM tests, `RemoteFileItem` field names, `write` signature/empty stream, column-enum cases, the `AuditEvent.Kind` switch sites, and the real cause in Task 5. No "TBD/TODO".
 
-**3. Type consistency:** `refreshAndSelect(path:)`, `createFile(named:) -> String?`, `LocalFileSystem(fetchesOwnerGroup:)`, `BrowserMenuEntry.newFile`, `AuditEvent.Kind.newFile` — über alle Tasks konsistent verwendet.
+**3. Type consistency:** `refreshAndSelect(path:)`, `createFile(named:) -> String?`, `LocalFileSystem(fetchesOwnerGroup:)`, `BrowserMenuEntry.newFile`, `AuditEvent.Kind.newFile` — used consistently across all tasks.

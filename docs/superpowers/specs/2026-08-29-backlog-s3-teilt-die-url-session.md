@@ -1,146 +1,141 @@
-# Backlog: S3 fährt auf der geteilten URL-Session
+# Backlog: S3 rides the shared URL session
 
-**Angelegt:** 2026-08-29, als Produktionsbefund aus der Diagnose eines
-flatternden Tests. **Gemessen**, nicht vermutet — aber die Folgen im
-laufenden Betrieb sind **nicht** gemessen, und der Unterschied steht unten.
+**Created:** 2026-08-29, as a production finding from diagnosing a flaky
+test. **Measured**, not assumed — but the consequences in live operation are
+**not** measured, and the difference is laid out below.
 
-**Erledigt 2026-08-29** (siehe „Was daraus wurde" am Ende). Der Text
-darunter bleibt im Zustand der Anlage stehen; was davon inzwischen falsch
-ist, sagt der Abschlussteil.
+**Done 2026-08-29** (see "What came of it" at the end). The text below
+stays in the state it was in when this entry was filed; the closing section
+says which parts of that are now wrong.
 
-## Der gezählte Befund
+## The counted finding
 
-`URLSessionHTTPTransport.init` trägt den Vorgabewert `session: URLSession =
-.shared`, und `S3FileSystem.connect` nimmt diesen Vorgabewert. **S3 ist der
-einzige Pfad im Baum auf der geteilten Session** — in diesem Durchgang
-nachgezählt:
+`URLSessionHTTPTransport.init` carries the default value `session:
+URLSession = .shared`, and `S3FileSystem.connect` takes that default.
+**S3 is the only path in the tree on the shared session** — recounted in
+this pass:
 
-| Pfad | Session |
+| Path | Session |
 |---|---|
 | S3 | `URLSession.shared` |
-| WebDAV | eigene, aus `URLSessionConfiguration.ephemeral` |
-| Update-Prüfung | eigene, aus `.ephemeral` |
+| WebDAV | own, from `URLSessionConfiguration.ephemeral` |
+| Update check | own, from `.ephemeral` |
 
-`URLSession.shared` benutzt `URLCache.shared`: einen **persistenten
-Platten-Cache**, den alle Prozesse des Rechners teilen und der in
-`~/Library/Caches` liegt.
+`URLSession.shared` uses `URLCache.shared`: a **persistent on-disk cache**
+shared by every process on the machine, living under `~/Library/Caches`.
 
-## Wie er gefunden wurde
+## How it was found
 
-Nicht durch Lesen. Ein Test, der die S3-Redirect-Frage beantwortet, fiel
-gelegentlich; die naheliegende Erklärung (knappe Wartezeiten unter Last) war
-falsch. 80 Läufe zeigten: **ohne Last fiel er häufiger**, und mit geleertem
-`URLCache.shared` gar nicht mehr. Belegt über zwei Prozesse — ein zweiter
-`swift test`-Prozess ohne eigenen Listener fand `cachedEntry=true
-status=308` und folgte einem Location, den ein früherer Prozess hinterlassen
-hatte.
+Not by reading. A test answering the S3 redirect question failed
+occasionally; the obvious explanation (tight timing under load) was wrong.
+80 runs showed: **without load it failed more often**, and with
+`URLCache.shared` cleared it stopped failing entirely. Proved across two
+processes — a second `swift test` process with no listener of its own found
+`cachedEntry=true status=308` and followed a Location that an earlier
+process had left behind.
 
-Die ganze Kette steht in
+The full chain is in
 `2026-08-08-testsuite-haenger-untersuchung.md`.
 
-## Warum das mehr ist als eine Testeigenheit
+## Why this is more than a test quirk
 
-**Gemessen** wurde, dass die 301- und 308-Antworten eines Endpunkts auf
-Platte landen und **prozessübergreifend** wieder ausgeliefert werden.
+**Measured**: that an endpoint's 301 and 308 responses land on disk and get
+served again **across processes**.
 
-**Daraus folgt, ungemessen im laufenden Betrieb:**
+**Follows from that, unmeasured in live operation:**
 
-1. **S3-Antworten liegen in `~/Library/Caches`** — Bucket-Listings, und je
-   nach Kopfzeilen auch Objekt-Antworten. Unverschlüsselt, außerhalb jedes
-   Ablaufs, den macSCP kontrolliert. Der Rest dieses Projekts legt Geheimes
-   ausschließlich in den Keychain und schreibt es nie in eine JSON-Datei; ein
-   Bucket-Inhalt ist kein Geheimnis derselben Klasse, aber er ist auch nicht
-   nichts.
-2. **Eine einmal gelieferte dauerhafte Weiterleitung (301/308) wirkt über
-   Neustarts hinweg.** Antwortet ein Endpunkt einmal mit 301 auf eine fremde
-   Origin, folgt macSCP dieser Weiterleitung danach womöglich aus dem Cache —
-   ohne den echten Endpunkt zu fragen. Das ist dieselbe Klasse Frage wie die,
-   die `2026-08-29-backlog-s3-weiterleitungen.md` stellt, nur haltbarer.
-3. **Die Session ist geteilt.** Cookies, Kreditiv-Cache und
-   Verbindungs-Wiederverwendung von `URLSession.shared` gelten für alles, was
-   sie benutzt.
+1. **S3 responses sit in `~/Library/Caches`** — bucket listings, and
+   depending on headers, object responses too. Unencrypted, outside any
+   flow macSCP controls. The rest of this project puts secrets exclusively
+   in the Keychain and never writes them to a JSON file; bucket contents
+   are not a secret of the same class, but they are not nothing either.
+2. **A permanent redirect (301/308) delivered once acts across restarts.**
+   If an endpoint answers once with a 301 to a foreign origin, macSCP may
+   subsequently follow that redirect from cache — without ever asking the
+   real endpoint. This is the same class of question that
+   `2026-08-29-backlog-s3-weiterleitungen.md` asks, only longer-lived.
+3. **The session is shared.** Cookies, credential cache, and connection
+   reuse of `URLSession.shared` apply to everything that uses it.
 
-## Was zu tun wäre
+## What would need to be done
 
-**Die Naht existiert und wird von WebDAV bereits benutzt:**
-`URLSessionHTTPTransport(session:)`. S3 bekäme eine eigene Session aus
-`URLSessionConfiguration.ephemeral`, wie WebDAV eine hat.
+**The seam already exists and WebDAV already uses it:**
+`URLSessionHTTPTransport(session:)`. S3 would get its own session from
+`URLSessionConfiguration.ephemeral`, the way WebDAV has one.
 
-Vor dem Umsetzen zu entscheiden:
+To decide before implementing:
 
-- **Reicht `ephemeral`, oder soll der Vorgabewert von
-  `URLSessionHTTPTransport` ganz verschwinden?** Ein Vorgabewert, der auf
-  einen prozessweiten geteilten Zustand zeigt, ist genau die Sorte, die
-  dieses Projekt bei `SessionListViewModel.init` bereits entfernt hat —
-  weglassen kompilierte dort, und wer weglässt, bekam den echten Ort. Hier
-  ist es dasselbe Muster.
-- **Was das für den Download-Pfad heißt.** `sendStreaming` geht über
-  `URLSession.bytes(for:)`; ob dort dieselbe Cache-Frage gilt, ist
-  **ungemessen** und gehört vor den Entwurf.
-- **Ob eine eigene Session etwas kostet**, das heute stillschweigend von der
-  geteilten kommt — Verbindungs-Wiederverwendung über mehrere Anfragen
-  hinweg ist der Kandidat.
+- **Is `ephemeral` enough, or should `URLSessionHTTPTransport`'s default
+  value disappear entirely?** A default value that points at process-wide
+  shared state is exactly the kind this project already removed from
+  `SessionListViewModel.init` — dropping it compiled there, and whoever
+  dropped it got the real call site. Here it is the same pattern.
+- **What this means for the download path.** `sendStreaming` goes through
+  `URLSession.bytes(for:)`; whether the same caching question applies
+  there is **unmeasured** and belongs before the design.
+- **Whether a dedicated session costs something** that today comes
+  silently from the shared one — connection reuse across multiple
+  requests is the candidate.
 
-## Was das nicht ist
+## What this is not
 
-- **Kein bestätigtes Leck.** Dass Antworten gecacht werden, ist gemessen;
-  dass ein Nutzer dadurch zu Schaden kommt, ist es nicht.
-- **Keine Änderung an WebDAV**, das es bereits richtig macht.
-- Kein Umbau von `HTTPTransport` als Naht — sie genügt und wird benutzt, wie
-  sie ist.
+- **Not a confirmed leak.** That responses get cached is measured; that a
+  user is harmed by it is not.
+- **No change to WebDAV**, which already does it right.
+- Not a rebuild of `HTTPTransport` as the seam — it is sufficient and used
+  as it is.
 
 ---
 
-## Was daraus wurde (2026-08-29)
+## What came of it (2026-08-29)
 
-Beide Entscheidungen wie vorgeschlagen umgesetzt:
+Both decisions implemented as proposed:
 
-1. **S3 baut sich eine eigene Session** aus `URLSessionConfiguration.ephemeral`
-   und gibt sie in `disconnect()` frei — wie `WebDAVFileSystem`. Vorher war
-   `disconnect()` leer; ein Wählvorgang, der scheitert, macht die Session
-   jetzt ebenfalls zu, statt sie stehen zu lassen.
-2. **Der Vorgabewert von `URLSessionHTTPTransport.init` ist weg.** Vier
-   Konstruktionsstellen, jede nennt ihre Session. Die Regel ist damit vom
-   Compiler getragen und nicht von einem Wächter, der eine Schreibweise
-   kauft und eine andere durchlässt.
+1. **S3 builds its own session** from `URLSessionConfiguration.ephemeral`
+   and releases it in `disconnect()` — like `WebDAVFileSystem`. Before,
+   `disconnect()` was empty; a dial attempt that fails now closes the
+   session too, instead of leaving it standing.
+2. **`URLSessionHTTPTransport.init`'s default value is gone.** Four
+   construction sites, each naming its session. The rule is now carried by
+   the compiler, not by a guard that buys one spelling and lets another
+   through.
 
-### Die drei Fragen, die der Eintrag vor den Entwurf gestellt hat
+### The three questions the entry posed before the design
 
-**„Wirkt eine gecachte dauerhafte Weiterleitung über Neustarts hinweg?"**
-Ja, prozessübergreifend nachgemessen. Prozess A holt über eine
-plattengestützte `URLCache` eine 308 auf einen zweiten Loopback-Port ab.
-Prozess B, mit **keinem einzigen Lauscher irgendwo**, fragt dieselbe URL:
-er scheitert mit `NSURLErrorCannotConnectToHost` am **Ziel**-Port. Er hat
-den Ursprung nie gefragt. Damit ist die Kette geschlossen:
-`URLSession.shared.configuration.urlCache` *ist* `URLCache.shared`
-(Objektidentität geprüft), 20 MB Platte unter `~/Library/Caches`.
-`URLSessionConfiguration.ephemeral` gibt dagegen pro Session eine **frische**
-Cache-Instanz mit `diskCapacity == 0` heraus — nicht bloß keine Platte,
-sondern auch nichts, was zwei Verbindungen desselben Prozesses teilen.
+**"Does a cached permanent redirect act across restarts?"** Yes,
+remeasured across processes. Process A fetches a 308 to a second loopback
+port through a disk-backed `URLCache`. Process B, with **no listener
+anywhere**, requests the same URL: it fails with
+`NSURLErrorCannotConnectToHost` at the **target** port. It never asked the
+origin. That closes the chain: `URLSession.shared.configuration.urlCache`
+*is* `URLCache.shared` (object identity checked), 20 MB of disk under
+`~/Library/Caches`. `URLSessionConfiguration.ephemeral`, by contrast,
+hands out a **fresh** cache instance per session with `diskCapacity == 0`
+— not just no disk, but nothing shared between two connections of the same
+process either.
 
-**„Was heißt das für den Download-Pfad?" — die offene Messung.**
-`sendStreaming` über `URLSession.bytes(for:)` verhält sich **identisch**:
-dieselbe gecachte 308 wurde prozessübergreifend nachgefahren, und eine
-`Cache-Control: max-age=3600`-Antwort mit Körper landete auf Platte und
-wurde dem zweiten Prozess von dort **samt Körper** ausgeliefert. Die Frage
-war „ob dort dieselbe Cache-Frage gilt" — die Antwort ist ja, ohne
-Einschränkung. Objektinhalte, die ein Anbieter als cachebar markiert,
-lagen damit unverschlüsselt in `~/Library/Caches`.
+**"What does that mean for the download path?" — the open measurement.**
+`sendStreaming` over `URLSession.bytes(for:)` behaves **identically**: the
+same cached 308 was replayed across processes, and a
+`Cache-Control: max-age=3600` response with a body landed on disk and was
+served to the second process from there, **body included**. The question
+was "whether the same caching question applies there" — the answer is
+yes, without qualification. Object contents a provider marks cacheable
+thus sat unencrypted in `~/Library/Caches`.
 
-**„Kostet eine eigene Session etwas?"** Verbindungs-Wiederverwendung nicht:
-sie ist eine Eigenschaft *einer* Session über mehrere Anfragen, und die
-Session lebt jetzt genau so lange wie das `S3FileSystem`, das sie gebaut
-hat — also über alle `list`/`stat`/`readStream`/`write`-Aufrufe einer
-Verbindung hinweg. Verloren geht nur, was `URLSession.shared` **zwischen
-unabhängigen Verbindungen** geteilt hat: Verbindungspool, Cookie-Speicher
-und Kreditiv-Cache. Für S3 ist das nichts, was gebraucht wird — S3 signiert
-jede Anfrage einzeln und setzt keine Cookies —, und geteilter Zustand
-zwischen zwei Fenstern ist genau das, was die Fenster-Regel dieses Projekts
-ausschließt.
+**"Does a dedicated session cost something?"** Connection reuse does not:
+it is a property of *one* session across multiple requests, and the
+session now lives exactly as long as the `S3FileSystem` that built it —
+i.e., across all `list`/`stat`/`readStream`/`write` calls of one
+connection. What is lost is only what `URLSession.shared` shared **between
+independent connections**: connection pool, cookie storage, and credential
+cache. For S3 that is nothing that is needed — S3 signs every request
+individually and sets no cookies — and shared state between two windows is
+exactly what this project's window rule excludes.
 
-### Was weiterhin offen ist
+### What remains open
 
-Die Session trägt **keinen Delegate**. Sie *könnte* jetzt einen tragen, was
-unter `URLSession.shared` gar nicht ging — die Weiterleitungskontrolle aus
-`2026-08-28-backlog-s3-weiterleitungen.md` ist damit erreichbar geworden,
-aber nicht gebaut. Eigener Vorgang, wie dort entschieden.
+The session carries **no delegate**. It *could* now carry one, which was
+not possible under `URLSession.shared` at all — the redirect control from
+`2026-08-28-backlog-s3-weiterleitungen.md` has thereby become reachable,
+but not built. A separate task, as decided there.

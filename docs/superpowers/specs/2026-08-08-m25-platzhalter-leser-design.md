@@ -1,54 +1,54 @@
-# M25 — Die letzten Platzhalter-Leser (Design)
+# M25 — The last placeholder readers (Design)
 
-**Stand:** 2026-08-08. Vorgänger: M24 (`2026-08-08-m24-abschluss.md`), dessen
-Gesamtreview diesen Meilenstein als Eröffnungszug benannt hat.
+**As of:** 2026-08-08. Predecessor: M24 (`2026-08-08-m24-abschluss.md`), whose
+overall review named this milestone as the opening move.
 
-## Ziel
+## Goal
 
-`StoredSession.host`/`port`/`username`/`authKind` liefern für eine `.s3`- oder
-`.webdav`-Sitzung die SSH-Rückfallwerte `""`/`22`/`""`/`.password` — der
-Platzhalter, den M23 loswerden wollte, in neuer Schreibweise. M24 hat per
-Compiler-Probe fünf **ungeschützte** Leser in `SessionListViewModel`
-festgestellt und die Accessoren bewusst stehen lassen, weil die Spec dort
-nichts zugesagt hatte.
+`StoredSession.host`/`port`/`username`/`authKind` return the SSH fallback
+values `""`/`22`/`""`/`.password` for an `.s3` or `.webdav` session — the
+placeholder M23 wanted to get rid of, in new spelling. M24 found, via a
+compiler probe, five **unguarded** readers in `SessionListViewModel`
+and deliberately left the accessors in place, because the spec had made
+no promise there.
 
-M25 räumt diese fünf ab und **prüft anschließend**, ob die vier Accessoren
-löschbar sind. Geprüft wird, nicht versprochen: beide Ausgänge sind ein
-gültiges Ergebnis.
+M25 clears out those five and **then checks** whether the four accessors
+can be deleted. It is checked, not promised: both outcomes are a
+valid result.
 
-## Die drei Änderungen
+## The three changes
 
-### 1. `delete` — hochziehen, nicht umstellen
+### 1. `delete` — hoist, don't restructure
 
-`SessionListViewModel.delete(_:)` berechnet `bastionUsername`,
-`bastionAuthKind`, `bastionKeyPath` und holt `bastionSecret` aus dem Keychain
-(Zeilen 248–257). **Alle vier Werte werden ausschließlich innerhalb der
-Schleife über `affected` benutzt** — und `affected` ist seit M24 für jede
-Nicht-SSH-Sitzung leer (`session.kind == .ssh ? sessionsUsingAsJump(...) : []`).
+`SessionListViewModel.delete(_:)` computes `bastionUsername`,
+`bastionAuthKind`, `bastionKeyPath` and fetches `bastionSecret` from the keychain
+(lines 248–257). **All four values are used exclusively inside the
+loop over `affected`** — and `affected` has been empty for every
+non-SSH session since M24 (`session.kind == .ssh ? sessionsUsingAsJump(...) : []`).
 
-Das ist also kein Protokollproblem, sondern toter Aufwand. Die Berechnung
-wandert in ein `if !affected.isEmpty`.
+So this is not a protocol problem but wasted work. The computation
+moves into an `if !affected.isEmpty`.
 
-Der Nebeneffekt ist der eigentliche Gewinn: beim Löschen einer S3-Sitzung wird
-nicht länger deren **Secret Access Key** aus dem Keychain geholt, nur um
-verworfen zu werden. Ein Zugriff auf ein Geheimnis, den niemand braucht, ist
-einer zu viel — auch wenn der Wert nirgends hinfließt.
+The side effect is the real win: deleting an S3 session no longer
+fetches its **secret access key** from the keychain just to discard it.
+A read of a secret that nobody needs is one too many — even when the
+value flows nowhere.
 
-Drei der fünf Leser (Zeilen 249, 250, 255) verschwinden damit. Die beiden
-verbleibenden (262, 263) liegen bereits in der Schleife und sind geschützt.
+Three of the five readers (lines 249, 250, 255) disappear as a result. The two
+remaining (262, 263) already sit inside the loop and are guarded.
 
-### 2. Eine neue Frage am `BackendDescriptor`
+### 2. A new question on `BackendDescriptor`
 
-Zwei Stellen fragen dasselbe in SSH-Vokabular:
+Two places ask the same thing in SSH vocabulary:
 
-| Stelle | heute | Bedeutung |
+| Site | today | meaning |
 |---|---|---|
-| `updateSession` | `updated.authKind == .agent` | „braucht keine Anmeldung, alten Slot aufräumen" |
-| `exportPayload` | `authKind != .agent` | „hat ein Secret, das exportiert werden kann" |
+| `updateSession` | `updated.authKind == .agent` | "needs no login, clean up the old slot" |
+| `exportPayload` | `authKind != .agent` | "has a secret that can be exported" |
 
-Dieselbe Beschwörung steht ein drittes Mal in
-`StoredSessionConnectionConfig.build` — dort bereits schema-getrieben, aber
-ausgeschrieben. Also ein Mitglied:
+The same incantation appears a third time in
+`StoredSessionConnectionConfig.build` — there already schema-driven, but
+spelled out. So, one member:
 
 ```swift
 /// The secret field this stored session currently shows, or nil when it
@@ -57,118 +57,119 @@ ausgeschrieben. Also ein Mitglied:
 public func visibleSecretField(for session: StoredSession) -> ConnectionField?
 ```
 
-Rumpf: `credentialSchema.visibleSecretField(in: sessionValues(session),
-namespace: fieldNamespace)`. Drei Aufrufstellen, eine Regel.
+Body: `credentialSchema.visibleSecretField(in: sessionValues(session),
+namespace: fieldNamespace)`. Three call sites, one rule.
 
-**Es wächtert nicht selbst.** `hasStoredConfiguration` bleibt Sache der
-Aufrufer: `StoredSessionConnectionConfig.build` prüft heute vorher und
-behält das, `updateSession` und `exportPayload` haben ihre eigenen Wachen.
-Ein Mitglied, das mal wächtert und mal nicht, wäre schlimmer als drei
-Aufrufer, die ihre Frage selbst stellen.
+**It does not guard itself.** `hasStoredConfiguration` stays the callers'
+concern: `StoredSessionConnectionConfig.build` already checks beforehand
+today and keeps doing so, `updateSession` and `exportPayload` have their
+own guards. A member that sometimes guards and sometimes doesn't would be
+worse than three callers that ask their own question.
 
-**Äquivalenz, Fall für Fall geprüft:**
+**Equivalence, checked case by case:**
 
-| Sitzung | heute | mit dem Schema |
+| Session | today | with the schema |
 |---|---|---|
-| SSH `.agent` | `authKind == .agent` → aufräumen | kein Secret-Feld sichtbar → `nil` → aufräumen |
-| SSH `.password`/`.privateKey` | nicht aufräumen | Feld sichtbar → nicht aufräumen |
-| S3 / WebDAV | `authKind` fälscht `.password` → nicht aufräumen | Feld sichtbar → nicht aufräumen |
-| SSH ohne Block (`ssh == nil`) | `authKind` fällt auf `.password` → nicht aufräumen | `values(from:)` liest durch dieselben Rückfälle → Feld sichtbar → nicht aufräumen |
+| SSH `.agent` | `authKind == .agent` → clean up | no secret field visible → `nil` → clean up |
+| SSH `.password`/`.privateKey` | do not clean up | field visible → do not clean up |
+| S3 / WebDAV | `authKind` fakes `.password` → do not clean up | field visible → do not clean up |
+| SSH without a block (`ssh == nil`) | `authKind` falls back to `.password` → do not clean up | `values(from:)` reads through the same fallbacks → field visible → do not clean up |
 
-Die letzte Zeile ist der Grund, warum das Mitglied `sessionValues` benutzt und
-nicht etwa den leeren Beutel: für `.ssh` liest `SSHFieldSchema.values(from:)`
-durch die Accessoren in einen **gefüllten** Beutel, für `.s3`/`.webdav` liefert
-ein fehlender Block einen leeren. Das ist dokumentiertes Verhalten
-(`BackendDescriptor.sessionValues`) und in beiden Fällen dasselbe Ergebnis wie
-heute.
+The last row is why the member uses `sessionValues` and not, say, the
+empty bag: for `.ssh`, `SSHFieldSchema.values(from:)` reads through the
+accessors into a **filled** bag, for `.s3`/`.webdav` a missing block
+returns an empty one. That is documented behavior
+(`BackendDescriptor.sessionValues`) and, in both cases, the same result
+as today.
 
-### 3. `exportPayload` — nur der Fallback-Zweig
+### 3. `exportPayload` — only the fallback branch
 
-Dort steht `let authKind = resolved?.authKind ?? session.authKind`. **Die
-Agent-Eigenschaft einer set-gebundenen Sitzung kommt aus dem Set, nicht aus der
-Sitzung.** Wer das pauschal durch eine Schema-Frage an die Sitzungswerte
-ersetzt, ändert Verhalten: eine Sitzung an einem Agent-Set würde plötzlich ein
-Secret suchen und, wenn keines da ist, im nutzer-sichtbaren „N Passwörter
-fehlen" mitgezählt.
+There, the line reads `let authKind = resolved?.authKind ?? session.authKind`.
+**The agent property of a set-bound session comes from the set, not from the
+session.** Replacing that wholesale with a schema question against the
+session values would change behavior: a session on an agent set would
+suddenly look for a secret and, when none is there, be counted in the
+user-visible "N passwords missing".
 
-Ersetzt wird deshalb ausschließlich der Rückfall auf die Sitzung:
+So only the fallback onto the session is replaced:
 
 ```swift
 let needsSecret = resolved.map { $0.authKind != .agent }
     ?? (descriptor.visibleSecretField(for: session) != nil)
 ```
 
-Der `.agent`-Vergleich auf `ResolvedLogin` **bleibt** und ist kein Rückfall in
-alte Gewohnheiten: `resolvedSSHLogin` ist seit M22/T9 absichtlich SSH-geformt
-(Jump-Pfad und Exportformat sprechen genau diese vier Spalten). Ein
-`StoredSession`-Accessor ist es nicht.
+The `.agent` comparison on `ResolvedLogin` **stays**, and is not a
+regression to old habits: `resolvedSSHLogin` has been deliberately
+SSH-shaped since M22/T9 (the jump path and export format speak exactly
+these four columns). A `StoredSession` accessor it is not.
 
-**Die lokale Bindung `authKind` verschwindet dabei ganz** — nachgeprüft, nicht
-angenommen: sie wird innerhalb von `exportPayload` an genau einer Stelle
-gelesen, nämlich in dieser Wache. Die beiden anderen `authKind`-Vorkommen der
-Funktion sind `resolved.authKind.rawValue` für die Feldablage (liest das
-Resolved-Login direkt) und der eigene `authKind` des Jumps.
+**The local binding `authKind` disappears entirely** — verified, not
+assumed: within `exportPayload` it is read at exactly one place, namely
+this guard. The function's two other `authKind` occurrences are
+`resolved.authKind.rawValue` for the field storage (which reads the
+resolved login directly) and the jump's own `authKind`.
 
-Die beiden anderen kind-Bedingungen der Zeile — `session.kind != .s3` und
-`session.kind != .webdav || session.webdav != nil` — **bleiben unangetastet**
-(Maintainer-Entscheidung 2026-08-08). Sie sind Format-Logik, kein
-Protokoll-Dispatch: das Exportformat hat getrennte Secret-Spalten, und M23/P3
-hat beide Wachen nach einem Befund ausdrücklich wiederhergestellt.
+The line's two other kind conditions — `session.kind != .s3` and
+`session.kind != .webdav || session.webdav != nil` — **stay untouched**
+(maintainer decision, 2026-08-08). They are format logic, not
+protocol dispatch: the export format has separate secret columns, and
+M23/P3 explicitly restored both guards after a finding.
 
-## Die Probe
+## The probe
 
-Nach den drei Änderungen: `@available(*, deprecated, message: "…")` auf die vier
-Accessoren, `swift build`, jeden Treffer einzeln beurteilen.
+After the three changes: `@available(*, deprecated, message: "…")` on the
+four accessors, `swift build`, judge each hit individually.
 
-- **Bleiben nur `SSHFieldSchema.values(from:)` und geschützte Stellen** →
-  Accessoren löschen, volle Suite erneut, Ergebnis im Abschlussbericht.
-- **Bleibt etwas Ungeschütztes** → Accessoren bleiben, und jeder verbleibende
-  ungeschützte Leser wird **namentlich mit Datei und Zeile** genannt.
+- **Only `SSHFieldSchema.values(from:)` and guarded sites remain** →
+  delete the accessors, run the full suite again, result in the
+  closing report.
+- **Something unguarded remains** → the accessors stay, and every
+  remaining unguarded reader is named **by file and line**.
 
-Die Probe ist ein Compiler-Lauf, kein `grep`: M24 hat gezeigt, dass der Grep auf
-`.host`/`.port` 241 Treffer liefert, von denen die große Mehrheit URLs und
-fremde Typen sind.
+The probe is a compiler run, not a `grep`: M24 showed that grepping for
+`.host`/`.port` returns 241 hits, the large majority of which are URLs
+and unrelated types.
 
-## Erfolgskriterien
+## Success criteria
 
-| # | Kriterium | Nachweis |
+| # | Criterion | Evidence |
 |---|---|---|
-| 1 | Das Löschen einer Nicht-SSH-Sitzung fasst den Keychain nicht mehr an | Test mit lesefeindlichem `SecretStore` (Muster: `agentSetResolvesWithoutKeychainRead`) |
-| 2 | Das Löschen einer SSH-Bastion restauriert unverändert | die bestehenden `delete`-Tests bleiben grün, ohne Anpassung |
-| 3 | `updateSession` räumt für ssh-agent auf und für S3/WebDAV nicht | je ein Test, beide Richtungen |
-| 4 | Eine Sitzung an einem **Agent-Login-Set** exportiert weiterhin kein Passwort und wird nicht als fehlend gezählt | Test — das ist die Stelle, an der eine pauschale Umstellung Verhalten geändert hätte |
-| 5 | `visibleSecretField(for:)` hat drei Aufrufstellen; die ausgeschriebene Kopie in `StoredSessionConnectionConfig` ist verschwunden | grep |
-| 6 | Die Probe ist gelaufen und ihr Ergebnis steht im Abschlussbericht | beide Ausgänge zulässig, ungeschützte Leser namentlich |
-| 7 | Keine Verhaltensänderung sonst; Testzahl ≥ 1587 | volle Suite, gegatete Suiten, vier Kataloge `plutil`-clean |
+| 1 | Deleting a non-SSH session no longer touches the keychain | test with a read-hostile `SecretStore` (pattern: `agentSetResolvesWithoutKeychainRead`) |
+| 2 | Deleting an SSH bastion restores unchanged | the existing `delete` tests stay green, unmodified |
+| 3 | `updateSession` cleans up for ssh-agent and does not for S3/WebDAV | one test each, both directions |
+| 4 | A session on an **agent login set** still exports no password and is not counted as missing | test — this is the spot where a blanket switch-over would have changed behavior |
+| 5 | `visibleSecretField(for:)` has three call sites; the spelled-out copy in `StoredSessionConnectionConfig` is gone | grep |
+| 6 | The probe has run and its result is in the closing report | both outcomes admissible, unguarded readers named |
+| 7 | No other behavior change; test count ≥ 1587 | full suite, gated suites, four catalogs `plutil`-clean |
 
-## Test-Hinweise
+## Test notes
 
-- Sitzungen über die Fixtures (`sshSession`, `s3Session`, `webdavSession`),
-  nie `StoredSession` direkt.
-- Für Kriterium 1 und für jede „liest nicht" -Zusage: ein `SecretStore`, dessen
-  `password(for:)` den Test scheitern lässt. Das Muster steht am Ende von
+- Sessions via the fixtures (`sshSession`, `s3Session`, `webdavSession`),
+  never `StoredSession` directly.
+- For criterion 1 and for every "does not read" claim: a `SecretStore`
+  whose `password(for:)` fails the test. The pattern is at the end of
   `LoginMergePlannerTests.swift`.
-- Kriterium 2 ist die Regressionsklammer: müssen die bestehenden
-  `delete`-Tests angefasst werden, hat die Verlagerung Verhalten verschoben —
-  das ist ein Befund und gehört gemeldet, nicht weggeschrieben.
+- Criterion 2 is the regression clamp: if the existing `delete` tests
+  have to be touched, the relocation shifted behavior —
+  that is a finding and must be reported, not written away.
 
-## Für die Release-Notes
+## For the release notes
 
-**Nichts.** M25 ist eine reine Innenumstellung ohne nutzer-sichtbare Wirkung.
-Sollte die Probe eine Verhaltensänderung ans Licht bringen, gehört sie hier
-nachgetragen.
+**Nothing.** M25 is a purely internal restructuring with no user-visible
+effect. Should the probe bring a behavior change to light, it belongs
+here, added after the fact.
 
-## Offen, bewusst nicht Teil von M25
+## Open, deliberately not part of M25
 
-- Die Secret-Spalten des Exportformats zu vereinheitlichen (`password` /
-  `s3SecretAccessKey` / `jumpPassword` → eine Spalte, das Schema sagt welche).
-  Das wäre die Vollendung von M23/P3, ist aber eine **Formatänderung** mit
-  `.macscp`-Version 3, Migration und dem Ende des Austauschs mit v2-Dateien.
-  Eigener Meilenstein, eigene Spec.
-- Die Blocklos-Wachen (`session.s3 != nil`, `session.webdav != nil`) auf
-  `hasStoredConfiguration` zu ziehen.
-- Die vertagten M24-Minors (`ssh.managedKeyID`-Test, Komparator-Tiebreaker,
-  zwei irreführende Kommentare, das deutsche Zitat in einem Doc-Kommentar,
+- Unifying the export format's secret columns (`password` /
+  `s3SecretAccessKey` / `jumpPassword` → one column, the schema says which).
+  That would complete M23/P3, but is a **format change** with
+  `.macscp` version 3, migration, and the end of exchange with v2 files.
+  Its own milestone, its own spec.
+- Moving the blockless guards (`session.s3 != nil`, `session.webdav != nil`)
+  onto `hasStoredConfiguration`.
+- The deferred M24 minors (`ssh.managedKeyID` test, comparator tiebreaker,
+  two misleading comments, the German quote in a doc comment,
   `actions/checkout@v4` → `@v5`).
-- Der 0-%-CPU-Testsuite-Hänger (eigene Akte:
+- The 0% CPU test suite hang (its own file:
   `2026-08-08-testsuite-haenger-untersuchung.md`).

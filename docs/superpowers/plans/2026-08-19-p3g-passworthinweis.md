@@ -1,45 +1,46 @@
-# P3g — Der Passworthinweis hält kein Geheimnis mehr
+# P3g — The Password Hint No Longer Holds a Secret
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `pendingPasswordHintRequest` hält, solange der Passworthinweis offen
-steht, keine Klartext-Geheimnisse mehr — weil die zurückgehaltene
-Konfiguration sie beim Anlegen verliert, nicht weil ein weiterer Aufräumweg
-sie später löscht.
+**Goal:** `pendingPasswordHintRequest` no longer holds plaintext secrets for
+as long as the password hint is open — because the retained configuration
+loses them at creation time, not because a further cleanup path deletes
+them later.
 
-**Architecture:** Eine Messung vor dem Planen hat die Prämisse der Spec
-korrigiert: **kein Verbraucher der zurückgehaltenen Konfiguration liest ein
-Geheimnis.** `ExternalTerminalLauncher.open` reicht sie ausschließlich an
-`SSHCommandBuilder.scriptContents(for:)` weiter, und der liest laut eigenem
-Doc-Kommentar und ausweislich seines Codes nur Host, Port, Benutzername,
-Schlüssel*pfad* und Jump-Ziel — nie ein Passwort, nie eine Passphrase. Das
-Startskript enthält also gar kein Geheimnis; genau das sagt auch der
-Hinweistext selbst („macSCP can't hand a saved password to an external
-terminal — ssh will ask you for it there").
+**Architecture:** A measurement taken before planning corrected the spec's
+premise: **no consumer of the retained configuration reads a secret.**
+`ExternalTerminalLauncher.open` passes it on exclusively to
+`SSHCommandBuilder.scriptContents(for:)`, which, per its own doc comment
+and as verified by its code, reads only host, port, username, key *path*,
+and jump target — never a password, never a passphrase. The launch script
+thus contains no secret at all; that is exactly what the hint text itself
+says ("macSCP can't hand a saved password to an external terminal — ssh
+will ask you for it there").
 
-Daraus folgt eine kleinere und schärfere Reparatur als die Spec annahm:
-statt einen dritten Aufräumpfad zu bauen, den künftige Änderungen mitpflegen
-müssten, bekommt `ExternalTerminalRequest` einen Initializer, der die
-Konfiguration geschwärzt ablegt. Der Zustand „Hinweis offen **und** Passwort
-im View-State" wird dadurch nicht aufgeräumt, sondern unmöglich.
+That yields a smaller and sharper fix than the spec assumed: instead of
+building a third cleanup path that future changes would have to maintain,
+`ExternalTerminalRequest` gets an initializer that stores the configuration
+already redacted. The state "hint open **and** password in view state" is
+thereby not cleaned up, but made impossible.
 
-Task 1 legt das Schwärzen in den Core (dort ist es testbar), Task 2
-verdrahtet es an der einen Stelle und korrigiert einen Doc-Kommentar, der
-das Gegenteil der Wahrheit behauptet.
+Task 1 puts the redaction in Core (where it is testable), Task 2 wires it
+at the one call site and corrects a doc comment that claims the opposite
+of the truth.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, Swift Testing.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen: **ausschließlich Englisch.**
-- Ein Geheimnis darf **nie** gedruckt, geloggt oder in eine Meldung
-  eingebettet werden — auch nicht in eine Testfehlermeldung. `#expect`
-  expandiert seinen Ausdruck: erst in ein `Bool` heben, dann prüfen.
-- Nie eine Zeilennummer in einen Kommentar schreiben.
-- Kein Doc-Kommentar behauptet etwas, das der Code nicht tut.
-- Commit-Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
+- Code, comments, identifiers, test names: **English only.**
+- A secret must **never** be printed, logged, or embedded in a message —
+  not even in a test failure message. `#expect` expands its expression:
+  hoist into a `Bool` first, then check.
+- Never write a line number into a comment.
+- No doc comment claims something the code does not do.
+- Commit footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 - Conventional Commits.
-- Tests: TDD rot→grün. `swift test` muss am Ende jeder Task grün sein.
+- Tests: TDD red→green. `swift test` must be green at the end of every
+  task.
 
 ---
 
@@ -47,26 +48,26 @@ das Gegenteil der Wahrheit behauptet.
 
 **Files:**
 - Modify: `Sources/macSCPCore/SSH/SSHConnectionConfig.swift`
-- Test: `Tests/macSCPCoreTests/SSHConnectionConfigRedactionTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/SSHConnectionConfigRedactionTests.swift` (new)
 
 **Interfaces:**
-- Consumes: nichts aus früheren Tasks.
-- Produces: `public func redactingSecrets() -> SSHConnectionConfig` auf
-  `SSHConnectionConfig`. Task 2 ruft genau diese Methode auf.
+- Consumes: nothing from earlier tasks.
+- Produces: `public func redactingSecrets() -> SSHConnectionConfig` on
+  `SSHConnectionConfig`. Task 2 calls exactly this method.
 
-**Warum ein privater, nicht-werfender Initializer:** Der öffentliche
-Initializer wirft, weil er extern gelieferte Werte validiert. Eine
-Ableitung aus einer bereits validierten Konfiguration ist keine externe
-Eingabe: jedes Feld kommt unverändert durch, außer den Geheimnis-Nutzlasten,
-die keine Validierungsregel anfasst. `try!` wäre hier ein Absturzrisiko ohne
-Gegenwert, `try?` mit `?? self` gäbe im Fehlerfall stillschweigend die
-**ungeschwärzte** Konfiguration zurück — die schlechtestmögliche
-Fehlerrichtung. Der private Initializer ist der ehrliche dritte Weg; weil er
-privat ist, bleibt der werfende Initializer das eine Tor für externe Werte.
+**Why a private, non-throwing initializer:** The public initializer throws
+because it validates externally supplied values. A derivation from an
+already-validated configuration is not external input: every field passes
+through unchanged, except the secret payloads, which no validation rule
+touches. `try!` here would be a crash risk for no benefit, `try?` with
+`?? self` would silently return the **unredacted** configuration on
+failure — the worst possible failure direction. The private initializer
+is the honest third way; because it is private, the throwing initializer
+remains the one gate for external values.
 
 - [ ] **Step 1: Write the failing tests**
 
-Neue Datei `Tests/macSCPCoreTests/SSHConnectionConfigRedactionTests.swift`:
+New file `Tests/macSCPCoreTests/SSHConnectionConfigRedactionTests.swift`:
 
 ```swift
 import Foundation
@@ -166,10 +167,10 @@ Expected: FAIL — `value of type 'SSHConnectionConfig' has no member 'redacting
 
 - [ ] **Step 3: Implement**
 
-In `Sources/macSCPCore/SSH/SSHConnectionConfig.swift`, **innerhalb** der
-`struct SSHConnectionConfig`-Deklaration (nicht in einer Extension — der
-private Initializer muss von der Methode aus erreichbar bleiben), direkt
-hinter dem vorhandenen werfenden `init`:
+In `Sources/macSCPCore/SSH/SSHConnectionConfig.swift`, **inside** the
+`struct SSHConnectionConfig` declaration (not in an extension — the
+private initializer must stay reachable from the method), directly after
+the existing throwing `init`:
 
 ```swift
     /// Non-throwing initializer for values DERIVED from an already-valid
@@ -208,7 +209,7 @@ hinter dem vorhandenen werfenden `init`:
     }
 ```
 
-Und am Ende derselben Datei, auf Dateiebene:
+And at the end of the same file, at file scope:
 
 ```swift
 extension SSHConnectionConfig.AuthMethod {
@@ -232,9 +233,9 @@ extension SSHConnectionConfig.AuthMethod {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `swift test --filter "SSHConnectionConfig redaction"`
-Expected: PASS (6 Tests).
+Expected: PASS (6 tests).
 
-Danach die volle Suite: `swift test` — muss grün sein.
+Then the full suite: `swift test` — must be green.
 
 - [ ] **Step 5: Commit**
 
@@ -245,25 +246,25 @@ git commit -m "feat(core): derive a config copy without plaintext secrets"
 
 ---
 
-### Task 2: Der Hinweis legt die Konfiguration geschwärzt ab (App)
+### Task 2: The hint stores the configuration redacted (App)
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/ContentView.swift`
-- Test: `Tests/macSCPAppKitTests/ExternalTerminalRequestRedactionTests.swift` (neu)
+- Test: `Tests/macSCPAppKitTests/ExternalTerminalRequestRedactionTests.swift` (new)
 
 **Interfaces:**
-- Consumes: `SSHConnectionConfig.redactingSecrets()` aus Task 1.
-- Produces: nichts für spätere Tasks (dies ist die letzte Task).
+- Consumes: `SSHConnectionConfig.redactingSecrets()` from Task 1.
+- Produces: nothing for later tasks (this is the last task).
 
-**Kontext:** `ContentView.ExternalTerminalRequest` ist ein `struct` mit drei
-`let`-Feldern und **ohne** eigenen Initializer — es nutzt bisher den
-memberwise-Initializer. Der Test-Zugriff läuft über
-`@testable import MacSCPAppKit`; `ContentView` ist `internal`, die
-verschachtelte Struktur damit für das Test-Target sichtbar.
+**Context:** `ContentView.ExternalTerminalRequest` is a `struct` with three
+`let` fields and **no** own initializer — it currently uses the memberwise
+initializer. Test access goes through
+`@testable import MacSCPAppKit`; `ContentView` is `internal`, making the
+nested struct visible to the test target.
 
 - [ ] **Step 1: Write the failing test**
 
-Neue Datei `Tests/macSCPAppKitTests/ExternalTerminalRequestRedactionTests.swift`:
+New file `Tests/macSCPAppKitTests/ExternalTerminalRequestRedactionTests.swift`:
 
 ```swift
 import Foundation
@@ -338,17 +339,17 @@ struct ExternalTerminalRequestRedactionTests {
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `swift test --filter "ExternalTerminalRequest redaction"`
-Expected: FAIL — der erste und zweite Test schlagen fehl, weil der
-memberwise-Initializer die Konfiguration unverändert ablegt.
+Expected: FAIL — the first and second tests fail because the memberwise
+initializer stores the configuration unchanged.
 
-(`TerminalTarget` liegt in `Sources/macSCPCore/Settings/TerminalTarget.swift`
-und hat die Fälle `builtIn`, `terminalApp`, `iTerm`, `custom` — der Test
-nutzt zwei davon und ist über `import macSCPCore` versorgt.)
+(`TerminalTarget` lives in `Sources/macSCPCore/Settings/TerminalTarget.swift`
+and has the cases `builtIn`, `terminalApp`, `iTerm`, `custom` — the test
+uses two of them and is supplied via `import macSCPCore`.)
 
 - [ ] **Step 3: Implement**
 
-In `Sources/MacSCPAppKit/ContentView.swift` die Struktur um einen
-Initializer ergänzen (die drei `let`-Felder bleiben unverändert):
+In `Sources/MacSCPAppKit/ContentView.swift`, add an initializer to the
+struct (the three `let` fields stay unchanged):
 
 ```swift
     struct ExternalTerminalRequest {
@@ -377,10 +378,10 @@ Initializer ergänzen (die drei `let`-Felder bleiben unverändert):
 
 - [ ] **Step 4: Correct the untrue doc comment**
 
-Der Doc-Kommentar über `requestExternalTerminal(config:)` behauptet
-derzeit, der Sinn des Hinweises sei, „that the password ends up in a launch
-script". Das ist falsch: das Skript enthält kein Passwort, und die
-Hinweismeldung selbst sagt das Gegenteil. Ersetze den zweiten Absatz durch:
+The doc comment on `requestExternalTerminal(config:)` currently claims the
+purpose of the hint is, "that the password ends up in a launch script".
+That is false: the script contains no password, and the hint message
+itself says the opposite. Replace the second paragraph with:
 
 ```swift
     /// Split out of `requestExternalTerminal(for:)` rather than duplicated,
@@ -393,9 +394,9 @@ Hinweismeldung selbst sagt das Gegenteil. Ersetze den zweiten Absatz durch:
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `swift test --filter "ExternalTerminalRequest redaction"`
-Expected: PASS (3 Tests).
+Expected: PASS (3 tests).
 
-Danach die volle Suite: `swift test` — muss grün sein.
+Then the full suite: `swift test` — must be green.
 
 - [ ] **Step 6: Commit**
 

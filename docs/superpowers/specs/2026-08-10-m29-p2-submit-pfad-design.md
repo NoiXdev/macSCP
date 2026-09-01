@@ -1,24 +1,24 @@
-# M29-P2 — Der Submit-Pfad nach Core (Design)
+# M29-P2 — The submit path moves into Core (design)
 
-**Stand:** 2026-08-10. Vorgänger: `2026-08-09-m29-p1-abschluss.md`.
+**Status:** 2026-08-10. Predecessor: `2026-08-09-m29-p1-abschluss.md`.
 
-## Warum es diese Phase gibt
+## Why this phase exists
 
-M28s Whole-Branch-Review fand einen **Critical**: ein WebDAV- oder S3-Passwort
-konnte einen SSH-Bastion-Host erreichen. Der Wächter, der ihn schloss, sitzt
-in `ContentView.resolveSelectedJumpLoginSet` — einer `private func` auf einer
-SwiftUI-View. **Kein Test hält ihn.** In M29-P1 wurde er probeweise ganz
-entfernt; die volle Suite blieb grün.
+M28's whole-branch review found a **Critical**: a WebDAV or S3 password
+could reach an SSH bastion host. The guard that closed it sits in
+`ContentView.resolveSelectedJumpLoginSet` — a `private func` on a SwiftUI
+view. **No test holds it.** In M29-P1 it was experimentally removed
+entirely; the full suite stayed green.
 
-P1 hat das Fundament gebaut (Library-Split, zweites Testtarget, Lokalisierung
-unter `swift test`). **P2 holt die Entscheidung aus der View heraus**, dorthin,
-wo die bestehende Suite sie erreicht.
+P1 built the foundation (library split, second test target, localization
+under `swift test`). **P2 pulls the decision out of the view**, to where
+the existing suite can reach it.
 
-## Was der Submit-Pfad heute tut
+## What the submit path does today
 
-`ConnectionFormView` ruft an drei Knöpfen `resolveLoginSetForSubmit()`. Die
-Implementierung in `ContentView` ruft drei Funktionen und verundet ihre
-Ergebnisse:
+`ConnectionFormView` calls `resolveLoginSetForSubmit()` at three buttons.
+The implementation in `ContentView` calls three functions and ANDs their
+results:
 
 ```swift
 let targetResolved = resolveSelectedLoginSet(in: tab)
@@ -27,72 +27,71 @@ let jumpSessionResolved = resolveSelectedJumpSession(in: tab)
 return targetResolved && jumpResolved && jumpSessionResolved
 ```
 
-**Dass alle drei laufen, ist Absicht** — jede Ablehnung soll ihre eigene
-Meldung zeigen, nicht nur die erste. Gesichert ist das heute allein dadurch,
-dass drei `let`-Zeilen vor dem `&&` stehen.
+**That all three run is deliberate** — every rejection is meant to show its
+own message, not just the first one. Today that is secured solely by three
+`let` lines standing before the `&&`.
 
-Jede der drei mischt drei Aufgaben: Modus-Wächter, Prüfung, und das Befüllen
-des Formulars samt lokalisierter Meldung.
+Each of the three mixes three jobs: a mode guard, a check, and filling in
+the form together with a localized message.
 
-### Die Sicherheitseigenschaft steckt in der Zeilenreihenfolge
+### The security property lives in the line order
 
-`resolveSelectedJumpLoginSet` prüft `JumpLoginSetEligibility.isEligible`
-**bevor** `fillJumpForm` läuft — und `fillJumpForm` liest den Keychain-Slot
-des Sets. Vertauscht man die beiden Zeilen, ist M28s Critical zurück: das
-Secret des artfremden Sets steht im Formular, ein späterer Moduswechsel
-schreibt es in den eigenen Jump-Slot der Sitzung, und der Connect trägt es
-zum Bastion.
+`resolveSelectedJumpLoginSet` checks `JumpLoginSetEligibility.isEligible`
+**before** `fillJumpForm` runs — and `fillJumpForm` reads the set's
+keychain slot. Swap the two lines and M28's Critical is back: the
+mismatched set's secret ends up in the form, a later mode switch writes it
+into the session's own jump slot, and the connect carries it to the
+bastion.
 
-**Diese Reihenfolge ist die eigentliche Zusicherung des Meilensteins, und sie
-ist bis heute von nichts festgehalten.**
+**This ordering is the milestone's actual guarantee, and to this day
+nothing holds it in place.**
 
-### Asymmetrie zwischen Ziel und Jump
+### Asymmetry between target and jump
 
-Der **Ziel**-Füllpfad ist bereits ein Einzeiler nach Core
+The **target** fill path is already a one-liner into Core
 (`form.applyResolvedCredentials(sessionListViewModel.credentials(of: set))`);
-in der View steckt nur die Entscheidung. Der **Jump**-Füllpfad liegt
-vollständig App-seitig und liest den Keychain selbst über eine synthetische
-`StoredSession`. Genau dort saß der Critical.
+only the decision sits in the view. The **jump** fill path is entirely on
+the app side and reads the keychain itself via a synthetic `StoredSession`.
+That is exactly where the Critical sat.
 
-## Der Entwurf
+## The design
 
-Core bekommt **einen** neuen Typ in `Sources/macSCPCore/Presentation/`. Er
-beantwortet eine Frage: *darf dieser Submit laufen, und mit welchen Werten?*
-Er liefert **Fälle, keinen Text** — dieselbe Aufteilung wie
-`LoginResolveError`, und die, die die Projektregel für Core-Meldungen
-verlangt.
+Core gets **one** new type in `Sources/macSCPCore/Presentation/`. It
+answers one question: *may this submit run, and with which values?* It
+returns **cases, not text** — the same split as `LoginResolveError`, and
+the one the project rule requires for Core messages.
 
-### Drei Auflösungen plus ein Koordinator
+### Three resolutions plus one coordinator
 
-| Funktion | Aufgabe |
+| Function | Job |
 |---|---|
-| `resolveTargetLoginSet` | Ziel-Set auflösen; **neu: `kind`-Wächter** |
-| `resolveJumpLoginSet` | Jump-Set auflösen; **Wächter vor dem Füllen** |
-| `resolveJumpSession` | referenzierte Sitzung auflösen (vier Fehlerfälle) |
-| `prepareForSubmit` | ruft alle drei, **kürzt nie ab**, sammelt **jede** Ablehnung |
+| `resolveTargetLoginSet` | resolve the target set; **new: `kind` guard** |
+| `resolveJumpLoginSet` | resolve the jump set; **guard before the fill** |
+| `resolveJumpSession` | resolve the referenced session (four error cases) |
+| `prepareForSubmit` | calls all three, **never short-circuits**, collects **every** rejection |
 
-Der Koordinator ist kein Beiwerk. Ein kurzschließender Koordinator verbirgt
-die zweite und dritte Meldung — ein Verhalten, das heute niemand prüft und
-das sich als Test schreiben lässt. Die Ablehnungen kommen in **fester
-Reihenfolge** zurück (Ziel, Jump-Set, Jump-Sitzung), damit die App sie
-deterministisch anzeigen kann und der Test sie als Liste vergleichen kann.
+The coordinator is not incidental. A short-circuiting coordinator hides
+the second and third message — a behavior nobody checks today and that
+can be written as a test. The rejections come back in **fixed order**
+(target, jump set, jump session), so the app can display them
+deterministically and the test can compare them as a list.
 
-**Wer füllt.** Das Befüllen bleibt in Core, nicht in der App: `Connection
-ViewModel` ist ein Core-Typ, und die Reihenfolge Wächter-vor-Füllen ist nur
-dann festgenagelt, wenn beide Schritte im selben prüfbaren Aufruf liegen.
-Der Submit-Pfad der App liest und schreibt danach **kein** Zugangsdatenfeld
-mehr.
+**Who fills.** Filling stays in Core, not in the App: `ConnectionViewModel`
+is a Core type, and the guard-before-fill order is only pinned down when
+both steps sit in the same checkable call. After this, the App's submit
+path reads and writes **no** credential field at all.
 
-### Die Ablehnungsfälle
+### The rejection cases
 
-Jeder Fall trägt sein hervorzuhebendes Feld selbst. `ConnectionViewModel.
-Field` ist bereits `public` in Core, die Zuordnung gehört also dorthin — und
-wird damit prüfbar, statt wie heute über vier Fangzweige verstreut zu liegen.
+Every case carries its own field to highlight. `ConnectionViewModel.
+Field` is already `public` in Core, so the mapping belongs there — and
+becomes checkable that way, instead of being scattered across four catch
+branches as it is today.
 
-| Fall | Feld | Meldungsschlüssel (App) |
+| Case | Field | Message key (App) |
 |---|---|---|
 | `targetSetMissing` | – | `loginSets.missingSet` |
-| **`targetSetKindMismatch`** (neu) | – | **`form.loginSet.kindMismatch`** (neu) |
+| **`targetSetKindMismatch`** (new) | – | **`form.loginSet.kindMismatch`** (new) |
 | `jumpSetMissing` | `.jumpHost` | `loginSets.missingSet` |
 | `jumpSetNotSSH` | `.jumpHost` | `form.jump.set.notSSH` |
 | `jumpSessionMissing` | `.jumpSession` | `form.jump.session.missing` |
@@ -100,102 +99,101 @@ wird damit prüfbar, statt wie heute über vier Fangzweige verstreut zu liegen.
 | `jumpSessionNotSSH` | `.jumpSession` | `form.jump.session.notSSH` |
 | `jumpSessionLoginUnresolvable` | `.jumpSession` | `loginSets.missingSet` |
 
-Der letzte Fall ist heute ein `catch`-all („dangling login set auf der
-referenzierten Sitzung, oder sonst etwas"). Er behält seine Meldung, bekommt
-aber einen Namen — ein unbenannter Sammelfall ist nicht prüfbar.
+The last case is a `catch`-all today ("a dangling login set on the
+referenced session, or something else"). It keeps its message but gets a
+name — an unnamed catch-all case is not checkable.
 
-### Was in der App bleibt
+### What stays in the App
 
-Ein Dreizeiler: Fälle in Text übersetzen, `showFailure(message:field:)`
-aufrufen, `refusals.isEmpty` zurückgeben. Kein Wächter, keine Reihenfolge,
-keine Keychain-Lesung.
+Three lines: translate the cases to text, call
+`showFailure(message:field:)`, return `refusals.isEmpty`. No guard, no
+ordering, no keychain read.
 
-### Der neue Ziel-Wächter
+### The new target guard
 
-`resolveSelectedLoginSet` fragt heute **nicht**, ob das gewählte Set zum
-Protokoll der Sitzung passt. Folgenlos ist das nur durch einen
-Namensraum-Zufall: `applyResolvedCredentials` legt die Werte unter dem
-Präfix des jeweiligen Backends ab, und ein `.ssh`-Formular liest
-`webdav.password` nie. **Sicher aus Versehen, nicht aus Konstruktion** —
-und der Zufall trägt nur, solange kein Backend die Feld-Namen eines anderen
-benutzt.
+`resolveSelectedLoginSet` today does **not** ask whether the chosen set
+matches the session's protocol. This is consequence-free only by a
+namespace coincidence: `applyResolvedCredentials` stores the values under
+the respective backend's prefix, and an `.ssh` form never reads
+`webdav.password`. **Safe by accident, not by construction** — and the
+accident holds only as long as no backend uses another backend's field
+names.
 
-Der Wächter stellt dieselbe Frage wie die Jump-Seite, nur für das Ziel:
-`set.kind == session kind`. Das ist die **einzige gewollte
-Verhaltensänderung** dieser Phase.
+The guard asks the same question the jump side already asks, just for the
+target: `set.kind == session kind`. This is the **only intended behavior
+change** of this phase.
 
-## Was P2 erstmals prüfbar macht
+## What P2 makes checkable for the first time
 
-Der Test, den es heute nicht geben kann:
+The test that cannot exist today:
 
-> Ein Jump ist an ein WebDAV-Set gebunden. `prepareForSubmit` lehnt mit
-> `jumpSetNotSSH` ab — **und** `form.jumpPassword` ist unverändert. Das
-> Secret wurde nie ins Formular gelesen.
+> A jump is bound to a WebDAV set. `prepareForSubmit` rejects with
+> `jumpSetNotSSH` — **and** `form.jumpPassword` is unchanged. The secret
+> was never read into the form.
 
-Die zweite Zusicherung ist die eigentliche: sie hält die Reihenfolge
-Wächter-vor-Füllen fest. Wer die beiden Zeilen vertauscht, macht diesen Test
-rot — mit dem Credential sichtbar an der falschen Stelle, nicht bloß mit
-einem abweichenden Flag.
+The second assertion is the real one: it pins down the guard-before-fill
+ordering. Swapping the two lines turns this test red — with the
+credential visibly in the wrong place, not just with a differing flag.
 
-Dazu: dass der Koordinator nicht kurzschließt (zwei gleichzeitige Fehler
-liefern zwei Ablehnungen), und die Fall-zu-Feld-Zuordnung.
+Also: that the coordinator never short-circuits (two simultaneous errors
+yield two rejections), and the case-to-field mapping.
 
-## Was ausdrücklich **nicht** dazugehört
+## What is explicitly **not** part of this
 
-- **Die Entkernung des Rests von `ContentView`** (3540 Zeilen, 65 Funktionen)
-  und die **Aufteilung in Unter-Views** — das ist P3.
-- **UI-Testing.** Weder XCUITest noch ViewInspector kommen ins Projekt. Dass
-  der Knopf die Core-Funktion tatsächlich aufruft, bleibt ungeprüft; der
-  Restrisiko-Anteil schrumpft dadurch, dass die App-Seite auf einen
-  Dreizeiler zusammenfällt.
-- **Der veraltete Slot** einer set-gebundenen Sitzung. Eigener Durchgang.
-- **Die Editor-Reibung** beim Bearbeiten eines Login-Sets.
+- **Gutting the rest of `ContentView`** (3540 lines, 65 functions) and
+  **splitting it into sub-views** — that is P3.
+- **UI testing.** Neither XCUITest nor ViewInspector enter the project.
+  Whether the button actually calls the Core function stays unverified;
+  the residual risk shrinks because the App side collapses into three
+  lines.
+- **The stale slot** of a set-bound session. Its own pass.
+- **The editor friction** when editing a login set.
 
-## Risiken
+## Risks
 
-- **Verhaltensgleichheit.** Sieben der acht Fälle müssen Meldung **und** Feld
-  exakt wie heute liefern. Eine vertauschte Zuordnung wäre eine stille
-  Verschlechterung: der Nutzer bekäme das falsche Feld hervorgehoben.
-- **Der Jump-Fill zieht mit nach Core.** Er liest den Keychain über eine
-  synthetische `StoredSession` mit der ID des Sets. Diese Konstruktion muss
-  mitwandern, ohne dass eine zweite Lesart entsteht.
-- **Der neue Ziel-Wächter kann bestehende Konfigurationen ablehnen**, die
-  heute stillschweigend funktionieren — nämlich eine Sitzung, die an ein
-  artfremdes Set gebunden ist. Das ist gewollt: sie funktioniert nur
-  scheinbar, weil die Werte ins Leere geschrieben werden. Der Nutzer bekommt
-  jetzt eine Erklärung statt eines unerklärlichen Anmeldefehlers.
-- **Ein achter Fall, der heute keiner ist.** Der `catch`-all bekommt einen
-  Namen; wenn dort mehr als der bekannte Fall hineinläuft, verdeckt der neue
-  Name das nicht mehr — er benennt es.
+- **Behavioral equality.** Seven of the eight cases must deliver message
+  **and** field exactly as today. A swapped mapping would be a silent
+  regression: the user would get the wrong field highlighted.
+- **The jump fill moves into Core along with it.** It reads the keychain
+  via a synthetic `StoredSession` with the set's ID. This construction has
+  to move along without a second reading of it appearing.
+- **The new target guard can reject existing configurations** that work
+  silently today — namely, a session bound to a mismatched set. That is
+  intentional: it only appears to work, because the values are written
+  into the void. The user now gets an explanation instead of an
+  inexplicable login failure.
+- **An eighth case that is not one today.** The `catch`-all gets a name;
+  if more than the known case flows in there, the new name no longer hides
+  that — it names it.
 
-## Erfolgskriterien
+## Success criteria
 
-| # | Kriterium | Nachweis |
+| # | Criterion | Evidence |
 |---|---|---|
-| 1 | Der Jump-Wächter läuft **vor** jeder Keychain-Lesung | Test: artfremdes Set gebunden ⇒ Ablehnung **und** `jumpPassword` unverändert |
-| 2 | Mutation macht Kriterium 1 rot | Wächter hinter den Fill verschoben ⇒ Rot-Ausgabe wörtlich im Bericht, mit dem Credential an der falschen Stelle |
-| 3 | Der Koordinator kürzt nie ab | Test mit zwei gleichzeitigen Fehlern ⇒ zwei Ablehnungen |
-| 4 | Jeder der acht Fälle ist einzeln erreichbar | ein Test je Zeile der Fall-Tabelle |
-| 5 | Fall-zu-Feld-Zuordnung stimmt | Test über alle acht Fälle |
-| 6 | Sieben Fälle liefern Meldung und Feld **wie heute** | Vergleich gegen den heutigen Code, im Bericht Fall für Fall |
-| 7 | Der neue Ziel-`kind`-Wächter greift | Test je Protokoll-Paarung |
-| 8 | Die App-Seite ist ein Dreizeiler ohne Wächter | Review; kein `isEligible`, kein `kind`, keine Keychain-Lesung mehr in `ContentView`s Submit-Pfad |
-| 9 | Kein Secret-Wert in Meldung, Log oder Testfehlertext | Review |
-| 10 | Der neue Schlüssel steht in allen vier App-Katalogen | vorhandener Wächtertest, `plutil -lint` |
-| 11 | Suite bleibt grün, Zahl steigt um die neuen Tests | Testausgabe |
+| 1 | The jump guard runs **before** any keychain read | Test: mismatched set bound ⇒ rejection **and** `jumpPassword` unchanged |
+| 2 | Mutation turns criterion 1 red | Guard moved after the fill ⇒ red output quoted verbatim in the report, with the credential in the wrong place |
+| 3 | The coordinator never short-circuits | Test with two simultaneous errors ⇒ two rejections |
+| 4 | Each of the eight cases is individually reachable | one test per row of the case table |
+| 5 | Case-to-field mapping is correct | test across all eight cases |
+| 6 | Seven cases deliver message and field **as today** | comparison against today's code, case by case in the report |
+| 7 | The new target `kind` guard fires | test per protocol pairing |
+| 8 | The App side is three lines with no guard | review; no `isEligible`, no `kind`, no keychain read left in `ContentView`'s submit path |
+| 9 | No secret value in message, log, or test failure text | review |
+| 10 | The new key is present in all four App catalogues | existing guard test, `plutil -lint` |
+| 11 | Suite stays green, count rises by the new tests | test output |
 
-## Für die Release-Notes
+## For the release notes
 
-**Ein Satz.** Wird für eine Verbindung ein gespeichertes Login gewählt, das
-zu einem anderen Protokoll gehört, sagt macSCP das jetzt, statt die Angaben
-stillschweigend zu verwerfen.
+**One sentence.** If a stored login chosen for a connection belongs to a
+different protocol, macSCP now says so instead of silently discarding the
+values.
 
-## Offen, bewusst nicht Teil von P2
+## Open, deliberately not part of P2
 
-- P3: Entkernung und View-Aufteilung.
-- Dass der Submit-Knopf die Core-Funktion aufruft, ist nicht pinnbar (siehe
-  oben).
-- Kein Test deckt den Pfad ab, über den die ausgelieferte App ihr
-  Ressourcen-Bundle findet (Befund aus P1).
-- Der veraltete Slot, die Editor-Reibung, der app-weite Audit-Bereich.
-- Der Release-Stau: 399 Commits vor `origin/main`.
+- P3: gutting and view splitting.
+- That the submit button calls the Core function is not pinnable (see
+  above).
+- No test covers the path by which the shipped app finds its resource
+  bundle (finding from P1).
+- The stale slot, the editor friction, the app-wide audit area.
+- The release backlog: 399 commits ahead of `origin/main`.

@@ -1,111 +1,111 @@
-# Suche im Sitzungsbaum — Entwurf
+# Search in the session tree — Design
 
-**Stand:** 2026-08-29. Umsetzung von **D3** aus
+**As of:** 2026-08-29. Implementation of **D3** from
 `docs/superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md`.
-D3 hat ausdrücklich auf D1 gewartet, weil die Verschachtelung die
-Darstellung mitbestimmt — und tatsächlich stellt sie die Frage anders, als
-der Eintrag sie stellte.
+D3 deliberately waited for D1, because the nesting co-determines the
+presentation — and it does in fact pose the question differently than
+the entry posed it.
 
 ---
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-**Die Seitenleiste hat keine Suche.** Kein `searchText`, kein Suchfeld.
+**The sidebar has no search.** No `searchText`, no search field.
 
-Zwei Bausteine liegen aber schon da, und beide sind der Grund, warum dieser
-Vorgang klein ist:
+Two building blocks are already in place, though, and both are the reason
+this change is small:
 
-- **`SheetSearchField`** aus M18, benutzt in vier Verwaltungs-Sheets. Es
-  bringt einen **Regex-Schalter** und eine Fehleranzeige für einen ungültigen
-  Ausdruck mit.
-- **`SidebarVisibility`**, seit D1+D2 baumweise: es filtert heute rein auf
-  `StoredSession.tags` und hält einen Ordner am Leben, wenn **irgendetwas
-  darunter** passt — von jedem Treffer aufwärts über
+- **`SheetSearchField`** from M18, used in four management sheets. It
+  brings a **regex toggle** and an error display for an invalid
+  expression.
+- **`SidebarVisibility`**, tree-wide since D1+D2: today it filters purely
+  on `StoredSession.tags` and keeps a folder alive if **anything
+  underneath it** matches — from every match upward via
   `GroupTree.selfAndAncestors`.
 
-Die zweite Hälfte ist die eigentliche Nachricht: **die Filterregel für einen
-Baum existiert bereits und ist geprüft.** Eine Textsuche ist dieselbe Regel
-mit einem zweiten Kriterium, kein zweiter Filterweg.
+The second one is the real news: **the filter rule for a tree already
+exists and is proven.** A text search is the same rule with a second
+criterion, not a second filtering path.
 
-## Warum „filtern oder hervorheben" nicht mehr die Frage ist
+## Why "filter or highlight" is no longer the question
 
-Der Eintrag lässt beides offen. Nach D1+D2 ist Filtern nahezu geschenkt und
-Hervorheben wäre neue Maschinerie — ein zweiter Begriff neben „sichtbar",
-mit eigenen Zuständen.
+The entry leaves both open. After D1+D2, filtering is nearly free, and
+highlighting would be new machinery — a second concept next to
+"visible", with its own states.
 
-Die Verschachtelung stellt dafür eine neue Frage, die der Eintrag nicht haben
-konnte: **ein Treffer in einem zugeklappten Ordner ist gefiltert und trotzdem
-unsichtbar.**
+The nesting poses a new question for this, one the entry couldn't have
+had: **a match inside a collapsed folder is filtered and still
+invisible.**
 
-## Entscheidung des Maintainers (2026-08-29)
+## Maintainer decision (2026-08-29)
 
-**Während der Suche wird aufgeklappt.** Steht etwas im Suchfeld, zeigt die
-Seitenleiste den gefilterten Baum offen — sonst filtert man auf etwas, das
-man nicht sieht.
+**While searching, the tree expands.** With something in the search field,
+the sidebar shows the filtered tree open — otherwise you'd be filtering
+onto something you can't see.
 
-**Der Zuklapp-Zustand des Nutzers bleibt unangetastet** und kehrt zurück,
-sobald das Feld leer ist. Die Suche *überlagert* ihn, sie überschreibt ihn
-nicht. Das ist die Bedingung, unter der diese Entscheidung tragbar ist: eine
-Suche, die die Ordner des Nutzers dauerhaft aufklappt, hat seine Ordnung
-verändert, ohne dass er das wollte.
+**The user's collapse state stays untouched** and returns as soon as the
+field is empty. The search *overlays* it, it does not overwrite it. That
+is the condition under which this decision is bearable: a search that
+permanently expands the user's folders has changed their organization
+without their wanting it.
 
-## Der Entwurf
+## The design
 
-### Ein Kriterium mehr in derselben Regel
+### One more criterion in the same rule
 
-`SidebarVisibility.compute` bekommt den Suchbegriff zusätzlich zum
-Tag-Filter. Beide gelten **zusammen**: wer nach einem Tag filtert und dann
-tippt, sucht innerhalb des Gefilterten. Alles andere wäre überraschend, und
-zwei Filter, die einander aufheben, sind schwer zu erklären.
+`SidebarVisibility.compute` gets the search term in addition to the
+tag filter. Both apply **together**: someone who filters by a tag and
+then types is searching within the filtered set. Anything else would be
+surprising, and two filters that cancel each other out are hard to
+explain.
 
-Die Vorfahren-Regel bleibt unverändert und gilt für den neuen Fall genauso —
-sie ist der Grund, warum ein Treffer in der Tiefe seinen Weg nach oben
-behält.
+The ancestor rule stays unchanged and applies to the new case just the
+same — it is the reason a match deep down keeps its path upward.
 
-### Wonach gesucht wird
+### What is searched
 
-**Name, Host, Benutzername und Tags** einer Sitzung. Das ist, was ein Nutzer
-tippt, wenn er eine Verbindung sucht.
+**Name, host, username and tags** of a session. That is what a user
+types when looking for a connection.
 
-**Ordnernamen zählen nicht als Treffer.** Ein Ordner ist sichtbar, weil etwas
-in ihm passt — nicht, weil er selbst so heißt. Sonst zeigte ein Treffer auf
-dem Ordnernamen dessen gesamten Inhalt, und die Suche behauptete Treffer, die
-keine sind.
+**Folder names don't count as a match.** A folder is visible because
+something inside it matches — not because it is itself named that. Otherwise
+a match on the folder name would show all of its contents, and the search
+would claim matches that aren't.
 
-### Das Aufklappen ist ein zweiter, kurzlebiger Zustand
+### The expansion is a second, short-lived state
 
-„Aufgeklappt während der Suche" und „vom Nutzer zugeklappt" sind zwei
-verschiedene Dinge, und der Entwurf hält sie getrennt: der gemerkte Zustand
-wird gelesen, wenn das Suchfeld leer ist, und **ignoriert**, solange es das
-nicht ist. Nichts wird beim Suchen geschrieben.
+"Expanded while searching" and "collapsed by the user" are two
+different things, and the design keeps them separate: the remembered
+state is read when the search field is empty, and **ignored** while it
+is not. Nothing is written while searching.
 
-### Der Baustein wird benutzt, wie er ist
+### The building block is used as it is
 
-`SheetSearchField` samt Regex-Schalter und Fehleranzeige, wie in den vier
-Sheets. Ein eigenes Suchfeld für die Seitenleiste wäre eine zweite Bauart
-derselben Sache — und die Regex-Fähigkeit ist in einer Sitzungsliste eher
-nützlicher als in einem Sheet.
+`SheetSearchField`, complete with the regex toggle and error display, as in
+the four sheets. A dedicated search field for the sidebar would be a second
+construction of the same thing — and the regex capability is arguably more
+useful in a session list than in a sheet.
 
-Ein **ungültiger** Ausdruck zeigt seinen Fehler und **filtert nicht** — er
-darf die Liste nicht leeren, denn eine leere Seitenleiste wegen eines halb
-getippten Ausdrucks sieht aus wie ein Datenverlust.
+An **invalid** expression shows its error and **filters nothing** — it
+must not empty the list, since an empty sidebar because of a half-typed
+expression looks like data loss.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: wonach gesucht wird, dass Suche und
-Tag-Filter zusammen gelten, dass Vorfahren erhalten bleiben, dass ein
-ungültiger Ausdruck nichts filtert, und dass der gemerkte Zuklapp-Zustand
-weder gelesen noch geschrieben wird, solange gesucht wird.
+Testable is everything decidable: what is searched, that search and
+tag filter apply together, that ancestors are preserved, that an
+invalid expression filters nothing, and that the remembered collapse
+state is neither read nor written while searching.
 
-**Nicht prüfbar** bleibt, ob sich das Aufklappen und Zurückfallen beim Tippen
-ruhig anfühlt. Maintainer-Blick.
+**Not testable** remains whether the expanding and falling back while
+typing feels calm. Maintainer's eye.
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly not included
 
-- **Kein Hervorheben** von Treffern im Text, keine zweite Darstellung der
-  Seitenleiste, keine flache Trefferliste.
-- **Kein Schreiben** am gemerkten Zuklapp-Zustand während der Suche.
-- **Keine Suche über Ordnernamen.**
-- **Kein eigenes Suchfeld** für die Seitenleiste.
-- Keine Änderung an der Tag-Leiste (E1/E2) — dieselbe Seitenleiste, anderer
-  Vorgang.
+- **No highlighting** of matches in the text, no second presentation of
+  the sidebar, no flat match list.
+- **No writing** to the remembered collapse state while searching.
+- **No search over folder names.**
+- **No dedicated search field** for the sidebar.
+- No change to the tag bar (E1/E2) — same sidebar, different
+  change.

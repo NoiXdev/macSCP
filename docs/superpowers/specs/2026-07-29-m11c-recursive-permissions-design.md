@@ -1,125 +1,125 @@
-# M11c — Rechte rekursiv setzen (Design)
+# M11c — Set permissions recursively (Design)
 
-Datum: 2026-07-29 · Status: vom Maintainer freigegeben („los")
+Date: 2026-07-29 · Status: approved by the maintainer ("go ahead")
 
-## Ziel
+## Goal
 
-Im Rechte-Dialog Rechte auf einen ganzen Unterbaum anwenden — wahlweise
-dieselben Rechte für Dateien und Ordner oder getrennte (Ordner brauchen
-fast immer das x-Bit, Dateien nicht).
+In the permissions dialog, apply permissions to an entire subtree —
+either the same permissions for files and folders, or separate ones
+(folders almost always need the x bit, files usually don't).
 
-**Maintainer-Entscheidungen (2026-07-29):**
+**Maintainer decisions (2026-07-29):**
 
-1. Getrennter Modus wird vorbelegt mit: Dateien = Rechte des angeklickten
-   Ordners, Ordner = dieselben Rechte PLUS x-Bit dort, wo Lesen erlaubt
-   ist (644 ⇒ Ordner 755). Beides frei änderbar.
-2. Der Dialog fragt beim Einschalten von „rekursiv", ob gleiche oder
-   getrennte Rechte gelten sollen.
+1. Separate mode is pre-filled with: files = permissions of the clicked
+   folder, folders = the same permissions PLUS the x bit wherever read is
+   allowed (644 ⇒ folder 755). Both freely editable.
+2. The dialog asks, when "recursive" is switched on, whether to use the
+   same or separate permissions.
 
-## 1. Der Walk (Core, RISK)
+## 1. The walk (Core, RISK)
 
-- `PermissionsTreeApplier` — reine Funktion gegen `any RemoteFileSystem`,
-  KEINE Protokoll-Erweiterung: dadurch gilt sie ohne Duplizierung für das
-  lokale UND das entfernte Backend (`deleteTree` musste pro Backend
-  implementiert werden, weil es `topLevelKind` selbst herleitet; hier
-  liefert der Aufrufer die Art des Wurzel-Eintrags mit, siehe unten).
-- Signatur:
+- `PermissionsTreeApplier` — a pure function against `any RemoteFileSystem`,
+  NO protocol extension: this way it applies without duplication to both
+  the local AND the remote backend (`deleteTree` had to be implemented per
+  backend because it derives `topLevelKind` itself; here the caller
+  supplies the kind of the root entry, see below).
+- Signature:
   `static func apply(root: String, kind: RemoteFileKind, filePermissions: UInt32, directoryPermissions: UInt32, on fs: any RemoteFileSystem) async -> PermissionsTreeResult`
-  — wirft NICHT; das Ergebnis trägt die Zahlen.
+  — does NOT throw; the result carries the numbers.
 - `PermissionsTreeResult: Equatable, Sendable`:
   `changed: Int`, `skippedSymlinks: Int`, `failed: Int`,
   `firstErrorMessage: String?`, `cancelled: Bool`.
-- Ablauf: top-down über `list(path:)`, weil dessen Einträge den Typ
-  UNAUFGELÖST melden (dieselbe Eigenschaft, auf der die Symlink-Sicherheit
-  des Lösch-Walks beruht). Für jeden Eintrag:
-  - `.symlink` ⇒ ÜBERSPRINGEN, `skippedSymlinks += 1`, NIE `setPermissions`
-    darauf und NIE hineinlaufen.
-  - `.directory` ⇒ `setPermissions(directoryPermissions)`, danach rekursiv.
-  - sonst ⇒ `setPermissions(filePermissions)`.
-  - Fehler pro Eintrag: `failed += 1`, erste Meldung merken, WEITERLAUFEN
-    (Muster `applyImport`). Auch ein fehlgeschlagenes `list` eines
-    Unterverzeichnisses zählt so und stoppt den Rest nicht.
-- **Symlink-Begründung (bindend):** `setPermissions` FOLGT auf beiden
-  Backends dem Symlink (bekannter M7a-Fund). Ein rekursiver Lauf, der
-  Symlinks nicht überspringt, würde Rechte an Zielen AUSSERHALB des Baums
-  ändern — genau der Ausbruch, den `deleteTree` verhindert. Überspringen
-  ist deshalb Sicherheits-Invariante, keine Bequemlichkeit.
-- Wurzel: Die Art (`kind`) kommt vom Aufrufer (die Auswahl stammt aus
-  `list()`, also aus derselben unaufgelösten Quelle). Ist sie `.symlink`,
-  passiert NICHTS (Ergebnis: nur `skippedSymlinks == 1`) — der Dialog
-  bietet die Aktion für Symlinks ohnehin nicht an.
-- Abbruch: `Task.checkCancellation()` vor jedem Eintrag; bei Abbruch
-  bricht der Walk ab und liefert `cancelled: true` mit den bis dahin
-  gezählten Zahlen (kein Fehler, kein Rollback — bereits gesetzte Rechte
-  bleiben, das ist dokumentiert).
+- Flow: top-down via `list(path:)`, because its entries report the type
+  UNRESOLVED (the same property the delete walk's symlink safety rests on).
+  For each entry:
+  - `.symlink` ⇒ SKIP, `skippedSymlinks += 1`, NEVER call `setPermissions`
+    on it and NEVER descend into it.
+  - `.directory` ⇒ `setPermissions(directoryPermissions)`, then recurse.
+  - otherwise ⇒ `setPermissions(filePermissions)`.
+  - Per-entry error: `failed += 1`, remember the first message, KEEP GOING
+    (the `applyImport` pattern). A failed `list` of a subdirectory also
+    counts this way and does not stop the rest.
+- **Symlink rationale (binding):** `setPermissions` FOLLOWS the symlink on
+  both backends (a known M7a finding). A recursive run that does not skip
+  symlinks would change permissions on targets OUTSIDE the tree — exactly
+  the escape `deleteTree` prevents. Skipping is therefore a safety
+  invariant, not a convenience.
+- Root: the kind (`kind`) comes from the caller (the selection comes from
+  `list()`, i.e. from the same unresolved source). If it is `.symlink`,
+  NOTHING happens (result: only `skippedSymlinks == 1`) — the dialog
+  doesn't offer the action for symlinks anyway.
+- Cancellation: `Task.checkCancellation()` before every entry; on
+  cancellation the walk stops and returns `cancelled: true` with the
+  counts accumulated so far (no error, no rollback — permissions already
+  set stay set, which is documented).
 
-## 2. Ableitung der Ordner-Rechte (Core, pur)
+## 2. Deriving folder permissions (Core, pure)
 
-`PosixPermissions.directoryDefault(from:)`: setzt in jeder Dreiergruppe
-(owner/group/other) das x-Bit, wenn dort r gesetzt ist; Sonderbits
-(setuid/setgid/sticky) bleiben unverändert. 644 ⇒ 755, 600 ⇒ 700,
-640 ⇒ 750. Reine Funktion, direkt testbar.
+`PosixPermissions.directoryDefault(from:)`: sets the x bit in each triple
+(owner/group/other) wherever r is set there; special bits
+(setuid/setgid/sticky) stay unchanged. 644 ⇒ 755, 600 ⇒ 700,
+640 ⇒ 750. A pure function, directly testable.
 
-## 3. VM-Aktion
+## 3. VM action
 
 `RemoteBrowserViewModel.applyPermissionsRecursively(file:directory:to:)`:
-ruft den Walk, lädt danach die Liste neu, schreibt EINEN Audit-Eintrag
-(`chmod -R <file>/<dir> <pfad>` plus die Zahlen; `isError` nur, wenn
-`failed > 0`), liefert das Ergebnis an die UI. Fortschritt wird über
-einen optionalen Callback gemeldet (`(changed, failed) -> Void`), damit
-das Sheet mitzählen kann.
+calls the walk, reloads the list afterward, writes ONE audit entry
+(`chmod -R <file>/<dir> <path>` plus the numbers; `isError` only if
+`failed > 0`), delivers the result to the UI. Progress is reported via an
+optional callback (`(changed, failed) -> Void`) so the sheet can keep
+count.
 
 ## 4. Dialog
 
-- Schalter „Auf alle Unterobjekte anwenden" im bestehenden Rechte-Sheet;
-  NUR sichtbar, wenn das Objekt ein Ordner ist (bei einer Datei wäre
-  „rekursiv" wirkungslos).
-- Eingeschaltet: Segmente `Gleiche Rechte | Getrennt`. „Gleiche Rechte"
-  nutzt das vorhandene Raster für beides; „Getrennt" zeigt ZWEI Raster
-  (Dateien / Ordner) mit der Vorbelegung aus §2.
-- Der Anwenden-Knopf heißt dann „Rekursiv anwenden" und stellt vorher
-  EINE Rückfrage mit Zielpfad und Modus (die Aktion ist nicht
-  rückgängig zu machen).
-- Während des Laufs: Fortschrittszeile im Sheet (laufende Zählung) plus
-  „Abbrechen"; danach die Ergebniszeile (geändert / übersprungen /
-  fehlgeschlagen, bei Fehlern die erste Meldung). Kein Eintrag in die
-  Transfer-Warteschlange — das ist keine Übertragung.
-- **Korrektur (Final-Review 2026-07-29):** Der Walk ist protokollbasiert
-  und funktioniert nachweislich auch gegen `LocalFileSystem` (Symlink-
-  Erkennung dort korrekt, inkl. Symlink-auf-Verzeichnis und toter
-  Symlinks). ERREICHBAR ist er heute aber NUR auf der Remote-Seite:
-  `LocalFileSystem.item(for:)` liefert `permissions: nil`, weshalb das
-  Sheet lokal den ganzen Rechte-Block durch „Rechte sind für diesen
-  Eintrag nicht verfügbar" ersetzt (Verhalten seit M7b, keine Regression).
-  Die ursprüngliche Formulierung „gilt auf beiden Panes" war falsch.
-  Lokale Rechte freizuschalten (POSIX-Attribute in `item(for:)` füllen)
-  ist Backlog — der rekursive Lauf wäre dann ohne weitere Arbeit dabei.
+- A "Apply to all sub-items" toggle in the existing permissions sheet;
+  ONLY visible when the object is a folder (for a file, "recursive" would
+  have no effect).
+- Switched on: segments `Same permissions | Separate`. "Same permissions"
+  uses the existing grid for both; "Separate" shows TWO grids
+  (files / folders) pre-filled per §2.
+- The apply button is then named "Apply Recursively" and first asks ONE
+  confirmation naming the target path and mode (the action cannot be
+  undone).
+- During the run: a progress line in the sheet (a running count) plus
+  "Cancel"; afterward the result line (changed / skipped / failed, with
+  the first message on failures). No entry in the transfer queue — this
+  isn't a transfer.
+- **Correction (final review 2026-07-29):** the walk is protocol-based
+  and demonstrably works against `LocalFileSystem` too (symlink detection
+  there is correct, including symlink-to-directory and dead symlinks).
+  REACHABLE today, though, it is ONLY on the remote side:
+  `LocalFileSystem.item(for:)` returns `permissions: nil`, which is why the
+  sheet locally replaces the whole permissions block with "Permissions are
+  not available for this item" (behavior since M7b, not a regression).
+  The original wording "applies on both panes" was wrong. Unlocking local
+  permissions (filling in POSIX attributes in `item(for:)`) is backlog —
+  the recursive run would then come along with no further work.
 
 ## 5. Tests
 
-- Ableitung: 644⇒755, 600⇒700, 640⇒750, Sonderbits bleiben.
-- Walk (Mock-FS mit Aufzeichnung aller `setPermissions`-Aufrufe):
-  gemischter Baum (Dateien, Ordner, Symlinks, leerer Ordner);
-  getrennte vs. gleiche Rechte; **kein `setPermissions` auf einem
-  Symlink-Pfad** (Aufzeichnung beweist es); Fehler eines Eintrags zählt
-  und stoppt nicht; fehlgeschlagenes `list` eines Unterordners zählt und
-  stoppt nicht; Abbruch mitten im Baum liefert `cancelled: true` mit
-  Teilzahlen; Wurzel ist Symlink ⇒ nichts passiert.
-- VM: Audit-Eintrag mit Zahlen, `isError` nur bei `failed > 0`, Liste
-  wird neu geladen, Fortschritts-Callback feuert.
-- Gated am Rig: echter Baum inkl. Symlink; danach Kontrolle per
-  `docker exec stat`, dass die Rechte im Baum stimmen UND das
-  Symlink-Ziel außerhalb UNVERÄNDERT ist.
+- Derivation: 644⇒755, 600⇒700, 640⇒750, special bits unchanged.
+- Walk (mock FS recording every `setPermissions` call): a mixed tree
+  (files, folders, symlinks, an empty folder); separate vs. same
+  permissions; **no `setPermissions` on a symlink path** (the recording
+  proves it); an entry's error counts and doesn't stop the run; a failed
+  `list` of a subfolder counts and doesn't stop the run; cancellation
+  mid-tree returns `cancelled: true` with partial counts; root is a symlink
+  ⇒ nothing happens.
+- VM: audit entry with numbers, `isError` only when `failed > 0`, the list
+  is reloaded, the progress callback fires.
+- Gated against the rig: a real tree including a symlink; then verified via
+  `docker exec stat` that permissions in the tree are correct AND the
+  symlink target outside is UNCHANGED.
 
-## 6. Aufteilung
+## 6. Breakdown
 
-T1 Core-Walk + Ableitung (RISK) → T2 VM-Aktion + Audit + Fortschritt →
-T3 Dialog (Schalter, zwei Raster, Rückfrage, Fortschritt, EN/DE) →
-T4 Abschluss (gated Rig-Test, Final-Review). KEIN Release.
+T1 Core walk + derivation (RISK) → T2 VM action + audit + progress →
+T3 dialog (toggle, two grids, confirmation, progress, EN/DE) →
+T4 wrap-up (gated rig test, final review). NO release.
 
-## 7. Bewusst NICHT in M11c
+## 7. Deliberately NOT in M11c
 
-Keine Mehrfachauswahl (der Dialog ist Einzelauswahl), kein „nur Dateien"
-oder „nur Ordner"-Filter, kein Rückgängig, keine Vorschau der
-betroffenen Einträge, kein rekursives Setzen von Eigentümer/Gruppe
-(SFTP-`chown` ist nicht implementiert und nicht geplant).
+No multi-selection (the dialog is single-selection), no "files only" or
+"folders only" filter, no undo, no preview of the affected entries, no
+recursive setting of owner/group (SFTP `chown` is not implemented and not
+planned).

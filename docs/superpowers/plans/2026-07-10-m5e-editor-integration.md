@@ -1,32 +1,32 @@
-# macSCP M5e — Editor-Integration + „Öffnen mit"-Einstellungen Implementation Plan
+# macSCP M5e — Editor integration + "Open with" settings Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Doppelklick auf eine Remote-Datei lädt sie in ein Temp-Verzeichnis, öffnet sie in der richtigen App (Endungs-Regel → Standard-Editor → System-Zuordnung — konfigurierbar im neuen Settings-Tab „Öffnen mit"), und jedes Speichern lädt automatisch zurück auf den Server; beim Trennen wird aufgeräumt.
+**Goal:** Double-clicking a remote file downloads it into a temp directory, opens it in the right app (extension rule → default editor → system association — configurable in the new "Open with" settings tab), and every save automatically uploads it back to the server; cleanup happens on disconnect.
 
-**Architektur:** `SettingsStore` wächst um `defaultEditorPath` + `fileAssociations` (Endung→App-Pfad, normalisiert). Neuer Settings-Tab „Öffnen mit" (App-Auswahl über Datei-Dialog auf `/Applications`, Regel-Tabelle mit Hinzufügen/Entfernen). Core: `EditSessionManager` (@Observable @MainActor) — Temp-Download über die QUEUE (`enqueueAndWait`), `DispatchSource`-Datei-Watcher mit Debounce, Auto-Upload über die Queue mit Konflikt-Bypass (Zurückschreiben IST gewollt), Lifecycle explizit (`stopAll` im Teardown, Temp-Ordner pro Session). App: `EditorResolver` (Regel → Default → `NSWorkspace`-System-Default) + `NSWorkspace.open(_:withApplicationAt:)`, Doppelklick-Wiring.
+**Architecture:** `SettingsStore` grows `defaultEditorPath` + `fileAssociations` (extension→app path, normalized). New settings tab "Open with" (app selection via a file dialog on `/Applications`, a rule table with add/remove). Core: `EditSessionManager` (@Observable @MainActor) — temp download via the QUEUE (`enqueueAndWait`), a `DispatchSource` file watcher with debounce, auto-upload via the queue with a conflict bypass (writing back IS intended), explicit lifecycle (`stopAll` in teardown, a temp folder per session). App: `EditorResolver` (rule → default → `NSWorkspace` system default) + `NSWorkspace.open(_:withApplicationAt:)`, double-click wiring.
 
 ## Global Constraints
 
-- swift-tools 6.0; ALLE Targets `.swiftLanguageMode(.v5)`; macOS 15; Swift Testing, TDD rot→grün.
-- SPRACH-POLICY: Kommentare/Identifier Englisch; neue UI-Strings via `L10n` mit EN-Quelle + DE in BEIDEN `.strings`; `reason:` englisch.
-- Alle Queue-Invarianten bleiben (sechste Generation!): exactly-once, cancelAll-Fenster, Gruppen, FIFO-Start, Slots, interrupted-Semantik.
-- Edit-Uploads laufen als NORMALE Queue-Items (sichtbar in der Leiste, Drossel/Parallelität gelten), aber mit Konflikt-Bypass (bindend: eigenes internes `bypassConflictCheck`-Flag am Job; das bestehende resume-Bypass-Verhalten bleibt unverändert daran gekoppelt — `resume==true ⇒ bypass`, neu zusätzlich explizites Flag für Edit-Writebacks mit `resume:false`).
-- Temp-Dateien: `FileManager.temporaryDirectory/macscp-edit/<sessionUUID>/<hash(remotePfad)>/<fileName>`; Cleanup löscht den Session-Ordner rekursiv (lokal, FileManager — NICHT das Remote-`delete`).
-- KEINE Geheimnisse; Settings bleiben vorwärtskompatibel. Gated: `MACSCP_ITEST=1` (Rig aus Haupt-Checkout).
-- Conventional Commits, Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`. Implementierer pushen nicht.
+- swift-tools 6.0; ALL targets `.swiftLanguageMode(.v5)`; macOS 15; Swift Testing, TDD red→green.
+- LANGUAGE POLICY: comments/identifiers English; new UI strings via `L10n` with an EN source + DE in BOTH `.strings`; `reason:` in English.
+- All queue invariants stay (sixth generation!): exactly-once, the cancelAll window, groups, FIFO start, slots, interrupted semantics.
+- Edit uploads run as NORMAL queue items (visible in the bar, throttle/parallelism apply), but with a conflict bypass (binding: its own internal `bypassConflictCheck` flag on the job; the existing resume-bypass behavior stays coupled to it unchanged — `resume==true ⇒ bypass`, newly with an additional explicit flag for edit write-backs with `resume:false`).
+- Temp files: `FileManager.temporaryDirectory/macscp-edit/<sessionUUID>/<hash(remotePfad)>/<fileName>`; cleanup recursively deletes the session folder (local, FileManager — NOT the remote `delete`).
+- NO secrets; settings stay forward-compatible. Gated: `MACSCP_ITEST=1` (rig from the main checkout).
+- Conventional Commits, footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`. Implementers do not push.
 
-**Abhängigkeitsgraph:** `[ T1 (Settings-Store) ∥ T3 (EditSessionManager, RISK) ] → [ T2 (Settings-Tab) ∥ T4 (Resolver+Wiring) ] → T5 (Abschluss)` — T1 (Settings/) ∥ T3 (Presentation/EditSessionManager + Queue-Flag) dateidisjunkt; T2 (SettingsView) ∥ T4 (ContentView/EditorResolver) ebenso.
+**Dependency graph:** `[ T1 (settings store) ∥ T3 (EditSessionManager, RISK) ] → [ T2 (settings tab) ∥ T4 (resolver+wiring) ] → T5 (wrap-up)` — T1 (Settings/) ∥ T3 (Presentation/EditSessionManager + queue flag) file-disjoint; T2 (SettingsView) ∥ T4 (ContentView/EditorResolver) likewise.
 
 ---
 
-### Task 1: SettingsStore — Default-Editor + Endungs-Regeln
+### Task 1: SettingsStore — default editor + extension rules
 
 **Files:**
 - Modify: `Sources/macSCPCore/Settings/SettingsStore.swift`
-- Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift` (ergänzen)
+- Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift` (extend)
 
-**Interfaces (bindend für T2/T4):**
+**Interfaces (binding for T2/T4):**
 
 ```swift
 /// Absolute path to the .app bundle used as the default editor for remote
@@ -40,25 +40,25 @@ public var fileAssociations: [String: String] { get set }
 public func associatedApp(forExtension ext: String) -> String?
 ```
 
-**Bindend:** Normalisierung beim Setzen UND Lesen (".PHP"/"php"/" .php " → "php"); leere/Whitespace-Endungen werden ignoriert; Persistenz-Roundtrip; Forward-Compat bleibt (unbekannte Schlüssel + die neuen als JSONValue-Objekt/String); Defaults nil/[:]. Tests: Roundtrip beider Felder, Normalisierung, Regel-Entfernen via leerem Pfad, Fixture-Kompatibilität (alte settings.json ohne neue Keys lädt sauber; neue Datei von alter Version lesbar-Simulation via Unknown-Key-Test besteht weiter).
+**Binding:** normalization on both set AND read (".PHP"/"php"/" .php " → "php"); empty/whitespace extensions are ignored; persistence roundtrip; forward compatibility stays (unknown keys + the new ones as a JSONValue object/string); defaults nil/[:]. Tests: roundtrip of both fields, normalization, rule removal via an empty path, fixture compatibility (an old settings.json without the new keys loads cleanly; readability of a new file by an old version — simulated via the unknown-key test — continues to pass).
 
-- [x] Rot → implementieren → grün → Commit `feat: add default editor and file association settings` (mit Footer).
+- [x] Red → implement → green → Commit `feat: add default editor and file association settings` (with footer).
 
 ---
 
-### Task 2: Settings-Tab „Öffnen mit"
+### Task 2: Settings tab "Open with"
 
 **Files:**
-- Modify: `Sources/MacSCPApp/SettingsView.swift`, beide `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`
+- Modify: `Sources/MacSCPApp/SettingsView.swift`, both `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`
 
-**Bindend:**
-1. Zweiter Tab „Open with"/„Öffnen mit" (Symbol `doc.badge.gearshape` o. ä.), Fensterhöhe darf wachsen (~460×360).
-2. Abschnitt Standard-Editor: Anzeige des gewählten App-Namens (aus Pfad, `FileManager.displayName`) oder „System default"/„System-Standard"; Buttons „Choose…"/„Auswählen…" (`.fileImporter`, `allowedContentTypes: [.application]`, Start `/Applications`) und „Reset"/„Zurücksetzen" (→ nil).
-3. Abschnitt Regeln: Tabelle/Liste der `fileAssociations` (sortiert nach Endung): Endung | App-Name | Entfernen-Button (−). Darunter Hinzufügen-Zeile: TextField Endung (Placeholder „php") + „Choose app…"-Button → fileImporter → Regel wird mit normalisierter Endung gesetzt. Doppelte Endung überschreibt (Store-Semantik).
-4. Neue L10n-Keys (EN-Quelle + DE) für Tab, Labels, Buttons, Placeholder, Fußnote („Rules take precedence over the default editor; the system association is the fallback." / „Regeln gehen vor Standard-Editor; System-Zuordnung ist der Fallback.").
-5. Verifikation: Build + Suite unverändert; Headless-Launch; visuell in T5.
+**Binding:**
+1. A second tab "Open with"/„Öffnen mit" (symbol `doc.badge.gearshape` or similar), window height may grow (~460×360).
+2. Default editor section: shows the chosen app's name (from the path, `FileManager.displayName`) or "System default"/„System-Standard"; buttons "Choose…"/„Auswählen…" (`.fileImporter`, `allowedContentTypes: [.application]`, starting at `/Applications`) and "Reset"/„Zurücksetzen" (→ nil).
+3. Rules section: a table/list of `fileAssociations` (sorted by extension): extension | app name | remove button (−). Below it an add row: a text field for the extension (placeholder "php") + a "Choose app…" button → fileImporter → the rule is set with the normalized extension. A duplicate extension overwrites (store semantics).
+4. New L10n keys (EN source + DE) for the tab, labels, buttons, placeholder, footnote ("Rules take precedence over the default editor; the system association is the fallback." / „Regeln gehen vor Standard-Editor; System-Zuordnung ist der Fallback.").
+5. Verification: build + suite unchanged; headless launch; visual in T5.
 
-- [x] Implementieren → grün → Commit `feat: add open-with settings tab` (mit Footer).
+- [x] Implement → green → Commit `feat: add open-with settings tab` (with footer).
 
 ---
 
@@ -66,10 +66,10 @@ public func associatedApp(forExtension ext: String) -> String?
 
 **Files:**
 - Create: `Sources/macSCPCore/Presentation/EditSessionManager.swift`
-- Modify: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift` (NUR: internes `bypassConflictCheck`-Flag am Job + öffentliche `enqueueEditUpload(...)`-Methode — Signatur unten)
-- Test: `Tests/macSCPCoreTests/EditSessionManagerTests.swift`, Queue-Tests ergänzen
+- Modify: `Sources/macSCPCore/Presentation/TransferQueueViewModel.swift` (ONLY: an internal `bypassConflictCheck` flag on the job + a public `enqueueEditUpload(...)` method — signature below)
+- Test: `Tests/macSCPCoreTests/EditSessionManagerTests.swift`, extend queue tests
 
-**Interfaces (bindend für T4):**
+**Interfaces (binding for T4):**
 
 ```swift
 @Observable @MainActor
@@ -109,42 +109,42 @@ public func enqueueEditUpload(
 ) -> UUID
 ```
 
-**Bindend:**
-1. Temp-Layout wie in den Global Constraints; Ordner wird bei `beginEditing` angelegt.
-2. Download über `queue.enqueueAndWait` (erscheint in der Leiste als Download).
-3. Watcher: `DispatchSource.makeFileSystemObjectSource(fileDescriptor:eventMask:[.write,.rename,.delete])` auf der Datei; Editoren machen atomare Saves (rename-swap!) — bindend: nach `.rename`/`.delete` den FD NEU öffnen (Datei am selben Pfad) und weiterbeobachten; Debounce 500 ms (mehrere Events in Folge → EIN Upload); jede erkannte Änderung → `enqueueEditUpload`.
-4. Watcher-Callbacks hüpfen auf den MainActor; keine Retain-Zyklen (Quelle gehalten vom Manager, cancel im stopAll/deinit-frei — UI-owned wie immer, KEIN deinit-Cleanup: stopAll ist Pflicht des Aufrufers).
-5. `stopAll`: alle Sources canceln, FDs schließen, Session-Temp-Ordner rekursiv löschen; idempotent; laufende Edit-Uploads in der Queue bleiben unberührt (sie lesen die Datei ggf. noch — Reihenfolge: erst Watcher stoppen, dann löschen; ein gerade laufender Upload einer gelöschten Datei endet als normaler .failed — akzeptiert, dokumentieren).
-6. Queue-Flag: `bypassConflictCheck` im Job (internal); `resolveConflictIfNeeded` prüft `job.resume || job.bypassConflictCheck`; alle bestehenden Pfade unverändert (Flag default false überall sonst).
-7. Tests (Mock-FS, TestSignals, injizierbare Zeit fürs Debounce falls nötig — Debounce via injizierbarem Scheduler/Task.sleep-Hook testbar machen): beginEditing lädt via Queue und liefert URL (Datei existiert lokal, Inhalt == Mock-Remote); Doppel-beginEditing derselben Datei → gleiche URL, kein zweiter Download (Queue-Item-Count!); simulierte Datei-Änderung (lokal schreiben + Watcher-Event bzw. direkter Handler-Aufruf, wenn DispatchSource im Test zu flaky ist → dann den Event-Handler-Pfad als testbare interne Methode schneiden und die DispatchSource-Schicht dünn halten) → genau EIN enqueueEditUpload nach Debounce (zwei schnelle Änderungen → EIN Upload); enqueueEditUpload umgeht Konfliktprüfung (Ziel existiert, KEIN Decider-Call, Item finished); stopAll löscht Temp-Ordner + weitere Änderung löst NICHTS mehr aus; atomarer Save simuliert (rename weg + neue Datei am Pfad) → Watcher überlebt und feuert.
+**Binding:**
+1. Temp layout as in the global constraints; the folder is created on `beginEditing`.
+2. Download via `queue.enqueueAndWait` (appears in the bar as a download).
+3. Watcher: `DispatchSource.makeFileSystemObjectSource(fileDescriptor:eventMask:[.write,.rename,.delete])` on the file; editors do atomic saves (rename-swap!) — binding: after `.rename`/`.delete`, reopen the FD (the file at the same path) and keep watching; debounce 500 ms (several events in a row → ONE upload); every detected change → `enqueueEditUpload`.
+4. Watcher callbacks hop onto the MainActor; no retain cycles (the source is held by the manager, cancel in stopAll / no deinit — UI-owned as always, NO deinit cleanup: stopAll is the caller's obligation).
+5. `stopAll`: cancel all sources, close FDs, recursively delete the session temp folder; idempotent; running edit uploads in the queue are left untouched (they may still be reading the file — order: stop the watcher first, then delete; an upload of a just-deleted file that is currently running ends as a normal .failed — accepted, document it).
+6. Queue flag: `bypassConflictCheck` on the job (internal); `resolveConflictIfNeeded` checks `job.resume || job.bypassConflictCheck`; all existing paths unchanged (flag defaults to false everywhere else).
+7. Tests (mock FS, TestSignals, injectable time for the debounce where needed — make the debounce testable via an injectable scheduler/Task.sleep hook): beginEditing downloads via the queue and returns a URL (the file exists locally, content == mock remote); a double beginEditing of the same file → the same URL, no second download (queue item count!); a simulated file change (write locally + a watcher event, or a direct handler call if DispatchSource is too flaky in tests → then cut the event-handler path as a testable internal method and keep the DispatchSource layer thin) → exactly ONE enqueueEditUpload after the debounce (two rapid changes → ONE upload); enqueueEditUpload bypasses the conflict check (the target exists, NO decider call, item finished); stopAll deletes the temp folder + a further change triggers NOTHING any more; an atomic save simulated (rename away + a new file at the path) → the watcher survives and fires.
 
-- [x] Rot → implementieren → grün (Filter + Gesamt) → Commit `feat: add edit session manager with auto-upload` (mit Footer).
+- [x] Red → implement → green (filter + total) → Commit `feat: add edit session manager with auto-upload` (with footer).
 
 ---
 
-### Task 4: EditorResolver + Doppelklick-Wiring (App)
+### Task 4: EditorResolver + double-click wiring (App)
 
 **Files:**
 - Create: `Sources/MacSCPApp/EditorResolver.swift`
-- Modify: `Sources/MacSCPApp/ContentView.swift`, `Sources/MacSCPApp/RemoteFileTableView.swift` (nur falls Doppelklick-auf-Datei-Callback fehlt — prüfen: Verzeichnis-Doppelklick existiert), beide `.strings` (Fehlertext, s. u.)
+- Modify: `Sources/MacSCPApp/ContentView.swift`, `Sources/MacSCPApp/RemoteFileTableView.swift` (only if a double-click-on-file callback is missing — check: double-click on a directory already exists), both `.strings` (error text, see below)
 
-**Bindend:**
-1. `EditorResolver.applicationURL(forFileName:settings:) -> URL?`: (1) `settings.associatedApp(forExtension:)` der Datei-Endung → URL wenn Pfad existiert; (2) `defaultEditorPath` → URL wenn existiert; (3) `NSWorkspace.shared.urlForApplication(toOpen: localURL)`-Fallback… Reihenfolge-Detail: Systemzuordnung braucht die LOKALE URL — Auflösung daher zweistufig: Regel/Default vorab per Dateiname; System-Fallback erst nach dem Download mit der lokalen URL; liefert alles nichts → `NSWorkspace.shared.open(localURL)` (öffnet mit irgendwas) als letzte Stufe. Nicht-existenter konfigurierter App-Pfad → nächste Stufe + einmaliger Log.
-2. `BrowserSession` erhält `editManager: EditSessionManager` (Init in `startSession` mit Session-UUID + `transferQueue`); `teardownSession` ruft `await editManager.stopAll()` NACH `cancelAll` und VOR `terminal.shutdown` (Reihenfolge dokumentieren).
-3. Doppelklick auf Remote-DATEI (kind == .file): `Task { let url = try await editManager.beginEditing(...); dann App-Auflösung + NSWorkspace.open([url], withApplicationAt: appURL, configuration:) bzw. Fallback-open }`; Fehler → dezente rote Meldung wie bestehende Muster (neuer L10n-Key `edit.openFailed` EN "Could not open file for editing: %@" / DE „Datei konnte nicht zum Bearbeiten geöffnet werden: %@").
-4. Symlinks/Verzeichnisse: unverändertes Verhalten (dir = cd; symlink = nichts).
-5. Build + Suite grün; Headless-Launch.
+**Binding:**
+1. `EditorResolver.applicationURL(forFileName:settings:) -> URL?`: (1) `settings.associatedApp(forExtension:)` of the file's extension → a URL if the path exists; (2) `defaultEditorPath` → a URL if it exists; (3) an `NSWorkspace.shared.urlForApplication(toOpen: localURL)` fallback… ordering detail: the system association needs the LOCAL URL — resolution is therefore two-staged: rule/default resolved beforehand from the file name; the system fallback only after the download, using the local URL; if all of that yields nothing → `NSWorkspace.shared.open(localURL)` (opens with whatever) as the last stage. A configured app path that does not exist → falls through to the next stage + a one-time log entry.
+2. `BrowserSession` gets an `editManager: EditSessionManager` (initialized in `startSession` with the session UUID + `transferQueue`); `teardownSession` calls `await editManager.stopAll()` AFTER `cancelAll` and BEFORE `terminal.shutdown` (document the order).
+3. Double-click on a remote FILE (kind == .file): `Task { let url = try await editManager.beginEditing(...); then app resolution + NSWorkspace.open([url], withApplicationAt: appURL, configuration:) or the fallback open }`; on error → a subtle red message following the existing pattern (new L10n key `edit.openFailed` EN "Could not open file for editing: %@" / DE „Datei konnte nicht zum Bearbeiten geöffnet werden: %@").
+4. Symlinks/directories: unchanged behavior (dir = cd; symlink = nothing).
+5. Build + suite green; headless launch.
 
-- [x] Implementieren → grün → Commit `feat: open remote files in the configured editor` (mit Footer).
+- [x] Implement → green → Commit `feat: open remote files in the configured editor` (with footer).
 
 ---
 
-### Task 5: Abschluss-Verifikation
+### Task 5: Final verification
 
-- [x] `swift test` gesamt; Rig hoch, `MACSCP_ITEST=1` voll, `MACSCP_KEYCHAIN=1` 2/2.
-- [x] **Visueller Edit-Roundtrip (Bildschirm frei):** In Settings „Öffnen mit": Regel `txt` → TextEdit anlegen; remote eine `.txt` erzeugen (docker exec), doppelklicken → Download-Item in Leiste → TextEdit öffnet die Datei; Text ändern + ⌘S → Upload-Item erscheint automatisch in der Leiste → `docker exec cat` zeigt die Änderung; ZWEITES Speichern → wieder genau ein Upload. Standard-Editor-Fall (Regel entfernen, Default z. B. TextEdit setzen, `.conf`-Datei doppelklicken → öffnet in TextEdit). System-Fallback-Fall (Default zurücksetzen, `.txt` → öffnet im System-Editor). Trennen → Temp-Ordner ist weg (`ls /tmp/...macscp-edit/`), TextEdit-Dokument bleibt offen (dokumentiert ok), erneutes Speichern löst nichts mehr aus.
-- [x] Checkboxen, Commit `docs: mark M5e plan tasks as completed` (mit Footer).
+- [x] `swift test` overall; rig up, `MACSCP_ITEST=1` full, `MACSCP_KEYCHAIN=1` 2/2.
+- [x] **Visual edit roundtrip (free screen):** in Settings "Open with": set up a `txt` rule → TextEdit; create a `.txt` remotely (docker exec), double-click → a download item appears in the bar → TextEdit opens the file; change the text + ⌘S → an upload item automatically appears in the bar → `docker exec cat` shows the change; a SECOND save → again exactly one upload. Default-editor case (remove the rule, set the default to e.g. TextEdit, double-click a `.conf` file → opens in TextEdit). System-fallback case (reset the default, `.txt` → opens in the system editor). Disconnect → the temp folder is gone (`ls /tmp/...macscp-edit/`), the TextEdit document stays open (documented as OK), saving again triggers nothing more.
+- [x] Checkboxes, commit `docs: mark M5e plan tasks as completed` (with footer).
 
-## Ausblick
+## Outlook
 
-Danach M6 — Release: App-Icon (Variante A), lproj-Marker + SPM-Bundles im .app, notarisierte DMG, README/Docs (EN, ohne Stack-Begriffe), Polish-Backlog (globaler Drossel-Bucket, applyToAll-Recheck, Sheet-Default-Action, core.transfer.interrupted verdrahten/löschen, delete-Konsument Teil-Datei-Cleanup, Auto-Reconnect-Backoff-Evaluierung).
+After this, M6 — release: app icon (variant A), lproj markers + SPM bundles in the .app, a notarized DMG, README/docs (EN, without stack terms), the polish backlog (global throttle bucket, applyToAll recheck, sheet default action, wiring/removing core.transfer.interrupted, the delete consumer's partial-file cleanup, auto-reconnect backoff evaluation).

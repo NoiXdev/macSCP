@@ -1,31 +1,31 @@
-# M11d — Externes Terminal Implementation Plan
+# M11d — External Terminal Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die SSH-Sitzung wahlweise im eingebauten Terminal oder in einer externen Terminal-App öffnen (Terminal.app, iTerm, frei wählbare App), ohne dass ein Passwort die App verlässt.
+**Goal:** Open the SSH session either in the built-in terminal or in an external terminal app (Terminal.app, iTerm, freely chosen app), without a password ever leaving the app.
 
-**Architecture:** Reiner `SSHCommandBuilder` (Argumentliste → POSIX-Quoting → Skript-Inhalt), damit alles Sicherheitsrelevante testbar ist; die App schreibt ein kurzlebiges `.command` (0700, eigener Temp-Unterordner mit Startup-Sweep nach M5e-Muster) und öffnet es mit der gewählten App — kein AppleScript, keine Automatisierungs-Berechtigung.
+**Architecture:** A pure `SSHCommandBuilder` (argument list → POSIX quoting → script content), so everything security-relevant is testable; the App writes a short-lived `.command` (0700, its own temp subfolder with a startup sweep following the M5e pattern) and opens it with the chosen app — no AppleScript, no automation permission.
 
 **Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, AppKit (`NSWorkspace`), SwiftUI.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-29-m11d-external-terminal-design.md` — bindend. Branch: **develop**.
-- **KEIN Passwort verlässt die App** — nicht als Argument, nicht in der Umgebung, nicht in der Zwischenablage, nicht im Skript. Bei Passwort-Verbindungen fragt `ssh` selbst.
-- Quoting ist sicherheitsrelevant: jedes Argument EINZELN in Single-Quotes, enthaltene `'` nach POSIX-Muster (`'\''`). Ein Test muss beweisen, dass Sonderzeichen (Semikolon, Backtick, `$(...)`, Leerzeichen, Quote) nicht ausbrechen.
-- Kein AppleScript, keine app-spezifische Automatisierung, keine neuen Entitlements.
-- Skript: Rechte 0700, eigener Temp-Unterordner, Selbstlöschung vor `exec`, Startup-Sweep (Muster `EditSessionManager`).
-- Fehler ehrlich und typisiert: fehlende/ungültige App und Schreibfehler sind eigene Fälle; KEIN stiller Rückfall auf eine andere App oder aufs eingebaute Terminal.
-- Die Einstellung nimmt keine Fähigkeit weg: beide Wege bleiben über Menüeinträge erreichbar.
-- KEIN Test startet einen Prozess oder öffnet eine App.
-- Alle neuen UI-Texte EN/DE in BEIDEN App-Katalogen; Code + Kommentare NUR Englisch; keine neuen Dependencies.
-- Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` + volle `swift test` nach jedem Task grün (Ausgangslage 670 Tests / 50 Suiten); gated Suiten in T3; Tests SYNCHRON im Vordergrund; TDD rot→grün für Core.
-- KEIN Release, kein Merge nach main.
+- Spec: `docs/superpowers/specs/2026-07-29-m11d-external-terminal-design.md` — binding. Branch: **develop**.
+- **NO password leaves the App** — not as an argument, not in the environment, not on the clipboard, not in the script. For password connections, `ssh` itself asks.
+- Quoting is security-relevant: every argument INDIVIDUALLY in single quotes, contained `'` per the POSIX pattern (`'\''`). A test must prove that special characters (semicolon, backtick, `$(...)`, space, quote) cannot break out.
+- No AppleScript, no app-specific automation, no new entitlements.
+- Script: permissions 0700, its own temp subfolder, self-deletion before `exec`, startup sweep (pattern: `EditSessionManager`).
+- Errors honest and typed: a missing/invalid app and write failures are their own cases; NO silent fallback to another app or to the built-in terminal.
+- The setting takes away no capability: both paths stay reachable via menu items.
+- NO test starts a process or opens an app.
+- All new UI text EN/DE in BOTH App catalogs; code + comments English ONLY; no new dependencies.
+- Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` + full `swift test` green after every task (starting point 670 tests / 50 suites); gated suites in T3; tests run SYNCHRONOUSLY in the foreground; TDD red→green for Core.
+- NO release, no merge to main.
 
 ## Schedule
 
-T1 (Core: Argumentbau + Quoting + Skript-Inhalt) → T2 (App: Settings, Start, Menüs, Hinweis, Fehler, Sweep) → T3 Abschluss (Koordinator).
+T1 (Core: argument building + quoting + script content) → T2 (App: settings, start, menus, notice, errors, sweep) → T3 wrap-up (coordinator).
 
 ---
 
@@ -33,23 +33,23 @@ T1 (Core: Argumentbau + Quoting + Skript-Inhalt) → T2 (App: Settings, Start, M
 
 **Files:**
 - Create: `Sources/macSCPCore/SSH/SSHCommandBuilder.swift`
-- Test: `Tests/macSCPCoreTests/SSHCommandBuilderTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/SSHCommandBuilderTests.swift` (new)
 
 **Interfaces:**
-- Consumes: `SSHConnectionConfig` (inkl. `AuthMethod` mit `.password`/`.privateKey`/`.agent` und `Jump`).
-- Produces (T2 verlässt sich exakt hierauf):
+- Consumes: `SSHConnectionConfig` (incl. `AuthMethod` with `.password`/`.privateKey`/`.agent` and `Jump`).
+- Produces (T2 relies on this exactly):
   - `SSHCommandBuilder.arguments(for config: SSHConnectionConfig) -> [String]`
-  - `SSHCommandBuilder.shellCommand(for config: SSHConnectionConfig) -> String` (die gequotete `ssh …`-Zeile)
-  - `SSHCommandBuilder.scriptContents(for config: SSHConnectionConfig) -> String` (vollständiger Skript-Text)
+  - `SSHCommandBuilder.shellCommand(for config: SSHConnectionConfig) -> String` (the quoted `ssh …` line)
+  - `SSHCommandBuilder.scriptContents(for config: SSHConnectionConfig) -> String` (full script text)
 
-**Verhaltens-Anforderungen (Spec §1/§2, bindend):**
-1. `arguments`: Reihenfolge `["-p","<port>"]` (NUR wenn `port != 22`), `["-l","<username>"]`, `["-i","<keyPath>"]` (NUR bei `.privateKey`), `["-J","<jumpUser>@<jumpHost>[:<jumpPort>]"]` (NUR wenn `config.jump != nil`; `:<port>` nur wenn `!= 22`), zuletzt `config.host`. `.agent` und `.password` erzeugen KEIN zusätzliches Argument.
-2. Ein Passwort darf in KEINER Ausgabe vorkommen — auch nicht die Passphrase eines Keys (es wird nur der Pfad übergeben).
-3. `shellCommand`: `ssh` gefolgt von den Argumenten, jedes EINZELN in Single-Quotes, enthaltene `'` als `'\''`. Ergebnis muss für eine POSIX-Shell exakt die Argumentliste aus (1) reproduzieren.
-4. `scriptContents`: erste Zeile `#!/bin/sh`, dann eine Zeile, die das Skript selbst entfernt (`rm -f -- "$0"`), dann `exec ` + `shellCommand`. Genau EIN `exec ssh` im Text.
-5. Reine Funktionen — kein Dateisystem, kein Prozess, keine Umgebung.
+**Behavior requirements (spec §1/§2, binding):**
+1. `arguments`: order `["-p","<port>"]` (ONLY when `port != 22`), `["-l","<username>"]`, `["-i","<keyPath>"]` (ONLY with `.privateKey`), `["-J","<jumpUser>@<jumpHost>[:<jumpPort>]"]` (ONLY when `config.jump != nil`; `:<port>` only when `!= 22`), lastly `config.host`. `.agent` and `.password` produce NO additional argument.
+2. A password must appear in NO output — not even a key's passphrase (only the path is passed).
+3. `shellCommand`: `ssh` followed by the arguments, each INDIVIDUALLY in single quotes, contained `'` as `'\''`. The result must reproduce exactly the argument list from (1) for a POSIX shell.
+4. `scriptContents`: first line `#!/bin/sh`, then a line that removes the script itself (`rm -f -- "$0"`), then `exec ` + `shellCommand`. Exactly ONE `exec ssh` in the text.
+5. Pure functions — no filesystem, no process, no environment.
 
-- [x] **Step 1: Failing Tests**
+- [x] **Step 1: Failing tests**
 
 ```swift
     // SSHCommandBuilderTests:
@@ -75,40 +75,40 @@ T1 (Core: Argumentbau + Quoting + Skript-Inhalt) → T2 (App: Settings, Start, M
     //   und kein Passwort/keine Passphrase.
 ```
 
-- [x] **Step 2: Rot beweisen.** `swift test --filter SSHCommandBuilder` → FAIL.
-- [x] **Step 3: Implementierung.**
-- [x] **Step 4: Grün + volle Suite.** `swift test` → 670 + neue.
+- [x] **Step 2: Prove red.** `swift test --filter SSHCommandBuilder` → FAIL.
+- [x] **Step 3: Implementation.**
+- [x] **Step 4: Green + full suite.** `swift test` → 670 + new.
 - [x] **Step 5: Commit.** `feat: build an ssh command line for external terminals`
 
 ---
 
-### Task 2: Einstellung, Start, Menüs, Hinweis (App)
+### Task 2: Setting, start, menus, notice (App)
 
 **Files:**
-- Modify: `Sources/macSCPCore/Settings/SettingsStore.swift` (drei neue Werte), `Sources/MacSCPApp/ContentView.swift` (Toolbar-Knopf/⌘T-Verhalten + Start + Fehler-Alert + Hinweis), `Sources/MacSCPApp/MacSCPApp.swift` (Menüeinträge), die Settings-View mit dem Terminal-Tab (grep `terminalFontName`), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
+- Modify: `Sources/macSCPCore/Settings/SettingsStore.swift` (three new values), `Sources/MacSCPApp/ContentView.swift` (toolbar button/⌘T behavior + start + error alert + notice), `Sources/MacSCPApp/MacSCPApp.swift` (menu items), the settings view with the terminal tab (grep `terminalFontName`), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
 - Create: `Sources/MacSCPApp/ExternalTerminalLauncher.swift`
-- Test: Settings-Vorwärtskompatibilität + Roundtrip in der bestehenden Settings-Testdatei
+- Test: settings forward-compatibility + roundtrip in the existing settings test file
 
 **Interfaces:**
-- Consumes (T1): `SSHCommandBuilder.scriptContents(for:)`; bestehend: `EditSessionManager`s Sweep-Muster (`macscp-edit`) als Vorbild für den eigenen Ordner, `SSHConnectionConfig` der laufenden Session (inkl. aufgelöstem Jump — dieselben Werte, die der Connect benutzt hat).
-- Produces: `SettingsStore.terminalTarget: TerminalTarget` (`builtIn`/`terminalApp`/`iTerm`/`custom`, Default `builtIn`), `SettingsStore.customTerminalAppPath: String?`, `SettingsStore.externalTerminalPasswordHintShown: Bool`.
+- Consumes (T1): `SSHCommandBuilder.scriptContents(for:)`; existing: `EditSessionManager`'s sweep pattern (`macscp-edit`) as the model for its own folder, the running session's `SSHConnectionConfig` (incl. resolved jump — the same values the connect used).
+- Produces: `SettingsStore.terminalTarget: TerminalTarget` (`builtIn`/`terminalApp`/`iTerm`/`custom`, default `builtIn`), `SettingsStore.customTerminalAppPath: String?`, `SettingsStore.externalTerminalPasswordHintShown: Bool`.
 
-**Verhaltens-Anforderungen (Spec §3/§4, bindend):**
-1. Settings vorwärtskompatibel (altes JSON ⇒ `builtIn`, nil, false); Roundtrip aller Fälle inkl. `custom` + Pfad.
-2. `ExternalTerminalLauncher.open(config:target:customPath:)`: schreibt `scriptContents` nach `<temp>/macscp-terminal/<uuid>.command` mit Rechten **0700**, öffnet es mit der Ziel-App über `NSWorkspace` (`open(_:withApplicationAt:configuration:)`); wirft typisierte Fehler `applicationNotFound(String)` und `scriptWriteFailed(String)`.
-3. App-Auflösung: `terminalApp` ⇒ Bundle-ID `com.apple.Terminal`, `iTerm` ⇒ `com.googlecode.iterm2`, `custom` ⇒ gespeicherter Pfad. Nicht auffindbar/ungültig ⇒ `applicationNotFound` mit Namen/Pfad in der Meldung; KEIN Rückfall.
-4. Startup-Sweep für `<temp>/macscp-terminal` analog `EditSessionManager` (dort nachschauen und dasselbe Muster verwenden).
-5. ⌘T und der Toolbar-Knopf folgen `terminalTarget`: `builtIn` ⇒ heutiges Umschalten; sonst ⇒ externes Öffnen. ZUSÄTZLICH zwei Menüeinträge, die immer beide Wege anbieten („Terminal ein-/ausblenden" und „Im externen Terminal öffnen"), beide nur bei verbundener Session aktiv.
-6. Passwort-Hinweis: ist die Auth der Session `.password` und `externalTerminalPasswordHintShown == false`, VOR dem Öffnen ein Hinweis (EN „macSCP can't hand a saved password to an external terminal — ssh will ask you for it there." / DE „macSCP kann ein gespeichertes Passwort nicht an ein externes Terminal übergeben — ssh fragt dort danach.") mit „Nicht mehr anzeigen"/„Don't show again" (setzt das Flag) und „Öffnen"/„Open". Danach öffnen.
-7. Fehler aus (2)/(3) erscheinen als Alert mit der konkreten Meldung.
-8. Alle neuen Keys EN/DE in beiden App-Katalogen; Grep-Gegenprobe.
+**Behavior requirements (spec §3/§4, binding):**
+1. Settings forward compatible (old JSON ⇒ `builtIn`, nil, false); roundtrip of all cases incl. `custom` + path.
+2. `ExternalTerminalLauncher.open(config:target:customPath:)`: writes `scriptContents` to `<temp>/macscp-terminal/<uuid>.command` with permissions **0700**, opens it with the target app via `NSWorkspace` (`open(_:withApplicationAt:configuration:)`); throws typed errors `applicationNotFound(String)` and `scriptWriteFailed(String)`.
+3. App resolution: `terminalApp` ⇒ bundle ID `com.apple.Terminal`, `iTerm` ⇒ `com.googlecode.iterm2`, `custom` ⇒ stored path. Not found/invalid ⇒ `applicationNotFound` with the name/path in the message; NO fallback.
+4. Startup sweep for `<temp>/macscp-terminal` analogous to `EditSessionManager` (look there and use the same pattern).
+5. ⌘T and the toolbar button follow `terminalTarget`: `builtIn` ⇒ today's toggling; otherwise ⇒ external open. ADDITIONALLY two menu items that always offer both paths ("Show/Hide Terminal" and "Open in External Terminal"), both active only with a connected session.
+6. Password notice: if the session's auth is `.password` and `externalTerminalPasswordHintShown == false`, BEFORE opening show a notice (EN "macSCP can't hand a saved password to an external terminal — ssh will ask you for it there." / DE „macSCP kann ein gespeichertes Passwort nicht an ein externes Terminal übergeben — ssh fragt dort danach.") with "Don't show again"/„Nicht mehr anzeigen" (sets the flag) and "Open"/„Öffnen". Then open.
+7. Errors from (2)/(3) appear as an alert with the concrete message.
+8. All new keys EN/DE in both App catalogs; grep cross-check.
 
-- [x] **Step 1:** Settings-Werte + Tests (rot→grün). **Step 2:** Launcher + Sweep. **Step 3:** ⌘T/Toolbar + Menüeinträge. **Step 4:** Passwort-Hinweis + Fehler-Alerts. **Step 5:** Settings-UI (Auswahl + App-Picker). **Step 6:** L10n + Gegenprobe. **Step 7:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test`. **Step 8:** Commit `feat: open the session in an external terminal`.
+- [x] **Step 1:** Settings values + tests (red→green). **Step 2:** Launcher + sweep. **Step 3:** ⌘T/toolbar + menu items. **Step 4:** Password notice + error alerts. **Step 5:** Settings UI (selection + app picker). **Step 6:** L10n + cross-check. **Step 7:** `swift build` (0 errors, no new warnings) + full `swift test`. **Step 8:** Commit `feat: open the session in an external terminal`.
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Final verification (coordinator)
 
-- [x] Gated Suiten am finalen Stand: Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine Leichen; Rig `stop`.
-- [x] Visueller Smoke — an den Maintainer delegiert (Checkliste: Auswahl in den Einstellungen inkl. „Eigene App"; ⌘T folgt der Einstellung; beide Menüeinträge funktionieren; Öffnen mit Key-Verbindung verbindet ohne Nachfrage; Passwort-Verbindung zeigt den Hinweis und `ssh` fragt im Terminal; deinstallierte/ungültige App zeigt die konkrete Meldung; nach dem Start liegt kein Skript mehr in `<temp>/macscp-terminal`).
-- [x] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.
+- [x] Gated suites at the final state: rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → all green, zero skips, no leftovers; rig `stop`.
+- [x] Visual smoke — delegated to the maintainer (checklist: selection in settings incl. "custom app"; ⌘T follows the setting; both menu items work; opening with a key connection connects without prompting; a password connection shows the notice and `ssh` asks in the terminal; an uninstalled/invalid app shows the concrete message; after starting, no script remains in `<temp>/macscp-terminal`).
+- [x] Plan checkboxes, ledger, Opus final review (package via `git merge-base origin/develop HEAD`), fix rounds until "Yes", push develop, `gh run watch`, memory, summary. NO release.

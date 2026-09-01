@@ -2,48 +2,48 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Dateien per Drag & Drop übertragen — Finder/lokales Pane → Remote-Pane (Upload) und Remote-Zeile → Finder (Download via File Promise).
+**Goal:** Transfer files via drag & drop — Finder/local pane → remote pane (upload) and remote row → Finder (download via File Promise).
 
-**Architecture:** Das Remote-`BrowserPane` wird SwiftUI-`onDrop`-Ziel für `.fileURL` (mit Tint-Highlight); gedroppte Dateien laufen **sequenziell** durch das vorhandene `TransferViewModel` (Review-Warnung aus M2c: der `isRunning`-Guard verschluckt parallele Aufrufe — die Drop-Schleife awaited deshalb jeden Transfer). Die AppKit-Tabelle wird Drag-Quelle über einen pane-spezifischen `NSPasteboardWriting`-Provider: lokal liefert `NSURL` (Finder kopiert selbst; Drop aufs Remote-Pane nutzt denselben Upload-Pfad), remote liefert einen `NSFilePromiseProvider`, dessen Delegate die Datei bei Einlösung direkt über die `TransferEngine` an die vom Finder vorgegebene URL lädt.
+**Architecture:** The remote `BrowserPane` becomes a SwiftUI `onDrop` target for `.fileURL` (with tint highlight); dropped files run **sequentially** through the existing `TransferViewModel` (review warning from M2c: the `isRunning` guard swallows concurrent calls — the drop loop therefore awaits each transfer). The AppKit table becomes a drag source via a pane-specific `NSPasteboardWriting` provider: locally it supplies `NSURL` (Finder copies it itself; dropping onto the remote pane uses the same upload path), remote supplies an `NSFilePromiseProvider` whose delegate downloads the file straight through the `TransferEngine` to the URL Finder hands it, once redeemed.
 
-**Abhängigkeiten:** Task 1 → Task 2 → Task 3 → Task 4 (alle enden in `ContentView` — KEINE Parallel-Phase in diesem Plan).
+**Dependencies:** Task 1 → Task 2 → Task 3 → Task 4 (all end in `ContentView` — NO parallel phase in this plan).
 
-**Tech Stack:** wie M2c; zusätzlich UniformTypeIdentifiers (`UTType.fileURL`) und `NSFilePromiseProvider` (AppKit).
+**Tech Stack:** as M2c; plus UniformTypeIdentifiers (`UTType.fileURL`) and `NSFilePromiseProvider` (AppKit).
 
 ## Global Constraints
 
-- swift-tools-version 6.0, Language Mode v5; macOS 14; UI-Texte Deutsch
-- Conventional Commits, Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; niemals pushen (macht der Koordinator)
-- YAGNIs für M2d: KEINE Verzeichnis-Drops (Ordner werden still übersprungen), KEIN Fortschritt im Finder für Promises (NSProgress-Registrierung → M5), KEIN Drop aufs LOKALE Pane (Finder→lokal wäre lokales Kopieren — nicht unsere Aufgabe), KEINE Konfliktdialoge (Überschreiben, wie M2c)
-- Drops laufen strikt sequenziell durch `TransferViewModel.run` (awaited-Schleife); Promise-Downloads laufen bewusst AN der TransferBar VORBEI direkt über die Engine (dokumentiert; Queue-Integration → M5)
-- Nach jedem Task: `swift test` grün (ohne Docker)
+- swift-tools-version 6.0, Language Mode v5; macOS 14; UI text German
+- Conventional Commits, footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; never push (the coordinator does that)
+- YAGNIs for M2d: NO directory drops (folders are silently skipped), NO Finder progress for promises (NSProgress registration → M5), NO drop onto the LOCAL pane (Finder→local would be a local copy — not our job), NO conflict dialogs (overwrite, as in M2c)
+- Drops run strictly sequentially through `TransferViewModel.run` (awaited loop); promise downloads deliberately run PAST the TransferBar directly through the engine (documented; queue integration → M5)
+- After every task: `swift test` green (without Docker)
 
-## Datei-Landkarte (Delta M2d)
+## File Map (Delta M2d)
 
 ```
-Sources/macSCPCore/Presentation/TransferViewModel.swift  (unverändert — Sequenz-Test neu in Tests)
+Sources/macSCPCore/Presentation/TransferViewModel.swift  (unchanged — new sequence test in Tests)
 Sources/MacSCPApp/
-  BrowserPane.swift            (Task 1 — onDropURLs + Drop-Highlight; Task 2 — pasteboardWriter durchreichen)
+  BrowserPane.swift            (Task 1 — onDropURLs + drop highlight; Task 2 — pass through pasteboardWriter)
   RemoteFileTableView.swift    (Task 2 — pasteboardWriterForRow)
-  RemoteFilePromise.swift      (Task 3 — neu: Provider + Delegate)
-  ContentView.swift            (Task 1 Drop-Handler; Task 2 lokaler Writer; Task 3 remote Writer)
+  RemoteFilePromise.swift      (Task 3 — new: provider + delegate)
+  ContentView.swift            (Task 1 drop handler; Task 2 local writer; Task 3 remote writer)
 Tests/macSCPCoreTests/
-  TransferEngineTests.swift    (Task 1 — +1 Sequenz-Test)
+  TransferEngineTests.swift    (Task 1 — +1 sequence test)
 ```
 
 ---
 
-### Task 1: Sequenzieller Drop-Upload aufs Remote-Pane
+### Task 1: Sequential drop upload onto the remote pane
 
 **Files:**
 - Modify: `Sources/MacSCPApp/BrowserPane.swift`
 - Modify: `Sources/MacSCPApp/ContentView.swift`
-- Test: `Tests/macSCPCoreTests/TransferEngineTests.swift` (+1 Test)
+- Test: `Tests/macSCPCoreTests/TransferEngineTests.swift` (+1 test)
 
 **Interfaces:**
-- Produces: `BrowserPane(title:tint:viewModel:onDropURLs:)` mit `onDropURLs: (([URL]) -> Void)? = nil` — nur das Remote-Pane bekommt einen Handler; Panes ohne Handler lehnen Drops ab.
+- Produces: `BrowserPane(title:tint:viewModel:onDropURLs:)` with `onDropURLs: (([URL]) -> Void)? = nil` — only the remote pane gets a handler; panes without a handler reject drops.
 
-- [x] **Step 1: Fehlschlagender Test (Sequenz-Garantie im VM)** — in `TransferEngineTests` ergänzen:
+- [x] **Step 1: Failing test (sequence guarantee in the VM)** — add to `TransferEngineTests`:
 
 ```swift
     @Test func sequentialAwaitedRunsBothExecute() async {
@@ -72,11 +72,11 @@ Tests/macSCPCoreTests/
     }
 ```
 
-Run: `swift test --filter TransferEngineTests` — der Test ist NEU und muss beim ersten Lauf GRÜN sein (er dokumentiert die Sequenz-Garantie, die der Drop-Handler nutzt; falls er ROT ist, liegt ein echter Bug im isRunning-Guard vor — dann STOPP und melden).
+Run: `swift test --filter TransferEngineTests` — the test is NEW and must be GREEN on the first run (it documents the sequence guarantee the drop handler relies on; if it is RED, there is a real bug in the isRunning guard — then STOP and report).
 
-- [x] **Step 2: BrowserPane um Drop-Ziel erweitern**
+- [x] **Step 2: Extend BrowserPane with a drop target**
 
-`Sources/MacSCPApp/BrowserPane.swift` — Datei komplett ersetzen:
+`Sources/MacSCPApp/BrowserPane.swift` — replace the file entirely:
 
 ```swift
 import SwiftUI
@@ -197,9 +197,9 @@ extension NSItemProvider {
 }
 ```
 
-- [x] **Step 3: Drop-Handler in ContentView**
+- [x] **Step 3: Drop handler in ContentView**
 
-In `Sources/MacSCPApp/ContentView.swift`: das Remote-`BrowserPane` im `HSplitView` erweitern (das lokale Pane bleibt OHNE `onDropURLs`):
+In `Sources/MacSCPApp/ContentView.swift`: extend the remote `BrowserPane` in the `HSplitView` (the local pane stays WITHOUT `onDropURLs`):
 
 ```swift
                     BrowserPane(
@@ -213,7 +213,7 @@ In `Sources/MacSCPApp/ContentView.swift`: das Remote-`BrowserPane` im `HSplitVie
                     .frame(minWidth: 280)
 ```
 
-und als private Methode in `ContentView` ergänzen:
+and add as a private method to `ContentView`:
 
 ```swift
     /// Gedroppte Datei-URLs sequenziell hochladen (Ordner werden übersprungen).
@@ -241,7 +241,7 @@ und als private Methode in `ContentView` ergänzen:
     }
 ```
 
-- [x] **Step 4: Bauen + Gesamtsuite** — `swift build && swift test`: 67 Tests grün (66 + 1).
+- [x] **Step 4: Build + full suite** — `swift build && swift test`: 67 tests green (66 + 1).
 
 - [x] **Step 5: Commit**
 
@@ -254,31 +254,31 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Drag-Quelle (lokales Pane liefert Datei-URLs)
+### Task 2: Drag source (local pane supplies file URLs)
 
 **Files:**
 - Modify: `Sources/MacSCPApp/RemoteFileTableView.swift`
-- Modify: `Sources/MacSCPApp/BrowserPane.swift` (Parameter durchreichen)
-- Modify: `Sources/MacSCPApp/ContentView.swift` (Writer fürs lokale Pane)
+- Modify: `Sources/MacSCPApp/BrowserPane.swift` (pass parameter through)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (writer for the local pane)
 
 **Interfaces:**
-- Produces: `RemoteFileTableView(items:selectedPath:onOpen:onSelect:pasteboardWriter:)` mit `pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil`; `BrowserPane(..., pasteboardWriter:)` reicht durch. Damit: lokale Zeile → Finder (Kopie durch Finder) und lokale Zeile → Remote-Pane (Upload über Task-1-Drop).
+- Produces: `RemoteFileTableView(items:selectedPath:onOpen:onSelect:pasteboardWriter:)` with `pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil`; `BrowserPane(..., pasteboardWriter:)` passes it through. So: local row → Finder (Finder copies) and local row → remote pane (upload via the Task 1 drop).
 
-Kein Unit-Test (AppKit-Drag); Verifikation: Build + visueller Test in Task 4.
+No unit test (AppKit drag); verification: build + visual test in Task 4.
 
-- [x] **Step 1: Tabelle als Drag-Quelle**
+- [x] **Step 1: Table as a drag source**
 
 In `Sources/MacSCPApp/RemoteFileTableView.swift`:
 
-1. Property nach `onSelect` ergänzen:
+1. Add a property after `onSelect`:
 
 ```swift
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
 ```
 
-2. In `makeCoordinator()`/`updateNSView` den Writer an den Coordinator geben (analog zu `onOpen`/`onSelect`): Coordinator-Property `var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)?`, Zuweisung in beiden Methoden.
+2. In `makeCoordinator()`/`updateNSView` pass the writer to the coordinator (analogous to `onOpen`/`onSelect`): coordinator property `var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)?`, assigned in both methods.
 
-3. Im `Coordinator` die DataSource-Methode ergänzen:
+3. Add the data-source method in `Coordinator`:
 
 ```swift
         func tableView(
@@ -290,15 +290,15 @@ In `Sources/MacSCPApp/RemoteFileTableView.swift`:
         }
 ```
 
-4. In `makeNSView` nach `table.doubleAction = ...` ergänzen (Drag nach außerhalb der App erlauben):
+4. In `makeNSView`, after `table.doubleAction = ...`, add (allow dragging outside the app):
 
 ```swift
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
 ```
 
-- [x] **Step 2: BrowserPane durchreichen** — Property `var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil` ergänzen und im `RemoteFileTableView`-Aufruf `pasteboardWriter: pasteboardWriter` übergeben.
+- [x] **Step 2: Pass through BrowserPane** — add the property `var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil` and pass `pasteboardWriter: pasteboardWriter` at the `RemoteFileTableView` call site.
 
-- [x] **Step 3: Lokales Pane in ContentView** — das lokale `BrowserPane` erweitern:
+- [x] **Step 3: Local pane in ContentView** — extend the local `BrowserPane`:
 
 ```swift
                     BrowserPane(
@@ -314,9 +314,9 @@ In `Sources/MacSCPApp/RemoteFileTableView.swift`:
                     .frame(minWidth: 280)
 ```
 
-(`import AppKit` in ContentView ergänzen, falls der Compiler `NSURL`/`NSPasteboardWriting` nicht sieht.)
+(Add `import AppKit` to ContentView if the compiler cannot see `NSURL`/`NSPasteboardWriting`.)
 
-- [x] **Step 4: Bauen + Gesamtsuite** — `swift build && swift test`: 67 Tests grün.
+- [x] **Step 4: Build + full suite** — `swift build && swift test`: 67 tests green.
 
 - [x] **Step 5: Commit**
 
@@ -333,14 +333,14 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `Sources/MacSCPApp/RemoteFilePromise.swift`
-- Modify: `Sources/MacSCPApp/ContentView.swift` (Writer fürs Remote-Pane)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (writer for the remote pane)
 
 **Interfaces:**
-- Produces: `RemoteFilePromiseProvider(item:download:)` — `download: @Sendable (RemoteFileItem, URL) async throws -> Void` wird beim Einlösen der Promise mit der Ziel-URL des Finders aufgerufen.
+- Produces: `RemoteFilePromiseProvider(item:download:)` — `download: @Sendable (RemoteFileItem, URL) async throws -> Void` is called with Finder's destination URL when the promise is redeemed.
 
-Kein Unit-Test (AppKit-Pasteboard); Verifikation: Build + visueller Test in Task 4.
+No unit test (AppKit pasteboard); verification: build + visual test in Task 4.
 
-- [x] **Step 1: Promise-Provider**
+- [x] **Step 1: Promise provider**
 
 `Sources/MacSCPApp/RemoteFilePromise.swift`:
 
@@ -399,9 +399,9 @@ private final class RemoteFilePromiseDelegate: NSObject, NSFilePromiseProviderDe
 }
 ```
 
-- [x] **Step 2: Remote-Pane-Writer in ContentView**
+- [x] **Step 2: Remote pane writer in ContentView**
 
-Das Remote-`BrowserPane` um den Writer erweitern (zusätzlich zum `onDropURLs` aus Task 1):
+Extend the remote `BrowserPane` with the writer (in addition to `onDropURLs` from Task 1):
 
 ```swift
                         pasteboardWriter: { item in
@@ -419,9 +419,9 @@ Das Remote-`BrowserPane` um den Writer erweitern (zusätzlich zum `onDropURLs` a
                         },
 ```
 
-(Reihenfolge der Parameter: `viewModel`, dann `onDropURLs`, dann `pasteboardWriter` — an die tatsächliche Property-Reihenfolge in `BrowserPane` anpassen.)
+(Parameter order: `viewModel`, then `onDropURLs`, then `pasteboardWriter` — match the actual property order in `BrowserPane`.)
 
-- [x] **Step 3: Bauen + Gesamtsuite** — `swift build && swift test`: 67 Tests grün.
+- [x] **Step 3: Build + full suite** — `swift build && swift test`: 67 tests green.
 
 - [x] **Step 4: Commit**
 
@@ -434,18 +434,18 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: Abschluss-Verifikation
+### Task 4: Final verification
 
-- [x] **Step 1:** `swift test` — 67 Tests grün
-- [x] **Step 2:** Docker-Rig hoch, `MACSCP_ITEST=1 swift test --filter CitadelFileSystem` — 6/6, Rig laufen lassen (visueller Test braucht ihn)
-- [x] **Step 3: Visueller Smoke-Test** (Koordinator am Bildschirm):
-  1. Lokale Datei-Zeile aufs Remote-Pane ziehen → blaues Drop-Highlight beim Hover, Upload läuft (TransferBar Bernstein), Remote-Pane refresht
-  2. Mehrere Dateien nacheinander droppen → alle kommen an (Sequenz)
-  3. Ordner-Zeile ziehen → Drop wird ignoriert (kein Transfer, kein Crash)
-  4. Remote-Zeile in den Finder ziehen (Desktop/Ordner) → Datei erscheint mit korrektem Inhalt (Promise-Download; Finder-Zugriff für den Test nötig — sonst diesen Punkt vom Maintainer verifizieren lassen)
-  5. Rig danach: `docker compose -f docker/test-server/compose.yml down`
-- [x] **Step 4:** Checkboxen abhaken, Commit `docs: mark M2d plan tasks as completed` (mit Footer)
+- [x] **Step 1:** `swift test` — 67 tests green
+- [x] **Step 2:** Docker rig up, `MACSCP_ITEST=1 swift test --filter CitadelFileSystem` — 6/6, leave the rig running (the visual test needs it)
+- [x] **Step 3: Visual smoke test** (coordinator at the screen):
+  1. Drag a local file row onto the remote pane → blue drop highlight on hover, upload runs (amber TransferBar), remote pane refreshes
+  2. Drop several files in sequence → all arrive (sequence)
+  3. Drag a folder row → drop is ignored (no transfer, no crash)
+  4. Drag a remote row into Finder (desktop/folder) → file appears with correct content (promise download; needs Finder access for the test — otherwise have the maintainer verify this point)
+  5. Rig afterwards: `docker compose -f docker/test-server/compose.yml down`
+- [x] **Step 4:** Check off checkboxes, commit `docs: mark M2d plan tasks as completed` (with footer)
 
-## Ausblick
+## Outlook
 
-Mit M2d ist **Meilenstein M2 (Browser) komplett**. Danach M3 — Sessions: Session-Manager (JSON in Application Support), Schlüsselbund für Geheimnisse, Key-/Agent-Auth, TOFU-Host-Keys, `~/.ssh/config`-Import, Sessions-Sidebar.
+M2d completes **Milestone M2 (Browser)**. After that, M3 — Sessions: session manager (JSON in Application Support), keychain for secrets, key/agent auth, TOFU host keys, `~/.ssh/config` import, sessions sidebar.

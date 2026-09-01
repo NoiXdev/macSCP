@@ -1,15 +1,15 @@
-# M26 — Der blocklose SSH-Datensatz Implementation Plan
+# M26 — The blockless SSH record Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Einen `.ssh`-Datensatz ohne gespeicherten SSH-Block beim Laden
-verwerfen, die fünfzehn Leser auf `guard let ssh` umstellen und die vier
-erfindenden `StoredSession`-Accessoren löschen.
+**Goal:** Drop a `.ssh` record with no stored SSH block on load, switch
+the fifteen readers to `guard let ssh`, and delete the four inventing
+`StoredSession` accessors.
 
-**Architecture:** Der Verwurf sitzt an der Hygiene-Naht, die im
-`SessionStore`-Lesepfad schon existiert (verwaiste Gruppen-IDs). Danach gilt
-`.ssh` ⇒ `ssh != nil` in der Praxis, und `host`/`port`/`username`/`authKind`
-haben keine Leser mehr.
+**Architecture:** The drop sits at the hygiene seam that already exists in
+the `SessionStore` read path (orphaned group IDs). After that,
+`.ssh` ⇒ `ssh != nil` holds in practice, and `host`/`port`/`username`/`authKind`
+have no readers left.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, macOS 15+,
 Swift Testing (`@Test`/`#expect`).
@@ -18,88 +18,90 @@ Swift Testing (`@Test`/`#expect`).
 
 ## Global Constraints
 
-- **Code und Kommentare: nur Englisch.** Bezeichner, Doc-Kommentare,
-  Inline-Kommentare, Testnamen. Kein Deutsch in Quelldateien.
-- **Commit-Messages: Englisch, Conventional Commits.** Footer auf jedem Commit:
+- **Code and comments: English only.** Identifiers, doc comments, inline
+  comments, test names. No German in source files.
+- **Commit messages: English, Conventional Commits.** Footer on every commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- **Commit/Push nur auf ausdrückliche Anfrage.** Kein `scripts/release`.
-- **Ein Secret-Wert darf nie geloggt, gedruckt oder in einen Fehler eingebettet
-  werden.** Secrets leben ausschließlich im Keychain.
-- **Die GUI-App nicht starten.** Kein Schlüsselmaterial committen.
-- `swift build` bleibt sauber **inklusive App-Target**. Testzahl **≥ 1604**.
-- **Keine neuen Localization-Schlüssel.**
-- **Nur `.ssh` wird verworfen**, nicht `.s3`/`.webdav` — bewusste Asymmetrie mit
-  Begründung in der Spec. Wer sie ausdehnt, muss die vorhandenen
-  Blocklos-Wachen mit anfassen; das ist nicht dieser Meilenstein.
-- **Der Lesepfad schreibt die Datei nicht.** Kein `persist` in `load()`.
-- Sitzungen in Tests über die Fixtures aus `SessionFixtures.swift`; die
-  Fixture-DATEI für Task 1 wird von Hand geschrieben (kein Schreibpfad der App
-  kann sie erzeugen), mit Kommentar warum.
+- **Commit/push only on explicit request.** No `scripts/release`.
+- **A secret value must never be logged, printed, or embedded in an
+  error.** Secrets live exclusively in the keychain.
+- **Do not launch the GUI app.** Do not commit key material.
+- `swift build` stays clean **including the App target**. Test count
+  **≥ 1604**.
+- **No new localization keys.**
+- **Only `.ssh` is dropped**, not `.s3`/`.webdav` — a deliberate asymmetry
+  justified in the spec. Whoever extends it must also touch the existing
+  blockless guards; that is not this milestone.
+- **The read path does not write the file.** No `persist` inside `load()`.
+- Sessions in tests via the fixtures in `SessionFixtures.swift`; the
+  fixture FILE for Task 1 is written by hand (no write path in the app can
+  produce it), with a comment explaining why.
 
 ---
 
 ## File Structure
 
-| Datei | Verantwortung | Task |
+| File | Responsibility | Task |
 |---|---|---|
-| `Sources/macSCPCore/Sessions/SessionStore.swift` | Verwurf im Lesepfad | 1 |
-| `Sources/macSCPCore/Sessions/LoginResolver.swift` | 6 Leser → `guard let ssh` | 2 |
-| `Sources/macSCPCore/Presentation/SessionListViewModel.swift` | 5 Leser → `guard let ssh` | 2 |
-| `Sources/macSCPCore/SSH/SSHFieldSchema.swift` | 4 Leser → leerer Beutel | 2 |
-| `Sources/macSCPCore/Sessions/StoredSession.swift` | die vier Accessoren löschen | 2 |
-| `docs/superpowers/specs/2026-08-08-m26-abschluss.md` | Abschlussbericht | 3 |
+| `Sources/macSCPCore/Sessions/SessionStore.swift` | drop in the read path | 1 |
+| `Sources/macSCPCore/Sessions/LoginResolver.swift` | 6 readers → `guard let ssh` | 2 |
+| `Sources/macSCPCore/Presentation/SessionListViewModel.swift` | 5 readers → `guard let ssh` | 2 |
+| `Sources/macSCPCore/SSH/SSHFieldSchema.swift` | 4 readers → empty bag | 2 |
+| `Sources/macSCPCore/Sessions/StoredSession.swift` | delete the four accessors | 2 |
+| `docs/superpowers/specs/2026-08-08-m26-abschluss.md` | close-out report | 3 |
 
-Neue Tests in die bestehende Suite des geprüften Typs (`SessionStoreTests`,
-`BackendDescriptorTests`). **Keine neue Testdatei.**
+New tests go into the existing suite of the checked type
+(`SessionStoreTests`, `BackendDescriptorTests`). **No new test file.**
 
-## Warum die Tests als Tabelle stehen
+## Why the tests are laid out as a table
 
-Drei Meilensteine haben zusammen siebzehn Defekte gefunden, die **im Plan**
-steckten statt in der Umsetzung — fast alle in nie ausgeführtem Testcode.
-Produktionscode steht deshalb unten wörtlich, Tests als Tabelle aus (Name,
-Aufbau, Erwartung) plus Zeiger auf die zu kopierende Form.
+Three milestones together found seventeen defects that sat **in the plan**
+rather than in the implementation — almost all in test code that was never
+run. Production code is therefore given verbatim below, tests as a table
+of (name, setup, expectation) plus a pointer to the form to copy.
 
 ---
 
-## Task 1: Der Verwurf beim Laden
+## Task 1: The drop on load
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/SessionStore.swift:61-78` (`load()`)
 - Test: `Tests/macSCPCoreTests/SessionStoreTests.swift`
 
 **Interfaces:**
-- Produces: nichts Neues. `load()` bleibt `private`; die Wirkung ist über die
-  öffentliche Leseschnittstelle des Stores sichtbar.
+- Produces: nothing new. `load()` stays `private`; the effect is visible
+  through the store's public read interface.
 
-- [ ] **Step 1: Die Tests schreiben (rot)**
+- [ ] **Step 1: Write the tests (red)**
 
-Aufbau von den vorhandenen `SessionStore`-Tests kopieren: echter Store über
-eine Datei in einem temporären Verzeichnis, nicht über einen Mock — geprüft
-wird der Lesepfad selbst.
+Copy the setup from the existing `SessionStore` tests: a real store over
+a file in a temporary directory, not a mock — the read path itself is
+what is under test.
 
-Die Fixture-Datei wird **von Hand als JSON geschrieben**: ein Datensatz mit
-`"kind": "ssh"` und **ohne** `"ssh"`-Schlüssel, dazu ein gesunder
-SSH-Nachbar. Im Test kommentieren, warum von Hand — kein Schreibpfad der App
-kann diesen Zustand erzeugen.
+The fixture file is written **by hand as JSON**: a record with
+`"kind": "ssh"` and **without** an `"ssh"` key, alongside a healthy
+SSH neighbour. Comment in the test why it is written by hand — no write
+path in the app can produce this state.
 
-| Test | Aufbau | Erwartung |
+| Test | Setup | Expectation |
 |---|---|---|
-| `aBlocklessSSHRecordIsDroppedWhenLoading` | die Fixture-Datei, dann Store lesen | die geladene Liste enthält den blocklosen Datensatz **nicht** |
-| `aHealthyNeighbourSurvivesTheDrop` | dieselbe Datei | der gesunde Nachbar ist da, mit allen Feldern — **ein kaputter Eintrag lässt die Datei nicht scheitern** |
-| `loadingDoesNotRewriteTheFile` | Datei-Inhalt als `Data` vor dem Lesen merken, Store lesen, Inhalt erneut lesen | byte-gleich. Pinnt die Entscheidung, dass der Lesepfad nicht schreibt |
-| `aBlocklessS3RecordIsKept` | eine Datei mit einem `"kind": "s3"`-Datensatz ohne `"s3"`-Schlüssel | der Datensatz ist **noch da** — pinnt die bewusste Asymmetrie aus der Spec, damit ein späteres Ausdehnen eine Entscheidung ist und kein Versehen |
+| `aBlocklessSSHRecordIsDroppedWhenLoading` | the fixture file, then read the store | the loaded list does **not** contain the blockless record |
+| `aHealthyNeighbourSurvivesTheDrop` | the same file | the healthy neighbour is present, with all fields — **a broken entry does not make the file fail** |
+| `loadingDoesNotRewriteTheFile` | capture the file contents as `Data` before reading, read the store, read the contents again | byte-identical. Pins the decision that the read path does not write |
+| `aBlocklessS3RecordIsKept` | a file with a `"kind": "s3"` record with no `"s3"` key | the record is **still there** — pins the deliberate asymmetry from the spec, so a later extension is a decision rather than an oversight |
 
-- [ ] **Step 2: Rot bestätigen**
+- [ ] **Step 2: Confirm red**
 
 Run: `swift test --filter SessionStore`
-Expected: `aBlocklessSSHRecordIsDroppedWhenLoading` schlägt fehl (der Datensatz
-wird heute geladen). Die anderen drei beschreiben heutiges Verhalten und sind
-bereits grün — **das ist beabsichtigt**, sie sind die Klammer. Welche rot und
-welche grün waren, gehört in den Task-Bericht.
+Expected: `aBlocklessSSHRecordIsDroppedWhenLoading` fails (the record is
+loaded today). The other three describe today's behaviour and are
+already green — **that is intended**, they are the bracket. Which were
+red and which were green belongs in the task report.
 
-- [ ] **Step 3: Den Verwurf einbauen**
+- [ ] **Step 3: Build in the drop**
 
-In `load()`, **nach** dem vorhandenen Gruppen-Sweep und **vor** `return file`:
+In `load()`, **after** the existing group sweep and **before**
+`return file`:
 
 ```swift
         // Second hygiene rule, same shape as the group sweep above: an `.ssh`
@@ -121,13 +123,13 @@ In `load()`, **nach** dem vorhandenen Gruppen-Sweep und **vor** `return file`:
         file.sessions.removeAll { $0.kind == .ssh && $0.ssh == nil }
 ```
 
-- [ ] **Step 4: Grün bestätigen**
+- [ ] **Step 4: Confirm green**
 
 Run: `swift test --filter SessionStore`
 Expected: PASS.
 Run: `swift test`
-Expected: alles grün. **Schlägt ein bestehender Test fehl, ist das ein
-Befund** — er gehört in den Bericht, nicht weggeschrieben.
+Expected: everything green. **If an existing test fails, that is a
+finding** — it goes into the report, not papered over.
 
 - [ ] **Step 5: Commit**
 
@@ -138,45 +140,46 @@ git commit -m "fix(core): drop an SSH record with no stored block when loading"
 
 ---
 
-## Task 2: Die fünfzehn Leser und die vier Accessoren
+## Task 2: The fifteen readers and the four accessors
 
 **Files:**
 - Modify: `Sources/macSCPCore/SSH/SSHFieldSchema.swift:288-296` (`values(from:)`)
 - Modify: `Sources/macSCPCore/Sessions/LoginResolver.swift:214-231` (`resolveJump`)
 - Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift:252-275` (`delete`)
-- Modify: `Sources/macSCPCore/Sessions/StoredSession.swift` (die vier Accessoren)
+- Modify: `Sources/macSCPCore/Sessions/StoredSession.swift` (the four accessors)
 - Test: `Tests/macSCPCoreTests/BackendDescriptorTests.swift`
 
 **Interfaces:**
-- Consumes: den Verwurf aus Task 1 — er macht die Guards in der Praxis
-  unerreichbar, weshalb ihr Verhalten „defensiv" statt „normal" ist.
+- Consumes: the drop from Task 1 — it makes the guards unreachable in
+  practice, which is why their behaviour is "defensive" rather than
+  "normal".
 
-**Alles in EINEM Task**, weil die Accessor-Löschung und die Umstellung der
-Leser zusammen kompilieren müssen.
+**Everything in ONE task**, because the accessor deletion and the reader
+switch must compile together.
 
-- [ ] **Step 1: Die beiden M25-Tests umschreiben (rot)**
+- [ ] **Step 1: Rewrite the two M25 tests (red)**
 
-In `BackendDescriptorTests` steht `anSSHSessionWithoutItsBlockStillShowsAPasswordField`
-(M25). Er nagelt fest, dass ein blockloser `.ssh`-Datensatz einen **gefüllten**
-Beutel liefert. Nach diesem Task liefert er einen leeren.
+`BackendDescriptorTests` has `anSSHSessionWithoutItsBlockStillShowsAPasswordField`
+(M25). It pins that a blockless `.ssh` record produces a **filled**
+bag. After this task it produces an empty one.
 
-**Umschreiben, nicht löschen** — zu `anSSHSessionWithoutItsBlockYieldsTheEmptyBag`
-oder gleichwertig. Der Doc-Kommentar sagt, was jetzt gilt, und nennt **M26** als
-die Stelle, an der sich die Antwort geändert hat. Erwartung: `visibleSecretField(for:)`
-ist `nil` **und** `descriptor.sessionValues(session).raw.isEmpty`.
+**Rewrite, do not delete** — to `anSSHSessionWithoutItsBlockYieldsTheEmptyBag`
+or equivalent. The doc comment states what now holds, and names **M26** as
+the point where the answer changed. Expectation: `visibleSecretField(for:)`
+is `nil` **and** `descriptor.sessionValues(session).raw.isEmpty`.
 
-**Der `.s3`/`.webdav`-Zwilling bleibt unverändert** — er pinnt eine Eigenschaft
-des Schemas, nicht der Accessoren, und gilt weiter.
+**The `.s3`/`.webdav` twin stays unchanged** — it pins a property of the
+schema, not of the accessors, and still holds.
 
-- [ ] **Step 2: Rot bestätigen**
+- [ ] **Step 2: Confirm red**
 
 Run: `swift test --filter BackendDescriptor`
-Expected: der umgeschriebene Test schlägt fehl (heute ist der Beutel gefüllt).
+Expected: the rewritten test fails (today the bag is filled).
 
-- [ ] **Step 3: `SSHFieldSchema.values(from:)` umstellen**
+- [ ] **Step 3: Switch over `SSHFieldSchema.values(from:)`**
 
-Der Rumpf beginnt heute mit `var values = ...` und liest dann die vier
-Accessoren. Voranstellen:
+The body today starts with `var values = ...` and then reads the four
+accessors. Prepend:
 
 ```swift
         // A record whose kind says `.ssh` but carries no block is dropped when
@@ -187,14 +190,14 @@ Accessoren. Voranstellen:
         guard let ssh = session.ssh else { return FieldValues() }
 ```
 
-und die vier Zeilen darunter von `session.` auf `ssh.` umstellen:
+and switch the four lines below it from `session.` to `ssh.`:
 `ssh.host`, `String(ssh.port)`, `ssh.username`, `ssh.authKind.rawValue`.
-`keyPath`, `managedKeyID` und der Jump-Block bleiben, wie sie sind — sie lesen
-schon heute über `session.ssh?` oder über die bleibenden Accessoren.
+`keyPath`, `managedKeyID`, and the jump block stay as they are — they
+already read via `session.ssh?` or via the accessors that remain.
 
-- [ ] **Step 4: `LoginResolver.resolveJump` umstellen**
+- [ ] **Step 4: Switch over `LoginResolver.resolveJump`**
 
-Nach dem `kind == .ssh`-Guard und vor dem ersten Lesezugriff:
+After the `kind == .ssh` guard and before the first read access:
 
 ```swift
         // Defensive, and unreachable in practice: a blockless `.ssh` record is
@@ -207,14 +210,14 @@ Nach dem `kind == .ssh`-Guard und vor dem ersten Lesezugriff:
         }
 ```
 
-Dann die sechs Lesezugriffe umstellen: `referenced.authKind` → `ssh.authKind`
-(zweimal), `referenced.username` → `ssh.username` (zweimal), und im
+Then switch the six read accesses: `referenced.authKind` → `ssh.authKind`
+(twice), `referenced.username` → `ssh.username` (twice), and in
 `ResolvedJump` `referenced.host`/`referenced.port` → `ssh.host`/`ssh.port`.
-`referenced.keyPath` bleibt (bleibender Accessor).
+`referenced.keyPath` stays (a remaining accessor).
 
-- [ ] **Step 5: `SessionListViewModel.delete` umstellen**
+- [ ] **Step 5: Switch over `SessionListViewModel.delete`**
 
-Innerhalb des `if !affected.isEmpty`-Blocks, ganz vorn:
+Inside the `if !affected.isEmpty` block, at the very top:
 
 ```swift
             // Defensive, and unreachable in practice for the same reason as
@@ -226,21 +229,21 @@ Innerhalb des `if !affected.isEmpty`-Blocks, ganz vorn:
             guard let ssh = session.ssh else { return finishDeleting(session, secretFailures: 0) }
 ```
 
-**Achtung:** ein früher `return` hier würde die Löschung selbst überspringen.
-Prüfe, wie der Rumpf nach der Schleife aufgebaut ist, und wähle die Form, die
-die Löschung **nicht** überspringt — entweder ein `if let ssh { … }` um
-Berechnung und Schleife (bevorzugt, weil es nichts umbaut), oder eine
-Extraktion des Endes in einen Helfer. **Der obige `finishDeleting`-Aufruf ist
-eine Skizze, keine existierende Funktion** — wenn du den Helfer nicht brauchst,
-nimm ihn nicht. Der Test aus Schritt 8 fängt den Fehler, falls die Löschung
-verloren geht.
+**Careful:** an early `return` here would skip the deletion itself. Check
+how the body is structured after the loop, and choose the form that does
+**not** skip the deletion — either an `if let ssh { … }` around the
+computation and the loop (preferred, because it restructures nothing), or
+an extraction of the tail into a helper. **The `finishDeleting` call above
+is a sketch, not an existing function** — if you do not need the helper,
+do not add it. The test from step 8 catches the bug if the deletion is
+lost.
 
-Dann `session.username`/`session.authKind`/`session.host`/`session.port` in
-diesem Block auf `ssh.` umstellen. `resolvedSSHLogin(for: session)` bleibt.
+Then switch `session.username`/`session.authKind`/`session.host`/`session.port`
+in this block to `ssh.`. `resolvedSSHLogin(for: session)` stays.
 
-- [ ] **Step 6: Die vier Accessoren löschen**
+- [ ] **Step 6: Delete the four accessors**
 
-In `StoredSession.swift` die vier Zeilen entfernen:
+In `StoredSession.swift`, remove the four lines:
 
 ```swift
     var host: String { ssh?.host ?? "" }
@@ -249,36 +252,36 @@ In `StoredSession.swift` die vier Zeilen entfernen:
     var authKind: AuthKind { ssh?.authKind ?? .password }
 ```
 
-**`keyPath` und `jump` bleiben.** Den Doc-Kommentar über der Gruppe anpassen:
-er beschreibt heute vier erfindende und zwei ehrliche Accessoren; künftig nur
-noch die beiden ehrlichen. Was über die gelöschten dort steht, kommt weg —
-kein Kommentar über Code, den es nicht mehr gibt.
+**`keyPath` and `jump` stay.** Update the doc comment above the group:
+it currently describes four inventing and two honest accessors; going
+forward, only the two honest ones. Whatever it says about the deleted
+ones goes away — no comment about code that no longer exists.
 
-- [ ] **Step 7: Bauen und die Testleser nachziehen**
+- [ ] **Step 7: Build and follow up the test readers**
 
 Run: `swift build`
-Expected: Fehler in **Tests**, die die Accessoren lesen (M25 zählte 38
-Lesestellen). Jede einzeln nachziehen: auf `session.ssh?.host` o. Ä., oder auf
-die Fixture-Werte, je nachdem was der Test aussagt. **Keine Testaussage
-abschwächen** — wo ein Test einen Rückfallwert erwartete, den es nicht mehr
-gibt, ist die richtige Änderung die Erwartung auf den echten Wert zu drehen,
-nicht die Behauptung zu streichen. Jede Anpassung, die mehr ist als das
-Umlesen desselben Werts, gehört in den Bericht.
+Expected: errors in **tests** that read the accessors (M25 counted 38
+read sites). Follow up each individually: onto `session.ssh?.host` or
+similar, or onto the fixture values, depending on what the test asserts.
+**Do not weaken any test assertion** — where a test expected a fallback
+value that no longer exists, the correct change is to turn the
+expectation onto the real value, not to strike the assertion. Any change
+that is more than re-reading the same value goes into the report.
 
-- [ ] **Step 8: Den `delete`-Test ergänzen**
+- [ ] **Step 8: Add the `delete` test**
 
-| Test | Aufbau | Erwartung |
+| Test | Setup | Expectation |
 |---|---|---|
-| `deletingASessionStillRemovesItWhenItsBlockIsMissing` | eine `.ssh`-Sitzung ohne Block **direkt** über `StoredSession(...)` gebaut (Kommentar warum) und über den Store gespeichert; eine zweite Sitzung verweist per `jump.sessionID` darauf; `delete(broken)` | die Sitzung ist gelöscht **und** der Verweis unverändert. Fängt den Fehler aus Step 5, falls ein früher `return` die Löschung überspringt |
+| `deletingASessionStillRemovesItWhenItsBlockIsMissing` | an `.ssh` session with no block, built **directly** via `StoredSession(...)` (comment explaining why) and saved via the store; a second session references it via `jump.sessionID`; `delete(broken)` | the session is deleted **and** the reference is unchanged. Catches the bug from step 5 if an early `return` skips the deletion |
 
-- [ ] **Step 9: Grün bestätigen**
+- [ ] **Step 9: Confirm green**
 
 Run: `swift test`
-Expected: alles grün, ≥ 1604.
+Expected: everything green, ≥ 1604.
 Run: `swift build`
-Expected: sauber inklusive App-Target.
+Expected: clean, including the App target.
 Run: `grep -n "var host\|var port\|var username\|var authKind" Sources/macSCPCore/Sessions/StoredSession.swift`
-Expected: keine Treffer.
+Expected: no hits.
 
 - [ ] **Step 10: Commit**
 
@@ -289,20 +292,20 @@ git commit -m "refactor(core): read the SSH block directly and retire the invent
 
 ---
 
-## Task 3: Meilenstein-Abschluss
+## Task 3: Milestone close-out
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-08-m26-abschluss.md`
 
-- [ ] **Step 1: Volle Verifikation**
+- [ ] **Step 1: Full verification**
 
 ```bash
 swift build
 swift test
 ```
-Testzahl notieren (≥ 1604).
+Note the test count (≥ 1604).
 
-Das Docker-Rig aus dem **Haupt-Checkout** starten, nie aus einem Worktree:
+Start the Docker rig from the **main checkout**, never from a worktree:
 
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
@@ -310,67 +313,67 @@ MACSCP_ITEST=1 swift test
 MACSCP_KEYCHAIN=1 swift test --filter Keychain
 ```
 
-Bleibt ein Lauf bei 0 % CPU stehen, ist das der seit M20 bekannte Hänger
+If a run stalls at 0% CPU, that is the hang known since M20
 (`docs/superpowers/specs/2026-08-08-testsuite-haenger-untersuchung.md`) —
-abbrechen, neu starten, im Bericht vermerken, **nicht** als M26-Befund zählen.
-Danach `pgrep -fl swiftpm-testing-helper` prüfen: gekillte Läufe hinterlassen
-Waisen.
+abort, restart, note it in the report, do **not** count it as an M26
+finding. Then check `pgrep -fl swiftpm-testing-helper`: killed runs leave
+orphans behind.
 
-Kataloge:
+Catalogs:
 ```bash
 for f in Sources/MacSCPApp/Resources/*.lproj/Localizable.strings Sources/macSCPCore/Resources/*.lproj/Localizable.strings; do plutil -lint "$f"; done
 ```
 
-- [ ] **Step 2: Die Gegenprobe**
+- [ ] **Step 2: The counter-check**
 
 ```bash
 grep -rn "\.host\b" Sources/ --include=*.swift | grep -v "URL\|url\|endpoint\|baseURL" | head -20
 ```
 
-Beurteilen, ob ein verbliebener Treffer noch `StoredSession` betrifft. Erwartet
-wird: keiner — die Accessoren existieren nicht mehr, der Compiler hätte es
-gemeldet. Das Ergebnis kommt in den Bericht, auch wenn es leer ist.
+Judge whether any remaining hit still concerns `StoredSession`. Expected:
+none — the accessors no longer exist, the compiler would have reported
+it. The result goes into the report regardless, even if empty.
 
-- [ ] **Step 3: Den Abschlussbericht schreiben**
+- [ ] **Step 3: Write the close-out report**
 
-`docs/superpowers/specs/2026-08-08-m26-abschluss.md`, Form von
-`2026-08-08-m25-abschluss.md` kopieren. Muss enthalten: die Verifikation
-(Testzahlen, gegatete Läufe, Kataloge); die acht Erfolgskriterien der Spec mit
-**Beleg statt Behauptung**; die Zahl der angepassten Tests aus Task 2 Step 7
-und jede Anpassung, die mehr war als ein Umlesen; jeden Befund aus Task 1
-Step 4; die eine Release-Notiz aus der Spec; was offen bleibt (die Asymmetrie
-gegenüber `.s3`/`.webdav`, der unrepräsentierbare Zustand als möglicher
-späterer Meilenstein); und die Zahl der unversendeten Commits
+`docs/superpowers/specs/2026-08-08-m26-abschluss.md`, copy the shape of
+`2026-08-08-m25-abschluss.md`. Must contain: the verification (test
+counts, gated runs, catalogs); the spec's eight success criteria with
+**evidence rather than claims**; the number of tests adjusted in Task 2
+step 7 and every adjustment that was more than a re-read; every finding
+from Task 1 step 4; the one release note from the spec; what remains
+open (the asymmetry against `.s3`/`.webdav`, the unrepresentable state as
+a possible later milestone); and the number of unpushed commits
 (`git rev-list --count origin/develop..develop`).
 
-- [ ] **Step 4: Commit, nicht pushen**
+- [ ] **Step 4: Commit, do not push**
 
 ```bash
 git add docs/superpowers/specs/2026-08-08-m26-abschluss.md
 git commit -m "docs(m26): record the milestone close"
 ```
 
-Der Push erfolgt ausschließlich auf ausdrückliche Anordnung des Maintainers.
+Pushing happens exclusively on the maintainer's explicit instruction.
 
 ---
 
-## Selbstreview des Plans
+## Self-review of the plan
 
-**Spec-Abdeckung.** Kriterium 1–3 → T1/Step 1; 4 → T2/Step 6 + T2/Step 9;
-5 → T2/Step 6 (die beiden bleiben) und T3/Step 2; 6 → T2/Step 1; 7 → T2/Step 7
-(die Befundregel) und T1/Step 4; 8 → T3/Step 1. Die Asymmetrie zu
-`.s3`/`.webdav` ist als **Test** gepinnt (T1, `aBlocklessS3RecordIsKept`), nicht
-nur als Prosa — sonst wäre ein späteres Ausdehnen ein Versehen statt einer
-Entscheidung.
+**Spec coverage.** Criteria 1–3 → T1/Step 1; 4 → T2/Step 6 + T2/Step 9;
+5 → T2/Step 6 (the two that stay) and T3/Step 2; 6 → T2/Step 1; 7 → T2/Step 7
+(the finding rule) and T1/Step 4; 8 → T3/Step 1. The asymmetry against
+`.s3`/`.webdav` is pinned as a **test** (T1, `aBlocklessS3RecordIsKept`), not
+just as prose — otherwise a later extension would be an oversight instead
+of a decision.
 
-**Typkonsistenz.** `guard let ssh = session.ssh` / `referenced.ssh` liefert
-`StoredSSHConfig` mit `host`/`port`/`username`/`authKind`/`keyPath`/`jump`;
-alle Umstellungen lesen genau diese Namen.
+**Type consistency.** `guard let ssh = session.ssh` / `referenced.ssh` yields
+`StoredSSHConfig` with `host`/`port`/`username`/`authKind`/`keyPath`/`jump`;
+every switch reads exactly these names.
 
-**Eine bewusste Unschärfe, ausgewiesen statt versteckt:** Task 2 Step 5 gibt
-den Guard als Skizze und sagt ausdrücklich, dass `finishDeleting` **nicht**
-existiert. Ein früher `return` an dieser Stelle würde die Löschung selbst
-überspringen, und welche Form richtig ist, hängt vom Rumpf ab, den der
-Implementierer vor sich hat. Der Test aus Step 8 ist die Klammer, die den
-Fehler fängt — das ist verlässlicher als eine Planzeile, die ich nicht
-ausgeführt habe.
+**One deliberate imprecision, disclosed rather than hidden:** Task 2 step 5
+gives the guard as a sketch and explicitly states that `finishDeleting`
+does **not** exist. An early `return` at this point would skip the
+deletion itself, and which form is correct depends on the body the
+implementer has in front of them. The test from step 8 is the bracket
+that catches the bug — more reliable than a plan line I have not run
+myself.

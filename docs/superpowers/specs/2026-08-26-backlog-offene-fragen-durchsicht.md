@@ -1,90 +1,89 @@
-# Backlog: Zwei offene Fragen aus der Abschlussdurchsicht
+# Backlog: two open questions from the closing review
 
-**Angelegt:** 2026-08-26, als Nachtrag zur Abschlussdurchsicht des Plans
-*gescheiterter Aufbau* (`re-review-final.md`). Beide Punkte standen bis
-dahin nur unter `.superpowers/`, das `.gitignore:10` ausschließt — sie
-wären mit dem Arbeitsverzeichnis verschwunden. **Kein Entwurf.** Beide
-Punkte sind ausdrücklich als **begründet, nicht gemessen** markiert; das
-ist hier keine Nachlässigkeit, sondern das, was ein Netzversuch bzw. ein
-Nebenläufigkeits-Fahrversuch für diesen Befund gekostet hätte, gegen die
-Regel dieser Durchsicht, keinen echten Host zu wählen.
+**Logged:** 2026-08-26, as an addendum to the closing review of the plan
+*gescheiterter Aufbau* (`re-review-final.md`). Both points had until then
+lived only under `.superpowers/`, which `.gitignore:10` excludes — they
+would have vanished with the working directory. **Not a design.** Both
+points are explicitly marked as **reasoned, not measured**; that is not
+carelessness here, but what a network trial or a concurrency test drive
+would have cost for this finding, against the rule of this review not to
+pick a real host.
 
-## M3 — Ein noch nicht gewählter gespeicherter Sitzungsursprung kann einem ad-hoc-Fehlschlag zugeschrieben werden
+## M3 — An as-yet-unselected saved session origin can be attributed to an ad-hoc failure
 
-**Nur begründet, nicht ausgeführt.**
+**Reasoned only, not carried out.**
 
-`connect(in:stored:)` setzt `tab.dialingStoredSessionID = stored.id`
-**vor** `await form.connect()`. Läuft zu diesem Zeitpunkt bereits ein
-ad-hoc-Wählvorgang des Formulars, weist `ConnectionViewModel.connect()`
-den zweiten Aufruf ab (`secondConnectWhileConnectingIsRejected`) — ohne
-den Zustand zu ändern, also ohne dass der Mirror den Ursprung verbraucht.
-Scheitert dann der **ad-hoc**-Versuch, trägt `ConnectFailure` die
-`stored.id`, und die Fläche bietet „Sitzung bearbeiten" für eine Sitzung
-an, die dieser Versuch nie gewählt hat.
+`connect(in:stored:)` sets `tab.dialingStoredSessionID = stored.id`
+**before** `await form.connect()`. If an ad-hoc dial of the form is
+already running at that point, `ConnectionViewModel.connect()` rejects
+the second call (`secondConnectWhileConnectingIsRejected`) — without
+changing state, so the mirror never consumes the origin. If the
+**ad-hoc** attempt then fails, `ConnectFailure` carries `stored.id`, and
+the surface offers "Sitzung bearbeiten" for a session this attempt never
+selected.
 
-Erreichbar, weil der Formular-Verbinden-Knopf `tab.isReconnecting`
-**nicht** nimmt (nur `connect(in:stored:)` tut das) und
-`sidebarConnectTarget` denselben Tab zurückgibt, solange er nicht
-verbunden ist.
+Reachable because the form's connect button does **not** take
+`tab.isReconnecting` (only `connect(in:stored:)` does) and
+`sidebarConnectTarget` returns the same tab as long as it is not
+connected.
 
-**Einordnung:** rein kosmetisch — „Erneut versuchen" würde dann die
-gespeicherte Sitzung wählen, was vermutlich das ist, was der Nutzer
-gerade angeklickt hat. Kein Sicherheitsproblem, keine Datenverwechslung
-über eine Fenstergrenze hinweg; nur eine falsch beschriftete Fläche für
-einen schmalen Zeitfensterfall.
+**Classification:** purely cosmetic — "Erneut versuchen" would then
+select the saved session, which is presumably what the user just clicked.
+No security problem, no data mix-up across a window boundary; just a
+mislabeled surface for a narrow timing-window case.
 
-**Billige Behebung, wenn jemand das angeht:** den Mirror den Ursprung
-beim Ablehnen des zweiten Aufrufs ebenfalls räumen lassen, oder
-`dialingStoredSessionID` erst NACH einem bestätigten Alleinstellungs-Check
-setzen statt davor.
+**Cheap fix, if anyone takes this on:** have the mirror also clear the
+origin when rejecting the second call, or set
+`dialingStoredSessionID` only AFTER a confirmed exclusivity check instead
+of before it.
 
-## Die S3-Redirect-Frage
+## The S3 redirect question
 
-**Offene Frage ohne Beleg, ausdrücklich als solche notiert — kein
-gemessener Befund.**
+**Open question without evidence, explicitly noted as such — not a
+measured finding.**
 
-S3 setzt den `Authorization`-Header von Hand und fährt über
-`URLSession.shared` **ohne** Delegate, also ohne Redirect-Kontrolle im
-Code (im Unterschied zu WebDAV, das `WebDAVSessionDelegate` als einzige
-Delegate-Klasse im Baum einsetzt). Ob Foundations `URLSession` diesen
-handgesetzten `Authorization`-Header bei einer automatischen
-Weiterleitung über eine **andere Origin** hinweg mitnimmt, lässt sich
-ohne einen echten Netzversuch nicht entscheiden — und die Abschlussdurchsicht
-hat bewusst keinen gemacht (Auflage: kein realer Host).
+S3 sets the `Authorization` header by hand and runs over
+`URLSession.shared` **without** a delegate, i.e. without redirect control
+in code (unlike WebDAV, which uses `WebDAVSessionDelegate` as the only
+delegate class in the tree). Whether Foundation's `URLSession` carries
+this hand-set `Authorization` header along on an automatic redirect
+across a **different origin** cannot be decided without a real network
+trial — and the closing review deliberately did not run one (constraint:
+no real host).
 
-Der Header trägt nicht den Secret Key, wohl aber die Access-Key-ID und
-die Signatur. Eine mitgenommene Signatur an eine fremde Origin ist kein
-Klartext-Kreditiv-Leck, aber eine Anfrage-Fälschungs-Fläche, die von der
-Antwort eines fremden, redirect-fähigen Endpunkts abhinge.
+The header does not carry the secret key, but it does carry the access
+key ID and the signature. A carried-along signature to a foreign origin
+is not a plaintext credential leak, but it is a request-forgery surface
+that would depend on the response of a foreign, redirect-capable
+endpoint.
 
-**Was das für ein Angehen bedeutet:** vor jeder Aussage über die
-Sicherheit dieses Pfades braucht es entweder einen kontrollierten
-Redirect-Test (ein lokaler Server, der 3xx auf eine zweite Origin
-ausstellt, dagegen `S3FileSystem`s echte Anfrage gefahren) oder das
-Nachlesen von Foundations dokumentiertem Verhalten für
-`Authorization`-Header über Redirects (das sich je nach macOS-Version
-und Statuscode unterscheiden kann). Bis dahin ist das eine offene Frage,
-kein bestätigter Fehler — und sollte auch so zitiert werden.
+**What this means for taking it on:** before any statement about the
+security of this path, it needs either a controlled redirect test (a
+local server issuing a 3xx to a second origin, run against `S3FileSystem`'s
+real request) or reading up on Foundation's documented behavior for
+`Authorization` headers across redirects (which can differ by macOS
+version and status code). Until then this is an open question, not a
+confirmed bug — and should be cited as such.
 
 
 ---
 
-## Nachtrag 2026-08-28: die S3-Frage ist gemessen und entwarnt
+## Addendum 2026-08-28: the S3 question is measured and cleared
 
-`Authorization` wird **nicht** über eine Weiterleitung mitgenommen — zehn
-Fälle, zwei Origin-Formen (nur Port; Host und Port), fünf Statuscodes
-(301/302/303/307/308), gemessen an der echten signierten Anfrage über
-`URLSession.shared` auf macOS 26.6.2 / Swift 6.3.3. Der Test liegt im Baum
-(`Tests/macSCPCoreTests/S3RedirectAuthorizationMeasurementTests.swift`) und
-stellt die Frage auf jeder Plattform neu, weil Foundations Verhalten hier
-undokumentiert und versionsabhängig ist.
+`Authorization` is **not** carried along across a redirect — ten cases,
+two origin forms (port only; host and port), five status codes
+(301/302/303/307/308), measured against the real signed request over
+`URLSession.shared` on macOS 26.6.2 / Swift 6.3.3. The test lives in the
+tree (`Tests/macSCPCoreTests/S3RedirectAuthorizationMeasurementTests.swift`)
+and re-asks the question on every platform, because Foundation's behavior
+here is undocumented and version-dependent.
 
-Was die Messung **nicht** entwarnt, steht in
-`2026-08-28-backlog-s3-weiterleitungen.md`: die Weiterleitung wird gefolgt
-statt verweigert, der handgesetzte `Host` reist mit und ist danach falsch,
-und Foundation streift den Header auch bei gleicher Origin ab — was eine
-legitime Anbieter-Weiterleitung unsigniert ankommen ließe. Maintainer-
-Entscheidung vom selben Tag: als eigener Vorgang angehen.
+What the measurement does **not** clear is in
+`2026-08-28-backlog-s3-weiterleitungen.md`: the redirect is followed
+instead of refused, the hand-set `Host` travels along and is wrong
+afterward, and Foundation strips the header even for the same origin —
+which would let a legitimate provider redirect arrive unsigned.
+Maintainer decision from the same day: take it on as its own change.
 
-**M3 bleibt offen** und ist in
-`2026-08-28-zwei-offene-fragen-design.md` entworfen.
+**M3 stays open** and is designed in
+`2026-08-28-zwei-offene-fragen-design.md`.

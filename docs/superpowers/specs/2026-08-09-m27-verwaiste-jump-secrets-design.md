@@ -1,251 +1,255 @@
-# M27 — Verwaiste Jump-Secrets aus der M23-Migration (Design)
+# M27 — Orphaned jump secrets from the M23 migration (Design)
 
-**Stand:** 2026-08-09. Vorgänger: der Aufräum-Durchgang nach M26
-(`2026-08-08-m26-abschluss.md`, Nachträge). Dieser Meilenstein löst den
-letzten technischen Punkt, der aus M23 offen geblieben ist.
+**Status:** 2026-08-09. Predecessor: the cleanup pass after M26
+(`2026-08-08-m26-abschluss.md`, addenda). This milestone resolves the last
+technical point left open from M23.
 
-## Ziel
+## Goal
 
-`LegacyStoredSession` sagt seit M23 im Doc-Kommentar, dass die Migration einer
-Nicht-SSH-Sitzung deren `jump` verwirft und den zugehörigen
-Schlüsselbund-Eintrag **stehen lässt** — und verweist die Aufräumarbeit an
-„einen eigenen Durchgang, der einen `SecretStore` besitzt und seine Fehler
-melden kann". Diesen Durchgang gibt es nicht. M27 baut ihn.
+`LegacyStoredSession`'s doc comment has said, since M23, that migrating a
+non-SSH session discards its `jump` and **leaves the associated** keychain
+entry standing — and points the cleanup work to "a dedicated pass that owns a
+`SecretStore` and can report its errors". That pass does not exist. M27
+builds it.
 
-Der Eintrag ist heute durch **keinen** Löschpfad erreichbar: jeder Aufrufer
-von `deletePassword` leitet seine ID aus einem Datensatz ab, den die Liste
-noch enthält, und der verwaiste Datensatz ist genau der, den es nicht mehr
-gibt.
+Today the entry is reachable through **no** deletion path: every caller of
+`deletePassword` derives its ID from a record the list still contains, and
+the orphaned record is exactly the one that's no longer there.
 
-## Warum das gefährlich ist, und was daraus folgt
+## Why this is dangerous, and what follows from it
 
-Alle Secrets liegen unter **einem** Keychain-Service, das Konto ist jeweils
-eine nackte UUID. Sitzungs-Secrets, Jump-Secrets, Login-Set-Secrets und
-Managed-Key-Passphrasen stehen ununterscheidbar nebeneinander. Ein Sweep, der
-„lösche, was keine Sitzung beansprucht" umsetzt, löscht Login-Set-Secrets und
-Schlüssel-Passphrasen mit.
+All secrets live under **one** keychain service, with the account in each
+case a bare UUID. Session secrets, jump secrets, login-set secrets, and
+managed-key passphrases sit side by side, indistinguishable. A sweep that
+implements "delete whatever no session claims" would delete login-set
+secrets and key passphrases along with it.
 
-Die Bestandsaufnahme hat **sieben** konkrete Wege gefunden, auf denen die
-Menge der beanspruchten IDs zu klein herauskommt. Vier davon haben dieselbe
-Wurzel — zwischen Datei und Aufzählung sitzt ein Filter oder ein `try?`:
+The inventory found **seven** concrete paths on which the set of claimed IDs
+comes out too small. Four of them share the same root — between the file and
+the enumeration sits a filter or a `try?`:
 
-| Falle | Mechanismus |
+| Trap | Mechanism |
 |---|---|
-| Login-Set mit unbekanntem `authKind` | `LoginSetStore.all()` verschweigt den Datensatz (Vorwärtskompatibilität, per Test festgenagelt); für einen neueren Build ist sein Secret lebendig |
-| Store nicht lesbar | `reload()` setzt bei einem Wurf auf leere Listen und liest Login-Sets mit `try? … ?? []` |
-| `managed_keys.json` nicht dekodierbar | `all()` **wirft**; ein Aufrufer mit `try?` macht daraus „es gibt keine Schlüssel" |
-| Blockloser `.ssh`-Datensatz | `dropsOnLoad` blendet ihn aus `all()` aus, während er noch in der Datei steht |
+| Login set with an unknown `authKind` | `LoginSetStore.all()` withholds the record (forward compatibility, pinned by a test); for a newer build, its secret is live |
+| Store not readable | `reload()` falls back to empty lists on a throw, and reads login sets with `try? … ?? []` |
+| `managed_keys.json` not decodable | `all()` **throws**; a caller using `try?` turns that into "there are no keys" |
+| Blockless `.ssh` record | `dropsOnLoad` hides it from `all()` while it's still sitting in the file |
 
-Die übrigen drei: ein fehlschlagender Keychain-Read beweist nichts (Hausregel
-seit M19); das Secret einer auf Login-Set-Modus umgestellten Sitzung ist
-abgestanden, aber beansprucht; und die eigentlichen M23-Waisen sind nur aus
-einer Datei erreichbar, die heute niemand liest.
+The remaining three: a failing keychain read proves nothing (house rule
+since M19); the secret of a session switched to login-set mode is stale but
+still claimed; and the actual M23 orphans are only reachable from a file
+that nobody reads today.
 
-**Daraus folgt die Bauform**, und sie ist der Kern dieses Entwurfs: nicht
-„alles löschen, was niemand beansprucht", sondern **nur löschen, was positiv
-als Waise identifiziert ist**.
+**That is where the shape follows from**, and it is the core of this
+design: not "delete everything nobody claims", but **only delete what is
+positively identified as an orphan**.
 
-## Die Bauform
+## The shape
 
-### Kandidaten kommen aus der Legacy-Datei, nicht aus dem Schlüsselbund
+### Candidates come from the legacy file, not from the keychain
 
-`sessions.json` wird von M23 **nie gelöscht** — `migrateFromLegacy()` schreibt
-nur die neue Datei, und der Doc-Kommentar am Store nennt die alte ausdrücklich
-die Momentaufnahme, die für einen Downgrade liegen bleibt. Die verwaisten
-`secretID`s stehen also noch dort, benennbar statt erschlossen.
+`sessions.json` is **never deleted** by M23 — `migrateFromLegacy()` only
+writes the new file, and the store's doc comment explicitly calls the old
+one the snapshot that stays behind for a downgrade. The orphaned
+`secretID`s are therefore still sitting there, nameable rather than
+inferred.
 
-**Das ist die entscheidende Eigenschaft dieses Entwurfs.** Ein Eintrag, den
-ein *künftiger* macSCP-Build angelegt hat, kann per Konstruktion nie Kandidat
-werden, weil er nicht in einer Datei von vor M23 stehen kann. Die
-Vorwärtskompatibilitätsfalle ist damit nicht umgangen, sondern ausgeschlossen.
+**This is the decisive property of this design.** An entry that a *future*
+macSCP build created can, by construction, never become a candidate,
+because it cannot appear in a file from before M23. The forward-
+compatibility trap is thereby not sidestepped, but excluded.
 
-Eine Aufzählung des Schlüsselbunds ist nicht nötig. **Das `SecretStore`-
-Protokoll bleibt unverändert** — und mit ihm die zwölf Konformitäten in acht
-Dateien.
+Enumerating the keychain is not necessary. **The `SecretStore` protocol
+stays unchanged** — and with it the twelve conformances across eight files.
 
-### Die Anspruchsmenge, und welcher Teil davon wirklich trägt
+### The claim set, and which part of it actually carries weight
 
-Abgezogen wird die Vereinigung aller IDs, die heute irgendetwas beansprucht:
-Sitzungs-IDs, Jump-`secretID`s, Login-Set-IDs, Managed-Key-IDs.
+What gets subtracted is the union of all IDs that anything claims today:
+session IDs, jump `secretID`s, login-set IDs, managed-key IDs.
 
-**Hier ist eine Einschränkung fällig, die dieser Entwurf sich beim Nachrechnen
-selbst auferlegt hat.** Der erste Entwurf verlangte, all das aus den
-**Rohdateien** zu lesen statt aus `all()`, und begründete das mit den vier
-Filterfallen der Tabelle oben. Nachgerechnet trägt dieses Argument hier
-**nicht**:
+**A restriction is due here, one this design imposed on itself while
+double-checking the math.** The first draft required reading all of that
+from the **raw files** instead of from `all()`, and justified that with the
+four filter traps in the table above. On recalculation, that argument does
+**not** hold up here:
 
-- `dropsOnLoad` verbirgt nur blocklose `.ssh`-Datensätze — und ein solcher hat
-  keinen `ssh`-Block, also auch keine Jump-`secretID`, die zu schützen wäre.
-- `LoginSetStore.all()` verbirgt Login-Sets mit unbekanntem `authKind` — deren
-  IDs werden eigens vergeben und können keine Jump-`secretID` von vor M23 sein.
+- `dropsOnLoad` only hides blockless `.ssh` records — and such a record has
+  no `ssh` block, and therefore no jump `secretID` that would need
+  protecting.
+- `LoginSetStore.all()` hides login sets with an unknown `authKind` — their
+  IDs are assigned separately and cannot be a jump `secretID` from before
+  M23.
 
-Weil Kandidaten **ausschließlich** Jump-`secretID`s aus der Legacy-Datei sind,
-kann keine der beiden verborgenen Sorten je Kandidat werden. Der Rohdatei-Weg
-ist damit **Gürtel und Hosenträger, nicht die tragende Wand** — und die Spec
-sagt das, statt eine Sicherheit zu behaupten, die woanders herkommt.
+Because candidates are **exclusively** jump `secretID`s from the legacy
+file, neither of the two hidden kinds can ever become a candidate. The
+raw-file path is therefore **belt and suspenders, not the load-bearing
+wall** — and the spec says so, instead of claiming a safety that comes
+from somewhere else.
 
-**Tragend ist etwas anderes, und das ist ernst:** wird die Sitzungsdatei nicht
-gelesen, sondern schweigend als leer behandelt, ist **keine** Jump-`secretID`
-mehr beansprucht — und der Sweep löscht die Secrets sämtlicher noch
-existierender Jump-Verbindungen. Genau diesen Weg macht `reload()` auf, das
-bei einem Wurf auf leere Listen setzt.
+**What is load-bearing is something else, and it is serious:** if the
+session file is not read but silently treated as empty, **no** jump
+`secretID` is claimed anymore — and the sweep deletes the secrets of every
+jump connection that still exists. That is exactly the path `reload()`
+opens up, falling back to empty lists on a throw.
 
-Daraus die Regel: **der Sweep benutzt niemals den Zustand des ViewModels**,
-sondern die Stores selbst, und lässt sie werfen. Der großzügige Abzug über
-alle vier Sorten bleibt trotzdem — er kostet nichts und macht „gelöscht wird
-nur, was nirgends vorkommt" ohne Fallunterscheidung wahr.
+Hence the rule: **the sweep never uses the ViewModel's state**, but the
+stores themselves, and lets them throw. The generous subtraction across all
+four kinds stays anyway — it costs nothing and makes "only what appears
+nowhere gets deleted" true without a case distinction.
 
-### Jeder Lesefehler bricht ab
+### Every read error aborts
 
-Kein `try? … ?? []` auf irgendeinem Pfad dieses Meilensteins. Lässt sich eine
-der Dateien nicht lesen, **läuft der Sweep nicht** und sagt das. „Ich konnte
-nicht lesen" darf nie zu „es gibt nichts" werden — das ist der Fehler, aus dem
-drei der sieben Fallen bestehen.
+No `try? … ?? []` anywhere on this milestone's path. If one of the files
+cannot be read, **the sweep does not run**, and says so. "I could not read"
+must never turn into "there is nothing" — that is the mistake three of the
+seven traps consist of.
 
-Das gilt auch für die Legacy-Datei selbst: ist sie da und nicht lesbar, ist
-das ein Abbruch. Ist sie **nicht** da, gibt es nichts zu tun — kein Fehler.
+This also applies to the legacy file itself: if it's there and not
+readable, that's an abort. If it's **not** there, there's nothing to do —
+no error.
 
-### Es wird nichts gelesen, nur gelöscht
+### Nothing is read, only deleted
 
-Der Sweep ruft `password(for:)` nie auf. Damit gibt es keine
-Zugriffsdialoge, und keine Entscheidung hängt an einem fehlschlagenden Read.
-Ein Löschen ohne vorhandenen Eintrag ist ein No-op — im Repo bereits durch
-`deleteRemovesAndIsIdempotent` festgehalten.
+The sweep never calls `password(for:)`. That means no access dialogs, and
+no decision hangs on a failing read. Deleting a non-existent entry is a
+no-op — already pinned in the repo by `deleteRemovesAndIsIdempotent`.
 
-### Die Legacy-Datei bleibt liegen
+### The legacy file stays put
 
-Sie wird gelesen und nicht angefasst. Die Downgrade-Zusage aus M23 bleibt
-gültig. Der Sweep braucht dafür einen **schmalen, ausschließlich lesenden**
-Zugang zu einer Datei, die heute `private` ist.
+It is read and not touched. The downgrade promise from M23 stays valid. For
+this, the sweep needs a **narrow, read-only** access path to a file that is
+`private` today.
 
-## Bedienung
+## Operation
 
-Ein Knopf in **Einstellungen › Daten verwalten** — der Bereich existiert und
-enthält bisher nur Verknüpfungen, keine eigene Aktion.
+A button in **Settings › Manage Data** — the section already exists and so
+far only contains links, no action of its own.
 
-- **Bestätigung nach Hausmuster:** `.confirmationDialog` mit destruktivem
-  Knopf, wie beim Löschen von Sitzungen, Login-Sets und Known Hosts.
-- **Kein Vorschau-Zähler, sondern ein Bericht danach.** Ursprünglich sollte er
-  „N Einträge entfernt" lauten, und ein zweiter Lauf sollte null melden.
-  **Das geht nicht, und der Grund kam bei der Umsetzung ans Licht:**
-  `KeychainSecretStore.deletePassword` bildet `errSecItemNotFound` auf **Erfolg**
-  ab. Eine Löschung meldet also auch dann Erfolg, wenn gar nichts da war —
-  `removed` zählt geglückte Lösch*aufrufe*, nicht entfernte Einträge. Und da
-  die Legacy-Datei als Downgrade-Zusage liegen bleibt, ist die Kandidatenmenge
-  beim zweiten Lauf dieselbe: er meldete erneut „N entfernt", obwohl nichts da
-  war. Unterscheiden ließe sich das nur durch Lesen (verboten: Zugriffsdialoge,
-  und ein fehlschlagender Read beweist nichts) oder durch ein neues
-  Protokollmitglied (verboten).
-  **Also nennt der Bericht keine Entfernungszahl.** Er sagt, dass der Lauf
-  durch ist, und nennt die Zahl der **Fehler**, wenn es welche gab. Eine Zahl,
-  der man nicht trauen kann, ist schlechter als keine. Damit braucht es
-  weiterhin **keine Erledigt-Markierung**.
-- **Der Knopf ist immer aktiv.** Ein Ausgegraut-Zustand bräuchte einen
-  Dateizugriff beim Zeichnen der Einstellungen, für eine Aktion, die ohnehin
-  idempotent ist.
-- **Ein Teilfehler stoppt nicht.** Wie beim Entfernen mehrerer Known Hosts
-  läuft die Schleife weiter und der Bericht nennt die Fehlerzahl.
+- **Confirmation follows house pattern:** `.confirmationDialog` with a
+  destructive button, as when deleting sessions, login sets and known
+  hosts.
+- **No preview count, but a report afterward.** Originally it was meant to
+  say "N entries removed", and a second run was meant to report zero.
+  **That doesn't work, and the reason came to light during implementation:**
+  `KeychainSecretStore.deletePassword` maps `errSecItemNotFound` to
+  **success**. A deletion therefore reports success even when nothing was
+  there — `removed` counts successful delete *calls*, not removed entries.
+  And since the legacy file stays put as the downgrade promise, the
+  candidate set on the second run is the same: it would again report "N
+  removed", even though nothing was there. That could only be
+  distinguished by reading (forbidden: access dialogs, and a failing read
+  proves nothing) or by a new protocol member (forbidden).
+  **So the report states no removal count.** It says the run finished, and
+  names the number of **errors**, if there were any. A number nobody can
+  trust is worse than no number. This still needs no **done marker**.
+- **The button is always enabled.** A greyed-out state would need a file
+  access while drawing the settings, for an action that is idempotent
+  anyway.
+- **A partial failure does not stop it.** As with removing several known
+  hosts, the loop keeps going and the report names the error count.
 
-### Kein Audit-Eintrag — und warum die erste Entscheidung zurückgenommen wurde
+### No audit entry — and why the first decision was reversed
 
-Ursprünglich sollte der Lauf auditiert werden: hier verschwinden Zugangsdaten,
-die der Nutzer nie gesehen hat. Beim Schreiben des Plans stellte sich heraus,
-dass das im heutigen Modell nicht einlösbar ist.
+Originally the run was meant to be audited: this is where credentials
+disappear that the user never saw. While writing the plan, it turned out
+this cannot be honored in today's model.
 
-**Das Audit-Log ist strikt sitzungsgebunden.** `AuditRecorder` wird mit einer
-`sessionID` erzeugt, `AuditLogStore` legt eine Datei je Sitzung an, und ein
-Recorder entsteht nur, wenn ein Verbindungsfenster einen anhängt. Die
-Einstellungen haben keine Sitzung. Zudem gibt es **bewusst keine globale
-Audit-Ansicht** — ein erzeugter Eintrag wäre aus der App heraus nicht lesbar.
+**The audit log is strictly session-bound.** `AuditRecorder` is created
+with a `sessionID`, `AuditLogStore` creates one file per session, and a
+recorder only comes into being when a connection window attaches one.
+Settings have no session. On top of that, there is **deliberately no
+global audit view** — a created entry would not be readable from within the
+app.
 
-„Auditiert" hieße also: eine Datei auf der Platte, die niemand öffnen kann.
-Das ist kein Protokoll, sondern die Behauptung eines Protokolls.
+"Audited" would therefore mean: a file on disk that nobody can open. That
+is not a log, it is the claim of a log.
 
-**Entscheidung (Maintainer, 2026-08-09): kein Audit-Eintrag.** Stattdessen der
-Bericht unmittelbar nach dem Lauf — der Nutzer hat die Aktion selbst ausgelöst
-und steht davor. Damit liegt M27 auf einer Linie mit dem Löschen von
-Sitzungen, Login-Sets und Managed Keys, die alle nicht auditiert sind.
+**Decision (maintainer, 2026-08-09): no audit entry.** Instead, the report
+immediately after the run — the user triggered the action themselves and is
+standing right in front of it. That puts M27 in line with deleting
+sessions, login sets and managed keys, none of which are audited.
 
-Ein app-weiter Audit-Bereich wurde erwogen und verworfen: er löste das Problem
-richtig, hat aber eigene Designfragen (Aufbewahrung, Ansicht, Menge) und wäre
-größer als dieser Meilenstein. **Gehört aufs Backlog, nicht in M27.**
+An app-wide audit area was considered and rejected: it would solve the
+problem properly, but it has its own design questions (retention, view,
+volume) and would be bigger than this milestone. **Belongs on the backlog,
+not in M27.**
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly out of scope
 
-- **Waisen aus fehlgeschlagenen Managed-Key-Rollbacks.** Drei Rollback-Pfade
-  löschen mit `try?`; schlägt das fehl, bleibt ein Eintrag unter einer ID
-  zurück, die nie in `managed_keys.json` gelangt ist. Diese IDs stehen
-  **nirgends** — mit dem Verfahren dieses Meilensteins sind sie nicht
-  auffindbar. Sie zu finden hieße, den Schlüsselbund aufzuzählen, und genau
-  das schließt dieser Entwurf aus.
-- **Das abgestandene Secret einer auf Login-Set-Modus umgestellten Sitzung.**
-  `save()` überspringt den Secret-Block, wenn ein Login-Set gesetzt ist, und
-  `updateSession`s Aufräumen fragt das Schema, das `loginSetID` nicht kennt —
-  also bleibt der alte Eintrag liegen. Die ID ist beansprucht, der Eintrag ist
-  **keine Waise**, und der Sweep fasst ihn nicht an. Andere Fehlerklasse:
-  keine Altlast, sondern eine Lücke im laufenden Speicherpfad. **Eigener
-  Befund, eigener Fix, eigener Test** — Maintainer-Entscheidung 2026-08-09.
-- **Ein Unterscheidungsmerkmal im Schlüsselbund** (Label, Präfix, eigener
-  Service je Sorte). Erwogen und verworfen: Keychain-ACLs hängen am einzelnen
-  Eintrag, ein umgeschriebenes Konto ist ein neuer Eintrag, und damit wären
-  alle „Immer erlauben"-Zustimmungen weg, die die CLI für unbeaufsichtigte
-  Läufe braucht. Ein älterer Build sähe außerdem null Secrets, ohne den
-  Datei-Umweg, den M23 sich offengehalten hat.
-- **Ein automatischer Lauf beim Start.** Der Code hält ausdrücklich fest, dass
-  ein Lesepfad keine Keychain-Schreibwirkung haben darf; ein stiller Lauf
-  bräuchte einen eigenen Aufhänger nach dem Start und nähme dem Nutzer die
-  Entscheidung ab.
+- **Orphans from failed managed-key rollbacks.** Three rollback paths
+  delete with `try?`; if that fails, an entry is left behind under an ID
+  that never made it into `managed_keys.json`. These IDs appear
+  **nowhere** — with this milestone's method they are not discoverable.
+  Finding them would mean enumerating the keychain, and that is exactly
+  what this design rules out.
+- **The stale secret of a session switched to login-set mode.**
+  `save()` skips the secret block when a login set is set, and
+  `updateSession`'s cleanup checks the schema, which doesn't know
+  `loginSetID` — so the old entry stays behind. The ID is claimed, the
+  entry is **not an orphan**, and the sweep does not touch it. A different
+  class of error: not a leftover, but a gap in the live save path. **Own
+  finding, own fix, own test** — maintainer decision 2026-08-09.
+- **A distinguishing mark in the keychain** (label, prefix, a separate
+  service per kind). Considered and rejected: keychain ACLs attach to the
+  individual entry, a rewritten account is a new entry, and that would
+  wipe out all the "Always Allow" consents the CLI needs for unattended
+  runs. An older build would also see zero secrets, without the file
+  detour M23 deliberately kept open.
+- **An automatic run at startup.** The code explicitly holds that a read
+  path must never have a keychain write effect; a silent run would need
+  its own hook after startup and would take the decision away from the
+  user.
 
-## Erfolgskriterien
+## Success criteria
 
-| # | Kriterium | Nachweis |
+| # | Criterion | Proof |
 |---|---|---|
-| 1 | Eine Legacy-Jump-`secretID`, die kein heutiger Datensatz beansprucht, wird gelöscht | Test über temporäre Dateien + `InMemorySecretStore`: ID vorher da, nachher weg |
-| 2 | Eine Legacy-`secretID`, die ein heutiger Datensatz weiterhin beansprucht, wird **nicht** gelöscht | derselbe Test, zweite ID, bleibt liegen |
-| 3 | **Eine nicht lesbare Sitzungsdatei löscht nichts** — der schwerste Fall: schweigend leer hieße, sämtliche lebenden Jump-Secrets zu löschen | Test mit unlesbarer Datei; `InMemorySecretStore` danach **unverändert**, Lauf meldet den Fehler |
-| 4 | Der Sweep liest den ViewModel-Zustand nicht | Sweep bekommt die Stores, nicht das ViewModel; als Signatur festgelegt und im Review geprüft |
-| 5 | Jede einzelne unlesbare Datei bricht den Lauf ab, ohne zu löschen | ein Test je Datei; `InMemorySecretStore` unverändert |
-| 6 | Fehlende Legacy-Datei ist kein Fehler | Lauf meldet null entfernt, kein Wurf |
-| 7 | Der Sweep liest nie ein Secret | Test-Double, dessen `password(for:)` den Test scheitern lässt |
-| 8 | Ein Teilfehler stoppt den Lauf nicht | Double, das für eine ID wirft; die übrigen werden entfernt, der Bericht nennt den Fehler |
-| 9 | Die Legacy-Datei ist nach dem Lauf byte-gleich | Bytes vorher/nachher |
-| 10 | Der Bericht behauptet keine Entfernungszahl und nennt nie eine ID oder einen Wert | **durch Inspektion** — ein Test über den erzeugten Text kann in dieser Struktur nicht existieren: der Text entsteht in `ManageDataSettingsSection.runReap()`, einer `private` Methode einer `private struct` im App-Target `MacSCPApp`, und das Paket hat nur das Testtarget `macSCPCoreTests`. **Damit ungesichert:** ein späteres `text += "\(result.removed)"` bricht die zentrale benutzersichtbare Entscheidung dieses Meilensteins, ohne dass irgendetwas rot wird. Wer das pinnen will, muss die Formatierung erst aus der View in eine aufrufbare Funktion ziehen — eigener Durchgang, steht im Backlog des Abschlussberichts |
-| 11 | Alle vier Kataloge tragen die neuen Schlüssel | der vorhandene Wächtertest |
+| 1 | A legacy jump `secretID` that no current record claims is deleted | Test over temporary files + `InMemorySecretStore`: ID present before, gone after |
+| 2 | A legacy `secretID` still claimed by a current record is **not** deleted | Same test, second ID, stays behind |
+| 3 | **An unreadable session file deletes nothing** — the worst case: silently empty would mean deleting every live jump secret | Test with an unreadable file; `InMemorySecretStore` **unchanged** afterward, run reports the error |
+| 4 | The sweep does not read ViewModel state | Sweep gets the stores, not the ViewModel; fixed as the signature and checked in review |
+| 5 | Every single unreadable file aborts the run without deleting | one test per file; `InMemorySecretStore` unchanged |
+| 6 | A missing legacy file is not an error | Run reports zero removed, no throw |
+| 7 | The sweep never reads a secret | Test double whose `password(for:)` fails the test |
+| 8 | A partial failure does not stop the run | Double that throws for one ID; the rest get removed, the report names the error |
+| 9 | The legacy file is byte-identical after the run | Bytes before/after |
+| 10 | The report claims no removal count and never names an ID or a value | **by inspection** — a test over the generated text cannot exist in this structure: the text is created in `ManageDataSettingsSection.runReap()`, a `private` method of a `private struct` in the App target `MacSCPApp`, and the package only has the test target `macSCPCoreTests`. **Left unsecured as a result:** a later `text += "\(result.removed)"` would break this milestone's central user-visible decision without anything turning red. Whoever wants to pin this must first pull the formatting out of the view into a callable function — a separate pass, noted in the wrap-up report's backlog |
+| 11 | All four catalogs carry the new keys | the existing catalog guard test |
 
-## Test-Hinweise
+## Test notes
 
-- Die Kernlogik gehört in Core und wird **ohne echten Schlüsselbund** getestet:
-  temporäre Dateien plus `InMemorySecretStore`. Dessen `storedIDs` — im
-  Aufräum-Durchgang eingeführt — ist genau das Werkzeug für die Kriterien 1–3:
-  es zeigt, dass **nirgends** etwas übrig blieb bzw. dass **nichts** angefasst
-  wurde, nicht nur unter der einen ID, nach der man gefragt hat.
-- **Zwei Tests, die keine sind, und trotzdem hineingehören.** Die Fixtures für
-  den blocklosen `.ssh`-Datensatz und für das Login-Set mit unbekanntem
-  `authKind` werden mitgeführt — aber mit einem Doc-Kommentar, der sagt, dass
-  sie unter der heutigen Kandidatenregel **nicht scheitern können** und als
-  Wächter für eine spätere Ausweitung dastehen. Wer die Kandidatenmenge je auf
-  „alles im Schlüsselbund" erweitert, macht sie damit scharf. Ohne diesen
-  Kommentar wären es zwei Tests, die Sicherheit vortäuschen.
-- Für Kriterium 7 braucht es ein Double, dessen `password(for:)` den Test
-  scheitern lässt. Das Muster existiert im Repo mehrfach.
-- Die gegatete `MACSCP_KEYCHAIN`-Suite bleibt **unberührt**. Sie deckt den
-  echten Schlüsselbund ab, dieser Meilenstein fügt dem nichts hinzu.
-- Fixtures für den blocklosen Datensatz und für den unbekannten `authKind`
-  existieren bereits und werden wiederverwendet statt neu erfunden.
+- The core logic belongs in Core and is tested **without a real keychain**:
+  temporary files plus `InMemorySecretStore`. Its `storedIDs` — introduced
+  in the cleanup pass — is exactly the tool for criteria 1–3: it shows that
+  **nowhere** did anything remain, or that **nothing** was touched, not
+  just under the one ID that was asked about.
+- **Two tests that aren't really tests, and belong in anyway.** The
+  fixtures for the blockless `.ssh` record and for the login set with an
+  unknown `authKind` are kept around — but with a doc comment saying that
+  under today's candidate rule they **cannot fail**, and stand as a guard
+  for a later extension. Whoever ever widens the candidate set to "everything
+  in the keychain" makes them sharp. Without that comment, they would be
+  two tests faking safety.
+- Criterion 7 needs a double whose `password(for:)` fails the test. The
+  pattern already exists in the repo multiple times.
+- The gated `MACSCP_KEYCHAIN` suite stays **untouched**. It covers the real
+  keychain, this milestone adds nothing to it.
+- Fixtures for the blockless record and for the unknown `authKind` already
+  exist and are reused rather than reinvented.
 
-## Für die Release-Notes
+## For the release notes
 
-**Ein Satz.** Einstellungen › Daten verwalten kann Zugangsdaten entfernen, die
-beim Aufstieg von Version 1.0 im Schlüsselbund zurückgeblieben sind und seither
-von nichts mehr benutzt werden.
+**One sentence.** Settings › Manage Data can now remove credentials left
+behind in the keychain during the upgrade from version 1.0, that nothing
+has used since.
 
-## Offen, bewusst nicht Teil von M27
+## Open, deliberately not part of M27
 
-- Das abgestandene Secret im Login-Set-Modus (siehe oben) — **auf dem Backlog**.
-- **Ein app-weiter Audit-Bereich** ohne Sitzungsbezug, samt Ansicht — die
-  Voraussetzung dafür, eine Aktion aus den Einstellungen überhaupt
-  protokollieren zu können. **Auf dem Backlog.**
-- Waisen aus fehlgeschlagenen Managed-Key-Rollbacks — nur über eine
-  Schlüsselbund-Aufzählung erreichbar, die dieser Entwurf ablehnt.
-- Der 0-%-CPU-Testsuite-Hänger.
-- Der Release-Stau.
+- The stale secret in login-set mode (see above) — **on the backlog**.
+- **An app-wide audit area** with no session binding, including a view — the
+  prerequisite for logging an action from Settings at all. **On the
+  backlog.**
+- Orphans from failed managed-key rollbacks — only reachable through a
+  keychain enumeration, which this design rejects.
+- The 0%-CPU test-suite hang.
+- The release backlog.

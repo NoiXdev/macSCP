@@ -1,79 +1,79 @@
-# Backlog: CLI — Autovervollständigung, Hilfe, Host-Liste
+# Backlog: CLI — autocompletion, help, host list
 
-**Angelegt:** 2026-08-20, aus Maintainer-Zuruf. Gesicherte Ideen, **kein Design**.
+**Logged:** 2026-08-20, from a maintainer prompt. Secured ideas, **not a
+design**.
 
-## Ausgangslage, gemessen
+## Starting point, measured
 
-`macscp-cli` ist klein: **430 Zeilen**, fünf Unterbefehle (`ls`, `get`, `put`,
-`mkdir`, `rm`) auf `swift-argument-parser`. Sitzungen werden als
-`name:/pfad` referenziert. `--json` gibt es bereits (in `SessionConnecting`,
-also für alle verbindenden Befehle).
+`macscp-cli` is small: **430 lines**, five subcommands (`ls`, `get`,
+`put`, `mkdir`, `rm`) on `swift-argument-parser`. Sessions are referenced
+as `name:/path`. `--json` already exists (in `SessionConnecting`, so for
+all connecting commands).
 
-**Es gibt keinen Befehl, der Sitzungen auflistet.** Wer den Namen nicht
-auswendig weiß, muss die App öffnen.
+**There is no command that lists sessions.** Whoever does not know the
+name by heart has to open the app.
 
-Jeder Befehl hat einen einzeiligen `abstract`, **keiner** hat ein
-`discussion`. Die `name:/pfad`-Schreibweise wird nirgends als Konzept
-erklärt, sondern nur in einzelnen Argument-Hilfetexten beispielhaft gezeigt.
+Every command has a one-line `abstract`, **none** has a `discussion`. The
+`name:/path` notation is not explained anywhere as a concept, only shown
+by example in individual argument help texts.
 
-## 1. Host-Liste mit Filtern — zuerst bauen
+## 1. Host list with filters — build first
 
-Ein Unterbefehl, der die gespeicherten Sitzungen ausgibt, mit Filter-Argumenten
-(Gruppe, Backend-Art, Namensmuster). `--json` ist als Muster bereits gesetzt
-und sollte hier gelten.
+A subcommand that outputs the saved sessions, with filter arguments
+(group, backend kind, name pattern). `--json` is already set as a
+pattern and should apply here.
 
-**Sicherheitsauflage, nicht verhandelbar:** die Auflistung darf **keine
-Geheimnisse** ausgeben und **den Keychain nicht anfassen**. Sie liest den
-Sitzungs-Store, der per Projektinvariante keine Geheimnisse enthält. Kein
-Auflösen von Login-Sets, keine Passphrasen-Abfrage, kein Verbindungsaufbau —
-die Liste ist eine reine Store-Abfrage.
+**Security constraint, non-negotiable:** the listing must output **no
+secrets** and **must not touch the keychain**. It reads the session
+store, which by project invariant contains no secrets. No resolving of
+login sets, no passphrase prompt, no connection setup — the list is a
+pure store query.
 
-**Warum zuerst:** Punkt 2 braucht genau diese Abfrage. Baut man die
-Vervollständigung zuerst, entsteht die Auflistungslogik zweimal.
+**Why first:** item 2 needs exactly this query. If completion is built
+first, the listing logic gets built twice.
 
-## 2. Autovervollständigung
+## 2. Autocompletion
 
-**Der halbe Weg ist schon gegangen.** `swift-argument-parser` erzeugt
-Completion-Skripte für bash, zsh und fish von sich aus
-(`--generate-completion-script`), und die Fehlerbehandlung in
-`MacSCPCLI.main()` behandelt eine Completion-Anforderung bereits wie eine
-Hilfe-Anforderung (Beendigungscode 0). Es fehlt also nicht der Mechanismus,
-sondern zweierlei:
+**Half the way is already walked.** `swift-argument-parser` generates
+completion scripts for bash, zsh and fish on its own
+(`--generate-completion-script`), and the error handling in
+`MacSCPCLI.main()` already treats a completion request like a help
+request (exit code 0). So what is missing is not the mechanism, but two
+things:
 
-1. **Ausliefern und Einrichten.** Das Skript muss beim Nutzer landen. Zu
-   klären: erzeugt das Installationsskript es mit, oder dokumentieren wir nur
-   den Befehl? Die CLI liegt im App-Bundle und wird per Symlink erreichbar
-   gemacht — das ist der Ort, an dem sich das entscheidet.
-2. **Dynamische Werte.** Sitzungsnamen kommen aus dem Store, nicht aus einer
-   festen Liste; dafür gibt es `@Argument(completion: .custom { … })`.
+1. **Shipping and setup.** The script must reach the user. To clarify:
+   does the install script generate it along the way, or do we only
+   document the command? The CLI lives inside the app bundle and is made
+   reachable via a symlink — that is the place where this gets decided.
+2. **Dynamic values.** Session names come from the store, not from a
+   fixed list; `@Argument(completion: .custom { … })` exists for this.
 
-**Die Entwurfsfrage, die vor dem Bau beantwortet werden muss:** wie weit geht
-die Vervollständigung?
+**The design question that must be answered before building:** how far
+does completion go?
 
-- **Sitzungsnamen** sind lokal, billig und gefahrlos. Klarer Fall.
-- **Entfernte Pfade** hinter dem Doppelpunkt wären der eigentliche Komfort —
-  aber ein Druck auf Tab würde dann **eine Verbindung aufbauen**. Das ist
-  langsam, überraschend, und kann in einer nicht-interaktiven Shell auf eine
-  TOFU-Entscheidung laufen, die niemand beantworten kann. Empfehlung:
-  zunächst **nur Sitzungsnamen**; entfernte Pfade allenfalls später und
-  ausdrücklich eingeschaltet.
+- **Session names** are local, cheap, and safe. Clear case.
+- **Remote paths** after the colon would be the actual convenience — but
+  pressing Tab would then **establish a connection**. That is slow,
+  surprising, and in a non-interactive shell can run into a TOFU
+  decision nobody can answer. Recommendation: **session names only** for
+  now; remote paths at most later and explicitly opted into.
 
-## 3. Hilfe, die erklärt, wie man es benutzt
+## 3. Help that explains how to use it
 
-Die Einzeiler beschreiben, was ein Befehl tut, nicht wie man ihn aufruft.
-Konkret fehlt:
+The one-liners describe what a command does, not how to invoke it.
+Specifically missing:
 
-- Ein `discussion` am **Wurzelbefehl**, das die `name:/pfad`-Schreibweise
-  einmal als Konzept erklärt — inklusive des Hinweises, woher die Namen
-  kommen (Punkt 1 liefert dann den Befehl, der sie zeigt).
-- Beispielaufrufe je Unterbefehl. `swift-argument-parser` nimmt sie im
-  `discussion` entgegen.
-- Ein Wort dazu, dass die CLI **im App-Bundle** liegt und wie man sie in den
-  Pfad bekommt — steht heute nur in der README, nicht in der Hilfe selbst.
+- A `discussion` on the **root command** that explains the `name:/path`
+  notation once as a concept — including where the names come from (item
+  1 then supplies the command that shows them).
+- Example invocations per subcommand. `swift-argument-parser` accepts
+  these in `discussion`.
+- A note that the CLI lives **inside the app bundle** and how to get it
+  onto the path — today this is only in the README, not in the help
+  itself.
 
-## Reihenfolge
+## Order
 
-**1 → 3 → 2.** Die Auflistung ist die Datenquelle für die Vervollständigung
-und gleichzeitig das, worauf die Hilfe verweisen will. Die
-Vervollständigung kommt zuletzt, weil sie als einzige eine Auslieferungsfrage
-aufwirft.
+**1 → 3 → 2.** The listing is the data source for completion and at the
+same time what the help wants to point to. Completion comes last because
+it is the only one that raises a shipping question.

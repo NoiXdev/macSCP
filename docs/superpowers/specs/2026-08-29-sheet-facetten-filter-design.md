@@ -1,112 +1,114 @@
-# Facetten-Schnellfilter in den Verwaltungs-Sheets — Entwurf
+# Facet quick filter in the management sheets — Design
 
-**Stand:** 2026-08-29. Umsetzung von **Punkt 2** aus
-`docs/superpowers/specs/2026-08-20-backlog-verwaltungs-sheets.md` — dem
-letzten offenen Punkt dieses Eintrags.
+**As of:** 2026-08-29. Implementation of **item 2** from
+`docs/superpowers/specs/2026-08-20-backlog-verwaltungs-sheets.md` — the
+last open item of that entry.
 
 ---
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-`SheetSearchField` (M18) steht in mehreren Sheets und liefert über
-`sheetSearchPredicate(text:isRegex:)` ein `FileSearch.FileSearchPredicate`
-plus einen Fehlertext für einen ungültigen Ausdruck. Jedes Sheet filtert
-seine Zeilen damit selbst (`filteredRows`).
+`SheetSearchField` (M18) sits in several sheets and returns, via
+`sheetSearchPredicate(text:isRegex:)`, a `FileSearch.FileSearchPredicate`
+plus an error text for an invalid expression. Each sheet filters
+its rows with it itself (`filteredRows`).
 
-**Einen Facetten-Filter gibt es nur im `AuditLogSheet`** — und das ist keines
-der drei Sheets, um die es hier geht. Known-Hosts, SSH-Schlüssel und
-Login-Sets haben die Suche, aber keine Facetten.
+**A facet filter exists only in `AuditLogSheet`** — and that is not one
+of the three sheets at issue here. Known Hosts, SSH keys and
+Login Sets have the search, but no facets.
 
-## Entscheidung des Maintainers (2026-08-29)
+## Maintainer decision (2026-08-29)
 
-**Ein gemeinsames Steuerelement, dem die Facetten übergeben werden** — nicht
-drei eigene.
+**One shared control that the facets are passed into** — not
+three separate ones.
 
-Der Grund steht im Eintrag selbst: es teilt die Prädikat-Form der Suche,
-damit Suche und Filter sich **verketten statt zu konkurrieren**. Drei Kopien
-dieser Verkettung wären drei Stellen, an denen sie stimmen muss — und dieses
-Projekt hat in dieser Woche mehrfach dafür bezahlt, dass dieselbe Regel an
-mehreren Orten lag.
+The reason is stated in the entry itself: it shares the predicate shape of the
+search, so search and filter **chain instead of competing**. Three copies
+of this chaining would be three places where it has to be correct — and this
+project has paid for the same rule sitting in multiple places
+more than once this week.
 
-## Der Entwurf
+## The design
 
-### Die Facetten sind Daten, nicht Bauart
+### The facets are data, not construction
 
-Das Steuerelement bekommt eine Liste von Facetten und die Funktion, die einer
-Zeile ihren Facettenwert zuordnet. Was eine Facette *ist*, weiß nur das
-jeweilige Sheet:
+The control gets a list of facets and the function that maps a
+row to its facet value. What a facet *is* is known only to the
+respective sheet:
 
-| Sheet | Facette |
+| Sheet | Facet |
 |---|---|
-| SSH-Schlüssel | Schlüsseltyp |
-| Login-Sets | Backend-Art |
-| Known Hosts | Algorithmus |
+| SSH Keys | Key type |
+| Login Sets | Backend kind |
+| Known Hosts | Algorithm |
 
-### Eine Auswahl, nicht mehrere
+### One selection, not several
 
-Ein Wert oder „Alle" — kein Mengenmodell mit Verknüpfung.
+One value or "All" — no set model with a combinator.
 
-Das ist bewusst **anders als beim Tag-Filter der Seitenleiste**, und der
-Unterschied ist nicht Inkonsequenz: Tags sind offen und beliebig viele,
-weshalb dort eine Menge plus „alle/irgendeines" nötig war. Eine Facette ist
-eine geschlossene, kleine Aufzählung, und die Werte schließen einander in der
-Praxis aus — ein Schlüssel hat *einen* Typ. Ein Mengenmodell darüber wäre
-Maschinerie ohne Fall.
+This is deliberately **different from the sidebar's tag filter**, and the
+difference is not inconsistency: tags are open-ended and there can be any
+number of them, which is why a set plus "all/any" was needed there. A facet
+is a closed, small enumeration, and in practice the values are mutually
+exclusive — a key has *one* type. A set model on top of that would be
+machinery without a case for it.
 
-**„Alle" ist die Abwesenheit einer Auswahl**, kein eigener Facettenwert.
-Sonst müsste jede Zuordnungsfunktion einen Wert kennen, der nichts bedeutet.
+**"All" is the absence of a selection**, not a facet value of its own.
+Otherwise every mapping function would have to know a value that means
+nothing.
 
-### Verketten heißt: beides muss zutreffen
+### Chaining means: both must match
 
-Eine Zeile überlebt, wenn die **Suche** sie trifft **und** die Facette passt.
-Wer nach einem Typ filtert und dann tippt, sucht innerhalb des Gefilterten —
-dieselbe Regel, die die Seitenleiste seit D3 befolgt.
+A row survives if the **search** matches it **and** the facet fits.
+Someone who filters by a type and then types is searching within the
+filtered set — the same rule the sidebar has followed since D3.
 
-Die Verkettung ist ein **prüfbarer Wert**, keine Zeile in drei
-`filteredRows`-Bergen. Sie wird einmal geschrieben und dreimal gerufen.
+The chaining is a **testable value**, not a line in three separate
+`filteredRows` piles. It is written once and called three times.
 
-### Die Facetten kommen von der Platte, nicht aus einer Liste
+### The facets come from the data, not from a list
 
-Welche Werte ein Sheet anbietet, wird aus seinen **Zeilen** abgeleitet, nicht
-fest aufgezählt. Ein Schlüsseltyp, den niemand hat, gehört nicht in die
-Auswahl — und ein neuer, den jemand anlegt, erscheint ohne dass jemand eine
-Liste nachzieht.
+Which values a sheet offers is derived from its **rows**, not
+fixed and enumerated. A key type nobody has does not belong in the
+selection — and a new one someone creates appears without anyone updating
+a list.
 
-Das ist die stehende Regel dieses Projekts („nur zeigen, was möglich ist")
-und zugleich die, die es diese Woche zweimal gelernt hat: eine feste
-Aufzählung veraltet still.
+That is this project's standing rule ("only show what's possible")
+and at the same time the one it has learned twice this week: a fixed
+enumeration goes stale silently.
 
-**Daraus folgt:** hat ein Sheet nur einen einzigen Facettenwert, ist die
-Auswahl bedeutungslos und erscheint **nicht**. Ein Steuerelement, das sich
-bedienen lässt und nichts ändert, ist schlechter als keines.
+**It follows that:** if a sheet has only a single facet value, the
+selection is meaningless and does **not** appear. A control that can be
+operated and changes nothing is worse than none.
 
-### Der Leerzustand nennt beide Verengungen
+### The empty state names both narrowings
 
-Ein Sheet, dessen Liste leer ist, muss sagen, **warum** — kein Treffer, oder
-kein Eintrag dieser Art. Und die Möglichkeit, beides zusammen wegzuräumen,
-gehört dazu.
+A sheet whose list is empty must say **why** — no match, or
+no entry of that kind. And the possibility of both together clearing the
+list belongs to that as well.
 
-`KnownHostsSheet` führt heute `isUnfiltered` als `searchText.isEmpty`. Das
-wird mit der Facette falsch und ist in demselben Durchgang nachzuziehen —
-sonst behauptet ein Sheet, ungefiltert zu sein, während eine Facette Zeilen
-versteckt.
+`KnownHostsSheet` currently derives `isUnfiltered` as `searchText.isEmpty`.
+That becomes wrong with the facet and must be fixed in the same
+pass — otherwise a sheet claims to be unfiltered while a facet hides
+rows.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: die Verkettung, dass die Facettenwerte aus
-den Zeilen kommen, dass eine Auswahl mit nur einem Wert nicht erscheint, dass
-ein ungültiger Ausdruck weiterhin nichts filtert, und was der Leerzustand
-sagt.
+Testable is everything decidable: the chaining, that the facet values come
+from the rows, that a selection with only one value does not appear, that
+an invalid expression still filters nothing, and what the empty state
+says.
 
-**Nicht prüfbar** bleibt, ob das Steuerelement unter der Suche gut sitzt.
-Maintainer-Blick.
+**Not testable** remains whether the control sits well below the search.
+Maintainer's eye.
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly not included
 
-- **Keine Mehrfachauswahl** und keine Und/Oder-Verknüpfung.
-- **Keine Facette über einen zusammengesetzten Untertitel** — Fingerabdruck,
-  Schlüssellänge und Pfad stecken in einem String und stehen nicht als Felder
-  zur Verfügung. Das ist der bewusst bezahlte Preis von Punkt 4 und bleibt es.
-- **Kein Facetten-Filter im `AuditLogSheet`**, das seinen eigenen hat und ihn
-  behält.
-- **Keine Änderung an `SheetSearchField`** selbst.
+- **No multi-select** and no and/or combinator.
+- **No facet over a composite subtitle** — fingerprint,
+  key length and path sit in one string and are not available as
+  separate fields. That is the deliberately paid price of item 4 and
+  remains so.
+- **No facet filter in `AuditLogSheet`**, which has its own and
+  keeps it.
+- **No change to `SheetSearchField`** itself.

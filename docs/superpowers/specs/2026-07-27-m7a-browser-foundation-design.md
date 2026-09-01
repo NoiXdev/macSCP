@@ -1,88 +1,87 @@
-# macSCP M7a — Browser-Fundament (Design-Spec)
+# macSCP M7a — Browser foundation (design spec)
 
-**Datum:** 2026-07-27
-**Status:** vom Maintainer freigegeben (Block 1)
-**Kontext:** Erster Teil des Datei-Browser-Ausbaus (Schnitt M7a Fundament →
-M7b Kontextmenü & Dialoge). Erste Arbeit im neuen **develop-Workflow**:
-Branch `develop`, Releases nur noch gezielt via Merge auf `main` + Tag.
-Tabs für mehrere Sessions sind M8 — das Menü-Design in M7b hält dafür die
-„Übertragen"-Substruktur offen.
+**Date:** 2026-07-27
+**Status:** approved by the maintainer (block 1)
+**Context:** First part of the file-browser expansion (split M7a foundation
+→ M7b context menu & dialogs). First work on the new **develop workflow**:
+branch `develop`, releases only via targeted merge onto `main` + tag from
+now on. Tabs for multiple sessions are M8 — the menu design in M7b keeps
+the "Übertragen" substructure open for that.
 
-## Entscheidungen (Maintainer, 2026-07-27)
+## Decisions (maintainer, 2026-07-27)
 
-- **Multi-Select**: ja, Finder-artig (⌘/⇧-Klick), Aktionen wirken auf die
-  Auswahl.
-- **Löschen**: auch Ordner, rekursiv (mit Bestätigung — UI in M7b).
-- **Rechte-Editor**: beide Panes (lokal + remote) — UI in M7b, API hier.
-- **Versteckte Dateien**: Standard AUS (Verhaltensänderung — heute wird
-  alles angezeigt), Settings-Toggle + ⌘⇧.
+- **Multi-select**: yes, Finder-style (⌘/⇧-click), actions act on the
+  selection.
+- **Delete**: folders too, recursively (with confirmation — UI in M7b).
+- **Permissions editor**: both panes (local + remote) — UI in M7b, API
+  here.
+- **Hidden files**: default OFF (behavior change — today everything is
+  shown), settings toggle + ⌘⇧.
 
-## Neue FS-APIs (`RemoteFileSystem`-Protocol, Local + Citadel + Tests)
+## New FS APIs (`RemoteFileSystem` protocol, Local + Citadel + tests)
 
 1. `func rename(from: String, to: String) async throws`
-   - `to` ist der VOLLE Zielpfad (gleicher Ordner ⇒ Umbenennen; die UI
-     baut den Pfad, das Protokoll bleibt generisch).
-   - Existierendes Ziel: Fehler (`RemoteFSError`-Mapping), KEIN stilles
-     Überschreiben. Lokal: `FileManager.moveItem` (wirft bei Kollision);
-     remote: SFTP-rename (Server lehnt Kollision ab bzw. Fehler wird auf
-     einen klaren Text gemappt).
+   - `to` is the FULL target path (same folder ⇒ rename; the UI builds
+     the path, the protocol stays generic).
+   - Existing target: error (`RemoteFSError` mapping), NO silent
+     overwrite. Local: `FileManager.moveItem` (throws on collision);
+     remote: SFTP rename (server refuses the collision, or the error is
+     mapped to a clear text).
 2. `func setPermissions(path: String, permissions: UInt32) async throws`
-   - Wirkt nur auf die unteren 12 Bits (rwx für Owner/Group/Other +
-     setuid/setgid/sticky); Datei-Typ-Bits werden nie geschrieben.
-   - Lokal: `FileManager.setAttributes([.posixPermissions:])`;
+   - Acts only on the lower 12 bits (rwx for owner/group/other +
+     setuid/setgid/sticky); file-type bits are never written.
+   - Local: `FileManager.setAttributes([.posixPermissions:])`;
      remote: SFTP setstat.
 3. `func deleteTree(at path: String) async throws` (RISK)
-   - Rekursives Löschen. Lokal: `FileManager.removeItem` (nativ
-     rekursiv). Remote: Bottom-up-Walk — `list`, Dateien/Symlinks per
-     `delete`, danach die (leeren) Verzeichnisse; Symlinks werden
-     GELÖSCHT, NIE gefolgt (kein Ausbruch aus dem Baum).
-   - Kooperativ cancelbar (`Task.checkCancellation` pro Eintrag); ein
-     Abbruch hinterlässt einen teilgelöschten Baum (dokumentiert).
-   - Einzeldatei-Aufruf verhält sich wie `delete`.
+   - Recursive delete. Local: `FileManager.removeItem` (natively
+     recursive). Remote: bottom-up walk — `list`, files/symlinks via
+     `delete`, then the (empty) directories; symlinks are DELETED, NEVER
+     followed (no escape from the tree).
+   - Cooperatively cancelable (`Task.checkCancellation` per entry); a
+     cancellation leaves behind a partially deleted tree (documented).
+   - Single-file call behaves like `delete`.
 
-## Multi-Select
+## Multi-select
 
-- `RemoteFileTableView`: `allowsMultipleSelection = true`; Coordinator
-  meldet die Auswahl als geordnetes Array (Tabellenreihenfolge).
-- `RemoteBrowserViewModel`: neu `selectedItems: [RemoteFileItem]`
-  (Quelle der Wahrheit); `selectedItem` bleibt als abgeleitete
-  Convenience (`selectedItems.count == 1 ? first : nil`) — Doppelklick/
-  Editor-Pfad nutzt sie weiter.
-- Upload-/Download-Toolbar-Buttons: aktiv, sobald die Auswahl mindestens
-  ein übertragbares Item enthält; sie enqueuen ALLE ausgewählten Items
-  (Datei → `enqueue`, Ordner → `enqueueTree`, Symlinks werden still
-  übersprungen — nicht mehr die Buttons sperren wie bisher bei
-  Symlink-Einzelauswahl).
-- Drag aus der Tabelle: alle ausgewählten Zeilen liefern Writer
-  (lokal NSURL, remote FilePromise) — Mechanik pro Zeile wie heute.
+- `RemoteFileTableView`: `allowsMultipleSelection = true`; the coordinator
+  reports the selection as an ordered array (table order).
+- `RemoteBrowserViewModel`: new `selectedItems: [RemoteFileItem]`
+  (source of truth); `selectedItem` stays as a derived convenience
+  (`selectedItems.count == 1 ? first : nil`) — the double-click/editor
+  path continues to use it.
+- Upload/download toolbar buttons: active as soon as the selection
+  contains at least one transferable item; they enqueue ALL selected
+  items (file → `enqueue`, folder → `enqueueTree`, symlinks are silently
+  skipped — no longer locking the buttons the way single symlink
+  selection used to).
+- Drag from the table: all selected rows supply writers (local NSURL,
+  remote FilePromise) — mechanics per row as today.
 
-## Versteckte Dateien
+## Hidden files
 
-- `SettingsStore.showHiddenFiles: Bool`, Default `false`
-  (vorwärtskompatibles JSON wie gehabt).
-- Filter im `RemoteBrowserViewModel` (Anzeige-Schicht, NICHT im
-  FS-Protokoll): ausgeblendet wird, was mit `.` beginnt; die Sortierung
-  bleibt unverändert. `..`-Navigation ist nicht betroffen (kein
-  Listeneintrag).
-- Settings-UI: neuer Tab **„Allgemein"** im bestehenden
-  Settings-Fenster mit dem Toggle „Versteckte Dateien anzeigen"
-  (EN „Show hidden files"), Keys EN/DE.
-- Shortcut **⌘⇧.** im Browser toggelt die Einstellung live (schreibt in
-  den SettingsStore; beide Panes reagieren über das bestehende
-  onChange-Muster).
+- `SettingsStore.showHiddenFiles: Bool`, default `false`
+  (forward-compatible JSON as before).
+- Filter in `RemoteBrowserViewModel` (display layer, NOT in the FS
+  protocol): anything starting with `.` is hidden; sorting stays
+  unchanged. `..` navigation is not affected (no list entry).
+- Settings UI: new tab **"Allgemein"** in the existing settings window
+  with the toggle "Versteckte Dateien anzeigen" (EN "Show hidden files"),
+  keys EN/DE.
+- Shortcut **⌘⇧.** in the browser toggles the setting live (writes to
+  `SettingsStore`; both panes react via the existing onChange pattern).
 
-## Invarianten
+## Invariants
 
-- Sicherheits-/Architektur-Invarianten unangetastet (TOFU, Keychain,
-  UI-owned Lifecycles, Queue-Invarianten).
-- Code + Kommentare Englisch; neue UI-Texte katalogisiert EN/DE.
-- Bestehende Suite (317) bleibt grün; neue Logik TDD (rename/
-  setPermissions/deleteTree gated Docker-Tests wie die übrigen
-  FS-APIs; Multi-Select- und Filter-Logik unit-getestet).
+- Security/architecture invariants untouched (TOFU, keychain, UI-owned
+  lifecycles, queue invariants).
+- Code + comments in English; new UI text cataloged EN/DE.
+- Existing suite (317) stays green; new logic TDD (rename/
+  setPermissions/deleteTree gated Docker tests like the other FS APIs;
+  multi-select and filter logic unit-tested).
 
-## Bewusst NICHT in M7a
+## Deliberately NOT in M7a
 
-- Kontextmenü, Dialoge, Lösch-Bestätigung → M7b.
-- Tabs/Multi-Session → M8.
-- macOS-Hidden-Flag lokal (UF_HIDDEN) als zusätzliches Kriterium —
-  Punkt-Präfix genügt für v1.1 (Backlog-Notiz).
+- Context menu, dialogs, delete confirmation → M7b.
+- Tabs/multi-session → M8.
+- macOS hidden flag locally (UF_HIDDEN) as an additional criterion — the
+  dot prefix suffices for v1.1 (backlog note).

@@ -1,64 +1,64 @@
-# Terminal-Snippets (Design)
+# Terminal Snippets (Design)
 
-**Stand:** 2026-08-10. Nie beauftragtes Backlog-Feature, erstes Design.
+**As of:** 2026-08-10. A backlog feature never commissioned, first design.
 
-## Was es ist
+## What it is
 
-Wiederverwendbare Kommandozeilen, die sich im SSH-Terminal-Panel einfügen
-lassen. Global gepflegt, über ein Menü ausgelöst.
+Reusable command lines that can be inserted into the SSH terminal panel.
+Maintained globally, triggered via a menu.
 
-Der Anknüpfungspunkt ist schmal: `TerminalPanelViewModel.send(_ bytes:
-[UInt8])` schickt Bytes an die Shell des jeweiligen Tabs. Ein Snippet ist
-„Text → Bytes → send". Die Substanz des Meilensteins liegt nicht in der
-Mechanik, sondern in zwei Entscheidungen über Risiko.
+The attachment point is narrow: `TerminalPanelViewModel.send(_ bytes:
+[UInt8])` sends bytes to the given tab's shell. A snippet is
+"text → bytes → send". The substance of the milestone is not in the
+mechanics but in two decisions about risk.
 
-## Die zwei Risikoentscheidungen
+## The two risk decisions
 
-### Einfügen ist der Normalfall, Ausführen ist markiert
+### Inserting is the default, executing is marked
 
-Ein Snippet landet in der Eingabezeile; Enter drückt der Nutzer. Er sieht
-vorher, was auf welchem Host liefe.
+A snippet lands in the input line; the user presses Enter. They see
+beforehand what would run on which host.
 
-Jedes Snippet kann jedoch als **sofort ausführend** gekennzeichnet werden
-(Maintainer-Entscheidung 2026-08-10). Der dagegen vorgebrachte Einwand war:
-die Entscheidung fällt beim **Anlegen**, wirkt aber beim **Auslösen**, wo
-niemand mehr weiß, welche Einträge scharf sind.
+However, every snippet can be flagged as **runs immediately**
+(maintainer decision, 2026-08-10). The objection raised against this was:
+the decision is made at **creation** time but takes effect at
+**trigger** time, where nobody remembers any more which entries are live.
 
-**Das Design löst den Einwand, statt ihn zu überstimmen:** zwei Abschnitte
-im Menü — oben die einfügenden, darunter die ausführenden unter eigener
-Überschrift. Eine Gruppierung trägt diese Bedeutung zuverlässiger als ein
-Symbol am Eintrag, und sie umgeht die Symbol-Regel aus M19a gleich mit.
+**The design resolves the objection instead of overruling it:** two
+sections in the menu — inserting ones on top, executing ones below under
+their own heading. A grouping carries this meaning more reliably than an
+icon on the entry, and it sidesteps the M19a icon rule as well.
 
-**Korrektur am ersten Entwurf:** dieser sah ein eigenes Menü „Snippets" vor.
-Beim Vermessen für den Plan stellte sich heraus, dass es **bereits ein
-`CommandMenu("Terminal")`** gibt, mit „Terminal ein-/ausblenden" und „In
-externem Terminal öffnen". Snippets gehören dort hinein, nicht in eine
-zweite Anlaufstelle für dieselbe Sache.
+**Correction to the first draft:** it had proposed a dedicated "Snippets"
+menu. While sizing the plan, it turned out there **already is a
+`CommandMenu("Terminal")`**, with "Show/Hide Terminal" and "Open in
+External Terminal". Snippets belong there, not in a second entry point
+for the same thing.
 
-### Snippets enthalten keine Zugangsdaten
+### Snippets contain no credentials
 
-Der Store ist JSON, und die Projektregel ist eindeutig: Secrets leben
-ausschließlich im Schlüsselbund, JSON-Stores enthalten nie welche.
+The store is JSON, and the project rule is unambiguous: secrets live
+exclusively in the keychain, JSON stores never contain any.
 
-Beim Brainstorming standen drei Gegenvorschläge im Raum. Sie sind hier
-festgehalten, weil sie plausibel klingen und **nicht halten**:
+Three counterproposals came up during brainstorming. They are recorded
+here because they sound plausible and **do not hold up**:
 
-| Vorschlag | Warum er nicht trägt |
+| Proposal | Why it doesn't hold |
 |---|---|
-| Passwortloses SSH statt Passwörtern | Löst ein anderes Problem. macSCPs **eigene** Verbindung kann seit M10d Schlüssel und Agent. Das Snippet-Problem sitzt tiefer: Kommandos, die auf dem **Zielhost** ein Passwort brauchen (`mysql -p`, `sudo`, ein zweiter Hop). Für den zweiten Hop wäre **Agent-Forwarding** die Antwort — in M10d ausdrücklich ausgeschlossen und als eigener Meilenstein im Backlog. |
-| History danach löschen | Schützt nicht und richtet Schaden an. Der Befehl steht während der Ausführung in `ps`, wo ihn jeder andere Nutzer der Maschine sieht — dagegen hilft nachträglich nichts. Dazu manipulierte macSCP fremde Shell-History, shell-spezifisch (bash/zsh/fish unterscheiden sich), und löschte dabei Einträge, die der Nutzer behalten wollte. |
-| Eigene Shell statt Login-Shell | Umgeht die History-Datei, aber `ps` bleibt. Und das Panel wäre nicht mehr **seine** Shell: Prompt, Aliases, Environment fielen weg. Großer Preis, Teilnutzen, und eine Änderung am ganzen Terminal statt an Snippets. |
+| Passwordless SSH instead of passwords | Solves a different problem. macSCP's **own** connection has supported keys and agent since M10d. The snippet problem sits deeper: commands that need a password **on the target host** (`mysql -p`, `sudo`, a second hop). For the second hop, **agent forwarding** would be the answer — explicitly excluded in M10d and tracked in the backlog as its own milestone. |
+| Delete history afterward | Protects nothing and does damage. The command sits in `ps` during execution, where any other user of the machine sees it — nothing after the fact helps against that. On top of that, macSCP would be manipulating someone else's shell history, shell-specific (bash/zsh/fish differ), and would delete entries the user wanted to keep. |
+| A dedicated shell instead of the login shell | Sidesteps the history file, but `ps` remains. And the panel would no longer be **the user's own** shell: prompt, aliases, environment would be gone. High cost, partial benefit, and a change to the whole terminal instead of to snippets. |
 
-**Was trägt:** Zugangsdaten gehören nicht in die Kommandozeile — weder ins
-Snippet noch von Hand getippt. Die Werkzeuge haben eigene Wege
-(`mysql --defaults-file`, `sudo -S` über stdin, SSH mit Schlüssel).
-Der Editor sagt das mit Begründung, statt Sicherheit vorzutäuschen.
+**What holds:** credentials do not belong on the command line — neither
+in a snippet nor typed by hand. The tools have their own paths
+(`mysql --defaults-file`, `sudo -S` via stdin, SSH with a key).
+The editor says so, with reasoning, instead of faking security.
 
-Wer später echte Zugangsdaten im Terminal braucht, bekommt sie über
-**Agent-Forwarding** als eigenes Feature — nicht über ein Passwortfeld an
-Snippets.
+Anyone who later needs real credentials in the terminal gets them via
+**agent forwarding** as its own feature — not via a password field on
+snippets.
 
-## Modell und Ablage
+## Model and storage
 
 ```swift
 public struct Snippet: Identifiable, Codable, Equatable, Sendable {
@@ -69,100 +69,100 @@ public struct Snippet: Identifiable, Codable, Equatable, Sendable {
 }
 ```
 
-`SnippetStore` schreibt `snippets.json` in dasselbe Verzeichnis wie
-`known_hosts.json` und `managed_keys.json` — gleiche Bauart wie
-`KnownHostsStore`: zustandslos, atomare Schreibvorgänge, keine Secrets.
+`SnippetStore` writes `snippets.json` into the same directory as
+`known_hosts.json` and `managed_keys.json` — the same construction as
+`KnownHostsStore`: stateless, atomic writes, no secrets.
 
-**Global, nicht pro Host.** Wie Login-Sets und verwaltete Schlüssel. Eine
-Bindung an einzelne Sitzungen hat niemand verlangt und zöge Export, Import
-und Gruppen mit sich.
+**Global, not per host.** Like login sets and managed keys. Nobody has
+asked for binding to individual sessions, and that would drag along
+export, import, and groups.
 
-## Ein Snippet ist genau eine Kommandozeile
+## A snippet is exactly one command line
 
-**Eingebettete Zeilenumbrüche werden beim Speichern abgelehnt.** Sonst wäre
-„einfügen" gelogen: alle Zeilen bis auf die letzte liefen sofort, ohne dass
-jemand Enter gedrückt hätte. Mehrzeilige Skripte sind ein anderes Feature.
+**Embedded line breaks are rejected on save.** Otherwise "insert" would
+be a lie: every line but the last would run immediately, without
+anyone pressing Enter. Multi-line scripts are a different feature.
 
-Die Ablehnung ist eine Store-/Modellregel, kein Formular-Detail — sie muss
-auch für einen von Hand bearbeiteten `snippets.json` gelten.
+The rejection is a store/model rule, not a form detail — it must also
+hold for a hand-edited `snippets.json`.
 
-## Das Auslösen
+## Triggering
 
-`send(Array(command.utf8))`, bei `runsImmediately` gefolgt vom
-Zeilenabschluss-Byte. Mehr ist es nicht; die Gegenseite ist ein echtes PTY
-und zeigt den eingefügten Text in ihrer Eingabezeile.
+`send(Array(command.utf8))`, followed by the line-terminator byte when
+`runsImmediately`. That is all it is; the far end is a real PTY and
+shows the inserted text in its own input line.
 
-> **Welches Byte, ist zu prüfen und nicht zu raten.** Die Eingabetaste
-> schickt an einem Terminal üblicherweise **CR** (`0x0D`), nicht LF
-> (`0x0A`) — ein `\n` kann in einer PTY-Zeilendisziplin wirkungslos sein,
-> und dann führt ein als „sofort ausführend" markiertes Snippet nichts aus.
-> Der Implementierer stellt fest, was SwiftTerm und die Gegenseite für die
-> Eingabetaste tatsächlich senden, und pinnt das Ergebnis in einem Test.
-> **Diese Spec legt sich bewusst nicht fest**; sie legt nur fest, dass die
-> Antwort gemessen wird.
+> **Which byte is to be checked, not guessed.** On a terminal, the
+> Enter key usually sends **CR** (`0x0D`), not LF
+> (`0x0A`) — a `\n` can be inert under a PTY's line discipline,
+> and then a snippet marked "runs immediately" executes nothing.
+> The implementer determines what SwiftTerm and the far end actually
+> send for the Enter key, and pins the result in a test.
+> **This spec deliberately does not commit to an answer**; it only
+> commits to the answer being measured.
 
-**Ohne verbundene Sitzung im aktiven Tab sind die Menüeinträge deaktiviert**
-— es gibt kein `send`-Ziel, und ein Eintrag, der ins Leere läuft, ist
-schlechter als einer, der grau ist.
+**Without a connected session in the active tab, the menu entries are
+disabled** — there is no `send` target, and an entry that fires into
+nothing is worse than one that is greyed out.
 
-Die Bedingung ist nicht neu zu erfinden: die beiden vorhandenen Einträge im
-Terminal-Menü benutzen bereits
+The condition is not to be reinvented: the two existing entries in the
+Terminal menu already use
 `!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell`.
-Snippets nehmen dieselbe.
+Snippets adopt the same one.
 
-## Verwaltung
+## Management
 
-Ein Sheet wie die Login-Sets und die SSH-Schlüssel: Liste, Suchfeld (das
-`SheetSearchField` aus M18 existiert bereits), Anlegen, Bearbeiten,
-Löschen. Dort steht der Hinweis zu Zugangsdaten.
+A sheet like login sets and SSH keys: list, search field (the
+`SheetSearchField` from M18 already exists), create, edit,
+delete. The credentials notice lives there.
 
-Der **Shortcuts-Katalog aus M11q wird mitgepflegt**: er ist von Hand
-gewartet, und sein eigener Doc-Kommentar nennt das als Pflicht bei jeder
-Kürzel-Änderung.
+**The shortcuts catalog from M11q is kept in sync**: it is hand
+maintained, and its own doc comment names this as a requirement for
+every shortcut change.
 
-## Was ausdrücklich **nicht** dazugehört
+## What explicitly does **not** belong here
 
-- **Platzhalter** (`{{pfad}}`, aktuelles Verzeichnis).
-- **Export/Import.** Die Envelope-Maschinerie aus M19 ist dafür da, aber
-  niemand hat es verlangt; Snippets enthalten keine Secrets, ein späterer
-  Nachbau ist billig.
-- **Bindung an Hosts, Gruppen oder Protokolle.**
-- **Mehrzeilige Skripte.**
-- **Agent-Forwarding** — eigener Meilenstein, siehe oben.
+- **Placeholders** (`{{path}}`, current directory).
+- **Export/import.** The envelope machinery from M19 exists for this,
+  but nobody has asked for it; snippets contain no secrets, and a later
+  rebuild is cheap.
+- **Binding to hosts, groups, or protocols.**
+- **Multi-line scripts.**
+- **Agent forwarding** — its own milestone, see above.
 
-## Erfolgskriterien
+## Success criteria
 
-| # | Kriterium | Nachweis |
+| # | Criterion | Evidence |
 |---|---|---|
-| 1 | Ein eingefügtes Snippet endet **ohne** Zeilenabschluss | Test über die erzeugten Bytes |
-| 2 | Ein ausführendes Snippet endet mit **genau einem** Zeilenabschluss, und zwar dem, den die Eingabetaste sendet | Test über die erzeugten Bytes; das Byte ist gemessen, nicht angenommen (siehe oben) |
-| 3 | Ein Kommando mit Zeilenumbruch wird abgelehnt | Test, auch für einen von Hand geschriebenen Store-Inhalt |
-| 4 | Der Store überlebt Schreiben und Lesen unverändert | Roundtrip-Test |
-| 5 | Ein fehlender Store liefert eine leere Liste, keinen Fehler | Test — dieselbe Zusicherung wie bei `KnownHostsStore` |
-| 6 | Ausführende Snippets stehen im Menü in einem eigenen Abschnitt | Review; App-seitig, kein Test möglich |
-| 7 | Ohne verbundene Sitzung sind die Einträge deaktiviert | Review; App-seitig |
-| 8 | Der Store enthält nie ein Secret | Review; die Regel steht als Doc-Zusage am Typ |
-| 9 | Alle vier Kataloge tragen die neuen Schlüssel | vorhandener Wächtertest, `plutil -lint` |
-| 10 | Der Shortcuts-Katalog nennt die neuen Kürzel | Review gegen den Katalog |
+| 1 | An inserted snippet ends **without** a line terminator | test over the generated bytes |
+| 2 | An executing snippet ends with **exactly one** line terminator, namely the one the Enter key sends | test over the generated bytes; the byte is measured, not assumed (see above) |
+| 3 | A command with a line break is rejected | test, including for a hand-written store content |
+| 4 | The store survives a write and read unchanged | round-trip test |
+| 5 | A missing store returns an empty list, not an error | test — the same guarantee as `KnownHostsStore` |
+| 6 | Executing snippets appear in the menu in their own section | review; app-side, no test possible |
+| 7 | Without a connected session, the entries are disabled | review; app-side |
+| 8 | The store never contains a secret | review; the rule is a doc commitment on the type |
+| 9 | All four catalogs carry the new keys | existing guard test, `plutil -lint` |
+| 10 | The shortcuts catalog names the new shortcut | review against the catalog |
 
-## Prüfbarkeit, ehrlich
+## Testability, honestly
 
-Store, Modell, die Newline-Ablehnung und die Byte-Kodierung liegen in Core
-und sind vollständig testbar. **Die Menü-Verdrahtung ist App-seitig und
-bleibt ungepinnt** — dieselbe Grenze, die M29 offengelegt hat: es gibt kein
-View-Testwerkzeug im Projekt, und das ist eine bewusste Entscheidung.
+Store, model, the newline rejection, and the byte encoding sit in Core
+and are fully testable. **The menu wiring is app-side and stays
+unpinned** — the same boundary M29 exposed: there is no view test
+tooling in the project, and that is a deliberate decision.
 
-Kriterien 6 und 7 sind deshalb Review-Punkte, keine Tests, und der
-Abschlussbericht muss das so sagen.
+Criteria 6 and 7 are therefore review points, not tests, and the
+closing report must say so.
 
-## Für die Release-Notes
+## For the release notes
 
-**Ein Satz.** Häufig gebrauchte Befehle lassen sich als Snippets ablegen und
-im Terminal einfügen.
+**One sentence.** Frequently used commands can be saved as snippets and
+inserted into the terminal.
 
-## Offen, bewusst nicht Teil davon
+## Open, deliberately not part of this
 
-- Agent-Forwarding (eigener Meilenstein, Backlog seit M10d).
-- Platzhalter, Export/Import, mehrzeilige Skripte.
-- M29-P3: die Entkernung des Rests von `ContentView`.
-- Der Release-Stau: 410 Commits vor `origin/main`.
+- Agent forwarding (its own milestone, backlog since M10d).
+- Placeholders, export/import, multi-line scripts.
+- M29-P3: hollowing out the rest of `ContentView`.
+- The release backlog: 410 commits ahead of `origin/main`.

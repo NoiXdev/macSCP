@@ -1,257 +1,270 @@
-# M8 — Tabs für mehrere aktive Sessions (Design)
+# M8 — Tabs for multiple active sessions (Design)
 
-Datum: 2026-07-27 · Status: vom Maintainer freigegeben (Blöcke 1+2 einzeln bestätigt) ·
+Date: 2026-07-27 · Status: approved by the maintainer (blocks 1+2 confirmed individually) ·
 Mockup: `docs/design/assets/m8-tabs-mockup.html`
 
-## Ziel
+## Goal
 
-Ein Fenster hält mehrere gleichzeitig aktive SSH-Sessions als Tabs (WinSCP-Modell).
-Hintergrund-Tabs laufen vollständig weiter (Transfers, Shell, Edit-Watcher). Das
-Kontextmenü überträgt Auswahlen in andere Sessions — inklusive direktem
-Server-zu-Server-Stream durch die App.
+One window holds several simultaneously active SSH sessions as tabs (the WinSCP model).
+Background tabs keep running fully (transfers, shell, edit watcher). The
+context menu carries selections into other sessions — including a direct
+server-to-server stream through the app.
 
-**Maintainer-Entscheidungen (2026-07-27):**
+**Maintainer decisions (2026-07-27):**
 
-1. Neue Tabs entstehen über BEIDES: ⊕-Tab (leerer Tab = Verbindungsformular) UND
-   Sidebar-Klick, der bei verbundenem aktivem Tab einen neuen Tab öffnet.
-2. „Übertragen zu Session xy" aus beiden Panes, inkl. Remote→Remote direkt
-   (Stream durch die App, keine Zwischendatei).
-3. Hintergrund-Tabs laufen weiter; Tabs tragen Aktivitäts-/Achtung-Indikatoren;
-   Schließen mit aktiven Transfers fragt nach.
-4. Bandbreiten-Limits gelten app-global über alle Tabs (ein Token-Bucket pro
-   Richtung app-weit).
-5. Ansatz A: eigener Tab-Strip im Fenster (EINE Sidebar; native Fenster-Tabs
-   verworfen). Release v1.1.0 erst NACH M8 (bündelt M7+M8).
+1. New tabs arise via BOTH: the ⊕ tab (an empty tab = connection form) AND
+   a sidebar click, which opens a new tab when the active tab is connected.
+2. "Transfer to session xy" from both panes, including remote→remote directly
+   (stream through the app, no intermediate file).
+3. Background tabs keep running; tabs carry activity/attention indicators;
+   closing with active transfers asks for confirmation.
+4. Bandwidth limits apply app-globally across all tabs (one token bucket per
+   direction, app-wide).
+5. Approach A: a dedicated tab strip in the window (ONE sidebar; native window
+   tabs were dropped). Release v1.1.0 only comes AFTER M8 (it bundles M7+M8).
 
-**Architektur-Invariante präzisiert:** „eine SSH-Verbindung pro **Tab**; die
-Tab-Kollektion gehört dem Fenster." Multi-Fenster bleibt v2-offen; nichts wird
-App-Singleton außer den bereits app-weiten Objekten (SettingsStore, neu: die
-beiden Bandbreiten-Buckets).
+**Architecture invariant, sharpened:** "one SSH connection per **tab**; the
+tab collection belongs to the window." Multi-window stays open for v2; nothing
+becomes an app singleton besides the objects that already are app-wide
+(SettingsStore, and newly: the two bandwidth buckets).
 
-## Aufteilung
+## Split
 
-- **M8a — Tab-Infrastruktur:** TabsViewModel (Core), Tab-Strip (UI), Pro-Tab-
-  Sessions/Queues/Bridges, app-globale Buckets, Fenster-/Sidebar-/Shortcut-
-  Verhalten, Indikatoren, Schließen-Semantik.
-- **M8b — Cross-Session-Transfers:** Übertragen-Submenü mit Ziel-Sessions,
-  Remote→Remote, zweiter Rig-Container, Schließen-Warnung für Ziel-Tabs.
+- **M8a — Tab infrastructure:** TabsViewModel (Core), tab strip (UI), per-tab
+  sessions/queues/bridges, app-global buckets, window/sidebar/shortcut
+  behavior, indicators, close semantics.
+- **M8b — Cross-session transfers:** the transfer submenu with target
+  sessions, remote→remote, a second rig container, close warning for target
+  tabs.
 
-Jeder Teil ist für sich lauffähig; eigene Pläne, gemeinsames Spec (dieses).
+Each part stands on its own; separate plans, one shared spec (this one).
 
 ---
 
-## 1. State-Modell (M8a)
+## 1. State model (M8a)
 
 ### 1.1 SessionTab
 
-`ContentView` ersetzt `session: BrowserSession?` durch:
+`ContentView` replaces `session: BrowserSession?` with:
 
-- `tabs: [SessionTab]` (mindestens 1 Element, Reihenfolge = Strip-Reihenfolge)
-- `activeTabID: UUID?` (immer auf ein existierendes Element gerichtet)
+- `tabs: [SessionTab]` (at least 1 element, order = strip order)
+- `activeTabID: UUID?` (always points at an existing element)
 
-`SessionTab` (App-Layer, Referenztyp `@MainActor @Observable final class`) bündelt
-den bisher fensterweiten Zustand PRO TAB:
+`SessionTab` (App layer, reference type `@MainActor @Observable final class`)
+bundles the state that used to be window-wide, PER TAB:
 
-- `id: UUID` (Tab-Identität; unabhängig von `BrowserSession.id`)
-- `connectionViewModel: ConnectionViewModel` (Formular-Zustand leerer Tabs;
-  jeder Tab hat sein eigenes)
-- `session: BrowserSession?` (nil = Formular-Tab)
-- `transferQueue: TransferQueueViewModel` (pro Tab; überlebt Disconnect im Tab —
-  Resume-Banner-Verhalten wie heute, nur tab-lokal)
-- `conflictBridge: ConflictPromptBridge` (pro Tab)
-- `titleName: String?` (bisheriges `sessionTitleName`, pro Tab)
-- `editErrorMessage: String?` (pro Tab)
-- `activeStoredSessionID: UUID?` (bisheriges `activeSessionID`, pro Tab —
-  die Sidebar highlightet den Wert des AKTIVEN Tabs)
-- `isReconnecting: Bool` (pro Tab; sperrt nur die eigenen Verbindungswege)
+- `id: UUID` (tab identity; independent of `BrowserSession.id`)
+- `connectionViewModel: ConnectionViewModel` (form state of empty tabs;
+  every tab has its own)
+- `session: BrowserSession?` (nil = form tab)
+- `transferQueue: TransferQueueViewModel` (per tab; survives disconnecting
+  the tab — resume-banner behavior as today, just tab-local)
+- `conflictBridge: ConflictPromptBridge` (per tab)
+- `titleName: String?` (the former `sessionTitleName`, per tab)
+- `editErrorMessage: String?` (per tab)
+- `activeStoredSessionID: UUID?` (the former `activeSessionID`, per tab —
+  the sidebar highlights the value of the ACTIVE tab)
+- `isReconnecting: Bool` (per tab; locks only its own connection paths)
 
-`BrowserSession` selbst bleibt unverändert (id/localFS/remoteFS/local/remote/
+`BrowserSession` itself stays unchanged (id/localFS/remoteFS/local/remote/
 terminal/editManager).
 
-### 1.2 TabsViewModel (Core, testbar)
+### 1.2 TabsViewModel (Core, testable)
 
-Die Tab-VERWALTUNGSREGELN liegen als generische Zustandsmaschine in
-`Sources/macSCPCore/Presentation/TabsViewModel.swift` — ohne UI- und ohne
-SSH-Abhängigkeit (Lektion M7a: das App-Target ist untestbar). Generisch über das
-Payload (`TabsViewModel<Payload>` oder Protokoll-basiert), die App instanziiert
-es mit `SessionTab`.
+The tab MANAGEMENT RULES live as a generic state machine in
+`Sources/macSCPCore/Presentation/TabsViewModel.swift` — without UI and
+without SSH dependencies (lesson M7a: the App target is untestable). Generic
+over the payload (`TabsViewModel<Payload>` or protocol-based), the app
+instantiates it with `SessionTab`.
 
-Regeln (alle unit-getestet):
+Rules (all unit-tested):
 
-- `addTab()` → neuer Tab ans Ende, wird aktiv (⊕ / ⌘N).
-- `closeTab(id:)` → entfernt; war er aktiv, wird der RECHTE Nachbar aktiv, sonst
-  der linke (Browser-Konvention); der letzte Tab ist NICHT entfernbar (die App
-  interpretiert „⌘W auf letztem unverbundenen Tab" als Fenster-Schließen).
-- `activate(id:)`; `activeTab`-Accessor.
-- „Ziel-Tab für Sidebar-Connect": aktiver Tab unverbunden → dieser Tab; aktiver
-  Tab verbunden → `addTab()`. (Das Prädikat „unverbunden" liefert die App über
-  eine Closure/Protokoll-Anforderung, damit die Regel testbar bleibt.)
+- `addTab()` → a new tab at the end, becomes active (⊕ / ⌘N).
+- `closeTab(id:)` → removes it; if it was active, the RIGHT neighbor becomes
+  active, otherwise the left one (browser convention); the last tab is NOT
+  removable (the app interprets "⌘W on the last unconnected tab" as closing
+  the window).
+- `activate(id:)`; `activeTab` accessor.
+- "Target tab for sidebar connect": active tab unconnected → this tab; active
+  tab connected → `addTab()`. (The "unconnected" predicate is supplied by the
+  app via a closure/protocol requirement, so the rule stays testable.)
 
-### 1.3 Rendering & Lebenszyklus
+### 1.3 Rendering & lifecycle
 
-- Nur der AKTIVE Tab ist im View-Baum gemountet. Hintergrund-Tabs leben als
-  State weiter — ihre Queues, Shells und Watcher laufen ohne Zutun.
-- Terminal-Remount beim Tab-Wechsel läuft über den vorhandenen
-  256-KiB-Replay-Puffer (M5a); die Panes remounten über die bestehenden VMs.
-- Konflikt-Sheets hängen am Tab-Inhalt: Ein Konflikt in einem Hintergrund-Tab
-  parkt den Transfer (FIFOGate, vorhanden) und setzt den Achtung-Indikator; das
-  Sheet erscheint erst beim Wechsel in den Tab. Kein Sheet unterbricht je den
-  aktiven Tab wegen eines fremden Tabs.
-- Teardown beim Tab-Schließen = heutige `teardownSession`-Reihenfolge, tab-lokal:
+- Only the ACTIVE tab is mounted in the view tree. Background tabs keep
+  living as state — their queues, shells and watchers run without further
+  intervention.
+- Terminal remount on tab switch goes through the existing 256 KiB replay
+  buffer (M5a); the panes remount via the existing VMs.
+- Conflict sheets hang off the tab content: a conflict in a background tab
+  parks the transfer (FIFOGate, already present) and sets the attention
+  indicator; the sheet only appears when switching into that tab. No sheet
+  ever interrupts the active tab because of a foreign tab.
+- Teardown on tab close = today's `teardownSession` order, tab-local:
   `conflictBridge.dismiss()` → `queue.cancelAll()` → `editManager.stopAll()` →
   `terminal.shutdown()` → `remote.disconnect()`.
 
-## 2. Tab-Strip (M8a, UI)
+## 2. Tab strip (M8a, UI)
 
-Maße/Optik laut Mockup (`m8-tabs-mockup.html`), Design-Tokens vorhanden:
+Dimensions/look per the mockup (`m8-tabs-mockup.html`), design tokens
+present:
 
-- Strip 30 pt hoch, zwischen Toolbar und Paneheads, Hairline unten, Fläche
-  `paper`.
-- Aktiver Tab: Fläche `card`, Titel 12 pt semibold `ink`, 2-pt-Unterstreichung
-  `remoteBlue` an der Unterkante. Inaktive: `inkSecondary`, Trenner-Hairline
-  rechts. Max-Breite ~200 pt, Titel mit Ellipsis.
-- ✕ (15 pt Hit-Area) nur bei Hover des Tabs sichtbar; ⊕ rechts (30 pt).
-- Formular-Tab-Titel: „Neue Verbindung" (lokalisiert), kursiv, `inkTertiary`.
-- Indikator (7-pt-Punkt, links vom Titel): Bernstein = Upload aktiv, Blau =
-  Download aktiv (bei beidem: Richtung des zuletzt GESTARTETEN Items), dezentes
-  Pulsieren; Rot statisch = Achtung (Konflikt wartet ODER fehlgeschlagene
-  Transfers seit letztem Besuch); kein Punkt = idle. Priorität: Rot > aktiv.
-  a11y: Indikator-Zustand als accessibilityValue am Tab.
-- **Jungfräulicher Zustand** (genau ein unverbundener Formular-Tab): Strip
-  unsichtbar — Startbild identisch zu heute.
+- Strip 30 pt tall, between toolbar and pane heads, hairline at the bottom,
+  surface `paper`.
+- Active tab: surface `card`, title 12 pt semibold `ink`, 2-pt underline
+  `remoteBlue` at the bottom edge. Inactive: `inkSecondary`, separator
+  hairline on the right. Max width ~200 pt, title with ellipsis.
+- ✕ (15 pt hit area) only visible on tab hover; ⊕ on the right (30 pt).
+- Form-tab title: "New connection" (localized), italic, `inkTertiary`.
+- Indicator (7-pt dot, left of the title): amber = upload active, blue =
+  download active (with both: direction of the most recently STARTED item),
+  subtle pulsing; static red = attention (a conflict waiting OR failed
+  transfers since the last visit); no dot = idle. Priority: red > active.
+  a11y: indicator state as accessibilityValue on the tab.
+- **Pristine state** (exactly one unconnected form tab): the strip is
+  invisible — startup look identical to today.
 
-## 3. Fenster, Sidebar, Shortcuts (M8a)
+## 3. Window, sidebar, shortcuts (M8a)
 
-- **Fenstergröße:** Die aktive Grow/Shrink-Logik (700×460 ↔ ≥930×620) gilt nur
-  im Ein-Tab-Zustand. Ab dem zweiten Tab ODER sobald der einzige Tab verbunden
-  ist, bleibt das Fenster auf Browser-Größe; ein Formular-Tab zeigt das Formular
-  im großen Fenster oben ausgerichtet. Schrumpfen erst, wenn wieder genau ein
-  unverbundener Tab übrig ist. `lastBrowserSize` bleibt fensterweit.
-- **Fenstertitel:** „macSCP — ‹titleName des aktiven Tabs›", sonst „macSCP".
-- **Toolbar** wirkt auf den aktiven Tab (Upload/Download/⌘T/Trennen).
-  „Trennen" macht den Tab zum Formular-Tab (Queue + Unterbrochene bleiben).
-- **Sidebar (EINE, unverändert links):**
-  - Session-Klick: aktiver Tab unverbunden → Connect IM Tab (heutiges
-    Verhalten); verbunden → neuer Tab + Connect dort.
-  - Die pauschale Sperre `sidebarDisabled` entfällt; gesperrt sind Klicks nur,
-    solange der Tab, der den Connect ausführen würde, selbst `isReconnecting`/
-    connecting ist. Laufende Transfers sperren die Sidebar NICHT mehr (ein
-    Klick zerstört keine Session mehr).
-  - „Bearbeiten…": aktiver Tab unverbunden → Formular im Tab; sonst neuer
-    Formular-Tab mit Edit-Kontext.
-  - Highlight = `activeStoredSessionID` des aktiven Tabs.
-  - Löschen einer gespeicherten Session lässt verbundene Tabs unberührt (nur
-    Highlight-Reset wie heute).
-- **Shortcuts:** ⌘T Terminal (bleibt). ⌘N neuer Tab (Multi-Fenster ist v2).
-  ⌘W schließt den aktiven Tab; ist er der letzte UND unverbunden, schließt es
-  das Fenster (Verhaltensänderung dokumentieren). ⌃Tab/⌃⇧Tab Zyklus, ⌘1–⌘9
-  Direktwahl.
-- **Settings-Verkabelung:** `showHiddenFiles` wirkt auf ALLE Tabs (Filter +
-  Refresh je Session). `maxConcurrentTransfers` wirkt pro Tab-Queue (bewusst:
-  Pro-Verbindung-Limit, Channel-Multiplex). Bandbreite: siehe 4.
+- **Window size:** the active grow/shrink logic (700×460 ↔ ≥930×620) applies
+  only in the single-tab state. From the second tab onward, OR as soon as the
+  only tab is connected, the window stays at browser size; a form tab shows
+  the form top-aligned in the large window. It only shrinks back once exactly
+  one unconnected tab remains again. `lastBrowserSize` stays window-wide.
+- **Window title:** "macSCP — ‹titleName of the active tab›", otherwise
+  "macSCP".
+- **Toolbar** acts on the active tab (upload/download/⌘T/disconnect).
+  "Disconnect" turns the tab into a form tab (queue and interrupted transfers
+  remain).
+- **Sidebar (ONE, unchanged, on the left):**
+  - Session click: active tab unconnected → connect IN the tab (today's
+    behavior); connected → new tab + connect there.
+  - The blanket `sidebarDisabled` lock goes away; clicks are locked only
+    while the tab that would perform the connect is itself `isReconnecting`/
+    connecting. Running transfers no longer lock the sidebar (a click no
+    longer destroys a session).
+  - "Edit…": active tab unconnected → form in the tab; otherwise a new form
+    tab with edit context.
+  - Highlight = `activeStoredSessionID` of the active tab.
+  - Deleting a stored session leaves connected tabs untouched (only a
+    highlight reset, as today).
+- **Shortcuts:** ⌘T terminal (stays). ⌘N new tab (multi-window is v2).
+  ⌘W closes the active tab; if it's the last one AND unconnected, it closes
+  the window (document this behavior change). ⌃Tab/⌃⇧Tab cycle, ⌘1–⌘9 direct
+  selection.
+- **Settings wiring:** `showHiddenFiles` affects ALL tabs (filter + refresh
+  per session). `maxConcurrentTransfers` affects the per-tab queue
+  (deliberate: per-connection limit, channel multiplexing). Bandwidth: see
+  4.
 
-## 4. App-globale Bandbreiten-Buckets (M8a)
+## 4. App-global bandwidth buckets (M8a)
 
-- Die beiden Richtungs-Buckets (`BandwidthBucket` Up/Down) werden EINMAL in
-  `MacSCPApp` erzeugt (neben dem `SettingsStore`) und in jede Tab-Queue
-  injiziert. `TransferQueueViewModel` erhält dafür einen Init-/Injektionsweg
-  für extern verwaltete Buckets; die heutige interne Erzeugung über
-  `uploadLimitBytesPerSec`-didSet entfällt zugunsten der injizierten Instanzen.
-- Limit-Änderungen re-raten die LEBENDEN Instanzen (Generation-Counter aus
-  M6b bleibt); Semantik: 300 KB/s = 300 über alle Tabs zusammen (geteilt, wie
-  der M6a-Live-Beweis, nur app-weit).
-- **Remote→Remote zählt in BEIDEN Buckets** (real Down- + Upload der Leitung):
-  Der Engine-Aufruf bekommt für solche Transfers beide Buckets; gedrosselt wird
-  auf das Minimum beider Freigaben. (Erweiterung `copyFile(throttle:)` um einen
-  zweiten optionalen Bucket; Reihenfolge der Token-Entnahme deadlockfrei —
-  erst warten auf den knapperen, dann nachziehen, Details im Plan.)
-- 0 = aus (wie heute); Mischbetrieb (ein Limit gesetzt, eins aus) unverändert.
+- The two directional buckets (`BandwidthBucket` up/down) are created ONCE in
+  `MacSCPApp` (alongside the `SettingsStore`) and injected into every tab
+  queue. `TransferQueueViewModel` gets an init/injection path for
+  externally-managed buckets for this purpose; today's internal creation via
+  `uploadLimitBytesPerSec`'s didSet goes away in favor of the injected
+  instances.
+- Limit changes re-rate the LIVE instances (the generation counter from M6b
+  stays); semantics: 300 KB/s = 300 across all tabs combined (shared, like
+  the M6a live proof, just app-wide).
+- **Remote→remote counts against BOTH buckets** (it is really a download AND
+  an upload on the line): the engine call gets both buckets for such
+  transfers, throttled to the minimum of both allowances. (Extend
+  `copyFile(throttle:)` with a second optional bucket; token-taking order is
+  deadlock-free — wait on the tighter one first, then draw the other, details
+  in the plan.)
+- 0 = off (as today); mixed operation (one limit set, one off) unchanged.
 
-## 5. Cross-Session-Transfers (M8b)
+## 5. Cross-session transfers (M8b)
 
-### 5.1 Semantik
+### 5.1 Semantics
 
-- Das Kontextmenü-„Übertragen" wird zum SUBMENÜ: erster Eintrag wie bisher
-  („Zum anderen Pane" — Wortlaut heute), dann Separator, dann JE ein Eintrag
-  pro ANDEREM verbundenen Tab: „Zu ‚‹titleName›'" mit dem aktuellen Remote-Pfad
-  des Ziel-Tabs als Untertitel/Hinweis. Formular-Tabs und der eigene Tab
-  erscheinen NIE. Kein anderer verbundener Tab → Submenü enthält nur den
-  bisherigen Eintrag (Optik wie heute).
-- Ziel ist IMMER das Remote des Ziel-Tabs, Zielverzeichnis = dessen
-  `remote.currentPath` zum Zeitpunkt des Klicks.
-  - Lokale Auswahl → Upload zum Ziel-Remote.
-  - Remote-Auswahl → direkter Remote→Remote-Stream durch die App (Chunk-weise,
-    keine Zwischendatei; Durchsatz = min aus Download A und Upload B).
-- Symlinks: wie bisher von Übertragungen ausgeschlossen (Menü-Regeln M7b
-  unverändert; Multi-Select überspringt Symlinks im Baum wie gehabt).
-- Ordner laufen über `enqueueTree` (vorhandene Rekursion inkl. Konflikt- und
-  Gruppenabbruch-Maschinerie).
+- The context menu's "Transfer" becomes a SUBMENU: first entry as before
+  ("To the other pane" — today's wording), then a separator, then ONE entry
+  per OTHER connected tab: "To '‹titleName›'" with the target tab's current
+  remote path as subtitle/hint. Form tabs and the tab's own entry NEVER
+  appear. No other connected tab → the submenu contains only the previous
+  entry (look as today).
+- The target is ALWAYS the target tab's remote, target directory =
+  its `remote.currentPath` at the time of the click.
+  - Local selection → upload to the target remote.
+  - Remote selection → a direct remote→remote stream through the app
+    (chunk-wise, no intermediate file; throughput = min of download A and
+    upload B).
+- Symlinks: excluded from transfers as before (menu rules from M7b
+  unchanged; multi-select skips symlinks in the tree as before).
+- Folders go through `enqueueTree` (existing recursion including conflict-
+  and group-abort machinery).
 
-### 5.2 Queue-Besitz & Konflikte
+### 5.2 Queue ownership & conflicts
 
-- Der Job landet in der Queue des QUELL-Tabs: Dort wurde die Aktion ausgelöst,
-  dort erscheinen Fortschritt, Fehler, Konflikt-Sheets (Bridge des Quell-Tabs).
-- Konfliktprüfung läuft gegen das Ziel-FS (destination) — M5b-Maschinerie
-  unverändert (Umbenennen/Überspringen/Überschreiben/applyToAll).
-- Nach Abschluss refresht das REMOTE-Pane des ZIEL-Tabs (weak-Capture wie
-  bisher üblich); zusätzlich das Quell-Pane nur, wo heute schon üblich.
-- Bandbreite: lokale→Remote-Cross-Transfers zählen im Upload-Bucket;
-  Remote→Remote in beiden (Abschnitt 4).
+- The job lands in the SOURCE tab's queue: that's where the action was
+  triggered, that's where progress, errors, conflict sheets appear (the
+  source tab's bridge).
+- Conflict checking runs against the destination FS — M5b machinery
+  unchanged (rename/skip/overwrite/applyToAll).
+- After completion, the TARGET tab's REMOTE pane refreshes (weak capture as
+  usual); additionally the source pane, only where that's already the
+  practice today.
+- Bandwidth: local→remote cross-transfers count against the upload bucket;
+  remote→remote against both (section 4).
 
-### 5.3 Kanten & Fehlerfälle
+### 5.3 Edges & error cases
 
-- **Ziel-Tab schließt während des Streams:** dessen Teardown reißt die
-  Ziel-Verbindung; der laufende Job im Quell-Tab endet über das vorhandene
-  M5d-Mapping (connectionFailed → unterbrochen bzw. fehlgeschlagen). Kein
-  Sonderpfad, kein Hänger.
-- **Schließen-Nachfrage erweitert:** Sie erscheint auch, wenn der Tab ZIEL
-  aktiver Transfers anderer Tabs ist (Text nennt das ausdrücklich).
-  Erkennung: die Queue-Items tragen ab M8b eine optionale Ziel-Tab-Referenz
-  (nur App-seitig, z. B. `destinationTabID`), über die beim Schließen
-  app-seitig geprüft wird.
-- **Ziel trennt zwischen Menü-Aufbau und Klick:** Der Enqueue läuft gegen das
-  tote FS und endet als normale Fehlermeldung in der Quell-Queue (kein Guard
-  nötig; fail-safe vorhanden).
-- Der Ziel-Pfad wird beim KLICK eingefroren (navigiert der Ziel-Tab danach
-  weiter, ändert das das Ziel nicht mehr) — bewusste Entscheidung, im
-  Submenü-Hinweis sichtbar.
+- **Target tab closes during the stream:** its teardown severs the target
+  connection; the running job in the source tab ends via the existing M5d
+  mapping (connectionFailed → interrupted or failed). No special path, no
+  hang.
+- **Close confirmation extended:** it also appears if the tab is the TARGET
+  of active transfers from other tabs (the text names this explicitly).
+  Detection: starting with M8b, queue items carry an optional target-tab
+  reference (App-side only, e.g. `destinationTabID`), checked app-side on
+  close.
+- **Target disconnects between menu build and click:** the enqueue runs
+  against the dead FS and ends as a normal error message in the source
+  queue (no guard needed; fail-safe already present).
+- The target path is frozen at CLICK time (if the target tab navigates
+  further afterward, that no longer changes the target) — a deliberate
+  decision, visible in the submenu hint.
 
-## 6. Menü-Modell (M8b, Core)
+## 6. Menu model (M8b, Core)
 
-`BrowserContextMenu` wird erweitert:
+`BrowserContextMenu` is extended:
 
-- Neuer Parameter: Liste der möglichen Ziel-Sessions
-  (`[CrossSessionTarget]`: `id`, `title`, `remotePath`) — die App übergibt die
-  anderen VERBUNDENEN Tabs.
-- `BrowserMenuEntry.transferToOtherPane` bleibt; neu:
-  `transferToSession(CrossSessionTarget)`. Der exhaustive Switch in
-  `ContentView` (M7b-Final-Review-Fix) erzwingt die Behandlung zur Compile-Zeit.
-- Regeln (unit-getestet): Ziel-Einträge nur, wenn die Auswahl übertragbar ist
-  (gleiche Gate wie `transferToOtherPane`); nie der eigene Tab; nie
-  Formular-Tabs; Reihenfolge = Strip-Reihenfolge.
+- New parameter: list of possible target sessions
+  (`[CrossSessionTarget]`: `id`, `title`, `remotePath`) — the app passes the
+  other CONNECTED tabs.
+- `BrowserMenuEntry.transferToOtherPane` stays; new:
+  `transferToSession(CrossSessionTarget)`. The exhaustive switch in
+  `ContentView` (M7b final-review fix) enforces handling it at compile time.
+- Rules (unit-tested): target entries only when the selection is
+  transferable (same gate as `transferToOtherPane`); never the tab's own
+  entry; never form tabs; order = strip order.
 
 ## 7. Tests
 
-- **TabsViewModel (Core, TDD):** add/close/activate, Nachbar-Wahl beim
-  Schließen des aktiven Tabs (rechts, sonst links), Letzter-Tab-Schutz,
-  Sidebar-Connect-Zielwahl (unverbunden=in place, verbunden=neuer Tab).
-- **Geteilte Buckets:** zwei Queues, ein Bucket-Paar, Aggregatrate hält das
-  Limit (Muster des M6a-Beweises als Unit-Test mit injizierter Uhr);
-  Doppel-Bucket-Drossel (Remote→Remote) inkl. Deadlock-Freiheit
-  (knapper Bucket zuerst).
-- **Menü-Modell:** Submenü-Regeln aus Abschnitt 6; Multi-Select/Symlink
-  unverändert (Regressionen).
-- **Remote→Remote gated:** ZWEITER Container im Test-Compose (Port 2223,
-  eigener Seed, gleiches Image/PIN); Test verbindet beide, kopiert
-  Server→Server, prüft Checksum; Cleanup beidseitig. Rig-Konvention
-  (start/stop, Haupt-Checkout) gilt unverändert.
-- **App-Seite** (Strip-Rendering, Sheet-Anbindung, Indikatoren): visueller
-  Smoke (Checkliste im Plan; Maintainer testet selbst).
+- **TabsViewModel (Core, TDD):** add/close/activate, neighbor choice when
+  closing the active tab (right, otherwise left), last-tab protection,
+  sidebar-connect target choice (unconnected = in place, connected = new
+  tab).
+- **Shared buckets:** two queues, one bucket pair, aggregate rate holds the
+  limit (pattern of the M6a proof as a unit test with an injected clock);
+  double-bucket throttle (remote→remote) including deadlock freedom (tighter
+  bucket first).
+- **Menu model:** submenu rules from section 6; multi-select/symlink
+  unchanged (regressions).
+- **Remote→remote, gated:** SECOND container in the test compose (port 2223,
+  its own seed, same image/PIN); test connects both, copies server→server,
+  checks checksum; cleanup on both sides. Rig convention (start/stop, main
+  checkout) applies unchanged.
+- **App side** (strip rendering, sheet wiring, indicators): visual smoke
+  (checklist in the plan; the maintainer tests it themselves).
 
-## 8. Bewusst NICHT in M8
+## 8. Deliberately NOT in M8
 
-- Tab-Reißen/-Andocken (Drag out), Tab-Umsortieren per Drag — Backlog.
-- Multi-Fenster (v2) und Persistenz offener Tabs über App-Neustart.
-- Ein app-globales Transfer-Fenster über alle Tabs (jede Queue-Bar bleibt
-  tab-lokal).
-- Warteschlangen-Übergabe beim Schließen (Jobs wandern nicht in andere Tabs).
+- Tab tear-off/docking (drag out), tab reordering via drag — backlog.
+- Multi-window (v2) and persisting open tabs across app restart.
+- One app-global transfer window across all tabs (every queue bar stays
+  tab-local).
+- Handing off queues on close (jobs do not migrate to other tabs).

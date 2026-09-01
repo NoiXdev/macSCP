@@ -1,50 +1,50 @@
-# M7b — Kontextmenü & Dialoge Implementation Plan
+# M7b — Context Menu & Dialogs Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rechtsklick-Kontextmenü in beiden Panes (Übertragen-Submenü, Öffnen, Umbenennen, Info & Rechte, Neuer Ordner, Pfad kopieren, Löschen) mit den zugehörigen Sheets — auf den M7a-FS-APIs.
+**Goal:** Right-click context menu in both panes (Transfer submenu, Open, Rename, Info & Permissions, New Folder, Copy Path, Delete) with the associated sheets — built on the M7a FS APIs.
 
-**Architecture:** Eine VM-Aktionsschicht (`RemoteBrowserViewModel` kapselt rename/chmod/delete/createFolder inkl. Refresh und lokalisierter Fehlertexte) plus ein UNIT-TESTBARES Menü-Modell in Core (`BrowserContextMenu.entries(for:side:)` — Lektion aus M7a: App-Target-Code ist untestbar, das Test-Target hängt nur an `macSCPCore`); der AppKit-Teil ist eine dünne `NSMenu`-Brücke im Tabellen-Coordinator, die Dialoge sind Pane-lokale SwiftUI-Sheets.
+**Architecture:** A VM action layer (`RemoteBrowserViewModel` encapsulates rename/chmod/delete/createFolder including refresh and localized error text) plus a UNIT-TESTABLE menu model in Core (`BrowserContextMenu.entries(for:side:)` — lesson from M7a: App-target code is untestable, the test target only links against `macSCPCore`); the AppKit part is a thin `NSMenu` bridge in the table coordinator, the dialogs are pane-local SwiftUI sheets.
 
-**Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, AppKit `NSMenu`/`NSMenuDelegate`, SwiftUI-Sheets, PolishedButtonStyle.
+**Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, AppKit `NSMenu`/`NSMenuDelegate`, SwiftUI sheets, PolishedButtonStyle.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-27-m7b-context-menu-design.md` — bindend. Branch: **develop**.
-- Review-Auflagen aus M7a (bindend): **kein Rechte-Editor für `.symlink`-Zeilen** (`setPermissions` folgt auf beiden Backends dem Ziel) — der Menüpunkt „Informationen & Rechte…" entfällt für Symlinks (Spec-Präzisierung); Protokoll-Doku-Zeile dazu; `MockRemoteFileSystem.rename` ist shallow für Verzeichnisse — Fix in T1, BEVOR VM-Tests darauf bauen.
-- Kein Verhalten bestehender Wege ändert sich (Doppelklick-Editor via `onOpenFile`, Toolbar-Buttons, Drag&Drop, Queue-Invarianten).
-- Fehlermeldungen über das bestehende lokalisierte Mapping (`RemoteBrowserViewModel.message(for:path:)` bzw. `TransferQueueViewModel.message(for:)`); kein `String(describing:)`.
-- Alle neuen UI-Texte katalogisiert EN/DE (`Sources/MacSCPApp/Resources/*/Localizable.strings`); Code + Kommentare NUR Englisch.
-- Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` + volle `swift test` nach jedem Task grün (Ausgangslage 340 Tests / 28 Suiten); gated Suiten nur in T4.
-- TDD für Core-Logik (VM-Aktionen, Menü-Modell, Permissions-Modell, Namens-Validierung).
-- Umgebungs-Hinweis: Bash-Fehler „claude-opus-4-8 is temporarily unavailable … cannot determine the safety" sind KEINE Permission-Denials — warten und identisch wiederholen.
+- Spec: `docs/superpowers/specs/2026-07-27-m7b-context-menu-design.md` — binding. Branch: **develop**.
+- Review requirements from M7a (binding): **no permissions editor for `.symlink` rows** (`setPermissions` follows the target on both backends) — the menu item „Informationen & Rechte…" is dropped for symlinks (spec refinement); a protocol doc line for that; `MockRemoteFileSystem.rename` is shallow for directories — fix in T1, BEFORE VM tests build on it.
+- No behavior of existing paths changes (double-click editor via `onOpenFile`, toolbar buttons, drag & drop, queue invariants).
+- Error messages go through the existing localized mapping (`RemoteBrowserViewModel.message(for:path:)` resp. `TransferQueueViewModel.message(for:)`); no `String(describing:)`.
+- All new UI text cataloged EN/DE (`Sources/MacSCPApp/Resources/*/Localizable.strings`); code + comments ENGLISH ONLY.
+- Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` + the full `swift test` green after every task (starting point 340 tests / 28 suites); gated suites only in T4.
+- TDD for Core logic (VM actions, menu model, permissions model, name validation).
+- Environment note: bash errors like „claude-opus-4-8 is temporarily unavailable … cannot determine the safety" are NOT permission denials — wait and retry identically.
 
 ## Schedule
 
-T1 (Core-Logik) → T2 (Menü) → T3 (Sheets) → T4 Abschluss (Koordinator).
+T1 (Core logic) → T2 (Menu) → T3 (Sheets) → T4 Wrap-up (coordinator).
 
 ---
 
-### Task 1: VM-Aktionsschicht + Permissions-/Namens-Modell
+### Task 1: VM action layer + permissions/name model
 
 **Files:**
 - Create: `Sources/macSCPCore/Presentation/PosixPermissions.swift`
-- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (Aktions-Methoden nach `refresh()` Zeile ~72)
-- Modify: `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift` (eine Doku-Zeile an `setPermissions`)
-- Modify: `Tests/macSCPCoreTests/MockRemoteFileSystem.swift` (Dir-Rename-Fix)
-- Test: `Tests/macSCPCoreTests/PosixPermissionsTests.swift` (neu), `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift`, `Tests/macSCPCoreTests/MockRemoteFileSystemTests.swift`
+- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (action methods after `refresh()` around line 72)
+- Modify: `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift` (one doc line on `setPermissions`)
+- Modify: `Tests/macSCPCoreTests/MockRemoteFileSystem.swift` (dir-rename fix)
+- Test: `Tests/macSCPCoreTests/PosixPermissionsTests.swift` (new), `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift`, `Tests/macSCPCoreTests/MockRemoteFileSystemTests.swift`
 
 **Interfaces:**
-- Produces (T2/T3 verlassen sich exakt hierauf):
-  - `RemoteBrowserViewModel.rename(_ item: RemoteFileItem, to newName: String) async -> String?` (nil = Erfolg; sonst lokalisierte Fehlermeldung — Sheet zeigt sie inline)
+- Produces (T2/T3 rely on this exactly):
+  - `RemoteBrowserViewModel.rename(_ item: RemoteFileItem, to newName: String) async -> String?` (nil = success; otherwise a localized error message — the sheet shows it inline)
   - `RemoteBrowserViewModel.createFolder(named name: String) async -> String?`
   - `RemoteBrowserViewModel.applyPermissions(_ permissions: UInt32, to item: RemoteFileItem) async -> String?`
   - `RemoteBrowserViewModel.deleteItems(_ doomed: [RemoteFileItem]) async -> String?`
   - `RemoteBrowserViewModel.isValidEntryName(_ name: String) -> Bool` (static)
-  - `struct PosixPermissions` (siehe unten)
+  - `struct PosixPermissions` (see below)
 
-- [x] **Step 1: Mock-Dir-Rename-Fix (Vorbedingung, TDD)** — failing Test in `MockRemoteFileSystemTests.swift`:
+- [x] **Step 1: Mock dir-rename fix (precondition, TDD)** — failing test in `MockRemoteFileSystemTests.swift`:
 
 ```swift
     @Test func renameDirectoryRekeysDescendants() async throws {
@@ -61,9 +61,9 @@ T1 (Core-Logik) → T2 (Menü) → T3 (Sheets) → T4 Abschluss (Koordinator).
     }
 ```
 
-(Helper-Namen `dirItem`/`fileItem` bzw. die Konstruktions-API an die tatsächliche Mock-Init-Form der Datei anpassen — Assertions unverändert.) Rot beweisen, dann im Mock-`rename` alle Schlüssel mit Präfix `from + "/"` in `tree`/`files`/`written`/`writeModes`/`permissionsByPath` auf das neue Präfix umschreiben und die Item-`path`/`name`-Felder der umgehängten Einträge aktualisieren; grün beweisen.
+(Helper names `dirItem`/`fileItem`, resp. the construction API, may be adjusted to the file's actual mock-init form — the assertions stay unchanged.) Prove it red, then in the mock's `rename` rewrite every key prefixed with `from + "/"` in `tree`/`files`/`written`/`writeModes`/`permissionsByPath` to the new prefix and update the `path`/`name` fields of the relocated entries; prove it green.
 
-- [x] **Step 2: `PosixPermissions`** — failing Tests (`PosixPermissionsTests.swift`, neu):
+- [x] **Step 2: `PosixPermissions`** — failing tests (`PosixPermissionsTests.swift`, new):
 
 ```swift
 import Testing
@@ -96,7 +96,7 @@ struct PosixPermissionsTests {
 }
 ```
 
-Rot, dann Implementierung (`Sources/macSCPCore/Presentation/PosixPermissions.swift`):
+Red, then implementation (`Sources/macSCPCore/Presentation/PosixPermissions.swift`):
 
 ```swift
 import Foundation
@@ -143,7 +143,7 @@ public struct PosixPermissions: Equatable, Sendable {
 }
 ```
 
-- [x] **Step 3: VM-Aktionen** — failing Tests in `RemoteBrowserViewModelTests.swift` (Mock-Konventionen der Datei):
+- [x] **Step 3: VM actions** — failing tests in `RemoteBrowserViewModelTests.swift` (the file's mock conventions):
 
 ```swift
     @Test @MainActor func renameRefreshesAndFollowsSelection() async {
@@ -201,7 +201,7 @@ public struct PosixPermissions: Equatable, Sendable {
     }
 ```
 
-- [x] **Step 4: Rot, dann implementieren** — in `RemoteBrowserViewModel`:
+- [x] **Step 4: Red, then implement** — in `RemoteBrowserViewModel`:
 
 ```swift
     // MARK: - Browser actions (M7b)
@@ -283,37 +283,37 @@ public struct PosixPermissions: Equatable, Sendable {
     }
 ```
 
-Doku-Zeile an `RemoteFileSystem.setPermissions` (Zeile ~46) ergänzen:
+Add a doc line to `RemoteFileSystem.setPermissions` (around line 46):
 
 ```swift
     /// NOTE: both implementations follow symlinks (chmod semantics) — the
     /// UI must not offer the permission editor for `.symlink` entries (M7b).
 ```
 
-- [x] **Step 5: Grün** — volle `swift test` (340 + neue).
+- [x] **Step 5: Green** — the full `swift test` (340 + new).
 - [x] **Step 6: Commit** — `feat: browser action layer, posix permissions model, mock dir rename`.
 
 ---
 
-### Task 2: Menü-Modell + NSMenu-Brücke
+### Task 2: Menu model + NSMenu bridge
 
 **Files:**
 - Create: `Sources/macSCPCore/Presentation/BrowserContextMenu.swift`
-- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (Coordinator: Menü + Delegate; Representable: neuer Callback)
-- Modify: `Sources/MacSCPApp/BrowserPane.swift` (Callback durchreichen)
-- Modify: `Sources/MacSCPApp/ContentView.swift` (Transfer-/Editor-Verdrahtung, Pfad kopieren)
-- Modify: `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj` (Menü-Keys)
-- Test: `Tests/macSCPCoreTests/BrowserContextMenuTests.swift` (neu)
+- Modify: `Sources/MacSCPApp/RemoteFileTableView.swift` (coordinator: menu + delegate; representable: new callback)
+- Modify: `Sources/MacSCPApp/BrowserPane.swift` (pass the callback through)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (transfer/editor wiring, copy path)
+- Modify: `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj` (menu keys)
+- Test: `Tests/macSCPCoreTests/BrowserContextMenuTests.swift` (new)
 
 **Interfaces:**
-- Consumes: T1 (nur konzeptionell — die Menü-AKTIONEN verdrahtet T3 für die Sheets; T2 verdrahtet transfer/open/copyPath vollständig).
+- Consumes: T1 (only conceptually — T3 wires the menu ACTIONS for the sheets; T2 fully wires transfer/open/copyPath).
 - Produces:
   - `public enum BrowserPaneSide: Sendable { case local, remote }`
   - `public enum BrowserMenuEntry: Equatable, Sendable { case transferToOtherPane, openInEditor, rename, infoAndPermissions, newFolder, copyPath, delete }`
   - `public enum BrowserContextMenu { public static func entries(for selection: [RemoteFileItem], side: BrowserPaneSide) -> [BrowserMenuEntry] }`
-  - Coordinator-/Pane-Callback `onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?` (Items = die Selektion, auf die das Menü wirkt; bei `newFolder` darf sie leer sein).
+  - Coordinator/pane callback `onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?` (items = the selection the menu acts on; for `newFolder` it may be empty).
 
-- [x] **Step 1: Failing Tests** (`BrowserContextMenuTests.swift`):
+- [x] **Step 1: Failing tests** (`BrowserContextMenuTests.swift`):
 
 ```swift
 import Testing
@@ -369,7 +369,7 @@ struct BrowserContextMenuTests {
 }
 ```
 
-- [x] **Step 2: Rot, dann Modell implementieren:**
+- [x] **Step 2: Red, then implement the model:**
 
 ```swift
 import Foundation
@@ -418,8 +418,8 @@ public enum BrowserContextMenu {
 }
 ```
 
-- [x] **Step 3: Coordinator-Brücke** — in `RemoteFileTableView`:
-  - Representable: neues Property `var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?`; in `makeNSView` `table.menu = NSMenu()` + `table.menu?.delegate = context.coordinator`; in `updateNSView` (VOR den Guards, bei den anderen Rebinds) `context.coordinator.onMenuAction = onMenuAction`.
+- [x] **Step 3: Coordinator bridge** — in `RemoteFileTableView`:
+  - Representable: new property `var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?`; in `makeNSView` `table.menu = NSMenu()` + `table.menu?.delegate = context.coordinator`; in `updateNSView` (BEFORE the guards, alongside the other rebinds) `context.coordinator.onMenuAction = onMenuAction`.
   - Coordinator: `var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)?` + `NSMenuDelegate`:
 
 ```swift
@@ -496,7 +496,7 @@ public enum BrowserContextMenu {
         }
 ```
 
-  plus die kleine Box-Klasse (Datei-Ende, neben `Coordinator`):
+  plus the small box class (end of file, next to `Coordinator`):
 
 ```swift
 /// NSMenuItem.representedObject needs a class — boxes the menu action.
@@ -510,8 +510,8 @@ private final class MenuActionBox {
 }
 ```
 
-  Hinweis Side-Erkennung: `onOpenFile != nil ⇒ .remote` nutzt die bestehende Verdrahtung (nur das Remote-Pane setzt `onOpenFile`) — dokumentieren; falls der Reviewer das zu implizit findet, ist ein explizites `side: BrowserPaneSide`-Property am Representable die saubere Alternative (dann auch in `BrowserPane` durchreichen). IMPLEMENTIERE direkt die explizite Variante (`let side: BrowserPaneSide` als Representable-/Pane-Parameter) — sie ist selbstdokumentierend.
-- [x] **Step 4: Pane/ContentView-Verdrahtung** — `BrowserPane` bekommt `let side: BrowserPaneSide` und `var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil`, reicht beides an `RemoteFileTableView`. `ContentView` setzt `side: .local` / `.remote` und verdrahtet in T2 NUR diese Fälle im Handler (Rest kommt in T3):
+  Note on side detection: `onOpenFile != nil ⇒ .remote` uses the existing wiring (only the remote pane sets `onOpenFile`) — document it; if the reviewer finds that too implicit, an explicit `side: BrowserPaneSide` property on the representable is the clean alternative (then pass it through `BrowserPane` too as well). IMPLEMENT the explicit variant directly (`let side: BrowserPaneSide` as a representable/pane parameter) — it is self-documenting.
+- [x] **Step 4: Pane/ContentView wiring** — `BrowserPane` gets `let side: BrowserPaneSide` and `var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil`, passing both through to `RemoteFileTableView`. `ContentView` sets `side: .local` / `.remote` and in T2 wires ONLY these cases in the handler (the rest arrives in T3):
 
 ```swift
                 onMenuAction: { entry, selection in
@@ -528,7 +528,7 @@ private final class MenuActionBox {
                 }
 ```
 
-  Neue Helper in `ContentView`:
+  New helpers in `ContentView`:
 
 ```swift
     /// Context-menu transfer: same per-item enqueue the toolbar buttons use.
@@ -577,27 +577,27 @@ private final class MenuActionBox {
     }
 ```
 
-  REFAKTOR im selben Zug: `uploadButton`/`downloadButton` rufen `transferSelection` (DRY — deren Schleifen entfallen; Verhalten identisch, bestehende Hilfetexte/Disable-Logik bleiben).
-- [x] **Step 5: Menü-Keys** — EN: `"menu.transfer" = "Transfer"; "menu.transfer.otherPane" = "To the other pane"; "menu.openEditor" = "Open"; "menu.rename" = "Rename…"; "menu.info" = "Info & Permissions…"; "menu.newFolder" = "New Folder…"; "menu.copyPath" = "Copy Path"; "menu.delete" = "Delete…";` — DE: `"Übertragen"; "Zum anderen Fenster"; "Öffnen"; "Umbenennen…"; "Informationen & Rechte…"; "Neuer Ordner…"; "Pfad kopieren"; "Löschen…";`
-- [x] **Step 6: Grün** — volle Suite; Build sauber.
+  REFACTOR in the same pass: `uploadButton`/`downloadButton` call `transferSelection` (DRY — their loops go away; behavior identical, existing help text/disable logic stays).
+- [x] **Step 5: Menu keys** — EN: `"menu.transfer" = "Transfer"; "menu.transfer.otherPane" = "To the other pane"; "menu.openEditor" = "Open"; "menu.rename" = "Rename…"; "menu.info" = "Info & Permissions…"; "menu.newFolder" = "New Folder…"; "menu.copyPath" = "Copy Path"; "menu.delete" = "Delete…";` — DE: `"Übertragen"; "Zum anderen Fenster"; "Öffnen"; "Umbenennen…"; "Informationen & Rechte…"; "Neuer Ordner…"; "Pfad kopieren"; "Löschen…";`
+- [x] **Step 6: Green** — full suite; clean build.
 - [x] **Step 7: Commit** — `feat: context menu in both panes with transfer, open, copy path`.
 
 ---
 
-### Task 3: Sheets — Umbenennen, Neuer Ordner, Info & Rechte, Löschen
+### Task 3: Sheets — Rename, New Folder, Info & Permissions, Delete
 
 **Files:**
 - Create: `Sources/MacSCPApp/BrowserSheets.swift` (NameEntrySheet + InfoPermissionsSheet)
-- Modify: `Sources/MacSCPApp/BrowserPane.swift` (Sheet-States + Präsentation + restliche Menü-Fälle)
-- Modify: `Sources/MacSCPApp/ContentView.swift` (Menü-Handler: rename/info/newFolder/delete an das Pane delegieren — die Sheets leben im Pane, der Handler dort braucht die Fälle nicht mehr; prüfen und die Verantwortung sauber EINEM Ort geben: die vier Dialog-Fälle behandelt `BrowserPane` INTERN, `ContentView` behält nur transfer/openInEditor/copyPath)
-- Modify: beide `Localizable.strings`
-- Test: keine neuen Unit-Tests (View-Schicht; Logik ist in T1 getestet) — bestehende Suite bleibt grün.
+- Modify: `Sources/MacSCPApp/BrowserPane.swift` (sheet states + presentation + the remaining menu cases)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (menu handler: delegate rename/info/newFolder/delete to the pane — the sheets live in the pane, the handler there no longer needs these cases; check and give the responsibility cleanly to ONE place: `BrowserPane` handles the four dialog cases INTERNALLY, `ContentView` keeps only transfer/openInEditor/copyPath)
+- Modify: both `Localizable.strings`
+- Test: no new unit tests (view layer; the logic is tested in T1) — the existing suite stays green.
 
 **Interfaces:**
-- Consumes: T1-VM-Methoden (exakte Signaturen oben), `PosixPermissions`, T2-Menü (`BrowserMenuEntry`, `onMenuAction`).
-- Produces: `struct NameEntrySheet: View`, `struct InfoPermissionsSheet: View` (beide in `BrowserSheets.swift`).
+- Consumes: T1 VM methods (exact signatures above), `PosixPermissions`, T2 menu (`BrowserMenuEntry`, `onMenuAction`).
+- Produces: `struct NameEntrySheet: View`, `struct InfoPermissionsSheet: View` (both in `BrowserSheets.swift`).
 
-- [x] **Step 1: Pane-interne Behandlung** — in `BrowserPane`:
+- [x] **Step 1: Pane-internal handling** — in `BrowserPane`:
 
 ```swift
     @State private var renameTarget: RemoteFileItem?
@@ -607,7 +607,7 @@ private final class MenuActionBox {
     @State private var deleteErrorMessage: String?
 ```
 
-  Der `onMenuAction`-Callback des Panes wird zweistufig: Das Pane fängt `rename`/`infoAndPermissions`/`newFolder`/`delete` selbst ab (setzt die States) und reicht NUR die übrigen Fälle an den externen Callback weiter:
+The pane's `onMenuAction` callback becomes two-stage: the pane intercepts `rename`/`infoAndPermissions`/`newFolder`/`delete` itself (sets the states) and passes ONLY the remaining cases through to the external callback:
 
 ```swift
                 RemoteFileTableView(
@@ -624,7 +624,7 @@ private final class MenuActionBox {
                 )
 ```
 
-- [x] **Step 2: NameEntrySheet** (`BrowserSheets.swift`) — geteilt für Umbenennen/Neuer Ordner:
+- [x] **Step 2: NameEntrySheet** (`BrowserSheets.swift`) — shared for Rename/New Folder:
 
 ```swift
 import SwiftUI
@@ -687,7 +687,7 @@ struct NameEntrySheet: View {
 }
 ```
 
-  Präsentation im Pane:
+Presentation in the pane:
 
 ```swift
             .sheet(item: $renameTarget) { target in
@@ -706,7 +706,7 @@ struct NameEntrySheet: View {
             }
 ```
 
-  (`RemoteFileItem` braucht dafür `Identifiable` — falls noch nicht konform: `extension RemoteFileItem: Identifiable { public var id: String { path } }` in Core, mit Doku-Satz.)
+(`RemoteFileItem` needs `Identifiable` for this — if not already conforming: `extension RemoteFileItem: Identifiable { public var id: String { path } }` in Core, with a doc sentence.)
 - [x] **Step 3: InfoPermissionsSheet** (`BrowserSheets.swift`):
 
 ```swift
@@ -847,7 +847,7 @@ struct InfoPermissionsSheet: View {
 }
 ```
 
-  Präsentation im Pane:
+Presentation in the pane:
 
 ```swift
             .sheet(item: $infoTarget) { target in
@@ -856,7 +856,7 @@ struct InfoPermissionsSheet: View {
                     onApply: { perms in await viewModel.applyPermissions(perms, to: target) })
             }
 ```
-- [x] **Step 4: Lösch-Bestätigung** — im Pane (Alert statt Sheet; destruktiver roter Button):
+- [x] **Step 4: Delete confirmation** — in the pane (alert instead of sheet; destructive red button):
 
 ```swift
             .alert(
@@ -909,14 +909,14 @@ struct InfoPermissionsSheet: View {
     }
 ```
 
-- [x] **Step 5: Katalog-Keys** — EN/DE für: `sheet.rename.title/confirm`, `sheet.newFolder.title/confirm/defaultName`, `common.close`, `common.apply`, `info.path/kind/size/modified/permissions/octal/permissionsUnavailable`, `info.kind.directory/file/symlink/other`, `info.perm.read/write/execute/owner/group/other`, `delete.title/confirm/failedTitle`, `delete.message.single/many/recursive/permanent`. DE-Texte: „Umbenennen"/„Umbenennen", „Neuer Ordner"/„Erstellen"/„unbenannter Ordner", „Schließen", „Übernehmen", „Pfad"/„Art"/„Größe"/„Geändert"/„Rechte"/„Oktal"/„Für diesen Eintrag sind keine Rechte verfügbar.", „Ordner"/„Datei"/„Symbolischer Link"/„Sonstiges", „Lesen"/„Schreiben"/„Ausführen"/„Besitzer"/„Gruppe"/„Andere", „Löschen?"/„Löschen"/„Löschen fehlgeschlagen", „„%@" wird gelöscht."/„%lld Objekte werden gelöscht."/„Ordner werden mit ihrem gesamten Inhalt gelöscht."/„Diese Aktion kann nicht widerrufen werden."
-- [x] **Step 6: Grün** — volle Suite; Build sauber (neue Dateien warnungsfrei).
+- [x] **Step 5: Catalog keys** — EN/DE for: `sheet.rename.title/confirm`, `sheet.newFolder.title/confirm/defaultName`, `common.close`, `common.apply`, `info.path/kind/size/modified/permissions/octal/permissionsUnavailable`, `info.kind.directory/file/symlink/other`, `info.perm.read/write/execute/owner/group/other`, `delete.title/confirm/failedTitle`, `delete.message.single/many/recursive/permanent`. German text: „Umbenennen"/„Umbenennen", „Neuer Ordner"/„Erstellen"/„unbenannter Ordner", „Schließen", „Übernehmen", „Pfad"/„Art"/„Größe"/„Geändert"/„Rechte"/„Oktal"/„Für diesen Eintrag sind keine Rechte verfügbar.", „Ordner"/„Datei"/„Symbolischer Link"/„Sonstiges", „Lesen"/„Schreiben"/„Ausführen"/„Besitzer"/„Gruppe"/„Andere", „Löschen?"/„Löschen"/„Löschen fehlgeschlagen", „„%@" wird gelöscht."/„%lld Objekte werden gelöscht."/„Ordner werden mit ihrem gesamten Inhalt gelöscht."/„Diese Aktion kann nicht widerrufen werden."
+- [x] **Step 6: Green** — full suite; clean build (new files warning-free).
 - [x] **Step 7: Commit** — `feat: rename, new-folder, info-permissions and delete dialogs`.
 
 ---
 
-### Task 4: Abschluss-Verifikation (Koordinator, kein Subagent)
+### Task 4: Final verification (coordinator, no subagent)
 
-- [x] Gated Suiten (Rig aus dem Haupt-Checkout): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün.
-- [ ] Visueller Smoke (Dev-Wrapper) — **an den Maintainer delegiert** (wie M7a; Checkliste übergeben): Menü in BEIDEN Panes (Hintergrund-Klick → nur „Neuer Ordner…"); Rechtsklick auf unselektierte Zeile selektiert; Umbenennen inkl. Kollision (Fehlertext im Sheet, Sheet bleibt offen); chmod am Rig mit `docker exec ls -l`-Beweis (0644→0600); Symlink-Zeile: kein Übertragen/Öffnen/Info; rekursives Löschen mit rotem Confirm (Ordner-Hinweis) + `docker exec`-Beweis; Neuer Ordner (Default-Name, Auswahl folgt); Pfad kopieren (Mehrfachauswahl → mehrzeilig, pbpaste-Beweis); Übertragen-Submenü 2er-Auswahl → 2 Queue-Items; Editor-„Öffnen" aus dem Menü; Doppelklick/Toolbar/Drag-Regression.
-- [x] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ Frage an den Maintainer: Release v1.1.0 von diesem Stand?).
+- [x] Gated suites (rig from the main checkout): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ fully green.
+- [ ] Visual smoke test (dev wrapper) — **delegated to the maintainer** (as in M7a; checklist handed over): menu in BOTH panes (background click → only „Neuer Ordner…"); right-click on an unselected row selects it; rename including collision (error text in the sheet, sheet stays open); chmod on the rig with `docker exec ls -l` proof (0644→0600); symlink row: no Transfer/Open/Info; recursive delete with the red confirm (folder hint) + `docker exec` proof; New Folder (default name, selection follows); copy path (multi-selection → multi-line, pbpaste proof); transfer submenu with a 2-item selection → 2 queue items; editor „Öffnen" from the menu; double-click/toolbar/drag regression.
+- [x] Plan checkboxes, ledger, Opus whole-branch final review (base = commit before T1), fixes, push develop, CI, rig `stop`, memory update, milestone summary (+ question for the maintainer: release v1.1.0 from this state?).

@@ -1,217 +1,214 @@
-# M10d — ssh-agent-Authentifizierung (Design)
+# M10d — ssh-agent authentication (design)
 
-Datum: 2026-07-28 · Status: vom Maintainer freigegeben („los gehts")
+Date: 2026-07-28 · Status: approved by the maintainer ("let's go")
 
-## Ziel
+## Goal
 
-Authentifizierung über den lokalen ssh-agent als DRITTE Auth-Art überall
-(Formular Ziel + Jump, Login-Sets, gespeicherte Sessions). Der private
-Schlüssel verlässt den Agent nie; macSCP spricht das Agent-Protokoll über
-`SSH_AUTH_SOCK` selbst.
+Authentication via the local ssh-agent as a THIRD auth kind everywhere
+(form target + jump, login sets, stored sessions). The private key never
+leaves the agent; macSCP speaks the agent protocol over `SSH_AUTH_SOCK`
+itself.
 
-**Maintainer-Entscheidungen (2026-07-28):**
+**Maintainer decisions (2026-07-28):**
 
-1. Scope: NUR Agent-Auth. Agent-FORWARDING (inkl. der Einstellung
-   „Weiterleiten pro Host + globaler Default") ist ein eigener späterer
-   Meilenstein — die Machbarkeits-Analyse hat gezeigt, dass Forwarding
-   einen gepflegten Fork von swift-nio-ssh erfordert (Parser wirft bei
-   `auth-agent@openssh.com`-Channel-Opens hart; Outbound-Channel-Requests
-   sind verschlossen), während Auth ohne Fork über den offiziellen
-   Erweiterungspunkt geht.
-2. Kein Identitäts-Picker in M10d: Verhalten wie OpenSSH — Identitäten
-   werden der Reihe nach angeboten. Bevorzugte Identität pinnen = Backlog.
+1. Scope: agent auth ONLY. Agent FORWARDING (including the "forward per
+   host + global default" setting) is its own later milestone — the
+   feasibility analysis showed that forwarding requires a maintained fork
+   of swift-nio-ssh (the parser hard-throws on
+   `auth-agent@openssh.com` channel opens; outbound channel requests are
+   sealed off), whereas auth works without a fork via the official
+   extension point.
+2. No identity picker in M10d: behavior like OpenSSH — identities are
+   offered in order. Pinning a preferred identity = backlog.
 
-## Machbarkeits-Grundlage (verifiziert gegen die vendorten Quellen)
+## Feasibility basis (verified against the vendored sources)
 
-- `NIOSSHPrivateKeyProtocol` + `NIOSSHPrivateKey.init(custom:)` sind der
-  offizielle Custom-Signer-Haken (swift-nio-ssh `CustomKeys.swift:23-89`,
-  `NIOSSHPrivateKey.swift:50-52`); Citadels `Insecure.RSA.PrivateKey`
-  (`Citadel/Algorithms/RSA.swift:167-255`) ist das Produktions-Vorbild.
-- Der zu signierende Blob ist exakt RFC 4252 §7
-  (`UserAuthSignablePayload.swift:32-55`) — identisch mit dem `data`-Feld
-  von `SSH_AGENTC_SIGN_REQUEST`. Der Custom-Key erhält ihn roh/ungehasht.
-- Keine `NIOSSHAlgorithms`-Registrierung nötig (Registry wird nur beim
-  PARSEN fremder Typen konsultiert; wir senden nur).
-- swift-nio (NIOPosix `ClientBootstrap` mit
-  `SocketAddress(unixDomainSocketPath:)`) ist bereits transitiv im Baum.
+- `NIOSSHPrivateKeyProtocol` + `NIOSSHPrivateKey.init(custom:)` are the
+  official custom-signer hook (swift-nio-ssh `CustomKeys.swift:23-89`,
+  `NIOSSHPrivateKey.swift:50-52`); Citadel's `Insecure.RSA.PrivateKey`
+  (`Citadel/Algorithms/RSA.swift:167-255`) is the production model.
+- The blob to sign is exactly RFC 4252 §7
+  (`UserAuthSignablePayload.swift:32-55`) — identical to the `data` field
+  of `SSH_AGENTC_SIGN_REQUEST`. The custom key receives it raw/unhashed.
+- No `NIOSSHAlgorithms` registration is needed (the registry is only
+  consulted when PARSING foreign types; we only send).
+- swift-nio (NIOPosix `ClientBootstrap` with
+  `SocketAddress(unixDomainSocketPath:)`) is already transitively in the
+  tree.
 
-## 1. Agent-Client (Core, RISK)
+## 1. Agent client (Core, RISK)
 
-- `SSHAgentCodec` (pur, testbar): Framing uint32-Länge + Typ-Byte;
-  Requests `SSH_AGENTC_REQUEST_IDENTITIES` (11) /
-  `SSH_AGENTC_SIGN_REQUEST` (13); Antworten
+- `SSHAgentCodec` (pure, testable): framing uint32 length + type byte;
+  requests `SSH_AGENTC_REQUEST_IDENTITIES` (11) /
+  `SSH_AGENTC_SIGN_REQUEST` (13); responses
   `SSH_AGENT_IDENTITIES_ANSWER` (12) / `SSH_AGENT_SIGN_RESPONSE` (14) /
-  `SSH_AGENT_FAILURE` (5). Identities-Antwort: Liste aus
-  (Pubkey-Blob, Kommentar); aus dem Blob werden Typ-String und
-  SHA256-Fingerprint abgeleitet (bestehende Fingerprint-Helfer aus M3c
-  wiederverwenden, sofern passend).
-- `SSHAgentClient`: Transport-Protokoll (injizierbar; produktiv
-  NIO-`ClientBootstrap` auf den UDS-Pfad aus `SSH_AUTH_SOCK`), API
-  `listIdentities() async throws -> [AgentIdentity]` und
+  `SSH_AGENT_FAILURE` (5). Identities response: list of
+  (pubkey blob, comment); type string and SHA256 fingerprint are derived
+  from the blob (reuse the existing fingerprint helpers from M3c where
+  they fit).
+- `SSHAgentClient`: transport protocol (injectable; in production a
+  NIO `ClientBootstrap` on the UDS path from `SSH_AUTH_SOCK`), API
+  `listIdentities() async throws -> [AgentIdentity]` and
   `sign(publicKeyBlob:data:flags:) async throws -> Data`
-  (Signatur-Antwort roh: `string` mit Algo + Blob).
-- RSA-Identitäten (Blob-Typ `ssh-rsa`): SIGN_REQUEST mit
-  `SSH_AGENT_RSA_SHA2_256` (2) bzw. bevorzugt `…_512` (4) Flags —
-  benanntes Restrisiko, gedeckt durch den gated Live-Test.
-- Typisierte Fehler: `AgentError.socketUnavailable`
-  (`SSH_AUTH_SOCK` fehlt/Verbindung scheitert), `.noIdentities`,
-  `.refused` (FAILURE-Frame), `.protocolError(reason:)`.
+  (raw signature response: `string` with algo + blob).
+- RSA identities (blob type `ssh-rsa`): SIGN_REQUEST with
+  `SSH_AGENT_RSA_SHA2_256` (2) or preferably `…_512` (4) flags —
+  a named residual risk, covered by the gated live test.
+- Typed errors: `AgentError.socketUnavailable`
+  (`SSH_AUTH_SOCK` missing/connection fails), `.noIdentities`,
+  `.refused` (FAILURE frame), `.protocolError(reason:)`.
 
-## 2. NIOSSH-Anbindung + Connect (Core, RISK)
+## 2. NIOSSH binding + connect (Core, RISK)
 
-- `AgentBackedPrivateKey: NIOSSHPrivateKeyProtocol` (eine Instanz pro
-  Agent-Identität; `signature(for:)` reicht den Blob an
-  `SSHAgentClient.sign` durch) + `AgentSignature: NIOSSHSignatureProtocol`
-  und `AgentBackedPublicKey: NIOSSHPublicKeyProtocol`, die den vom Agent
-  gelieferten Blob VERBATIM re-emittieren.
-- `SSHConnectionConfig.AuthMethod.agent` (ohne Payload). Der Connect-Pfad
-  (CitadelFileSystem) baut dafür ein `SSHAuthenticationMethod`, das die
-  Agent-Identitäten DER REIHE NACH anbietet (OpenSSH-Verhalten; NIOSSHs
-  Delegate wird pro Fehlversuch erneut gefragt — Citadel-Muster
-  `SSHAuthenticationMethod` mit konsumierbarer Liste). Bounded: jede
-  Identität genau einmal.
-- Identitäten werden EINMAL beim Connect gelistet (kein Re-Listing
-  zwischen den Versuchen); Jump-Hop und Ziel-Hop dürfen beide `.agent`
-  nutzen (je eigene Signaturen, gleicher Agent).
-- Fehler-Mapping: `.socketUnavailable`/`.noIdentities` ⇒ eigene
-  lokalisierte, EHRLICHE Meldungen (kein generisches „Auth failed");
-  alle Identitäten abgelehnt ⇒ `RemoteFSError.authenticationFailed`
-  (am Jump-Hop: `jumpAuthenticationFailed` — bestehende
-  Stage-1-Klassifikation greift unverändert). TOFU-Invarianten
-  unangetastet.
+- `AgentBackedPrivateKey: NIOSSHPrivateKeyProtocol` (one instance per
+  agent identity; `signature(for:)` passes the blob through to
+  `SSHAgentClient.sign`) + `AgentSignature: NIOSSHSignatureProtocol`
+  and `AgentBackedPublicKey: NIOSSHPublicKeyProtocol`, which re-emit the
+  blob supplied by the agent VERBATIM.
+- `SSHConnectionConfig.AuthMethod.agent` (no payload). The connect path
+  (CitadelFileSystem) builds an `SSHAuthenticationMethod` for it that
+  offers the agent identities IN ORDER (OpenSSH behavior; NIOSSH's
+  delegate is asked again on each failed attempt — the Citadel pattern
+  `SSHAuthenticationMethod` with a consumable list). Bounded: each
+  identity exactly once.
+- Identities are listed ONCE at connect time (no re-listing between
+  attempts); the jump hop and target hop may both use `.agent` (each
+  with its own signatures, same agent).
+- Error mapping: `.socketUnavailable`/`.noIdentities` ⇒ their own
+  localized, HONEST messages (no generic "Auth failed");
+  all identities rejected ⇒ `RemoteFSError.authenticationFailed`
+  (at the jump hop: `jumpAuthenticationFailed` — the existing
+  stage-1 classification applies unchanged). TOFU invariants
+  untouched.
 
-## 3. Modell überall (Core)
+## 3. Model everywhere (Core)
 
-- `StoredSession.AuthKind.agent` (Raw „agent" — exakt der Wert, für den
-  M10bs logins.json-Record-Store vorwärtskompatibel gebaut wurde).
-  `keyPath` bleibt nil; Keychain-Slots bleiben für Agent-Logins unberührt
-  (Slot-Hygiene: Wechsel auf `.agent` räumt einen alten manuellen Slot
-  wie der Set-Wechsel).
-- `JumpSpec.authKind` erbt `.agent` automatisch (gleiches Enum).
-- Login-Sets: `.agent`-Sets (kein Secret, kein keyPath); Editor drittes
-  Segment; AGENT-Badge im Sheet; `LoginResolver.resolve/resolveJump`
-  liefern `ResolvedLogin` mit `authKind: .agent`, `secret: nil`.
-- Merge-Erkennung: Agent-Gruppen = gleicher Username (kein
-  Secret-Vergleich; Sessions mit `.agent` nehmen OHNE Keychain-Zugriff
-  teil).
-- Lösch-Rückstellung: `.agent`-Sets kopieren nur username/authKind
-  zurück (kein Secret-Transfer — trivialer Sonderfall der bestehenden
-  Maschinerie).
-- Export/Import: `authKind` „agent" wandert als Wert mit (kein Passwort);
-  Import übernimmt ihn.
+- `StoredSession.AuthKind.agent` (raw "agent" — exactly the value that
+  M10b's logins.json record store was built forward-compatible for).
+  `keyPath` stays nil; keychain slots stay untouched for agent logins
+  (slot hygiene: switching to `.agent` clears an old manual slot the
+  same way a set change does).
+- `JumpSpec.authKind` inherits `.agent` automatically (same enum).
+- Login sets: `.agent` sets (no secret, no keyPath); editor third
+  segment; AGENT badge in the sheet; `LoginResolver.resolve/resolveJump`
+  return `ResolvedLogin` with `authKind: .agent`, `secret: nil`.
+- Merge detection: agent groups = same username (no secret comparison;
+  sessions with `.agent` participate WITHOUT keychain access).
+- Deletion restore: `.agent` sets copy back only username/authKind
+  (no secret transfer — a trivial special case of the existing
+  machinery).
+- Export/import: `authKind` "agent" travels along as a value (no
+  password); import takes it over.
 
-## 4. Bekannte Downgrade-Grenze (bewusst akzeptiert)
+## 4. Known downgrade boundary (deliberately accepted)
 
-`logins.json` ist dank M10b sicher (alte Versionen überlesen
-„agent"-Records). `sessions.json` und Export-Dateien sind es NICHT: eine
-ältere App-Version scheitert beim Enum-Decode einer „agent"-Session
-(Datei liest leer bzw. Import schlägt fehl). Betrifft nur Downgrades
-NACH Nutzung des Features; als Grenze dokumentiert, keine Gegenmaßnahme
-in M10d.
+`logins.json` is safe thanks to M10b (older versions skip over "agent"
+records on read). `sessions.json` and export files are NOT: an older app
+version fails to decode an "agent" session's enum (the file reads empty,
+or import fails). Affects only downgrades AFTER using the feature;
+documented as a boundary, no countermeasure in M10d.
 
-### 4a. T2-Review-Nachträge (Reconnect-Verhalten + RSA-Grenze)
+### 4a. T2 review addenda (reconnect behavior + RSA boundary)
 
-**Pro-Identität-RECONNECT statt wiederholter Delegate-Aufrufe (verifiziert):**
-Citadels `SSHAuthenticationMethod.custom(_:)` konsumiert seinen Delegate
-GENAU EINMAL pro Verbindungsversuch (`implementations.removeFirst()` leert
-die einzige `.custom(delegate)`-Eintragung beim ersten Aufruf endgültig).
-Bietet der Agent N Identitäten an, bedeutet das N SEPARATE
-`SSHClient.connect()`/`jump(to:)`-Aufrufe — je einen FRISCHEN
-`SSHAuthenticationMethod.custom(...)`-Wrapper um dieselbe
-`AgentAuthDelegate`-Instanz, deren interner Cursor (`remaining`) so über
-die Aufrufe hinweg fortschreitet (siehe `CitadelFileSystem.connectHop`).
-Aus Sicht des Ziel-Servers erscheint jeder Fehlversuch als ein SEPARATER,
-fehlgeschlagener Login — sysadmin-seitig sichtbar z. B. in `auth.log`/
-`journalctl` als mehrere `Failed publickey`-Einträge statt eines einzigen
-Login-Vorgangs mit mehreren Angeboten. Die Anzahl ist bewusst begrenzt
-(siehe M-3/I-3: Cap auf `min(identities.count, 6)`, MaxAuthTries-Parität),
-damit ein Agent mit vielen Identitäten keinen Login-Spam gegen den Server
-erzeugt.
+**Per-identity RECONNECT instead of repeated delegate calls (verified):**
+Citadel's `SSHAuthenticationMethod.custom(_:)` consumes its delegate
+EXACTLY ONCE per connection attempt (`implementations.removeFirst()` empties
+the single `.custom(delegate)` entry permanently on the first call). If the
+agent offers N identities, that means N SEPARATE
+`SSHClient.connect()`/`jump(to:)` calls — each a FRESH
+`SSHAuthenticationMethod.custom(...)` wrapper around the same
+`AgentAuthDelegate` instance, whose internal cursor (`remaining`) advances
+across the calls this way (see `CitadelFileSystem.connectHop`). From the
+target server's point of view, each failed attempt appears as a SEPARATE
+failed login — visible on the sysadmin side, e.g. in `auth.log`/
+`journalctl`, as several `Failed publickey` entries instead of a single
+login process offering several keys. The count is deliberately capped
+(see M-3/I-3: cap at `min(identities.count, 6)`, MaxAuthTries parity), so
+that an agent with many identities does not generate login spam against
+the server.
 
-**I-2-Nachtrag: der Cap von 6 ist KEINE echte MaxAuthTries-Parität, und das
-hat eine fail2ban-Konsequenz.** `MaxAuthTries` zählt Auth-ANGEBOTE
-innerhalb EINER einzigen Verbindung (ein TCP/SSH-Handshake, mehrere
-Schlüssel nacheinander angeboten). Der Pro-Identität-Reconnect oben
-produziert dagegen bis zu 6 SEPARATE, jeweils fehlgeschlagene Logins —
-jeder mit eigenem TCP-Connect/SSH-Handshake/Auth-Versuch, sichtbar als 6
-einzelne `Failed publickey`-Einträge statt eines Vorgangs mit 6 Angeboten
-(bei zusätzlichen TOFU-Retries entsprechend mehr). Der Stock-Jail von
-fail2ban für `sshd` hat standardmäßig `maxretry = 5`. Ein Nutzer mit ≥5
-Agent-Identitäten, die der Zielserver alle ablehnt (z. B. beim ersten
-Verbindungsversuch zu einem neuen Host, oder wenn keiner der angebotenen
-Schlüssel dort autorisiert ist), kann seine eigene IP auf einem
-fail2ban-geschützten Host sperren — ausgelöst durch EIN
-Verbindungsversuch in macSCP, nicht durch wiederholte manuelle Versuche.
-Der Cap bleibt bei 6 (Maintainer-Entscheidung steht noch aus); diese
-Konsequenz ist hiermit bewusst dokumentiert, nicht durch Gegenmaßnahmen
-entschärft.
+**I-2 addendum: the cap of 6 is NOT true MaxAuthTries parity, and that has
+a fail2ban consequence.** `MaxAuthTries` counts auth OFFERS within ONE
+single connection (one TCP/SSH handshake, several keys offered in
+sequence). The per-identity reconnect above instead produces up to 6
+SEPARATE, individually failed logins — each with its own
+TCP-connect/SSH-handshake/auth attempt, visible as 6 individual
+`Failed publickey` entries instead of one process with 6 offers (more, on
+top TOFU retries). fail2ban's stock jail for `sshd` defaults to
+`maxretry = 5`. A user with ≥5 agent identities, all of which the target
+server rejects (e.g. on the first connection attempt to a new host, or
+when none of the offered keys is authorized there), can lock out their own
+IP on a fail2ban-protected host — triggered by ONE connection attempt in
+macSCP, not by repeated manual attempts. The cap stays at 6 (maintainer
+decision still pending); this consequence is hereby deliberately
+documented, not mitigated by countermeasures.
 
-**Bekannte RSA-Grenze (verifiziert, nicht hypothetisch):** Eine
-`ssh-rsa`-Identität wird über den Agent mit dem Blob-Tag `rsa-sha2-512`
-angeboten (swift-nio-ssh koppelt Algorithmusname und Blob-Tag für
-`.custom`-Schlüssel untrennbar, siehe `AgentBackedPrivateKey.swift`,
-`AgentAlgorithm.RSASha512`-Dokumentation). Gegen echtes OpenSSH `sshd`
-funktioniert das (gated `agentAuthConnectsRSA`-Test, Docker-Rig). Gegen
-Server auf Basis von Go's `golang.org/x/crypto/ssh` (Gitea, Forgejo,
-Gogs, `gitlab-sshd`, SFTPGo u. a.) schlägt es fehl — direkt gegen
-`x/crypto/ssh` verifiziert, exakte Fehlermeldung:
+**Known RSA boundary (verified, not hypothetical):** An
+`ssh-rsa` identity is offered via the agent with the blob tag
+`rsa-sha2-512` (swift-nio-ssh couples algorithm name and blob tag
+inseparably for `.custom` keys, see `AgentBackedPrivateKey.swift`,
+`AgentAlgorithm.RSASha512` documentation). Against real OpenSSH `sshd`
+this works (gated `agentAuthConnectsRSA` test, Docker rig). Against
+servers based on Go's `golang.org/x/crypto/ssh` (Gitea, Forgejo,
+Gogs, `gitlab-sshd`, SFTPGo, etc.) it fails — verified directly against
+`x/crypto/ssh`, exact error message:
 
 ```
 ssh: signature algorithm "rsa-sha2-512" isn't a key format; key is
 malformed and should be re-encoded with type "ssh-rsa"
 ```
 
-ed25519- und ECDSA-Identitäten sind NICHT betroffen (Blob-Tag und
-Signaturname sind bei ihnen bereits identisch, keine Drei-Wege-Kopplung
-nötig). Der eigentliche Fix müsste in swift-nio-ssh selbst passieren
-(Blob-Tag und Algorithmus-/Signaturname für `.custom`-Schlüssel
-entkoppelbar machen) — außerhalb des macSCP-Scopes; als bekannte Grenze
-dokumentiert, nicht in M10d behoben.
+ed25519 and ECDSA identities are NOT affected (their blob tag and
+signature name are already identical, no three-way coupling needed). The
+actual fix would have to happen in swift-nio-ssh itself (decoupling blob
+tag and algorithm/signature name for `.custom` keys) — outside macSCP's
+scope; documented as a known boundary, not fixed in M10d.
 
-## 5. App (Formular + Sets-Editor)
+## 5. App (form + sets editor)
 
-- Auth-Segmente Ziel UND Jump: `Passwort | SSH-Key | Agent`. Agent-Modus
-  blendet Passwort-/Key-Felder aus; Validierung verlangt nur den
-  Username. `selectAuthChoice`/`selectJumpAuthChoice` räumen Secrets beim
-  Wechsel wie gehabt.
-- Set-Editor: drittes Segment „Agent" (Name + Username genügen).
-  LoginSetsSheet: AGENT-Badge (Muster KEY/PASS), Kurzform `user · Agent`.
-- Fehlermeldungen: „Kein SSH-Agent erreichbar (SSH_AUTH_SOCK)."
-  / „Der SSH-Agent hat keine Identitäten geladen." EN/DE, dem
-  Auth-Segment zugeordnet (Jump-Varianten markieren die Jump-Felder).
-- Edit-Prefill: `.agent` ⇒ Segment Agent, keine Secret-Felder.
+- Auth segments for target AND jump: `Password | SSH Key | Agent`. Agent
+  mode hides the password/key fields; validation requires only the
+  username. `selectAuthChoice`/`selectJumpAuthChoice` clear secrets on
+  switching as before.
+- Set editor: third segment "Agent" (name + username suffice).
+  LoginSetsSheet: AGENT badge (KEY/PASS pattern), short form
+  `user · Agent`.
+- Error messages: "No SSH agent reachable (SSH_AUTH_SOCK)."
+  / "The SSH agent has no identities loaded." EN/DE, attached to the
+  auth segment (jump variants mark the jump fields).
+- Edit prefill: `.agent` ⇒ Agent segment, no secret fields.
 
 ## 6. Tests
 
-- Codec pur: Framing-Roundtrip, Identities-Parse (mehrere, leer),
-  Sign-Request-Bytes (inkl. RSA-Flags), FAILURE-Frame ⇒ `.refused`,
-  Garbage ⇒ `.protocolError`.
-- Client mit Mock-Transport: listIdentities/sign-Sequenz, Socket-tot ⇒
+- Codec, pure: framing round-trip, identities parse (several, empty),
+  sign-request bytes (incl. RSA flags), FAILURE frame ⇒ `.refused`,
+  garbage ⇒ `.protocolError`.
+- Client with mock transport: listIdentities/sign sequence, dead socket ⇒
   `.socketUnavailable`.
-- Auth-Reihenfolge mit Mock: Identitäten nacheinander, Erfolg stoppt,
-  alle abgelehnt ⇒ authenticationFailed; `.agent` am Jump ⇒
-  `jumpAuthenticationFailed`-Klassifikation.
-- Modell: AuthKind.agent Decode/Encode, Set ohne Secret, Resolver,
-  Merge-Gruppierung per Username, Rückstellung, Export/Import-Roundtrip.
-- Gated (MACSCP_ITEST, Rig): Test startet EIGENEN `ssh-agent`-Prozess
-  (SSH_AUTH_SOCK aus dessen Ausgabe), `ssh-add` mit generiertem
-  ed25519-Key, Pubkey per docker-exec ins Rig (M3b-Muster), Connect mit
-  `.agent` ⇒ list("/"); RSA-Variante für die sha2-Flag-Aushandlung;
-  Agent-Prozess im Teardown beendet. Ein Test mit totem Socket-Pfad ⇒
-  `.socketUnavailable` (ungated möglich).
-- App: visueller Smoke (T5) inkl. echtem Agent des Maintainers
+- Auth order with mock: identities in sequence, success stops, all
+  rejected ⇒ authenticationFailed; `.agent` on the jump ⇒
+  `jumpAuthenticationFailed` classification.
+- Model: AuthKind.agent decode/encode, set without a secret, resolver,
+  merge grouping by username, restore, export/import round-trip.
+- Gated (MACSCP_ITEST, rig): the test starts its OWN `ssh-agent` process
+  (SSH_AUTH_SOCK from its output), `ssh-add` with a generated
+  ed25519 key, the pubkey pushed into the rig via docker-exec (M3b
+  pattern), connect with `.agent` ⇒ list("/"); an RSA variant for the
+  sha2-flag negotiation; the agent process is killed in teardown. One
+  test with a dead socket path ⇒ `.socketUnavailable` (can run ungated).
+- App: visual smoke (T5) including the maintainer's real agent
   (1Password/ssh-agent).
 
-## 7. Aufteilung
+## 7. Breakdown
 
-T1 Agent-Codec + Client (RISK) → T2 NIOSSH-Key + AuthMethod.agent +
-Connect inkl. Jump + gated Live-Tests (RISK) → T3 Modell/VM/Sets/Export →
-T4 App (Segmente, Editor, L10n) → T5 Abschluss. KEIN Release (stehende
-Regel).
+T1 agent codec + client (RISK) → T2 NIOSSH key + AuthMethod.agent +
+connect incl. jump + gated live tests (RISK) → T3 model/VM/sets/export →
+T4 app (segments, editor, L10n) → T5 closing. NO release (standing
+rule).
 
-## 8. Bewusst NICHT in M10d
+## 8. Deliberately NOT in M10d
 
-- Kein Agent-Forwarding (eigener Fork-Meilenstein, Backlog), keine
-  Pro-Host-Weiterleitungs-Settings, kein Identitäts-Picker/-Pinning,
-  keine sessions.json-Downgrade-Absicherung, kein FIDO/sk-Sonderweg
-  (sk-Identitäten laufen, sofern der Agent sie normal signiert).
+- No agent forwarding (its own fork milestone, backlog), no per-host
+  forwarding settings, no identity picker/pinning, no sessions.json
+  downgrade safeguard, no FIDO/sk special path (sk identities work as
+  long as the agent signs them normally).

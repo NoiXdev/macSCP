@@ -1,70 +1,70 @@
-# P1: Snippets erreichbar machen — Implementation Plan
+# P1: Making snippets reachable — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Snippets sind dort auslösbar, wo gearbeitet wird — Menüleiste,
-Kontextmenü am Host, Terminal-Kopfzeile, Rechtsklick im Terminal — und die
-Entscheidung „einfügen oder ausführen" fällt beim Auslösen statt beim
-Anlegen.
+**Goal:** Snippets can be triggered wherever the work happens — menu bar,
+context menu on the host, terminal header, right-click in the terminal —
+and the decision "insert or execute" is made at trigger time rather than at
+creation time.
 
-**Architecture:** Ein Core-Typ `SnippetMenuModel` rechnet aus Snippets,
-Tag-Filter und Verbindungszustand die fertige Menüstruktur aus; die vier
-Auslöseflächen rendern nur noch daraus. Das Flag `runsImmediately`
-verschwindet aus `Snippet`; `SnippetKeystrokes.bytes(for:execute:)` bekommt
-die Entscheidung vom Aufrufer. Tags sind eine Modellregel, kein
-Formulardetail.
+**Architecture:** A Core type `SnippetMenuModel` computes the finished menu
+structure from snippets, tag filter and connection state; the four trigger
+surfaces do nothing but render from it. The `runsImmediately` flag
+disappears from `Snippet`; `SnippetKeystrokes.bytes(for:execute:)` gets the
+decision from the caller. Tags are a model rule, not a form detail.
 
 **Tech Stack:** Swift 6, `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+,
-SwiftUI, Swift Testing (`@Test`/`#expect`), zwei Testtargets
+SwiftUI, Swift Testing (`@Test`/`#expect`), two test targets
 (`macSCPCoreTests`, `macSCPAppKitTests`).
 
 ## Global Constraints
 
-- **Code, Kommentare, Testnamen: Englisch.** Interne Doku (`docs/`) darf
-  Deutsch sein.
-- **Nutzer-sichtbare Strings** über `L10n.string(_:_:)`; **jeder neue
-  Schlüssel in allen vier Katalogen** (en/de/fr/pl). Nachweis: vorhandener
-  Wächtertest plus `plutil -lint` über alle acht Kataloge.
-- **Snippets enthalten nie Zugangsdaten.** Der Store ist JSON; Secrets
-  leben ausschließlich im Schlüsselbund. Kein Snippet-Feld nimmt ein
-  Secret auf, und kein Snippet-Text darf in einer Fehlermeldung landen.
-- **Kein Secret in Log, Fehler oder Testfehlermeldung.** `#expect`
-  expandiert seinen Ausdruck.
-- **Nie eine Zeilennummer in einen Kommentar schreiben.** Das Ding benennen.
-- **Die Prosa dieses Plans ist eine zu prüfende Behauptung, kein Fakt.** In
-  der Vorphase steckte in fünf von elf Tasks ein echter Fehler im Brief.
-  Stimmt etwas nicht mit dem Code überein: melden, nicht still umbauen.
-- **Ein Test, der gegen eine konstante Rückgabe grün bleibt, ist kein
-  Test.** Diese Probe vor jedem Commit selbst durchführen.
-- **Commit/Push nur auf Anfrage** des Koordinators. Kein `scripts/release`.
-- **Die GUI wird nicht gestartet.** `scripts/package-app` ist erlaubt.
-- Conventional Commits, Englisch, Footer auf jedem Commit:
+- **Code, comments, test names: English.** Internal docs (`docs/`) may be
+  German.
+- **User-facing strings** through `L10n.string(_:_:)`; **every new key in
+  all four catalogs** (en/de/fr/pl). Proof: the existing guard test plus
+  `plutil -lint` across all eight catalogs.
+- **Snippets never contain credentials.** The store is JSON; secrets live
+  exclusively in the keychain. No snippet field accepts a secret, and no
+  snippet text may end up in an error message.
+- **No secret in a log, error, or test failure message.** `#expect`
+  expands its expression.
+- **Never write a line number into a comment.** Name the thing.
+- **This plan's prose is a claim to be checked, not a fact.** In the
+  pre-phase, five of eleven tasks had a real error in the brief. If
+  something doesn't match the code: report it, don't silently rework it.
+- **A test that stays green against a constant return value is not a
+  test.** Run this probe on yourself before every commit.
+- **Commit/push only on request** from the coordinator. No
+  `scripts/release`.
+- **The GUI is not launched.** `scripts/package-app` is allowed.
+- Conventional Commits, English, footer on every commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- Volle Suite grün vor jedem Commit. Ausgangsstand: **1786 Tests in 150
-  Suiten** — neu messen, nie abschreiben.
+- Full suite green before every commit. Starting point: **1786 tests in 150
+  suites** — measure fresh, never copy the number.
 
-## Dateistruktur
+## File structure
 
-| Datei | Verantwortung |
+| File | Responsibility |
 |---|---|
-| `Sources/macSCPCore/Terminal/Snippet.swift` | Modell: `runsImmediately` raus, `tags` rein, Tag-Regel im Initializer |
+| `Sources/macSCPCore/Terminal/Snippet.swift` | Model: `runsImmediately` out, `tags` in, tag rule in the initializer |
 | `Sources/macSCPCore/Terminal/SnippetKeystrokes.swift` | `bytes(for:execute:)` |
-| `Sources/macSCPCore/Terminal/SnippetTagSuggestions.swift` | **neu** — Vorschlagsliste beim Tippen |
-| `Sources/macSCPCore/Terminal/SnippetMenuModel.swift` | **neu** — die Struktur, aus der alle vier Flächen rendern |
-| `Sources/MacSCPAppKit/SnippetTagField.swift` | **neu** — Token-Feld mit Vorschlägen |
-| `Sources/MacSCPAppKit/SnippetsSheet.swift` | Editor ohne Häkchen, Filterzeile |
-| `Sources/MacSCPAppKit/SnippetMenuItems.swift` | **neu** — die geteilte SwiftUI-Darstellung einer `SnippetMenuModel` |
-| `Sources/MacSCPAppKit/MacSCPApp.swift` | Menüleiste auf das Modell |
-| `Sources/MacSCPAppKit/SessionSidebar.swift` | Kontextmenü am Host |
-| `Sources/MacSCPAppKit/ContentView+Detail.swift` | Terminal-Kopfzeile + Popover |
-| `Sources/MacSCPAppKit/SSHTerminalView.swift` | Rechtsklick |
-| `Sources/MacSCPAppKit/KeyboardShortcutsCatalog.swift` | Kürzel-Eintrag |
+| `Sources/macSCPCore/Terminal/SnippetTagSuggestions.swift` | **new** — suggestion list while typing |
+| `Sources/macSCPCore/Terminal/SnippetMenuModel.swift` | **new** — the structure all four surfaces render from |
+| `Sources/MacSCPAppKit/SnippetTagField.swift` | **new** — token field with suggestions |
+| `Sources/MacSCPAppKit/SnippetsSheet.swift` | Editor without a checkbox, filter row |
+| `Sources/MacSCPAppKit/SnippetMenuItems.swift` | **new** — the shared SwiftUI rendering of a `SnippetMenuModel` |
+| `Sources/MacSCPAppKit/MacSCPApp.swift` | Menu bar onto the model |
+| `Sources/MacSCPAppKit/SessionSidebar.swift` | Context menu on the host |
+| `Sources/MacSCPAppKit/ContentView+Detail.swift` | Terminal header + popover |
+| `Sources/MacSCPAppKit/SSHTerminalView.swift` | Right-click |
+| `Sources/MacSCPAppKit/KeyboardShortcutsCatalog.swift` | Shortcut entry |
 
 ---
 
-## Teil A: Core
+## Part A: Core
 
-### Task 1: Das Modell — Flag raus, Tags rein
+### Task 1: The model — flag out, tags in
 
 **Files:**
 - Modify: `Sources/macSCPCore/Terminal/Snippet.swift`
@@ -72,17 +72,16 @@ SwiftUI, Swift Testing (`@Test`/`#expect`), zwei Testtargets
 
 **Interfaces:**
 - Produces: `Snippet(id:name:command:tags:)` (failable), `Snippet.tags: [String]`.
-  `runsImmediately` existiert nicht mehr.
+  `runsImmediately` no longer exists.
 
-- [ ] **Schritt 1: Den Ist-Zustand lesen**
+- [ ] **Step 1: Read the current state**
 
-`Snippet.swift` samt seines `init(from:)`, und die vorhandenen Tests. Der
-Zeilenumbruch-Riegel und der Weg „Decode geht durch den validierenden
-Initializer" bleiben **unverändert** — sie sind der Grund, warum eine von
-Hand bearbeitete Datei die Regel nicht umgehen kann. Die Tag-Regel wird
-genauso gebaut.
+`Snippet.swift` including its `init(from:)`, and the existing tests. The
+newline guard and the "decode goes through the validating initializer" path
+stay **unchanged** — they are the reason a hand-edited file cannot get
+around the rule. The tag rule is built the same way.
 
-- [ ] **Schritt 2: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 2: Write the failing tests**
 
 ```swift
 /// Whitespace around a tag is typing noise, not part of the tag.
@@ -141,12 +140,12 @@ genauso gebaut.
 }
 ```
 
-- [ ] **Schritt 3: Rot laufen lassen**
+- [ ] **Step 3: Run it red**
 
 Run: `swift test --filter SnippetTests`
-Erwartet: FAIL — `tags` gibt es nicht.
+Expected: FAIL — `tags` doesn't exist.
 
-- [ ] **Schritt 4: Das Modell ändern**
+- [ ] **Step 4: Change the model**
 
 ```swift
 public struct Snippet: Identifiable, Codable, Equatable, Sendable {
@@ -174,24 +173,23 @@ public struct Snippet: Identifiable, Codable, Equatable, Sendable {
 }
 ```
 
-`init(from:)` dekodiert `tags` mit `decodeIfPresent(… ) ?? []` und routet
-weiter durch den Initializer oben. **`runsImmediately` wird nicht
-dekodiert** — ein unbekannter Schlüssel stört `JSONDecoder` nicht, und die
-Markierung soll ja entfallen. Der Doc-Kommentar des Typs muss aufhören,
-`runsImmediately` zu erwähnen; der Absatz über den Zeilenumbruch braucht
-eine neue Begründung, weil sie sich nicht mehr auf das Flag stützen kann.
+`init(from:)` decodes `tags` with `decodeIfPresent(… ) ?? []` and routes
+onward through the initializer above. **`runsImmediately` is not decoded**
+— an unknown key doesn't bother `JSONDecoder`, and the flag is meant to go
+away anyway. The type's doc comment must stop mentioning
+`runsImmediately`; the paragraph about the newline needs a new
+justification, since it can no longer lean on the flag.
 
-- [ ] **Schritt 5: Grün, dann Aufrufer**
+- [ ] **Step 5: Green, then callers**
 
 Run: `swift test --filter SnippetTests` → PASS.
-Danach den ganzen Baum bauen: jeder Aufrufer von `runsImmediately` bricht
-jetzt. **Nicht reparieren, sondern melden**, wenn eine Stelle mehr als das
-Weglassen des Arguments braucht — Task 2 und Task 5 nehmen sie auf. Für
-diesen Task genügt es, den Compiler mit dem minimalen Eingriff zu
-befriedigen (Argument weglassen, Flag-Lesestellen vorläufig auf „einfügen"
-setzen) und das im Bericht zu benennen.
+Then build the whole tree: every caller of `runsImmediately` now breaks.
+**Don't fix it, report it** if a spot needs more than dropping the
+argument — Task 2 and Task 5 pick those up. For this task it is enough to
+satisfy the compiler with the minimal intervention (drop the argument, set
+flag-reading spots to "insert" for now) and name that in the report.
 
-- [ ] **Schritt 6: Volle Suite und Commit**
+- [ ] **Step 6: Full suite and commit**
 
 ```bash
 swift test
@@ -201,23 +199,23 @@ git commit -m "feat(core): give snippets tags and drop the runs-immediately flag
 
 ---
 
-### Task 2: Die Bytes — Entscheidung wandert an den Aufruf
+### Task 2: The bytes — the decision moves to the call site
 
 **Files:**
 - Modify: `Sources/macSCPCore/Terminal/SnippetKeystrokes.swift`
 - Modify: `Tests/macSCPCoreTests/SnippetKeystrokesTests.swift`
 
 **Interfaces:**
-- Consumes: `Snippet` ohne `runsImmediately` (Task 1).
+- Consumes: `Snippet` without `runsImmediately` (Task 1).
 - Produces: `SnippetKeystrokes.bytes(for snippet: Snippet, execute: Bool) -> [UInt8]`
 
-- [ ] **Schritt 1: Den vorhandenen Code und seine Tests lesen**
+- [ ] **Step 1: Read the existing code and its tests**
 
-Besonders den Doc-Kommentar über `terminator`. Das gemessene `0x0D` und
-die Beweiskette dazu **bleiben wörtlich erhalten** — sie sind das Ergebnis
-einer Messung, die in Runde 1 einen echten Fehler korrigiert hat.
+Especially the doc comment above `terminator`. The measured `0x0D` and the
+chain of evidence around it **stay exactly as written** — they are the
+result of a measurement that corrected a real bug in round 1.
 
-- [ ] **Schritt 2: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 2: Write the failing tests**
 
 ```swift
 /// Inserting never appends a terminator — that is the whole difference
@@ -254,12 +252,12 @@ einer Messung, die in Runde 1 einen echten Fehler korrigiert hat.
 }
 ```
 
-- [ ] **Schritt 3: Rot, implementieren, grün**
+- [ ] **Step 3: Red, implement, green**
 
-Run: `swift test --filter SnippetKeystrokes` → FAIL, dann die Signatur
-ändern (`if execute { bytes.append(terminator) }`), dann PASS.
+Run: `swift test --filter SnippetKeystrokes` → FAIL, then change the
+signature (`if execute { bytes.append(terminator) }`), then PASS.
 
-- [ ] **Schritt 4: Volle Suite und Commit**
+- [ ] **Step 4: Full suite and commit**
 
 ```bash
 swift test
@@ -269,11 +267,11 @@ git commit -m "feat(core): let the caller decide whether a snippet executes"
 
 ---
 
-### Task 3: Die Vorschlagsliste
+### Task 3: The suggestion list
 
-Die Maintainer-Entscheidung lautet „nur trimmen, Groß/Klein bleibt". Damit
-sind `Docker` und `docker` zwei Tags. Gedämpft wird das **an der Eingabe**:
-wer `doc` tippt, bekommt das vorhandene `Docker` angeboten.
+The maintainer's decision is "only trim, case stays as typed". That makes
+`Docker` and `docker` two tags. This is damped **at the input**: someone
+typing `doc` gets the existing `Docker` offered.
 
 **Files:**
 - Create: `Sources/macSCPCore/Terminal/SnippetTagSuggestions.swift`
@@ -287,10 +285,10 @@ wer `doc` tippt, bekommt das vorhandene `Docker` angeboten.
       public static func matching(_ prefix: String, in snippets: [Snippet], excluding taken: [String]) -> [(tag: String, count: Int)]
   }
   ```
-  Beide sortiert: absteigend nach `count`, bei Gleichstand alphabetisch
-  (Groß/Klein-unempfindlich verglichen).
+  Both sorted: descending by `count`, alphabetically on a tie (compared
+  case-insensitively).
 
-- [ ] **Schritt 1: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 ```swift
 /// The whole point of the suggestion list: typing lowercase must surface an
@@ -337,13 +335,13 @@ wer `doc` tippt, bekommt das vorhandene `Docker` angeboten.
 }
 ```
 
-- [ ] **Schritt 2: Rot, implementieren, grün, volle Suite, Commit**
+- [ ] **Step 2: Red, implement, green, full suite, commit**
 
 Run: `swift test --filter SnippetTagSuggestions` → FAIL → PASS.
 
-**Vor dem Commit die Konstant-Probe:** gäbe `matching` immer `[]` zurück,
-welcher Test wird rot? Gäbe es alle Tags ungefiltert zurück, welcher? Beide
-Antworten in den Bericht.
+**Before the commit, the constant probe:** if `matching` always returned
+`[]`, which test goes red? If it returned all tags unfiltered, which one?
+Both answers in the report.
 
 ```bash
 git commit -m "feat(core): suggest existing tags case-insensitively"
@@ -351,7 +349,7 @@ git commit -m "feat(core): suggest existing tags case-insensitively"
 
 ---
 
-### Task 4: `SnippetMenuModel` — ein Typ, vier Flächen
+### Task 4: `SnippetMenuModel` — one type, four surfaces
 
 **Files:**
 - Create: `Sources/macSCPCore/Terminal/SnippetMenuModel.swift`
@@ -380,16 +378,16 @@ git commit -m "feat(core): suggest existing tags case-insensitively"
   }
   ```
 
-**Zwei Entscheidungen, die hier festgeschrieben werden, damit sie nicht in
-vier Views je anders ausfallen:**
+**Two decisions fixed here so they don't come out differently across four
+views:**
 
-1. **Ein Snippet mit zwei Tags erscheint unter beiden.** Das ist, was ein
-   Tag bedeutet — man sucht es dort, wo man es einsortiert hat. Doppelte
-   Einträge im Menü sind der Preis und sind gewollt.
-2. **Untagged kommt zuletzt**, in einer Gruppe mit `tag == nil`. Sonst
-   wären genau die Snippets unauffindbar, die noch nicht einsortiert sind.
+1. **A snippet with two tags appears under both.** That is what a tag
+   means — you look for it wherever you filed it. Duplicate entries in the
+   menu are the price, and are intended.
+2. **Untagged comes last**, in a group with `tag == nil`. Otherwise exactly
+   the snippets nobody has sorted yet would become unreachable.
 
-- [ ] **Schritt 1: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 ```swift
 /// A snippet carrying two tags is reachable under both — that is what a tag
@@ -466,20 +464,20 @@ vier Views je anders ausfallen:**
 }
 ```
 
-- [ ] **Schritt 2: Rot, implementieren, grün**
+- [ ] **Step 2: Red, implement, green**
 
-Gruppen-Reihenfolge: Tags alphabetisch (Groß/Klein-unempfindlich
-verglichen, bei Gleichstand stabil), `nil` zuletzt.
+Group order: tags alphabetically (compared case-insensitively, stable on a
+tie), `nil` last.
 
-**Wenn `isConnected == false` und `supportsShell == false` gleichzeitig
-gelten:** entscheide dich für einen Vorrang, schreibe ihn in den
-Doc-Kommentar und pinne ihn mit einem Test. Ein Fall ohne festgelegte
-Antwort wird sonst in vier Views vier Mal anders geraten.
+**If `isConnected == false` and `supportsShell == false` hold at the same
+time:** pick a precedence, write it in the doc comment, and pin it with a
+test. Otherwise a case with no fixed answer gets guessed four different
+ways across four views.
 
-- [ ] **Schritt 3: Konstant-Probe, volle Suite, Commit**
+- [ ] **Step 3: Constant probe, full suite, commit**
 
-Gäbe `build` immer ein Modell ohne Gruppen zurück — welcher Test wird rot?
-Immer `disabledReason == nil`? In den Bericht.
+If `build` always returned a model with no groups — which test goes red?
+Always `disabledReason == nil`? Into the report.
 
 ```bash
 git commit -m "feat(core): derive the snippet menu structure in one tested place"
@@ -487,62 +485,62 @@ git commit -m "feat(core): derive the snippet menu structure in one tested place
 
 ---
 
-## Teil B: App
+## Part B: App
 
-### Task 5: Das Verwaltungs-Sheet — Häkchen raus, Tags rein
+### Task 5: The management sheet — checkbox out, tags in
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/SnippetTagField.swift`
 - Modify: `Sources/MacSCPAppKit/SnippetsSheet.swift`
-- Modify: die vier `Localizable.xcstrings` (en/de/fr/pl)
-- Modify: `Tests/macSCPAppKitTests/SnippetsPresentationTests.swift` (falls
-  `SnippetMenuEntry.title(for:)` entfällt — siehe unten)
+- Modify: the four `Localizable.xcstrings` (en/de/fr/pl)
+- Modify: `Tests/macSCPAppKitTests/SnippetsPresentationTests.swift` (if
+  `SnippetMenuEntry.title(for:)` goes away — see below)
 
-- [ ] **Schritt 1: Lesen, was da ist**
+- [ ] **Step 1: Read what's there**
 
-`SnippetsSheet.swift` ganz, `SnippetsPresentation.swift` ganz.
-`SheetSearchField` aus M18 existiert und wird wiederverwendet.
+`SnippetsSheet.swift` in full, `SnippetsPresentation.swift` in full.
+`SheetSearchField` from M18 exists and is reused.
 
-**`SnippetMenuEntry.title(for:)` verliert seinen Zweck** — es markierte
-ausführende Snippets im Titel, und ausführende Snippets gibt es nicht mehr.
-Entferne es samt seinen Tests. Prüfe per Compiler, nicht per `grep`, dass
-kein Aufrufer bleibt.
+**`SnippetMenuEntry.title(for:)` loses its purpose** — it marked executing
+snippets in the title, and executing snippets no longer exist. Remove it
+along with its tests. Verify with the compiler, not with `grep`, that no
+caller remains.
 
-- [ ] **Schritt 2: Das Token-Feld**
+- [ ] **Step 2: The token field**
 
-`SnippetTagField` ist ein `View` mit `@Binding var tags: [String]` und
-einem `suggestions: (String) -> [(tag: String, count: Int)]`-Closure (aus
-`SnippetTagSuggestions`, hereingereicht statt selbst gebaut — dieselbe
-Naht, die `SessionSecretPolicy` testbar gemacht hat).
+`SnippetTagField` is a `View` with `@Binding var tags: [String]` and a
+`suggestions: (String) -> [(tag: String, count: Int)]` closure (from
+`SnippetTagSuggestions`, passed in rather than built internally — the same
+seam that made `SessionSecretPolicy` testable).
 
-Verhalten: gesetzte Tags als Chips mit Entfernen-Knopf; beim Tippen eine
-Vorschlagsliste mit Anzahl; **letzter Eintrag immer** „*x* als neuen Tag
-anlegen". Return übernimmt den markierten Vorschlag, Komma schließt den
-getippten Tag ab, Backspace im leeren Feld entfernt den letzten Chip.
+Behavior: set tags as chips with a remove button; a suggestion list with
+count while typing; **last entry always** "create *x* as a new tag".
+Return picks up the highlighted suggestion, comma closes off the typed tag,
+backspace in the empty field removes the last chip.
 
-**Neue L10n-Schlüssel** (Vorschlag, Wortlaut ist deine Entscheidung, aber
-in allen vier Katalogen identisch benannt):
+**New L10n keys** (wording is your call, but named identically in all four
+catalogs):
 `snippets.tags.label`, `snippets.tags.placeholder`,
 `snippets.tags.createNew`, `snippets.tags.remove`,
 `snippets.filter.all`, `snippets.filter.untagged`.
 
-- [ ] **Schritt 3: Editor und Filterzeile**
+- [ ] **Step 3: Editor and filter row**
 
-Im Editor: das „sofort ausführen"-Häkchen **entfernen**, das Tag-Feld
-darunter. Unter dem vorhandenen Suchfeld eine Chip-Zeile: „Alle", je ein
-Chip pro Tag mit Anzahl, dazu „ohne Tag". **Einwertig** — ein Chip zur
-Zeit, „Alle" setzt zurück.
+In the editor: **remove** the "run immediately" checkbox, put the tag field
+below. Below the existing search field, a chip row: "All", one chip per tag
+with count, plus "untagged". **Single-select** — one chip at a time, "All"
+resets.
 
-- [ ] **Schritt 4: Kataloge und Suite**
+- [ ] **Step 4: Catalogs and suite**
 
 ```bash
 swift test
 for f in $(git ls-files '*.xcstrings'); do plutil -lint "$f"; done
 ```
-Erwartet: Suite grün, alle Kataloge OK, der vorhandene Wächtertest hält die
-Schlüsselmengen zusammen.
+Expected: suite green, all catalogs OK, the existing guard test keeps the
+key sets aligned.
 
-- [ ] **Schritt 5: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git commit -m "feat(app): tag snippets in the editor and filter the list by tag"
@@ -550,44 +548,43 @@ git commit -m "feat(app): tag snippets in the editor and filter the list by tag"
 
 ---
 
-### Task 6: Die Menüleiste auf das Modell
+### Task 6: The menu bar onto the model
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/SnippetMenuItems.swift`
 - Modify: `Sources/MacSCPAppKit/MacSCPApp.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView.swift` (`triggerSnippet`)
 - Modify: `Sources/MacSCPAppKit/KeyboardShortcutsCatalog.swift`
-- Modify: die vier Kataloge
+- Modify: the four catalogs
 
-- [ ] **Schritt 1: Lesen**
+- [ ] **Step 1: Read**
 
-`snippetMenuItems` und `snippetButton` in `MacSCPApp.swift`,
+`snippetMenuItems` and `snippetButton` in `MacSCPApp.swift`,
 `triggerSnippet` in `ContentView.swift`, `SnippetsLoad` in
-`SnippetsPresentation.swift` (**bleibt** — ein unlesbarer Store darf nie
-wie ein leerer aussehen).
+`SnippetsPresentation.swift` (**stays** — a store that can't be read must
+never look like an empty one).
 
-- [ ] **Schritt 2: Die geteilte Darstellung**
+- [ ] **Step 2: The shared rendering**
 
-`SnippetMenuItems` ist ein `View`, der aus einer `SnippetMenuModel` die
-Einträge rendert: Untermenü je Gruppe, pro Snippet **zwei** Aktionen
-(„Einfügen", „Ausführen"). Es bekommt die Aktion als Closure
-`(Snippet, Bool) -> Void` herein — dasselbe Stück wird in Task 7 und 8
-wiederverwendet, damit die vier Flächen nachweislich aus einem Modell
-lesen.
+`SnippetMenuItems` is a `View` that renders the entries from a
+`SnippetMenuModel`: a submenu per group, **two** actions per snippet
+("Insert", "Execute"). It receives the action as a closure
+`(Snippet, Bool) -> Void` — the same piece is reused in Task 7 and 8, so
+that all four surfaces demonstrably read from one model.
 
-- [ ] **Schritt 3: `triggerSnippet` auf zwei Aktionen**
+- [ ] **Step 3: `triggerSnippet` onto two actions**
 
-`triggerSnippet(_ snippet: Snippet, execute: Bool)`, reicht `execute` an
-`SnippetKeystrokes.bytes(for:execute:)` durch. Sonst unverändert.
+`triggerSnippet(_ snippet: Snippet, execute: Bool)`, passes `execute`
+through to `SnippetKeystrokes.bytes(for:execute:)`. Otherwise unchanged.
 
-- [ ] **Schritt 4: Kürzel**
+- [ ] **Step 4: Shortcut**
 
-⌃⌘1–3 **fügen** die ersten drei Snippets in Speicherreihenfolge ein.
-**Ausführen bekommt kein Kürzel** — ein Tastendruck, der sofort auf einem
-Host läuft, hat keinen guten Fehlerfall. Den Shortcuts-Katalog aus M11q
-mitpflegen; sein Doc-Kommentar nennt das als Pflicht.
+⌃⌘1–3 **insert** the first three snippets in store order. **Execute gets no
+shortcut** — a keystroke that immediately runs on a host has no good
+failure case. Keep the shortcuts catalog from M11q updated; its doc comment
+names that as a duty.
 
-- [ ] **Schritt 5: Suite, Kataloge, Commit**
+- [ ] **Step 5: Suite, catalogs, commit**
 
 ```bash
 swift test && for f in $(git ls-files '*.xcstrings'); do plutil -lint "$f"; done
@@ -596,32 +593,32 @@ git commit -m "feat(app): offer insert and execute for every snippet in the Term
 
 ---
 
-### Task 7: Kontextmenü am Host
+### Task 7: Context menu on the host
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SessionSidebar.swift`
-- Modify: die vier Kataloge
+- Modify: the four catalogs
 
-- [ ] **Schritt 1: Lesen**
+- [ ] **Step 1: Read**
 
-Die vorhandenen `.contextMenu`-Blöcke in `SessionSidebar.swift` — es gibt
-mehrere, für Sitzungszeile, Gruppe und importierten Host. **Nur die
-Sitzungszeile** bekommt den Snippet-Eintrag.
+The existing `.contextMenu` blocks in `SessionSidebar.swift` — there are
+several, for the session row, the group, and the imported host. **Only the
+session row** gets the snippet entry.
 
-- [ ] **Schritt 2: Verdrahten**
+- [ ] **Step 2: Wire it up**
 
-Ein Untermenü „Snippet", das `SnippetMenuItems` mit derselben
-`SnippetMenuModel` rendert. Deaktiviert über
-`BackendDescriptor.descriptor(for:).capabilities.supportsShell` — S3- und
-WebDAV-Sitzungen zeigen den Eintrag grau statt ins Leere zu laufen.
+A submenu "Snippet" that renders `SnippetMenuItems` with the same
+`SnippetMenuModel`. Disabled via
+`BackendDescriptor.descriptor(for:).capabilities.supportsShell` — S3 and
+WebDAV sessions show the entry greyed out instead of leading nowhere.
 
-**Zu klären und im Bericht zu beantworten:** eine Sitzung in der Sidebar
-ist nicht notwendig die **aktive** — auf welche Shell schickt der Eintrag?
-Entscheide dich, schreibe es in den Doc-Kommentar, und wenn die Antwort
-„nur für die aktive Sitzung, sonst deaktiviert" lautet, sag das dem Nutzer
-im Menü statt es stumm zu tun.
+**To clarify and answer in the report:** a session in the sidebar is not
+necessarily the **active** one — which shell does the entry send to?
+Decide, write it into the doc comment, and if the answer is "only for the
+active session, disabled otherwise", say so to the user in the menu instead
+of doing it silently.
 
-- [ ] **Schritt 3: Suite, Kataloge, Commit**
+- [ ] **Step 3: Suite, catalogs, commit**
 
 ```bash
 git commit -m "feat(app): reach snippets from a session's context menu"
@@ -629,26 +626,26 @@ git commit -m "feat(app): reach snippets from a session's context menu"
 
 ---
 
-### Task 8: Terminal-Kopfzeile mit Popover
+### Task 8: Terminal header with popover
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/ContentView+Detail.swift` (`terminalPanel`)
-- Modify: die vier Kataloge
+- Modify: the four catalogs
 
-- [ ] **Schritt 1: Messen, bevor du baust**
+- [ ] **Step 1: Measure before you build**
 
-Notiere den **heutigen** Randwert und die Höhe des Terminal-Streifens aus
-`terminalPanel`. Die Zahl kommt in den Bericht. **Ändere sie nicht** — der
-Rand ist P2, nicht dieser Task. Diese Kopfzeile kommt hinzu, weil das
-Popover sie braucht.
+Note the **current** margin value and the height of the terminal strip from
+`terminalPanel`. The number goes into the report. **Don't change it** —
+the margin is P2, not this task. This header is being added because the
+popover needs it.
 
-- [ ] **Schritt 2: Die Kopfzeile**
+- [ ] **Step 2: The header**
 
-Schmale Zeile über der Terminalfläche: links der Host, rechts ein
-Snippet-Knopf. Der Knopf öffnet ein Popover mit `SheetSearchField` und
-`SnippetMenuItems` auf derselben `SnippetMenuModel`.
+A slim row above the terminal area: the host on the left, a snippet button
+on the right. The button opens a popover with `SheetSearchField` and
+`SnippetMenuItems` on the same `SnippetMenuModel`.
 
-- [ ] **Schritt 3: Suite, Kataloge, Commit**
+- [ ] **Step 3: Suite, catalogs, commit**
 
 ```bash
 git commit -m "feat(app): give the terminal panel a header with a snippet picker"
@@ -656,31 +653,30 @@ git commit -m "feat(app): give the terminal panel a header with a snippet picker
 
 ---
 
-### Task 9: Rechtsklick im Terminal
+### Task 9: Right-click in the terminal
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SSHTerminalView.swift`
 
-- [ ] **Schritt 1: Messen, nicht folgern**
+- [ ] **Step 1: Measure, don't infer**
 
-Aus dem Quelltext von SwiftTerms `MacTerminalView` ist bekannt: **keine
-Überschreibung von `rightMouseDown`, kein `menu(for:)`**, wohl aber eine
-`paste(_:)`-Aktion. Daraus folgt **nicht**, dass ein gesetztes Menü auch
-ankommt.
+From SwiftTerm's `MacTerminalView` source it is known: **no override of
+`rightMouseDown`, no `menu(for:)`**, but there is a `paste(_:)` action.
+**It does not follow** from that that a set menu actually arrives.
 
-Stelle fest, ob ein auf der gehosteten View gesetztes `NSMenu` beim
-Rechtsklick erscheint, und ob dadurch etwas verlorengeht, das die
-Terminalfläche heute mit der rechten Maustaste tut. Halte fest, **wie** du
-es festgestellt hast. Geht es nicht ohne GUI-Start: sag das, und trage den
-Punkt als offene Sichtprüfung in den Bericht — **starte die GUI nicht**.
+Determine whether an `NSMenu` set on the hosted view appears on
+right-click, and whether that loses anything the terminal area currently
+does with the right mouse button. Record **how** you determined it. If it
+can't be done without launching the GUI: say so, and carry the point into
+the report as an open visual check — **do not launch the GUI**.
 
-- [ ] **Schritt 2: Verdrahten oder melden**
+- [ ] **Step 2: Wire it up or report it**
 
-Trägt es: dieselben Einträge wie in Task 6, über `SnippetMenuItems`.
-Trägt es nicht: **melden statt improvisieren.** Ein halb funktionierender
-Rechtsklick ist schlechter als keiner.
+If it works: the same entries as in Task 6, via `SnippetMenuItems`. If it
+doesn't: **report it, don't improvise.** A half-working right-click is
+worse than none.
 
-- [ ] **Schritt 3: Suite und Commit**
+- [ ] **Step 3: Suite and commit**
 
 ```bash
 git commit -m "feat(app): reach snippets by right-clicking the terminal"
@@ -688,32 +684,32 @@ git commit -m "feat(app): reach snippets by right-clicking the terminal"
 
 ---
 
-## Teil C: Abschluss
+## Part C: Wrap-up
 
-### Task 10: Phasenabschluss
+### Task 10: Phase close-out
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-11-p1-snippets-abschluss.md`
 
-- [ ] **Schritt 1: Messen**
+- [ ] **Step 1: Measure**
 
 ```bash
 swift test 2>&1 | tail -3
 for f in $(git ls-files '*.xcstrings'); do plutil -lint "$f"; done
 MACSCP_VERSION="1.2.0-dev" MACSCP_BUILD="$(git rev-list --count HEAD)" ./scripts/package-app
 ```
-Alle Zahlen neu messen. **Die App wird nicht gestartet.**
+Measure all numbers fresh. **The app is not launched.**
 
-- [ ] **Schritt 2: Bericht**
+- [ ] **Step 2: Report**
 
-Er nennt: die gemessenen Zahlen; dass alle vier Flächen aus **einem**
-Modell lesen und dass das der Nachweis im Code ist, kein Test; welche
-Kriterien Review-Punkte statt Tests sind; das Ergebnis der
-Rechtsklick-Messung; und **ausdrücklich**, dass die GUI nicht gestartet
-wurde und welche Sichtprüfungen beim Maintainer liegen — Kopfzeile,
-Popover, Kontextmenü, Filterzeile, Token-Feld.
+It states: the measured numbers; that all four surfaces read from **one**
+model and that this is proof in the code, not a test; which criteria are
+review points rather than tests; the result of the right-click
+measurement; and **explicitly** that the GUI was not launched, and which
+visual checks are left for the maintainer — header, popover, context menu,
+filter row, token field.
 
-- [ ] **Schritt 3: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git commit -m "docs(app): record the snippet trigger surfaces"
@@ -721,22 +717,22 @@ git commit -m "docs(app): record the snippet trigger surfaces"
 
 ---
 
-## Selbstreview dieses Plans
+## Self-review of this plan
 
-**Spec-Abdeckung** (Abschnitt „P1" der Spec): Modell + Migration → T1.
-Tag-Regel → T1. Vorschlagsliste → T3. Bytes → T2. `SnippetMenuModel` → T4.
-Tag-Eingabefeld → T5. Filterzeile → T5. Vier Auslöseflächen → T6/T7/T8/T9.
-Kürzel + Katalog → T6. Beide „zu messen"-Punkte: Rechtsklick → T9 Schritt 1;
-Terminal-Rand → T8 Schritt 1 misst ihn, ändert ihn aber bewusst erst in P2.
+**Spec coverage** (section "P1" of the spec): model + migration → T1.
+Tag rule → T1. Suggestion list → T3. Bytes → T2. `SnippetMenuModel` → T4.
+Tag input field → T5. Filter row → T5. Four trigger surfaces → T6/T7/T8/T9.
+Shortcut + catalog → T6. Both "to be measured" points: right-click → T9
+step 1; terminal margin → T8 step 1 measures it, but deliberately changes
+it only in P2.
 
-**Drei Stellen, an denen dieser Plan bewusst nicht rät**, sondern den
-Implementierer entscheiden und begründen lässt: der Vorrang zwischen
-`notConnected` und `backendHasNoShell` (T4), auf welche Shell das
-Host-Kontextmenü schickt (T7), und ob der Rechtsklick überhaupt trägt (T9).
-Alle drei sind mit „entscheiden, in den Doc-Kommentar schreiben, pinnen"
-bzw. „melden statt improvisieren" versehen — nicht mit einer erfundenen
-Antwort.
+**Three places where this plan deliberately does not guess**, and instead
+leaves the implementer to decide and justify: the precedence between
+`notConnected` and `backendHasNoShell` (T4), which shell the host context
+menu sends to (T7), and whether the right-click even works (T9). All three
+carry "decide, write into the doc comment, pin it" or "report, don't
+improvise" — never a made-up answer.
 
-**Nicht Teil davon:** der Terminal-Rand und das reine Terminal-Fenster
-(P2), Host-Tags und Import/Export (P3), der Massen-Runner, mehrzeilige
-Kommandos, Syntax-Hervorhebung, Platzhalter, Agent-Forwarding.
+**Not part of this:** the terminal margin and the plain terminal window
+(P2), host tags and import/export (P3), the bulk runner, multi-line
+commands, syntax highlighting, placeholders, agent forwarding.

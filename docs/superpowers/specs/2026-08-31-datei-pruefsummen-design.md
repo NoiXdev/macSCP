@@ -1,127 +1,127 @@
-# Prüfsummen für Dateien — Entwurf
+# File Checksums — Design
 
-**Stand:** 2026-08-31. Umsetzung der Punkte **1 und 2** aus
-`docs/superpowers/specs/2026-08-27-backlog-datei-hashes.md`. Punkt 3 (die
-Tabellenspalte) bleibt ausdrücklich draußen — der Eintrag schneidet das
-selbst so zu, und Frage 3 dort ist unbeantwortet.
+**Status:** 2026-08-31. Implements points **1 and 2** from
+`docs/superpowers/specs/2026-08-27-backlog-datei-hashes.md`. Point 3 (the
+table column) is explicitly left out — the entry itself scopes it that way,
+and question 3 there is unanswered.
 
 ---
 
-## Entscheidungen des Maintainers
+## Maintainer decisions
 
-- **2026-08-27:** nur auf Anforderung, **nicht durch Herunterladen**.
-- **2026-08-31:** der Vorgang baut den **SFTP-Befehlsweg** mit.
-- **2026-08-31:** **SHA-256, MD5 und SHA-1**, mit Hinweis an der Einstellung.
+- **2026-08-27:** on request only, **not by downloading**.
+- **2026-08-31:** the change builds the **SFTP command path** as well.
+- **2026-08-31:** **SHA-256, MD5 and SHA-1**, with a note on the setting.
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
 | | |
 |---|---|
-| Befehl mit Rückgabewert in Core | **gibt es nicht** — `CitadelShell` bedient das Terminal |
-| `ProtocolCapabilities` | acht Felder, u. a. `supportsPresignedURL` als Vorbild für „dieses Backend kann etwas" |
-| `RemoteFileItem` | trägt keinen Hash und kein ETag |
-| Quoting | `PosixQuoting` liegt in Core und ist geprüft |
+| Command with a return value in Core | **does not exist** — `CitadelShell` serves the terminal |
+| `ProtocolCapabilities` | eight fields, including `supportsPresignedURL` as the model for "this backend can do something" |
+| `RemoteFileItem` | carries no hash and no ETag |
+| Quoting | `PosixQuoting` lives in Core and is tested |
 
-## Die Fähigkeit ist eng, nicht allgemein
+## The capability is narrow, not general
 
-**Core bekommt keinen `exec(String)`.** Es bekommt „berechne die Prüfsumme
-dieser Datei mit diesem Verfahren".
+**Core does not get an `exec(String)`.** It gets "compute the checksum of
+this file with this method".
 
-Das ist die Entscheidung, an der dieser Entwurf hängt. Ein allgemeiner
-Ausführungsweg wäre eine neue Fläche, die jeder künftige Wächter beobachten
-müsste, und die Erfahrung dieses Projekts mit Quelltext-Wächtern ist
-eindeutig. Eine enge Fähigkeit hat **einen** interpolierten Teil — den Pfad —
-und der geht durch `PosixQuoting`, das es schon gibt.
+That is the decision this design hangs on. A general execution path would
+be a new surface that every future guard would have to watch, and this
+project's experience with source-scanning guards is unambiguous. A narrow
+capability has **one** interpolated part — the path — and it goes through
+`PosixQuoting`, which already exists.
 
-Der Aufrufer kann damit keinen Befehl formulieren. Nicht weil ein Test es
-verbietet, sondern weil es keinen Parameter dafür gibt.
+The caller cannot compose a command with this. Not because a test forbids
+it, but because there is no parameter for it.
 
-## Die Gegenseite ist nicht überall dieselbe
+## The remote side is not the same everywhere
 
-`sha256sum` ist GNU; unter macOS und BSD heißt es `shasum -a 256`. Dasselbe
-gilt für die anderen beiden Verfahren.
+`sha256sum` is GNU; on macOS and BSD it's `shasum -a 256`. The same holds
+for the other two methods.
 
-**Einmal je Verbindung wird gefragt**, welche Form vorhanden ist, und die
-Antwort gilt für diese Verbindung. Kein zusammengesetzter Befehl mit `&&`
-und `||`, der beide Fälle in einer Zeile abdeckt — das wäre genau die
-Konstruktion, die dieses Projekt an anderer Stelle acht Prüfrunden lang
-abgelehnt hat, und sie brächte nichts außer einem gesparten Umlauf.
+**The available form is asked once per connection**, and the answer holds
+for that connection. No composed command with `&&` and `||` covering both
+cases in one line — that would be exactly the construction this project has
+rejected elsewhere across eight review rounds, and it would buy nothing but
+one saved round trip.
 
-**Findet sich keine Form, gibt es die Funktion auf dieser Verbindung nicht**,
-und das wird gesagt.
+**If no form is found, the function does not exist on that connection**,
+and that is stated.
 
-## Die Ausgabe wird nicht geglaubt, sondern gelesen
+## The output is read, not believed
 
-Ein `sha256sum` antwortet mit `<hex>  <pfad>`. Gelesen wird **nur das erste
-Feld**, und nur, wenn es aus Hex-Ziffern in der Länge besteht, die das
-Verfahren vorschreibt.
+An `sha256sum` responds with `<hex>  <path>`. **Only the first field** is
+read, and only if it consists of hex digits in the length the method
+prescribes.
 
-Der zurückgegebene Pfad wird **nicht** verglichen und nicht angezeigt: er
-kommt von der Gegenseite, und ein Wert von dort ist Eingabe. Die Zuordnung
-„welche Datei" macht der Aufrufer, der gefragt hat.
+The returned path is **not** compared and not displayed: it comes from the
+remote side, and a value from there is input. Matching it to "which file"
+is the caller's job — the caller already knew what it asked for.
 
-Das ist eine reine Funktion und damit prüfbar, ohne dass eine Verbindung
-existiert.
+This is a pure function and therefore testable without a connection
+existing.
 
-## Woher der Wert stammt, steht dabei
+## The origin of the value travels with it
 
-| Backend | Quelle | Beschreibt es den Inhalt? |
+| Backend | Source | Does it describe the content? |
 |---|---|---|
-| SFTP | auf der Gegenseite gerechnet | ja |
-| Lokal | lokal gerechnet | ja |
-| S3 | ETag aus der Auflistung | **nur bei einteiligem Upload** |
-| WebDAV | nichts | — |
+| SFTP | computed on the remote side | yes |
+| Local | computed locally | yes |
+| S3 | ETag from the listing | **only for single-part upload** |
+| WebDAV | nothing | — |
 
-**Der S3-Fall ist der, an dem eine Anzeige lügen könnte.** Ein ETag der Form
-`md5-der-md5s-N` ist kein Dateihash, und genau bei großen Dateien tritt er
-auf. Ein Ergebnis trägt deshalb **immer** mit, woher es kommt und ob es den
-Inhalt beschreibt — nicht als Fußnote, sondern als Teil des Werts. Eine
-Anzeige, die das weglassen kann, wird es irgendwann weglassen.
+**The S3 case is the one where a display could lie.** An ETag of the form
+`md5-of-the-md5s-N` is not a file hash, and it occurs exactly for large
+files. A result therefore **always** carries where it came from and whether
+it describes the content — not as a footnote, but as part of the value. A
+display that can leave that out will eventually leave it out.
 
-WebDAV liefert nichts. **Das wird gesagt, nicht ausgegraut:** „dieser Server
-liefert keine Prüfsummen" ist eine Antwort, ein toter Menüeintrag nicht.
+WebDAV delivers nothing. **That is stated, not grayed out:** "this server
+does not provide checksums" is an answer; a dead menu entry is not.
 
-## Rechnen ist eine Übertragung
+## Computing is a transfer
 
-Der Eintrag sagt es: auf Anforderung, mit sichtbarem Fortschritt und
-Abbruch — „denn genau das ist es".
+The backlog entry says it: on request, with visible progress and
+cancellation — "because that is exactly what it is".
 
-Bei einer Auswahl wird **eine Datei nach der anderen** gerechnet, das
-Ergebnis erscheint, sobald es da ist, und Abbrechen lässt das Gerechnete
-stehen. Eine Prüfsumme über 40 GB dauert auf der Gegenseite Minuten; ein
-Fenster ohne Ausweg wäre dasselbe Problem, das der Abbau-Vorgang dieser Woche
-gerade behoben hat.
+For a selection, files are computed **one after another**, the result
+appears as soon as it is ready, and cancelling leaves what was already
+computed standing. A checksum over 40 GB takes minutes on the remote side;
+a window with no way out would be the same problem this week's teardown
+change just fixed.
 
-**Und der Aufruf bekommt eine Frist.** Diese Woche hat zweimal gemessen, dass
-ein `await` gegen eine schweigende Gegenseite nicht zurückkommt; ein neuer
-Wartepunkt ohne Decke wäre der dritte.
+**And the call gets a deadline.** This week measured twice that an `await`
+against a silent remote side does not return; a new wait point without a
+ceiling would be the third.
 
-## Die Verfahren
+## The methods
 
-**SHA-256 als Voreinstellung.** MD5 und SHA-1 werden angeboten, weil der
-häufigste reale Anlass der Abgleich gegen eine fremde Angabe ist — und die
-ist oft MD5.
+**SHA-256 as the default.** MD5 and SHA-1 are offered because the most
+common real-world reason is comparing against a value supplied by someone
+else — and that is often MD5.
 
-**An der Einstellung steht, dass beide gebrochen sind**, und zwar so, dass
-der Unterschied klar ist: zum Abgleich gegen eine Angabe taugen sie, als
-Nachweis, dass zwei Dateien gleich sind, nicht. Sie stehen nicht
-gleichwertig neben SHA-256.
+**The setting states that both are broken**, in a way that makes the
+distinction clear: they are fit for comparing against a supplied value, not
+as proof that two files are identical. They do not stand as equals next to
+SHA-256.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: das Lesen der Ausgabe, das Quoten des
-Pfads, die Wahl der Befehlsform, die Herkunft im Ergebnis, dass ein
-Mehrteil-ETag nicht als Dateihash gilt, und dass ein fehlender Befehl eine
-Aussage erzeugt statt eines toten Eintrags.
+Everything decidable is testable: reading the output, quoting the path,
+choosing the command form, the origin carried in the result, that a
+multi-part ETag does not count as a file hash, and that a missing command
+produces a statement instead of a dead entry.
 
-**Nicht prüfbar** bleibt, was ein echter Server tut — gemessen wird gegen das
-Docker-Rig und lokale Dateien.
+**Not testable** is what a real server does — measurement is against the
+Docker rig and local files.
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly excluded
 
-- **Keine Tabellenspalte** (Punkt 3).
-- **Kein allgemeiner Befehlsweg** in Core.
-- **Kein Herunterladen**, um zu rechnen — auch nicht als Ausweichweg, wenn
-  kein Befehl gefunden wurde.
-- **Kein `OC-Checksum`** für WebDAV in diesem Vorgang; es ist eine Erweiterung
-  und ein eigener Fall.
+- **No table column** (point 3).
+- **No general command path** in Core.
+- **No downloading** in order to compute — not even as a fallback when no
+  command was found.
+- **No `OC-Checksum`** for WebDAV in this change; it is an extension and a
+  separate case.

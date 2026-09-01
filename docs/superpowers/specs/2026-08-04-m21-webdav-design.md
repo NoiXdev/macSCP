@@ -1,270 +1,266 @@
-# M21 — WebDAV als drittes Backend
+# M21 — WebDAV as a third backend
 
-**Stand:** 2026-08-04
-**Vorgänger:** M12 (Fähigkeits-Framework), M13 (S3-Backend), M16 (Cross-Backend-Transfer)
+**Status:** 2026-08-04
+**Predecessors:** M12 (capability framework), M13 (S3 backend), M16 (cross-backend transfer)
 
-## Zweck
+## Purpose
 
-WebDAV als drittes Backend neben SSH/SFTP und S3 — und damit der erste echte
-Test der Behauptung aus M12, weitere Protokolle seien „bloße
-Zusatzimplementierungen". WebDAV eignet sich dafür besser als jedes andere:
-es ist HTTP-basiert wie S3, hat aber **echte Verzeichnisse** und **atomares
-Rename**, also genau die zwei Fähigkeits-Achsen, die bei S3 auf `false`
-stehen. Wenn die generischen Schichten das ohne eine einzige
-`if kind ==`-Abfrage mittragen, sind die Achsen wirklich unabhängig.
+WebDAV as a third backend alongside SSH/SFTP and S3 — and thereby the first
+real test of M12's claim that further protocols are "mere additional
+implementations". WebDAV suits this better than any other candidate: it is
+HTTP-based like S3, but has **real directories** and **atomic rename** —
+exactly the two capability axes that read `false` for S3. If the generic
+layers carry that without a single `if kind ==` check, the axes are truly
+independent.
 
-## Zielserver
+## Target servers
 
-Vier Familien, in zwei Gruppen:
+Four families, in two groups:
 
-**Automatisiert prüfbar**
-- Generisches WebDAV nach RFC 4918 (Apache `mod_dav`, nginx-dav, Caddy)
+**Automatically testable**
+- Generic WebDAV per RFC 4918 (Apache `mod_dav`, nginx-dav, Caddy)
 - Nextcloud / ownCloud
 
-**Nur manuell prüfbar** (keine Container-Abbilder, Prüfung gegen echte Geräte)
-- Synology, QNAP und andere NAS
+**Manually testable only** (no container images, tested against real devices)
+- Synology, QNAP, and other NAS
 - Hetzner Storage Box
 
-Die Implementierung zielt auf den RFC-Kern; Nextcloud bekommt genau eine
-Anpassung (Pfad-Präfix, siehe Formular). NAS und Hetzner brauchen keine
-eigenen Zugeständnisse, wohl aber die Zertifikatsbehandlung.
+The implementation targets the RFC core; Nextcloud gets exactly one
+adjustment (path prefix, see the form). NAS and Hetzner need no
+implementation-specific concessions, but do need certificate handling.
 
-## Architektur
+## Architecture
 
-### Geteilte HTTP-Naht
+### Shared HTTP seam
 
-`S3HTTPTransport` wird zu `HTTPTransport` verallgemeinert,
-`URLSessionS3Transport` zu `URLSessionHTTPTransport`; beide ziehen aus
-`Sources/macSCPCore/S3/` in einen neutralen Ort um. Die Oberfläche bleibt
-unverändert (`send`, `sendStreaming`) — es ist Umbenennung plus Umzug. Die
-vorhandenen S3-Tests hängen an dieser Naht und sind das Sicherheitsnetz.
+`S3HTTPTransport` is generalized to `HTTPTransport`,
+`URLSessionS3Transport` to `URLSessionHTTPTransport`; both move from
+`Sources/macSCPCore/S3/` to a neutral location. The surface stays unchanged
+(`send`, `sendStreaming`) — it is a rename plus a move. The existing S3
+tests hang off this seam and are the safety net.
 
-Eine Erweiterung: der Transport nimmt eine mitgegebene `URLSession` entgegen
-statt `.shared`. WebDAV braucht eine Session **mit Delegat** — das ist die
-Stelle, an der macOS sowohl die Authentifizierungs-Herausforderung als auch
-die Server-Vertrauensprüfung anbietet.
+One extension: the transport accepts a supplied `URLSession` instead of
+`.shared`. WebDAV needs a session **with a delegate** — that is the spot
+where macOS offers both the authentication challenge and the server trust
+check.
 
-**Warum nicht kopieren:** Zwei fast gleiche Transporte im Baum wären beim
-nächsten Protokoll drei. Wörtliche Verdopplung eines Logikblocks gilt in
-diesem Projekt als Wartungsschaden.
+**Why not copy:** two nearly identical transports in the tree would become
+three at the next protocol. Literal duplication of a logic block counts as
+maintenance damage in this project.
 
-**Warum Digest nicht von Hand:** URLSession beantwortet Basic *und* Digest
-über denselben Delegat-Rückruf, inklusive Nonce-Zähler, `qop` und
-`stale`-Erneuerung. Falls sich das im Rig als sperrig erweist, ist der
-dokumentierte Rückfallweg eine eigene Digest-Berechnung, prüfbar gegen die
-Vektoren aus RFC 7616.
+**Why not hand-roll Digest:** URLSession answers both Basic *and* Digest
+through the same delegate callback, including nonce counting, `qop`, and
+`stale` renewal. If this turns out to be unwieldy against the rig, the
+documented fallback is a custom Digest computation, checkable against the
+vectors from RFC 7616.
 
-### Neue Bausteine (`Sources/macSCPCore/WebDAV/`)
+### New building blocks (`Sources/macSCPCore/WebDAV/`)
 
-| Datei | Aufgabe |
+| File | Responsibility |
 |---|---|
-| `WebDAVConnectionConfig` | Basis-URL, Benutzername, Auth-Art |
-| `WebDAVURL` | Pfad-Arithmetik: relative Browser-Pfade → absolute URLs, Prozent-Kodierung, Verzeichnis-Schrägstrich, Nextcloud-Vorlage |
-| `WebDAVPropfindParser` | `multistatus`-XML → `[RemoteFileItem]` über `XMLParser` |
-| `WebDAVSessionDelegate` | Auth-Herausforderung (Basic/Digest) und Server-Vertrauen |
-| `ServerCertificateValidation` | TOFU-Entscheidungslogik, rein und netzfrei |
-| `WebDAVFileSystem` | die `RemoteFileSystem`-Implementierung |
+| `WebDAVConnectionConfig` | base URL, username, auth kind |
+| `WebDAVURL` | path arithmetic: relative browser paths → absolute URLs, percent encoding, directory slash, Nextcloud template |
+| `WebDAVPropfindParser` | `multistatus` XML → `[RemoteFileItem]` via `XMLParser` |
+| `WebDAVSessionDelegate` | auth challenge (Basic/Digest) and server trust |
+| `ServerCertificateValidation` | TOFU decision logic, pure and network-free |
+| `WebDAVFileSystem` | the `RemoteFileSystem` implementation |
 
-`WebDAVURL` ist bewusst eine eigene Datei: dort wohnen die stillen Fehler
-(Leerzeichen, Umlaute, `+`, doppelte Schrägstriche, die Wurzel), und sie sind
-rein rechnerisch prüfbar.
+`WebDAVURL` is deliberately its own file: it is home to the silent bugs
+(spaces, umlauts, `+`, double slashes, the root), and they are checkable
+purely computationally.
 
-Der Parser ist **nachsichtig gegenüber fremden Namensräumen**, damit
-Nextclouds Zusatz-Properties nichts brechen.
+The parser is **lenient toward foreign namespaces**, so that Nextcloud's
+extra properties don't break anything.
 
-### Vertrauensspeicher
+### Trust store
 
-`TrustedCertificateStore` bei den Sessions spiegelt `KnownHostsStore` eins zu
-eins: dieselbe JSON-Ablage, dieselben vier Operationen
-(`find`/`upsert`/`allKeys`/`remove`), geschlüsselt auf Host und Port. Damit
-erbt er das Verwaltungsmuster aus M10a samt der Suche aus M18.
+`TrustedCertificateStore` next to the sessions mirrors `KnownHostsStore`
+one to one: the same JSON storage, the same four operations
+(`find`/`upsert`/`allKeys`/`remove`), keyed on host and port. It thereby
+inherits the management pattern from M10a along with the search from M18.
 
-### Angefasste Registrierungsstellen
+### Touched registration sites
 
 `ConnectionKind`, `ConnectionConfig`, `BackendConnector`,
 `BackendDescriptor`, `StoredSessionConnectionConfig`, `ConnectionViewModel`,
-`LoginSetsSheet`, `CLISecretSources`. Das ist die Naht, die M12 angelegt
-hat; ob sie vollständig ist, zeigt dieser Meilenstein.
+`LoginSetsSheet`, `CLISecretSources`. This is the seam M12 laid down;
+whether it is complete is what this milestone shows.
 
-## Verbindungsmodell
+## Connection model
 
-### Formular
+### Form
 
-Über das vorhandene `ConnectionFieldSchema` — keine neue UI-Mechanik.
+Through the existing `ConnectionFieldSchema` — no new UI mechanism.
 
-| Feld | Art |
+| Field | Kind |
 |---|---|
-| Server-URL | Text |
-| Benutzername | Text |
-| Passwort | Geheimnis (Keychain, nie im JSON) |
-| Nextcloud-Pfad anhängen | Umschalter |
+| Server URL | Text |
+| Username | Text |
+| Password | Secret (Keychain, never in JSON) |
+| Append Nextcloud path | Toggle |
 
-Vorlagen: **Nextcloud / ownCloud** setzt den Umschalter, **Eigene** setzt
-nichts. Der Nutzer gibt `https://cloud.example.com` ein, `WebDAVURL` hängt
-`/remote.php/dav/files/<benutzer>/` an — die Eigenheit, an der Nutzer sonst
-scheitern.
+Templates: **Nextcloud / ownCloud** sets the toggle, **Custom** sets
+nothing. The user enters `https://cloud.example.com`, `WebDAVURL` appends
+`/remote.php/dav/files/<user>/` — the quirk users otherwise trip over.
 
-Für Hetzner und Synology gibt es **bewusst keine Vorlage**: dort ist die URL
-benutzer- beziehungsweise gerätespezifisch, eine Vorlage könnte nichts
-sinnvoll vorbelegen und würde nur Vertrauen vortäuschen.
+For Hetzner and Synology there is **deliberately no template**: there the
+URL is user- or device-specific, a template could not meaningfully
+prefill anything and would only fake confidence.
 
-### Klartext-HTTP
+### Plaintext HTTP
 
-`http://` bleibt erlaubt — im Heimnetz ist es Realität. Aber Basic sendet die
-Zugangsdaten dabei im Klartext.
+`http://` remains allowed — on a home network it is a fact of life. But
+Basic sends credentials over it in plaintext.
 
-Hier bekommt die Achse `TransportSecurity` **ihren ersten Leser**: sie ist
-heute deklariert und bei beiden Backends gesetzt, wird aber nirgends
-ausgewertet (nachgeprüft am Baum, Stand 2026-08-04). Neue Regel, an genau
-einer Stelle:
+Here the `TransportSecurity` axis gets **its first reader**: today it is
+declared and set on both backends, but evaluated nowhere (verified against
+the tree, as of 2026-08-04). New rule, at exactly one spot:
 
-- Basic über `http://` → ausdrückliche Bestätigung, Eintrag im Prüfprotokoll
-- Digest über `http://` → keine Rückfrage; es geht kein Geheimnis über die Leitung
-- alles über `https://` → keine Rückfrage
+- Basic over `http://` → explicit confirmation, entry in the audit log
+- Digest over `http://` → no prompt; no secret goes over the wire
+- anything over `https://` → no prompt
 
-### Zertifikats-TOFU
+### Certificate TOFU
 
-`ServerCertificateValidation` entscheidet nach dem Muster von
-`HostKeyValidation`. Drei Fälle, und nur drei:
+`ServerCertificateValidation` decides following the pattern of
+`HostKeyValidation`. Three cases, and only three:
 
-1. **Systemkette vertraut** → durch, nichts wird gespeichert. Nextcloud und
-   Hetzner sollen gar nicht erst durch TOFU laufen.
-2. **Unbekannt** → Dialog mit SHA-256-Fingerprint, Aussteller und
-   Gültigkeit; ohne Zustimmung keine Verbindung.
-3. **Bekannt und abweichend** → **harter Stopp**. Kein Dialog, keine
-   Möglichkeit zuzustimmen — dieselbe Invariante wie beim Hostkey.
+1. **System chain trusts it** → through, nothing is stored. Nextcloud and
+   Hetzner should never go through TOFU at all.
+2. **Unknown** → dialog with SHA-256 fingerprint, issuer, and validity; no
+   connection without consent.
+3. **Known and deviating** → **hard stop**. No dialog, no way to consent —
+   the same invariant as for the host key.
 
-Es gibt **keinen** Schalter „Zertifikat nicht prüfen". Das wäre der
-`accept-anything path`, den die Projektregeln für Hostkeys ausdrücklich
-verbieten.
+There is **no** "don't check certificate" toggle. That would be the
+`accept-anything path` the project rules explicitly forbid for host keys.
 
-Verwaltet wird das im bestehenden Known-Hosts-Sheet als **zweiter
-Abschnitt**, nicht in einem neuen Fenster: es ist dieselbe Frage („wem
-vertraue ich?").
+Managed in the existing known-hosts sheet as a **second section**, not a
+new window: it is the same question ("who do I trust?").
 
-## Protokoll-Abbildung
+## Protocol mapping
 
 | Operation | WebDAV |
 |---|---|
 | `list` | PROPFIND, `Depth: 1` |
 | `stat` | PROPFIND, `Depth: 0` |
-| `readStream` | GET mit `Range` |
-| `write` | PUT (strömend) |
+| `readStream` | GET with `Range` |
+| `write` | PUT (streaming) |
 | `delete` | DELETE |
 | `createDirectory` | MKCOL |
-| `rename` | MOVE mit `Destination`, `Overwrite: F` |
-| `deleteTree` | DELETE auf die Sammlung |
-| `homeDirectoryPath` | `/` — die Basis-URL *ist* die Wurzel |
-| `setPermissions` | nicht unterstützt, wirft |
+| `rename` | MOVE with `Destination`, `Overwrite: F` |
+| `deleteTree` | DELETE on the collection |
+| `homeDirectoryPath` | `/` — the base URL *is* the root |
+| `setPermissions` | not supported, throws |
 
-Zwei Stellen unterscheiden sich deutlich von S3:
+Two spots differ clearly from S3:
 
-- **`deleteTree` ist ein einziger Aufruf.** WebDAV löscht eine Sammlung
-  serverseitig rekursiv; S3 braucht dafür rekursives Auflisten und
-  DeleteObjects-Stapel.
-- **`rename` ist echt atomar.** MOVE mit `Overwrite: F` gibt bei belegtem
-  Ziel 412 zurück, statt wie bei S3 aus Kopieren-und-Löschen zusammengesetzt
-  zu sein und im Fehlerfall einen halben Zustand zu hinterlassen.
+- **`deleteTree` is a single call.** WebDAV deletes a collection
+  recursively server-side; S3 needs recursive listing plus DeleteObjects
+  batches for that.
+- **`rename` is genuinely atomic.** MOVE with `Overwrite: F` returns 412
+  when the target is occupied, instead of being composed of copy-and-delete
+  like S3 and leaving a half state on failure.
 
-### Fähigkeiten
+### Capabilities
 
 ```
 supportsShell:        false
 permissionModel:      .none
 supportsSymlinks:     false
-atomicRename:         true      ← bei S3 false
-directoriesAreReal:   true      ← bei S3 false
+atomicRename:         true      ← false for S3
+directoriesAreReal:   true      ← false for S3
 resumeMode:           .rangeGet
 supportsPresignedURL: false
 transport:            .optionalTLS
 ```
 
-### Fortsetzung nur beim Herunterladen
+### Resume only on download
 
-Für teilweises PUT gibt es keinen Standard; Nextclouds Chunked Upload ist
-eine eigene Erweiterung und bleibt draußen. Ein abgebrochener Upload beginnt
-von vorn — die Warteschlange behandelt das bereits, seit M13 die
-Resume-Sperre an `supportsAppendResume` gehängt hat.
+There is no standard for partial PUT; Nextcloud's chunked upload is its own
+extension and stays out. An interrupted upload starts over — the queue
+already handles that, since M13 hung the resume lock off
+`supportsAppendResume`.
 
-Beim Herunterladen wird `Accept-Ranges: bytes` ausgewertet. **Fehlt der
-Kopf, wird vollständig neu abgerufen** statt einen Bereich anzufordern, den
-der Server still ignoriert — sonst entstünde eine beschädigte Datei.
+On download, `Accept-Ranges: bytes` is evaluated. **If the header is
+missing, a full refetch happens** instead of requesting a range the server
+silently ignores — otherwise a corrupted file would result.
 
-### Fehlerabbildung
+### Error mapping
 
-Auf die vorhandenen `RemoteFSError`-Fälle:
+Onto the existing `RemoteFSError` cases:
 
-| Status | Fall |
+| Status | Case |
 |---|---|
-| 401 | Authentifizierung fehlgeschlagen |
-| 403 | keine Berechtigung |
-| 404 | nicht gefunden |
-| 405 auf MKCOL | existiert bereits |
-| 409 | übergeordneter Ordner fehlt |
-| 412 auf MOVE | Zielkonflikt |
-| 507 | kein Speicherplatz |
+| 401 | authentication failed |
+| 403 | no permission |
+| 404 | not found |
+| 405 on MKCOL | already exists |
+| 409 | parent folder missing |
+| 412 on MOVE | target conflict |
+| 507 | out of storage |
 
-## Nicht in diesem Meilenstein
+## Not in this milestone
 
-LOCK/UNLOCK, PROPPATCH, Kontingent-Abfrage, Nextclouds Chunked Upload und
-dessen Papierkorb, OAuth2/Bearer, presigned URLs (WebDAV kennt sie nicht),
-WebDAV in der CLI über das hinaus, was der Connector-Dispatcher ohnehin
-mitbringt.
+LOCK/UNLOCK, PROPPATCH, quota query, Nextcloud's chunked upload and its
+trash, OAuth2/Bearer, presigned URLs (WebDAV doesn't have them), WebDAV in
+the CLI beyond what the connector dispatcher already brings along.
 
 ## Tests
 
-### Ohne Netz
+### Without network
 
-- **`WebDAVURL`** — Wurzel (die Stelle, an der M20 den `//`-Fehler hatte),
-  Leerzeichen, Umlaute, `+`, `#`, doppelte Schrägstriche,
-  Verzeichnis-Schrägstrich, Nextcloud-Vorlage mit Benutzernamen.
-- **`WebDAVPropfindParser`** — abgelegte Antworten von Apache **und** von
-  echtem Nextcloud, dazu die leere Sammlung und ein `multistatus` mit 404 für
-  einzelne Einträge. Der Nextcloud-Baustein ist der Wächter gegen einen zu
-  engen Parser.
-- **`ServerCertificateValidation`** — die drei Fälle; der Abweichungsfall als
-  eigener Test nach dem Muster von `tamperedKnownKeyFailsHardWithMismatch`.
-- **Anfragenbau und Fehlerabbildung** über einen eingesetzten
-  `HTTPTransport`-Doppelgänger, wie S3 es bereits macht.
+- **`WebDAVURL`** — root (the spot where M20 had the `//` bug), spaces,
+  umlauts, `+`, `#`, double slashes, directory slash, Nextcloud template
+  with usernames.
+- **`WebDAVPropfindParser`** — stored responses from Apache **and** from
+  real Nextcloud, plus the empty collection and a `multistatus` with 404
+  for individual entries. The Nextcloud fixture is the guard against a
+  parser that is too narrow.
+- **`ServerCertificateValidation`** — the three cases; the deviation case
+  as its own test following the pattern of
+  `tamperedKnownKeyFailsHardWithMismatch`.
+- **Request construction and error mapping** via an injected
+  `HTTPTransport` double, the way S3 already does it.
 
-### Gegatet (`MACSCP_ITEST=1`)
+### Gated (`MACSCP_ITEST=1`)
 
-Neuer `webdav`-Dienst im vorhandenen compose: ein `httpd` mit `mod_dav` und
-drei vhosts — Basic über Klartext, Digest über Klartext, TLS mit
-selbstsigniertem Zertifikat. **Das Zertifikat wird beim Rig-Start erzeugt,
-nicht eingecheckt**, genau wie die SSH-Testschlüssel.
+New `webdav` service in the existing compose: an `httpd` with `mod_dav` and
+three vhosts — Basic over plaintext, Digest over plaintext, TLS with a
+self-signed certificate. **The certificate is generated when the rig
+starts, not checked in**, exactly like the SSH test keys.
 
-Geprüft wird: vollständiger CRUD-Umlauf, Rename mit belegtem Ziel, rekursives
-Löschen, Fortsetzung per Range-GET, beide Auth-Verfahren, und der
-TOFU-Ablauf einschließlich des harten Stopps nach Zertifikatswechsel.
+Checked: full CRUD round trip, rename with an occupied target, recursive
+delete, resume via range GET, both auth methods, and the TOFU flow
+including the hard stop after a certificate change.
 
-Dazu ein **WebDAV↔SSH-Transfer**: `CrossBackendTarget` aus M16 ist
-protokollneutral gebaut — läuft es ohne Anpassung, ist das ein zweiter Beleg
-fürs Framework.
+Plus a **WebDAV↔SSH transfer**: `CrossBackendTarget` from M16 was built
+protocol-neutral — if it runs without adjustment, that is a second piece of
+evidence for the framework.
 
 ### Nextcloud
 
-Im selben compose hinter einem **eigenen Profil**, das der normale Riglauf
-nicht startet. Einmal manuell gefahren liefert es die echte PROPFIND-Antwort,
-aus der der Testbaustein oben entsteht.
+In the same compose behind its **own profile**, which the normal rig run
+does not start. Run manually once, it delivers the real PROPFIND response
+that the test fixture above is built from.
 
-## Erfolgskriterien
+## Success criteria
 
-1. Eine WebDAV-Session lässt sich anlegen, verbinden, durchsuchen und in
-   beide Richtungen übertragen — gegen Apache und gegen echtes Nextcloud.
-2. Kein generischer Codepfad bekommt eine `if kind == .webdav`-Abfrage; alles
-   Protokollabhängige liest den Descriptor.
-3. Ein gewechseltes Serverzertifikat bricht die Verbindung hart ab, ohne dem
-   Nutzer eine Zustimmung anzubieten.
-4. Basic über Klartext-HTTP verlangt eine Bestätigung und steht im
-   Prüfprotokoll.
-5. Die vier Sprachkataloge bleiben vollständig und deckungsgleich.
+1. A WebDAV session can be created, connected, browsed, and transferred in
+   both directions — against Apache and against real Nextcloud.
+2. No generic code path gets an `if kind == .webdav` check; everything
+   protocol-dependent reads the descriptor.
+3. A changed server certificate hard-aborts the connection, without
+   offering the user a way to consent.
+4. Basic over plaintext HTTP requires confirmation and appears in the audit
+   log.
+5. The four language catalogs stay complete and matched.
 
-## Offene Punkte für den Plan
+## Open points for the plan
 
-- Ob `HTTPTransport` unter `RemoteFS/` oder in einem eigenen `HTTP/`-Ordner
-  liegt.
-- Ob der Nextcloud-Testbaustein aus dem Rig erzeugt oder von Hand aus einer
-  echten Antwort abgeschrieben wird.
-- Genaue Form der Bestätigung bei Basic über Klartext: eigener Dialog oder
-  eine Zeile im vorhandenen Verbindungs-Fehlerweg.
+- Whether `HTTPTransport` lives under `RemoteFS/` or in its own `HTTP/`
+  folder.
+- Whether the Nextcloud test fixture is generated from the rig or
+  hand-transcribed from a real response.
+- The exact form of the confirmation for Basic over plaintext: its own
+  dialog, or a line in the existing connection error path.

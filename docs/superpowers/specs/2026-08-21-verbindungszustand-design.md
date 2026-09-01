@@ -1,187 +1,184 @@
-# Verbindungszustand: Erkennung, Anzeige, Erholung
+# Connection state: detection, display, recovery
 
-**Stand:** Entwurf, vom Maintainer abgenommen 2026-08-21.
+**Status:** design, accepted by the maintainer 2026-08-21.
 
-Fasst drei Backlog-Einträge zusammen, weil sie **ein** Zustandsmodell teilen:
-A1 (Fehleransicht im Tab mit „Erneut verbinden", Zustandssymbol am Reiter)
-und A2 (Keep-alive) aus `2026-08-20-backlog-sitzungen-tabs-seitenleiste.md`,
-sowie B-1 (Einfrieren beim toten Host) aus `2026-08-20-bugs.md`.
+Combines three backlog entries because they share **one** state model:
+A1 (error view in the tab with "Reconnect", state symbol on the tab) and A2
+(keep-alive) from `2026-08-20-backlog-sitzungen-tabs-seitenleiste.md`, plus
+B-1 (freezing on a dead host) from `2026-08-20-bugs.md`.
 
-Getrennt gebaut entstünden drei Wege, die dasselbe sagen wollen: „verbindet",
-„verbunden", „verloren".
+Built separately, these would end up as three paths trying to say the same
+thing: "connecting", "connected", "lost".
 
-## Was bereits gemessen wurde
+## What has already been measured
 
-Am Quelltext geprüft, nicht angenommen:
+Checked against the source, not assumed:
 
-- **Weder Citadel noch NIOSSH kennt Keep-alive.** NIOSSHs einzige öffentliche
-  Sende-API für globale Requests ist `sendTCPForwardingRequest`; ein eigenes
-  `keepalive@openssh.com` ist darüber nicht zu schicken.
-- **Citadels `session` ist `internal`.** Weder der Kanal noch der
-  `NIOSSHHandler` sind von außen erreichbar. Ein Keep-alive auf SSH-Ebene
-  scheidet damit aus.
-- **`SSHClient.isConnected`** (liest `channel.isActive`) und
-  **`onDisconnect(perform:)`** sind öffentlich und für die Erkennung nutzbar.
-- **`SSHClient.connect(host:port:…)` hat einen Parameter
-  `connectTimeout: TimeAmount = .seconds(30)`**, den `CitadelFileSystem` an
-  **beiden** Aufrufstellen — Sprung-Hop und Ziel — nicht übergibt. B-1s lange
-  Wartezeit ist damit eine nicht gesetzte Vorgabe, keine Umstrukturierung.
-- **`RemoteFileSystem.stat(path:)`** ist der billigste Rundlauf im Protokoll
-  und damit die Sonde.
+- **Neither Citadel nor NIOSSH knows keep-alive.** NIOSSH's only public
+  send API for global requests is `sendTCPForwardingRequest`; a custom
+  `keepalive@openssh.com` cannot be sent through it.
+- **Citadel's `session` is `internal`.** Neither the channel nor the
+  `NIOSSHHandler` is reachable from outside. A keep-alive at the SSH level
+  is therefore ruled out.
+- **`SSHClient.isConnected`** (reads `channel.isActive`) and
+  **`onDisconnect(perform:)`** are public and usable for detection.
+- **`SSHClient.connect(host:port:…)` has a parameter
+  `connectTimeout: TimeAmount = .seconds(30)`**, which `CitadelFileSystem`
+  does not pass at **either** call site — jump hop and target. B-1's long
+  wait is therefore an unset default, not a restructuring.
+- **`RemoteFileSystem.stat(path:)`** is the cheapest round trip in the
+  protocol and therefore the probe.
 
-## 1. Zustandsmodell
+## 1. State model
 
-Ein Wert je Sitzung, in Core:
+One value per session, in Core:
 
-| Zustand | Punkt | Bedeutung |
+| State | Dot | Meaning |
 |---|---|---|
-| `connecting` | gelb | Aufbau läuft, abbrechbar |
-| `connected` | grün | letzter Beweis war erfolgreich |
-| `degraded` | gelb | eine Sonde ist fehlgeschlagen, ein zweiter Versuch läuft |
-| `lost` | rot | aufgegeben, Sitzung abgebaut |
+| `connecting` | yellow | setup in progress, cancelable |
+| `connected` | green | last proof succeeded |
+| `degraded` | yellow | one probe failed, a second attempt is running |
+| `lost` | red | given up, session torn down |
 
-Der Zustand gehört zur Sitzung im **Fensterbereich**, nie zu einem
-app-weiten Singleton — bestehende Architektur-Invariante.
+The state belongs to the session at the **window scope**, never to an
+app-wide singleton — existing architecture invariant.
 
-`degraded` ist kein Schmuck: ohne ihn müsste eine einzelne verlorene Sonde
-sofort zu Rot führen, und ein einzelner Paketverlust sähe aus wie ein
-Abriss.
+`degraded` is not decoration: without it, a single lost probe would have to
+go straight to red, and a single dropped packet would look like a
+disconnect.
 
-## 2. Erkennung
+## 2. Detection
 
-Ein Zeitgeber je Sitzung, Intervall aus den Einstellungen.
+A timer per session, interval from settings.
 
-Beim Ticken:
+On each tick:
 
-1. **Hat die Warteschlange Arbeit, wird übersprungen.** Laufender Verkehr
-   beweist die Verbindung besser als jede Sonde, und eine zusätzliche
-   Anfrage während einer Übertragung ist reine Störung.
-2. Sonst `stat` auf den **beim Verbinden ermittelten Heimatpfad**
-   (`homeDirectoryPath()` läuft ohnehin beim Aufbau) — kein zusätzlicher
-   Rundlauf, um erst den Pfad zu finden.
-3. Erfolg → `connected`.
-4. Fehlschlag oder eigene Frist abgelaufen → `degraded`, **ein** sofortiger
-   zweiter Versuch. Auch der scheitert → `lost`.
+1. **If the queue has work, it is skipped.** Traffic in flight proves the
+   connection better than any probe, and an extra request during a transfer
+   is pure interference.
+2. Otherwise `stat` on the **home path determined at connect time**
+   (`homeDirectoryPath()` runs during setup anyway) — no extra round trip
+   just to find the path first.
+3. Success → `connected`.
+4. Failure or its own deadline expired → `degraded`, **one** immediate
+   second attempt. If that also fails → `lost`.
 
-Die Entscheidungslogik (überspringen / senden / erneut / aufgeben) ist reine
-Funktion über (Warteschlange beschäftigt, letztes Ergebnis, Fehlversuche)
-und gehört als eigener Typ getestet, getrennt vom Zeitgeber.
+The decision logic (skip / send / retry / give up) is a pure function over
+(queue busy, last result, failed attempts) and belongs tested as its own
+type, separate from the timer.
 
-## 3. Erholung
+## 3. Recovery
 
-`lost` zeigt im Tab die Fehleransicht: was passiert ist, und **„Erneut
-verbinden"**.
+`lost` shows the error view in the tab: what happened, and **"Reconnect"**.
 
-Der Wiederaufbau läuft durch **denselben** Verbindungspfad wie ein frischer
-Aufbau. Das ist die tragende Entscheidung dieses Abschnitts: TOFU bleibt ein
-harter Stopp, die Keychain-Regeln bleiben unverändert, und es entsteht kein
-zweiter Pfad, an dem eine Sicherheitsregel vergessen werden könnte.
+The rebuild runs through the **same** connection path as a fresh setup.
+That is the load-bearing decision of this section: TOFU remains a hard
+stop, the keychain rules stay unchanged, and no second path exists where a
+security rule could be forgotten.
 
-Einstellbares Verhalten:
+Configurable behavior:
 
-- **`offerOnly` (Standard)** — nichts geschieht ohne Klick.
-- **`onceThenAsk`** — ein automatischer Versuch, danach die Fehleransicht.
-- **`automatic`** — wiederholte Versuche, erster nach 5 s, danach jeweils
-  doppelter Abstand bis höchstens 60 s, ohne Aufgabegrenze. Jederzeit
-  abbrechbar; ein Abbruch führt in die Fehleransicht.
+- **`offerOnly` (default)** — nothing happens without a click.
+- **`onceThenAsk`** — one automatic attempt, then the error view.
+- **`automatic`** — repeated attempts, first after 5s, then doubling the
+  interval each time up to a maximum of 60s, with no give-up limit.
+  Cancelable at any time; a cancel leads to the error view.
 
-Auch bei `automatic` gilt: ein Versuch, der auf TOFU oder eine Passphrase
-läuft, endet in der Fehleransicht und wird nicht im Hintergrund wiederholt.
+Even with `automatic`: an attempt that runs into TOFU or a passphrase ends
+in the error view and is not retried in the background.
 
-## 4. Verbindungsaufbau (B-1)
+## 4. Connection setup (B-1)
 
-Der Aufbau wird eine **abbrechbare Aufgabe** und benutzt dieselbe Tab-Fläche:
-„Verbinde …" mit Abbrechen, während der Rest der App bedienbar bleibt.
+Setup becomes a **cancelable task** and uses the same tab area:
+"Connecting …" with cancel, while the rest of the app stays usable.
 
-Dazu wird `connectTimeout` an beiden Aufrufstellen übergeben, mit einem
-kürzeren Standard als den geerbten 30 Sekunden.
+For this, `connectTimeout` is passed at both call sites, with a shorter
+default than the inherited 30 seconds.
 
-**Bewusst ohne Vorbedingung:** ob der Hauptthread heute wirklich blockiert
-oder ob nur eine tote Modal-Fläche danach aussieht, ist **nicht gemessen**
-(die App wird in dieser Arbeitsweise nicht gestartet). Die gewählte Form
-behebt beide Fälle, deshalb muss die Frage vorher nicht beantwortet sein.
-Fällt bei der Umsetzung auf, dass tatsächlich blockiert wird, ist das ein
-eigener Befund und gehört gemeldet.
+**Deliberately without a precondition:** whether the main thread actually
+blocks today, or whether it's just a dead modal surface that looks like it,
+is **not measured** (the app is not launched in this working mode). The
+chosen form fixes both cases, so the question doesn't need to be answered
+beforehand. If implementation reveals that it really does block, that is
+its own finding and should be reported.
 
-Am Rande angesehen, nicht Teil dieses Umfangs: `AgentBackedPrivateKey`
-wartet mit `semaphore.wait(timeout:)` blockierend in einem sonst
-asynchronen Pfad.
+Noted in passing, not part of this scope: `AgentBackedPrivateKey` waits
+blockingly with `semaphore.wait(timeout:)` in an otherwise asynchronous
+path.
 
-## 5. Übertragungen
+## 5. Transfers
 
-Bei `lost`:
+On `lost`:
 
-- Die **laufende** Übertragung scheitert mit dem Grund „Verbindung verloren".
-- Die **wartenden** bleiben in der Liste und werden gekennzeichnet — nichts
-  wird stillschweigend verworfen.
-- **Kein automatisches Fortsetzen.** Eine halb geschriebene Datei auf der
-  Gegenseite ist ein Konfliktfall, der die bestehenden Konfliktregeln
-  braucht, keine stille Entscheidung.
+- The **running** transfer fails with the reason "Connection lost."
+- The **waiting** ones stay in the list and are flagged — nothing is
+  silently discarded.
+- **No automatic resumption.** A half-written file on the other side is a
+  conflict case that needs the existing conflict rules, not a silent
+  decision.
 
-Der Abbau geht durch die bestehende Reihenfolge — `cancelAll` → Terminal
-`shutdown` → `disconnect` —, nicht an ihr vorbei. Die Invarianten der
-Warteschlange (FIFO, genau-einmal-Fortsetzungen, keine verwaisten Shells)
-gelten unverändert.
+Teardown goes through the existing sequence — `cancelAll` → terminal
+`shutdown` → `disconnect` —, not around it. The queue invariants (FIFO,
+exactly-once continuations, no orphaned shells) apply unchanged.
 
-## 6. Einstellungen
+## 6. Settings
 
-Drei Werte im `SettingsStore`:
+Three values in `SettingsStore`:
 
-| Wert | Standard | Anmerkung |
+| Value | Default | Note |
 |---|---|---|
-| Wiederverbinden-Verhalten | `offerOnly` | die drei Fälle aus Abschnitt 3 |
-| Intervall der Lebenszeichen | 60 s | 0 schaltet die Sonde ab |
-| Frist für den Verbindungsaufbau | 10 s | NIOs eigener Vorgabewert; Citadel überschreibt ihn auf 30. Gilt für den **TCP-Aufbau jedes Hops**, den die Frist erreicht — siehe die Einschränkung darunter |
+| Reconnect behavior | `offerOnly` | the three cases from section 3 |
+| Heartbeat interval | 60s | 0 turns the probe off |
+| Connection setup deadline | 10s | NIO's own default; Citadel overrides it to 30. Applies to the **TCP setup of every hop** the deadline reaches — see the caveat below |
 
-**Korrektur, gemessen 2026-08-21:** eine frühere Fassung dieser Spec
-behauptete, die Frist gelte „für jeden Hop einzeln, also auch für den
-Sprung-Host". Das stimmt nicht. Nur der **erste** Hop geht über
-`SSHClient.connect`, das die Frist entgegennimmt. Der zweite läuft über
-Citadels `jump(to:)`, das `connectTimeout` gar nicht liest — dort begrenzt
-ein fest verdrahtetes `loginTimeout` von 10 Sekunden, an das wir nicht
-herankommen. Eine Kette mit Sprung-Host ist also nur zur Hälfte einstellbar.
-Das gehört in den Backlog, nicht in diesen Umfang.
+**Correction, measured 2026-08-21:** an earlier version of this spec
+claimed the deadline applies "to each hop individually, including the jump
+host." That is not true. Only the **first** hop goes through
+`SSHClient.connect`, which accepts the deadline. The second runs through
+Citadel's `jump(to:)`, which does not read `connectTimeout` at all — there
+a hard-wired `loginTimeout` of 10 seconds limits it instead, and we cannot
+reach that. A chain with a jump host is therefore only half configurable.
+That belongs in the backlog, not in this scope.
 
-Die Frist der **Sonde** ist bewusst **keine** Einstellung: sie muss kürzer
-als das Intervall sein, sonst überholen sich Sonden. Sie wird aus dem
-Intervall abgeleitet — die halbe Intervalldauer, nach oben auf 10 s
-begrenzt —, und diese Ableitung gehört getestet. Bei Intervall 0 findet
-keine Sonde statt, die Frist ist dann gegenstandslos.
+The **probe's** deadline is deliberately **not** a setting: it must be
+shorter than the interval, otherwise probes overtake each other. It is
+derived from the interval — half the interval duration, capped at 10s on
+the upper end — and this derivation belongs tested. At interval 0 no probe
+runs, so the deadline is then moot.
 
-## 7. Lokalisierung
+## 7. Localization
 
-Alle neuen Zeichenketten in `en`, `de`, `fr` und `pl`; ein Wächtertest
-erzwingt gleiche Schlüsselmengen. Betroffen: die Fehleransicht, der
-Abbrechen-Knopf, die drei Einstellungen samt Erläuterung, der Grund
-„Verbindung verloren" an der Übertragung, und die Kurzhilfen der drei
-Punktfarben.
+All new strings in `en`, `de`, `fr`, and `pl`; a guard test enforces equal
+key sets. Affected: the error view, the cancel button, the three settings
+along with their explanation, the reason "Connection lost" on the transfer,
+and the short-help texts for the three dot colors.
 
-## 8. Prüfbarkeit
+## 8. Testability
 
-- **Unit:** Zustandsautomat, Sondenregel, Ableitung der Sondenfrist,
-  Rückfallabstände bei `automatic`. Reine Logik, normale Tests.
-- **Docker-Rig (`MACSCP_ITEST=1`):** ein echter Abriss lässt sich erzeugen
-  (Container anhalten) und `lost` nachweisen; ebenso, dass die Sonde bei
-  lebender Gegenseite erfolgreich ist und dass sie bei beschäftigter
-  Warteschlange ausbleibt.
-- **Sichtprüfung beim Maintainer:** der Punkt am Reiter in allen drei Farben,
-  die Fehleransicht, der Abbrechen-Knopf während des Aufbaus. Kein Test
-  dieses Projekts zeichnet SwiftUI.
+- **Unit:** state machine, probe rule, derivation of the probe deadline,
+  fallback intervals under `automatic`. Pure logic, normal tests.
+- **Docker rig (`MACSCP_ITEST=1`):** a real disconnect can be produced
+  (stopping the container) and `lost` proven; likewise that the probe
+  succeeds against a live counterpart and stays quiet while the queue is
+  busy.
+- **Visual check by the maintainer:** the dot on the tab in all three
+  colors, the error view, the cancel button during setup. No test in this
+  project renders SwiftUI.
 
-## 9. Ausdrücklich nicht dazu
+## 9. Explicitly out of scope
 
-- **Kein Keep-alive auf Socket-Ebene** (`SO_KEEPALIVE`). Es wurde erwogen:
-  kein Log-Rauschen, aber macOS lässt so einen Socket standardmäßig zwei
-  Stunden leer laufen, das Feinjustieren geht nur über rohe Socket-Optionen,
-  ein lebendiger TCP-Socket beweist nichts über SSH oder SFTP darüber — und
-  er wäre faktisch ungetestet.
-- **Kein Fortsetzen abgebrochener Übertragungen.**
-- **Keine Änderung an TOFU, Keychain oder dem Verbindungspfad selbst.**
+- **No keep-alive at the socket level** (`SO_KEEPALIVE`). It was
+  considered: no log noise, but macOS by default leaves such a socket idle
+  for two hours, fine-tuning it only works through raw socket options, and
+  a live TCP socket proves nothing about SSH or SFTP on top of it — and it
+  would in practice be untested.
+- **No resuming of interrupted transfers.**
+- **No change to TOFU, the keychain, or the connection path itself.**
 
-## 10. Textfrage für die Umsetzung
+## 10. Text question for implementation
 
-Ob die Fehleransicht den technischen Grund zeigt oder nur eine
-verständliche Zusammenfassung, entscheidet sich beim Schreiben der Texte.
-Fest steht die Auflage: sie darf **kein** Geheimnis und keinen vom Nutzer
-getippten Wert enthalten — dieselbe Regel, die für Protokolle, Exporte und
-Fehlermeldungen im ganzen Projekt gilt.
+Whether the error view shows the technical reason or only an
+understandable summary is decided when the texts are written. What is
+fixed is the requirement: it may contain **no** secret and no value typed
+by the user — the same rule that applies to logs, exports, and error
+messages throughout the project.

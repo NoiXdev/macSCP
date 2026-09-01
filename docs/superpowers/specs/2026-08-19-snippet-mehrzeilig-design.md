@@ -1,208 +1,205 @@
-# Snippet-Editor Teil 2 — mehrzeilige Snippets (Design)
+# Snippet editor part 2 — multiline snippets (design)
 
-**Stand:** 2026-08-19, freigegeben. Setzt auf Teil 1 auf
-(`2026-08-19-snippet-syntax-design.md`, abgeschlossen und sichtgeprüft).
+**Status:** 2026-08-19, approved. Builds on part 1
+(`2026-08-19-snippet-syntax-design.md`, completed and visually verified).
 
-## Ausgangslage
+## Starting point
 
-Ein Snippet ist heute **eine** Befehlszeile. `Snippet.init?` scheitert, sobald
-der Befehl ein Zeichen enthält, für das `Character.isNewline` gilt — das ist
-der einzige Grund, aus dem dieser Initializer überhaupt scheitern kann. Teil 1
-hat diese Klemme sichtbar gemacht und ausdrücklich stehen lassen: das
-Eingabefeld wandelt eingefügte Umbrüche in Leerzeichen, „solange Teil 2 nicht
-da ist".
+A snippet today is **one** command line. `Snippet.init?` fails as soon as
+the command contains a character for which `Character.isNewline` holds —
+that is the only reason this initializer can fail at all. Part 1 made this
+constraint visible and deliberately left it standing: the input field turns
+pasted line breaks into spaces, "until part 2 exists".
 
-Der Bedarf sind kleine, wiederkehrende Abläufe: ein Datenbank-Export, ein Log
-einsammeln und unter einem Namen ablegen. Drei Zeilen, kein Skript.
+The need is small, recurring workflows: a database export, collecting a
+log and filing it under a name. Three lines, no script.
 
-## Die entscheidende Frage war nicht der Editor
+## The decisive question was not the editor
 
-Sie war, **was auf der Gegenseite passiert**. Der Editor ist der leichte Teil.
+It was **what happens on the other side**. The editor is the easy part.
 
-Gemessen, nicht angenommen: `Terminal.bracketedPasteMode` in SwiftTerm ist
-`public private(set) var`, und SwiftTerms eigener ⌘V-Pfad auf macOS wertet ihn
-aus (`MacTerminalView`: `if isPaste, terminal.bracketedPasteMode { … }`).
-**Bracketed Paste ist ein Modus, den die entfernte Shell einschaltet und den
-der lokale Emulator mitschreibt** — die App kann ihn also lesen, ohne die
-Gegenseite zu befragen. `getTerminal()` ist öffentlich; der Zustand ist von der
-App-Schicht aus erreichbar, wo `TerminalView` lebt.
+Measured, not assumed: `Terminal.bracketedPasteMode` in SwiftTerm is
+`public private(set) var`, and SwiftTerm's own ⌘V path on macOS reads it
+(`MacTerminalView`: `if isPaste, terminal.bracketedPasteMode { … }`).
+**Bracketed paste is a mode the remote shell switches on, and the local
+emulator tracks it** — so the app can read it without asking the other
+side. `getTerminal()` is public; the state is reachable from the app
+layer, where `TerminalView` lives.
 
-**Maintainer-Entscheidung:** geklammert, wenn der Modus an ist, sonst
-zeilenweise. Damit übernimmt macSCP die Regel, die SwiftTerm für ⌘V ohnehin
-anwendet, statt eine eigene zu erfinden.
+**Maintainer decision:** bracketed when the mode is on, otherwise
+line-by-line. This makes macSCP follow the same rule SwiftTerm already
+applies for ⌘V, instead of inventing its own.
 
-Verworfen wurden:
+Rejected were:
 
-- **Immer zeilenweise.** Überall gleich, aber eine fehlschlagende Zeile stoppt
-  die folgenden nicht, und startet eine Zeile ein Programm, das `stdin` liest
-  (`python`, `mysql`, `ssh`), landet der Rest in diesem Programm.
-- **Immer als Heredoc.** Ein logischer Befehl unabhängig vom Modus — aber er
-  läuft in einer Subshell, also wirken `cd`, `export`, `source` nicht mehr auf
-  die Sitzung, und ausgeführt wird nicht mehr wörtlich das, was dasteht.
+- **Always line-by-line.** Consistent everywhere, but a failing line does
+  not stop the ones after it, and if a line starts a program that reads
+  `stdin` (`python`, `mysql`, `ssh`), the rest ends up inside that program.
+- **Always as a heredoc.** One logical command regardless of mode — but it
+  runs in a subshell, so `cd`, `export`, `source` no longer affect the
+  session, and what runs is no longer verbatim what is written.
 
-## Kein Modus am Snippet
+## No mode on the snippet
 
-Ein Snippet **enthält** Umbrüche oder nicht; der Inhalt trägt die Information
-bereits. Ein zusätzliches `multiline`-Flag wäre ein Zustand, der dem Inhalt
-widersprechen kann — Flag aus, Inhalt zweizeilig, wer gewinnt? Es entfällt,
-und mit ihm die Store-Migration und die Anpassung an Export/Import.
+A snippet either **contains** line breaks or it does not; the content
+already carries the information. An extra `multiline` flag would be a
+state that can contradict the content — flag off, content two lines, which
+wins? It is dropped, and with it the store migration and the export/import
+adjustment.
 
-Preis, bewusst getragen: die Eingabetaste muss im Befehlsfeld einen Umbruch
-schreiben. Damit ist die in Teil 1 offen gebliebene Return-Frage nicht
-beobachtet, sondern **umdefiniert** — sie stellt sich nicht mehr.
+Price, deliberately paid: the Return key must write a line break inside
+the command field. This means the Return question left open in part 1 is
+not observed but **redefined** — it no longer arises.
 
-## Modell
+## Model
 
-`Snippet.init?` verliert die Umbruch-Abweisung. Kein neues Feld. Das
-Store-Format bleibt unverändert: ein JSON-String trägt Umbrüche, alte Dateien
-lesen sich ohne Migration.
+`Snippet.init?` loses the line-break rejection. No new field. The store
+format stays unchanged: a JSON string carries line breaks, old files read
+without migration.
 
-`SnippetCommandInput.sanitized` fällt **ersatzlos** weg — seine einzige
-Aufgabe war das Ersetzen von Umbrüchen durch Leerzeichen. Der Aufruf im
-`shouldChangeTextIn:`-Zweig des Editors verschwindet mit ihm; ein eingefügter
-mehrzeiliger Befehl ist ab jetzt gültige Eingabe.
+`SnippetCommandInput.sanitized` is dropped **with no replacement** — its
+only job was replacing line breaks with spaces. The call in the editor's
+`shouldChangeTextIn:` branch disappears with it; a pasted multiline command
+is now valid input.
 
-`Snippet.command` bleibt `let`. Der Grund dafür war nie allein die
-Umbruch-Regel, sondern auch die Tag-Normalisierung — siehe den Doc-Kommentar
-des Typs.
+`Snippet.command` stays `let`. The reason for that was never only the
+line-break rule, but also tag normalization — see the type's doc comment.
 
-## Senden: eine reine Funktion mit einem Ergebnistyp
+## Sending: a pure function with a result type
 
-Neu in Core, neben `SnippetKeystrokes`. Sie liefert **nicht** nur Bytes,
-sondern einen Typ, der auch „abgelehnt" sagen kann — sonst müsste ein
-Menüpunkt Bytes senden, die etwas anderes tun, als er verspricht:
+New in Core, next to `SnippetKeystrokes`. It returns **not just** bytes,
+but a type that can also say "refused" — otherwise a menu item would have
+to send bytes that do something other than what it promises:
 
 ```swift
 public enum SnippetSendPlan: Equatable {
     case send([UInt8])
-    /// Einfügen ist ohne Klammerung nicht ohne Ausführen möglich.
+    /// Insert is not possible without execution when unbracketed.
     case refusedMultilineInsert
 }
 ```
 
-Eingaben: der Snippet-Befehl, `execute: Bool`, `bracketedPaste: Bool`.
+Inputs: the snippet command, `execute: Bool`, `bracketedPaste: Bool`.
 
-| Befehl | Klammerung | Aktion | Ergebnis |
+| Command | Bracketing | Action | Result |
 |---|---|---|---|
-| einzeilig | egal | einfügen | Bytes des Befehls |
-| einzeilig | egal | ausführen | Bytes + CR |
-| mehrzeilig | an | einfügen | `ESC[200~` + Rumpf + `ESC[201~` |
-| mehrzeilig | an | ausführen | dito + CR |
-| mehrzeilig | aus | ausführen | zeilenweise, CR nach **jeder** Zeile |
-| mehrzeilig | aus | einfügen | `refusedMultilineInsert` |
+| single-line | either | insert | bytes of the command |
+| single-line | either | execute | bytes + CR |
+| multiline | on | insert | `ESC[200~` + body + `ESC[201~` |
+| multiline | on | execute | same + CR |
+| multiline | off | execute | line-by-line, CR after **every** line |
+| multiline | off | insert | `refusedMultilineInsert` |
 
-**Ein einzeiliger Befehl wird nie geklammert**, auch wenn der Modus an ist.
-Das hält das heutige Verhalten byteweise identisch und ist ein eigener Test
-wert: der häufigste Fall darf sich durch diese Änderung nicht verschieben.
+**A single-line command is never bracketed**, even when the mode is on.
+This keeps today's behavior byte-identical and is worth its own test: the
+most common case must not shift as a result of this change.
 
-Die App liest `bracketedPasteMode` und reicht das `Bool` hinein. Core sieht
-SwiftTerm nicht und bleibt ohne Terminal testbar.
+The app reads `bracketedPasteMode` and passes the `Bool` in. Core never
+sees SwiftTerm and stays testable without a terminal.
 
-**`SnippetKeystrokes` bleibt und behält seine Aufgabe:** die Bytes einer
-einzelnen Zeile samt Terminator, mitsamt der dort niedergeschriebenen
-Belegkette für das CR. Die neue Funktion **ruft sie auf** — für den
-einzeiligen Fall unverändert, für den zeilenweisen Rückfall je Zeile. So ist
-die Gleichheit im häufigsten Fall keine Behauptung eines Tests gegen ein
-Literal, sondern strukturell: es ist derselbe Aufruf. Der Test hält das nur
-fest.
+**`SnippetKeystrokes` stays and keeps its job:** the bytes of a single line
+plus its terminator, including the evidence chain written down there for
+the CR. The new function **calls it** — unchanged for the single-line
+case, per line for the line-by-line fallback. So equality in the most
+common case is not a test's claim against a literal, but structural: it is
+the same call. The test only records that.
 
-### Was zu messen ist, bevor es geschrieben wird
+### What has to be measured before it is written
 
-**Welche Zeilenenden zwischen den Klammern stehen.** Das ist dieselbe Sorte
-Frage wie das CR in Teil 1, das dort vermessen statt geraten wurde. Der Plan
-misst am Paste-Pfad von SwiftTerm nach, welche Bytes ein mehrzeiliger
-Zwischenablage-Inhalt zwischen `ESC[200~` und `ESC[201~` tatsächlich erzeugt,
-und legt die Belegkette als Doc-Kommentar an die Naht — so wie
-`SnippetKeystrokes.terminator` sie heute für das CR trägt.
+**Which line endings sit between the brackets.** This is the same kind of
+question as the CR in part 1, which was measured there instead of guessed.
+The plan measures against SwiftTerm's paste path what bytes a multiline
+clipboard content actually produces between `ESC[200~` and `ESC[201~`, and
+records the evidence chain as a doc comment at the seam — the way
+`SnippetKeystrokes.terminator` carries it today for the CR.
 
-Bis diese Messung vorliegt, steht in dieser Spec **keine** Byte-Behauptung
-über den Rumpf.
+Until that measurement exists, this spec makes **no** byte claim about the
+body.
 
-## Ablehnung an der Oberfläche
+## Rejection at the surface
 
-`refusedMultilineInsert` wird nicht verschluckt. Die auslösende Stelle zeigt
-einen Hinweis: dass die Gegenseite mehrzeiliges Einfügen ohne Ausführen nicht
-anbietet, mit dem Angebot, stattdessen auszuführen. Text lokalisiert in allen
-vier Katalogen (`en`, `de`, `fr`, `pl`) — der Wächtertest hält die
-Schlüsselmengen gleich.
+`refusedMultilineInsert` is not swallowed. The triggering spot shows a
+hint: that the other side does not offer multiline insert without
+execution, with the offer to execute instead. Text localized in all four
+catalogues (`en`, `de`, `fr`, `pl`) — the guard test keeps the key sets
+equal.
 
 ## Editor
 
-Alles, was Teil 1 gebaut und der Maintainer geprüft hat, bleibt: kein Umbruch,
-waagerechtes Scrollen, Einfärbung, abgeschaltete automatische Ersetzungen,
-Tab wandert weiter.
+Everything part 1 built and the maintainer verified stays: no wrapping,
+horizontal scrolling, highlighting, disabled automatic substitutions, Tab
+moves on.
 
-Was sich ändert:
+What changes:
 
-- **Return schreibt einen Umbruch.** Der `insertNewline(_:)`-Anspruch im
-  `doCommandBy:` entfällt; der zugehörige Wächtertest wird umgedreht, statt
-  gelöscht zu werden — er hält dann fest, dass Return **nicht** beansprucht
-  wird.
-- **Speichern wird ⌘Return**, und zwar nur im Snippet-Editor. Die übrigen
-  `.defaultAction`-Stellen der Datei bleiben unangetastet; welche das sind,
-  zählt der Plan im selben Moment nach, in dem er sie anfasst.
-- **Das Feld wächst mit** — eine Zeile hoch bei einzeiligem Befehl, dann pro
-  Zeile mehr bis zu einer Obergrenze, danach senkrechter Scroller. Die
-  Obergrenze ist ein Schätzwert und gehört in die Sichtprüfung.
-- Die Bedienhilfen-Beschriftung bleibt, wie sie ist (M6a-Invariante).
+- **Return writes a line break.** The `insertNewline(_:)` claim in
+  `doCommandBy:` is dropped; the corresponding guard test is flipped
+  rather than deleted — it now asserts that Return is **not** claimed.
+- **Save becomes ⌘Return**, and only in the snippet editor. The file's
+  other `.defaultAction` spots stay untouched; which ones those are, the
+  plan counts at the same moment it touches them.
+- **The field grows with it** — one line tall for a single-line command,
+  then more per line up to a cap, after which a vertical scroller takes
+  over. The cap is an estimate and belongs in the visual check.
+- The accessibility label stays as it is (M6a invariant).
 
-## Liste
+## List
 
-Die Snippet-Liste zeigt den Befehl als Text. Bei mehreren Zeilen zeigt sie die
-**erste Zeile**; dass weitere folgen, muss erkennbar sein. Die genaue Form
-(Marker, Zeilenzahl) entscheidet die Umsetzung am Bestand — sie soll dem
-Rhythmus der Liste folgen, nicht ihn brechen.
+The snippet list shows the command as text. For several lines it shows the
+**first line**; that more follow must be recognizable. The exact form
+(marker, line count) is a decision for the implementation against the
+existing code — it should follow the list's rhythm, not break it.
 
-## Protokoll: nichts zu tun, aber jetzt belastet
+## Log: nothing to do, but now under strain
 
-`SnippetAuditDetail` faltet Weißraum schon heute zu einfachen Leerzeichen
-zusammen, und in Swift ist **jedes** Zeichen mit `isNewline` auch
-`isWhitespace` — ein mehrzeiliger Befehl geht also von selbst einzeilig ins
-Protokoll. Das ist keine Änderung.
+`SnippetAuditDetail` already folds whitespace down to plain spaces today,
+and in Swift **every** character with `isNewline` is also `isWhitespace` —
+so a multiline command already goes into the log as a single line on its
+own. This is not a change.
 
-Es ist aber ab jetzt eine **belastete** Regel: geschrieben wurde sie, als es
-mehrzeilige Befehle nicht geben konnte. Sie bekommt deshalb ihren eigenen
-Test.
+But it is from now on a **strained** rule: it was written when multiline
+commands could not exist. It therefore gets its own test.
 
 ## Tests
 
-**Die Sendefunktion, vollständig** — jede Zeile der Tabelle oben, plus die
-Ablehnung.
+**The send function, complete** — every row of the table above, plus the
+rejection.
 
-**Konstant-Rückgabe-Probe:** eine Implementierung, die immer dieselben Bytes
-liefert, muss an mindestens zwei dieser Fälle scheitern. Eine, die immer
-klammert, scheitert am einzeiligen Fall.
+**Constant-return probe:** an implementation that always returns the same
+bytes must fail at least two of these cases. One that always brackets
+fails the single-line case.
 
-**Der einzeilige Fall ist byteweise unverändert** — gegen das heutige
-`SnippetKeystrokes.bytes(for:execute:)` geprüft, nicht gegen ein neu
-hingeschriebenes Literal.
+**The single-line case is byte-identical** — checked against today's
+`SnippetKeystrokes.bytes(for:execute:)`, not against a freshly written
+literal.
 
-**Das Modell nimmt Umbrüche an:** `Snippet(name:command:)` mit `"a\nb"` ist
-nicht mehr `nil`, und ein `"\r\n"` im Befehl überlebt den Roundtrip durch den
-Store. Der CRLF-Fall verdient seinen eigenen Test aus demselben Grund, aus dem
-ihn Teil 1 hatte: `"\r\n"` ist **ein** Grapheme-Cluster.
+**The model accepts line breaks:** `Snippet(name:command:)` with `"a\nb"`
+is no longer `nil`, and a `"\r\n"` in the command survives the round trip
+through the store. The CRLF case earns its own test for the same reason
+part 1 had one: `"\r\n"` is **one** grapheme cluster.
 
-**Das Protokoll bleibt einzeilig** bei mehrzeiligem Befehl.
+**The log stays single-line** for a multiline command.
 
-**Wächter in der App-Schicht**, dem Muster von `SnippetCommandEditorGuardTests`
-folgend: Return wird nicht mehr beansprucht, Tab weiterhin schon, und das
-Speichern-Kürzel ist ⌘Return.
+**Guards in the app layer**, following the pattern of
+`SnippetCommandEditorGuardTests`: Return is no longer claimed, Tab still
+is, and the save shortcut is ⌘Return.
 
-## Was ungeprüft bleibt
+## What stays unverified
 
-Die Darstellung: das Mitwachsen des Feldes, ⌘Return, und wie sich ein
-geklammertes Einfügen im laufenden Terminal anfühlt. Kein Test dieses Projekts
-zeichnet `NSViewRepresentable`, und keiner spricht mit einer echten Shell im
-Bracketed-Paste-Modus. **Sichtprüfung beim Maintainer**, und das gehört so in
-den Abschlussbericht.
+The presentation: the field growing with content, ⌘Return, and how a
+bracketed insert feels in the running terminal. No test in this project
+draws `NSViewRepresentable`, and none talks to a real shell in
+bracketed-paste mode. **Visual check by the maintainer**, and that belongs
+in the closing report as such.
 
-Teil 1 hat für diese Klasse den Beleg geliefert: das Schluss-Review fand den
-Umbruch-Fehler korrekt, und der Fix ersetzte ihn durch zwei neue, die
-ebenfalls plausibel aussahen und erst der Blick auf die laufende App fand.
+Part 1 already delivered the evidence for this class of issue: the closing
+review correctly found the line-break bug, and the fix replaced it with
+two new ones that also looked plausible and were found only by looking at
+the running app.
 
-## Nicht in diesem Teil
+## Not in this part
 
-- **Heredoc.** Die Klammerung löst den Fall besser — ohne den Befehl
-  umzuschreiben und ohne Subshell.
-- **Variablen mit Abfrage** und ein `shell`/`telnet`-Marker: Teil 3, siehe
+- **Heredoc.** Bracketing solves the case better — without rewriting the
+  command and without a subshell.
+- **Variables with a prompt** and a `shell`/`telnet` marker: part 3, see
   `2026-08-19-backlog-snippet-teil-3.md`.

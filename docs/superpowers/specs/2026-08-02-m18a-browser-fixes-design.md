@@ -1,54 +1,53 @@
-# M18a — Browser-Fixes & „Neue Datei" (Design/Spec)
+# M18a — Browser fixes & "New File" (design/spec)
 
-**Datum:** 2026-08-02
-**Status:** freigegeben (Maintainer), bereit für writing-plans
+**Date:** 2026-08-02
+**Status:** approved (maintainer), ready for writing-plans
 **Branch:** `develop`
-**Anlass:** Maintainer-Bugreport im Dev-Build v1.8.0-dev + eine kleine Funktionslücke.
+**Occasion:** maintainer bug report in dev build v1.8.0-dev + one small feature gap.
 
-## Ziel
+## Goal
 
-Vier kleine, unabhängige Punkte aus dem Alltagsgebrauch: der hängende
-Neuer-Ordner-Dialog, seine Ursache im Auflisten, eine fehlende
-„Neue Datei"-Aktion, und eine beobachtete Fenster-Wiederherstellung außerhalb
-des Bildschirms.
+Four small, independent points from everyday use: the hanging new-folder
+dialog, its root cause in listing, a missing "New File" action, and an
+observed off-screen window restoration.
 
-## Befund (reproduziert, belegt)
+## Finding (reproduced, proven)
 
-**Symptom:** „Wenn man Ordner erstellt, geht der Dialog nicht mehr weg."
+**Symptom:** "When you create a folder, the dialog no longer goes away."
 
-**Reproduziert** im laufenden Dev-Build (lokaler Bereich, UI-Scripting):
-Der Ordner wird angelegt, **kein** Fehlertext erscheint, der Dialog bleibt mit
-Spinner (`isWorking == true`) stehen — und schließt sofort korrekt, sobald drei
-nacheinander erscheinende macOS-**TCC-Berechtigungsdialoge** („Zugriff auf
-Schreibtisch/Dokumente/Downloads") bestätigt sind.
+**Reproduced** in the running dev build (local pane, UI scripting): the
+folder gets created, **no** error text appears, the dialog stays up with a
+spinner (`isWorking == true`) — and closes correctly right away as soon as
+three macOS **TCC permission dialogs** appearing in sequence ("access to
+Desktop/Documents/Downloads") are confirmed.
 
-**Ursachenkette:**
-1. `RemoteBrowserViewModel.createFolder(named:)` (`Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift:464`) ruft nach erfolgreichem `createDirectory` **`await load()`**, bevor es `nil` zurückgibt.
-2. `load()` → `LocalFileSystem.list(path:)` (`Sources/macSCPCore/RemoteFS/LocalFileSystem.swift:59`) schickt **jeden** Eintrag durch `item(for:)` → `ownerGroup(for:)` (`:302`) → ein `FileManager.attributesOfItem` **pro Eintrag** — unabhängig davon, ob die Owner/Gruppe-Spalten überhaupt sichtbar sind (M11m).
-3. Trifft das auf TCC-geschützte Ordner (Schreibtisch/Dokumente/Downloads), blockiert macOS mit Systemdialogen.
-4. `NameEntrySheet.confirm()` (`Sources/MacSCPApp/BrowserSheets.swift:47`) wartet auf `await onConfirm(...)` und ruft `dismiss()` erst danach → der Dialog wirkt eingefroren.
+**Root-cause chain:**
+1. `RemoteBrowserViewModel.createFolder(named:)` (`Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift:464`) calls **`await load()`** after a successful `createDirectory`, before returning `nil`.
+2. `load()` → `LocalFileSystem.list(path:)` (`Sources/macSCPCore/RemoteFS/LocalFileSystem.swift:59`) sends **every** entry through `item(for:)` → `ownerGroup(for:)` (`:302`) → a `FileManager.attributesOfItem` call **per entry** — regardless of whether the owner/group columns are even visible (M11m).
+3. If this hits a TCC-protected folder (Desktop/Documents/Downloads), macOS blocks with system dialogs.
+4. `NameEntrySheet.confirm()` (`Sources/MacSCPApp/BrowserSheets.swift:47`) awaits `await onConfirm(...)` and only calls `dismiss()` afterward → the dialog appears frozen.
 
-**Ausgeschlossen:** kein SwiftUI-`dismiss()`-Fehler (der Dialog schließt korrekt,
-sobald `load()` zurückkehrt); kein Fehler in `createFolder`s Rückgabewert
-(Tests grün); kein Problem mit gestapelten `.sheet`-Modifiern (ContentView
-stapelt acht davon funktionierend).
+**Ruled out:** not a SwiftUI `dismiss()` bug (the dialog closes correctly
+as soon as `load()` returns); not a bug in `createFolder`'s return value
+(tests green); not an issue with stacked `.sheet` modifiers (ContentView
+stacks eight of them working correctly).
 
-**Warum jetzt:** Ein frisch gebauter Dev-Build ist für TCC eine neue App —
-die Abfragen erscheinen erneut. Vermutlich blieben sie unbemerkt, weil das
-Fenster außerhalb des sichtbaren Bereichs wiederhergestellt wurde (siehe D).
+**Why now:** A freshly built dev build is a new app as far as TCC is
+concerned — the prompts appear again. Presumably they went unnoticed
+because the window was restored outside the visible area (see D).
 
-## Umfang
+## Scope
 
-### A — Dialog wartet nicht mehr auf das Neuladen (der eigentliche Fehler)
+### A — Dialog no longer waits on the reload (the actual bug)
 
-Der Ordner ist fertig, sobald `createDirectory` zurückkehrt; das Neuladen der
-Liste ist reine Anzeige-Aktualisierung. Dass das Schließen daran hängt, trifft
-genauso einen langsamen SFTP-Server oder ein sehr großes Verzeichnis.
+The folder is done as soon as `createDirectory` returns; reloading the
+list is a pure display refresh. Tying the close to that hits a slow SFTP
+server or a very large directory just as hard.
 
-**Änderung (Core):** `createFolder(named:)` und `rename(_:to:)` führen künftig
-**nur die Operation** aus (inkl. Kollisionsprüfung und Audit-Ereignis) und
-kehren sofort zurück. Das Neuladen samt Auswahl des neuen Eintrags zieht in
-eine eigene, ebenfalls awaitbare Methode um:
+**Change (Core):** `createFolder(named:)` and `rename(_:to:)` will from
+now on **only perform the operation** (including collision check and
+audit event) and return immediately. Reloading, including selecting the
+new entry, moves into its own, likewise awaitable method:
 
 ```swift
 /// Refreshes the listing and selects `path` if present. Called after a
@@ -56,30 +55,30 @@ eine eigene, ebenfalls awaitbare Methode um:
 public func refreshAndSelect(path: String) async
 ```
 
-**Änderung (App):** Der `onConfirm`-Aufruf in `BrowserPane` wartet nur noch auf
-die Operation; bei Erfolg wird `refreshAndSelect` in einem eigenen `Task`
-gestartet, **ohne** darauf zu warten. Der Dialog schließt damit sofort.
+**Change (App):** The `onConfirm` call in `BrowserPane` now only awaits
+the operation; on success, `refreshAndSelect` is started in its own
+`Task`, **without** awaiting it. The dialog thus closes immediately.
 
-Beide Wege bleiben in Core einzeln awaitbar und damit testbar — die
-bestehenden Tests werden entsprechend angepasst (Operation und Aktualisierung
-getrennt geprüft), nicht gelöscht.
+Both paths stay individually awaitable in Core and thus testable — the
+existing tests are adjusted accordingly (operation and refresh checked
+separately), not deleted.
 
-### B — Owner/Gruppe nur holen, wenn die Spalten sichtbar sind
+### B — Fetch owner/group only when the columns are visible
 
-`LocalFileSystem` bekommt `init(fetchesOwnerGroup: Bool = false)`. Ist es
-`false` (Standard), entfällt der `attributesOfItem`-Aufruf pro Eintrag
-vollständig: keine unnötigen Syscalls, keine TCC-Abfragen. Die App setzt es
-beim Erzeugen der lokalen Ansicht auf „an", **wenn** die Owner- oder
-Gruppe-Spalte in den Einstellungen sichtbar ist.
+`LocalFileSystem` gets `init(fetchesOwnerGroup: Bool = false)`. When it is
+`false` (default), the `attributesOfItem` call per entry drops out
+entirely: no unnecessary syscalls, no TCC prompts. The App sets it to "on"
+when creating the local view **if** the owner or group column is visible
+in settings.
 
-Das Protokoll bleibt unverändert (kein `list`-Parameter): SFTP liefert
-Owner/Gruppe ohnehin kostenlos aus dem `longname`, S3 hat das Konzept nicht —
-nur der lokale Dateizugriff zahlt hier drauf.
+The protocol stays unchanged (no `list` parameter): SFTP delivers
+owner/group for free from the `longname` anyway, S3 has no such concept —
+only local file access pays this cost.
 
-### C — „Neue Datei…" im Kontextmenü
+### C — "New File…" in the context menu
 
-Neuer Menüeintrag `newFile` (analog zu `newFolder`, ebenfalls auch bei Klick
-auf den leeren Bereich), neue Core-Aktion:
+New menu entry `newFile` (analogous to `newFolder`, also on clicking the
+empty area), new Core action:
 
 ```swift
 /// Creates an empty file in the current directory. Same collision probe and
@@ -87,51 +86,65 @@ auf den leeren Bereich), neue Core-Aktion:
 public func createFile(named name: String) async -> String?
 ```
 
-Sie legt die Datei über den bestehenden `write`-Weg des `RemoteFileSystem`
-mit leerem Inhalt an — funktioniert damit für lokal, SFTP und S3 gleichermaßen.
-UI: derselbe `NameEntrySheet` wie „Neuer Ordner" (Titel/Bestätigungstext und
-Standardname eigen), dieselbe Nicht-Warten-Regel aus A.
+It creates the file via the `RemoteFileSystem`'s existing `write` path
+with empty content — thus working the same for local, SFTP, and S3. UI:
+the same `NameEntrySheet` as "New Folder" (title/confirmation text and
+default name its own), the same no-waiting rule from A.
 
-### D — Fenster-Wiederherstellung außerhalb des Bildschirms (erst untersuchen)
+### D — Off-screen window restoration (investigate first)
 
-Beobachtet: Das App-Fenster wurde nach einem Neustart bei `{-101, -1386}`
-wiederhergestellt, also außerhalb aller Bildschirme. **Nicht ursächlich
-geklärt** — es kann macOS' eigene Fensterwiederherstellung sein oder unser
-`window.setFrame` (`Sources/MacSCPApp/ContentView.swift:1565`, das Wachsen auf
-die gemerkte Browser-Größe aus M5c).
+Observed: the app window was restored at `{-101, -1386}` after a restart,
+i.e. outside all screens. **Root cause not established** — it could be
+macOS's own window restoration, or our own `window.setFrame`
+(`Sources/MacSCPApp/ContentView.swift:1565`, growing to the remembered
+browser size from M5c).
 
-Vorgehen: erst belegen, wer den Rahmen setzt. Ist es unser Code, wird der
-resultierende Rahmen auf die sichtbare Fläche geklemmt (`NSScreen.visibleFrame`
-des nächstgelegenen Bildschirms). Ist es macOS' Restaurierung, wird das
-dokumentiert und **nicht** blind umgangen.
+Approach: first establish who sets the frame. If it is our code, the
+resulting frame gets clamped to the visible area (`NSScreen.visibleFrame`
+of the nearest screen). If it is macOS's restoration, that gets documented
+and **not** blindly worked around.
 
 ## Tests
 
-- **A:** `createFolder`/`rename` geben nach der Operation zurück, **ohne** die Liste geladen zu haben (Fake-FS zählt `list`-Aufrufe); `refreshAndSelect` aktualisiert und selektiert. Die bestehenden Erwartungen (Kollision → Fehlertext, Audit-Ereignis, Auswahl nach Aktualisierung) bleiben erhalten, nur auf die zwei Schritte verteilt.
-- **B:** `LocalFileSystem(fetchesOwnerGroup: false).list(...)` liefert Einträge **ohne** Owner/Gruppe und ruft `attributesOfItem` nicht auf (prüfbar über ein Verzeichnis, dessen Einträge sonst Owner/Gruppe hätten); mit `true` sind sie gefüllt.
-- **C:** `createFile` legt eine leere Datei an, meldet Kollisionen mit demselben Fehlerkontrakt wie `createFolder`, und feuert ein Audit-Ereignis.
-- **D:** je nach Befund — bei eigenem Code ein Test der Klemm-Funktion (Rahmen außerhalb → auf sichtbare Fläche korrigiert).
-- App: build-verifiziert, Katalog-Parität, Idle-CPU-Smoke.
+- **A:** `createFolder`/`rename` return after the operation, **without**
+  having loaded the list (fake FS counts `list` calls); `refreshAndSelect`
+  updates and selects. The existing expectations (collision → error text,
+  audit event, selection after refresh) are kept, just split across the
+  two steps.
+- **B:** `LocalFileSystem(fetchesOwnerGroup: false).list(...)` delivers
+  entries **without** owner/group and does not call `attributesOfItem`
+  (checkable via a directory whose entries would otherwise have
+  owner/group); with `true` they are filled in.
+- **C:** `createFile` creates an empty file, reports collisions with the
+  same error contract as `createFolder`, and fires an audit event.
+- **D:** depending on the finding — for our own code, a test of the
+  clamping function (frame off-screen → corrected to the visible area).
+- App: build-verified, catalog parity, idle-CPU smoke test.
 
-## Invarianten
+## Invariants
 
-- Kein verändertes Fehlerverhalten: Kollisionen und Fehler erscheinen weiterhin **im** Dialog (er bleibt dann offen).
-- Audit-Ereignisse (`newFolder`, `rename`, neu `newFile`) bleiben erhalten bzw. folgen demselben Muster.
-- Keine neue externe Dependency; keine Protokolländerung an `RemoteFileSystem`.
-- UI-Strings EN/DE/FR/PL, typografisch.
+- No changed error behavior: collisions and errors still appear **in**
+  the dialog (which then stays open).
+- Audit events (`newFolder`, `rename`, new `newFile`) are kept, or follow
+  the same pattern.
+- No new external dependency; no protocol change to `RemoteFileSystem`.
+- UI strings EN/DE/FR/PL, typographic.
 
-## Nicht in M18a
+## Not in M18a
 
-- Weitere Owner/Gruppe-Optimierungen für SFTP/S3 (dort entsteht der Aufwand nicht).
-- Ein allgemeiner „Aktion ohne Warten"-Umbau für andere Sheets (Info/Rechte laufen bewusst weiter synchron, sie zeigen ihr Ergebnis im Dialog).
+- Further owner/group optimizations for SFTP/S3 (the cost does not arise
+  there).
+- A general "action without waiting" rework for other sheets (info/
+  permissions deliberately stay synchronous, they show their result in
+  the dialog).
 
-## Betroffene Dateien
+## Files affected
 
-- `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` — **modify** (A: Operation/Aktualisierung trennen; C: `createFile`).
+- `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` — **modify** (A: split operation/refresh; C: `createFile`).
 - `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift` — **modify** (B: `fetchesOwnerGroup`).
-- `Sources/macSCPCore/Presentation/BrowserContextMenu.swift` — **modify** (C: `newFile`-Eintrag).
-- `Sources/MacSCPApp/BrowserPane.swift` — **modify** (A: nicht warten; C: Sheet + Auslöser).
-- `Sources/MacSCPApp/RemoteFileTableView.swift` — **modify** (C: Menüeintrag rendern).
-- `Sources/MacSCPApp/ContentView.swift` — **modify** (B: Flag setzen; D: ggf. Klemmung).
+- `Sources/macSCPCore/Presentation/BrowserContextMenu.swift` — **modify** (C: `newFile` entry).
+- `Sources/MacSCPApp/BrowserPane.swift` — **modify** (A: don't wait; C: sheet + trigger).
+- `Sources/MacSCPApp/RemoteFileTableView.swift` — **modify** (C: render menu entry).
+- `Sources/MacSCPApp/ContentView.swift` — **modify** (B: set flag; D: clamping if applicable).
 - `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` — **modify**.
-- `Tests/macSCPCoreTests/…` — Tests zu A, B, C (und D, falls eigener Code).
+- `Tests/macSCPCoreTests/…` — tests for A, B, C (and D, if own code).

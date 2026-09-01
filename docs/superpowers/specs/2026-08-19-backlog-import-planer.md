@@ -1,36 +1,36 @@
-# Backlog: Import-Planer — halb gefüllte Feldtaschen
+# Backlog: import planner — half-filled field bags
 
-**Angelegt:** 2026-08-19, beim Aufräumen der Wegwerf-Berichte unter
-`.superpowers/`. Der Punkt stammt aus dem Import-Planer-Durchgang und wurde
-dort ausdrücklich als „bewusst nicht behoben" geführt. Vor dem Übertragen am
-Quelltext nachgemessen: gilt weiterhin.
+**Created:** 2026-08-19, while cleaning up the throwaway reports under
+`.superpowers/`. The point comes from the import-planner pass and was
+tracked there explicitly as "deliberately not fixed". Re-measured
+against the source before carrying it over: still holds.
 
-## Der offene Fall
+## The open case
 
-`SessionImportPlanner` lässt eine Feldtasche passieren, sobald sie *nicht
-leer* ist — nicht erst, wenn sie brauchbar ist. Eine Tasche, die
-beispielsweise nur `SSHField.keyPath` enthält, kommt durch; `SSHFieldSchema.apply`
-schreibt dann die Vorgaben `host: ""`, `port: 22`, `username: ""`.
+`SessionImportPlanner` lets a field bag through as soon as it's *not
+empty* — not only once it's usable. A bag that, for instance, contains
+only `SSHField.keyPath` gets through; `SSHFieldSchema.apply` then writes
+the defaults `host: ""`, `port: 22`, `username: ""`.
 
-Ergebnis: ein sichtbarer, aber nicht wählbarer Datensatz. Er überlebt
-`dropsOnLoad`, weil ein `ssh`-Block existiert.
+Result: a record that's visible but not selectable. It survives
+`dropsOnLoad`, because an `ssh` block exists.
 
-**Nicht betroffen:** die Orphan-Fälle, die derselbe Durchgang behoben hat.
-Der Eintrag ist sichtbar und löschbar, und Löschen räumt den Keychain-Slot
-mit — also kein Datenleck, sondern ein Ärgernis beim Import kaputter Dateien.
+**Not affected:** the orphan cases that the same pass fixed. The entry
+is visible and deletable, and deleting cleans up the keychain slot along
+with it — so not a data leak, just an annoyance when importing broken
+files.
 
-## Verwandter Fall, der bereits im Code steht
+## Related case already noted in the code
 
-Der Zwilling — ein Eintrag mit `jumpHost` und `jumpUsername`, aber ohne
-SSH-Block, der über die Jump-Anheftung einen leeren `ssh`-Block bekommt und
-dadurch ebenfalls den Drop überlebt — ist im Planer selbst als bekannter,
-außerhalb des damaligen Auftrags liegender Rest kommentiert. Wer (a)
-angeht, sollte beide in einem Zug erledigen: es ist dieselbe Ursache.
+The twin — an entry with `jumpHost` and `jumpUsername` but no SSH block,
+which gets an empty `ssh` block through the jump attachment and thereby
+also survives the drop — is commented in the planner itself as a known
+remainder lying outside the scope of that earlier task. Whoever tackles
+(a) should handle both in one pass: it's the same cause.
 
-## Warum nicht sofort
+## Why not right away
 
-Beide Formen entstehen nur aus einer von Hand veränderten oder von einer
-fremden Quelle erzeugten Exportdatei. Ein sinnvoller Fix prüft die Tasche
-gegen das Pflichtfeld-Schema des Backends statt gegen `isEmpty` — das ist
-mehr als eine Zeile und gehört in einen eigenen Durchgang mit Tests für
-beide Formen.
+Both forms only arise from a hand-edited export file, or one produced by
+a third-party source. A proper fix checks the bag against the backend's
+required-field schema instead of against `isEmpty` — that's more than
+one line and belongs in its own pass with tests for both forms.

@@ -1,86 +1,84 @@
-# P3e — Abschluss
+# P3e — Completion
 
-**Ziel:** Wer ein Snippet im Terminal ausführt, findet es später im
-Sitzungsprotokoll wieder.
-**Stand:** fertig. Suite 2118 Tests in 185 Suiten, grün.
+**Goal:** Whoever runs a snippet in the terminal can find it later in the
+session log.
+**Status:** done. Suite 2118 tests in 185 suites, green.
 
-## Was die Machbarkeitsmessung entschieden hat
+## What the feasibility measurement decided
 
-Nicht gebaut wird die Protokollierung freier Tastatureingabe. SSH handelt
-Echo nicht aus, SwiftTerms SRM-Modus ist ein Stub, und `sudo` schaltet das
-Echo serverseitig per `termios` ab — auf der Leitung unsichtbar. Es gibt
-also keinen ehrlichen Weg, getippte Eingaben zu protokollieren, ohne
-irgendwann ein Passwort mitzuschreiben. Protokolliert wird nur, was macSCP
-selbst absendet und dessen Text es kennt.
+Logging free keyboard input is not being built. SSH does not negotiate
+echo, SwiftTerm's SRM mode is a stub, and `sudo` turns off echo
+server-side via `termios` — invisible on the wire. So there is no honest
+way to log typed input without at some point recording a password.
+Only what macSCP itself sends, and whose text it knows, is logged.
 
-## Was die Messung an der Phasengröße geändert hat
+## What the measurement changed about the phase's size
 
-Zwei Funde machten sie klein: die Audit-Maschinerie aus M9b steht komplett,
-und alle vier Snippet-Oberflächen (Menüleiste, Terminal-Rechtsklick,
-Header-Popover samt Doppelklick-Fenster und Zeilen-Kontextmenü,
-Sidebar-Submenü) laufen durch **einen** Trichter,
-`ContentView.triggerSnippet(_:execute:)`. Es blieb: eine Ereignisart, ein
-Core-Formatierer, eine Aufzeichnungszeile, eine Filterkategorie „Terminal",
-vier Kataloge.
+Two findings made it small: the audit machinery from M9b already stands
+complete, and all four snippet surfaces (menu bar, terminal right-click,
+header popover including the double-click window, row context menu,
+sidebar submenu) run through **one** funnel,
+`ContentView.triggerSnippet(_:execute:)`. What remained: one event type,
+one Core formatter, one recording line, one filter category "Terminal",
+four catalogs.
 
-**Nur Ausführungen.** Ein eingefügtes Snippet steht im Prompt und kann vor
-dem Absenden geändert werden; es als „ausgeführt" zu protokollieren wäre
-ein falscher Eintrag. Die ⌃⌘-Kürzel belegen ausschließlich Einfügen und
-schreiben deshalb nichts.
+**Executions only.** An inserted snippet sits in the prompt and can be
+changed before being sent; logging it as "executed" would be a wrong
+entry. The ⌃⌘ shortcuts are dedicated exclusively to inserting and
+therefore write nothing.
 
-## Was die Gesamtprüfung fand
+## What the full review found
 
-**Ein echter, vorbestehender Fehler in `Snippet` — nicht von dieser Phase
-verursacht, aber von ihr aufgedeckt.** Der Guard prüfte
-`command.contains("\n")` und `contains("\r")`. Swift behandelt `"\r\n"` als
-**einen** Grapheme-Cluster, und `String.contains(_:)` sucht graphembasiert:
+**A real, pre-existing bug in `Snippet` — not caused by this phase, but
+uncovered by it.** The guard checked
+`command.contains("\n")` and `contains("\r")`. Swift treats `"\r\n"` as
+**one** grapheme cluster, and `String.contains(_:)` searches by grapheme:
 
     let cmd = "cd /srv\r\nls -la"
     cmd.contains("\n")              // false
     cmd.contains("\r")              // false
-    Array(cmd.utf8)                 // enthält 13 UND 10
+    Array(cmd.utf8)                 // contains 13 AND 10
 
-Ein Snippet mit Windows-Zeilenenden kam also durch — und ging mit einem
-rohen `0x0D` in der Mitte an die Shell. Das führt die erste Zeile **sofort
-aus**, auch beim *Einfügen*, wo der Code ausdrücklich zusagt, nie einen
-Zeilenabschluss anzuhängen. Erreichbar über den Snippet-Import (eine unter
-Windows erzeugte oder handgeschriebene Datei), weil `init(from:)` durch
-denselben Guard läuft. Ebenso passierten U+000B, U+000C, U+0085, U+2028 und
-U+2029.
+A snippet with Windows line endings therefore got through — and went to
+the shell with a raw `0x0D` in the middle. That **immediately executes**
+the first line, even on *insert*, where the code explicitly promises
+never to append a line terminator. Reachable via the snippet import (a
+file generated on Windows, or handwritten), because `init(from:)` runs
+through the same guard. U+000B, U+000C, U+0085, U+2028 and U+2029 got
+through in the same way.
 
-Der Guard heißt jetzt `!command.contains(where: \.isNewline)`, mit roten
-Tests für CRLF und den vertikalen Tabulator vorweg.
+The guard is now called `!command.contains(where: \.isNewline)`, with
+red tests up front for CRLF and the vertical tab.
 
-Außerdem: die Prüfung hat drei unwahre bzw. veraltete Textstellen gefunden
-(die Zusage „the log says what actually went out", die veraltete
-Guard-Beschreibung im Snippet-Sheet und dessen L10n-Rückfalltext) und einen
-schwachen Test, der jetzt über `AuditEvent.Kind.allCases` läuft und damit
-jeden künftigen Fall ohne Katalogeintrag fängt.
+Additionally: the review found three untrue or stale pieces of text (the
+promise "the log says what actually went out", the stale guard
+description in the snippet sheet, and its L10n fallback text) and a weak
+test, which now runs over `AuditEvent.Kind.allCases` and thereby catches
+every future case with no catalog entry.
 
-## Bekannte Grenzen (bewusst so)
+## Known limits (deliberately so)
 
-- **Der Eintrag entsteht nach dem `send`-Aufruf, nicht nach der
-  Zustellung.** `TerminalPanelViewModel.send` ist fire-and-forget: Bytes,
-  die vor dem Öffnen der Shell anfallen, werden gepuffert, und scheitert das
-  Öffnen, verwirft der Fehlerzweig sie — der Eintrag steht dann trotzdem.
-  Realistisch bei einem Konto mit `ForceCommand`. Der Kommentar an der
-  Stelle sagt das inzwischen. Eine echte Zustellrückmeldung wäre eine eigene
-  Änderung an `send`.
-- **Ad-hoc-Verbindungen protokollieren nichts.** Der Recorder hängt an einer
-  gespeicherten Session; ohne sie gibt es auch kein Sheet zum Öffnen. Das
-  gilt für das ganze Audit-Feature, ist aber hier zuerst spürbar, weil
-  Terminal und Snippets auf einer Ad-hoc-Verbindung normal funktionieren.
-- **Die Regel „Snippets tragen keine Zugangsdaten" ist zugesagt, nicht
-  erzwungen.** Neu ist, dass ein ausgeführter Befehl jetzt auch im
-  Sitzungsprotokoll steht — es überlebt das Snippet, landet im Textexport
-  des Protokolls und wiederholt sich pro Sitzung. Der Hinweistext im Editor
-  sagt das jetzt in allen vier Sprachen.
+- **The entry is created after the `send` call, not after delivery.**
+  `TerminalPanelViewModel.send` is fire-and-forget: bytes that accumulate
+  before the shell opens are buffered, and if opening fails, the error
+  branch discards them — the entry stands anyway. Realistic with an
+  account that has `ForceCommand`. The comment at that spot now says so.
+  A real delivery acknowledgment would be a separate change to `send`.
+- **Ad-hoc connections log nothing.** The recorder is tied to a saved
+  session; without one there is also no sheet to open. This applies to
+  the whole audit feature, but is noticed here first, because terminal
+  and snippets work normally on an ad-hoc connection.
+- **The rule "snippets carry no credentials" is a promise, not
+  enforced.** What is new is that an executed command now also appears
+  in the session log — it outlives the snippet, ends up in the log's
+  text export, and repeats per session. The hint text in the editor now
+  says so in all four languages.
 
-## Backlog (aus der Prüfung, vorbestehend)
+## Backlog (from the review, pre-existing)
 
-`AuditLogStore.loadIfNeeded` schluckt Decode-Fehler und schreibt beim
-nächsten `append` neu. Eine ältere App-Version, die ein Protokoll mit einer
-ihr unbekannten Ereignisart liest, sieht es als leer und **überschreibt die
-Historie dieser Sitzung**. Gilt für jede je hinzugefügte Art. Ein
-nachsichtiger Decoder (unbekannte Werte auf `.unknown` abbilden) wäre der
-Fix — vor der nächsten neuen Ereignisart zu erledigen.
+`AuditLogStore.loadIfNeeded` swallows decode errors and rewrites on the
+next `append`. An older app version reading a log with an event type it
+does not know sees it as empty and **overwrites that session's
+history**. This applies to every kind ever added. A lenient decoder
+(mapping unknown values to `.unknown`) would be the fix — to be done
+before the next new event kind.

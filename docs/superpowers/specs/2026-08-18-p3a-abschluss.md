@@ -1,6 +1,6 @@
-# P3a — Abschluss: Host-Tags und Sidebar-Filter
+# P3a — Close-out: Host tags and sidebar filter
 
-Abgeschlossen 2026-08-18. Elf Commits, `f2ad8ce..fb545a1`:
+Completed 2026-08-18. Eleven commits, `f2ad8ce..fb545a1`:
 
 ```
 c0ffc5a refactor(core): give both tag vocabularies one normalization
@@ -16,365 +16,359 @@ db1d105 feat(app): filter the sidebar by host tag
 fb545a1 fix(app): tighten the sidebar filter guard and fold the tag-row scaffold
 ```
 
-Die Phase deckt genau das, was die Spec (`docs/superpowers/specs/
-2026-08-18-p3-ordnung-design.md`, Abschnitt „P3a — Host-Tags und
-Sidebar-Filter") verlangt hat: eine geteilte Normalisierung, `tags` an
-`StoredSession`, Export/Import, das Formularfeld, und der erste Filter, den
-die Sidebar je hatte — Chip-Reihe, Ausblenden von Gruppen und „IMPORTIERT",
-zwei Leer-Zustände, Rückfall bei verschwundenem letzten Host.
+The phase covers exactly what the spec (`docs/superpowers/specs/
+2026-08-18-p3-ordnung-design.md`, section "P3a — Host tags and sidebar
+filter") required: a shared normalization, `tags` on `StoredSession`,
+export/import, the form field, and the first filter the sidebar has ever
+had — chip row, hiding groups and "IMPORTED", two empty states, fallback
+when the last host disappears.
 
-## Gemessene Zahlen
+## Measured numbers
 
-- **Suite:** `swift test` — **2018 Tests in 174 Suiten**, 0 Fehlschläge.
-  Selbst gemessen (nicht aus einem Report übernommen), deckt sich mit dem
-  letzten Stand aus Task 6.
-- **`.strings`:** `plutil -lint` auf alle acht Kataloge
+- **Suite:** `swift test` — **2018 tests in 174 suites**, 0 failures.
+  Measured directly (not carried over from a report), matches the latest
+  state from Task 6.
+- **`.strings`:** `plutil -lint` on all eight catalogs
   (`Sources/MacSCPAppKit/Resources/{en,de,fr,pl}.lproj/Localizable.strings`,
   `Sources/macSCPCore/Resources/{en,de,fr,pl}.lproj/Localizable.strings`) —
-  alle acht `OK`.
-- **Build:** `scripts/package-app` im Hintergrund gestartet
+  all eight `OK`.
+- **Build:** `scripts/package-app` launched in the background
   (`MACSCP_VERSION=1.2.0-dev MACSCP_BUILD=962`, `962` = `git rev-list
-  --count HEAD` zum Zeitpunkt des Laufs), erfolgreich durchgelaufen.
-  Geprüft:
-  - `lipo -archs` auf `macSCP` und `macscp-cli`: beide `x86_64 arm64`.
-  - Beide Ressourcen-Bundles vorhanden:
+  --count HEAD` at the time of the run), completed successfully.
+  Checked:
+  - `lipo -archs` on `macSCP` and `macscp-cli`: both `x86_64 arm64`.
+  - Both resource bundles present:
     `macSCP_MacSCPAppKit.bundle`, `macSCP_macSCPCore.bundle`.
-  - Alle vier `.lproj` im Bundle: `en`, `de`, `fr`, `pl`.
-  - `plutil -lint` auf `Contents/Info.plist`: `OK`.
-  - Die App wurde **nicht gestartet** — Vorgabe des Auftrags.
+  - All four `.lproj` in the bundle: `en`, `de`, `fr`, `pl`.
+  - `plutil -lint` on `Contents/Info.plist`: `OK`.
+  - The app was **not launched** — a requirement of the brief.
 
-## Was durch Tests gehalten wird, was nur durch Review
+## What is held by tests, what only by review
 
-Die Phase stützt sich an drei Stellen auf **quelltext-lesende Wächter**
-statt auf Verhaltenstests, weil dem Projekt ein View-Rendering-Harness
-fehlt. Jeder wurde per Mutation geprüft, nicht nur behauptet — und jeder
-hat einen dokumentierten blinden Fleck, der auch nach der Härtung noch
-besteht.
+The phase relies at three points on **source-text-reading guards**
+instead of behaviour tests, because the project lacks a view-rendering
+harness. Each was verified by mutation, not merely claimed — and each has
+a documented blind spot that persists even after the hardening.
 
 ### 1. `HostTagsWiringGuardTests` (Task 5)
 
-Prüft zwei Zeilen als Text, nicht als Verhalten:
-`tagFieldRowPinsIdentityToTheEditedSession` (die `FormRow` enthält sowohl
-`SnippetTagField(` als auch `.id(editingSessionID)`) und
-`startSessionForwardsFormTagsToSave` (der `save(...)`-Aufruf in
-`ContentView.swift` enthält `tags: form.tags)`). Beide rot/grün gegen den
-echten Quelltext geprüft (Zeilen temporär entfernt, Fehlschlag beobachtet,
-zurückgesetzt).
+Checks two lines as text, not as behaviour:
+`tagFieldRowPinsIdentityToTheEditedSession` (the `FormRow` contains both
+`SnippetTagField(` and `.id(editingSessionID)`) and
+`startSessionForwardsFormTagsToSave` (the `save(...)` call in
+`ContentView.swift` contains `tags: form.tags)`). Both proven red/green
+against the real source text (lines temporarily removed, failure
+observed, reverted).
 
-**Blinder Fleck (akzeptiert, nicht behoben):** Ob `.id(editingSessionID)`
-beim Wechsel der bearbeiteten Sitzung tatsächlich zur richtigen Zeit das
-lokale `@State` zurücksetzt, ist eine reine Rendering-Tatsache — dieses
-Projekt hat kein Werkzeug, das eine SwiftUI-View instanziiert. Der Guard
-beweist, dass der Aufruf existiert, nicht dass er im Betrieb wirkt.
+**Blind spot (accepted, not fixed):** whether `.id(editingSessionID)`
+actually resets the local `@State` at the right time when the edited
+session changes is a pure rendering fact — this project has no tool that
+instantiates a SwiftUI view. The guard proves the call exists, not that
+it works at runtime.
 
-### 2. `SidebarFilterWiringTests` (Task 6, zwei Runden)
+### 2. `SidebarFilterWiringTests` (Task 6, two rounds)
 
-Acht Guards in Runde 0, plus sechs weitere nach Review-Runde 1 (macht 14).
-Scannt `SessionSidebar.swift` als Text: genau ein
-`SidebarVisibility.compute(`-Aufruf, kein direkter `.tags`-Vergleich gegen
-`activeTag`, `body` liest Sections/Imported/Leerzustand weiterhin aus
-`visibility`, der Rückfall (`.onChange(of: viewModel.sessions)`) ruft
-`SidebarVisibility.resolvedTag`, die Unabhängigkeits-Pin (`SessionRow`
-bekommt die volle, ungefilterte Snippet-Liste unabhängig vom aktiven Tag),
-und dass `activeTag` nie über `SettingsStore`/`AppStorage` persistiert wird.
+Eight guards in round 0, plus six more after review round 1 (14 total).
+Scans `SessionSidebar.swift` as text: exactly one
+`SidebarVisibility.compute(` call, no direct `.tags` comparison against
+`activeTag`, `body` still reads sections/imported/empty-state from
+`visibility`, the fallback (`.onChange(of: viewModel.sessions)`) calls
+`SidebarVisibility.resolvedTag`, the independence pin (`SessionRow`
+receives the full, unfiltered snippet list regardless of the active tag),
+and that `activeTag` is never persisted via `SettingsStore`/`AppStorage`.
 
-Der Reviewer fand in Runde 1 zwei blinde Flecken **per Mutation, nicht per
-Vermutung**:
-- Ein zweiter `SidebarVisibility.compute(...)`-Aufruf unter anderem
-  Variablennamen wurde vom ursprünglichen Zähler nicht erkannt (er zählte
-  nur die exakte Zeile `let visibility = SidebarVisibility.compute(`).
-- `Set(s.tags).contains(activeTag!)` — ein direkter Tag-Vergleich mit einer
-  Klammer zwischen `tags` und `.contains(` — rutschte am ursprünglichen
-  Literal-Scan `tags.contains(` vorbei.
+The reviewer found two blind spots in round 1 **by mutation, not by
+guesswork**:
+- A second `SidebarVisibility.compute(...)` call under a different
+  variable name was not recognized by the original counter (it only
+  counted the exact line `let visibility = SidebarVisibility.compute(`).
+- `Set(s.tags).contains(activeTag!)` — a direct tag comparison with a
+  parenthesis between `tags` and `.contains(` — slipped past the original
+  literal scan `tags.contains(`.
 
-Beide Detektoren wurden verschärft (zeilenbasiert auf jede Nicht-Kommentar-
-Zeile mit `SidebarVisibility.compute(`; auf jede Zeile mit `.tags`
-Property-Zugriff **und** `activeTag` **und** `contains(`), gegen den echten
-Reviewer-Mutations-Fund rot/grün bewiesen.
+Both detectors were tightened (line-based over every non-comment line
+containing `SidebarVisibility.compute(`; over every line with a `.tags`
+property access **and** `activeTag` **and** `contains(`), proven red/green
+against the real reviewer mutation finding.
 
-**Blinder Fleck, der immer noch durchrutscht** (im Guard-eigenen
-Doc-Kommentar benannt, von der Re-Review selbst gefunden — der dritte
-Mutations-Fund, den auch die gehärtete Fassung nicht fängt):
-`.tags.firstIndex(of: activeTag) != nil`, oder ein über mehrere Zeilen
-verteilter Vergleich ohne das Literal `contains(` auf einer einzigen Zeile,
-schlägt am Guard 2 vorbei. Dokumentiert in `Tests/macSCPAppKitTests/
-SidebarFilterWiringTests.swift`s Suite-Doc-Kommentar, nicht stillschweigend
-hingenommen.
+**Blind spot that still slips through** (named in the guard's own doc
+comment, found by the re-review itself — the third mutation finding that
+even the hardened version does not catch):
+`.tags.firstIndex(of: activeTag) != nil`, or a comparison spread across
+several lines without the literal `contains(` on a single line, slips
+past guard 2. Documented in `Tests/macSCPAppKitTests/
+SidebarFilterWiringTests.swift`'s suite doc comment, not silently
+accepted.
 
-### 3. Die Ranking-Äquivalenz-Pin — `TagSuggestionRankingEquivalenceTests` (Task 5, Runde 2)
+### 3. The ranking equivalence pin — `TagSuggestionRankingEquivalenceTests` (Task 5, round 2)
 
-Vier Tests, die `SnippetTagSuggestions` und `HostTagSuggestions` gegen den
-gemeinsamen `TagSuggestionRanking`-Kern für dieselben Tag-Daten vergleichen
-(Inhaltsvergleich per `Dictionary`, nicht Array-Reihenfolge — eine frühere
-Fassung mit Reihenfolgen-Vergleich war **flaky** bei gleich gezählten,
-unterschiedlich geschriebenen Tags wie `Docker`/`docker`, weil
-`Dictionary`-Iterationsreihenfolge dafür keine Garantie gibt). Rot/grün
-bewiesen, 5× wiederholt zur Flake-Kontrolle.
+Four tests that compare `SnippetTagSuggestions` and `HostTagSuggestions`
+against the shared `TagSuggestionRanking` core for the same tag data
+(content comparison via `Dictionary`, not array order — an earlier
+version with order comparison was **flaky** for equally-counted,
+differently-spelled tags such as `Docker`/`docker`, because `Dictionary`
+iteration order gives no guarantee there). Proven red/green, repeated 5×
+for flake control.
 
-**Kein neuer Wächter, aber derselbe Vorbehalt wie bei jedem Äquivalenz-Test
-in dieser Phase:** Eine Pin dieser Form beweist Drift-Freiheit zwischen den
-Aufrufern, nicht Korrektheit der gemeinsamen Funktion selbst — die liegt
-bei `TagListTests` (Task 1) bzw. den granularen `TagSuggestionRanking`-
-Konsumenten-Tests.
+**Not a new guard, but the same caveat as every equivalence test in this
+phase:** a pin of this shape proves absence of drift between the callers,
+not correctness of the shared function itself — that rests with
+`TagListTests` (Task 1) resp. the granular `TagSuggestionRanking`
+consumer tests.
 
-### Was das für den Maintainer bedeutet
+### What this means for the maintainer
 
-Alle drei Wächter sind **quelltext-lesend**, nicht verhaltensprüfend — eine
-projektweite, dokumentierte Grenze (kein View-Rendering-Harness), keine
-Besonderheit dieser Phase. Sie schützen gegen eine versehentliche
-Regression (jemand baut die Sidebar-Sichtbarkeit ein zweites Mal von Hand
-nach), nicht gegen einen absichtlich verschleierten Umbau. Jeder benennt
-seinen verbleibenden blinden Fleck im eigenen Doc-Kommentar. Das ist Review-
-Aufgabe, keine Test-Aufgabe — der GUI-Sichtprüfpunkt unten ist genau dafür
-da.
+All three guards are **source-text-reading**, not behaviour-checking — a
+project-wide, documented limitation (no view-rendering harness), not a
+peculiarity of this phase. They protect against an accidental regression
+(someone rebuilding sidebar visibility by hand a second time), not against
+a deliberately obscured rework. Each names its remaining blind spot in
+its own doc comment. That is a review task, not a test task — the GUI
+sight-check below exists for exactly that.
 
-## Export/Import: was mit `tags` passiert, und warum
+## Export/Import: what happens to `tags`, and why
 
-`ExportedSession` bekommt `tags: [String]?`, exakt neben `paneVisibility`.
-Die Entscheidung fiel nicht durch Analogie zu `groupID`, sondern durch
-Lesen, was beide Präzedenzfälle tatsächlich **je einzeln** tun (Task 3):
+`ExportedSession` gets `tags: [String]?`, exactly next to
+`paneVisibility`. The decision was not made by analogy to `groupID`, but
+by reading what both precedents actually do **individually** (Task 3):
 
 | | `groupID` | `paneVisibility` |
 |---|---|---|
-| Export | `includeGroups ? session.groupID : nil` — **gated** | `session.paneVisibility` — bedingungslos |
-| Bedeutung von `nil` beim Import | Ambiguität: "keine Gruppe" oder "ohne Gruppen exportiert" | reines Migrationssignal: "Datei von vor diesem Feld" |
-| Import-Auflösung | über eine pro-Lauf gebaute `groupIDMap` auf eine ID **remapped** — eine Referenz auf ein zweites Objekt im File | direkt **wertkopiert**, `?? .filesOnly` als Default |
+| Export | `includeGroups ? session.groupID : nil` — **gated** | `session.paneVisibility` — unconditional |
+| Meaning of `nil` on import | Ambiguous: "no group" or "exported without groups" | pure migration signal: "file from before this field" |
+| Import resolution | **remapped** onto an ID via a per-run `groupIDMap` — a reference to a second object in the file | copied directly **by value**, `?? .filesOnly` as default |
 
-Die beiden Präzedenzfälle zeigen in unterschiedliche Richtungen —
-`paneVisibility` selbst ist bereits eine Mischung aus beiden Mustern.
-`tags` folgt `paneVisibility` auf **beiden** Achsen, aus zwei Gründen, die
-sich aus der Natur des Felds ergeben, nicht aus Präferenz:
+The two precedents point in different directions —
+`paneVisibility` itself is already a mix of both patterns. `tags`
+follows `paneVisibility` on **both** axes, for two reasons arising from
+the nature of the field, not from preference:
 
-1. **Kein Referenzobjekt.** Anders als `groupID`, das auf `ExportedGroup`
-   zeigt, gibt es im File keinen Tag-Katalog, den `tags` referenzieren
-   könnte — eine Tag-Liste ist ein Wert, kein Zeiger. Es gibt nichts zum
-   Remappen, also keine `groupIDMap`-artige Tabelle.
-2. **Bedingungsloser Export**, nie hinter `includeGroups` versteckt: Das
-   Flag gated Gruppen-**Mitgliedschaft**, keine Sitzungs-Eigenschaft, und
-   ein Tag ist eine Eigenschaft der Sitzung, keine Gruppenzugehörigkeit.
+1. **No reference object.** Unlike `groupID`, which points at
+   `ExportedGroup`, there is no tag catalog in the file that `tags` could
+   reference — a tag list is a value, not a pointer. There is nothing to
+   remap, hence no `groupIDMap`-style table.
+2. **Unconditional export**, never hidden behind `includeGroups`: that
+   flag gates group **membership**, not a session property, and a tag is
+   a property of the session, not a group affiliation.
 
-Import-Default: `TagList.normalized(fileSession.tags ?? [])` im Planner —
-`nil` und `[]` sehen bei einer Liste ohnehin identisch aus (anders als bei
-`groupID`, wo `nil` echte Ambiguität trägt), was die Entscheidung zusätzlich
-vereinfacht hat. Der `TagList.normalized`-Aufruf an dieser Stelle ist kein
-Nebenprodukt: `tags` wird im Planner per Property-Zuweisung gesetzt, nicht
-über `StoredSession`s eigenen Initializer/Decoder, die beide automatisch
-normalisieren — eine reine Zuweisung tut das nicht. Ohne den expliziten
-Aufruf könnte eine handbearbeitete Exportdatei einen ungetrimmten oder
-doppelten Tag am Regelwerk vorbei einschmuggeln; das ist in Task 3 durch
-einen eigenen Test (`importNormalizesTagsSoAHandEditedExportFileCannotSmuggleDuplicates`)
-beobachtet, nicht nur im Kommentar behauptet.
+Import default: `TagList.normalized(fileSession.tags ?? [])` in the
+planner — `nil` and `[]` look identical for a list anyway (unlike
+`groupID`, where `nil` carries real ambiguity), which simplified the
+decision further. The `TagList.normalized` call at this point is not
+incidental: `tags` is set in the planner via a property assignment, not
+through `StoredSession`'s own initializer/decoder, both of which
+normalize automatically — a plain assignment does not. Without the
+explicit call, a hand-edited export file could smuggle an untrimmed or
+duplicate tag past the rule set; this was observed in Task 3 through its
+own test
+(`importNormalizesTagsSoAHandEditedExportFileCannotSmuggleDuplicates`),
+not merely claimed in a comment.
 
-## Die Wiederverwendungsentscheidung — und ihre Umkehr
+## The reuse decision — and its reversal
 
-Task 5 hat zunächst **nicht** `SnippetTagField` wiederverwendet, sondern ein
-eigenes, schlankes `HostTagsField` gebaut (ein `TextField` mit lokalem
-`@State`, kommagetrennt, durch `TagList.normalized` geroutet). Die Messung
-zum Zeitpunkt der Entscheidung war korrekt — `SnippetTagField`s Binding-
-Form ist generisch genug, um technisch mit einer leeren Vorschlagsliste
-durchzulaufen — aber die Schlussfolgerung war falsch: Das
-Wiederverwendungs-Argument wog die falschen Kosten ab. Es fragte, ob das
-Einklinken *sicher* ist (ja), statt ob das *Weglassen* etwas kostet, das die
-Spec dem Eingabefeld explizit zuweist.
+Task 5 initially did **not** reuse `SnippetTagField`, but built its own,
+slim `HostTagsField` (a `TextField` with local `@State`, comma-separated,
+routed through `TagList.normalized`). The measurement at the time of the
+decision was correct — `SnippetTagField`'s binding shape is generic
+enough to technically work with an empty suggestion list — but the
+conclusion was wrong: the reuse argument weighed the wrong costs. It asked
+whether plugging it in is *safe* (yes), instead of whether *omitting* it
+costs something the spec explicitly assigns to the input field.
 
-Die Review deckte den eigentlichen Fehler auf: `TagList`s Doc-Kommentar
-weist die Dämpfung von Fast-Duplikaten explizit **dem Eingabesteuerelement**
-zu ("the input control's job — a case-insensitive suggestion list"), nicht
-`TagList.normalized` selbst — Groß-/Kleinschreibung bleibt in der Regel
-bewusst erhalten. Ein reines `TextField` ohne Vorschlagsliste hat diese
-Dämpfung nicht. `Docker` und `docker` wären als zwei Sidebar-Chips gelandet,
-die dieselbe Bedeutung meinen aber nie zusammenfallen — sichtbar für den
-Nutzer, weil `SidebarVisibility` exakt vergleicht.
+The review uncovered the actual bug: `TagList`'s doc comment explicitly
+assigns damping of near-duplicates to **the input control** ("the input
+control's job — a case-insensitive suggestion list"), not to
+`TagList.normalized` itself — case is deliberately preserved as a rule. A
+plain `TextField` without a suggestion list lacks that damping. `Docker`
+and `docker` would have landed as two sidebar chips meaning the same
+thing but never collapsing — visible to the user, because
+`SidebarVisibility` compares exactly.
 
-Die Umkehr (Fix-Runde 1) ersetzte `HostTagsField` vollständig durch
-`SnippetTagField` mit einem neuen `placeholder`-Parameter (Default erhält
-`SnippetsSheet`s bestehenden Aufruf unverändert) und einem neuen
-Adapter-Typ `HostTagSuggestions`, der `SidebarVisibility.availableTags(in:)`
-um Pro-Tag-Zählung und case-insensitive Präfixsuche ergänzt — genau die
-Form, die `SnippetTagField`s `suggestions`-Closure erwartet. `HostTagsField`
-wurde vollständig gelöscht, nicht als toter Code belassen.
+The reversal (fix round 1) replaced `HostTagsField` entirely with
+`SnippetTagField` plus a new `placeholder` parameter (default keeps
+`SnippetsSheet`'s existing call unchanged) and a new adapter type
+`HostTagSuggestions`, which extends `SidebarVisibility.availableTags(in:)`
+with per-tag counting and a case-insensitive prefix search — exactly the
+shape `SnippetTagField`'s `suggestions` closure expects. `HostTagsField`
+was deleted entirely, not left as dead code.
 
-**Der Merksatz für einen künftigen Leser:** Ein zweites Eingabefeld für
-dieselbe Regel ist nicht per se falsch — aber wenn die Regel selbst dem
-Steuerelement (nicht der Normalisierungsfunktion) eine Verantwortung
-zuweist, überträgt ein "gleich aussehendes" Ersatzfeld diese Verantwortung
-nicht automatisch mit. Das war hier der Fehler: die Spec sagt "dasselbe
-Token-Feld … sofern es sich ohne Verrenkung wiederverwenden lässt", und das
-Messen der *technischen* Wiederverwendbarkeit reichte nicht — die
-*verhaltensbezogene* Lücke (Case-Dämpfung) wurde erst durch Review sichtbar,
-nicht durch das ursprüngliche Messen selbst.
+**The takeaway for a future reader:** a second input field for the same
+rule is not inherently wrong — but when the rule itself assigns a
+responsibility to the control (not the normalization function), a
+"same-looking" replacement field does not automatically carry that
+responsibility along. That was the bug here: the spec says "the same
+token field … as long as it can be reused without contortion", and
+measuring *technical* reusability was not enough — the *behavioural* gap
+(case damping) only became visible through review, not through the
+original measurement itself.
 
-## Was die GUI nicht geprüft hat
+## What the GUI did not check
 
-**Die GUI wurde in dieser gesamten Phase nie gestartet.** Jede Aussage über
-tatsächliches Rendering, Tap-Verhalten oder visuelle Unterscheidbarkeit ist
-in den Task-Reports als unbeobachtete Behauptung geführt, nicht als
-getestete. Der Maintainer muss vor dem nächsten Release folgendes von Hand
-ansehen:
+**The GUI was never launched during this entire phase.** Every statement
+about actual rendering, tap behaviour, or visual distinguishability is
+carried in the task reports as an unobserved claim, not a tested one. The
+maintainer must look at the following by hand before the next release:
 
-1. **Die Chip-Reihe** über der Sidebar-Liste — füllt sie sich korrekt aus
-   den tatsächlich vergebenen Host-Tags, reagiert ein Klick auf einen Chip
-   sichtbar (Liste filtert), setzt "Alle"/erneutes Klicken den Filter
-   zurück?
-2. **Das Tag-Feld im Verbindungsformular** — rendert `SnippetTagField` mit
-   dem neuen Platzhaltertext korrekt, committen Komma/Return/Klick wie
-   erwartet, und **reseeded das Feld korrekt beim Wechsel der bearbeiteten
-   Sitzung** (die `.id(editingSessionID)`-Pin beweist nur, dass der Aufruf
-   im Quelltext steht, nicht dass SwiftUI im Betrieb zur richtigen Zeit
-   zurücksetzt)?
-3. **Gruppen und der Bereich „IMPORTIERT" verschwinden vollständig**, sobald
-   ein Tag aktiv ist und keine Treffer in ihnen liegen — nicht nur leer,
-   sondern nicht mehr im Baum.
-4. **Beide Leer-Zustände**, visuell unterscheidbar: "keine Sitzungen
-   vorhanden" (frische Installation, kein Button) gegen "Filter aktiv, kein
-   Treffer" (mit einem sichtbaren Weg zurück — "Filter aufheben").
-5. **Ob die Vorschlagsliste bei `doc` tatsächlich `Docker` anbietet** — die
-   case-insensitive Präfixsuche aus `HostTagSuggestions` ist durch
-   `HostTagSuggestionsTests` (8 Tests) auf Funktionsebene geprüft, aber ob
-   sie im echten Formular tatsächlich als Dropdown-Zeile erscheint, ist
-   ungeprüft.
+1. **The chip row** above the sidebar list — does it populate correctly
+   from the host tags actually assigned, does clicking a chip visibly
+   react (list filters), does "All"/clicking again reset the filter?
+2. **The tag field in the connection form** — does `SnippetTagField`
+   render correctly with the new placeholder text, do
+   comma/Return/click commit as expected, and does it **correctly
+   reseed when the edited session changes** (the `.id(editingSessionID)`
+   pin only proves the call is in the source text, not that SwiftUI
+   resets at the right time at runtime)?
+3. **Groups and the "IMPORTED" section disappear entirely** as soon as a
+   tag is active and there are no matches within them — not just empty,
+   but gone from the tree.
+4. **Both empty states**, visually distinguishable: "no connections
+   present" (fresh install, no button) versus "filter active, no match"
+   (with a visible way back — "clear filter").
+5. **Whether the suggestion list actually offers `Docker` for `doc`** —
+   the case-insensitive prefix search from `HostTagSuggestions` is
+   checked at the function level by `HostTagSuggestionsTests` (8 tests),
+   but whether it actually appears as a dropdown row in the real form is
+   unchecked.
 
-## Bekannte, bewusst zurückgestellte Kleinigkeiten (aus dem Ledger)
+## Known, deliberately deferred minor items (from the ledger)
 
-- `TagSuggestionRanking`s Äquivalenz-Pin übt nur `prefix: ""` — enger als
-  der eigene Doc-Kommentar behauptet. Keine echte Lücke (jede Typ-eigene
-  Präfix-Suite deckt das ab), aber der Kommentar übertreibt.
-- `SnippetTagField.placeholder` wird von keinem Test angefasst — bekannte
-  Rendering-Grenze, gehört auf die GUI-Liste oben.
-- `SnippetTagSuggestions` und `HostTagSuggestions` bleiben zwei separate
-  öffentliche Typen über demselben `TagSuggestionRanking`-Kern —
-  eine mögliche weitere Zusammenlegung, absichtlich nicht angefasst, da sie
-  bereits getesteten, ausgelieferten Code berührt hätte.
-- Der Guard-eigene blinde Fleck (`firstIndex(of:)` ohne das Literal
-  `contains(`, oder ein über mehrere Zeilen verteilter Tag-Vergleich)
-  bleibt offen, siehe oben.
+- `TagSuggestionRanking`'s equivalence pin only exercises `prefix: ""` —
+  narrower than its own doc comment claims. Not a real gap (each type's
+  own prefix suite covers that), but the comment overstates.
+- `SnippetTagField.placeholder` is untouched by any test — a known
+  rendering limitation, belongs on the GUI list above.
+- `SnippetTagSuggestions` and `HostTagSuggestions` remain two separate
+  public types over the same `TagSuggestionRanking` core — a possible
+  further consolidation, deliberately left untouched since it would have
+  touched already-tested, shipped code.
+- The guard's own blind spot (`firstIndex(of:)` without the literal
+  `contains(`, or a tag comparison spread across several lines) remains
+  open, see above.
 
-## Brief-Fehler dieser Phase (aus den Task-Reports)
+## Brief errors in this phase (from the task reports)
 
-- Task 3: Der Plan-Testentwurf nannte `ExportedSession(from: session)`, das
-  es nicht gibt — der reale Designated-Initializer wurde verwendet.
-- Task 5: Der Plan behauptete, der Edit-Speicherpfad liefe über `save`; er
-  läuft über `updateSession`. Ohne die Korrektur hätte das Tag-Feld für
-  jede bereits existierende Sitzung ein No-Op ergeben.
+- Task 3: the plan's test draft named `ExportedSession(from: session)`,
+  which does not exist — the real designated initializer was used
+  instead.
+- Task 5: the plan claimed the edit-save path runs through `save`; it
+  runs through `updateSession`. Without the correction, the tag field
+  would have been a no-op for every already-existing session.
 
-## Nachtrag: Was die Ganz-Phasen-Review gefunden hat
+## Addendum: what the whole-phase review found
 
-Nach Abschluss aller sieben Tasks (und ihrer je eigenen Reviews) lief eine
-Review über die **ganze** Phase. Sie fand drei Dinge, die keine der
-Task-Reviews strukturell finden konnte — eine davon eine echte, in dieser
-Phase eingeführte Regression. Fix-Commits: `b0abc1f`, `4c4e9e0`, `e78c97a`.
-Suite danach: **2024 Tests in 174 Suiten**, 0 Fehlschläge (Basislinie vor
-dem Durchgang: 2018/174, selbst gemessen).
+After all seven tasks were complete (and each had its own review), a
+review ran over the **whole** phase. It found three things that none of
+the task reviews could find structurally — one of them a real regression
+introduced in this phase. Fix commits: `b0abc1f`, `4c4e9e0`, `e78c97a`.
+Suite afterward: **2024 tests in 174 suites**, 0 failures (baseline
+before the pass: 2018/174, measured directly).
 
-### 1. Regression (kritisch): leere Gruppen verschwanden aus der UNGEFILTERTEN Sidebar
+### 1. Regression (critical): empty groups vanished from the UNFILTERED sidebar
 
-`SidebarVisibility.compute` verwarf jede Gruppe ohne passende Sitzung
-**bedingungslos** (`groups.compactMap { … inGroup.isEmpty ? nil : … }`).
-Solange ein Tag aktiv ist, ist das genau das Gewünschte. Task 6 hat den
-Sidebar-`body` aber von `ForEach(viewModel.groups)` auf
-`ForEach(visibility.groupSections)` umgestellt — womit die Regel **auch
-ohne aktiven Filter** griff. Vor dieser Phase rendete die Sidebar jede
-Gruppe, leer oder nicht.
+`SidebarVisibility.compute` dropped every group with no matching session
+**unconditionally** (`groups.compactMap { … inGroup.isEmpty ? nil : … }`).
+As long as a tag is active, that is exactly the intended behaviour. But
+Task 6 switched the sidebar `body` from `ForEach(viewModel.groups)` to
+`ForEach(visibility.groupSections)` — which made the rule apply **even
+without an active filter**. Before this phase, the sidebar rendered every
+group, empty or not.
 
-Zwei nutzer-sichtbare Folgen:
+Two user-visible consequences:
 
-1. Eine über das Kontextmenü **neu angelegte Gruppe** wurde nach
-   `sessions-v2.json` geschrieben und erschien **nie** — der Nutzer legt
-   sie erneut an, und erneut, und sammelt unsichtbare Geister-Gruppen an.
-2. Zieht man die **letzte Sitzung aus einer Gruppe heraus**, verschwindet
-   deren Kopfzeile — und mit ihr das Menü (Umbenennen / Exportieren /
-   Auflösen) **und das Drop-Ziel**. Die Gruppe existiert dann nur noch im
-   Store und im „Verschieben nach"-Untermenü jeder Zeile: sie lässt sich
-   weder auflösen noch wieder befüllen.
+1. A **newly created group**, created via the context menu, was written
+   to `sessions-v2.json` and **never** appeared — the user creates it
+   again, and again, accumulating invisible ghost groups.
+2. Pulling the **last session out of a group** makes its header vanish —
+   and with it the menu (Rename / Export / Dissolve) **and the drop
+   target**. The group then exists only in the store and in the "Move
+   to" submenu of every row: it can be neither dissolved nor refilled.
 
-**Warum keiner der Wächter das gefangen hat — der eigentliche Merksatz.**
-Alle sieben quelltext-lesenden Wächter der Phase pinnen, **dass**
-`SidebarVisibility.compute` aufgerufen wird, nie **was es entscheidet**.
-Ein Textscanner kann diese Klasse Fehler prinzipiell nicht sehen. Die
-Antwort darauf ist deshalb ausdrücklich **kein achter Scanner**, sondern
-ein Verhaltenstest gegen den berechneten Wert: `compute` zweimal auf
-demselben Store, einmal mit und einmal ohne `activeTag`, und der
-Unterschied ist die Zusicherung
+**Why none of the guards caught it — the actual takeaway.** All seven
+source-text-reading guards in the phase pin **that**
+`SidebarVisibility.compute` is called, never **what it decides**. A text
+scanner cannot, in principle, see this class of bug. The answer to that
+is therefore deliberately **not an eighth scanner**, but a behaviour test
+against the computed value: `compute` called twice on the same store,
+once with and once without `activeTag`, and the difference is the
+assertion
 (`SidebarVisibilityTests.anEmptyGroupIsHiddenOnlyWhileATagIsActive`, plus
-je ein Test für die beiden oben genannten Folgen). Rot/grün bewiesen.
+one test each for the two consequences named above). Proven red/green.
 
-Zusätzlich hat der Doc-Kommentar des Typs die Auslassung selbst als
-Filter-Verhalten gerahmt („so a *filtered* sidebar never renders an empty
-section header") — was erklärt, warum **vier** Reviewer die Zeile als
-spec-konform gelesen haben. Der Kommentar sagt jetzt, was der Code tut.
+Additionally, the type's doc comment had itself framed the omission as
+filter behaviour ("so a *filtered* sidebar never renders an empty
+section header") — which explains why **four** reviewers read the line
+as spec-compliant. The comment now says what the code does.
 
-**Für eine künftige Phase:** Verhalten, das nur unter einem Filter gelten
-soll, gehört an die Filter-Bedingung, nicht an das Symptom
-(`inGroup.isEmpty`). Und wenn eine View-Schleife von einer Modell-Liste
-auf ein berechnetes Ergebnis umgestellt wird, ändert sich die Bedeutung
-jeder Bedingung in dieser Berechnung — auch der, die vorher unstrittig war.
+**For a future phase:** behaviour that is meant to apply only under a
+filter belongs on the filter condition, not on the symptom
+(`inGroup.isEmpty`). And when a view loop is switched from a model list
+to a computed result, the meaning of every condition in that computation
+changes — including the one that was previously uncontroversial.
 
-### 2. `StoredSession.tags` war ein nacktes `var` (wichtig)
+### 2. `StoredSession.tags` was a bare `var` (important)
 
-Drei Schreibstellen riefen `TagList.normalized` von Hand auf, jede mit
-einem eigenen erklärenden Kommentar: `SessionListViewModel.save`,
-`ConnectionViewModel.buildUpdatedSession` und
-`SessionImportPlanner.makePlanned` — letztere war in Task 3 als **echter
-Fehler** aufgefallen, weil sie es zunächst vergessen hatte. Eine vierte
-Schreibstelle hätte es genauso vergessen, und nichts wäre rot geworden.
+Three write sites called `TagList.normalized` by hand, each with its own
+explanatory comment: `SessionListViewModel.save`,
+`ConnectionViewModel.buildUpdatedSession` and
+`SessionImportPlanner.makePlanned` — the last of which had turned up in
+Task 3 as a **real bug**, because it had initially forgotten to. A fourth
+write site would have forgotten it just the same, and nothing would have
+turned red.
 
-Die Regel liegt jetzt an der Eigenschaft selbst
+The rule now lives on the property itself
 (`public var tags: [String] = [] { didSet { tags = TagList.normalized(tags) } }`).
-Geprüft, nicht angenommen: eine Zuweisung **innerhalb** von `didSet` löst
-den Observer nicht erneut aus (keine Rekursion), und Property-Observer
-laufen **nicht während der Initialisierung** — deshalb bleiben die
-expliziten Aufrufe im Initializer und im Decoder stehen und sind *nicht*
-redundant. Ein eigener Test hält genau das fest.
+Verified, not assumed: an assignment **inside** `didSet` does not
+re-trigger the observer (no recursion), and property observers do **not**
+run during initialization — which is why the explicit calls in the
+initializer and in the decoder stay, and are *not* redundant. A dedicated
+test pins exactly that.
 
-Die drei expliziten Aufrufe wurden **entfernt**, nicht als doppelter Boden
-belassen: sie wären eine zweite Kopie einer Regel, die jetzt einen Ort hat,
-und ihre Kommentare wären mit dem Fix falsch geworden. Als Zugabe deckt der
-Observer auch die In-Place-Mutation (`tags.append(…)`) ab, die keine der
-drei Schreibstellen je abgedeckt hat.
+The three explicit calls were **removed**, not left as a second floor:
+they would have been a second copy of a rule that now has one place, and
+their comments would have become wrong with the fix. As a bonus, the
+observer also covers in-place mutation (`tags.append(…)`), which none of
+the three write sites ever covered.
 
-### 3. Drei Doc-Kommentare (klein)
+### 3. Three doc comments (minor)
 
-- `TagList`: „Only the normalization rule below is shared today" war seit
-  der `TagSuggestionRanking`-Extraktion (Task 5, Runde 2) falsch — das
-  Ranking ist ebenfalls geteilt. Benennt jetzt beides, und was **nicht**
-  geteilt ist (die Tag-Daten selbst).
-- `SidebarVisibility`: ein Core-Kommentar berief sich auf
-  `SnippetTagFilter.matches` — einen Typ im App-Target, und dazu aus dem
-  *anderen* Vokabular. Die Aussage stimmte, die Richtung nicht. Formuliert
-  jetzt die Regel in Cores eigenen Begriffen.
-- Die Ranking-Äquivalenz-Pin behauptete breitere Deckung, als sie hat: alle
-  Fälle laufen mit `prefix: ""`. Der Kommentar benennt jetzt den Umfang
-  (Zählen und Ranking, nicht Präfix-Matching) und wo Präfix-Matching
-  stattdessen abgedeckt ist.
+- `TagList`: "Only the normalization rule below is shared today" had
+  been wrong since the `TagSuggestionRanking` extraction (Task 5, round
+  2) — the ranking is shared too. Now names both, and what is **not**
+  shared (the tag data itself).
+- `SidebarVisibility`: a Core comment referenced
+  `SnippetTagFilter.matches` — a type in the App target, and from the
+  *other* vocabulary at that. The claim was correct, the direction was
+  not. Now states the rule in Core's own terms.
+- The ranking equivalence pin claimed broader coverage than it has: all
+  cases run with `prefix: ""`. The comment now names the scope (counting
+  and ranking, not prefix matching) and where prefix matching is covered
+  instead.
 
-### Weiterhin zurückgestellt (bestätigte Rulings, nicht angefasst)
+### Still deferred (confirmed rulings, untouched)
 
-Die vier Punkte aus „Bekannte, bewusst zurückgestellte Kleinigkeiten"
-bleiben stehen; dazu kommen aus der Ganz-Phasen-Review als **ausdrücklich
-zurückgestellt**: `TagList` kappt weder Tag-Länge noch Tag-Anzahl (ein
-handbearbeitetes Import-File kann die Chip-Reihe fluten — reines
-Layout-Problem, selbst zugefügt, ein Clamp ist eine eigene Entscheidung),
-und `.filterMatchesNothing` kann theoretisch ohne aktiven Filter gemeldet
-werden (Sitzung mit `groupID` auf eine nicht existierende Gruppe) — heute
-unerreichbar, weil `SessionStore.load` und `dissolveGroup` beide baumelnde
-IDs auf `nil` setzen.
+The four items from "Known, deliberately deferred minor items" stand;
+added from the whole-phase review as **explicitly deferred**: `TagList`
+caps neither tag length nor tag count (a hand-edited import file can
+flood the chip row — a pure layout problem, self-inflicted, a clamp is a
+separate decision), and `.filterMatchesNothing` can theoretically be
+reported with no active filter (a session with `groupID` pointing at a
+non-existent group) — today unreachable, because `SessionStore.load` and
+`dissolveGroup` both set dangling IDs to `nil`.
 
-### Zwei Nachträge zur GUI-Sichtprüfliste (aus der Re-Review dieses Fix-Durchgangs)
+### Two additions to the GUI sight-check list (from the re-review of this fix pass)
 
-Beide betreffen genau das, worauf Fix 1 abzielt, und beide sind aus dem
-Quelltext prinzipiell nicht überprüfbar:
+Both concern exactly what Fix 1 targets, and both are in principle
+unverifiable from the source text:
 
-6. **Zeichnet SwiftUI eine `Section(isExpanded:)` mit LEEREM Inhalt** in
-   einer Sidebar-`List` überhaupt — mit Kopfzeile, Aufklapp-Dreieck und
-   funktionierendem `dropDestination`? Das ist das eigentliche Ergebnis von
-   Fix 1: die leere Gruppe muss nicht nur im berechneten Wert stehen,
-   sondern sichtbar und bedienbar auf dem Bildschirm landen. Konkret: Gruppe
-   neu anlegen (erscheint sie sofort?), letzte Sitzung herausziehen (bleibt
-   Kopfzeile, Kontextmenü und Drop-Ziel erhalten?), Sitzung wieder
-   hineinziehen.
-7. **Ein Store mit null Sitzungen, aber mindestens einer Gruppe, ist jetzt
-   `.notEmpty`** — „Keine gespeicherten Verbindungen." erscheint dort also
-   nicht mehr, stattdessen steht die Gruppen-Kopfzeile allein da. Absichtlich
-   und durch `aFreshlyCreatedGroupShowsBeforeItHasAnySession` festgehalten
-   (es gibt etwas zu zeichnen), aber es ist eine UX-Änderung und verdient
-   einen Blick.
+6. **Does SwiftUI even draw a `Section(isExpanded:)` with EMPTY content**
+   in a sidebar `List` — with a header, a disclosure triangle, and a
+   working `dropDestination`? That is the actual outcome of Fix 1: the
+   empty group must not only exist in the computed value, but land
+   visibly and operably on screen. Concretely: create a new group (does
+   it appear immediately?), pull out the last session (do the header,
+   context menu, and drop target survive?), drag a session back in.
+7. **A store with zero sessions but at least one group is now
+   `.notEmpty`** — "No saved connections." therefore no longer appears
+   there; instead the group header stands alone. Deliberate, and pinned
+   by `aFreshlyCreatedGroupShowsBeforeItHasAnySession` (there is
+   something to draw), but it is a UX change and deserves a look.

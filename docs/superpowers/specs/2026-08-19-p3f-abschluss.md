@@ -1,71 +1,70 @@
-# P3f — Abschluss
+# P3f — Wrap-up
 
-**Ziel:** Exportieren überall über das Zeilen-Kontextmenü.
-**Stand:** fertig. Suite 2128 Tests in 186 Suiten, grün.
+**Goal:** Export everywhere through the row context menu.
+**Status:** done. Suite 2128 tests in 186 suites, green.
 
-## Was die Messung ergab
+## What the measurement found
 
-Der Auftrag lautete, vor dem Planen zu messen, welche Listen exportierbare
-Dinge zeigen und was ihr Kontextmenü schon kann. Ergebnis: **vier von fünf
-waren bereits fertig.**
+The task was to measure, before planning, which lists show exportable
+things and what their context menu can already do. Result: **four of
+five were already done.**
 
-| Liste | Export in der Zeile |
+| List | Export in the row |
 |---|---|
-| Sitzung (Sidebar) | vorhanden, `export.menu.single` |
-| Gruppe (Sidebar) | vorhanden, `export.menu.group` |
-| Login-Sets | vorhanden, `logins.export.action` |
-| SSH-Schlüssel | vorhanden, öffentlich und privat |
-| Snippets (Sheet) | **fehlte** — jetzt ergänzt |
+| Session (sidebar) | present, `export.menu.single` |
+| Group (sidebar) | present, `export.menu.group` |
+| Login sets | present, `logins.export.action` |
+| SSH keys | present, public and private |
+| Snippets (sheet) | **missing** — now added |
 
-Damit war die Phase ein Eintrag, kein Umbau.
+So the phase was one entry, not a rework.
 
-## Die offene Frage der Spec war schon beantwortet — im Code
+## The spec's open question was already answered — in the code
 
-Die Spec fragte, ob „Exportieren" an der Zeile dasselbe meint wie im Sheet.
-`LoginSetsSheet` beantwortet das seit M19 mit Kommentar: *„the footer button
-covers 'all' (or whatever is selected); this one always means THIS row."*
-Der Zeileneintrag setzt vorher die Auswahl, damit sichtbare Auswahl und
-wirksamer Umfang nie auseinanderlaufen. Der neue Snippet-Eintrag überträgt
-genau dieses Muster — keine zweite Regel.
+The spec asked whether "Export" on the row means the same as in the
+sheet. `LoginSetsSheet` has answered that since M19 with a comment: *"the
+footer button covers 'all' (or whatever is selected); this one always
+means THIS row."* The row entry sets the selection beforehand, so the
+visible selection and the effective scope never diverge. The new snippet
+entry carries over exactly this pattern — no second rule.
 
-## Was die Gesamtprüfung fand
+## What the full check found
 
-**Die Messung war unvollständig.** Es gibt ein **sechstes** Zeilen-
-Kontextmenü auf einer Liste mit exportierbaren Dingen: den Terminal-
-Snippet-Picker aus P3d (`ContentView+Detail.swift`, `SnippetRowContextMenu`)
-mit Ausführen / Einfügen / Vorschau. Er wurde weder gezählt noch bewusst
-ausgeschlossen. Zwei kleinere Nachbarn ebenso: das Audit-Protokoll (Export
-nur in der Fußzeile, gar kein Zeilenmenü) und die importierten Hosts
-(Zeilenmenü mit nur „Ausblenden").
+**The measurement was incomplete.** There is a **sixth** row context
+menu on a list with exportable things: the terminal snippet picker from
+P3d (`ContentView+Detail.swift`, `SnippetRowContextMenu`) with
+Run / Insert / Preview. It was neither counted nor deliberately
+excluded. Two smaller neighbors likewise: the audit log (export only in
+the footer, no row menu at all) and the imported hosts (row menu with
+only "Hide").
 
-Kein Code geändert — aber „überall" ist damit belegt-für-fünf und
-offen-für-den-Picker. **Das ist eine Maintainer-Entscheidung**, kein
-stiller Ausschluss: ein Speichern-Dialog mitten in einer laufenden
-Terminal-Sitzung ist plausibel unerwünscht, aber das entscheidet nicht die
-Phase.
+No code was changed — but "everywhere" is thereby proved-for-five and
+open-for-the-picker. **That is a maintainer decision**, not a silent
+exclusion: a save dialog in the middle of a running terminal session is
+plausibly unwanted, but that's not the phase's call to make.
 
-Außerdem: zwei Kommentare, die nicht mehr stimmten (der Suite-Kommentar des
-neuen Wächters versprach eine Reihenfolge-Zusicherung, die eine Korrektur
-zuvor entfernt hatte; `performExport`s Kommentar kannte nur einen Aufrufer,
-seit dieser Phase gibt es zwei), und ein Wächtertest, der über die ganze
-Datei suchte und die richtigen Vorkommen nur durch Reihenfolgen-Glück traf.
-Er isoliert jetzt den Zeilen-Menüblock, scheitert bei fehlendem Anker statt
-still durchzugehen, und zählt `"snippets.export"` auf genau zwei Vorkommen —
-das fängt die Drift, die ein bloßes `contains` nicht sehen konnte.
+Also: two comments that were no longer true (the new guard's suite
+comment promised an ordering guarantee that an earlier correction had
+removed; `performExport`'s comment knew of only one caller, and since
+this phase there are two), and a guard test that searched the whole file
+and hit the right occurrences only by ordering luck. It now isolates the
+row menu block, fails on a missing anchor instead of silently passing
+through, and counts `"snippets.export"` at exactly two occurrences — that
+catches the drift a bare `contains` couldn't see.
 
-## Offen, bewusst nicht entschieden
+## Open, deliberately not decided
 
-**Der Bestätigungsschritt fehlt bei Snippets — an beiden Auslösern.**
-`LoginSetsSheet` öffnet sowohl aus der Fußzeile als auch aus der Zeile sein
-Export-Sheet mit Optionen und Anzahl; der Snippet-Export geht direkt in den
-Speichern-Dialog. Sachlich begründet: `SnippetExportCodec` hat weder
-Optionen noch Passwort, ein Optionen-Sheet hätte nichts zu zeigen.
+**The confirmation step is missing for snippets — at both triggers.**
+`LoginSetsSheet` opens its export sheet with options and a count from
+both the footer and the row; snippet export goes straight into the save
+dialog. Substantively justified: `SnippetExportCodec` has neither options
+nor a password, an options sheet would have nothing to show.
 
-**Die Fußzeilen meinen Verschiedenes.** Login-Sets exportieren die Auswahl,
-falls eine sichtbar ist, sonst alle sichtbaren — und nennen die Anzahl,
-bevor geschrieben wird. Snippets exportieren immer die sichtbare Menge und
-ignorieren die Auswahl. Beides vorbestehend, von dieser Phase nicht
-angefasst. Eine Vereinheitlichung wäre eine Verhaltensänderung an
-ausgeliefertem Code und gehört dem Maintainer vorgelegt, nicht nebenbei
-erledigt — zumal ohne Bestätigungsschritt eine Auswahl-Verengung bei
-Snippets **unsichtbar** wäre, also genau das, wovor die Spec warnt.
+**The footers mean different things.** Login sets export the selection
+if one is visible, otherwise all visible ones — and name the count
+before writing. Snippets always export the visible set and ignore the
+selection. Both pre-existing, untouched by this phase. Unifying them
+would be a behavior change to shipped code and belongs in front of the
+maintainer, not handled on the side — especially since, without a
+confirmation step, a selection narrowing for snippets would be
+**invisible**, which is exactly what the spec warns against.

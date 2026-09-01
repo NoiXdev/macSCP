@@ -1,43 +1,43 @@
-# M11o — Transfer-Leiste ein-/ausblendbar Implementation Plan
+# M11o — Transfer Bar Show/Hide Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die Transfer-Leiste per Toolbar-Icon (neben dem Terminal-Icon), Menüeintrag und ⌘⇧Y ein-/ausblendbar machen — pro Tab, nicht persistiert, mit Auto-Einblenden bei jeder neuen Übertragung und einem Leerzustand.
+**Goal:** Make the transfer bar show/hide-able via a toolbar icon (next to the terminal icon), a menu entry, and ⌘⇧Y — per tab, not persisted, with auto-reveal on every new transfer and an empty state.
 
-**Architecture:** Rein App-Schicht. Ein neues Pro-Tab-Bool `SessionTab.transfersPanelVisible` besitzt die Sichtbarkeit (spiegelt `TerminalPanelViewModel.isVisible`). `ContentView` rendert `TransferQueueBar` nur bei sichtbarem Bool und setzt es per `.onChange` auf die Item-Anzahl automatisch, wenn eine Übertragung dazukommt. Toolbar-Button + Menüeintrag (über `TabCommands.toggleTransfers`) schalten das Bool.
+**Architecture:** App layer only. A new per-tab bool `SessionTab.transfersPanelVisible` owns visibility (mirroring `TerminalPanelViewModel.isVisible`). `ContentView` renders `TransferQueueBar` only when the bool is visible, and sets it automatically via `.onChange` on the item count when a transfer is added. Toolbar button + menu entry (via `TabCommands.toggleTransfers`) toggle the bool.
 
 **Tech Stack:** SwiftUI + AppKit, Swift 6 (`.swiftLanguageMode(.v5)`), macOS 15.
 
 ## Global Constraints
 
-- Swift-tools 6.0, alle Targets `.swiftLanguageMode(.v5)`, min. macOS 15.
-- Code/Kommentare/`reason:`-Strings **English only**.
-- UI-Strings über `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`, EN-Default + DE, Lookup `L10n.string(key, "English default")`.
-- **Typografische Anführungszeichen `„ "` / `…`; ein ASCII-`"` in einer DE-Zeile macht den ganzen DE-Katalog ungültig** (`plutil -lint` + `LocalizableStringsTests` bewachen das).
-- Sichtbarkeit **pro Tab**, **nicht persistiert** (kein `SettingsStore`-Key, kein Singleton).
-- Kein Core; **kein App-Test-Target** — Verifikation per `swift build` (keine neuen Warnungen), Katalog-Parität + `plutil`, volle `swift test` unverändert grün, Lesen/Trace + **Runtime-Idle-CPU-Rauchtest**.
-- **M11n-Lektion:** keine `MenuBarExtra`; dieses Feature berührt sie nicht. Vor Auslieferung Dev-Build starten und Idle-CPU (~0%) prüfen.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- Baseline: **900 Tests / 62 Suiten** grün.
-- Kein Release/Tag ohne ausdrückliche Maintainer-Anordnung.
+- Swift-tools 6.0, all targets `.swiftLanguageMode(.v5)`, min. macOS 15.
+- Code/comments/`reason:` strings **English only**.
+- UI strings via `Sources/MacSCPApp/Resources/{en,de}.lproj/Localizable.strings`, EN default + DE, lookup `L10n.string(key, "English default")`.
+- **Typographic quotation marks `„ "` / `…`; one ASCII `"` in a DE line invalidates the whole DE catalogue** (guarded by `plutil -lint` + `LocalizableStringsTests`).
+- Visibility **per tab**, **not persisted** (no `SettingsStore` key, no singleton).
+- No Core; **no app test target** — verification via `swift build` (no new warnings), catalogue parity + `plutil`, the full `swift test` unchanged and green, reading/tracing + a **runtime idle-CPU smoke test**.
+- **M11n lesson:** no `MenuBarExtra`; this feature does not touch it. Start a dev build before shipping and check idle CPU (~0%).
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- Baseline: **900 tests / 62 suites** green.
+- No release/tag without explicit maintainer direction.
 
 ---
 
-### Task 1: Transfer-Leiste ein-/ausblendbar (App)
+### Task 1: Transfer bar show/hide (App)
 
 **Files:**
 - Modify: `Sources/MacSCPApp/SessionTab.swift` (`transfersPanelVisible`)
-- Modify: `Sources/MacSCPApp/TransferQueueBar.swift` (Leerzustand statt `EmptyView`)
-- Modify: `Sources/MacSCPApp/ContentView.swift` (Sichtbarkeits-Gate + `.onChange`-Auto-Einblenden + Toolbar-Button + `toggleTransfers`-Closure)
-- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (`TabCommands.toggleTransfers` + Menüeintrag)
+- Modify: `Sources/MacSCPApp/TransferQueueBar.swift` (empty state instead of `EmptyView`)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (visibility gate + `.onChange` auto-reveal + toolbar button + `toggleTransfers` closure)
+- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (`TabCommands.toggleTransfers` + menu entry)
 - Modify: `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings`
 - Modify: `Sources/MacSCPApp/Resources/de.lproj/Localizable.strings`
 
 **Interfaces:**
-- Consumes (bestehend, verifiziert): `SessionTab` (`@Observable`, `id: UUID`, `transferQueue: TransferQueueViewModel`, `isConnected`); `TransferQueueViewModel.items: [Item]`; `TabCommands` (`@Observable`, App-Schicht in `MacSCPApp.swift`, `isActiveTabConnected`, `toggleTerminal`-Muster); `ContentView.activeTab`, `window?.isKeyWindow`; die `ToolbarItemGroup(.primaryAction)` (gated `if let session = activeTab.session`) mit dem Terminal-`Button`; `CommandGroup(after: .sidebar)` mit „Show/Hide Hidden Files"; `L10n.string`.
+- Consumes (existing, verified): `SessionTab` (`@Observable`, `id: UUID`, `transferQueue: TransferQueueViewModel`, `isConnected`); `TransferQueueViewModel.items: [Item]`; `TabCommands` (`@Observable`, app layer in `MacSCPApp.swift`, `isActiveTabConnected`, the `toggleTerminal` pattern); `ContentView.activeTab`, `window?.isKeyWindow`; the `ToolbarItemGroup(.primaryAction)` (gated `if let session = activeTab.session`) with the terminal `Button`; `CommandGroup(after: .sidebar)` with "Show/Hide Hidden Files"; `L10n.string`.
 - Produces: `SessionTab.transfersPanelVisible: Bool`; `TabCommands.toggleTransfers: (() -> Void)?`.
 
-- [x] **Step 1: Pro-Tab-Bool.** In `Sources/MacSCPApp/SessionTab.swift`, direkt nach `let conflictBridge = ConflictPromptBridge()` (um Zeile 31):
+- [x] **Step 1: Per-tab bool.** In `Sources/MacSCPApp/SessionTab.swift`, right after `let conflictBridge = ConflictPromptBridge()` (around line 31):
 
 ```swift
     /// Whether the transfer bar is shown for this tab (M11o). Per-tab and
@@ -47,7 +47,7 @@
     var transfersPanelVisible = false
 ```
 
-- [x] **Step 2: Leerzustand in der Leiste.** In `Sources/MacSCPApp/TransferQueueBar.swift` den `if viewModel.items.isEmpty { EmptyView() }`-Zweig durch einen sichtbaren Leerzustand ersetzen (die Sichtbarkeit selbst steuert jetzt `ContentView`; erreicht die Leiste den leeren Fall, ist sie bewusst offen gehalten). Ersetze:
+- [x] **Step 2: Empty state in the bar.** In `Sources/MacSCPApp/TransferQueueBar.swift`, replace the `if viewModel.items.isEmpty { EmptyView() }` branch with a visible empty state (visibility itself is now controlled by `ContentView`; if the bar reaches the empty case, it is deliberately being kept open). Replace:
 
 ```swift
         if viewModel.items.isEmpty {
@@ -55,7 +55,7 @@
         } else {
 ```
 
-durch:
+with:
 
 ```swift
         if viewModel.items.isEmpty {
@@ -75,15 +75,15 @@ durch:
         } else {
 ```
 
-(Der `else`-Zweig mit Kopfzeile/Liste bleibt unverändert.)
+(The `else` branch with the header/list stays unchanged.)
 
-- [x] **Step 3: Sichtbarkeits-Gate + Auto-Einblenden in `ContentView`.** In `Sources/MacSCPApp/ContentView.swift` die Render-Zeile (aktuell Zeile 1001):
+- [x] **Step 3: Visibility gate + auto-reveal in `ContentView`.** In `Sources/MacSCPApp/ContentView.swift`, replace the render line (currently line 1001):
 
 ```swift
                     TransferQueueBar(viewModel: tab.transferQueue)
 ```
 
-ersetzen durch:
+with:
 
 ```swift
                     if tab.transfersPanelVisible {
@@ -91,7 +91,7 @@ ersetzen durch:
                     }
 ```
 
-Und am selben `VStack`-Container (der die Panes + Banner + Leiste hält, unmittelbar vor `.task(id: session.id)` bei Zeile 1003) die Auto-Einblende-Beobachtung anhängen — jede neu eingereihte Übertragung (steigende Item-Anzahl) enthüllt die Leiste:
+And on the same `VStack` container (the one holding the panes + banner + bar, right before `.task(id: session.id)` at line 1003) attach the auto-reveal observation — every newly queued transfer (a rising item count) reveals the bar:
 
 ```swift
                 .onChange(of: tab.transferQueue.items.count) { oldCount, newCount in
@@ -105,7 +105,7 @@ Und am selben `VStack`-Container (der die Panes + Banner + Leiste hält, unmitte
                 }
 ```
 
-- [x] **Step 4: Toolbar-Icon.** In `Sources/MacSCPApp/ContentView.swift`, in der `ToolbarItemGroup(placement: .primaryAction)` den neuen Button **zwischen** dem Terminal-`Button` (endet mit dem `.help(...)`-Modifier um Zeile 780) und dem „Disconnect"-`Button` einfügen. **Kein** `.keyboardShortcut` hier — das ⌘⇧Y lebt ausschließlich am Menüeintrag (Step 7), damit SwiftUI nicht zwei Kommandos für dieselbe Taste sieht (dasselbe Muster nutzt der Terminal-Knopf für ⌘T). Der Hilfetext nennt das Kürzel dennoch als Hinweis:
+- [x] **Step 4: Toolbar icon.** In `Sources/MacSCPApp/ContentView.swift`, in the `ToolbarItemGroup(placement: .primaryAction)`, insert the new button **between** the terminal `Button` (ending with its `.help(...)` modifier around line 780) and the "Disconnect" `Button`. **No** `.keyboardShortcut` here — ⌘⇧Y lives exclusively on the menu entry (Step 7), so SwiftUI does not see two commands for the same key (the terminal button uses the same pattern for ⌘T). The help text still names the shortcut as a hint:
 
 ```swift
                     Button {
@@ -118,7 +118,7 @@ Und am selben `VStack`-Container (der die Panes + Banner + Leiste hält, unmitte
                                       "Show/hide transfers (⌘⇧Y)"))
 ```
 
-- [x] **Step 5: `toggleTransfers`-Closure in `.task`.** In `Sources/MacSCPApp/ContentView.swift`, im `.task { … }`-Block neben `tabCommands.toggleTerminal` (um Zeile 574) ergänzen:
+- [x] **Step 5: `toggleTransfers` closure in `.task`.** In `Sources/MacSCPApp/ContentView.swift`, in the `.task { … }` block next to `tabCommands.toggleTerminal` (around line 574), add:
 
 ```swift
             // Transfer-bar menu bridge (M11o) — same key-window guard as the
@@ -129,7 +129,7 @@ Und am selben `VStack`-Container (der die Panes + Banner + Leiste hält, unmitte
             }
 ```
 
-- [x] **Step 6: `TabCommands`-Feld.** In `Sources/MacSCPApp/MacSCPApp.swift`, im `TabCommands`-Klassenkörper (nach `var openExternalTerminal: (() -> Void)?`, um Zeile 40):
+- [x] **Step 6: `TabCommands` field.** In `Sources/MacSCPApp/MacSCPApp.swift`, in the `TabCommands` class body (after `var openExternalTerminal: (() -> Void)?`, around line 40):
 
 ```swift
     /// Transfer-bar toggle (M11o): the "Show/Hide Transfers" menu entry and
@@ -139,7 +139,7 @@ Und am selben `VStack`-Container (der die Panes + Banner + Leiste hält, unmitte
     var toggleTransfers: (() -> Void)?
 ```
 
-- [x] **Step 7: Menüeintrag + Kürzel.** In `Sources/MacSCPApp/MacSCPApp.swift`, im `CommandGroup(after: .sidebar)` (Zeilen 164–169) den neuen Eintrag NACH dem „Show/Hide Hidden Files"-Button einfügen:
+- [x] **Step 7: Menu entry + shortcut.** In `Sources/MacSCPApp/MacSCPApp.swift`, in `CommandGroup(after: .sidebar)` (lines 164–169), insert the new entry AFTER the "Show/Hide Hidden Files" button:
 
 ```swift
             CommandGroup(after: .sidebar) {
@@ -156,7 +156,7 @@ Und am selben `VStack`-Container (der die Panes + Banner + Leiste hält, unmitte
             }
 ```
 
-- [x] **Step 8: Strings EN.** In `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` anfügen (bei den `transfers.*`/`browser.*`/`menu.*`-Blöcken oder am Ende):
+- [x] **Step 8: Strings EN.** Append to `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` (with the `transfers.*`/`browser.*`/`menu.*` blocks, or at the end):
 
 ```
 "browser.transfersToggle" = "Transfers";
@@ -165,7 +165,7 @@ Und am selben `VStack`-Container (der die Panes + Banner + Leiste hält, unmitte
 "transfers.empty" = "No transfers";
 ```
 
-- [x] **Step 9: Strings DE.** In `Sources/MacSCPApp/Resources/de.lproj/Localizable.strings` anfügen (nur ASCII-`"` als Delimiter, keine im Wert; ⌘⇧Y wörtlich):
+- [x] **Step 9: Strings DE.** Append to `Sources/MacSCPApp/Resources/de.lproj/Localizable.strings` (ASCII `"` as delimiter only, none inside the value; ⌘⇧Y verbatim):
 
 ```
 "browser.transfersToggle" = "Übertragungen";
@@ -174,25 +174,25 @@ Und am selben `VStack`-Container (der die Panes + Banner + Leiste hält, unmitte
 "transfers.empty" = "Keine Übertragungen";
 ```
 
-- [x] **Step 10: Katalog-Lint + Parität.**
+- [x] **Step 10: Catalogue lint + parity.**
 
 ```bash
 plutil -lint Sources/MacSCPApp/Resources/en.lproj/Localizable.strings
 plutil -lint Sources/MacSCPApp/Resources/de.lproj/Localizable.strings
 ```
-Expected: beide „OK". Dann `swift test --filter Localizable` → PASS (EN/DE-Schlüssel-Parität).
+Expected: both "OK". Then `swift test --filter Localizable` → PASS (EN/DE key parity).
 
-- [x] **Step 11: Build + volle Suite.** `swift build`
-Expected: `Build complete`, keine NEUEN Warnungen (die vier vorbestehenden Citadel/`_`-Warnungen bleiben). Dann `swift test`
-Expected: **900 Tests / 62 Suiten** grün (unverändert — keine neue/geänderte Core-Logik).
+- [x] **Step 11: Build + full suite.** `swift build`
+Expected: `Build complete`, no NEW warnings (the four pre-existing Citadel/`_` warnings remain). Then `swift test`
+Expected: **900 tests / 62 suites** green (unchanged — no new/changed Core logic).
 
-- [x] **Step 12: Trace-Verifikation (kein App-Test-Target).** Lesen und bestätigen:
-  - `TransferQueueBar` wird in `ContentView` nur bei `tab.transfersPanelVisible` gerendert; leer ⇒ Leerzustand „Keine Übertragungen", nicht leer ⇒ unveränderte Kopfzeile/Liste.
-  - `.onChange(of: tab.transferQueue.items.count)` setzt bei Anstieg `transfersPanelVisible = true`; „Aufräumen"/Fertigstellen (fallende/gleiche Anzahl) blendet nie zwangsweise aus.
-  - Toolbar-Button (nur bei aktiver Session, da in der gated Gruppe) und Menüeintrag (disabled ohne Verbindung) schalten dasselbe Pro-Tab-Bool; **⌘⇧Y liegt nur am Menüeintrag** (kein Doppel-Binding), das Toolbar-Icon ist ein reiner klickbarer Knopf mit Hilfetext.
-  - `toggleTransfers` ist key-window-guarded wie die übrigen `tabCommands`.
+- [x] **Step 12: Trace verification (no app test target).** Read and confirm:
+  - `TransferQueueBar` is rendered in `ContentView` only when `tab.transfersPanelVisible`; empty ⇒ empty state "Keine Übertragungen", non-empty ⇒ unchanged header/list.
+  - `.onChange(of: tab.transferQueue.items.count)` sets `transfersPanelVisible = true` on an increase; "cleaning up"/completing (falling or equal count) never force-hides.
+  - The toolbar button (only present for an active session, since it is in the gated group) and the menu entry (disabled without a connection) toggle the same per-tab bool; **⌘⇧Y lives only on the menu entry** (no double binding), the toolbar icon is a plain clickable button with help text.
+  - `toggleTransfers` is key-window-guarded like the other `tabCommands`.
 
-- [x] **Step 13: Runtime-Idle-CPU-Rauchtest.** Dev-Build bauen und starten, Idle-CPU prüfen (muss ~0% sein — fängt SwiftUI-Layout-Stürme ab, die Build/Tests nicht sehen):
+- [x] **Step 13: Runtime idle-CPU smoke test.** Build and launch a dev build, check idle CPU (must be ~0% — this catches SwiftUI layout storms that build/tests don't see):
 
 ```bash
 MACSCP_VERSION=1.2.0-dev MACSCP_BUILD=m11o scripts/package-app
@@ -201,7 +201,7 @@ open dist/macSCP.app; sleep 7
 ps -o pid,%cpu,state -p "$(pgrep -f 'dist/macSCP.app/Contents/MacOS/macSCP' | head -1)"
 pkill -f 'dist/macSCP.app/Contents/MacOS/macSCP'
 ```
-Expected: `%CPU` nahe 0, Status `S`.
+Expected: `%CPU` near 0, state `S`.
 
 - [x] **Step 14: Commit.**
 
@@ -215,11 +215,11 @@ git commit -m "feat: toggle the transfer bar via a toolbar icon, menu and ⌘⇧
 
 ---
 
-### Task 2: Abschluss-Verifikation (Koordinator)
+### Task 2: Final verification (coordinator)
 
-- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips (Docker-Rig aus dem Haupt-Checkout).
-- [x] `swift build` sauber; `plutil -lint` beide Kataloge OK; `LocalizableStringsTests` grün.
-- [x] Runtime-Idle-CPU-Rauchtest bestanden (Step 13).
-- [x] Whole-Task Opus-Review (kleiner App-Diff): Fokus auf (a) Auto-Einblenden nur bei Anstieg, nie Zwangs-Ausblenden; (b) Pro-Tab-Bool, kein Singleton/keine Persistenz; (c) Toolbar-/Menü-/Kürzel-Verdrahtung + key-window-Guard; (d) Leerzustand vs. Liste; (e) L10n-Parität + kein ASCII-`"` in DE. Fix-Runden bis „Ready to merge: Yes".
-- [ ] Visueller Smoke — Maintainer (Icon neben Terminal, ⌘⇧Y, Menüeintrag; Wegklappen während Transfer; leer öffnen + „Aufräumen"; neue Übertragung klappt auf; pro Tab getrennt; hell/dunkel; DE ↔ EN).
-- [x] Plan-Checkboxen, Ledger, Push develop, `gh run watch`, Dev-Build deployen, Memory. **KEIN Release.** Kürzel ⌘⇧Y für die spätere Tastenkürzel-Übersicht vormerken.
+- [x] Gated suites: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → green, zero skips (Docker rig from the main checkout).
+- [x] `swift build` clean; `plutil -lint` both catalogues OK; `LocalizableStringsTests` green.
+- [x] Runtime idle-CPU smoke test passed (Step 13).
+- [x] Whole-task Opus review (small app diff): focus on (a) auto-reveal only on an increase, never a forced hide; (b) per-tab bool, no singleton/no persistence; (c) toolbar/menu/shortcut wiring + key-window guard; (d) empty state vs. list; (e) L10n parity + no ASCII `"` in DE. Fix rounds until "Ready to merge: Yes".
+- [ ] Visual smoke — maintainer (icon next to Terminal, ⌘⇧Y, menu entry; collapsing during a transfer; opening empty + "cleaning up"; new transfer expands it; separate per tab; light/dark; DE ↔ EN).
+- [x] Plan checkboxes, ledger, push develop, `gh run watch`, deploy dev build, memory. **NO release.** Note the ⌘⇧Y shortcut for the later keyboard-shortcut overview.

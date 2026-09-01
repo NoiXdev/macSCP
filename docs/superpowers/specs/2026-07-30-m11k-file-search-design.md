@@ -1,127 +1,127 @@
-# M11k — Suche in der Dateiliste (Design)
+# M11k — Search in the file list (Design)
 
-Datum: 2026-07-30 · Status: vom Maintainer freigegeben (beides umschaltbar,
-Regex, ⌘F)
+Date: 2026-07-30 · Status: approved by the maintainer (both toggleable,
+regex, ⌘F)
 
-## Ziel
+## Goal
 
-In der aktuellen Verzeichnis-Liste suchen: entweder **filtern** (nur Treffer
-zeigen) oder **zur Fundstelle springen** (Liste bleibt voll, Auswahl wandert),
-umschaltbar; optional als regulärer Ausdruck. Feld auf ⌘F, Esc schließt.
+Search within the currently loaded directory listing: either **filter**
+(show only matches) or **jump to the match** (list stays full, selection
+moves), toggleable; optionally as a regular expression. Field on ⌘F, Esc
+closes.
 
-## Grenze (wichtig)
+## Boundary (important)
 
-Die Suche wirkt **nur auf die aktuell geladene Liste** eines Panes — kein
-rekursiver Gang durch den Baum, keine zusätzlichen Server-Abfragen. Die
-Trefferzahl („12 von 431") bezieht sich auf die Einträge des aktuellen
-Verzeichnisses (nach dem Versteckt-Filter). Rekursive Suche wäre ein eigener,
-viel größerer Meilenstein.
+The search acts **only on the currently loaded list** of a pane — no
+recursive walk through the tree, no additional server requests. The match
+count ("12 of 431") refers to the entries of the current directory (after
+the hidden-file filter). Recursive search would be its own, much larger
+milestone.
 
-## Ausgangslage
+## Starting point
 
-- `RemoteBrowserViewModel.load()`/`refreshQuietly()` bauen `items` über
-  `displayItems(from:)` = Versteckt-Filter + Sortierung. `items` IST die
-  angezeigte Liste; es gibt heute keine getrennte „volle" Liste.
-- Die Dateiliste ist das `NSTableView` aus M11j; Auswahl läuft über
+- `RemoteBrowserViewModel.load()`/`refreshQuietly()` build `items` via
+  `displayItems(from:)` = hidden filter + sorting. `items` IS the displayed
+  list; there is no separate "full" list today.
+- The file list is the `NSTableView` from M11j; selection runs through
   `onSelect`/`viewModel.selectedItems`.
-- ⌘F ist bisher unbelegt. M11j hat einen **fokus-gescopten**
-  `performKeyEquivalent` in `KeyboardDrivenTableView` — der ideale Ort, ⌘F
-  ans FOKUSSIERTE Pane zu leiten.
+- ⌘F is currently unassigned. M11j has a **focus-scoped**
+  `performKeyEquivalent` in `KeyboardDrivenTableView` — the ideal place to
+  route ⌘F to the FOCUSED pane.
 
-## 1. Reiner Matcher (Core)
+## 1. Pure matcher (Core)
 
-`FileSearchMatcher` (pur, testbar):
+`FileSearchMatcher` (pure, testable):
 
 - `compile(query:isRegex:) -> Result<Predicate, FileSearchError>`:
-  - leerer/blanker Query ⇒ „alles passt" (kein Filter).
-  - `isRegex == false`: case-insensitiver **Teiltext** auf dem Dateinamen.
-  - `isRegex == true`: `NSRegularExpression` (case-insensitiv), Teiltreffer
-    im Namen zählt. Ein **ungültiger** Ausdruck ⇒ `.failure(.invalidRegex)`
-    — ein eigener Fall, NICHT „keine Treffer".
-- `matches(name:) -> Bool` auf dem kompilierten Prädikat.
+  - empty/blank query ⇒ "everything matches" (no filter).
+  - `isRegex == false`: case-insensitive **substring** match on the file
+    name.
+  - `isRegex == true`: `NSRegularExpression` (case-insensitive), a partial
+    match in the name counts. An **invalid** expression ⇒
+    `.failure(.invalidRegex)` — its own case, NOT "no matches".
+- `matches(name:) -> Bool` against the compiled predicate.
 
-Warum kompiliert-dann-anwenden: der reguläre Ausdruck wird EINMAL geprüft/
-gebaut, nicht pro Zeile; und der Ungültig-Fall ist sauber vom Leer-Treffer-
-Fall getrennt (der Maintainer hat ausdrücklich eine eigene, ehrliche
-Fehleranzeige verlangt).
+Why compile-then-apply: the regular expression is checked/built ONCE, not
+per row; and the invalid case is cleanly separated from the empty-match
+case (the maintainer explicitly asked for its own, honest error display).
 
-## 2. Suchzustand im ViewModel
+## 2. Search state in the ViewModel
 
-Additiv, ohne die bestehende `items`-Bedeutung zu brechen:
+Additive, without breaking the existing meaning of `items`:
 
-- Neue gespeicherte Basis `displayedAll: [RemoteFileItem]` = das Ergebnis von
-  `displayItems(from:)` VOR der Suche (Versteckt-gefiltert, sortiert).
-  `load()`/`refreshQuietly()` setzen sie; die Suche leitet daraus ab.
+- New stored base `displayedAll: [RemoteFileItem]` = the result of
+  `displayItems(from:)` BEFORE the search (hidden-filtered, sorted).
+  `load()`/`refreshQuietly()` set it; the search derives from it.
 - `searchQuery: String`, `searchIsRegex: Bool`,
   `searchMode: SearchMode` (`.filter` / `.jump`).
-- Abgeleitet:
-  - **Filter-Modus:** `items` = `displayedAll` ∩ Matcher; zusätzlich
-    `searchMatchCount` und `searchTotalCount` für „N von M".
-  - **Sprung-Modus:** `items` = `displayedAll` (voll); ein
-    `searchMatchPaths`/`currentMatchIndex`, das die Auswahl auf den nächsten
-    Treffer setzt (Enter/„weiter" iteriert, Umbruch am Ende).
-  - **Ungültiger Regex:** `items` bleibt unverändert stehen (nicht leeren!)
-    und ein `searchError` wird gesetzt — die UI zeigt ihn, statt „0 Treffer"
-    vorzutäuschen.
-- Bei jeder Änderung von Query/Modus/Regex-Schalter neu ableiten. `load()`
-  auf ein neues Verzeichnis **setzt die Suche zurück** (leerer Query) —
-  ein Filter aus dem alten Ordner soll nicht stumm den neuen verstecken.
-- `refreshQuietly()` behält den aktiven Suchzustand bei (der Ordner ist
-  derselbe), wendet ihn auf die frische Liste an.
+- Derived:
+  - **Filter mode:** `items` = `displayedAll` ∩ matcher; additionally
+    `searchMatchCount` and `searchTotalCount` for "N of M".
+  - **Jump mode:** `items` = `displayedAll` (full); a
+    `searchMatchPaths`/`currentMatchIndex` that sets the selection to the
+    next match (Enter/"next" iterates, wraps at the end).
+  - **Invalid regex:** `items` stays unchanged (do not clear it!) and a
+    `searchError` is set — the UI shows it instead of pretending "0
+    matches".
+- Re-derive on every change of query/mode/regex toggle. `load()` on a new
+  directory **resets the search** (empty query) — a filter from the old
+  folder must not silently hide the new one.
+- `refreshQuietly()` keeps the active search state (it's the same folder),
+  applies it to the fresh list.
 
-Die Ableitung (Query+Modus+Liste ⇒ sichtbare Items / Match-Indizes /
-Fehler) ist eine **reine, testbare** Funktion; die VM ruft sie nur.
+The derivation (query+mode+list ⇒ visible items / match indices / error)
+is a **pure, testable** function; the VM only calls it.
 
-## 3. Bedienung (App)
+## 3. Interaction (App)
 
-- **⌘F** öffnet über der Dateiliste des FOKUSSIERTEN Panes ein Suchfeld —
-  geleitet über den fokus-gescopten `performKeyEquivalent` aus M11j (nur die
-  fokussierte Tabelle reagiert). Fokus wandert ins Feld.
-- Das Feld enthält: das Textfeld, einen **Modus-Umschalter** (Filtern /
-  Springen), einen **Regex-Schalter** (`.*`), rechts die Trefferzahl
-  („12 von 431"). Bei ungültigem Regex statt der Zahl eine rote,
-  konkrete Meldung.
-- **Springen-Modus:** Enter setzt die Auswahl auf den nächsten Treffer,
-  ⇧Enter auf den vorherigen, Umbruch. Die Trefferzahl zeigt „Treffer k/N".
-- **Esc** schließt das Feld, leert die Suche und zeigt wieder alles; der
-  Fokus geht zurück auf die Tabelle.
-- Das Feld ist **pro Pane** (jedes Pane sucht in seiner eigenen Liste); der
-  Zustand hängt am jeweiligen ViewModel/Tab, überlebt also einen
-  Tab-Wechsel nicht als globaler Zustand.
-- Type-Select der Tabelle (M11j) bleibt unberührt — das Suchfeld ist ein
-  eigener Fokus.
+- **⌘F** opens a search field over the file list of the FOCUSED pane —
+  routed through the focus-scoped `performKeyEquivalent` from M11j (only
+  the focused table reacts). Focus moves into the field.
+- The field contains: the text field, a **mode toggle** (Filter / Jump), a
+  **regex toggle** (`.*`), and the match count on the right ("12 of 431").
+  On an invalid regex, a concrete red message replaces the count.
+- **Jump mode:** Enter sets the selection to the next match, ⇧Enter to the
+  previous one, with wraparound. The match count shows "Match k/N".
+- **Esc** closes the field, clears the search and shows everything again;
+  focus returns to the table.
+- The field is **per pane** (each pane searches its own list); the state
+  hangs off the respective ViewModel/tab, so it does not survive a tab
+  switch as global state.
+- The table's type-select (M11j) stays untouched — the search field is its
+  own focus target.
 
-## 4. Fehler ehrlich
+## 4. Honest errors
 
-- Ungültiger regulärer Ausdruck: eigene rote Meldung im Suchfeld, die Liste
-  bleibt stehen (kein vorgetäuschtes „keine Treffer").
-- Kein Treffer bei GÜLTIGER Suche: „0 von M" bzw. „keine Treffer" — das ist
-  ein legitimes Ergebnis, keine Fehlermeldung.
+- Invalid regular expression: its own red message in the search field, the
+  list stays as it was (no pretend "no matches").
+- No match on a VALID search: "0 of M" resp. "no matches" — that is a
+  legitimate result, not an error message.
 
-## 5. Bewusst NICHT in M11k
+## 5. Deliberately NOT in M11k
 
-- Keine rekursive/Server-seitige Suche über das aktuelle Verzeichnis hinaus.
-- Kein Suchverlauf, keine gespeicherten Suchen.
-- Kein Ersetzen/Bulk-Umbenennen über Treffer.
-- Keine Suche über Größe/Datum/Rechte — nur über den Namen.
-- Kein Audit-Eintrag (Suche ist reine Anzeige).
+- No recursive/server-side search beyond the current directory.
+- No search history, no saved searches.
+- No replace/bulk-rename over matches.
+- No search over size/date/permissions — name only.
+- No audit entry (search is pure display).
 
 ## 6. Tests
 
-- **Matcher (Core):** leerer Query ⇒ alles; Teiltext case-insensitiv;
-  Regex gültig (Teiltreffer, Anker `^`/`$`, `\.log$`); Regex UNGÜLTIG ⇒
-  `.invalidRegex` (nicht „kein Treffer"); Unicode/Umlaut im Namen.
-- **Ableitung (Core/VM-nah):** Filter-Modus reduziert `items` und liefert
-  N/M; Sprung-Modus lässt `items` voll und liefert Match-Indizes + Umbruch
-  vorwärts/rückwärts; ungültiger Regex lässt `items` stehen und setzt den
-  Fehler; `load()` auf neues Verzeichnis setzt die Suche zurück;
-  `refreshQuietly()` behält sie und wendet sie auf die frische Liste an;
-  Auswahl im Sprung-Modus zeigt auf den erwarteten Pfad.
-- EN/DE-Kataloge: Key-Mengen identisch.
-- Die AppKit-/SwiftUI-Feld-Anbindung hat kein Test-Target → Smoke.
+- **Matcher (Core):** empty query ⇒ everything; case-insensitive substring;
+  valid regex (partial match, anchors `^`/`$`, `\.log$`); INVALID regex ⇒
+  `.invalidRegex` (not "no matches"); Unicode/umlaut in the name.
+- **Derivation (Core/VM-adjacent):** filter mode reduces `items` and
+  returns N/M; jump mode leaves `items` full and returns match indices +
+  wraparound forward/backward; invalid regex leaves `items` as is and sets
+  the error; `load()` on a new directory resets the search;
+  `refreshQuietly()` keeps it and applies it to the fresh list; selection
+  in jump mode points at the expected path.
+- EN/DE catalogs: identical key sets.
+- The AppKit/SwiftUI field wiring has no test target → smoke test.
 
-## 7. Aufteilung
+## 7. Breakdown
 
-T1 Core (`FileSearchMatcher` + reine Ableitung + VM-Suchzustand, mit Tests)
-→ T2 App (Suchfeld, Modus-/Regex-Schalter, Trefferzahl/Fehler, ⌘F über den
-M11j-Fokusweg, Esc, EN/DE) → T3 Abschluss. KEIN Release.
+T1 Core (`FileSearchMatcher` + pure derivation + VM search state, with
+tests) → T2 App (search field, mode/regex toggle, match count/error, ⌘F via
+the M11j focus path, Esc, EN/DE) → T3 wrap-up. NO release.

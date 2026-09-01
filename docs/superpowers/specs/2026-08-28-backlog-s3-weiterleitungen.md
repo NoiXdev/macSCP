@@ -1,86 +1,85 @@
-# Backlog: S3 folgt Weiterleitungen ohne Kontrolle
+# Backlog: S3 follows redirects without control
 
-**Angelegt:** 2026-08-28, aus der Messung, welche die S3-Frage der
-Abschlussdurchsicht beantwortet hat. **Die Sicherheitsfrage ist beantwortet
-und entwarnt** — was hier steht, sind die Befunde daneben.
+**Logged:** 2026-08-28, from the measurement that answered the closing
+review's S3 question. **The security question is answered and cleared**
+— what stands here are the findings beside it.
 
-**Entscheidung des Maintainers (2026-08-28): angehen, als eigener
-Vorgang.** Nicht wegen der Signatur.
+**Maintainer decision (2026-08-28): take it on, as its own change.**
+Not because of the signature.
 
-## Was gemessen wurde, und was dabei herauskam
+## What was measured, and what came out of it
 
-Gemessen mit `S3FileSystem.connect` ohne eingespeisten Transport — also der
-echten signierten Anfrage über `URLSessionHTTPTransport()` und damit
-`URLSession.shared`. Zwei Origin-Formen, fünf Statuscodes, zehn Fälle.
+Measured with `S3FileSystem.connect` without an injected transport — i.e.
+the real signed request over `URLSessionHTTPTransport()` and thus
+`URLSession.shared`. Two origin forms, five status codes, ten cases.
 macOS 26.6.2 (25G83), Swift 6.3.3, CFNetwork 3860.700.1.
 
-**`Authorization` wird nicht mitgenommen. In keinem der zehn Fälle.**
+**`Authorization` is not carried along. In none of the ten cases.**
 
-Damit ist die ursprüngliche Sorge — eine Signatur an einer fremden Origin —
-widerlegt. Der Test steht im Baum und stellt dieselbe Frage auf jeder
-Plattform neu, auf der die Suite läuft; das ist Absicht, weil das Verhalten
-Foundations undokumentiert und versionsabhängig ist.
+This refutes the original concern — a signature reaching a foreign
+origin. The test lives in the tree and re-asks the same question on every
+platform the suite runs on; that is deliberate, because Foundation's
+behavior here is undocumented and version-dependent.
 
-## Die drei Befunde, die bleiben
+## The three findings that remain
 
-### 1. Die Weiterleitung wird gefolgt, nicht verweigert
+### 1. The redirect is followed, not refused
 
-Die fremde Origin erfährt den Bucket-Pfad, die Listenabfrage, `x-amz-date`,
-`x-amz-content-sha256` — und über den mitgereisten `Host` den konfigurierten
-Endpunkt. Keine Signatur, keine Access-Key-ID. Aber auch nicht nichts.
+The foreign origin learns the bucket path, the list query, `x-amz-date`,
+`x-amz-content-sha256` — and, via the carried-along `Host`, the
+configured endpoint. No signature, no access key ID. But not nothing
+either.
 
-**Das ist der Grund für den Vorgang.** Er behebt nichts Hypothetisches: die
-Preisgabe ist gemessen, nur kleiner als befürchtet.
+**This is the reason for the change.** It fixes nothing hypothetical:
+the exposure is measured, just smaller than feared.
 
-### 2. Der handgesetzte `Host` reist mit und ist danach falsch
+### 2. The hand-set `Host` travels along and is wrong afterward
 
-S3 setzt `Host` ausdrücklich, weil er Teil der SigV4-Signatur ist. Nach
-einem Sprung auf eine andere Origin trägt die Anfrage weiterhin den alten
-Wert — gemessen: eine Anfrage an `localhost:<p2>` mit
+S3 sets `Host` explicitly because it is part of the SigV4 signature.
+After a jump to a different origin, the request still carries the old
+value — measured: a request to `localhost:<p2>` with
 `Host: 127.0.0.1:<p1>`.
 
-Kein Kreditiv-Problem, aber bei virtual-hosted Adressierung eine falsch
-adressierte Anfrage. Und es ist der Weg, über den Befund 1 den Endpunkt
-preisgibt.
+Not a credential problem, but a misaddressed request under
+virtual-hosted addressing. And it is the path through which finding 1
+exposes the endpoint.
 
-### 3. Foundation streift den Header bei **jeder** Weiterleitung ab
+### 3. Foundation strips the header on **every** redirect
 
-Auch bei gleicher Origin und nur anderem Pfad — im Kontrollarm gemessen.
+Even for the same origin and only a different path — measured in the
+control arm.
 
-Das ist keine Sicherheits-, sondern eine **Funktionsfrage**: eine legitime
-Weiterleitung eines Anbieters käme unsigniert an und würde abgelehnt.
-Niemand hat einen solchen Fall gesehen; er gehört hierher, damit die
-Behebung ihn nicht übersieht.
+This is not a security question but a **functionality question**: a
+legitimate redirect from a provider would arrive unsigned and get
+rejected. Nobody has seen such a case; it belongs here so the fix does
+not overlook it.
 
-## Was ein Vorgang zu klären hätte
+## What a change would need to clarify
 
-Die Naht existiert bereits und wird benutzt, wie sie ist:
-`URLSessionHTTPTransport(session:)`. WebDAV fährt genau so, mit
-`URLSessionConfiguration.ephemeral` und `WebDAVSessionDelegate` als
-einziger Delegate-Klasse im Baum. **`URLSession.shared` kann keinen
-Delegate tragen** — das ist der ganze Grund, warum im S3-Pfad keine
-Kontrolle sitzt.
+The seam already exists and is used as it is:
+`URLSessionHTTPTransport(session:)`. WebDAV runs exactly this way, with
+`URLSessionConfiguration.ephemeral` and `WebDAVSessionDelegate` as the
+only delegate class in the tree. **`URLSession.shared` cannot carry a
+delegate** — that is the entire reason no control sits in the S3 path.
 
-Offen und beim Entwerfen zu entscheiden:
+Open, to be decided while designing:
 
-- **Ablehnen oder umsigniert folgen?** Eine Weiterleitung über eine fremde
-  Origin abzulehnen ist die strengere und einfachere Antwort. Ihr neu zu
-  folgen und dabei für das neue Ziel zu signieren behebt zusätzlich Befund 3
-  — und ist deutlich mehr Arbeit, weil die Signatur den `Host` bindet.
-- **Was „fremd" heißt.** Schema, Host und Port, oder nur der Host? Die
-  Messung zeigt, dass Foundation hier gar nicht unterscheidet; das Projekt
-  müsste es selbst festlegen.
-- **Gilt dasselbe für `sendStreaming`?** Der Download-Pfad geht über
-  `URLSession.bytes(for:)` — dieselbe Sitzung, ein anderer
-  Foundation-Einstieg. **Nicht gemessen.** Vor dem Entwerfen messen.
+- **Refuse, or follow with a re-signed request?** Refusing a redirect
+  across a foreign origin is the stricter and simpler answer. Following
+  it and signing anew for the new target additionally fixes finding 3 —
+  and is considerably more work, because the signature binds the `Host`.
+- **What "foreign" means.** Scheme, host and port, or only the host? The
+  measurement shows that Foundation does not distinguish here at all;
+  the project would have to define this itself.
+- **Does the same apply to `sendStreaming`?** The download path goes
+  through `URLSession.bytes(for:)` — the same session, a different
+  Foundation entry point. **Not measured.** Measure before designing.
 
-## Was das nicht ist
+## What this is not
 
-- **Keine Behebung eines Lecks.** Es gibt keins; die Messung sagt das
-  ausdrücklich.
-- **Keine Änderung an WebDAVs Delegate** und keine gemeinsame
-  Weiterleitungs-Politik über beide Backends, bevor jemand das entworfen
-  hat.
-- Keine Aussage über echte S3-Anbieter. Gemessen wurde Foundation gegen
-  einen kontrollierten Stub auf Loopback — das genügt für die gestellte
-  Frage und für nichts darüber hinaus.
+- **Not a leak fix.** There is none; the measurement says so explicitly.
+- **No change to WebDAV's delegate**, and no shared redirect policy
+  across both backends, before someone has designed one.
+- No statement about real S3 providers. Foundation was measured against
+  a controlled stub on loopback — that suffices for the question asked
+  and for nothing beyond it.

@@ -1,73 +1,73 @@
-# P3g — Abschluss
+# P3g — Completion
 
-**Ziel:** Der Passworthinweis hält kein Klartext-Geheimnis mehr.
-**Stand:** fertig. Suite 2110 Tests in 183 Suiten, grün.
+**Goal:** The password hint no longer holds a plaintext secret.
+**Status:** done. Suite 2110 tests in 183 suites, green.
 
-## Was die Messung an der Spec korrigiert hat
+## What the measurement corrected in the spec
 
-Die Spec nahm an, das Startskript enthalte ein Passwort — der Doc-Kommentar
-über `requestExternalTerminal(config:)` behauptete das ausdrücklich. Beides
-war falsch. `SSHCommandBuilder` liest Host, Port, Benutzername,
-Schlüssel*pfad* und Jump-Ziel; ein Geheimnis übergibt er nie, `ssh` fragt
-selbst danach — genau das sagt auch der Hinweistext, den die App anzeigt.
+The spec assumed the start script contained a password — the doc comment
+on `requestExternalTerminal(config:)` claimed exactly that. Both were
+wrong. `SSHCommandBuilder` reads host, port, username, key *path*, and
+jump target; it never passes a secret, `ssh` itself asks for it — which
+is exactly what the hint text the app shows says too.
 
-Damit war die Reparatur nicht „noch ein Aufräumpfad", sondern: das
-Geheimnis gar nicht erst zurückhalten. `redactingSecrets()` liefert eine
-Kopie ohne Klartext-Nutzlasten; die Auth-Art selbst überlebt, weil Aufrufer
-auf sie verzweigen. Der Zustand „Hinweis offen und Passwort im View-State"
-ist jetzt nicht aufgeräumt, sondern nicht darstellbar.
+So the fix was not "one more cleanup path", but: never hold the secret
+back in the first place. `redactingSecrets()` returns a copy without
+plaintext payloads; the auth kind itself survives, because callers branch
+on it. The state "hint open and password in view state" is now not
+cleaned up, it is unrepresentable.
 
-## Was die Gesamtprüfung fand — und was daraus wurde
+## What the full review found — and what came of it
 
-Die Phase hatte die **kleinere** der zwei Instanzen repariert.
-`lastConnectedConfig` hielt dasselbe Klartext-Passwort **die ganze
-Sitzung** statt der Sekunden eines offenen Alerts — und war auf der
-Toolbar-Route die Quelle der Konfiguration, die in den Hinweis fließt. Die
-Kopie zu schwärzen, während die Quelle den Klartext behält, senkte die
-Exposition dort um null.
+The phase had fixed the **smaller** of the two instances.
+`lastConnectedConfig` held the same plaintext password for **the whole
+session** instead of the seconds of an open alert — and, on the toolbar
+route, was the source of the configuration that flows into the hint.
+Redacting the copy while the source kept the plaintext lowered the
+exposure there by zero.
 
-Nachgeprüft: `lastConnectedConfig` hat genau **einen** Verbraucher in der
-Produktion, den externen Terminalstart. Es wählt nie. Also speichert
-`connect()` es jetzt geschwärzt. Der reale Gewinn der Phase liegt damit
-nicht mehr nur auf der P3c-Sidebar-Route.
+Reverified: `lastConnectedConfig` has exactly **one** consumer in
+production, the external terminal launch. It never dials. So `connect()`
+now stores it redacted. The phase's real gain therefore no longer sits
+only on the P3c sidebar route.
 
-Sieben Doc-Kommentare zogen nach: drei behaupteten weiterhin, das
-Aufräumen bei `disconnect` sei der Grund, warum kein Klartext-Passwort eine
-Verbindung überlebt. Die Schwärzung bei der Zuweisung ist die stärkere
-Garantie; jetzt steht das auch da. `clearRetainedSecrets()` löscht
-`lastConnectedConfig` weiterhin — nur ist es nicht mehr die Schranke,
-sondern Sorgfalt für Host-/Benutzer-Metadaten.
+Seven doc comments followed suit: three still claimed that the cleanup
+on `disconnect` was the reason no plaintext password survives a
+connection. The redaction at assignment is the stronger guarantee; that
+is now stated too. `clearRetainedSecrets()` still clears
+`lastConnectedConfig` — it is just no longer the barrier, but diligence
+for host/user metadata.
 
-## Erledigte offene Punkte der Spec
+## Resolved open points from the spec
 
-- **Sollen die Aufräumwege sie mit erfassen?** Nein — die Schwärzung bei der
-  Zuweisung macht sie überflüssig, statt einen dritten Pfad zu schaffen,
-  den jede spätere Änderung mitpflegen müsste.
-- **Muss der Hinweis die Konfiguration überhaupt halten?** Ja, aber
-  geschwärzt. Ein Neu-Auflösen nach der Bestätigung könnte scheitern und
-  brächte einen zweiten Fehlerweg für nichts.
-- **Braucht ein Fenster, das während des Hinweises zugeht, einen eigenen
-  Weg?** Nein. Nach der Schwärzung trägt der zurückgehaltene Request nur
-  noch Host/Port/Benutzer/Schlüsselpfad, und `@State` stirbt mit der View.
-  Bewusst so gelassen: die Alert-Knöpfe starten ein losgelöstes `Task`, das
-  den externen Terminal auch dann noch öffnet, wenn das Fenster unmittelbar
-  nach dem Klick zugeht — das ist der Wunsch des Nutzers, nicht ein Leck.
+- **Should the cleanup paths also capture it?** No — redaction at
+  assignment makes them unnecessary, instead of creating a third path
+  that every later change would have to maintain alongside.
+- **Does the hint need to hold the configuration at all?** Yes, but
+  redacted. Re-resolving after confirmation could fail and would bring a
+  second error path for nothing.
+- **Does a window that closes during the hint need its own path?** No.
+  After redaction, the retained request only carries host/port/
+  user/key path, and `@State` dies with the view. Deliberately left as
+  is: the alert buttons start a detached `Task` that still opens the
+  external terminal even if the window closes right after the click —
+  that is the user's intent, not a leak.
 
-## Geprüft und widerlegt
+## Checked and refuted
 
-Ein Hintergrund-Scan meldete als stärksten Fund, das Jump-Geheimnis in
-`values` überlebe den Disconnect, weil `clearPassword()` nur Felder der
-obersten Ebene räumt und `teardown` `clearJumpFields()` nicht rufe. Der
-Scan hatte das selbst als ungeprüft markiert. Nachgeprüft: `teardown` ruft
-`exitEditMode()`, und das ruft `clearJumpFields()`. Kein Befund.
+A background scan reported as its strongest finding that the jump secret
+in `values` survives the disconnect, because `clearPassword()` only
+clears top-level fields and `teardown` does not call
+`clearJumpFields()`. The scan itself had marked this as unverified.
+Reverified: `teardown` calls `exitEditMode()`, and that calls
+`clearJumpFields()`. No finding.
 
-## Offene Spuren (ungeprüft, eigene Phase wert)
+## Open leads (unverified, worth their own phase)
 
-Aus demselben Scan, jeweils **nicht verifiziert** — vor einer Umsetzung erst
-messen:
+From the same scan, each **not verified** — measure before implementing:
 
-- Eine aus dem Keychain gelöste Managed-Key-Passphrase landet im
-  langlebigen Formular (`ConnectionFormView`, `ContentView.fillForm`). Bei
-  einem **gescheiterten** Connect räumt sie niemand.
-- Login-Set-Geheimnisse werden vor jedem Submit ins Formular vorgefüllt;
-  ein abgelehnter Submit lässt sie stehen.
+- A managed-key passphrase resolved from the keychain lands in the
+  long-lived form (`ConnectionFormView`, `ContentView.fillForm`). On a
+  **failed** connect, nobody clears it.
+- Login-set secrets are pre-filled into the form before every submit; a
+  rejected submit leaves them standing.

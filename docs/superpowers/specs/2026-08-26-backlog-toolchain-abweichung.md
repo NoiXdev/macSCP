@@ -1,63 +1,62 @@
-# Backlog: Toolchain-Abweichung zwischen Arbeitsplatz und CI
+# Backlog: toolchain divergence between workstation and CI
 
-**Status:** offen
-**Aufgenommen:** 2026-08-26, nach einem roten CI-Lauf auf `develop`
+**Status:** open
+**Logged:** 2026-08-26, after a red CI run on `develop`
 
-## Was passiert ist
+## What happened
 
-Lauf `32938674467` ist am Build gescheitert, nicht an einem Test:
+Run `32938674467` failed at the build, not at a test:
 
 ```
 Sources/MacSCPAppKit/ContentView+Lifecycle.swift:233:45:
 error: expression is 'async' but is not marked with 'await'
 ```
 
-Die Zeile las `settingsStore.connectTimeoutSeconds`. `SettingsStore` ist
-`@MainActor`; `ConnectionViewModel.Connector` ist ein nicht isolierter
-`@Sendable`-Funktionstyp. Ob die Connector-Closure selbst als
-Main-Actor-isoliert gilt, entscheidet damit die Closure-Isolationsinferenz
-des Compilers — und genau die unterscheidet sich:
+The line read `settingsStore.connectTimeoutSeconds`. `SettingsStore` is
+`@MainActor`; `ConnectionViewModel.Connector` is a non-isolated
+`@Sendable` function type. Whether the connector closure itself counts
+as main-actor-isolated is thus decided by the compiler's closure
+isolation inference — and that's exactly what differs:
 
-| | Swift | Ergebnis |
+| | Swift | Result |
 |---|---|---|
-| Arbeitsplatz | 6.3.3 (macOS 26) | baut |
-| CI (`macos-15`) | älter | Fehler |
+| Workstation | 6.3.3 (macOS 26) | builds |
+| CI (`macos-15`) | older | error |
 
-Behoben in `750ccc6` mit einem expliziten `await MainActor.run { … }`, das
-beide Compiler akzeptieren.
+Fixed in `750ccc6` with an explicit `await MainActor.run { … }`, which
+both compilers accept.
 
-## Warum das ein Backlog-Eintrag ist und keine erledigte Sache
+## Why this is a backlog entry and not a closed matter
 
-Der Fix beseitigt den einen Fundort. Er beseitigt nicht die Ursache: **ein
-grüner lokaler Build ist kein Beleg über den CI-Build.** Die gesamte
-Aussage „2648 Tests grün" vor dem Push bezog sich ausschließlich auf die
-lokale Toolchain. Für alles, was von Nebenläufigkeits-Inferenz abhängt,
-sagt sie nichts.
+The fix removes the one spot found. It does not remove the cause: **a
+green local build is not evidence about the CI build.** The whole claim
+"2648 tests green" before the push referred exclusively to the local
+toolchain. For anything that depends on concurrency inference, it says
+nothing.
 
-Das trifft dieselbe wiederkehrende Lektion wie die Shell-Klassifikation
-weiter oben im Backlog: als Orakel wurde die *lokale* Umgebung befragt,
-obwohl die Aussage über eine *andere* gelten sollte.
+This hits the same recurring lesson as the shell classification further
+up in the backlog: the *local* environment was consulted as the oracle,
+even though the claim was supposed to hold for a *different* one.
 
-## Mögliche Wege (nicht entschieden)
+## Possible paths (not decided)
 
-1. **Zweiter CI-Job auf `macos-26`.** Billig, und es ist eine Messung
-   statt einer Annahme: beide Inferenz-Regime werden tatsächlich gebaut.
-   Deckt nur ab, verhindert nicht.
-2. **Feature-Flags in `Package.swift` festnageln.** Vermutlich geht die
-   Abweichung auf `NonisolatedNonsendingByDefault` (SE-0461) zurück, das
-   der neuere Compiler voreingestellt hat. *Vermutlich* — nachgemessen ist
-   das nicht, dazu fehlt hier die ältere Toolchain. Wenn es stimmt, bringt
-   ein explizites Flag beide Compiler zur Deckung und behebt die Klasse,
-   nicht den Fundort.
-3. **Xcode in CI anheben**, sodass CI der Arbeitsplatzversion folgt.
-   Verschiebt die Abweichung nur, sobald der Arbeitsplatz erneut vorauszieht.
+1. **A second CI job on `macos-26`.** Cheap, and it's a measurement
+   instead of an assumption: both inference regimes actually get built.
+   Only covers, doesn't prevent.
+2. **Pin feature flags in `Package.swift`.** The divergence presumably
+   traces back to `NonisolatedNonsendingByDefault` (SE-0461), which the
+   newer compiler defaults on. *Presumably* — this hasn't been
+   re-measured, the older toolchain is missing here for that. If it's
+   true, an explicit flag brings both compilers into alignment and fixes
+   the class, not just the spot found.
+3. **Raise Xcode in CI**, so CI follows the workstation version. Only
+   shifts the divergence, once the workstation moves ahead again.
 
-Weg 2 ist der einzige, der die Klasse schließt — und der einzige, der vor
-der Umsetzung eine Messung braucht.
+Path 2 is the only one that closes the class — and the only one that
+needs a measurement before implementation.
 
-## Nebenbefund
+## Side finding
 
-`ContentView+Lifecycle.swift` ist die einzige Fundstelle gewesen. Der
-Compiler bricht die Datei allerdings beim ersten Fehler ab; ob hinter
-dieser Zeile weitere Stellen derselben Klasse liegen, zeigt erst ein
-grüner Lauf.
+`ContentView+Lifecycle.swift` was the only spot found. However, the
+compiler aborts the file at the first error; whether further spots of
+the same class lie behind this line only a green run will show.

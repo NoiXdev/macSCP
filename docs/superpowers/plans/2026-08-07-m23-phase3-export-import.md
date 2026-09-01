@@ -395,7 +395,7 @@ Dispatch a fresh reviewer over the phase diff. The questions that matter:
 
 - [ ] **Step 5: Write the close record**
 
-Write `docs/superpowers/specs/2026-08-07-m23-phase3-abschluss.md` and, because this closes M23, a short **milestone** summary: the criteria table across all three phases, the consolidated release-notes list (Phase 1's `sessions-v2.json` divergence and anonymous WebDAV; Phase 2's four items; Phase 3's end of `.macscp` interchange), and the follow-ups nobody owns yet.
+Write `docs/superpowers/specs/2026-08-07-m23-abschluss.md` and, because this closes M23, a short **milestone** summary: the criteria table across all three phases, the consolidated release-notes list (Phase 1's `sessions-v2.json` divergence and anonymous WebDAV; Phase 2's four items; Phase 3's end of `.macscp` interchange), and the follow-ups nobody owns yet.
 
 **Do not push.**
 

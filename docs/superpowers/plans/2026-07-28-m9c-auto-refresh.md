@@ -2,42 +2,42 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Das Remote-Pane des aktiven Tabs aktualisiert sich alle X Sekunden still (kein Spinner, Selektion bleibt), Default 5 s, einstellbar (Toggle + 2–300 s) im Allgemein-Tab.
+**Goal:** The remote pane of the active tab refreshes itself silently every X seconds (no spinner, selection stays), default 5 s, adjustable (toggle + 2–300 s) in the General tab.
 
-**Architecture:** `refreshQuietly()` im Core-VM (bleibt `.loaded`, gemeinsame Filter/Sort-Aufbereitung mit `load()`, Selektions-Beschnitt, Fehler still, Doppel-Guard gegen Races); zwei neue SettingsStore-Properties; der Timer ist ein `.task` im Detail-Baum des aktiven Tabs (stirbt/startet mit der `.id(tab.id)`-Identität aus M8a).
+**Architecture:** `refreshQuietly()` in the Core VM (stays `.loaded`, shares filter/sort preparation with `load()`, prunes selection, swallows errors silently, double-guarded against races); two new SettingsStore properties; the timer is a `.task` in the detail tree of the active tab (dies/starts with the `.id(tab.id)` identity from M8a).
 
 **Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, SwiftUI `.task` + `Task.sleep`.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-28-m9c-auto-refresh-design.md` — bindend. Branch: **develop**.
-- Stiller Refresh: Zustand bleibt UNVERÄNDERT `.loaded` (kein Flackern, keine Sperre); Fehler still geschluckt (kein State-Wechsel, keine Meldung); Guard bei nicht-`.loaded` am Anfang UND vor dem Items-Schreiben; Selektion auf Pfade der neuen GEFILTERTEN Liste beschnitten; Filter+Sortierung identisch zu `load()` (EINE gemeinsame private Funktion, kein Duplikat).
-- Settings: `autoRefreshEnabled` Default `true`; `autoRefreshIntervalSeconds` Default `5`, geklemmt `2...300` beim Setzen UND Lesen; vorwärtskompatibles Store-Muster wie gehabt.
-- Timer NUR im aktiven Tab-Detail (Remote-Pane), nie für Hintergrund-/Formular-Tabs oder das lokale Pane; liest Toggle/Intervall bei jedem Durchlauf frisch.
-- Alle neuen UI-Texte EN/DE; Code + Kommentare NUR Englisch; keine neuen Dependencies.
-- Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` + volle `swift test` nach jedem Task grün (Ausgangslage 445 Tests / 36 Suiten); gated Suiten nur in T3; Tests SYNCHRON im Vordergrund.
-- TDD für Core; App-Target untestbar → T2 liefert Build + Verhaltensbeschreibung.
+- Spec: `docs/superpowers/specs/2026-07-28-m9c-auto-refresh-design.md` — binding. Branch: **develop**.
+- Silent refresh: state stays UNCHANGED at `.loaded` (no flicker, no lock); errors swallowed silently (no state change, no message); guard against non-`.loaded` at the start AND before writing items; selection pruned to paths of the new FILTERED list; filter+sort identical to `load()` (ONE shared private function, no duplicate).
+- Settings: `autoRefreshEnabled` default `true`; `autoRefreshIntervalSeconds` default `5`, clamped `2...300` on both set AND read; forward-compatible store pattern as before.
+- Timer ONLY in the active tab detail (remote pane), never for background/form tabs or the local pane; reads toggle/interval fresh on every lap.
+- All new UI text EN/DE; code + comments English ONLY; no new dependencies.
+- Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` + full `swift test` green after every task (starting point 445 tests / 36 suites); gated suites only in T3; tests run SYNCHRONOUSLY in the foreground.
+- TDD for Core; App target untestable → T2 delivers a build + a behavior description.
 
 ## Schedule
 
-T1 (Core: refreshQuietly + Settings) → T2 (App: Timer + Settings-UI) → T3 Abschluss (Koordinator).
+T1 (Core: refreshQuietly + Settings) → T2 (App: Timer + Settings UI) → T3 wrap-up (coordinator).
 
 ---
 
-### Task 1: refreshQuietly + Settings-Properties (Core)
+### Task 1: refreshQuietly + Settings properties (Core)
 
 **Files:**
-- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (`load()` ~Zeile 50–64 refaktorieren + neue Methode), `Sources/macSCPCore/Settings/SettingsStore.swift` (zwei Properties nach dem `showHiddenFiles`-Muster ~Zeile 177)
-- Test: `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift`, `Tests/macSCPCoreTests/SettingsStoreTests.swift` (bestehende Dateien erweitern; Muster dort übernehmen)
+- Modify: `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift` (refactor `load()` ~line 50–64 + new method), `Sources/macSCPCore/Settings/SettingsStore.swift` (two properties following the `showHiddenFiles` pattern ~line 177)
+- Test: `Tests/macSCPCoreTests/RemoteBrowserViewModelTests.swift`, `Tests/macSCPCoreTests/SettingsStoreTests.swift` (extend existing files; follow the pattern already there)
 
 **Interfaces:**
-- Produces (T2 verlässt sich exakt hierauf):
+- Produces (T2 relies on this exactly):
   - `RemoteBrowserViewModel.refreshQuietly() async` (public)
-  - `SettingsStore.autoRefreshEnabled: Bool` (get/set, Default `true`)
-  - `SettingsStore.autoRefreshIntervalSeconds: Int` (get/set, Default `5`, geklemmt `2...300` in Setter UND Getter)
+  - `SettingsStore.autoRefreshEnabled: Bool` (get/set, default `true`)
+  - `SettingsStore.autoRefreshIntervalSeconds: Int` (get/set, default `5`, clamped `2...300` in both setter AND getter)
 
-- [x] **Step 1: Failing VM-Tests** (Mock-FS-Muster der Datei übernehmen — Helfer für Tree-Mutation/werfende Mocks existieren; Assertions unverändert lassen):
+- [x] **Step 1: Failing VM tests** (follow the file's mock-FS pattern — helpers for tree mutation/throwing mocks already exist; leave assertions unchanged):
 
 ```swift
     // refreshQuietlyUpdatesItemsWithoutStateFlicker:
@@ -57,9 +57,9 @@ T1 (Core: refreshQuietly + Settings) → T2 (App: Timer + Settings-UI) → T3 Ab
     //   — der stille Refresh repariert NICHT (nur „Erneut versuchen" tut das).
 ```
 
-- [x] **Step 2: Rot beweisen.** `swift test --filter RemoteBrowserViewModelTests` → FAIL (Methode fehlt).
+- [x] **Step 2: Prove red.** `swift test --filter RemoteBrowserViewModelTests` → FAIL (method missing).
 
-- [x] **Step 3: Implementierung.** In `RemoteBrowserViewModel`:
+- [x] **Step 3: Implementation.** In `RemoteBrowserViewModel`:
 
 ```swift
     /// Shared display pipeline for `load()` and `refreshQuietly()` — the
@@ -91,7 +91,7 @@ T1 (Core: refreshQuietly + Settings) → T2 (App: Timer + Settings-UI) → T3 Ab
     }
 ```
 
-`load()` auf `items = displayItems(from: listed)` umstellen (Filter/Sort-Zeilen dort raus). In `SettingsStore` (Keys/Defaults-Einträge nach Datei-Muster ergänzen; `intValue`/`setInt`-Helfer der Datei nachschlagen — analoge Helfer existieren für die Transfer-Settings):
+Switch `load()` over to `items = displayItems(from: listed)` (remove the filter/sort lines there). In `SettingsStore` (add key/default entries following the file's pattern; look up the file's `intValue`/`setInt` helpers — analogous helpers exist for the transfer settings):
 
 ```swift
     /// Auto-refresh of the active tab's remote pane (M9c). Default ON.
@@ -108,9 +108,9 @@ T1 (Core: refreshQuietly + Settings) → T2 (App: Timer + Settings-UI) → T3 Ab
     }
 ```
 
-- [x] **Step 4: Failing Settings-Tests** (Muster der Datei): Defaults (true/5), Setter-Klemmung (1→2, 9999→300), Getter-Klemmung (rohen Wert 0 bzw. 100000 direkt in die JSON-Datei schreiben wie die Vorwärtskompatibilitäts-Tests es tun → Lesen liefert 2 bzw. 300), Roundtrip, alte settings.json ohne die Keys lädt mit Defaults. Rot → implementieren → grün.
+- [x] **Step 4: Failing Settings tests** (file's pattern): defaults (true/5), setter clamping (1→2, 9999→300), getter clamping (write raw value 0 resp. 100000 directly into the JSON file the way the forward-compatibility tests do → reading yields 2 resp. 300), roundtrip, an old settings.json without the keys loads with defaults. Red → implement → green.
 
-- [x] **Step 5: Volle Suite + Commit.** `swift test` → 445 + ~8 (echte Zahl festhalten).
+- [x] **Step 5: Full suite + commit.** `swift test` → 445 + ~8 (record the actual count).
 
 ```bash
 git add -A
@@ -119,17 +119,17 @@ git commit -m "feat: add a silent remote refresh and its settings"
 
 ---
 
-### Task 2: Timer im aktiven Tab + Settings-UI (App)
+### Task 2: Timer in the active tab + Settings UI (App)
 
 **Files:**
-- Modify: `Sources/MacSCPApp/ContentView.swift` (Timer-`.task` im Detail-Baum), `Sources/MacSCPApp/SettingsView.swift` (Allgemein-Tab ~Zeile 41), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
-- Test: keiner (App-Target; Smoke in T3)
+- Modify: `Sources/MacSCPApp/ContentView.swift` (timer `.task` in the detail tree), `Sources/MacSCPApp/SettingsView.swift` (General tab ~line 41), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
+- Test: none (App target; smoke test in T3)
 
 **Interfaces:**
-- Consumes: `refreshQuietly()`, `autoRefreshEnabled`, `autoRefreshIntervalSeconds` (T1); die `.id(tab.id)`-Detail-Identität (M8a) in `ContentView.detail`.
+- Consumes: `refreshQuietly()`, `autoRefreshEnabled`, `autoRefreshIntervalSeconds` (T1); the `.id(tab.id)` detail identity (M8a) in `ContentView.detail`.
 
-**Verhaltens-Anforderungen:**
-1. Im Detail-Baum des aktiven Tabs, INNERHALB der `.id(tab.id)`-Gruppe und nur im verbundenen Zweig (`if let session = tab.session`), hängt:
+**Behavior requirements:**
+1. In the detail tree of the active tab, INSIDE the `.id(tab.id)` group and only on the connected branch (`if let session = tab.session`), attach:
 
 ```swift
         .task {
@@ -146,16 +146,16 @@ git commit -m "feat: add a silent remote refresh and its settings"
         }
 ```
 
-   (Platzierung: am selben View wie der bestehende `.task { await viewModel.load() }`-Stil — konkret an den Browser-Layout-Container im verbundenen Zweig; NICHT am Formular-Zweig. `refreshQuietly` guarded selbst auf `.loaded` — kein zusätzlicher Zustand nötig.)
-2. Settings-UI im Allgemein-Tab unter dem Versteckte-Dateien-Toggle: Toggle (Key `settings.general.autoRefresh` — EN „Auto-refresh remote view", DE „Remote-Ansicht automatisch aktualisieren") + Stepper/TextField-Zeile (Key `settings.general.autoRefreshInterval %lld` — EN „Every %lld seconds", DE „Alle %lld Sekunden"; Formular-Stil der bestehenden Transfer-Settings-Zeilen nachschlagen und übernehmen — dort existiert das Muster Zahlenfeld+Klemmung), Feld disabled wenn Toggle aus.
-3. Keys in BEIDEN Katalogen; Grep-Gegenprobe.
+   (Placement: on the same view as the existing `.task { await viewModel.load() }` style — specifically on the browser layout container on the connected branch; NOT on the form branch. `refreshQuietly` guards itself against `.loaded` — no extra state needed.)
+2. Settings UI in the General tab below the hidden-files toggle: a toggle (key `settings.general.autoRefresh` — EN "Auto-refresh remote view", DE „Remote-Ansicht automatisch aktualisieren") + a stepper/text-field row (key `settings.general.autoRefreshInterval %lld` — EN "Every %lld seconds", DE „Alle %lld Sekunden"; look up and follow the form style of the existing transfer-settings rows — the number-field-plus-clamping pattern exists there), field disabled when the toggle is off.
+3. Keys in BOTH catalogs; grep cross-check.
 
-- [x] **Step 1:** Timer. **Step 2:** Settings-UI + Keys. **Step 3:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test` (Stand T1). **Step 4:** Commit `feat: auto-refresh the active remote pane on an interval`.
+- [x] **Step 1:** Timer. **Step 2:** Settings UI + keys. **Step 3:** `swift build` (0 errors, no new warnings) + full `swift test` (as of T1). **Step 4:** Commit `feat: auto-refresh the active remote pane on an interval`.
 
 ---
 
-### Task 3: Abschluss-Verifikation (Koordinator)
+### Task 3: Final verification (coordinator)
 
-- [ ] Gated Suiten (Rig aus dem Haupt-Checkout): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ komplett grün, zero skips.
-- [ ] Visueller Smoke (Dev-Wrapper; Maintainer testet ggf. selbst): verbinden → per `docker exec` Datei auf dem Server anlegen → erscheint binnen ~5 s OHNE Spinner/Selektionsverlust; Auswahl halten während Refresh; Datei serverseitig löschen → verschwindet aus Liste UND Auswahl; Intervall in den Settings ändern (wirkt ohne Neustart), Toggle aus → Ruhe; Tab-Wechsel: nur aktiver Tab pollt (docker-Logs bzw. zweiter Tab bleibt stale bis Wechsel); Formular-Tab/getrennt: kein Polling; Sheets/Menü offen während Refresh → ungestört; Fehlerfall: Rig stoppen → KEIN Fehler-Screen-Flackern, manuelle Aktion zeigt den Fehler.
-- [ ] Plan-Checkboxen, Ledger, Opus-Whole-Branch-Final-Review (Base = Commit vor T1), Fixes, Push develop, CI, Rig `stop`, Memory-Update, Milestone-Zusammenfassung (+ M9d Terminal-Darstellung als Nächstes; Release-Bündelung weiter offen).
+- [ ] Gated suites (rig from the main checkout): `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` ⇒ fully green, zero skips.
+- [ ] Visual smoke (dev wrapper; maintainer may test this themselves): connect → create a file on the server via `docker exec` → appears within ~5 s WITHOUT spinner/selection loss; hold selection during a refresh; delete the file server-side → disappears from the list AND from the selection; change the interval in Settings (takes effect without restart), toggle off → quiet; tab switch: only the active tab polls (docker logs, or the second tab stays stale until switched to); form tab/disconnected: no polling; sheets/menu open during a refresh → undisturbed; failure case: stop the rig → NO error-screen flicker, manual action shows the error.
+- [ ] Plan checkboxes, ledger, Opus whole-branch final review (base = commit before T1), fixes, push develop, CI, rig `stop`, memory update, milestone summary (+ M9d terminal rendering next; release bundling still open).

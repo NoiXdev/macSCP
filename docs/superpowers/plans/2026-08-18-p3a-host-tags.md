@@ -1,62 +1,61 @@
-# P3a: Host-Tags und Sidebar-Filter — Implementation Plan
+# P3a: Host tags and sidebar filter — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Gespeicherte Hosts bekommen Tags, und die Sidebar bekommt ihr
-erstes Filterelement — eine Chip-Reihe, die auf einen Tag einschränkt.
+**Goal:** Saved hosts get tags, and the sidebar gets its first filter
+element — a chip row that restricts to one tag.
 
-**Architecture:** Die Tag-Normalisierung liegt als **eine** Funktion in
-Core und wird von `Snippet` und `StoredSession` aufgerufen. Welche Gruppen
-und Sitzungen bei aktivem Tag sichtbar sind und welcher Leer-Zustand gilt,
-ist ein testbarer Core-Typ; die Sidebar liest daraus und entscheidet nichts
-selbst.
+**Architecture:** Tag normalization lives as **one** function in Core and
+is called by `Snippet` and `StoredSession`. Which groups and sessions are
+visible while a tag is active, and which empty state applies, is a testable
+Core type; the sidebar reads from it and decides nothing itself.
 
 **Tech Stack:** Swift 6, `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+,
-SwiftUI, Swift Testing, zwei Testtargets.
+SwiftUI, Swift Testing, two test targets.
 
-Spec: `docs/superpowers/specs/2026-08-18-p3-ordnung-design.md`, Abschnitt P3a.
+Spec: `docs/superpowers/specs/2026-08-18-p3-ordnung-design.md`, section P3a.
 
 ## Global Constraints
 
-- **Code, Kommentare, Testnamen: Englisch.** Interne Doku (`docs/`) Deutsch.
-- **Jeder neue L10n-Schlüssel in allen vier Katalogen** (en/de/fr/pl),
-  identische Schlüsselmengen. Nachweis:
+- **Code, comments, test names: English.** Internal docs (`docs/`) German.
+- **Every new L10n key in all four catalogs** (en/de/fr/pl), identical key
+  sets. Proof:
   `for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done`
-- **Nie eine Zeilennummer in einen Kommentar.**
-- **Kein Secret in Log, Fehler oder Testfehlermeldung.**
-- **Die Prosa dieses Plans ist eine zu prüfende Behauptung.** In den beiden
-  Vorphasen steckte in mehreren Briefs ein echter Fehler. Weicht der Code
-  ab, ist **der Plan** falsch — melden, nicht anpassen.
-- **Zwei Proben vor jedem Commit**, beide:
-  1. Bliebe ein Test grün, wenn die Funktion konstant zurückgäbe?
-  2. **Welche Behauptung meines Doc-Kommentars beobachtet kein Test?**
-     Diese Frage hat in P2 in jeder Task eine echte Lücke gefunden, darunter
-     ein Critical und einen schlicht falschen Kommentar.
-- **Die GUI wird nicht gestartet.** `scripts/package-app` ist erlaubt,
-  `scripts/release` nicht.
-- Conventional Commits, Englisch, Footer:
+- **Never a line number in a comment.**
+- **No secret in a log, error, or test failure message.**
+- **This plan's prose is a claim to be checked.** In the two pre-phases,
+  several briefs had a real error in them. If the code diverges, **the
+  plan** is wrong — report it, don't adapt it.
+- **Two probes before every commit**, both:
+  1. Would a test stay green if the function returned a constant?
+  2. **Which claim in my doc comment is observed by no test?**
+     This question found a real gap in every task in P2, including a
+     Critical and one comment that was simply wrong.
+- **The GUI is not launched.** `scripts/package-app` is allowed,
+  `scripts/release` is not.
+- Conventional Commits, English, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- Volle Suite grün vor jedem Commit. Ausgangsstand: **1958 Tests in 166
-  Suiten** — selbst nachmessen, nie abschreiben.
+- Full suite green before every commit. Starting point: **1958 tests in 166
+  suites** — measure it yourself, never copy the number.
 
-## Dateien
+## Files
 
-| Datei | Zuständig für |
+| File | Responsible for |
 |---|---|
-| `Sources/macSCPCore/Tags/TagList.swift` (neu) | die eine Normalisierungsregel |
-| `Sources/macSCPCore/Terminal/Snippet.swift` | ruft sie auf statt sie zu wiederholen |
-| `Sources/macSCPCore/Sessions/StoredSession.swift` | `tags`-Feld + Decode-Standard |
-| `Sources/macSCPCore/Sessions/SessionExportCodec.swift` | `tags` im Austauschformat |
-| `Sources/macSCPCore/Presentation/SidebarVisibility.swift` (neu) | was bei aktivem Tag sichtbar ist |
+| `Sources/macSCPCore/Tags/TagList.swift` (new) | the one normalization rule |
+| `Sources/macSCPCore/Terminal/Snippet.swift` | calls it instead of repeating it |
+| `Sources/macSCPCore/Sessions/StoredSession.swift` | `tags` field + decode default |
+| `Sources/macSCPCore/Sessions/SessionExportCodec.swift` | `tags` in the exchange format |
+| `Sources/macSCPCore/Presentation/SidebarVisibility.swift` (new) | what's visible while a tag is active |
 | `Sources/macSCPCore/Presentation/SessionListViewModel.swift` | `save(… tags:)` |
-| `Sources/MacSCPAppKit/ConnectionFormView.swift` | Tag-Feld im Formular |
-| `Sources/MacSCPAppKit/SessionSidebar.swift` | Chip-Reihe, Leer-Zustand, Verdrahtung |
+| `Sources/MacSCPAppKit/ConnectionFormView.swift` | tag field in the form |
+| `Sources/MacSCPAppKit/SessionSidebar.swift` | chip row, empty state, wiring |
 
 ---
 
-### Task 1: Eine Regel, zwei Aufrufer
+### Task 1: One rule, two callers
 
-**Gemessener Ist-Zustand:** `Snippet.init?` normalisiert inline:
+**Measured current state:** `Snippet.init?` normalizes inline:
 
 ```swift
 var seen = Set<String>()
@@ -65,7 +64,7 @@ self.tags = tags
     .filter { !$0.isEmpty && seen.insert($0).inserted }
 ```
 
-Prüfe das selbst am Code, bevor du es verschiebst.
+Check this yourself against the code before you move it.
 
 **Files:**
 - Create: `Sources/macSCPCore/Tags/TagList.swift`
@@ -75,7 +74,7 @@ Prüfe das selbst am Code, bevor du es verschiebst.
 **Interfaces:**
 - Produces: `public enum TagList { public static func normalized(_ tags: [String]) -> [String] }`
 
-- [ ] **Schritt 1: Die Tests zuerst**
+- [ ] **Step 1: Tests first**
 
 ```swift
 @Test func normalizationTrimsDropsEmptiesAndDeduplicatesKeepingOrder() {
@@ -93,12 +92,12 @@ Prüfe das selbst am Code, bevor du es verschiebst.
 }
 ```
 
-- [ ] **Schritt 2: Rot laufen lassen**
+- [ ] **Step 2: Run it red**
 
 Run: `swift test --filter TagListTests`
-Erwartet: FAIL, `TagList` existiert nicht.
+Expected: FAIL, `TagList` doesn't exist.
 
-- [ ] **Schritt 3: Die Funktion**
+- [ ] **Step 3: The function**
 
 ```swift
 /// The one normalization every tag vocabulary in this app goes through:
@@ -123,21 +122,21 @@ public enum TagList {
 }
 ```
 
-- [ ] **Schritt 4: `Snippet` ruft auf statt zu wiederholen**
+- [ ] **Step 4: `Snippet` calls it instead of repeating it**
 
-In `Snippet.init?` die vier Zeilen ersetzen durch:
+In `Snippet.init?` replace the four lines with:
 
 ```swift
 self.tags = TagList.normalized(tags)
 ```
 
-Den Doc-Kommentar an `Snippet.tags` so anpassen, dass er auf `TagList`
-verweist, statt die Regel ein zweites Mal in Prosa zu beschreiben.
+Adjust the doc comment on `Snippet.tags` so it points to `TagList` instead
+of describing the rule a second time in prose.
 
-- [ ] **Schritt 5: Der Äquivalenz-Wächter**
+- [ ] **Step 5: The equivalence guard**
 
-Ein Test, der beide Wege gegen dieselben Eingaben vergleicht — er ist der
-Grund, warum diese Task existiert:
+A test comparing both paths against the same inputs — it's the reason this
+task exists:
 
 ```swift
 @Test func snippetTagsGoThroughTheSharedRule() {
@@ -155,7 +154,7 @@ Grund, warum diese Task existiert:
 }
 ```
 
-- [ ] **Schritt 6: Grün + volle Suite + Commit**
+- [ ] **Step 6: Green + full suite + commit**
 
 ```bash
 swift test --filter TagListTests
@@ -165,24 +164,24 @@ git commit -m "refactor(core): give both tag vocabularies one normalization"
 
 ---
 
-### Task 2: `tags` am `StoredSession`
+### Task 2: `tags` on `StoredSession`
 
-**Gemessener Ist-Zustand:** `StoredSession` hat einen **expliziten**
-`init(from:)` mit `private enum CodingKeys`. `paneVisibility` wird dort als
-`decodeIfPresent(…) ?? .filesOnly` gelesen — genau das Muster, das dieses
-Feld braucht. `groupID` ist der Präzedenzfall für ein Feld, das zur Sitzung
-gehört, aber **keine Verbindungseigenschaft** ist. Tags gehören in dieselbe
-Kategorie, **nicht** in `FieldValues`.
+**Measured current state:** `StoredSession` has an **explicit**
+`init(from:)` with `private enum CodingKeys`. `paneVisibility` is read there
+as `decodeIfPresent(…) ?? .filesOnly` — exactly the pattern this field
+needs. `groupID` is the precedent for a field that belongs to the session
+but is **not a connection property**. Tags belong in the same category,
+**not** in `FieldValues`.
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/StoredSession.swift`
 - Create: `Tests/macSCPCoreTests/StoredSessionTagsTests.swift`
 
 **Interfaces:**
-- Consumes: `TagList.normalized(_:)` aus Task 1
-- Produces: `StoredSession.tags: [String]`, Parameter `tags: [String] = []` in `init`
+- Consumes: `TagList.normalized(_:)` from Task 1
+- Produces: `StoredSession.tags: [String]`, parameter `tags: [String] = []` in `init`
 
-- [ ] **Schritt 1: Der Test zuerst — gegen eine wörtliche Alt-Datei**
+- [ ] **Step 1: Test first — against a literal legacy file**
 
 ```swift
 @Test func aStoredSessionWithoutTheTagsKeyDecodesAsUntagged() throws {
@@ -210,15 +209,15 @@ Kategorie, **nicht** in `FieldValues`.
 }
 ```
 
-- [ ] **Schritt 2: Rot laufen lassen**
+- [ ] **Step 2: Run it red**
 
 Run: `swift test --filter StoredSessionTagsTests`
-Erwartet: FAIL — `tags` existiert nicht (Compile-Fehler beim dritten Test,
-`session.tags` beim ersten).
+Expected: FAIL — `tags` doesn't exist (compile error on the third test,
+`session.tags` on the first).
 
-- [ ] **Schritt 3: Das Feld**
+- [ ] **Step 3: The field**
 
-Eigenschaft neben `paneVisibility`:
+Property beside `paneVisibility`:
 
 ```swift
 /// Free-form labels for the sidebar's tag filter. Normalized through
@@ -231,10 +230,10 @@ Eigenschaft neben `paneVisibility`:
 public var tags: [String] = []
 ```
 
-`init`: Parameter `tags: [String] = []`, zugewiesen als
+`init`: parameter `tags: [String] = []`, assigned as
 `self.tags = TagList.normalized(tags)`.
 
-`CodingKeys`: `tags` ergänzen.
+`CodingKeys`: add `tags`.
 
 `init(from:)`:
 
@@ -242,7 +241,7 @@ public var tags: [String] = []
 tags = TagList.normalized(try c.decodeIfPresent([String].self, forKey: .tags) ?? [])
 ```
 
-- [ ] **Schritt 4: Grün + volle Suite + Commit**
+- [ ] **Step 4: Green + full suite + commit**
 
 ```bash
 swift test --filter StoredSessionTagsTests
@@ -252,53 +251,51 @@ git commit -m "feat(core): let a saved session carry tags"
 
 ---
 
-### Task 3: Tags überleben Export und Import
+### Task 3: Tags survive export and import
 
-**Gemessener Ist-Zustand:** `ExportedSession` in
-`Sources/macSCPCore/Sessions/SessionExportCodec.swift` trägt
-`public var paneVisibility: PaneVisibility?`, listet es in seinen
-`CodingKeys` und schreibt es mit `encodeIfPresent`. Sieh dir an, was der
-Export mit `paneVisibility` **und** mit `groupID` tut, und mach es genauso.
-Schreib in den Bericht, was du vorgefunden hast.
+**Measured current state:** `ExportedSession` in
+`Sources/macSCPCore/Sessions/SessionExportCodec.swift` carries
+`public var paneVisibility: PaneVisibility?`, lists it in its
+`CodingKeys` and writes it with `encodeIfPresent`. Look at what the export
+does with `paneVisibility` **and** with `groupID`, and do the same. Write
+into the report what you found.
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/SessionExportCodec.swift`
-- Modify/Create: die zugehörigen Tests
+- Modify/Create: the associated tests
 
 **Interfaces:**
-- Consumes: `StoredSession.tags` aus Task 2
+- Consumes: `StoredSession.tags` from Task 2
 
-- [ ] **Schritt 1: Der Test zuerst**
+- [ ] **Step 1: Test first**
 
 ```swift
 @Test func exportRoundTripCarriesTags() throws {
     let session = StoredSession(name: "box", tags: ["docker", "web"])
-    let exported = ExportedSession(from: session)   // die tatsächliche
-                                                    // Bau-Stelle benutzen
+    let exported = ExportedSession(from: session)   // use the actual
+                                                    // construction site
     let data = try JSONEncoder().encode(exported)
     let restored = try JSONDecoder().decode(ExportedSession.self, from: data)
     #expect(restored.tags == ["docker", "web"])
 }
 
 @Test func anExportFileWithoutTheTagsKeyImportsAsUntagged() throws {
-    // Wörtliches Alt-JSON eines ExportedSession, ohne "tags".
-    // Die genauen Pflichtfelder aus dem Typ ablesen, nicht raten.
+    // Literal legacy JSON of an ExportedSession, without "tags".
+    // Read the exact required fields off the type, don't guess.
 }
 ```
 
-Den zweiten Test **ausformulieren**, sobald du die Pflichtfelder von
-`ExportedSession` gelesen hast — er ist der Migrationsnachweis und darf
-nicht als Skizze stehen bleiben.
+Write out the second test **in full** once you've read `ExportedSession`'s
+required fields — it's the proof of migration and must not stay a sketch.
 
-- [ ] **Schritt 2: Rot, dann Feld ergänzen**
+- [ ] **Step 2: Red, then add the field**
 
-`tags` an `ExportedSession` nach dem Muster von `paneVisibility`
-(inkl. `CodingKeys`, `decodeIfPresent`, `encodeIfPresent` bzw. `encode` —
-**wie der vorhandene Präzedenzfall es macht**, nicht wie du es lieber
-hättest). Beide Richtungen verdrahten: Sitzung → Export und Import →
-Sitzung.
+`tags` on `ExportedSession` following the `paneVisibility` pattern
+(incl. `CodingKeys`, `decodeIfPresent`, `encodeIfPresent` or `encode` —
+**as the existing precedent does it**, not as you'd rather have it). Wire
+both directions: session → export and import → session.
 
-- [ ] **Schritt 3: Grün + volle Suite + Commit**
+- [ ] **Step 3: Green + full suite + commit**
 
 ```bash
 swift test
@@ -307,20 +304,19 @@ git commit -m "feat(core): carry session tags through export and import"
 
 ---
 
-### Task 4: Was bei aktivem Tag sichtbar ist (Core)
+### Task 4: What's visible while a tag is active (Core)
 
-**Warum Core:** In P2 lag eine Anzeigeentscheidung im View-Body und war am
-Ende nur noch mit einem Quelltext-Wächter zu sichern, nachdem sie ein leeres
-Fenster erzeugen konnte. Diese Entscheidung wird von vornherein ein
-testbarer Typ.
+**Why Core:** In P2, a display decision lived in the view body and was in
+the end only held down by a source guard, after it had produced an empty
+window. This decision becomes a testable type from the start.
 
-**Gemessener Ist-Zustand:** `SessionListViewModel.sessions(inGroup:)`
-filtert `sessions.filter { $0.groupID == groupID }`. `StoredGroup` hat
-`id` und `name`. Die Sidebar rendert Gruppen als `Section` und daneben eine
-eigene Section „IMPORTIERT". `SnippetTagFilter` liegt in der **App**-Schicht
-(`SnippetsPresentation.swift`) und ist hier **nicht** wiederverwendbar — es
-beantwortet eine andere Frage (passt ein Snippet?) als diese (was zeigt die
-Liste?).
+**Measured current state:** `SessionListViewModel.sessions(inGroup:)`
+filters `sessions.filter { $0.groupID == groupID }`. `StoredGroup` has
+`id` and `name`. The sidebar renders groups as a `Section` and, next to
+it, its own section "IMPORTED". `SnippetTagFilter` lives in the **App**
+layer (`SnippetsPresentation.swift`) and is **not** reusable here — it
+answers a different question (does a snippet match?) than this one (what
+does the list show?).
 
 **Files:**
 - Create: `Sources/macSCPCore/Presentation/SidebarVisibility.swift`
@@ -354,7 +350,7 @@ public struct SidebarVisibility: Equatable, Sendable {
 }
 ```
 
-- [ ] **Schritt 1: Die Tests zuerst**
+- [ ] **Step 1: Tests first**
 
 ```swift
 private func session(_ name: String, group: UUID? = nil, tags: [String] = [])
@@ -414,29 +410,28 @@ private func session(_ name: String, group: UUID? = nil, tags: [String] = [])
 }
 ```
 
-- [ ] **Schritt 2: Rot laufen lassen**
+- [ ] **Step 2: Run it red**
 
 Run: `swift test --filter SidebarVisibilityTests`
-Erwartet: FAIL — `SidebarVisibility` existiert nicht.
+Expected: FAIL — `SidebarVisibility` doesn't exist.
 
-- [ ] **Schritt 3: Der Typ**
+- [ ] **Step 3: The type**
 
-`compute` filtert bei nicht-nil `activeTag` auf `tags.contains(activeTag)`
-(exakter Vergleich, wie `SnippetTagFilter.matches` es tut), lässt Gruppen
-ohne Treffer weg, setzt `showsImportedSection = (activeTag == nil)` und
-bestimmt `emptiness` aus (sind überhaupt Sitzungen da?) und (ist gefiltert
-und nichts übrig?).
+`compute` filters on `tags.contains(activeTag)` when `activeTag` is
+non-nil (exact comparison, the way `SnippetTagFilter.matches` does it),
+drops groups with no match, sets `showsImportedSection = (activeTag == nil)`
+and determines `emptiness` from (are there any sessions at all?) and (is it
+filtered and nothing is left?).
 
-`availableTags` sammelt alle Tags aller Sitzungen, dedupliziert und sortiert
-sie (`sorted()`, damit die Chip-Reihe stabil steht).
+`availableTags` collects all tags across all sessions, deduplicates and
+sorts them (`sorted()`, so the chip row stays stable).
 
-`resolvedTag` gibt `nil` zurück, wenn den Tag niemand mehr trägt.
+`resolvedTag` returns `nil` if nobody carries the tag anymore.
 
-**Die zweite Probe hier ausdrücklich stellen:** jede Behauptung, die du in
-den Doc-Kommentar schreibst, braucht einen Test, der sie beobachtet — oder
-sie darf nicht dort stehen.
+**Explicitly apply the second probe here:** every claim you write into the
+doc comment needs a test that observes it — or it must not be there.
 
-- [ ] **Schritt 4: Grün + volle Suite + Commit**
+- [ ] **Step 4: Green + full suite + commit**
 
 ```bash
 swift test --filter SidebarVisibilityTests
@@ -446,10 +441,10 @@ git commit -m "feat(core): decide what the sidebar shows while a tag is active"
 
 ---
 
-### Task 5: Tags im Verbindungsformular
+### Task 5: Tags in the connection form
 
-**Gemessener Ist-Zustand:** `SessionListViewModel.save` hat heute die
-Signatur
+**Measured current state:** `SessionListViewModel.save` today has the
+signature
 
 ```swift
 public func save(
@@ -460,34 +455,34 @@ public func save(
 ) -> StoredSession?
 ```
 
-Sie sucht eine bestehende Sitzung **über den Namen** und mutiert sie,
-sonst baut sie eine neue. `ConnectionFormView` (rund 1000 Zeilen) rendert
-das Namensfeld in einem `TextField` nahe dem Formularanfang; die
-Backend-Felder kommen aus dem generischen `SchemaFormView`. Ein Tag ist
-**kein** Schema-Feld und gehört neben den Namen, nicht in den Renderer.
+It looks for an existing session **by name** and mutates it, otherwise it
+builds a new one. `ConnectionFormView` (about 1000 lines) renders the name
+field in a `TextField` near the start of the form; the backend fields come
+from the generic `SchemaFormView`. A tag is **not** a schema field and
+belongs beside the name, not in the renderer.
 
-`SnippetTagField` (`Sources/MacSCPAppKit/SnippetTagField.swift`) ist ein
-`View` mit `@Binding var tags: [String]`. **Miss selbst nach, ob es sich
-ohne Änderung wiederverwenden lässt** — hängt es an Snippet-spezifischen
-Vorschlägen, dann trenne den Vorschlagsteil ab oder baue ein gleich
-aussehendes Feld, das dieselbe `TagList`-Regel benutzt. Was davon zutrifft,
-gehört in den Bericht.
+`SnippetTagField` (`Sources/MacSCPAppKit/SnippetTagField.swift`) is a
+`View` with `@Binding var tags: [String]`. **Measure for yourself whether
+it can be reused unchanged** — if it depends on snippet-specific
+suggestions, either split off the suggestion part or build a
+similarly-looking field that uses the same `TagList` rule. Whichever
+applies belongs in the report.
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/SessionListViewModel.swift`
 - Modify: `Sources/MacSCPAppKit/ConnectionFormView.swift`
-- Modify: alle vier `Localizable.strings`
-- Modify/Create: Tests
+- Modify: all four `Localizable.strings`
+- Modify/Create: tests
 
 **Interfaces:**
 - Consumes: `StoredSession.tags`, `TagList.normalized(_:)`
 - Produces: `save(… tags: [String] = [])`
 
-- [ ] **Schritt 1: Der VM-Test zuerst**
+- [ ] **Step 1: VM test first**
 
 ```swift
 @Test func savingCarriesTagsOntoTheStoredSession() throws {
-    // Vorhandenen VM-Testaufbau dieses Testtargets benutzen.
+    // Use this test target's existing VM setup.
     let saved = viewModel.save(name: "box", values: values, password: "",
                                tags: ["  docker ", "docker", "web"])
     #expect(saved?.tags == ["docker", "web"])
@@ -500,33 +495,33 @@ gehört in den Bericht.
 }
 ```
 
-Der zweite Test ist kein Beiwerk: `save` mutiert eine namensgleiche
-Sitzung, und ohne ihn bliebe offen, ob Tags dabei ersetzt oder ergänzt
-werden. Er pinnt „ersetzt".
+The second test is not extra: `save` mutates a same-named session, and
+without it whether tags are replaced or merged would stay open. It pins
+"replaced".
 
-- [ ] **Schritt 2: Rot, dann `save` erweitern**
+- [ ] **Step 2: Red, then extend `save`**
 
-Parameter `tags: [String] = []` **ans Ende** der Signatur, damit kein
-vorhandener Aufrufer bricht. Im Rumpf `session.tags = TagList.normalized(tags)`
-an derselben Stelle, an der `groupID` gesetzt wird.
+Parameter `tags: [String] = []` **at the end** of the signature, so no
+existing caller breaks. In the body, `session.tags = TagList.normalized(tags)`
+at the same spot `groupID` is set.
 
-- [ ] **Schritt 3: Das Formularfeld**
+- [ ] **Step 3: The form field**
 
-Ein Tag-Feld direkt unter dem Namensfeld, mit `L10n.string`-Beschriftung.
-Neue Schlüssel:
+A tag field directly under the name field, with an `L10n.string` label.
+New keys:
 
-- `form.tags.label` — „Tags"
-- `form.tags.help` — „Comma-separated. Used by the sidebar filter."
+- `form.tags.label` — "Tags"
+- `form.tags.help` — "Comma-separated. Used by the sidebar filter."
 
-Beide in **allen vier** Katalogen von `MacSCPAppKit`. Der Formularzustand
-hält `[String]`; die Umwandlung Text↔Liste macht das Feld, nicht der
-Formular-ViewModel.
+Both in **all four** catalogs of `MacSCPAppKit`. The form state holds
+`[String]`; the text↔list conversion is done by the field, not the form
+view model.
 
-Beim Bearbeiten einer bestehenden Sitzung wird das Feld mit deren Tags
-vorbelegt, und beim Speichern gehen sie an `save(… tags:)`. Prüfe beide
-Wege am Code, statt sie anzunehmen.
+When editing an existing session, the field is pre-filled with its tags,
+and on save they go to `save(… tags:)`. Verify both paths against the code
+rather than assuming them.
 
-- [ ] **Schritt 4: Katalog-Nachweis + volle Suite + Commit**
+- [ ] **Step 4: Catalog proof + full suite + commit**
 
 ```bash
 for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done
@@ -536,60 +531,59 @@ git commit -m "feat(app): tag a saved connection from its form"
 
 ---
 
-### Task 6: Die Sidebar — Chips, Ausblenden, Leer-Zustand
+### Task 6: The sidebar — chips, hiding, empty state
 
-**Gemessener Ist-Zustand:** `SessionSidebar` (rund 680 Zeilen) läuft
-ungefiltert durch `viewModel.sessions(inGroup:)`, rendert Gruppen als
-`Section(isExpanded:)` mit einem `Set<UUID>` im View-Zustand, hat eine
-eigene Section `importedSection` und **keinen Leer-Zustand**. Prüfe das
-selbst; weicht es ab, ist der Plan falsch.
+**Measured current state:** `SessionSidebar` (about 680 lines) runs
+unfiltered through `viewModel.sessions(inGroup:)`, renders groups as
+`Section(isExpanded:)` with a `Set<UUID>` in the view state, has its own
+`importedSection` section and **no empty state**. Check this for yourself;
+if it diverges, the plan is wrong.
 
-`SnippetTagFilterRow` und `SnippetTagFilterChip` in `SnippetsSheet.swift`
-sind `private` — sie sind die **optische** Vorlage, aber nicht direkt
-benutzbar. Entweder du hebst sie in eine geteilte Datei, oder du baust die
-Sidebar-Reihe danebendran. Entscheide bewusst und begründe es im Bericht;
-eine wörtliche Kopie ist die eine Option, die dieses Projekt nicht will.
+`SnippetTagFilterRow` and `SnippetTagFilterChip` in `SnippetsSheet.swift`
+are `private` — they are the **visual** template but not directly usable.
+Either lift them into a shared file, or build the sidebar's row alongside
+them. Decide deliberately and justify it in the report; a literal copy is
+the one option this project doesn't want.
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SessionSidebar.swift`
-- Modify: alle vier `Localizable.strings`
+- Modify: all four `Localizable.strings`
 - Create: `Tests/macSCPAppKitTests/SidebarFilterWiringTests.swift`
 
 **Interfaces:**
-- Consumes: `SidebarVisibility.compute/availableTags/resolvedTag` aus Task 4
+- Consumes: `SidebarVisibility.compute/availableTags/resolvedTag` from Task 4
 
-- [ ] **Schritt 1: Zustand + Chip-Reihe**
+- [ ] **Step 1: State + chip row**
 
-`@State private var activeTag: String?` in `SessionSidebar` — **nicht**
-persistiert, nicht in `SettingsStore`. Der Filter ist eine Sicht, keine
-Einstellung.
+`@State private var activeTag: String?` in `SessionSidebar` — **not**
+persisted, not in `SettingsStore`. The filter is a view, not a setting.
 
-Die Chip-Reihe steht über der Liste, speist sich aus
-`SidebarVisibility.availableTags(in: viewModel.sessions)` und zeigt gar
-nichts, solange keine Sitzung einen Tag trägt — eine leere Chip-Leiste über
-einer Liste ohne Tags wäre nur Rahmen.
+The chip row sits above the list, is fed from
+`SidebarVisibility.availableTags(in: viewModel.sessions)` and shows nothing
+at all as long as no session carries a tag — an empty chip bar above a
+tagless list would be nothing but a frame.
 
-Neue Schlüssel (alle vier Kataloge):
+New keys (all four catalogs):
 
-- `sidebar.filter.all` — „All"
-- `sidebar.empty.noSessions` — „No saved connections yet."
-- `sidebar.empty.noMatches` — „No connection has this tag."
-- `sidebar.empty.clearFilter` — „Show all"
+- `sidebar.filter.all` — "All"
+- `sidebar.empty.noSessions` — "No saved connections yet."
+- `sidebar.empty.noMatches` — "No connection has this tag."
+- `sidebar.empty.clearFilter` — "Show all"
 
-- [ ] **Schritt 2: Liste und Sections lesen aus `SidebarVisibility`**
+- [ ] **Step 2: List and sections read from `SidebarVisibility`**
 
-Ein `let visibility = SidebarVisibility.compute(sessions: viewModel.sessions,
-groups: viewModel.groups, activeTag: activeTag)` an **einer** Stelle, und
-Gruppen, Sitzungen, `importedSection` und Leer-Zustand lesen daraus.
+One `let visibility = SidebarVisibility.compute(sessions: viewModel.sessions,
+groups: viewModel.groups, activeTag: activeTag)` at **one** spot, and read
+groups, sessions, `importedSection` and the empty state from it.
 
-**Ausdrücklich nicht:** ein zweites `if` im Body, das `session.tags`
-direkt prüft. Genau diese Form — die Entscheidung noch einmal im View
-nachgebaut — war in P2 der Critical.
+**Explicitly not:** a second `if` in the body that checks `session.tags`
+directly. Exactly this shape — the decision rebuilt a second time in the
+view — was the Critical in P2.
 
-- [ ] **Schritt 3: Der Rückfall**
+- [ ] **Step 3: The fallback**
 
-Wenn der aktive Tag verschwindet (Sitzung gelöscht, Tag entfernt), fällt
-der Filter zurück:
+If the active tag disappears (session deleted, tag removed), the filter
+falls back:
 
 ```swift
 .onChange(of: viewModel.sessions) { _, sessions in
@@ -597,22 +591,21 @@ der Filter zurück:
 }
 ```
 
-- [ ] **Schritt 4: Der Wächter**
+- [ ] **Step 4: The guard**
 
-`SessionSidebar` lässt sich in diesem Projekt nicht instanziieren — es gibt
-kein View-Testwerkzeug. Deshalb ein Quelltext-Wächter nach dem Muster von
-`PaneRenderConditionGuardTests` und `PaneVisibilityWiringGuardTests`
-(beide in `Tests/macSCPAppKitTests/`): er prüft, dass die Sidebar ihre
-Sichtbarkeit aus `SidebarVisibility` liest und **nicht** irgendwo `.tags`
-direkt gegen `activeTag` hält.
+`SessionSidebar` cannot be instantiated in this project — there is no view
+test tool. So a source guard following the pattern of
+`PaneRenderConditionGuardTests` and `PaneVisibilityWiringGuardTests` (both
+in `Tests/macSCPAppKitTests/`): it checks that the sidebar reads its
+visibility from `SidebarVisibility` and **doesn't** hold `.tags` against
+`activeTag` directly anywhere.
 
-Beweise ihn: baue die Bedingung testweise zurück auf einen direkten
-`tags`-Vergleich, zeig den roten Lauf, stell es wieder her, zeig grün.
-**Dokumentiere seine blinden Flecken im eigenen Doc-Kommentar**, so ehrlich
-wie die beiden vorhandenen es tun — ein Wächter, der dichter verkauft wird
-als er ist, wäre schlechter als keiner.
+Prove it: temporarily revert the condition to a direct `tags` comparison,
+show the red run, restore it, show green. **Document its blind spots in
+its own doc comment**, as honestly as the two existing ones do — a guard
+sold as tighter than it is would be worse than none.
 
-- [ ] **Schritt 5: Katalog-Nachweis + volle Suite + Commit**
+- [ ] **Step 5: Catalog proof + full suite + commit**
 
 ```bash
 for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done
@@ -622,12 +615,12 @@ git commit -m "feat(app): filter the sidebar by host tag"
 
 ---
 
-### Task 7: Phasenabschluss
+### Task 7: Phase close-out
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-18-p3a-abschluss.md`
 
-- [ ] **Schritt 1: Messen**
+- [ ] **Step 1: Measure**
 
 ```bash
 swift test 2>&1 | tail -3
@@ -635,23 +628,21 @@ for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done
 MACSCP_VERSION="1.2.0-dev" MACSCP_BUILD="$(git rev-list --count HEAD)" ./scripts/package-app
 ```
 
-Den Build **im Hintergrund** starten und weiterarbeiten; danach prüfen:
-`lipo -archs` auf beide Binaries, beide Ressourcen-Bundles, alle vier
-`.lproj`, `plutil -lint` auf die Info.plist. **Die App wird nicht
-gestartet.**
+Start the build **in the background** and keep working; then check:
+`lipo -archs` on both binaries, both resource bundles, all four `.lproj`,
+`plutil -lint` on the Info.plist. **The app is not launched.**
 
-- [ ] **Schritt 2: Der Bericht**
+- [ ] **Step 2: The report**
 
-Er nennt die gemessenen Zahlen; was durch Tests gehalten wird und was nur
-durch Review (der Wächter aus Task 6 gehört ausdrücklich in die zweite
-Spalte, mit seinen blinden Flecken); was der Export mit dem neuen Feld tut
-und warum; ob `SnippetTagField` wiederverwendet wurde oder nicht und
-weshalb; und **ausdrücklich**, dass die GUI nicht gestartet wurde — mit der
-Liste dessen, was der Maintainer ansehen muss: die Chip-Reihe, das Tag-Feld
-im Formular, das Ausblenden von Gruppen und „IMPORTIERT" bei aktivem
-Filter, und beide Leer-Zustände.
+It states the measured numbers; what is held by tests and what only by
+review (the guard from Task 6 explicitly belongs in the second column,
+with its blind spots); what the export does with the new field and why;
+whether `SnippetTagField` was reused or not and why; and **explicitly**
+that the GUI was not launched — with the list of what the maintainer must
+look at: the chip row, the tag field in the form, the hiding of groups and
+"IMPORTED" while a filter is active, and both empty states.
 
-- [ ] **Schritt 3: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git commit -m "docs(app): record the host tags phase"
@@ -659,18 +650,18 @@ git commit -m "docs(app): record the host tags phase"
 
 ---
 
-## Selbstreview dieses Plans
+## Self-review of this plan
 
-**Spec-Abdeckung:** Eine Regel, zwei Vokabulare → Task 1. Feld neben
-`groupID`, `decodeIfPresent`, Standard `[]` → Task 2. Export/Import → Task 3.
-Chip-Filter, Ausblenden von Gruppen und „IMPORTIERT", Rückfall,
-Entscheidung in Core → Tasks 4 und 6. Beide Leer-Zustände → Tasks 4 und 6.
-Formularfeld → Task 5. Nicht persistierter Filterzustand → Task 6, Schritt 1.
+**Spec coverage:** One rule, two vocabularies → Task 1. Field beside
+`groupID`, `decodeIfPresent`, default `[]` → Task 2. Export/import → Task 3.
+Chip filter, hiding of groups and "IMPORTED", fallback, decision in Core →
+Tasks 4 and 6. Both empty states → Tasks 4 and 6. Form field → Task 5.
+Non-persisted filter state → Task 6, step 1.
 
-**Platzhalter:** Einer bleibt bewusst offen — der zweite Test in Task 3
-kann erst formuliert werden, wenn die Pflichtfelder von `ExportedSession`
-gelesen sind, und der Schritt sagt das ausdrücklich, statt es zu verstecken.
+**Placeholder:** One is deliberately left open — the second test in Task 3
+can only be written once `ExportedSession`'s required fields have been
+read, and the step says so explicitly instead of hiding it.
 
-**Typkonsistenz:** `TagList.normalized(_:)` wird in den Tasks 1, 2 und 5
-gleich geschrieben. `SidebarVisibility.compute/availableTags/resolvedTag`
-in den Tasks 4 und 6 gleich. `save(… tags:)` in Task 5 einmal definiert.
+**Type consistency:** `TagList.normalized(_:)` is written the same way in
+Tasks 1, 2 and 5. `SidebarVisibility.compute/availableTags/resolvedTag` the
+same way in Tasks 4 and 6. `save(… tags:)` defined once in Task 5.

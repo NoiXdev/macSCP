@@ -1,112 +1,112 @@
-# M18 — UI-Nachbesserungen (Suche, SSH-Keys-Sheet, Kontextmenü, Settings-Sidebar) — Design/Spec
+# M18 — UI polish (search, SSH Keys sheet, context menu, settings sidebar) — Design/Spec
 
-**Datum:** 2026-08-02
-**Status:** freigegeben (Brainstorm), bereit für writing-plans
+**Date:** 2026-08-02
+**Status:** approved (brainstorm), ready for writing-plans
 **Branch:** `develop`
-**Vorgänger:** M11k (FileSearch), M9a (Session-Export-Muster), M10a/M10b (Known-Hosts-/Login-Sets-Sheets), M11f (Hidden-Imports-Sheet), M17 (SSH-Key-Manager).
+**Predecessors:** M11k (FileSearch), M9a (session export pattern), M10a/M10b (Known Hosts/Login Sets sheets), M11f (Hidden Imports sheet), M17 (SSH key manager).
 
-## Ziel
+## Goal
 
-Vier zusammenhängende UI-Verbesserungen: (1) eine geteilte Suchleiste in allen Listen-Sheets, (2) die SSH-Schlüssel-Verwaltung aus den Einstellungen in ein eigenes Sheet (mit Import/Export), (3) ein Zeilen-Kontextmenü im Login-Sets-Sheet, (4) das Settings-Fenster als Sidebar-Navigation mit protokoll-spezifischen Bereichen.
+Four related UI improvements: (1) a shared search bar across all list sheets, (2) moving SSH key management out of settings into its own sheet (with import/export), (3) a row context menu in the Login Sets sheet, (4) the settings window as sidebar navigation with protocol-specific sections.
 
-## Ausgangslage (verifiziert)
+## Starting point (verified)
 
-- **Sheets:** `LoginSetsSheet` (List, Footer-Buttons New/Edit/Delete, **keine** Suche, **kein** Kontextmenü), `KnownHostsSheet` (Table, **eigene** Ad-hoc-Contains-Suche), `HiddenImportsSheet` (List, keine Suche), `AuditLogSheet` (List, keine Suche). Alle im 720×460-Rhythmus, präsentiert via `TabCommands`-Brücke (`showKnownHosts`/`showLogins`/`showHiddenImports`) + „Sessions"-Menüpunkte + `@State` + `.sheet(isPresented:)` in `ContentView`.
-- **Suche:** `FileSearch.compile(query:isRegex:) -> Result<FileSearchPredicate, FileSearchError>` + `FileSearchPredicate.matches(_ name: String) -> Bool` (Core, M11k, getestet). `FileSearchBar` ist die vorhandene, aber datei-listen-spezifische App-UI.
-- **SSH-Keys:** heute ein Settings-Tab (`SSHKeysSettingsTab`, M17) mit Liste + `GenerateKeySheet` + kopieren/exportieren/löschen; erreicht die Kern-APIs `ManagedKeyStore`/`SSHKeyGenerator`/`KeychainSecretStore`. Der „Schlüssel verwalten…"-Knopf (Formular/Login-Set-Editor) nutzt heute `SettingsLink`.
-- **Settings:** `SettingsView` = `TabView` mit 6 Tabs (General/Transfers/Open-with/Terminal/Shortcuts/SSH-Keys), feste `.frame(width: 460, height: 460)`. Tab-`struct`s sauber injiziert. `GeneralSettingsTab` überladen (Sprache/Hidden/Menübar/Spalten/Auto-Refresh/Updates). Kein `.searchable`-Muster im Projekt; kein SwiftUI-Fertigbaustein für Settings-Sidebar.
-- **Login-Set-Kontextmenü-Vorlage:** `SessionSidebar` hat bereits ein Zeilen-`.contextMenu` (Connect/Edit/Export/Rename/Delete).
-- **Sicherheit:** SSH-Key-Privatdateien liegen 0600 im App-Ordner; Passphrase im Keychain unter `key.id`; kein `~/.ssh`-Schreiben (M17-Invarianten bleiben).
+- **Sheets:** `LoginSetsSheet` (List, footer buttons New/Edit/Delete, **no** search, **no** context menu), `KnownHostsSheet` (Table, **its own** ad-hoc contains search), `HiddenImportsSheet` (List, no search), `AuditLogSheet` (List, no search). All in the 720×460 rhythm, presented via the `TabCommands` bridge (`showKnownHosts`/`showLogins`/`showHiddenImports`) + the "Sessions" menu items + `@State` + `.sheet(isPresented:)` in `ContentView`.
+- **Search:** `FileSearch.compile(query:isRegex:) -> Result<FileSearchPredicate, FileSearchError>` + `FileSearchPredicate.matches(_ name: String) -> Bool` (Core, M11k, tested). `FileSearchBar` is the existing App UI, but specific to file lists.
+- **SSH keys:** today a settings tab (`SSHKeysSettingsTab`, M17) with a list + `GenerateKeySheet` + copy/export/delete; reaches the core APIs `ManagedKeyStore`/`SSHKeyGenerator`/`KeychainSecretStore`. The „Schlüssel verwalten…"-button (form/login-set editor) currently uses `SettingsLink`.
+- **Settings:** `SettingsView` = `TabView` with 6 tabs (General/Transfers/Open-with/Terminal/Shortcuts/SSH-Keys), fixed `.frame(width: 460, height: 460)`. Tab `struct`s cleanly injected. `GeneralSettingsTab` overloaded (language/hidden/menu bar/columns/auto-refresh/updates). No `.searchable` pattern in the project; no ready-made SwiftUI building block for a settings sidebar.
+- **Login-set context-menu template:** `SessionSidebar` already has a row `.contextMenu` (Connect/Edit/Export/Rename/Delete).
+- **Security:** SSH key private files sit at 0600 in the App folder; passphrase in the keychain under `key.id`; no writing to `~/.ssh` (M17 invariants stay).
 
-## Entscheidungen (Maintainer, 2026-08-02)
+## Decisions (maintainer, 2026-08-02)
 
-1. **Scope:** M18 = Suche + SSH-Keys-Sheet + Login-Set-Kontextmenü + Settings-Sidebar. **Login-Set-Import/Export bleibt eigener Meilenstein M19** (verschlüsseltes Codec-Subsystem).
-2. **Suche:** volle `FileSearch.compile`-Mechanik (Enthält + optionaler Regex + Fehleranzeige), geteilte Komponente, angewandt auf **Login-Sets, Known-Hosts, Hidden-Imports, Audit-Log, SSH-Keys**.
-3. **SSH-Keys:** raus aus den Einstellungen, eigenes Sheet wie Logins/Known-Hosts; **mit Import** (vorgezogen aus M17-v2) und **privatem-Schlüssel-Export mit Warnung**; Zeilen-Kontextmenü inkl. **Umbenennen**.
-4. **Settings:** **Sidebar-Navigation** (macOS-15-Stil); „General" wird in **Allgemein** + **Ansicht** aufgeteilt; **Protokoll-Bereiche SSH/S3** mit protokoll-spezifischen Settings (presigned-Ablauf → S3, externes-Terminal-Ziel → SSH).
+1. **Scope:** M18 = search + SSH-Keys sheet + login-set context menu + settings sidebar. **Login-set import/export stays its own milestone M19** (encrypted codec subsystem).
+2. **Search:** the full `FileSearch.compile` mechanism (contains + optional regex + error display), shared component, applied to **Login Sets, Known Hosts, Hidden Imports, Audit Log, SSH Keys**.
+3. **SSH keys:** out of settings, its own sheet like Logins/Known Hosts; **with import** (pulled forward from M17-v2) and **private-key export with a warning**; row context menu incl. **rename**.
+4. **Settings:** **sidebar navigation** (macOS 15 style); „General" is split into **Allgemein** + **Ansicht**; **protocol sections SSH/S3** with protocol-specific settings (presigned expiry → S3, external-terminal target → SSH).
 
-## Architektur
+## Architecture
 
-### 1. Geteilte Such-Komponente (App)
+### 1. Shared search component (App)
 
-Neue App-View **`SheetSearchField`** (kompakter als `FileSearchBar`, ohne Filter/Jump-Picker — Sheets filtern immer):
-- Bindet `@Binding var text: String` + `@Binding var isRegex: Bool`; zeigt Suchfeld + Regex-Toggle + Fehlertext.
-- Liefert den kompilierten `FileSearchPredicate` an die Host-View (z. B. über eine `onChange`-abgeleitete `@State`, oder die Host-View ruft `FileSearch.compile` selbst mit `text`/`isRegex`). Leeres/whitespace-Query → matcht alles; ungültiges Regex → `FileSearchError` → Fehlertext, **keine** stille 0-Treffer-Liste.
-- Jedes Sheet filtert seine eigene Liste: `items.filter { predicate.matches(searchString(for: $0)) }` mit einem sheet-spezifischen `searchString`:
-  - Login-Sets: `"\(name) \(username) \(accessKeyID ?? "")"`
-  - Known-Hosts: `"\(host) \(fingerprint)"` (ersetzt die bestehende Contains-Suche)
-  - Hidden-Imports: `alias`/Host
-  - Audit-Log: Event-Zusammenfassung (Aktion + Host/Ziel)
-  - SSH-Keys: `"\(name) \(comment) \(fingerprint)"`
+New App view **`SheetSearchField`** (more compact than `FileSearchBar`, without filter/jump picker — sheets always filter):
+- Binds `@Binding var text: String` + `@Binding var isRegex: Bool`; shows a search field + regex toggle + error text.
+- Delivers the compiled `FileSearchPredicate` to the host view (e.g. via an `onChange`-derived `@State`, or the host view calls `FileSearch.compile` itself with `text`/`isRegex`). Empty/whitespace query → matches everything; invalid regex → `FileSearchError` → error text, **no** silent 0-match list.
+- Each sheet filters its own list: `items.filter { predicate.matches(searchString(for: $0)) }` with a sheet-specific `searchString`:
+  - Login Sets: `"\(name) \(username) \(accessKeyID ?? "")"`
+  - Known Hosts: `"\(host) \(fingerprint)"` (replaces the existing contains search)
+  - Hidden Imports: `alias`/host
+  - Audit Log: event summary (action + host/target)
+  - SSH Keys: `"\(name) \(comment) \(fingerprint)"`
 
-**Kein neuer Core-Code** — nur die App-View + fünf Einbindungen. Reine SwiftUI, build-verifiziert.
+**No new Core code** — just the App view + five integrations. Pure SwiftUI, build-verified.
 
-### 2. SSH-Keys-Verwaltung als eigenes Sheet (App)
+### 2. SSH key management as its own sheet (App)
 
-Neuer **`SSHKeysSheet`** (Struktur wie `LoginSetsSheet`): Titel, `SheetSearchField`, Liste (Name, Typ-Badge, Fingerprint-Kurz, Kommentar, Datum, Schloss; RSA/ECDSA „nicht verbindbar"-Hinweis), Footer-Buttons, feste 720×460. Der M17-`SSHKeysSettingsTab`-Inhalt + `GenerateKeySheet` ziehen um; `ManagedKeyStore`/`SSHKeyGenerator`/Keychain-Kern unverändert.
+New **`SSHKeysSheet`** (structure like `LoginSetsSheet`): title, `SheetSearchField`, list (name, type badge, short fingerprint, comment, date, lock; RSA/ECDSA „nicht verbindbar" notice), footer buttons, fixed 720×460. The M17 `SSHKeysSettingsTab` content + `GenerateKeySheet` move over; `ManagedKeyStore`/`SSHKeyGenerator`/keychain core unchanged.
 
-**Aktionen (Footer + Zeilen-`.contextMenu`):**
-- **Generieren…** (M17, unverändert)
-- **Importieren…** — `fileImporter` wählt eine OpenSSH-Privatschlüssel-Datei; in den App-Key-Ordner kopieren (0600); Typ + Fingerprint via `ssh-keygen -l -f`, Public-Key via `ssh-keygen -y -f` (bei passphrase-geschütztem Key mit Passphrase-Eingabe) ableiten; Name/Kommentar abfragen; optionale Passphrase in den Keychain unter neuer `key.id`; `ManagedKey` mit `add`. Fehlschlag räumt kopierte Datei + Keychain-Slot auf (kein verwaistes Artefakt).
-- **Public-Key kopieren** / **Public-Key exportieren…** (M17, unverändert)
-- **Privaten Schlüssel exportieren…** — kopiert die private Key-Datei an einen `NSSavePanel`-Ort, **hinter einer Bestätigung mit Warnhinweis** („Der private Schlüssel verlässt den geschützten Speicher"); Passphrase-Verschlüsselung der Datei bleibt erhalten.
-- **Umbenennen…** — Name/Kommentar eines Keys ändern (`ManagedKey` upsert unter derselben `id`; Datei/Keychain unberührt).
-- **Löschen…** (M17, `store.remove(id:secrets:)`).
+**Actions (footer + row `.contextMenu`):**
+- **Generate…** (M17, unchanged)
+- **Import…** — `fileImporter` selects an OpenSSH private-key file; copy into the App key folder (0600); derive type + fingerprint via `ssh-keygen -l -f`, public key via `ssh-keygen -y -f` (with a passphrase prompt for a passphrase-protected key); ask for name/comment; optional passphrase into the keychain under a new `key.id`; `ManagedKey` with `add`. On failure, clean up the copied file + keychain slot (no orphaned artifact).
+- **Copy public key** / **Export public key…** (M17, unchanged)
+- **Export private key…** — copies the private key file to an `NSSavePanel` location, **behind a confirmation with a warning** („Der private Schlüssel verlässt den geschützten Speicher"); the file's passphrase encryption is preserved.
+- **Rename…** — change a key's name/comment (`ManagedKey` upsert under the same `id`; file/keychain untouched).
+- **Delete…** (M17, `store.remove(id:secrets:)`).
 
-**Erreichbarkeit (gleiche Brücke wie Logins/Known-Hosts):** neuer `TabCommands.showSSHKeys` + „Sessions"-Menüpunkt **„SSH-Schlüssel…"** + `@State showSSHKeysSheet` + `.sheet(isPresented:)` in `ContentView`. Der M17-„Schlüssel verwalten…"-Knopf (Formular/Login-Set-Editor) ruft jetzt **direkt** dieses Sheet (ersetzt `SettingsLink`). Der Settings-Tab „SSH Keys" wird aus `SettingsView` entfernt.
+**Reachability (same bridge as Logins/Known Hosts):** new `TabCommands.showSSHKeys` + a „Sessions" menu item **„SSH-Schlüssel…"** + `@State showSSHKeysSheet` + `.sheet(isPresented:)` in `ContentView`. The M17 „Schlüssel verwalten…" button (form/login-set editor) now calls this sheet **directly** (replacing `SettingsLink`). The settings tab „SSH Keys" is removed from `SettingsView`.
 
-**Sicherheit:** M17-Invarianten bleiben — Privatdateien 0600, Passphrase nur Keychain unter `key.id`, kein `~/.ssh`-Schreiben, `ssh-keygen` per Argument-Array; der private-Key-Export ist der einzige bewusste Weg aus dem Schutzraum, hinter Bestätigung.
+**Security:** M17 invariants stay — private files 0600, passphrase only in the keychain under `key.id`, no writing to `~/.ssh`, `ssh-keygen` via an argument array; the private-key export is the only deliberate way out of the protected space, behind a confirmation.
 
-### 3. Login-Set-Zeilen-Kontextmenü (App)
+### 3. Login-set row context menu (App)
 
-An `LoginSetsSheet.row` ein `.contextMenu { Bearbeiten…; Löschen… }`, das dieselben Closures wie die Footer-Buttons aufruft (`editorTarget` bzw. Lösch-`confirmationDialog`). Rechtsklick selektiert die Zeile zuerst. Footer-Buttons bleiben (additiv). Keine neuen L10n-Keys (Edit/Delete existieren).
+On `LoginSetsSheet.row`, a `.contextMenu { Bearbeiten…; Löschen… }` that calls the same closures as the footer buttons (`editorTarget` and the delete `confirmationDialog` respectively). A right click selects the row first. Footer buttons stay (additive). No new L10n keys (Edit/Delete already exist).
 
-### 4. Settings-Fenster → Sidebar-Navigation (App)
+### 4. Settings window → sidebar navigation (App)
 
-`SettingsView` von `TabView` auf **`NavigationSplitView`** umstellen: links `List` der Bereiche (mit SF-Symbolen), rechts Detail = Inhalt des gewählten Bereichs. Bestehende Bereichs-`struct`s als Detail wiederverwendet; `GeneralSettingsTab` in zwei aufgeteilt.
+Switch `SettingsView` from `TabView` to **`NavigationSplitView`**: on the left a `List` of sections (with SF Symbols), on the right the detail = the content of the selected section. Existing section `struct`s reused as the detail; `GeneralSettingsTab` split into two.
 
-**Bereiche:**
-- **Allgemein** — Sprache/Relaunch, Menübar-Icon, Updates
-- **Ansicht** — versteckte Dateien, Datei-Spalten, Auto-Refresh
-- **Übertragung** — Parallelität, Bandbreite *(protokoll-neutral)*
-- **Öffnen mit** — Editor/Endungs-Regeln
-- **Terminal** — Font/Größe/Cursor des eingebauten Terminals
-- **Kurzbefehle** — Tastenkürzel-Übersicht
-- **Protokolle** (Gruppe):
-  - **SSH** — externes-Terminal-Ziel (aus „Terminal" hierher); Knopf „SSH-Schlüssel verwalten…" öffnet das Sheet (Abschnitt 2)
-  - **S3** — presigned-URL-Standard-Ablauf (aus „Übertragung" hierher); Heimat für künftige S3-Settings
+**Sections:**
+- **Allgemein** — language/relaunch, menu bar icon, updates
+- **Ansicht** — hidden files, file columns, auto-refresh
+- **Übertragung** — parallelism, bandwidth *(protocol-neutral)*
+- **Öffnen mit** — editor/extension rules
+- **Terminal** — font/size/cursor of the built-in terminal
+- **Kurzbefehle** — keyboard-shortcut overview
+- **Protokolle** (group):
+  - **SSH** — external-terminal target (moved here from „Terminal"); a „SSH-Schlüssel verwalten…" button opens the sheet (section 2)
+  - **S3** — presigned-URL default expiry (moved here from „Übertragung"); home for future S3 settings
 
-Der SSH-Keys-Bereich entfällt (jetzt Sheet). Fenstergröße ans Split-Layout angepasst (breiter). **Idle-CPU-Rauchtest** vor Auslieferung (M11n-Lektion: SwiftUI-Layout-Container auf macOS 26 können in eine Endlosschleife laufen).
+The SSH-Keys section is dropped (now a sheet). Window size adjusted to the split layout (wider). **Idle-CPU smoke test** before shipping (M11n lesson: SwiftUI layout containers on macOS 26 can run into an infinite loop).
 
-**L10n:** neue Bereichstitel („Allgemein"/„Ansicht"/„Protokolle"/„SSH"/„S3"), Such-Placeholder/Regex/Fehler, Import/privat-Export/Umbenennen/Warnung-Strings, Menüpunkt „SSH-Schlüssel…" — EN/DE/FR/PL, typografische Zeichen, FR/PL KI-generiert.
+**L10n:** new section titles („Allgemein"/„Ansicht"/„Protokolle"/„SSH"/„S3"), search placeholder/regex/error, import/private-export/rename/warning strings, „SSH-Schlüssel…" menu item — EN/DE/FR/PL, typographic characters, FR/PL AI-generated.
 
 ## Tests
 
-- **Core:** kein neuer Core-Code außer ggf. einem kleinen `searchString`-Helfer pro Modell (falls in Core); die Such-Mechanik (`FileSearch`) ist bereits getestet. Falls der SSH-Key-**Import** eine Core-Funktion bekommt (Datei kopieren + `ssh-keygen`-Ableitung), ein Unit-/Integrationstest gegen echtes `ssh-keygen` (wie M17): ein per `ssh-keygen` erzeugter Key wird importiert → Fingerprint/Typ/Public-Key stimmen, lädt via `SSHPrivateKeyLoader`.
-- **App:** build-verifiziert + **Runtime-Idle-CPU-Smoke** (v. a. die neue Settings-Sidebar + die fünf Such-Sheets).
-- **L10n:** Katalog-Parität (bestehender Test-Wächter).
+- **Core:** no new Core code except possibly a small `searchString` helper per model (if in Core); the search mechanism (`FileSearch`) is already tested. If SSH key **import** gets a Core function (copy file + `ssh-keygen` derivation), a unit/integration test against real `ssh-keygen` (like M17): a key generated via `ssh-keygen` is imported → fingerprint/type/public key match, loads via `SSHPrivateKeyLoader`.
+- **App:** build-verified + **runtime idle-CPU smoke test** (especially the new settings sidebar + the five search sheets).
+- **L10n:** catalog parity (existing test guard).
 
-## Sicherheit / Invarianten
+## Security / invariants
 
-- SSH-Key-Invarianten aus M17 unverändert (0600/0700, Passphrase nur Keychain unter `key.id`, kein `~/.ssh`-Schreiben, `ssh-keygen` Argument-Array).
-- Privater-Schlüssel-Export nur hinter Bestätigung + Warnhinweis; Import räumt bei Fehlschlag auf (kein verwaistes Artefakt).
-- Keine neue externe Dependency.
+- SSH key invariants from M17 unchanged (0600/0700, passphrase only in the keychain under `key.id`, no writing to `~/.ssh`, `ssh-keygen` argument array).
+- Private-key export only behind a confirmation + warning; import cleans up on failure (no orphaned artifact).
+- No new external dependency.
 
-## Nicht in M18 (→ später)
+## Not in M18 (→ later)
 
-- **Login-Set-Import/Export** (verschlüsseltes Codec-Subsystem) — eigener Meilenstein **M19**.
-- `authorized_keys`-Ausrollen (M17-v2).
-- WebDAV/weitere Protokoll-Settings-Bereiche (kommen mit dem jeweiligen Protokoll-Meilenstein).
+- **Login-set import/export** (encrypted codec subsystem) — its own milestone **M19**.
+- Rolling out `authorized_keys` (M17-v2).
+- WebDAV/further protocol settings sections (come with the respective protocol milestone).
 
-## Betroffene Dateien
+## Affected files
 
-- `Sources/MacSCPApp/SheetSearchField.swift` — **create** (geteilte Suchleiste).
-- `Sources/MacSCPApp/LoginSetsSheet.swift` — **modify** (Suche + Zeilen-Kontextmenü).
-- `Sources/MacSCPApp/KnownHostsSheet.swift` — **modify** (Suche auf `SheetSearchField` vereinheitlichen).
-- `Sources/MacSCPApp/HiddenImportsSheet.swift`, `Sources/MacSCPApp/AuditLogSheet.swift` — **modify** (Suche).
-- `Sources/MacSCPApp/SSHKeysSheet.swift` — **create** (aus `SSHKeysSettingsTab` extrahiert + Import/privat-Export/Umbenennen + Suche).
-- `Sources/MacSCPApp/SettingsView.swift` — **modify** (Sidebar-Navigation, General-Split, Protokoll-Bereiche, SSH-Keys-Tab entfernt).
-- `Sources/MacSCPApp/ContentView.swift`, `Sources/MacSCPApp/MacSCPApp.swift` — **modify** (`showSSHKeys`-Brücke + „SSH-Schlüssel…"-Menüpunkt + `.sheet`).
-- `Sources/MacSCPApp/ConnectionFormView.swift`, `Sources/MacSCPApp/LoginSetsSheet.swift` — **modify** („Schlüssel verwalten…" → Sheet statt `SettingsLink`).
-- `Sources/macSCPCore/SSH/…` — **modify/create** ggf. SSH-Key-Import-Helfer + Test.
+- `Sources/MacSCPApp/SheetSearchField.swift` — **create** (shared search bar).
+- `Sources/MacSCPApp/LoginSetsSheet.swift` — **modify** (search + row context menu).
+- `Sources/MacSCPApp/KnownHostsSheet.swift` — **modify** (unify search onto `SheetSearchField`).
+- `Sources/MacSCPApp/HiddenImportsSheet.swift`, `Sources/MacSCPApp/AuditLogSheet.swift` — **modify** (search).
+- `Sources/MacSCPApp/SSHKeysSheet.swift` — **create** (extracted from `SSHKeysSettingsTab` + import/private-export/rename + search).
+- `Sources/MacSCPApp/SettingsView.swift` — **modify** (sidebar navigation, General split, protocol sections, SSH-Keys tab removed).
+- `Sources/MacSCPApp/ContentView.swift`, `Sources/MacSCPApp/MacSCPApp.swift` — **modify** (`showSSHKeys` bridge + „SSH-Schlüssel…" menu item + `.sheet`).
+- `Sources/MacSCPApp/ConnectionFormView.swift`, `Sources/MacSCPApp/LoginSetsSheet.swift` — **modify** („Schlüssel verwalten…" → sheet instead of `SettingsLink`).
+- `Sources/macSCPCore/SSH/…` — **modify/create** possibly an SSH key import helper + test.
 - `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings` — **modify**.

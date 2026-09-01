@@ -1,145 +1,140 @@
-# M30 — Der abgestandene Session-Slot beim Login-Set-Wechsel (Design)
+# M30 — The stale session slot on login-set switch (design)
 
-Stand 2026-08-19. Ersetzt den am 2026-08-09 in `479d018` zurückgenommenen
-Anlauf.
+As of 2026-08-19. Replaces the attempt reverted on 2026-08-09 in `479d018`.
 
-## Ausgangslage
+## Starting point
 
-Eine Sitzung, die an ein Login-Set gebunden wird, behält ihr eigenes
-Passwort im Schlüsselbund. Schaltet der Nutzer später auf manuell zurück und
-lässt das Feld leer, wird nichts geschrieben — und der nächste Connect nimmt
-den alten Wert.
+A session bound to a login set keeps its own password in the keychain. If
+the user later switches back to manual and leaves the field empty, nothing
+gets written — and the next connect picks up the old value.
 
-Vier Anläufe sind daran gescheitert. Jeder wollte den Slot **beim Binden**
-löschen, jede Review-Runde schloss den zuvor benannten Verlustweg und
-lieferte einen neuen. Die Revert-Nachricht zählt drei der vier Wege
-namentlich auf; einer davon fragte `LoginSet.authKind == .agent`, obwohl der
-Kommentar daneben wörtlich davor warnt, genau diese Ersetzung vorzunehmen. Die
-Commit-Nachricht des Reverts fasst es zusammen: der Defekt ist real, aber
-mild — ein unsichtbarer Slot, dessen Wert noch funktioniert —, und dagegen
-stand jedes Mal ein Pfad, der die einzige Kopie eines Zugangsdatums
-vernichtet.
+Four attempts have failed at this. Each wanted to delete the slot **at
+bind time**, and each review round closed the previously named loss path
+and delivered a new one. The revert message names three of the four paths;
+one of them checked `LoginSet.authKind == .agent`, even though the comment
+right next to it warns in so many words against making exactly that
+substitution. The revert's commit message sums it up: the defect is real
+but mild — an invisible slot whose value still works — and every time,
+what stood against it was a path that destroys the only copy of a
+credential.
 
-## Was vorher gemessen wurde
+## What was measured beforehand
 
-Vier Messungen, die den Entwurf tragen. Ohne sie wäre dieselbe Falle noch
-einmal aufgestellt worden:
+Four measurements that carry the design. Without them, the same trap would
+have been set again:
 
-1. **Das Formular lädt das Geheimnis nie aus dem Schlüsselbund.** Ein leeres
-   Feld beim Speichern heißt projektweit „unverändert lassen" — eine
-   bewusste, dokumentierte Regel.
-2. **`visibleSecretField(for session:)` weiß von der Set-Bindung nichts.**
-   Es liest nur die eigenen Werte der Sitzung; der Lösch-Zweig in
-   `updateSession` (der für ssh-agent aufräumt) greift hier also nicht. Der
-   Slot überlebt tatsächlich.
-3. **Der Edit-Save-Validator läuft mit `requireSecrets: false`** — genau
-   deshalb geht das leere Feld heute durch.
-4. **`requireSecrets: true` verlangt nur sichtbare, als erforderlich
-   deklarierte Geheimfelder.** Die SSH-Passphrase ist ausdrücklich optional,
-   Agent-Logins zeigen gar kein Geheimfeld. Es gibt also keine
-   Falschablehnung — die Annahme, an der dieser Ansatz sonst gescheitert
-   wäre.
+1. **The form never loads the secret from the keychain.** An empty field
+   at save time means "leave unchanged" project-wide — a deliberate,
+   documented rule.
+2. **`visibleSecretField(for session:)` knows nothing of the set
+   binding.** It only reads the session's own values; the delete branch in
+   `updateSession` (which cleans up for ssh-agent) therefore does not
+   apply here. The slot genuinely survives.
+3. **The edit-save validator runs with `requireSecrets: false`** — exactly
+   why the empty field goes through today.
+4. **`requireSecrets: true` demands only visible secret fields declared as
+   required.** The SSH passphrase is explicitly optional, and agent
+   logins show no secret field at all. So there is no false rejection —
+   the assumption on which this approach would otherwise have failed.
 
-## Der Schnitt
+## The cut
 
-Der Befund zerfällt in zwei Schäden:
+The finding splits into two harms:
 
-- **Schaden 1:** Ein Geheimnis, das der Nutzer für abgelöst hält, liegt
-  weiter im Schlüsselbund — unsichtbar, unbenutzt, ohne Verfallsdatum.
-- **Schaden 2:** Beim Zurückschalten auf manuell wird es stillschweigend
-  wieder aktiv.
+- **Harm 1:** A secret the user considers superseded stays in the
+  keychain — invisible, unused, with no expiry.
+- **Harm 2:** Switching back to manual silently reactivates it.
 
-**M30 behebt Schaden 2. Schaden 1 bleibt bewusst offen** (Maintainer-
-Entscheidung 2026-08-19). Alle vier gescheiterten Anläufe zielten auf
-Schaden 1 — per Löschen in dem Moment, in dem das Löschen am gefährlichsten
-ist, weil das Set die einzige Kopie halten kann.
+**M30 fixes harm 2. Harm 1 stays deliberately open** (maintainer decision
+2026-08-19). All four failed attempts targeted harm 1 — by deleting at the
+exact moment deletion is most dangerous, because the set may hold the only
+copy.
 
-## Die Regel
+## The rule
 
-Beim Verlassen des Set-Modus bedeutet ein leeres Geheimfeld **nicht**
-„unverändert", sondern ist ein Validierungsfehler. Der bestehende Validator
-sagt das mit der Meldung, die er für dieses Feld ohnehin deklariert.
+On leaving set mode, an empty secret field means **not** "unchanged" but a
+validation error. The existing validator says so with the message it
+already declares for that field.
 
-In `ConnectionViewModel.validateForEditSave()` ist die Geheimnis-Pflicht
-damit keine Konstante mehr, sondern folgt aus dem Übergang:
+In `ConnectionViewModel.validateForEditSave()`, the secret requirement is
+therefore no longer a constant but follows from the transition:
 
 ```swift
 let leftLoginSet = editingOriginal.loginSetID != nil && loginMode == .manual
 if let violation = descriptor.firstViolation(in: values, requireSecrets: leftLoginSet) { … }
 ```
 
-Symmetrisch für den Jump, über `editingOriginal.jump?.loginSetID` und
-`jumpLoginMode`; `validateJump(requireSecret:)` trägt den Parameter bereits.
-Ein sitzungsreferenzierender Jump (`jumpSourceMode == .session`) kehrt dort
-ohnehin früh zurück und besitzt kein eigenes Geheimnis, der Fall kann also
-nicht greifen.
+Symmetrically for the jump, via `editingOriginal.jump?.loginSetID` and
+`jumpLoginMode`; `validateJump(requireSecret:)` already carries the
+parameter. A session-referencing jump (`jumpSourceMode == .session`)
+already returns early there and has no secret of its own, so the case
+cannot arise.
 
-**Die Änderung enthält keinen `delete`-Aufruf.** Der getippte Wert
-überschreibt den alten Slot über den vorhandenen Schreibpfad. Die vier
-Verlustwege sind damit nicht bewacht, sondern baulich ausgeschlossen — das
-ist der eigentliche Unterschied zum zurückgenommenen Anlauf.
+**The change contains no `delete` call.** The typed value overwrites the
+old slot via the existing write path. The four loss paths are thus not
+guarded but structurally excluded — that is the actual difference from the
+reverted attempt.
 
-## Warum die Regel im Validator sitzt
+## Why the rule sits in the validator
 
-Validierung gehört in den Validator. `validateForEditSave` ist die eine
-Funktion, die ein Edit-Speichern seine Sitzung zusammenbauen lässt; die
-Aufrufstellen im Formular gehen beide durch sie hindurch. Ein künftiger
-Aufrufer kann die Regel deshalb nicht vergessen — dieselbe Begründung wie
-beim Jump-Guard in `updateSession`.
+Validation belongs in the validator. `validateForEditSave` is the one
+function through which an edit save assembles its session; both call sites
+in the form go through it. A future caller therefore cannot forget the
+rule — the same reasoning as the jump guard in `updateSession`.
 
-`editingOriginal` ist dort nachweislich nicht-nil, nicht bloß „bisher immer":
-`mode` ist `private(set)`, `beginEditing` ist die einzige Stelle, die
-`.edit` setzt, und sie setzt `editingOriginal` davor. Der bestehende
-Doc-Kommentar führt das bereits aus.
+`editingOriginal` is provably non-nil there, not merely "always has been
+so far": `mode` is `private(set)`, `beginEditing` is the only place that
+sets `.edit`, and it sets `editingOriginal` before that. The existing doc
+comment already lays this out.
 
-Die Alternative — die Regel in `SessionListViewModel.updateSession`, das den
-vorherigen Zustand ebenfalls kennt — wurde verworfen: dort müsste ein neuer
-Ablehnungspfad durch die Persistenzschicht wachsen, für eine Frage, die die
-Validierung schon beantworten kann.
+The alternative — putting the rule in `SessionListViewModel.updateSession`,
+which also knows the previous state — was rejected: a new rejection path
+would have to grow through the persistence layer there, for a question
+validation can already answer.
 
-## Randfälle
+## Edge cases
 
-| Fall | Verhalten |
+| Case | Behavior |
 |---|---|
-| Set → manuell, Passwort-Auth, Feld leer | abgelehnt, Passwortfeld benannt |
-| Set → manuell, Passwort getippt | gespeichert, alter Wert überschrieben |
-| Set → manuell, Schlüssel-Auth ohne Passphrase | gespeichert (Passphrase ist optional) |
-| Set → manuell, Agent-Auth | gespeichert (kein Geheimfeld sichtbar) |
-| Set A → Set B | unverändert, kein manueller Modus im Spiel |
-| Manuelle Sitzung, kein Modus-Wechsel, Feld leer | gespeichert — „leer = unverändert" bleibt intakt |
+| Set → manual, password auth, field empty | rejected, password field named |
+| Set → manual, password typed | saved, old value overwritten |
+| Set → manual, key auth without passphrase | saved (passphrase is optional) |
+| Set → manual, agent auth | saved (no secret field visible) |
+| Set A → Set B | unchanged, no manual mode in play |
+| Manual session, no mode change, field empty | saved — "empty = unchanged" stays intact |
 
-### Die andere Tür: das Set wird gelöscht
+### The other door: the set gets deleted
 
-Eine Sitzung verlässt den Set-Modus auch, wenn ihr Login-Set gelöscht wird.
-Dieser Pfad ist **bereits richtig** und wird nicht angefasst: er schreibt das
-Geheimnis des Sets in den Slot der Sitzung, bevor er `loginSetID` nullt. Der
-alte Wert wird also überschrieben, nicht abgestanden zurückgelassen — hier
-entsteht der Befund gar nicht. Nachgemessen 2026-08-19; ohne diese Messung
-wäre es die naheliegendste Lücke im Umfang von M30.
+A session also leaves set mode when its login set is deleted. This path is
+**already correct** and is not touched: it writes the set's secret into
+the session's slot before nulling `loginSetID`. The old value is thus
+overwritten, not left stale — the finding does not arise here at all.
+Remeasured 2026-08-19; without that measurement it would have been the
+most obvious gap in M30's scope.
 
-## Der Preis
+## The cost
 
-Wer das Set verlässt und sein altes Passwort behalten wollte, muss es einmal
-neu tippen. Das ist die Gegenleistung dafür, dass „leer" an dieser Stelle
-nicht mehr zwei Dinge bedeuten kann. Bewusst so entschieden, nicht übersehen.
+Anyone who leaves the set and wanted to keep their old password has to
+type it in again once. That is the price of "empty" no longer being able
+to mean two things at this spot. Decided deliberately, not overlooked.
 
 ## Tests
 
-Sechs Fälle, einer je Zeile der Randfall-Tabelle, plus die beiden
-Jump-Formen von Zeile 1 und 2.
+Six cases, one per row of the edge-case table, plus the two jump forms of
+rows 1 and 2.
 
-Die **Konstant-Rückgabe-Probe** ist erfüllt: Zeile 1 wird rot, wenn
-`requireSecrets` hart auf `false` steht, Zeile 6 wird rot, wenn es hart auf
-`true` steht. Die Regel ist damit in beide Richtungen festgenagelt, nicht
-nur in der, die der Fix herstellt.
+The **constant-return probe** is satisfied: row 1 goes red if
+`requireSecrets` is hardcoded to `false`, row 6 goes red if it is
+hardcoded to `true`. The rule is thus pinned in both directions, not only
+the one the fix establishes.
 
-Zeile 3 und 4 sind die Falschablehnungs-Wächter: sie halten Messung 4 fest,
-damit ein künftiger Umbau der Feldschemata — etwa eine Passphrase, die
-erforderlich wird — hier auffällt statt beim Nutzer.
+Rows 3 and 4 are the false-rejection guards: they pin down measurement 4,
+so that a future rework of the field schemas — say, a passphrase that
+becomes required — surfaces here instead of for the user.
 
-## Was offen bleibt
+## What remains open
 
-Schaden 1: der eigene Slot einer Sitzung, die gebunden **ist**, wird nicht
-angefasst. Ebenso unberührt bleiben die im Revert genannten Nachbarn
-`applyMerge` und die Jump-Bindung, die mit `try?` lesen und trotzdem
-löschen — sie gehören zu Schaden 1 und zu keinem Pfad, den M30 anfasst.
+Harm 1: the own slot of a session that **is** bound is not touched.
+Likewise untouched are the neighbors named in the revert, `applyMerge` and
+the jump binding, which read with `try?` and delete anyway — they belong
+to harm 1 and to no path M30 touches.

@@ -1,112 +1,111 @@
-# M11d — Externes Terminal (Design)
+# M11d — External Terminal (Design)
 
-Datum: 2026-07-29 · Status: vom Maintainer freigegeben („ja los gehts")
+Date: 2026-07-29 · Status: approved by the maintainer ("go ahead")
 
-## Ziel
+## Goal
 
-Die SSH-Sitzung wahlweise im eingebauten Terminal ODER in einer externen
-Terminal-App öffnen (Terminal.app, iTerm, frei wählbare App).
+Open the SSH session either in the built-in terminal OR in an external
+terminal app (Terminal.app, iTerm, a freely chosen app).
 
-**Maintainer-Entscheidungen (2026-07-29):**
+**Maintainer decisions (2026-07-29):**
 
-1. Bei Verbindungen mit gespeichertem PASSWORT wird trotzdem geöffnet;
-   `ssh` fragt dort selbst. Beim ersten Mal ein Hinweis mit „nicht mehr
-   anzeigen". Das Passwort verlässt NIE den Schlüsselbund — kein
-   Weiterreichen, kein Kopieren in die Zwischenablage (ausdrücklich
-   abgelehnt: die Zwischenablage ist für jede laufende App lesbar).
-2. Start über ein kurzlebiges `.command`-Skript + `open -a`, NICHT über
+1. For connections with a saved PASSWORD, it opens anyway;
+   `ssh` asks there itself. The first time, a notice with "don't show
+   again". The password NEVER leaves the keychain — no
+   passing it along, no copying to the clipboard (explicitly
+   rejected: the clipboard is readable by any running app).
+2. Start via a short-lived `.command` script + `open -a`, NOT via
    AppleScript.
 
-## 1. Befehlsbau (Core, pur)
+## 1. Command building (Core, pure)
 
 - `SSHCommandBuilder.arguments(for config: SSHConnectionConfig) -> [String]`
-  — reine Funktion, liefert die `ssh`-ARGUMENTLISTE (kein String):
-  - `-p <port>` nur wenn `port != 22`
+  — pure function, returns the `ssh` ARGUMENT LIST (not a string):
+  - `-p <port>` only when `port != 22`
   - `-l <username>`
-  - `-i <keyPath>` nur bei `authKind == .privateKey`
-  - `-J <user>@<host>[:<port>]` wenn ein Jump gesetzt ist (Port nur wenn
-    != 22). Der Jump ist zu diesem Zeitpunkt bereits aufgelöst — bei
-    einem Session-referenzierten Jump (M11a) liefert die App die
-    aufgelösten Werte.
-  - Agent-Auth (`.agent`) braucht KEIN Argument (`ssh` findet den Agent
-    über `SSH_AUTH_SOCK` selbst).
-  - zuletzt der Host.
-- Passwörter tauchen NIRGENDS auf (weder Argument noch Umgebung).
-- `SSHCommandBuilder.shellCommand(for:) -> String` setzt jedes Argument
-  EINZELN in Single-Quotes und maskiert enthaltene Quotes nach dem
-  POSIX-Muster (`'` ⇒ `'\''`). Damit sind Leerzeichen und Sonderzeichen
-  in Pfaden/Benutzernamen kein Einfallstor.
+  - `-i <keyPath>` only with `authKind == .privateKey`
+  - `-J <user>@<host>[:<port>]` if a jump is set (port only when
+    != 22). The jump is already resolved by this point — for a
+    session-referenced jump (M11a), the App supplies the
+    resolved values.
+  - Agent auth (`.agent`) needs NO argument (`ssh` finds the agent
+    via `SSH_AUTH_SOCK` itself).
+  - the host last.
+- Passwords appear NOWHERE (neither as an argument nor in the environment).
+- `SSHCommandBuilder.shellCommand(for:) -> String` puts every argument
+  INDIVIDUALLY in single quotes and escapes contained quotes per the
+  POSIX pattern (`'` ⇒ `'\''`). This closes off spaces and special
+  characters in paths/usernames as an attack vector.
 
-## 2. Skript + Start (App)
+## 2. Script + start (App)
 
-- `TerminalScriptWriter` (App-Schicht, aber der INHALT kommt aus einer
-  reinen Core-Funktion `SSHCommandBuilder.scriptContents(for:)`):
-  Shebang `#!/bin/sh`, Selbstlöschung (`rm -f -- "$0"` unmittelbar vor
-  dem `exec`, damit das Skript auch bei langer Sitzung nicht liegen
-  bleibt), dann `exec ssh <quoted args>`.
-- Ablage: `<temp>/macscp-terminal/<uuid>.command`, Rechte 0700 (nur der
-  Benutzer). Sweep beim App-Start wie die Editor-Temp-Dateien aus M5e
-  (dasselbe Muster, eigener Unterordner).
+- `TerminalScriptWriter` (App layer, but the CONTENT comes from a
+  pure Core function `SSHCommandBuilder.scriptContents(for:)`):
+  shebang `#!/bin/sh`, self-deletion (`rm -f -- "$0"` immediately before
+  the `exec`, so the script doesn't linger even for a long session),
+  then `exec ssh <quoted args>`.
+- Location: `<temp>/macscp-terminal/<uuid>.command`, permissions 0700 (only
+  the user). Swept on App start like the editor temp files from M5e
+  (the same pattern, its own subfolder).
 - Start: `NSWorkspace.shared.open([scriptURL], withApplicationAt: appURL,
-  configuration:)` bzw. `open -a`-Äquivalent. Funktioniert mit JEDER
-  Terminal-App; KEINE AppleScript-Automatisierung, daher KEINE
-  zusätzliche TCC-/Automation-Berechtigung nötig (die App ist nicht
-  sandboxed, läuft aber mit Hardened Runtime — eine AppleScript-Lösung
-  bräuchte `com.apple.security.automation.apple-events` plus
-  Nutzer-Zustimmung und app-spezifische Skripte).
+  configuration:)`, i.e. the `open -a` equivalent. Works with ANY
+  terminal app; NO AppleScript automation, hence NO
+  extra TCC/automation permission needed (the App is not
+  sandboxed, but runs under Hardened Runtime — an AppleScript solution
+  would need `com.apple.security.automation.apple-events` plus
+  user consent and app-specific scripts).
 
-## 3. Einstellung + Bedienung
+## 3. Setting + operation
 
 - `SettingsStore.terminalTarget: TerminalTarget`
   (`enum TerminalTarget: String, Codable`: `builtIn`, `terminalApp`,
   `iTerm`, `custom`) plus `customTerminalAppPath: String?`.
-  Vorwärtskompatibel (alte `settings.json` ⇒ `builtIn`).
-- Terminal-Tab der Einstellungen: Auswahl `Eingebaut | Terminal.app |
-  iTerm | Eigene App…` (bei „Eigene App" ein `fileImporter` auf
-  `/Applications`, gespeichert wird der Pfad).
-- Die Einstellung bestimmt, was **⌘T** und der Toolbar-Knopf tun.
-- ZUSÄTZLICH immer beide Wege explizit erreichbar: ein Menüeintrag
-  „Im externen Terminal öffnen" (auch bei `builtIn`) und — bei
-  eingestelltem externen Ziel — bleibt das eingebaute Terminal über
-  einen eigenen Eintrag erreichbar. Niemand verliert eine Fähigkeit
-  durch die Einstellung.
-- Passwort-Verbindungen: öffnen trotzdem; beim ERSTEN Mal ein Hinweis
-  („macSCP kann das gespeicherte Passwort nicht an ein externes Terminal
-  übergeben — `ssh` fragt dort selbst danach.") mit „Nicht mehr
-  anzeigen", persistiert als `externalTerminalPasswordHintShown: Bool`.
+  Forward compatible (old `settings.json` ⇒ `builtIn`).
+- Settings' terminal tab: selection `Built-in | Terminal.app |
+  iTerm | Custom App…` (for "custom app" a `fileImporter` on
+  `/Applications`, the path is what's stored).
+- The setting determines what **⌘T** and the toolbar button do.
+- ADDITIONALLY both paths are always explicitly reachable: a menu item
+  "Open in External Terminal" (even with `builtIn`) and — with
+  an external target configured — the built-in terminal stays reachable via
+  its own item. Nobody loses a capability because of the setting.
+- Password connections: open anyway; the FIRST time a notice
+  ("macSCP can't hand the saved password to an external terminal —
+  `ssh` will ask you for it there.") with "Don't show
+  again", persisted as `externalTerminalPasswordHintShown: Bool`.
 
-## 4. Fehler ehrlich
+## 4. Errors, honestly
 
-- Gewählte App nicht vorhanden (deinstalliert, Pfad ungültig) ⇒ konkrete
-  Meldung mit dem Namen/Pfad; KEIN stiller Rückfall auf eine andere App
-  und KEIN stiller Wechsel auf das eingebaute Terminal.
-- Skript-Schreibfehler ⇒ eigene Meldung.
-- Beides sind eigene typisierte Fälle, keine Sammel-Fehlermeldung.
+- Chosen app not present (uninstalled, invalid path) ⇒ a concrete
+  message with the name/path; NO silent fallback to another app
+  and NO silent switch to the built-in terminal.
+- Script write failure ⇒ its own message.
+- Both are their own typed cases, not a catch-all error message.
 
 ## 5. Tests
 
-- Argumentbau: Passwort-Auth (nur `-l` + Host), Key-Auth (`-i`),
-  Agent-Auth (kein Extra-Argument), Port 22 vs. abweichend, Jump mit und
-  ohne abweichenden Port, Jump + Key gleichzeitig.
-- Quoting: Leerzeichen im Key-Pfad, Single-Quote im Benutzernamen,
-  Semikolon/Backtick im Host (Ergebnis muss unschädlich sein).
-- Skript-Inhalt: Shebang, Selbstlöschung vor `exec`, exakt ein `exec ssh`,
-  kein Passwort-Vorkommen.
-- KEIN Test startet einen Prozess oder öffnet eine App.
-- Settings: Vorwärtskompatibilität (altes JSON ⇒ `builtIn`), Roundtrip
-  aller Fälle inkl. `custom` + Pfad.
+- Argument building: password auth (only `-l` + host), key auth (`-i`),
+  agent auth (no extra argument), port 22 vs. non-default, jump with and
+  without a non-default port, jump + key at the same time.
+- Quoting: space in the key path, single quote in the username,
+  semicolon/backtick in the host (the result must be harmless).
+- Script content: shebang, self-deletion before `exec`, exactly one `exec ssh`,
+  no password occurring.
+- NO test starts a process or opens an app.
+- Settings: forward compatibility (old JSON ⇒ `builtIn`), roundtrip
+  of all cases incl. `custom` + path.
 
-## 6. Aufteilung
+## 6. Breakdown
 
-T1 Core (Argumentbau, Quoting, Skript-Inhalt) → T2 App (Settings-Auswahl,
-Start, Menüeinträge, Passwort-Hinweis, Fehlerfälle, Sweep, EN/DE) →
-T3 Abschluss. KEIN Release.
+T1 Core (argument building, quoting, script content) → T2 App (settings
+selection, start, menu items, password notice, error cases, sweep, EN/DE) →
+T3 wrap-up. NO release.
 
-## 7. Bewusst NICHT in M11d
+## 7. Deliberately NOT in M11d
 
-Kein Weiterreichen von Passwörtern (auch nicht über Zwischenablage,
-Umgebungsvariable, `sshpass` o. Ä.); kein AppleScript und keine
-app-spezifische Automatisierung; kein Öffnen im aktuellen
-Arbeitsverzeichnis des Remote-Panes (Backlog: `-t "cd … && exec $SHELL"`);
-keine Übernahme der Terminal-Darstellungseinstellungen (Schrift/Cursor
-gelten weiter nur fürs eingebaute Terminal).
+No passing along of passwords (not via clipboard,
+environment variable, `sshpass` or similar either); no AppleScript and no
+app-specific automation; no opening in the remote pane's current
+working directory (backlog: `-t "cd … && exec $SHELL"`);
+no adoption of the terminal appearance settings (font/cursor
+continue to apply only to the built-in terminal).

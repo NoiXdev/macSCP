@@ -1,92 +1,90 @@
-# P4 — Kommentar-Wahrheitsaudit (Pilot)
+# P4 — Comment truth audit (pilot)
 
-**Anlass:** In fünf Phasen hintereinander (P2, P3a, P3c, P3e, P3f, P3h) hat
-die Gesamtprüfung Kommentare gefunden, die etwas behaupten, das der Code
-nicht tut. Immer dieselbe Sorte: Aussagen über **Aufrufer**, über
-**Aufrufstellen**, über **Einzigkeit**.
+**Trigger:** Across five phases in a row (P2, P3a, P3c, P3e, P3f, P3h) the
+full review found comments that assert something the code does not do.
+Always the same kind: statements about **callers**, about **call sites**,
+about **uniqueness**.
 
-## Messung
+## Measurement
 
-38 % der Zeilen in `Sources/` sind Kommentar (16.183 von 42.880). 5.558
-Kommentarzeilen nennen einen anderen Bezeichner in Backticks; 331 behaupten
-etwas über Aufrufer oder Einzigkeit. Das Suchmuster war zu eng — in zwei der
-drei Pilotdateien fand der Prüfer mehr, als es geschätzt hatte (39 statt 28,
-42 statt 17). Die 331 sind eine Untergrenze.
+38% of the lines in `Sources/` are comments (16,183 of 42,880). 5,558
+comment lines name another identifier in backticks; 331 assert something
+about callers or uniqueness. The search pattern was too narrow — in two of
+the three pilot files the reviewer found more than it had estimated (39
+instead of 28, 42 instead of 17). The 331 is a lower bound.
 
-## Pilot über drei Dateien
+## Pilot across three files
 
-| Datei | Zuletzt umgebaut | Behauptungen | falsch |
+| File | Last restructured | Claims | wrong |
 |---|---|---|---|
-| `SessionListViewModel` | M24, seither still | 34 | **0** |
-| `ContentView` | diese Woche mehrfach | 42 | **8** |
-| `ConnectionViewModel` | laufend, M22 → P3g | 39 | **9** |
-| **Summe** | | **115** | **17 (15 %)** |
+| `SessionListViewModel` | M24, quiet since | 34 | **0** |
+| `ContentView` | several times this week | 42 | **8** |
+| `ConnectionViewModel` | ongoing, M22 → P3g | 39 | **9** |
+| **Total** | | **115** | **17 (15%)** |
 
-**Kommentare verrotten nicht mit dem Alter, sondern mit der Bewegung des
-Codes, den sie beschreiben.** Die seit einem Meilenstein unveränderte Datei
-war fehlerfrei, die beiden laufend umgebauten lagen bei rund einem Fünftel.
+**Comments do not rot with age, but with the movement of the code they
+describe.** The file unchanged since a milestone was error-free, the two
+under ongoing restructuring sat at around a fifth.
 
-Alle 17 Falschstellen folgen demselben Mechanismus: eine Extraktion, eine
-Umbenennung oder ein neuer Aufrufer verändert die Wahrheit über eine
-*andere* Datei — und der Kommentar dort taucht in keinem Diff auf. Zwei
-Belege:
+All 17 wrong spots follow the same mechanism: an extraction, a rename, or
+a new caller changes the truth about a *different* file — and the comment
+there appears in no diff. Two examples:
 
-- `buildJumpConfig()` sagte „only caller is `connect()`". Das wurde falsch,
-  als P3c `resolveConfigWithoutDialing()` herauszog und einen zweiten
-  Aufrufer schuf — in derselben Woche, durch dieselbe Hand.
-- Die Umbenennung `connectStored` → `connect(in:stored:)` (`2153a47`) zog
-  die Kommentare in ihrer Nähe mit, die zwei entfernteren derselben Datei
-  nicht.
+- `buildJumpConfig()` said "only caller is `connect()`". That became false
+  when P3c pulled out `resolveConfigWithoutDialing()` and created a second
+  caller — in the same week, by the same hand.
+- The rename `connectStored` → `connect(in:stored:)` (`2153a47`) carried
+  along the comments near it, not the two further away in the same file.
 
-## Der eigentliche Befund: die Korrekturrunden
+## The actual finding: the correction rounds
 
-| Runde | Änderungen | davon falsch |
+| Round | Changes | of which wrong |
 |---|---|---|
-| Korrektur der 17 Befunde | 17 | 3 neu falsch + 3 angrenzende übersehen |
-| Nachbesserung dieser 6 | 6 | 4 falsch |
-| Dritte Runde über diese 4 | 4 | 1 falsch |
-| Vierte Runde über diese 1 | 1 | 0 — bestätigt |
+| Correcting the 17 findings | 17 | 3 newly wrong + 3 adjacent ones missed |
+| Fixing these 6 | 6 | 4 wrong |
+| Third round over these 4 | 4 | 1 wrong |
+| Fourth round over this 1 | 1 | 0 — confirmed |
 
-Eine Korrekturrunde produziert dieselbe Fehlerquote wie das Problem, das
-sie behebt. Sie macht denselben Fehler wie der Entwickler, der Code
-verschiebt: **sie prüft, was sie anfasst, nicht, was davon abhängt.**
+A correction round produces the same error rate as the problem it fixes.
+It makes the same mistake as the developer moving the code: **it checks
+what it touches, not what depends on it.**
 
-Der Gegenleser hat das Muster über alle Runden isoliert:
+The counter-reader isolated the pattern across all rounds:
 
-> **Jeder einzelne Folgefehler saß in einer Zahl oder einer Aufzählung.
-> Prosa ohne Kardinalität blieb fehlerfrei.**
+> **Every single follow-on error sat in a number or an enumeration. Prose
+> without cardinality stayed error-free.**
 
-Runde 1: drei Zähl-/Listenfehler. Runde 2: zwei Zählfehler plus eine falsch
-adressierte Liste (der Absatz *neben* dem beanstandeten wurde geändert, die
-falsche Aufrufer-Liste blieb stehen — mit Vollzugsmeldung). Runde 3: wieder
-eine Zahl. Der letzte Fehler ist das Musterbeispiel: der Grep, der den
-dritten Aufrufer auflistete, stand beim Schreiben von „two paths" bereits
-auf dem Schirm.
+Round 1: three count/list errors. Round 2: two count errors plus one
+misdirected list (the paragraph *next to* the flagged one was changed, the
+wrong caller list stayed as it was — with a completion report). Round 3:
+another number. The last error is the textbook case: the grep that listed
+the third caller was already on screen while "two paths" was being
+written.
 
-Der Grund liegt nahe. „Drei Aufrufstellen" ist eine Behauptung über den
-Rest des Projekts, die beim Schreiben plausibel klingt und nur durch
-Nachzählen widerlegbar ist. Ein Satz über die Absicht einer Stelle lässt
-sich dagegen aus der Stelle selbst beurteilen.
+The reason is close at hand. "Three call sites" is a claim about the rest
+of the project that sounds plausible while writing it and is only
+refutable by recounting. A sentence about a spot's intent, by contrast,
+can be judged from the spot itself.
 
-## Ergebnis
+## Outcome
 
-17 falsche Behauptungen korrigiert, über vier Runden mit unabhängigem
-Gegenlesen nach jeder. Über den gesamten Durchgang wurden **null
-Nicht-Kommentarzeilen** geändert (mechanisch geprüft). Suite unverändert
-grün, 2139 Tests in 188 Suiten.
+17 wrong claims corrected, across four rounds with independent
+counter-reading after each. Across the entire pass, **zero non-comment
+lines** were changed (checked mechanically). Suite unchanged and green,
+2139 tests in 188 suites.
 
-## Was NICHT gemacht wird
+## What is NOT done
 
-**Kein Rundumschlag über die restlichen ~216 Behauptungen** in den 94
-kleineren Dateien. Bei 0 % Fehlern in der stillen Datei und dieser
-Fehlerquote pro Korrekturrunde wäre der erwartete Schaden größer als der
-Nutzen. Sie gehören geprüft, wenn die jeweilige Datei ohnehin umgebaut
-wird — dann ist der Kontext da, in dem sich Wahrheit beurteilen lässt.
+**No sweep over the remaining ~216 claims** in the 94 smaller files. At
+0% errors in the quiet file and this error rate per correction round, the
+expected damage would exceed the benefit. They should be checked when the
+respective file gets restructured anyway — that is when the context
+exists in which truth can be judged.
 
-**Kein CI-Wächter gegen tote Namen**, jedenfalls nicht in der zuerst
-angedachten Form. Eine Messung zeigte, dass die auffälligen Kandidaten
-(`SSHKeysSettingsTab`, `TransferViewModel`) **absichtliche historische
-Verweise** sind — „removed in M18/T6" ist wahr, nicht faul. Mechanisch ist
-das nicht von einer vergessenen Umbenennung zu trennen; ein solcher Wächter
-hätte eine hohe Falsch-Positiv-Rate und würde nach der dritten Ausnahme
-abgeschaltet.
+**No CI guard against dead names**, at least not in the form first
+considered. A measurement showed that the conspicuous candidates
+(`SSHKeysSettingsTab`, `TransferViewModel`) are **deliberate historical
+references** — "removed in M18/T6" is true, not stale. Mechanically that
+cannot be told apart from a forgotten rename; such a guard would have a
+high false-positive rate and would get switched off after the third
+exception.

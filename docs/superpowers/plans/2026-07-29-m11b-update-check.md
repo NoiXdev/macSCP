@@ -1,32 +1,32 @@
-# M11b — Update-Prüfung Implementation Plan
+# M11b — Update check implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** macSCP erfährt von neuen Versionen — Abgleich der Bundle-Version gegen das neueste GitHub-Release, Menüeintrag für die Prüfung von Hand, stille Automatik höchstens einmal täglich, Hinweis mit Link zur Release-Seite. Kein Auto-Download.
+**Goal:** macSCP learns about new versions — comparing the bundle version against the newest GitHub release, a menu entry for a manual check, silent automatic checking at most once daily, a notice with a link to the release page. No auto-download.
 
-**Architecture:** Reiner `AppVersion`-SemVer-Typ + `UpdateChecker` hinter einem injizierbaren `ReleaseFetcher` (produktiv `GitHubReleaseFetcher` auf `URLSession`), plus eine reine Intervall-Funktion; die App liest die Bundle-Version, verdrahtet Menü, Dialog, Settings-Schalter und die Start-Automatik. Kein Test geht ins echte Netz (Mock-Fetcher + `URLProtocol`-Stub).
+**Architecture:** A pure `AppVersion` SemVer type + `UpdateChecker` behind an injectable `ReleaseFetcher` (production `GitHubReleaseFetcher` on `URLSession`), plus a pure interval function; the App reads the bundle version and wires up the menu, dialog, settings toggle, and startup automation. No test touches the real network (mock fetcher + `URLProtocol` stub).
 
 **Tech Stack:** Swift 6 / `.swiftLanguageMode(.v5)`, Swift Testing, Foundation URLSession, SwiftUI/AppKit.
 
 ## Global Constraints
 
-- Spec: `docs/superpowers/specs/2026-07-29-m11b-update-check-design.md` — bindend. Branch: **develop**.
-- KEIN Auto-Download/Installer/Sparkle; die App öffnet höchstens die Release-Seite im Browser.
-- Automatik zeigt NUR bei einem Fund etwas; kein Fund und jeder Fehler bleiben still. Von Hand ausgelöst wird IMMER ein Ergebnis gezeigt.
-- Der Zeitstempel der letzten Prüfung wird nach JEDEM Versuch gesetzt (auch bei Fehlern).
-- Kein Token, keine authentifizierten Anfragen, keine Nutzerdaten im Request (nur die übliche URL + `Accept` + `User-Agent`).
-- Unparsbare/fehlende lokale Version ⇒ ehrliches „Version unbekannt", NIE eine Update-Behauptung.
-- KEIN Test darf eine echte Netzwerkverbindung aufbauen (Mock-Fetcher bzw. `URLProtocol`-Stub).
-- `SettingsStore`-Erweiterungen vorwärtskompatibel (alte `settings.json` liest Defaults).
-- Core bleibt bundle-frei: die Bundle-Version liest die App-Schicht und reicht sie in den Checker.
-- Alle neuen UI-Texte EN/DE in BEIDEN App-Katalogen; Code + Kommentare NUR Englisch; keine neuen Dependencies.
-- Conventional Commits (Englisch), Footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- `swift build` + volle `swift test` nach jedem Task grün (Ausgangslage 622 Tests / 45 Suiten); gated Suiten in T3; Tests SYNCHRON im Vordergrund; TDD rot→grün für Core.
-- KEIN Release, kein Merge nach main.
+- Spec: `docs/superpowers/specs/2026-07-29-m11b-update-check-design.md` — binding. Branch: **develop**.
+- NO auto-download/installer/Sparkle; the app opens the release page in the browser at most.
+- Automatic checking shows something ONLY on a find; no find and every error stay silent. A manually triggered check ALWAYS shows a result.
+- The timestamp of the last check gets set after EVERY attempt (errors included).
+- No token, no authenticated requests, no user data in the request (only the usual URL + `Accept` + `User-Agent`).
+- Unparsable/missing local version ⇒ an honest "version unknown", NEVER an update claim.
+- NO test may open a real network connection (mock fetcher or `URLProtocol` stub).
+- `SettingsStore` extensions forward-compatible (an old `settings.json` reads defaults).
+- Core stays bundle-free: the App layer reads the bundle version and passes it into the checker.
+- All new UI text EN/DE in BOTH App catalogs; code + comments English ONLY; no new dependencies.
+- Conventional Commits (English), footer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- `swift build` + full `swift test` green after every task (baseline 622 tests / 45 suites); gated suites in T3; tests SYNCHRONOUS in the foreground; TDD red→green for Core.
+- NO release, no merge to main.
 
 ## Schedule
 
-T1 (Core: AppVersion + UpdateChecker + Fetcher + Intervall) → T2 (App: Settings, Automatik, Menü, Dialog, L10n) → T3 (README + Abschluss, Koordinator).
+T1 (Core: AppVersion + UpdateChecker + Fetcher + interval) → T2 (App: settings, automation, menu, dialog, L10n) → T3 (README + closeout, coordinator).
 
 ---
 
@@ -34,26 +34,26 @@ T1 (Core: AppVersion + UpdateChecker + Fetcher + Intervall) → T2 (App: Setting
 
 **Files:**
 - Create: `Sources/macSCPCore/Updates/AppVersion.swift`, `Sources/macSCPCore/Updates/UpdateChecker.swift`, `Sources/macSCPCore/Updates/GitHubReleaseFetcher.swift`
-- Test: `Tests/macSCPCoreTests/AppVersionTests.swift`, `Tests/macSCPCoreTests/UpdateCheckerTests.swift`, `Tests/macSCPCoreTests/GitHubReleaseFetcherTests.swift` (alle neu)
+- Test: `Tests/macSCPCoreTests/AppVersionTests.swift`, `Tests/macSCPCoreTests/UpdateCheckerTests.swift`, `Tests/macSCPCoreTests/GitHubReleaseFetcherTests.swift` (all new)
 
 **Interfaces:**
-- Produces (T2 verlässt sich exakt hierauf):
-  - `AppVersion: Comparable, Equatable, Sendable, CustomStringConvertible` mit `init?(_ string: String)`
+- Produces (T2 relies on this exactly):
+  - `AppVersion: Comparable, Equatable, Sendable, CustomStringConvertible` with `init?(_ string: String)`
   - `ReleaseInfo: Equatable, Sendable` (`tag: String`, `url: URL`)
   - `protocol ReleaseFetcher: Sendable { func latestRelease() async throws -> ReleaseInfo }`
   - `GitHubReleaseFetcher: ReleaseFetcher` (`init(session: URLSession = .shared)`)
   - `UpdateCheckError: Error, Equatable, Sendable` (`offline`, `httpStatus(Int)`, `rateLimited`, `malformedResponse`)
   - `UpdateCheckResult: Equatable, Sendable` (`upToDate(current: AppVersion)`, `updateAvailable(latest: AppVersion, current: AppVersion, url: URL)`, `unknownLocalVersion`, `failed(UpdateCheckError)`)
   - `UpdateChecker` (`init(fetcher: any ReleaseFetcher, currentVersion: String?)`, `func check() async -> UpdateCheckResult`)
-  - `UpdateSchedule.shouldCheck(now: Date, lastCheck: Date?, enabled: Bool) -> Bool` (reine Funktion, 24-h-Regel)
+  - `UpdateSchedule.shouldCheck(now: Date, lastCheck: Date?, enabled: Bool) -> Bool` (pure function, 24 h rule)
 
-**Verhaltens-Anforderungen (Spec §1/§2, bindend):**
-1. `AppVersion`: akzeptiert `1.2.3` und `v1.2.3`; Vorab-Kennung nach `-`; Build-Metadaten nach `+` werden abgeschnitten und ignoriert; alles andere (leer, `abc`, `1.2`, `1.2.x`) ⇒ nil. Vergleich: major→minor→patch numerisch; gleiche Zahlen ⇒ Version MIT Vorab-Kennung ist kleiner als ohne; zwei Vorab-Kennungen feldweise (Felder an `.` getrennt; rein numerische Felder numerisch, sonst lexikografisch; weniger Felder ⇒ kleiner). `description` gibt die normalisierte Form ohne `v` zurück.
-2. `UpdateChecker.check()`: `currentVersion` nil oder unparsbar ⇒ `.unknownLocalVersion` OHNE Netzzugriff (der Fetcher wird nicht gerufen — im Test über einen zählenden Mock beweisen). Sonst Fetcher rufen; Tag unparsbar ⇒ `.failed(.malformedResponse)`; `latest > current` ⇒ `.updateAvailable`, sonst `.upToDate`. Geworfene `UpdateCheckError` werden durchgereicht; jeder ANDERE Fehler ⇒ `.failed(.offline)` (URLSession wirft für fehlende Verbindung `URLError`; die Zuordnung passiert im Fetcher, der Checker fängt nur den Rest ab).
-3. `GitHubReleaseFetcher`: GET auf `https://api.github.com/repos/NoiXdev/macSCP/releases/latest`, Header `Accept: application/vnd.github+json` und `User-Agent` beginnend mit `macSCP/`; `timeoutInterval` 10 s. Antwort 200 ⇒ JSON mit `tag_name` und `html_url` lesen (fehlt eins ⇒ `malformedResponse`). 403 oder 429 MIT Header `x-ratelimit-remaining: 0` ⇒ `rateLimited`; sonstige Nicht-200 ⇒ `httpStatus(code)`. `URLError` ⇒ `offline`.
-4. `UpdateSchedule.shouldCheck`: `enabled == false` ⇒ false; `lastCheck == nil` ⇒ true; sonst `now.timeIntervalSince(lastCheck) >= 24*3600`.
+**Behavioral requirements (spec §1/§2, binding):**
+1. `AppVersion`: accepts `1.2.3` and `v1.2.3`; pre-release tag after `-`; build metadata after `+` is stripped and ignored; anything else (empty, `abc`, `1.2`, `1.2.x`) ⇒ nil. Comparison: major→minor→patch numeric; equal numbers ⇒ a version WITH a pre-release tag is less than one without; two pre-release tags compare field by field (fields split on `.`; purely numeric fields numeric, otherwise lexicographic; fewer fields ⇒ smaller). `description` returns the normalized form without `v`.
+2. `UpdateChecker.check()`: `currentVersion` nil or unparsable ⇒ `.unknownLocalVersion` WITHOUT network access (the fetcher does not get called — prove this in the test via a counting mock). Otherwise call the fetcher; tag unparsable ⇒ `.failed(.malformedResponse)`; `latest > current` ⇒ `.updateAvailable`, otherwise `.upToDate`. Thrown `UpdateCheckError`s are passed through; every OTHER error ⇒ `.failed(.offline)` (URLSession throws a `URLError` for a missing connection; the mapping happens in the fetcher, the checker only catches the rest).
+3. `GitHubReleaseFetcher`: GET on `https://api.github.com/repos/NoiXdev/macSCP/releases/latest`, header `Accept: application/vnd.github+json` and `User-Agent` starting with `macSCP/`; `timeoutInterval` 10 s. Response 200 ⇒ read JSON with `tag_name` and `html_url` (either missing ⇒ `malformedResponse`). 403 or 429 WITH header `x-ratelimit-remaining: 0` ⇒ `rateLimited`; other non-200 ⇒ `httpStatus(code)`. `URLError` ⇒ `offline`.
+4. `UpdateSchedule.shouldCheck`: `enabled == false` ⇒ false; `lastCheck == nil` ⇒ true; otherwise `now.timeIntervalSince(lastCheck) >= 24*3600`.
 
-- [x] **Step 1: Failing Tests**
+- [x] **Step 1: Failing tests**
 
 ```swift
     // AppVersionTests:
@@ -91,39 +91,39 @@ T1 (Core: AppVersion + UpdateChecker + Fetcher + Intervall) → T2 (App: Setting
     //   true; 23h59m -> false; 24h01m -> true.
 ```
 
-- [x] **Step 2: Rot beweisen.** `swift test --filter AppVersion` etc. → FAIL.
-- [x] **Step 3: Implementierung** (AppVersion → UpdateSchedule → UpdateChecker → GitHubReleaseFetcher).
-- [x] **Step 4: Grün + volle Suite.** `swift test` → 622 + neue, 0 Failures. Zusätzlich beweisen, dass kein Test ins Netz geht (der Stub registriert sich als `URLProtocol` und der Test schlägt fehl, wenn eine unerwartete URL angefragt wird — im Report festhalten).
+- [x] **Step 2: Prove red.** `swift test --filter AppVersion` etc. → FAIL.
+- [x] **Step 3: Implementation** (AppVersion → UpdateSchedule → UpdateChecker → GitHubReleaseFetcher).
+- [x] **Step 4: Green + full suite.** `swift test` → 622 + new ones, 0 failures. Additionally prove that no test touches the network (the stub registers as a `URLProtocol` and the test fails if an unexpected URL is requested — note this in the report).
 - [x] **Step 5: Commit.** `feat: check GitHub for a newer release`
 
 ---
 
-### Task 2: Settings, Start-Automatik, Menü, Dialog (App)
+### Task 2: Settings, startup automation, menu, dialog (App)
 
 **Files:**
-- Modify: `Sources/macSCPCore/Settings/SettingsStore.swift` (zwei neue Werte), `Sources/MacSCPApp/MacSCPApp.swift` (Menüeintrag + Start-Automatik), `Sources/MacSCPApp/SettingsView.swift` (bzw. die Datei mit dem Allgemein-Tab — per grep `showHiddenFiles`), `Sources/MacSCPApp/ContentView.swift` (Dialog-State, falls dort das natürliche Zuhause ist — der Implementer entscheidet und begründet), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
-- Test: Settings-Vorwärtskompatibilität + Klemm-/Default-Verhalten in der bestehenden Settings-Testdatei (per grep `autoRefreshIntervalSeconds`)
+- Modify: `Sources/macSCPCore/Settings/SettingsStore.swift` (two new values), `Sources/MacSCPApp/MacSCPApp.swift` (menu entry + startup automation), `Sources/MacSCPApp/SettingsView.swift` (or the file with the General tab — find it via grep for `showHiddenFiles`), `Sources/MacSCPApp/ContentView.swift` (dialog state, if that is the natural home — the implementer decides and justifies it), `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` + `de.lproj`
+- Test: settings forward compatibility + clamping/default behavior in the existing settings test file (find via grep for `autoRefreshIntervalSeconds`)
 
 **Interfaces:**
 - Consumes (T1): `AppVersion`, `UpdateChecker`, `GitHubReleaseFetcher`, `UpdateCheckResult`, `UpdateCheckError`, `UpdateSchedule.shouldCheck`.
-- Produces: `SettingsStore.updateCheckEnabled: Bool` (Default true), `SettingsStore.lastUpdateCheck: Date?`.
+- Produces: `SettingsStore.updateCheckEnabled: Bool` (default true), `SettingsStore.lastUpdateCheck: Date?`.
 
-**Verhaltens-Anforderungen (Spec §3/§4, bindend):**
-1. Settings: beide Werte vorwärtskompatibel (Raw-JSON ohne sie ⇒ Default true bzw. nil); Schreiben persistiert atomar wie die übrigen Werte.
-2. Start-Automatik: beim App-Start EINMAL, nebenläufig (blockiert den Start nie); nur wenn `UpdateSchedule.shouldCheck(now:lastCheck:enabled:)` true ist. Zeitstempel nach JEDEM Versuch setzen (auch bei Fehlern). Anzeige NUR bei `.updateAvailable` — alle anderen Ergebnisse bleiben in der Automatik still.
-3. Menüeintrag „Nach Updates suchen…"/„Check for Updates…" via `CommandGroup(after: .appInfo)`; von Hand ausgelöst wird IMMER ein Ergebnis gezeigt (Fund, aktuell, Version unbekannt, Fehlermeldung je Fehlerart). Läuft bereits eine Prüfung, ist der Eintrag deaktiviert.
-4. Fund-Dialog: Titel/Text „Version %@ ist verfügbar (installiert: %@)"/EN-Pendant; Buttons „Release-Seite öffnen" (`NSWorkspace.shared.open(url)`) und „Später". Bei „Version unbekannt": eigene Meldung, kein Link. Fehlermeldungen je `UpdateCheckError` (offline / HTTP-Status / Rate-Limit / kaputte Antwort).
-5. Einstellungen (Allgemein-Tab): Schalter „Automatisch nach Updates suchen"/EN mit Fußtext „Fragt höchstens einmal täglich bei GitHub nach der neuesten Version. Es werden keine Daten über dich übertragen."/EN-Pendant.
-6. Die lokale Version kommt aus `Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String` — fehlt sie (Dev-Build), führt das über den Core-Pfad zu `.unknownLocalVersion` (keine Sonderbehandlung in der App).
-7. Alle neuen Keys EN/DE in beiden App-Katalogen; Grep-Gegenprobe Key-Set-Gleichheit.
+**Behavioral requirements (spec §3/§4, binding):**
+1. Settings: both values forward-compatible (raw JSON without them ⇒ default true or nil respectively); writing persists atomically like the other values.
+2. Startup automation: ONCE on app start, concurrently (never blocks startup); only if `UpdateSchedule.shouldCheck(now:lastCheck:enabled:)` is true. Set the timestamp after EVERY attempt (errors included). Display ONLY on `.updateAvailable` — all other results stay silent in the automatic check.
+3. Menu entry "Check for Updates…"/German equivalent via `CommandGroup(after: .appInfo)`; a manually triggered check ALWAYS shows a result (find, up to date, version unknown, error message per error kind). If a check is already running, the entry is disabled.
+4. Find dialog: title/text "Version %@ is available (installed: %@)"/DE equivalent; buttons "Open Release Page" (`NSWorkspace.shared.open(url)`) and "Later". On "version unknown": its own message, no link. Error messages per `UpdateCheckError` (offline / HTTP status / rate limit / malformed response).
+5. Settings (General tab): toggle "Automatically check for updates"/DE with footer text "Checks GitHub for the latest version at most once daily. No data about you is transmitted."/DE equivalent.
+6. The local version comes from `Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String` — if missing (dev build), that leads via the Core path to `.unknownLocalVersion` (no special handling in the App).
+7. All new keys EN/DE in both App catalogs; grep cross-check for key-set equality.
 
-- [x] **Step 1:** Settings-Werte + Tests (rot→grün). **Step 2:** Menüeintrag + Dialog-State + Ergebnis-Darstellung. **Step 3:** Start-Automatik. **Step 4:** Settings-UI-Schalter. **Step 5:** L10n + Gegenprobe. **Step 6:** `swift build` (0 Fehler, keine neuen Warnungen) + volle `swift test`. **Step 7:** Commit `feat: offer a manual and a daily update check`.
+- [x] **Step 1:** settings values + tests (red→green). **Step 2:** menu entry + dialog state + result display. **Step 3:** startup automation. **Step 4:** settings UI toggle. **Step 5:** L10n + cross-check. **Step 6:** `swift build` (0 errors, no new warnings) + full `swift test`. **Step 7:** Commit `feat: offer a manual and a daily update check`.
 
 ---
 
-### Task 3: README + Abschluss (Koordinator)
+### Task 3: README + closeout (coordinator)
 
-- [x] README-Abschnitt (Englisch, kurz): was wann angefragt wird (`api.github.com`, höchstens täglich, nur Tag + Link werden gelesen), dass keine Nutzerdaten übertragen werden, wo man es abschaltet. Platz: eigener kurzer Abschnitt nach „Known limitations" oder als Unterpunkt dort — die kleinere Lösung wählen.
-- [x] Gated Suiten am finalen Stand: Rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → alle grün, zero skips, keine Leichen; Rig `stop`.
-- [ ] Visueller Smoke — an den Maintainer delegiert (Checkliste: Menüeintrag zeigt bei aktueller Version „du bist aktuell"; Schalter in den Einstellungen; Fund-Dialog gegen eine künstlich kleine Bundle-Version; Offline-Verhalten).
-- [x] Plan-Checkboxen, Ledger, Opus-Final-Review (Package über `git merge-base origin/develop HEAD`), Fix-Runden bis „Yes", Push develop, `gh run watch`, Memory, Zusammenfassung. KEIN Release.
+- [x] README section (English, short): what gets requested when (`api.github.com`, at most daily, only the tag + link get read), that no user data is transmitted, where to turn it off. Placement: its own short section after "Known limitations" or as a subsection there — pick the smaller solution.
+- [x] Gated suites at the final state: rig `start`, `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → all green, zero skips, no leftovers; rig `stop`.
+- [ ] Visual smoke test — delegated to the maintainer (checklist: menu entry shows "you're up to date" at the current version; toggle in settings; find dialog against an artificially low bundle version; offline behavior).
+- [x] Plan checkboxes, ledger, Opus final review (package via `git merge-base origin/develop HEAD`), fix rounds until "Yes", push develop, `gh run watch`, memory, summary. NO release.

@@ -2,23 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Zwei-Fenster-Layout (Lokal ↔ Remote, beide read-only) plus die Hardening-Punkte aus den M2a-Reviews — inklusive roter Feld-Umrandung bei Validierungsfehlern (Maintainer-Anforderung 2026-07-09).
+**Goal:** Two-window layout (Local ↔ Remote, both read-only) plus the hardening points from the M2a reviews — including a red field outline on validation errors (maintainer requirement 2026-07-09).
 
-**Architecture:** `ConnectionViewModel` wird feld-bewusst (`State.failed(message:field:)`) und re-entrancy-sicher; ein neues `LocalFileSystem` implementiert das vorhandene `RemoteFileSystem`-Protocol über `FileManager`, sodass beide Panes dasselbe ViewModel (`RemoteBrowserViewModel`) und dieselbe Tabelle (`RemoteFileTableView`) nutzen. Die Markenfarben aus `docs/design/ci.md` kommen als dynamische Design-Tokens in die App (Pane-Badges). `BrowserView` wird durch ein wiederverwendbares `BrowserPane` ersetzt, `ContentView` hält nach dem Verbinden eine `BrowserSession` mit beiden ViewModels in einem `HSplitView`.
+**Architecture:** `ConnectionViewModel` becomes field-aware (`State.failed(message:field:)`) and re-entrancy-safe; a new `LocalFileSystem` implements the existing `RemoteFileSystem` protocol over `FileManager`, so both panes use the same view model (`RemoteBrowserViewModel`) and the same table (`RemoteFileTableView`). The brand colors from `docs/design/ci.md` come into the app as dynamic design tokens (pane badges). `BrowserView` is replaced by a reusable `BrowserPane`; after connecting, `ContentView` holds a `BrowserSession` with both view models in an `HSplitView`.
 
-**Tech Stack:** wie M2a (Swift 6-Toolchain, Language Mode v5, SwiftUI + AppKit, macOS 14, Swift Testing, Citadel).
+**Tech Stack:** same as M2a (Swift 6 toolchain, Language Mode v5, SwiftUI + AppKit, macOS 14, Swift Testing, Citadel).
 
 ## Global Constraints
 
-- swift-tools-version 6.0, alle Targets `swiftSettings: [.swiftLanguageMode(.v5)]`; Plattform macOS 14
-- Conventional Commits, Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; niemals pushen (macht der Koordinator)
-- UI-Texte auf Deutsch
-- YAGNI für M2b: KEINE Transfers/Streams, KEIN Drag & Drop (→ M2c/M2d), KEINE Keychain/Sessions (→ M3), KEINE Auswahl-/Mehrfachselektions-Features in der Tabelle
-- Markenfarben nur semantisch einsetzen (Lokal/Remote-Duo aus `docs/design/ci.md`); App bleibt sonst macOS-nativ
-- Integrationstest-Gate `MACSCP_ITEST=1` und Docker-Rig bleiben unverändert
-- Nach jedem Task: kompletter `swift test` grün (Unit-Suite läuft ohne Docker)
+- swift-tools-version 6.0, all targets `swiftSettings: [.swiftLanguageMode(.v5)]`; platform macOS 14
+- Conventional Commits, footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; never push (the coordinator does that)
+- UI text in German
+- YAGNI for M2b: NO transfers/streams, NO drag & drop (→ M2c/M2d), NO Keychain/sessions (→ M3), NO selection/multi-selection features in the table
+- Use brand colors only semantically (Local/Remote duo from `docs/design/ci.md`); otherwise the app stays macOS-native
+- Integration test gate `MACSCP_ITEST=1` and the Docker rig stay unchanged
+- After every task: full `swift test` green (the unit suite runs without Docker)
 
-## Datei-Landkarte (Delta M2b)
+## File Map (M2b Delta)
 
 ```
 Sources/
@@ -40,26 +40,26 @@ Tests/macSCPCoreTests/
 
 ---
 
-### Task 1: ConnectionViewModel v2 (Feld-Fehler, Guard, Trim) + Sort-Bereinigung
+### Task 1: ConnectionViewModel v2 (Field Errors, Guard, Trim) + Sort Cleanup
 
 **Files:**
-- Modify (vollständig ersetzen): `Sources/macSCPCore/Presentation/ConnectionViewModel.swift`
-- Modify (vollständig ersetzen): `Tests/macSCPCoreTests/ConnectionViewModelTests.swift`
-- Modify: `Sources/macSCPCore/SSH/CitadelFileSystem.swift` (nur die Sortier-Zeile)
+- Modify (fully replace): `Sources/macSCPCore/Presentation/ConnectionViewModel.swift`
+- Modify (fully replace): `Tests/macSCPCoreTests/ConnectionViewModelTests.swift`
+- Modify: `Sources/macSCPCore/SSH/CitadelFileSystem.swift` (just the sort line)
 
 **Interfaces:**
-- Consumes: `SSHConnectionConfig`, `RemoteFSError`, `RemoteFileSystem`, im Test `MockRemoteFileSystem`
-- Produces (für Task 3/4): `ConnectionViewModel.Field` (`.host/.port/.username/.password`, Equatable+Sendable), `State.failed(message: String, field: Field?)` statt bisher `failed(message:)`, unverändert `connect() async -> (any RemoteFileSystem)?`, NEU `clearPassword()`
+- Consumes: `SSHConnectionConfig`, `RemoteFSError`, `RemoteFileSystem`, in the test `MockRemoteFileSystem`
+- Produces (for Task 3/4): `ConnectionViewModel.Field` (`.host/.port/.username/.password`, Equatable+Sendable), `State.failed(message: String, field: Field?)` instead of the previous `failed(message:)`, unchanged `connect() async -> (any RemoteFileSystem)?`, NEW `clearPassword()`
 
-**Semantik-Änderungen gegenüber M2a (bewusst):**
-1. Jeder Validierungsfehler benennt sein Feld; Auth-/Verbindungsfehler haben `field: nil`.
-2. `connect()` ist re-entrancy-sicher: während `.connecting` kehrt ein zweiter Aufruf sofort mit `nil` zurück (Review-Finding: Doppelklick leakte sonst eine SSH-Verbindung).
-3. Host und Benutzername werden vor dem Config-Bau getrimmt (Review-Finding: `" example.com "` wählte sich sonst wörtlich ein).
-4. `clearPassword()` für den Disconnect-Pfad (Review-Finding: Klartext-Passwort blieb im State).
+**Semantic changes vs. M2a (deliberate):**
+1. Every validation error names its field; auth/connection errors have `field: nil`.
+2. `connect()` is re-entrancy-safe: during `.connecting`, a second call returns `nil` immediately (review finding: a double click would otherwise leak an SSH connection).
+3. Host and username are trimmed before building the config (review finding: `" example.com "` would otherwise dial in literally).
+4. `clearPassword()` for the disconnect path (review finding: the plaintext password stayed in state).
 
-- [x] **Step 1: Tests ersetzen (Rot)**
+- [x] **Step 1: Replace tests (Red)**
 
-`Tests/macSCPCoreTests/ConnectionViewModelTests.swift` — Datei komplett ersetzen:
+`Tests/macSCPCoreTests/ConnectionViewModelTests.swift` — replace the file completely:
 
 ```swift
 import Foundation
@@ -171,14 +171,14 @@ private actor CallCounter {
 }
 ```
 
-- [x] **Step 2: Rot verifizieren**
+- [x] **Step 2: Verify red**
 
 Run: `swift test --filter ConnectionViewModelTests`
-Expected: Compile-Fehler (u.a. `type 'ConnectionViewModel.State' has no member 'failed(message:field:)'` bzw. fehlendes `Field`)
+Expected: compile error (among others `type 'ConnectionViewModel.State' has no member 'failed(message:field:)'` or a missing `Field`)
 
-- [x] **Step 3: ViewModel ersetzen**
+- [x] **Step 3: Replace the view model**
 
-`Sources/macSCPCore/Presentation/ConnectionViewModel.swift` — Datei komplett ersetzen:
+`Sources/macSCPCore/Presentation/ConnectionViewModel.swift` — replace the file completely:
 
 ```swift
 import Foundation
@@ -274,33 +274,33 @@ public final class ConnectionViewModel {
 }
 ```
 
-- [x] **Step 4: Build-Bruchstelle in ConnectionFormView minimal flicken**
+- [x] **Step 4: Patch the build break in ConnectionFormView minimally**
 
-Der App-Target kompiliert jetzt nicht mehr (`case .failed(let message)` passt nicht mehr). In `Sources/MacSCPApp/ConnectionFormView.swift` NUR diese eine Zeile ändern (die vollständige Neugestaltung mit roter Umrandung kommt in Task 3):
+The app target no longer compiles (`case .failed(let message)` no longer matches). In `Sources/MacSCPApp/ConnectionFormView.swift` change ONLY this one line (the full redesign with the red outline comes in Task 3):
 
 ```swift
             if case .failed(let message, _) = viewModel.state {
 ```
 
-- [x] **Step 5: Redundante Sortierung in CitadelFileSystem entfernen**
+- [x] **Step 5: Remove redundant sorting in CitadelFileSystem**
 
-In `Sources/macSCPCore/SSH/CitadelFileSystem.swift`, Methode `list(path:)`: die Zeile
+In `Sources/macSCPCore/SSH/CitadelFileSystem.swift`, method `list(path:)`: the line
 
 ```swift
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 ```
 
-ersatzlos streichen (Review-Finding: `RemoteBrowserViewModel.sortedForDisplay` ist die einzige Sortier-Autorität; das Backend-Sortieren war totes Werk).
+delete outright, with no replacement (review finding: `RemoteBrowserViewModel.sortedForDisplay` is the sole sorting authority; the backend sort was dead work).
 
-- [x] **Step 6: Grün verifizieren**
+- [x] **Step 6: Verify green**
 
 Run: `swift test --filter ConnectionViewModelTests`
-Expected: 8 Tests PASS
+Expected: 8 tests PASS
 
 Run: `swift test`
-Expected: 45 Tests grün (43 bisher − 6 alte + 8 neue ConnectionViewModel-Tests)
+Expected: 45 tests green (43 previously − 6 old + 8 new ConnectionViewModel tests)
 
-- [x] **Step 7: Committen (zwei Commits)**
+- [x] **Step 7: Commit (two commits)**
 
 ```bash
 git add Sources/macSCPCore/Presentation/ConnectionViewModel.swift Tests/macSCPCoreTests/ConnectionViewModelTests.swift Sources/MacSCPApp/ConnectionFormView.swift
@@ -322,10 +322,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Test: `Tests/macSCPCoreTests/LocalFileSystemTests.swift`
 
 **Interfaces:**
-- Consumes: `RemoteFileSystem`-Protocol, `RemoteFileItem`, `RemoteFileKind`, `RemoteFSError`
-- Produces (für Task 4): `public struct LocalFileSystem: RemoteFileSystem` mit `init()`, `list/stat` via FileManager, `disconnect()` No-op
+- Consumes: the `RemoteFileSystem` protocol, `RemoteFileItem`, `RemoteFileKind`, `RemoteFSError`
+- Produces (for Task 4): `public struct LocalFileSystem: RemoteFileSystem` with `init()`, `list/stat` via FileManager, `disconnect()` a no-op
 
-- [x] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Failing tests**
 
 `Tests/macSCPCoreTests/LocalFileSystemTests.swift`:
 
@@ -407,12 +407,12 @@ struct LocalFileSystemTests {
 }
 ```
 
-- [x] **Step 2: Rot verifizieren**
+- [x] **Step 2: Verify red**
 
 Run: `swift test --filter LocalFileSystemTests`
-Expected: Compile-Fehler `cannot find 'LocalFileSystem' in scope`
+Expected: compile error `cannot find 'LocalFileSystem' in scope`
 
-- [x] **Step 3: Implementieren**
+- [x] **Step 3: Implement**
 
 `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift`:
 
@@ -484,16 +484,16 @@ public struct LocalFileSystem: RemoteFileSystem {
 }
 ```
 
-Hinweis: `RemoteFileItem.path` trägt hier absichtlich Pfade ohne Trailing-Slash (`path(percentEncoded: false)` liefert für Verzeichnisse ggf. einen Trailing-Slash — falls die Tests deshalb an `RemotePath.parent`-Erwartungen scheitern, in `item(for:)` normalisieren: `var p = url.path(percentEncoded: false); if p.count > 1 && p.hasSuffix("/") { p.removeLast() }` und das im Report offenlegen).
+Note: `RemoteFileItem.path` deliberately carries paths without a trailing slash here (`path(percentEncoded: false)` may return a trailing slash for directories — if the tests therefore fail against `RemotePath.parent` expectations, normalize in `item(for:)`: `var p = url.path(percentEncoded: false); if p.count > 1 && p.hasSuffix("/") { p.removeLast() }` and disclose that in the report).
 
-- [x] **Step 4: Grün verifizieren**
+- [x] **Step 4: Verify green**
 
 Run: `swift test --filter LocalFileSystemTests`
-Expected: 6 Tests PASS
+Expected: 6 tests PASS
 
-- [x] **Step 5: Gesamtsuite + Commit**
+- [x] **Step 5: Full suite + commit**
 
-Run: `swift test` — Expected: 51 Tests grün.
+Run: `swift test` — Expected: 51 tests green.
 
 ```bash
 git add Sources/macSCPCore/RemoteFS/LocalFileSystem.swift Tests/macSCPCoreTests/LocalFileSystemTests.swift
@@ -504,19 +504,19 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Design-Tokens + rote Feld-Umrandung
+### Task 3: Design Tokens + Red Field Outline
 
 **Files:**
 - Create: `Sources/MacSCPApp/DesignTokens.swift`
-- Modify (vollständig ersetzen): `Sources/MacSCPApp/ConnectionFormView.swift`
+- Modify (fully replace): `Sources/MacSCPApp/ConnectionFormView.swift`
 
 **Interfaces:**
 - Consumes: `ConnectionViewModel` v2 (Task 1: `Field`, `State.failed(message:field:)`)
-- Produces (für Task 4): `enum DesignTokens` mit `localAmber: Color` und `remoteBlue: Color` (dynamisch Hell/Dunkel, Werte aus `docs/design/ci.md`)
+- Produces (for Task 4): `enum DesignTokens` with `localAmber: Color` and `remoteBlue: Color` (dynamic light/dark, values from `docs/design/ci.md`)
 
-Kein Unit-Test (reine View-/Konstanten-Schicht); Verifikation: Build + Gesamtsuite + visueller Smoke-Test in Task 5.
+No unit test (a pure view/constants layer); verification: build + full suite + visual smoke test in Task 5.
 
-- [x] **Step 1: Design-Tokens**
+- [x] **Step 1: Design tokens**
 
 `Sources/MacSCPApp/DesignTokens.swift`:
 
@@ -542,9 +542,9 @@ enum DesignTokens {
 }
 ```
 
-- [x] **Step 2: ConnectionFormView mit Feld-Highlight ersetzen**
+- [x] **Step 2: Replace ConnectionFormView with field highlighting**
 
-`Sources/MacSCPApp/ConnectionFormView.swift` — Datei komplett ersetzen:
+`Sources/MacSCPApp/ConnectionFormView.swift` — replace the file completely:
 
 ```swift
 import SwiftUI
@@ -619,10 +619,10 @@ private extension View {
 }
 ```
 
-- [x] **Step 3: Bauen + Gesamtsuite**
+- [x] **Step 3: Build + full suite**
 
 Run: `swift build && swift test`
-Expected: `Build complete!`, 51 Tests grün
+Expected: `Build complete!`, 51 tests green
 
 - [x] **Step 4: Commit**
 
@@ -635,17 +635,17 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: Zwei-Fenster-Layout (BrowserPane + BrowserSession)
+### Task 4: Two-Window Layout (BrowserPane + BrowserSession)
 
 **Files:**
 - Create: `Sources/MacSCPApp/BrowserPane.swift`
 - Delete: `Sources/MacSCPApp/BrowserView.swift`
-- Modify (vollständig ersetzen): `Sources/MacSCPApp/ContentView.swift`
-- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (nur die frame-Zeile)
+- Modify (fully replace): `Sources/MacSCPApp/ContentView.swift`
+- Modify: `Sources/MacSCPApp/MacSCPApp.swift` (just the frame line)
 
 **Interfaces:**
-- Consumes: `RemoteBrowserViewModel` (unverändert aus M2a), `RemoteFileTableView` (unverändert), `LocalFileSystem` (Task 2), `DesignTokens` (Task 3), `ConnectionViewModel.clearPassword()` (Task 1)
-- Produces: benutzbare Zwei-Fenster-App (Lokal links ab Home-Verzeichnis, Remote rechts, beide read-only)
+- Consumes: `RemoteBrowserViewModel` (unchanged from M2a), `RemoteFileTableView` (unchanged), `LocalFileSystem` (Task 2), `DesignTokens` (Task 3), `ConnectionViewModel.clearPassword()` (Task 1)
+- Produces: a usable two-window app (Local on the left starting at the home directory, Remote on the right, both read-only)
 
 - [x] **Step 1: BrowserPane**
 
@@ -727,15 +727,15 @@ struct BrowserPane: View {
 }
 ```
 
-- [x] **Step 2: BrowserView löschen**
+- [x] **Step 2: Delete BrowserView**
 
 ```bash
 git rm Sources/MacSCPApp/BrowserView.swift
 ```
 
-- [x] **Step 3: ContentView ersetzen**
+- [x] **Step 3: Replace ContentView**
 
-`Sources/MacSCPApp/ContentView.swift` — Datei komplett ersetzen:
+`Sources/MacSCPApp/ContentView.swift` — replace the file completely:
 
 ```swift
 import SwiftUI
@@ -799,18 +799,18 @@ struct ContentView: View {
 }
 ```
 
-- [x] **Step 4: Mindestfenster vergrößern**
+- [x] **Step 4: Increase the minimum window size**
 
-In `Sources/MacSCPApp/MacSCPApp.swift` die frame-Zeile im `WindowGroup` ändern zu:
+In `Sources/MacSCPApp/MacSCPApp.swift`, change the frame line in the `WindowGroup` to:
 
 ```swift
                 .frame(minWidth: 760, minHeight: 440)
 ```
 
-- [x] **Step 5: Bauen + Gesamtsuite**
+- [x] **Step 5: Build + full suite**
 
 Run: `swift build && swift test`
-Expected: `Build complete!`, 51 Tests grün
+Expected: `Build complete!`, 51 tests green
 
 - [x] **Step 6: Commit**
 
@@ -823,17 +823,17 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Abschluss-Verifikation
+### Task 5: Final Verification
 
 **Files:**
-- Modify: `docs/superpowers/plans/2026-07-09-m2b-dual-pane-hardening.md` (Checkboxen)
+- Modify: `docs/superpowers/plans/2026-07-09-m2b-dual-pane-hardening.md` (checkboxes)
 
-- [x] **Step 1: Komplette Unit-Suite**
+- [x] **Step 1: Complete unit suite**
 
 Run: `swift test`
-Expected: 51 Tests in 9 Suiten grün, Integrationssuite übersprungen
+Expected: 51 tests in 9 suites green, integration suite skipped
 
-- [x] **Step 2: Integrationstests**
+- [x] **Step 2: Integration tests**
 
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
@@ -841,16 +841,16 @@ sleep 6
 MACSCP_ITEST=1 swift test --filter CitadelFileSystem
 docker compose -f docker/test-server/compose.yml down
 ```
-Expected: 4/4 grün
+Expected: 4/4 green
 
-- [x] **Step 3: Visueller Smoke-Test** (macht der Koordinator am Bildschirm)
+- [x] **Step 3: Visual smoke test** (the coordinator does this on screen)
 
-1. Formular: Port auf `abc` → rote Meldung UND Port-Feld rot umrandet; Host leeren → Host-Feld rot umrandet.
-2. Verbinden gegen Docker (127.0.0.1:2222, testuser/testpass) → Zwei Panes: links LOKAL (Bernstein-Badge, Home-Verzeichnis), rechts REMOTE (Ozeanblau-Badge, `/`).
-3. Beide Panes unabhängig navigieren (Doppelklick/Hoch/Aktualisieren).
-4. Trennen → Formular, Passwortfeld ist geleert.
+1. Form: set Port to `abc` → red message AND the Port field outlined in red; clear Host → Host field outlined in red.
+2. Connect against Docker (127.0.0.1:2222, testuser/testpass) → two panes: LOCAL on the left (amber badge, home directory), REMOTE on the right (ocean-blue badge, `/`).
+3. Navigate both panes independently (double-click/up/refresh).
+4. Disconnect → form, the password field is cleared.
 
-- [x] **Step 4: Checkboxen dieses Plans auf `- [x]` setzen und committen**
+- [x] **Step 4: Set this plan's checkboxes to `- [x]` and commit**
 
 ```bash
 git add docs/superpowers/plans/2026-07-09-m2b-dual-pane-hardening.md
@@ -861,7 +861,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-## Ausblick (eigene Pläne, nicht Teil dieses Plans)
+## Outlook (separate plans, not part of this plan)
 
-- **M2c — Transfers:** `readStream`/`writeStream` im Protocol (Citadel-openFile-Chunks bzw. FileHandle), TransferEngine mit Fortschritt (Bytes/Rate), Download-/Upload-Buttons zwischen den Panes, Fortschrittsleiste in den Duo-Farben (↑ Bernstein, ↓ Ozeanblau).
+- **M2c — Transfers:** `readStream`/`writeStream` in the protocol (Citadel openFile chunks or FileHandle), TransferEngine with progress (bytes/rate), download/upload buttons between the panes, progress bar in the duo colors (↑ amber, ↓ ocean blue).
 - **M2d — Drag & Drop:** Finder → Remote (`onDrop`), Remote → Finder (`NSFilePromiseProvider`), Pane ↔ Pane.

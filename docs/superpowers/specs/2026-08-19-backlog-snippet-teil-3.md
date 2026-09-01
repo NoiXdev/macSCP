@@ -1,60 +1,63 @@
-# Backlog: Snippet-Editor Teil 3 — deklarierte Variablen
+# Backlog: snippet editor part 3 — declared variables
 
-**Angelegt:** 2026-08-19. **Kein Design, sondern eine gesicherte Idee.**
+**Created:** 2026-08-19. **Not a design, a solid idea.**
 
-Diese Schärfung stammt aus dem Gespräch beim Zuschnitt von Teil 1 und war
-danach in keiner Datei — sie lebte nur im Verlauf. Beim Aufräumen der
-Wegwerf-Artefakte fiel das auf. Hier steht sie, damit sie einen Brainstorming-
-Durchgang überlebt, nicht damit sie ihn ersetzt.
+This sharpening came out of the conversation while scoping part 1 and
+afterward lived in no file — it existed only in the transcript. It
+surfaced while cleaning up the throwaway artifacts. It's written down
+here so it survives a brainstorming pass, not so it replaces one.
 
-## Die Idee des Maintainers
+## The maintainer's idea
 
-Ein Snippet bekommt ein Kennzeichen — im Gespräch „erweitertes Snippet" —,
-und erst damit erscheint ein Bereich, in dem **Variablen deklariert** werden:
-Name, Typ (freie Eingabe, Auswahl aus einer Liste), vermutlich ein
-Vorgabewert. Beim Auslösen fragt macSCP die Werte ab und übergibt sie an den
-Befehl.
+A snippet gets a marker — called "extended snippet" in the conversation
+— and only with it does an area appear where **variables get declared**:
+name, type (free text, choice from a list), presumably a default value.
+When triggered, macSCP asks for the values and passes them to the
+command.
 
-Der Kern des Arguments, und er ist gut: **so muss niemand die Variablen im
-Text suchen.** Die Alternative — den Befehlstext nach `{{name}}` oder `$1`
-absuchen und daraus ein Formular bauen — macht den Befehl zur Quelle der
-Wahrheit über etwas, das der Nutzer nirgends zusammenhängend sieht. Eine
-Deklaration ist sichtbar, sortierbar, kommentierbar.
+The core of the argument, and it's a good one: **this way nobody has to
+hunt for the variables in the text.** The alternative — scanning the
+command text for `{{name}}` or `$1` and building a form from that —
+makes the command the source of truth for something the user never sees
+laid out anywhere. A declaration is visible, sortable, commentable.
 
-Beispiele aus dem Gespräch: ein Datenbank-Export, ein Log einsammeln und unter
-einem Namen ablegen — also wiederkehrende Abläufe, bei denen sich zwischen
-zwei Aufrufen genau ein oder zwei Werte ändern.
+Examples from the conversation: a database export, collecting a log and
+filing it under a name — that is, recurring workflows where exactly one
+or two values change between two invocations.
 
-Zusätzlich erwogen: ein **Typ-Marker am Snippet** (`shell`, perspektivisch
-`telnet` o. Ä.), falls macSCP je andere Sitzungsarten bekommt. Der Tokenizer
-aus Teil 1 nimmt die Sprache bereits als Parameter entgegen und speichert sie
-ausdrücklich **nicht** — dieser Marker wäre der Ort, an dem sie herkäme.
+Also considered: a **type marker on the snippet** (`shell`, eventually
+`telnet` or similar), in case macSCP ever gets other session kinds. The
+tokenizer from part 1 already takes the language as a parameter and
+explicitly does **not** store it — this marker would be where it comes
+from.
 
-## Was vor einem Design zu klären ist
+## What needs clarifying before a design
 
-- **Wie die Werte in den Befehl kommen.** Textersetzung im Befehl, oder als
-  `NAME=wert` vorangestellte Umgebungszuweisungen? Das erste ist offensichtlich
-  und anfällig für Quoting-Fehler; das zweite ist robust, funktioniert aber nur
-  für Werte, die tatsächlich als Umgebung taugen.
-- **Quoting.** Ein Wert mit Leerzeichen, Anführungszeichen oder `$` darf den
-  Befehl nicht umbauen können. Das ist der sicherheitsnahe Kern des ganzen
-  Vorhabens und gehört an eine getestete Stelle in Core, nicht in die View.
-- **Braucht es das Kennzeichen überhaupt?** Dieselbe Frage wie bei Teil 2, wo
-  sie den Schalter gekostet hat: eine leere Deklarationsliste ist bereits die
-  Aussage „keine Variablen". Ein Flag daneben kann ihr widersprechen. Der
-  Unterschied zu Teil 2: hier wäre das Flag zugleich der Schalter, der den
-  Bereich in der Oberfläche überhaupt einblendet — das kann seinen Preis wert
-  sein. Offen, nicht entschieden.
-- **Store-Format.** Anders als Teil 2 kommt dieser Teil ohne Migration nicht
-  aus. Das Snippet-JSON bekommt eine Struktur, und Export/Import
-  (`macscp`-Umschlag) müssen mit.
-- **Niemals Zugangsdaten.** Der Snippet-Store ist reines JSON. Ein
-  Variablentyp „Passwort", der den Wert speichert, ist ausgeschlossen; ein
-  Typ, der bei jedem Aufruf fragt und den Wert nicht behält, wäre denkbar —
-  und müsste dann auch aus dem Protokoll herausgehalten werden, das heute den
-  ausgeführten Befehl mitschreibt.
+- **How the values get into the command.** Text substitution in the
+  command, or as `NAME=value` environment assignments prepended? The
+  first is obvious and prone to quoting errors; the second is robust,
+  but only works for values that actually work as environment.
+- **Quoting.** A value with a space, quotation marks, or `$` must not be
+  able to reshape the command. That's the security-adjacent core of the
+  whole undertaking and belongs in a tested spot in Core, not in the
+  view.
+- **Does it even need the marker?** The same question as in part 2,
+  where it cost the toggle: an empty declaration list is already the
+  statement "no variables". A flag next to it can contradict it. The
+  difference from part 2: here the flag would at the same time be the
+  switch that shows the area in the UI at all — that might be worth its
+  price. Open, not decided.
+- **Store format.** Unlike part 2, this part can't avoid a migration.
+  The snippet JSON gets a structure, and export/import (the `macscp`
+  envelope) have to follow along.
+- **Never credentials.** The snippet store is plain JSON. A "password"
+  variable type that stores the value is out; a type that asks on every
+  invocation and doesn't retain the value would be conceivable — and
+  would then also have to be kept out of the log, which today records
+  the executed command.
 
-## Reihenfolge
+## Ordering
 
-Nach Teil 2. Teil 2 macht mehrzeilige Rümpfe möglich, und erst damit lohnen
-Variablen richtig — ein einzeiliger Befehl mit drei Abfragen ist selten.
+After part 2. Part 2 makes multi-line bodies possible, and only then do
+variables really pay off — a one-line command with three prompts is
+rare.

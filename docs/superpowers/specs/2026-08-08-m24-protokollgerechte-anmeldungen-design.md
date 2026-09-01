@@ -1,101 +1,101 @@
-# M24 — Protokollgerechte Anmeldungen (Design)
+# M24 — Protocol-Correct Logins (Design)
 
-**Stand:** 2026-08-08. Vorgänger: M23 (`2026-08-07-m23-abschluss.md`), dessen
-Abschlussbericht beide Bugs benannt und bewusst nicht behoben hat.
+**Status:** 2026-08-08. Predecessor: M23 (`2026-08-07-m23-abschluss.md`),
+whose completion report named both bugs and deliberately left them unfixed.
 
-## Ziel
+## Goal
 
-Zwei echte Fehler derselben Klasse beheben: eine SSH-geformte Schicht, die seit
-M12 protokollfremde Sitzungen durchlässt.
+Fix two real bugs of the same class: an SSH-shaped layer that has let
+non-protocol sessions through since M12.
 
-1. **`LoginMergePlanner` kann das Secret einer S3- oder WebDAV-Sitzung
-   löschen.** Ein Datenverlustpfad, nicht Kosmetik.
-2. **`JumpSessionEligibility` filtert nicht nach Protokoll.** Ein Bucket ist als
-   Bastion wählbar; der Resolver liest anschließend `host: ""`.
+1. **`LoginMergePlanner` can delete the secret of an S3 or WebDAV
+   session.** A data-loss path, not cosmetics.
+2. **`JumpSessionEligibility` does not filter by protocol.** A bucket is
+   selectable as a bastion; the resolver then reads `host: ""`.
 
-Beide sind heute durch Charakterisierungstests festgehalten, die erklären, was
-falsch ist. Diese Tests kippen in diesem Meilenstein zu Zusagen.
+Both are currently pinned by characterization tests that explain what is
+wrong. These tests flip to commitments in this milestone.
 
-**Nicht in diesem Meilenstein:** der intermittierende 0-%-CPU-Hänger der
-Testsuite. Offene Ursache, eigene Untersuchung mit systematic-debugging.
+**Not part of this milestone:** the intermittent 0% CPU hang of the test
+suite. Open cause, own investigation with systematic-debugging.
 
-## Bug 1 — der Merge-Vorschlag
+## Bug 1 — the merge proposal
 
-### Ist-Zustand
+### Current state
 
-`LoginMergePlanner.candidates` filtert ausschließlich auf `loginSetID == nil`.
-Es gibt kein `kind`-Prädikat, und `SessionListViewModel.mergeCandidates()`
-reicht jede Sitzung hinein. Für eine `.s3`-Sitzung liefert `session.authKind`
-den Rückfallwert `.password` und `session.username` den Rückfallwert `""`; der
-`.password`-Zweig liest dann den Keychain-Slot der Sitzung — der bei S3 den
-**Secret Access Key** enthält.
+`LoginMergePlanner.candidates` filters exclusively on `loginSetID == nil`.
+There is no `kind` predicate, and `SessionListViewModel.mergeCandidates()`
+feeds in every session. For an `.s3` session, `session.authKind` returns
+the fallback value `.password` and `session.username` returns the
+fallback value `""`; the `.password` branch then reads the session's
+keychain slot — which for S3 holds the **secret access key**.
 
-Zwei S3-Sitzungen auf einem Zugangspaar (ein Account, zwei Buckets — der
-Normalfall) erscheinen damit als Merge-Vorschlag. Wer ihn annimmt, bekommt über
-`SessionListViewModel.applyMerge` ein `LoginSet`, dessen `kind` auf `.ssh`
-vorbelegt ist und dessen `accessKeyID` `nil` bleibt; beide Sitzungen werden
-darauf umgehängt und anschließend wird **jeder Sitzung ihr eigener
-Keychain-Slot gelöscht**. WebDAV hat dieselbe Form.
+Two S3 sessions on one credential pair (one account, two buckets — the
+normal case) thus appear as a merge proposal. Whoever accepts it gets, via
+`SessionListViewModel.applyMerge`, a `LoginSet` whose `kind` is
+pre-populated as `.ssh` and whose `accessKeyID` stays `nil`; both
+sessions are rehung onto it and afterward **each session's own keychain
+slot is deleted**. WebDAV has the same shape.
 
-Der Folgeschaden ist vollständig: das Set kann die Anmeldung nicht tragen
-(falscher `kind`, kein `accessKeyID`), und `LoginResolver.resolve` lehnt die
-Bindung beim Verbinden korrekt mit `kindMismatch` ab — nur ist das Secret dann
-schon weg und muss neu eingetippt werden.
+The resulting damage is complete: the set cannot carry the login (wrong
+`kind`, no `accessKeyID`), and `LoginResolver.resolve` correctly rejects
+the binding on connect with `kindMismatch` — except by then the secret is
+already gone and has to be retyped.
 
-### Entscheidung (Maintainer, 2026-08-08)
+### Decision (maintainer, 2026-08-08)
 
-**Merge protokollgerecht machen**, nicht auf SSH einschränken. S3-Login-Sets
-existieren seit M15 und sind für genau diesen Fall gedacht; ein Filter würde
-den Datenverlust beseitigen und den Nutzen gleich mit.
+**Make the merge protocol-correct**, not restrict it to SSH. S3 login
+sets have existed since M15 and are meant for exactly this case; a
+filter would eliminate the data loss and keep the benefit at the same time.
 
-### Der Gruppierungsschlüssel
+### The grouping key
 
-Heute hart SSH-geformt (`username` + `authKind` + `keyPath` + `password`).
-Künftig aus dem Schema abgeleitet:
+Today hard SSH-shaped (`username` + `authKind` + `keyPath` + `password`).
+Going forward, derived from the schema:
 
 > `kind`
-> + die Werte aller **sichtbaren** Felder des `credentialSchema`, die kein
->   Secret sind
-> + das Secret, **falls** das sichtbare Secret-Feld die Anmeldung selbst ist
->   (siehe `SecretRole` unten)
+> + the values of all **visible** fields of the `credentialSchema` that
+>   are not a secret
+> + the secret, **if** the visible secret field is the login itself
+>   (see `SecretRole` below)
 
-`ConnectionFieldSchema.visibleFields(in:namespace:)` erledigt dabei die
-Fallunterscheidung, die heute der `switch` macht. Das Ergebnis reproduziert das
-SSH-Verhalten exakt, ohne SSH zu nennen:
+`ConnectionFieldSchema.visibleFields(in:namespace:)` handles the case
+distinction that the `switch` makes today. The result reproduces the SSH
+behavior exactly, without naming SSH:
 
-**Alle Werte werden wörtlich verglichen** — auch die Nicht-Secret-Felder, auch
-Groß-/Kleinschreibung, auch Leerraum. Das ist das heutige Verhalten (der
-Planner liest `session.username` roh) und bewusst **nicht** das
-`FieldIdentity`-Vokabular aus M23/P3: das beantwortet „ist das dieselbe
-Verbindung" für die Import-Dublettenprüfung, tragen längst nicht alle
-Credential-Felder (`SSHField.authKind` etwa nicht), und ein Feld ohne `identity`
-fiele damit aus dem Schlüssel — genau das Feld, das SSHs drei Auth-Arten
-auseinanderhält.
+**All values are compared literally** — including the non-secret fields,
+including case, including whitespace. That is the current behavior (the
+planner reads `session.username` raw) and deliberately **not** the
+`FieldIdentity` vocabulary from M23/P3: that answers "is this the same
+connection" for the import duplicate check, far from all credential
+fields carry it (`SSHField.authKind`, for instance, does not), and a
+field without `identity` would then drop out of the key — exactly the
+field that distinguishes SSH's three auth kinds.
 
-| Konfiguration | Sichtbare Nicht-Secret-Felder | Secret im Schlüssel |
+| Configuration | Visible non-secret fields | Secret in the key |
 |---|---|---|
-| SSH `.password` | `username`, `authKind` | ja |
-| SSH `.privateKey` | `username`, `authKind`, `keyPath` | nein |
-| SSH `.agent` | `username`, `authKind` | kein Secret-Feld sichtbar |
-| S3 | `accessKeyID` | ja |
-| WebDAV | `username` | ja |
+| SSH `.password` | `username`, `authKind` | yes |
+| SSH `.privateKey` | `username`, `authKind`, `keyPath` | no |
+| SSH `.agent` | `username`, `authKind` | no secret field visible |
+| S3 | `accessKeyID` | yes |
+| WebDAV | `username` | yes |
 
-### `SecretRole` — warum `isRequired` nicht reicht
+### `SecretRole` — why `isRequired` is not enough
 
-Der naheliegende Ableitungsweg „das Secret zählt mit, wenn sein Feld
-`isRequired` ist" ergibt für SSH und S3 das Richtige und für **WebDAV das
-Falsche**: dessen `password` ist seit M23 optional (anonyme Freigaben werden
-unterstützt), fiele also aus dem Schlüssel. Zwei WebDAV-Sitzungen mit gleichem
-Benutzernamen und **verschiedenen Passwörtern** wären wieder ein
-Merge-Kandidat — derselbe Datenverlust in anderer Farbe.
+The obvious derivation path "the secret counts if its field is
+`isRequired`" gets the right answer for SSH and S3 and **the wrong one
+for WebDAV**: its `password` has been optional since M23 (anonymous
+shares are supported), so it would drop out of the key. Two WebDAV
+sessions with the same username and **different passwords** would again
+be a merge candidate — the same data loss in a different color.
 
-Die Unterscheidung ist inhaltlich und nicht ableitbar, also wird sie
-deklariert. SSHs `passphrase` **entsperrt** eine Anmeldung, die bereits im
-Schlüssel steht (die Schlüsseldatei über `keyPath`): zwei Sitzungen auf
-derselben Datei sind dieselbe Anmeldung, unabhängig davon, ob die Passphrase
-hinterlegt ist. `password` und `secretAccessKey` **sind** die Anmeldung.
+The distinction is substantive and not derivable, so it is declared.
+SSH's `passphrase` **unlocks** a login that is already in the key (the
+key file via `keyPath`): two sessions on the same file are the same
+login, regardless of whether the passphrase happens to be stored.
+`password` and `secretAccessKey` **are** the login.
 
-Neu in `FieldVocabulary.swift`, neben `FieldFormat` und `FieldIdentity`:
+New in `FieldVocabulary.swift`, next to `FieldFormat` and `FieldIdentity`:
 
 ```swift
 public enum SecretRole: Sendable {
@@ -109,89 +109,91 @@ public enum SecretRole: Sendable {
 }
 ```
 
-Getragen von `ConnectionField` (nur für `kind == .secret` bedeutungsvoll),
-deklariert an vier Feldern: `SSHField.password` → `.credential`,
+Carried by `ConnectionField` (meaningful only for `kind == .secret`),
+declared on four fields: `SSHField.password` → `.credential`,
 `SSHField.passphrase` → `.passphrase`, `S3Field.secretAccessKey` →
-`.credential`, `WebDAVField.password` → `.credential`. Ein viertes Backend
-deklariert es einmal mit.
+`.credential`, `WebDAVField.password` → `.credential`. A fourth backend
+declares it once alongside.
 
-### Teilnahmeregel
+### Participation rule
 
-- Sichtbares Secret-Feld mit `.credential` und **kein** Secret im Keychain →
-  die Sitzung nimmt nicht teil. Das ist exakt die heutige SSH-Regel („nichts
-  zum Vergleichen"), jetzt auch für S3 und WebDAV. Anonyme WebDAV-Sitzungen
-  werden damit nie vorgeschlagen.
-- Sichtbares Secret-Feld mit `.passphrase`, oder gar kein sichtbares
-  Secret-Feld (ssh-agent) → **der Keychain wird nicht angefasst.** Damit bleibt
-  M10ds strukturelle Zusage erhalten, die `agentSetResolvesWithoutKeychainRead`
-  mit einem lesefeindlichen Store festhält.
+- Visible secret field with `.credential` and **no** secret in the
+  keychain → the session does not participate. That is exactly the
+  current SSH rule ("nothing to compare"), now also for S3 and WebDAV.
+  Anonymous WebDAV sessions are therefore never proposed.
+- Visible secret field with `.passphrase`, or no visible secret field
+  at all (ssh-agent) → **the keychain is not touched.** This preserves
+  M10d's structural commitment, pinned by
+  `agentSetResolvesWithoutKeychainRead` with a read-hostile store.
 
 ### `LoginMergeCandidate`
 
-Verliert `username`, `authKind` und `keyPath`. Bekommt:
+Loses `username`, `authKind` and `keyPath`. Gains:
 
 - `kind: ConnectionKind`
-- `values: FieldValues` — die Credential-Werte des Kandidaten, **ohne Secret**
-- `displayLabel: String` — der Wert des ersten sichtbaren Nicht-Secret-Feldes
-  des Credential-Schemas. Bei SSH und WebDAV der Benutzername, bei S3 die
-  Access Key ID.
-- `sessionIDs: [UUID]` (unverändert)
+- `values: FieldValues` — the candidate's credential values, **without
+  the secret**
+- `displayLabel: String` — the value of the first visible non-secret
+  field of the credential schema. For SSH and WebDAV the username, for
+  S3 the access key ID.
+- `sessionIDs: [UUID]` (unchanged)
 
-Die Sortierung (heute `username`, dann `keyPath`, dann Gruppengröße) läuft
-künftig über `displayLabel`, dann Gruppengröße. Die ignorierten Gruppen
-(`ignoredMergeGroups`) sind Mengen von Sitzungs-IDs und bleiben unberührt.
+Sorting (today `username`, then `keyPath`, then group size) will run
+via `displayLabel`, then group size. The ignored groups
+(`ignoredMergeGroups`) are sets of session IDs and stay untouched.
 
 ### `applyMerge`
 
-Baut das Set über den seit M22 vorhandenen
-`BackendDescriptor.loginSet(id:name:from:)` — die Inverse, die jeden `kind`
-kann. Der Secret-Transport (erste Gruppensitzung, die tatsächlich eines hat →
-unter `set.id` speichern → erst danach die Sitzungs-Slots löschen, mit Rollback
-bei Schreibfehler) bleibt unverändert; er war nie das Problem.
+Builds the set via the `BackendDescriptor.loginSet(id:name:from:)` that
+has existed since M22 — the inverse that can handle any `kind`. The
+secret transport (first group session that actually has one → store it
+under `set.id` → only then delete the session slots, with rollback on
+write failure) stays unchanged; it was never the problem.
 
-**Zusätzlich ein harter Riegel**, obwohl der umgebaute Planner ihn nie auslösen
-sollte: ein Kandidat, dessen Sitzungen nicht alle den Kandidaten-`kind` tragen,
-wird abgelehnt und nichts wird geschrieben. M23 hat zwölf Kommentare gefunden,
-die etwas über den Code behaupteten, das niemand nachgezogen hatte — der Riegel
-kostet wenige Zeilen und einen Test und macht aus der Behauptung eine Tatsache.
+**In addition, a hard gate**, even though the rebuilt planner should
+never trigger it: a candidate whose sessions do not all carry the
+candidate's `kind` is rejected and nothing is written. M23 found twelve
+comments that claimed something about the code that nobody had
+verified — the gate costs a few lines and a test and turns the claim
+into a fact.
 
-### App-Schicht
+### App layer
 
-`LoginSetsSheet` liest `candidate.username` an drei Stellen (Banner,
-Bestätigungsdialog, Vorschlagsname über `suggestedSetName(forUsername:)`).
-Alle drei lesen künftig `candidate.displayLabel`. Der Bannertext („%lld
-connections use the same login “%@”.") bleibt wörtlich gültig — er nennt keine
-Protokoll-Begriffe. `suggestedSetName(forUsername:)` wird zu
-`suggestedSetName(forLabel:)` umbenannt, damit der Parametername nicht lügt.
+`LoginSetsSheet` reads `candidate.username` in three places (banner,
+confirmation dialog, suggested name via `suggestedSetName(forUsername:)`).
+All three will read `candidate.displayLabel` going forward. The banner
+text ("%lld connections use the same login "%@".") remains literally
+valid — it names no protocol terms. `suggestedSetName(forUsername:)` is
+renamed to `suggestedSetName(forLabel:)` so the parameter name does not lie.
 
-## Bug 2 — der Jump-Host
+## Bug 2 — the jump host
 
-### Ist-Zustand
+### Current state
 
-`JumpSessionEligibility.eligible(for:in:)` filtert auf die gerade bearbeitete
-Sitzung und auf Ketten, sonst nichts. Eine `.s3`- oder `.webdav`-Sitzung wird
-als Bastion angeboten, obwohl nur SSH tunnelt.
+`JumpSessionEligibility.eligible(for:in:)` filters on the session
+currently being edited and on chains, nothing else. An `.s3` or
+`.webdav` session is offered as a bastion, even though only SSH tunnels.
 `LoginResolver.resolveJump(spec:sets:secrets:sessions:referencingSessionID:)`
-weist sie ebenfalls nicht ab: es prüft Kette und Selbstbezug und liest dann
-`referenced.host`/`referenced.port` — bei einer S3-Sitzung die internen
-Rückfallwerte `""` und `22`.
+does not reject it either: it checks chain and self-reference and then
+reads `referenced.host`/`referenced.port` — for an S3 session, the
+internal fallback values `""` and `22`.
 
-### Drei Stellen, in aufsteigender Wichtigkeit
+### Three sites, in ascending order of importance
 
-**1. Der Picker.** `JumpSessionEligibility.eligible` filtert zusätzlich auf
-`kind == .ssh`. Ein Bucket verschwindet aus der Auswahl.
+**1. The picker.** `JumpSessionEligibility.eligible` additionally filters
+on `kind == .ssh`. A bucket disappears from the selection.
 
-**2. Der harte Riegel im Resolver — die eigentliche Reparatur.** Ein
-Picker-Filter schützt nur, was künftig angelegt wird. Wer heute schon eine
-Sitzung hat, deren `jump.sessionID` auf einen Bucket zeigt (seit M12 anlegbar),
-läuft weiterhin hinein. Also bekommt `resolveJump(…sessions:
-referencingSessionID:)` neben den Prüfungen auf Kette und Selbstbezug eine
-dritte: zeigt `sessionID` auf eine Nicht-SSH-Sitzung, wird geworfen, bevor Host
-und Port gelesen werden.
+**2. The hard gate in the resolver — the actual fix.** A picker filter
+only protects what gets created going forward. Anyone who already has a
+session whose `jump.sessionID` points at a bucket (creatable since M12)
+still runs into it. So `resolveJump(…sessions:
+referencingSessionID:)` gets a third check besides the chain and
+self-reference ones: if `sessionID` points at a non-SSH session, it
+throws before host and port are read.
 
-Ein **eigener** Fehlerfall, nicht das vorhandene `kindMismatch` — das bedeutet
-„Sitzung und ihr Login-Set sprechen verschiedene Protokolle" und würde hier eine
-falsche Ursache nennen:
+An **own** error case, not the existing `kindMismatch` — that means
+"session and its login set speak different protocols" and would name
+the wrong cause here:
 
 ```swift
 /// A jump's `sessionID` points at a session that is not an SSH connection.
@@ -201,99 +203,100 @@ falsche Ursache nennen:
 case jumpSessionNotSSH
 ```
 
-Kosten: drei vorhandene `catch`-Stellen (`ContentView` zweimal,
-`ConnectionFormView` einmal) bekommen einen Arm, ein neuer L10n-Schlüssel in
-allen vier App-Katalogen (en/de/fr/pl, identische Schlüsselmengen).
+Cost: three existing `catch` sites (`ContentView` twice,
+`ConnectionFormView` once) get an arm, one new L10n key in all four App
+catalogs (en/de/fr/pl, identical key sets).
 
-**3. `SessionListViewModel.delete`.** Wird eine Sitzung gelöscht, die anderen
-als Bastion dient, kopiert `delete` deren Anmeldung in die referenzierenden
-Sitzungen — inklusive `session.host` und `session.port`. Bei einer
-Nicht-SSH-Sitzung sind das die Platzhalter.
+**3. `SessionListViewModel.delete`.** If a session that serves others as
+a bastion is deleted, `delete` copies its login into the referencing
+sessions — including `session.host` and `session.port`. For a non-SSH
+session, those are the placeholders.
 
-Künftig: **ist die gelöschte Sitzung nicht SSH, wird nichts restauriert.** Die
-Referenz bleibt hängen und ergibt beim nächsten Verbinden `.missingJumpSession`
-(„die referenzierte Verbindung wurde gelöscht") — wahr und behebbar, während
-`host: ""` wie eine konfigurierte Bastion aussieht, die niemand wählen kann.
-`JumpRestoreResult.restored` fällt entsprechend niedriger aus.
+Going forward: **if the deleted session is not SSH, nothing is
+restored.** The reference stays dangling and, on the next connect,
+yields `.missingJumpSession` ("the referenced connection was deleted")
+— true and fixable, whereas `host: ""` looks like a configured bastion
+nobody can select.
+`JumpRestoreResult.restored` comes out correspondingly lower.
 
-### Bewusst nicht: eine Migration
+### Deliberately not: a migration
 
-Bestehende kaputte Jump-Referenzen werden **nicht** umgeschrieben. Sie
-scheitern nach dem Riegel mit einer Meldung, die die Ursache nennt. Ein Sweep,
-der gespeicherte `JumpSpec`-Blöcke des Nutzers anfasst, ist riskanter als der
-Fehler, den er heilen soll.
+Existing broken jump references are **not** rewritten. They fail after
+the gate with a message that names the cause. A sweep that touches the
+user's stored `JumpSpec` blocks is riskier than the bug it would be
+healing.
 
-## Erfolgskriterien
+## Success criteria
 
-| # | Kriterium | Nachweis |
+| # | Criterion | Evidence |
 |---|---|---|
-| 1 | Zwei S3-Sitzungen mit **gleichem** Zugangspaar ergeben einen `.s3`-Kandidaten, dessen Merge ein `.s3`-Set mit gesetztem `accessKeyID` erzeugt | Test über `applyMerge`, der das entstandene Set liest |
-| 2 | Zwei S3- oder WebDAV-Sitzungen mit **verschiedenen** Secrets sind **kein** Kandidat | Test je Backend |
-| 3 | Kein Merge löscht je ein Secret, das das Ziel-Set nicht trägt | Test: nach `applyMerge` liegt unter `set.id` genau das Secret der Gruppe |
-| 4 | Das heutige SSH-Verhalten ist unverändert | siehe unten — die schmalste zulässige Anpassung der bestehenden `LoginMergePlannerTests` |
-| 5 | `.passphrase` und ssh-agent lesen den Keychain nicht an | lesefeindlicher `SecretStore` wie in `agentSetResolvesWithoutKeychainRead` |
-| 6 | Eine Nicht-SSH-Sitzung ist weder wählbar noch auflösbar als Bastion | Picker-Test **und** Resolver-Test; der Resolver-Test baut den `JumpSpec` direkt, ohne den Picker |
-| 7 | `delete` schreibt nie einen Platzhalter-Host in einen fremden `JumpSpec` | Test mit S3-Bastion und referenzierender SSH-Sitzung |
-| 8 | Beide Charakterisierungstests sind zu Zusagen umgeschrieben, nicht gelöscht | `nonSSHSessionsAreStillOfferedAsJumpHosts`, `nonSSHSessionsSharingASecretAreStillOfferedAsAMergeCandidate` |
+| 1 | Two S3 sessions with the **same** credential pair yield an `.s3` candidate whose merge produces an `.s3` set with `accessKeyID` set | test over `applyMerge` that reads the resulting set |
+| 2 | Two S3 or WebDAV sessions with **different** secrets are **not** a candidate | test per backend |
+| 3 | No merge ever deletes a secret the target set does not carry | test: after `applyMerge`, exactly the group's secret sits under `set.id` |
+| 4 | Today's SSH behavior is unchanged | see below — the narrowest allowed adjustment of the existing `LoginMergePlannerTests` |
+| 5 | `.passphrase` and ssh-agent do not read the keychain | read-hostile `SecretStore` as in `agentSetResolvesWithoutKeychainRead` |
+| 6 | A non-SSH session is neither selectable nor resolvable as a bastion | picker test **and** resolver test; the resolver test builds the `JumpSpec` directly, without the picker |
+| 7 | `delete` never writes a placeholder host into a foreign `JumpSpec` | test with an S3 bastion and a referencing SSH session |
+| 8 | Both characterization tests are rewritten into commitments, not deleted | `nonSSHSessionsAreStillOfferedAsJumpHosts`, `nonSSHSessionsSharingASecretAreStillOfferedAsAMergeCandidate` |
 
-### Kriterium 4 im Detail
+### Criterion 4 in detail
 
-Die bestehenden `LoginMergePlannerTests` lesen `candidate.username`,
-`candidate.authKind` und `candidate.keyPath` — alle drei fallen mit der neuen
-Kandidatenform weg. „Ohne Anpassung grün" ist deshalb nicht erreichbar; die
-Klammer ist stattdessen, **welche** Anpassung zulässig ist.
+The existing `LoginMergePlannerTests` read `candidate.username`,
+`candidate.authKind` and `candidate.keyPath` — all three fall away with
+the new candidate shape. "Green without adjustment" is therefore not
+achievable; the clamp instead is **which** adjustment is allowed.
 
-Zulässig ist ausschließlich das Umlesen einer Behauptung auf ihren neuen
-Sitzplatz — der behauptete Wert bleibt derselbe:
+Allowed is exclusively re-reading an assertion at its new seat — the
+asserted value stays the same:
 
-| vorher | nachher |
+| before | after |
 |---|---|
 | `candidate.username == "deploy"` | `candidate.displayLabel == "deploy"` |
 | `candidate.authKind == .privateKey` | `candidate.values[SSHField.authKind] == "privateKey"` |
 | `candidate.keyPath == "/k1"` | `candidate.values[SSHField.keyPath] == "/k1"` |
 
-**Unzulässig — und ein Befund für den Task-Bericht — ist jede Änderung an den
-Eingaben eines Tests, an seinem `sessionIDs`-Ergebnis oder an der Zahl der
-Kandidaten.** Wenn eine dieser Zeilen angefasst werden muss, hat der Umbau
-SSH-Verhalten verschoben, und das gehört gemeldet statt weggeschrieben.
+**Not allowed — and a finding for the task report — is any change to a
+test's inputs, to its `sessionIDs` result, or to the number of
+candidates.** If any of these lines needs to be touched, the rebuild has
+shifted SSH behavior, and that belongs reported rather than silently
+rewritten.
 
-## Test-Hinweise
+## Test notes
 
-- Sitzungen werden über die M23-Fixtures gebaut (`sshSession`, `s3Session`,
-  `webdavSession` in `Tests/macSCPCoreTests/SessionFixtures.swift`) — die eine
-  Stelle, an der Tests einen `StoredSession` zusammensetzen.
-- Secrets kommen aus `InMemorySecretStore`; echte Keychain-Zugriffe bleiben
-  hinter `MACSCP_KEYCHAIN=1`.
-- Kriterium 4 ist die Regressionsklammer: die bestehenden SSH-Tests dürfen
-  **nicht** an die neue Kandidatenform angepasst werden müssen, außer dort, wo
-  sie `candidate.username` lesen. Wo eine Anpassung nötig wird, gehört sie in
-  den Task-Bericht.
-- L10n-Parität wird vom vorhandenen `LocalizableStringsTests` erzwungen; der
-  neue Schlüssel muss in allen vier App-Katalogen stehen.
+- Sessions are built via the M23 fixtures (`sshSession`, `s3Session`,
+  `webdavSession` in `Tests/macSCPCoreTests/SessionFixtures.swift`) —
+  the one place where tests assemble a `StoredSession`.
+- Secrets come from `InMemorySecretStore`; real keychain access stays
+  behind `MACSCP_KEYCHAIN=1`.
+- Criterion 4 is the regression clamp: the existing SSH tests must
+  **not** need adjustment for the new candidate shape, except where
+  they read `candidate.username`. Where an adjustment becomes
+  necessary, it belongs in the task report.
+- L10n parity is enforced by the existing `LocalizableStringsTests`; the
+  new key must appear in all four App catalogs.
 
-## Für die Release-Notes
+## For the release notes
 
-1. **Merge-Vorschläge gibt es jetzt auch für S3 und WebDAV** — und sie erzeugen
-   ein Set des richtigen Protokolls. Vorher war der Vorschlag für diese
-   Protokolle fehlerhaft und hat beim Annehmen die hinterlegten Zugangsdaten
-   gelöscht.
-2. **Objektspeicher- und WebDAV-Verbindungen sind nicht mehr als Jump-Host
-   wählbar.** Eine bestehende Konfiguration, die auf eine solche zeigt,
-   meldet beim Verbinden nun im Klartext, dass nur SSH-Verbindungen als
-   Zwischenstation dienen können, statt eine nicht wählbare Bastion zu
-   erzeugen.
-3. **Wird eine Nicht-SSH-Verbindung gelöscht, auf die ein Jump-Host verweist,
-   wird nichts mehr in die verweisende Verbindung zurückkopiert.** Sie meldet
-   beim nächsten Verbinden, dass die referenzierte Verbindung fehlt.
+1. **Merge proposals now also exist for S3 and WebDAV** — and they
+   produce a set of the correct protocol. Previously the proposal for
+   these protocols was broken and deleted the stored credentials on
+   accept.
+2. **Object-storage and WebDAV connections can no longer be selected as
+   a jump host.** An existing configuration that points at one now
+   reports plainly on connect that only SSH connections can serve as an
+   intermediate stop, instead of producing an unselectable bastion.
+3. **If a non-SSH connection that a jump host points to is deleted,
+   nothing is copied back into the referencing connection anymore.** It
+   reports on the next connect that the referenced connection is missing.
 
-## Offen, bewusst nicht Teil von M24
+## Open, deliberately not part of M24
 
-- Der 0-%-CPU-Hänger der Testsuite (eigene Untersuchung; als Sofortmaßnahme ein
-  `timeout-minutes` im CI-Job).
-- Verwaiste Jump-Keychain-Slots aus der M23-Migration.
-- Die acht toten S3/WebDAV-Form-Shims auf `ConnectionViewModel`.
-- Ob die vier `internal`-Accessoren `host`/`port`/`username`/`authKind` auf
-  `StoredSession` nach diesem Meilenstein löschbar werden, wird beim Abschluss
-  **geprüft**, nicht vorab zugesagt: nach M24 ist jeder verbliebene Leser
-  entweder SSH-geschützt oder `SSHFieldSchema.values(from:)`, aber das ist ein
-  Nebenergebnis und kein Ziel.
+- The 0% CPU hang of the test suite (own investigation; as an immediate
+  measure a `timeout-minutes` in the CI job).
+- Orphaned jump keychain slots from the M23 migration.
+- The eight dead S3/WebDAV form shims on `ConnectionViewModel`.
+- Whether the four `internal` accessors `host`/`port`/`username`/`authKind`
+  on `StoredSession` become deletable after this milestone will be
+  **checked** at completion, not promised in advance: after M24 every
+  remaining reader is either SSH-guarded or `SSHFieldSchema.values(from:)`,
+  but that is a side effect, not a goal.

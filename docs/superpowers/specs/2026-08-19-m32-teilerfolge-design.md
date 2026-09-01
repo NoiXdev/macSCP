@@ -1,30 +1,30 @@
-# M32 — Teilerfolge, die trotzdem löschen (Design)
+# M32 — Partial successes that delete anyway (design)
 
-Stand 2026-08-19. Aus dem geerbten Backlog, nach einer Messung neu
-zugeschnitten.
+Status 2026-08-19. From the inherited backlog, rescoped after a
+measurement.
 
-## Die Messung, die den Schnitt bestimmt hat
+## The measurement that determined the scope
 
-Der Backlog führte fünf technische Punkte. Nachgemessen am Branch:
+The backlog listed five technical points. Remeasured against the branch:
 
-| Punkt | Stand |
+| Point | Status |
 |---|---|
-| `applyMerge` liest mit `try?` und löscht trotzdem | **erledigt** in M28/T2 — der Lesevorgang wirft, mit ausführlicher Begründung im Code. Die Notiz war veraltet. |
-| Jump-Bindung, dieselbe Bauart | **nicht gefunden** — die Bindestellen schreiben mit `try`, nicht `try?` |
-| `applyMerge`-Rewire-Schleife | **echt**, siehe unten |
-| Waisen aus der Schlüssel-Erzeugung | **erledigt** — der `catch` um `store.add` entfernt beide Dateien und wirft den ursprünglichen Fehler weiter. Beim ersten Schreiben dieser Spec falsch als offen geführt, weil nur die Reihenfolge der Aufrufe gelesen wurde, nicht ihr `catch`. |
-| Testsuite-Hänger | nicht auf Zuruf lösbar (280 Läufe ohne Reproduktion); Werkzeug liegt bereit |
+| `applyMerge` reads with `try?` and deletes anyway | **done** in M28/T2 — the read throws, with a detailed justification in the code. The note was stale. |
+| Jump binding, same construction | **not found** — the binding sites write with `try`, not `try?` |
+| `applyMerge` rewire loop | **real**, see below |
+| Orphans from key generation | **done** — the `catch` around `store.add` removes both files and rethrows the original error. When this spec was first written, this was wrongly carried as open, because only the order of calls was read, not their `catch`. |
+| Test suite hang | not solvable on demand (280 runs without reproduction); tooling is in place |
 
-Ein Backlog-Eintrag ist derselbe Fall wie ein Kommentar: eine Behauptung mit
-Verfallsdatum. **Drei von fünf waren abgelaufen** — der dritte fiel erst
-beim Planschreiben auf, nachdem diese Spec ihn bereits als offen geführt
-hatte. Die Lehre gilt also auch für diese Spec selbst: eine Reihenfolge von
-Aufrufen zu lesen ist keine Messung, solange der `catch` daneben ungelesen
-bleibt.
+A backlog entry is the same case as a comment: a claim with an expiry
+date. **Three of five had expired** — the third one was only noticed
+while writing the plan, after this very spec had already carried it as
+open. So the lesson applies to this spec itself too: reading a sequence
+of calls is not a measurement as long as the `catch` beside it stays
+unread.
 
-## Die eine echte Fundstelle
+## The one real finding
 
-### `applyMerge` — kostet ein Zugangsdatum
+### `applyMerge` — costs a credential
 
 ```swift
 for session in groupSessions {
@@ -35,53 +35,53 @@ for session in groupSessions {
 }
 ```
 
-Scheitert der Store-Write, behält die Sitzung `loginSetID == nil` — sie holt
-ihr Geheimnis also weiter aus dem eigenen Slot — und genau dieser Slot wird
-in derselben Iteration gelöscht. Die Sitzung steht danach ohne jedes
-Zugangsdatum da.
+If the store write fails, the session keeps `loginSetID == nil` — so it
+still fetches its secret from its own slot — and that very slot gets
+deleted in the same iteration. The session ends up with no credential at
+all.
 
-Das ist als Verhalten dokumentiert, nicht als Befund: der Doc-Kommentar sagt
-wörtlich „both are `try?`, so a store-write failure for one session does not
-stop that session's secret from being deleted." Es war gesehen und
-hingenommen.
+This is documented as behavior, not as a finding: the doc comment says,
+verbatim, "both are `try?`, so a store-write failure for one session does
+not stop that session's secret from being deleted." It had been seen and
+accepted.
 
-## Die Regel
+## The rule
 
-**Ein Schritt, der etwas wegnimmt, läuft nur, wenn der Schritt, der seinen
-Ersatz schafft, nachweislich geglückt ist.**
+**A step that takes something away runs only if the step that creates its
+replacement has demonstrably succeeded.**
 
-- **`applyMerge`:** `try? store.upsert` wird zu `do/catch`. Scheitert der
-  Write, wird der Slot dieser Sitzung **nicht** gelöscht; sie behält
-  Geheimnis und Un-Bindung und bleibt damit funktionsfähig. Die Schleife
-  läuft für die übrigen Mitglieder weiter — ein Fehlschlag bei einem
-  Mitglied darf die anderen nicht mit sich reißen —, und am Ende sagt eine
-  Meldung, dass Sitzungen nicht umgehängt wurden und ihr eigenes Passwort
-  behalten haben. **Ohne Anzahl:** Plurale brauchen `.stringsdict`, das es
-  nur in `MacSCPAppKit` gibt, während diese Meldung in Cores Katalog liegt —
-  eine Zahl wäre hier Plural-Infrastruktur für einen Satz. Der Rückgabewert
-  bleibt das erzeugte Set: es existiert, und die geglückten Mitglieder
-  zeigen darauf.
-Die Schlüssel-Erzeugung erfüllt diese Regel bereits und bleibt unberührt;
-ihr `catch` ist das Muster, dem `applyMerge` folgt.
+- **`applyMerge`:** `try? store.upsert` becomes `do/catch`. If the write
+  fails, this session's slot is **not** deleted; it keeps its secret and
+  its non-binding, and thereby stays functional. The loop keeps running
+  for the remaining members — a failure on one member must not drag the
+  others down with it —, and at the end a message states that sessions
+  were not rebound and kept their own password. **Without a count:**
+  plurals need `.stringsdict`, which exists only in `MacSCPAppKit`, while
+  this message lives in Core's catalog — a count here would mean plural
+  infrastructure for one sentence. The return value stays the created
+  set: it exists, and the members that succeeded point to it.
+Key generation already satisfies this rule and stays untouched; its
+`catch` is the pattern `applyMerge` follows.
 
 ## Tests
 
-**`applyMerge`.** Der Fehlschlag wird nicht simuliert, sondern **erzeugt**:
-das Sitzungsverzeichnis wird schreibgeschützt gesetzt, sodass `upsert`
-wirklich scheitert. Kein Test-Seam, den es nur für diesen Test gäbe — und
-der Test beweist damit auch, dass ein unbeschreibbares Verzeichnis
-tatsächlich zu einem Fehler führt, statt das anzunehmen.
+**`applyMerge`.** The failure is not simulated, it is **produced**: the
+session directory is set read-only so `upsert` genuinely fails. No test
+seam that would exist only for this test — and the test thereby also
+proves that an unwritable directory actually leads to an error, instead
+of assuming it.
 
-- Bei fehlgeschlagenem Write behält die Sitzung ihr Geheimnis.
-- **Positivkontrolle:** ohne Schreibschutz wird das Geheimnis sehr wohl
-  gelöscht und die Sitzung zeigt aufs Set. Ohne diesen zweiten Test bliebe
-  der erste auch dann grün, wenn `applyMerge` gar nichts mehr löscht.
+- On a failed write, the session keeps its secret.
+- **Positive control:** without the write protection, the secret does
+  get deleted and the session does point to the set. Without this second
+  test, the first would stay green even if `applyMerge` deleted nothing
+  at all anymore.
 
-## Was nicht dazugehört
+## What does not belong here
 
-- **Schaden 1 aus M30** — der eigene Slot einer Sitzung, die an ein Set
-  gebunden **ist**. Andere Bauart: kein Fehlschlag beteiligt, sondern eine
-  Aufräumfrage. Eigener Durchgang.
-- **Der app-weite Audit-Bereich.** Nach M31 ist die Ad-hoc-Hälfte gelöst;
-  der Rest ist eine bewusste Nicht-Entscheidung (M27), kein Defekt.
-- **Der Testsuite-Hänger.** Bleibt entschärft und dokumentiert.
+- **Damage 1 from M30** — the own slot of a session that **is** bound to
+  a set. Different construction: no failure is involved, it is a cleanup
+  question. Its own pass.
+- **The app-wide audit surface.** After M31 the ad-hoc half is solved;
+  the rest is a deliberate non-decision (M27), not a defect.
+- **The test suite hang.** Stays defused and documented.

@@ -1,61 +1,63 @@
-# Bereiche aus dem Reiter-Menü umschalten — Umsetzungsplan
+# Switching panes from the tab menu — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Das Reiter-Kontextmenü blendet Dateien und Terminal ein und aus, und bietet das externe Terminal als eigenen Weg an.
+**Goal:** The tab context menu shows and hides files and terminal, and offers the external terminal as its own entry.
 
-**Grundlage:** `docs/superpowers/specs/2026-08-27-reiter-bereiche-umschalten-design.md`
+**Basis:** `docs/superpowers/specs/2026-08-27-reiter-bereiche-umschalten-design.md`
 
-**Architektur:** Kein neues Modell. Die Zustände kommen aus `PaneToggleState`, das die Werkzeugleiste bereits liest; `TabContextMenu.entries` bekommt sie als fertige Antwort herein, so wie es `supportsShell` schon bekommt. Der einseitige Eintrag „Terminal öffnen" entfällt.
+**Architecture:** No new model. The states come from `PaneToggleState`, which the toolbar already reads; `TabContextMenu.entries` receives them as a finished answer, the way it already receives `supportsShell`. The one-sided "Open Terminal" entry goes away.
 
-**Reihenfolge:** erst der Wert in Core, dann die Verdrahtung.
+**Order:** first the value in Core, then the wiring.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **nur Englisch**;
-  Katalogwerte sind Übersetzungen, das Deutsche duzt.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- **Alle vier Kataloge** (`en`, `de`, `fr`, `pl` unter
-  `Sources/MacSCPAppKit/Resources/`), gleiche Schlüsselmengen.
-- **Nur zeigen, was möglich ist** — kein `.disabled`, kein Ausgrauen im
-  Reiter-Menü. Ein nicht anwendbarer Eintrag **fehlt** (Maintainer, 2026-08-27).
-- **`terminalTarget` bleibt außen vor.** Die Bereichsumschalter meinen immer
-  den eingebauten Bereich, „Externes Terminal öffnen" meint immer extern —
-  genau wie die zwei Einträge des „Terminal"-Menüs, die sich bewusst nie mit
-  der Einstellung ändern, „sodass ein Umstellen nie eine Fähigkeit wegnimmt".
-- **`TerminalPanelViewModel.toggle()` bleibt der einzige Schreibweg** für die
-  Terminal-Sichtbarkeit; er besitzt den Lebenszyklus der Shell. Kein nackter
-  Bool-Schreibvorgang.
-- Alle sechs Targets stehen auf `.swiftLanguageMode(.v6)`; **CI wird rot, sobald
-  die Zahl eindeutiger Warnorte über 1 liegt.**
-- **Keine Zeilennummern, keine Ortsangaben in Kommentaren.** Jede Zahl und jede
-  Aufzählung wird in dem Durchgang gezählt, der sie schreibt.
-- Die App wird nicht gestartet, nichts gepusht.
+- Code, comments, identifiers, test names, commit messages: **English
+  only**; catalog values are translations, the German addresses the
+  user as *du*.
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- **All four catalogs** (`en`, `de`, `fr`, `pl` under
+  `Sources/MacSCPAppKit/Resources/`), same key sets.
+- **Only show what is possible** — no `.disabled`, no greying out in the
+  tab menu. An entry that does not apply **is absent** (maintainer, 2026-08-27).
+- **`terminalTarget` stays out of this.** The pane toggles always mean
+  the built-in pane, "Open External Terminal" always means external —
+  exactly like the two entries of the "Terminal" menu, which deliberately
+  never change with the setting, "so that switching it never takes a
+  capability away."
+- **`TerminalPanelViewModel.toggle()` stays the only write path** for
+  terminal visibility; it owns the shell's lifecycle. No bare bool write.
+- All six targets are on `.swiftLanguageMode(.v6)`; **CI goes red as soon
+  as the number of distinct warning sites is above 1.**
+- **No line numbers, no location references in comments.** Every number
+  and every enumeration is counted in the pass that writes it.
+- The app is not launched, nothing is pushed.
 
 ---
 
-### Task 1: Die Einträge in Core
+### Task 1: The entries in Core
 
 **Files:**
 - Modify: `Sources/macSCPCore/Presentation/TabContextMenu.swift`
-- Modify: `Sources/macSCPCore/Presentation/PaneVisibility.swift` (nur ein Kommentar)
+- Modify: `Sources/macSCPCore/Presentation/PaneVisibility.swift` (one comment only)
 - Test: `Tests/macSCPCoreTests/TabContextMenuTests.swift`
 
 **Interfaces:**
-- Consumes: `PaneToggle` (`.files`/`.terminal`) und `PaneToggleState`
-  (`isOn`, `isEnabled`) aus `PaneVisibility.swift`.
-- Produces: `TabMenuEntry.pane(PaneToggle, PaneAction)` und
-  `TabMenuEntry.openExternalTerminal`; `TabMenuEntry.openTerminal` **entfällt**.
-  Neue Signatur
+- Consumes: `PaneToggle` (`.files`/`.terminal`) and `PaneToggleState`
+  (`isOn`, `isEnabled`) from `PaneVisibility.swift`.
+- Produces: `TabMenuEntry.pane(PaneToggle, PaneAction)` and
+  `TabMenuEntry.openExternalTerminal`; `TabMenuEntry.openTerminal`
+  **goes away**. New signature
   `entries(atIndex:ofTabCount:supportsShell:isAdHoc:isConnected:filesToggle:terminalToggle:)`.
-  Task 2 rendert daraus.
+  Task 2 renders from it.
 
-**Der gemessene Ist-Zustand:** `entries` nimmt heute fünf Fakten und hängt
-`.openTerminal` an `supportsShell && isConnected`. `PaneToggleState` liefert
-`isOn` und `isEnabled`; `toggleState(for:hasShell:)` faltet `hasShell` bereits
-ein und meldet für die **einzige noch sichtbare** Hälfte `isEnabled == false`.
+**Measured current state:** `entries` today takes five facts and appends
+`.openTerminal` on `supportsShell && isConnected`. `PaneToggleState`
+delivers `isOn` and `isEnabled`; `toggleState(for:hasShell:)` already
+folds in `hasShell` and reports `isEnabled == false` for the **only
+still-visible** half.
 
-- [ ] **Step 1: Den Test zuerst schreiben.** In die bestehende Suite ergänzen:
+- [ ] **Step 1: Write the test first.** Add to the existing suite:
 
 ```swift
     private static let bothVisible = PaneToggleState(isOn: true, isEnabled: true)
@@ -124,17 +126,18 @@ ein und meldet für die **einzige noch sichtbare** Hälfte `isEnabled == false`.
     }
 ```
 
-  **Der bestehende Test gleichen Namens (`theOrderIsFixed…`) wird ersetzt**, weil
-  seine erwartete Liste `.openTerminal` enthält; ebenso die beiden bestehenden
-  Tests, die `.openTerminal` prüfen. Zähle beim Ersetzen, wie viele Tests die
-  Suite danach hat, falls du die Zahl irgendwo hinschreibst.
+  **The existing test of the same name (`theOrderIsFixed…`) is replaced**,
+  because its expected list contains `.openTerminal`; likewise the two
+  existing tests that check `.openTerminal`. When replacing them, count
+  how many tests the suite has afterward, if you write that number down
+  anywhere.
 
-- [ ] **Step 2: Rot laufen lassen.**
+- [ ] **Step 2: Run it red.**
 
 Run: `swift test --filter TabContextMenu`
-Erwartet: FAIL — `type 'TabMenuEntry' has no member 'pane'`.
+Expected: FAIL — `type 'TabMenuEntry' has no member 'pane'`.
 
-- [ ] **Step 3: Umsetzen.** In `TabContextMenu.swift`:
+- [ ] **Step 3: Implement.** In `TabContextMenu.swift`:
 
 ```swift
 /// Which way a pane entry points: the action the user can take right now.
@@ -146,7 +149,7 @@ public enum PaneAction: Equatable, Sendable {
 }
 ```
 
-  In `TabMenuEntry`: `case openTerminal` **entfernen**, dafür
+  In `TabMenuEntry`: **remove** `case openTerminal`, add instead
 
 ```swift
     /// Show or hide one of the window's two halves. Present only while the
@@ -160,7 +163,7 @@ public enum PaneAction: Equatable, Sendable {
     case openExternalTerminal
 ```
 
-  Und in `entries`, an die Stelle der `.openTerminal`-Zeile:
+  And in `entries`, in place of the `.openTerminal` line:
 
 ```swift
         if isConnected && filesToggle.isEnabled {
@@ -172,79 +175,81 @@ public enum PaneAction: Equatable, Sendable {
         if supportsShell && isConnected { entries.append(.openExternalTerminal) }
 ```
 
-  Die Signatur um die zwei Parameter erweitern (`filesToggle:`, `terminalToggle:`
-  am Ende) und den Doku-Kommentar der Funktion nachziehen: er zählt heute
-  „drei Fakten" auf — **zähle nach, was danach stimmt.**
+  Extend the signature by the two parameters (`filesToggle:`,
+  `terminalToggle:` at the end) and update the function's doc comment
+  accordingly: it currently lists "three facts" — **count what holds
+  true afterward.**
 
-- [ ] **Step 4: Den veralteten Kommentar richtigstellen.** In
-  `PaneVisibility.swift` steht:
+- [ ] **Step 4: Fix the stale comment.** In
+  `PaneVisibility.swift` it reads:
 
   > This type only decides WHICH halves are visible. It says nothing about
   > `TerminalPanelViewModel.isVisible`, the existing terminal-only toggle —
   > reconciling the two is a later task's decision.
 
-  Das ist überholt: `SessionTab.effectivePaneVisibility(terminalIsVisible:hasShell:)`
-  ist der eine Zusammenbau-Punkt und sein eigener Kommentar sagt, es dürfe nur
-  einen geben. Schreib das dort hin, statt eine erledigte Aufgabe zu vertagen.
+  This is outdated: `SessionTab.effectivePaneVisibility(terminalIsVisible:hasShell:)`
+  is the one point of assembly, and its own comment says there must be
+  only one. Write that there, instead of deferring a task that is already done.
 
-- [ ] **Step 5: Grün laufen lassen.** `swift test --filter TabContextMenu`
-- [ ] **Step 6:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 5: Run it green.** `swift test --filter TabContextMenu`
+- [ ] **Step 6:** Full suite green, no new warning.
 - [ ] **Step 7: Commit** — `feat(tabs): let the menu offer both panes, not just the terminal`
 
 ---
 
-### Task 2: Verdrahten
+### Task 2: Wiring
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/ContentView+Lifecycle.swift`,
   `Sources/MacSCPAppKit/TabStripView.swift`
-- Modify: alle vier `Localizable.strings`
+- Modify: all four `Localizable.strings`
 - Test: `Tests/macSCPAppKitTests/TabContextMenuWiringGuardTests.swift`
 
 **Interfaces:**
-- Consumes: alles aus Task 1.
+- Consumes: everything from Task 1.
 
-**Der gemessene Ist-Zustand:** `tabMenuEntries(for:)` schlägt den Index nach,
-liest `BackendDescriptor…capabilities` und ruft `TabContextMenu.entries`.
-`handleTabMenuEntry` verzweigt über die Fälle; `openTerminalPane(in:)` blendet
-**nur ein** und kehrt zurück, wenn das Terminal schon sichtbar ist.
-`SessionTab.paneToggleState(for:terminalIsVisible:hasShell:)` liefert genau
-das, was Task 1 braucht — dieselbe Funktion, aus der die Werkzeugleiste liest.
+**Measured current state:** `tabMenuEntries(for:)` looks up the index,
+reads `BackendDescriptor…capabilities`, and calls `TabContextMenu.entries`.
+`handleTabMenuEntry` branches over the cases; `openTerminalPane(in:)`
+**only shows** and returns early if the terminal is already visible.
+`SessionTab.paneToggleState(for:terminalIsVisible:hasShell:)` delivers
+exactly what Task 1 needs — the same function the toolbar reads from.
 
-- [ ] **Step 1: Die Fakten beschaffen.** `tabMenuEntries(for:)` reicht die zwei
-  Zustände nach, aus `paneToggleState(for:terminalIsVisible:hasShell:)`.
-  **Nicht selbst zusammenbauen** — der Quelltext sagt an
-  `effectivePaneVisibility`, dass es nur einen Zusammenbau-Punkt geben darf,
-  und ein zweiter hier wäre genau der Fehler, den dieser Vorgang vermeiden soll.
-- [ ] **Step 2: Die Titel.** Fünf Schlüssel in alle vier Kataloge:
+- [ ] **Step 1: Get the facts.** `tabMenuEntries(for:)` passes the two
+  states along, from `paneToggleState(for:terminalIsVisible:hasShell:)`.
+  **Don't assemble them yourself** — the source says at
+  `effectivePaneVisibility` that there must be only one assembly point,
+  and a second one here would be exactly the mistake this work aims to avoid.
+- [ ] **Step 2: The titles.** Five keys into all four catalogs:
   `tabs.menu.showFiles`, `tabs.menu.hideFiles`, `tabs.menu.showTerminal`,
-  `tabs.menu.hideTerminal`, `tabs.menu.openExternalTerminal`. Der alte Schlüssel
-  `tabs.menu.openTerminal` **entfällt in allen vier**. Deutsch duzt.
-- [ ] **Step 3: Die Handler.**
-  - `.pane(.files, _)` ruft den bestehenden Weg für einen Klick auf den
-    Datei-Umschalter — such ihn über `applyingClick(on: .files, …)`, statt einen
-    zweiten zu bauen.
-  - `.pane(.terminal, _)` ruft `session.terminal.toggle()` und danach
-    `persistActivePaneVisibility()`, wie `openTerminalPane` es heute schon tut
-    — aber **ohne** dessen `guard !session.terminal.isVisible`, denn genau der
-    machte den Eintrag einseitig.
-  - `.openExternalTerminal` ruft `requestExternalTerminal(for: tab)`.
-  - `openTerminalPane(in:)` entfällt, sofern kein anderer Aufrufer bleibt —
-    **zähle die Aufrufer, bevor du löschst.**
-- [ ] **Step 4: Den Wächter nachziehen.** `TabContextMenuWiringGuardTests`
-  verankert die Menü-Einträge und den Weiterreich-Weg wörtlich. Der Wechsel von
-  `.openTerminal` auf zwei neue Fälle wird ihn rot machen — **das ist beabsichtigt
-  und der Beleg, dass er greift.** Zieh ihn nach und prüfe danach, ob sein
-  Abschnitt „What this guard does NOT catch" noch stimmt.
-- [ ] **Step 5:** Volle Suite grün, keine neue Warnung.
+  `tabs.menu.hideTerminal`, `tabs.menu.openExternalTerminal`. The old key
+  `tabs.menu.openTerminal` **goes away in all four**. German addresses the
+  user as *du*.
+- [ ] **Step 3: The handlers.**
+  - `.pane(.files, _)` calls the existing path for a click on the files
+    toggle — find it via `applyingClick(on: .files, …)`, instead of
+    building a second one.
+  - `.pane(.terminal, _)` calls `session.terminal.toggle()` and then
+    `persistActivePaneVisibility()`, the way `openTerminalPane` already
+    does today — but **without** its `guard !session.terminal.isVisible`,
+    since that was exactly what made the entry one-sided.
+  - `.openExternalTerminal` calls `requestExternalTerminal(for: tab)`.
+  - `openTerminalPane(in:)` goes away, provided no other caller remains —
+    **count the callers before deleting.**
+- [ ] **Step 4: Update the guard.** `TabContextMenuWiringGuardTests`
+  anchors the menu entries and the pass-through path verbatim. The switch
+  from `.openTerminal` to two new cases will turn it red — **that is
+  intentional and the proof that it works.** Update it and then check
+  whether its "What this guard does NOT catch" section still holds.
+- [ ] **Step 5:** Full suite green, no new warning.
 - [ ] **Step 6: Commit** — `feat(tabs): switch panes from the tab menu`
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly out of scope
 
-- Keine Änderung an `terminalTarget`, an der Werkzeugleiste oder am
-  „Terminal"-Menü der Menüleiste.
-- Kein Ausgrauen im Reiter-Menü.
-- Keine Änderung daran, wie `TerminalPanelViewModel.isVisible` geschrieben wird.
-- Keine Antwort auf I5 (Speichern überschreibt namensgleich).
+- No change to `terminalTarget`, to the toolbar, or to the menu bar's
+  "Terminal" menu.
+- No greying out in the tab menu.
+- No change to how `TerminalPanelViewModel.isVisible` is written.
+- No answer to I5 (saving overwrites a same-named entry).

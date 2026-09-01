@@ -1,48 +1,48 @@
-# macSCP M3d — ssh-config-Import Implementation Plan
+# macSCP M3d — ssh-config Import Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Lesender Import aus `~/.ssh/config`: bestehende Hosts (Host/HostName/User/Port/IdentityFile) erscheinen als eigene Sidebar-Sektion und füllen per Klick das Verbindungsformular — der letzte M3-Baustein.
+**Goal:** Read-only import from `~/.ssh/config`: existing hosts (Host/HostName/User/Port/IdentityFile) appear as their own sidebar section and fill the connection form on click — the last M3 building block.
 
-**Architecture:** `SSHConfigParser` (Core, pur): Block-Parser für `Host`-Einträge (Keywords case-insensitiv, `=`- oder Whitespace-Trenner, Kommentare, Anführungszeichen, Mehrfach-Aliase pro Host-Zeile; Wildcard-/Negations-Muster und `Match`/`Include` werden übersprungen — dokumentierte YAGNI-Grenzen). `SSHConfigImporter.load(path:)` liest die Datei (fehlend → `[]`, alias-sortiert). Die Sidebar bekommt eine Sektion „IMPORTIERT"; Klick füllt das Formular (Key-Pfad → SSH-Key-Modus), verbindet aber bewusst NICHT (Import kennt keine Geheimnisse). Vorab: Host-Casing-Normalisierung im `KnownHostsStore` (M3c-Review: Import-Casing darf gepinnte Keys nicht verfehlen).
+**Architecture:** `SSHConfigParser` (Core, pure): block parser for `Host` entries (keywords case-insensitive, `=` or whitespace separator, comments, quotes, multiple aliases per Host line; wildcard/negation patterns and `Match`/`Include` are skipped — documented YAGNI boundaries). `SSHConfigImporter.load(path:)` reads the file (missing → `[]`, alias-sorted). The sidebar gets an "IMPORTED" section; clicking fills the form (key path → SSH key mode), but deliberately does NOT connect (import knows no secrets). Beforehand: host-casing normalization in `KnownHostsStore` (M3c review: import casing must not miss pinned keys).
 
-**Abhängigkeitsgraph:** `[ Task 0 (Casing, Core) ∥ Task 1 (Parser+Importer, Core) ] → Task 2 (Sidebar+Form-Fill, UI) → Task 3 (Abschluss)` — T0∥T1 dateidisjunkt (Worktree).
+**Dependency graph:** `[ Task 0 (casing, Core) ∥ Task 1 (parser+importer, Core) ] → Task 2 (sidebar+form fill, UI) → Task 3 (wrap-up)` — T0∥T1 file-disjoint (worktree).
 
 ## Global Constraints
 
-- swift-tools-version 6.0, Language Mode v5; macOS 14; UI-Texte Deutsch; Conventional Commits mit Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; niemals pushen (macht der Koordinator)
-- **Die echte `~/.ssh/config` des Nutzers wird NIE geschrieben** — Import ist strikt lesend; Tests nutzen ausschließlich Temp-Dateien
-- Import-Klick verbindet NICHT automatisch (keine Geheimnisse vorhanden); er füllt nur das Formular
-- YAGNI: kein `Match`, kein `Include`, keine Wildcard-Vererbung (`Host *`-Blöcke werden komplett übersprungen), kein Import-Editor, keine Persistenz importierter Hosts in sessions.json
-- Nach jedem Task: `swift test` grün
+- swift-tools-version 6.0, Language Mode v5; macOS 14; UI text German; Conventional Commits with footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`; never push (the coordinator does that)
+- **The user's real `~/.ssh/config` is NEVER written to** — import is strictly read-only; tests exclusively use temp files
+- The import click does NOT auto-connect (no secrets present); it only fills the form
+- YAGNI: no `Match`, no `Include`, no wildcard inheritance (`Host *` blocks are skipped entirely), no import editor, no persistence of imported hosts into sessions.json
+- After every task: `swift test` green
 
-## Datei-Landkarte (Delta M3d)
+## File Map (Delta M3d)
 
 ```
 Sources/macSCPCore/
   Sessions/KnownHostsStore.swift     (Task 0 — Host lowercased in find/upsert)
-  Sessions/SSHConfigParser.swift     (neu, Task 1 — Parser + SSHConfigHost + Importer)
+  Sessions/SSHConfigParser.swift     (new, Task 1 — parser + SSHConfigHost + importer)
 Sources/MacSCPApp/
-  SessionSidebar.swift               (Task 2 — Sektion IMPORTIERT)
-  ContentView.swift                  (Task 2 — importedHosts laden + fillFromImported)
+  SessionSidebar.swift               (Task 2 — IMPORTED section)
+  ContentView.swift                  (Task 2 — load importedHosts + fillFromImported)
 Tests/macSCPCoreTests/
   KnownHostsStoreTests.swift         (Task 0 +2)
-  SSHConfigParserTests.swift         (neu, Task 1 — 9 Tests)
+  SSHConfigParserTests.swift         (new, Task 1 — 9 tests)
 ```
 
 ---
 
-### Task 0: Host-Casing-Normalisierung im KnownHostsStore
+### Task 0: Host-casing normalization in KnownHostsStore
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/KnownHostsStore.swift`
 - Test: `Tests/macSCPCoreTests/KnownHostsStoreTests.swift` (+2)
 
-**Interfaces:** keine API-Änderung. Invariante: `find`/`upsert` behandeln den Host case-insensitiv (gespeichert wird lowercased) — ein via ssh-config importierter Host „Web.Example.COM" trifft den manuell gepinnten Key von „web.example.com".
+**Interfaces:** no API change. Invariant: `find`/`upsert` treat the host case-insensitively (stored lowercased) — a host "Web.Example.COM" imported via ssh-config matches the manually pinned key of "web.example.com".
 
-**Parallel-Hinweis:** disjunkt zu Task 1 — Worktree.
+**Parallel note:** disjoint from Task 1 — worktree.
 
-- [x] **Step 1: Fehlschlagende Tests** — in `KnownHostsStoreTests` ergänzen:
+- [x] **Step 1: Failing tests** — add to `KnownHostsStoreTests`:
 
 ```swift
     @Test func findIsCaseInsensitiveOnHost() throws {
@@ -63,16 +63,16 @@ Tests/macSCPCoreTests/
     }
 ```
 
-Run: `swift test --filter KnownHostsStoreTests` — beide FAIL.
+Run: `swift test --filter KnownHostsStoreTests` — both FAIL.
 
-- [x] **Step 2: Implementieren** — in `KnownHostsStore`:
+- [x] **Step 2: Implement** — in `KnownHostsStore`:
 
-1. `KnownHostKey.init` normalisiert: `self.host = host.lowercased()` (Doc-Kommentar: „Host wird lowercased gespeichert — Vergleiche sind case-insensitiv."). ACHTUNG: `host` ist `let` — Normalisierung im Init ist der einzige Schreibpunkt, das genügt.
-2. `find(host:port:)`: Vergleich gegen `host.lowercased()`.
-3. `upsert`: `removeAll`-Vergleich ebenfalls über lowercased (durch Init-Normalisierung von `key.host` + lowercased-Vergleich abgedeckt — beide Seiten normalisieren).
+1. `KnownHostKey.init` normalizes: `self.host = host.lowercased()` (doc comment: "Host is stored lowercased — comparisons are case-insensitive."). NOTE: `host` is `let` — normalizing in the init is the only write site, which is sufficient.
+2. `find(host:port:)`: compare against `host.lowercased()`.
+3. `upsert`: the `removeAll` comparison likewise via lowercased (covered by init normalization of `key.host` + lowercased comparison — both sides normalize).
 
-- [x] **Step 3: Grün** — Filter-Suite (6), Gesamtsuite (auf eigenem Branch Basis + 2). Prüfen, dass die drei gated TOFU-Tests unverändert kompilieren (sie nutzen „127.0.0.1" — casing-neutral).
-- [x] **Step 4: Commit** — `fix: normalize host casing in known hosts store` (mit Footer).
+- [x] **Step 3: Green** — filtered suite (6), full suite (base + 2 on the own branch). Check that the three gated TOFU tests still compile unchanged (they use "127.0.0.1" — casing-neutral).
+- [x] **Step 4: Commit** — `fix: normalize host casing in known hosts store` (with footer).
 
 ---
 
@@ -83,15 +83,15 @@ Run: `swift test --filter KnownHostsStoreTests` — beide FAIL.
 - Test: `Tests/macSCPCoreTests/SSHConfigParserTests.swift`
 
 **Interfaces:**
-- Produces (für Task 2):
+- Produces (for Task 2):
 
 ```swift
 public struct SSHConfigHost: Equatable, Sendable {
     public let alias: String
-    public let hostName: String?     // nil → Konsument fällt auf alias zurück
+    public let hostName: String?     // nil → consumer falls back to alias
     public let user: String?
-    public let port: Int?            // nil bei fehlend ODER nicht-numerisch
-    public let identityFile: String? // unverändert (inkl. "~"), Loader expandiert
+    public let port: Int?            // nil when missing OR non-numeric
+    public let identityFile: String? // unchanged (including "~"), loader expands it
 }
 
 public enum SSHConfigParser {
@@ -100,16 +100,16 @@ public enum SSHConfigParser {
 
 public enum SSHConfigImporter {
     public static var defaultPath: String   // ~/.ssh/config
-    /// Fehlende/unlesbare Datei → [] (Import ist optional, nie ein Fehler).
-    public static func load(path: String) -> [SSHConfigHost]   // alias-sortiert (case-insensitiv)
+    /// Missing/unreadable file → [] (import is optional, never an error).
+    public static func load(path: String) -> [SSHConfigHost]   // alias-sorted (case-insensitive)
 }
 ```
 
-**Parser-Regeln (Vertrag):** Keywords case-insensitiv; Trenner Whitespace ODER `=`; `#`-Kommentare (ganze Zeile und Zeilenrest); Werte optional in doppelten Anführungszeichen; `Host a b c` erzeugt DREI Einträge mit gemeinsamen Settings; Aliase mit `*`, `?` oder `!`-Präfix werden übersprungen; Keywords vor dem ersten `Host` werden ignoriert; nur der ERSTE Wert eines Keywords pro Block zählt (ssh-Verhalten); `Match`-Blöcke beenden den aktuellen Host-Block und werden bis zum nächsten `Host` ignoriert.
+**Parser rules (contract):** keywords case-insensitive; separator whitespace OR `=`; `#` comments (whole line and line remainder); values optionally in double quotes; `Host a b c` produces THREE entries with shared settings; aliases with a `*`, `?`, or `!` prefix are skipped; keywords before the first `Host` are ignored; only the FIRST value of a keyword per block counts (ssh behavior); `Match` blocks end the current host block and are ignored up to the next `Host`.
 
-**Parallel-Hinweis:** disjunkt zu Task 0 — Worktree.
+**Parallel note:** disjoint from Task 0 — worktree.
 
-- [x] **Step 1: Fehlschlagende Tests**
+- [x] **Step 1: Failing tests**
 
 `Tests/macSCPCoreTests/SSHConfigParserTests.swift`:
 
@@ -145,10 +145,10 @@ struct SSHConfigParserTests {
 
     @Test func commentsAndBlankLinesAreIgnored() {
         let hosts = SSHConfigParser.parse("""
-        # global Kommentar
+        # global comment
 
-        Host web   # Zeilenrest-Kommentar
-            HostName server.example.com  # noch einer
+        Host web   # line-remainder comment
+            HostName server.example.com  # another one
         """)
         #expect(hosts == [SSHConfigHost(
             alias: "web", hostName: "server.example.com", user: nil,
@@ -226,9 +226,9 @@ struct SSHConfigParserTests {
 }
 ```
 
-- [x] **Step 2: Rot** — Compile-Fehler (`SSHConfigParser` unbekannt)
+- [x] **Step 2: Red** — compile error (`SSHConfigParser` unknown)
 
-- [x] **Step 3: Implementieren**
+- [x] **Step 3: Implement**
 
 `Sources/macSCPCore/Sessions/SSHConfigParser.swift`:
 
@@ -339,25 +339,25 @@ public enum SSHConfigImporter {
 }
 ```
 
-- [x] **Step 4: Grün** — Filter-Suite (9 PASS), Gesamtsuite (Basis + 9).
-- [x] **Step 5: Commit** — `feat: parse and import ssh config hosts` (mit Footer).
+- [x] **Step 4: Green** — filtered suite (9 PASS), full suite (base + 9).
+- [x] **Step 5: Commit** — `feat: parse and import ssh config hosts` (with footer).
 
 ---
 
-### Task 2: Sidebar-Sektion + Form-Fill
+### Task 2: Sidebar section + form fill
 
 **Files:**
 - Modify: `Sources/MacSCPApp/SessionSidebar.swift`
 - Modify: `Sources/MacSCPApp/ContentView.swift`
 
-**Interfaces:** Consumes Task 1. `SessionSidebar` bekommt `importedHosts: [SSHConfigHost]` und `onSelectImported: (SSHConfigHost) -> Void`. Klick füllt das Formular und verbindet NICHT.
+**Interfaces:** consumes Task 1. `SessionSidebar` gets `importedHosts: [SSHConfigHost]` and `onSelectImported: (SSHConfigHost) -> Void`. Click fills the form and does NOT connect.
 
-Kein Unit-Test (UI-Wiring; Parser/Importer sind Core-getestet); Verifikation: Build + Suite + Headless-Launch; visuell in Task 3.
+No unit test (UI wiring; parser/importer are Core-tested); verification: build + suite + headless launch check; visual in Task 3.
 
 - [x] **Step 1: Sidebar** — in `SessionSidebar`:
 
-1. Properties ergänzen (nach `viewModel`): `let importedHosts: [SSHConfigHost]` und (nach `onDelete`) `let onSelectImported: (SSHConfigHost) -> Void`.
-2. In der `List` NACH dem Sessions-`ForEach` ergänzen:
+1. Add properties (after `viewModel`): `let importedHosts: [SSHConfigHost]` and (after `onDelete`) `let onSelectImported: (SSHConfigHost) -> Void`.
+2. In the `List`, add AFTER the Sessions `ForEach`:
 
 ```swift
                 if !importedHosts.isEmpty {
@@ -386,13 +386,13 @@ Kein Unit-Test (UI-Wiring; Parser/Importer sind Core-getestet); Verifikation: Bu
 - [x] **Step 2: ContentView** —
 
 1. State: `@State private var importedHosts: [SSHConfigHost] = []`
-2. An der `SessionSidebar`-Aufrufstelle die neuen Argumente (Reihenfolge an die Property-Deklaration anpassen) + ans `HSplitView` (bzw. den äußeren Container) anhängen:
+2. At the `SessionSidebar` call site, add the new arguments (match the order to the property declaration) + attach to the `HSplitView` (or the outer container):
 
 ```swift
         .task { importedHosts = SSHConfigImporter.load(path: SSHConfigImporter.defaultPath) }
 ```
 
-3. Private Methode:
+3. Private method:
 
 ```swift
     /// Import-Klick: Formular aus dem ssh-config-Eintrag füllen — bewusst
@@ -417,20 +417,20 @@ Kein Unit-Test (UI-Wiring; Parser/Importer sind Core-getestet); Verifikation: Bu
     }
 ```
 
-(`onSelectImported: { fillFromImported($0) }` an der Sidebar.)
+(`onSelectImported: { fillFromImported($0) }` on the sidebar.)
 
-- [x] **Step 3: Grün** — `swift build && swift test` (Basis unverändert), Headless-Launch-Check.
-- [x] **Step 4: Commit** — `feat: import ssh config hosts into the sidebar` (mit Footer).
+- [x] **Step 3: Green** — `swift build && swift test` (base unchanged), headless launch check.
+- [x] **Step 4: Commit** — `feat: import ssh config hosts into the sidebar` (with footer).
 
 ---
 
-### Task 3: Abschluss-Verifikation
+### Task 3: Final verification
 
-- [x] **Step 1:** `swift test` — 126 gesamt (115 + 2 T0 + 9 T1)
-- [x] **Step 2:** Rig hoch (HAUPT-Checkout), `MACSCP_ITEST=1` 10/10, `MACSCP_KEYCHAIN=1` 2/2, Rig runter
-- [x] **Step 3: Visueller Smoke-Test** (Koordinator): PRÜFEN ob `~/.ssh/config` existiert (nur lesen!); falls ja: Sektion IMPORTIERT zeigt die Aliase; Klick auf einen Eintrag → Formular gefüllt (Host/Port/User/ggf. Key-Modus + Pfad), KEINE automatische Verbindung, KEIN Prompt; falls der User keine config hat: Sektion bleibt aus (ebenfalls korrekt — dokumentieren was vorlag). Die echte Datei wird unter KEINEN Umständen verändert.
-- [x] **Step 4:** Checkboxen, Commit `docs: mark M3d plan tasks as completed` (mit Footer)
+- [x] **Step 1:** `swift test` — 126 total (115 + 2 T0 + 9 T1)
+- [x] **Step 2:** rig up (MAIN checkout), `MACSCP_ITEST=1` 10/10, `MACSCP_KEYCHAIN=1` 2/2, rig down
+- [x] **Step 3: Visual smoke test** (coordinator): CHECK whether `~/.ssh/config` exists (read only!); if yes: the IMPORTED section shows the aliases; clicking an entry → form filled (host/port/user/key mode + path as applicable), NO automatic connection, NO prompt; if the user has no config: the section stays hidden (also correct — document what was present). The real file is NEVER modified under any circumstances.
+- [x] **Step 4:** checkboxes, commit `docs: mark M3d plan tasks as completed` (with footer)
 
-## Ausblick
+## Outlook
 
-Mit M3d ist **Meilenstein M3 (Sessions) KOMPLETT** — der gesamte Verbindungsmanager aus der Spec. Danach: **M4 Terminal** (SwiftTerm-Panel je Verbindung — das größte fehlende Design-Element), M5 Transfer-Queue, M6 Release (App-Icon, Design-Polish, notarisierte DMG). Offen geblieben aus M3: Cancellation-Handler am Prompt-Continuation (M4-Opening), ssh-agent/RSA (optional M3e).
+M3d completes **Milestone M3 (Sessions) COMPLETELY** — the entire connection manager from the spec. After that: **M4 Terminal** (a SwiftTerm panel per connection — the largest missing design element), M5 transfer queue, M6 release (app icon, design polish, notarized DMG). Left open from M3: the cancellation handler on the prompt continuation (M4 opening), ssh-agent/RSA (optional M3e).

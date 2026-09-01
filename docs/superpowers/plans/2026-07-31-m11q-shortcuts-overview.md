@@ -1,25 +1,25 @@
-# M11q — Tastenkürzel-Übersicht Implementation Plan
+# M11q — Keyboard Shortcuts Overview Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein read-only „Tastenkürzel"-Tab in den Einstellungen, der alle Kürzel gruppiert auflistet, gespeist aus einem hand-gepflegten `KeyboardShortcutsCatalog`.
+**Goal:** A read-only "Keyboard Shortcuts" tab in Settings that lists all shortcuts grouped, fed from a hand-maintained `KeyboardShortcutsCatalog`.
 
-**Architecture:** Rein App-Schicht. Ein statischer `KeyboardShortcutsCatalog` (Gruppen → Zeilen; Doc-Kommentar nennt die sechs Definitions-Stellen, die er spiegelt) wird von einem neuen `ShortcutsSettingsTab` in einem `Form` gerendert. Labels via `L10n` (neue `settings.shortcuts.*`-Keys in EN/DE/FR/PL); die Kürzel-Symbole sind feste, unlokalisierte Anzeigestrings.
+**Architecture:** Pure App layer. A static `KeyboardShortcutsCatalog` (groups → rows; doc comment names the six definition sites it mirrors) is rendered by a new `ShortcutsSettingsTab` inside a `Form`. Labels via `L10n` (new `settings.shortcuts.*` keys in EN/DE/FR/PL); the shortcut glyphs are fixed, unlocalized display strings.
 
 **Tech Stack:** SwiftUI, Swift 6 (`.swiftLanguageMode(.v5)`), macOS 15.
 
 ## Global Constraints
 
-- Swift-tools 6.0, alle Targets `.swiftLanguageMode(.v5)`, min. macOS 15.
-- Code/Kommentare **English only**.
-- UI-Strings über `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`, Lookup `L10n.string(key, "English default")`.
-- **Kein ASCII-`"` im Wert** eines nicht-englischen Katalogs (bricht den Katalog; `plutil -lint` + `LocalizableStringsTests` bewachen das). Format-Platzhalter kommen hier nicht vor.
-- Kürzel-Anzeigestrings sind fest und **nicht** lokalisiert.
-- Read-only — kein Umbelegen. Kein Core, keine neue Logik.
-- FR/PL neue Strings sind KI-generiert (konsistent mit M11p), vor Release muttersprachlich zu prüfen.
-- **M11n-Lektion:** neue GUI-Wege vor Auslieferung per Runtime-Idle-CPU-Rauchtest prüfen.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- Baseline: **903 Tests / 62 Suiten** grün. Kein Release/Tag ohne Maintainer-Anordnung.
+- Swift-tools 6.0, all targets `.swiftLanguageMode(.v5)`, min. macOS 15.
+- Code/comments **English only**.
+- UI strings via `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`, lookup `L10n.string(key, "English default")`.
+- **No ASCII `"` in the value** of a non-English catalog (breaks the catalog; `plutil -lint` + `LocalizableStringsTests` guard this). Format placeholders don't occur here.
+- Shortcut display strings are fixed and **not** localized.
+- Read-only — no rebinding. No Core, no new logic.
+- FR/PL new strings are AI-generated (consistent with M11p), to be reviewed by a native speaker before release.
+- **M11n lesson:** check new GUI paths with a runtime idle-CPU smoke test before shipping.
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- Baseline: **903 tests / 62 suites** green. No release/tag without maintainer directive.
 
 ---
 
@@ -27,14 +27,14 @@
 
 **Files:**
 - Create: `Sources/MacSCPApp/KeyboardShortcutsCatalog.swift`
-- Modify: `Sources/MacSCPApp/SettingsView.swift` (`ShortcutsSettingsTab` + Tab im `TabView`)
+- Modify: `Sources/MacSCPApp/SettingsView.swift` (`ShortcutsSettingsTab` + tab in `TabView`)
 - Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 
 **Interfaces:**
-- Consumes (bestehend, verifiziert): `SettingsView.body`s `TabView` (General/Transfers/Open with/Terminal, `.frame(width: 460, height: 460)`); Tab-Muster `SomeTab(...) .tabItem { Label(L10n.string("settings.tab.X", "…"), systemImage: "…") }`; `L10n.string`.
-- Produces: `KeyboardShortcutsCatalog.groups: [Group]` mit `Group{titleKey,titleDefault,rows:[Row{labelKey,labelDefault,shortcut}]}`.
+- Consumes (existing, verified): `SettingsView.body`'s `TabView` (General/Transfers/Open with/Terminal, `.frame(width: 460, height: 460)`); tab pattern `SomeTab(...) .tabItem { Label(L10n.string("settings.tab.X", "…"), systemImage: "…") }`; `L10n.string`.
+- Produces: `KeyboardShortcutsCatalog.groups: [Group]` with `Group{titleKey,titleDefault,rows:[Row{labelKey,labelDefault,shortcut}]}`.
 
-- [x] **Step 1: Katalog-Datei.** Neue Datei `Sources/MacSCPApp/KeyboardShortcutsCatalog.swift`:
+- [x] **Step 1: Catalog file.** New file `Sources/MacSCPApp/KeyboardShortcutsCatalog.swift`:
 
 ```swift
 import Foundation
@@ -111,7 +111,7 @@ enum KeyboardShortcutsCatalog {
 ```
 
 - [x] **Step 2: ShortcutsSettingsTab + Tab.** In `Sources/MacSCPApp/SettingsView.swift`:
-  - Am Dateiende einen privaten Tab hinzufügen:
+  - Add a private tab at the end of the file:
 
 ```swift
 /// Read-only keyboard-shortcuts overview (M11q) — renders
@@ -138,7 +138,7 @@ private struct ShortcutsSettingsTab: View {
 }
 ```
 
-  - Im `TabView` (nach dem `TerminalSettingsTab`-Block, vor der schließenden `}` des `TabView`) den fünften Tab einfügen:
+  - In the `TabView` (after the `TerminalSettingsTab` block, before the closing `}` of the `TabView`) insert the fifth tab:
 
 ```swift
             ShortcutsSettingsTab()
@@ -149,7 +149,7 @@ private struct ShortcutsSettingsTab: View {
                 }
 ```
 
-- [x] **Step 3: Strings EN.** In `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings` anfügen:
+- [x] **Step 3: Strings EN.** Append to `Sources/MacSCPApp/Resources/en.lproj/Localizable.strings`:
 
 ```
 "settings.tab.shortcuts" = "Shortcuts";
@@ -184,7 +184,7 @@ private struct ShortcutsSettingsTab: View {
 "settings.shortcuts.label.confirm" = "Confirm";
 ```
 
-- [x] **Step 4: Strings DE.** In `de.lproj/Localizable.strings` anfügen (kein ASCII-`"` im Wert):
+- [x] **Step 4: Strings DE.** Append to `de.lproj/Localizable.strings` (no ASCII `"` in the value):
 
 ```
 "settings.tab.shortcuts" = "Tastenkürzel";
@@ -219,7 +219,7 @@ private struct ShortcutsSettingsTab: View {
 "settings.shortcuts.label.confirm" = "Bestätigen";
 ```
 
-- [x] **Step 5: Strings FR.** In `fr.lproj/Localizable.strings` anfügen (Guillemets/kein ASCII-`"`; Apostroph `'` ist erlaubt):
+- [x] **Step 5: Strings FR.** Append to `fr.lproj/Localizable.strings` (guillemets/no ASCII `"`; apostrophe `'` is allowed):
 
 ```
 "settings.tab.shortcuts" = "Raccourcis";
@@ -254,7 +254,7 @@ private struct ShortcutsSettingsTab: View {
 "settings.shortcuts.label.confirm" = "Confirmer";
 ```
 
-- [x] **Step 6: Strings PL.** In `pl.lproj/Localizable.strings` anfügen (kein ASCII-`"`):
+- [x] **Step 6: Strings PL.** Append to `pl.lproj/Localizable.strings` (no ASCII `"`):
 
 ```
 "settings.tab.shortcuts" = "Skróty klawiszowe";
@@ -289,17 +289,17 @@ private struct ShortcutsSettingsTab: View {
 "settings.shortcuts.label.confirm" = "Potwierdź";
 ```
 
-  (Hinweis: `settings.shortcuts.label.cancel` wird von zwei Katalog-Zeilen genutzt — nur EINMAL je Sprache eintragen.)
+  (Note: `settings.shortcuts.label.cancel` is used by two catalog rows — enter it only ONCE per language.)
 
-- [x] **Step 7: Katalog-Lint + Parität.**
+- [x] **Step 7: Catalog lint + parity.**
 
 ```bash
 for l in en de fr pl; do plutil -lint "Sources/MacSCPApp/Resources/$l.lproj/Localizable.strings"; done
 swift test --filter Localizable
 ```
-  Expected: alle „OK"; `Localizable`-Suite PASS (die 30 neuen Keys sind in allen vier Katalogen → Parität bleibt).
+  Expected: all "OK"; `Localizable` suite PASS (the 30 new keys are in all four catalogs → parity holds).
 
-- [x] **Step 8: Build + Suite + Runtime-Rauchtest.**
+- [x] **Step 8: Build + suite + runtime smoke test.**
 
 ```bash
 swift build
@@ -310,9 +310,9 @@ open dist/macSCP.app; sleep 7
 ps -o pid,%cpu,state -p "$(pgrep -f 'dist/macSCP.app/Contents/MacOS/macSCP' | head -1)"
 pkill -f 'dist/macSCP.app/Contents/MacOS/macSCP'
 ```
-  Expected: `Build complete` (keine neuen Warnungen); `swift test` **903** grün (keine neue Core-Logik); App idle `%CPU` nahe 0, state `S`. Bei Spin (>50%) STOP + BLOCKED.
+  Expected: `Build complete` (no new warnings); `swift test` **903** green (no new Core logic); app idle `%CPU` near 0, state `S`. On spin (>50%) STOP + BLOCKED.
 
-- [x] **Step 9: Trace-Verifikation.** Bestätigen: jede Katalog-Zeile hat einen `labelKey`, der in allen vier Katalogen existiert (durch Parität abgedeckt); jeder `shortcut` ist nicht leer; der Tab ist read-only (keine Bindings/Buttons); die Fensterhöhe reicht (das `Form` scrollt sonst — kein Abschneiden, nur ggf. Scrollen).
+- [x] **Step 9: Trace verification.** Confirm: every catalog row has a `labelKey` that exists in all four catalogs (covered by parity); every `shortcut` is non-empty; the tab is read-only (no bindings/buttons); the window height is sufficient (the `Form` scrolls otherwise — no clipping, just possible scrolling).
 
 - [x] **Step 10: Commit.**
 
@@ -323,11 +323,11 @@ git commit -m "feat: add a read-only keyboard shortcuts overview in Settings"
 
 ---
 
-### Task 2: Abschluss-Verifikation (Koordinator)
+### Task 2: Final verification (coordinator)
 
-- [x] Gated Suiten: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → grün, zero skips.
-- [x] `swift build` sauber; `plutil -lint` alle vier Kataloge OK; `LocalizableStringsTests` grün (Parität EN↔{DE,FR,PL}).
-- [x] Runtime-Idle-CPU-Rauchtest bestanden; Einstellungen ▸ Tastenkürzel öffnet ohne Spin.
-- [x] Whole-Task Opus-Review (kleiner App-Diff): Fokus auf (a) Katalog spiegelt die tatsächlichen Kürzel korrekt (Inventur-Abgleich: keine erfundenen/falschen Zuordnungen, ⌘⇧Y/⌘T/⌘↑ etc. stimmen); (b) alle 30 neuen Keys in allen vier Katalogen, kein ASCII-`"` in Nicht-EN; (c) Tab read-only, kein Interaktions-/Layout-Bruch; (d) `cancel`-Key nur einmal je Sprache. Fix-Runden bis „Ready to merge: Yes".
-- [ ] Visueller Smoke — Maintainer (Tab „Tastenkürzel" erscheint; Gruppen + Zeilen lesbar; Kürzel rechtsbündig monospaced; DE/FR/PL Labels korrekt; hell/dunkel; Fenster scrollt sauber).
-- [x] Plan-Checkboxen, Ledger, Push develop, `gh run watch`, Dev-Build deployen, Memory. **KEIN Release** (FR/PL vor Release muttersprachlich prüfen). Roadmap: Umbelegung bleibt eigener späterer Meilenstein.
+- [x] Gated suites: `MACSCP_ITEST=1 MACSCP_KEYCHAIN=1 swift test` → green, zero skips.
+- [x] `swift build` clean; `plutil -lint` all four catalogs OK; `LocalizableStringsTests` green (parity EN↔{DE,FR,PL}).
+- [x] Runtime idle-CPU smoke test passed; Settings ▸ Shortcuts opens without spinning.
+- [x] Whole-task Opus review (small App diff): focus on (a) catalog correctly mirrors the actual shortcuts (inventory check: no invented/wrong mappings, ⌘⇧Y/⌘T/⌘↑ etc. are correct); (b) all 30 new keys in all four catalogs, no ASCII `"` in non-EN; (c) tab read-only, no interaction/layout break; (d) `cancel` key only once per language. Fix rounds until "Ready to merge: Yes".
+- [ ] Visual smoke — maintainer (tab "Shortcuts" appears; groups + rows readable; shortcuts right-aligned monospaced; DE/FR/PL labels correct; light/dark; window scrolls cleanly).
+- [x] Plan checkboxes, ledger, push develop, `gh run watch`, deploy dev build, memory. **NO release** (FR/PL to be reviewed by a native speaker before release). Roadmap: rebinding remains its own future milestone.

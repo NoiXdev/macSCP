@@ -1,191 +1,188 @@
-# RSA aus der Datei — lokal verankern statt forken — Entwurf
+# RSA from the file — anchor locally instead of forking — design
 
-**Stand:** 2026-08-31. Antwort auf `2026-08-31-backlog-ssh-schluesselformate.md`
-und auf die Frage des Maintainers, ob sich die fehlenden Protokollteile
-**lokal im Projekt** verankern und später wieder entfernen lassen.
+**As of:** 2026-08-31. Response to `2026-08-31-backlog-ssh-schluesselformate.md`
+and to the maintainer's question of whether the missing protocol parts can
+be anchored **locally in the project** and removed again later.
 
-**Die Antwort ist ja** — für unverschlüsselte Schlüssel, ohne Fork und ohne
-handgeschriebene Kryptographie. Die Grenze verläuft an einer Stelle, die
-gemessen ist und unten benannt wird.
+**The answer is yes** — for unencrypted keys, without a fork and without
+hand-written cryptography. The boundary sits at a point that is measured and
+named below.
 
 ---
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-| | aus der **Datei** | über den **Agenten** |
+| | from the **file** | via the **agent** |
 |---|---|---|
-| ed25519 | ja | ja |
-| RSA | **nein** — parst, authentifiziert nicht | ja |
-| ECDSA P-256/384/521 | **nein** — kein Parser | ja, alle drei |
+| ed25519 | yes | yes |
+| RSA | **no** — parses, does not authenticate | yes |
+| ECDSA P-256/384/521 | **no** — no parser | yes, all three |
 
-RSA scheitert **nicht am Parsen**: Citadels dateibasierter Signierer kann nur
-SHA-1 (`ssh-rsa`), und OpenSSH hat das seit 8.8 aus den Vorgaben genommen.
-Isoliert durch Ausführen — derselbe Schlüssel, derselbe Server, nur der
-Algorithmus variiert (`ssh-rsa` abgelehnt, `rsa-sha2-512` angenommen).
+RSA does not fail **at parsing**: Citadel's file-based signer can only do
+SHA-1 (`ssh-rsa`), and OpenSSH removed that from its defaults as of 8.8.
+Isolated by running it — same key, same server, only the algorithm varies
+(`ssh-rsa` rejected, `rsa-sha2-512` accepted).
 
-## Warum das lokal geht
+## Why this works locally
 
-**Die Einsteckstelle gehört NIOSSH, nicht Citadel** — und macSCP bedient sie
-bereits vollständig. `AgentBackedPrivateKey` erfüllt
-`NIOSSHPrivateKeyProtocol`, `AgentBackedPublicKey` das öffentliche
-Gegenstück, `AgentSignature` das Signatur-Protokoll, und **`RSASha512` steht
-dort schon** mit dem richtigen Namen auf der Leitung.
+**The plug-in point belongs to NIOSSH, not Citadel** — and macSCP already
+serves it fully. `AgentBackedPrivateKey` satisfies
+`NIOSSHPrivateKeyProtocol`, `AgentBackedPublicKey` the public counterpart,
+`AgentSignature` the signature protocol, and **`RSASha512` is already
+sitting** there on the wire with the right name.
 
-Ein Datei-Zwilling unterscheidet sich in **genau einem** Punkt: er rechnet
-die Signatur, statt sie zu erfragen.
+A file-based twin differs in **exactly one** respect: it computes the
+signature instead of asking for it.
 
-**Das Rechnen kommt von swift-crypto**, nicht von Hand: `_CryptoExtras` ist
-ein deklariertes Bibliotheksprodukt des Pakets, das macSCP ohnehin
-einbindet, und `_RSA.Signing.PrivateKey.signature(for:padding:)` nimmt einen
-`Digest` entgegen.
+**The computing comes from swift-crypto**, not by hand: `_CryptoExtras` is a
+declared library product of the package macSCP already links against, and
+`_RSA.Signing.PrivateKey.signature(for:padding:)` takes a `Digest`.
 
-## Die Hürde, und was sie erzwingt
+## The hurdle, and what it forces
 
-**Citadels geparster Schlüssel ist nicht wiederverwendbar.**
-`Insecure.RSA.PrivateKey.privateExponent` ist `internal`, und
-`signature(for:)` verdrahtet SHA-1 fest. macSCP muss den **OpenSSH-Container
-selbst lesen**.
+**Citadel's parsed key is not reusable.**
+`Insecure.RSA.PrivateKey.privateExponent` is `internal`, and
+`signature(for:)` hard-wires SHA-1. macSCP has to **read the OpenSSH
+container itself**.
 
-**Das ist Container-Parsen, keine Kryptographie** — Base64 plus ein
-dokumentiertes Binärformat, um an Modulus und Exponenten zu kommen. Das
-Rechnen bleibt bei swift-crypto. Diese Unterscheidung ist der Grund, warum
-die Projektregel „kein eigener Schlüsselparser" hier nicht verletzt wird, und
-sie gehört ausgesprochen statt stillschweigend umgedeutet.
+**That is container parsing, not cryptography** — Base64 plus a documented
+binary format, to get at the modulus and exponent. The computing stays with
+swift-crypto. This distinction is why the project rule "no home-grown key
+parser" is not violated here, and it deserves to be said out loud rather
+than silently reinterpreted.
 
-## Die Grenze: verschlüsselte Schlüssel bleiben draußen
+## The boundary: encrypted keys stay out
 
-OpenSSH verschlüsselt private Schlüssel mit **bcrypt_pbkdf**. Gemessen:
-Citadels Umsetzung ist `internal`, und swift-crypto liefert PBKDF2 und
-Scrypt, aber **kein bcrypt_pbkdf**. Lokal zu verankern hieße, eine
-Blowfish-basierte Schlüsselableitung von Hand zu schreiben.
+OpenSSH encrypts private keys with **bcrypt_pbkdf**. Measured: Citadel's
+implementation is `internal`, and swift-crypto delivers PBKDF2 and Scrypt,
+but **no bcrypt_pbkdf**. Anchoring this locally would mean hand-writing a
+Blowfish-based key derivation.
 
-**Das wird nicht gebaut.** Handgeschriebene Kryptographie ist in diesem
-Projekt keine Option, und ein Entwurf, der sie durch die Hintertür einführt,
-wäre schlechter als gar keine RSA-Unterstützung.
+**That will not be built.** Hand-written cryptography is not an option in
+this project, and a design that smuggles it in through the back door would
+be worse than no RSA support at all.
 
-**Kein Rückschritt:** ein verschlüsselter RSA-Schlüssel scheitert heute
-ebenso. Für ihn gibt es einen **gemessenen** Weg — den ssh-agent, in dem ein
-passphrase-geschützter Schlüssel ohnehin meist liegt. Die Meldung sagt das.
+**No regression:** an encrypted RSA key fails today just the same. For it
+there is a **measured** path — the ssh-agent, where a passphrase-protected
+key mostly lives anyway. The message says so.
 
-## Der Entwurf
+## The design
 
-### Drei Teile, einer davon der Rückbau
+### Three parts, one of them the removal
 
-**1. Den Container lesen.** Ein reiner Wert in Core, der aus einem
-unverschlüsselten OpenSSH-RSA-Schlüssel die Bestandteile herausliest. Er
-**entschlüsselt nichts**: trifft er einen verschlüsselten Schlüssel, sagt er
-das als eigenes Ergebnis, nicht als Fehler — der Aufrufer verweist dann auf
-den Agenten.
+**1. Read the container.** A pure value in Core that reads the components
+out of an unencrypted OpenSSH RSA key. It **decrypts nothing**: if it hits
+an encrypted key, it says so as its own result, not as an error — the
+caller then points to the agent.
 
-**2. Lokal signieren.** Ein Typ nach dem Vorbild von
-`AgentBackedPrivateKey`, der dieselben NIOSSH-Protokolle erfüllt und die
-Signatur über `_RSA.Signing` rechnet.
+**2. Sign locally.** A type modeled on `AgentBackedPrivateKey`, which
+satisfies the same NIOSSH protocols and computes the signature via
+`_RSA.Signing`.
 
-**Zwei Festlegungen, die jemand sonst „verbessert":**
+**Two decisions someone else will otherwise "improve":**
 
-- **Die Auffüllung ist PKCS#1 v1.5**, nicht PSS. RFC 8332 schreibt
-  RSASSA-PKCS1-v1_5 vor; swift-crypto nennt die Wahl
-  `.insecurePKCS1v1_5`, und dieser Name lädt zum Ändern ein. Ein Wechsel auf
-  PSS erzeugt Signaturen, die **kein** SSH-Server annimmt. Das gehört als
-  Kommentar an die Stelle **und** in einen Test.
-- **`rsa-sha2-512` zuerst.** Ob zusätzlich `rsa-sha2-256` angeboten wird, ist
-  beim Umsetzen zu **messen** — nicht anzunehmen: das Angebot geht über
-  NIOSSHs Mechanismus, und ob sich zwei Algorithmen für denselben Schlüssel
-  anbieten lassen, ist ungeprüft.
+- **The padding is PKCS#1 v1.5**, not PSS. RFC 8332 mandates
+  RSASSA-PKCS1-v1_5; swift-crypto names the choice
+  `.insecurePKCS1v1_5`, and that name invites changing it. Switching to
+  PSS produces signatures that **no** SSH server accepts. That belongs as a
+  comment at the spot **and** in a test.
+- **`rsa-sha2-512` first.** Whether `rsa-sha2-256` is additionally offered
+  is something to **measure** while implementing — not assume: the offer
+  goes through NIOSSH's mechanism, and whether two algorithms can be offered
+  for the same key is unchecked.
 
-**3. Der Rückbau, als Wächter.** Landet Citadels PR #135, wird der lokale Typ
-gelöscht und der Lader zeigt auf `rsaSHA2()`. Damit das eine Löschung bleibt
-und keine Archäologie:
+**3. The removal, as a guard.** If Citadel's PR #135 lands, the local type
+gets deleted and the loader points to `rsaSHA2()`. So that this stays a
+deletion and not archaeology:
 
-> Ein Wächter hält fest, dass der lokale Signierer **genau eine**
-> Aufrufstelle hat — hinter `SSHPrivateKeyLoader`.
+> A guard holds that the local signer has **exactly one** call site — behind
+> `SSHPrivateKeyLoader`.
 
-Verbreitet er sich, fällt das auf, bevor der Rückbau ansteht. Und weil das
-eine **positive** Prüfung mit einer Zahl ist, kann sie nicht still veralten.
+If it spreads, that shows up before the removal is due. And because that is
+a **positive** check with a number, it cannot go stale in silence.
 
-### Was der Nutzer danach sieht
+### What the user sees afterward
 
-| Schlüssel | Ergebnis |
+| Key | Result |
 |---|---|
-| ed25519, Datei | verbindet (wie bisher) |
-| **RSA unverschlüsselt, Datei** | **verbindet** |
-| RSA verschlüsselt, Datei | Meldung: über den ssh-agent |
-| ECDSA, Datei | Meldung: über den ssh-agent |
-| alles im Agenten | verbindet (gemessen) |
+| ed25519, file | connects (as before) |
+| **RSA unencrypted, file** | **connects** |
+| RSA encrypted, file | message: use the ssh-agent |
+| ECDSA, file | message: use the ssh-agent |
+| everything in the agent | connects (measured) |
 
-Die Meldung nennt den **erkannten Typ** — `SSHKeyType` aus Citadel kann das —
-statt einer Klammer, die sich als ihr Gegenteil lesen lässt.
+The message names the **detected type** — `SSHKeyType` from Citadel can do
+that — instead of a parenthetical that reads like its own opposite.
 
-**Ein Vorbehalt, ausdrücklich ungemessen:** der RSA-Blob des Agenten gilt als
-inkompatibel mit Go-Servern (Gitea, Forgejo, SFTPGo). Gelesen, nicht geprüft
-— wer die Meldung schreibt, misst das oder behauptet es nicht.
+**One caveat, explicitly unmeasured:** the agent's RSA blob is said to be
+incompatible with Go servers (Gitea, Forgejo, SFTPGo). Read, not verified —
+whoever writes the message either measures this or does not claim it.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles: das Container-Lesen gegen erzeugte Schlüssel, die
-Signatur gegen das Rig, die Auffüllung, die Verweigerung bei einem
-verschlüsselten Schlüssel, und die eine Aufrufstelle.
+Everything is checkable: the container reading against generated keys, the
+signature against the rig, the padding, the refusal on an encrypted key, and
+the single call site.
 
-**Nicht prüfbar** ist das Verhalten fremder Server jenseits des Rigs — das
-Rig ist OpenSSH, und ein Go-Server ist nicht darin.
+**Not checkable** is the behavior of third-party servers beyond the rig —
+the rig is OpenSSH, and a Go server is not in it.
 
-## Was ausdrücklich nicht dazugehört
+## What explicitly does not belong here
 
-- **Kein bcrypt_pbkdf**, keine handgeschriebene Kryptographie, keine
-  Entschlüsselung privater Schlüssel.
-- **Kein Fork** von Citadel und keine zweite Fremdquelle in
+- **No bcrypt_pbkdf**, no hand-written cryptography, no decryption of
+  private keys.
+- **No fork** of Citadel and no second third-party source in
   `Package.resolved`.
-- **Keine ECDSA-Datei-Unterstützung** in diesem Vorgang. Dasselbe Muster
-  wäre dort sogar kleiner (`P256/384/521.Signing.PrivateKey(rawRepresentation:)`
-  nimmt die rohen Bytes ohne DER-Umweg) — aber dieselbe Verschlüsselungs-
-  grenze gilt, und ein Vorgang nach dem anderen.
-- **Keine Änderung an TOFU** und keine am harten Stopp bei einem
-  Fingerabdruck-Konflikt.
+- **No ECDSA file support** in this change. The same pattern would even be
+  smaller there (`P256/384/521.Signing.PrivateKey(rawRepresentation:)`
+  takes the raw bytes without a DER detour) — but the same encryption
+  boundary applies, and one change at a time.
+- **No change to TOFU** and none to the hard stop on a fingerprint
+  conflict.
 
 ---
 
-## Zurückgezogen (2026-08-31, noch am selben Tag)
+## Withdrawn (2026-08-31, the same day)
 
-**Der Maintainer hat den Entwurf an der Stelle gekippt, an der er zählt:**
-etwa 90 % seiner Nutzer verwenden passphrase-geschützte Schlüssel. Ein
-Vorgang, der genau diese ausschließt, behebt fast niemanden — und führt
-dafür Container-Parsen ins Projekt ein.
+**The maintainer struck down the design at the point where it counts:**
+roughly 90% of its users use passphrase-protected keys. A change that
+excludes exactly those fixes almost nobody — and brings container parsing
+into the project for it.
 
-**Zwei weitere Wege wurden danach geprüft, beide zu:**
+**Two further paths were then checked, both dead ends:**
 
-- `Insecure.RSA.PrivateKey.privateExponent` ist `internal`, ohne
-  öffentlichen Zugang. Citadels geparster Schlüssel gibt sein Material
-  nicht her.
-- `protocol OpenSSHPrivateKey` und `OpenSSH.PrivateKey<…>` sind **ebenfalls
-  internal**. macSCP kann also auch keinen eigenen Typ an Citadels
-  entschlüsselnden Parser hängen — der Weg, der Entschlüsselung geschenkt
-  bekommen hätte.
+- `Insecure.RSA.PrivateKey.privateExponent` is `internal`, with no public
+  access. Citadel's parsed key does not hand over its material.
+- `protocol OpenSSHPrivateKey` and `OpenSSH.PrivateKey<…>` are **also
+  internal**. So macSCP cannot hang its own type off Citadel's decrypting
+  parser either — the path that would have gotten decryption for free.
 
-Damit bleibt: selbst parsen ⇒ selbst entschlüsseln ⇒ bcrypt_pbkdf von Hand.
-Das lehnt dieser Entwurf ab, und die Ablehnung steht.
+Which leaves: parse it yourself ⇒ decrypt it yourself ⇒ bcrypt_pbkdf by
+hand. This design rejects that, and the rejection stands.
 
-## Was stattdessen gilt
+## What holds instead
 
-**Citadel kann bereits entschlüsseln** — nur das Signieren ist SHA-1. Landet
-PR #135, funktioniert RSA aus der Datei **einschließlich Passphrase**, ohne
-dass macSCP je einen Container liest. Das ist der Weg, der alles löst, und er
-kostet nichts außer Warten.
+**Citadel can already decrypt** — only the signing is SHA-1. If PR #135
+lands, RSA from the file works **including passphrase**, without macSCP
+ever reading a container. That is the path that solves everything, and it
+costs nothing but waiting.
 
-**Bis dahin trägt der ssh-agent.** Ein passphrase-geschützter Schlüssel wird
-einmal mit `ssh-add` geladen und liegt danach entschlüsselt im Agenten.
+**Until then, the ssh-agent carries it.** A passphrase-protected key is
+loaded once with `ssh-add` and afterward sits decrypted in the agent.
 
-**Ungemessen, und deshalb hier markiert:** gemessen wurde der Agent-Weg mit
-**unverschlüsselten** Schlüsseln. Dass ein verschlüsselter nach `ssh-add`
-für den Client identisch aussieht, folgt aus der Bauart von ssh-agent — es
-ist ein **Schluss, keine Messung**. Bevor eine Nutzer-Meldung darauf zeigt,
-gehört genau das nachgemessen: Schlüssel mit Passphrase erzeugen, per
-`ssh-add` laden, verbinden.
+**Unmeasured, and therefore flagged here:** what was measured is the agent
+path with **unencrypted** keys. That an encrypted one looks identical to the
+client after `ssh-add` follows from how ssh-agent is built — it is an
+**inference, not a measurement**. Before a user-facing message points to
+this, exactly that needs to be measured after the fact: generate a key with
+a passphrase, load it via `ssh-add`, connect.
 
-## Was von diesem Dokument bleibt
+## What remains of this document
 
-Die Messungen. Sie sind richtig und teuer erarbeitet: die Einsteckstelle
-gehört NIOSSH und macSCP bedient sie bereits; `_CryptoExtras` ist ein
-deklariertes Produkt; die Auffüllung wäre PKCS#1 v1.5 gewesen. Landet #135
-nie und wird der Fork doch nötig, ist der Weg hier beschrieben.
+The measurements. They are correct and expensive to obtain: the plug-in
+point belongs to NIOSSH and macSCP already serves it; `_CryptoExtras` is a
+declared product; the padding would have been PKCS#1 v1.5. If #135 never
+lands and the fork does become necessary after all, the path is described
+here.
 
-**Der Entwurf als Empfehlung ist zurückgezogen.**
+**The design, as a recommendation, is withdrawn.**

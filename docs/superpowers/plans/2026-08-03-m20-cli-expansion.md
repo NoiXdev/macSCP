@@ -1,61 +1,61 @@
-# M20 — CLI-Ausbau Implementation Plan
+# M20 — CLI Expansion Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `macscp-cli` benutzt dieselben gespeicherten Sessions wie die App — für SSH und S3 — und arbeitet sowohl am Terminal als auch rückfragefrei in cron und CI.
+**Goal:** `macscp-cli` uses the same stored sessions as the app — for SSH and S3 — and works both at the terminal and without prompting in cron and CI.
 
-**Architecture:** Alle Entscheidungslogik (Session-Auflösung, Geheimnisbeschaffung, Vertrauensentscheidung, Transferplanung) landet als kleine, testbare Typen in `macSCPCore`, weil nur Core ein Testtarget hat. `MacSCPCLI` bleibt Verdrahtung: ArgumentParser, Ausgabeformatierung, TTY-Erkennung, Exit-Codes.
+**Architecture:** All decision logic (session resolution, secret acquisition, trust decisions, transfer planning) lands as small, testable types in `macSCPCore`, because only Core has a test target. `MacSCPCLI` stays wiring: ArgumentParser, output formatting, TTY detection, exit codes.
 
-**Tech Stack:** Swift 6 (Sprachmodus v5), SwiftPM, swift-argument-parser, Swift Testing (`@Test`/`#expect`), Security.framework (Keychain), Docker-Rigs für gated Tests.
+**Tech Stack:** Swift 6 (language mode v5), SwiftPM, swift-argument-parser, Swift Testing (`@Test`/`#expect`), Security.framework (Keychain), Docker rigs for gated tests.
 
 ## Global Constraints
 
-- Swift-tools 6.0, alle Targets `.swiftLanguageMode(.v5)`, Minimum macOS 15.
-- **Code und Kommentare ausschließlich Englisch.** Kein Deutsch in Quelldateien, auch nicht in Testnamen oder `reason:`-Strings.
-- CLI-Ausgaben sind Programmausgaben, keine lokalisierte UI: **Englisch, nicht über `L10n`.** Die String-Kataloge der App werden in M20 **nicht** angefasst.
-- Tests: Swift Testing, TDD rot→grün. Neue Logik kommt mit Tests; Regressionen werden zuerst rot bewiesen.
-- Ungated Suite: `swift test`. Gated: `MACSCP_ITEST=1` (Docker-SSH-Rig, MinIO), `MACSCP_KEYCHAIN=1` (echte Keychain).
-- Docker-Rig **immer aus dem Haupt-Checkout** starten, nie aus einem Worktree: `docker compose -f docker/test-server/compose.yml up -d`.
-- Niemals Schlüsselmaterial committen. Testschlüssel zur Laufzeit via `ssh-keygen`.
-- Conventional Commits, englische Commit-Messages, Footer auf **jedem** Commit:
+- Swift tools 6.0, all targets `.swiftLanguageMode(.v5)`, minimum macOS 15.
+- **Code and comments exclusively in English.** No German in source files, including test names or `reason:` strings.
+- CLI output is program output, not localized UI: **English, not through `L10n`.** The app's string catalogs are **not** touched in M20.
+- Tests: Swift Testing, TDD red→green. New logic ships with tests; regressions are proved red first.
+- Ungated suite: `swift test`. Gated: `MACSCP_ITEST=1` (Docker SSH rig, MinIO), `MACSCP_KEYCHAIN=1` (real keychain).
+- Start the Docker rig **always from the main checkout**, never from a worktree: `docker compose -f docker/test-server/compose.yml up -d`.
+- Never commit key material. Test keys generated at runtime via `ssh-keygen`.
+- Conventional Commits, commit messages in English, footer on **every** commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- Build muss bei 0 neuen Warnungen bleiben.
+- Build must stay at 0 new warnings.
 
 ---
 
 ## File Structure
 
-**Neu in Core:**
+**New in Core:**
 
-| Datei | Verantwortung |
+| File | Responsibility |
 |---|---|
-| `Sources/macSCPCore/Connection/HostKeyDecider.swift` | Der Decider-Typ, aus der Präsentationsschicht befreit |
-| `Sources/macSCPCore/Connection/HostKeyPolicy.swift` | Politik für unbekannte Schlüssel (fragen/ablehnen/accept-new) |
-| `Sources/macSCPCore/Sessions/SessionReference.swift` | `name:/pfad` parsen und gegen den Store auflösen |
-| `Sources/macSCPCore/Sessions/SecretResolver.swift` | Gestufte Geheimnisbeschaffung mit austauschbaren Quellen |
-| `Sources/macSCPCore/Sessions/KeychainMigration.swift` | Einmaliges Umschreiben auf die Access Group |
-| `Sources/macSCPCore/RemoteFS/TransferPlan.swift` | Quelle/Ziel → konkrete Transferaufträge |
+| `Sources/macSCPCore/Connection/HostKeyDecider.swift` | The decider type, freed from the presentation layer |
+| `Sources/macSCPCore/Connection/HostKeyPolicy.swift` | Policy for unknown keys (ask/reject/accept-new) |
+| `Sources/macSCPCore/Sessions/SessionReference.swift` | Parse `name:/pfad` and resolve it against the store |
+| `Sources/macSCPCore/Sessions/SecretResolver.swift` | Staged secret acquisition with interchangeable sources |
+| `Sources/macSCPCore/Sessions/KeychainMigration.swift` | One-time rewrite onto the access group |
+| `Sources/macSCPCore/RemoteFS/TransferPlan.swift` | Source/destination → concrete transfer jobs |
 
-**Neu in der CLI** (je Datei ein Unterbefehl, plus drei Infrastrukturdateien):
+**New in the CLI** (one subcommand per file, plus three infrastructure files):
 
-`Sources/MacSCPCLI/` — `MacSCPCLI.swift` (Wurzelbefehl), `CLIExitCode.swift`, `CLIEnvironment.swift`, `OutputFormatter.swift`, `SessionConnecting.swift`, `LsCommand.swift`, `GetCommand.swift`, `PutCommand.swift`, `RmCommand.swift`, `MkdirCommand.swift`
+`Sources/MacSCPCLI/` — `MacSCPCLI.swift` (root command), `CLIExitCode.swift`, `CLIEnvironment.swift`, `OutputFormatter.swift`, `SessionConnecting.swift`, `LsCommand.swift`, `GetCommand.swift`, `PutCommand.swift`, `RmCommand.swift`, `MkdirCommand.swift`
 
-**Geändert:** `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` (typealias), `Sources/macSCPCore/Sessions/SecretStore.swift` (optionale Access Group), `scripts/release` (CLI signieren), `Resources/macSCP.entitlements` + `Resources/macscp-cli.entitlements` (neu), `README.md`.
+**Changed:** `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` (typealias), `Sources/macSCPCore/Sessions/SecretStore.swift` (optional access group), `scripts/release` (sign the CLI), `Resources/macSCP.entitlements` + `Resources/macscp-cli.entitlements` (new), `README.md`.
 
 ---
 
-### Task 1: `HostKeyDecider` aus der Präsentationsschicht befreien
+### Task 1: Free `HostKeyDecider` from the presentation layer
 
-Reine Verschiebung ohne Verhaltensänderung. Muss zuerst passieren, weil die CLI sonst einen Typ aus der UI-Schicht importieren müsste, um überhaupt zu verbinden.
+A pure move with no behavior change. Must happen first, because otherwise the CLI would have to import a type from the UI layer just to connect at all.
 
 **Files:**
 - Create: `Sources/macSCPCore/Connection/HostKeyDecider.swift`
 - Modify: `Sources/macSCPCore/Presentation/ConnectionViewModel.swift:76`
 
 **Interfaces:**
-- Produces: `public typealias HostKeyDecider = @Sendable (HostKeyCandidate) async -> Bool` auf Modulebene in `macSCPCore`.
+- Produces: `public typealias HostKeyDecider = @Sendable (HostKeyCandidate) async -> Bool` at module level in `macSCPCore`.
 
-- [ ] **Step 1: Neue Datei anlegen**
+- [ ] **Step 1: Create the new file**
 
 ```swift
 // Sources/macSCPCore/Connection/HostKeyDecider.swift
@@ -68,9 +68,9 @@ import Foundation
 public typealias HostKeyDecider = @Sendable (HostKeyCandidate) async -> Bool
 ```
 
-- [ ] **Step 2: Am ViewModel ein typealias stehen lassen**
+- [ ] **Step 2: Leave a typealias on the view model**
 
-In `ConnectionViewModel.swift` Zeile 76 ersetzen:
+Replace line 76 in `ConnectionViewModel.swift`:
 
 ```swift
     /// Moved to `Connection/HostKeyDecider.swift` in M20 so non-UI callers
@@ -79,10 +79,10 @@ In `ConnectionViewModel.swift` Zeile 76 ersetzen:
     public typealias HostKeyDecider = macSCPCore.HostKeyDecider
 ```
 
-- [ ] **Step 3: Bauen und volle Suite laufen lassen**
+- [ ] **Step 3: Build and run the full suite**
 
 Run: `swift build && swift test 2>&1 | tail -3`
-Expected: `Build complete!` und alle Tests grün (Baseline 1188/87). Keine neuen Warnungen.
+Expected: `Build complete!` and all tests green (baseline 1188/87). No new warnings.
 
 - [ ] **Step 4: Commit**
 
@@ -107,7 +107,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   - `public enum HostKeyDecision: Equatable, Sendable { case prompt, accept, reject }`
   - `public static func decision(for policy: HostKeyPolicy, hasTTY: Bool) -> HostKeyDecision`
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
 ```swift
 // Tests/macSCPCoreTests/HostKeyPolicyTests.swift
@@ -142,12 +142,12 @@ struct HostKeyPolicyTests {
 }
 ```
 
-- [ ] **Step 2: Test rot sehen**
+- [ ] **Step 2: See the test fail (red)**
 
 Run: `swift test --filter HostKeyPolicy 2>&1 | tail -5`
-Expected: Kompilierfehler `cannot find 'HostKeyPolicy' in scope`.
+Expected: compile error `cannot find 'HostKeyPolicy' in scope`.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
 ```swift
 // Sources/macSCPCore/Connection/HostKeyPolicy.swift
@@ -186,7 +186,7 @@ extension HostKeyPolicy {
 }
 ```
 
-- [ ] **Step 4: Test grün sehen**
+- [ ] **Step 4: See the test pass (green)**
 
 Run: `swift test --filter HostKeyPolicy 2>&1 | tail -3`
 Expected: `Test run with 4 tests in 1 suite passed`.
@@ -202,23 +202,23 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Auto-Trust aus der CLI entfernen
+### Task 3: Remove auto-trust from the CLI
 
-Die Invarianten-Reparatur, **bevor** neue Befehle dazukommen. Nach dieser Task kann die CLI weniger als vorher (unbekannte Hosts brauchen Bestätigung) — das ist beabsichtigt.
+The invariant repair, **before** new commands are added. After this task the CLI can do less than before (unknown hosts need confirmation) — that is intentional.
 
 **Files:**
 - Create: `Sources/MacSCPCLI/CLIExitCode.swift`
 - Create: `Sources/MacSCPCLI/CLIEnvironment.swift`
-- Modify: `Sources/MacSCPCLI/MacSCPCLI.swift` (Decider ersetzen)
+- Modify: `Sources/MacSCPCLI/MacSCPCLI.swift` (replace the decider)
 
 **Interfaces:**
-- Consumes: `HostKeyPolicy.decision(for:hasTTY:)` aus Task 2.
+- Consumes: `HostKeyPolicy.decision(for:hasTTY:)` from Task 2.
 - Produces:
   - `enum CLIExitCode: Int32 { case success = 0, usage = 2, auth = 10, hostKeyUnknown = 11, hostKeyMismatch = 12, connection = 13, remote = 14, conflict = 15 }`
   - `enum CLIEnvironment { static var hasTTY: Bool }`
   - `func makeDecider(policy:) -> HostKeyDecider`
 
-- [ ] **Step 1: Exit-Codes und TTY-Erkennung anlegen**
+- [ ] **Step 1: Create exit codes and TTY detection**
 
 ```swift
 // Sources/MacSCPCLI/CLIExitCode.swift
@@ -251,9 +251,9 @@ enum CLIEnvironment {
 }
 ```
 
-- [ ] **Step 2: Den Test für den Ersatz schreiben** (in Core, weil die CLI kein Testtarget hat)
+- [ ] **Step 2: Write the test for the replacement** (in Core, because the CLI has no test target)
 
-An `Tests/macSCPCoreTests/HostKeyPolicyTests.swift` anhängen:
+Append to `Tests/macSCPCoreTests/HostKeyPolicyTests.swift`:
 
 ```swift
     /// The shape the CLI relies on: with no terminal and the default policy,
@@ -266,14 +266,14 @@ An `Tests/macSCPCoreTests/HostKeyPolicyTests.swift` anhängen:
     }
 ```
 
-- [ ] **Step 3: Test laufen lassen**
+- [ ] **Step 3: Run the test**
 
 Run: `swift test --filter HostKeyPolicy 2>&1 | tail -3`
 Expected: `Test run with 5 tests in 1 suite passed`.
 
-- [ ] **Step 4: Den Auto-Trust in der CLI ersetzen**
+- [ ] **Step 4: Replace the auto-trust in the CLI**
 
-In `MacSCPCLI.swift` den `decider:`-Block (aktuell Zeilen 28–32) ersetzen durch:
+In `MacSCPCLI.swift`, replace the `decider:` block (currently lines 28–32) with:
 
 ```swift
     /// Builds the decider for UNKNOWN host keys. A mismatch never gets here:
@@ -308,7 +308,7 @@ In `MacSCPCLI.swift` den `decider:`-Block (aktuell Zeilen 28–32) ersetzen durc
     }
 ```
 
-Dazu am Wurzelbefehl die Flags ergänzen:
+Also add the flags to the root command:
 
 ```swift
     @Flag(name: .long, help: "Trust unknown host keys without asking. Never affects mismatches.")
@@ -323,15 +323,15 @@ Dazu am Wurzelbefehl die Flags ergänzen:
     }
 ```
 
-und den Aufruf auf `decider: makeDecider(policy: hostKeyPolicy)` umstellen.
+and switch the call to `decider: makeDecider(policy: hostKeyPolicy)`.
 
-- [ ] **Step 5: Bauen und von Hand prüfen**
+- [ ] **Step 5: Build and verify by hand**
 
 Run: `swift build 2>&1 | tail -2`
-Expected: `Build complete!`, keine neuen Warnungen.
+Expected: `Build complete!`, no new warnings.
 
 Run: `docker compose -f docker/test-server/compose.yml up -d && MACSCP_PASSWORD=testpass swift run macscp-cli --non-interactive --host 127.0.0.1 --port 2222 --user testuser / ; echo "exit=$?"`
-Expected: Der Lauf bricht mit der Meldung `Unknown host key for 127.0.0.1:2222` ab (sofern das Rig nicht schon in `known_hosts` steht) und **fragt nicht**.
+Expected: The run aborts with the message `Unknown host key for 127.0.0.1:2222` (provided the rig is not already in `known_hosts`) and **does not ask**.
 
 - [ ] **Step 6: Commit**
 
@@ -355,9 +355,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   - `public enum SessionReference: Equatable, Sendable { case local(path: String); case remote(name: String, path: String) }`
   - `public static func parse(_ text: String) -> SessionReference`
   - `public enum SessionReferenceError: Error, Equatable, Sendable { case unknown(String); case ambiguous(String, count: Int) }`
-  - `public func resolve(in sessions: [StoredSession]) throws -> StoredSession` (nur für `.remote`; `.local` wirft `unknown`)
+  - `public func resolve(in sessions: [StoredSession]) throws -> StoredSession` (only for `.remote`; `.local` throws `unknown`)
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
 ```swift
 // Tests/macSCPCoreTests/SessionReferenceTests.swift
@@ -438,12 +438,12 @@ struct SessionReferenceTests {
 }
 ```
 
-- [ ] **Step 2: Test rot sehen**
+- [ ] **Step 2: See the test fail (red)**
 
 Run: `swift test --filter SessionReference 2>&1 | tail -5`
-Expected: Kompilierfehler `cannot find 'SessionReference' in scope`.
+Expected: compile error `cannot find 'SessionReference' in scope`.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
 ```swift
 // Sources/macSCPCore/Sessions/SessionReference.swift
@@ -502,12 +502,12 @@ extension SessionReference {
 }
 ```
 
-- [ ] **Step 4: Test grün sehen**
+- [ ] **Step 4: See the test pass (green)**
 
 Run: `swift test --filter SessionReference 2>&1 | tail -3`
 Expected: `Test run with 10 tests in 1 suite passed`.
 
-Falls der `StoredSession`-Initialisierer andere Pflichtfelder verlangt, den Test-Helfer entsprechend erweitern — **nicht** die Produktionssignatur ändern.
+If the `StoredSession` initializer requires other mandatory fields, extend the test helper accordingly — **do not** change the production signature.
 
 - [ ] **Step 5: Commit**
 
@@ -533,7 +533,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   - `public struct SecretResolver: Sendable { public init(sources: [any SecretSource]); public func resolve(for sessionID: UUID) throws -> ResolvedSecret? }`
   - `public struct SecretSourceFailure: Error, Equatable, Sendable { public let label: String }`
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
 ```swift
 // Tests/macSCPCoreTests/SecretResolverTests.swift
@@ -600,12 +600,12 @@ struct SecretResolverTests {
 }
 ```
 
-- [ ] **Step 2: Test rot sehen**
+- [ ] **Step 2: See the test fail (red)**
 
 Run: `swift test --filter SecretResolver 2>&1 | tail -5`
-Expected: Kompilierfehler `cannot find 'SecretResolver' in scope`.
+Expected: compile error `cannot find 'SecretResolver' in scope`.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
 ```swift
 // Sources/macSCPCore/Sessions/SecretResolver.swift
@@ -656,7 +656,7 @@ public struct SecretResolver: Sendable {
 }
 ```
 
-- [ ] **Step 4: Test grün sehen**
+- [ ] **Step 4: See the test pass (green)**
 
 Run: `swift test --filter SecretResolver 2>&1 | tail -3`
 Expected: `Test run with 5 tests in 1 suite passed`.
@@ -672,9 +672,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 6: Access Group optional + Migration (Core)
+### Task 6: Optional access group + migration (Core)
 
-Der riskanteste Baustein: Er berührt gespeicherte Geheimnisse echter Nutzer.
+The riskiest piece: it touches stored secrets of real users.
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/SecretStore.swift`
@@ -682,12 +682,12 @@ Der riskanteste Baustein: Er berührt gespeicherte Geheimnisse echter Nutzer.
 - Test: `Tests/macSCPCoreTests/KeychainMigrationTests.swift`
 
 **Interfaces:**
-- Consumes: `SecretStore`-Protokoll (unverändert).
+- Consumes: the `SecretStore` protocol (unchanged).
 - Produces:
-  - `KeychainSecretStore.init(service:accessGroup:)` mit `accessGroup: String? = nil`
+  - `KeychainSecretStore.init(service:accessGroup:)` with `accessGroup: String? = nil`
   - `public struct KeychainMigration { public init(from: KeychainSecretStore, to: KeychainSecretStore); public func migrate(sessionIDs: [UUID]) throws -> Int }`
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
 ```swift
 // Tests/macSCPCoreTests/KeychainMigrationTests.swift
@@ -773,12 +773,12 @@ struct KeychainMigrationTests {
 }
 ```
 
-- [ ] **Step 2: Test rot sehen**
+- [ ] **Step 2: See the test fail (red)**
 
 Run: `swift test --filter KeychainMigration 2>&1 | tail -5`
-Expected: Kompilierfehler `cannot find 'KeychainMigration' in scope`.
+Expected: compile error `cannot find 'KeychainMigration' in scope`.
 
-- [ ] **Step 3: Migration implementieren**
+- [ ] **Step 3: Implement the migration**
 
 ```swift
 // Sources/macSCPCore/Sessions/KeychainMigration.swift
@@ -821,14 +821,14 @@ public struct KeychainMigration: Sendable {
 }
 ```
 
-- [ ] **Step 4: Test grün sehen**
+- [ ] **Step 4: See the test pass (green)**
 
 Run: `swift test --filter KeychainMigration 2>&1 | tail -3`
 Expected: `Test run with 4 tests in 1 suite passed`.
 
-- [ ] **Step 5: Access Group optional in `SecretStore` ergänzen**
+- [ ] **Step 5: Add the optional access group to `SecretStore`**
 
-In `SecretStore.swift` den Initialisierer und `baseQuery` ersetzen:
+In `SecretStore.swift`, replace the initializer and `baseQuery`:
 
 ```swift
 public struct KeychainSecretStore: SecretStore {
@@ -854,10 +854,10 @@ public struct KeychainSecretStore: SecretStore {
     }
 ```
 
-- [ ] **Step 6: Volle Suite laufen lassen**
+- [ ] **Step 6: Run the full suite**
 
 Run: `swift build && swift test 2>&1 | tail -3`
-Expected: alles grün; die bestehenden Keychain-Tests laufen unverändert, weil ohne Gruppe nichts an der Abfrage anders ist.
+Expected: everything green; the existing keychain tests run unchanged, because without a group nothing about the query is different.
 
 - [ ] **Step 7: Commit**
 
@@ -870,19 +870,19 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 7: Entitlements und Signierung der CLI
+### Task 7: Entitlements and signing for the CLI
 
 **Files:**
 - Create: `Resources/macSCP.entitlements`
 - Create: `Resources/macscp-cli.entitlements`
 - Modify: `scripts/release`
-- Modify: `README.md` (Abschnitt zur CLI-Installation)
+- Modify: `README.md` (section on CLI installation)
 
 **Interfaces:**
-- Consumes: `KeychainSecretStore(service:accessGroup:)` aus Task 6.
-- Produces: Die Access-Group-Kennung `$(TeamIdentifierPrefix)dev.noix.macSCP` in beiden Binaries.
+- Consumes: `KeychainSecretStore(service:accessGroup:)` from Task 6.
+- Produces: the access-group identifier `$(TeamIdentifierPrefix)dev.noix.macSCP` in both binaries.
 
-- [ ] **Step 1: Entitlements anlegen**
+- [ ] **Step 1: Create the entitlements**
 
 ```xml
 <!-- Resources/macSCP.entitlements -->
@@ -898,11 +898,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 </plist>
 ```
 
-Dieselbe Datei ein zweites Mal als `Resources/macscp-cli.entitlements` — identischer Inhalt, denn beide Binaries müssen dieselbe Gruppe beanspruchen.
+The same file a second time as `Resources/macscp-cli.entitlements` — identical content, since both binaries must claim the same group.
 
-- [ ] **Step 2: Release-Skript erweitern**
+- [ ] **Step 2: Extend the release script**
 
-In `scripts/release` nach dem Signieren der App ergänzen:
+In `scripts/release`, add after signing the app:
 
 ```bash
 # The CLI must carry the SAME keychain access group as the app, otherwise it
@@ -915,12 +915,12 @@ codesign --force --options runtime --timestamp \
 codesign --verify --strict "$CLI_BIN"
 ```
 
-und den App-Signieraufruf um `--entitlements Resources/macSCP.entitlements` ergänzen.
+and add `--entitlements Resources/macSCP.entitlements` to the app's signing call.
 
-- [ ] **Step 3: Prüfen, dass der Dev-Build unberührt bleibt**
+- [ ] **Step 3: Verify the dev build stays untouched**
 
 Run: `scripts/package-app 2>&1 | tail -2 && codesign -dv dist/macSCP.app 2>&1 | grep Signature`
-Expected: `wrote dist/macSCP.app` und weiterhin `Signature=adhoc` — das Entwickeln ändert sich nicht.
+Expected: `wrote dist/macSCP.app` and still `Signature=adhoc` — development is unaffected.
 
 - [ ] **Step 4: Commit**
 
@@ -933,19 +933,19 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 8: CLI-Gerüst und `ls`
+### Task 8: CLI scaffold and `ls`
 
 **Files:**
-- Modify: `Sources/MacSCPCLI/MacSCPCLI.swift` (Wurzelbefehl mit Unterbefehlen)
+- Modify: `Sources/MacSCPCLI/MacSCPCLI.swift` (root command with subcommands)
 - Create: `Sources/MacSCPCLI/OutputFormatter.swift`
 - Create: `Sources/MacSCPCLI/SessionConnecting.swift`
 - Create: `Sources/MacSCPCLI/LsCommand.swift`
 
 **Interfaces:**
 - Consumes: `SessionReference`, `SecretResolver`, `HostKeyPolicy`, `CLIExitCode`, `CLIEnvironment`, `BackendConnector.connect(_:decider:)`.
-- Produces: `struct GlobalOptions: ParsableArguments` mit `--json`, `--verbose`, `--non-interactive`, `--accept-new`, `--password-command`; `func connect(to reference: SessionReference, options: GlobalOptions) async throws -> any RemoteFileSystem`.
+- Produces: `struct GlobalOptions: ParsableArguments` with `--json`, `--verbose`, `--non-interactive`, `--accept-new`, `--password-command`; `func connect(to reference: SessionReference, options: GlobalOptions) async throws -> any RemoteFileSystem`.
 
-- [ ] **Step 1: Ausgabeformatierung schreiben**
+- [ ] **Step 1: Write the output formatting**
 
 ```swift
 // Sources/MacSCPCLI/OutputFormatter.swift
@@ -989,7 +989,7 @@ enum OutputFormatter {
 }
 ```
 
-- [ ] **Step 2: Verbindungsaufbau bündeln**
+- [ ] **Step 2: Bundle the connection setup**
 
 ```swift
 // Sources/MacSCPCLI/SessionConnecting.swift
@@ -1038,9 +1038,9 @@ func connect(
 }
 ```
 
-Die Helfer `secretSources(options:)` und `connectionConfig(for:secret:)` bauen die drei Quellen (Kommando, Umgebung, Keychain) beziehungsweise die `ConnectionConfig` aus der Session — analog zu `ConnectionViewModel`, nur ohne UI-Zustand.
+The helpers `secretSources(options:)` and `connectionConfig(for:secret:)` build the three sources (command, environment, keychain) and the `ConnectionConfig` from the session respectively — analogous to `ConnectionViewModel`, just without UI state.
 
-- [ ] **Step 3: `ls` als Unterbefehl**
+- [ ] **Step 3: `ls` as a subcommand**
 
 ```swift
 // Sources/MacSCPCLI/LsCommand.swift
@@ -1065,9 +1065,9 @@ struct LsCommand: AsyncParsableCommand {
 }
 ```
 
-- [ ] **Step 4: Wurzelbefehl umbauen**
+- [ ] **Step 4: Rebuild the root command**
 
-`MacSCPCLI.swift` wird zum reinen Verteiler:
+`MacSCPCLI.swift` becomes a pure dispatcher:
 
 ```swift
 @main
@@ -1081,13 +1081,13 @@ struct MacSCPCLI: AsyncParsableCommand {
 }
 ```
 
-- [ ] **Step 5: Bauen und gegen das Rig prüfen**
+- [ ] **Step 5: Build and check against the rig**
 
 Run: `swift build 2>&1 | tail -2`
 Expected: `Build complete!`
 
 Run: `swift run macscp-cli ls --help`
-Expected: Hilfetext mit `--json`, `--non-interactive`, `--accept-new`, `--password-command`.
+Expected: help text with `--json`, `--non-interactive`, `--accept-new`, `--password-command`.
 
 - [ ] **Step 6: Commit**
 
@@ -1113,7 +1113,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   - `public enum TransferPlanError: Error, Equatable, Sendable { case conflict(String) }`
   - `public static func jobs(source:destinationDirectory:destinationExists:action:) throws -> [TransferJob]`
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
 ```swift
 // Tests/macSCPCoreTests/TransferPlanTests.swift
@@ -1158,12 +1158,12 @@ struct TransferPlanTests {
 }
 ```
 
-- [ ] **Step 2: Test rot sehen**
+- [ ] **Step 2: See the test fail (red)**
 
 Run: `swift test --filter TransferPlan 2>&1 | tail -5`
-Expected: Kompilierfehler `cannot find 'TransferPlan' in scope`.
+Expected: compile error `cannot find 'TransferPlan' in scope`.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
 ```swift
 // Sources/macSCPCore/RemoteFS/TransferPlan.swift
@@ -1212,7 +1212,7 @@ public enum TransferPlan {
 }
 ```
 
-- [ ] **Step 4: Test grün sehen**
+- [ ] **Step 4: See the test pass (green)**
 
 Run: `swift test --filter TransferPlan 2>&1 | tail -3`
 Expected: `Test run with 4 tests in 1 suite passed`.
@@ -1228,7 +1228,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 10: `get` und `put`
+### Task 10: `get` and `put`
 
 **Files:**
 - Create: `Sources/MacSCPCLI/GetCommand.swift`
@@ -1237,7 +1237,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `TransferPlan.jobs(...)`, `ConflictAction`, `TransferEngine`, `connect(to:options:)`.
 
-- [ ] **Step 1: `get` schreiben**
+- [ ] **Step 1: Write `get`**
 
 ```swift
 // Sources/MacSCPCLI/GetCommand.swift
@@ -1277,9 +1277,9 @@ struct GetCommand: AsyncParsableCommand {
 }
 ```
 
-Die genaue Signatur von `TransferEngine.download` beim Umsetzen aus `Sources/macSCPCore/RemoteFS/TransferEngine.swift` übernehmen und hier einsetzen — die Engine bleibt unverändert.
+Take the exact signature of `TransferEngine.download` from `Sources/macSCPCore/RemoteFS/TransferEngine.swift` when implementing this and insert it here — the engine stays unchanged.
 
-- [ ] **Step 2: `put` schreiben** (spiegelbildlich, Ziel ist die Session)
+- [ ] **Step 2: Write `put`** (mirror image, the destination is the session)
 
 ```swift
 // Sources/MacSCPCLI/PutCommand.swift
@@ -1320,9 +1320,9 @@ struct PutCommand: AsyncParsableCommand {
 }
 ```
 
-- [ ] **Step 3: Konflikt-Exit-Code verdrahten**
+- [ ] **Step 3: Wire up the conflict exit code**
 
-`TransferPlanError.conflict` muss zu Exit-Code 15 führen. Im Wurzelbefehl:
+`TransferPlanError.conflict` must lead to exit code 15. In the root command:
 
 ```swift
     /// ArgumentParser maps thrown errors to exit code 1 by default. The point
@@ -1341,9 +1341,9 @@ struct PutCommand: AsyncParsableCommand {
     }
 ```
 
-Den genauen Fallnamen von `HostKeyError.mismatch` beim Umsetzen aus `Sources/macSCPCore/SSH/HostKeyValidation.swift:31` übernehmen.
+Take the exact case name of `HostKeyError.mismatch` from `Sources/macSCPCore/SSH/HostKeyValidation.swift:31` when implementing this.
 
-- [ ] **Step 4: Bauen**
+- [ ] **Step 4: Build**
 
 Run: `swift build 2>&1 | tail -2`
 Expected: `Build complete!`
@@ -1359,13 +1359,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 11: `rm` und `mkdir`
+### Task 11: `rm` and `mkdir`
 
 **Files:**
 - Create: `Sources/MacSCPCLI/RmCommand.swift`
 - Create: `Sources/MacSCPCLI/MkdirCommand.swift`
 
-- [ ] **Step 1: Beide Befehle schreiben**
+- [ ] **Step 1: Write both commands**
 
 ```swift
 // Sources/MacSCPCLI/RmCommand.swift
@@ -1420,12 +1420,12 @@ struct MkdirCommand: AsyncParsableCommand {
 }
 ```
 
-Die genauen Methodennamen aus `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift` übernehmen.
+Take the exact method names from `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift`.
 
-- [ ] **Step 2: Bauen und Hilfetexte prüfen**
+- [ ] **Step 2: Build and check help texts**
 
 Run: `swift build && swift run macscp-cli --help`
-Expected: alle fünf Unterbefehle gelistet.
+Expected: all five subcommands listed.
 
 - [ ] **Step 3: Commit**
 
@@ -1438,13 +1438,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 12: Abschluss — gated Rig-Tests, README, Review
+### Task 12: Wrap-up — gated rig tests, README, review
 
 **Files:**
 - Create: `Tests/macSCPCoreTests/CLIRoundtripITests.swift`
 - Modify: `README.md`
 
-- [ ] **Step 1: Gated Roundtrip schreiben**
+- [ ] **Step 1: Write the gated roundtrip**
 
 ```swift
 // Tests/macSCPCoreTests/CLIRoundtripITests.swift
@@ -1470,9 +1470,9 @@ struct CLIRoundtripITests {
 }
 ```
 
-Beim Umsetzen den Rumpf ausschreiben: `Process` mit `swift build --show-bin-path`-Pfad, Session zuvor über einen temporären `SessionStore` anlegen, `MACSCP_PASSWORD=testpass`, `--accept-new` für das Rig.
+When implementing, write out the body: `Process` with the `swift build --show-bin-path` path, create the session beforehand via a temporary `SessionStore`, `MACSCP_PASSWORD=testpass`, `--accept-new` for the rig.
 
-- [ ] **Step 2: Die Sicherheitszusage als eigener Test**
+- [ ] **Step 2: The security promise as its own test**
 
 ```swift
     /// The promise every automation relies on: no terminal, unknown host, and
@@ -1484,25 +1484,25 @@ Beim Umsetzen den Rumpf ausschreiben: `Process` mit `swift build --show-bin-path
     }
 ```
 
-- [ ] **Step 3: Gated Suite laufen lassen**
+- [ ] **Step 3: Run the gated suite**
 
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
 MACSCP_ITEST=1 swift test --filter CLIRoundtrip 2>&1 | tail -5
 ```
 
-Expected: beide Tests grün.
+Expected: both tests green.
 
-- [ ] **Step 4: Volle ungated Suite**
+- [ ] **Step 4: Full ungated suite**
 
 Run: `swift build && swift test 2>&1 | tail -3`
-Expected: alles grün, keine neuen Warnungen.
+Expected: everything green, no new warnings.
 
-- [ ] **Step 5: README ergänzen**
+- [ ] **Step 5: Extend the README**
 
-Einen Abschnitt „Command line" mit den fünf Befehlen, der Reihenfolge der Geheimnisquellen, `--accept-new` und der Exit-Code-Tabelle. **Keine Tech-Stack-Begriffe** über das hinaus, was die README ohnehin nennt.
+A "Command line" section with the five commands, the order of the secret sources, `--accept-new`, and the exit code table. **No tech-stack terms** beyond what the README already names.
 
-- [ ] **Step 6: Whole-Milestone-Review und Commit**
+- [ ] **Step 6: Whole-milestone review and commit**
 
 ```bash
 git add Tests/macSCPCoreTests/CLIRoundtripITests.swift README.md
@@ -1511,14 +1511,14 @@ git commit -m "test: prove the CLI roundtrip and its non-interactive refusal
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
-Danach Review über `git diff <M20-Basis>..HEAD` mit Fokus auf: Kann irgendein Pfad einen unbekannten Host-Key ohne Zustimmung eintragen? Kann die Migration ein Geheimnis verlieren? Ist die Quellenreihenfolge im Code dieselbe wie in der Spec?
+Then review via `git diff <M20-Basis>..HEAD` focusing on: Can any path record an unknown host key without consent? Can the migration lose a secret? Is the source order in the code the same as in the spec?
 
 ---
 
 ## Self-Review
 
-**1. Spec-Abdeckung:** Zweck/`--non-interactive` → Task 3, 8 ✅ · Keychain teilen → Task 6, 7 ✅ · gestufte Auflösung → Task 5, 8 ✅ · TOFU + `--accept-new` → Task 2, 3 ✅ · fünf Befehle → Task 8, 10, 11 ✅ · `--on-conflict fail` → Task 9, 10 ✅ · Ausgabe/`--json` → Task 8 ✅ · Exit-Codes → Task 3, 10 ✅ · Prüfung inkl. Sicherheitszusage → Task 12 ✅ · `HostKeyDecider` verschieben → Task 1 ✅
+**1. Spec coverage:** Purpose/`--non-interactive` → Task 3, 8 ✅ · Share keychain → Task 6, 7 ✅ · Staged resolution → Task 5, 8 ✅ · TOFU + `--accept-new` → Task 2, 3 ✅ · Five commands → Task 8, 10, 11 ✅ · `--on-conflict fail` → Task 9, 10 ✅ · Output/`--json` → Task 8 ✅ · Exit codes → Task 3, 10 ✅ · Verification incl. security promise → Task 12 ✅ · Move `HostKeyDecider` → Task 1 ✅
 
-**2. Platzhalter:** Drei Stellen verlangen ausdrücklich, eine Signatur aus dem Bestand zu übernehmen (`TransferEngine.download/upload`, `HostKeyError`-Fallname, `RemoteFileSystem`-Methoden) statt sie zu raten — mit exaktem Dateipfad. Task 12 Schritt 1/2 skizzieren die Testrümpfe mit klarer Anweisung, was auszuschreiben ist; die Testabsicht und die Prüfbedingung stehen fest.
+**2. Placeholders:** Three places explicitly require taking a signature from the existing codebase (`TransferEngine.download/upload`, the `HostKeyError` case name, `RemoteFileSystem` methods) rather than guessing it — with an exact file path. Task 12 steps 1/2 sketch the test bodies with a clear instruction of what to write out; the test intent and the assertion condition are fixed.
 
-**3. Typkonsistenz:** `HostKeyPolicy`/`HostKeyDecision` (Task 2 → 3, 8), `SessionReference`/`SessionReferenceError` (4 → 8, 10, 11), `SecretResolver`/`ResolvedSecret`/`SecretSourceFailure` (5 → 8), `KeychainSecretStore(service:accessGroup:)` (6 → 7), `TransferPlan.jobs`/`ConflictAction`/`TransferJob`/`TransferPlanError` (9 → 10), `GlobalOptions`/`connect(to:options:)` (8 → 10, 11), `CLIExitCode` (3 → 10) — durchgehend gleich geschrieben.
+**3. Type consistency:** `HostKeyPolicy`/`HostKeyDecision` (Task 2 → 3, 8), `SessionReference`/`SessionReferenceError` (4 → 8, 10, 11), `SecretResolver`/`ResolvedSecret`/`SecretSourceFailure` (5 → 8), `KeychainSecretStore(service:accessGroup:)` (6 → 7), `TransferPlan.jobs`/`ConflictAction`/`TransferJob`/`TransferPlanError` (9 → 10), `GlobalOptions`/`connect(to:options:)` (8 → 10, 11), `CLIExitCode` (3 → 10) — spelled consistently throughout.

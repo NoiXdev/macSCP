@@ -1,98 +1,97 @@
-# Namenskonflikt beim Speichern — Entwurf
+# Name conflict on save — design
 
-**Stand:** 2026-08-27. Umsetzung von **I5** aus der Abschlussprüfung des
-Tab-Kontextmenüs.
+**Status:** 2026-08-27. Implementation of **I5** from the closing review of
+the tab context menu.
 
 ---
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-`SessionListViewModel.save(name:…)` sucht eine vorhandene Sitzung **über den
-Namen** und ändert sie an Ort und Stelle, statt eine neue anzulegen. Das ist
-Absicht und im Quelltext begründet — es trägt Gruppe und Login-Set-Bindung
-weiter, und der Kommentar hält sogar fest, dass ein Namenstreffer über
-Protokollgrenzen hinweg die vorhandene Sitzung **konvertiert**.
+`SessionListViewModel.save(name:…)` looks up an existing session **by
+name** and modifies it in place instead of creating a new one. That is
+intentional and justified in the source — it carries the group and
+login-set binding forward, and the comment even records that a name match
+across protocol boundaries **converts** the existing session.
 
-**Dieses Upsert ist nicht das Problem und wird nicht angefasst.** Wo der Nutzer
-den Namen tippt, ist es stimmig: wer einen vorhandenen Namen einträgt, meint
-diese Sitzung.
+**This upsert is not the problem and is not touched.** Where the user
+types the name, it is coherent: whoever enters an existing name means that
+session.
 
-Das Problem ist, dass der Name nicht immer getippt wird. `saveName` wird an
-drei Stellen vorbefüllt:
+The problem is that the name is not always typed. `saveName` is pre-filled
+in three places:
 
-| Stelle | Woher | Gefahr |
+| Site | Source | Danger |
 |---|---|---|
-| Sitzung bearbeiten | `stored.name` | keine — das **ist** diese Sitzung |
-| „Als Sitzung speichern" | `tab.displayTitle` | **ja**, seit heute |
-| ssh-config-Import | `host.alias` | **ja, und schon länger** |
+| Edit session | `stored.name` | none — this **is** that session |
+| "Save as session" | `tab.displayTitle` | **yes**, as of today |
+| ssh-config import | `host.alias` | **yes, and for longer** |
 
-Und es gibt **nirgends** eine Namenskonflikt-Warnung für Sitzungen; das einzige
-Vorbild im Projekt ist die Dublettenprüfung der Snippet-Variablen.
+And there is **nowhere** a name-conflict warning for sessions; the only
+model in the project is the duplicate check for snippet variables.
 
-Zusammen heißt das: zwei Wege setzen einen Namen ein, den der Nutzer nie
-getippt hat, und nichts sagt ihm, dass dieser Name bereits vergeben ist. Trifft
-er, wird die fremde Sitzung samt Gruppe, Tags, Login-Set, Jump-Spezifikation
-und Keychain-Geheimnis ersetzt.
+Together this means: two paths insert a name the user never typed, and
+nothing tells them this name is already taken. If it hits, the other
+session — group, tags, login set, jump spec and keychain secret included
+— gets replaced.
 
-## Entscheidung des Maintainers (2026-08-27)
+## Maintainer decision (2026-08-27)
 
-**Warnen und den automatischen Namen entschärfen.** Beides, nicht eines davon.
+**Warn, and defuse the automatic name.** Both, not either.
 
-### 1. Das Formular warnt
+### 1. The form warns
 
-Trifft der eingetragene Name eine vorhandene Sitzung, sagt das Formular es —
-sichtbar, bevor gespeichert wird, und benennt die Sitzung, die ersetzt würde.
+If the entered name matches an existing session, the form says so —
+visibly, before saving, naming the session that would be replaced.
 
-**Es blockiert nicht.** Das Upsert bleibt erreichbar; wer eine vorhandene
-Sitzung aktualisieren will, soll das weiterhin können. Die Warnung stellt
-Sichtbarkeit her, nicht eine Hürde.
+**It does not block.** The upsert stays reachable; whoever wants to
+update an existing session should still be able to. The warning
+establishes visibility, not a hurdle.
 
-**Die bearbeitete Sitzung ist ausgenommen.** `ConnectionViewModel.mode` ist
-`FormMode.edit(sessionID: UUID)` im Bearbeiten-Fall — trifft der Name genau
-diese ID, ist das kein Konflikt, sondern der Normalfall. Ohne diese Ausnahme
-würde jedes Bearbeiten einer gespeicherten Sitzung warnen, sie ersetze sich
-selbst; eine Warnung, die immer erscheint, wird nach zwei Tagen nicht mehr
-gelesen.
+**The session being edited is excluded.** `ConnectionViewModel.mode` is
+`FormMode.edit(sessionID: UUID)` in the edit case — if the name matches
+exactly that ID, that is not a conflict but the normal case. Without this
+exception, every edit of a saved session would warn that it replaces
+itself; a warning that always appears stops being read after two days.
 
-### 2. Ein vorbefüllter Name weicht aus
+### 2. A pre-filled name steps aside
 
-Setzt **macSCP selbst** einen Namen ein und der ist vergeben, wird nicht dieser
-gesetzt, sondern der nächste freie. Betrifft ausschließlich die beiden Wege,
-die einen Namen erfinden — „Als Sitzung speichern" und den ssh-config-Import.
+If **macSCP itself** inserts a name and that name is taken, the name that
+gets set is not that one but the next free one. This applies only to the
+two paths that invent a name — "Save as session" and the ssh-config
+import.
 
-**Was der Nutzer tippt, wird nie verändert.** Ein Vorschlag darf ausweichen,
-eine Eingabe nicht: eine App, die getippten Text still umschreibt, ist
-schlimmer als eine, die überschreibt, weil man ihr danach beim Tippen nicht
-mehr zusehen mag.
+**What the user types is never changed.** A suggestion may step aside, an
+input may not: an app that silently rewrites typed text is worse than one
+that overwrites, because afterward you no longer want to watch it type.
 
-Die Regel muss ein prüfbarer Wert in Core sein, kein Einzeiler an zwei
-Aufrufstellen — sonst weichen die beiden Wege irgendwann verschieden aus.
-Offen und beim Umsetzen zu entscheiden, mit Test je Fall:
+The rule must be a testable value in Core, not a one-liner at two call
+sites — otherwise the two paths will eventually step aside differently.
+Open, to be decided during implementation, with a test per case:
 
-- Wie der freie Name gebildet wird (ein angehängter Zähler ist das Naheliegende).
-- Was passiert, wenn auch der belegt ist — also dass die Regel wirklich sucht
-  statt einmal zu raten.
-- Wie mit einem Namen umgegangen wird, der bereits auf einen Zähler endet.
-- Ob Groß-/Kleinschreibung zählt. **Das ist die Frage mit der Falle:** `save`
-  vergleicht mit `==`, also exakt. Weicht die Vorbefüllung nach anderen Regeln
-  aus als `save` vergleicht, entsteht genau der Fall, den dieser Vorgang
-  beseitigen soll — ein Name, der „frei" aussieht und trotzdem trifft, oder
-  umgekehrt ein Ausweichen ohne Konflikt. **Die Ausweich-Regel muss denselben
-  Vergleich benutzen wie `save`.**
+- How the free name is formed (an appended counter is the obvious choice).
+- What happens if that one is also taken — i.e. that the rule really
+  searches instead of guessing once.
+- How to handle a name that already ends in a counter.
+- Whether case matters. **This is the question with the trap:** `save`
+  compares with `==`, i.e. exactly. If the pre-fill steps aside by
+  different rules than `save` compares by, exactly the case arises that
+  this change is meant to remove — a name that looks "free" and still
+  hits, or conversely, stepping aside without a conflict. **The
+  step-aside rule must use the same comparison as `save`.**
 
-## Was das nicht ist
+## What this is not
 
-- **Keine Änderung an `save`.** Das Upsert über den Namen bleibt.
-- **Kein Blockieren.** Speichern auf einen vorhandenen Namen bleibt möglich.
-- **Kein Umbenennen von Bestehendem.** Nur der Vorschlag weicht aus.
-- **Keine Eindeutigkeitsregel im Store.** Zwei Sitzungen dürfen weiterhin
-  denselben Namen tragen, wenn sie anders dorthin gelangt sind (Import,
-  Bearbeiten) — dieser Vorgang macht das nur nicht mehr aus Versehen.
+- **No change to `save`.** The upsert over the name stays.
+- **No blocking.** Saving over an existing name remains possible.
+- **No renaming of what exists.** Only the suggestion steps aside.
+- **No uniqueness rule in the store.** Two sessions may still carry the
+  same name if they got there differently (import, editing) — this
+  change only stops that from happening by accident.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles: die Ausweich-Regel ist ein Wert in Core, und ob die Warnung
-bei einem gegebenen Zustand erscheinen soll, ebenfalls.
+Everything is testable: the step-aside rule is a value in Core, and so is
+whether the warning should appear for a given state.
 
-**Nicht prüfbar** ist, dass die Warnung im laufenden Formular tatsächlich
-erscheint und lesbar steht. Das bleibt ein Blick des Maintainers.
+**Not testable** is that the warning actually appears in the running form
+and stands there legibly. That remains a maintainer's look.

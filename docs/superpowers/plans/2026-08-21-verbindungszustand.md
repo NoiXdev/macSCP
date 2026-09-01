@@ -1,10 +1,10 @@
-# Verbindungszustand — Umsetzungsplan
+# Connection Liveness — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Eine Sitzung sagt jederzeit, ob sie lebt — und bietet nach einem Abriss den Weg zurück, ohne dass die App beim toten Host einfriert.
+**Goal:** A session can say at any time whether it is alive — and offers a way back after a drop, without the app freezing on a dead host.
 
-**Architecture:** Ein Zustandswert je Sitzung in Core, getrieben von einer reinen Entscheidungsregel; eine Sonde als `.task(id:)` nach dem Muster der bestehenden Auto-Refresh-Schleife; Anzeige als Punkt am Reiter und als Fläche im Tab, die Aufbau, Betrieb und Verlust mit **einem** Mechanismus abdeckt.
+**Architecture:** One state value per session in Core, driven by a pure decision rule; a probe as `.task(id:)` following the pattern of the existing auto-refresh loop; display as a dot on the tab and as a pane in the tab that covers connecting, operating and loss with **one** mechanism.
 
 **Tech Stack:** Swift 6 in `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+, Swift Testing, SwiftUI + AppKit, Citadel/NIOSSH.
 
@@ -12,30 +12,30 @@
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **nur Englisch.** Interne Doku darf Deutsch bleiben.
-- Conventional Commits; Footer auf jedem Commit: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- `macSCPCore` importiert **kein** SwiftTerm und **kein** AppKit.
-- Neue nutzersichtbare Zeichenketten in **allen vier** Katalogen (`en`, `de`, `fr`, `pl`); ein Wächtertest erzwingt gleiche Schlüsselmengen.
-- **TOFU bleibt ein harter Stopp.** Der Wiederaufbau benutzt denselben Verbindungspfad wie ein frischer Aufbau; es entsteht kein zweiter Pfad.
-- Kein Geheimnis und kein vom Nutzer getippter Wert in Protokoll, Export, Fehlermeldung oder Testfehlertext.
-- Abbau nur über die bestehende Reihenfolge `cancelAll` → Terminal `shutdown` → `disconnect`; kein `deinit`-Aufräumen.
-- Nie eine Zeilennummer in einen Kommentar. Eine Zahl oder Aufzählung im Kommentar wird **in demselben Durchgang gezählt**, in dem sie geschrieben wird.
-- Neue Logik kommt mit Tests; Regressionen zuerst rot beweisen.
-- Die App wird **nicht** gestartet. `scripts/release` wird **nicht** ausgeführt.
+- Code, comments, identifiers, test names, commit messages: **English only.** Internal docs may stay German.
+- Conventional Commits; footer on every commit: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
+- `macSCPCore` imports **no** SwiftTerm and **no** AppKit.
+- New user-visible strings in **all four** catalogs (`en`, `de`, `fr`, `pl`); a guard test enforces matching key sets.
+- **TOFU stays a hard stop.** Reconnecting uses the same connection path as a fresh connect; no second path is created.
+- No secret and no user-typed value in a log, export, error message, or test failure text.
+- Teardown only through the existing order `cancelAll` → terminal `shutdown` → `disconnect`; no `deinit` cleanup.
+- Never a line number in a comment. A number or enumeration in a comment is **counted in the same pass** in which it is written.
+- New logic comes with tests; prove regressions red first.
+- The app is **not** launched. `scripts/release` is **not** run.
 
 ---
 
-### Task 1: Zustand und Entscheidungsregel (Core, reine Logik)
+### Task 1: State and decision rule (Core, pure logic)
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/ConnectionLiveness.swift`
 - Test: `Tests/macSCPCoreTests/ConnectionLivenessTests.swift`
 
 **Interfaces:**
-- Produces: `ConnectionLiveness` (4 Fälle), `LivenessProbePolicy.decide(...) -> LivenessProbeAction`, `LivenessProbePolicy.probeTimeout(forInterval:)`, `ReconnectBackoff.delay(forAttempt:)`
-- Consumes: nichts
+- Produces: `ConnectionLiveness` (4 cases), `LivenessProbePolicy.decide(...) -> LivenessProbeAction`, `LivenessProbePolicy.probeTimeout(forInterval:)`, `ReconnectBackoff.delay(forAttempt:)`
+- Consumes: nothing
 
-- [ ] **Step 1: Test zuerst — der Zustand und die Ableitung der Sondenfrist**
+- [ ] **Step 1: Test first — the state and the derivation of the probe deadline**
 
 ```swift
 @Test func theProbeTimeoutIsHalfTheIntervalCappedAtTen() {
@@ -67,12 +67,12 @@
 }
 ```
 
-- [ ] **Step 2: Rot laufen lassen**
+- [ ] **Step 2: Run red**
 
 Run: `swift test --filter ConnectionLiveness`
-Expected: FAIL, die Typen existieren nicht.
+Expected: FAIL, the types do not exist.
 
-- [ ] **Step 3: Minimal umsetzen**
+- [ ] **Step 3: Implement minimally**
 
 ```swift
 /// What a session's connection is doing right now. Four states, three
@@ -121,7 +121,7 @@ public enum ReconnectBackoff {
 }
 ```
 
-- [ ] **Step 4: Grün laufen lassen**
+- [ ] **Step 4: Run green**
 
 Run: `swift test --filter ConnectionLiveness`
 Expected: PASS.
@@ -135,22 +135,24 @@ git commit -m "feat(core): decide when to probe a connection and when to give up
 
 ---
 
-### Task 2: Die drei Einstellungen (Core)
+### Task 2: The three settings (Core)
 
 **Files:**
 - Modify: `Sources/macSCPCore/Settings/SettingsStore.swift`
 - Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift`
 
 **Interfaces:**
-- Consumes: `ConnectionLiveness.swift` aus Task 1 (nur für `ReconnectBehaviour`s Nachbarschaft, kein Zwang)
-- Produces: `SettingsStore.reconnectBehaviour`, `.keepAliveIntervalSeconds`, `.connectTimeoutSeconds`, und `ReconnectBehaviour`
+- Consumes: `ConnectionLiveness.swift` from Task 1 (only for `ReconnectBehaviour`'s neighbourhood, not a requirement)
+- Produces: `SettingsStore.reconnectBehaviour`, `.keepAliveIntervalSeconds`, `.connectTimeoutSeconds`, and `ReconnectBehaviour`
 
-**Muster:** `autoRefreshIntervalSeconds` in derselben Datei. Die Tests bauen
-den Store als `SettingsStore(directory: dir)` über ein temporäres
-Verzeichnis — so macht es `SettingsStoreTests` durchgehend, es gibt dort
-keinen Fabrik-Helfer — Getter klemmt **und** Setter klemmt, damit eine von Hand editierte `settings.json` weder Spam noch einen toten Zeitgeber erzeugen kann. Genauso hier.
+**Pattern:** `autoRefreshIntervalSeconds` in the same file. The tests build
+the store as `SettingsStore(directory: dir)` over a temporary
+directory — that is how `SettingsStoreTests` does it throughout, there is no
+factory helper there — getter clamps **and** setter clamps, so that a
+hand-edited `settings.json` can produce neither spam nor a dead timer. The
+same applies here.
 
-- [ ] **Step 1: Test zuerst**
+- [ ] **Step 1: Test first**
 
 ```swift
 @Test func theKeepAliveIntervalIsClampedOnBothEnds() {
@@ -178,9 +180,9 @@ keinen Fabrik-Helfer — Getter klemmt **und** Setter klemmt, damit eine von Han
 }
 ```
 
-- [ ] **Step 2: Rot laufen lassen** — `swift test --filter SettingsStore`, FAIL.
+- [ ] **Step 2: Run red** — `swift test --filter SettingsStore`, FAIL.
 
-- [ ] **Step 3: Umsetzen**
+- [ ] **Step 3: Implement**
 
 ```swift
 /// What macSCP does when a session's connection is found gone.
@@ -194,18 +196,19 @@ public enum ReconnectBehaviour: String, CaseIterable, Sendable {
 }
 ```
 
-Dazu die drei Eigenschaften nach dem Muster von `autoRefreshIntervalSeconds`.
-Klemmung: Intervall `0` **oder** `15...600`; Frist `5...120`, Vorgabe `10`.
-`ReconnectBehaviour` wird wie `TerminalCursorStyle` als `String` abgelegt und
-fällt bei unbekanntem Inhalt auf `.offerOnly` zurück.
+Alongside it the three properties following the pattern of
+`autoRefreshIntervalSeconds`. Clamp: interval `0` **or** `15...600`;
+timeout `5...120`, default `10`. `ReconnectBehaviour` is stored as a
+`String` like `TerminalCursorStyle` and falls back to `.offerOnly` on
+unrecognised content.
 
-- [ ] **Step 4: Grün laufen lassen.**
+- [ ] **Step 4: Run green.**
 
 - [ ] **Step 5: Commit** — `feat(core): settle how long a connection may stay silent`
 
 ---
 
-### Task 3: Die Aufbaufrist tatsächlich übergeben (Core)
+### Task 3: Actually passing on the connect timeout (Core)
 
 **Files:**
 - Modify: `Sources/macSCPCore/SSH/CitadelFileSystem.swift`
@@ -213,186 +216,184 @@ fällt bei unbekanntem Inhalt auf `.offerOnly` zurück.
 
 **Interfaces:**
 - Consumes: `SettingsStore.connectTimeoutSeconds`
-- Produces: ein `connectTimeout`-Parameter am Verbindungs-Einstieg, bis zu **beiden** Aufrufstellen durchgereicht
+- Produces: a `connectTimeout` parameter on the connection entry point, passed through to **both** call sites
 
-**Der Befund:** `SSHClient.connect(host:port:…)` trägt
-`connectTimeout: TimeAmount = .seconds(30)`. `CitadelFileSystem` ruft diese
-Überladung **zwei** Mal auf — Sprung-Hop und Ziel — und übergibt den
-Parameter an keiner. Beide Stellen sind zu versorgen; eine allein ließe eine
-Kette mit Sprung-Host bei der alten Wartezeit.
+**The finding:** `SSHClient.connect(host:port:…)` carries
+`connectTimeout: TimeAmount = .seconds(30)`. `CitadelFileSystem` calls this
+overload **twice** — jump hop and destination — and passes the parameter at
+neither. Both sites need to be supplied; one alone would leave a chain with
+a jump host at the old wait time.
 
-- [ ] **Step 1: Wächtertest zuerst** — ein Quellscan nach dem Muster der
-  bestehenden Wiring-Guards: `SSHClient.connect(` in dieser Datei kommt nie
-  ohne `connectTimeout:` vor. Fail-closed, mit Selbsttest gegen einen
-  synthetischen Quelltext, und **durch Mutation geprüft**: einen der beiden
-  Aufrufe entschärfen, rot sehen, zurücknehmen, grün sehen. Beide Ergebnisse
-  in den Bericht.
+- [ ] **Step 1: Guard test first** — a source scan following the pattern of
+  the existing wiring guards: `SSHClient.connect(` in this file never
+  appears without `connectTimeout:`. Fail-closed, with a self-test against
+  synthetic source text, and **verified by mutation**: disarm one of the
+  two calls, see red, revert, see green. Both results go into the report.
 
-- [ ] **Step 2: Rot laufen lassen.**
+- [ ] **Step 2: Run red.**
 
-- [ ] **Step 3: Umsetzen** — Parameter am Einstieg ergänzen, an beide
-  Aufrufe durchreichen, Aufrufer aus der App mit
-  `settingsStore.connectTimeoutSeconds` versorgen.
+- [ ] **Step 3: Implement** — add the parameter at the entry point, pass it
+  through to both calls, supply the caller in the app with
+  `settingsStore.connectTimeoutSeconds`.
 
-- [ ] **Step 4: Grün laufen lassen** (volle Suite, nicht nur der Filter).
+- [ ] **Step 4: Run green** (the full suite, not just the filter).
 
 - [ ] **Step 5: Commit** — `fix(ssh): pass the connect timeout Citadel already offers`
 
 ---
 
-### Task 4: Zustand und Sonde an der Sitzung (App)
+### Task 4: State and probe on the session (App)
 
 **Files:**
-- Modify: `Sources/MacSCPAppKit/SessionTab.swift` (Zustand an `BrowserSession`/`SessionTab`)
-- Modify: `Sources/MacSCPAppKit/ContentView+Detail.swift` (Sondenschleife)
+- Modify: `Sources/MacSCPAppKit/SessionTab.swift` (state on `BrowserSession`/`SessionTab`)
+- Modify: `Sources/MacSCPAppKit/ContentView+Detail.swift` (probe loop)
 - Test: `Tests/macSCPAppKitTests/LivenessProbeWiringGuardTests.swift`
 
 **Interfaces:**
-- Consumes: Task 1 (`LivenessProbePolicy`), Task 2 (Einstellungen)
-- Produces: ein lesbarer `ConnectionLiveness` je Tab
+- Consumes: Task 1 (`LivenessProbePolicy`), Task 2 (settings)
+- Produces: a readable `ConnectionLiveness` per tab
 
-**Muster, das schon dasteht:** die Auto-Refresh-Schleife in
-`ContentView+Detail.swift` — `.task(id: session.id)`, Einstellungen **frisch
-pro Runde** gelesen, übersprungene Runden schlafen weiter. Die Sonde folgt
-derselben Form, damit ein Tabwechsel oder ein Abbau sie mit abräumt.
+**Pattern already in place:** the auto-refresh loop in
+`ContentView+Detail.swift` — `.task(id: session.id)`, settings read
+**freshly each round**, skipped rounds keep sleeping. The probe follows the
+same shape, so that switching tabs or a teardown cleans it up along with
+everything else.
 
-Die Sonde ruft `stat` auf den **beim Verbinden ermittelten Heimatpfad**.
-`homeDirectoryPath()` läuft ohnehin beim Aufbau; der Wert wird dort
-festgehalten, damit die Sonde keinen zweiten Rundlauf braucht, um ihr Ziel
-zu finden.
+The probe calls `stat` on the **home path determined at connect time**.
+`homeDirectoryPath()` already runs at connect; the value is captured there
+so the probe does not need a second round trip to find its target.
 
-- [ ] **Step 1: Wächtertest zuerst** — drei Aussagen über den Quelltext,
-  jede durch Mutation geprüft: die Schleife liest das Intervall in der
-  Schleife (nicht davor), sie fragt `LivenessProbePolicy` statt selbst zu
-  entscheiden, und bei `.giveUp` läuft der Abbau über `ContentView.teardown(_:)`
-  statt über einen eigenen Weg.
-- [ ] **Step 2: Rot.**
-- [ ] **Step 3: Umsetzen.** Intervall `0` heißt: gar keine Sonde.
-- [ ] **Step 4: Grün.**
+- [ ] **Step 1: Guard test first** — three assertions about the source
+  text, each verified by mutation: the loop reads the interval inside the
+  loop (not before it), it asks `LivenessProbePolicy` instead of deciding
+  itself, and on `.giveUp` the teardown runs through `ContentView.teardown(_:)`
+  instead of its own path.
+- [ ] **Step 2: Red.**
+- [ ] **Step 3: Implement.** Interval `0` means: no probe at all.
+- [ ] **Step 4: Green.**
 - [ ] **Step 5: Commit** — `feat(app): probe an idle session and notice when it dies`
 
 ---
 
-### Task 5: Der Punkt am Reiter (App)
+### Task 5: The dot on the tab (App)
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/TabStripView.swift`
-- Modify: alle vier `Localizable.strings`
+- Modify: all four `Localizable.strings`
 
 **Interfaces:** Consumes: Task 4.
 
-Ein kleiner Punkt vor `tab.displayTitle`: grün `connected`, gelb
-`connecting`/`degraded`, rot `lost`. **Farbe ist nie die einzige Aussage** —
-jeder Zustand bekommt einen `help`-Text und ein `accessibilityLabel`, sonst
-ist der Reiter für Farbenblinde und für VoiceOver stumm.
+A small dot before `tab.displayTitle`: green for `connected`, yellow for
+`connecting`/`degraded`, red for `lost`. **Colour is never the only signal**
+— every state gets a `help` text and an `accessibilityLabel`, otherwise the
+tab is mute for the colour-blind and for VoiceOver.
 
-- [ ] Step 1: Katalogschlüssel in allen vier Sprachen, Wächtertest grün.
-- [ ] Step 2: Punkt zeichnen, Farben aus `DesignTokens`, keine Literale.
-- [ ] Step 3: Volle Suite grün.
+- [ ] Step 1: Catalog keys in all four languages, guard test green.
+- [ ] Step 2: Draw the dot, colours from `DesignTokens`, no literals.
+- [ ] Step 3: Full suite green.
 - [ ] Step 4: Commit — `feat(app): show each tab whether its session is alive`
 
 ---
 
-### Task 6: Aufbau als abbrechbarer Tab-Zustand (App)
+### Task 6: Connecting as a cancellable tab state (App)
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/ContentView+Detail.swift`
-- Modify: alle vier `Localizable.strings`
+- Modify: all four `Localizable.strings`
 
-**Interfaces:** Consumes: Task 3 (Frist), Task 4 (Zustand).
+**Interfaces:** Consumes: Task 3 (timeout), Task 4 (state).
 
-Der Tab zeigt „Verbinde …" mit **Abbrechen**, der Rest der App bleibt
-bedienbar. Abbrechen bricht die Aufgabe ab und räumt über `ContentView.teardown(_:)`
-ab — nicht über einen eigenen Weg.
+The tab shows "Connecting…" with **Cancel**, the rest of the app stays
+usable. Cancel aborts the task and tears down through
+`ContentView.teardown(_:)` — not through its own path.
 
-**Wenn bei der Umsetzung auffällt, dass der Hauptthread tatsächlich
-blockiert** (statt nur eine tote Fläche zu zeigen), ist das ein eigener
-Befund: melden, nicht nebenbei mitreparieren. Die Spec hält ausdrücklich
-fest, dass dies ungemessen ist.
+**If, while implementing this, it turns out the main thread is actually
+blocked** (rather than just showing a dead pane), that is a separate
+finding: report it, do not fix it on the side. The spec explicitly states
+that this is unmeasured.
 
-- [ ] Step 1: Katalogschlüssel. — [ ] Step 2: Fläche und Abbruch.
-- [ ] Step 3: Volle Suite. — [ ] Step 4: Commit — `fix(app): let a connection attempt be cancelled`
+- [ ] Step 1: Catalog keys. — [ ] Step 2: Pane and cancel.
+- [ ] Step 3: Full suite. — [ ] Step 4: Commit — `fix(app): let a connection attempt be cancelled`
 
 ---
 
-### Task 7: Fehleransicht und Wiederverbinden (App)
+### Task 7: Error view and reconnecting (App)
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/ContentView+Detail.swift`
 - Create: `Tests/macSCPAppKitTests/ReconnectWiringGuardTests.swift`
-- Modify: alle vier `Localizable.strings`
+- Modify: all four `Localizable.strings`
 
-**Interfaces:** Consumes: Task 2 (`reconnectBehaviour`), Task 4, Task 6 (dieselbe Fläche).
+**Interfaces:** Consumes: Task 2 (`reconnectBehaviour`), Task 4, Task 6 (the same pane).
 
-`lost` zeigt Grund und **„Erneut verbinden"**. Der Wiederaufbau ruft
-**denselben** Verbindungspfad wie ein frischer Aufbau.
+`lost` shows the reason and **"Reconnect"**. Reconnecting calls **the
+same** connection path as a fresh connect.
 
-- [ ] **Step 1: Wächtertest zuerst**, durch Mutation geprüft: der
-  Wiederaufbau ruft die gemeinsame Verbindungsfunktion und nicht Citadel
-  direkt. Das ist die Stelle, an der ein zweiter Pfad entstehen würde — und
-  mit ihm eine zweite Gelegenheit, TOFU zu vergessen.
-- [ ] Step 2: Rot. — [ ] Step 3: Umsetzen, inkl. `onceThenAsk` und
-  `automatic` mit `ReconnectBackoff`; ein Versuch, der auf TOFU oder eine
-  Passphrase läuft, endet in der Fehleransicht und wird **nicht**
-  wiederholt.
-- [ ] Step 4: Volle Suite. — [ ] Step 5: Commit — `feat(app): offer the way back after a connection is lost`
+- [ ] **Step 1: Guard test first**, verified by mutation: the reconnect
+  calls the shared connection function and not Citadel directly. That is
+  exactly the place where a second path would arise — and with it a second
+  opportunity to forget TOFU.
+- [ ] Step 2: Red. — [ ] Step 3: Implement, incl. `onceThenAsk` and
+  `automatic` with `ReconnectBackoff`; an attempt that runs into TOFU or a
+  passphrase ends in the error view and is **not** retried.
+- [ ] Step 4: Full suite. — [ ] Step 5: Commit — `feat(app): offer the way back after a connection is lost`
 
 ---
 
-### Task 8: Übertragungen beim Abriss (App/Core)
+### Task 8: Transfers during a drop (App/Core)
 
 **Files:**
-- Modify: die Warteschlangen-Anbindung in `Sources/MacSCPAppKit/ContentView+Transfers.swift`
-- Modify: alle vier `Localizable.strings`
-- Test: `Tests/macSCPCoreTests/` (Grund und Erhalt der Liste)
+- Modify: the queue wiring in `Sources/MacSCPAppKit/ContentView+Transfers.swift`
+- Modify: all four `Localizable.strings`
+- Test: `Tests/macSCPCoreTests/` (reason and retention of the list)
 
-Laufende Übertragung scheitert mit dem Grund „Verbindung verloren";
-wartende bleiben in der Liste und werden gekennzeichnet. **Nichts wird
-verworfen, nichts fortgesetzt.**
+A running transfer fails with the reason "Connection lost";
+waiting ones stay in the list and are marked. **Nothing is discarded,
+nothing is resumed.**
 
-- [ ] Step 1: Test — nach dem Abriss ist die Zahl der gelisteten Einträge
-  unverändert und der Grund gesetzt.
-- [ ] Step 2: Rot. — [ ] Step 3: Umsetzen. — [ ] Step 4: Grün.
+- [ ] Step 1: Test — after the drop, the number of listed entries is
+  unchanged and the reason is set.
+- [ ] Step 2: Red. — [ ] Step 3: Implement. — [ ] Step 4: Green.
 - [ ] Step 5: Commit — `feat(transfers): keep the queue after a connection is lost`
 
 ---
 
-### Task 9: Einstellungen sichtbar machen (App)
+### Task 9: Making settings visible (App)
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SettingsView.swift`
-- Modify: alle vier `Localizable.strings`
+- Modify: all four `Localizable.strings`
 
-Drei Bedienelemente nach dem Muster des Auto-Refresh-Abschnitts derselben
-Datei; das Intervallfeld ist deaktiviert, wenn das Intervall `0` ist.
+Three controls following the pattern of the auto-refresh section of the
+same file; the interval field is disabled when the interval is `0`.
 
-- [ ] Step 1: Katalogschlüssel, Wächtertest grün.
-- [ ] Step 2: Bedienelemente.
-- [ ] Step 3: Volle Suite grün.
+- [ ] Step 1: Catalog keys, guard test green.
+- [ ] Step 2: Controls.
+- [ ] Step 3: Full suite green.
 - [ ] Step 4: Commit — `feat(settings): expose the connection's liveness options`
 
 ---
 
-### Task 10: Beweis gegen das Docker-Rig
+### Task 10: Proof against the Docker rig
 
 **Files:**
-- Test: `Tests/macSCPCoreTests/` (hinter `MACSCP_ITEST=1`)
+- Test: `Tests/macSCPCoreTests/` (behind `MACSCP_ITEST=1`)
 
-**Rig immer aus dem Haupt-Checkout starten, nie aus einem Worktree** — die
-Seed-Einbindung ist relativ zur Compose-Datei.
+**Always start the rig from the main checkout, never from a worktree** —
+the seed mount is relative to the compose file.
 
-- [ ] Step 1: Sonde gegen die lebende Gegenseite ist erfolgreich.
-- [ ] Step 2: Container anhalten → die Sonde schlägt fehl und der Zustand
-  wird `lost`. Das ist der einzige Test dieses Zweigs, der einen echten
-  Abriss erzeugt; ohne ihn ist die ganze Erkennung nur behauptet.
+- [ ] Step 1: A probe against the live counterpart succeeds.
+- [ ] Step 2: Stop the container → the probe fails and the state becomes
+  `lost`. This is the only test in this branch that produces a real drop;
+  without it, the whole detection is only claimed.
 - [ ] Step 3: Commit — `test(itest): prove the probe notices a real drop`
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly out of scope
 
-- Kein `SO_KEEPALIVE`, kein eigenes Bootstrap (Spec, Abschnitt 9).
-- Kein Fortsetzen abgebrochener Übertragungen.
-- Keine Änderung an TOFU, Keychain oder dem Verbindungspfad selbst.
-- `AgentBackedPrivateKey`s blockierendes `semaphore.wait(timeout:)` ist
-  gesehen und **nicht** Teil dieses Umfangs.
+- No `SO_KEEPALIVE`, no custom bootstrap (spec, section 9).
+- No resuming of cancelled transfers.
+- No change to TOFU, keychain, or the connection path itself.
+- `AgentBackedPrivateKey`'s blocking `semaphore.wait(timeout:)` has been
+  seen and is **not** part of this scope.

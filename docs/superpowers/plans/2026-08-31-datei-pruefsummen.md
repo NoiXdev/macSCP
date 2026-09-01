@@ -1,161 +1,164 @@
-# Prüfsummen für Dateien — Umsetzungsplan
+# File checksums — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Auf Anforderung sagen können, welche Prüfsumme eine Datei hat —
-und dabei nie verschweigen, woher der Wert kommt.
+**Goal:** Be able to state, on request, what checksum a file has — and
+never conceal where the value came from.
 
-**Grundlage:** `docs/superpowers/specs/2026-08-31-datei-pruefsummen-design.md`
+**Basis:** `docs/superpowers/specs/2026-08-31-datei-pruefsummen-design.md`
 
-**Architektur:** Eine **enge** Fähigkeit in Core („berechne die Prüfsumme
-dieser Datei"), kein allgemeiner Befehlsweg. Das Lesen der Ausgabe, die Wahl
-der Befehlsform und die Herkunft eines Werts sind reine Funktionen.
+**Architecture:** A **narrow** capability in Core ("compute the checksum
+of this file"), no general command path. Reading the output, choosing
+the command form, and a value's provenance are pure functions.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **nur Englisch**.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- **Kein `exec(String)` in Core**, in keiner Form und unter keinem Namen. Der
-  Aufrufer darf keinen Befehl formulieren können.
-- **Der Pfad geht durch `PosixQuoting`.** Keine zweite Quoting-Regel.
-- **Die Antwort der Gegenseite ist Eingabe.** Nur das erste Feld wird
-  gelesen, nur als Hex in der Länge des Verfahrens; der zurückgegebene Pfad
-  wird nicht verglichen und nicht angezeigt.
-- **Kein Herunterladen**, um zu rechnen — auch nicht als Ausweichweg.
-- **Jeder neue Wartepunkt bekommt eine Frist.** Diese Woche wurde zweimal
-  gemessen, dass ein `await` gegen eine schweigende Gegenseite nicht
-  zurückkommt.
-- Nutzer-sichtbare Texte in **alle vier Kataloge** (`en`, `de`, `fr`, `pl`)
-  über `L10n.string(_:_:)`; Core-seitig `CoreL10n.string(_:)`. **Kein String
-  Catalog, kein `String(localized:)`, kein `Bundle.module`.** Das Deutsche
-  **duzt**.
-- **Nur zeigen, was möglich ist** — nichts wird ausgegraut; „dieser Server
-  liefert keine Prüfsummen" ist eine Aussage, ein toter Eintrag nicht.
-- **Keine Zeilennummern, keine Ortsangaben in Kommentaren.** Jede Zahl und
-  jede Aufzählung wird in dem Durchgang gezählt, der sie schreibt.
-- Alle sechs Targets stehen auf `.swiftLanguageMode(.v6)`; **CI wird rot,
-  sobald die Zahl eindeutiger Warnorte über 1 liegt.** Warnungen werden auf
-  einem **frischen** Scratch-Pfad gemessen.
-- Ein Scratch-Pfad je Agent, nach Gebrauch gelöscht. Die App wird nicht
-  gestartet, nichts gepusht.
+- Code, comments, identifiers, test names, commit messages: **English
+  only**.
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- **No `exec(String)` in Core**, in any form and under any name. The
+  caller must not be able to formulate a command.
+- **The path goes through `PosixQuoting`.** No second quoting rule.
+- **The far side's answer is input.** Only the first field is read,
+  only as hex of the algorithm's length; the returned path is neither
+  compared nor displayed.
+- **No downloading** in order to compute — not even as a fallback.
+- **Every new wait point gets a deadline.** Twice this week it was
+  measured that an `await` against a silent peer does not come back.
+- User-visible text in **all four catalogs** (`en`, `de`, `fr`, `pl`)
+  via `L10n.string(_:_:)`; Core-side `CoreL10n.string(_:)`. **No String
+  Catalog, no `String(localized:)`, no `Bundle.module`.** The German
+  uses **du**.
+- **Only show what is possible** — nothing gets greyed out; "this
+  server provides no checksums" is a statement, a dead entry is not.
+- **No line numbers, no location references in comments.** Every number
+  and every enumeration gets counted in the same pass that writes it.
+- All six targets are on `.swiftLanguageMode(.v6)`; **CI goes red as
+  soon as the count of distinct warning sites exceeds 1.** Warnings are
+  measured on a **fresh** scratch path.
+- One scratch path per agent, deleted after use. The app is not
+  launched, nothing is pushed.
 
 ---
 
-### Task 1: Die reinen Werte
+### Task 1: The pure values
 
 **Files:**
 - Create: `Sources/macSCPCore/RemoteFS/FileChecksum.swift`
 - Test: `Tests/macSCPCoreTests/FileChecksumTests.swift`
 
 **Interfaces:**
-- Produces: das Verfahren als Aufzählung, das Ergebnis samt **Herkunft**, das
-  Lesen einer Ausgabe, und die Wahl der Befehlsform. Tasks 2–4 rufen daraus.
+- Produces: the algorithm as an enum, the result together with its
+  **provenance**, reading an output, and choosing the command form.
+  Tasks 2–4 call into this.
 
-**Warum zuerst:** alles hier ist ohne Verbindung prüfbar, und es legt fest,
-was ein Ergebnis überhaupt sagen kann. Ein Ergebnis **ohne** Herkunft darf
-sich nicht bauen lassen.
+**Why first:** everything here is verifiable without a connection, and
+it fixes what a result can even say. A result **without** provenance
+must not be constructible.
 
-- [ ] **Step 1: Rot zuerst.** Tests für: `<hex>  <pfad>` wird gelesen und
-  ergibt nur das Hex; falsche Länge, Nicht-Hex, leere Ausgabe und eine
-  Ausgabe **ohne** Pfad werden abgelehnt; ein Pfad in der Antwort, der nicht
-  der angefragte ist, ändert **nichts** (er wird gar nicht angesehen); die
-  GNU- und die BSD-Form ergeben denselben gelesenen Wert.
-- [ ] **Step 2: Umsetzen.** Die Herkunft ist **Teil** des Ergebnisses, nicht
-  ein zweites Feld daneben, das jemand weglassen kann — bau es so, dass ein
-  Ergebnis ohne sie nicht konstruierbar ist.
-- [ ] **Step 3: Der S3-Fall.** Ein ETag der Form `"…-N"` ist **kein**
-  Dateihash. Eine Funktion entscheidet das, mit Tests für beide Formen und
-  für die Anführungszeichen, die S3 mitliefert.
-- [ ] **Step 4:** Volle Suite grün, keine neue Warnung (frischer Bau).
+- [ ] **Step 1: Red first.** Tests for: `<hex>  <path>` is read and
+  yields only the hex; wrong length, non-hex, empty output, and an
+  output **without** a path are rejected; a path in the answer that is
+  not the one requested changes **nothing** (it is not even looked at);
+  the GNU and the BSD form produce the same read value.
+- [ ] **Step 2: Implement.** The provenance is **part** of the result,
+  not a second field beside it that someone can omit — build it so a
+  result without it cannot be constructed.
+- [ ] **Step 3: The S3 case.** An ETag of the form `"…-N"` is **not**
+  a file hash. A function decides this, with tests for both forms and
+  for the quotation marks S3 supplies.
+- [ ] **Step 4:** Full suite green, no new warning (fresh build).
 - [ ] **Step 5: Commit** — `feat(remotefs): say what a checksum is and where it came from`
 
 ---
 
-### Task 2: Die enge Fähigkeit über SSH
+### Task 2: The narrow capability over SSH
 
 **Files:**
 - Modify: `Sources/macSCPCore/SSH/CitadelFileSystem.swift`,
   `Sources/macSCPCore/Capabilities/ProtocolCapabilities.swift`,
   `Sources/macSCPCore/RemoteFS/RemoteFileSystem.swift`
-- Test: `Tests/macSCPCoreTests/`, plus ein gegateter Fall gegen das Rig
+- Test: `Tests/macSCPCoreTests/`, plus a gated case against the rig
 
 **Interfaces:**
 - Consumes: Task 1.
 
-**Die Auflage, die diesen Task ausmacht:** die Fähigkeit heißt „berechne die
-Prüfsumme dieser Datei mit diesem Verfahren" und nimmt **keinen Befehl**
-entgegen. Wer hier einen `String` durchreicht, hat den Entwurf verletzt —
-melden, nicht bauen.
+**The requirement that defines this task:** the capability is called
+"compute the checksum of this file with this algorithm" and accepts
+**no command**. Whoever passes a `String` through here has violated
+the design — report it, don't build it.
 
-- [ ] **Step 1: Rot zuerst**, gegen einen Doppelgänger: der Pfad wird
-  gequotet (`PosixQuoting`, keine zweite Regel), die Befehlsform folgt der
-  einmal je Verbindung ermittelten Antwort, und eine unlesbare Ausgabe wird
-  zum Fehler statt zu einem Wert.
-- [ ] **Step 2: Der Ausführungsweg.** Eng, mit **Frist**. Wo `CitadelShell`
-  Bausteine hat, benutze sie — **lies nach, statt zu erfinden**, und wenn
-  der Terminalweg nicht taugt, sag im Bericht warum.
-- [ ] **Step 3: Die Fähigkeit in `ProtocolCapabilities`**, nach dem Vorbild
-  von `supportsPresignedURL`. Damit verzweigt die Oberfläche später **nicht**
-  über `ConnectionKind`.
-- [ ] **Step 4: Ein gegateter Fall** (`MACSCP_ITEST=1`) gegen das Rig, der
-  eine echte Prüfsumme holt und mit einer lokal gerechneten vergleicht. Rig
-  aus dem Haupt-Checkout, nie aus einem Worktree; aufräumen auf jedem
-  Ausgangspfad.
-- [ ] **Step 5:** Volle Suite grün, keine neue Warnung (frischer Bau).
+- [ ] **Step 1: Red first**, against a double: the path is quoted
+  (`PosixQuoting`, no second rule), the command form follows the answer
+  determined once per connection, and an unreadable output becomes an
+  error rather than a value.
+- [ ] **Step 2: The execution path.** Narrow, with a **deadline**. Where
+  `CitadelShell` has building blocks, use them — **look them up instead
+  of inventing them**, and if the terminal path does not fit, say why in
+  the report.
+- [ ] **Step 3: The capability in `ProtocolCapabilities`**, modeled on
+  `supportsPresignedURL`. That way the surface later does **not**
+  branch on `ConnectionKind`.
+- [ ] **Step 4: A gated case** (`MACSCP_ITEST=1`) against the rig, that
+  fetches a real checksum and compares it against a locally computed
+  one. Rig from the main checkout, never from a worktree; clean up on
+  every exit path.
+- [ ] **Step 5:** Full suite green, no new warning (fresh build).
 - [ ] **Step 6: Commit** — `feat(ssh): compute a file's checksum on the remote`
 
 ---
 
-### Task 3: Die anderen drei Backends
+### Task 3: The other three backends
 
 **Files:**
 - Modify: `Sources/macSCPCore/S3/S3FileSystem.swift`,
   `Sources/macSCPCore/RemoteFS/LocalFileSystem.swift`,
   `Sources/macSCPCore/WebDAV/WebDAVFileSystem.swift`
-- Test: die jeweiligen Suiten
+- Test: the respective suites
 
-- [ ] **Step 1: Lokal** — gerechnet, Herkunft „lokal gerechnet".
-- [ ] **Step 2: S3** — aus dem ETag, **und** die Mehrteil-Einschränkung im
-  Ergebnis. Ein Mehrteil-ETag darf nicht als Dateihash herauskommen; Test für
-  beide Formen.
-- [ ] **Step 3: WebDAV** — nicht verfügbar, und zwar als **Aussage**. Kein
-  `OC-Checksum` in diesem Vorgang.
-- [ ] **Step 4:** Volle Suite grün, keine neue Warnung (frischer Bau).
+- [ ] **Step 1: Local** — computed, provenance "computed locally".
+- [ ] **Step 2: S3** — from the ETag, **and** the multipart restriction
+  in the result. A multipart ETag must not come out as a file hash;
+  test for both forms.
+- [ ] **Step 3: WebDAV** — unavailable, and as a **statement**. No
+  `OC-Checksum` in this change.
+- [ ] **Step 4:** Full suite green, no new warning (fresh build).
 - [ ] **Step 5: Commit** — `feat(remotefs): answer the checksum question per backend`
 
 ---
 
-### Task 4: Anfordern und anzeigen
+### Task 4: Requesting and displaying
 
 **Files:**
-- Modify: die Datei-Info, das Kontextmenü der Dateitabelle, `SettingsStore`
-  und `SettingsView`
-- Modify: alle vier `Localizable.strings`
+- Modify: the file info, the file table's context menu, `SettingsStore`
+  and `SettingsView`
+- Modify: all four `Localizable.strings`
 - Test: `Tests/macSCPAppKitTests/`
 
 **Interfaces:**
 - Consumes: Tasks 1–3.
 
-- [ ] **Step 1: In der Datei-Info** für eine Datei, auf Anforderung.
-- [ ] **Step 2: Für eine Auswahl** über das Kontextmenü. **Eine nach der
-  anderen**, Ergebnis erscheint sobald es da ist, Abbrechen lässt das
-  Gerechnete stehen.
-- [ ] **Step 3: Die Herkunft steht dabei** — bei S3 sichtbar, dass ein
-  Mehrteil-ETag den Inhalt nicht beschreibt. Wer diesen Text weglässt, macht
-  die Anzeige zur Lüge.
-- [ ] **Step 4: Die Einstellung.** SHA-256 voreingestellt; an MD5 und SHA-1
-  steht, dass sie zum Abgleich gegen eine fremde Angabe taugen und **nicht**
-  als Nachweis, dass zwei Dateien gleich sind.
-- [ ] **Step 5: Wo es nicht geht, steht warum.** Kein ausgegrauter Eintrag.
-- [ ] **Step 6:** Volle Suite grün, keine neue Warnung (frischer Bau).
+- [ ] **Step 1: In the file info**, for a single file, on request.
+- [ ] **Step 2: For a selection**, via the context menu. **One after
+  another**, the result appears as soon as it is there, cancelling
+  leaves what has already been computed standing.
+- [ ] **Step 3: The provenance appears alongside it** — for S3, visible
+  that a multipart ETag does not describe the content. Whoever omits
+  this text turns the display into a lie.
+- [ ] **Step 4: The setting.** SHA-256 preselected; MD5 and SHA-1 note
+  that they are suitable for matching against a third-party value and
+  **not** as proof that two files are identical.
+- [ ] **Step 5: Where it isn't possible, it says why.** No greyed-out
+  entry.
+- [ ] **Step 6:** Full suite green, no new warning (fresh build).
 - [ ] **Step 7: Commit** — `feat(files): show a checksum on request, and where it came from`
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What explicitly is not part of this
 
-- **Keine Tabellenspalte** — Punkt 3 des Eintrags, eigener Vorgang, und
-  dessen Frage 3 ist unbeantwortet.
-- **Kein allgemeiner Befehlsweg** in Core.
-- **Kein Herunterladen**, um zu rechnen.
-- **Kein `OC-Checksum`** für WebDAV.
+- **No table column** — item 3 of the backlog entry, its own change,
+  and its question 3 is unanswered.
+- **No general command path** in Core.
+- **No downloading** in order to compute.
+- **No `OC-Checksum`** for WebDAV.

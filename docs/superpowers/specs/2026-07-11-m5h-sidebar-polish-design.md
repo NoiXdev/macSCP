@@ -1,82 +1,86 @@
-# macSCP M5h — Design-Polish Sidebar (Design-Spec)
+# macSCP M5h — Design polish sidebar (design spec)
 
-**Datum:** 2026-07-11
-**Status:** vom Maintainer freigegeben (Runde 2 der gestaffelten Polish-Runden)
-**Referenz:** `docs/design/assets/macscp-ci-mockup.html` (bindende Blaupause);
-Vorgänger-Runde `docs/superpowers/specs/2026-07-11-m5g-browser-polish-design.md`.
+**Date:** 2026-07-11
+**Status:** approved by the maintainer (round 2 of the staged polish rounds)
+**Reference:** `docs/design/assets/macscp-ci-mockup.html` (binding blueprint);
+predecessor round `docs/superpowers/specs/2026-07-11-m5g-browser-polish-design.md`.
 
-## Ziel
+## Goal
 
-Die Sessions-Sidebar übernimmt Fläche, Zeilen-Rhythmus und Label-Typo aus dem
-CI-Mockup. Reiner View-Layer, null Verhaltensänderung. Zweite von vier Runden
-(nach M5g Browser; danach Transfer-Leiste/Terminal-Strip, dann Formular).
+The sessions sidebar adopts surface, row rhythm, and label typography
+from the CI mockup. Pure view layer, zero behavior change. Second of four
+rounds (after M5g browser; followed by transfer bar/terminal strip, then
+form).
 
-## Mockup-Werte (bindend, aus dem CSS des Entwurfs)
+## Mockup values (binding, from the design's CSS)
 
-| Element | Wert |
+| Element | Value |
 |---|---|
-| `paper` | hell `#F4F7FA`, dunkel `#0D1720` |
-| `card` | hell `#FFFFFF`, dunkel `#14212E` |
-| Sidebar-Fläche | `color-mix(card 70 %, paper)` → vorberechnet hell `#FCFDFE`, dunkel `#121E2A` |
-| Sidebar-Kante | 1 pt Hairline rechts (`hairline`-Token aus M5g) |
-| Container-Padding | 12 pt vertikal, 8 pt horizontal |
-| Abschnitts-Labels | 10,5 pt semibold, versal, Laufweite ~1 pt (`.1em`), `inkTertiary`, Padding oben 2 / seitlich 10 / unten 6 |
-| Session-Zeilen | Padding 5×10 pt, Radius 6, Zeilenabstand 2 pt |
-| Aktive Zeile | Hintergrund `remoteSoft` (Token statt bisher `remoteBlue.opacity(0.12)`), Schrift semibold `remoteBlue`, Phosphor-Punkt |
-| Inaktive Zeilen | Text Standard; Hover `Color.secondary.opacity(0.08)` (wie M5f, unverändert) |
+| `paper` | light `#F4F7FA`, dark `#0D1720` |
+| `card` | light `#FFFFFF`, dark `#14212E` |
+| Sidebar surface | `color-mix(card 70%, paper)` → precomputed light `#FCFDFE`, dark `#121E2A` |
+| Sidebar edge | 1 pt hairline on the right (`hairline` token from M5g) |
+| Container padding | 12 pt vertical, 8 pt horizontal |
+| Section labels | 10.5 pt semibold, uppercase, tracking ~1 pt (`.1em`), `inkTertiary`, padding top 2 / sides 10 / bottom 6 |
+| Session rows | padding 5×10 pt, radius 6, row spacing 2 pt |
+| Active row | background `remoteSoft` (token replacing the previous `remoteBlue.opacity(0.12)`), text semibold `remoteBlue`, phosphor dot |
+| Inactive rows | text default; hover `Color.secondary.opacity(0.08)` (as in M5f, unchanged) |
 
-## Umsetzung
+## Implementation
 
 ### 1. Tokens (`Sources/MacSCPApp/DesignTokens.swift`)
 
-Neu über den bestehenden `dynamicNS`-Helper:
+New, via the existing `dynamicNS` helper:
 
-- `paper: Color` — hell `#F4F7FA`, dunkel `#0D1720`
-- `card: Color` — hell `#FFFFFF`, dunkel `#14212E`
-- `sidebarSurface: Color` — hell `#FCFDFE`, dunkel `#121E2A` (vorberechneter
-  70/30-Mischton; statisch statt Laufzeit-Mischung — deterministisch)
+- `paper: Color` — light `#F4F7FA`, dark `#0D1720`
+- `card: Color` — light `#FFFFFF`, dark `#14212E`
+- `sidebarSurface: Color` — light `#FCFDFE`, dark `#121E2A` (precomputed
+  70/30 blend; static instead of runtime blending — deterministic)
 
-`paper`/`card` werden in M5h NICHT konsumiert (Staging für Transferbar- und
-Formular-Runde, wie bereits `ink`/`inkSecondary` — Kommentar entsprechend).
+`paper`/`card` are NOT consumed in M5h (staging for the transfer-bar and
+form round, as already done for `ink`/`inkSecondary` — comment
+accordingly).
 
 ### 2. Sidebar (`Sources/MacSCPApp/SessionSidebar.swift`)
 
-- Container (äußerer VStack): `.background(DesignTokens.sidebarSurface)` +
-  `.overlay(alignment: .trailing)` mit 1-pt-`hairline`-Rectangle.
-- „SESSIONS"-Label und Gruppen-/IMPORTIERT-Header: `font(.system(size: 10.5,
-  weight: .semibold))`, `.tracking(1.0)`, `.foregroundStyle(DesignTokens.inkTertiary)`,
-  Padding oben 2 / seitlich 10 / unten 6 (Gruppen-Header behalten ihre
-  Kontextmenü-/Drop-/Rename-Funktion unverändert; nur Typo/Farbe/Padding).
-- Session-Zeilen (`SessionRow`): Innen-Padding 5 pt vertikal / 10 pt horizontal,
-  Radius 6 für Hover- und Aktiv-Hintergrund; aktive Zeile nutzt
-  `DesignTokens.remoteSoft` statt `remoteBlue.opacity(0.12)`; Listen-Insets so
-  anpassen, dass die Zeilen mit den Labels fluchten; Zeilenabstand ~2 pt
-  (List-Row-Spacing bzw. Padding — der Plan legt den Mechanismus fest, das
-  visuelle Ergebnis ist bindend).
-- `List(.sidebar)` + `scrollContentBackground(.hidden)` bleiben; die getönte
-  Fläche kommt vom Container darunter.
-- Fehlertext-Bereich unten unverändert.
+- Container (outer VStack): `.background(DesignTokens.sidebarSurface)` +
+  `.overlay(alignment: .trailing)` with a 1-pt `hairline` rectangle.
+- The "SESSIONS" label and group/IMPORTED headers: `font(.system(size:
+  10.5, weight: .semibold))`, `.tracking(1.0)`,
+  `.foregroundStyle(DesignTokens.inkTertiary)`, padding top 2 / sides 10
+  / bottom 6 (group headers keep their context menu/drop/rename function
+  unchanged; only typography/color/padding change).
+- Session rows (`SessionRow`): inner padding 5 pt vertical / 10 pt
+  horizontal, radius 6 for hover and active background; the active row
+  uses `DesignTokens.remoteSoft` instead of `remoteBlue.opacity(0.12)`;
+  adjust list insets so rows align with the labels; row spacing ~2 pt
+  (list row spacing or padding — the plan fixes the mechanism, the
+  visual result is binding).
+- `List(.sidebar)` + `scrollContentBackground(.hidden)` stay; the tinted
+  surface comes from the container underneath.
+- The error-text area at the bottom is unchanged.
 
-## Invarianten
+## Invariants
 
-- KEINE Verhaltensänderung: Kontextmenüs, Inline-Rename (Enter/Escape/Blur),
-  Drag & Drop, Lösch-Dialog, Neue-Gruppe-Alert, Collapse-State,
-  `interactionsDisabled` — alles exakt wie M5f.
-- Beide Appearances über dynamische Tokens; keine statischen Farben in Views.
-- CI-Regeln unverändert (Blau = aktiv/Auswahl, Phosphor nur Status).
-- Lokalisierung unangetastet (Label-Keys bleiben; Versal-Darstellung war schon
-  Anzeige-Transformation).
+- NO behavior change: context menus, inline rename (Enter/Escape/Blur),
+  drag & drop, delete dialog, new-group alert, collapse state,
+  `interactionsDisabled` — all exactly as in M5f.
+- Both appearances via dynamic tokens; no static colors in views.
+- CI rules unchanged (blue = active/selection, phosphor status only).
+- Localization untouched (label keys stay; uppercase rendering was
+  already a display transformation).
 
 ## Tests
 
-- Keine neuen Unit-Tests (View-Layer); bestehende 295 bleiben grün.
-- Visueller Smoke: hell UND dunkel Seite an Seite mit dem Mockup — getönte
-  Fläche sichtbar gegen die Pane-Fläche, rechte Hairline, Label-Typo, aktive
-  Zeile in remoteSoft, Zeilen-Maße; Verhaltens-Regression: Kontextmenü,
-  Inline-Rename, Gruppe ein-/ausklappen, Verbinden-Klick.
+- No new unit tests (view layer); existing 295 stay green.
+- Visual smoke: light AND dark, side by side with the mockup — tinted
+  surface visible against the pane surface, right-hand hairline, label
+  typography, active row in remoteSoft, row dimensions; behavior
+  regression: context menu, inline rename, group expand/collapse,
+  connect click.
 
-## Bewusst NICHT in M5h
+## Deliberately NOT in M5h
 
-- Transfer-Leiste & Terminal-Strip (Runde 3), Formular & Buttons (Runde 4).
-- Kein app-weiter `paper`-Grund (die Panes bleiben auf `controlBackgroundColor`,
-  bis die Folgerunden die Karten-Hierarchie komplettieren).
+- Transfer bar & terminal strip (round 3), form & buttons (round 4).
+- No app-wide `paper` ground (the panes stay on `controlBackgroundColor`
+  until the following rounds complete the card hierarchy).

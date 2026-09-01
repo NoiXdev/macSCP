@@ -1,39 +1,38 @@
-# Fähigkeitsgrenze beim Verbinden — Umsetzungsplan
+# Capability Boundary at Connect — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein anonymer Ja-sager als Entscheider lässt sich nicht mehr schreiben, und die App-Schicht kann den rohen Wählvorgang nicht mehr erreichen.
+**Goal:** An anonymous yes-man can no longer be written as a decider, and the app layer can no longer reach the raw dialing procedure.
 
-**Grundlage:** `docs/superpowers/specs/2026-08-28-faehigkeitsgrenze-verbinden-design.md`
+**Foundation:** `docs/superpowers/specs/2026-08-28-faehigkeitsgrenze-verbinden-design.md`
 
-**Architektur:** Zwei Halbschritte, die verschiedene Hälften decken. Aus den nackten Funktionstypen `HostKeyDecider` und `CertificateDecider` werden Typen mit nicht-öffentlichem Initialisierer und benannten Fabriken; `BackendDescriptor.connect` wird `internal` und bekommt einen öffentlichen Einstiegspunkt. Danach schrumpft der Wächter auf das, was Typen nicht ausdrücken.
+**Architecture:** Two half-steps that cover different halves. The bare function types `HostKeyDecider` and `CertificateDecider` become types with a non-public initializer and named factories; `BackendDescriptor.connect` becomes `internal` and gets a public entry point. After that, the guard shrinks down to what types cannot express.
 
-**Von außen unsichtbar:** kein neues Verhalten, keine neue Einstellung. Diese Arbeit verändert, was sich schreiben lässt.
+**Invisible from outside:** no new behavior, no new setting. This work changes what can be written.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **nur Englisch**.
-- Conventional Commits; Footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- **TOFU bleibt unangetastet.** Ein Fingerabdruck-Konflikt ist weiterhin ein
-  harter Stopp im Backend und erreicht keinen Entscheider. Wer beim Umbauen auf
-  einen Pfad stößt, der das ändern würde, hält an und meldet es.
-- **Die CLI entscheidet weiter, was sie heute entscheidet:** unbekannte
-  Zertifikate ablehnen, Host-Keys nach `HostKeyPolicy`. Ihre Ausgaben auf
-  `stderr` und ihr `CLIEnvironment.hasTTY` bleiben in der CLI — **nichts davon
-  wandert nach Core.**
-- Alle sechs Targets stehen auf `.swiftLanguageMode(.v6)`; **CI wird rot, sobald
-  die Zahl eindeutiger Warnorte über 1 liegt.**
-- **Keine Zeilennummern, keine Ortsangaben in Kommentaren.** Jede Zahl und jede
-  Aufzählung wird in dem Durchgang gezählt, der sie schreibt.
-- **Nur eine negative Prüfung neben einer positiven.** Siehe den Abschnitt
-  „Guards that name what they watch" in `CLAUDE.md` — er ist an genau dieser
-  Wächter-Familie gemessen worden.
-- Ein Scratch-Pfad, nach Gebrauch gelöscht.
-- Die App wird nicht gestartet, nichts gepusht.
+- Code, comments, identifiers, test names, commit messages: **English only**.
+- Conventional Commits; footer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- **TOFU stays untouched.** A fingerprint mismatch remains a hard stop in the
+  backend and never reaches a decider. Anyone who hits a path during the
+  rework that would change that stops and reports it.
+- **The CLI keeps deciding what it decides today:** rejecting unknown
+  certificates, host keys per `HostKeyPolicy`. Its output on `stderr` and its
+  `CLIEnvironment.hasTTY` stay in the CLI — **none of it moves to Core.**
+- All six targets are on `.swiftLanguageMode(.v6)`; **CI turns red as soon as
+  the number of distinct warning sites exceeds 1.**
+- **No line numbers, no location references in comments.** Every number and
+  every enumeration is counted in the pass that writes it.
+- **Only one negative check beside a positive one.** See the section
+  "Guards that name what they watch" in `CLAUDE.md` — it was measured against
+  exactly this guard family.
+- One scratch path, deleted after use.
+- The app is not launched, nothing is pushed.
 
 ---
 
-### Task 1: Ein Entscheider ist ein Typ
+### Task 1: A decider is a type
 
 **Files:**
 - Modify: `Sources/macSCPCore/Connection/HostKeyDecider.swift`,
@@ -43,27 +42,27 @@
   `Sources/macSCPCore/Presentation/ConnectionViewModel.swift`,
   `Sources/MacSCPAppKit/ContentView+Lifecycle.swift`,
   `Sources/MacSCPCLI/SessionConnecting.swift`
-- Test: `Tests/macSCPCoreTests/HostKeyDeciderTests.swift` (neu)
+- Test: `Tests/macSCPCoreTests/HostKeyDeciderTests.swift` (new)
 
 **Interfaces:**
-- Produces: `HostKeyDecider` und `CertificateDecider` als `struct`s mit
-  `callAsFunction`, mit den Fabriken `.asking(_:)` und `.refusing`.
-  Task 2 reicht sie durch den neuen Einstiegspunkt.
+- Produces: `HostKeyDecider` and `CertificateDecider` as `struct`s with
+  `callAsFunction`, with the factories `.asking(_:)` and `.refusing`.
+  Task 2 threads them through the new entry point.
 
-**Der gemessene Ist-Zustand:** beide sind heute nackte Funktionstypen —
+**The measured status quo:** both are bare function types today —
 `public typealias HostKeyDecider = @Sendable (HostKeyCandidate) async -> Bool`
-und dasselbe für `CertificateDecider`. Meine Dateizählung (**vier** und
-**drei**) war **unvollständig**: `CitadelFileSystem.connect(onUnknownHostKey:)`
-buchstabiert den rohen Funktionstyp statt des Alias und taucht in einer Suche
-nach dem Aliasnamen deshalb nicht auf — ausgerechnet die direkte Wählstelle,
-für die der Wächter existiert. **Zähl selbst, und such nach der Signatur, nicht
-nach dem Namen.**
+and the same for `CertificateDecider`. My file count (**four** and
+**three**) was **incomplete**: `CitadelFileSystem.connect(onUnknownHostKey:)`
+spells out the raw function type instead of the alias and therefore does not
+show up in a search for the alias name — of all things, the direct dialing
+site the guard exists for. **Count it yourself, and search for the
+signature, not the name.**
 
-`callAsFunction` ist entscheidend für den Umfang: die Verbrauchsstellen rufen
-heute `await decider(candidate)`, und genau so rufen sie danach weiter. Nur die
-**Bau**stellen ändern sich.
+`callAsFunction` is decisive for scope: consuming sites today call
+`await decider(candidate)`, and they keep calling it exactly that way
+afterward. Only the **construction** sites change.
 
-- [ ] **Step 1: Den Test zuerst schreiben.**
+- [ ] **Step 1: Write the test first.**
 
 ```swift
 import Foundation
@@ -101,22 +100,22 @@ struct HostKeyDeciderTests {
 }
 ```
 
-  **`TestBox`** liegt in `Tests/macSCPCoreTests/WebDAVSessionDelegateTests.swift`
-  (`final class TestBox<Value>: @unchecked Sendable`) — benutze den, statt einen
-  zweiten einzuführen. Ist er dort nicht sichtbar, sag es im Bericht, statt
-  einen eigenen zu bauen.
+  **`TestBox`** lives in `Tests/macSCPCoreTests/WebDAVSessionDelegateTests.swift`
+  (`final class TestBox<Value>: @unchecked Sendable`) — use that one instead of
+  introducing a second one. If it is not visible there, say so in the report
+  instead of building your own.
 
-  **Zur Kandidaten-Signatur, weil ich sie beim Planschreiben zuerst falsch
-  hatte:** `HostKeyCandidate.init(host:port:keyType:publicKeyBase64:)` — der
-  Fingerabdruck wird daraus abgeleitet und ist kein Initialisierer-Argument.
-  Prüf sie trotzdem selbst.
+  **On the candidate signature, because I had it wrong myself while writing
+  the plan:** `HostKeyCandidate.init(host:port:keyType:publicKeyBase64:)` —
+  the fingerprint is derived from it and is not an initializer argument.
+  Verify it yourself anyway.
 
-- [ ] **Step 2: Rot laufen lassen.**
+- [ ] **Step 2: Run it red.**
 
 Run: `swift test --filter HostKeyDecider`
-Erwartet: FAIL — `type 'HostKeyDecider' has no member 'asking'`.
+Expected: FAIL — `type 'HostKeyDecider' has no member 'asking'`.
 
-- [ ] **Step 3: Umsetzen.** `HostKeyDecider.swift` wird:
+- [ ] **Step 3: Implement.** `HostKeyDecider.swift` becomes:
 
 ```swift
 import Foundation
@@ -159,42 +158,42 @@ public struct HostKeyDecider: Sendable {
 }
 ```
 
-  **Dasselbe für `CertificateDecider`** in `WebDAVSessionDelegate.swift`, mit
-  `ServerCertificateCandidate` statt `HostKeyCandidate` und einem eigenen
-  Doc-Kommentar, der sagt, was dort der harte Stopp ist. Eine zweite Testdatei
-  dafür, nach demselben Muster — **nicht** dieselben Tests kopieren, sondern die
-  Fragen stellen, die für Zertifikate gelten.
+  **The same for `CertificateDecider`** in `WebDAVSessionDelegate.swift`, with
+  `ServerCertificateCandidate` instead of `HostKeyCandidate` and its own doc
+  comment saying what the hard stop is there. A second test file for it,
+  following the same pattern — **do not** copy the same tests, ask the
+  questions that apply to certificates.
 
-- [ ] **Step 4: Die Baustellen nachziehen.** Jede Stelle, die heute eine
-  Closure übergibt, benutzt jetzt eine Fabrik. Die CLI behält ihre
-  `makeDecider(policy:)` unverändert im Rumpf und wickelt sie in `.asking`;
-  ihre `stderr`-Ausgaben und `CLIEnvironment.hasTTY` bleiben, wo sie sind.
-- [ ] **Step 5:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 4: Update the construction sites.** Every place that currently
+  passes a closure now uses a factory. The CLI keeps its
+  `makeDecider(policy:)` unchanged in body and wraps it in `.asking`;
+  its `stderr` output and `CLIEnvironment.hasTTY` stay where they are.
+- [ ] **Step 5:** Full suite green, no new warning.
 - [ ] **Step 6: Commit** — `refactor(connection): make a decider a type, not a closure`
 
 ---
 
-### Task 2: Wählen ist keine Fähigkeit der App-Schicht
+### Task 2: Dialing is not a capability of the app layer
 
 **Files:**
 - Modify: `Sources/macSCPCore/Capabilities/BackendDescriptor.swift`,
   `Sources/MacSCPAppKit/ContentView+Lifecycle.swift`,
   `Sources/MacSCPCLI/SessionConnecting.swift`
-- Test: `Tests/macSCPCoreTests/` (neu, für den Einstiegspunkt)
+- Test: `Tests/macSCPCoreTests/` (new, for the entry point)
 
 **Interfaces:**
-- Consumes: die zwei Entscheider-Typen aus Task 1.
+- Consumes: the two decider types from Task 1.
 - Produces: `BackendDescriptor.openConnection(_:hostKey:certificate:timeoutSeconds:)`
-  als **einzigen** öffentlichen Weg zu einer Verbindung.
+  as the **only** public path to a connection.
 
-**Der gemessene Ist-Zustand:** genau **zwei** echte Aufrufer außerhalb Core —
-`ContentView+Lifecycle` und `SessionConnecting`. **Kein** Test wählt über den
-Descriptor; jeder Treffer in `Tests/` ist Probenmaterial in einem Wächter.
-**170** Core-Testdateien importieren `@testable` und behalten Zugriff auf
-Internes. Prüf beide Zahlen selbst, bevor du dich darauf verlässt.
+**The measured status quo:** exactly **two** real callers outside Core —
+`ContentView+Lifecycle` and `SessionConnecting`. **No** test dials through
+the descriptor; every hit in `Tests/` is sample material inside a guard.
+**170** Core test files import `@testable` and retain access to internals.
+Verify both numbers yourself before relying on them.
 
-- [ ] **Step 1:** `public let connect:` im Descriptor wird `let connect:`
-  (modulintern), und daneben entsteht:
+- [ ] **Step 1:** `public let connect:` in the descriptor becomes `let connect:`
+  (module-internal), and next to it comes:
 
 ```swift
 extension BackendDescriptor {
@@ -216,67 +215,66 @@ extension BackendDescriptor {
 }
 ```
 
-- [ ] **Step 2:** Beide Aufrufer auf `openConnection` umstellen.
-- [ ] **Step 3: Belegen, dass die Grenze wirkt.** Schreib in den Bericht das
-  Ergebnis eines Versuchs: `BackendDescriptor.descriptor(for:).connect(…)` in
-  einer App-Datei — **muss ein Compile-Fehler sein**, und der Fehlertext gehört
-  zitiert. Probe danach entfernen.
-- [ ] **Step 4:** Volle Suite grün, keine neue Warnung.
+- [ ] **Step 2:** Switch both callers over to `openConnection`.
+- [ ] **Step 3: Prove the boundary holds.** Write into the report the
+  result of an attempt: `BackendDescriptor.descriptor(for:).connect(…)` in
+  an app file — **must be a compile error**, and the error text belongs
+  quoted. Remove the probe afterward.
+- [ ] **Step 4:** Full suite green, no new warning.
 - [ ] **Step 5: Commit** — `refactor(connection): take dialing out of the app layer's reach`
 
 ---
 
-### Task 3: Der Wächter schrumpft
+### Task 3: The guard shrinks
 
 **Files:**
 - Modify: `Tests/macSCPAppKitTests/ReconnectWiringGuardTests.swift`,
   `Tests/macSCPAppKitTests/ConnectTimeoutAppWiringGuardTests.swift`
 
 **Interfaces:**
-- Consumes: alles aus Task 1 und 2.
+- Consumes: everything from Task 1 and 2.
 
-**Der gemessene Ist-Zustand:** die Suite hält Probenmaterial, das den rohen
-Wählvorgang als Zeichenkette enthält — unter anderem die `async let`-Form aus
-Runde 6. Vieles davon prüft ab jetzt etwas, das nicht mehr kompiliert.
+**The measured status quo:** the suite holds sample material that carries
+the raw dialing procedure as a string — among other things the `async let`
+form from round 6. Much of it now checks something that no longer compiles.
 
-- [ ] **Step 1: Aufzählen, was jede Prüfung noch leistet.** Für jede Prüfung
-  eine Zeile: deckt der Compiler das jetzt ab, oder nicht? **Was er abdeckt,
-  wird gelöscht** — nicht „für alle Fälle" behalten. Ein Wächter neben einer
-  Garantie lässt den nächsten Leser der Suite mehr vertrauen, als sie verdient.
-- [ ] **Step 2: Den Rest belegen.**
+- [ ] **Step 1: Enumerate what each check still accomplishes.** For each
+  check, one line: does the compiler cover this now, or not? **What it
+  covers gets deleted** — not kept "just in case." A guard standing beside
+  a guarantee lets the suite's next reader trust it more than it deserves.
+- [ ] **Step 2: Prove the rest.**
 
-  **Korrektur zu diesem Plan, gemessen nach Task 1:** die App-Schicht baut
-  **keinen** Host-Key-Entscheider. Sie reicht ihn durch; die Abfrage wird in
-  Core verdrahtet (`ConnectionViewModel.connect` → `presentHostKeyPrompt`).
-  Ein **Zertifikats**-Entscheider wird dort dagegen gebaut, mit
-  `.asking { candidate in await certificateBridge.ask(candidate) }`. Die
-  ursprüngliche Fassung dieses Schritts behauptete beides für Host-Keys und war
-  falsch.
+  **Correction to this plan, measured after Task 1:** the app layer builds
+  **no** host key decider. It threads it through; the prompt is wired in
+  Core (`ConnectionViewModel.connect` → `presentHostKeyPrompt`). A
+  **certificate** decider, by contrast, is built there, with
+  `.asking { candidate in await certificateBridge.ask(candidate) }`. The
+  original version of this step claimed both for host keys and was wrong.
 
-  Übrig bleiben soll also, was ein Typ nicht sagen kann, und das ist **genau
-  eine** Sache: dass die vier `.asking`-Aufrufstellen an das hängen, was
-  wirklich fragt, und nicht an einen Ja-sager. **Zähl sie selbst**, statt die
-  Vier zu übernehmen.
+  What should remain, then, is exactly **one** thing a type cannot say:
+  that the four `.asking` call sites hang off whatever actually asks, and
+  not off a yes-man. **Count them yourself**, rather than taking the four
+  on faith.
 
-  Pflanze `.asking { _ in true }` an jeder dieser Stellen und belege, ob ein
-  Wächter **rot** wird. Wird er es nicht, ist der Rest kein Wächter mehr,
-  sondern Zierde — **dann sag das, statt einen zu bauen.** Ein neuer Scan über
-  vier Aufrufstellen wäre der siebte Anlauf derselben Familie; ob er sich lohnt,
-  ist eine Entscheidung des Maintainers und keine dieser Aufgabe.
-- [ ] **Step 3: Die Grenzen-Aussage neu schreiben.** Sie ist über sechs Runden
-  gewachsen und beschreibt größtenteils Löcher, die es nicht mehr gibt. Sie
-  muss nach diesem Schritt **wahr** sein: was der Compiler hält, was der Rest
-  bewacht, und was weiterhin niemand sieht.
-- [ ] **Step 4:** Volle Suite grün, keine neue Warnung.
+  Plant `.asking { _ in true }` at each of these sites and prove whether a
+  guard goes **red**. If it does not, the rest is no longer a guard but
+  decoration — **say so, instead of building one.** A new scan over four
+  call sites would be the seventh attempt of the same family; whether it is
+  worth it is a maintainer decision, not part of this task.
+- [ ] **Step 3: Rewrite the boundary statement.** It has grown over six
+  rounds and mostly describes holes that no longer exist. After this step
+  it must be **true**: what the compiler holds, what the rest guards, and
+  what still nobody sees.
+- [ ] **Step 4:** Full suite green, no new warning.
 - [ ] **Step 5: Commit** — `test(connection): keep only what types cannot say`
 
 ---
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly out of scope
 
-- **Keine Änderung an TOFU** und keine an dem, was die CLI entscheidet.
-- **Kein Umzug von CLI-Ausgaben oder `hasTTY` nach Core.**
-- Keine neue Einstellung, kein neues Verhalten für den Nutzer.
-- Keine Antwort auf die verbleibende Grenze: `.asking { _ in true }` bleibt
-  schreibbar. Der Entwurf sagt, warum das in Ordnung ist — sichtbar statt
-  unmöglich — und Task 3 macht sie zu dem, was der Wächter bewacht.
+- **No change to TOFU** and none to what the CLI decides.
+- **No move of CLI output or `hasTTY` to Core.**
+- No new setting, no new behavior for the user.
+- No answer to the remaining boundary: `.asking { _ in true }` stays
+  writable. The design says why that is fine — visible instead of
+  impossible — and Task 3 makes it into what the guard watches.

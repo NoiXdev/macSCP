@@ -1,182 +1,177 @@
-# macSCP M6b — Release (Design-Spec)
+# macSCP M6b — Release (design spec)
 
-**Datum:** 2026-07-27
-**Status:** vom Maintainer freigegeben (Block 1 + Block 2)
-**Kontext:** Zweiter Teil des Release-Meilensteins M6 (nach M6a Polish-Backlog).
-Entscheidungen aus dem M6-Split (Maintainer, 2026-07-26): Verteilung
-**signiert + notarisiert**; **release-fertig, Repo bleibt privat** (den
-public-Schalter legt der Maintainer selbst um); Release-Mechanik als
-**lokales Skript** (kein Zertifikat in CI/GitHub-Secrets).
+**Date:** 2026-07-27
+**Status:** approved by the maintainer (block 1 + block 2)
+**Context:** Second part of the release milestone M6 (after M6a polish
+backlog). Decisions from the M6 split (maintainer, 2026-07-26):
+distribution **signed + notarized**; **release-ready, repo stays private**
+(the maintainer flips the public switch himself); release mechanics as a
+**local script** (no certificate in CI/GitHub secrets).
 
-## Entscheidungen (Maintainer, 2026-07-27)
+## Decisions (maintainer, 2026-07-27)
 
-- Lizenz: **MIT**, Copyright „© 2026 Tim Rösner".
-- Erste Version: **1.0.0** (Build 1).
-- Bundle-Identifier: `dev.noix.macscp` (der Dev-Wrapper nutzte
-  `dev.noix.macscp.dev` — der Release-Bundle-Id ist neu und final).
+- License: **MIT**, copyright "© 2026 Tim Rösner".
+- First version: **1.0.0** (build 1).
+- Bundle identifier: `dev.noix.macscp` (the dev wrapper used
+  `dev.noix.macscp.dev` — the release bundle ID is new and final).
 
-## Ziel
+## Goal
 
-Ein reproduzierbar gebautes, Developer-ID-signiertes, notarisiertes und
-gestapeltes DMG von macSCP 1.0.0 mit App-Icon, vollständiger Info.plist,
-funktionierender EN/DE-Lokalisierung, MIT-Lizenz und englischem README —
-plus die vier M6a-Backlog-Härtungen und die zwei vom M6a-Final-Review
-auferlegten Live-Beweise.
+A reproducibly built, Developer ID–signed, notarized, and stapled DMG of
+macSCP 1.0.0 with an app icon, complete Info.plist, working EN/DE
+localization, MIT license, and English README — plus the four M6a backlog
+hardenings and the two live proofs required by the M6a final review.
 
-## Task 0 — Backlog-Härtungen (Code)
+## Task 0 — backlog hardenings (code)
 
-1. **Konflikt-Sheet-Label für Ordner-Transfers:** `TransferConflict`
-   erhält `isPartOfFolderTransfer: Bool` (Queue setzt es, wenn das Item
-   einer Gruppe angehört). Das Sheet zeigt bei `true` statt des
-   generischen Abbrechen-Buttons „Cancel folder transfer" / „Ordner-
-   Übertragung abbrechen" plus eine Hinweiszeile, dass damit die gesamte
-   Ordner-Übertragung endet (bereits kopierte Dateien bleiben). Neue
-   Katalog-Keys EN/DE; Einzeldatei-Fall unverändert.
-2. **`updatedBucket`-Ordering:** Generation-Counter — die Queue zählt
-   pro Richtung eine Generation hoch und übergibt sie an
-   `setRate(bytesPerSecond:generation:)`; der Actor ignoriert Aufrufe
-   mit älterer Generation als der zuletzt angewandten. Damit kann ein
-   überholter Fire-and-forget-Hop keine neuere Rate überschreiben.
-3. **Sweep-Root injizierbar:**
-   `sweepOrphanedTempDirectories(root: URL = …/macscp-edit)`; der Test
-   nutzt einen isolierten Root, `.serialized` auf der Suite entfällt
-   (inkl. Anpassung des Suite-Kommentars).
-4. **FIFOGate-Determinismus:** internes `waiterCount` auf `FIFOGate` +
-   internal Sicht auf der Queue; der queueRule-Gate-Test wartet auf
-   `waiterCount == 1` statt auf Yield-Schleifen.
+1. **Conflict-sheet label for folder transfers:** `TransferConflict`
+   gains `isPartOfFolderTransfer: Bool` (the queue sets it when the item
+   belongs to a group). When `true`, the sheet shows "Cancel folder
+   transfer" / "Ordner-Übertragung abbrechen" instead of the generic
+   cancel button, plus a note that this ends the entire folder transfer
+   (already-copied files remain). New catalog keys EN/DE; the single-file
+   case unchanged.
+2. **`updatedBucket` ordering:** a generation counter — the queue counts
+   up a generation per direction and passes it to
+   `setRate(bytesPerSecond:generation:)`; the actor ignores calls with an
+   older generation than the last one applied. This way a stale
+   fire-and-forget hop cannot overwrite a newer rate.
+3. **Sweep root injectable:**
+   `sweepOrphanedTempDirectories(root: URL = …/macscp-edit)`; the test
+   uses an isolated root, `.serialized` on the suite is dropped
+   (including an update to the suite comment).
+4. **FIFOGate determinism:** internal `waiterCount` on `FIFOGate` +
+   internal visibility on the queue; the queueRule gate test waits for
+   `waiterCount == 1` instead of yield loops.
 
 ## Icon
 
-- `scripts/make-icon`: rendert `docs/design/assets/icon.svg` per
-  `rsvg-convert` in alle `.iconset`-Größen (16, 16@2x, 32, 32@2x, 128,
-  128@2x, 256, 256@2x, 512, 512@2x) und baut mit `iconutil` die
-  `Resources/AppIcon.icns`.
-- Die fertige `.icns` wird EINGECHECKT (Builds/Packaging brauchen kein
-  rsvg); das Skript dient der Regenerierung bei Icon-Änderungen und
-  bricht mit klarer Meldung ab, wenn `rsvg-convert` fehlt.
+- `scripts/make-icon`: renders `docs/design/assets/icon.svg` via
+  `rsvg-convert` into all `.iconset` sizes (16, 16@2x, 32, 32@2x, 128,
+  128@2x, 256, 256@2x, 512, 512@2x) and builds
+  `Resources/AppIcon.icns` with `iconutil`.
+- The finished `.icns` is CHECKED IN (builds/packaging need no rsvg); the
+  script is for regenerating it on icon changes and aborts with a clear
+  message if `rsvg-convert` is missing.
 
-## Bundle-Assembly
+## Bundle assembly
 
-- `scripts/package-app`: baut aus einem `swift build -c release` das
-  Bundle `dist/macSCP.app`:
-  - `Contents/MacOS/macSCP` (Release-Binary),
-  - `Contents/Info.plist` mit: `CFBundleIdentifier dev.noix.macscp`,
+- `scripts/package-app`: builds the bundle `dist/macSCP.app` from a
+  `swift build -c release`:
+  - `Contents/MacOS/macSCP` (release binary),
+  - `Contents/Info.plist` with: `CFBundleIdentifier dev.noix.macscp`,
     `CFBundleName macSCP`, `CFBundleDisplayName macSCP`,
     `CFBundleShortVersionString 1.0.0`, `CFBundleVersion 1`,
     `CFBundleExecutable macSCP`, `CFBundleIconFile AppIcon`,
     `CFBundlePackageType APPL`, `LSMinimumSystemVersion 15.0`,
     `NSHumanReadableCopyright © 2026 Tim Rösner`,
     `NSPrincipalClass NSApplication`,
-  - `Contents/Resources/`: `AppIcon.icns`, BEIDE SPM-Ressourcen-Bundles
-    (`macSCP_MacSCPApp.bundle`, `macSCP_macSCPCore.bundle`) und **leere
-    `en.lproj`/`de.lproj`-Marker** (M5i-Lektion: macOS wählt die
-    App-Sprache über die Lokalisierungen des MAIN-Bundles — ohne Marker
-    bleibt die App englisch).
-- `dist/` kommt in `.gitignore`.
+  - `Contents/Resources/`: `AppIcon.icns`, BOTH SPM resource bundles
+    (`macSCP_MacSCPApp.bundle`, `macSCP_macSCPCore.bundle`) and **empty
+    `en.lproj`/`de.lproj` markers** (M5i lesson: macOS chooses the app
+    language via the localizations of the MAIN bundle — without markers
+    the app stays English).
+- `dist/` goes into `.gitignore`.
 
-## Signierung, DMG, Notarisierung (`scripts/release`)
+## Signing, DMG, notarization (`scripts/release`)
 
-Ablauf (jeder Schritt bricht bei Fehler ab, Exit-Codes sind die Beweise):
+Flow (every step aborts on error, exit codes are the proof):
 
-1. Vorbedingungs-Checks: sauberer Git-Stand, Identität
-   `Developer ID Application: Tim Rösner (5V8ZCK434F)` im Keychain,
-   Keychain-Profil `macscp-notary` vorhanden (sonst Abbruch mit
-   Anleitung: `xcrun notarytool store-credentials macscp-notary …` —
-   das richtet der MAINTAINER einmalig selbst ein; Skript und Repo
-   sehen nie Secrets).
-2. `scripts/package-app` (frischer Release-Build).
-3. `codesign --force --options runtime --timestamp` mit der
-   Developer-ID-Identität: erst die eingebetteten Ressourcen-Bundles,
-   dann das App-Bundle; Verifikation `codesign --verify --deep
+1. Precondition checks: clean git state, identity
+   `Developer ID Application: Tim Rösner (5V8ZCK434F)` in the keychain,
+   keychain profile `macscp-notary` present (otherwise abort with
+   instructions: `xcrun notarytool store-credentials macscp-notary …` —
+   the MAINTAINER sets this up himself, once; the script and repo never
+   see secrets).
+2. `scripts/package-app` (fresh release build).
+3. `codesign --force --options runtime --timestamp` with the
+   Developer ID identity: first the embedded resource bundles, then the
+   app bundle; verification `codesign --verify --deep
    --strict` + `codesign -dv`.
-4. DMG: `hdiutil create` (UDZO, Volume „macSCP") aus einem Staging-Dir
-   mit `macSCP.app` + Symlink `Applications`; Ergebnis
-   `dist/macSCP-1.0.0.dmg`; DMG signieren.
+4. DMG: `hdiutil create` (UDZO, volume "macSCP") from a staging dir with
+   `macSCP.app` + symlink `Applications`; result
+   `dist/macSCP-1.0.0.dmg`; sign the DMG.
 5. `xcrun notarytool submit dist/macSCP-1.0.0.dmg --keychain-profile
-   macscp-notary --wait` (bei Ablehnung: Log via `notarytool log`
-   ausgeben und abbrechen).
-6. `xcrun stapler staple` auf App UND DMG.
-7. Abschluss-Verifikation: `spctl --assess --type open --context
-   context:primary-signature` auf dem DMG bzw. `spctl --assess --type
-   execute` auf der App, `stapler validate` — Ausgabe im Skript-Log.
+   macscp-notary --wait` (on rejection: print the log via
+   `notarytool log` and abort).
+6. `xcrun stapler staple` on BOTH the app AND the DMG.
+7. Final verification: `spctl --assess --type open --context
+   context:primary-signature` on the DMG and `spctl --assess --type
+   execute` on the app, `stapler validate` — output in the script log.
 
-Kein Sandbox-Opt-in, keine zusätzlichen Entitlements (Hardened Runtime
-ohne Ausnahmen genügt; die App nutzt kein JIT, keine unsignierten
-Plugins). CI bleibt Test-only.
+No sandbox opt-in, no additional entitlements (hardened runtime with no
+exceptions suffices; the app uses no JIT, no unsigned plugins). CI stays
+test-only.
 
 ## Docs
 
-- `LICENSE`: MIT-Text, „Copyright (c) 2026 Tim Rösner".
-- `README.md` (Englisch):
-  - Tagline + Intro **ohne Tech-Stack-Begriffe** (Policy): „A native
-    macOS SFTP client …" — Features aus Nutzersicht (Zwei-Fenster-
-    Browser, gespeicherte Sessions, SSH-Key-Auth, Host-Key-Pinning,
-    integriertes Terminal, Transfer-Queue mit Pause/Resume-Verhalten,
-    Bandbreiten-Limits, Editor-Integration, EN/DE).
-  - Screenshot (dunkler Browser-Screenshot, `docs/design/assets/`).
-  - Install: DMG laden → App nach `/Applications` ziehen; Hinweis
-    macOS 15+.
-  - „Building from source": HIER dürfen technische Begriffe stehen
-    (`swift build`, Test-Rig-Hinweis) — technischer Abschnitt, keine
-    Landing-Copy.
-  - Lizenz-Abschnitt (MIT).
-- Kein CHANGELOG in M6b (YAGNI — kommt mit dem zweiten Release).
+- `LICENSE`: MIT text, "Copyright (c) 2026 Tim Rösner".
+- `README.md` (English):
+  - Tagline + intro **without tech-stack terms** (policy): "A native
+    macOS SFTP client …" — features from a user perspective (dual-pane
+    browser, saved sessions, SSH key auth, host-key pinning, integrated
+    terminal, transfer queue with pause/resume behavior, bandwidth
+    limits, editor integration, EN/DE).
+  - Screenshot (dark browser screenshot, `docs/design/assets/`).
+  - Install: download DMG → drag app to `/Applications`; note macOS 15+.
+  - "Building from source": technical terms ARE allowed HERE
+    (`swift build`, test-rig note) — a technical section, not landing
+    copy.
+  - License section (MIT).
+- No CHANGELOG in M6b (YAGNI — comes with the second release).
 
-## Abschluss-Smoke (bindend, inkl. M6a-Final-Review-Bedingungen)
+## Final smoke (binding, including the M6a final-review conditions)
 
-Mit dem NOTARISIERTEN DMG:
-1. Mounten, App nach `/Applications` kopieren, Erststart OHNE
-   Gatekeeper-Warnung (Quarantäne-Attribut vorhanden, Start trotzdem
-   sauber — der Kern-Beweis der Notarisierung).
-2. Deutsche UI auf deutschem System (Lokalisierungs-Marker-Beweis) und
-   `-AppleLanguages (en)`-Gegenprobe.
-3. Icon sichtbar in Finder + Dock; Version 1.0.0 im About-Fenster.
-4. Funktions-Kurztest gegen das Docker-Rig (Verbinden, Transfer,
-   Trennen).
-5. **Edit-Roundtrip-Livebeweis** (M6a-Bedingung): Textdatei per
-   Doppelklick öffnen, im Editor speichern, Auto-Upload auf dem Rig
-   verifiziert. Mit einem Editor, der getrieben werden darf; falls
-   keiner verfügbar ist, übernimmt der Maintainer den einen
-   Save-Schritt.
-6. **FKA-Fokus-Ring-Check** (M6a-Bedingung): Full Keyboard Access an,
-   Tab durch die Formular-Buttons — System-Ring sichtbar.
-7. Konflikt-Sheet-Ordner-Label (Task 0) einmal live gesichtet.
+With the NOTARIZED DMG:
+1. Mount, copy the app to `/Applications`, first launch WITHOUT a
+   Gatekeeper warning (quarantine attribute present, launch still clean
+   — the core proof of notarization).
+2. German UI on a German system (localization-marker proof) and an
+   `-AppleLanguages (en)` counter-check.
+3. Icon visible in Finder + Dock; version 1.0.0 in the About window.
+4. Short functional test against the Docker rig (connect, transfer,
+   disconnect).
+5. **Edit-roundtrip live proof** (M6a condition): open a text file via
+   double-click, save it in the editor, verify the auto-upload on the
+   rig. With an editor that can be driven; if none is available, the
+   maintainer takes over the one save step.
+6. **FKA focus-ring check** (M6a condition): Full Keyboard Access on,
+   tab through the form buttons — system ring visible.
+7. Conflict-sheet folder label (Task 0) sighted live once.
 
-## Invarianten
+## Invariants
 
-- Sicherheits-Invarianten unangetastet; keine Secrets in Repo/Skripten
-  (Notarisierung ausschließlich über das Keychain-Profil des
-  Maintainers).
-- Code + Kommentare + Skripte Englisch; neue UI-Texte katalogisiert
-  EN/DE.
-- Öffentliche Texte (README-Intro/Tagline) ohne Stack-Begriffe.
-- Bestehende Suite (320) bleibt grün; Task-0-Logik TDD.
+- Security invariants untouched; no secrets in repo/scripts
+  (notarization exclusively via the maintainer's keychain profile).
+- Code + comments + scripts English; new UI texts cataloged EN/DE.
+- Public-facing texts (README intro/tagline) without stack terms.
+- The existing suite (320) stays green; Task 0 logic TDD.
 
-## Bewusst NICHT in M6b
+## Deliberately NOT in M6b
 
-- GitHub-Release/Tag-Automatik und Repo-auf-public (macht der
-  Maintainer, wenn er bereit ist).
-- Sparkle/Auto-Update, CHANGELOG, Menüleisten-Icon (Variante B bleibt
-  Reserve).
-- App Store / Sandbox-Migration.
+- GitHub release/tag automation and repo-to-public (the maintainer does
+  this when he is ready).
+- Sparkle/auto-update, CHANGELOG, menu-bar icon (variant B stays in
+  reserve).
+- App Store / sandbox migration.
 
-## Update (Maintainer, 2026-07-27 — nach Task 6)
+## Update (maintainer, 2026-07-27 — after Task 6)
 
-- **Bundle-ID/Branding:** `dev.noidee.macscp` → **`dev.noix.macscp`**
-  (Angleich an die NoiXdev-Org; Keychain-Service und Logger-Subsystem
-  ziehen mit — lokal gespeicherte Dev-Secrets unter dem alten Service
-  müssen einmalig neu gespeichert werden).
-- **Release-Mechanik erweitert:** zusätzlich zum lokalen Skript ein
-  **CI-Release-Workflow** (`.github/workflows/release.yml`) nach dem
-  Vorbild des s3Manager-Repos derselben Org: Tag `v*.*.*` →
-  Changelog-Job (conventional-changelog, CHANGELOG.md-Commit auf main,
-  GitHub-Release mit Release-Notes) → macOS-Build-Job (Zertifikat-Import
-  + App-Store-Connect-API-Key aus den org-weiten Secrets
+- **Bundle ID/branding:** `dev.noidee.macscp` → **`dev.noix.macscp`**
+  (alignment with the NoiXdev org; the keychain service and logger
+  subsystem move with it — locally stored dev secrets under the old
+  service need to be re-saved once).
+- **Release mechanics extended:** in addition to the local script, a
+  **CI release workflow** (`.github/workflows/release.yml`) modeled on
+  the s3Manager repo of the same org: tag `v*.*.*` →
+  changelog job (conventional-changelog, CHANGELOG.md commit on main,
+  GitHub release with release notes) → macOS build job (certificate
+  import + App Store Connect API key from the org-wide secrets
   `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PASSWORD`, `APPLE_API_KEY`,
-  `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`) → `scripts/release` im
-  CI-Modus → DMG als Release-Asset. `scripts/release` ist zweigleisig:
-  API-Key-Env (CI) oder Keychain-Profil (lokal); `MACSCP_VERSION` kommt
-  aus dem Tag. Damit sind „CI bleibt Test-only", „kein CHANGELOG" und
-  „GitHub-Release-Automatik nicht in M6b" aus der ursprünglichen Spec
-  REVIDIERT. Das Repo wird dafür public gestellt (Audit 2026-07-27:
-  0 Critical, Härtungen committet).
+  `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`) → `scripts/release` in
+  CI mode → DMG as a release asset. `scripts/release` runs two ways:
+  API-key env (CI) or keychain profile (local); `MACSCP_VERSION` comes
+  from the tag. This REVISES "CI stays test-only," "no CHANGELOG," and
+  "GitHub release automation not in M6b" from the original spec. The
+  repo is made public for this (audit 2026-07-27: 0 critical,
+  hardenings committed).

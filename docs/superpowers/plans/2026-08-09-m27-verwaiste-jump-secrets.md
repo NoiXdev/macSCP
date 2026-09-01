@@ -1,18 +1,18 @@
-# M27 — Verwaiste Jump-Secrets: Implementierungsplan
+# M27 — Orphaned Jump Secrets: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die Schlüsselbund-Einträge entfernen, die die M23-Migration
-zurückgelassen hat — ausgelöst vom Nutzer, ohne je etwas Lebendiges zu treffen.
+**Goal:** Remove the Keychain entries the M23 migration left behind —
+triggered by the user, without ever touching anything live.
 
-**Architecture:** Ein Core-Typ `LegacyJumpSecretSweep` liest die aufgehobene
-`sessions.json` über einen neuen, ausschließlich lesenden Zugang am
-`SessionStore`, zieht alles ab, was heute noch beansprucht wird, und löscht den
-Rest über die vorhandene `SecretStore.deletePassword`. Die App bekommt einen
-Knopf in Einstellungen › Daten verwalten.
+**Architecture:** A Core type `LegacyJumpSecretSweep` reads the preserved
+`sessions.json` through a new, read-only-only access on `SessionStore`,
+subtracts everything still claimed today, and deletes the rest via the
+existing `SecretStore.deletePassword`. The App gets a button in Settings ›
+Manage Data.
 
 **Tech Stack:** Swift 6, `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+,
 Swift Testing, SwiftUI.
@@ -21,41 +21,41 @@ Spec: `../specs/2026-08-09-m27-verwaiste-jump-secrets-design.md`
 
 ## Global Constraints
 
-- **Code, Kommentare, Bezeichner, Testnamen: nur Englisch.** Interne Doku
-  Deutsch.
-- **Ein Secret-Wert wird nie gedruckt, geloggt oder in einen Fehler eingebettet
-  — auch nicht in eine Testfehlermeldung.** Der Sweep ruft `password(for:)`
-  **nie** auf.
-- **Kein `try? … ?? []` auf irgendeinem Pfad dieses Meilensteins.** Jeder
-  Lesefehler bricht ab.
-- **Der Sweep fasst den ViewModel-Zustand nicht an**, sondern die Stores.
-- Die Legacy-Datei wird **gelesen und nicht verändert**.
-- Das `SecretStore`-Protokoll bekommt **kein** neues Mitglied.
-- App-UI über alle vier Kataloge en/de/fr/pl mit identischen Schlüsselmengen;
-  CLI ist englisch und wird nicht angefasst.
-- Conventional Commits, englische Nachricht, Footer auf jedem Commit:
+- **Code, comments, identifiers, test names: English only.** Internal docs
+  German.
+- **A secret value is never printed, logged, or embedded in an error — not
+  even in a test failure message.** The sweep **never** calls
+  `password(for:)`.
+- **No `try? … ?? []` on any path of this milestone.** Every read error
+  aborts.
+- **The sweep does not touch ViewModel state**, only the stores.
+- The legacy file is **read and not modified**.
+- The `SecretStore` protocol gets **no** new member.
+- App UI across all four catalogs en/de/fr/pl with identical key sets;
+  the CLI is English and is not touched.
+- Conventional Commits, English message, footer on every commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- **Nicht pushen.** Die GUI nicht starten. `scripts/release` nicht ausführen.
-- Testzahl-Basis: **1619**.
+- **Do not push.** Do not start the GUI. Do not run `scripts/release`.
+- Test-count baseline: **1619**.
 
 ---
 
-### Task 1: Der lesende Zugang zur Legacy-Datei
+### Task 1: The read access to the legacy file
 
 **Files:**
 - Modify: `Sources/macSCPCore/Sessions/SessionStore.swift`
 - Test: `Tests/macSCPCoreTests/SessionStoreTests.swift`
 
 **Interfaces:**
-- Produces: `SessionStore.legacyJumpSecretIDs() throws -> [UUID]` — jede
-  `jump.secretID` aus `sessions.json`, in Dateireihenfolge, Duplikate
-  entfernt. Leeres Array, wenn die Datei fehlt. **Wirft**, wenn sie da und
-  nicht lesbar/dekodierbar ist.
+- Produces: `SessionStore.legacyJumpSecretIDs() throws -> [UUID]` — every
+  `jump.secretID` from `sessions.json`, in file order, duplicates removed.
+  Empty array if the file is missing. **Throws** if it is present and not
+  readable/decodable.
 
-- [ ] **Step 1: Die Tests schreiben**
+- [ ] **Step 1: Write the tests**
 
-In `SessionStoreTests`, im Stil der vorhandenen handgeschriebenen Fixtures
-(siehe `blocklessSSHFixture` und die Begründung darüber, warum von Hand):
+In `SessionStoreTests`, in the style of the existing hand-written fixtures
+(see `blocklessSSHFixture` and the rationale above it for why they are hand-written):
 
 ```swift
 /// The sweep's candidate source. A jump's `secretID` is the only thing M23
@@ -109,8 +109,8 @@ In `SessionStoreTests`, im Stil der vorhandenen handgeschriebenen Fixtures
 }
 ```
 
-Der Fixture-Helfer, daneben im selben File — von Hand geschrieben, weil kein
-Schreibpfad der App die Legacy-Form noch erzeugt:
+The fixture helper, right beside it in the same file — hand-written because
+no write path in the app produces the legacy shape any more:
 
 ```swift
 /// A pre-M23 `sessions.json`. Hand-written for the same reason the blockless
@@ -134,27 +134,27 @@ private func legacyFixture(withJumpSecretIDs ids: [UUID?]) -> Data {
 }
 ```
 
-- [ ] **Step 2: Rot sehen**
+- [ ] **Step 2: See it fail**
 
 ```bash
 swift test --filter legacyJumpSecretIDs
 ```
-Erwartet: FAIL, `value of type 'SessionStore' has no member 'legacyJumpSecretIDs'`.
+Expected: FAIL, `value of type 'SessionStore' has no member 'legacyJumpSecretIDs'`.
 
-- [ ] **Step 3: Umsetzen**
+- [ ] **Step 3: Implement**
 
-In `SessionStore`, neben `migrateFromLegacy()`:
+In `SessionStore`, next to `migrateFromLegacy()`:
 
-> **Korrektur 2026-08-09 (Task-1-Review, Critical).** Der Beispielcode unten
-> war falsch: `sessions.json` hat **zwei** Legacy-Formen, und
-> `migrateFromLegacy()` behandelt beide — erst den Container
-> `{"groups":…,"sessions":…}` per `try?`, dann als Rückfall das nackte Array
-> per hartem `try`. Nur das Array zu dekodieren lässt den Zugriff auf jeder
-> Installation mit Gruppen **werfen** — also seit vor 1.0. Die Umsetzung
-> spiegelt `migrateFromLegacy()`. **Die tragende Eigenschaft dabei:** der
-> `try?` auf den Container ist nur harmlos, weil der Array-Versuch danach ein
-> hartes `try` ist; wären beide optional, würde aus „nicht lesbar" wieder
-> „keine Kandidaten".
+> **Correction 2026-08-09 (Task 1 review, Critical).** The sample code below
+> was wrong: `sessions.json` has **two** legacy shapes, and
+> `migrateFromLegacy()` handles both — first the container
+> `{"groups":…,"sessions":…}` via `try?`, then as a fallback the bare array
+> via a hard `try`. Decoding only the array would make the access **throw**
+> on every installation with groups — that is, since before 1.0. The
+> implementation mirrors `migrateFromLegacy()`. **The property that carries
+> the weight here:** the `try?` on the container is only harmless because the
+> array attempt after it is a hard `try`; if both were optional, "not
+> readable" would collapse back into "no candidates".
 
 ```swift
 /// Every jump `secretID` in the preserved pre-M23 `sessions.json`, in file
@@ -179,14 +179,14 @@ public func legacyJumpSecretIDs() throws -> [UUID] {
 }
 ```
 
-- [ ] **Step 4: Grün sehen**
+- [ ] **Step 4: See it pass**
 
 ```bash
 swift test --filter legacyJumpSecretIDs
 ```
-Erwartet: 5 Tests grün.
+Expected: 5 tests green.
 
-- [ ] **Step 5: Committen**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Sources/macSCPCore/Sessions/SessionStore.swift Tests/macSCPCoreTests/SessionStoreTests.swift
@@ -195,22 +195,22 @@ git commit -m "feat(core): expose the legacy file's jump secret ids for the M27 
 
 ---
 
-### Task 2: Der Sweep
+### Task 2: The sweep
 
 **Files:**
 - Create: `Sources/macSCPCore/Sessions/LegacyJumpSecretSweep.swift`
 - Create: `Tests/macSCPCoreTests/LegacyJumpSecretSweepTests.swift`
 
 **Interfaces:**
-- Consumes: `SessionStore.legacyJumpSecretIDs()` aus Task 1;
+- Consumes: `SessionStore.legacyJumpSecretIDs()` from Task 1;
   `SessionStore.all() throws -> [StoredSession]`,
   `LoginSetStore.all() throws -> [LoginSet]`,
   `ManagedKeyStore.all() throws -> [ManagedKey]`,
   `SecretStore.deletePassword(for:) throws`.
-- Produces: `LegacyJumpSecretSweep(sessions:loginSets:keys:secrets:)` mit
+- Produces: `LegacyJumpSecretSweep(sessions:loginSets:keys:secrets:)` with
   `run() throws -> Result`, `Result(removed: Int, failed: Int)`.
 
-- [ ] **Step 1: Die Tests schreiben**
+- [ ] **Step 1: Write the tests**
 
 ```swift
 @Suite("LegacyJumpSecretSweep")
@@ -253,26 +253,27 @@ struct LegacyJumpSecretSweepTests {
 }
 ```
 
-Jeder Test baut echte Stores über temporäre Verzeichnisse plus
-`InMemorySecretStore`. Für `theSweepNeverReadsASecret` ein Double, dessen
-`password(for:)` `Issue.record` auslöst — das Muster steht mehrfach im Repo
-(z. B. die „reads are forbidden"-Doubles in `LoginResolverTests`).
+Each test builds real stores over temporary directories plus
+`InMemorySecretStore`. For `theSweepNeverReadsASecret`, a double whose
+`password(for:)` triggers `Issue.record` — this pattern appears several
+times in the repo (e.g. the "reads are forbidden" doubles in
+`LoginResolverTests`).
 
-Für die Unlesbar-Tests je Datei denselben Trick wie in Task 1: kaputtes JSON
-schreiben.
+For the unreadable-file tests, per file, the same trick as in Task 1: write
+broken JSON.
 
-**Regel für alle vier Abbruch-Tests:** nach dem Wurf muss
-`secrets.storedIDs` **unverändert** sein. Der Wurf allein genügt nicht — er
-muss vor dem ersten Löschen passieren.
+**Rule for all four abort tests:** after the throw, `secrets.storedIDs`
+must be **unchanged**. The throw alone is not enough — it must happen
+before the first deletion.
 
-- [ ] **Step 2: Rot sehen**
+- [ ] **Step 2: See it fail**
 
 ```bash
 swift test --filter LegacyJumpSecretSweep
 ```
-Erwartet: FAIL, Typ existiert nicht.
+Expected: FAIL, the type does not exist.
 
-- [ ] **Step 3: Umsetzen**
+- [ ] **Step 3: Implement**
 
 ```swift
 /// Removes the Keychain entries the M23 migration left behind.
@@ -363,28 +364,27 @@ public struct LegacyJumpSecretSweep {
 }
 ```
 
-- [ ] **Step 4: Grün sehen**
+- [ ] **Step 4: See it pass**
 
 ```bash
 swift test --filter LegacyJumpSecretSweep
 ```
 
-- [ ] **Step 5: Die Gegenprobe fahren**
+- [ ] **Step 5: Run the counter-proof**
 
-Nicht optional. Nacheinander, jeweils zurücknehmen:
+Not optional. In sequence, reverting each time:
 
-1. `guard !candidates.isEmpty` entfernen und `claimedIDs()` **nach** der
-   Schleife aufrufen → `anUnreadableSessionFileDeletesNothingAndThrows` muss
-   rot werden. Beweist, dass die Reihenfolge geprüft ist und nicht zufällig
-   stimmt.
-2. `try sessions.all()` durch `(try? sessions.all()) ?? []` ersetzen →
-   derselbe Test muss rot werden. Das ist der Fehler, gegen den der ganze
-   Meilenstein gebaut ist.
+1. Remove `guard !candidates.isEmpty` and call `claimedIDs()` **after** the
+   loop → `anUnreadableSessionFileDeletesNothingAndThrows` must go red.
+   Proves that the order is enforced and not accidentally correct.
+2. Replace `try sessions.all()` with `(try? sessions.all()) ?? []` → the
+   same test must go red. This is the bug the whole milestone is built
+   against.
 
-Beide Rot-Zustände in den Bericht, dann sauber zurücknehmen und
-`git status --porcelain` als leer nachweisen.
+Both red states into the report, then revert cleanly and prove
+`git status --porcelain` empty.
 
-- [ ] **Step 6: Committen**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add Sources/macSCPCore/Sessions/LegacyJumpSecretSweep.swift Tests/macSCPCoreTests/LegacyJumpSecretSweepTests.swift
@@ -393,19 +393,19 @@ git commit -m "feat(core): reap the jump secrets the M23 migration orphaned"
 
 ---
 
-### Task 3: Der Knopf in den Einstellungen
+### Task 3: The button in Settings
 
 **Files:**
 - Modify: `Sources/MacSCPApp/SettingsView.swift` (`ManageDataSettingsSection`)
 - Modify: `Sources/MacSCPApp/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 
 **Interfaces:**
-- Consumes: `LegacyJumpSecretSweep` aus Task 2.
+- Consumes: `LegacyJumpSecretSweep` from Task 2.
 
-- [ ] **Step 1: Die vier Kataloge ergänzen**
+- [ ] **Step 1: Add the four catalogs**
 
-Neue Schlüssel, in **allen vier** Dateien, an der Stelle der übrigen
-`manageData.*`-Schlüssel. Englisch als Referenz:
+New keys, in **all four** files, in the place of the other `manageData.*`
+keys. English as the reference:
 
 ```
 "manageData.reapSecrets.button" = "Remove leftover credentials…";
@@ -418,7 +418,7 @@ Neue Schlüssel, in **allen vier** Dateien, an der Stelle der übrigen
 "manageData.reapSecrets.failed" = "The leftover credentials could not be checked. Nothing was removed.";
 ```
 
-Deutsch:
+German:
 
 ```
 "manageData.reapSecrets.button" = "Übrige Zugangsdaten entfernen…";
@@ -431,28 +431,28 @@ Deutsch:
 "manageData.reapSecrets.failed" = "Die übrigen Zugangsdaten konnten nicht geprüft werden. Es wurde nichts entfernt.";
 ```
 
-FR und PL sinngemäß übersetzen — dieselbe Schlüsselmenge, das erzwingt
+Translate FR and PL accordingly — the same key set, enforced by
 `appLayerLanguagesMatchEnglishKeys`.
 
-- [ ] **Step 2: Kataloge prüfen**
+- [ ] **Step 2: Check the catalogs**
 
 ```bash
 for f in Sources/MacSCPApp/Resources/*.lproj/Localizable.strings; do plutil -lint "$f"; done
 swift test --filter LocalizableStrings
 ```
-Erwartet: alle `OK`, Wächtertest grün.
+Expected: all `OK`, guard test green.
 
-- [ ] **Step 3: Den Knopf einbauen**
+- [ ] **Step 3: Wire in the button**
 
-In `ManageDataSettingsSection`, unter den vorhandenen Verknüpfungen, ein
-eigener Abschnitt. Zustand:
+In `ManageDataSettingsSection`, below the existing links, its own section.
+State:
 
 ```swift
 @State private var confirmingReap = false
 @State private var reapResult: String?
 ```
 
-Der Knopf, der Dialog nach Hausmuster, und der Bericht darunter:
+The button, the dialog after the house pattern, and the report below:
 
 ```swift
 Button(L10n.string("manageData.reapSecrets.button", "Remove leftover credentials…")) {
@@ -471,9 +471,9 @@ Button(L10n.string("manageData.reapSecrets.button", "Remove leftover credentials
 if let reapResult { Text(reapResult).font(.callout).foregroundStyle(.secondary) }
 ```
 
-Der Aufruf. **Der Fehlerfall nennt keine Ursache** — der Nutzer kann an einer
-unlesbaren Store-Datei nichts ablesen, und die Meldung soll vor allem sagen,
-dass nichts entfernt wurde:
+The call. **The failure case names no cause** — the user cannot draw any
+conclusion from an unreadable store file, and the message should above all
+say that nothing was removed:
 
 ```swift
 private func runReap() {
@@ -503,21 +503,21 @@ private func runReap() {
 }
 ```
 
-**Die Namen der `defaultDirectory`-Eigenschaften vor dem Schreiben prüfen** —
-`SessionStore.defaultDirectory` existiert (`ContentView.swift` benutzt sie);
-für die anderen beiden Stores nachsehen, wie `ContentView` sie konstruiert,
-und dieselbe Quelle benutzen statt einen Pfad zu erfinden. Weicht etwas ab,
-ist das ein Befund für den Bericht, keine stille Anpassung.
+**Check the `defaultDirectory` property names before writing** —
+`SessionStore.defaultDirectory` exists (`ContentView.swift` uses it); for
+the other two stores, look up how `ContentView` constructs them, and use
+the same source rather than inventing a path. If something deviates, that
+is a finding for the report, not a silent adjustment.
 
-- [ ] **Step 4: Bauen**
+- [ ] **Step 4: Build**
 
 ```bash
 swift build
 swift test
 ```
-Erwartet: sauber inklusive App-Target, Suite grün, Zahl ≥ 1619 + neue Tests.
+Expected: clean including the App target, suite green, count ≥ 1619 + new tests.
 
-- [ ] **Step 5: Committen**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Sources/MacSCPApp
@@ -526,19 +526,19 @@ git commit -m "feat(app): offer the leftover-credential cleanup in settings"
 
 ---
 
-### Task 4: Meilenstein-Abschluss
+### Task 4: Milestone close
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-09-m27-abschluss.md`
 
-- [ ] **Step 1: Volle Verifikation**
+- [ ] **Step 1: Full verification**
 
 ```bash
 swift build
 swift test
 ```
 
-Docker-Rig **aus dem Haupt-Checkout**, nie aus einem Worktree:
+Docker rig **from the main checkout**, never from a worktree:
 
 ```bash
 docker compose -f docker/test-server/compose.yml up -d
@@ -546,80 +546,80 @@ MACSCP_ITEST=1 swift test
 MACSCP_KEYCHAIN=1 swift test --filter Keychain
 ```
 
-Bleibt ein Lauf bei 0 % CPU stehen, ist das der seit M20 bekannte Hänger
-(`2026-08-08-testsuite-haenger-untersuchung.md`) — abbrechen, neu starten, im
-Bericht vermerken, **nicht** als M27-Befund zählen. Danach
-`pgrep -fl swiftpm-testing-helper` auf Waisen prüfen.
+If a run stalls at 0% CPU, that is the hang known since M20
+(`2026-08-08-testsuite-haenger-untersuchung.md`) — abort, restart, note it
+in the report, do **not** count it as an M27 finding. Afterward check for
+orphans with `pgrep -fl swiftpm-testing-helper`.
 
-Kataloge:
+Catalogs:
 
 ```bash
 for f in Sources/MacSCPApp/Resources/*.lproj/Localizable.strings Sources/macSCPCore/Resources/*.lproj/Localizable.strings; do plutil -lint "$f"; done
 ```
 
-- [ ] **Step 2: Die Gegenprobe zum Protokoll**
+- [ ] **Step 2: The counter-proof on the protocol**
 
-Belegen, dass das `SecretStore`-Protokoll **unverändert** ist — die Zusage der
-Spec, dass keine der zwölf Konformitäten angefasst werden musste:
+Prove that the `SecretStore` protocol is **unchanged** — the spec's promise
+that none of the twelve conformances had to be touched:
 
 ```bash
 git diff 05a1811..HEAD -- Sources/macSCPCore/Sessions/SecretStore.swift
 ```
 
-Erwartet: leer. Ein leeres Diff ist hier ein echter Beleg, weil eine
-Protokolländerung zwingend in dieser Datei stünde — anders als bei einem Grep,
-dessen Leerergebnis nichts beweist.
+Expected: empty. An empty diff is real evidence here, because a protocol
+change would necessarily show in this file — unlike a grep, whose empty
+result proves nothing.
 
-- [ ] **Step 3: Den Bericht schreiben**
+- [ ] **Step 3: Write the report**
 
-Form von `2026-08-08-m26-abschluss.md`. Muss enthalten: die Verifikation mit
-Zahlen; die elf Erfolgskriterien der Spec mit **Beleg statt Behauptung**; die
-beiden Rot-Zustände der Gegenprobe aus Task 2 Step 5 im Wortlaut; die zwei
-Entscheidungen, die während der Umsetzung zurückgenommen wurden (der
-Rohdatei-Weg als Gürtel statt tragender Wand; der Audit-Eintrag, den das
-sitzungsgebundene Log nicht halten kann) mit dem, was sie über das Vorgehen
-sagen; was offen bleibt (abgestandenes Secret im Login-Set-Modus,
-Managed-Key-Rollback-Waisen, app-weites Audit); und die Zahl der unversendeten
-Commits (`git rev-list --count origin/develop..develop`).
+Shape of `2026-08-08-m26-abschluss.md`. Must contain: the verification
+with numbers; the spec's eleven success criteria with **evidence rather
+than assertion**; the two red states of the counter-proof from Task 2 Step
+5 verbatim; the two decisions that were reverted during implementation
+(the raw-file route as a belt rather than a load-bearing wall; the audit
+entry the session-bound log cannot hold) with what they say about the
+approach; what remains open (a stale secret in login-set mode,
+managed-key rollback orphans, an app-wide audit); and the number of
+unpushed commits (`git rev-list --count origin/develop..develop`).
 
-- [ ] **Step 4: Committen, nicht pushen**
+- [ ] **Step 4: Commit, do not push**
 
 ```bash
 git add docs/superpowers/specs/2026-08-09-m27-abschluss.md
 git commit -m "docs(m27): record the milestone close"
 ```
 
-Der Push erfolgt ausschließlich auf ausdrückliche Anordnung des Maintainers.
+The push happens only on the maintainer's explicit order.
 
 ---
 
-## Selbstreview des Plans
+## Plan self-review
 
-**Spec-Abdeckung.** Kriterium 1–2 → T2/Step 1 (die ersten beiden Tests);
-3 → T2/Step 1 (`anUnreadableSessionFileDeletesNothingAndThrows`) und T2/Step 5
-(die Gegenprobe, die ihn scharf macht); 4 → T2/Step 3, Signatur nimmt Stores,
-kein ViewModel; 5 → T1/Step 1 und die drei Unlesbar-Tests in T2; 6 → T1 und
-T2 je ein Test; 7 → T2 `theSweepNeverReadsASecret`; 8 → T2
+**Spec coverage.** Criterion 1–2 → T2/Step 1 (the first two tests);
+3 → T2/Step 1 (`anUnreadableSessionFileDeletesNothingAndThrows`) and T2/Step 5
+(the counter-proof that arms it); 4 → T2/Step 3, signature takes stores,
+no ViewModel; 5 → T1/Step 1 and the three unreadable-file tests in T2;
+6 → T1 and T2, one test each; 7 → T2 `theSweepNeverReadsASecret`; 8 → T2
 `aFailingDeleteIsCountedAndTheRestStillRun`; 9 → T1
-`readingLegacyJumpSecretIDsLeavesTheFileByteIdentical`; 10 → T3, der Bericht
-formatiert nur Zahlen; 11 → T3/Step 2.
+`readingLegacyJumpSecretIDsLeavesTheFileByteIdentical`; 10 → T3, the report
+only formats numbers; 11 → T3/Step 2.
 
-**Typkonsistenz.** `LegacyStoredSession.jump` ist `StoredSession.JumpSpec?`
-mit `secretID: UUID`; `StoredSession.jump` ist `ssh?.jump`, ebenfalls
-`JumpSpec?`. Beide Seiten lesen dieselbe Eigenschaft.
+**Type consistency.** `LegacyStoredSession.jump` is `StoredSession.JumpSpec?`
+with `secretID: UUID`; `StoredSession.jump` is `ssh?.jump`, likewise
+`JumpSpec?`. Both sides read the same property.
 
-**Zwei bewusste Unschärfen, ausgewiesen statt versteckt:**
+**Two deliberate unclarities, disclosed rather than hidden:**
 
-1. **Die `defaultDirectory`-Namen für `LoginSetStore` und `ManagedKeyStore`
-   habe ich nicht verifiziert.** `SessionStore.defaultDirectory` ist belegt;
-   für die anderen beiden sagt der Plan, wo nachzusehen ist, statt einen Namen
-   zu erfinden, den der Implementierer dann glaubt. Eine Planzeile, die ich
-   nicht geprüft habe, ist eine Hypothese — und diese ist als solche markiert.
-2. **Die Testrümpfe in Task 2 Step 1 sind Namen plus Doc-Kommentar, kein
-   fertiger Code.** Das ist hier Absicht: jeder dieser Tests baut drei echte
-   Stores über temporäre Verzeichnisse, und die Helfer dafür stehen bereits in
-   den vorhandenen Suiten. Ausgeschriebene Rümpfe wären elf Mal derselbe
-   Aufbau, den der Implementierer ohnehin an einer Stelle zusammenzieht. Was
-   der Plan **nicht** offenlässt, ist die Frage, was jeder Test beweisen muss
-   — das steht im Doc-Kommentar, und Step 5 nagelt die zwei wichtigsten per
-   Mutation fest.
+1. **I did not verify the `defaultDirectory` names for `LoginSetStore` and
+   `ManagedKeyStore`.** `SessionStore.defaultDirectory` is confirmed; for
+   the other two, the plan says where to look instead of inventing a name
+   the implementer would then trust. A plan line I have not checked is a
+   hypothesis — and this one is marked as such.
+2. **The test bodies in Task 2 Step 1 are names plus doc comments, not
+   finished code.** That is deliberate here: each of these tests builds
+   three real stores over temporary directories, and the helpers for that
+   already exist in the current suites. Fully written bodies would be the
+   same setup eleven times over, which the implementer would consolidate
+   in one place anyway. What the plan does **not** leave open is what each
+   test has to prove — that is in the doc comment, and Step 5 pins the two
+   most important ones by mutation.

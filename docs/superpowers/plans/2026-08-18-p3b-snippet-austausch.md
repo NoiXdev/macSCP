@@ -1,85 +1,85 @@
-# P3b: Snippets exportieren und importieren — Implementation Plan
+# P3b: Exporting and Importing Snippets — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Snippets lassen sich in eine Datei schreiben und wieder einlesen —
-über dieselbe Envelope wie Sitzungen und Login-Sets, immer ohne Passwort.
+**Goal:** Snippets can be written to a file and read back — via the same
+envelope as sessions and login sets, always without a password.
 
-**Architecture:** Ein Codec über `ExportEnvelopeCodec` mit eigenem
-Formatnamen, ein Planer auf dem **geteilten** `ImportConflictArbiter`, und
-zwei Sheets nach dem Muster der vorhandenen. Nichts an der Envelope selbst
-wird angefasst.
+**Architecture:** A codec on top of `ExportEnvelopeCodec` with its own
+format name, a planner on the **shared** `ImportConflictArbiter`, and two
+sheets following the pattern of the existing ones. Nothing about the
+envelope itself is touched.
 
 **Tech Stack:** Swift 6, `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+,
-SwiftUI, Swift Testing, zwei Testtargets.
+SwiftUI, Swift Testing, two test targets.
 
-Spec: `docs/superpowers/specs/2026-08-18-p3-ordnung-design.md`, Abschnitt P3b.
+Spec: `docs/superpowers/specs/2026-08-18-p3-ordnung-design.md`, section P3b.
 
 ## Global Constraints
 
-- **Code, Kommentare, Testnamen: Englisch.** Interne Doku (`docs/`) Deutsch.
-- **Jeder neue L10n-Schlüssel in allen vier Katalogen** (en/de/fr/pl),
-  identische Schlüsselmengen. Nachweis:
+- **Code, comments, test names: English.** Internal docs (`docs/`) German.
+- **Every new L10n key in all four catalogs** (en/de/fr/pl), identical key
+  sets. Proof:
   `for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done`
-- **Nie eine Zeilennummer in einen Kommentar.**
-- **Kein Secret in Log, Fehler oder Testfehlermeldung.** Snippets enthalten
-  keine — und dieses Format bekommt **keinen Krypto-Pfad**, der etwas
-  anderes suggeriert.
-- **Die Prosa dieses Plans ist eine zu prüfende Behauptung.** In der
-  Vorphase steckte in **fünf** Task-Beschreibungen ein sachlicher Fehler
-  über den Code. Weicht etwas ab, ist **der Plan** falsch — melden, nicht
-  anpassen.
-- **Zwei Proben vor jedem Commit**, beide:
-  1. Bliebe ein Test grün, wenn die Funktion konstant zurückgäbe?
-  2. **Welche Behauptung meines Doc-Kommentars beobachtet kein Test?**
-     Diese Frage hat in den letzten drei Phasen jedes Mal etwas gefunden,
-     zweimal eine schlicht falsche Aussage.
-- **Die GUI wird nicht gestartet.** `scripts/package-app` erlaubt,
-  `scripts/release` nicht.
-- Conventional Commits, Englisch, Footer:
+- **Never a line number in a comment.**
+- **No secret in a log, error, or test failure message.** Snippets contain
+  none — and this format gets **no crypto path** that would suggest
+  otherwise.
+- **This plan's prose is a claim to be checked.** In the previous phase,
+  **five** task descriptions contained a factual error about the code. If
+  something diverges, **the plan** is wrong — report it, do not adapt.
+- **Two probes before every commit**, both:
+  1. Would a test stay green if the function returned a constant?
+  2. **Which claim of my doc comment is observed by no test?**
+     This question has found something every time in the last three
+     phases, twice a plainly false statement.
+- **The GUI is not started.** `scripts/package-app` is allowed,
+  `scripts/release` is not.
+- Conventional Commits, English, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- Volle Suite grün vor jedem Commit. Ausgangsstand: **2024 Tests in 174
-  Suiten** — selbst nachmessen, nie abschreiben.
+- Full suite green before every commit. Starting state: **2024 tests in 174
+  suites** — measure it yourself, never copy it from here.
 
-## Gemessener Ist-Zustand
+## Measured current state
 
-Selbst nachgeprüft, bevor der Plan geschrieben wurde — prüfe es trotzdem:
+Verified myself before writing the plan — check it anyway:
 
-- `ExportEnvelopeCodec` ist bereits generisch:
+- `ExportEnvelopeCodec` is already generic:
   `encode<P: Codable>(_:format:version:password:)`, `probe`, `decode`.
-  Bei `password == nil` entsteht ein Klartext-Payload mit
-  `encrypted: false`. **Ein Klartextpfad existiert also schon.**
-- Zwei Formate nutzen sie: `SessionExportCodec` (`macscp-sessions`) und
-  `LoginSetExportCodec` (`macscp-logins`). Beide bestehen aus
-  `static let formatName`, `static let currentVersion` und drei dünnen
-  `encode/probe/decode`-Wrappern über die Envelope.
-- `LoginSetImportPlanner` ist der Präzedenzfall für **namensbasierte**
-  Duplikate: `plan(existing:incoming:arbiter:) async -> LoginSetImportPlan`,
-  Kollisionsschlüssel **getrimmter, groß-/kleinschreibungsunabhängiger
-  Name**, `takenNames` mit dem Bestand vorbelegt und bei jedem vergebenen
-  Namen erweitert, `replacedExistingIDs` gegen Doppelersetzung, und
-  **Abbruch verwirft den ganzen Lauf**, nicht nur den Rest.
-- `ImportConflict(itemName:kindLabel:reason:)` mit `reason: .name`.
-- `SnippetStore` schreibt `snippets.json` als **nacktes Array ohne
-  Versionsfeld**; Methoden `all() throws`, `save(_:) throws`,
-  `remove(id:) throws`. Ein Export- oder Importpfad existiert nicht.
-- `SnippetsLoad` (App) unterscheidet `.loaded([Snippet])` von `.unreadable`.
-- Die UTTypes stehen in `Sources/MacSCPAppKit/SessionExportImportSheets.swift`
-  als `UTType(exportedAs: "dev.noix.macscp.…", conformingTo: .json)`.
+  With `password == nil`, a plaintext payload with `encrypted: false`
+  results. **A plaintext path already exists.**
+- Two formats use it: `SessionExportCodec` (`macscp-sessions`) and
+  `LoginSetExportCodec` (`macscp-logins`). Both consist of
+  `static let formatName`, `static let currentVersion`, and three thin
+  `encode/probe/decode` wrappers around the envelope.
+- `LoginSetImportPlanner` is the precedent for **name-based** duplicates:
+  `plan(existing:incoming:arbiter:) async -> LoginSetImportPlan`,
+  collision key **trimmed, case-insensitive name**, `takenNames`
+  pre-seeded with the existing stock and extended on every name assigned,
+  `replacedExistingIDs` against double replacement, and **cancellation
+  discards the whole run**, not just the rest.
+- `ImportConflict(itemName:kindLabel:reason:)` with `reason: .name`.
+- `SnippetStore` writes `snippets.json` as a **bare array with no version
+  field**; methods `all() throws`, `save(_:) throws`, `remove(id:) throws`.
+  No export or import path exists.
+- `SnippetsLoad` (app) distinguishes `.loaded([Snippet])` from
+  `.unreadable`.
+- The UTTypes live in `Sources/MacSCPAppKit/SessionExportImportSheets.swift`
+  as `UTType(exportedAs: "dev.noix.macscp.…", conformingTo: .json)`.
 
-## Dateien
+## Files
 
-| Datei | Zuständig für |
+| File | Responsible for |
 |---|---|
-| `Sources/macSCPCore/Terminal/SnippetExportCodec.swift` (neu) | Payload + Format `macscp-snippets` |
-| `Sources/macSCPCore/Terminal/SnippetImportPlanner.swift` (neu) | Duplikate am Namen, geteilter Arbiter |
-| `Sources/MacSCPAppKit/SessionExportImportSheets.swift` | neuer UTType |
-| `Sources/MacSCPAppKit/SnippetsSheet.swift` | Export-/Import-Knöpfe |
-| die vier `Localizable.strings` | neue Schlüssel |
+| `Sources/macSCPCore/Terminal/SnippetExportCodec.swift` (new) | payload + format `macscp-snippets` |
+| `Sources/macSCPCore/Terminal/SnippetImportPlanner.swift` (new) | duplicates by name, shared arbiter |
+| `Sources/MacSCPAppKit/SessionExportImportSheets.swift` | new UTType |
+| `Sources/MacSCPAppKit/SnippetsSheet.swift` | export/import buttons |
+| the four `Localizable.strings` | new keys |
 
 ---
 
-### Task 1: Das Austauschformat
+### Task 1: The exchange format
 
 **Files:**
 - Create: `Sources/macSCPCore/Terminal/SnippetExportCodec.swift`
@@ -100,14 +100,13 @@ public enum SnippetExportCodec {
 }
 ```
 
-**Beachte die Asymmetrie zu den beiden vorhandenen Codecs:** deren
-`encode`/`decode` nehmen ein `password: String?`. **Dieser nicht.** Das
-Format trägt keine Secrets, und ein Passwort-Parameter wäre eine Einladung,
-später eine Verschlüsselung anzubieten, die nichts schützt. Intern wird
-`password: nil` übergeben — **und genau das ist zu pinnen**, nicht bloß zu
-kommentieren.
+**Note the asymmetry with the two existing codecs:** their `encode`/`decode`
+take a `password: String?`. **This one does not.** The format carries no
+secrets, and a password parameter would be an invitation to later offer an
+encryption that protects nothing. Internally, `password: nil` is passed —
+**and that is exactly what must be pinned**, not merely commented.
 
-- [ ] **Schritt 1: Die Tests zuerst**
+- [ ] **Step 1: Tests first**
 
 ```swift
 @Test func aRoundTripPreservesNameCommandAndTags() throws {
@@ -140,25 +139,24 @@ kommentieren.
 }
 ```
 
-Die letzten beiden **ausformulieren**, sobald du die Bau-Stellen gelesen
-hast. Ein Entwurf, der stehen bleibt, ist ein Planfehler.
+**Spell out** the last two once you have read the actual construction
+sites. A draft that stays as a draft is a plan defect.
 
-- [ ] **Schritt 2: Rot, dann der Codec**
+- [ ] **Step 2: Red, then the codec**
 
-Nach dem Muster von `LoginSetExportCodec`: `formatName = "macscp-snippets"`,
-`currentVersion = 1`, drei dünne Wrapper über `ExportEnvelopeCodec` mit
+Following the pattern of `LoginSetExportCodec`: `formatName = "macscp-snippets"`,
+`currentVersion = 1`, three thin wrappers around `ExportEnvelopeCodec` with
 `password: nil`.
 
-- [ ] **Schritt 3: Das Passwort pinnen, nicht kommentieren**
+- [ ] **Step 3: Pin the password, don't just comment it**
 
-Ein Test, der rot wird, wenn jemand später doch ein Passwort durchreicht.
-**Wie** du das prüfbar machst, entscheidest du — über das erzeugte
-`encrypted`-Feld, über einen Quelltext-Wächter nach dem Muster der
-vorhandenen, oder anders. Begründe die Wahl im Bericht; ein Wächter ist
-hier ausdrücklich **nicht** die einzige Möglichkeit, und das Projekt hat
-davon bereits sieben.
+A test that goes red if someone later passes a password through after all.
+**How** you make that checkable is your call — via the generated
+`encrypted` field, via a source guard following the existing pattern, or
+otherwise. Justify the choice in the report; a guard is explicitly **not**
+the only option here, and the project already has seven of them.
 
-- [ ] **Schritt 4: Volle Suite + Commit**
+- [ ] **Step 4: Full suite + commit**
 
 ```bash
 swift test
@@ -167,7 +165,7 @@ git commit -m "feat(core): give snippets an exchange format without a crypto pat
 
 ---
 
-### Task 2: Der Import-Planer
+### Task 2: The import planner
 
 **Files:**
 - Create: `Sources/macSCPCore/Terminal/SnippetImportPlanner.swift`
@@ -199,21 +197,21 @@ public enum SnippetImportPlanner {
 }
 ```
 
-**Lies `LoginSetImportPlanner` vollständig, bevor du anfängst.** Es ist der
-Präzedenzfall, und es löst vier Probleme, die dir sonst einzeln begegnen:
-der Kollisionsschlüssel ist der **getrimmte, groß-/kleinschreibungs-
-unabhängige** Name; `takenNames` wird mit dem Bestand vorbelegt **und bei
-jedem vergebenen Namen erweitert**, damit zwei umbenannte Einträge aus
-derselben Datei nicht miteinander kollidieren; ein vorhandener Eintrag darf
-pro Lauf **höchstens einmal** ersetzt werden; und **Abbruch verwirft den
-gesamten Lauf**, nicht nur den Rest. Übernimm alle vier, oder begründe im
-Bericht, warum eines für Snippets nicht gilt.
+**Read `LoginSetImportPlanner` in full before you start.** It is the
+precedent, and it solves four problems you would otherwise hit one at a
+time: the collision key is the **trimmed, case-insensitive** name;
+`takenNames` is pre-seeded with the existing stock **and extended on every
+name assigned**, so that two renamed entries from the same file do not
+collide with each other; an existing entry may be replaced **at most once**
+per run; and **cancellation discards the entire run**, not just the rest.
+Adopt all four, or justify in the report why one does not apply to
+snippets.
 
-**Warum groß-/kleinschreibungsunabhängig, obwohl Tags case-sensitiv sind:**
-ein Snippet-*Name* ist ein Name wie ein Login-Set-Name, kein Tag. Die beiden
-Importflüsse sollen sich gleich anfühlen, und das Konflikt-Sheet zeigt beide.
+**Why case-insensitive, even though tags are case-sensitive:** a snippet
+*name* is a name like a login-set name, not a tag. The two import flows
+should feel the same, and the conflict sheet shows both.
 
-- [ ] **Schritt 1: Die Tests zuerst**
+- [ ] **Step 1: Tests first**
 
 ```swift
 private func snippet(_ name: String, _ command: String = "echo hi") -> Snippet {
@@ -251,12 +249,12 @@ private func snippet(_ name: String, _ command: String = "echo hi") -> Snippet {
 }
 ```
 
-Die Arbiter-Helfer und den letzten Test **ausformulieren**, nachdem du
-gelesen hast, wie `LoginSetImportPlannerTests` seinen Arbiter baut.
+**Spell out** the arbiter helpers and the last test after you have read
+how `LoginSetImportPlannerTests` builds its arbiter.
 
-- [ ] **Schritt 2: Rot, dann der Planer**
+- [ ] **Step 2: Red, then the planner**
 
-- [ ] **Schritt 3: Volle Suite + Commit**
+- [ ] **Step 3: Full suite + commit**
 
 ```bash
 swift test
@@ -265,40 +263,39 @@ git commit -m "feat(core): plan a snippet import on the shared conflict arbiter"
 
 ---
 
-### Task 3: Exportieren aus dem Snippet-Sheet
+### Task 3: Exporting from the snippet sheet
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SessionExportImportSheets.swift` (UTType)
 - Modify: `Sources/MacSCPAppKit/SnippetsSheet.swift`
-- Modify: die vier `Localizable.strings`
+- Modify: the four `Localizable.strings`
 
-**Gemessener Ist-Zustand:** `SnippetsSheet` hat bereits Suchfeld,
-Tag-Filterreihe und Fehleranzeige, und liest den Store über `SnippetsLoad`,
-das `.loaded` von `.unreadable` unterscheidet. Sieh dir an, wie das
-Sitzungs-Sheet seinen `fileExporter` aufruft, und folge dem.
+**Measured current state:** `SnippetsSheet` already has a search field, a
+tag filter row, and error display, and reads the store via `SnippetsLoad`,
+which distinguishes `.loaded` from `.unreadable`. Look at how the session
+sheet calls its `fileExporter`, and follow that.
 
-- [ ] **Schritt 1: UTType**
+- [ ] **Step 1: UTType**
 
-`dev.noix.macscp.snippets`, konform zu `.json`, nach dem Muster der beiden
-vorhandenen.
+`dev.noix.macscp.snippets`, conforming to `.json`, following the pattern
+of the two existing ones.
 
-- [ ] **Schritt 2: Der Export**
+- [ ] **Step 2: The export**
 
-Ein Knopf im Snippet-Sheet, der die **aktuell sichtbaren** Snippets
-exportiert — also das, was Suche und Tag-Filter übrig lassen. Das ist die
-Auswahlmechanik, die das Sheet schon hat; ein zweites Auswahl-UI wäre
-doppelt.
+A button in the snippet sheet that exports the **currently visible**
+snippets — i.e. what the search and tag filter leave behind. That is the
+selection mechanism the sheet already has; a second selection UI would be
+redundant.
 
-**Bei `.unreadable` darf kein Export angeboten werden** — eine leere Datei
-aus einem unlesbaren Store zu schreiben wäre stiller Datenverlust in
-Dateiform. Prüfe, wie das Sheet diesen Zustand heute anzeigt, und schließe
-dich an.
+**No export may be offered in the `.unreadable` state** — writing an empty
+file from an unreadable store would be silent data loss in file form.
+Check how the sheet displays this state today, and follow suit.
 
-Neue Schlüssel (alle vier Kataloge):
-- `snippets.export` — „Export…"
-- `snippets.export.filename` — Vorschlagsname der Datei
+New keys (all four catalogs):
+- `snippets.export` — "Export…"
+- `snippets.export.filename` — the file's suggested name
 
-- [ ] **Schritt 3: Katalog-Nachweis + volle Suite + Commit**
+- [ ] **Step 3: Catalog proof + full suite + commit**
 
 ```bash
 for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done
@@ -308,40 +305,38 @@ git commit -m "feat(app): export the visible snippets to a file"
 
 ---
 
-### Task 4: Importieren, mit dem geteilten Konflikt-Sheet
+### Task 4: Importing, with the shared conflict sheet
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SnippetsSheet.swift`
-- Modify: die vier `Localizable.strings`
-- Modify/Create: Tests
+- Modify: the four `Localizable.strings`
+- Modify/Create: tests
 
-**Gemessener Ist-Zustand:** Das geteilte Konflikt-Sheet aus M19 wird bereits
-von zwei Importflüssen benutzt. Finde es, sieh nach, wie der Sitzungs- oder
-Login-Set-Import es an den `ImportConflictArbiter` hängt, und mach es
-genauso. `SnippetImportPlanner.kindLabel` ist der stabile Bezeichner, den
-die App auf eine übersetzte Bezeichnung abbildet — Core kennt keine
-Anzeigesprache.
+**Measured current state:** The shared conflict sheet from M19 is already
+used by two import flows. Find it, see how the session or login-set import
+hooks it up to the `ImportConflictArbiter`, and do the same.
+`SnippetImportPlanner.kindLabel` is the stable identifier the app maps to a
+translated label — Core knows no display language.
 
-- [ ] **Schritt 1: Der Import**
+- [ ] **Step 1: The import**
 
-`fileImporter` → `probe` → `decode` → `plan` → anwenden. Das Anwenden
-schreibt über `SnippetStore.save(_:)`; ein `replace` muss den vorhandenen
-Eintrag treffen, kein zweites Snippet danebenlegen. **Prüfe am Store, wie
-`save` einen vorhandenen Eintrag behandelt**, statt es anzunehmen.
+`fileImporter` → `probe` → `decode` → `plan` → apply. Applying writes via
+`SnippetStore.save(_:)`; a `replace` must hit the existing entry, not place
+a second snippet next to it. **Check the store to see how `save` handles an
+existing entry**, rather than assuming it.
 
-Neue Schlüssel (alle vier Kataloge):
-- `snippets.import` — „Import…"
-- `snippets.import.error` — Fehlertext für eine unlesbare Datei
-- `snippets.import.result %lld` — wie viele importiert wurden
-- die übersetzte Bezeichnung für `kindLabel` im Konflikt-Sheet
+New keys (all four catalogs):
+- `snippets.import` — "Import…"
+- `snippets.import.error` — error text for an unreadable file
+- `snippets.import.result %lld` — how many were imported
+- the translated label for `kindLabel` in the conflict sheet
 
-- [ ] **Schritt 2: Was passiert, wenn die Datei nicht passt**
+- [ ] **Step 2: What happens when the file doesn't fit**
 
-Eine Sitzungs- oder Login-Set-Datei muss eine verständliche Absage
-bekommen, keinen Absturz und keinen leeren Import. `probe` beantwortet das;
-verdrahte die Antwort.
+A session or login-set file must get an understandable rejection, no
+crash, and no empty import. `probe` answers this; wire the answer up.
 
-- [ ] **Schritt 3: Katalog-Nachweis + volle Suite + Commit**
+- [ ] **Step 3: Catalog proof + full suite + commit**
 
 ```bash
 for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done
@@ -351,12 +346,12 @@ git commit -m "feat(app): import snippets through the shared conflict sheet"
 
 ---
 
-### Task 5: Phasenabschluss
+### Task 5: Phase closeout
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-18-p3b-abschluss.md`
 
-- [ ] **Schritt 1: Messen**
+- [ ] **Step 1: Measure**
 
 ```bash
 swift test 2>&1 | tail -3
@@ -364,20 +359,21 @@ for f in $(git ls-files '*.strings'); do plutil -lint "$f"; done
 MACSCP_VERSION="1.2.0-dev" MACSCP_BUILD="$(git rev-list --count HEAD)" ./scripts/package-app
 ```
 
-Den Build **im Hintergrund** starten und weiterarbeiten; danach beide
-Binaries (`lipo -archs`), beide Ressourcen-Bundles, alle vier `.lproj` und
-`plutil -lint` auf die Info.plist prüfen. **Die App wird nicht gestartet.**
+Start the build **in the background** and keep working; afterward check
+both binaries (`lipo -archs`), both resource bundles, all four `.lproj`
+directories, and `plutil -lint` on the Info.plist. **The app is not
+started.**
 
-- [ ] **Schritt 2: Bericht**
+- [ ] **Step 2: Report**
 
-Er nennt die gemessenen Zahlen; was durch Tests gehalten wird und was nur
-durch Review; wie das fehlende Passwort gepinnt wurde und warum so; ob der
-Planer alle vier Eigenschaften des Login-Set-Präzedenzfalls übernommen hat;
-und **ausdrücklich**, dass die GUI nicht gestartet wurde — mit der Liste
-dessen, was der Maintainer ansehen muss: Export mit aktivem Filter, Import
-einer Datei mit Namenskonflikt, und die Absage bei einer Sitzungsdatei.
+It states the measured numbers; what is held by tests and what is only by
+review; how the missing password was pinned and why that way; whether the
+planner adopted all four properties of the login-set precedent; and
+**explicitly** that the GUI was not started — with the list of what the
+maintainer needs to look at: export with an active filter, import of a file
+with a name conflict, and the rejection on a session file.
 
-- [ ] **Schritt 3: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git commit -m "docs(app): record the snippet exchange phase"
@@ -385,17 +381,17 @@ git commit -m "docs(app): record the snippet exchange phase"
 
 ---
 
-## Selbstreview dieses Plans
+## Self-review of this plan
 
-**Spec-Abdeckung:** Format ohne Krypto-Pfad → Task 1. Duplikat am Namen auf
-dem geteilten Arbiter → Task 2. Eigener UTType, Sheets nach vorhandenem
-Muster, Auswahl beim Export → Tasks 3 und 4.
+**Spec coverage:** format without a crypto path → Task 1. Duplicate by name
+on the shared arbiter → Task 2. Own UTType, sheets following the existing
+pattern, selection at export time → Tasks 3 and 4.
 
-**Platzhalter:** Vier Tests sind bewusst als Entwurf markiert, weil ihre
-Fixtures von Bau-Stellen abhängen, die am Code zu lesen sind. Jeder sagt das
-ausdrücklich und verlangt Ausformulierung — ein Entwurf, der stehen bleibt,
-ist ein Planfehler.
+**Placeholders:** four tests are deliberately marked as drafts, because
+their fixtures depend on construction sites that must be read from the
+code. Each says so explicitly and requires spelling out — a draft that
+stays a draft is a plan defect.
 
-**Typkonsistenz:** `SnippetExportPayload` in den Tasks 1 und 2 gleich;
-`SnippetImportPlanner.plan(existing:incoming:arbiter:)` einmal definiert;
-`kindLabel` in den Tasks 2 und 4 gleich geschrieben.
+**Type consistency:** `SnippetExportPayload` matches across Tasks 1 and 2;
+`SnippetImportPlanner.plan(existing:incoming:arbiter:)` defined once;
+`kindLabel` spelled the same in Tasks 2 and 4.

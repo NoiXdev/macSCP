@@ -1,17 +1,16 @@
-# Snippet-Syntax-Darstellung: Implementierungsplan
+# Snippet syntax display: implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Das Befehlsfeld im Snippet-Editor färbt Shell-Syntax ein — beim
-Tippen, nicht nur beim Lesen.
+**Goal:** The command field in the snippet editor colours shell syntax —
+while typing, not only when reading.
 
-**Architecture:** Ein getesteter Tokenizer in Core (Text rein, benannte
-Bereiche raus, keine Farben) und ein `NSTextView` im
-`NSViewRepresentable`, der die Farben aus den vorhandenen Design-Tokens
-zieht. Dazu eine getestete Funktion, die Zeilenumbrüche abfängt, weil
-`Snippet.init?` sie ablehnt.
+**Architecture:** A tested tokenizer in Core (text in, named ranges out, no
+colours) and an `NSTextView` in an `NSViewRepresentable` that pulls its
+colours from the existing design tokens. Alongside it, a tested function
+that intercepts line breaks, because `Snippet.init?` rejects them.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, macOS 15+,
 Swift Testing, AppKit.
@@ -20,30 +19,30 @@ Swift Testing, AppKit.
 
 ## Global Constraints
 
-- Code, Kommentare, Testnamen, Commit-Messages **Englisch**; Doku Deutsch.
-- Conventional Commits, Footer:
+- Code, comments, test names, commit messages **English**; docs German.
+- Conventional Commits, footer:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- Core kennt **keine Farben und kein AppKit**. Die Zuordnung Art → Farbe
-  passiert ausschließlich in der App-Schicht.
-- **Kein gespeichertes `type`-Feld am `Snippet`.** Die Sprache ist ein
-  Parameter mit heute einem Fall.
-- TDD rot→grün. Suite: `swift test`.
-- **Die Prosa dieses Plans ist eine zu prüfende Behauptung.** Stimmt eine
-  Signatur oder ein Feldname nicht: melden, nicht still umbauen.
+- Core knows **no colours and no AppKit**. The mapping of kind → colour
+  happens exclusively in the App layer.
+- **No stored `type` field on `Snippet`.** The language is a parameter
+  that today has one case.
+- TDD red→green. Suite: `swift test`.
+- **This plan's prose is a claim to be checked.** If a signature or a
+  field name does not match: report it, do not silently rebuild.
 
-## Dateien
+## Files
 
-| Datei | Rolle |
+| File | Role |
 |---|---|
-| `Sources/macSCPCore/Terminal/SnippetHighlighter.swift` (neu) | Tokenizer + Sprach-Enum + Token-Typ |
-| `Sources/macSCPCore/Terminal/SnippetCommandInput.swift` (neu) | Zeilenumbrüche abfangen |
-| `Tests/macSCPCoreTests/SnippetHighlighterTests.swift` (neu) | beides |
-| `Sources/MacSCPAppKit/SnippetCommandEditor.swift` (neu) | `NSViewRepresentable` über `NSTextView` |
-| `Sources/MacSCPAppKit/SnippetsSheet.swift` | das `TextField` im Editor-Sheet ersetzen |
+| `Sources/macSCPCore/Terminal/SnippetHighlighter.swift` (new) | tokenizer + language enum + token type |
+| `Sources/macSCPCore/Terminal/SnippetCommandInput.swift` (new) | intercept line breaks |
+| `Tests/macSCPCoreTests/SnippetHighlighterTests.swift` (new) | both |
+| `Sources/MacSCPAppKit/SnippetCommandEditor.swift` (new) | `NSViewRepresentable` over `NSTextView` |
+| `Sources/MacSCPAppKit/SnippetsSheet.swift` | replace the `TextField` in the editor sheet |
 
 ---
 
-### Task 1: Tokenizer und Eingabefilter (Core)
+### Task 1: Tokenizer and input filter (Core)
 
 **Files:**
 - Create: `Sources/macSCPCore/Terminal/SnippetHighlighter.swift`
@@ -51,13 +50,13 @@ Swift Testing, AppKit.
 - Test: `Tests/macSCPCoreTests/SnippetHighlighterTests.swift`
 
 **Interfaces:**
-- Consumes: nichts
+- Consumes: nothing
 - Produces: `SnippetHighlighter.tokens(in:language:) -> [SnippetToken]`,
-  `SnippetToken` mit `kind` und `range: Range<String.Index>`,
+  `SnippetToken` with `kind` and `range: Range<String.Index>`,
   `SnippetLanguage.shell`, `SnippetCommandInput.sanitized(_:) -> String`.
-  Task 2 ruft alle drei.
+  Task 2 calls all three.
 
-- [ ] **Step 1: Die Tests schreiben**
+- [ ] **Step 1: Write the tests**
 
 ```swift
 import Foundation
@@ -151,15 +150,15 @@ struct SnippetHighlighterTests {
 }
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Rot bestätigen**
+- [ ] **Step 2: Run the tests, confirm red**
 
 ```bash
 swift test --filter "SnippetHighlighterTests"
 ```
 
-Erwartet: FAIL, `cannot find 'SnippetHighlighter' in scope`.
+Expected: FAIL, `cannot find 'SnippetHighlighter' in scope`.
 
-- [ ] **Step 3: Den Tokenizer anlegen**
+- [ ] **Step 3: Build the tokenizer**
 
 `Sources/macSCPCore/Terminal/SnippetHighlighter.swift`:
 
@@ -298,7 +297,7 @@ public enum SnippetHighlighter {
 }
 ```
 
-- [ ] **Step 4: Den Eingabefilter anlegen**
+- [ ] **Step 4: Build the input filter**
 
 `Sources/macSCPCore/Terminal/SnippetCommandInput.swift`:
 
@@ -324,15 +323,15 @@ public enum SnippetCommandInput {
 }
 ```
 
-- [ ] **Step 5: Tests laufen lassen, Grün bestätigen**
+- [ ] **Step 5: Run the tests, confirm green**
 
 ```bash
 swift test --filter "SnippetHighlighterTests"
 ```
 
-Erwartet: PASS (13 Tests).
+Expected: PASS (13 tests).
 
-- [ ] **Step 6: Volle Suite**
+- [ ] **Step 6: Full suite**
 
 ```bash
 swift test
@@ -349,24 +348,24 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Das einfärbende Eingabefeld (App)
+### Task 2: The colouring input field (App)
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/SnippetCommandEditor.swift`
-- Modify: `Sources/MacSCPAppKit/SnippetsSheet.swift` (das `TextField` im Editor-Sheet)
+- Modify: `Sources/MacSCPAppKit/SnippetsSheet.swift` (the `TextField` in the editor sheet)
 
 **Interfaces:**
 - Consumes: `SnippetHighlighter.tokens(in:language:)`, `SnippetToken.Kind`,
-  `SnippetLanguage.shell`, `SnippetCommandInput.sanitized(_:)` aus Task 1;
+  `SnippetLanguage.shell`, `SnippetCommandInput.sanitized(_:)` from Task 1;
   `DesignTokens.inkNS`, `.inkSecondaryNS`, `.inkTertiaryNS`,
-  `.remoteBlueNS`-Äquivalente über `Color`-Tokens (siehe Step 2)
-- Produces: nichts
+  `.remoteBlueNS` equivalents via `Color` tokens (see Step 2)
+- Produces: nothing
 
-- [ ] **Step 1: Den Representable anlegen**
+- [ ] **Step 1: Build the representable**
 
-`Sources/MacSCPAppKit/SnippetCommandEditor.swift`. Die vier bekannten
-Fallen sind hier je als benannte Vorkehrung umgesetzt — wer eine davon
-entfernt, sollte wissen, was sie hielt:
+`Sources/MacSCPAppKit/SnippetCommandEditor.swift`. The four known
+pitfalls are each implemented here as a named safeguard — whoever
+removes one should know what it was holding up:
 
 ```swift
 import AppKit
@@ -484,19 +483,19 @@ struct SnippetCommandEditor: NSViewRepresentable {
 }
 ```
 
-- [ ] **Step 2: Bauen**
+- [ ] **Step 2: Build**
 
 ```bash
 swift build
 ```
 
-Erwartet: keine Fehler. `NSColor(_ color: Color)` existiert ab macOS 11;
-scheitert das, sind die `…NS`-Varianten der Tokens der Ersatz — melden,
-welche fehlt, statt eine Farbe hart einzutragen.
+Expected: no errors. `NSColor(_ color: Color)` exists from macOS 11
+onward; if that fails, the `…NS` variants of the tokens are the
+replacement — report which one is missing rather than hardcoding a colour.
 
-- [ ] **Step 3: Das Feld im Sheet austauschen**
+- [ ] **Step 3: Swap the field into the sheet**
 
-In `SnippetsSheet.swift`, im Editor-Sheet:
+In `SnippetsSheet.swift`, in the editor sheet:
 
 ```swift
             let commandLabel = L10n.string("snippets.editor.command", "Command")
@@ -511,14 +510,14 @@ In `SnippetsSheet.swift`, im Editor-Sheet:
             }
 ```
 
-- [ ] **Step 4: Bauen und volle Suite**
+- [ ] **Step 4: Build and full suite**
 
 ```bash
 swift build && swift test
 ```
 
-Erwartet: PASS. Kein Test zeichnet den Representable — die Suite beweist
-hier nur, dass nichts anderes zerbrochen ist.
+Expected: PASS. No test in this project renders the representable — the
+suite only proves here that nothing else broke.
 
 - [ ] **Step 5: Commit**
 
@@ -531,40 +530,39 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Abschluss
+### Task 3: Wrap-up
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-19-snippet-syntax-abschluss.md`
 
-- [ ] **Step 1: Volle Suite, Ausgabe lesen BEVOR committet wird**
+- [ ] **Step 1: Full suite, read the output BEFORE committing**
 
 ```bash
 swift test
 ```
 
-- [ ] **Step 2: Prüfen, dass Core keine Farben kennt**
+- [ ] **Step 2: Verify that Core knows no colours**
 
 ```bash
 grep -c "NSColor\|Color\|import AppKit\|import SwiftUI" Sources/macSCPCore/Terminal/SnippetHighlighter.swift
 ```
 
-Erwartet: `0`. Positivkontrolle, damit ein leerer Treffer nicht als Erfolg
-durchgeht:
+Expected: `0`. A positive control, so that an empty hit does not pass as
+success:
 
 ```bash
 grep -c "SnippetToken" Sources/macSCPCore/Terminal/SnippetHighlighter.swift
 ```
 
-Erwartet: mindestens 1 — sonst hat der erste Befehl die falsche Datei
-gelesen.
+Expected: at least 1 — otherwise the first command read the wrong file.
 
-- [ ] **Step 3: Abschlussbericht schreiben**
+- [ ] **Step 3: Write the closing report**
 
-Deutsch, mit: was umgesetzt wurde, Suite-Zahlen, das Ergebnis von Step 2,
-und **ausdrücklich die ausstehende Sichtprüfung** — Cursor-Verhalten beim
-Tippen in der Mitte, ⌘Z, Einfügen eines mehrzeiligen Befehls, Fokusring
-und Ähnlichkeit zum Namensfeld daneben. Kein Test dieses Projekts zeichnet
-`NSViewRepresentable`.
+German, with: what was implemented, suite numbers, the result of Step 2,
+and **explicitly the outstanding visual check** — caret behavior when
+typing in the middle, ⌘Z, pasting a multi-line command, focus ring, and
+resemblance to the name field next to it. No test in this project
+renders `NSViewRepresentable`.
 
 - [ ] **Step 4: Commit**
 

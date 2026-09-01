@@ -1,86 +1,81 @@
-# Backlog: Unbegrenzte Dateischlüsse
+# Backlog: unbounded file closes
 
-**Angelegt:** 2026-08-28, als Nebenbefund zweier Messungen am Abbau gegen
-eine eingefrorene Gegenseite. **Kein Entwurf, und ausdrücklich kein
-gemessener Fehler** — eine gelesene Beobachtung mit einem bekannten
-Vorbild daneben.
+**Logged:** 2026-08-28, as a side finding of two measurements on
+teardown against a frozen peer. **Not a design, and explicitly not a
+measured bug** — a read observation with a known precedent beside it.
 
-## Woher das kommt
+## Where this comes from
 
-Zwei Aufrufe sind an diesem Tag gemessen worden, und beide hingen gegen
-einen schweigenden Peer:
+Two calls were measured that day, and both hung against a silent peer:
 
-- `SFTPClient.close()` in `disconnect()` — behoben mit einer Frist
+- `SFTPClient.close()` in `disconnect()` — fixed with a deadline
   (`7ac7f7e`)
-- `CitadelShell.close()` in `terminal.shutdown()` — behoben mit einer
-  Stufenfrist (`eed1c8a`)
+- `CitadelShell.close()` in `terminal.shutdown()` — fixed with a staged
+  deadline (`eed1c8a`)
 
-Beide hatten dieselbe Form: ein `await` auf eine Antwort der Gegenseite,
-ohne Decke. Beim Nachzählen des zweiten Falls fiel eine dritte Familie
-derselben Form auf.
+Both had the same shape: an `await` on a response from the other side,
+with no ceiling. While recounting the second case, a third family of the
+same shape turned up.
 
-## Der gezählte Befund
+## The counted finding
 
-**8 wörtliche `SFTPFile.close()`-Aufrufstellen**, alle in
-`Sources/macSCPCore/SSH/CitadelFileSystem.swift`, sonst nirgends unter
-`Sources/`. Keine davon ist begrenzt.
+**8 literal `SFTPFile.close()` call sites**, all in
+`Sources/macSCPCore/SSH/CitadelFileSystem.swift`, nowhere else under
+`Sources/`. None of them is bounded.
 
-Die Zahl ist mehrdeutig und deshalb aufgeschlüsselt, weil ein Vorbericht
-sie ohne Aufschlüsselung nannte: **5** haben `SFTPFile` als direkten
-Empfänger, die anderen **3** gehen über die Box `SFTPReadHandle` und
-laufen alle in derselben Stelle zusammen.
+The number is ambiguous and is therefore broken down, because an earlier
+report stated it without a breakdown: **5** have `SFTPFile` as direct
+receiver, the other **3** go through the `SFTPReadHandle` box and all
+converge at the same spot.
 
-**Gelesen, nicht gemessen:** vier davon sitzen in Abbruch- und
-Fehlerzweigen und eine in einem Weg, der über `cancelAll` Schritt 3
-erreichbar ist — also auf einem Abbau-Pfad, und zwar vor
-`terminal.shutdown()`. Eine weitere sitzt in einem `deinit` und läuft
-abgekoppelt: sie hält niemanden auf, kann aber eine Task lecken.
+**Read, not measured:** four of them sit in cancellation and error
+branches and one in a path reachable via `cancelAll` step 3 — i.e. on a
+teardown path, and before `terminal.shutdown()`. Another sits in a
+`deinit` and runs detached: it blocks nobody, but it can leak a task.
 
-**Fünf weitere unbegrenzte Schlüsse in derselben Datei gehören
-ausdrücklich NICHT dazu**, in diesem Durchgang mitgezählt, damit der
-nächste Leser sie nicht für einen Fund hält: die Schlüsse auf
-`jumpAgent`/`targetAgent`. Das sind `AgentAuthContext`-Verbindungen zum
-lokalen SSH-Agenten über einen Unix-Socket — sie sprechen nicht mit der
-Gegenseite und können an einem schweigenden Peer nicht hängen. Sie liegen
-zudem auf dem Verbindungs-, nicht auf dem Abbau-Pfad.
+**Five further unbounded closes in the same file explicitly do NOT
+belong to this**, counted in this pass so the next reader does not
+mistake them for a finding: the closes on `jumpAgent`/`targetAgent`.
+These are `AgentAuthContext` connections to the local SSH agent over a
+Unix socket — they do not talk to the remote side and cannot hang on a
+silent peer. They also sit on the connect path, not the teardown path.
 
-## Warum das kein „behebt sich mit demselben Handgriff" ist
+## Why this is not "fixed by the same move"
 
-`cancelAll` ist inzwischen **gemessen** worden und kommt zurück —
-0,0045 s mit laufendem 8-MB-Download gegen den eingefrorenen Peer,
-dreimal von drei. Der eine Abbau-Pfad, der über diese Aufrufe führt, hängt
-also heute nicht.
+`cancelAll` has since been **measured** and returns —
+0.0045 s with an 8 MB download in flight against the frozen peer, three
+for three. The one teardown path that runs through these calls therefore
+does not hang today.
 
-Das ist der Grund, warum hier ein Eintrag steht und keine Aufgabe: die
-Form ist verdächtig, der Fall ist es nicht. Eine Frist um acht Aufrufe zu
-legen, von denen keiner nachweislich hängt, wäre genau das, was diese
-Woche schon einmal zurückgenommen wurde — die Frist um `cancelAll` fing
-nichts und kostete eine sichtbare Verhaltensänderung.
+That is the reason there is an entry here and not a task: the shape is
+suspicious, the case is not. Putting a deadline around eight calls, none
+of which is demonstrably hanging, would be exactly what was already
+reverted this week — the deadline around `cancelAll` caught nothing and
+cost a visible behavior change.
 
-## Was zu tun wäre, wenn jemand das angeht
+## What would need doing if someone takes this on
 
-**Zuerst messen, nicht begrenzen.** Ein Transfer, der mitten im Schreiben
-oder Lesen steht, während die Gegenseite verstummt — kommt der
-Dateischluss zurück? Das Rig kann das (`docker pause`), und die Technik
-steht in `.superpowers/sdd/frozen-peer-measurement.md` und
+**Measure first, do not bound it.** A transfer mid-write or mid-read
+while the other side goes silent — does the file close return? The rig
+can do this (`docker pause`), and the technique is in
+`.superpowers/sdd/frozen-peer-measurement.md` and
 `.superpowers/sdd/shell-close-measurement.md`.
 
-Kommt er zurück, gehört das Ergebnis hierher und der Eintrag wird
-geschlossen. Kommt er nicht zurück, ist die Behebung bereits gebaut:
-`BoundedClose` trägt die Form, und `TeardownStage` zeigt, wie eine
-aufgegebene Stufe sichtbar wird.
+If it returns, the result belongs here and the entry is closed. If it
+does not return, the fix is already built: `BoundedClose` carries the
+shape, and `TeardownStage` shows how an abandoned stage becomes visible.
 
-**Die Falle beim Messen**, teuer gelernt am selben Tag: jede
-Nachbedingung wird **vor** dem Auftauen abgelesen. Ein Lauf dieser Serie
-war grün, während der Defekt vorlag, weil er den Zustand erst danach
-abfragte. Steht seit dem 2026-08-28 als Regel in `CLAUDE.md`.
+**The trap when measuring**, learned expensively the same day: every
+postcondition is read **before** the thaw. One run of this series was
+green while the defect was present, because it only queried the state
+afterward. This has stood as a rule in `CLAUDE.md` since 2026-08-28.
 
-## Was das nicht ist
+## What this is not
 
-- **Kein bestätigter Fehler.** Niemand hat einen hängenden Dateischluss
-  gesehen; es ist eine Formähnlichkeit zu zwei Fällen, die hingen.
-- **Kein Grund, `deinit` anzufassen.** Der abgekoppelte Schluss dort ist
-  eine eigene Frage (eine geleckte Task, kein Hänger) und gehört nicht in
-  denselben Vorgang.
-- Keine Verallgemeinerung auf andere Backends. S3 und WebDAV fahren über
-  `URLSession`, die eigene Fristen führt.
+- **Not a confirmed bug.** Nobody has seen a hanging file close; it is a
+  shape similarity to two cases that did hang.
+- **No reason to touch `deinit`.** The detached close there is a
+  separate question (a leaked task, not a hang) and does not belong in
+  the same change.
+- No generalization to other backends. S3 and WebDAV run over
+  `URLSession`, which manages its own deadlines.

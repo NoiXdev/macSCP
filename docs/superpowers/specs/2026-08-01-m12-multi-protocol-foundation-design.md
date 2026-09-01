@@ -1,220 +1,227 @@
-# M12 — Multi-Protokoll-Fundament + Fähigkeits-Framework + dünnes S3 Design
+# M12 — Multi-Protocol Foundation + Capability Framework + Thin S3 Design
 
-**Status:** freigegeben (Brainstorming 2026-08-01)
-**Meilenstein:** M12
-**Sprache:** Design-Doc DE; Code/Kommentare EN; UI lokalisiert EN/DE/FR/PL
+**Status:** approved (brainstorming 2026-08-01)
+**Milestone:** M12
+**Language:** design doc EN; code/comments EN; UI localized EN/DE/FR/PL
 
-## Ziel
+## Goal
 
-Die App vom SSH-Einzweck-Client zu einem **Protokoll-Plugin-System** umbauen:
-ein Verbindungstyp-Diskriminator (`kind`), ein **Fähigkeits-Framework**, über
-das jedes Backend Capabilities deklariert und eigene Beiträge (Formular-Schema,
-Info-Felder, Kontextmenü-Einträge) liefert, plus als **erster zweiter Consumer
-ein dünnes S3-Backend** (nur Verbinden + Browsen/Listen). SSH bleibt
-durchgehend grün; S3-Transfer/CRUD/Presigned folgen in M13/M14.
+Rebuild the app from a single-purpose SSH client into a **protocol plugin
+system**: a connection-type discriminator (`kind`), a **capability
+framework** through which each backend declares capabilities and supplies
+its own contributions (form schema, info fields, context menu entries),
+plus, as the **first second consumer, a thin S3 backend** (connect +
+browse/list only). SSH stays green throughout; S3 transfer/CRUD/presigned
+follow in M13/M14.
 
-Maintainer-Entscheidungen aus dem Brainstorming:
-- **Scope:** Fundament + Framework + dünnes S3 **zusammen** (validiert die
-  Abstraktion an zwei maximal verschiedenen Backends — POSIX-FS+Shell vs.
-  flacher Objektspeicher — statt spekulativ).
-- **Echtes Plugin-System** für die Zukunft (WebDAV/FTP/SMB als bloße
-  Descriptors): die Capability-Achsen decken das Spektrum ab.
-- **Login-Sets** bekommen ebenfalls `kind` + per-kind-Auth.
-- **Seams für später:** Datei-Ebene- und Verbindungs-Ebene-Contributions
-  werden als Typen angelegt; Presigned-URL (M14) und Diagnose-Tools (Ping/
-  Traceroute/Speedtest, eigener späterer Meilenstein) docken dort an.
-- Kein Release; weiter auf `develop`.
+Maintainer decisions from the brainstorming session:
+- **Scope:** foundation + framework + thin S3 **together** (validates the
+  abstraction against two maximally different backends — POSIX-FS+shell vs.
+  flat object storage — instead of speculatively).
+- **A real plugin system** for the future (WebDAV/FTP/SMB as mere
+  descriptors): the capability axes cover the spectrum.
+- **Login sets** also get `kind` + per-kind auth.
+- **Seams for later:** file-level and connection-level contributions are
+  laid down as types; presigned URLs (M14) and diagnostic tools (ping/
+  traceroute/speedtest, its own later milestone) dock in there.
+- No release; stays on `develop`.
 
-## Kontext / Ist-Zustand (verifiziert)
+## Context / current state (verified)
 
-- **`RemoteFileSystem`** (Core-Protokoll, `Sources/macSCPCore/RemoteFS/`) ist
-  bereits backend-agnostisch: `list/stat/readStream/write/delete/createDirectory/
-  rename/setPermissions/deleteTree/homeDirectoryPath/disconnect`. `LocalFileSystem`
-  und `CitadelFileSystem` implementieren es; die gesamte Browser-/Transfer-
-  Schicht programmiert gegen `any RemoteFileSystem`. `CitadelFileSystem` wird
-  namentlich nur an **zwei** Stellen referenziert (`ContentView.swift:1168`,
-  `MacSCPCLI.swift:25`).
-- **`RemoteShellProvider`** (`RemoteShell.swift:19`) ist bereits eine optionale
-  Laufzeit-Capability (`as?`) — nur SSH liefert eine Shell. **Das ist das
-  Vorbild** für die Laufzeit-Capability-Protokolle.
-- **`Connector`-Typealias** (`ConnectionViewModel.swift:73`):
+- **`RemoteFileSystem`** (Core protocol, `Sources/macSCPCore/RemoteFS/`) is
+  already backend-agnostic: `list/stat/readStream/write/delete/createDirectory/
+  rename/setPermissions/deleteTree/homeDirectoryPath/disconnect`.
+  `LocalFileSystem` and `CitadelFileSystem` implement it; the entire
+  browser/transfer layer programs against `any RemoteFileSystem`.
+  `CitadelFileSystem` is referenced by name in only **two** places
+  (`ContentView.swift:1168`, `MacSCPCLI.swift:25`).
+- **`RemoteShellProvider`** (`RemoteShell.swift:19`) is already an optional
+  runtime capability (`as?`) — only SSH supplies a shell. **This is the
+  model** for the runtime capability protocols.
+- **`Connector` typealias** (`ConnectionViewModel.swift:73`):
   `@Sendable (SSHConnectionConfig, @escaping @Sendable (HostKeyCandidate) async -> Bool) async throws -> any RemoteFileSystem`.
-  Der zweite Parameter ist der TOFU-Host-Key-Decider — **SSH-spezifisch**.
-- **`StoredSession`** (`Sessions/StoredSession.swift`): `Codable` (synthesized),
-  alle Felder SSH (host/port/username/authKind/keyPath/groupID/loginSetID/jump);
-  Vorwärtskompat über **optionale** Felder (nil = Legacy). **Kein `kind`.**
-  ⚠️ synthesized Codable wendet KEINE Defaults auf fehlende Keys an → ein neues
-  `kind` muss `decodeIfPresent(...) ?? .ssh` sein (custom `init(from:)`), sonst
-  bricht Alt-JSON (M3d-Lektion: synthesized Codable umging schon einmal eine
-  normalisierende Init).
-- **Login-Sets:** `Sessions/LoginSetStore.swift` (+ `LoginSetsSheet.swift`);
-  M10b. Aktuell SSH-geformt.
-- **Formular:** `ConnectionFormView.swift` (~750 Z., SSH-Feldsektionen), gespeist
-  von `ConnectionViewModel` (~888 Z., SSH-Auth/Jump/TOFU).
-- **Kontextmenü:** `BrowserContextMenu.entries(for:side:)` ist eine PURE
-  Core-Funktion (Datei-Ebene). **Info-Dialog:** `InfoPermissionsSheet`
-  (Owner/Group/rwx). **Sidebar/Tab:** `SessionSidebar`, `TabStripView` (hier
-  landet das Typ-Badge).
-- **Package.swift:** `defaultLocalization: "en"`; Core listet lproj explizit,
-  App via `.process("Resources")`. **swift-crypto** ist bereits Core-Dependency
-  (liefert HMAC-SHA256/SHA256 für SigV4 — **keine neue Dependency**). URLSession
-  (Foundation) für HTTP.
-- **Test-Rig:** `docker/test-server/compose.yml` (zwei sshd-Container 2222/2223);
-  `MACSCP_ITEST=1`. Ein **MinIO-Container** slottet identisch ein.
+  The second parameter is the TOFU host-key decider — **SSH-specific**.
+- **`StoredSession`** (`Sessions/StoredSession.swift`): `Codable`
+  (synthesized), all fields SSH (host/port/username/authKind/keyPath/groupID/
+  loginSetID/jump); forward compatibility via **optional** fields (nil =
+  legacy). **No `kind`.** ⚠️ synthesized Codable applies NO defaults to
+  missing keys → a new `kind` must be `decodeIfPresent(...) ?? .ssh` (custom
+  `init(from:)`), otherwise old JSON breaks (the M3d lesson: synthesized
+  Codable already bypassed a normalizing init once).
+- **Login sets:** `Sessions/LoginSetStore.swift` (+ `LoginSetsSheet.swift`);
+  M10b. Currently SSH-shaped.
+- **Form:** `ConnectionFormView.swift` (~750 lines, SSH field sections), fed
+  by `ConnectionViewModel` (~888 lines, SSH auth/jump/TOFU).
+- **Context menu:** `BrowserContextMenu.entries(for:side:)` is a PURE Core
+  function (file level). **Info dialog:** `InfoPermissionsSheet`
+  (owner/group/rwx). **Sidebar/tab:** `SessionSidebar`, `TabStripView`
+  (this is where the type badge lands).
+- **Package.swift:** `defaultLocalization: "en"`; Core lists lproj
+  explicitly, App via `.process("Resources")`. **swift-crypto** is already a
+  Core dependency (supplies HMAC-SHA256/SHA256 for SigV4 — **no new
+  dependency**). URLSession (Foundation) for HTTP.
+- **Test rig:** `docker/test-server/compose.yml` (two sshd containers
+  2222/2223); `MACSCP_ITEST=1`. A **MinIO container** slots in identically.
 
-## Architektur
+## Architecture
 
-### 1. Diskriminator & Config (Core)
+### 1. Discriminator & config (Core)
 
 - **`ConnectionKind`** (`enum: String, Codable, CaseIterable, Sendable`):
-  `case ssh, s3` (offen für `webdav`, `ftp`, `smb`).
+  `case ssh, s3` (open for `webdav`, `ftp`, `smb`).
 - **`ConnectionConfig`** (`enum`): `case ssh(SSHConnectionConfig)`,
-  `case s3(S3ConnectionConfig)`. Exhaustive-switchbar; typsicher.
-- **`S3ConnectionConfig`** (neu, Core): `accessKeyID`, `region`, `endpoint`
-  (S3-kompatibel), `bucket`, `usePathStyle: Bool`, optional `sessionToken`.
-  **Secret Access Key NICHT im Config** — nur in der Keychain (`SecretStore`),
-  wie das SSH-Passwort.
-- **`Connector`** wird generalisiert:
+  `case s3(S3ConnectionConfig)`. Exhaustively switchable; type-safe.
+- **`S3ConnectionConfig`** (new, Core): `accessKeyID`, `region`, `endpoint`
+  (S3-compatible), `bucket`, `usePathStyle: Bool`, optional `sessionToken`.
+  **Secret access key NOT in the config** — only in the keychain
+  (`SecretStore`), like the SSH password.
+- **`Connector`** is generalized:
   `@Sendable (ConnectionConfig, HostKeyDecider) async throws -> any RemoteFileSystem`
-  (der Decider bleibt im Typ, wird von S3 schlicht nie aufgerufen). Ein zentraler
-  **`BackendConnector`**-Dispatcher wählt nach `kind` das konkrete Connect
-  (`CitadelFileSystem.connect` / `S3FileSystem.connect`).
-- **`StoredSession.kind: ConnectionKind`** (`decodeIfPresent ?? .ssh`, custom
-  `init(from:)`) + optionales `s3: S3ConnectionConfig?`-Payload. Alt-JSON lädt
-  unverändert als `.ssh`. Analog `LoginSet` (kind + per-kind-Auth-Payload;
-  geteilte Felder wie Anzeigename/Benutzername bleiben gemeinsam).
+  (the decider stays in the type, and is simply never invoked by S3). A
+  central **`BackendConnector`** dispatcher picks the concrete connect call
+  by `kind` (`CitadelFileSystem.connect` / `S3FileSystem.connect`).
+- **`StoredSession.kind: ConnectionKind`** (`decodeIfPresent ?? .ssh`,
+  custom `init(from:)`) + optional `s3: S3ConnectionConfig?` payload. Old
+  JSON loads unchanged as `.ssh`. Analogous for `LoginSet` (kind + per-kind
+  auth payload; shared fields like display name/username stay shared).
 
-### 2. Fähigkeits-Framework (Core)
+### 2. Capability framework (Core)
 
-**A) Statischer `BackendDescriptor` je `kind`** (Registry, keine Live-Verbindung):
-- **`ProtocolCapabilities`** (struct, deklarativ): `supportsShell: Bool`,
+**A) Static `BackendDescriptor` per `kind`** (registry, no live connection):
+- **`ProtocolCapabilities`** (struct, declarative): `supportsShell: Bool`,
   `permissionModel: PermissionModel` (`.posixMode`/`.acl`/`.none`),
   `supportsSymlinks: Bool`, `atomicRename: Bool`, `directoriesAreReal: Bool`,
   `resumeMode: ResumeMode` (`.append`/`.rangeGet`/`.restOffset`/`.none`),
   `supportsPresignedURL: Bool`, `transport: TransportSecurity`
   (`.alwaysEncrypted`/`.optionalTLS`/`.plaintext`).
-- **Formular-Schema + Provider-Presets:** eine `ConnectionFieldSchema`
-  (geordnete Felder mit Label-Key, `isSecret`, Typ) + Auth-Modell +
-  Presets-Liste (AWS, Hetzner, „Custom"). Das generische Formular rendert aus
-  dem Schema; der Typ-Schalter tauscht nur das Schema.
-- **Badge:** Kurzname + Symbol/Tint je `kind`.
+- **Form schema + provider presets:** a `ConnectionFieldSchema` (ordered
+  fields with label key, `isSecret`, type) + auth model + a presets list
+  (AWS, Hetzner, "Custom"). The generic form renders from the schema; the
+  type switch only swaps the schema.
+- **Badge:** short name + symbol/tint per `kind`.
 
-Das generische UI liest **nur** `ProtocolCapabilities` fürs Gating: Terminal-
-Knopf (`supportsShell`), Rechte-Editor (`permissionModel != .none`),
-Symlink-Marker (`supportsSymlinks`), Resume-Banner (`resumeMode != .none`),
-Klartext-Warnung (`transport == .plaintext`). **Kein `if kind == …` in der
-generischen Schicht.**
+The generic UI reads **only** `ProtocolCapabilities` for gating: terminal
+button (`supportsShell`), permissions editor (`permissionModel != .none`),
+symlink marker (`supportsSymlinks`), resume banner (`resumeMode != .none`),
+plaintext warning (`transport == .plaintext`). **No `if kind == …` in the
+generic layer.**
 
-**B) Laufzeit-Capability-Protokolle** an der `RemoteFileSystem`-Instanz (via
-`as?`, wie `RemoteShellProvider`): Shell (SSH). Für später als Seam definiert:
-`PresignedURLProvider` (S3, M14). M12 legt den Seam an, füllt ihn für S3 nicht.
+**B) Runtime capability protocols** on the `RemoteFileSystem` instance (via
+`as?`, like `RemoteShellProvider`): Shell (SSH). Defined as a seam for
+later: `PresignedURLProvider` (S3, M14). M12 lays down the seam, does not
+fill it for S3.
 
-**Contributions (beide Ebenen als Seam in M12, minimal gefüllt):**
-- **Datei-Ebene:** `BrowserContextMenu.entries` akzeptiert vom Backend
-  beigesteuerte Datei-Aktionen (M12: nur der generische Satz + SSHs Bestand;
-  keine neuen S3-Einträge). Der **Info-Dialog** rendert generische +
-  beigesteuerte Detail-Felder (SSH behält Owner/Group/Rechte/Symlink; S3 dünn:
-  Größe/Datum/ETag).
-- **Verbindungs-Ebene:** neuer Seam für Session/Tab-Aktionen (Diagnose-Tools
-  docken später an). M12: nur der Seam, keine Einträge.
+**Contributions (both levels as a seam in M12, minimally filled):**
+- **File level:** `BrowserContextMenu.entries` accepts file actions
+  contributed by the backend (M12: only the generic set + SSH's existing
+  ones; no new S3 entries). The **info dialog** renders generic + contributed
+  detail fields (SSH keeps owner/group/permissions/symlink; S3 thin:
+  size/date/ETag).
+- **Connection level:** new seam for session/tab actions (diagnostic tools
+  dock in later). M12: only the seam, no entries.
 
-**Gating-Verhalten:** ein Nicht-SSH-Tab zeigt den Terminal-Knopf **nicht**; das
-Terminal-Kürzel/-Menü ist deaktiviert; wird ein SSH-only-Kürzel dennoch auf
-einem S3-Tab ausgelöst, gibt es eine **saubere, lokalisierte Fehlermeldung**
-(kein stiller No-op, kein Crash).
+**Gating behavior:** a non-SSH tab does **not** show the terminal button;
+the terminal shortcut/menu is disabled; if an SSH-only shortcut is
+triggered on an S3 tab anyway, there is a **clean, localized error message**
+(no silent no-op, no crash).
 
-### 3. Dünnes S3-Backend (Core, der zweite Consumer)
+### 3. Thin S3 backend (Core, the second consumer)
 
-- **`SigV4Signer`** (neu): AWS Signature V4 (Canonical Request → String-to-Sign
-  → HMAC-SHA256-Kette) über swift-crypto; `UNSIGNED-PAYLOAD` für GET (HTTPS).
-  Unit-getestet gegen die **offiziellen AWS-SigV4-Testvektoren** (deterministisch,
-  ohne Netz).
-- **`S3FileSystem: RemoteFileSystem`** (dünn): `connect` (Endpoint/Region/Bucket
-  + Access-Key aus Keychain, ein `ListObjectsV2`-Probe-Call zur Auth-Validierung),
-  `list(path:)` (`ListObjectsV2` mit `prefix` + `delimiter="/"` → CommonPrefixes
-  = synthetische Ordner + Objekte, **paginiert** über ContinuationToken),
-  `stat`, `homeDirectoryPath` → `"/"`, `disconnect`. **Nicht in M12:** `write`/
-  `readStream`/`delete`/`rename`/`createDirectory`/`deleteTree` werfen einen
-  klaren „not supported yet"-Fehler (kommen in M13). `setPermissions` wirft
-  `protocolError` (S3 hat keine POSIX-Rechte — dauerhaft).
-- **Provider-Presets:** AWS (region→endpoint-Ableitung, virtual-hosted-style),
-  Hetzner Object Storage (endpoint, path-style), „Custom" (freier Endpoint).
-- **Fehler-Mapping:** HTTP 403→`authenticationFailed`, 404→`notFound`,
-  Netz→`connectionFailed`, Rest→`protocolError`.
+- **`SigV4Signer`** (new): AWS Signature V4 (canonical request → string-to-
+  sign → HMAC-SHA256 chain) via swift-crypto; `UNSIGNED-PAYLOAD` for GET
+  (HTTPS). Unit-tested against the **official AWS SigV4 test vectors**
+  (deterministic, no network).
+- **`S3FileSystem: RemoteFileSystem`** (thin): `connect` (endpoint/region/
+  bucket + access key from keychain, one `ListObjectsV2` probe call to
+  validate auth), `list(path:)` (`ListObjectsV2` with `prefix` +
+  `delimiter="/"` → CommonPrefixes = synthetic folders + objects,
+  **paginated** via ContinuationToken), `stat`, `homeDirectoryPath` →
+  `"/"`, `disconnect`. **Not in M12:** `write`/`readStream`/`delete`/
+  `rename`/`createDirectory`/`deleteTree` throw a clear "not supported
+  yet" error (come in M13). `setPermissions` throws `protocolError` (S3
+  has no POSIX permissions — permanently).
+- **Provider presets:** AWS (region→endpoint derivation, virtual-hosted
+  style), Hetzner Object Storage (endpoint, path-style), "Custom" (free
+  endpoint).
+- **Error mapping:** HTTP 403→`authenticationFailed`, 404→`notFound`,
+  network→`connectionFailed`, rest→`protocolError`.
 
 ### 4. UI (App)
 
-- **Verbindungsformular:** Typ-Schalter (Picker ssh/s3) oben; darunter die aus
-  dem `ConnectionFieldSchema` generierte Feldsektion; Provider-Preset-Picker bei
-  S3. SSH-Sektion (Auth/Jump/TOFU) bleibt, nur hinter dem `kind`.
-- **Badge:** Typ-Badge (Kurzname/Symbol) in der Sidebar-Zeile und im Tab-Strip.
-- **Gating:** Terminal-Toolbar-Knopf/-Menü + SSH-only-Aktionen per Capability
-  aus-/eingeblendet; Kürzel-Fehlermeldung.
-- **L10n:** neue Keys (Typ-Namen, S3-Feld-Labels, Provider-Namen, Gating-Fehler)
-  in EN/DE/FR/PL (FR/PL KI-generiert, Native-Review-Markierung).
+- **Connection form:** type switch (picker ssh/s3) at the top; below it the
+  field section generated from the `ConnectionFieldSchema`; provider preset
+  picker for S3. The SSH section (auth/jump/TOFU) stays, just gated behind
+  `kind`.
+- **Badge:** type badge (short name/symbol) in the sidebar row and in the
+  tab strip.
+- **Gating:** terminal toolbar button/menu + SSH-only actions shown/hidden
+  by capability; shortcut error message.
+- **L10n:** new keys (type names, S3 field labels, provider names, gating
+  errors) in EN/DE/FR/PL (FR/PL AI-generated, native-review flagged).
 
-## Randfälle / bewusste Nicht-Ziele (M12)
+## Edge cases / deliberate non-goals (M12)
 
-- **S3 nur Verbinden + Browsen** — Up-/Download/Löschen/Umbenennen/Presigned/
-  Cross-Backend sind M13/M14. In M12 sauber „noch nicht unterstützt".
-- **Kein Live-Sprachwechsel-artiger Umbau** der Lookups.
-- **Alt-Sessions/-Login-Sets** laden unverändert als `.ssh` (decodeIfPresent).
-- **Secrets** (S3-Secret-Access-Key) nur in der Keychain, nie in JSON/Export im
-  Klartext (Export-Pfad muss `kind`+S3 mit-serialisieren, Secret separat wie
-  SSH).
-- **SMB/FTP/WebDAV** sind NICHT Teil von M12 — nur die Achsen des Frameworks
-  müssen sie konzeptionell tragen.
+- **S3 connect + browse only** — upload/download/delete/rename/presigned/
+  cross-backend are M13/M14. In M12, a clean "not yet supported".
+- **No live-language-switch-style rework** of the lookups.
+- **Old sessions/login sets** load unchanged as `.ssh` (decodeIfPresent).
+- **Secrets** (S3 secret access key) only in the keychain, never in
+  JSON/export in plain text (the export path must serialize `kind`+S3
+  together, secret kept separate like SSH).
+- **SMB/FTP/WebDAV** are NOT part of M12 — only the framework's axes need
+  to conceptually support them.
 
 ## Tests
 
-- **Core (neu, TDD):** `ConnectionKind`/`ConnectionConfig`-Roundtrip;
-  `StoredSession`/`LoginSet` `kind`-Decode (Alt-JSON → `.ssh`, neues S3 →
-  Roundtrip); `ProtocolCapabilities`/Descriptor-Registry (SSH- und
-  S3-Capabilities korrekt); `SigV4Signer` gegen **AWS-Testvektoren**
-  (deterministisch); `S3FileSystem.list`-Parsing (ListObjectsV2-XML →
-  RemoteFileItems, CommonPrefixes→Ordner, Pagination) mit einem Fake-HTTP-
-  Transport (kein Netz).
-- **Gated Integration:** **MinIO-Container** im Rig (Seed-Bucket); ein
-  `S3FileSystemIntegrationTests` (connect + list gegen echtes MinIO, `MACSCP_ITEST=1`).
-  SSH-Rig unverändert, weiter grün.
-- **App (kein Test-Target):** Schema-getriebenes Formular, Badge, Gating per
-  Build/Trace; **Runtime-Idle-CPU-Rauchtest** (M11n-Gewohnheit) — App startet,
-  SSH-Verbindung unverändert, S3-Tab öffnet ohne Spin.
-- **Regression:** die volle bestehende Suite bleibt grün (SSH-Pfad unangetastet
-  hinter dem generalisierten Connector).
+- **Core (new, TDD):** `ConnectionKind`/`ConnectionConfig` round-trip;
+  `StoredSession`/`LoginSet` `kind` decode (old JSON → `.ssh`, new S3 →
+  round-trip); `ProtocolCapabilities`/descriptor registry (SSH and S3
+  capabilities correct); `SigV4Signer` against **AWS test vectors**
+  (deterministic); `S3FileSystem.list` parsing (ListObjectsV2 XML →
+  RemoteFileItems, CommonPrefixes→folders, pagination) with a fake HTTP
+  transport (no network).
+- **Gated integration:** **MinIO container** in the rig (seed bucket); an
+  `S3FileSystemIntegrationTests` (connect + list against real MinIO,
+  `MACSCP_ITEST=1`). SSH rig unchanged, stays green.
+- **App (no test target):** schema-driven form, badge, gating via
+  build/trace; **runtime idle-CPU smoke test** (M11n habit) — app starts,
+  SSH connection unchanged, S3 tab opens without spinning.
+- **Regression:** the full existing suite stays green (SSH path untouched
+  behind the generalized connector).
 
-## Grobe Aufgaben-Schnitt (für den Plan)
+## Rough task breakdown (for the plan)
 
-1. **Core-Diskriminator:** `ConnectionKind` + `ConnectionConfig`-Enum +
-   `S3ConnectionConfig` + `StoredSession.kind`/`s3` (decodeIfPresent) + Tests.
-2. **Fähigkeits-Framework:** `ProtocolCapabilities` + `BackendDescriptor`-
-   Registry + `ConnectionFieldSchema` + Contribution-Seam-Typen (Datei-/
-   Verbindungs-Ebene) + Tests.
-3. **Connector-Dispatcher:** generalisierter `Connector` + `BackendConnector`
-   nach `kind`; SSH-Pfad wörtlich durchgereicht, Regression grün.
-4. **SigV4Signer** (+ AWS-Testvektoren).
-5. **S3FileSystem dünn** (connect + list + stat, XML-Parsing, Fehler-Mapping) +
-   Fake-Transport-Tests + MinIO-Rig + gated Integrationstest.
-6. **Login-Sets kind** + Resolver per kind + Export/Import `kind`+S3.
-7. **App:** schema-getriebenes Formular + Typ-Schalter + Provider-Presets + Badge
-   (Sidebar/Tab) + Capability-Gating (+Kürzel-Fehler) + L10n EN/DE/FR/PL.
-8. **Abschluss-Verifikation** (gated inkl. MinIO, Whole-Milestone-Opus-Review,
-   Runtime-Rauchtest, Push, Dev-Build).
+1. **Core discriminator:** `ConnectionKind` + `ConnectionConfig` enum +
+   `S3ConnectionConfig` + `StoredSession.kind`/`s3` (decodeIfPresent) +
+   tests.
+2. **Capability framework:** `ProtocolCapabilities` + `BackendDescriptor`
+   registry + `ConnectionFieldSchema` + contribution seam types (file/
+   connection level) + tests.
+3. **Connector dispatcher:** generalized `Connector` + `BackendConnector`
+   by `kind`; SSH path passed through verbatim, regression green.
+4. **SigV4Signer** (+ AWS test vectors).
+5. **Thin S3FileSystem** (connect + list + stat, XML parsing, error
+   mapping) + fake-transport tests + MinIO rig + gated integration test.
+6. **Login sets kind** + resolver per kind + export/import `kind`+S3.
+7. **App:** schema-driven form + type switch + provider presets + badge
+   (sidebar/tab) + capability gating (+shortcut error) + L10n EN/DE/FR/PL.
+8. **Closing verification** (gated including MinIO, whole-milestone Opus
+   review, runtime smoke test, push, dev build).
 
 ## Global Constraints
 
-- Swift 6, `.swiftLanguageMode(.v5)`, min. macOS 15; Swift Testing, TDD wo Logik
-  entsteht.
-- **Keine neue Dependency** — SigV4 über das vorhandene swift-crypto, HTTP über
+- Swift 6, `.swiftLanguageMode(.v5)`, min. macOS 15; Swift Testing, TDD
+  wherever logic is created.
+- **No new dependency** — SigV4 via the existing swift-crypto, HTTP via
   URLSession.
-- Diskriminator/Capabilities/Config in **Core** (testbar); lokalisierte Labels in
-  der App (Split wie `FileColumn`).
-- **Vorwärtskompatibilität:** Alt-`sessions.json`/Login-Sets laden als `.ssh`
+- Discriminator/capabilities/config in **Core** (testable); localized
+  labels in the App (split like `FileColumn`).
+- **Forward compatibility:** old `sessions.json`/login sets load as `.ssh`
   (`decodeIfPresent ?? .ssh`).
-- Secrets (SSH- **und** S3-) ausschließlich in der Keychain (`SecretStore`), nie
-  in JSON.
-- TOFU-Host-Key-Sicherheit unverändert für SSH; S3 hat keinen Decider.
-- Code/Kommentare EN; UI-Strings EN/DE/FR/PL, kein ASCII-`"` in Nicht-EN;
-  FR/PL KI-generiert (Native-Review vor Release).
-- **M11n-Lektion:** Runtime-Idle-CPU-Rauchtest vor Auslieferung.
-- Kein Release/Tag ohne ausdrückliche Maintainer-Anordnung.
+- Secrets (SSH **and** S3) exclusively in the keychain (`SecretStore`),
+  never in JSON.
+- TOFU host-key security unchanged for SSH; S3 has no decider.
+- Code/comments EN; UI strings EN/DE/FR/PL, no ASCII `"` in non-EN;
+  FR/PL AI-generated (native review before release).
+- **M11n lesson:** runtime idle-CPU smoke test before shipping.
+- No release/tag without explicit maintainer direction.

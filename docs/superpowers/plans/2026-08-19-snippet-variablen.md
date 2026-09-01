@@ -1,16 +1,16 @@
-# Snippet-Editor Teil 3 — deklarierte Variablen: Umsetzungsplan
+# Snippet editor part 3 — declared variables: implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein Snippet kann Variablen deklarieren, die beim Auslösen abgefragt
-und sicher gequotet in den Befehl eingesetzt werden.
+**Goal:** A snippet can declare variables that are prompted for when
+triggered and inserted into the command safely quoted.
 
-**Architecture:** Die Deklaration lebt im Snippet-Modell und reist mit dem
-Export. Das Einsetzen ist eine reine Funktion in Core, die für beide
-Platzierungen (Platzhalter im Text, vorangestellte Umgebungszuweisung) einen
-aufgelösten Befehl oder eine Abweisung liefert. Gemerkte Werte liegen in einer
-eigenen Ablage, nie im Snippet. Die App fragt vor dem Senden ab und reicht das
-Ergebnis in den bestehenden Weg aus Teil 2.
+**Architecture:** The declaration lives in the snippet model and travels
+with the export. Substitution is a pure function in Core that, for both
+placements (placeholder in the text, prepended environment assignment),
+yields either a resolved command or a rejection. Remembered values live in
+their own store, never in the snippet. The app prompts before sending and
+hands the result into the existing path from part 2.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, macOS 15+,
 Swift Testing (`@Test`/`#expect`), SwiftUI + AppKit.
@@ -19,55 +19,54 @@ Swift Testing (`@Test`/`#expect`), SwiftUI + AppKit.
 
 ## Global Constraints
 
-- Code, Kommentare, Bezeichner, Testnamen, Commit-Messages: **Englisch**.
-  Interne Doku unter `docs/` bleibt Deutsch.
-- Conventional Commits. Footer auf **jedem** Commit:
+- Code, comments, identifiers, test names, commit messages: **English**.
+  Internal docs under `docs/` stay German.
+- Conventional Commits. Footer on **every** commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- TDD rot→grün. Jede neue Logik kommt mit Tests.
-- **Jeder Commit baut und testet das ganze Paket** (`swift build && swift test`).
-  CI prüft jeden einzelnen. Ausgangswert: **2217 Tests in 199 Suiten**, grün.
-- Nutzer-sichtbare Zeichenketten über `L10n.string`, in **allen vier**
-  Katalogen (`en`, `de`, `fr`, `pl`). Ein Wächtertest hält die Schlüsselmengen
-  gleich.
-- `"\r\n"` ist **ein** `Character` in Swift; Zeilenregeln immer per
-  `isNewline`, nie `contains("\n")`.
-- **Keine Zeilennummer in einen Kommentar.** Wer eine Zahl oder eine
-  Aufzählung von Aufrufstellen schreibt, zählt sie im selben Moment nach.
-- Ein Kommentar, der anderen Code beschreibt, wird **in demselben Durchgang
-  korrigiert, der ihn falsch macht.** Der Vorgängerzweig hatte vier
-  Review-Runden dazu.
-- **Snippets enthalten niemals Zugangsdaten.** Weder Deklaration noch
-  gemerkter Wert darf je in den Export oder ins Sitzungsprotokoll wandern.
-- Die App wird **nicht** gestartet.
+- TDD red→green. Every new piece of logic ships with tests.
+- **Every commit builds and tests the whole package** (`swift build && swift test`).
+  CI checks each one individually. Starting value: **2217 tests in 199 suites**, green.
+- User-visible strings go through `L10n.string`, in **all four**
+  catalogs (`en`, `de`, `fr`, `pl`). A guard test keeps the key sets
+  equal.
+- `"\r\n"` is **one** `Character` in Swift; line rules always go through
+  `isNewline`, never `contains("\n")`.
+- **No line number in a comment.** Writing a number or an
+  enumeration of call sites means counting them in that same moment.
+- A comment that describes other code is **corrected in the same pass
+  that makes it wrong.** The predecessor branch had four
+  review rounds on this.
+- **Snippets never contain credentials.** Neither the declaration nor a
+  remembered value may ever travel into the export or the session log.
+- The app is **not** launched.
 
 ---
 
-## Dateien
+## Files
 
-**Neu:**
+**New:**
 
-- `Sources/macSCPCore/Terminal/SnippetVariable.swift` — die Deklaration samt
-  Namensregel.
-- `Sources/macSCPCore/Terminal/PosixQuoting.swift` — die aus
-  `SSHCommandBuilder` herausgelöste Quoting-Primitive, damit sie **eine**
-  Stelle hat.
-- `Sources/macSCPCore/Terminal/SnippetVariableSubstitution.swift` — das
-  Einsetzen und die zwei Abweisungen.
-- `Sources/macSCPCore/Terminal/SnippetVariableMemoryStore.swift` — gemerkte
-  Werte.
-- `Sources/MacSCPAppKit/SnippetVariablePromptSheet.swift` — das Abfrage-Sheet.
-- Je eine Testdatei zu den vier Core-Typen.
+- `Sources/macSCPCore/Terminal/SnippetVariable.swift` — the declaration,
+  including the naming rule.
+- `Sources/macSCPCore/Terminal/PosixQuoting.swift` — the quoting primitive
+  extracted from `SSHCommandBuilder`, so it has **one** home.
+- `Sources/macSCPCore/Terminal/SnippetVariableSubstitution.swift` — the
+  substitution and the two rejections.
+- `Sources/macSCPCore/Terminal/SnippetVariableMemoryStore.swift` —
+  remembered values.
+- `Sources/MacSCPAppKit/SnippetVariablePromptSheet.swift` — the prompt sheet.
+- One test file each for the four Core types.
 
-**Geändert:** `Snippet.swift`, `SSHCommandBuilder.swift`, `SnippetsSheet.swift`,
-`ContentView.swift`, die vier `Localizable.strings`.
+**Changed:** `Snippet.swift`, `SSHCommandBuilder.swift`, `SnippetsSheet.swift`,
+`ContentView.swift`, the four `Localizable.strings`.
 
-**Unverändert, obwohl man es vermuten würde:** `SnippetExportCodec.swift`. Sein
-Payload ist `[Snippet]`; Deklarationen reisen mit, sobald das Modell sie hat.
-Ein Test hält das fest, Code ändert sich nicht.
+**Unchanged, even though you'd expect otherwise:** `SnippetExportCodec.swift`. Its
+payload is `[Snippet]`; declarations travel along as soon as the model has them.
+A test pins this down; the code does not change.
 
 ---
 
-## Task 1: Core — die Deklaration im Modell
+## Task 1: Core — the declaration in the model
 
 **Files:**
 - Create: `Sources/macSCPCore/Terminal/SnippetVariable.swift`
@@ -76,7 +75,7 @@ Ein Test hält das fest, Code ändert sich nicht.
 - Modify: `Tests/macSCPCoreTests/SnippetExportCodecTests.swift`
 
 **Interfaces:**
-- Consumes: nichts.
+- Consumes: nothing.
 - Produces:
   - `public struct SnippetVariable: Codable, Equatable, Sendable` mit
     `name`, `prompt`, `kind`, `placement`, `defaultValue`, `remembersLastValue`
@@ -85,7 +84,7 @@ Ein Test hält das fest, Code ändert sich nicht.
   - `public static func SnippetVariable.isValidName(_:) -> Bool`
   - `Snippet.variables: [SnippetVariable]`
 
-- [ ] **Schritt 1: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 `Tests/macSCPCoreTests/SnippetVariableTests.swift`:
 
@@ -138,7 +137,7 @@ struct SnippetVariableTests {
 }
 ```
 
-An `Tests/macSCPCoreTests/SnippetExportCodecTests.swift` anhängen:
+Append to `Tests/macSCPCoreTests/SnippetExportCodecTests.swift`:
 
 ```swift
     /// The export payload is `[Snippet]`, so declarations travel without the
@@ -156,12 +155,12 @@ An `Tests/macSCPCoreTests/SnippetExportCodecTests.swift` anhängen:
     }
 ```
 
-- [ ] **Schritt 2: Rot laufen lassen**
+- [ ] **Step 2: Run red**
 
 Run: `swift test --filter SnippetVariable 2>&1 | tail -20`
-Expected: Compile-Fehler — `SnippetVariable` gibt es nicht.
+Expected: compile error — `SnippetVariable` does not exist.
 
-- [ ] **Schritt 3: Den Typ schreiben**
+- [ ] **Step 3: Write the type**
 
 `Sources/macSCPCore/Terminal/SnippetVariable.swift`:
 
@@ -233,26 +232,26 @@ public struct SnippetVariable: Codable, Equatable, Sendable {
 }
 ```
 
-In `Snippet.swift`: das Feld ergänzen, den `CodingKeys`-Fall, den Initializer-
-Parameter mit Vorgabe `[]`, und im Decoder `decodeIfPresent(… ) ?? []`
-**genau wie `tags`** — der bestehende Kommentar dort erklärt, warum das die
-Rückwärtskompatibilität herstellt; ergänze `variables` in derselben
-Begründung, statt einen zweiten Absatz zu schreiben.
+In `Snippet.swift`: add the field, the `CodingKeys` case, the initializer
+parameter with default `[]`, and in the decoder `decodeIfPresent(… ) ?? []`
+**exactly like `tags`** — the existing comment there explains why that
+establishes backward compatibility; add `variables` to that same
+rationale instead of writing a second paragraph.
 
-- [ ] **Schritt 4: Grün laufen lassen**
+- [ ] **Step 4: Run green**
 
 Run: `swift build && swift test 2>&1 | tail -3`
-Expected: grün, mehr Tests als vorher.
+Expected: green, more tests than before.
 
-- [ ] **Schritt 5: Die Konstant-Rückgabe-Probe fahren**
+- [ ] **Step 5: Run the constant-return probe**
 
-Ersetze `isValidName`s Rumpf vorübergehend durch `return true`.
+Temporarily replace `isValidName`'s body with `return true`.
 
 Run: `swift test --filter SnippetVariable 2>&1 | grep -c 'failed'`
-Expected: mindestens **1** Test scheitert (`invalidNames`). Stelle den Rumpf
-danach wieder her.
+Expected: at least **1** test fails (`invalidNames`). Restore the body
+afterward.
 
-- [ ] **Schritt 6: Committen**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add Sources/macSCPCore/Terminal/SnippetVariable.swift Sources/macSCPCore/Terminal/Snippet.swift Tests/macSCPCoreTests/
@@ -266,7 +265,7 @@ EOF
 
 ---
 
-## Task 2: Core — Quoting-Primitive an eine Stelle
+## Task 2: Core — one home for the quoting primitive
 
 **Files:**
 - Create: `Sources/macSCPCore/Terminal/PosixQuoting.swift`
@@ -274,16 +273,16 @@ EOF
 - Modify: `Sources/macSCPCore/SSH/SSHCommandBuilder.swift`
 
 **Interfaces:**
-- Consumes: nichts aus Task 1.
+- Consumes: nothing from Task 1.
 - Produces: `public enum PosixQuoting { public static func singleQuoted(_ value: String) -> String }`
 
-**Kontext:** `SSHCommandBuilder` hat heute ein `private static func
-posixSingleQuote(_:)`. Task 3 braucht dieselbe Regel. Sie wird
-herausgelöst, **nicht kopiert** — zwei Quoting-Implementierungen wären genau
-die Sorte Verdopplung, die irgendwann auseinanderläuft, und hier hinge
-Sicherheit daran.
+**Context:** `SSHCommandBuilder` currently has a `private static func
+posixSingleQuote(_:)`. Task 3 needs the same rule. It gets extracted,
+**not copied** — two quoting implementations would be exactly
+the kind of duplication that drifts apart eventually, and security would
+hang on it here.
 
-- [ ] **Schritt 1: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 `Tests/macSCPCoreTests/PosixQuotingTests.swift`:
 
@@ -335,12 +334,12 @@ struct PosixQuotingTests {
 }
 ```
 
-- [ ] **Schritt 2: Rot laufen lassen**
+- [ ] **Step 2: Run red**
 
 Run: `swift test --filter PosixQuoting 2>&1 | tail -10`
-Expected: Compile-Fehler.
+Expected: compile error.
 
-- [ ] **Schritt 3: Herauslösen**
+- [ ] **Step 3: Extract**
 
 `Sources/macSCPCore/Terminal/PosixQuoting.swift`:
 
@@ -367,22 +366,22 @@ public enum PosixQuoting {
 }
 ```
 
-In `SSHCommandBuilder.swift`: `posixSingleQuote` löschen und die Aufrufstelle
-auf `PosixQuoting.singleQuoted` umstellen. **Zähle vorher nach**, wie viele
-Aufrufstellen es sind, und trage die Zahl in den Bericht:
+In `SSHCommandBuilder.swift`: delete `posixSingleQuote` and switch the call
+site over to `PosixQuoting.singleQuoted`. **Count beforehand** how many call
+sites there are, and put the number in the report:
 
 ```bash
 grep -c 'posixSingleQuote' Sources/macSCPCore/SSH/SSHCommandBuilder.swift
 ```
 
-- [ ] **Schritt 4: Grün laufen lassen**
+- [ ] **Step 4: Run green**
 
 Run: `swift build && swift test 2>&1 | tail -3`
-Expected: grün. Die bestehenden `SSHCommandBuilderTests` prüfen durch
-`shellCommand` hindurch und dürfen sich **nicht** ändern — ändern sie sich,
-hat die Umstellung Verhalten verschoben. Melde das, statt die Tests anzupassen.
+Expected: green. The existing `SSHCommandBuilderTests` check through
+`shellCommand` and must **not** change — if they change, the switch has
+shifted behavior. Report that instead of adjusting the tests.
 
-- [ ] **Schritt 5: Committen**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Sources/macSCPCore Tests/macSCPCoreTests/PosixQuotingTests.swift
@@ -396,7 +395,7 @@ EOF
 
 ---
 
-## Task 3: Core — Einsetzen und die zwei Abweisungen
+## Task 3: Core — substitution and the two rejections
 
 **Files:**
 - Create: `Sources/macSCPCore/Terminal/SnippetVariableSubstitution.swift`
@@ -404,19 +403,19 @@ EOF
 
 **Interfaces:**
 - Consumes: `SnippetVariable` (Task 1), `PosixQuoting.singleQuoted` (Task 2),
-  `SnippetHighlighter.tokens(in:language:)` (Teil 1, vorhanden).
+  `SnippetHighlighter.tokens(in:language:)` (part 1, existing).
 - Produces:
   - `public enum SnippetVariableSubstitution`
   - `public static func resolve(command:variables:values:) -> String`
   - `public static func firstDeclarationProblem(command:variables:) -> Problem?`
   - `public enum Problem: Equatable { case unusedPlaceholder(name: String); case placeholderInsideQuotes(name: String) }`
 
-**Kontext:** `SnippetHighlighter.tokens(in:language:)` liefert Bereiche mit
-Arten, darunter `.string` für Anführungszeichen-Inhalte. Die Prüfung auf
-„Platzhalter steht in Anführungszeichen" fragt diesen Tokenizer, statt eine
-zweite Zustandsmaschine zu bauen. Lies seine Signatur, bevor du sie benutzt.
+**Context:** `SnippetHighlighter.tokens(in:language:)` returns ranges with
+kinds, including `.string` for quoted content. The check for "placeholder
+sits inside quotes" asks this tokenizer, instead of building a
+second state machine. Read its signature before you use it.
 
-- [ ] **Schritt 1: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 `Tests/macSCPCoreTests/SnippetVariableSubstitutionTests.swift`:
 
@@ -524,12 +523,12 @@ struct SnippetVariableSubstitutionTests {
 }
 ```
 
-- [ ] **Schritt 2: Rot laufen lassen**
+- [ ] **Step 2: Run red**
 
 Run: `swift test --filter SnippetVariableSubstitution 2>&1 | tail -10`
-Expected: Compile-Fehler.
+Expected: compile error.
 
-- [ ] **Schritt 3: Implementieren**
+- [ ] **Step 3: Implement**
 
 `Sources/macSCPCore/Terminal/SnippetVariableSubstitution.swift`:
 
@@ -611,22 +610,22 @@ public enum SnippetVariableSubstitution {
 }
 ```
 
-- [ ] **Schritt 4: Grün laufen lassen**
+- [ ] **Step 4: Run green**
 
 Run: `swift build && swift test 2>&1 | tail -3`
 
-- [ ] **Schritt 5: Zwei Mutationsproben fahren**
+- [ ] **Step 5: Run two mutation probes**
 
-(a) `PosixQuoting.singleQuoted(…)` in `resolve` durch den rohen Wert ersetzen.
+(a) Replace `PosixQuoting.singleQuoted(…)` in `resolve` with the raw value.
 Run: `swift test --filter SnippetVariableSubstitution 2>&1 | grep -c failed`
-Expected: mindestens **2** (die Werte mit Leerzeichen und mit `;`).
+Expected: at least **2** (the values with a space and with `;`).
 
-(b) `firstDeclarationProblem` pauschal `nil` liefern lassen.
-Expected: mindestens **2** scheitern.
+(b) Make `firstDeclarationProblem` return `nil` unconditionally.
+Expected: at least **2** fail.
 
-Beide Male wiederherstellen und erneut grün laufen lassen.
+Restore both times and run green again.
 
-- [ ] **Schritt 6: Committen**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add Sources/macSCPCore/Terminal/SnippetVariableSubstitution.swift Tests/macSCPCoreTests/SnippetVariableSubstitutionTests.swift
@@ -640,7 +639,7 @@ EOF
 
 ---
 
-## Task 4: Core — gemerkte Werte
+## Task 4: Core — remembered values
 
 **Files:**
 - Create: `Sources/macSCPCore/Terminal/SnippetVariableMemoryStore.swift`
@@ -648,7 +647,7 @@ EOF
 - Modify: `Sources/macSCPCore/Terminal/SnippetStore.swift`
 
 **Interfaces:**
-- Consumes: nichts aus Tasks 1–3.
+- Consumes: nothing from Tasks 1–3.
 - Produces:
   - `public final class SnippetVariableMemoryStore` mit
     `init(directory: URL) throws`,
@@ -656,12 +655,13 @@ EOF
     `func remember(_ value: String, snippetID: UUID, name: String) throws`,
     `func forget(snippetID: UUID) throws`
 
-**Kontext:** `SnippetStore` schreibt `snippets.json` in ein Verzeichnis, das es
-im Initializer bekommt. Diese Ablage kommt als `snippet-variables.json`
-danebe. **Warum getrennt:** ein Snippet, das sich beim Ausführen selbst
-ändert, wäre kein Vorlagen-Datensatz mehr — und der Export trüge die Werte mit.
+**Context:** `SnippetStore` writes `snippets.json` into a directory it
+receives in its initializer. This store lands alongside it as
+`snippet-variables.json`. **Why separate:** a snippet that changes itself
+when it runs would no longer be a template record — and the export would
+carry the values along.
 
-- [ ] **Schritt 1: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 ```swift
 import Foundation
@@ -728,27 +728,27 @@ struct SnippetVariableMemoryStoreTests {
 }
 ```
 
-- [ ] **Schritt 2: Rot laufen lassen**
+- [ ] **Step 2: Run red**
 
 Run: `swift test --filter SnippetVariableMemoryStore 2>&1 | tail -10`
 
-- [ ] **Schritt 3: Implementieren, und die Löschung koppeln**
+- [ ] **Step 3: Implement, and couple the deletion**
 
-Die Ablage schreibt `snippet-variables.json` mit `options: .atomic`, wie
-`SnippetStore` es tut — lies dort nach, statt es anders zu machen.
+The store writes `snippet-variables.json` with `options: .atomic`, the way
+`SnippetStore` does — look it up there instead of doing it differently.
 
-`SnippetStore.remove(id:)` muss die gemerkten Werte mitnehmen. **Entscheide
-beim Lesen des Bestands**, ob die Kopplung in `SnippetStore` gehört (dann
-braucht es dort eine Referenz auf die Memory-Ablage) oder an der Aufrufstelle
-in der App. Schreibe im Bericht, wofür du dich entschieden hast und warum —
-und wenn du die Kopplung in der App lässt, ergänze einen Test, der beweist,
-dass sie dort tatsächlich stattfindet.
+`SnippetStore.remove(id:)` must take the remembered values along. **Decide
+while reading the existing code** whether the coupling belongs in
+`SnippetStore` (in which case it needs a reference to the memory store
+there) or at the call site in the app. State in the report which you
+chose and why — and if you leave the coupling in the app, add a test that
+proves it actually happens there.
 
-- [ ] **Schritt 4: Grün laufen lassen**
+- [ ] **Step 4: Run green**
 
 Run: `swift build && swift test 2>&1 | tail -3`
 
-- [ ] **Schritt 5: Committen**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add Sources/macSCPCore Tests/macSCPCoreTests/SnippetVariableMemoryStoreTests.swift
@@ -762,14 +762,14 @@ EOF
 
 ---
 
-## Task 5: App — Variablen im Editor
+## Task 5: App — variables in the editor
 
-**Zu den Schritten dieser und der nächsten Aufgabe:** sie geben Verhalten und
-Texte vor, aber keine fertige SwiftUI-Anordnung. Das ist Absicht und die
-Lehre aus Teil 2: dort hat eine vorgeschriebene Ansichts-Einstellung, die
-kein Test prüfen konnte, den einzigen Critical des Zweigs erzeugt. Layout
-gehört an den Bestand angelehnt und in die Sichtprüfung, nicht in ein
-Plan-Literal. Alles, was ein Test halten kann, steht dagegen als Code da.
+**On the steps of this task and the next:** they prescribe behavior and
+text, but no finished SwiftUI layout. That is deliberate, and the lesson
+from part 2: there, a prescribed view arrangement that no test could check
+produced the branch's only critical. Layout belongs modeled on the
+existing code and in visual review, not in a plan literal. Everything a
+test can hold, by contrast, is written out as code.
 
 **Files:**
 - Modify: `Sources/MacSCPAppKit/SnippetsSheet.swift`
@@ -778,31 +778,31 @@ Plan-Literal. Alles, was ein Test halten kann, steht dagegen als Code da.
 
 **Interfaces:**
 - Consumes: `SnippetVariable`, `SnippetVariableSubstitution.firstDeclarationProblem`.
-- Produces: nichts für Task 6.
+- Produces: nothing for Task 6.
 
-- [ ] **Schritt 1: Den Abschnitt bauen**
+- [ ] **Step 1: Build the section**
 
-Unter dem Befehlsfeld ein Bereich „Variablen": je Deklaration eine Zeile mit
-Name, Beschriftung, Art, Platzierung, Vorgabewert und dem Merken-Häkchen, plus
-ein Plus zum Hinzufügen und ein Minus je Zeile. Folge dem Rhythmus, den
-`SnippetsSheet` und `FormRow` bereits setzen — **lies beide, bevor du eine
-eigene Anordnung erfindest.**
+Below the command field, a "Variables" section: one row per declaration
+with name, label, kind, placement, default value and the remember
+checkbox, plus a plus to add and a minus per row. Follow the rhythm that
+`SnippetsSheet` and `FormRow` already set — **read both before inventing
+your own arrangement.**
 
-Unter dem Bereich ein Hinweistext, der zwei Dinge sagt, weil beide
-überraschen: dass ein Wert als **ein** Shell-Wort eingesetzt wird, und dass
-eine Umgebungsvariable bei einem **mehrzeiligen** Befehl nach dem Lauf in der
-Sitzung gesetzt bleibt.
+Below the section, a hint text that says two things, because both are
+surprising: that a value is inserted as **one** shell word, and that an
+environment variable on a **multi-line** command stays set in the session
+after the run.
 
-- [ ] **Schritt 2: Speichern abweisen**
+- [ ] **Step 2: Reject saving**
 
-`isSaveDisabled` bekommt zwei weitere Gründe: ein ungültiger oder doppelter
-Variablenname, und ein `firstDeclarationProblem != nil`. Der Grund wird
-sichtbar angezeigt, nicht nur der Knopf ausgegraut — wer nicht weiß, warum
-Speichern nicht geht, probiert nicht weiter, sondern gibt auf.
+`isSaveDisabled` gets two more reasons: an invalid or duplicate variable
+name, and a `firstDeclarationProblem != nil`. The reason is shown visibly,
+not just the button greyed out — someone who doesn't know why saving
+doesn't work stops trying rather than continuing.
 
-- [ ] **Schritt 3: Die Texte in alle vier Kataloge**
+- [ ] **Step 3: The text into all four catalogs**
 
-Englisch:
+English:
 
 ```
 "snippets.variables.title" = "Variables";
@@ -822,7 +822,7 @@ Englisch:
 "snippets.variables.error.quotedPlaceholder" = "“%@” sits inside quotes. Remove them — the value is quoted for you.";
 ```
 
-Deutsch:
+German:
 
 ```
 "snippets.variables.title" = "Variablen";
@@ -842,7 +842,7 @@ Deutsch:
 "snippets.variables.error.quotedPlaceholder" = "„%@“ steht in Anführungszeichen. Nimm sie weg — der Wert wird für dich gequotet.";
 ```
 
-Französisch:
+French:
 
 ```
 "snippets.variables.title" = "Variables";
@@ -862,7 +862,7 @@ Französisch:
 "snippets.variables.error.quotedPlaceholder" = "« %@ » se trouve entre guillemets. Retirez-les — la valeur est protégée pour vous.";
 ```
 
-Polnisch:
+Polish:
 
 ```
 "snippets.variables.title" = "Zmienne";
@@ -882,12 +882,12 @@ Polnisch:
 "snippets.variables.error.quotedPlaceholder" = "„%@” znajduje się w cudzysłowie. Usuń go — wartość zostanie zacytowana za Ciebie.";
 ```
 
-- [ ] **Schritt 4: Bauen und die Suite laufen lassen**
+- [ ] **Step 4: Build and run the suite**
 
 Run: `swift build && swift test 2>&1 | tail -3`
-Expected: grün. Fehlt ein Schlüssel in einem Katalog, färbt der Wächter rot.
+Expected: green. If a key is missing from a catalog, the guard turns red.
 
-- [ ] **Schritt 5: Committen**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add -A Sources/MacSCPAppKit Tests/macSCPAppKitTests
@@ -901,7 +901,7 @@ EOF
 
 ---
 
-## Task 6: App — Abfrage beim Auslösen
+## Task 6: App — prompting on trigger
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/SnippetVariablePromptSheet.swift`
@@ -910,32 +910,33 @@ EOF
 
 **Interfaces:**
 - Consumes: `SnippetVariableSubstitution.resolve`, `SnippetVariableMemoryStore`.
-- Produces: nichts.
+- Produces: nothing.
 
-**Kontext:** `ContentView.triggerSnippet(_:execute:)` führt heute direkt über
-`SnippetSendPlanner`. Die Abfrage schiebt sich **davor**; ab dem aufgelösten
-Befehl bleibt der Weg aus Teil 2 unverändert.
+**Context:** `ContentView.triggerSnippet(_:execute:)` currently runs
+directly through `SnippetSendPlanner`. The prompt inserts itself
+**before** that; from the resolved command onward, the path from part 2
+stays unchanged.
 
-**Eine Falle, die der Vorgängerzweig teuer gelernt hat:** ein Sheet, das aus
-einem gerade schließenden Sheet oder Popover heraus angefordert wird,
-verschluckt SwiftUI. Die vier Auslöser in `ContentView+Detail.swift` schließen
-deshalb bereits **zuerst** und lösen danach aus. Prüfe beim Verdrahten nach,
-dass das noch gilt, und schreibe in den Bericht, wie viele Auslöser du
-geprüft hast.
+**A trap the predecessor branch learned the hard way:** a sheet requested
+from within a sheet or popover that is in the middle of closing gets
+swallowed by SwiftUI. The four triggers in `ContentView+Detail.swift`
+therefore already close **first** and trigger afterward. When wiring this
+in, check that this still holds, and state in the report how many
+triggers you checked.
 
-- [ ] **Schritt 1: Das Sheet bauen**
+- [ ] **Step 1: Build the sheet**
 
-Ein Feld je Deklaration, vorbelegt aus gemerktem Wert, sonst aus
-`defaultValue`; `.selection` wird ein Picker. Abbrechen sendet nichts.
+One field per declaration, pre-filled from a remembered value, otherwise
+from `defaultValue`; `.selection` becomes a picker. Cancel sends nothing.
 
-- [ ] **Schritt 2: `triggerSnippet` verdrahten**
+- [ ] **Step 2: Wire up `triggerSnippet`**
 
-Hat das Snippet keine Deklarationen, bleibt alles wie heute — **kein** Sheet.
-Sonst: Sheet zeigen, bei Bestätigung die angehakten Werte merken, dann
-`SnippetVariableSubstitution.resolve(...)` und den aufgelösten Befehl in den
-bestehenden Weg geben.
+If the snippet has no declarations, everything stays as it is today —
+**no** sheet. Otherwise: show the sheet, on confirmation remember the
+checked values, then `SnippetVariableSubstitution.resolve(...)` and hand
+the resolved command into the existing path.
 
-- [ ] **Schritt 3: Die Texte in alle vier Kataloge**
+- [ ] **Step 3: The text into all four catalogs**
 
 ```
 en: "snippets.variables.promptTitle" = "Values for “%@”";
@@ -948,9 +949,9 @@ pl: "snippets.variables.promptTitle" = "Wartości dla „%@”";
 pl: "snippets.variables.promptRun" = "Wykonaj";
 ```
 
-- [ ] **Schritt 4: Den Protokoll-Test schreiben**
+- [ ] **Step 4: Write the log test**
 
-An `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift`:
+Append to `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift`:
 
 ```swift
     /// The audit log records the TEMPLATE, never a value. This is free today
@@ -969,11 +970,11 @@ An `Tests/macSCPCoreTests/SnippetAuditDetailTests.swift`:
     }
 ```
 
-- [ ] **Schritt 5: Bauen und die Suite laufen lassen**
+- [ ] **Step 5: Build and run the suite**
 
 Run: `swift build && swift test 2>&1 | tail -3`
 
-- [ ] **Schritt 6: Committen**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A Sources Tests
@@ -987,15 +988,15 @@ EOF
 
 ---
 
-## Abschluss
+## Wrap-up
 
-Abschlussbericht nach
-`docs/superpowers/specs/2026-08-19-snippet-variablen-abschluss.md`, deutsch, mit
-den gemessenen Suite-Zahlen, der in Task 2 gezählten Aufrufstellen-Zahl, der
-Entscheidung aus Task 4 Schritt 3, und **ausdrücklich** der ausstehenden
-Sichtprüfung: der Variablen-Abschnitt im Editor, die Abweisungen mit ihren
-Texten, das Abfrage-Sheet aus allen Auslösern, und ein Lauf mit einem Wert,
-der ein Anführungszeichen enthält.
+Closing report per
+`docs/superpowers/specs/2026-08-19-snippet-variables-closeout.md`, in
+German, with the measured suite numbers, the call-site count counted in
+Task 2, the decision from Task 4 Step 3, and **explicitly** the
+outstanding visual review: the variables section in the editor, the
+rejections with their texts, the prompt sheet from every trigger, and a
+run with a value that contains a quote mark.
 
-Teil 1 und Teil 2 haben beide gezeigt, dass in dieser Schicht weder die grüne
-Suite noch das Review ausreicht.
+Part 1 and part 2 both showed that in this layer, neither the green suite
+nor the review is enough.

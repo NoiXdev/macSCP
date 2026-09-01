@@ -1,97 +1,98 @@
-# Backlog: Prüfsummen für Dateien
+# Backlog: checksums for files
 
-**Status:** offen
-**Aufgenommen:** 2026-08-27, Maintainer
+**Status:** open
+**Logged:** 2026-08-27, maintainer
 
-## Was gewünscht ist
+## What is wanted
 
-Drei Punkte, die zusammengehören, aber sehr unterschiedlich schwer sind:
+Three points that belong together but differ greatly in difficulty:
 
-1. **In der Datei-Info** die Prüfsummen einer Datei anzeigen.
-2. **Bei mehreren ausgewählten Dateien** ein Kontextmenü-Eintrag „Prüfsummen",
-   der sie für die Auswahl zeigt.
-3. **Eine neue Tabellenspalte** mit der Prüfsumme, samt Einstellung, **welche**
-   (SHA-256, SHA-1, MD5, …).
+1. **In the file info** show a file's checksums.
+2. **For several selected files** a context menu entry "Prüfsummen" that
+   shows them for the selection.
+3. **A new table column** with the checksum, plus a setting for **which**
+   one (SHA-256, SHA-1, MD5, …).
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
 | | |
 |---|---|
-| `RemoteFileItem` | trägt `name`, `path`, `kind`, `size`, `modifiedAt`, `permissions`, `owner`, `group` — **keinen** Hash und kein ETag |
-| Befehlsausführung in Core | **gibt es nicht**. SSH hat eine Shell (`CitadelShell`), aber die bedient das Terminal, nicht einen Aufruf mit Rückgabewert |
-| S3-ETag | wird intern für Mehrteil-Uploads benutzt (`S3MultipartXML`), aber **nicht** in die Auflistung durchgereicht |
-| Vorhandene Prüfsummen-Nutzung | nur ausgehend: `Insecure.MD5` für den `Content-MD5`-Header, `SigV4Signer.hexSHA256` fürs Signieren |
+| `RemoteFileItem` | carries `name`, `path`, `kind`, `size`, `modifiedAt`, `permissions`, `owner`, `group` — **no** hash and no ETag |
+| Command execution in Core | **does not exist**. SSH has a shell (`CitadelShell`), but that serves the terminal, not a call with a return value |
+| S3 ETag | is used internally for multipart uploads (`S3MultipartXML`), but **not** passed through into the listing |
+| Existing checksum use | outbound only: `Insecure.MD5` for the `Content-MD5` header, `SigV4Signer.hexSHA256` for signing |
 
-## Die Falle, an der alles hängt
+## The trap everything hinges on
 
-**Kein Protokoll dieser App liefert einen Datei-Hash im Vorbeigehen.** Was das
-je Backend bedeutet, ist der eigentliche Inhalt dieses Eintrags:
+**No protocol in this app delivers a file hash in passing.** What that
+means per backend is the actual content of this entry:
 
-| Backend | Woher käme ein Hash |
+| Backend | Where a hash would come from |
 |---|---|
-| **SFTP** | Gar nicht aus dem Protokoll. Entweder `sha256sum` über die Shell — setzt das Programm auf der Gegenseite voraus und ist kein SFTP mehr — oder **die ganze Datei herunterladen und lokal hashen**. |
-| **S3** | Der ETag kommt in `ListObjectsV2` frei mit. **Aber er ist nur bei einteiligen Uploads das MD5 der Datei**; bei Mehrteil-Uploads ist er `md5-der-md5s-N` und damit *kein* Dateihash. Ihn als „MD5" zu zeigen wäre eine Lüge, die genau bei großen Dateien zuschlägt. |
-| **WebDAV** | Kein Standardfeld. Manche Server (Nextcloud) liefern `OC-Checksum`, das ist aber eine Erweiterung und nichts, worauf sich ein Client verlassen kann. |
-| **Lokal** | Unproblematisch — die Datei liegt da. |
+| **SFTP** | Not from the protocol at all. Either `sha256sum` via the shell — which requires the program on the other side and is no longer SFTP — or **download the whole file and hash it locally**. |
+| **S3** | The ETag comes along for free with `ListObjectsV2`. **But it is only the file's MD5 for single-part uploads**; for multipart uploads it is `md5-of-the-md5s-N` and thus *not* a file hash. Showing it as "MD5" would be a lie that strikes exactly at large files. |
+| **WebDAV** | No standard field. Some servers (Nextcloud) deliver `OC-Checksum`, but that is an extension and nothing a client can rely on. |
+| **Local** | Unproblematic — the file is right there. |
 
-**Punkt 3 ist deshalb der gefährlichste, nicht der kleinste.** Eine Spalte
-verspricht einen Wert *pro Zeile*. Bei SFTP und WebDAV hieße das: beim Öffnen
-eines Verzeichnisses jede Datei darin herunterladen. Ein Ordner mit 200 Dateien
-zu je 50 MB wären 10 GB Verkehr für eine Spalte, die jemand versehentlich
-eingeschaltet hat.
+**Point 3 is therefore the most dangerous, not the smallest.** A column
+promises a value *per row*. For SFTP and WebDAV that would mean:
+downloading every file in a directory as soon as it is opened. A folder
+with 200 files of 50 MB each would be 10 GB of traffic for a column
+someone switched on by accident.
 
-## Entscheidung des Maintainers (2026-08-27)
+## Maintainer decision (2026-08-27)
 
-**Nur auf Anforderung. Und nicht durch Herunterladen** — die Datei zu holen,
-um sie zu hashen, ist den Preis nicht wert.
+**Only on request. And not by downloading** — fetching the file in order
+to hash it is not worth the price.
 
-Das beantwortet die Fragen 2 und 3 unten und schneidet zugleich die Reichweite
-der Funktion zu. Die Gegenseite muss rechnen, und damit gilt:
+That answers questions 2 and 3 below and at the same time cuts back the
+scope of the feature. The other side must compute, and from that follows:
 
-| Backend | Was daraus folgt |
+| Backend | What follows from it |
 |---|---|
-| **SFTP** | Nur über einen Befehl auf der Gegenseite (`sha256sum` und Verwandte). Setzt das Programm dort voraus und braucht in Core einen Weg, einen Befehl mit Rückgabewert auszuführen — **den es heute nicht gibt**. Das ist der eigentliche Bauanteil. |
-| **S3** | Der ETag, mit der Mehrteil-Einschränkung oben. Kein Rechnen nötig, aber auch keine freie Wahl des Verfahrens: es ist, was es ist. |
-| **WebDAV** | **Gar nicht**, außer der Server liefert `OC-Checksum` oder Ähnliches. Für einen Standard-WebDAV-Server gibt es die Funktion damit nicht. |
-| **Lokal** | Unproblematisch, lokal gerechnet ist kein Herunterladen. |
+| **SFTP** | Only via a command on the other side (`sha256sum` and relatives). Requires the program to be there and needs a way in Core to run a command with a return value — **which does not exist today**. That is the actual build effort. |
+| **S3** | The ETag, with the multipart limitation above. No computing needed, but also no free choice of algorithm: it is what it is. |
+| **WebDAV** | **Not at all**, unless the server delivers `OC-Checksum` or similar. For a standard WebDAV server, the feature therefore does not exist. |
+| **Local** | Unproblematic, computed locally is not a download. |
 
-**Die Konsequenz, die dabei benannt gehört:** die Funktion ist nicht überall
-verfügbar. Ein Menüeintrag, der bei WebDAV fehlt oder ins Leere greift, muss
-das *sagen* — „dieser Server liefert keine Prüfsummen" ist eine brauchbare
-Antwort, ein ausgegrauter Eintrag ohne Begründung nicht.
+**The consequence that needs to be named here:** the feature is not
+available everywhere. A menu entry that is missing or fires into nothing
+on WebDAV must *say so* — "this server does not deliver checksums" is a
+usable answer, a greyed-out entry with no explanation is not.
 
-Falls „nicht herunterladen" enger gemeint war, als es hier gelesen wird —
-etwa „nicht von allein, auf ausdrückliche Anforderung aber schon" —, kehrt
-SFTP ohne Fremdprogramm zurück und WebDAV wird überhaupt erst möglich. Diese
-Lesart ist bewusst **nicht** gewählt; sie steht hier, damit die Wahl beim
-Angehen sichtbar ist statt vergessen.
+If "not downloading" was meant more narrowly than it is read here — say,
+"not on its own, but yes on explicit request" — SFTP without a foreign
+program comes back, and WebDAV becomes possible at all. This reading is
+deliberately **not** chosen; it stands here so the choice stays visible
+when this is taken up, instead of being forgotten.
 
-## Was vor dem Angehen zu entscheiden ist
+## What must be decided before taking this on
 
-1. **Wird gerechnet oder abgefragt?** Ein Hash, der bei S3 aus dem ETag kommt
-   und bei SFTP aus einem Download, ist nicht dieselbe Zusage. Entweder das
-   auseinanderhalten und **benennen** (woher der Wert stammt, und ob er den
-   Dateiinhalt beschreibt), oder überall selbst rechnen und dafür überall
-   denselben Preis zahlen.
-2. **Wann wird gerechnet?** Nie von allein wäre die sichere Antwort: Prüfsumme
-   auf Anforderung, pro Datei oder pro Auswahl, mit sichtbarem Fortschritt und
-   Abbruch — so wie eine Übertragung, denn genau das ist es.
-3. **Was zeigt die Spalte, solange nichts gerechnet wurde?** Leer, ein Knopf,
-   oder eine Angabe, die aus der Auflistung kam? Ohne Antwort darauf wird die
-   Spalte entweder nutzlos oder gefährlich.
-4. **Welche Verfahren?** SHA-256 als Voreinstellung. MD5 und SHA-1 sind für
-   Integritätsprüfung gegen eine fremde Angabe noch verbreitet, aber
-   kryptografisch gebrochen — wenn sie angeboten werden, gehört das an der
-   Einstellung gesagt, nicht als gleichwertige Wahl daneben gestellt.
-5. **Kommt die Fähigkeit in `ProtocolCapabilities`?** Es gibt bereits
-   `supportsPresignedURL` als Beispiel für „dieses Backend kann etwas, das
-   andere nicht können". Eine Angabe wie „liefert Prüfsummen ohne Lesen" wäre
-   dieselbe Form — und würde verhindern, dass die Oberfläche über
-   `ConnectionKind` verzweigt.
+1. **Computed or queried?** A hash that comes from the ETag on S3 and
+   from a download on SFTP is not the same promise. Either keep those
+   apart and **name** them (where the value comes from, and whether it
+   describes the file content), or compute everywhere yourself and pay
+   the same price everywhere for it.
+2. **When is it computed?** Never on its own would be the safe answer:
+   checksum on request, per file or per selection, with visible progress
+   and cancellation — the same as a transfer, because that is exactly
+   what it is.
+3. **What does the column show while nothing has been computed?** Empty,
+   a button, or a value that came from the listing? Without an answer to
+   this, the column becomes either useless or dangerous.
+4. **Which algorithms?** SHA-256 as the default. MD5 and SHA-1 are still
+   common for integrity checks against a third-party value, but
+   cryptographically broken — if they are offered, that belongs stated at
+   the setting, not placed alongside as an equal choice.
+5. **Does the capability go into `ProtocolCapabilities`?** There is
+   already `supportsPresignedURL` as an example of "this backend can do
+   something others cannot". A flag such as "delivers checksums without
+   reading" would be the same shape — and would keep the UI from
+   branching on `ConnectionKind`.
 
-## Zuschnitt-Vorschlag
+## Scoping proposal
 
-Nicht als einen Vorgang bauen. Punkt 1 und 2 sind dieselbe Sache in zwei
-Größen (eine Datei, mehrere Dateien) und **auf Anforderung** — das ist ein
-überschaubarer, ehrlicher Vorgang. Punkt 3 ist ein eigener, und er sollte erst
-angegangen werden, wenn Frage 3 oben beantwortet ist.
+Do not build this as one change. Points 1 and 2 are the same thing at two
+sizes (one file, several files) and **on request** — that is a
+manageable, honest change. Point 3 is its own, and it should only be
+taken up once question 3 above is answered.

@@ -1,48 +1,50 @@
-# M22 — Datengetriebene Backend-Registrierung
+# M22 — Data-driven backend registration
 
-**Stand:** 2026-08-06
-**Vorgänger:** M12 (Fähigkeits-Framework), M21 (WebDAV als drittes Backend)
+**As of:** 2026-08-06
+**Predecessors:** M12 (capability framework), M21 (WebDAV as a third backend)
 
-## Zweck
+## Purpose
 
-M21 hat WebDAV als drittes Backend gebaut und dabei die Grenze des M12-Frameworks
-vermessen. Das Ergebnis, in der Ledger-Auswertung von M21/Task 8: die generischen
-Schichten (Browser, Transfer-Engine, Warteschlange) blieben unangetastet — aber
-der Compiler meldete **sechs** nicht mehr vollständige `switch`-Anweisungen, und
-**keine** ließ sich aus dem Descriptor bedienen.
+M21 built WebDAV as a third backend and in doing so measured the limits of
+the M12 framework. The result, in M21/Task 8's ledger evaluation: the
+generic layers (browser, transfer engine, queue) stayed untouched — but
+the compiler flagged **six** `switch` statements that were no longer
+exhaustive, and **none** could be served from the descriptor.
 
-Diese sechs Stellen sind keine Protokollfähigkeiten. Sie sind Formularfelder,
-CLI-Konventionen, Fehlertexte und Login-Sets — vier Dinge, die das Framework nie
-beschrieben hat. M22 beschreibt sie.
+These six spots are not protocol capabilities. They are form fields, CLI
+conventions, error texts and login sets — four things the framework never
+described. M22 describes them.
 
-**Der ausdrückliche Wunsch des Maintainers (2026-08-04):** Login-Sets sollen auch
-WebDAV können, und die `kind`-Abfragen sollen weg — abgeleitet aus dem Interface
-statt von Hand verzweigt. Beides greift ineinander: Login-Sets scheitern heute
-genau daran, dass `LoginSet` protokollspezifische Felder trägt.
+**The maintainer's explicit wish (2026-08-04):** login sets should support
+WebDAV too, and the `kind` checks should go away — derived from the
+interface instead of hand-branched. The two feed into each other: login
+sets fail today for exactly the reason that `LoginSet` carries
+protocol-specific fields.
 
-## Bindende Entscheidungen
+## Binding decisions
 
-Aus dem Brainstorming, in der Reihenfolge der Klärung:
+From the brainstorming session, in the order they were settled:
 
-1. **SSH ist dabei.** Nicht nur S3 und WebDAV — der Dispatcher soll am Ende
-   wirklich verschwinden, nicht auf einen Zweig schrumpfen.
-2. **Das Schema ist vollständig deklarativ.** Nichts bleibt maßgeschneidert;
-   auch SSHs Auth-Arten, Schlüsselauswahl und Jump-Block werden beschrieben.
-3. **Feld-IDs sind typisiert, pro Backend.** Ein Enum je Backend, aus dem beide
-   Schemata, die Fabrik und der Adapter schöpfen.
-4. **Zwei getrennte Schemata** — eines fürs Verbindungsformular, eines für den
-   Login-Set-Editor.
-5. **Das Persistenzformat ändert sich nicht.** Auf der Platte bleibt alles
-   typisiert und `Codable`; generisch wird nur der Weg dazwischen.
+1. **SSH is included.** Not just S3 and WebDAV — the dispatcher should
+   actually disappear in the end, not shrink to one branch.
+2. **The schema is fully declarative.** Nothing stays custom-built; SSH's
+   auth kinds, key selection and jump block are described too.
+3. **Field IDs are typed, per backend.** One enum per backend, from which
+   both schemas, the factory and the adapter all draw.
+4. **Two separate schemas** — one for the connection form, one for the
+   login-set editor.
+5. **The persistence format does not change.** On disk everything stays
+   typed and `Codable`; only the path in between becomes generic.
 
-Zu (4) gehört eine Einordnung: weil (3) gilt, sind das **nicht zwei Listen loser
-Zeichenketten**, sondern zwei Listen aus demselben Enum. Ein Feld, das es nicht
-gibt, lässt sich in keines der beiden schreiben. Bleibt die Gefahr, dass ein Feld
-in *keinem* steht — dagegen der Vollständigkeitstest (siehe Tests).
+Point (4) needs a clarification: because (3) holds, these are **not two
+lists of loose strings**, but two lists drawn from the same enum. A field
+that does not exist cannot be written into either. What remains is the
+risk of a field that is in *neither* — the completeness test guards
+against that (see Tests).
 
-## Das Vokabular
+## The vocabulary
 
-### Typisierte Feld-IDs
+### Typed field IDs
 
 ```swift
 public protocol BackendFieldID: RawRepresentable, CaseIterable, Hashable, Sendable
@@ -53,56 +55,56 @@ enum WebDAVField: String, CaseIterable, BackendFieldID {
 }
 ```
 
-Eine Quelle für beide Schemata, die Fabrik und den Adapter. Es gibt keine losen
-Zeichenketten mehr, also auch keine Tippfehler.
+One source for both schemas, the factory and the adapter. There are no
+more loose strings, so there are no more typos either.
 
-### Feldarten
+### Field kinds
 
 ```swift
 enum Kind {
     case text, number, secret, toggle
     case picker(OptionSource)
-    case group([LeafField])        // LeafField.Kind kennt kein .group
+    case group([LeafField])        // LeafField.Kind knows no .group
 }
 
 enum OptionSource {
-    case managedKeys                    // aus dem ManagedKeyStore (App-Schicht)
+    case managedKeys                    // from the ManagedKeyStore (App layer)
     case loginSets(kind: ConnectionKind)
-    case fixed([Option])                // z. B. Auth-Art
+    case fixed([Option])                // e.g. auth kind
 }
 
 struct Condition { let field: String; let equals: String }
 ```
 
-Zwei Schnitte sind bewusst so gewählt:
+Two cuts here are chosen deliberately:
 
-**Die Verschachtelung ist eine Typeigenschaft, keine Laufzeitprüfung.** Eine
-`.group` enthält `LeafField`, und `LeafField.Kind` hat keinen `.group`-Fall.
-„Genau eine Ebene tief" garantiert damit der Compiler, nicht ein Test, den jemand
-vergessen kann. Der Jump-Block ist die eine Gruppe, die gebraucht wird.
+**The nesting is a type property, not a runtime check.** A `.group`
+contains `LeafField`, and `LeafField.Kind` has no `.group` case. "Exactly
+one level deep" is thereby guaranteed by the compiler, not by a test
+someone can forget. The jump block is the one group that is needed.
 
-**Die Bedingung kann genau eine Sache:** „Feld X hat Wert Y". Kein Und, kein
-Oder, keine Negation. Das deckt den einzigen realen Fall ab (SSH: Schlüsselpfad
-nur bei `authKind == .privateKey`) und kann nicht zur Ausdruckssprache
-auswachsen. Braucht ein Backend jemals mehr, ist das ein Anlass zum Nachdenken,
-nicht zum Erweitern.
+**The condition can do exactly one thing:** "field X has value Y". No
+and, no or, no negation. That covers the one real case (SSH: key path
+only when `authKind == .privateKey`) and cannot grow into an expression
+language. If a backend ever needs more, that is cause for reflection, not
+for extending it.
 
-### Werte
+### Values
 
 ```swift
-values[WebDAVField.baseURL]     // kompiliert
-values["basURL"]                // existiert nicht
+values[WebDAVField.baseURL]     // compiles
+values["basURL"]                // does not exist
 ```
 
-`FieldValues` ist eine dünne Hülle um ein Wörterbuch, deren Zugriff über das
-Feld-Enum läuft.
+`FieldValues` is a thin wrapper around a dictionary whose access runs
+through the field enum.
 
-## Der Descriptor
+## The descriptor
 
 ```swift
 BackendDescriptor(
     kind: .webdav,
-    capabilities: …,                    // unverändert aus M12
+    capabilities: …,                    // unchanged from M12
     connectionSchema: [ … ],
     credentialSchema: [ … ],
     makeConfig: { values, secret in … },
@@ -112,140 +114,142 @@ BackendDescriptor(
     requiresSecret: true)
 ```
 
-`secretEnvironmentVariable` und `requiresSecret` sind die zwei Achsen, die
-M21/Task 8 als fehlend zutage gefördert hat — mit ihnen verschwinden die
-CLI-Fundstellen.
+`secretEnvironmentVariable` and `requiresSecret` are the two axes that
+M21/Task 8 surfaced as missing — with them, the CLI's hard-coded spots
+disappear.
 
-`makeConfig` ist eine Closure, in der das Backend über sein **eigenes** Enum
-schaltet. Die Vollständigkeit prüft damit der Compiler an der Stelle, wo sie
-zählt: ein neues Feld ohne Behandlung ist ein Build-Fehler.
+`makeConfig` is a closure in which the backend switches over its **own**
+enum. Completeness is thereby checked by the compiler at the spot where
+it matters: a new field without handling is a build error.
 
 ### `displaySummary`
 
-Seitenleiste, Tab-Titel und Prüfprotokoll bauen heute `benutzer@host` aus
-Feldern, die S3 und WebDAV nicht füllen — deshalb steht im Prüfprotokoll
-`host: "unused"` und ein WebDAV-Tab heißt `tim@`. Der M21-Abschlussreview hat das
-als Drift benannt. Eine Zusammenfassung je Backend behebt es nebenbei.
+The sidebar, tab title and audit log today build `user@host` from fields
+that S3 and WebDAV don't fill — which is why the audit log shows
+`host: "unused"` and a WebDAV tab is named `tim@`. The M21 closing review
+named this as drift. A per-backend summary fixes it along the way.
 
-## Datenfluss
+## Data flow
 
 ```
-connectionSchema  →  Formular rendert  →  FieldValues
+connectionSchema  →  form renders  →  FieldValues
                                               ↓
                                         makeConfig
                                               ↓
                                        ConnectionConfig  →  connect
 ```
 
-Das Formular kennt kein Protokoll mehr. Es rendert Felder, löst Optionsquellen
-auf, sammelt Werte. `ConnectionViewModel` verliert seine getippten `s3*`- und
-`webdav*`-Eigenschaften und behält ein `values: FieldValues`.
+The form no longer knows any protocol. It renders fields, resolves option
+sources, collects values. `ConnectionViewModel` loses its typed `s3*` and
+`webdav*` properties and keeps a `values: FieldValues`.
 
-**Die Optionsquellen sind die einzige Stelle, an der die App etwas beisteuert.**
-`OptionSource.managedKeys` kann der Core nicht auflösen — der Schlüsselspeicher
-lebt in der App. Das Formular bekommt einen Auflöser hereingereicht, der aus
-einer Quelle eine Optionsliste macht: drei Fälle, ein `switch`, an genau einer
-Stelle.
+**The option sources are the one place where the App still contributes
+something.** Core cannot resolve `OptionSource.managedKeys` — the key
+store lives in the App. The form is handed a resolver that turns a
+source into an option list: three cases, one `switch`, in exactly one
+place.
 
-## Persistenz
+## Persistence
 
-Die Platte ändert sich nicht. Pro Backend gibt es einen kleinen Adapter in beide
-Richtungen — `FieldValues` ⇄ `StoredWebDAVConfig`. Das ist Codable-Arbeit, die
-der Compiler prüft; die Dateien der Nutzer bleiben unberührt. Kein
-Migrationslauf, kein zweiter Lesepfad.
+The disk format does not change. Each backend gets a small adapter in
+both directions — `FieldValues` ⇄ `StoredWebDAVConfig`. That is Codable
+work the compiler checks; users' files stay untouched. No migration run,
+no second read path.
 
-`LoginSet` bekommt **additiv** die WebDAV-Felder, genau wie es in M12 die
-S3-Felder bekommen hat: neue optionale Eigenschaften, alte Dateien lesen sich
-unverändert als `nil`.
+`LoginSet` gets the WebDAV fields **additively**, exactly the way it got
+the S3 fields in M12: new optional properties, old files read unchanged
+as `nil`.
 
-## Login-Sets und der Auflöser
+## Login sets and the resolver
 
 ```swift
-// heute: zwei Funktionen, bei WebDAV würden es drei
+// today: two functions, WebDAV would make three
 LoginResolver.resolve(session:sets:secrets:)    -> ResolvedLogin?
 LoginResolver.resolveS3(session:sets:secrets:)  -> ResolvedS3Login?
 
-// künftig: eine
+// going forward: one
 LoginResolver.resolve(session:sets:secrets:)    -> FieldValues?
 ```
 
-Der Auflöser sucht das Set, lässt dessen Adapter die typisierten Felder in
-`FieldValues` übersetzen, holt das Geheimnis aus der Keychain unter der Set-ID —
-und liefert ein Wörterbuch, das die Fabrik genauso verarbeitet wie eines aus dem
-Formular. `ResolvedLogin` und `ResolvedS3Login` fallen zusammen.
+The resolver finds the set, has its adapter translate the typed fields
+into `FieldValues`, fetches the secret from the keychain under the set
+ID — and delivers a dictionary that the factory processes exactly the
+same as one from the form. `ResolvedLogin` and `ResolvedS3Login` merge
+into one.
 
-Der Login-Set-Editor rendert das `credentialSchema` mit demselben generischen
-Code wie das Verbindungsformular. Der handaufgezählte Typ-Picker, der heute nur
-SSH und S3 anbietet, wird ein `ForEach` über die Backends — WebDAV erscheint
-darin, ohne dass irgendwo „WebDAV" steht.
+The login-set editor renders the `credentialSchema` with the same generic
+code as the connection form. The hand-enumerated type picker that today
+offers only SSH and S3 becomes a `ForEach` over the backends — WebDAV
+appears in it without "WebDAV" being spelled anywhere.
 
-**Damit sind Login-Sets für WebDAV keine Arbeit, sondern eine Folge.**
+**That makes login sets for WebDAV not work, but a consequence.**
 
-### Offener Punkt, ausdrücklich benannt
+### Open point, named explicitly
 
-`authKind` ist bei SSH kein gewöhnliches Feld: es entscheidet, welche anderen
-Felder sichtbar sind, und ob überhaupt ein Geheimnis nötig ist. Im Schema wird es
-ein `.picker(.fixed([...]))`, und die Sichtbarkeitsbedingungen der übrigen Felder
-zeigen darauf. Genau dafür existiert die Bedingung — aber SSHs Login-Sets sind
-damit die einzigen, deren Editor Felder ein- und ausblendet. Erweist sich das im
-Bau als unhandlich, ist das die erste Stelle, an der die Umsetzung anhält und
-nachfragt.
+`authKind` is not an ordinary field for SSH: it decides which other
+fields are visible, and whether a secret is needed at all. In the schema
+it becomes a `.picker(.fixed([...]))`, and the visibility conditions of
+the remaining fields point to it. That is exactly what the condition
+exists for — but that makes SSH's login sets the only ones whose editor
+shows and hides fields. If that turns out to be unwieldy during
+construction, that is the first spot where the implementation should
+stop and ask.
 
-## Was verschwindet
+## What disappears
 
-| Fundstelle (M21/Task 8) | Wird zu |
+| Site found (M21/Task 8) | Becomes |
 |---|---|
 | `ConnectionViewModel.connect()` | `descriptor.makeConfig(values, secret)` |
-| `ConnectionViewModel.validateForEditSave()` | derselbe Aufruf, anderer Zweck |
-| `CLISecretSources` (Umgebungsvariable) | `descriptor.secretEnvironmentVariable` |
+| `ConnectionViewModel.validateForEditSave()` | the same call, different purpose |
+| `CLISecretSources` (environment variable) | `descriptor.secretEnvironmentVariable` |
 | `CLISecretSources.needsSecret` | `descriptor.requiresSecret` |
-| `LoginSetsSheet.isSaveDisabled` | Pflichtfeldprüfung über `credentialSchema` |
-| `LoginSetsSheet` Speichern-Knopf | dito; der `preconditionFailure` entfällt |
+| `LoginSetsSheet.isSaveDisabled` | required-field check via `credentialSchema` |
+| `LoginSetsSheet` save button | ditto; the `preconditionFailure` goes away |
 
-Dazu wird `CLIErrorMapping`s `.missingWebDAVConfiguration` zu
-`.missingBackendConfiguration(kind:)` und damit protokollneutral.
+In addition, `CLIErrorMapping`'s `.missingWebDAVConfiguration` becomes
+`.missingBackendConfiguration(kind:)`, and is thereby protocol-neutral.
 
-`BackendConnector` verschwindet ebenfalls, weil der Descriptor die
-Verbindungs-Closure mitführt. Der letzte verbleibende `switch` über
-`ConnectionKind` ist dann der in `BackendDescriptor.descriptor(for:)` selbst —
-die Registrierungstabelle, kein Dispatcher.
+`BackendConnector` disappears too, because the descriptor carries the
+connection closure along with it. The one remaining `switch` over
+`ConnectionKind` is then the one in `BackendDescriptor.descriptor(for:)`
+itself — the registration table, not a dispatcher.
 
 ## Tests
 
-**Vollständigkeitstest je Backend.** Jedes Feld beider Schemata wird von
-`makeConfig` gelesen und vom Adapter übersetzt; keines fällt zwischen die
-Schemata. Das fängt den Fall, den auch ein erschöpfender `switch` nicht sieht: ein
-Feld, das die Fabrik behandelt, das aber in keinem Schema steht und deshalb nie
-ein Eingabefeld bekommt.
+**Completeness test per backend.** Every field of both schemas is read
+by `makeConfig` and translated by the adapter; none falls between the
+schemas. This catches the case that even an exhaustive `switch` doesn't
+see: a field the factory handles that is in neither schema and therefore
+never gets an input field.
 
-**Rundlauf je Backend.** Formularwerte → Konfiguration → gespeicherte Session →
-Formularwerte. Am Ende steht dasselbe da wie am Anfang.
+**Round trip per backend.** Form values → configuration → stored session
+→ form values. What comes out at the end matches what went in.
 
-**Altbestands-Test mit echten Dateien.** Eine Session-JSON und eine
-Login-Set-JSON im heutigen Format, als Baustein eingefroren, müssen nach dem
-Umbau unverändert laden und dieselbe Konfiguration ergeben. Das ist der einzige
-Test, der beweist, dass die gespeicherten Verbindungen der Nutzer den Meilenstein
-überleben — und der einzige, der sich nicht durch Nachdenken ersetzen lässt.
+**Legacy-data test with real files.** A session JSON and a login-set
+JSON in today's format, frozen as a fixture, must load unchanged after
+the rebuild and produce the same configuration. That is the only test
+that proves users' stored connections survive the milestone — and the
+only one that cannot be replaced by reasoning about it.
 
-**Die vorhandenen SSH- und S3-Tests sind das Sicherheitsnetz.** Sie dürfen nicht
-angepasst werden, damit sie zu einer neuen Implementierung passen. Wird einer rot,
-ist die Implementierung falsch, nicht der Test.
+**The existing SSH and S3 tests are the safety net.** They must not be
+adjusted to fit a new implementation. If one goes red, the
+implementation is wrong, not the test.
 
-## Nicht in diesem Meilenstein
+## Not in this milestone
 
-Änderungen am Persistenzformat; UX-Änderungen an SSHs Formular (etwa den
-Jump-Block in ein eigenes Sheet zu verlegen); neue Protokolle; die aus M21
-offenen Kleinbefunde, soweit sie nicht ohnehin auf dem Weg liegen.
+Changes to the persistence format; UX changes to SSH's form (such as
+moving the jump block into its own sheet); new protocols; the open minor
+findings from M21, to the extent they aren't already on the path anyway.
 
-## Erfolgskriterien
+## Success criteria
 
-1. `grep -rn "kind == \." Sources/` findet außerhalb der Descriptor-Registrierung
-   keine Protokollverzweigung mehr.
-2. Ein Login-Set für WebDAV lässt sich anlegen, an eine Session binden und
-   verbinden — ohne dass für WebDAV eigener UI-Code existiert.
-3. Der Altbestands-Test lädt eine vor M22 geschriebene Session und ein vor M22
-   geschriebenes Login-Set unverändert.
-4. Alle vorhandenen SSH- und S3-Tests bleiben unverändert grün.
-5. Ein viertes Backend bräuchte: ein Feld-Enum, zwei Schemata, eine Fabrik, einen
-   Adapter, eine Verbindungs-Closure — und keine Änderung an einer generischen
-   Schicht.
+1. `grep -rn "kind == \." Sources/` finds no more protocol branching
+   outside the descriptor registration.
+2. A login set for WebDAV can be created, bound to a session, and
+   connected — without any WebDAV-specific UI code existing.
+3. The legacy-data test loads a session written before M22 and a
+   login set written before M22 unchanged.
+4. All existing SSH and S3 tests stay green, unchanged.
+5. A fourth backend would need: one field enum, two schemas, one
+   factory, one adapter, one connection closure — and no change to any
+   generic layer.

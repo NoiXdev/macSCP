@@ -1,58 +1,57 @@
-> **Erledigt am 2026-08-26** über
-> `docs/superpowers/plans/2026-08-26-swift6-sprachmodus.md`. Alle sechs Targets
-> stehen auf `.swiftLanguageMode(.v6)`, das Projekt baut warnungsfrei, und CI
-> wird rot, sobald die Zahl eindeutiger Warnorte über 1 liegt (die eine erlaubte
-> ist namentlich in `ci.yml` benannt).
+> **Resolved on 2026-08-26** via
+> `docs/superpowers/plans/2026-08-26-swift6-sprachmodus.md`. All six targets
+> are on `.swiftLanguageMode(.v6)`, the project builds warning-free, and CI
+> turns red as soon as the count of distinct warning locations exceeds 1 (the
+> one permitted one is named explicitly in `ci.yml`).
 >
-> **Die Zahl unten stimmt nicht.** „1472 Warnungen" war eine Zeilenzahl:
-> derselbe Fundort wird über mehrere Kompilierdurchgänge im Schnitt siebzehnmal
-> gedruckt. Gemessen waren es **37 eindeutige Fundorte**. Der Eintrag bleibt
-> stehen, weil dieser Zählfehler die eigentliche Lehre ist.
+> **The number below is wrong.** "1472 warnings" was a line count: the same
+> location gets printed on average seventeen times across multiple compile
+> passes. Measured, it was **37 distinct locations**. The entry stays as is,
+> because this counting error is the actual lesson.
 
-# Backlog: die Swift-6-Warnungen im CI-Log
+# Backlog: the Swift 6 warnings in the CI log
 
-**Angelegt:** 2026-08-19, nachdem im GitHub-Actions-Log Fehlermeldungen aufzufallen
-schienen. **Es sind keine Fehler.** Alle Läufe stehen auf `success`, null
-`error:`. Gemessen am Lauf `32248172604` (CI, develop).
+**Created:** 2026-08-19, after error-looking messages seemed to stand out in
+the GitHub Actions log. **They are not errors.** All runs show `success`,
+zero `error:`. Measured against run `32248172604` (CI, develop).
 
-## Der Befund
+## The finding
 
-**1472 Warnungen**, davon der ganz überwiegende Teil aus **unserem** Code, nicht
-aus Abhängigkeiten:
+**1472 warnings**, the vast majority of them from **our own** code, not
+from dependencies:
 
-| Ort | Anzahl | Vorherrschende Ursache |
+| Location | Count | Dominant cause |
 |---|---|---|
-| `Tests/macSCPCoreTests` | 661 | 528× ein Lock, in einem async-Kontext genommen |
-| `Sources/macSCPCore` | 72 | nicht-Sendable Citadel-Typen (`SFTPFile`) in `@Sendable`-Closures |
-| `Sources/MacSCPCLI` | 3 | dasselbe Muster |
+| `Tests/macSCPCoreTests` | 661 | 528× a lock, taken in an async context |
+| `Sources/macSCPCore` | 72 | non-Sendable Citadel types (`SFTPFile`) in `@Sendable` closures |
+| `Sources/MacSCPCLI` | 3 | same pattern |
 
-Im Produktivcode sind nur drei Dateien betroffen: `RemoteFS/TransferEngine.swift`,
-`SSH/CitadelFileSystem.swift` und `MacSCPCLI/MacSCPCLI.swift`.
+In production code only three files are affected: `RemoteFS/TransferEngine.swift`,
+`SSH/CitadelFileSystem.swift`, and `MacSCPCLI/MacSCPCLI.swift`.
 
-## Warum das kein Rauschen ist
+## Why this isn't noise
 
-An rund 1200 dieser Warnungen steht wörtlich *„this is an error in the Swift 6
-language mode"*. Alle Targets stehen auf `.swiftLanguageMode(.v5)`. Heute sind es
-Warnungen; sobald jemand den Sprachmodus umstellt — freiwillig oder weil eine
-Toolchain es erzwingt —, ist es ein Build-Stopp.
+Around 1200 of these warnings literally say *"this is an error in the Swift 6
+language mode"*. All targets are on `.swiftLanguageMode(.v5)`. Today they're
+warnings; the moment someone switches the language mode — voluntarily, or
+because a toolchain forces it — it's a build stop.
 
-Das ist eine **terminierte Schuld**, kein Aufräumwunsch.
+This is **deferred debt**, not a wish for cleanup.
 
-## Zwei getrennte Naturen
+## Two separate natures
 
-1. **Die 528 Lock-Warnungen in den Tests.** Ein Testhelfer nimmt ein Lock in
-   einem async-Kontext. Vermutlich ein einziges Muster, an einer Stelle
-   korrigierbar — die Zahl ist groß, weil dasselbe Muster in vielen Tests
-   verwendet wird, nicht weil es viele verschiedene Probleme wären. **Vor dem
-   Anfassen nachzählen, ob es wirklich ein Muster ist**; diese Vermutung ist
-   nicht gemessen.
-2. **Die Sendable-Warnungen in Core.** Citadels Typen wandern durch unsere
-   Closures. Das ist echte Arbeit an drei Dateien und kein Suchen-Ersetzen —
-   entweder `@preconcurrency import`, oder die Typen wirklich aus den Closures
-   heraushalten. Das erste ist ein Zudecken, das zweite eine Umstrukturierung.
+1. **The 528 lock warnings in the tests.** A test helper takes a lock in an
+   async context. Presumably a single pattern, fixable in one spot — the
+   number is large because the same pattern is used across many tests, not
+   because they'd be many different problems. **Recount before touching it,
+   whether it really is one pattern**; this hypothesis is not measured.
+2. **The Sendable warnings in Core.** Citadel's types travel through our
+   closures. That's real work across three files, not a search-and-replace —
+   either `@preconcurrency import`, or actually keeping the types out of the
+   closures. The first is papering over it, the second is a restructuring.
 
-## Reihenfolge
+## Ordering
 
-Kein Anlass zur Eile, solange der Sprachmodus auf v5 steht. Sinnvoll ist es
-**vor** dem nächsten Toolchain-Sprung, und die Tests zuerst: dort liegt die
-Masse, und sie ist wahrscheinlich die billigere Hälfte.
+No rush, as long as the language mode stays at v5. It's sensible **before**
+the next toolchain jump, and the tests first: that's where the bulk sits,
+and it's presumably the cheaper half.

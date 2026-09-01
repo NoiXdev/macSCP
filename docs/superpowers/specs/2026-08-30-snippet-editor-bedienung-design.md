@@ -1,125 +1,123 @@
-# Snippet-Editor: Variablen falten, Platzhalter vorschlagen — Entwurf
+# Snippet editor: collapsing variables, suggesting placeholders — Design
 
-**Stand:** 2026-08-30. Umsetzung von
+**Status:** 2026-08-30. Implements
 `docs/superpowers/specs/2026-08-21-backlog-snippet-editor-bedienung.md`.
 
 ---
 
-## Entscheidungen des Maintainers (2026-08-30)
+## Maintainer decisions (2026-08-30)
 
-1. **Kein gemerkter Faltzustand.** Jedes Öffnen beginnt gleich.
-2. **Voller Umfang bei den Platzhaltern:** Einfügen über die Variablenzeile,
-   Hinweis auf ein undeklariertes `{{NAME}}`, **und** Tipp-Vervollständigung
-   bei `{{`.
+1. **No remembered collapse state.** Every opening starts the same way.
+2. **Full scope for placeholders:** inserting via the variable row, a
+   notice for an undeclared `{{NAME}}`, **and** type-ahead completion on
+   `{{`.
 
-## Der gemessene Ausgangszustand
+## The measured starting state
 
-`SnippetCommandEditor` ist bereits ein `NSTextView` — eine Vorschlagsliste
-daran ist ein gelöstes Problem, an einem SwiftUI-`TextField` wäre es keins.
+`SnippetCommandEditor` is already an `NSTextView` — a suggestion list on
+it is a solved problem; on a SwiftUI `TextField` it would not be one.
 
-`SnippetVariableSubstitution.Problem` führt **sechs** Fälle, in diesem
-Durchgang gezählt: `invalidName`, `unanalyzableContext`, `unusedPlaceholder`,
+`SnippetVariableSubstitution.Problem` lists **six** cases, counted in this
+pass: `invalidName`, `unanalyzableContext`, `unusedPlaceholder`,
 `placeholderInsideQuotes`, `placeholderNotInArgumentPosition`,
 `placeholderIsReparsedByItsCommand`.
 
-**Keiner davon ist „benutzt, aber nicht deklariert".** Ein `{{NAME}}` ohne
-Deklaration geht wörtlich an die Shell. Als Text harmlos — aber der Befehl
-tut etwas anderes, als der Nutzer glaubt, und nichts sagt es ihm. Der Eintrag
-nennt das den eigentlichen Gewinn, und er hat recht: die anderen zwei Punkte
-sind Bedienung, dieser behebt einen stillen Fehler.
+**None of them is "used but not declared".** A `{{NAME}}` with no
+declaration goes to the shell verbatim. Harmless as text — but the command
+does something other than what the user believes, and nothing tells them.
+The backlog entry calls this the real win, and it's right: the other two
+points are usability, this one fixes a silent bug.
 
-## 1. Falten
+## 1. Collapsing
 
-### Kein gemerkter Zustand
+### No remembered state
 
-Bestehende Variablen sind beim Öffnen **zu**, eine neu hinzugefügte **offen**
-— sonst tippt niemand hinein.
+Existing variables are **collapsed** on open, a newly added one is **open**
+— otherwise nobody types into it.
 
-Nichts wird gespeichert. Damit stellt sich die Frage nicht, wo der Zustand
-lebt, ob er zum Snippet passt, was beim Löschen einer Variablen mit ihm
-geschieht und ob er mit einem Export reist. Der Eintrag verlangt ohnehin, dass
-er nie ins Modell darf; ihn gar nicht erst zu haben ist die kürzere Antwort.
+Nothing is stored. That removes the question of where the state lives,
+whether it matches the snippet, what happens to it when a variable is
+deleted, and whether it travels with an export. The entry demands anyway
+that it never enter the model; not having it at all is the shorter answer.
 
-### Was die zugeklappte Zeile zeigt
+### What the collapsed row shows
 
-**Name, Art und Platzierung.** Genug, um die richtige wiederzufinden, ohne sie
-zu öffnen — und Platzierung gehört dazu, weil sie darüber entscheidet, ob die
-Variable überhaupt als `{{NAME}}` in den Befehl gehört.
+**Name, kind and placement.** Enough to find the right one again without
+opening it — and placement belongs in that set, because it decides whether
+the variable even belongs in the command as `{{NAME}}`.
 
-### Eine Variable mit Fehler bleibt offen
+### A variable with an error stays open
 
-Sie lässt sich nicht zuklappen, solange sie ein Problem hat.
+It cannot be collapsed while it has a problem.
 
-Die Alternative — zuklappbar mit Fehlermarkierung — sagt einem, *dass* etwas
-nicht stimmt, aber nicht *was*, und man klappt sie ohnehin auf. Und sie
-verletzt den Zweck des Faltens an genau der Zeile, die Beachtung braucht.
+The alternative — collapsible with an error marker — tells you *that*
+something is wrong but not *what*, and you open it anyway. And it defeats
+the purpose of collapsing at exactly the row that needs attention.
 
-**Daraus folgt eine nützliche Eigenschaft von selbst:** „alle zuklappen"
-lässt die fehlerhaften offen und wird damit zu „zeig mir nur die Probleme".
+**A useful property follows from this on its own:** "collapse all" leaves
+the faulty ones open, and thereby becomes "show me only the problems".
 
-### Massenaktionen
+### Bulk actions
 
-„Alle auf" und „alle zu", neben „Variable hinzufügen". **Nur zeigen, was
-möglich ist**: sind alle bereits offen, erscheint „alle auf" nicht.
+"Expand all" and "collapse all", next to "Add Variable". **Show only what
+is possible**: if all are already open, "expand all" does not appear.
 
-## 2. Platzhalter
+## 2. Placeholders
 
-### Der Hinweis auf Undeklariertes
+### The notice for undeclared placeholders
 
-Steht im Befehl ein `{{NAME}}`, das keine Deklaration hat, sagt der Editor
-es. **Das ist kein neuer `Problem`-Fall**, sondern eine Anzeige im Editor:
-`SnippetVariableSubstitution` entscheidet, ob gesendet werden darf, und
-daran ändert sich nichts — ein undeklarierter Platzhalter war und bleibt
-sendbar, er ist nur wörtlich.
+If the command contains a `{{NAME}}` with no declaration, the editor says
+so. **This is not a new `Problem` case**, but a display in the editor:
+`SnippetVariableSubstitution` decides whether sending is allowed, and
+nothing about that changes — an undeclared placeholder was and remains
+sendable, it is simply literal.
 
-Der Unterschied ist wichtig: eine Prüfung, die das Senden **verbietet**,
-wäre eine Verhaltensänderung an acht Prüfrunden vorbei. Ein Hinweis im
-Editor ist eine Anzeige.
+The distinction matters: a check that **forbids** sending would be a
+behavior change past eight review rounds. A notice in the editor is a
+display.
 
-### Einfügen über die Variablenzeile
+### Inserting via the variable row
 
-Ein Weg, eine deklarierte Variable in den Befehl zu setzen, ohne ihren Namen
-zu tippen. Deckt den Fall ab, dass man ihn nicht mehr weiß.
+A way to place a declared variable into the command without typing its
+name. Covers the case where you no longer remember it.
 
-### Vervollständigung bei `{{`
+### Completion on `{{`
 
-Sobald `{{` getippt ist, werden die deklarierten Namen angeboten.
+As soon as `{{` is typed, the declared names are offered.
 
-**Angeboten wird nur, was als `{{NAME}}` in den Befehl gehört.** Eine
-Variable mit Platzierung „Umgebungsvariable" gehört das gerade nicht — sie
-wird als Zuweisung vorangestellt. Sie mit anzubieten führte zum genauen
-Gegenteil dessen, was ihre Platzierung sagt.
+**Only what belongs in the command as `{{NAME}}` is offered.** A variable
+with placement "environment variable" does not belong there — it is
+prepended as an assignment instead. Offering it too would produce exactly
+the opposite of what its placement says.
 
-**Und sie wird auch nicht als `$NAME` angeboten.** Das ist die Fußangel aus
-dem Eintrag, gemessen: bei einer **einzeiligen** Zuweisung als Präfix
-expandiert die Shell `$NAME`, *bevor* die Zuweisung greift —
-`P=neu echo "$P"` gibt den alten Wert aus. Eine Vervollständigung, die
-`$NAME` einsetzt, wäre in einem einzeiligen Befehl still falsch, und
-„manchmal anbieten, je nach Zeilenzahl" wäre eine Regel, die sich beim Tippen
-ändert.
+**And it is also not offered as `$NAME`.** That is the pitfall from the
+backlog entry, measured: for a **single-line** assignment used as a prefix,
+the shell expands `$NAME` *before* the assignment takes effect —
+`P=new echo "$P"` prints the old value. A completion that inserts `$NAME`
+would be silently wrong in a single-line command, and "offer it sometimes,
+depending on the line count" would be a rule that changes while typing.
 
-**Wer `$NAME` von Hand schreibt, sieht die Folge im Probelauf** — der zeigt
-seit gestern den aufgelösten Text, und dieser Fall ist genau der, für den er
-eine Fixture hat. Das ist die ehrliche Antwort: nicht verhindern, sondern
-sichtbar machen.
+**Anyone who writes `$NAME` by hand sees the consequence in the dry run** —
+which has shown the resolved text since yesterday, and this case is
+exactly the one it has a fixture for. That is the honest answer: not
+prevent, but make visible.
 
-## Was kein Test dieses Projekts sehen kann
+## What no test in this project can see
 
-Prüfbar ist alles Entscheidbare: was die zugeklappte Zeile trägt, dass eine
-fehlerhafte offen bleibt, welche Namen die Vervollständigung anbietet und
-welche nicht, und wann der Hinweis auf ein undeklariertes `{{NAME}}`
-erscheint.
+Everything decidable is testable: what the collapsed row carries, that a
+faulty one stays open, which names completion offers and which it does
+not, and when the notice for an undeclared `{{NAME}}` appears.
 
-**Nicht prüfbar** bleibt, ob sich die Vorschlagsliste am `NSTextView` beim
-Tippen gut anfühlt, und ob das Formular nach dem Falten wirklich in das
-Sheet passt. Beides Maintainer-Blick.
+**Not testable** is whether the suggestion list on the `NSTextView` feels
+right while typing, and whether the form really fits the sheet after
+collapsing. Both are a maintainer's-eye call.
 
-## Was ausdrücklich nicht dazugehört
+## What is explicitly excluded
 
-- **Kein gespeicherter Faltzustand**, in keiner Form.
-- **Kein neuer `Problem`-Fall** und keine Änderung an
-  `SnippetVariableSubstitution` oder `SnippetCommandSurvey`. Der Hinweis ist
-  eine Anzeige, kein Tor.
-- **Kein `$NAME` in der Vervollständigung.**
-- **Keine Änderung an der Sheet-Breite** (460 pt). Platz entsteht durch
-  Falten, nicht durch ein größeres Fenster.
+- **No stored collapse state**, in any form.
+- **No new `Problem` case** and no change to
+  `SnippetVariableSubstitution` or `SnippetCommandSurvey`. The notice is a
+  display, not a gate.
+- **No `$NAME` in the completion.**
+- **No change to the sheet width** (460 pt). Room comes from collapsing,
+  not from a larger window.

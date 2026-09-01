@@ -1,112 +1,116 @@
-# macSCP M5g — Design-Polish Browser-Hauptansicht (Design-Spec)
+# macSCP M5g — Design polish for the browser main view (Design spec)
 
-**Datum:** 2026-07-11
-**Status:** vom Maintainer freigegeben (Brainstorming nach Design-Review 2026-07-11)
-**Referenz:** `docs/design/assets/macscp-ci-mockup.html` (interaktiver CI-Entwurf,
-Abschnitt „Das Hauptfenster") — bindende Blaupause; `docs/design/ci.md`.
+**Date:** 2026-07-11
+**Status:** approved by the maintainer (brainstorming after the design review on 2026-07-11)
+**Reference:** `docs/design/assets/macscp-ci-mockup.html` (interactive CI draft,
+section „Das Hauptfenster") — binding blueprint; `docs/design/ci.md`.
 
-## Ziel & Kontext
+## Goal & context
 
-User-Feedback: Der Entwurf ist schön in Abständen, Formen und Design — die App
-wirkt dagegen „sehr leblos". Analyse: Dem Mockup geben Flächen-Hierarchie,
-Haarlinien, dichte Typo-Details und eine feine Radien-Sprache ihr Leben; die
-App nutzt flache System-Standards. Entscheidung des Maintainers:
+User feedback: the mockup is beautiful in spacing, shapes and design — the app
+by contrast feels "very lifeless". Analysis: what gives the mockup its life is
+surface hierarchy, hairlines, dense typographic detail and a fine radius
+language; the app uses flat system defaults. Maintainer's decision:
 
-- **Richtung:** „Mockup als Blaupause" — Flächen, Haarlinien, Typo-Rhythmus und
-  Radien exakt übernehmen; System-Controls bleiben nur, wo sie unsichtbar sind.
-- **Scope-Staffelung:** Alle Bereiche folgen, aber einzeln. **M5g = nur die
-  Browser-Hauptansicht** (Dateiliste, Paneheads, Pane-Trenner). Folgerunden:
-  Sidebar-Fläche & Rhythmus · Transfer-Leiste & Terminal-Strip · Formular &
-  Buttons.
+- **Direction:** "mockup as blueprint" — adopt surfaces, hairlines,
+  typographic rhythm and radii exactly; system controls stay only where they
+  are invisible.
+- **Scope staging:** all areas follow, but one at a time. **M5g = only the
+  browser main view** (file list, pane heads, pane divider). Follow-up
+  rounds: sidebar surface & rhythm · transfer bar & terminal strip · form &
+  buttons.
 
-## Mockup-Werte (bindend, aus dem CSS des Entwurfs)
+## Mockup values (binding, from the draft's CSS)
 
-| Element | Wert |
+| Element | Value |
 |---|---|
-| Linienfarbe `line` | hell `#DAE3EB`, dunkel `#24374A` |
-| Text `ink` | hell `#14212E`, dunkel `#E8EFF5` |
-| Text `ink-2` | hell `#4A5B6B`, dunkel `#A7B7C5` |
-| Text `ink-3` | hell `#7E8FA0`, dunkel `#6E8093` |
-| `remote-soft` | hell `#E3EEF9`, dunkel `#142C42` |
-| `local-soft` | hell `#FBF1DF`, dunkel `#2C2415` |
-| Spaltenköpfe | 10,5pt, semibold, versal, Laufweite ~0.08em, `ink-3`, Padding 5×12pt, Hairline unten |
-| Tabellenzellen | Padding 4,5×12pt, Hairline unten in `line` @45 % Opazität, `white-space: nowrap` |
-| Zellen-Typo | erste Spalte `ink`, übrige `ink-2`; Zahlen-Spalten rechtsbündig mit Tabellenziffern |
-| Zeilen-Auswahl | Hintergrund `remote-soft` (in BEIDEN Panes — Blau ist die Auswahl-/Primärfarbe, CI-Regel) |
-| Panehead | Padding 7×12pt, Hairline unten, Gap 8pt, Schriftgewicht ~650 |
-| Pane-Badge | versal 10,5pt, Laufweite .09em, Padding 2×8pt, Radius 5pt, Farbe/Soft je Seite |
-| Panehead-Pfad | `ink-3`, 11,5pt, Ellipsis |
-| Pane-Trenner | 1pt Hairline zwischen den Panes |
+| Line color `line` | light `#DAE3EB`, dark `#24374A` |
+| Text `ink` | light `#14212E`, dark `#E8EFF5` |
+| Text `ink-2` | light `#4A5B6B`, dark `#A7B7C5` |
+| Text `ink-3` | light `#7E8FA0`, dark `#6E8093` |
+| `remote-soft` | light `#E3EEF9`, dark `#142C42` |
+| `local-soft` | light `#FBF1DF`, dark `#2C2415` |
+| Column headers | 10.5pt, semibold, uppercase, letter spacing ~0.08em, `ink-3`, padding 5×12pt, hairline below |
+| Table cells | padding 4.5×12pt, hairline below in `line` @45% opacity, `white-space: nowrap` |
+| Cell typography | first column `ink`, others `ink-2`; number columns right-aligned with tabular figures |
+| Row selection | background `remote-soft` (in BOTH panes — blue is the selection/primary color, CI rule) |
+| Pane head | padding 7×12pt, hairline below, gap 8pt, font weight ~650 |
+| Pane badge | uppercase 10.5pt, letter spacing .09em, padding 2×8pt, radius 5pt, color/soft per side |
+| Pane-head path | `ink-3`, 11.5pt, ellipsis |
+| Pane divider | 1pt hairline between the panes |
 
-## Umsetzung
+## Implementation
 
-### 1. DesignTokens erweitern (`Sources/MacSCPApp/DesignTokens.swift`)
+### 1. Extend DesignTokens (`Sources/MacSCPApp/DesignTokens.swift`)
 
-Neue appearance-aware Tokens (Muster der bestehenden `localAmber`/`remoteBlue`
-mit `NSColor(name:dynamicProvider:)`): `hairline`, `ink`, `inkSecondary`,
-`inkTertiary`, `remoteSoft`, `localSoft` mit den Tabellenwerten oben. Bestehende
-Views, die Soft-Töne bisher über `opacity` improvisieren (Pane-Badge 0.18,
-aktive Sidebar-Zeile 0.12), stellen NUR dort um, wo M5g sie ohnehin anfasst
-(Pane-Badge); die Sidebar folgt in ihrer eigenen Runde.
+New appearance-aware tokens (following the pattern of the existing
+`localAmber`/`remoteBlue` with `NSColor(name:dynamicProvider:)`): `hairline`,
+`ink`, `inkSecondary`, `inkTertiary`, `remoteSoft`, `localSoft` with the table
+values above. Existing views that currently improvise soft tones via
+`opacity` (pane badge 0.18, active sidebar row 0.12) switch over ONLY where
+M5g touches them anyway (pane badge); the sidebar follows in its own round.
 
-### 2. Dateiliste (`Sources/MacSCPApp/RemoteFileTableView.swift`, AppKit — RISK)
+### 2. File list (`Sources/MacSCPApp/RemoteFileTableView.swift`, AppKit — RISK)
 
-- Eigene `NSTableHeaderCell`: versale Titel (Katalog-Strings bleiben, Anzeige
-  versal), 10,5pt semibold, Laufweite, `inkTertiary`, Hairline unten; Header-
-  Höhe ~22pt (10,5pt-Schrift + 2×5pt Padding, wie im Mockup).
-- Zeilen: Höhe ~24pt; Zellen-Padding 12pt seitlich; Trennung als Hairline
-  (`hairline` @45 %) UNTER jeder Zeile (NSTableView `gridStyleMask` reicht
-  nicht für die Transparenz — eigene Zeichnung in einer `NSTableRowView`-
-  Subclass oder Grid-Farbe `hairline.withAlphaComponent(0.45)` via
-  `gridColor`, wenn das visuell identisch ist; der Plan legt den Weg fest).
-- Auswahl: `selectionHighlightStyle = .none` + eigene `NSTableRowView`, die
-  bei Selektion `remoteSoft` als abgerundetes Rechteck (Radius 0 — Mockup
-  `tr.sel` ist rechteckig) zeichnet; Text bleibt lesbar in beiden Appearances.
-  Auswahlfarbe in BEIDEN Panes `remoteSoft`.
-- Typo: Namensspalte `ink` (bzw. `labelColor`-äquivalent des Tokens), Größe/
-  Datum `inkSecondary`, Zahlen-/Datumsspalten rechtsbündig mit
-  `monospacedDigit`-Font (Systemgröße bleibt 12–12,5pt-Bereich).
-- Verhalten UNVERÄNDERT: Sortierung, Auswahl-Logik, Doppelklick (Ordner +
-  onOpenFile), Kontextmenüs, Drag-Quellen/Promise, Symlink-„ →"-Suffix.
+- Custom `NSTableHeaderCell`: uppercase titles (catalog strings stay as-is,
+  display is uppercase), 10.5pt semibold, letter spacing, `inkTertiary`,
+  hairline below; header height ~22pt (10.5pt font + 2×5pt padding, as in
+  the mockup).
+- Rows: height ~24pt; cell padding 12pt on the sides; separation as a
+  hairline (`hairline` @45%) BELOW every row (NSTableView `gridStyleMask`
+  isn't enough for the transparency — either custom drawing in an
+  `NSTableRowView` subclass or the grid color
+  `hairline.withAlphaComponent(0.45)` via `gridColor`, if that is visually
+  identical; the plan fixes the approach).
+- Selection: `selectionHighlightStyle = .none` + a custom `NSTableRowView`
+  that, on selection, draws `remoteSoft` as a rounded rectangle (radius 0 —
+  the mockup's `tr.sel` is rectangular); text stays legible in both
+  appearances. Selection color `remoteSoft` in BOTH panes.
+- Typography: name column `ink` (or the `labelColor`-equivalent of the
+  token), size/date `inkSecondary`, number/date columns right-aligned with
+  a `monospacedDigit` font (system size stays in the 12–12.5pt range).
+- Behavior UNCHANGED: sorting, selection logic, double-click (folder +
+  onOpenFile), context menus, drag sources/promise, symlink " →" suffix.
 
-### 3. Paneheads + Trenner (`Sources/MacSCPApp/BrowserPane.swift`, `ContentView.swift`)
+### 3. Pane heads + divider (`Sources/MacSCPApp/BrowserPane.swift`, `ContentView.swift`)
 
-- Panehead: Padding 7×12pt, Gap 8pt; Badge auf `localSoft`/`remoteSoft` (statt
-  `tint.opacity(0.18)`), Padding 2×8pt, Radius 5pt, versal mit Laufweite .09em
-  wie gehabt; Pfad `inkTertiary` 11,5pt, `lineLimit(1)` + `truncationMode(.middle)`;
-  darunter Hairline (1pt `hairline`) statt `Divider()`.
-- Pane-Trenner: Die HSplitView-Optik zwischen Lokal/Remote auf 1pt-Hairline
-  bringen — funktional ziehbar bleiben. Weg (Plan legt fest): eigener
-  schmaler Divider-Look, oder Panes ohne Split-Steg mit Hairline-Overlay,
-  solange das Ziehen erhalten bleibt. Fällt die Ziehbarkeit dem Look zum
-  Opfer, gewinnt die Ziehbarkeit (Funktion > Optik) und der Steg wird nur
-  so dünn wie möglich.
+- Pane head: padding 7×12pt, gap 8pt; badge on `localSoft`/`remoteSoft`
+  (instead of `tint.opacity(0.18)`), padding 2×8pt, radius 5pt, uppercase
+  with letter spacing .09em as before; path `inkTertiary` 11.5pt,
+  `lineLimit(1)` + `truncationMode(.middle)`; below it a hairline (1pt
+  `hairline`) instead of `Divider()`.
+- Pane divider: bring the HSplitView look between local/remote to a 1pt
+  hairline — it must stay functionally draggable. Approach (the plan fixes
+  it): a custom slim divider look, or panes without a split bar with a
+  hairline overlay, as long as dragging is preserved. If draggability would
+  be sacrificed to the look, draggability wins (function > look) and the bar
+  is made as thin as possible.
 
-## Fehlerbehandlung / Invarianten
+## Error handling / invariants
 
-- KEINE Verhaltensänderung an Auswahl, Transfers, Drag & Drop, Kontextmenüs,
-  Queue, Terminal — reiner View-Layer.
-- Beide Appearances (hell/dunkel) müssen die Tabellenwerte treffen; Tokens
-  sind dynamisch, keine statischen Farben in Views.
-- CI-Regeln bleiben: Bernstein nur lokal (Badge), Blau Auswahl/Remote,
-  Phosphor nur Status, Fehler System-Rot.
-- Lokalisierung unangetastet (Spaltentitel bleiben Katalog-Keys; Versal-
-  Darstellung ist Anzeige-Transformation).
+- NO behavior change to selection, transfers, drag & drop, context menus,
+  queue, terminal — pure view layer.
+- Both appearances (light/dark) must hit the table values; tokens are
+  dynamic, no static colors in views.
+- CI rules stay: amber only local (badge), blue selection/remote, phosphor
+  status only, error system red.
+- Localization untouched (column titles stay catalog keys; uppercase
+  display is a display transform).
 
 ## Tests
 
-- Keine neuen Unit-Tests (reiner AppKit/SwiftUI-View-Layer; `FileListFormatter`
-  und alle ViewModels unverändert); bestehende 295 müssen grün bleiben.
-- Visueller Smoke (Abschluss-Task): Seite-an-Seite mit dem Mockup in hell UND
-  dunkel — Spaltenköpfe, Hairlines, Auswahlfarbe, Zellen-Typo/Tabellenziffern,
-  Panehead-Maße, Badge-Soft-Töne, 1pt-Trenner; Verhaltens-Regression:
-  Sortieren, Doppelklick (Ordner + Editor), Auswahl + Upload/Download,
-  Drag & Drop, Kontextmenü.
+- No new unit tests (pure AppKit/SwiftUI view layer; `FileListFormatter`
+  and all view models unchanged); the existing 295 must stay green.
+- Visual smoke test (wrap-up task): side by side with the mockup in light AND
+  dark — column headers, hairlines, selection color, cell typography/tabular
+  figures, pane-head measurements, badge soft tones, 1pt divider; behavior
+  regression: sorting, double-click (folder + editor), selection +
+  upload/download, drag & drop, context menu.
 
-## Bewusst NICHT in M5g
+## Deliberately NOT in M5g
 
-- Sidebar-Fläche & Zeilen-Rhythmus (eigene Runde).
-- Transfer-Leiste (Pillen-Progress) & Terminal-Strip (eigene Runde).
-- Formular-Grid & Button-Radien (eigene Runde).
-- Flächen-Hierarchie `paper`/`card` app-weit (kommt mit der Sidebar-Runde,
-  wo der Zwischenton gebraucht wird).
+- Sidebar surface & row rhythm (its own round).
+- Transfer bar (pill progress) & terminal strip (its own round).
+- Form grid & button radii (its own round).
+- App-wide surface hierarchy `paper`/`card` (comes with the sidebar round,
+  where the intermediate tone is needed).

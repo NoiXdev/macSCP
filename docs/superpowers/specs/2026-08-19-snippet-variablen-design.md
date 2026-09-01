@@ -1,221 +1,225 @@
-# Snippet-Editor Teil 3 — deklarierte Variablen (Design)
+# Snippet editor part 3 — declared variables (design)
 
-**Stand:** 2026-08-19, freigegeben. Setzt auf Teil 1 (Einfärbung) und Teil 2
-(mehrzeilig) auf, beide abgeschlossen und sichtgeprüft. Löst den Backlog-Eintrag
-`2026-08-19-backlog-snippet-teil-3.md` ab, der ausdrücklich als gesicherte Idee
-und nicht als Design geführt wurde.
+**Status:** 2026-08-19, approved. Builds on part 1 (highlighting) and part 2
+(multiline), both completed and visually verified. Supersedes the backlog
+entry `2026-08-19-backlog-snippet-teil-3.md`, which was deliberately carried
+as a secured idea and not as a design.
 
-## Ausgangslage
+## Starting point
 
-Ein Snippet ist heute ein fester Befehlstext. Wiederkehrende Abläufe — ein
-Datenbank-Export, ein Log einsammeln — unterscheiden sich zwischen zwei Läufen
-oft in genau einem Wert.
+A snippet today is a fixed command text. Recurring workflows — a database
+export, collecting a log — often differ between two runs in exactly one
+value.
 
-Der Kern des Auftrags, in den Worten des Maintainers: **man soll die Variablen
-nicht im Text suchen müssen.** Die Alternative — den Befehl nach Platzhaltern
-absuchen und daraus ein Formular bauen — macht den Befehlstext zur Quelle der
-Wahrheit über etwas, das der Nutzer nirgends zusammenhängend sieht. Eine
-Deklaration ist sichtbar, sortierbar und kommentierbar.
+The core of the request, in the maintainer's words: **the user should not
+have to hunt for the variables in the text.** The alternative — scanning the
+command for placeholders and building a form from that — makes the command
+text the source of truth for something the user never sees laid out
+together. A declaration is visible, sortable, and can carry a comment.
 
-## Entscheidungen
+## Decisions
 
-Fünf, alle vom Maintainer:
+Five, all from the maintainer:
 
-1. **Beide Einsetzwege, pro Variable wählbar** — Platzhalter im Text oder
-   vorangestellte Umgebungszuweisung.
-2. **Kein Kennzeichen „erweitert"** — eine leere Deklarationsliste ist bereits
-   die Aussage „keine Variablen".
-3. **Das Protokoll bekommt die Vorlage, nicht die Werte.**
-4. **Zwei Arten:** Freitext und Auswahl aus einer Liste, je mit optionalem
-   Vorgabewert.
-5. **Merken ist ein Häkchen an der Deklaration, standardmäßig aus.**
+1. **Both substitution paths, selectable per variable** — a placeholder in
+   the text, or a prepended environment assignment.
+2. **No "advanced" flag** — an empty declaration list already says "no
+   variables".
+3. **The log gets the template, not the values.**
+4. **Two kinds:** free text and selection from a list, each with an
+   optional default value.
+5. **Remembering is a checkbox on the declaration, off by default.**
 
-### Zu (1): eine bewusste Abweichung von der Empfehlung
+### On (1): a deliberate departure from the recommendation
 
-Ich hatte zu **einem** Weg geraten und begründet, dass zwei Mechanismen zwei
-Fehlerbilder und zwei Testmatrizen bedeuten. Der Maintainer hat sich für beide
-entschieden; das ist notiert, nicht ausgeführt.
+I had advised **one** path, arguing that two mechanisms mean two failure
+modes and two test matrices. The maintainer chose both; that is noted, not
+argued away.
 
-Die Gegenmaßnahme steht im Design: es gibt **eine** Deklaration mit einem
-`placement`-Feld und **eine** Einsetzfunktion, die beide Fälle bedient. Die
-Testmatrix läuft über die Platzierung, statt sich zu verdoppeln. Wo das
-Verhalten sich unterscheidet — und es unterscheidet sich —, steht es an einer
-Stelle.
+The countermeasure is in the design: there is **one** declaration with a
+`placement` field and **one** substitution function that serves both cases.
+The test matrix runs over placement instead of doubling. Where the behavior
+actually differs — and it does — it lives in one place.
 
-### Zu (5): warum das Häkchen nötig wurde
+### On (5): why the checkbox became necessary
 
-Die ursprüngliche Wahl war eine dritte Variablen**art** „zuletzt benutzter
-Wert". Das kollidierte mit Entscheidung (3): das Protokoll bekommt keine Werte,
-damit ein versehentlich eingetipptes Passwort nicht in einer Datei landet — und
-ein gemerkter Wert läge in derselben JSON-Ablage, nur in einer anderen Datei.
+The original choice was a third variable **kind**, "last used value". That
+collided with decision (3): the log gets no values, so that an accidentally
+typed password does not end up in a file — and a remembered value would sit
+in the same JSON store, just a different file.
 
-Nach dem Hinweis fiel die Entscheidung auf ein **Opt-in an der Deklaration**,
-standardmäßig aus. Damit fällt die Wahl, bevor ein Wert existiert, und sie hat
-dieselbe Form wie (3): sicher als Vorgabe, Bequemlichkeit als bewusste Wahl.
+After that was pointed out, the decision fell on an **opt-in on the
+declaration**, off by default. That way the choice is made before a value
+exists, and it has the same shape as (3): safe as the default, convenience
+as a deliberate choice.
 
-Nebenbei kollabierte damit die dritte Art zu einer Eigenschaft. Es bleiben zwei
-Arten und zwei unabhängige Eigenschaften (Vorgabewert, Merken) — weniger
-Maschinerie, als die Frage nahelegte.
+Along the way this collapsed the third kind into a property. What remains
+is two kinds and two independent properties (default value, remembering) —
+less machinery than the question suggested.
 
-## Modell
+## Model
 
-`Snippet` bekommt `variables: [SnippetVariable]` mit Vorgabe `[]`; alte Stores
-lesen sich ohne Migration, weil ein fehlender Schlüssel als leere Liste
-dekodiert (dasselbe Muster, mit dem `tags` eingeführt wurde).
+`Snippet` gets `variables: [SnippetVariable]` with a default of `[]`; old
+stores read without migration, because a missing key decodes as an empty
+list (the same pattern used to introduce `tags`).
 
-Eine Deklaration trägt:
+A declaration carries:
 
-| Feld | Bedeutung |
+| Field | Meaning |
 |---|---|
-| `name` | der Bezeichner, z. B. `DBNAME` |
-| `prompt` | Beschriftung im Abfrage-Sheet |
-| `kind` | `.freeText` oder `.selection([String])` |
-| `placement` | `.placeholder` oder `.environment` |
-| `defaultValue` | Vorbelegung, darf leer sein |
-| `remembersLastValue` | Häkchen, Vorgabe `false` |
+| `name` | the identifier, e.g. `DBNAME` |
+| `prompt` | label in the prompt sheet |
+| `kind` | `.freeText` or `.selection([String])` |
+| `placement` | `.placeholder` or `.environment` |
+| `defaultValue` | preset, may be empty |
+| `remembersLastValue` | checkbox, default `false` |
 
-**Namensregel, für beide Platzierungen gleich:** `[A-Za-z_][A-Za-z0-9_]*`. Für
-die Umgebung ist das Pflicht, weil daraus eine Shell-Zuweisung wird; für den
-Platzhalter ist es nicht nötig, aber zwei Regeln für dasselbe Feld wären eine
-Fehlerquelle ohne Gegenwert. Namen sind innerhalb eines Snippets eindeutig.
+**Naming rule, the same for both placements:** `[A-Za-z_][A-Za-z0-9_]*`.
+For the environment placement this is mandatory, because it becomes a shell
+assignment; for the placeholder it is not strictly necessary, but two rules
+for the same field would be a source of errors with no benefit. Names are
+unique within a snippet.
 
-### Gemerkte Werte liegen nicht im Snippet
+### Remembered values do not live in the snippet
 
-Sie kommen in eine eigene, kleine JSON-Ablage neben `snippets.json`,
-adressiert über Snippet-ID und Variablenname — **im Klartext, nicht
-verschlüsselt**, wie jede andere Nicht-Geheimnis-Ablage dieses Projekts. Genau
-deshalb ist das Merken ein bewusstes Opt-in und keine Vorgabe. Zwei Gründe für
-die eigene Ablage, beide zwingend:
+They go into a separate, small JSON store next to `snippets.json`,
+addressed by snippet ID and variable name — **in plain text, not
+encrypted**, like every other non-secret store in this project. Precisely
+for that reason, remembering is a deliberate opt-in and not a default. Two
+reasons for the separate store, both mandatory:
 
-- Ein Snippet, das sich beim Ausführen selbst ändert, ist kein
-  Vorlagen-Datensatz mehr — jeder Lauf wäre eine Store-Schreibung am Snippet.
-- **Der Export dürfte die Werte nicht mittragen.** Läge der letzte Wert im
-  Snippet, wanderte er in jede exportierte Datei und in jede Weitergabe.
+- A snippet that changes itself when run is no longer a template record —
+  every run would be a store write on the snippet.
+- **Export must not carry the values along.** If the last value lived in
+  the snippet, it would travel into every exported file and every share.
 
-Deklarationen wandern mit dem Export, gemerkte Werte nie.
+Declarations travel with export, remembered values never do.
 
-**Verwaiste Einträge.** Wird ein Snippet gelöscht, bleiben seine gemerkten
-Werte sonst liegen. Das Löschen räumt sie mit — dieselbe Kopplung, die das
-Löschen einer Sitzung mit ihrem Keychain-Eintrag hat. Ein Eintrag zu einer
-Snippet-ID, die es nicht mehr gibt, wird beim Laden verworfen.
+**Orphaned entries.** If a snippet is deleted, its remembered values would
+otherwise be left behind. Deletion clears them too — the same coupling that
+deleting a session has with its keychain entry. An entry for a snippet ID
+that no longer exists is discarded on load.
 
-## Einsetzen
+## Substitution
 
-Eine reine Funktion in Core: Vorlage plus Werte rein, aufgelöster Befehl raus —
-oder eine Abweisung.
+A pure function in Core: template plus values in, resolved command out —
+or a rejection.
 
-### Platzhalter
+### Placeholder
 
-`{{DBNAME}}` im Befehl wird durch den Wert ersetzt, gequotet über die
-vorhandene `SSHCommandBuilder.posixSingleQuote`-Primitive (einfache
-Anführungszeichen, eingebettetes `'` als `'\''`). Die Primitive existiert, wird
-bereits mit einem Wert samt eingebettetem Anführungszeichen getestet und wird
-für diese Verwendung sichtbar gemacht statt nachgebaut.
+`{{DBNAME}}` in the command is replaced by the value, quoted via the
+existing `SSHCommandBuilder.posixSingleQuote` primitive (single quotes,
+embedded `'` as `'\''`). The primitive already exists, is already tested
+with a value containing an embedded quote, and is exposed for this use
+rather than rebuilt.
 
-**Nur deklarierte Namen werden ersetzt.** Das ist nicht bloß eine
-Sparsamkeitsregel, sondern die Auflösung einer echten Kollision:
+**Only declared names are replaced.** This is not merely an economy rule,
+but the resolution of a real collision:
 
 ```
 kubectl get pods -o go-template='{{range .items}}{{.metadata.name}}{{end}}'
 ```
 
-Doppelte geschweifte Klammern kommen in realen Befehlen vor. `range .items` ist
-keine deklarierte Variable und bleibt wörtlich stehen. Es braucht deshalb weder
-einen eigenen Dialekt noch eine Escape-Regel.
+Double curly braces occur in real commands. `range .items` is not a
+declared variable and stays literal. It therefore needs neither its own
+dialect nor an escaping rule.
 
-### Umgebung
+### Environment
 
-`$DBNAME` im Befehl, und macSCP stellt die Zuweisung voran:
+`$DBNAME` in the command, and macSCP prepends the assignment:
 
-- **einzeilig:** `DBNAME='kunden db' mysqldump …` — die Zuweisung gilt nur für
-  diesen einen Befehl.
-- **mehrzeilig:** `DBNAME='kunden db'` als eigene erste Zeile, danach der
-  Rumpf.
+- **single-line:** `DBNAME='kunden db' mysqldump …` — the assignment applies
+  only to this one command.
+- **multiline:** `DBNAME='kunden db'` as its own first line, followed by the
+  body.
 
-Die zweite Form hat einen **echten Seiteneffekt**: die Variable bleibt nach dem
-Lauf in der Sitzung gesetzt. Das gehört sichtbar in den Hinweistext des
-Editors, nicht in eine Fußnote — wer `$PATH` als Variablennamen wählt, soll
-vorher wissen, was passiert.
+The second form has a **real side effect**: the variable stays set in the
+session after the run. That belongs visibly in the editor's hint text, not
+in a footnote — anyone choosing `$PATH` as a variable name should know what
+happens beforehand.
 
-Mehrere Zuweisungen stehen in Deklarationsreihenfolge.
+Multiple assignments appear in declaration order.
 
-## Zwei Abweisungen, beim Speichern
+## Two rejections, at save time
 
-Beide sind reine, testbare Prüfungen und beide feuern im Editor, nicht beim
-Ausführen — eine Überraschung auf einem fremden Host ist teurer als eine im
-eigenen Formular.
+Both are pure, testable checks, and both fire in the editor, not at
+execution time — a surprise on a remote host is more expensive than one in
+your own form.
 
-1. **Platzhalter-Deklaration ohne Verwendung.** Eine Variable mit
-   `placement == .placeholder`, deren `{{NAME}}` im Befehl nicht vorkommt,
-   würde abgefragt und käme nirgends an.
+1. **A placeholder declaration with no use.** A variable with
+   `placement == .placeholder` whose `{{NAME}}` does not occur in the
+   command would be prompted for and arrive nowhere.
 
-   **Nur für Platzhalter.** Für die Umgebungsplatzierung darf es diese Prüfung
-   nicht geben: dort ist der häufigste und beabsichtigte Fall gerade der, dass
-   `$NAME` im Befehl **nicht** steht — `DBNAME='x' ./backup.sh` setzt die
-   Variable für ein Skript, das sie selbst liest. Eine Prüfung auf `$NAME`
-   würde genau die natürliche Verwendung abweisen. (Im Selbstreview dieser
-   Spec stand die Prüfung zunächst für beide Platzierungen; das war falsch.)
-2. **Platzhalter innerhalb von Anführungszeichen.** `echo "{{DBNAME}}"` ergäbe
-   `echo "'wert'"` — die Quotes würden sichtbar. Die Erkennung, ob eine
-   Position in einfachen oder doppelten Anführungszeichen liegt, ist dieselbe
-   Zustandsmaschine, die `SnippetHighlighter` aus Teil 1 bereits durchläuft, um
-   Zeichenketten einzufärben. Ob der Code geteilt oder nur die Regel geteilt
-   wird, entscheidet die Umsetzung am Bestand.
+   **Placeholder only.** This check must not exist for the environment
+   placement: there, the most common and intended case is precisely that
+   `$NAME` does **not** appear in the command — `DBNAME='x' ./backup.sh`
+   sets the variable for a script that reads it itself. A check for `$NAME`
+   would reject exactly the natural use. (In this spec's own self-review,
+   the check initially covered both placements; that was wrong.)
+2. **A placeholder inside quotes.** `echo "{{DBNAME}}"` would produce
+   `echo "'wert'"` — the quotes would show. Detecting whether a position
+   sits inside single or double quotes is the same state machine that
+   `SnippetHighlighter` from part 1 already runs to color strings. Whether
+   the code is shared or only the rule is shared is a decision for the
+   implementation against the existing code.
 
-## Das Protokoll ändert sich nicht
+## The log does not change
 
-`SnippetAuditDetail.text(for:)` liest `snippet.command` — und das **ist** die
-Vorlage. Entscheidung (3) kostet damit keine Zeile Code; sie beschreibt den
-Zustand, der eintritt, wenn niemand etwas dagegen unternimmt.
+`SnippetAuditDetail.text(for:)` reads `snippet.command` — and that **is**
+the template. Decision (3) therefore costs no line of code; it describes
+the state that results when nobody does anything against it.
 
-Genau deshalb bekommt sie einen **Test**: eine Regel, die gratis ist, wird
-beim nächsten Umbau gratis gebrochen. Der Test hält fest, dass der Wert einer
-Variablen im Protokolltext nicht vorkommt.
+Precisely for that reason it gets a **test**: a rule that is free will be
+broken for free on the next refactor. The test asserts that a variable's
+value does not occur in the log text.
 
-## Ablauf beim Auslösen
+## Flow on firing
 
-Auslösen → hat das Snippet Deklarationen, erscheint ein Abfrage-Sheet mit einem
-Feld je Variable, vorbelegt aus gemerktem Wert, sonst aus dem Vorgabewert →
-**Abbrechen sendet nichts** → Bestätigen löst auf, merkt sich die angehakten
-Werte, und ab da läuft der Weg aus Teil 2 unverändert weiter: der aufgelöste
-Befehl geht in `SnippetSendPlanner`, der über den Bracketed-Paste-Modus
-entscheidet.
+Firing → if the snippet has declarations, a prompt sheet appears with one
+field per variable, preset from a remembered value, otherwise from the
+default value → **cancel sends nothing** → confirm resolves it, remembers
+the checked values, and from there the path from part 2 continues
+unchanged: the resolved command goes into `SnippetSendPlanner`, which
+decides on bracketed-paste mode.
 
-Ein Snippet ohne Deklarationen nimmt den heutigen Weg ohne Sheet.
+A snippet without declarations takes today's path, with no sheet.
 
 ## Tests
 
-**Das Einsetzen, vollständig:** beide Platzierungen, je einzeilig und
-mehrzeilig; Werte mit Leerzeichen, einfachem Anführungszeichen, `$`,
-Backslash und einer Zeichenkette, die selbst wie ein Platzhalter aussieht.
+**Substitution, complete:** both placements, each single-line and
+multiline; values with a space, a single quote, `$`, a backslash, and a
+string that itself looks like a placeholder.
 
-**Die Nicht-Ersetzung:** ein `{{…}}`, das keiner Deklaration entspricht, bleibt
-unangetastet — mit dem `go-template`-Befehl oben als Testfall, wörtlich.
+**Non-substitution:** a `{{…}}` that matches no declaration stays
+untouched — with the `go-template` command above as the test case,
+verbatim.
 
-**Beide Abweisungen**, je mit einem Fall, der sie auslöst, und einem, der sie
-nicht auslöst.
+**Both rejections**, each with one case that triggers it and one that does
+not.
 
-**Die Namensregel**, mit einem Namen, der als Shell-Zuweisung ungültig wäre.
+**The naming rule**, with a name that would be invalid as a shell
+assignment.
 
-**Das Protokoll**, siehe oben.
+**The log**, see above.
 
-**Konstant-Rückgabe-Probe:** eine Einsetzfunktion, die den Befehl unverändert
-zurückgibt, muss an mindestens der Hälfte dieser Fälle scheitern; eine, die
-jeden Wert ungequotet einsetzt, muss an den Werten mit Sonderzeichen scheitern.
+**Constant-return probe:** a substitution function that returns the command
+unchanged must fail at least half of these cases; one that substitutes
+every value unquoted must fail on the values with special characters.
 
-## Was ungeprüft bleibt
+## What stays unverified
 
-Das Abfrage-Sheet selbst und der Variablen-Abschnitt im Editor: kein Test
-dieses Projekts zeichnet SwiftUI-Ansichten. **Sichtprüfung beim Maintainer**,
-und das gehört so in den Abschlussbericht — Teil 1 und Teil 2 haben beide
-gezeigt, dass in dieser Schicht weder die grüne Suite noch das Review reicht.
+The prompt sheet itself and the variables section in the editor: no test in
+this project draws SwiftUI views. **Visual check by the maintainer**, and
+that belongs in the closing report as such — parts 1 and 2 both showed that
+at this layer neither the green suite nor the review is enough.
 
-## Nicht in diesem Teil
+## Not in this part
 
-- **Ein `type`-Marker am Snippet** (`shell`, perspektivisch `telnet`). Der
-  Tokenizer aus Teil 1 nimmt die Sprache bereits als Parameter und speichert
-  sie ausdrücklich nicht; dieser Marker wäre der Ort, an dem sie herkäme. Es
-  gibt aber noch keine zweite Sitzungsart, für die er etwas entscheiden würde.
-- **Variablen in Namen oder Tags** eines Snippets. Nur der Befehl.
-- **Verkettete Variablen** (eine Variable, deren Vorgabewert eine andere
-  einsetzt). Weder gefragt noch nötig.
+- **A `type` marker on the snippet** (`shell`, prospectively `telnet`). The
+  tokenizer from part 1 already takes the language as a parameter and
+  deliberately does not store it; this marker would be where it would come
+  from. But there is not yet a second session kind for it to decide
+  anything about.
+- **Variables in a snippet's name or tags.** Only the command.
+- **Chained variables** (a variable whose default value substitutes
+  another). Neither requested nor needed.

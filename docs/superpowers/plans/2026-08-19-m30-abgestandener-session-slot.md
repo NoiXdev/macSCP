@@ -1,21 +1,21 @@
-# M30 — Abgestandener Session-Slot beim Login-Set-Wechsel: Implementierungsplan
+# M30 — Stale Session Slot on Login-Set Switch: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Beim Verlassen des Login-Set-Modus bedeutet ein leeres Geheimfeld
-nicht mehr „unverändert", sondern ist ein Validierungsfehler — damit kann ein
-altes Passwort nicht stillschweigend wieder aktiv werden.
+**Goal:** When leaving login-set mode, an empty secret field no longer
+means "unchanged" — it is a validation error, so that an old password
+cannot silently become active again.
 
-**Architecture:** Eine einzige Änderung an zwei Aufrufen in
-`ConnectionViewModel.validateForEditSave()`: das bisher feste
-`requireSecrets: false` bzw. `requireSecret: false` wird aus dem Übergang
-abgeleitet (vorher an ein Set gebunden, jetzt manuell). Die Meldung liefert
-der vorhandene Validator aus der Felddeklaration. **Es wird nichts gelöscht**
-— der getippte Wert überschreibt den alten Slot über den vorhandenen
-Schreibpfad.
+**Architecture:** A single change to two calls in
+`ConnectionViewModel.validateForEditSave()`: the previously fixed
+`requireSecrets: false` resp. `requireSecret: false` is now derived from
+the transition (previously bound to a set, now manual). The message comes
+from the existing validator from the field declaration. **Nothing is
+deleted** — the typed value overwrites the old slot via the existing write
+path.
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v5)`), SwiftPM, macOS 15+,
 Swift Testing (`@Test`/`#expect`).
@@ -24,62 +24,62 @@ Swift Testing (`@Test`/`#expect`).
 
 ## Global Constraints
 
-- Code, Kommentare, Testnamen, Commit-Messages: **Englisch**. Interne Doku
-  (`docs/`) darf Deutsch bleiben.
-- Conventional Commits, Footer auf jedem Commit:
+- Code, comments, test names, commit messages: **English**. Internal docs
+  (`docs/`) may stay German.
+- Conventional Commits, footer on every commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-- **Kein Geheimnis darf je in eine Fehlermeldung geraten**, auch nicht in
-  eine Testmeldung: `#expect` expandiert seinen Ausdruck, also erst in ein
-  `Bool` heben und dieses prüfen.
-- **Diese Änderung enthält keinen `delete`-Aufruf.** Wer beim Umsetzen einen
-  braucht, hat den Entwurf verlassen und meldet das, statt ihn einzubauen.
-- Neue Logik kommt mit Tests, TDD rot→grün. Suite: `swift test`.
-- **Die Prosa dieses Plans ist eine zu prüfende Behauptung, kein Befund.**
-  Wenn eine hier behauptete Signatur, ein Feldname oder ein Meldungsschlüssel
-  nicht stimmt: melden, nicht stillschweigend umbauen.
+- **No secret may ever reach an error message**, not even a test message:
+  `#expect` expands its expression, so hoist it into a `Bool` first and
+  check that.
+- **This change contains no `delete` call.** Whoever needs one while
+  implementing has left the design and reports it instead of building it in.
+- New logic comes with tests, TDD red→green. Suite: `swift test`.
+- **The prose of this plan is a claim to be verified, not a finding.**
+  If a signature, field name, or message key claimed here does not hold:
+  report it, do not silently rework it.
 
-## Dateien
+## Files
 
-| Datei | Rolle in diesem Plan |
+| File | Role in this plan |
 |---|---|
-| `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` | trägt `validateForEditSave()`; hier sitzt die ganze Verhaltensänderung |
-| `Tests/macSCPCoreTests/ConnectionViewModelTests.swift` | die Validierungs-Tests, Task 1 und 2 |
-| `Tests/macSCPCoreTests/SessionListViewModelTests.swift` | der eine Test, der das Überschreiben des Slots festhält (Task 1) |
+| `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` | carries `validateForEditSave()`; this is where the whole behaviour change sits |
+| `Tests/macSCPCoreTests/ConnectionViewModelTests.swift` | the validation tests, Task 1 and 2 |
+| `Tests/macSCPCoreTests/SessionListViewModelTests.swift` | the one test that pins the overwrite of the slot (Task 1) |
 
-Keine neuen Dateien, keine neuen Typen, keine neuen L10n-Schlüssel: die
-Meldungen `core.connect.passwordEmpty` und `core.connect.jumpPasswordEmpty`
-sind bereits deklariert und übersetzt.
+No new files, no new types, no new L10n keys: the messages
+`core.connect.passwordEmpty` and `core.connect.jumpPasswordEmpty`
+are already declared and translated.
 
 ---
 
-### Task 1: Die Regel für die Sitzung
+### Task 1: The rule for the session
 
 **Files:**
-- Modify: `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` (in `validateForEditSave()`, am `descriptor.firstViolation`-Aufruf)
+- Modify: `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` (in `validateForEditSave()`, at the `descriptor.firstViolation` call)
 - Test: `Tests/macSCPCoreTests/ConnectionViewModelTests.swift`
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: `BackendDescriptor.firstViolation(in:requireSecrets:)`, `ConnectionViewModel.editingOriginal`, `ConnectionViewModel.loginMode`, die Fixture `sshSession(name:host:username:authKind:keyPath:loginSetID:jump:)` aus `Tests/macSCPCoreTests/SessionFixtures.swift`
-- Produces: nichts Neues — Task 2 ändert dieselbe Funktion an der Zeile darunter
+- Consumes: `BackendDescriptor.firstViolation(in:requireSecrets:)`, `ConnectionViewModel.editingOriginal`, `ConnectionViewModel.loginMode`, the fixture `sshSession(name:host:username:authKind:keyPath:loginSetID:jump:)` from `Tests/macSCPCoreTests/SessionFixtures.swift`
+- Produces: nothing new — Task 2 changes the same function on the line below
 
-- [ ] **Step 1: Die fünf fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the five failing tests**
 
-Ans Ende von `ConnectionViewModelTests` einfügen. `beginEditing` setzt
-`loginMode` aus `stored.loginSetID`; die Zeile `vm.loginMode = .manual`
-bildet also genau den Griff des Nutzers zum Umschalter nach.
+Insert at the end of `ConnectionViewModelTests`. `beginEditing` sets
+`loginMode` from `stored.loginSetID`; the line `vm.loginMode = .manual`
+therefore reproduces exactly the user's reach for the switch.
 
 ```swift
-    /// M30: Set-Modus zu verlassen ist der eine Moment, in dem ein leeres
-    /// Geheimfeld NICHT "unverändert lassen" heißt. Ohne diese Regel bleibt
-    /// das Passwort der vorherigen Konfiguration im Schlüsselbund stehen und
-    /// wird beim nächsten Connect stillschweigend wieder benutzt.
+    /// M30: Leaving Set mode is the one moment when an empty secret field
+    /// does NOT mean "leave unchanged". Without this rule, the previous
+    /// configuration's password stays in the keychain and is silently
+    /// reused on the next connect.
     ///
-    /// Die Gegenrichtung — eine manuelle Sitzung, die den Modus gar nicht
-    /// wechselt — hält `validateForEditSaveAllowsEmptyPasswordAndBuildsTheSession`
-    /// weiter oben in dieser Datei fest. Zusammen nageln die beiden die Regel
-    /// in beide Richtungen fest: ein hart verdrahtetes `true` oder `false`
-    /// macht je einen von ihnen rot.
+    /// The opposite direction — a manual session that does not switch mode
+    /// at all — is pinned by
+    /// `validateForEditSaveAllowsEmptyPasswordAndBuildsTheSession` further up
+    /// this file. Together the two nail the rule down in both directions: a
+    /// hard-wired `true` or `false` would turn one of them red.
     @Test @MainActor func leavingLoginSetModeWithAnEmptyPasswordIsRefused() {
         let vm = makeVM()
         vm.beginEditing(sshSession(name: "web", host: "h", username: "u",
@@ -105,10 +105,10 @@ bildet also genau den Griff des Nutzers zum Umschalter nach.
         #expect(vm.state == .idle)
     }
 
-    /// Falschablehnungs-Wächter. Die SSH-Passphrase ist in
-    /// `SSHFieldSchema.credential` ausdrücklich NICHT als erforderlich
-    /// deklariert — ein unverschlüsselter Schlüssel hat keine. Wird sie das
-    /// eines Tages, fällt es hier auf statt beim Nutzer.
+    /// False-refusal guard. The SSH passphrase is explicitly declared NOT
+    /// required in `SSHFieldSchema.credential` — an unencrypted key has
+    /// none. Should that ever change, it will show up here instead of on
+    /// the user.
     @Test @MainActor func leavingLoginSetModeWithAKeyLoginNeedsNoPassphrase() {
         let vm = makeVM()
         vm.beginEditing(sshSession(name: "web", host: "h", username: "u",
@@ -120,8 +120,8 @@ bildet also genau den Griff des Nutzers zum Umschalter nach.
         #expect(vm.validateForEditSave() != nil)
     }
 
-    /// Zweiter Falschablehnungs-Wächter: ein Agent-Login zeigt überhaupt kein
-    /// Geheimfeld, `requireSecrets` hat dort also nichts zu verlangen.
+    /// Second false-refusal guard: an agent login shows no secret field at
+    /// all, so `requireSecrets` has nothing to demand there.
     @Test @MainActor func leavingLoginSetModeWithAnAgentLoginNeedsNoSecret() {
         let vm = makeVM()
         vm.beginEditing(sshSession(name: "web", host: "h", username: "u",
@@ -132,9 +132,8 @@ bildet also genau den Griff des Nutzers zum Umschalter nach.
         #expect(vm.validateForEditSave() != nil)
     }
 
-    /// Von einem Set auf ein anderes zu wechseln ist kein Verlassen: es gibt
-    /// keinen manuellen Modus, in dem ein alter Slot wieder aktiv werden
-    /// könnte.
+    /// Switching from one set to another is not leaving: there is no
+    /// manual mode in which an old slot could become active again.
     @Test @MainActor func switchingBetweenLoginSetsNeedsNoSecret() {
         let vm = makeVM()
         vm.beginEditing(sshSession(name: "web", host: "h", username: "u",
@@ -146,20 +145,20 @@ bildet also genau den Griff des Nutzers zum Umschalter nach.
     }
 ```
 
-- [ ] **Step 2: Den sechsten Test schreiben — das Überschreiben**
+- [ ] **Step 2: Write the sixth test — the overwrite**
 
-In `SessionListViewModelTests` einfügen. Er hält die zweite Hälfte der
-Zusicherung fest: der getippte Wert ersetzt den alten Slot wirklich, statt
-neben ihm zu landen. Ohne ihn beweist Task 1 nur, dass gespeichert werden
-*darf*.
+Insert in `SessionListViewModelTests`. It pins the second half of the
+assertion: the typed value really replaces the old slot, instead of
+landing next to it. Without it, Task 1 only proves that saving is
+*allowed*.
 
-Das Geheimnis wird in ein `Bool` gehoben, bevor `#expect` es sieht — die
-Makro-Expansion druckt sonst den Wert in die Fehlermeldung.
+The secret is hoisted into a `Bool` before `#expect` sees it — the macro
+expansion would otherwise print the value into the failure message.
 
 ```swift
-    /// M30: der beim Verlassen des Set-Modus verlangte Wert muss den alten
-    /// Slot ERSETZEN. Sonst wäre die neue Validierungsregel wirkungslos --
-    /// der Nutzer tippt ein Passwort und das alte bliebe trotzdem stehen.
+    /// M30: the value demanded when leaving Set mode must REPLACE the old
+    /// slot. Otherwise the new validation rule would be pointless -- the
+    /// user types a password and the old one would stay put regardless.
     @Test func aNewSecretOnEditReplacesTheStoredOne() throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -175,23 +174,23 @@ Makro-Expansion druckt sonst den Wert in die Fehlermeldung.
     }
 ```
 
-- [ ] **Step 3: Tests laufen lassen, Rot bestätigen**
+- [ ] **Step 3: Run the tests, confirm red**
 
 ```bash
 swift test --filter "leavingLoginSetModeWithAnEmptyPasswordIsRefused"
 ```
 
-Erwartet: FAIL — `validateForEditSave()` liefert heute eine Sitzung statt
-`nil`, weil `requireSecrets` fest auf `false` steht. Die vier anderen neuen
-Tests aus Step 1 und der aus Step 2 sind bereits grün; sie sind die
-Kontrollen, die die Regel eingrenzen, nicht die Treiber.
+Expected: FAIL — `validateForEditSave()` today returns a session instead of
+`nil`, because `requireSecrets` is fixed to `false`. The four other new
+tests from Step 1 and the one from Step 2 are already green; they are the
+controls that bound the rule, not the drivers.
 
-- [ ] **Step 4: Die Regel einbauen**
+- [ ] **Step 4: Build in the rule**
 
-In `validateForEditSave()`, unmittelbar vor dem `descriptor.firstViolation`-
-Aufruf. `editingOriginal` statt der lokalen Kopie `session`: die Kopie wird
-weiter unten mutiert, und eine künftige Umstellung dieser Reihenfolge würde
-die Frage sonst still verfälschen.
+In `validateForEditSave()`, immediately before the `descriptor.firstViolation`
+call. `editingOriginal` rather than the local copy `session`: the copy is
+mutated further down, and a future reordering of that would otherwise
+silently falsify this question.
 
 ```swift
         let descriptor = BackendDescriptor.descriptor(for: kind)
@@ -211,24 +210,24 @@ die Frage sonst still verfälschen.
         if let violation = descriptor.firstViolation(in: values, requireSecrets: leftLoginSet) {
 ```
 
-- [ ] **Step 5: Tests laufen lassen, Grün bestätigen**
+- [ ] **Step 5: Run the tests, confirm green**
 
 ```bash
 swift test --filter "ConnectionViewModelTests|SessionListViewModelTests"
 ```
 
-Erwartet: PASS, alle sechs neuen Tests plus die bestehenden derselben
-Dateien.
+Expected: PASS, all six new tests plus the existing ones in the same
+files.
 
-- [ ] **Step 6: Volle Suite**
+- [ ] **Step 6: Full suite**
 
 ```bash
 swift test
 ```
 
-Erwartet: PASS. Sollte ein bestehender Test rot werden, ist das ein Befund
-über den Umfang der Regel und gehört gemeldet — nicht durch Anpassen des
-alten Tests entschärft.
+Expected: PASS. Should an existing test turn red, that is a finding
+about the scope of the rule and needs to be reported — not smoothed over
+by adjusting the old test.
 
 - [ ] **Step 7: Commit**
 
@@ -241,28 +240,28 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Die Jump-Symmetrie
+### Task 2: The jump symmetry
 
 **Files:**
-- Modify: `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` (in `validateForEditSave()`, am `validateJump`-Aufruf direkt unter Task 1s Änderung)
+- Modify: `Sources/macSCPCore/Presentation/ConnectionViewModel.swift` (in `validateForEditSave()`, at the `validateJump` call directly below Task 1's change)
 - Test: `Tests/macSCPCoreTests/ConnectionViewModelTests.swift`
 
 **Interfaces:**
-- Consumes: `ConnectionViewModel.validateJump(requireSecret:)` — der Parameter existiert bereits und wird heute mit `false` aufgerufen; `StoredSession.JumpSpec(host:port:username:authKind:keyPath:loginSetID:secretID:sessionID:)`
-- Produces: nichts — letzte Codeänderung des Plans
+- Consumes: `ConnectionViewModel.validateJump(requireSecret:)` — the parameter already exists and is today called with `false`; `StoredSession.JumpSpec(host:port:username:authKind:keyPath:loginSetID:secretID:sessionID:)`
+- Produces: nothing — last code change of the plan
 
-- [ ] **Step 1: Die zwei fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the two failing tests**
 
-Die Sitzung selbst bleibt in beiden manuell und ungebunden, damit allein die
-Jump-Regel geprüft wird. `beginEditing` setzt `jumpLoginMode` aus
-`jump.loginSetID`, genau wie `loginMode` aus dem der Sitzung.
+The session itself stays manual and unbound in both, so that only the
+jump rule is tested. `beginEditing` sets `jumpLoginMode` from
+`jump.loginSetID`, exactly as `loginMode` is set from the session's.
 
 ```swift
-    /// M30, die Jump-Hälfte derselben Regel: der Jump hat einen eigenen
-    /// Schlüsselbund-Slot und dieselbe Set-Bindung, also auch denselben
-    /// Rückweg, auf dem ein altes Geheimnis stillschweigend wieder aktiv
-    /// würde. Die Sitzung bleibt hier ungebunden, damit der Test die
-    /// Jump-Regel allein prüft und nicht die aus Task 1 mitmisst.
+    /// M30, the jump's half of the same rule: the jump has its own
+    /// keychain slot and the same set binding, and therefore the same way
+    /// back for an old secret to silently become active again. The session
+    /// itself stays unbound here so the test checks the jump rule alone,
+    /// without also exercising the one from Task 1.
     @Test @MainActor func aJumpLeavingLoginSetModeWithAnEmptyPasswordIsRefused() {
         let vm = makeVM()
         vm.beginEditing(sshSession(
@@ -292,20 +291,20 @@ Jump-Regel geprüft wird. `beginEditing` setzt `jumpLoginMode` aus
     }
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Rot bestätigen**
+- [ ] **Step 2: Run the tests, confirm red**
 
 ```bash
 swift test --filter "aJumpLeavingLoginSetModeWithAnEmptyPasswordIsRefused"
 ```
 
-Erwartet: FAIL — `validateJump` wird heute fest mit `requireSecret: false`
-gerufen.
+Expected: FAIL — `validateJump` is today called with a fixed
+`requireSecret: false`.
 
-- [ ] **Step 3: Die Regel einbauen**
+- [ ] **Step 3: Build in the rule**
 
-Der bestehende Kommentar über dem Aufruf („requireSecret: false for the same
-reason as above") wird ersetzt, weil er nach dieser Änderung nicht mehr
-stimmt — der Wert ist keine Konstante mehr.
+The existing comment above the call ("requireSecret: false for the same
+reason as above") is replaced, because it is no longer true after this
+change — the value is no longer a constant.
 
 ```swift
         // M30: the jump's own half of the rule above. Its `loginSetID` and
@@ -320,21 +319,21 @@ stimmt — der Wert ist keine Konstante mehr.
         }
 ```
 
-- [ ] **Step 4: Tests laufen lassen, Grün bestätigen**
+- [ ] **Step 4: Run the tests, confirm green**
 
 ```bash
 swift test --filter "ConnectionViewModelTests"
 ```
 
-Erwartet: PASS.
+Expected: PASS.
 
-- [ ] **Step 5: Volle Suite**
+- [ ] **Step 5: Full suite**
 
 ```bash
 swift test
 ```
 
-Erwartet: PASS.
+Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -347,41 +346,41 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Abschluss
+### Task 3: Close-out
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-08-19-m30-abschluss.md`
 
 **Interfaces:**
-- Consumes: die Commits aus Task 1 und 2
-- Produces: nichts
+- Consumes: the commits from Task 1 and 2
+- Produces: nothing
 
-- [ ] **Step 1: Volle Suite, Ausgabe lesen BEVOR committet wird**
+- [ ] **Step 1: Full suite, read the output BEFORE committing**
 
 ```bash
 swift test
 ```
 
-Die Zahl der Tests und Suiten notieren. (Frühere Phase hat einen roten Test
-mitcommittet, weil Lauf und Commit im selben Befehl standen — deshalb hier
-getrennt.)
+Note the number of tests and suites. (An earlier phase committed a red
+test because the run and the commit were in the same command — that is
+why they are kept separate here.)
 
-- [ ] **Step 2: Prüfen, dass die Änderung wirklich nichts löscht**
+- [ ] **Step 2: Verify that the change really deletes nothing**
 
 ```bash
-git diff origin/develop..HEAD -- Sources/ | grep -n "deletePassword" || echo "kein deletePassword im Diff"
+git diff origin/develop..HEAD -- Sources/ | grep -n "deletePassword" || echo "no deletePassword in the diff"
 ```
 
-Erwartet: `kein deletePassword im Diff`. Das ist die zentrale Zusicherung
-der Spec — sie wird geprüft, nicht behauptet.
+Expected: `no deletePassword in the diff`. This is the central assertion
+of the spec — it is verified, not claimed.
 
-- [ ] **Step 3: Abschlussbericht schreiben**
+- [ ] **Step 3: Write the close-out report**
 
-`docs/superpowers/specs/2026-08-19-m30-abschluss.md`, Deutsch, mit: was
-umgesetzt wurde, das Ergebnis von Step 2, die Suite-Zahlen aus Step 1, und
-ausdrücklich was offen bleibt (Schaden 1 — der Slot einer Sitzung, die
-gebunden IST, sowie `applyMerge` und die Jump-Bindung, die mit `try?` lesen
-und trotzdem löschen).
+`docs/superpowers/specs/2026-08-19-m30-abschluss.md`, German, with: what
+was implemented, the result of Step 2, the suite counts from Step 1, and
+explicitly what remains open (defect 1 — the slot of a session that IS
+bound, plus `applyMerge` and the jump binding, which read with `try?` and
+delete regardless).
 
 - [ ] **Step 4: Commit**
 
