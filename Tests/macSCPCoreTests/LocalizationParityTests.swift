@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import macSCPCore
 
 /// Where the string catalogs are, and what format each one is in — found,
 /// never listed.
@@ -576,6 +577,40 @@ struct LocalizationParityTests {
                 #expect(blank == [], "\(catalog.label) has empty values for \(blank)")
             }
         }
+    }
+
+    /// `core.connect.s3RegionRequired` says a blank region is required
+    /// AND names the value most S3-compatible providers accept -- and that
+    /// named value must be the SAME `"us-east-1"` `S3FieldSchema.defaults`
+    /// actually seeds, in every catalog, not a copy that can drift once the
+    /// default changes and nobody remembers to reword four `.strings`
+    /// files. Read off `S3FieldSchema.defaults[S3Field.region]` rather than
+    /// repeated as a literal, per CLAUDE.md's rule that a number or a value
+    /// written into a comment or test is a claim that must be measured, not
+    /// assumed -- the same hazard applies to a value repeated by hand here.
+    ///
+    /// A positive count alongside the negative `contains` check (CLAUDE.md's
+    /// "guards that name what they watch"): `matched` must be > 0, or a
+    /// renamed key would make every iteration below `continue` past nothing
+    /// and this test would pass while checking no catalog at all.
+    @Test func theRegionMessageNamesTheActualDefault() throws {
+        let key = "core.connect.s3RegionRequired"
+        let defaultRegion = S3FieldSchema.defaults[S3Field.region]
+        #expect(!defaultRegion.isEmpty, "the default region itself is empty -- nothing to check")
+
+        var matched = 0
+        for (reference, translations) in try Self.allCatalogs() {
+            for catalog in [reference] + translations {
+                guard let value = catalog.entries[key] else { continue }
+                matched += 1
+                let namesTheDefault = value.contains(defaultRegion)
+                #expect(namesTheDefault, """
+                    \(catalog.label)'s \(key) does not mention the actual default region \
+                    (\(defaultRegion)) -- the message and the default have drifted apart.
+                    """)
+            }
+        }
+        #expect(matched > 0, "no catalog declared \(key) -- this check scanned nothing")
     }
 
     /// The derivation every check above rides on. Without this, a lookup
