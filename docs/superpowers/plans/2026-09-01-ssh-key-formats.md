@@ -296,6 +296,10 @@ sends users down this route; a test must hold it.
   from `SSH_ASKPASS` when `SSH_ASKPASS_REQUIRE=force` is set and no
   terminal is attached. Extend `addKey`:
 
+> The helper below was superseded in review — see the spec's Done section;
+> the shipped version creates both files with their final mode in one
+> call and never interpolates the passphrase.
+
 ```swift
 /// Adds a key to the spawned agent. For an encrypted key, `passphrase` is
 /// handed to ssh-add through an SSH_ASKPASS helper the test writes into
