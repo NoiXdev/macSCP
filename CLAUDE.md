@@ -30,7 +30,24 @@
   `few`/`many` where `de`, `en` and `fr` carry only `one`/`other`). The
   localization checks read `.xcstrings` since `cb624e5`, so one would at
   least not go unexamined.
-- Internal docs (`docs/`, plans, specs, ledger) may remain German.
+- **Every written artifact is English.** `docs/` — plans, specs, designs,
+  backlog entries, ADRs, the SDD ledger — plus commit messages, PR
+  descriptions and branch names. There is no internal-German exception any
+  more; the one that used to stand here was retired on 2026-09-01 and the
+  existing corpus was translated in the same pass.
+- **The conversation is not an artifact.** Chat with the maintainer happens
+  in the maintainer's language — German, here. That is the whole split:
+  what gets written down is English so any contributor can read it; what
+  gets said is whatever the two people in the room speak. A German answer
+  in chat is not a violation of this rule, and rewriting one into English
+  is not compliance with it.
+- **Translating a document must not restate it.** These documents are a
+  measurement record: numbers, file paths, identifiers, commit hashes,
+  command lines, code blocks and quoted output are data, and they are
+  copied, never rendered. A translation that improves a claim has
+  falsified it — including tightening a hedge. Where a sentence marks
+  something as unmeasured, assumed, or withdrawn, the English keeps that
+  marking exactly as strong as it was.
 - Public-facing texts (README intro, taglines, landing copy) contain **no
   tech-stack terms** (see global user CLAUDE.md) and exist in English first.
 - Migration status: the German-comment and hardcoded-string sweep completed
