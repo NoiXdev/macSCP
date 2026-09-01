@@ -1633,8 +1633,13 @@ struct CitadelFileSystemIntegrationTests {
     /// Adds a key to the spawned agent. For an encrypted key, `passphrase` is
     /// handed to ssh-add through an SSH_ASKPASS helper the test writes into
     /// `dir` and removes — never through argv, never through stdin of the test
-    /// process. The helper is a two-line shell script that prints the
-    /// passphrase; it is 0700 and lives only for the call.
+    /// process. The passphrase is never interpolated into shell syntax: it is
+    /// written raw to a 0600 secret file, and the 0700 helper script just
+    /// `cat`s that file, so a passphrase containing a quote or any other
+    /// shell metacharacter cannot break or inject into the script. Both
+    /// files are removed in a `defer` set up before either is written, so a
+    /// throw from `write`/`setAttributes`/`run`/`waitUntilExit` still cleans
+    /// them up — they do not linger on disk past this call.
     private func addKey(atPath keyPath: String, to agent: SpawnedAgent,
                         passphrase: String? = nil, helperDirectory: URL? = nil) throws {
         let add = Process()
@@ -1644,20 +1649,30 @@ struct CitadelFileSystemIntegrationTests {
             "SSH_AUTH_SOCK": agent.socketPath,
             "PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin",
         ]
-        var helper: URL?
+        var helperScript: URL?
+        var secretFile: URL?
+        defer {
+            if let helperScript { try? FileManager.default.removeItem(at: helperScript) }
+            if let secretFile { try? FileManager.default.removeItem(at: secretFile) }
+        }
         if let passphrase, let helperDirectory {
+            let secret = helperDirectory.appendingPathComponent("askpass-secret")
+            try passphrase.write(to: secret, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: secret.path(percentEncoded: false))
+            secretFile = secret
+
             let script = helperDirectory.appendingPathComponent("askpass.sh")
-            try "#!/bin/sh\nprintf '%s' '\(passphrase)'\n".write(to: script, atomically: true, encoding: .utf8)
+            try "#!/bin/sh\ncat \"\(secret.path(percentEncoded: false))\"\n".write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path(percentEncoded: false))
+            helperScript = script
+
             environment["SSH_ASKPASS"] = script.path(percentEncoded: false)
             environment["SSH_ASKPASS_REQUIRE"] = "force"
             environment["DISPLAY"] = ":0"
-            helper = script
         }
         add.environment = environment
         try add.run()
         add.waitUntilExit()
-        if let helper { try? FileManager.default.removeItem(at: helper) }
         #expect(add.terminationStatus == 0)
     }
 
