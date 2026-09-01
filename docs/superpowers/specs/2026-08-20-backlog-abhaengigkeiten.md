@@ -147,3 +147,82 @@ gleichzeitig an und man weiß bei einem roten Build nicht, welche der beiden
 swift-nio (Patch) → Swift-6-Warnungen → SwiftTerm (nach Klärung des Pins) →
 swift-crypto 4.x. Der Fork ist keine Stufe in dieser Leiter, sondern eine
 eigene Entscheidung; er kann jederzeit davor oder danach angegangen werden.
+
+---
+
+## Gemessen 2026-08-31 — der Fork-Befund, und warum ein Citadel-Fork nichts löst
+
+**Die Kette ist eine andere, als der Eintrag oben annimmt.** Citadel hängt
+nicht an `swift-nio-ssh`, sondern an einem **nie gemergten Feature-Branch**
+davon (`jo-rsa-private-keys`, vom Citadel-Autor selbst). `Wellz26` ist ein
+Fork *dieses* Forks, der den PR weiterträgt — und Citadels eigenes
+`Package.swift` verdrahtet ihn fest:
+
+```
+.package(url: "https://github.com/Wellz26/swift-nio-ssh.git", "0.3.4" ..< "0.4.0")
+```
+
+### Ein Citadel-Fork kann das nicht beheben
+
+Gemessen gegen Apple 0.15.0: **52 distinkte Fehlerstellen** (277 rohe
+`error:`-Zeilen) auf 7 von 37 Citadel-Dateien, **13 Root Causes** in **4
+Familien**. **38 von 52** entfallen auf eine einzige: Apple exportiert fünf
+öffentliche Protokolle, davon **einen** Algorithmus-Erweiterungspunkt
+(`NIOSSHTransportProtection`). Die Maschinerie für Key Exchange und
+Public-Key-Typen ist bei Apple `internal`.
+
+Kein Rename, kein Signatur-Drift — zwei unabhängige Entwicklungen seit 2022.
+`NIOSSHTransportProtection` ist **beidseitig** divergiert.
+
+**Der Satz, der die Richtung entscheidet:**
+
+> `grep "ssh-rsa|rsa-sha2"` über Apple 0.15.0 = **0 Treffer**
+
+Apples swift-nio-ssh hat **kein RSA**. Citadels gesamter RSA-Support steht
+auf den fork-eigenen Protokollen — also genau der Fläche, auf der PR #135
+aufsetzt. Zurück zu Apple **entfernt** RSA, statt es zu reparieren.
+
+### Kein billiger Zwischenschritt
+
+Gemessen, nicht überlegt: Apple 0.4.1–0.8.0 scheitern schon an der Auflösung
+(swift-crypto `<3.0.0` gegen Citadels `3.12.3+`). Der kleinstmögliche
+auflösbare Sprung ist 0.9.1 — **54** Fehlerstellen, zwei *mehr* als 0.15.0,
+und ohne einen einzigen Sicherheitsfix.
+
+### Der Fork ist kein Spiegel
+
+Fork-Punkt ist Apple **0.4.0** (2022-04-21), nicht 0.3.x — die Tags
+`0.3.4`–`0.3.6` sind Fiktion, Apples höchster 0.3.x ist 0.3.3. Citadels
+Range ist gegen Apples Repo unerfüllbar. **76 Commits** (54 non-merge), 58
+Dateien, +1278/−354, **91 Apple-Commits** Distanz.
+
+## Was daraus folgt: Sicherheit und Architektur sind trennbar
+
+Das ist der Ausweg, den die Messung selbst gefunden hat.
+
+**Die Architektur** — zurück auf Apples gepflegte Bibliothek — ist ein
+echter Port (54 Commits rebasen) **und danach dauerhafte Pflege**, mit
+demselben Single-Point-of-Failure, an dem der jetzige Zustand gescheitert
+ist. Verschoben, nicht gelöst.
+
+**Die Sicherheit** ist billig und getrennt davon zu haben. Von Apples drei
+jüngeren Korrekturen betreffen macSCP als **Client** zwei:
+
+| Fix | betrifft macSCP |
+|---|---|
+| **0.14.1** — überlange ECDSA-Signatur-mpints ablehnen (`31cdc3c`, +70/−2, ~11 Zeilen Produktivcode) | **ja**, macSCP parst Server-Signaturen |
+| **0.14.0** — Absturz bei kaputten Versionsstrings | **ja**, ein bösartiger Server könnte den Client abstürzen lassen |
+| 0.15.0 — Anmeldeversuche begrenzen | **nein**, Serverschutz |
+
+**Ungemessen:** ob die beiden sauber aufsetzen. Der 0.14.1-Fix liegt in
+`NIOSSHSignature.swift`, einer vom Fork veränderten Datei — Konfliktzone.
+Das ist der erste Schritt, bevor irgendetwas zugesagt wird.
+
+**Und der Preis, der genannt gehört:** ein Cherry-Pick heißt zwei eigene
+Repos — swift-nio-ssh (für die Fixes) und Citadel (eine Zeile, um darauf zu
+zeigen). Ob SwiftPM das auch ohne den Citadel-Fork über eine
+Abhängigkeits-Übersteuerung kann, ist messbar und wäre billiger.
+
+**Was das nicht behebt:** RSA aus der Datei. Das wartet auf Citadels #135.
+Genau diese Trennung ist der Ertrag der Messung — vorher sah es aus wie ein
+Problem, es sind zwei, und nur eines ist billig.
