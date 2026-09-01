@@ -359,3 +359,68 @@ the rig; a second one without preamble lines as a control. The
 measurement scaffold was throwaway code and has been removed. **A
 regression test for this needs the forwarder as part of the rig** — that
 is to be designed, not built on the side.
+
+---
+
+## Done 2026-09-01 — the fork exists, and one measurement in the report above was wrong
+
+**`https://github.com/NoiXdev/swift-nio-ssh`**, forked from `Wellz26/swift-nio-ssh`
+(default branch `citadel2` = `a05e6bb`, the revision macSCP had pinned as 0.3.6).
+Branch `macscp/ecdsa-mpint-and-prelines`, tag **`0.3.7`**, two commits on top:
+
+| commit | what | proof |
+|---|---|---|
+| `b098395` | cherry-pick of Apple `31cdc3c` (0.14.1, ECDSA mpint validation) | applied without conflict; suite 357 → 357 |
+| `089d3ec` | RFC 4253 §4.2: only the `SSH-` line is the version | red first (3 tests), then 358 / 0 |
+
+The preamble fix needed one more thing than the one-line change: the fork's
+`SSHPacketParser` did not know its role, and `testServerRejectsLinesBeforeVersion`
+went red — correctly, a client is not allowed to send a preamble. The parser now
+takes `isServer` with **no default**, as Apple's does; a server treats the first
+line as the version and `validateBanner` rejects it downstream, which is the
+outcome that test pins. Two existing tests had asserted the preamble as part of
+the version string; their names already described tolerance, only the expected
+value was wrong.
+
+### macSCP side
+
+`Package.swift` carries a root dependency on the fork, `exact: "0.3.7"`, and
+`macSCPCore` names the `NIOSSH` product. `Package.resolved`: identity
+`swift-nio-ssh` → NoiXdev, **0 occurrences of Wellz26**. Build complete.
+
+### The correction
+
+The cherry-pick report above says the override resolved with *no* warning about
+colliding URLs. **That was wrong.** `swift build` prints:
+
+> warning: 'citadel': Conflicting identity for swift-nio-ssh: dependency
+> 'github.com/wellz26/swift-nio-ssh' and dependency 'github.com/noixdev/swift-nio-ssh'
+> both point to the same package identity 'swift-nio-ssh'. […] This will be
+> escalated to an error in future versions of SwiftPM.
+
+Measured against the CI gate: it counts only lines shaped `file:line:col: warning:`
+(`.github/workflows/ci.yml`, the "Warning gate" step), and this one has no such
+prefix — **CI does not count it**. So the override holds today, with an announced
+expiry. When SwiftPM escalates, the choice returns: fork Citadel too, or get
+Citadel upstream to move off Wellz26. Neither is done here; this entry is where
+that day starts.
+
+### End to end, against the rig
+
+Same scaffold as the morning measurement — a TCP forwarder in front of the
+untouched rig sshd, prepending RFC 4253 §4.2 lines — now against the fork:
+
+| target | morning (Wellz26 0.3.6) | now (NoiXdev 0.3.7) |
+|---|---|---|
+| direct | connects | connects |
+| transparent forwarder | connects | connects |
+| 1 preamble line | `invalidExchangeHashSignature` | **connects** |
+| 3 preamble lines | `invalidExchangeHashSignature` | **connects** |
+
+Then the whole gated suite with `MACSCP_ITEST=1` — SSH, agent auth,
+checksums, S3, WebDAV, cross-backend — with the new transport under all of
+it: **3427 tests in 302 suites, 0 failures**, 71.7 s.
+
+The scaffold was throwaway and is removed again. A permanent regression test
+still needs the forwarder as part of the Docker rig — unchanged from the
+morning entry, and still to be designed rather than bolted on.
