@@ -149,11 +149,13 @@ public struct BackendDescriptor: Sendable {
     /// Field ids the generic form renderer must NOT draw because the App
     /// draws them itself (`SchemaFormView.skipping`).
     ///
-    /// Declared here rather than in the view so it can be GUARDED: the App has
-    /// no test target, and `skipping` is matched against top-level ids by
-    /// string, so a renamed or restructured field would turn a skip into a
-    /// silent no-op — or, worse, keep skipping a field nobody draws any more,
-    /// which removes a row from the form with nothing failing anywhere.
+    /// Declared here rather than in the view: the App DOES have a test
+    /// target (`Tests/macSCPAppKitTests`), but declaring the set in Core
+    /// lets both Core and App guard it, and `skipping` is matched against
+    /// top-level ids by string, so a renamed or restructured field would
+    /// turn a skip into a silent no-op — or, worse, keep skipping a field
+    /// nobody draws any more, which removes a row from the form with
+    /// nothing failing anywhere.
     /// `BackendDescriptorTests` pins that every id in here is a real declared
     /// field AND a `.group`, the one shape today's vocabulary cannot express
     /// (see `SchemaFormView.skipping` for what would let the jump join the

@@ -415,6 +415,39 @@ struct ReconnectPathTests {
         #expect(step == .stop, sourceLocation: sourceLocation)
     }
 
+    // MARK: - fillForm never leaks the new-form region default into a stored session
+
+    /// A stored S3 session whose `s3` block is `nil` (corrupt/inconsistent
+    /// data) must show an EMPTY region after `fillForm`, not the new-form
+    /// default `S3FieldSchema.defaults` seeds for a brand-new form.
+    /// `d2b908f` moved this call site from `defaultValues` to
+    /// `editBaseline`; this test pins the fill's own output directly,
+    /// rather than only the validation failure it produces downstream --
+    /// for this same input, `ConnectionFieldSchema.firstViolation` reaches
+    /// the endpoint field first (declaration order), so a validation-only
+    /// check would not have caught a region leak here (see the backlog
+    /// entry, `docs/superpowers/specs/2026-08-31-backlog-s3-without-bucket.md`).
+    @Test func fillFormLeavesTheRegionEmptyForANilS3Block() throws {
+        let workDir = makeTempDirectory("predial-s3-nil-block")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(secrets: ReconnectSecretStore(), storeDirectory: workDir)
+        defer { cleanup() }
+
+        let stored = StoredSession(name: uniqueSaveName("s3-nil-block"), kind: .s3, s3: nil)
+        let form = ConnectionViewModel(connector: { _, _ in
+            Issue.record("the dial must never be reached — this test only checks the fill")
+            throw CancellationError()
+        })
+
+        _ = try view.fillForm(form, from: stored)
+
+        let regionIsEmpty = form.values[S3Field.region] == ""
+        #expect(regionIsEmpty, """
+            fillForm must not seed the new-form region default into a saved session's form -- \
+            it must show the session's own (missing) region instead.
+            """)
+    }
+
     // MARK: - The failed-connect surface's own actions (Task 3)
 
     /// The load-bearing claim of the failed-connect surface, run rather
