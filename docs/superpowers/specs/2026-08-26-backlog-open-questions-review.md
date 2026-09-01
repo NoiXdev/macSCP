@@ -87,3 +87,15 @@ Maintainer decision from the same day: take it on as its own change.
 
 **M3 stays open** and is designed in
 `2026-08-28-two-open-questions-design.md`.
+
+## Done 2026-08-29 (recorded 2026-09-02)
+
+M3 was fixed in `a07640c` ("bind the dial's origin to the attempt, not to
+the tab"): the origin now travels as an argument of `connect(origin:)` and
+is recorded only after the `state != .connecting` refusal, so a refused
+call never becomes an attempt and cannot contribute an origin;
+`SessionTab.dialingStoredSessionID` and the mirror's clearing rule are
+deleted — the wrong pairing is unwritable rather than cleaned up. Measured
+in that commit: after a failed attempt on one session, a `fillForm`
+refusal for another no longer carries the first one's id. This entry had
+kept saying "stays open" for four days after the fix landed.
