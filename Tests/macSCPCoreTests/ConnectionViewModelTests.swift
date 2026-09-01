@@ -1647,7 +1647,9 @@ struct ConnectionViewModelTests {
     /// own reset cannot catch (it is guarded on an actual change): a second S3
     /// session whose stored block is MISSING must leave a blank form, not the
     /// previous bucket. `sessionValues` returns the empty bag for that
-    /// inconsistency and the defaults underneath it are what blanks the form.
+    /// inconsistency and `editBaseline` underneath it (since `a9693b5`) is
+    /// what blanks the form — NOT `defaultValues`, which would seed the
+    /// new-form region assumption into what is still a saved session's edit.
     @Test @MainActor func beginEditingSameKindTwiceLeavesNoFieldsFromThePreviousSession() {
         let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
         vm.beginEditing(s3Session(
