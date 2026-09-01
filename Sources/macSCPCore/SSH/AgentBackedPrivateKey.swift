@@ -370,36 +370,22 @@ private final class SignatureResultBox: @unchecked Sendable {
 /// offer through the agent — the caller skips that identity rather than
 /// crashing on an unhandled static requirement (see `AgentAlgorithm`).
 enum AgentPrivateKeyFactory {
-    /// The exact same closed set `privateKey(for:client:)` switches over —
-    /// kept as one literal list so the two never drift apart. M-1: lets
-    /// `CitadelFileSystem.connectHop` pre-filter identities of an
-    /// unsupported type BEFORE spending a whole reconnect attempt on one,
-    /// instead of relying on `AgentAuthDelegate` to discover the same thing
-    /// mid-loop by returning `nil` here.
-    private static let supportedKeyTypes: Set<String> = [
-        "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384",
-        "ecdsa-sha2-nistp521", "ssh-rsa",
+    /// The closed set of agent key types, as ONE table: the name and the
+    /// factory for it live in the same entry, so `supports` and `privateKey`
+    /// cannot disagree. Used by `CitadelFileSystem.connectHop` to pre-filter
+    /// identities before spending a reconnect on one.
+    private static let factories: [String: @Sendable (AgentIdentity, SSHAgentClient) -> NIOSSHPrivateKey] = [
+        "ssh-ed25519":          { NIOSSHPrivateKey(custom: AgentBackedPrivateKey<AgentAlgorithm.Ed25519>(identity: $0, client: $1)) },
+        "ecdsa-sha2-nistp256":  { NIOSSHPrivateKey(custom: AgentBackedPrivateKey<AgentAlgorithm.ECDSAP256>(identity: $0, client: $1)) },
+        "ecdsa-sha2-nistp384":  { NIOSSHPrivateKey(custom: AgentBackedPrivateKey<AgentAlgorithm.ECDSAP384>(identity: $0, client: $1)) },
+        "ecdsa-sha2-nistp521":  { NIOSSHPrivateKey(custom: AgentBackedPrivateKey<AgentAlgorithm.ECDSAP521>(identity: $0, client: $1)) },
+        "ssh-rsa":              { NIOSSHPrivateKey(custom: AgentBackedPrivateKey<AgentAlgorithm.RSASha512>(identity: $0, client: $1)) },
     ]
 
-    static func supports(keyType: String) -> Bool {
-        supportedKeyTypes.contains(keyType)
-    }
+    static func supports(keyType: String) -> Bool { factories[keyType] != nil }
 
     static func privateKey(for identity: AgentIdentity, client: SSHAgentClient) -> NIOSSHPrivateKey? {
-        switch identity.keyType {
-        case "ssh-ed25519":
-            return NIOSSHPrivateKey(custom: AgentBackedPrivateKey<AgentAlgorithm.Ed25519>(identity: identity, client: client))
-        case "ecdsa-sha2-nistp256":
-            return NIOSSHPrivateKey(custom: AgentBackedPrivateKey<AgentAlgorithm.ECDSAP256>(identity: identity, client: client))
-        case "ecdsa-sha2-nistp384":
-            return NIOSSHPrivateKey(custom: AgentBackedPrivateKey<AgentAlgorithm.ECDSAP384>(identity: identity, client: client))
-        case "ecdsa-sha2-nistp521":
-            return NIOSSHPrivateKey(custom: AgentBackedPrivateKey<AgentAlgorithm.ECDSAP521>(identity: identity, client: client))
-        case "ssh-rsa":
-            return NIOSSHPrivateKey(custom: AgentBackedPrivateKey<AgentAlgorithm.RSASha512>(identity: identity, client: client))
-        default:
-            return nil
-        }
+        factories[identity.keyType]?(identity, client)
     }
 }
 
