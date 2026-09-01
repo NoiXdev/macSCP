@@ -77,6 +77,7 @@ public final class SettingsStore {
         static let appLanguage = "appLanguage"
         static let presignedDefaultExpiry = "presignedDefaultExpiry"
         static let reconnectBehaviour = "reconnectBehaviour"
+        static let keepAliveEnabled = "keepAliveEnabled"
         static let keepAliveIntervalSeconds = "keepAliveIntervalSeconds"
         static let connectTimeoutSeconds = "connectTimeoutSeconds"
         static let sidebarWidth = "sidebarWidth"
@@ -98,6 +99,7 @@ public final class SettingsStore {
         static let menuBarEnabled = true
         static let presignedDefaultExpiry = PresignedExpiry.oneHour
         static let reconnectBehaviour = ReconnectBehaviour.offerOnly
+        static let keepAliveEnabled = true
         static let keepAliveIntervalSeconds = 60
         static let connectTimeoutSeconds = 10
         static let sidebarWidth = 190
@@ -519,22 +521,33 @@ public final class SettingsStore {
         }
     }
 
-    /// Seconds between liveness probes; default 60. `0` means "off"
-    /// and is the ONLY value below the floor that survives clamping —
-    /// every other value is clamped to 15...600 on BOTH ends, same
-    /// forward-compat pattern as `autoRefreshIntervalSeconds`. A naive
-    /// `clamp(value, 15, 600)` would turn "off" into "every 15 seconds",
-    /// the opposite of what the user asked for.
-    public var keepAliveIntervalSeconds: Int {
+    /// Whether the idle-connection probe runs at all. Its own Bool, like
+    /// `autoRefreshEnabled`: the interval below never carries "off".
+    ///
+    /// Files written before 2026-09-02 stored "off" as `keepAliveIntervalSeconds
+    /// == 0` and had no key for this. Read-side migration, once: when this key
+    /// is ABSENT and the stored interval is `0`, the answer is `false`. Nothing
+    /// is rewritten until the user changes a setting.
+    public var keepAliveEnabled: Bool {
         get {
-            Self.clampKeepAliveInterval(
-                intValue(for: Keys.keepAliveIntervalSeconds, default: Defaults.keepAliveIntervalSeconds))
+            if let stored = optionalBool(for: Keys.keepAliveEnabled) { return stored }
+            return intValue(for: Keys.keepAliveIntervalSeconds, default: Defaults.keepAliveIntervalSeconds) != 0
         }
-        set { setInt(Self.clampKeepAliveInterval(newValue), for: Keys.keepAliveIntervalSeconds) }
+        set { setBool(newValue, for: Keys.keepAliveEnabled) }
     }
 
-    private static func clampKeepAliveInterval(_ value: Int) -> Int {
-        value == 0 ? 0 : min(max(value, 15), 600)
+    /// Seconds between liveness probes; default 60. Clamped to 15...600 on
+    /// BOTH ends, same forward-compat pattern as `autoRefreshIntervalSeconds`
+    /// — whether the probe runs at all is `keepAliveEnabled`'s own Bool, so
+    /// this value never needs to carry "off" and a hand-edited settings.json
+    /// cannot produce a runaway or dead probe.
+    public var keepAliveIntervalSeconds: Int {
+        get {
+            clamp(
+                intValue(for: Keys.keepAliveIntervalSeconds, default: Defaults.keepAliveIntervalSeconds),
+                15, 600)
+        }
+        set { setInt(clamp(newValue, 15, 600), for: Keys.keepAliveIntervalSeconds) }
     }
 
     /// Connection-establishment timeout in seconds —
@@ -645,6 +658,17 @@ public final class SettingsStore {
     private func setBool(_ value: Bool, for key: String) {
         raw[key] = .bool(value)
         persist()
+    }
+
+    /// Like `boolValue`, but distinguishes "key absent" (`nil`) from
+    /// "key present and `false`" — `boolValue` collapses both to its
+    /// `defaultValue` and can't tell them apart. Needed for a read-side
+    /// migration that only fires when the key is truly absent.
+    private func optionalBool(for key: String) -> Bool? {
+        guard case .bool(let value)? = raw[key] else {
+            return nil
+        }
+        return value
     }
 
     /// Writes the entire raw backing (including unknown keys) back out

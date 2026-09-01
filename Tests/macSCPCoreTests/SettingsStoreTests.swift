@@ -829,20 +829,22 @@ struct SettingsStoreTests {
         let store = SettingsStore(directory: dir)
 
         store.keepAliveIntervalSeconds = 5
-        // 0 means off and is the ONLY value below the floor that survives.
         #expect(store.keepAliveIntervalSeconds == 15)
         #expect(try persistedRaw(dir)["keepAliveIntervalSeconds"] == .number(15))
 
+        // `0` used to be the sentinel for "off"; "off" is now
+        // `keepAliveEnabled`'s own Bool, so `0` is just another value below
+        // the floor and clamps like anything else.
         store.keepAliveIntervalSeconds = 0
-        #expect(store.keepAliveIntervalSeconds == 0)
-        #expect(try persistedRaw(dir)["keepAliveIntervalSeconds"] == .number(0))
+        #expect(store.keepAliveIntervalSeconds == 15)
+        #expect(try persistedRaw(dir)["keepAliveIntervalSeconds"] == .number(15))
 
         store.keepAliveIntervalSeconds = 9_999
         #expect(store.keepAliveIntervalSeconds == 600)
         #expect(try persistedRaw(dir)["keepAliveIntervalSeconds"] == .number(600))
     }
 
-    @Test func keepAliveIntervalSecondsDefaultsToSixtyAndRoundtripsZero() {
+    @Test func keepAliveIntervalSecondsDefaultsToSixtyAndClampsZeroOnWrite() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = SettingsStore(directory: dir)
@@ -850,7 +852,7 @@ struct SettingsStoreTests {
 
         store.keepAliveIntervalSeconds = 0
         let reloaded = SettingsStore(directory: dir)
-        #expect(reloaded.keepAliveIntervalSeconds == 0)
+        #expect(reloaded.keepAliveIntervalSeconds == 15)
     }
 
     /// Pins `SettingsStore.defaultKeepAliveIntervalSeconds` (Task 9's
@@ -863,6 +865,62 @@ struct SettingsStoreTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = SettingsStore(directory: dir)
         #expect(SettingsStore.defaultKeepAliveIntervalSeconds == store.keepAliveIntervalSeconds)
+    }
+
+    // MARK: - keepAliveEnabled (2026-09-02: two settings, not one sentinel)
+
+    @Test func keepAliveEnabledDefaultsTrueAndRoundtrips() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.keepAliveEnabled == true)
+
+        store.keepAliveEnabled = false
+        #expect(try persistedRaw(dir)["keepAliveEnabled"] == .bool(false))
+        let reloadedOff = SettingsStore(directory: dir)
+        #expect(reloadedOff.keepAliveEnabled == false)
+
+        store.keepAliveEnabled = true
+        #expect(try persistedRaw(dir)["keepAliveEnabled"] == .bool(true))
+        let reloadedOn = SettingsStore(directory: dir)
+        #expect(reloadedOn.keepAliveEnabled == true)
+    }
+
+    /// Read-side migration: a file written before 2026-09-02 stored "off" as
+    /// `keepAliveIntervalSeconds == 0` and had no `keepAliveEnabled` key at
+    /// all. Opening it must read `keepAliveEnabled == false` without
+    /// rewriting anything — the file on disk stays byte-for-byte the same
+    /// until the user actually changes a setting.
+    @Test func oldOffFileWithoutKeepAliveEnabledKeyMigratesOnRead() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = #"{"keepAliveIntervalSeconds": 0}"#
+        try Data(json.utf8).write(to: fileURL(dir))
+        let beforeRead = try Data(contentsOf: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.keepAliveEnabled == false)
+        #expect(store.keepAliveIntervalSeconds == 15)
+
+        let afterRead = try Data(contentsOf: fileURL(dir))
+        #expect(afterRead == beforeRead)
+    }
+
+    /// Once both keys are on disk, `keepAliveEnabled` wins outright — the
+    /// migration fallback only applies when the key is ABSENT. A stored `0`
+    /// alongside an explicit `true` is just an out-of-range interval, not a
+    /// second way to spell "off".
+    @Test func explicitKeepAliveEnabledKeyWinsOverStoredZeroInterval() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = #"{"keepAliveIntervalSeconds": 0, "keepAliveEnabled": true}"#
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.keepAliveEnabled == true)
+        #expect(store.keepAliveIntervalSeconds == 15)
     }
 
     /// Asserts through the persisted file, not just the getter — see
