@@ -435,7 +435,10 @@ struct CitadelFileSystemIntegrationTests {
     /// `type`/`bits` default to the original M3b ed25519 shape; M10d/T2
     /// reuses this for RSA (`-t rsa -b 2048`) so the gated agent tests share
     /// the exact same docker-exec authorized_keys installation pattern.
-    private func makeInstalledKey(type: String = "ed25519", bits: Int? = nil) throws -> (dir: URL, keyPath: String) {
+    /// `passphrase`, when non-nil, is passed to `ssh-keygen -N` so the
+    /// generated private key is encrypted (T4: the passphrase-protected
+    /// agent route).
+    private func makeInstalledKey(type: String = "ed25519", bits: Int? = nil, passphrase: String? = nil) throws -> (dir: URL, keyPath: String) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-itest-key-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -445,7 +448,7 @@ struct CitadelFileSystemIntegrationTests {
             let keygen = Process()
             keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
             var arguments = ["-t", type, "-f", keyURL.path(percentEncoded: false),
-                             "-N", "", "-q", "-C", "macscp-itest"]
+                             "-N", passphrase ?? "", "-q", "-C", "macscp-itest"]
             if let bits {
                 arguments += ["-b", String(bits)]
             }
@@ -1627,16 +1630,34 @@ struct CitadelFileSystemIntegrationTests {
         kill.waitUntilExit()
     }
 
-    private func addKey(atPath keyPath: String, to agent: SpawnedAgent) throws {
+    /// Adds a key to the spawned agent. For an encrypted key, `passphrase` is
+    /// handed to ssh-add through an SSH_ASKPASS helper the test writes into
+    /// `dir` and removes — never through argv, never through stdin of the test
+    /// process. The helper is a two-line shell script that prints the
+    /// passphrase; it is 0700 and lives only for the call.
+    private func addKey(atPath keyPath: String, to agent: SpawnedAgent,
+                        passphrase: String? = nil, helperDirectory: URL? = nil) throws {
         let add = Process()
         add.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
         add.arguments = [keyPath]
-        add.environment = [
+        var environment = [
             "SSH_AUTH_SOCK": agent.socketPath,
             "PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin",
         ]
+        var helper: URL?
+        if let passphrase, let helperDirectory {
+            let script = helperDirectory.appendingPathComponent("askpass.sh")
+            try "#!/bin/sh\nprintf '%s' '\(passphrase)'\n".write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path(percentEncoded: false))
+            environment["SSH_ASKPASS"] = script.path(percentEncoded: false)
+            environment["SSH_ASKPASS_REQUIRE"] = "force"
+            environment["DISPLAY"] = ":0"
+            helper = script
+        }
+        add.environment = environment
         try add.run()
         add.waitUntilExit()
+        if let helper { try? FileManager.default.removeItem(at: helper) }
         #expect(add.terminationStatus == 0)
     }
 
@@ -1903,6 +1924,96 @@ struct CitadelFileSystemIntegrationTests {
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-ecdsa-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
+        let fs = try await withAgentEnv(agent) {
+            try await connectWithRetry {
+                try await CitadelFileSystem.connect(
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+            }
+        }
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/data/seed")
+        #expect(items.contains { $0.name == "hello.txt" })
+    }
+
+    /// T4/Step 1: an ECDSA P-384 identity through the agent, mirroring
+    /// `agentAuthConnectsECDSA` (P-256) — the backlog entry's table claimed
+    /// all three NIST curves connect through the agent, measured only by a
+    /// throwaway script, not by a test in the tree.
+    @Test func agentAuthConnectsECDSAP384() async throws {
+        let (dir, keyPath) = try makeInstalledKey(type: "ecdsa", bits: 384)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let agent = try spawnAgent()
+        defer { killAgent(agent) }
+        try addKey(atPath: keyPath, to: agent)
+
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-ecdsa-p384-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
+        let fs = try await withAgentEnv(agent) {
+            try await connectWithRetry {
+                try await CitadelFileSystem.connect(
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+            }
+        }
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/data/seed")
+        #expect(items.contains { $0.name == "hello.txt" })
+    }
+
+    /// T4/Step 1: an ECDSA P-521 identity through the agent, mirroring
+    /// `agentAuthConnectsECDSA` (P-256) — see `agentAuthConnectsECDSAP384`.
+    @Test func agentAuthConnectsECDSAP521() async throws {
+        let (dir, keyPath) = try makeInstalledKey(type: "ecdsa", bits: 521)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let agent = try spawnAgent()
+        defer { killAgent(agent) }
+        try addKey(atPath: keyPath, to: agent)
+
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-ecdsa-p521-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = KnownHostsStore(directory: khDir)
+        let fs = try await withAgentEnv(agent) {
+            try await connectWithRetry {
+                try await CitadelFileSystem.connect(
+                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+            }
+        }
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/data/seed")
+        #expect(items.contains { $0.name == "hello.txt" })
+    }
+
+    /// T4/Steps 2-3: a passphrase-protected ed25519 identity, added to the
+    /// agent through an `SSH_ASKPASS` helper. This is the route ~90% of
+    /// this project's users are actually in — the backlog entry marked it
+    /// as a conclusion from how ssh-agent works, not a measurement, and
+    /// this test is that measurement. `testPassphrase` has no security
+    /// value (a runtime-generated throwaway key, deleted after the test)
+    /// but is still kept out of any `#expect` literal, since `#expect`
+    /// prints the source text of the expression it checks on failure.
+    @Test func agentAuthConnectsWithPassphraseProtectedKey() async throws {
+        let testPassphrase = "macscp-itest-passphrase"
+        let (dir, keyPath) = try makeInstalledKey(type: "ed25519", passphrase: testPassphrase)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let agent = try spawnAgent()
+        defer { killAgent(agent) }
+        try addKey(atPath: keyPath, to: agent, passphrase: testPassphrase, helperDirectory: dir)
+
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-agent-passphrase-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
         let store = KnownHostsStore(directory: khDir)
         let fs = try await withAgentEnv(agent) {
