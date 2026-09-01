@@ -82,6 +82,13 @@ import Testing
                 == "SSHField.keyPath")
     }
 
+    /// A brand-new S3 form starts with a region filled in (see
+    /// `S3FieldSchema.defaults`), read back through the same string
+    /// subscript the form itself uses.
+    @Test func s3DefaultsPrefillTheRegion() {
+        #expect(S3FieldSchema.defaults[S3Field.region] == "us-east-1")
+    }
+
     @Test func s3ReportsItsOwnFieldsAndMessage() {
         var values = BackendDescriptor.descriptor(for: .s3).defaultValues
         values[S3Field.endpoint] = "https://s3.example.com"
@@ -91,8 +98,21 @@ import Testing
         values[S3Field.secretAccessKey] = "secret"
         let violation = BackendDescriptor.descriptor(for: .s3)
             .firstViolation(in: values, requireSecrets: true)
-        #expect(violation?.messageKey == "core.connect.s3FieldRequired")
+        #expect(violation?.messageKey == "core.connect.s3BucketRequired")
         #expect(violation?.fieldKey == "S3Field.bucket")
+    }
+
+    @Test func s3ReportsABlankRegionWithItsOwnMessage() {
+        var values = BackendDescriptor.descriptor(for: .s3).defaultValues
+        values[S3Field.endpoint] = "https://s3.example.com"
+        values[S3Field.region] = ""
+        values[S3Field.bucket] = "my-bucket"
+        values[S3Field.accessKeyID] = "AKIA"
+        values[S3Field.secretAccessKey] = "secret"
+        let violation = BackendDescriptor.descriptor(for: .s3)
+            .firstViolation(in: values, requireSecrets: true)
+        #expect(violation?.messageKey == "core.connect.s3RegionRequired")
+        #expect(violation?.fieldKey == "S3Field.region")
     }
 
     @Test func webdavReportsItsOwnFieldsAndMessage() {

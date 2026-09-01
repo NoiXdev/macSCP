@@ -31,12 +31,12 @@ public enum S3FieldSchema {
                             labelKey: "connection.s3.region", labelDefault: "Region",
                             kind: .text,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.s3FieldRequired"),
+                            invalidMessageKey: "core.connect.s3RegionRequired"),
             ConnectionField(id: S3Field.bucket.rawValue,
                             labelKey: "connection.s3.bucket", labelDefault: "Bucket",
                             kind: .text,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.s3FieldRequired",
+                            invalidMessageKey: "core.connect.s3BucketRequired",
                             identity: .verbatim),
             // NOT identifying: path-style versus virtual-host addressing is
             // how a client reaches the bucket, not which bucket it reaches.
@@ -65,6 +65,14 @@ public enum S3FieldSchema {
     public static let defaults: FieldValues = {
         var values = FieldValues()
         values[bool: S3Field.usePathStyle] = false
+        // A new form starts with the region most S3-compatible providers accept
+        // because they do not check it. That is an ASSUMPTION about third-party
+        // servers, which is why it is a visible, editable default on a new form
+        // and never written into an existing session. AWS itself does check —
+        // the AWS preset's user still has to enter theirs. Measured against the
+        // rig's MinIO (us-east-1 in the gated suite); not measured against
+        // Servinga, the provider in the report.
+        values[S3Field.region] = "us-east-1"
         return values
     }()
 

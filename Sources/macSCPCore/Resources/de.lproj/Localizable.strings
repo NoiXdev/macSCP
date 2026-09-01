@@ -36,6 +36,11 @@
 /* ConnectionViewModel S3 form validation (M12/T7a) */
 "core.connect.s3FieldRequired" = "Bitte alle erforderlichen S3-Felder ausfüllen.";
 
+/* S3 blank-bucket/region messages — each names why the field is required
+   rather than pointing at "some S3 field" (v1.3.0 user report) */
+"core.connect.s3BucketRequired" = "Gib den Bucket ein. macSCP öffnet pro Verbindung genau einen Bucket – das ist der erste Ordner, den du siehst. Alle Buckets eines Kontos aufzulisten wird noch nicht unterstützt.";
+"core.connect.s3RegionRequired" = "Gib die Region ein. Sie ist Teil der Anfragesignatur, darum darf sie nicht leer bleiben; die meisten S3-kompatiblen Anbieter akzeptieren us-east-1.";
+
 /* ConnectionViewModel WebDAV form validation (M21/T9) */
 "core.connect.webdavFieldRequired" = "WebDAV-Server-URL eingeben.";
 

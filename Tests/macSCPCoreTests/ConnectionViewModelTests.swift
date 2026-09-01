@@ -1450,7 +1450,7 @@ struct ConnectionViewModelTests {
 
         #expect(fs == nil)
         #expect(vm.state == .failed(
-            message: CoreL10n.string("core.connect.s3FieldRequired"),
+            message: CoreL10n.string("core.connect.s3BucketRequired"),
             field: .schema("S3Field.bucket")))
     }
 
@@ -1466,7 +1466,7 @@ struct ConnectionViewModelTests {
         vm.s3SecretAccessKey = "secret"
         #expect(await vm.connect() == nil)
         #expect(vm.state == .failed(
-            message: CoreL10n.string("core.connect.s3FieldRequired"),
+            message: CoreL10n.string("core.connect.s3BucketRequired"),
             field: .schema("S3Field.bucket")))
     }
 
@@ -1654,7 +1654,12 @@ struct ConnectionViewModelTests {
 
         #expect(vm.kind == .s3)
         #expect(vm.s3Bucket == "")
-        #expect(vm.s3Region == "")
+        // Not blank: `beginEditing` starts from `descriptor.defaultValues`
+        // before merging the stored session on top (see its own doc
+        // comment), and this session's `s3` block is nil, so there is no
+        // real region to merge over the default. It reads exactly like the
+        // blank-form case, not like a saved session's own value surviving.
+        #expect(vm.s3Region == "us-east-1")
         #expect(vm.s3Endpoint == "")
         #expect(vm.s3AccessKeyID == "")
         #expect(vm.s3UsePathStyle == false)
