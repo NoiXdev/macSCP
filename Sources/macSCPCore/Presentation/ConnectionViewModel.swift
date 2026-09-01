@@ -875,13 +875,14 @@ public final class ConnectionViewModel {
     /// macSCP does not have (`SSHKeyError.passphraseRequired` /
     /// `.wrongPassphrase`).
     ///
-    /// The other two `SSHKeyError` cases (`fileNotFound`,
-    /// `unsupportedFormat`) are deliberately `.other`, even though no
-    /// second attempt will fix them either: the spec's rule is about the
+    /// Every other `SSHKeyError` case (`fileNotFound`, `unsupportedFormat`,
+    /// and, since Task 1 of the key-formats plan, `typeNotLoadable` and
+    /// `pemNotSupported`) is deliberately `.other`, even though no second
+    /// attempt will fix any of them either: the spec's rule is about the
     /// two conditions above, and treating this as a general "would retrying
     /// help" oracle would make it a growing list of guesses instead of one
     /// stated rule. Nothing is lost either way — the surface that reads
-    /// this still offers a manual retry in both cases.
+    /// this still offers a manual retry in every case.
     static func failureKind(for error: Error) -> ConnectFailureKind {
         switch error {
         case is HostKeyError, is ServerCertificateError:
@@ -1845,6 +1846,32 @@ public final class ConnectionViewModel {
                 field: Self.sshField(.passphrase))
         case SSHKeyError.wrongPassphrase:
             return .failed(message: CoreL10n.string("core.connect.keyWrongPassphrase"), field: Self.sshField(.passphrase))
+        // `typeNotLoadable`/`pemNotSupported` (Task 1) carry only an algorithm
+        // name or nothing at all -- no `path`, unlike `fileNotFound` above --
+        // so the jump/target hop can't be told apart the way `fileNotFound`
+        // does (comparing the error's own path against `jumpKeyPath`). Nor
+        // does the `AgentError.socketUnavailable`/`.noIdentities` trick above
+        // apply: those two attribute purely from `jumpAuthChoice` because a
+        // dead agent socket or an empty identity list is a fact about the ONE
+        // shared agent, true for every hop alike, so whichever hop tries it
+        // first (the jump, per `CitadelFileSystem.connect`'s jump-first
+        // ordering, if the jump itself uses `.agent`) is guaranteed to be the
+        // one that hits it. A bad key FILE is the opposite: a per-hop fact.
+        // If both hops used `.privateKey` and it was the target's file that
+        // was RSA while the jump's own ed25519 file loaded fine, attributing
+        // by `jumpAuthChoice` alone would blame the jump instead. That is
+        // exactly the shape `AgentError.refused`/`.protocolError` are kept
+        // OUT of the jump-attributed cases for, by the comment above:
+        // "these can equally originate from either hop, and there's no
+        // ordering guarantee to lean on." These two follow that precedent.
+        case SSHKeyError.typeNotLoadable(let algorithm):
+            return .failed(
+                message: String(format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"), algorithm),
+                field: Self.sshField(.keyPath))
+        case SSHKeyError.pemNotSupported:
+            return .failed(
+                message: CoreL10n.string("core.connect.keyPEMNotSupported"),
+                field: Self.sshField(.keyPath))
         case SSHKeyError.unsupportedFormat:
             return .failed(
                 message: CoreL10n.string("core.connect.keyUnsupportedFormat"),

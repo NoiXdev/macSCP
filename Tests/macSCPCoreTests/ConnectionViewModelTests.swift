@@ -293,6 +293,32 @@ struct ConnectionViewModelTests {
             field: .schema("SSHField.passphrase")))
     }
 
+    /// `SSHKeyError.typeNotLoadable` (Task 1: a key whose `openssh-key-v1`
+    /// header names a non-ed25519 algorithm) names the algorithm in the
+    /// message, the same way `keyNotFound %@` names the path.
+    @Test func typeNotLoadableMapsToLocalizedMessageWithAlgorithm() async {
+        let vm = makeVM(connector: { _, _ in throw SSHKeyError.typeNotLoadable(algorithm: "RSA") })
+        vm.authChoice = .privateKey
+        vm.keyPath = "~/.ssh/id_rsa"
+        _ = await vm.connect()
+        #expect(vm.state == .failed(
+            message: String(format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"), "RSA"),
+            field: .schema("SSHField.keyPath")))
+    }
+
+    /// `SSHKeyError.pemNotSupported` (Task 1: a PEM-boundary file, not an
+    /// `openssh-key-v1` one) gets its own catalog entry rather than falling
+    /// into the generic `keyUnsupportedFormat` branch.
+    @Test func pemNotSupportedMapsToLocalizedMessage() async {
+        let vm = makeVM(connector: { _, _ in throw SSHKeyError.pemNotSupported })
+        vm.authChoice = .privateKey
+        vm.keyPath = "~/.ssh/id_rsa"
+        _ = await vm.connect()
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.keyPEMNotSupported"),
+            field: .schema("SSHField.keyPath")))
+    }
+
     /// `selectAuthChoice` is what the auth-kind PICKER goes through — the form
     /// intercepts that field's write and calls this instead of storing the new
     /// value (`ConnectionFormView.interceptEdit`, M22/T8 fix round 1). Both
