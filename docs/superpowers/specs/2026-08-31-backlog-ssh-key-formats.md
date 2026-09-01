@@ -150,3 +150,117 @@ point at the **ssh-agent**, the only measured path.
 with Go servers (Gitea, Forgejo, SFTPGo, `gitlab-sshd`). **Not measured**
 — read. Whoever writes the message should either measure that or not
 claim it.
+
+---
+
+## Done 2026-09-01
+
+Seven commits, `15e5042`..`d6efff7` (`git log --oneline 7fa32b0..HEAD`):
+
+- `15e5042` feat(ssh): name a key's type before trying to load it
+- `8f66d41` feat(ssh): say what a key is and what works instead
+- `19cf094` refactor(ssh): one table for the agent key types
+- `c103886` test(ssh): measure the agent route for every curve and for a passphrase-protected key
+- `43f8ed8` fix(ssh): make the ASKPASS helper's cleanup exception-safe and its passphrase shell-safe
+- `0d72b84` fix(ssh): close the write-then-chmod window in the ASKPASS helper
+- `d6efff7` test(ssh): remove the agent socket the gated suite creates
+
+### Task 1 — the loader names the type before parsing
+
+`SSHPrivateKeyLoader` now calls Citadel's public
+`SSHKeyDetection.detectPrivateKeyType(from:)` before attempting the
+ed25519 parse. A correction to this entry's own "What follows" section
+above: that section wrote "`SSHKeyType` can do this" as if `SSHKeyType`
+were the detecting call. It is not — `SSHKeyDetection` is the API that
+detects, and `SSHKeyType` is what it *returns*.
+
+Two new `SSHKeyError` cases: `typeNotLoadable(algorithm: String)` and
+`pemNotSupported`. A PEM-boundary check runs first and throws
+`pemNotSupported` for any header other than
+`-----BEGIN OPENSSH PRIVATE KEY-----`. An encrypted RSA key is named
+(`typeNotLoadable(algorithm: "RSA")`) before a passphrase is requested —
+covered by a dedicated test ("an encrypted RSA key is named without a
+passphrase").
+
+### Task 2 — the message says what the key is and what works
+
+Three catalog strings (`core.connect.keyTypeNotLoadable %@`,
+`core.connect.keyPEMNotSupported`, and a reworded
+`core.connect.keyUnsupportedFormat`) added/changed in all four
+`Localizable.strings` catalogs (`en`, `de`, `fr`, `pl`).
+
+The PEM-conversion hint was measured before it shipped:
+`ssh-keygen -t rsa -b 2048 -m PEM` writes
+`-----BEGIN RSA PRIVATE KEY-----`; `ssh-keygen -p -N '' -P <pass> -f <key>`
+rewrites that same file to `-----BEGIN OPENSSH PRIVATE KEY-----`. The
+Go-server RSA-agent-blob caveat is in none of the four new strings —
+checked by rereading each one against that constraint. It remains
+unmeasured; see below.
+
+### Task 3 — one table instead of two literals
+
+`AgentPrivateKeyFactory`'s `Set<String>` (`supportedKeyTypes`) plus its
+parallel `switch` collapsed into one
+`factories: [String: @Sendable (...) -> NIOSSHPrivateKey]` dictionary.
+
+The mutation that motivated the change: removing `"ssh-rsa"` from
+`supportedKeyTypes` alone, leaving the switch's own `"ssh-rsa"` case in
+place, left `AgentAuthTests` and `ConnectFailureSecrecyTests` fully
+green — 24 of 24 tests passed. No existing test called
+`supports(keyType:)` and `privateKey(for:client:)` on the same key type
+and compared the two answers, so the drift went uncaught. That is the
+finding the new `AgentPrivateKeyFactoryTests` now guards against, in
+both directions plus an unrecognized-type case.
+
+### Task 4 — measured on the rig
+
+`MACSCP_ITEST=1 swift test` against the Docker SSH rig. All three cases
+connected; no failure was found in any of them:
+
+- ECDSA P-384 — connected (`agentAuthConnectsECDSAP384`)
+- ECDSA P-521 — connected (`agentAuthConnectsECDSAP521`)
+- A passphrase-protected ed25519 key, added to the agent via `ssh-add`
+  under `SSH_ASKPASS` / `SSH_ASKPASS_REQUIRE=force` / `DISPLAY=:0`
+  (measured on macOS 15, this machine) — connected
+  (`agentAuthConnectsWithPassphraseProtectedKey`)
+
+Two review findings against the plan's own ASKPASS helper sample were
+fixed in two rounds:
+
+1. **Cleanup was not exception-safe** (`43f8ed8`) — the helper script,
+   which held the plaintext passphrase, was removed only after
+   `ssh-add` returned normally; a throw in between left it on disk.
+   Fixed with a `defer` registered before any throwing call in the
+   function.
+2. **The passphrase was interpolated unescaped into a single-quoted
+   shell literal** (`43f8ed8`, closed further in `0d72b84`) — fixed by
+   removing the shell interpolation entirely: the secret now goes into
+   its own file, created directly at `0600` via
+   `FileManager.createFile(atPath:contents:attributes:)` in one step
+   (no separate chmod, so no window at looser permissions), and the
+   `0700` helper script just `cat`s that file.
+
+### Task 5 — measured: why sockets were left behind
+
+Probed directly against `~/.ssh/agent/` (directory confirmed empty
+first): a hard `kill -KILL` on a live `ssh-agent` leaves its socket file
+behind (process confirmed dead; socket still present — count 1 before
+removal). A plain TERM delivered to a still-live agent already removes
+its own socket — the gated suite's own run measured 0 → 0, both before
+and after the fix. This confirms the 21.08./28.08. leftovers this entry
+flagged came from runs where TERM never reached a live agent (the test
+process died first, or the agent was killed hard) — not from
+`ssh-agent` failing to act on a TERM it received.
+
+`killAgent` now removes the socket file itself
+(`try? FileManager.default.removeItem(atPath: agent.socketPath)`) —
+never the shared `~/.ssh/agent/` directory, which belongs to every
+agent on the machine. Probe result: 1 → 0 after the removal line runs;
+the directory itself stayed intact and empty throughout.
+
+### Still not measured
+
+The Go-server RSA-agent-blob caveat (Gitea, Forgejo, SFTPGo,
+`gitlab-sshd` reportedly rejecting the agent's RSA signature) was not
+measured in this work and is not claimed anywhere in the four catalog
+strings Task 2 shipped.
