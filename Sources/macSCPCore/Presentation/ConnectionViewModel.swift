@@ -1252,17 +1252,24 @@ public final class ConnectionViewModel {
     public func beginEditing(_ stored: StoredSession) {
         editingOriginal = stored
         kind = stored.kind
-        // Starting from the descriptor's defaults is what the hand-written S3
-        // and WebDAV `else` branches used to do field by field: a previous S3
-        // edit's bucket must not survive into this (possibly SSH) session's
-        // form, because `kind` is itself a mode switch. The `kind` setter's own
-        // reset above cannot carry this alone -- it is guarded on an ACTUAL
-        // change, so two consecutive edits of the same kind would keep the
-        // previous one's values.
+        // Starting from the descriptor's edit baseline is what the
+        // hand-written S3 and WebDAV `else` branches used to do field by
+        // field: a previous S3 edit's bucket must not survive into this
+        // (possibly SSH) session's form, because `kind` is itself a mode
+        // switch. The `kind` setter's own reset above cannot carry this
+        // alone -- it is guarded on an ACTUAL change, so two consecutive
+        // edits of the same kind would keep the previous one's values.
+        //
+        // `editBaseline`, NOT `defaultValues`: this is the edit form, and
+        // S3's default region is a new-form-only assumption
+        // (`BackendDescriptor.editBaseline`'s doc comment) -- using
+        // `defaultValues` here would let that assumed region survive into a
+        // session whose S3 block is missing, and `validateForEditSave` would
+        // then silently write it back out as if it had been the user's own.
         //
         // `sessionValues` returns the EMPTY bag for an `.s3`/`.webdav` session
         // whose stored block is missing (`session.s3`/`session.webdav` is
-        // genuinely optional there), so merging it onto the defaults leaves a
+        // genuinely optional there), so merging it onto the baseline leaves a
         // blank form for those two -- the right answer for inconsistent data,
         // and better than the old `?? ""` fallbacks that silently produced a
         // half-filled one. Since M26 `.ssh` has the same gap, not a different
@@ -1276,11 +1283,11 @@ public final class ConnectionViewModel {
         // where the `"unused"` placeholder a legacy S3/WebDAV session still
         // carries used to enter the form.
         let descriptor = BackendDescriptor.descriptor(for: kind)
-        values = descriptor.defaultValues
+        values = descriptor.editBaseline
         values.merge(descriptor.sessionValues(stored))
         // The secret is deliberately NEVER loaded from the keychain: an empty
         // secret at save time means "leave unchanged" (see
-        // `validateForEditSave`). `defaultValues` above already left every
+        // `validateForEditSave`). `editBaseline` above already left every
         // secret field blank, so this is the assertion, not the action.
         password = ""
         saveName = stored.name

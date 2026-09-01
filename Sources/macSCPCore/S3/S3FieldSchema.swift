@@ -59,12 +59,16 @@ public enum S3FieldSchema {
                              nameDefault: "Custom", values: [:]),
         ])
 
-    /// What a brand-new S3 form starts with (M22/T8). The toggle is written
-    /// out rather than left absent so the checkbox reads "off" from a real
-    /// value instead of from `FieldValues`'s absent-means-false rule.
+    /// What a brand-new S3 form starts with (M22/T8) -- `BackendDescriptor
+    /// .defaultValues`'s S3 case. The toggle is written out rather than left
+    /// absent so the checkbox reads "off" from a real value instead of from
+    /// `FieldValues`'s absent-means-false rule.
+    ///
+    /// Built on `editBaseline` below, PLUS the region: a new form has no
+    /// saved values to merge on top and show instead, so the assumed default
+    /// is safe to show here and only here.
     public static let defaults: FieldValues = {
-        var values = FieldValues()
-        values[bool: S3Field.usePathStyle] = false
+        var values = editBaseline
         // A new form starts with the region most S3-compatible providers accept
         // because they do not check it. That is an ASSUMPTION about third-party
         // servers, which is why it is a visible, editable default on a new form
@@ -73,6 +77,21 @@ public enum S3FieldSchema {
         // rig's MinIO (us-east-1 in the gated suite); not measured against
         // Servinga, the provider in the report.
         values[S3Field.region] = "us-east-1"
+        return values
+    }()
+
+    /// What the EDIT form starts from before the stored session's own values
+    /// are merged on top (`BackendDescriptor.editBaseline`'s S3 case) --
+    /// `defaults` above MINUS the region assumption. A session whose S3
+    /// block is missing must show an EMPTY region and fail Save with
+    /// `core.connect.s3RegionRequired`, the same way a truly blank field
+    /// would; if the assumed default leaked in here it would instead get
+    /// silently written back into that session on the next Save via
+    /// `stored(from:)`, which is exactly the "never written into an existing
+    /// session" promise `defaults`' own comment makes.
+    public static let editBaseline: FieldValues = {
+        var values = FieldValues()
+        values[bool: S3Field.usePathStyle] = false
         return values
     }()
 

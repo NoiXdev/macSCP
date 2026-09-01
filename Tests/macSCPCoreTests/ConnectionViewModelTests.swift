@@ -1406,6 +1406,16 @@ struct ConnectionViewModelTests {
 
     // MARK: - S3 kind (M12/T7a)
 
+    /// A brand-new form (switching `kind` to `.s3`, exactly what the picker
+    /// does) starts with the region prefilled -- the `kind` setter's `didSet`
+    /// uses `defaultValues`, unlike `beginEditing`'s `editBaseline`, and this
+    /// is the property that must survive the split between the two.
+    @Test @MainActor func switchingKindToS3PrefillsTheRegion() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        vm.kind = .s3
+        #expect(vm.s3Region == "us-east-1")
+    }
+
     @Test func connectWithS3KindBuildsS3ConfigFromEnteredFields() async {
         let vm = makeVM(connector: { config, _ in
             guard case .s3(let s3) = config else {
@@ -1654,15 +1664,52 @@ struct ConnectionViewModelTests {
 
         #expect(vm.kind == .s3)
         #expect(vm.s3Bucket == "")
-        // Not blank: `beginEditing` starts from `descriptor.defaultValues`
-        // before merging the stored session on top (see its own doc
-        // comment), and this session's `s3` block is nil, so there is no
-        // real region to merge over the default. It reads exactly like the
-        // blank-form case, not like a saved session's own value surviving.
-        #expect(vm.s3Region == "us-east-1")
+        #expect(vm.s3Region == "")
         #expect(vm.s3Endpoint == "")
         #expect(vm.s3AccessKeyID == "")
         #expect(vm.s3UsePathStyle == false)
+    }
+
+    /// The region default (`S3FieldSchema.defaults`) is a NEW-form assumption
+    /// and must never surface on an edit form — `beginEditing` starts from
+    /// `BackendDescriptor.editBaseline`, not `defaultValues`, precisely so a
+    /// session with no S3 block of its own (inconsistent data) shows an
+    /// EMPTY region rather than the assumed "us-east-1", which
+    /// `validateForEditSave` would otherwise silently persist as if the user
+    /// had entered it (see `editSaveOnACorruptS3SessionFailsWithARegionViolation`
+    /// for that half). Its own test, split out from
+    /// `beginEditingSameKindTwiceLeavesNoFieldsFromThePreviousSession` above,
+    /// which shares this fixture but exists to check a different property
+    /// (no leftover fields across two edits).
+    @Test @MainActor func beginEditingACorruptS3SessionLeavesTheRegionEmpty() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        var inconsistent = s3Session(name: "broken")
+        inconsistent.s3 = nil
+        vm.beginEditing(inconsistent)
+
+        #expect(vm.kind == .s3)
+        #expect(vm.s3Region == "")
+    }
+
+    /// The other half: an untouched (empty) region on that same corrupt
+    /// session must fail Save with its own message, not get silently
+    /// written into the stored session as `"us-east-1"`.
+    @Test @MainActor func editSaveOnACorruptS3SessionFailsWithARegionViolation() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem() })
+        var inconsistent = s3Session(name: "broken")
+        inconsistent.s3 = nil
+        vm.beginEditing(inconsistent)
+        vm.s3Endpoint = "https://s3.example.com"
+        vm.s3Bucket = "archive"
+        vm.s3AccessKeyID = "AKIA"
+        // Region deliberately left untouched -- this is the whole point.
+
+        let saved = vm.validateForEditSave()
+
+        #expect(saved == nil)
+        #expect(vm.state == .failed(
+            message: CoreL10n.string("core.connect.s3RegionRequired"),
+            field: .schema("S3Field.region")))
     }
 
     /// WebDAV's user name lives on its own block, and the secret is NEVER read

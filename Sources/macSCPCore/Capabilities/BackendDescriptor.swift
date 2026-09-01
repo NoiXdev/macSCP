@@ -126,6 +126,26 @@ public struct BackendDescriptor: Sendable {
         }
     }
 
+    /// What the EDIT form starts from before the stored session's own values
+    /// are merged on top -- `ConnectionViewModel.beginEditing` -- as opposed
+    /// to `defaultValues` above, which is what a brand-new form starts from.
+    ///
+    /// Identical to `defaultValues` for SSH and WebDAV, where a form always
+    /// has real values to merge in (an S3-style "assumed" default has no
+    /// equivalent there yet). S3 is the one exception: its region default is
+    /// an ASSUMPTION about third-party servers that belongs on a blank new
+    /// form, never silently substituted for a saved session's own (possibly
+    /// missing) region -- see `S3FieldSchema.editBaseline`. A session whose
+    /// S3 block is missing must show an EMPTY region and fail Save with
+    /// `core.connect.s3RegionRequired`, not resurrect the assumed default.
+    public var editBaseline: FieldValues {
+        switch kind {
+        case .ssh: return SSHFieldSchema.defaults
+        case .s3: return S3FieldSchema.editBaseline
+        case .webdav: return WebDAVFieldSchema.defaults
+        }
+    }
+
     /// Field ids the generic form renderer must NOT draw because the App
     /// draws them itself (`SchemaFormView.skipping`).
     ///
