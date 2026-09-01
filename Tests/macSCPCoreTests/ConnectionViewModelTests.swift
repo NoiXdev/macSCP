@@ -316,6 +316,35 @@ struct ConnectionViewModelTests {
             field: .schema("SSHField.keyPath")))
     }
 
+    /// Pins that the substituted algorithm actually reaches the message
+    /// text, so a catalog edit that drops the `%@` placeholder from
+    /// `core.connect.keyTypeNotLoadable %@` goes red here rather than only
+    /// changing what the user sees.
+    ///
+    /// Deliberately NOT RSA: RSA also appends
+    /// `core.connect.keyTypeNotLoadableRSANote`, whose fixed text contains
+    /// the word "RSA" on its own -- so with RSA a dropped `%@` would still
+    /// leave the message containing "RSA" through the note, and this guard
+    /// would pass right through the regression it exists to catch. ECDSA
+    /// carries no such note, so the substring can only come from the `%@`
+    /// substitution actually happening.
+    @Test func typeNotLoadableMessageNamesTheAlgorithm() async {
+        let algorithm = SSHKeyType.ecdsaP521.description
+        let vm = makeVM(connector: { _, _ in
+            throw SSHKeyError.typeNotLoadable(algorithm: algorithm)
+        })
+        vm.authChoice = .privateKey
+        vm.keyPath = "~/.ssh/id_ecdsa521"
+        _ = await vm.connect()
+        let names: Bool
+        if case .failed(let message, _) = vm.state {
+            names = message.contains(algorithm)
+        } else {
+            names = false
+        }
+        #expect(names)
+    }
+
     /// The Go-server RSA caveat is VERIFIED (`AgentBackedPrivateKey.swift:92-115`
     /// -- checked directly against Go's `x/crypto/ssh`, not read secondhand),
     /// and the message must carry it, but only for the algorithm it is
