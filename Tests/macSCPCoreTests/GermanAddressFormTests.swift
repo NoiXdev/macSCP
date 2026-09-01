@@ -5,28 +5,40 @@ import Testing
 /// it.
 ///
 /// Measured before it was written, because the rule was not obvious from
-/// the outside: **eleven** strings in the App catalog carry a du-pronoun
+/// the outside: **twelve** strings in the App catalog carry a du-pronoun
 /// (`du`, `dich`, `dir`, `dein…`) — counted in the pass that writes this
 /// sentence, over the catalog as it stands — and more use the du-imperative
 /// without one ("Prüfe deine Internetverbindung und versuche es erneut.",
 /// "Verschiebe macSCP in deinen Programme-Ordner", "Bearbeite die
-/// Verbindung…"). Core's catalog addresses the user in neither register:
-/// its one imperative is the neutral bare infinitive ("Bitte alle
-/// erforderlichen S3-Felder ausfüllen.").
+/// Verbindung…"). Core's catalog is no longer the neutral-only exception
+/// this once described: its S3 field-required messages use the
+/// du-imperative ("Gib den Bucket ein…", "Gib die Region ein…") and one
+/// of them, `core.connect.s3BucketRequired`, carries an explicit du-pronoun
+/// ("der erste Ordner, den du siehst"), as does `core.s3.redirectRefused`
+/// ("Wenn du diesem Server vertraust…"). Core's *other* imperative is
+/// still the neutral bare infinitive ("Bitte alle erforderlichen S3-Felder
+/// ausfüllen.") — that one string, not the whole catalog, is what stayed
+/// neutral.
 ///
 /// The pronouns are what gets counted, because they are what a count can
 /// be checked against — an imperative is recognized by reading, and a
 /// number nobody can recompute is a number that drifts. This one said
 /// "eight" when it was written, in the same commit that moved two more
-/// strings into the du-register, and "ten" through the pass that
-/// restructured this file without recounting. Both times the sentence
-/// read as plausible; that is the whole hazard. The eleven, counted here:
+/// strings into the du-register, "ten" through the pass that restructured
+/// this file without recounting, and "eleven" through the pass that added
+/// the S3-without-a-bucket messages without recounting the du-pronoun list
+/// against the catalog it was drifting away from — `snippets.dryRun
+/// .rehearsalNote` ("Was du hier für einen Test eingibst…") was in the
+/// catalog the whole time and simply never made it into the enumeration.
+/// Every one of those sentences read as plausible; that is the whole
+/// hazard. The twelve, counted here:
 /// `connection.lost.body.needsPerson`,
 /// `connection.lost.hint.noSavedSession`, `connection.saveName.replaces %@`,
 /// `settings.cli.footer`, `settings.cli.status.translocated.detail`,
 /// `settings.cli.systemWide.footer`, `settings.connection.keepAlive.footer`,
 /// `settings.general.updateCheckHint`,
 /// `settings.terminal.target.builtInFallback.footer`,
+/// `snippets.dryRun.rehearsalNote`,
 /// `snippets.variables.error.quotedPlaceholder %@`, `update.error.offline`.
 ///
 /// Two strings used the polite form until the failed-connect surface's own
@@ -46,7 +58,7 @@ import Testing
 /// sentence is missed. It is the safe direction — a guard that flagged
 /// every "Die Datei konnte nicht gelesen werden. Sie ist vorhanden…" would
 /// be switched off by the first person it annoyed, and then it would
-/// protect nothing. All four legitimate pronouns in the catalogs today
+/// protect nothing. All five legitimate pronouns in the catalogs today
 /// happen to be sentence-initial, and all three real address cases were
 /// mid-sentence.
 ///
@@ -117,9 +129,9 @@ struct GermanAddressFormTests {
 
     // MARK: - The classifier, on the cases that made it necessary
 
-    /// The four legitimate pronouns actually in the catalogs, quoted as
+    /// The five legitimate pronouns actually in the catalogs, quoted as
     /// they stand. Every one is a *sie/ihr* forced into a capital by
-    /// sentence position — three feminine singulars and one plural — and a
+    /// sentence position — four feminine singulars and one plural — and a
     /// guard that flagged any of them would be the guard nobody keeps.
     ///
     /// Kept as literals rather than read from the files: these are the
@@ -131,6 +143,10 @@ struct GermanAddressFormTests {
         "Der Schlüssel wurde gespeichert, seine Passphrase jedoch nicht. Sie wird bei der nächsten Verbindung abgefragt.",
         "Die Snippet-Datei konnte nicht gelesen werden. Sie ist vorhanden, lässt sich aber nicht decodieren — es ging kein Snippet verloren, und es wird nichts darüber geschrieben.",
         "Einige Sitzungen konnten nicht mit dem neuen Login-Set verknüpft werden. Sie haben ihr eigenes Passwort behalten.",
+        // `core.connect.s3RegionRequired`: `Sie` refers back to `die
+        // Region` (feminine singular), forced to a capital by opening the
+        // second sentence — not address.
+        "Gib die Region ein. Sie ist Teil der Anfragesignatur, darum darf sie nicht leer bleiben; die meisten S3-kompatiblen Anbieter akzeptieren us-east-1.",
     ])
     func aSentenceInitialPronounIsNotAddress(value: String) throws {
         #expect(try Self.politeAddress(in: value).isEmpty, """
@@ -196,7 +212,7 @@ struct GermanAddressFormTests {
             German string(s) addressing the user in the polite form:
             \(offenders.joined(separator: "\n"))
 
-            This app says du — eleven strings in the App catalog carry a du-pronoun and more \
+            This app says du — twelve strings in the App catalog carry a du-pronoun and more \
             use the du-imperative ("Prüfe deine Internetverbindung und versuche es \
             erneut."). Two strings in \
             `connection.lost.*` used Sie until the failed-connect surface's own round 4, \
