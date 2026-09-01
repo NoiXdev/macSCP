@@ -8,10 +8,18 @@ public enum SSHKeyError: Error, Equatable, Sendable {
     case passphraseRequired
     case wrongPassphrase
     case unsupportedFormat(reason: String)
+    /// An `openssh-key-v1` file whose key is not ed25519. `algorithm` is
+    /// `SSHKeyType.description` ("RSA", "ECDSA P-256", "ECDSA P-384", "ECDSA P-521").
+    case typeNotLoadable(algorithm: String)
+    /// The file begins with a PEM boundary other than
+    /// `-----BEGIN OPENSSH PRIVATE KEY-----`.
+    case pemNotSupported
 }
 
 /// Loads private OpenSSH keys (M3b: ed25519, optionally encrypted) via
-/// Citadel's parser. RSA/ecdsa and ssh-agent are deliberately deferred (YAGNI).
+/// Citadel's parser. RSA, ECDSA and PEM-format keys are named but not
+/// parsed from a file — the agent (`AgentBackedPrivateKey`) is the measured
+/// route for those types.
 public enum SSHPrivateKeyLoader {
     public static func authentication(
         username: String, keyPath: String, passphrase: String?
@@ -26,6 +34,20 @@ public enum SSHPrivateKeyLoader {
             contents = try String(contentsOfFile: expanded, encoding: .utf8)
         } catch {
             throw SSHKeyError.unsupportedFormat(reason: String(describing: error))
+        }
+
+        // Name the key before parsing it. The openssh-key-v1 header is cleartext
+        // even when the private half is encrypted, so an RSA key is reported as
+        // RSA before anyone is asked for a passphrase it could never have used.
+        // Citadel's file signer is SHA-1 only for RSA and has no ECDSA parser
+        // (measured 2026-08-31, see the backlog entry); ed25519 is the one type
+        // this loader can hand to a connection.
+        let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("-----BEGIN ") && !trimmed.hasPrefix("-----BEGIN OPENSSH PRIVATE KEY-----") {
+            throw SSHKeyError.pemNotSupported
+        }
+        if let type = try? SSHKeyDetection.detectPrivateKeyType(from: contents), type != .ed25519 {
+            throw SSHKeyError.typeNotLoadable(algorithm: type.description)
         }
 
         // Empty passphrase == no passphrase (unencrypted key).
