@@ -42,9 +42,12 @@ passphrase case is a conclusion until Task 4 measures it).
   up through `CoreL10n.string(_:)`. **No String Catalog, no
   `String(localized:)`, no `Bundle.module`.** German addresses the user as
   **du**. `LocalizationParityTests` fails on a key missing from any catalog.
-- **The Go-server caveat is not claimed.** The entry records that the RSA
-  agent blob is *reportedly* incompatible with Gitea/Forgejo/SFTPGo — read,
-  not measured. No message says it.
+- **Correction (final review):** the bullet above was wrong — the Go-server
+  RSA caveat is VERIFIED in `AgentBackedPrivateKey.swift:92-115` (checked
+  directly against `x/crypto/ssh`), not merely read. The final whole-branch
+  review for this plan caught the wrong premise; `core.connect.keyTypeNotLoadable %@`
+  now carries a companion note, appended for RSA only, via
+  `core.connect.keyTypeNotLoadableRSANote`.
 - **No own key parser, no decryption.** Type detection reads the cleartext
   header through Citadel's public API; nothing else touches the container.
 - Gated tests only under `MACSCP_ITEST=1`; the rig is started from the main

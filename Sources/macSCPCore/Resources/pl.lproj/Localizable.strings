@@ -53,6 +53,7 @@
 "core.connect.keyPassphraseRequired" = "Klucz SSH jest zaszyfrowany — wprowadź hasło klucza.";
 "core.connect.keyWrongPassphrase" = "Hasło klucza jest nieprawidłowe.";
 "core.connect.keyTypeNotLoadable %@" = "To jest klucz %@. macSCP otwiera z pliku tylko klucze OpenSSH ed25519 — wczytaj ten klucz do ssh-agenta (ssh-add) i wybierz agenta jako metodę logowania.";
+"core.connect.keyTypeNotLoadableRSANote" = "Uwaga dotycząca kluczy RSA: serwery oparte na bibliotece SSH języka Go — Gitea, Forgejo, SFTPGo, gitlab-sshd — odrzucają klucz RSA oferowany przez agenta. Klucz ed25519 działa wszędzie.";
 "core.connect.keyPEMNotSupported" = "Ten klucz jest w formacie PEM. macSCP otwiera klucze w formacie OpenSSH — przekonwertuj go za pomocą ssh-keygen -p (hasło klucza zostaje zachowane) albo wczytaj go do ssh-agenta i wybierz agenta jako metodę logowania.";
 "core.connect.keyUnsupportedFormat" = "Tego pliku nie udało się odczytać jako klucza SSH. macSCP otwiera z pliku tylko klucze OpenSSH ed25519; inne typy działają przez ssh-agenta.";
 

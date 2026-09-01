@@ -258,9 +258,37 @@ never the shared `~/.ssh/agent/` directory, which belongs to every
 agent on the machine. Probe result: 1 → 0 after the removal line runs;
 the directory itself stayed intact and empty throughout.
 
-### Still not measured
+### Correction, 2026-09-01 — the Go-server caveat WAS measured
 
-The Go-server RSA-agent-blob caveat (Gitea, Forgejo, SFTPGo,
-`gitlab-sshd` reportedly rejecting the agent's RSA signature) was not
-measured in this work and is not claimed anywhere in the four catalog
-strings Task 2 shipped.
+This section used to say the Go-server RSA-agent-blob caveat was "not
+measured" and "not claimed anywhere." Both halves were wrong, and the
+plan this entry fed (`docs/superpowers/plans/2026-09-01-ssh-key-formats.md`)
+inherited the same wrong premise into its own Global Constraints.
+
+The caveat is not a rumor read secondhand — it is a VERIFIED finding,
+already sitting in the tree before this entry's "Done" section was
+written: `AgentBackedPrivateKey.swift:92-115` documents it, checked
+directly against Go's `golang.org/x/crypto/ssh` (`ParsePublicKey` on a
+blob tagged `rsa-sha2-512`, which that library rejects with "signature
+algorithm \"rsa-sha2-512\" isn't a key format"). It follows from how
+swift-nio-ssh's `.custom` key type couples the blob's embedded type tag
+to the signature/algorithm name (`AgentAlgorithm.RSASha512`'s doc comment
+walks the exact call chain) — a fact about wire encoding, not a claim
+about any particular server's behavior read from a forum post. Any
+server built on that library — Gitea, Forgejo, Gogs, `gitlab-sshd`,
+SFTPGo — therefore rejects an RSA identity offered through macSCP's
+agent route, while OpenSSH `sshd` accepts the identical key (proven live
+by the gated `agentAuthConnectsRSA` test). ed25519 and ECDSA identities
+are not affected, because their blob tag and signature/algorithm name are
+already the same string.
+
+The final whole-branch review for the `2026-09-01-ssh-key-formats` plan
+caught the gap this left: `core.connect.keyTypeNotLoadable %@` sent every
+non-ed25519 key to the agent unqualified, including RSA, with no mention
+of a route that a large share of that key's likely destinations will
+reject outright. The message now carries a fourth catalog key,
+`core.connect.keyTypeNotLoadableRSANote`, appended only when the named
+algorithm is RSA (`ConnectionViewModel`'s `typeNotLoadable` arm compares
+against `SSHKeyType.rsa.description`, not a string literal). See
+`docs/superpowers/specs/2026-09-01-backlog-rsa-agent-go-servers.md` for
+what is and is not measured about a fix.

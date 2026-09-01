@@ -1,3 +1,4 @@
+import Citadel
 import Foundation
 import Observation
 
@@ -1865,9 +1866,18 @@ public final class ConnectionViewModel {
         // "these can equally originate from either hop, and there's no
         // ordering guarantee to lean on." These two follow that precedent.
         case SSHKeyError.typeNotLoadable(let algorithm):
-            return .failed(
-                message: String(format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"), algorithm),
-                field: Self.sshField(.keyPath))
+            var message = String(format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"), algorithm)
+            // The Go-server incompatibility is VERIFIED, not claimed (see
+            // `AgentBackedPrivateKey.swift:92-115`): only an RSA identity's
+            // agent-signed blob collides on wire tag; ed25519 and ECDSA are
+            // unaffected because their blob tag and signature algorithm are
+            // already the same string. Read the symbol the check watches,
+            // not a copy of its spelling, so a rename of the case does not
+            // silently stop appending the note.
+            if algorithm == SSHKeyType.rsa.description {
+                message += " " + CoreL10n.string("core.connect.keyTypeNotLoadableRSANote")
+            }
+            return .failed(message: message, field: Self.sshField(.keyPath))
         case SSHKeyError.pemNotSupported:
             return .failed(
                 message: CoreL10n.string("core.connect.keyPEMNotSupported"),

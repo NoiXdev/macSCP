@@ -1,3 +1,4 @@
+import Citadel
 import Foundation
 import Testing
 @testable import macSCPCore
@@ -296,14 +297,61 @@ struct ConnectionViewModelTests {
     /// `SSHKeyError.typeNotLoadable` (Task 1: a key whose `openssh-key-v1`
     /// header names a non-ed25519 algorithm) names the algorithm in the
     /// message, the same way `keyNotFound %@` names the path.
+    ///
+    /// Uses ECDSA rather than RSA on purpose: RSA additionally appends the
+    /// Go-server note (`typeNotLoadableAppendsRSANoteForRSAOnly` below), and
+    /// this test's job is the plain "the algorithm is named" mapping, not
+    /// that interaction.
     @Test func typeNotLoadableMapsToLocalizedMessageWithAlgorithm() async {
-        let vm = makeVM(connector: { _, _ in throw SSHKeyError.typeNotLoadable(algorithm: "RSA") })
+        let vm = makeVM(connector: { _, _ in
+            throw SSHKeyError.typeNotLoadable(algorithm: SSHKeyType.ecdsaP256.description)
+        })
         vm.authChoice = .privateKey
-        vm.keyPath = "~/.ssh/id_rsa"
+        vm.keyPath = "~/.ssh/id_ecdsa"
         _ = await vm.connect()
         #expect(vm.state == .failed(
-            message: String(format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"), "RSA"),
+            message: String(
+                format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"),
+                SSHKeyType.ecdsaP256.description),
             field: .schema("SSHField.keyPath")))
+    }
+
+    /// The Go-server RSA caveat is VERIFIED (`AgentBackedPrivateKey.swift:92-115`
+    /// -- checked directly against Go's `x/crypto/ssh`, not read secondhand),
+    /// and the message must carry it, but only for the algorithm it is
+    /// actually true of: ed25519 and ECDSA agent identities never hit the
+    /// wire-tag collision the note describes, because for those algorithms
+    /// the blob's embedded type tag and the signature/algorithm name are
+    /// already the same string.
+    @Test func typeNotLoadableAppendsRSANoteForRSAOnly() async {
+        let rsaVM = makeVM(connector: { _, _ in
+            throw SSHKeyError.typeNotLoadable(algorithm: SSHKeyType.rsa.description)
+        })
+        rsaVM.authChoice = .privateKey
+        rsaVM.keyPath = "~/.ssh/id_rsa"
+        _ = await rsaVM.connect()
+        let rsaNote = CoreL10n.string("core.connect.keyTypeNotLoadableRSANote")
+        let rsaMessageHasNote: Bool
+        if case .failed(let message, _) = rsaVM.state {
+            rsaMessageHasNote = message.contains(rsaNote)
+        } else {
+            rsaMessageHasNote = false
+        }
+        #expect(rsaMessageHasNote)
+
+        let ecdsaVM = makeVM(connector: { _, _ in
+            throw SSHKeyError.typeNotLoadable(algorithm: SSHKeyType.ecdsaP384.description)
+        })
+        ecdsaVM.authChoice = .privateKey
+        ecdsaVM.keyPath = "~/.ssh/id_ecdsa"
+        _ = await ecdsaVM.connect()
+        let ecdsaMessageHasNote: Bool
+        if case .failed(let message, _) = ecdsaVM.state {
+            ecdsaMessageHasNote = message.contains(rsaNote)
+        } else {
+            ecdsaMessageHasNote = true
+        }
+        #expect(!ecdsaMessageHasNote)
     }
 
     /// `SSHKeyError.pemNotSupported` (Task 1: a PEM-boundary file, not an
