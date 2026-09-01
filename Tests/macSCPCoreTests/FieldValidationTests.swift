@@ -89,6 +89,24 @@ import Testing
         #expect(S3FieldSchema.defaults[S3Field.region] == "us-east-1")
     }
 
+    /// The edit form's own baseline (`beginEditing`, `fillForm`) must NOT
+    /// carry the new-form region assumption — the opposite fixture from
+    /// `s3DefaultsPrefillTheRegion` above, on the value `editBaseline` is
+    /// FOR.
+    @Test func s3EditBaselineLeavesTheRegionEmpty() {
+        #expect(S3FieldSchema.editBaseline[S3Field.region] == "")
+    }
+
+    /// Every non-S3 backend's edit baseline is identical to its new-form
+    /// defaults — S3 is the one exception with an assumed default to
+    /// withhold (`BackendDescriptor.editBaseline`'s doc comment).
+    @Test func nonS3EditBaselinesEqualTheirDefaults() {
+        #expect(BackendDescriptor.descriptor(for: .ssh).editBaseline
+                == BackendDescriptor.descriptor(for: .ssh).defaultValues)
+        #expect(BackendDescriptor.descriptor(for: .webdav).editBaseline
+                == BackendDescriptor.descriptor(for: .webdav).defaultValues)
+    }
+
     @Test func s3ReportsItsOwnFieldsAndMessage() {
         var values = BackendDescriptor.descriptor(for: .s3).defaultValues
         values[S3Field.endpoint] = "https://s3.example.com"
