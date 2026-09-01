@@ -1632,6 +1632,13 @@ struct CitadelFileSystemIntegrationTests {
         kill.arguments = ["-TERM", String(agent.pid)]
         try? kill.run()
         kill.waitUntilExit()
+        // ssh-agent removes its own socket on a TERM it receives while still
+        // alive, so this is a no-op on the common path. It matters when TERM
+        // never reached a live agent (the test process died first, or the
+        // agent was killed hard) and the socket file is left behind in the
+        // shared ~/.ssh/agent/ — remove the FILE only, never the directory,
+        // which belongs to every agent on the machine.
+        try? FileManager.default.removeItem(atPath: agent.socketPath)
     }
 
     /// Adds a key to the spawned agent. For an encrypted key, `passphrase` is
