@@ -72,8 +72,11 @@ closes it by removing the thing that needed the harness.
   forward-compat tests), open a store on it: `keepAliveEnabled == false`,
   `keepAliveIntervalSeconds == 60`, and the file is byte-unchanged until a
   write. (d) A raw file with `"keepAliveIntervalSeconds": 0` AND
-  `"keepAliveEnabled": true` reads enabled with interval `15` — the new key
-  wins, `0` is just out of range.
+  `"keepAliveEnabled": true` reads enabled with interval `60` — the new key
+  wins, and `0` is not an interval: the getter returns the default for it
+  (corrected 2026-09-02 after implementation showed the literal clamp
+  yields 15; a floor value surfacing as "your interval" would be a new
+  surprise in place of the old one).
 - [ ] **Step 2: Implement.**
 
 ```swift
@@ -95,7 +98,7 @@ public var keepAliveEnabled: Bool {
 
   (`optionalBool` — use whatever the store offers to tell "absent" from
   "false"; if nothing does, add the smallest private accessor beside
-  `boolValue`.) `keepAliveIntervalSeconds` becomes `clamp(value, 15, 600)`
+  `boolValue`.) `keepAliveIntervalSeconds`: a stored `0` (the retired sentinel) reads as the default `60`; every other value becomes `clamp(value, 15, 600)`
   on both ends, exactly like `autoRefreshIntervalSeconds`; delete
   `clampKeepAliveInterval`. Rewrite the doc comment: the old one explains
   the sentinel.
