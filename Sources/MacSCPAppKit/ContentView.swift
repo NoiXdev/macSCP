@@ -1992,9 +1992,10 @@ struct ContentView: View {
         // `editBaseline`, NOT `defaultValues`: this form IS `stored` -- a
         // saved session, not a new one -- so it must not inherit S3's
         // new-form region assumption (`BackendDescriptor.editBaseline`'s
-        // doc comment). A session whose S3 block is missing shows an EMPTY
-        // region and fails `firstViolation` with `s3RegionRequired`, the
-        // same as `ConnectionViewModel.beginEditing`.
+        // doc comment). A session whose S3 block is missing shows EMPTY S3
+        // fields and fails `firstViolation` at the first required field in
+        // declaration order -- today that is the endpoint, not the region
+        // -- the same as `ConnectionViewModel.beginEditing`.
         form.values = descriptor.editBaseline
         form.values.merge(descriptor.sessionValues(stored))
         // NOT a name macSCP invents, so deliberately no
