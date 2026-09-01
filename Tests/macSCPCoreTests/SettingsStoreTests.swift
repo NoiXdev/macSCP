@@ -901,7 +901,7 @@ struct SettingsStoreTests {
 
         let store = SettingsStore(directory: dir)
         #expect(store.keepAliveEnabled == false)
-        #expect(store.keepAliveIntervalSeconds == 15)
+        #expect(store.keepAliveIntervalSeconds == 60)
 
         let afterRead = try Data(contentsOf: fileURL(dir))
         #expect(afterRead == beforeRead)
@@ -909,8 +909,9 @@ struct SettingsStoreTests {
 
     /// Once both keys are on disk, `keepAliveEnabled` wins outright — the
     /// migration fallback only applies when the key is ABSENT. A stored `0`
-    /// alongside an explicit `true` is just an out-of-range interval, not a
-    /// second way to spell "off".
+    /// is the retired sentinel, not an interval, whether or not
+    /// `keepAliveEnabled` is present: it reads as the default `60`, exactly
+    /// like the absent-key case above, not as a second way to spell "off".
     @Test func explicitKeepAliveEnabledKeyWinsOverStoredZeroInterval() throws {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -920,7 +921,7 @@ struct SettingsStoreTests {
 
         let store = SettingsStore(directory: dir)
         #expect(store.keepAliveEnabled == true)
-        #expect(store.keepAliveIntervalSeconds == 15)
+        #expect(store.keepAliveIntervalSeconds == 60)
     }
 
     /// Asserts through the persisted file, not just the getter — see

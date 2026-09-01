@@ -541,11 +541,16 @@ public final class SettingsStore {
     /// — whether the probe runs at all is `keepAliveEnabled`'s own Bool, so
     /// this value never needs to carry "off" and a hand-edited settings.json
     /// cannot produce a runaway or dead probe.
+    ///
+    /// A stored `0` is the retired sentinel, not an interval: this getter
+    /// reads it as the default `60` rather than clamping it to the floor
+    /// `15`. Surfacing the floor as "your interval" for a file that never
+    /// meant one — an old off file, or a hand-edited `0` — would just be a
+    /// new surprise in place of the old one.
     public var keepAliveIntervalSeconds: Int {
         get {
-            clamp(
-                intValue(for: Keys.keepAliveIntervalSeconds, default: Defaults.keepAliveIntervalSeconds),
-                15, 600)
+            let stored = intValue(for: Keys.keepAliveIntervalSeconds, default: Defaults.keepAliveIntervalSeconds)
+            return stored == 0 ? Defaults.keepAliveIntervalSeconds : clamp(stored, 15, 600)
         }
         set { setInt(clamp(newValue, 15, 600), for: Keys.keepAliveIntervalSeconds) }
     }
