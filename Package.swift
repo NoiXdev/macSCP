@@ -19,9 +19,11 @@ let package = Package(
         // a different URL, which SwiftPM resolves in place of Citadel's —
         // measured 2026-09-01, see docs/superpowers/specs/2026-08-20-backlog-dependencies.md.
         // The fork is ours; `exact:` makes every change to it a deliberate
-        // bump here. 0.3.7 = Wellz26 0.3.6 + Apple 0.14.1 ECDSA mpint
-        // validation + preamble handling.
-        .package(url: "https://github.com/NoiXdev/swift-nio-ssh.git", exact: "0.3.7"),
+        // bump here. 0.3.8 = Wellz26 0.3.6 + Apple 0.14.1 ECDSA mpint
+        // validation + preamble handling + three Apple correctness fixes
+        // the fork lacked (window update after local close, ByteBuffer
+        // resize, sealed-box construction).
+        .package(url: "https://github.com/NoiXdev/swift-nio-ssh.git", exact: "0.3.8"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "d5ee56e1c74777120f3af688600d336de4201bd2"),

@@ -424,3 +424,42 @@ it: **3427 tests in 302 suites, 0 failures**, 71.7 s.
 The scaffold was throwaway and is removed again. A permanent regression test
 still needs the forwarder as part of the Docker rig — unchanged from the
 morning entry, and still to be designed rather than bolted on.
+
+---
+
+## Measured 2026-09-01 (evening) — "are all security patches in the fork?"
+
+The maintainer asked whether every security patch could go into the fork
+while it was open. Measured rather than assumed:
+
+**Published advisories for apple/swift-nio-ssh: exactly one.**
+GHSA-998x-vgvp-xwpc (critical, 2026-07-17, patched in 0.14.1) — the ECDSA
+mpint fix already cherry-picked as `b098395`. There is no second advisory.
+
+**Everything else Apple has that the fork lacks:** merge-base `b0591e4`
+(2022-04-21), 91 commits, all read by subject and the protocol-relevant ones
+by diff. 85 of them are CI, docs, benchmarks, Swift-version floors, Sendable
+annotations, Android and allocation limits. Six touch the protocol path:
+
+| Apple | what | verdict |
+|---|---|---|
+| `7733e7e` 0.7.0 | no window update after local close | **taken** as `0395d9f`, test adapted to this fork's 1<<17 window. Red without the guard is a **crash**: `Sent channel window adjust on channel in invalid state` |
+| `db57f32` 0.7.1 | `moveWriterIndex` past capacity in two places | **ported by hand** as `4cf1748` (cherry-pick conflicts with a refactor the fork never took); red = signal 5 |
+| `baa05dc` 0.6.1 | AES-GCM sealed box from combined bytes | **ported by hand** as `d58f304`, Sources only |
+| `ded5e5c` 0.8.0 | client-mode version parsing | **already covered** by `089d3ec` — same mechanism (`isServer`), this fork's own code |
+| `c99a20b` | `dup()` of pipe descriptors | server example target only; macSCP does not build it — **not taken** |
+| `a48586f` 0.5.0 | encryptPacket refactor | no fix in it — **not taken** |
+
+Not taken either, with reasons measured earlier: `8257bc4` 0.14.0 guards a
+server-only branch; `6d576c8`/`73d8f68` 0.15.0 buffer and packet-size limits
+exist independently in the fork; `3ec2814` 0.15.0 limits client auth
+attempts on the server side.
+
+**Result:** tag **`0.3.8`**, fork suite 361 tests / 0 failures. `citadel2`
+fast-forwarded to it.
+
+One correction to how this was done: two of the three commits were first
+written with a claim of a red test run that had not actually been observed —
+a grep that matched nothing, read as "no failure". Both were rewritten before
+anything was pushed, with the red that was then really seen (a trap, not an
+assertion). A commit message is a measurement record too.
