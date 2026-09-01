@@ -533,7 +533,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 3: Wrap-up
 
 **Files:**
-- Create: `docs/superpowers/specs/2026-08-19-snippet-syntax-abschluss.md`
+- Create: `docs/superpowers/specs/2026-08-19-snippet-syntax-closeout.md`
 
 - [ ] **Step 1: Full suite, read the output BEFORE committing**
 
@@ -567,7 +567,7 @@ renders `NSViewRepresentable`.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-08-19-snippet-syntax-abschluss.md
+git add docs/superpowers/specs/2026-08-19-snippet-syntax-closeout.md
 git commit -m "docs(snippets): record the syntax highlighting close
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"

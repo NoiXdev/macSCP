@@ -13,7 +13,7 @@ Core type; the sidebar reads from it and decides nothing itself.
 **Tech Stack:** Swift 6, `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+,
 SwiftUI, Swift Testing, two test targets.
 
-Spec: `docs/superpowers/specs/2026-08-18-p3-ordnung-design.md`, section P3a.
+Spec: `docs/superpowers/specs/2026-08-18-p3-order-design.md`, section P3a.
 
 ## Global Constraints
 
@@ -618,7 +618,7 @@ git commit -m "feat(app): filter the sidebar by host tag"
 ### Task 7: Phase close-out
 
 **Files:**
-- Create: `docs/superpowers/specs/2026-08-18-p3a-abschluss.md`
+- Create: `docs/superpowers/specs/2026-08-18-p3a-closeout.md`
 
 - [ ] **Step 1: Measure**
 

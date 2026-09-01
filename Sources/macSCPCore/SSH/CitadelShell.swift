@@ -3,7 +3,7 @@
 // the SSH transport reaches this app through a third-party fork of Apple's
 // swift-nio-ssh that branched in 2022 and never took Apple's `Sendable`
 // adoption (measured in
-// docs/superpowers/specs/2026-08-20-backlog-abhaengigkeiten.md). Neither
+// docs/superpowers/specs/2026-08-20-backlog-dependencies.md). Neither
 // package is ours, so there is nothing to conform here.
 //
 // What the suppression costs: the compiler stops diagnosing

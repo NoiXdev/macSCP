@@ -4,7 +4,7 @@ import Testing
 @testable import macSCPCore
 
 /// MEASUREMENT (2026-08-28), specified by
-/// `docs/superpowers/specs/2026-08-28-zwei-offene-fragen-design.md`, section
+/// `docs/superpowers/specs/2026-08-28-two-open-questions-design.md`, section
 /// "Die S3-Redirect-Frage".
 ///
 /// The question: `S3FileSystem` sets `Authorization` by hand and runs over

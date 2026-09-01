@@ -8,8 +8,8 @@
 
 **Tech Stack:** Swift 6 toolchain in `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+, SwiftUI, Swift Testing.
 
-**Spec:** `docs/superpowers/specs/2026-08-07-m23-sitzungs-lebenszyklus-design.md`
-**Phase 1 close record:** `docs/superpowers/specs/2026-08-07-m23-phase1-abschluss.md`
+**Spec:** `docs/superpowers/specs/2026-08-07-m23-session-lifecycle-design.md`
+**Phase 1 close record:** `docs/superpowers/specs/2026-08-07-m23-phase1-closeout.md`
 
 ## Global Constraints
 
@@ -511,7 +511,7 @@ Dispatch a fresh reviewer over the phase diff with this plan and the spec as con
 
 - [ ] **Step 5: Write the close record and commit**
 
-Append to `docs/superpowers/specs/2026-08-07-m23-phase1-abschluss.md` — or write a sibling `…-phase2-abschluss.md` if that file has grown unwieldy — covering: what the equivalence guard caught when it was first red, the CLI message change (`missingKeyPath` → `incompleteConfiguration`) **flagged for the release notes**, and what Phase 3 inherits.
+Append to `docs/superpowers/specs/2026-08-07-m23-phase1-closeout.md` — or write a sibling `…-phase2-abschluss.md` if that file has grown unwieldy — covering: what the equivalence guard caught when it was first red, the CLI message change (`missingKeyPath` → `incompleteConfiguration`) **flagged for the release notes**, and what Phase 3 inherits.
 
 **Do not push.**
 

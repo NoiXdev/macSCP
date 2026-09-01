@@ -7,7 +7,7 @@ import NIOCore
 // Apple has declared that type `Sendable` since 2023 — but the SSH transport
 // reaches this app through a third-party fork of swift-nio-ssh that branched
 // in 2022 and never took the adoption (measured in
-// docs/superpowers/specs/2026-08-20-backlog-abhaengigkeiten.md). So this is
+// docs/superpowers/specs/2026-08-20-backlog-dependencies.md). So this is
 // not a gap in our code or in Apple's; it is a merge the fork never
 // received, and there is nothing to conform on our side.
 //

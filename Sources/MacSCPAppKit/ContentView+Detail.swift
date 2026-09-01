@@ -1176,7 +1176,7 @@ enum LivenessProbeRace {
 /// added `failed` to — that one DID change the call site, which now passes
 /// a third fact (see `ConnectionSurfacePlan.surface`). Named per the design
 /// spec's own framing
-/// (`docs/superpowers/specs/2026-08-21-verbindungszustand-design.md` §4):
+/// (`docs/superpowers/specs/2026-08-21-connection-state-design.md` §4):
 /// one and the same tab area for connecting, connected and lost.
 enum ConnectionAttemptSurface: Equatable {
     /// The ordinary new-connection/edit form (`ConnectionFormView`).
@@ -2093,7 +2093,7 @@ private struct ConnectFailureView: View {
 /// .surface(for:hostKeyPromptPending:connectAttemptFailed:)` answers
 /// `.connecting`. The design
 /// spec's own framing for this surface
-/// (`docs/superpowers/specs/2026-08-21-verbindungszustand-design.md` §4):
+/// (`docs/superpowers/specs/2026-08-21-connection-state-design.md` §4):
 /// the connection attempt becomes a cancellable task on the same tab area,
 /// so the rest of the window — other tabs, the sidebar once this one's own
 /// dial ends — stays usable instead of the tab looking like a dead modal
@@ -2207,7 +2207,7 @@ private struct TerminalPanelHeader: View {
         }
         // Moves from this header's own former 12/6 to the panel's existing
         // 14/8 rhythm (Terminal-Fassung P2, Task 1, per
-        // docs/superpowers/specs/2026-08-10-snippets-runde-2-design.md,
+        // docs/superpowers/specs/2026-08-10-snippets-round-2-design.md,
         // "P2 — Terminal-Fassung") — a DELIBERATE visual change (this row
         // gets two points wider/taller), not a regression to revert. Reads
         // the same shared `DesignTokens` constants as the terminal surface

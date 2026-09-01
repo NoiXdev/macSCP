@@ -8,9 +8,9 @@
 
 **Tech Stack:** Swift 6 toolchain in `.swiftLanguageMode(.v5)`, SwiftPM, macOS 15+, SwiftUI, Swift Testing.
 
-**Spec:** `docs/superpowers/specs/2026-08-07-m23-sitzungs-lebenszyklus-design.md`
-**Phase 1 close:** `docs/superpowers/specs/2026-08-07-m23-phase1-abschluss.md`
-**Phase 2 close:** `docs/superpowers/specs/2026-08-07-m23-phase2-abschluss.md`
+**Spec:** `docs/superpowers/specs/2026-08-07-m23-session-lifecycle-design.md`
+**Phase 1 close:** `docs/superpowers/specs/2026-08-07-m23-phase1-closeout.md`
+**Phase 2 close:** `docs/superpowers/specs/2026-08-07-m23-phase2-closeout.md`
 
 ## Global Constraints
 
@@ -395,7 +395,7 @@ Dispatch a fresh reviewer over the phase diff. The questions that matter:
 
 - [ ] **Step 5: Write the close record**
 
-Write `docs/superpowers/specs/2026-08-07-m23-abschluss.md` and, because this closes M23, a short **milestone** summary: the criteria table across all three phases, the consolidated release-notes list (Phase 1's `sessions-v2.json` divergence and anonymous WebDAV; Phase 2's four items; Phase 3's end of `.macscp` interchange), and the follow-ups nobody owns yet.
+Write `docs/superpowers/specs/2026-08-07-m23-closeout.md` and, because this closes M23, a short **milestone** summary: the criteria table across all three phases, the consolidated release-notes list (Phase 1's `sessions-v2.json` divergence and anonymous WebDAV; Phase 2's four items; Phase 3's end of `.macscp` interchange), and the follow-ups nobody owns yet.
 
 **Do not push.**
 

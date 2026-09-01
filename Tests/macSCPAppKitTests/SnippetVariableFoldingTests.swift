@@ -4,7 +4,7 @@ import macSCPCore
 @testable import MacSCPAppKit
 
 /// Folding the snippet editor's variable rows
-/// (`docs/superpowers/specs/2026-08-30-snippet-editor-bedienung-design.md`,
+/// (`docs/superpowers/specs/2026-08-30-snippet-editor-interaction-design.md`,
 /// section 1).
 ///
 /// A declaration row carries a name, a kind, a prompt, a placement, a

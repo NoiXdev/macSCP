@@ -73,7 +73,7 @@
 ## Comments that describe other code
 
 Two rules, measured in the comment audit of 2026-08-19
-(`docs/superpowers/specs/2026-08-19-p4-kommentar-audit.md`): 15% of the
+(`docs/superpowers/specs/2026-08-19-p4-comment-audit.md`): 15% of the
 statements about callers were wrong — but only in files that had recently
 been restructured. In a file untouched since a milestone: none.
 

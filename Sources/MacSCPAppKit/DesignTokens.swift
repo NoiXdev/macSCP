@@ -128,7 +128,7 @@ enum DesignTokens {
     // value multiple independent views must agree on.
     //
     // The value is 14/8, decided by
-    // `docs/superpowers/specs/2026-08-10-snippets-runde-2-design.md`
+    // `docs/superpowers/specs/2026-08-10-snippets-round-2-design.md`
     // ("P2 — Terminal-Fassung"): the panel's panes and the `.ended` text
     // block already used 14/8 before this task, so that is the existing
     // rhythm, not an invented one. `TerminalPanelHeader` previously used

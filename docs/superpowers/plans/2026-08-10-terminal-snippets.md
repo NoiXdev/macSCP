@@ -423,7 +423,7 @@ git commit -m "feat(app): trigger snippets from the Terminal menu"
 ### Task 5: Verification and close record
 
 **Files:**
-- Create: `docs/superpowers/specs/2026-08-10-terminal-snippets-abschluss.md`
+- Create: `docs/superpowers/specs/2026-08-10-terminal-snippets-closeout.md`
 
 - [ ] **Step 1: Run everything**
 
@@ -442,7 +442,7 @@ Docker rig from the **main checkout**, never a worktree.
 
 - [ ] **Step 2: Write the close record**
 
-German, following `2026-08-10-m29-p2-abschluss.md`'s shape. It must carry:
+German, following `2026-08-10-m29-p2-closeout.md`'s shape. It must carry:
 
 - the commit list; unpushed and ahead-of-`origin/main` counts; test counts
   before and after;

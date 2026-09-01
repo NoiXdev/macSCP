@@ -981,7 +981,7 @@ struct LivenessProbeDropIntegrationTests {
 
     /// The question `aSilentlyFrozenPeerIsNoticedByTheDeadline` deliberately
     /// does not settle, and the one the backlog entry
-    /// `docs/superpowers/specs/2026-08-25-backlog-abbau-bei-eingefrorenem-peer.md`
+    /// `docs/superpowers/specs/2026-08-25-backlog-teardown-with-frozen-peer.md`
     /// was filed to close: the same give-up lap, run against a peer that is
     /// STILL frozen.
     ///

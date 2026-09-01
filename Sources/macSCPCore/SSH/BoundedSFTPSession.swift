@@ -6,7 +6,7 @@ import Foundation
 /// form.
 ///
 /// This is a capability boundary in the sense of
-/// `docs/superpowers/specs/2026-08-28-faehigkeitsgrenze-verbinden-design.md`:
+/// `docs/superpowers/specs/2026-08-28-capability-boundary-connect-design.md`:
 /// not a better way to observe a mistake, but the withdrawal of the ability
 /// to make it. `7ac7f7e` bounded the SFTP close because that call does not
 /// return against a peer that has stopped answering (measured in
@@ -51,7 +51,7 @@ import Foundation
 /// in `CitadelFileSystem` are unbounded round trips of the same kind. They
 /// are a recorded backlog observation, not a silent gap in this type —
 /// counted and broken down in
-/// `docs/superpowers/specs/2026-08-28-backlog-unbegrenzte-dateischluesse.md`.
+/// `docs/superpowers/specs/2026-08-28-backlog-unbounded-file-closes.md`.
 /// The other call of that shape, `CitadelShell.close()`, is NOT among them:
 /// it is unbounded in itself, but the App layer runs it inside
 /// `TeardownStage.shutDownTerminal`'s bound, which is the stage bound that

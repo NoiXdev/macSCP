@@ -4,7 +4,7 @@ import Testing
 
 /// Guards ONE property of `ContentView+Detail.swift`'s `terminalPanel(_:)`
 /// (Terminal-Fassung P2, Task 1, round 2 per
-/// `docs/superpowers/specs/2026-08-10-snippets-runde-2-design.md`,
+/// `docs/superpowers/specs/2026-08-10-snippets-round-2-design.md`,
 /// "P2 — Terminal-Fassung"): the terminal surface (`SSHTerminalView`, shown
 /// for `.running`/`.opening`), the `.ended` state's text block, AND
 /// `TerminalPanelHeader` above them all read the SAME two `DesignTokens`
@@ -153,7 +153,7 @@ struct TerminalPanelInsetTests {
     }
 
     /// Pins the actual DECIDED value from
-    /// `docs/superpowers/specs/2026-08-10-snippets-runde-2-design.md`
+    /// `docs/superpowers/specs/2026-08-10-snippets-round-2-design.md`
     /// ("P2 — Terminal-Fassung": "Rand ums Terminal: 14 horizontal / 8
     /// vertikal") — unlike a bare "the inset is 14" test on its own, this
     /// is not standing in for the coupling guard above (that is what the

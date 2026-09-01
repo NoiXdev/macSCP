@@ -4,7 +4,7 @@ import macSCPCore
 @testable import MacSCPAppKit
 
 /// Placeholder help in the snippet editor
-/// (`docs/superpowers/specs/2026-08-30-snippet-editor-bedienung-design.md`,
+/// (`docs/superpowers/specs/2026-08-30-snippet-editor-interaction-design.md`,
 /// section 2): the hint about a `{{NAME}}` nothing declares, the way to put
 /// a declared name into the command without typing it, and the completion
 /// that opens at `{{`.

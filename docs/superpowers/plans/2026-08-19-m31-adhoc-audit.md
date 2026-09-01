@@ -306,7 +306,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 3: Close-out
 
 **Files:**
-- Create: `docs/superpowers/specs/2026-08-19-m31-abschluss.md`
+- Create: `docs/superpowers/specs/2026-08-19-m31-closeout.md`
 
 **Interfaces:**
 - Consumes: the commits from Task 1 and 2
@@ -339,7 +339,7 @@ nothing and its "success" is worthless.
 
 - [ ] **Step 3: Write the close-out report**
 
-`docs/superpowers/specs/2026-08-19-m31-abschluss.md`, German: what was
+`docs/superpowers/specs/2026-08-19-m31-closeout.md`, German: what was
 implemented, the result of Step 2, the suite counts, and explicitly what
 remains open (no global audit view; the visual check of the menu entry
 and the sheet is pending with the maintainer, because no test starts the
@@ -348,7 +348,7 @@ GUI).
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-08-19-m31-abschluss.md
+git add docs/superpowers/specs/2026-08-19-m31-closeout.md
 git commit -m "docs(m31): record the close
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"

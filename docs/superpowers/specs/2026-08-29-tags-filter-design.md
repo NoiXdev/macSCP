@@ -1,7 +1,7 @@
 # Tags: togglable and as a filter — Design
 
 **Status:** 2026-08-29. Implements **E1 + E2** from
-`docs/superpowers/specs/2026-08-20-backlog-sitzungen-tabs-seitenleiste.md`,
+`docs/superpowers/specs/2026-08-20-backlog-sessions-tabs-sidebar.md`,
 explicitly listed there as to be designed together, because they touch the
 same spot in the sidebar. These are the entry's last two open points.
 

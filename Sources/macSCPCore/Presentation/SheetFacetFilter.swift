@@ -1,7 +1,7 @@
 import Foundation
 
 /// The management sheets' facet quick filter: one value, or none at all
-/// (design: `docs/superpowers/specs/2026-08-29-sheet-facetten-filter-design.md`).
+/// (design: `docs/superpowers/specs/2026-08-29-sheet-facets-filter-design.md`).
 ///
 /// A facet is a small, closed dimension whose values exclude one another —
 /// a key has ONE type, a login has ONE backend, a host key ONE algorithm —

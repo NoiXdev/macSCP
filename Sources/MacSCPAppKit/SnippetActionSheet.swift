@@ -17,7 +17,7 @@ import macSCPCore
 ///
 /// ## The keyboard assignment is a maintainer decision, not a default
 ///
-/// `docs/superpowers/specs/2026-08-18-p3-ordnung-design.md` (P3d) fixes it:
+/// `docs/superpowers/specs/2026-08-18-p3-order-design.md` (P3d) fixes it:
 /// **Esc cancels**, **Return inserts**, **⌘Return executes**. On macOS,
 /// Return activates a dialog's DEFAULT button. Putting Execute on Return
 /// would let double-click + Return start a command on a remote host in two

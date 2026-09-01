@@ -6,7 +6,7 @@
 // The toolchain used to build this locally accepts it and the older one CI
 // builds with rejects it, so the plain import compiles here and breaks
 // there -- the same divergence recorded in
-// `docs/superpowers/specs/2026-08-26-backlog-toolchain-abweichung.md`.
+// `docs/superpowers/specs/2026-08-26-backlog-toolchain-deviation.md`.
 //
 // What stops being checked: Sendable violations involving ArgumentParser's
 // types are no longer diagnosed in this file. That is affordable precisely

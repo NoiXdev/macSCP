@@ -2,7 +2,7 @@
 // `Sendable` conformance, and the stack underneath is no better: the SSH
 // transport reaches this app through a third-party fork of Apple's
 // swift-nio-ssh that never took Apple's `Sendable` adoption (measured in
-// docs/superpowers/specs/2026-08-20-backlog-abhaengigkeiten.md). Those
+// docs/superpowers/specs/2026-08-20-backlog-dependencies.md). Those
 // annotations belong to packages this project does not own, so there is
 // nothing to conform here — but be clear about what the suppression costs:
 // the compiler stops diagnosing `Sendable` violations involving Citadel's
