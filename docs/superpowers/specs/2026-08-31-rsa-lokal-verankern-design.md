@@ -141,3 +141,51 @@ Rig ist OpenSSH, und ein Go-Server ist nicht darin.
   grenze gilt, und ein Vorgang nach dem anderen.
 - **Keine Änderung an TOFU** und keine am harten Stopp bei einem
   Fingerabdruck-Konflikt.
+
+---
+
+## Zurückgezogen (2026-08-31, noch am selben Tag)
+
+**Der Maintainer hat den Entwurf an der Stelle gekippt, an der er zählt:**
+etwa 90 % seiner Nutzer verwenden passphrase-geschützte Schlüssel. Ein
+Vorgang, der genau diese ausschließt, behebt fast niemanden — und führt
+dafür Container-Parsen ins Projekt ein.
+
+**Zwei weitere Wege wurden danach geprüft, beide zu:**
+
+- `Insecure.RSA.PrivateKey.privateExponent` ist `internal`, ohne
+  öffentlichen Zugang. Citadels geparster Schlüssel gibt sein Material
+  nicht her.
+- `protocol OpenSSHPrivateKey` und `OpenSSH.PrivateKey<…>` sind **ebenfalls
+  internal**. macSCP kann also auch keinen eigenen Typ an Citadels
+  entschlüsselnden Parser hängen — der Weg, der Entschlüsselung geschenkt
+  bekommen hätte.
+
+Damit bleibt: selbst parsen ⇒ selbst entschlüsseln ⇒ bcrypt_pbkdf von Hand.
+Das lehnt dieser Entwurf ab, und die Ablehnung steht.
+
+## Was stattdessen gilt
+
+**Citadel kann bereits entschlüsseln** — nur das Signieren ist SHA-1. Landet
+PR #135, funktioniert RSA aus der Datei **einschließlich Passphrase**, ohne
+dass macSCP je einen Container liest. Das ist der Weg, der alles löst, und er
+kostet nichts außer Warten.
+
+**Bis dahin trägt der ssh-agent.** Ein passphrase-geschützter Schlüssel wird
+einmal mit `ssh-add` geladen und liegt danach entschlüsselt im Agenten.
+
+**Ungemessen, und deshalb hier markiert:** gemessen wurde der Agent-Weg mit
+**unverschlüsselten** Schlüsseln. Dass ein verschlüsselter nach `ssh-add`
+für den Client identisch aussieht, folgt aus der Bauart von ssh-agent — es
+ist ein **Schluss, keine Messung**. Bevor eine Nutzer-Meldung darauf zeigt,
+gehört genau das nachgemessen: Schlüssel mit Passphrase erzeugen, per
+`ssh-add` laden, verbinden.
+
+## Was von diesem Dokument bleibt
+
+Die Messungen. Sie sind richtig und teuer erarbeitet: die Einsteckstelle
+gehört NIOSSH und macSCP bedient sie bereits; `_CryptoExtras` ist ein
+deklariertes Produkt; die Auffüllung wäre PKCS#1 v1.5 gewesen. Landet #135
+nie und wird der Fork doch nötig, ist der Weg hier beschrieben.
+
+**Der Entwurf als Empfehlung ist zurückgezogen.**
