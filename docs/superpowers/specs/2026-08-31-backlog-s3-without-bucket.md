@@ -88,13 +88,21 @@ Shipped, in three commits (`62d2678`, `a9693b5`, `d2b908f`):
   an account isn't supported yet; region: it's part of the request
   signature, so it can't be left empty, and most S3-compatible providers
   accept `us-east-1`) — in all four catalogs, `en`/`de`/`fr`/`pl`.
-- **What was measured:** the rig's MinIO accepts `us-east-1` (gated
-  suite, `MACSCP_ITEST=1`).
+- **What was measured:** the standing gated fixture
+  (`Tests/macSCPCoreTests/S3FileSystemIntegrationTests.swift`) connects to
+  the rig's MinIO with `region: "us-east-1"` and passes (`MACSCP_ITEST=1`).
+  That fixture predates this work and was not re-run specifically for it;
+  it is cited here as existing evidence that MinIO accepts the value, not
+  as a measurement taken for this change.
 - **What was not measured:** Servinga, the provider named in the original
   report. The default's comment and this entry both keep that unmeasured,
   not claimed.
-- **No change to saved sessions**, by design and by two review rounds
-  that found and closed leaks of the new default into existing data:
+- **No SILENT change to saved sessions**, by design and by two review
+  rounds that found and closed leaks of the new default into existing
+  data. This is narrower than "no change": one path below (the kind
+  picker in edit mode) does put the new default in front of the user on
+  screen, where Save can persist it — that is a visible seed, not a
+  silent one, and it stands as of this entry.
   - `a9693b5` closed a leak into `beginEditing` — a saved session with a
     `nil` S3 block (corrupt/inconsistent stored data) picked up
     `"us-east-1"` as if it were the session's own value, and Save would
@@ -103,12 +111,28 @@ Shipped, in three commits (`62d2678`, `a9693b5`, `d2b908f`):
     excludes the region; a corrupt session now shows an empty region on
     edit and Save fails with the `s3RegionRequired` message instead of
     silently completing.
-  - `d2b908f` closed the same leak on the App's `fillForm` connect path
-    (`Sources/MacSCPAppKit/ContentView.swift`, used by sidebar reconnect
-    and "Open in External Terminal") — a corrupt saved session used to
-    correctly fail validation on reconnect and had regressed into
-    silently dialing with the guessed region; now uses `editBaseline` and
-    fails validation again, as before.
+  - `d2b908f` closes the same SHAPE of leak on the App's `fillForm`
+    connect path (`Sources/MacSCPAppKit/ContentView.swift`, used by
+    sidebar reconnect and "Open in External Terminal") before it can
+    become observable: today, a saved session with a `nil` S3 block has
+    every S3 field empty, and `ConnectionFieldSchema.firstViolation` walks
+    the fields in declaration order and fails at the first required one —
+    the endpoint (`s3FieldRequired`) — before validation ever reaches the
+    region. So switching this call from `defaultValues` to `editBaseline`
+    changes no observable behaviour today; it removes the region leak
+    before a change elsewhere in field order could expose it, the same
+    defensive move as `a9693b5`.
+  - **Not closed by either commit:** the kind picker in edit mode
+    (`ConnectionViewModel.kind`'s `didSet`,
+    `Sources/macSCPCore/Presentation/ConnectionViewModel.swift`) seeds
+    `values` from `BackendDescriptor.defaultValues` — not `editBaseline`
+    — on every kind change, including inside an edit. Switching a saved
+    SSH session's kind picker to S3 while editing it shows `us-east-1` in
+    the region field, visibly, and `validateForEditSave` accepts and
+    persists it on Save. That is within this plan's "never SILENTLY"
+    wording (the value is on screen before Save), but it is a real change
+    to a saved session's stored region, which the heading above no longer
+    claims never happens.
 
 **Not done — everything else in this file stays open**, and is the
 proposal in `docs/superpowers/specs/2026-09-02-s3-bucket-browser-design.md`,
