@@ -1864,7 +1864,15 @@ public final class ConnectionViewModel {
         // exactly the shape `AgentError.refused`/`.protocolError` are kept
         // OUT of the jump-attributed cases for, by the comment above:
         // "these can equally originate from either hop, and there's no
-        // ordering guarantee to lean on." These two follow that precedent.
+        // ordering guarantee to lean on." These two follow that precedent --
+        // with one difference: `.refused`/`.protocolError` use `field: nil`,
+        // while these two still use `.keyPath`. The row it outlines is the
+        // TARGET's key path, the common single-hop case where there is no
+        // jump host to misattribute to in the first place. The imprecision
+        // this comment describes is narrower than a wrong field, not zero:
+        // with a jump host whose OWN key is the one that is RSA (or another
+        // non-ed25519 type), this error can still originate at the jump hop
+        // while the target's row is the one that gets outlined.
         case SSHKeyError.typeNotLoadable(let algorithm):
             var message = String(format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"), algorithm)
             // The Go-server incompatibility is VERIFIED, not claimed (see
