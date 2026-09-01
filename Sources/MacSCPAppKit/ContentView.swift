@@ -1989,7 +1989,13 @@ struct ContentView: View {
         // which is where the `"unused"` placeholder used to enter the form.
         form.kind = stored.kind
         let descriptor = BackendDescriptor.descriptor(for: stored.kind)
-        form.values = descriptor.defaultValues
+        // `editBaseline`, NOT `defaultValues`: this form IS `stored` -- a
+        // saved session, not a new one -- so it must not inherit S3's
+        // new-form region assumption (`BackendDescriptor.editBaseline`'s
+        // doc comment). A session whose S3 block is missing shows an EMPTY
+        // region and fails `firstViolation` with `s3RegionRequired`, the
+        // same as `ConnectionViewModel.beginEditing`.
+        form.values = descriptor.editBaseline
         form.values.merge(descriptor.sessionValues(stored))
         // NOT a name macSCP invents, so deliberately no
         // `SessionNameCollision.freeName` here (unlike `fillFromImported`
@@ -2046,15 +2052,18 @@ struct ContentView: View {
             // existing error field (spec §2/§6). The user picks a login
             // or enters credentials. Falls back to the session's own raw
             // values so the form isn't left half-filled: the same
-            // defaults + `sessionValues` merge as above, which leaves
-            // every secret field blank because `defaultValues` does.
+            // `editBaseline` + `sessionValues` merge as above, which leaves
+            // every secret field blank because `editBaseline` does -- and,
+            // for S3, leaves a missing region blank rather than guessed, for
+            // the same reason the merge above uses `editBaseline` and not
+            // `defaultValues`.
             //
             // Kept in its OWN do/catch, independent of the jump's below
             // (final review M-1): sharing one catch meant a JUMP-only
             // `.missingSet` also reset this (valid) target resolution --
             // a dangling jump set discarded a perfectly good target
             // login pick.
-            form.values = descriptor.defaultValues
+            form.values = descriptor.editBaseline
             form.values.merge(descriptor.sessionValues(stored))
             form.loginMode = .manual
             form.selectedLoginSetID = nil
