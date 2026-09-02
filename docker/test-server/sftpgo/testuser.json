@@ -1,0 +1,10 @@
+{
+  "username": "testuser",
+  "password": "testpass",
+  "status": 1,
+  "home_dir": "/data/seed",
+  "permissions": {
+    "/": ["list", "download"]
+  },
+  "public_keys": []
+}

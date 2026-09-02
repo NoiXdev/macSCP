@@ -231,3 +231,58 @@ services:
       - USER_PASSWORD=testpass
     volumes:
       - ./sshd_config.d-hostkey/rsa:/config/sshd/sshd_config.d:ro
+
+  # SFTPGo (2026-09-02): the rig's only Go-based SSH server. Every other SSH
+  # service here is OpenSSH; SFTPGo's server side is `golang.org/x/crypto/ssh`,
+  # the library that parses a user-auth public-key blob's leading string as a
+  # KEY FORMAT and therefore refuses one typed `rsa-sha2-512` where RFC 8332 §3
+  # says `ssh-rsa`. That refusal was measured against the library directly on
+  # 2026-09-01 (`docs/superpowers/specs/2026-09-01-backlog-rsa-agent-go-servers.md`);
+  # this service is what makes it measurable against a real SERVER, which is
+  # what `GoServerRSAIntegrationTests` does.
+  #
+  # AGPL-3.0-only, run as a test-only container — nothing here links it.
+  #
+  # Ports: 2240 -> 2022 (SFTP) and 18091 -> 8080 (the admin REST API, which is
+  # how a test installs a public key on `testuser`). Both host ports are in the
+  # same "high, unlikely to clash" spirit as the sshd/minio/webdav mappings
+  # above, and were verified free with `lsof -nP -iTCP:<port> -sTCP:LISTEN`
+  # before being settled on.
+  #
+  # `testuser`'s home directory is the SAME read-only `./seed` mount the `sshd`
+  # service serves, so a listing against SFTPGo asserts the same `hello.txt`
+  # the OpenSSH suites assert. Read-only is deliberate: a gated test can never
+  # write into the repository through this server.
+  #
+  # The sqlite data provider and the auto-generated host keys live in the
+  # container's own `/var/lib/sftpgo` — no bind mount, so no key material can
+  # reach the repository.
+  sftpgo:
+    image: drakkan/sftpgo:v2.6.6
+    container_name: macscp-test-sftpgo
+    ports:
+      - "2240:2022"
+      - "18091:8080"
+    environment:
+      # `debug` so the log carries the refused public-key offer, not just a
+      # summary line — the measurement quotes that log line.
+      - SFTPGO_LOG_LEVEL=debug
+      # The image ships `create_default_admin: false`, so without this the
+      # REST API has no account to authenticate `sftpgo-init` with.
+      - SFTPGO_DATA_PROVIDER__CREATE_DEFAULT_ADMIN=true
+      - SFTPGO_DEFAULT_ADMIN_USERNAME=macscpadmin
+      - SFTPGO_DEFAULT_ADMIN_PASSWORD=macscpsecretkey
+    volumes:
+      - ./seed:/data/seed:ro
+
+  # One-shot seeding for `sftpgo`, in the spirit of `minio-init` above: waits
+  # for the admin API, then creates `testuser` unless it is already there. See
+  # the comments in ./sftpgo/init.sh for the idempotency argument.
+  sftpgo-init:
+    image: curlimages/curl:8.9.1
+    container_name: macscp-test-sftpgo-init
+    depends_on:
+      - sftpgo
+    volumes:
+      - ./sftpgo:/seed:ro
+    entrypoint: ["/bin/sh", "/seed/init.sh"]

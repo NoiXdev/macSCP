@@ -143,3 +143,117 @@ than stderr, so a plain `2>/dev/null` does not strip them; the `grep -v
 field — the banner's second field is the host:port repeated, never a
 second type — so no port printed more than one type in either form of the
 command.)
+
+## SFTPGo — the rig's Go-based SSH server (2026-09-02)
+
+`sftpgo` (`drakkan/sftpgo:v2.6.6`, arm64 and amd64 both in the manifest;
+AGPL-3.0-only, run as a test-only container, never linked) is the only SSH
+server here that is not OpenSSH. Its server side is `golang.org/x/crypto/ssh`,
+which parses a user-auth public-key blob's leading string as a KEY FORMAT and
+therefore refuses one typed `rsa-sha2-512`, where RFC 8332 §3 keeps the blob
+typed `ssh-rsa` and puts the algorithm name only in `pkalg` and the signature.
+That refusal was measured against the library directly on 2026-09-01
+(`docs/superpowers/specs/2026-09-01-backlog-rsa-agent-go-servers.md`); this
+service is what makes it measurable against a real server, which is what the
+gated `GoServerRSAIntegrationTests` does.
+
+| service | host port | container port | what |
+|---|---|---|---|
+| `sftpgo` | 2240 | 2022 | SFTP |
+| `sftpgo` | 18091 | 8080 | admin REST API + web admin |
+
+| identity | credentials | what it is for |
+|---|---|---|
+| admin | `macscpadmin` / `macscpsecretkey` | the REST API (`/api/v2`), nothing else |
+| SFTP user | `testuser` / `testpass` | the login under test |
+
+`testuser`'s home directory is the SAME read-only `./seed` mount `sshd`
+serves, so a listing against SFTPGo asserts the same `hello.txt` the OpenSSH
+suites assert, and a gated test can never write into the repository through
+this server. Its permissions are `list`/`download` only, for the same reason.
+The sqlite data provider and the host keys SFTPGo generates on first start
+live in the container's own `/var/lib/sftpgo` — no bind mount, so no key
+material can reach the repository. `SFTPGO_LOG_LEVEL=debug` is set so the log
+names a refused offer instead of merely counting it.
+
+### How a test installs a public key
+
+SFTPGo keeps a user's authorized keys in its data provider, not in a file, so
+there is no `authorized_keys` to append to and no `docker exec` that would do
+it. `makeSFTPGoInstalledKey` in
+`Tests/macSCPCoreTests/Support/InstalledKey.swift` — the twin of
+`makeInstalledKey`, which does use `docker exec` for `sshd` — goes through the
+documented REST flow instead:
+
+1. `GET /api/v2/token` with the admin's HTTP basic auth → a bearer token
+2. `GET /api/v2/users/testuser` → the current user object
+3. `PUT /api/v2/users/testuser` → the same object with the new key APPENDED to
+   `public_keys`
+
+The append is what makes it behave like sshd's `authorized_keys`: keys from
+earlier runs stay valid for as long as the container lives.
+
+The one-shot `sftpgo-init` (`curlimages/curl:8.9.1`, `./sftpgo/init.sh`) only
+creates the user; it deliberately sets no public keys. It waits for the admin
+API — which answers only once the data provider is initialized and the default
+admin exists, so that wait is the readiness gate for both — and then creates
+`testuser` from `./sftpgo/testuser.json` only when
+`GET /api/v2/users/testuser` says the user is absent. A repeated
+`POST /api/v2/users` is a 500 ("username already in use"), which is why the
+create is guarded rather than retried, the same "check, then act" shape
+`minio-init` uses for its policy attach.
+
+### Proof, measured 2026-09-02
+
+`docker compose -f docker/test-server/compose.yml up -d` against the rig with
+`sftpgo` already running leaves EVERY container ID unchanged — the eleven that
+predate this service, `macscp-test-sftpgo` itself, and on a steady-state rerun
+`macscp-test-sftpgo-init` too (`docker ps -a --filter 'name=macscp-test-'
+--format '{{.ID}} {{.Names}}'` before and after, diffed: no differences). The
+one exception is the `up` immediately after the service is first created, where
+compose recreates the one-shot `sftpgo-init` alone. Its rerun log on an
+already-seeded provider:
+
+```
+$ docker logs macscp-test-sftpgo-init 2>&1 | tail -1
+sftpgo user 'testuser' already present — nothing to do
+```
+
+The host key, and the three types SFTPGo generates for itself:
+
+```
+$ ssh-keyscan -p 2240 127.0.0.1 2>&1
+# 127.0.0.1:2240 SSH-2.0-SFTPGo_2.6.6
+[127.0.0.1]:2240 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDLE/z+IIsD7wyyrb25mkRLRlBzQeT5fB2K3ftMYKAU5B2kcS7agnj0Gv32NbhaSBC8fQQ/ixP7GQLBCtVqgaHjD6D3CVlQqjIq7kXuYtrgQ/+zsfI3WIgLHnfZvpKzmfiExAwkIAXpEIpLqwkAan4MQPQNLGHb4j1nsGCDnAQmY7noLCRtZkJrzs+Ec8+xhL+Ruu3lyR7NRUK9NVx7sJl8+IDvdzNaA61hO2prawqOSP/+9cDw9Isb4diQr1ZSxbIMET1SBkU3i9mlADrxb/L4PffaYjYLxbb56zQkxlog+Y+1MdLfzl+TtnU22ddc7XJ2oawKBttPrrQR5W3F1JClU3YWiWDl7m9dXRXDuLTNwkWo9jEOTwP41gfYGsafvJxYsqqpu0f/bz4cbFW3MQBCN4bkFkCkN7hS31g8waZ6cuvGEkhWhjQr2OS7vjfuIL/YtRj0ZhjJ2Dm/ZbQpylIfdM7yXfW3mczna4ckrTUkwiEq5Chf3nUQv1bkbY+K+DE=
+# 127.0.0.1:2240 SSH-2.0-SFTPGo_2.6.6
+# 127.0.0.1:2240 SSH-2.0-SFTPGo_2.6.6
+[127.0.0.1]:2240 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBN+doidg2xR2aE4SqsyqWEkTHukWeZ1eMWToOBePJTqkz0l2t7uLHPppGSGqJWEq/lQuQHEnjvCec1vDrErJ1zs=
+# 127.0.0.1:2240 SSH-2.0-SFTPGo_2.6.6
+[127.0.0.1]:2240 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHJF8x9EtrTSSwhTu3wbhL66Y3TQ5qWaeyCIwspLFD0U
+# 127.0.0.1:2240 SSH-2.0-SFTPGo_2.6.6
+```
+
+These keys are regenerated whenever the `sftpgo` container is recreated, so the
+gated suite pins nothing against them — each test uses a fresh known-hosts
+directory and takes the TOFU `.accept` branch, exactly as the other integration
+suites do.
+
+### The refusal, measured 2026-09-02
+
+An ed25519 file key logs in through `CitadelFileSystem.connect` and lists
+`hello.txt` — the rig works. An RSA 2048 key, from a file and through an
+ssh-agent alike, does not. SFTPGo's log line for both:
+
+```
+{"level":"debug","time":"2026-09-02T16:38:55.165","sender":"sftpd","message":"failed to accept an incoming connection from ip \"192.168.65.1\": ssh: unknown key algorithm: rsa-sha2-512"}
+{"level":"debug","time":"2026-09-02T16:38:55.165","sender":"connection_failed","client_ip":"192.168.65.1","username":"","login_type":"no_auth_tried","protocol":"SSH","error":"ssh: unknown key algorithm: rsa-sha2-512"}
+```
+
+macSCP surfaces it as
+`macSCPCore.RemoteFSError.connectionFailed(reason: "Disconnected()")` — note
+`connectionFailed`, not `authenticationFailed`: `x/crypto/ssh` cannot parse the
+blob at all, so it drops the connection rather than answering the userauth
+request with a failure, and its own log calls the login type `no_auth_tried`.
+The identical RSA key authenticates against this rig's OpenSSH `sshd` on 2222
+(the ten-cell matrix in `FileKeyTypeIntegrationTests`, and
+`agentAuthConnectsRSA` for the agent route). The only difference is the server.
