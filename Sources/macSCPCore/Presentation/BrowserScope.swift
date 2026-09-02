@@ -59,10 +59,12 @@ public struct BrowserScope: Equatable, Sendable {
     /// after the fact is not the same as not offering.
     ///
     /// **Every way a transfer can be aimed at a pane asks THIS function.**
-    /// Three places READ it — counted in the tree in the pass that writes
-    /// this, and they are reads, not mentions: a grep for the name also
-    /// finds this declaration and the comments that point here, which is a
-    /// larger number and the reason this sentence quotes no command.
+    /// Three places READ it, counted in the tree on 2026-09-02 — reads, not
+    /// mentions: a grep for the name also finds this declaration and the
+    /// comments that point here, which is a larger number and the reason
+    /// this sentence quotes no command. The date is part of the claim: a
+    /// count in the present tense is an assertion about a tree that keeps
+    /// moving, and this one has moved under a comment before.
     ///
     /// 1. `BrowserContextMenu.entries(…, destination:)` — which gates
     ///    `.transferToOtherPane`, and through it the toolbar's Upload and

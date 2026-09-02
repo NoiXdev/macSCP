@@ -12,8 +12,8 @@ import macSCPCore
 /// `CrossSessionTarget` at build time (Spec §5.3), so staleness is bounded
 /// to "between two menu opens", never longer.
 enum CrossSessionTargets {
-    /// THREE rules now, counted against the two `guard` statements below
-    /// (the first carries two conditions): the tab never offers itself, a
+    /// THREE rules now, counted 2026-09-02 against the two `guard`
+    /// statements below (the first carries two conditions): the tab never offers itself, a
     /// tab without a session is skipped, and — since fix round 1 of the
     /// bucket-list task — a tab whose remote pane is sitting at a bucket
     /// list is not offered either.

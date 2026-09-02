@@ -242,17 +242,66 @@ struct BucketListTransferGuardTests {
     /// `.ordinary` — offering a transfer into a bucket list.
     @Test func bothPanesHandTheirTableTheOtherPanesScope() throws {
         let detail = try Self.strippedSource(Self.detailSourceFile)
+
+        let constructions = Self.paneConstructions(in: detail)
+        // A COUNT that must match, and the positive anchor for everything
+        // below: a file with no `BrowserPane(` left would otherwise give two
+        // empty regions that satisfy every negative check in sight.
+        #expect(constructions.count == 2, """
+            ContentView+Detail.swift builds \(constructions.count) BrowserPane(s), \
+            expected 2 — one per side. This guard reads them by position, so \
+            it cannot say anything about a file of another shape.
+            """)
+        let localIndex = try #require(
+            constructions.firstIndex { $0.contains("side: .local,") },
+            "no BrowserPane construction in ContentView+Detail.swift says `side: .local,`")
+        let remoteIndex = try #require(
+            constructions.firstIndex { $0.contains("side: .remote,") },
+            "no BrowserPane construction in ContentView+Detail.swift says `side: .remote,`")
+        #expect(localIndex != remoteIndex, """
+            one construction claims both sides, so the two regions below are \
+            the same text and a swap between them cannot be seen.
+            """)
+
+        // The LOCAL pane's transfer destination is the REMOTE pane...
+        let localDestination = try Self.destinationClosureBody(in: constructions[localIndex])
+        #expect(localDestination.contains("session.remoteFS.rootIsContainerList")
+            && localDestination.contains("session.remote.currentPath"), """
+            the LOCAL pane's `destinationScope` does not build the REMOTE \
+            pane's scope, so its "To the other pane" entry and its Space key \
+            are decided against the wrong pane: \(localDestination)
+            """)
+        #expect(!localDestination.contains("session.localFS")
+            && !localDestination.contains("session.local."), """
+            the LOCAL pane's `destinationScope` builds its OWN scope — a pane \
+            cannot be its own transfer destination, and a local pane always \
+            answers "yes", so this offers a transfer into a bucket list: \
+            \(localDestination)
+            """)
+
+        // ...and the REMOTE pane's is the LOCAL pane. The mirror, in its own
+        // region, which is the whole point: the two used to be checked by a
+        // file-wide `contains`, so exchanging the two closures satisfied
+        // both while restoring half of C-1 (final review, I-4).
+        let remoteDestination = try Self.destinationClosureBody(in: constructions[remoteIndex])
+        #expect(remoteDestination.contains("session.localFS.rootIsContainerList")
+            && remoteDestination.contains("session.local.currentPath"), """
+            the REMOTE pane's `destinationScope` does not build the LOCAL \
+            pane's scope: \(remoteDestination)
+            """)
+        #expect(!remoteDestination.contains("session.remoteFS")
+            && !remoteDestination.contains("session.remote."), """
+            the REMOTE pane's `destinationScope` builds its OWN scope: \
+            \(remoteDestination)
+            """)
+    }
+
+    /// And the pane forwards what it was handed. Separate from the check
+    /// above because it reads a different file, and because these two are
+    /// the "is it wired at all" half — the half that a swap leaves alone.
+    @Test func bothPanesForwardTheScopesToTheirTable() throws {
         let pane = try Self.strippedSource(Self.paneSourceFile)
 
-        #expect(detail.contains("rootIsContainerList: session.remoteFS.rootIsContainerList"), """
-            the LOCAL pane is no longer handed the remote pane's scope as its \
-            transfer destination, so its "To the other pane" entry is offered \
-            while the remote pane sits at a bucket list.
-            """)
-        #expect(detail.contains("rootIsContainerList: session.localFS.rootIsContainerList"), """
-            the REMOTE pane is no longer handed the local pane's scope as its \
-            transfer destination.
-            """)
         #expect(pane.contains("destinationScope: destinationScope"), """
             BrowserPane no longer forwards `destinationScope` to \
             RemoteFileTableView, so both menus and the Space key fall back to \
@@ -263,6 +312,61 @@ struct BucketListTransferGuardTests {
             RemoteFileTableView, so the context menu and the keyboard fall \
             back to `BrowserScope.ordinary` and a bucket row offers \
             everything again.
+            """)
+    }
+
+    /// One region per `BrowserPane(` construction, each running from its
+    /// own marker to the NEXT construction (or the end of the file).
+    ///
+    /// The point is the boundary, not the extraction: every check on a
+    /// pane's arguments has to be unable to read the other pane's. The
+    /// version this replaced asked the whole file, so exchanging the two
+    /// `destinationScope` closures left both of its `contains` satisfied
+    /// while each pane was decided against itself (final review, I-4).
+    private static func paneConstructions(in source: String) -> [String] {
+        var starts: [String.Index] = []
+        var searchStart = source.startIndex
+        while let found = source.range(of: "BrowserPane(", range: searchStart..<source.endIndex) {
+            starts.append(found.upperBound)
+            searchStart = found.upperBound
+        }
+        return starts.enumerated().map { offset, start in
+            String(source[start..<(offset + 1 < starts.count ? starts[offset + 1] : source.endIndex)])
+        }
+    }
+
+    /// The body of one construction's `destinationScope:` closure,
+    /// BRACE-MATCHED rather than taken as a fixed window.
+    ///
+    /// A window would have to be long enough to hold the closure and short
+    /// enough to stop before the arguments after it — and the local pane's
+    /// next arguments include `ChecksumAvailability.isOffered(byLocalFileSystem:
+    /// session.localFS)`, which the negative check above is looking for. A
+    /// span that reaches it fails for a reason that has nothing to do with
+    /// the property (CLAUDE.md: a check whose span is wrong is not a check).
+    private static func destinationClosureBody(in construction: String) throws -> String {
+        let marker = "destinationScope: {"
+        let markerRange = try #require(construction.range(of: marker), """
+            this BrowserPane construction has no `\(marker)` — the pane is not \
+            handed a transfer destination at all, and decides with \
+            `BrowserScope.ordinary`.
+            """)
+        var depth = 1
+        var index = markerRange.upperBound
+        while index < construction.endIndex {
+            switch construction[index] {
+            case "{": depth += 1
+            case "}":
+                depth -= 1
+                if depth == 0 { return String(construction[markerRange.upperBound..<index]) }
+            default: break
+            }
+            index = construction.index(after: index)
+        }
+        let balanced: String? = nil
+        return try #require(balanced, """
+            `\(marker)`'s braces are unbalanced in this construction, so its \
+            body cannot be delimited.
             """)
     }
 

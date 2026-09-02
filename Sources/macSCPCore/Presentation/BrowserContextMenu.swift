@@ -62,18 +62,20 @@ public enum BrowserContextMenu {
     /// what every LOCAL pane always is.
     ///
     /// **Two directions, one function, four consumers** — counted in the
-    /// tree in the pass that writes this, and listed so the next door added
-    /// is added HERE rather than beside it:
+    /// tree on 2026-09-02, and listed so the next door added is added HERE
+    /// rather than beside it:
     ///
     /// 1. the context menu (`RemoteFileTableView.menuNeedsUpdate`);
     /// 2. the keyboard (`BrowserKeyCommand.resolve`);
     /// 3. the window toolbar's **Upload** button;
     /// 4. the window toolbar's **Download** button.
     ///
-    /// Four CONSUMERS, six call sites: the resolver asks four times, once
-    /// per key it gates, and the two toolbar buttons share one through
-    /// `ContentView.offersTransfer`. The two numbers differ, so neither is
-    /// left to be inferred from the other.
+    /// Four CONSUMERS, six call sites on that date: the resolver asks four
+    /// times, once per key it gates, and the two toolbar buttons share one
+    /// through `ContentView.offersTransfer`. The two numbers differ, so
+    /// neither is left to be inferred from the other — and both are stated
+    /// as of a day, because a count written in the present tense is a claim
+    /// about a tree that keeps moving.
     ///
     /// Items 3 and 4 joined in fix round 1: review C-1 found them deciding
     /// for themselves with `.disabled(!selected.contains { $0.kind !=
