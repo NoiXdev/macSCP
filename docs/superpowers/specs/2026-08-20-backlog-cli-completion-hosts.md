@@ -106,3 +106,38 @@ session names read from the store through `SessionCatalog` — no secret,
 no keychain, no connection touched (the same forbidden-symbol guard the
 `sessions` subcommand carries). Item 3 (the `discussion` for
 `name:/path` on the root command) rides along. Plannable now.
+
+## Done 2026-09-02 (night) — items 2 and 3
+
+Planned in `../plans/2026-09-02-cli-completion.md`. Commits: `ae0078c`
+(the completer, first in the CLI), `c6aa796` (moved to Core after the
+review: `SessionNameCompleter` in `Sources/macSCPCore/Sessions`, the CLI
+keeps only the `CompletionKind` wrapper — the M20 design's "decision
+logic in Core, CLI stays wiring" had been inverted, and a test-target
+dependency on the executable with it; both undone), and the root help
+(item 3, `d3e25bd`: the root `discussion`, and the abstract now names WebDAV
+beside SFTP and S3, which the CLI dials through the same path).
+
+**Item 2.** `swift-argument-parser` 1.8.2 emits the scripts
+(`macscp-cli --generate-completion-script zsh|bash|fish`); the dynamic
+half completes the `name:` of every `name:/path` target — `ls`, `get`
+(remote source), `put` (remote destination), `rm`, `mkdir` — from
+`SessionCatalog` through `SessionStore.defaultDirectory`, reading no
+secret, no keychain, no known-hosts, dialling nothing; silent, an empty
+list on any failure. The boundary is the first `:` (a session name is
+free text and may contain `/`; the first version used `/` and the review
+caught it with the fixture `Prod / DB`). Names come back sorted with a
+trailing colon; once a `:` is typed the completer returns nothing (a
+remote path would need a connection). Guards: the forbidden-symbol scan
+that already covered `sessions` now covers the completer's two files
+(positive anchor on the file constructing `SessionCatalog`); a structural
+count that every command parsing a `SessionReference` carries the
+completion, derived from the sources rather than a spelled list of five;
+a binary-level check that the generated zsh script names the six
+commands.
+
+**Item 3.** The root command's `discussion` explains `name:/path`.
+
+**Left open:** completion for `--group`/`--tag` values (same completer
+family, not asked).
+
