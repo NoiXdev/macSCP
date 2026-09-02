@@ -107,3 +107,89 @@ services:
       - SQLITE_DATABASE=nextcloud
       - NEXTCLOUD_ADMIN_USER=testuser
       - NEXTCLOUD_ADMIN_PASSWORD=testpass
+
+  # Host-key-types rig (2026-09-02): one sshd service per host-key type, so
+  # the gated host-key-handling tests can pin each type individually.
+  # `sshd`/`sshd2` above offer all three types the base image generates at
+  # once (rsa, ecdsa P-256, ed25519), so every client negotiates ed25519 --
+  # these five services each restrict HostKeyAlgorithms (via their own
+  # sshd_config.d-hostkey/<type> include) to exactly one type. Seed-less:
+  # the tests only connect, no /data/seed mount is needed. Same image pin
+  # and environment as `sshd`/`sshd2`.
+  sshd-hostkey-ed25519:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230
+    container_name: macscp-test-sshd-hostkey-ed25519
+    ports:
+      - "2231:2222"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+    volumes:
+      - ./sshd_config.d-hostkey/ed25519:/config/sshd/sshd_config.d:ro
+
+  sshd-hostkey-ecdsa256:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230
+    container_name: macscp-test-sshd-hostkey-ecdsa256
+    ports:
+      - "2232:2222"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+    volumes:
+      - ./sshd_config.d-hostkey/ecdsa256:/config/sshd/sshd_config.d:ro
+
+  # The base image's `ssh-keygen -A` only produces a P-256 ECDSA key, never
+  # P-384 -- the custom-cont-init.d hook below (run as root before sshd
+  # starts, per the image's documented custom-init support) generates one
+  # into the service's own /config volume if absent. That key is never
+  # bind-mounted to the host, so nothing generated ends up in the repo.
+  sshd-hostkey-ecdsa384:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230
+    container_name: macscp-test-sshd-hostkey-ecdsa384
+    ports:
+      - "2233:2222"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+    volumes:
+      - ./sshd_config.d-hostkey/ecdsa384:/config/sshd/sshd_config.d:ro
+      - ./custom-cont-init.d-hostkey/ecdsa384:/custom-cont-init.d:ro
+
+  # Same P-384 rationale as above, for P-521.
+  sshd-hostkey-ecdsa521:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230
+    container_name: macscp-test-sshd-hostkey-ecdsa521
+    ports:
+      - "2234:2222"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+    volumes:
+      - ./sshd_config.d-hostkey/ecdsa521:/config/sshd/sshd_config.d:ro
+      - ./custom-cont-init.d-hostkey/ecdsa521:/custom-cont-init.d:ro
+
+  sshd-hostkey-rsa:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230
+    container_name: macscp-test-sshd-hostkey-rsa
+    ports:
+      - "2235:2222"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+    volumes:
+      - ./sshd_config.d-hostkey/rsa:/config/sshd/sshd_config.d:ro
