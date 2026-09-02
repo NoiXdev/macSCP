@@ -63,6 +63,14 @@ public struct SessionCatalog: Sendable {
     /// in `SessionCatalogTests`).
     public init(sessions: [StoredSession], groups: [StoredGroup]) {
         let knownGroupIDs = Set(groups.map(\.id))
+        // A duplicated id is dropped HERE, at the input, so the tree walk in
+        // `rows(matching:)` visits each session once. Deduplicating only the
+        // lookup dictionary (the first shape of this fix) left the walk
+        // iterating the raw array and printed the surviving session twice —
+        // the fix wave's re-review measured two rows for one id. First
+        // occurrence wins, matching the dictionary's rule below.
+        var seenIDs = Set<UUID>()
+        let sessions = sessions.filter { seenIDs.insert($0.id).inserted }
         self.sessions = sessions.map { session in
             var session = session
             if let groupID = session.groupID, !knownGroupIDs.contains(groupID) {

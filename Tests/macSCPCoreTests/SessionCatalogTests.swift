@@ -213,7 +213,11 @@ struct SessionCatalogTests {
         let rows = catalog.rows(matching: .init())
 
         let everyRowMatchesTheFirstSession = rows.allSatisfy { $0.target == "tim@first.example.com:22" }
-        #expect(!rows.isEmpty)
+        // One row, not two: the re-review of the fix wave found that the
+        // dictionary was deduplicated while the tree walk still visited the
+        // id twice, so "first wins" printed the first session twice.
+        let exactlyOneRow = rows.count == 1
+        #expect(exactlyOneRow)
         #expect(everyRowMatchesTheFirstSession)
     }
 
