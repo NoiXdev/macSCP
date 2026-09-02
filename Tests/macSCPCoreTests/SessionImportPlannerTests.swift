@@ -1014,6 +1014,25 @@ struct SessionImportPlannerTests {
         #expect(plan.sessionsToImport[0].session.ssh?.port == 22)
     }
 
+    /// And a value that is only whitespace is blank too: `firstViolation`
+    /// trims before it judges, so the overlay must trim before it decides
+    /// whether a value is there at all — otherwise `"  "` overrides the
+    /// default with whitespace and is then judged blank, the very defect the
+    /// blank-port case above fixes, one keystroke away.
+    @Test func sshBagWithWhitespacePortIsTreatedAsAbsentAndImportsOnPort22() async {
+        var values = FieldValues()
+        values[SSHField.host] = "web-01"
+        values[SSHField.username] = "root"
+        values[SSHField.port] = "  "
+        let file = ExportedSession(id: UUID(), name: "whitespace-port", kind: .ssh, fields: values.raw)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        #expect(plan.rejected.isEmpty)
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.sessionsToImport[0].session.ssh?.port == 22)
+    }
+
     /// The same rule for a REQUIRED text field, and the shape it exists for:
     /// a pre-M23 S3 session whose stored `region` was never filled
     /// (`BackendDescriptor.editBaseline`'s own doc explains why the store

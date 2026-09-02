@@ -507,10 +507,15 @@ public enum SessionImportPlanner {
         guard descriptor.hasStoredConfiguration(probe.session) else { return false }
         var values = descriptor.defaultValues
         // A PRESENT but BLANK raw value overlays as if it were ABSENT: only a
-        // non-empty value overwrites the default. See the doc comment above
-        // for why ("could this be dialed after the form's own defaults", not
-        // "does every key the bag names carry a value").
-        for (key, value) in fileSession.fields where !value.isEmpty { values.setRaw(key, to: value) }
+        // value with something other than whitespace in it overwrites the
+        // default — trimmed the same way `firstViolation` trims before it
+        // judges, so "blank" means the same thing on both sides. See the doc
+        // comment above for why ("could this be dialed after the form's own
+        // defaults", not "does every key the bag names carry a value").
+        for (key, value) in fileSession.fields
+        where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            values.setRaw(key, to: value)
+        }
         return descriptor.firstViolation(in: values, requireSecrets: false) != nil
     }
 
