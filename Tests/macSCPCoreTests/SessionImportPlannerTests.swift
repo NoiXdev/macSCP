@@ -917,6 +917,164 @@ struct SessionImportPlannerTests {
             baseURL: "https://dav.example.com", username: "alice", useNextcloudPath: true))
     }
 
+    // MARK: - Unusable field bags (schema-checked)
+
+    /// A non-empty bag used to be enough to pass the old guard —
+    /// `wouldBeDroppedByStore` only asks whether the STORE would discard the
+    /// record on its next load, and a bag holding nothing but `keyPath`
+    /// builds an `.ssh` block that survives that (host/username default to
+    /// "", which is still a non-nil block). The backend's own schema is
+    /// stricter: `host` is required, so this bag can never be dialed. It
+    /// must be rejected, not imported as a session nobody can connect.
+    @Test func sshBagWithOnlyKeyPathIsRejected() async {
+        var values = FieldValues()
+        values[SSHField.keyPath] = "/Users/tim/.ssh/id_ed25519"
+        let file = ExportedSession(id: UUID(), name: "keypath-only", kind: .ssh, fields: values.raw)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.rejected == ["keypath-only"])
+    }
+
+    /// The jump-only shape `makePlanned`'s own comment used to call a "known,
+    /// out-of-scope remainder": an empty bag plus `jumpHost`/`jumpUsername`
+    /// slips past `wouldBeDroppedByStore` because attaching the jump gives
+    /// the session a non-nil `ssh` block regardless of the bag, so
+    /// `dropsOnLoad` reads false for it. It is visible in the sidebar and
+    /// undialable all the same: the target's own `host`/`username` are blank,
+    /// which the schema's `isUnusable` check catches even though the store's
+    /// own check does not.
+    @Test func sshEmptyBagWithJumpFieldsIsRejected() async {
+        let file = ExportedSession(
+            id: UUID(), name: "jump-only", kind: .ssh, fields: [:],
+            jumpHost: "bastion.example.com", jumpUsername: "jumpuser")
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.rejected == ["jump-only"])
+    }
+
+    /// Pins the defaults overlay itself: `SSHField.port` is `format:
+    /// .numeric` but not `isRequired`, so `firstViolation` still flags a
+    /// value that will not parse as `Int` — and an ABSENT key reads as `""`,
+    /// which does not parse either. Without overlaying the bag on top of
+    /// `BackendDescriptor.defaultValues` (port "22"), a perfectly good export
+    /// that simply never carried a port key -- because the port was the
+    /// default when the session was saved -- would be rejected right along
+    /// with the genuinely unusable ones.
+    @Test func sshBagWithoutPortKeyDefaultsToPort22() async {
+        var values = FieldValues()
+        values[SSHField.host] = "web-01"
+        values[SSHField.username] = "root"
+        let file = ExportedSession(id: UUID(), name: "no-port", kind: .ssh, fields: values.raw)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        #expect(plan.rejected.isEmpty)
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.sessionsToImport[0].session.ssh?.port == 22)
+    }
+
+    /// S3's non-empty-bag equivalent of the SSH keyPath-only case: an
+    /// endpoint and an access key describe half a connection. `bucket` is
+    /// required (`S3FieldSchema.connection`) and absent here, so the schema
+    /// refuses it — a `Connect` attempt on this exact bag would refuse it too.
+    @Test func s3BagWithoutBucketIsRejected() async {
+        var values = FieldValues()
+        values[S3Field.endpoint] = "https://s3.example.com"
+        values[S3Field.accessKeyID] = "AKIAEXAMPLE"
+        let file = ExportedSession(id: UUID(), name: "s3-no-bucket", kind: .s3, fields: values.raw)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.rejected == ["s3-no-bucket"])
+    }
+
+    /// WebDAV's counterpart: `baseURL` (`WebDAVFieldSchema.connection`) is
+    /// the one required field the schema has — unlike `username`/`password`,
+    /// which stay optional for anonymous WebDAV. A bag naming a user but no
+    /// server has nothing to dial.
+    @Test func webdavBagWithoutBaseURLIsRejected() async {
+        var values = FieldValues()
+        values[WebDAVField.username] = "alice"
+        let file = ExportedSession(id: UUID(), name: "dav-no-url", kind: .webdav, fields: values.raw)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.rejected == ["dav-no-url"])
+    }
+
+    /// All four unusable shapes above in one file, alongside three ordinary
+    /// entries: the rejected count is their sum, file order is kept, and the
+    /// good entries around them are unaffected — the same "one bad entry does
+    /// not stop the rest" precedent `oneRejectedEntryDoesNotStopTheRestOfTheFile`
+    /// already pins for the store-drop shape, now exercised across three
+    /// backends and two rejection reasons (`wouldBeDroppedByStore` for the
+    /// store-drop shape is not among the four here; this is `isUnusable`'s
+    /// own four shapes).
+    @Test func mixedFileRejectsUnusableBagsAndImportsTheRest() async {
+        var keyPathOnly = FieldValues()
+        keyPathOnly[SSHField.keyPath] = "/Users/tim/.ssh/id_ed25519"
+
+        var s3NoBucket = FieldValues()
+        s3NoBucket[S3Field.endpoint] = "https://s3.example.com"
+        s3NoBucket[S3Field.accessKeyID] = "AKIAEXAMPLE"
+
+        var webdavNoURL = FieldValues()
+        webdavNoURL[WebDAVField.username] = "alice"
+
+        let files = [
+            exported(name: "good-1", host: "host-a"),
+            ExportedSession(id: UUID(), name: "keypath-only", kind: .ssh, fields: keyPathOnly.raw),
+            ExportedSession(
+                id: UUID(), name: "jump-only", kind: .ssh, fields: [:],
+                jumpHost: "bastion.example.com", jumpUsername: "jumpuser"),
+            exported(name: "good-2", host: "host-b"),
+            ExportedSession(id: UUID(), name: "s3-no-bucket", kind: .s3, fields: s3NoBucket.raw),
+            ExportedSession(id: UUID(), name: "dav-no-url", kind: .webdav, fields: webdavNoURL.raw),
+            exported(name: "good-3", host: "host-c"),
+        ]
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming(files), arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.map(\.session.name) == ["good-1", "good-2", "good-3"])
+        #expect(plan.rejected == ["keypath-only", "jump-only", "s3-no-bucket", "dav-no-url"])
+    }
+
+    /// The secret-non-leak guarantee stated on `SessionImportPlan.rejected`:
+    /// a rejected entry may carry a secret, and no part of it is logged or
+    /// planned. `isUnusable` runs BEFORE `makePlanned` is ever called for this
+    /// entry, so no `PlannedSession` carrying the file's password is built at
+    /// all — pinned here by checking `sessionsToImport` for one rather than by
+    /// a spy on `makePlanned`, which this file has no seam for.
+    ///
+    /// The comparison is computed into a named `Bool` before the `#expect`
+    /// (project convention): `#expect` reports the SOURCE TEXT of the
+    /// expression it checks, so writing the password literal directly into
+    /// the expectation would leak it through a failure message — the very
+    /// thing this test exists to rule out.
+    @Test func rejectedEntryWithAPasswordBuildsNoPlannedSessionCarryingIt() async {
+        let filePassword = "super-secret-password"
+        var keyPathOnly = FieldValues()
+        keyPathOnly[SSHField.keyPath] = "/Users/tim/.ssh/id_ed25519"
+        let file = ExportedSession(
+            id: UUID(), name: "keypath-only", kind: .ssh, fields: keyPathOnly.raw,
+            password: filePassword)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.rejected == ["keypath-only"])
+        let noPlannedSessionCarriesTheFilePassword = plan.sessionsToImport.allSatisfy {
+            $0.password != filePassword
+        }
+        #expect(noPlannedSessionCarriesTheFilePassword)
+    }
+
     // MARK: - Kind-aware duplicate key
 
     /// Every S3 and WebDAV session stores the literal placeholder
