@@ -259,6 +259,9 @@ struct ConnectMainActorLivenessTests {
         #expect(ranOnMainThread.value == false)
         // The dial really lasted what the ceiling is calibrated against.
         #expect(elapsed > .seconds(4), "the dial was only \(elapsed)")
+        print(
+            "liveness: test1 ambient=\(ambient) gap=\(log.largestGap) "
+                + "ceiling=\(ceiling(forAmbient: ambient))")
         #expect(
             log.largestGap <= ceiling(forAmbient: ambient),
             "gap \(log.largestGap) over \(log.stamps.count) ticks, ambient \(ambient)")
@@ -318,6 +321,9 @@ struct ConnectMainActorLivenessTests {
         #expect(thrown != nil)
         #expect(elapsed > .seconds(5))
         // And the main actor ran the whole time it was stalling.
+        print(
+            "liveness: test2 ambient=\(ambient) gap=\(log.largestGap) "
+                + "ceiling=\(ceiling(forAmbient: ambient))")
         #expect(
             log.largestGap <= ceiling(forAmbient: ambient),
             "gap \(log.largestGap) over \(log.stamps.count) ticks, ambient \(ambient)")
