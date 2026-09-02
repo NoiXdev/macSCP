@@ -207,8 +207,10 @@ machine, no code change to dialing in between:
 | suite alone, ×1 | unloaded (right after) | green, 4/4 |
 | full gated run | review agent active, 3642 tests, run took 96 s (2026-09-02, night) | **red**, 1 issue: `largestGap 1.072 s` vs `ceiling 0.3 s` |
 | suite alone, ×1 | unloaded (right after) | green |
+| full gated run | 3712 tests, run took 117 s (2026-09-02, late night) | **red**, 1 issue: `largestGap 1.027 s` vs `ceiling 0.739 s` |
+| suite alone, ×1 | unloaded (right after) | green |
 
-Sixteen red of nineteen full runs, twenty-five of twenty-five green alone. The failing assertion
+Seventeen red of twenty full runs, twenty-six of twenty-six green alone — the last row before the rebuild (`../plans/2026-09-03-liveness-assertion-rebuild.md`). The failing assertion
 is a wall-clock ceiling — the shape `TeardownStageTests` was moved away
 from on 2026-08-28 for the same reason. This is the "test harness stalls
 its own main actor" side finding from B-1 (2026-08-28), now with a
