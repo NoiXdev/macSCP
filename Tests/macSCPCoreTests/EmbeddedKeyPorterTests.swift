@@ -821,12 +821,10 @@ struct EmbeddedKeyPorterTests {
     /// either ("is not a key file", exit 255). That case therefore fails
     /// closed — deliberately: nothing is left that ties the file to the
     /// declared identity, and accepting it on the payload's word would reopen
-    /// exactly the hole the two tests above close. The PEM *format* is what
-    /// blocks it, not the RSA/DSA/ECDSA *type* — `SSHPrivateKeyLoader` opens
-    /// RSA and ECDSA (`KeyType.isConnectable`) in OpenSSH format, and refuses
-    /// PEM for every type (`pemNotSupported`); the way to carry a PEM key here
-    /// is to export WITH its passphrase, which lands in the strong
-    /// `ssh-keygen -y -P` branch.
+    /// exactly the hole the two tests above close. Such keys are RSA/DSA/ECDSA,
+    /// which macSCP cannot connect with anyway (`KeyType.isConnectable`); the
+    /// way to carry one is to export WITH its passphrase, which lands in the
+    /// strong `ssh-keygen -y -P` branch.
     @Test func materializeRejectsALegacyPEMEncryptedKeyExportedWithoutItsPassphrase() throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)

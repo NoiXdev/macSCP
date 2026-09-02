@@ -72,7 +72,7 @@
 "core.connect.keyWrongPassphrase" = "Hasło klucza jest nieprawidłowe.";
 "core.connect.keyTypeNotLoadable %@" = "To jest klucz %@. macSCP otwiera z pliku klucze ed25519, RSA i ECDSA; ten typ do nich nie należy.";
 "core.connect.keyPEMNotSupported" = "Ten klucz jest w formacie PEM. macSCP otwiera klucze w formacie OpenSSH — przekonwertuj go za pomocą ssh-keygen -p (hasło klucza zostaje zachowane) albo wczytaj go do ssh-agenta i wybierz agenta jako metodę logowania.";
-"core.connect.keyUnsupportedFormat" = "Tego pliku nie udało się odczytać jako klucza SSH. macSCP otwiera z pliku klucze prywatne w formacie OpenSSH (ed25519, RSA, ECDSA); klucz PEM jest zgłaszany osobno.";
+"core.connect.keyUnsupportedFormat" = "Tego pliku nie udało się odczytać jako klucza SSH. macSCP otwiera z pliku tylko klucze OpenSSH ed25519; inne typy działają przez ssh-agenta.";
 
 /* ConnectionViewModel.failedState(for:) — ssh-agent (M10d/T4) */
 "core.connect.agentSocketUnavailable" = "Brak dostępnego agenta SSH (SSH_AUTH_SOCK).";

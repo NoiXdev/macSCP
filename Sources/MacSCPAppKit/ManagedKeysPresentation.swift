@@ -40,10 +40,10 @@ enum ManagedKeysLoad: Equatable {
 
     var isUnreadable: Bool { self == .unreadable }
 
-    /// Managed keys offerable to fill `keyPath` from (M17/T5): every type
-    /// `SSHPrivateKeyLoader` can open (ed25519, RSA, ECDSA — `KeyType.isConnectable`),
-    /// and only those whose stored `fileName` addresses a file inside the
-    /// key directory — a key without a usable path has nothing to offer.
+    /// Managed keys offerable to fill `keyPath` from (M17/T5): ed25519 only,
+    /// because `SSHPrivateKeyLoader` can load nothing else, and only those
+    /// whose stored `fileName` addresses a file inside the key directory —
+    /// a key without a usable path has nothing to offer.
     ///
     /// This is an ENUMERATION, not a claim: a picker showing no keys says
     /// "nothing to offer here", not "you own no keys". The screen that makes
