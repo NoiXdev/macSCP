@@ -79,11 +79,29 @@ private let isolatedWriteCloseServerPort = 2229
 /// exactly its own value", which is a tautology about `BoundedClose`. This
 /// number is larger on purpose, so what it answers is the question the
 /// measurement asked: does the close return AT ALL against a peer that has
-/// stopped answering. It has to stay comfortably above the production bound
-/// for that to keep working; at 10s against 5s it has a factor of two.
-/// 10s, per the measurement plan
+/// stopped answering. It has to stay above the production bound for that to
+/// keep working, and how far above is not written here in prose — a second
+/// copy of `closeBoundSeconds` is exactly what this file's own rule about
+/// numbers forbids. `FileCloseBoundRelationTests` below asserts the relation
+/// against the production constant instead. 10s, per the measurement plan
 /// (`.superpowers/sdd/2026-09-02-unbounded-file-closes-measurement/task-1-brief.md`).
 private let fileCloseBoundSeconds = 10
+
+/// Pins the one thing the comment above cannot say without copying a number:
+/// this section's bound must sit ABOVE the production bound it measures. If
+/// `BoundedSFTPSession.closeBoundSeconds` ever rose past it, the two
+/// isolate-close tests would go red for a bound that is doing its job, and
+/// their message would blame the close.
+///
+/// Not gated, unlike the suite whose constant it guards: it is arithmetic
+/// over two `let`s, it needs no container, and a relation that only holds
+/// when Docker is running is a relation nobody checks.
+@Suite("File-close bound relation")
+struct FileCloseBoundRelationTests {
+    @Test func theMeasurementBoundStaysAboveTheProductionBound() {
+        #expect(fileCloseBoundSeconds > BoundedSFTPSession.closeBoundSeconds)
+    }
+}
 
 /// `#filePath` here is
 /// `<repoRoot>/Tests/macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift`;
@@ -1409,7 +1427,7 @@ struct LivenessProbeDropIntegrationTests {
         // Best-effort, not deferred: leaving this unclosed on an early
         // throw is harmless (the container is force-removed regardless by
         // the defers above), and closing it earlier would race the very
-        // `close()` this test measures.
+        // `closeBounded()` this test measures.
         await closeIgnoringErrors(rawClient)
 
         #expect(returnedBeforeThaw, """

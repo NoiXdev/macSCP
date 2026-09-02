@@ -213,8 +213,21 @@ final class BoundedSFTPSession: Sendable {
 /// safe is ownership, not luck: `openFile` returns a fresh handle per call,
 /// each of this project's two callers (`readStream`, `write`) keeps its own
 /// and never shares it, and the abandoned task's only remaining act is the
-/// one close it was handed — after which the handle is invalid to everyone,
-/// because Citadel's `close()` clears `isActive` before it sends anything.
+/// one close it was handed.
+///
+/// One pair of tasks that this change makes possible for the FIRST time, and
+/// why it holds: a `closeBounded()` whose bound won leaves its operation task
+/// parked inside Citadel's `sendRequest`, and the caller then drops the
+/// stream — so `SFTPReadHandle.deinit` starts a SECOND close on the same
+/// non-`Sendable` `SFTPFile` while the first is still suspended in it. Two
+/// tasks, one object. What separates them is that Citadel's `close()` writes
+/// `isActive = false` BEFORE it sends anything
+/// (`Citadel/Sources/Citadel/SFTP/Client/SFTPFile.swift:264`), and the
+/// parked task wrote it on its way in: the second call reaches the
+/// `guard self.isActive` at the top and returns without reading or writing
+/// anything the first one is using. It is not that the second close is
+/// harmless because the handle is stale — it is that the second close never
+/// gets past its first line.
 final class BoundedSFTPFile: @unchecked Sendable {
     private let raw: SFTPFile
 

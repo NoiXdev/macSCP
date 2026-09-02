@@ -9,13 +9,24 @@
 // types in this file. Moving an `SFTPFile`, an `SFTPClient` or any other
 // Citadel value across an isolation boundary now compiles in silence,
 // whether or not it is actually safe. Every such crossing in this file
-// therefore has to carry its own argument for why it holds — and, counted in
-// this pass, there is no longer one to argue: the SFTP session and the SFTP
-// file this class works through are `BoundedSFTPSession` and
-// `BoundedSFTPFile`, both of which are `Sendable`, and the crossings they
-// make are argued in their own file. What is left of this suppression is the
-// SSH client and its NIO stack, still reached directly by `disconnect()`,
-// `openShell` and `standardOutput(of:)`.
+// therefore has to carry its own argument for why it holds. What changed
+// when the SFTP path moved behind `BoundedSFTPSession` and `BoundedSFTPFile`
+// is the SHAPE of what is left, not the amount of care owed: both of those
+// are `Sendable`, and the crossings they make are argued in their own file,
+// so no crossing of a Citadel value remains in this one. The suppression
+// still covers everything this class does with the SSH client itself and the
+// NIO stack under it — created, jumped through, stored, closed on every
+// failure arm of the connect path, handed to child channels, and captured by
+// a detached task that outlives the call that made it. No enumeration of
+// those sites is written here on purpose: a list in a comment is a count,
+// and this file's rule is that a count has to be retaken every time it is
+// read.
+//
+// Whether the annotation is still LOAD-BEARING was measured rather than
+// assumed, on 2026-09-02: dropping it and building fails with "capture of
+// 'method' with non-Sendable type 'SSHAuthenticationMethod' in a '@Sendable'
+// closure", from the closure `connect(config:...)` hands to `connectHop`.
+// So this is not a leftover; removing it needs that capture solved first.
 @preconcurrency import Citadel
 import Foundation
 import NIOCore
