@@ -108,3 +108,43 @@ listing (an ETag) appears in the column only when it is provably the
 file's hash — the multipart case stays "not the checksum". Question 4
 stands as written (SHA-256 default; MD5/SHA-1 offered only with the
 warning at the setting). Item 3 is plannable now.
+
+## Done 2026-09-02 (night) — item 3, the column
+
+Planned in `../plans/2026-09-02-checksum-column.md`. Commits: `57e5927`
+(`ChecksumLedger`, Core), `3cd7221` (the column), `da30363` and
+`589e431` (the review's two fix rounds — the second one closes a real
+hole: a hash still in flight across a disconnect/reconnect used to land
+in the NEW session's ledger; the binding now carries the session id it
+was made for and a stale one writes nothing). What it is: a toggleable column "Checksum (SHA-256)" — the
+header names the algorithm the setting selects — hidden by default,
+persisted through `visibleColumns` like the others, that shows a value
+ONLY for a row whose checksum the user asked for, through the existing
+action: the context-menu batch and the info sheet both go through one
+compute funnel in `BrowserPane` that records into the tab's ledger
+(`BrowserSession`, one per side), and that funnel is the ledger's only
+writer — pinned by a guard scoped to the files that mention the ledger,
+with the positive anchor beside it. No listing, refresh, scroll or
+toggle computes anything; the column is a display.
+
+The ledger's key is `(path, size, modifiedAt)`, so a row that changed
+size or date reads empty again, and only values with digest provenance
+enter it — a multipart ETag never reaches the column, exactly as it
+never reaches the sheet as "the checksum". **The limit the review
+named:** a same-size rewrite within one modification-time tick (SFTP and
+WebDAV carry whole seconds) keeps the old value visible; the sheet has
+the same blindness, so the column is no worse than what existed — but
+it is a limit, not a guarantee. Changing the algorithm rebuilds the
+columns only while the checksum column is visible, so hidden it costs
+the user no column widths.
+
+Two things the reviews found on the way, worth keeping: a source scan of
+the cell mapping stayed green after the real branch was renamed, because
+a second switch spelled the same string — replaced by an exhaustive
+`switch` over `FileColumn` (a forgotten column is now a compile error,
+CLAUDE.md's "structural boundary beats a scanner"); and a guard's
+`fileDeclaring("struct BrowserPane")` matched `BrowserPaneSide` too — it
+now requires the name to end where it is written. Still open in this
+entry: no progress within a file; no dedicated case for "this algorithm
+does not exist here".
+
