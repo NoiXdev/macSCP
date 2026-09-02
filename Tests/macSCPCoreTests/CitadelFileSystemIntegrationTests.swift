@@ -2020,17 +2020,27 @@ struct CitadelFileSystemIntegrationTests {
         #expect(items.contains { $0.name == "hello.txt" })
     }
 
-    /// T4/Steps 2-3: a passphrase-protected ed25519 identity, added to the
-    /// agent through an `SSH_ASKPASS` helper. This is the route ~90% of
-    /// this project's users are actually in — the backlog entry marked it
-    /// as a conclusion from how ssh-agent works, not a measurement, and
-    /// this test is that measurement. `testPassphrase` has no security
+    /// T4/Steps 2-3: a passphrase-protected identity, added to the agent
+    /// through an `SSH_ASKPASS` helper, across all five key shapes the
+    /// unencrypted `agentAuthConnects*` tests above cover individually
+    /// (ed25519, RSA 2048, and the three NIST ECDSA curves). Encryption is
+    /// the agent's own business, not macSCP's: `ssh-add` reads the
+    /// passphrase through `SSH_ASKPASS` and hands the AGENT a decrypted
+    /// key, so macSCP's `.agent` auth path never sees the passphrase or
+    /// the encrypted key material at all — every row exercises the exact
+    /// same macSCP code as the unencrypted tests. That is also why this is
+    /// a measurement and not an assumption: the backlog entry inferred all
+    /// five rows would pass from how ssh-agent works, without a test
+    /// actually running any of them. `testPassphrase` has no security
     /// value (a runtime-generated throwaway key, deleted after the test)
     /// but is still kept out of any `#expect` literal, since `#expect`
     /// prints the source text of the expression it checks on failure.
-    @Test func agentAuthConnectsWithPassphraseProtectedKey() async throws {
+    @Test(arguments: [
+        ("ed25519", nil), ("rsa", 2048), ("ecdsa", 256), ("ecdsa", 384), ("ecdsa", 521),
+    ] as [(String, Int?)])
+    func agentAuthConnectsWithPassphraseProtectedKey(type: String, bits: Int?) async throws {
         let testPassphrase = "macscp-itest-passphrase"
-        let (dir, keyPath) = try makeInstalledKey(type: "ed25519", passphrase: testPassphrase)
+        let (dir, keyPath) = try makeInstalledKey(type: type, bits: bits, passphrase: testPassphrase)
         defer { try? FileManager.default.removeItem(at: dir) }
         let agent = try spawnAgent()
         defer { killAgent(agent) }
