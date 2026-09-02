@@ -372,3 +372,68 @@ File keys with a passphrase are still ed25519-only here, because the
 loader still refuses the other types — see
 `../plans/2026-09-02-file-keys-without-agent.md`.
 
+## Done 2026-09-02 — file keys of every type, without the agent
+
+Planned in `../plans/2026-09-02-file-keys-without-agent.md`; the fork
+record is in `2026-08-20-backlog-dependencies.md` ("the second fork:
+Citadel"). Commits: `eaa5baa` (Citadel from `NoiXdev/Citadel` at
+`0.12.1-noix.2`), `fa67138` (the loader loads RSA and ECDSA files),
+`dfebdf8` (the ten-cell gated matrix), `8f9dd89` (the key manager offers
+RSA and ECDSA managed keys as file logins; every comment that said the
+loader was ed25519-only rewritten; `core.connect.keyUnsupportedFormat`
+no longer names an allow-list), `e9320c4` (the generator's "not usable
+as a login" caption asks `isConnectable` instead of the type literal —
+found by the task review; a source-scanning guard now walks every
+occurrence of the caption's key).
+
+**The measurement that decided the shape (Step 0, before any loader
+change):** the fork's RSA-SHA2 userauth request types the public-key blob
+with the algorithm name (`rsa-sha2-512`) where RFC 8332 keeps `ssh-rsa`
+— the fork review had flagged this as unverified. Against the rig's
+OpenSSH 10.3p1 (default `PubkeyAcceptedAlgorithms`, so `ssh-rsa` is not
+accepted) a raw `Citadel.SSHClient` login with `.rsaSHA2(...)` was
+accepted: `Accepted publickey for testuser … ssh2: RSA SHA256:jpxGRe0…`.
+So no NIOSSH fork change was needed for this. Two limits stay written
+down: at `LogLevel INFO` sshd names the key type, never the signature
+algorithm, so "the accepted signature was SHA-2" rests on two measured
+facts (the fork offers only the two SHA-2 names; the server's default
+list has no `ssh-rsa`) rather than on a log line — the review recommends
+a throwaway `LogLevel DEBUG1` container to READ `pkalg`, and an
+`ssh-rsa`-only container that must refuse, as a follow-up; and one server
+implementation was measured — Dropbear, libssh, Tectia and appliances
+were not.
+
+**The loader now:** ed25519 as before; RSA through
+`SSHAuthenticationMethod.rsaSHA2(username:privateKey:includeSHA1Fallback: false)`
+— the `false` is explicit on macSCP's side and pinned by a test, although
+the fork's default is `false` too; ECDSA P-256/384/521 through the fork's
+`init(sshEcdsa:decryptionKey:)` into NIOSSH's native private-key types.
+`typeNotLoadable` remains for DSA (OpenSSH 10.3 cannot even generate one;
+the test builds the container header by hand), `sk-*` and certificates;
+`pemNotSupported` stays. `passphraseRequired`/`wrongPassphrase` map for
+the new types the same way.
+
+| type | file, no passphrase | file, with passphrase |
+|---|---|---|
+| ed25519 | green | green |
+| RSA 2048 | green | green |
+| ECDSA P-256 | green | green |
+| ECDSA P-384 | green | green |
+| ECDSA P-521 | green | green |
+
+Each cell goes through macSCP's own `CitadelFileSystem.connect` with the
+file-key login and ends in a real listing; the loader suite is 16/16;
+the full gated run 3510 (Task 4) and 3539 (Task 5, unit suite).
+`includeSHA1Fallback: true` was planted and measured red (2 issues).
+
+**Key manager:** `ManagedKey.KeyType.isConnectable` is true for all three
+types and says what it describes — what the loader can load, not what a
+server will accept (OpenSSH's `RequiredRSASize` default 1024 is the
+server's decision). The `keys.notConnectable` string is unreachable for
+every current type and kept for a future one.
+
+**With the agent matrix above, every key type this project handles is now
+measured on both paths, with and without a passphrase.** Not covered, by
+decision: PEM containers, PuTTY `.ppk`, DSA, FIDO2 `sk-*` keys,
+certificates.
+

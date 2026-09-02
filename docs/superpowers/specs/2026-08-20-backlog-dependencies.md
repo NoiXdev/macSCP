@@ -659,3 +659,33 @@ to `ssh-keyscan`'s reading. Only `rsa-sha2-512` is offered. The jump
 target hop is covered by reasoning (the hop registers first), not by a
 measurement — the rig has no jump path to 2235.
 
+## Done 2026-09-02 — Citadel fork tags `0.12.1-noix.1` and `.2`, and macSCP on them
+
+- **`0.12.1-noix.1`** (`d228998` on `noix`): upstream PR #135 cherry-picked
+  with `-x` (`ac2ac0e`, `2ec2751`; author Mihai Burlac kept; the PR's
+  `Package.resolved` hunk dropped), plus our own `fix(rsa): no SHA-1
+  fallback unless asked for` — `includeSHA1Fallback` defaults to `false`,
+  pinned by a test whose red run showed the offer list
+  `["rsa-sha2-512","rsa-sha2-256","ssh-rsa"]` under upstream's default.
+  Fork suite: 43 tests, one pre-existing failure (`testSFTPUpload`
+  hardcodes port 2222, held by macSCP's rig).
+- **`0.12.1-noix.2`** (`b1f1dfd`): ECDSA private keys from the
+  `openssh-key-v1` container — `P256/P384/P521.Signing.PrivateKey
+  .init(sshEcdsa:decryptionKey:)` (Data and String), `OpenSSHKeyTypeMismatch`;
+  `d` left-padded to 32/48/66 bytes; 13 tests, the parsed `d` reproduces
+  the container's `Q`; a defaulted `keyTypeMismatch(found:)` protocol
+  requirement is the fork's second divergence a rebase must re-apply.
+- **Fork review** (Spec ✅, Quality approved): the userauth request types
+  the key blob with the algorithm name — measured accepted by OpenSSH
+  10.3 in macSCP's Task 4 (see `2026-08-31-backlog-ssh-key-formats.md`);
+  `sk-*`/`ssh-dss`/cert files still throw an opaque `InvalidOpenSSHKey`
+  (macSCP names those types before parsing, so it did not matter).
+- **macSCP:** `Package.swift` → `https://github.com/NoiXdev/Citadel.git`
+  `exact: "0.12.1-noix.2"` (`eaa5baa`; an incidental swift-log
+  1.14.0→1.15.0 bump rode along in `Package.resolved`, named in the
+  commit). `swift test` in the fork rewrites `Package.resolved` v1→v2 on
+  every run — restore before every commit there.
+- **Upstream PR candidates:** the SHA-1-fallback default flip and the
+  ECDSA parser, against `orlandos-nl/Citadel` (dormant since 2026-04-04
+  as of this measurement).
+
