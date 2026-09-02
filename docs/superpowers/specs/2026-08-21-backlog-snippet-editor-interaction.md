@@ -116,3 +116,30 @@ the end (SwiftUI doesn't hand a `View` a cursor position; completion is
 the access path that inserts at the point), and a `{{foo}}` from a foreign
 templating language gets flagged along with the rest — it blocks nothing,
 and what it says is correct.
+
+## Done 2026-09-02 (`96ea4d1`) — the environment-variable sentence
+
+Planned in `../plans/2026-09-02-snippet-environment-placeholder-hint.md`.
+
+The second sentence exists. `snippetEnvironmentPlaceholders` and
+`snippetEnvironmentPlaceholderHint` sit beside the undeclared pair in
+`SnippetsPresentation.swift` and answer for a `{{NAME}}` whose
+declaration has placement "environment variable": every such name at
+once, declaration order, no repeats. The editor shows it under the
+undeclared sentence, and both can show for one command — the two lists
+are disjoint by construction, because the one filters on "not declared"
+and the other on "declared as `.environment`".
+
+What it says (`en`): "Declared as an environment variable, not a
+placeholder: “DB”. Nothing is filled in there either — write it as $NAME
+to use the exported value." The advice is the generic `$NAME`, not the
+name itself: the sentence lists every affected name, and "write it as
+`$DB`" would be wrong for the second one.
+
+A **display**, like its sibling: substitution, the send plan and the
+survey are untouched, and such a command was sendable before and stays
+sendable. The notice names the placeholder name only, never a value.
+
+**Still open, unchanged:** the row's insert path appends at the end, and
+a foreign `{{foo}}` is still flagged (correctly, blocking nothing).
+
