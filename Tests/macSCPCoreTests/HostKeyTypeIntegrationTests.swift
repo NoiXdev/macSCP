@@ -8,7 +8,7 @@ import Testing
 /// Each of the five `sshd-hostkey-*` rig services restricts
 /// `HostKeyAlgorithms` to exactly one type (docker/test-server/README.md's
 /// "SSH host-key-types rig" table), so a successful connect to a given port
-/// pins the client to having actually negotiated that type — not merely
+/// pins the client to having actually negotiated that algorithm — not merely
 /// accepted whatever ed25519 key the multi-type `sshd`/`sshd2` services
 /// would have offered instead.
 ///
@@ -41,10 +41,11 @@ struct HostKeyTypeIntegrationTests {
     /// key type TOFU actually recorded matches the rig service's own
     /// restricted `HostKeyAlgorithms`.
     ///
-    /// `ssh-rsa` is deliberately NOT a row here: the client has no
-    /// registered RSA host-key algorithm to offer (see
-    /// `rsaHostKeyIsRejectedForWantOfANegotiableAlgorithm` below), so a
-    /// connect to port 2235 cannot reach the point of recording anything.
+    /// The rig's RSA service (port 2235) is deliberately NOT a row here, and
+    /// the reason changed when `RSASHA2HostKey` arrived: it now connects, but
+    /// it is the one service whose negotiated algorithm name and recorded key
+    /// type are DIFFERENT strings, so the sentence above would be false for
+    /// it. It has its own test below.
     @Test(arguments: [
         (port: 2231, expectedKeyType: "ssh-ed25519"),
         (port: 2232, expectedKeyType: "ecdsa-sha2-nistp256"),
@@ -63,44 +64,83 @@ struct HostKeyTypeIntegrationTests {
         #expect(try store.find(host: "127.0.0.1", port: port)?.keyType == expectedKeyType)
     }
 
-    /// Measured 2026-09-02 against `sshd-hostkey-rsa` (port 2235, which
-    /// restricts `HostKeyAlgorithms` to `rsa-sha2-512,rsa-sha2-256`): the
-    /// client offers no RSA host-key algorithm during key exchange at all
-    /// (NIOSSH's `bundledServerHostKeyAlgorithms` is ed25519 + the three
-    /// NIST curves; Citadel registers only what a caller passes in
-    /// `SSHAlgorithms.publicKeyAlgorihtms` — through
-    /// `NIOSSHAlgorithms.register(publicKey:signature:)`, Client.swift — and
-    /// macSCP passes no `SSHAlgorithms` at all, so nothing is registered; and
-    /// Citadel's only RSA type is `ssh-rsa` over SHA-1), so key exchange itself fails
-    /// before any host key is ever presented to `TOFUHostKeyValidator` —
-    /// the connect throws `RemoteFSError.connectionFailed(reason:
-    /// "NIOSSHError.keyExchangeNegotiationFailure")` (captured verbatim via
-    /// `String(describing:)`/`String(reflecting:)` against the live rig;
-    /// `reflecting` additionally carries the `macSCPCore.` module prefix),
-    /// and `store.find` afterwards finds nothing because nothing was ever
-    /// recorded.
+    /// Port 2235 restricts `HostKeyAlgorithms` to `rsa-sha2-512,rsa-sha2-256`,
+    /// so reaching a host key at all means the client offered an RSA name —
+    /// which it does only because `HostKeyAlgorithms.registerOnce()` put
+    /// `RSASHA2HostKey` into NIOSSH's registry before the dial.
     ///
-    /// Expected once the fork can negotiate rsa-sha2-256/512: this test
-    /// turns red then, and the assertion flips.
-    @Test func rsaHostKeyIsRejectedForWantOfANegotiableAlgorithm() async throws {
+    /// What a completed connect proves, beyond negotiation:
+    ///
+    ///  - the key blob parsed (`RSASHA2HostKey.read(from:)`),
+    ///  - the re-serialization matched byte for byte — the exchange hash
+    ///    covers the server's own encoding of `K_S`, and NIOSSH recomputes
+    ///    that from `write(to:)`, so a single differing byte fails the
+    ///    handshake, and
+    ///  - the server's `rsa-sha2-512` signature over that hash verified.
+    ///
+    /// This test therefore cannot pass while any of those three is wrong,
+    /// which is why there is nothing here that inspects them separately;
+    /// `RSASHA2HostKeyTests` takes each apart on its own, without Docker.
+    ///
+    /// The recorded key type is the BLOB prefix, not the negotiated name:
+    /// RFC 8332 types every RSA key blob `ssh-rsa` whatever digest was
+    /// negotiated, and `known_hosts` records what OpenSSH would record.
+    ///
+    /// (This test used to assert the opposite — that key exchange failed for
+    /// want of a negotiable algorithm. Its own note said it would turn red
+    /// the day the fork could do RSA, and on 2026-09-02 it did.)
+    @Test func rsaHostKeyNegotiatesUnderTheSHA2NameAndIsRecordedUnderItsBlobPrefix() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-hostkeytype-rsa-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = KnownHostsStore(directory: dir)
 
-        // Matched on macSCP's own case plus the NIOSSH reason as a substring,
-        // not on the exact string: a fork bump that merely renames the NIOSSH
-        // case must fail this test for THAT reason (the `contains` line), not
-        // look like RSA had started to negotiate. A connect that succeeds is
-        // the flip this test waits for, and lands in the `Issue.record`.
+        let fs = try await connect(port: 2235, knownHosts: store)
+        await fs.disconnect()
+
+        let recorded = try store.find(host: "127.0.0.1", port: 2235)
+        // Read off the type as well as spelled out: the derived form ties the
+        // record to the type that produced it, the literal pins what actually
+        // goes into `known_hosts` even if that type were renamed.
+        #expect(recorded?.keyType == RSASHA2HostKey.publicKeyPrefix)
+        #expect(recorded?.keyType == "ssh-rsa")
+        #expect(recorded?.publicKeyBase64.isEmpty == false)
+    }
+
+    /// The hard stop on the RSA path, mirroring
+    /// `tamperedEcdsa256KeyFailsHardWithMismatch` below: a wrong `ssh-rsa`
+    /// key is seeded for port 2235, so the handshake presents a real RSA key
+    /// against a stored fingerprint that can never match it. A custom
+    /// host-key algorithm is a new way INTO `TOFUHostKeyValidator`, and this
+    /// checks it lands on the same stop as every bundled type — the connect
+    /// fails with `.mismatch`, and the decider is never consulted.
+    @Test func tamperedRsaKeyFailsHardWithMismatch() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-hostkeytype-rsa-mismatch-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = KnownHostsStore(directory: dir)
+        try store.upsert(KnownHostKey(
+            host: "127.0.0.1", port: 2235,
+            keyType: RSASHA2HostKey.publicKeyPrefix,
+            publicKeyBase64: "QUJDREVG"))   // deliberately wrong
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2235, username: "testuser",
+            auth: .password("testpass"))
+
         do {
-            _ = try await connect(port: 2235, knownHosts: store)
-            Issue.record("an RSA-only host key negotiated — the fork can do RSA now; flip this test")
-        } catch RemoteFSError.connectionFailed(let reason) {
-            let isKeyExchangeFailure = reason.contains("keyExchangeNegotiationFailure")
-            #expect(isKeyExchangeFailure, "unexpected connect failure reason: \(reason)")
+            _ = try await CitadelFileSystem.connect(
+                config: config, connectTimeout: .seconds(30), knownHosts: store,
+                onUnknownHostKey: .asking { _ in
+                    Issue.record("mismatch must NEVER ask the decider")
+                    return true
+                })
+            Issue.record("expected mismatch")
+        } catch let error as HostKeyError {
+            guard case .mismatch = error else {
+                Issue.record("expected mismatch, was: \(error)")
+                return
+            }
         }
-        #expect(try store.find(host: "127.0.0.1", port: 2235) == nil)
     }
 
     /// Mismatch on a non-ed25519 type that DID pass above
