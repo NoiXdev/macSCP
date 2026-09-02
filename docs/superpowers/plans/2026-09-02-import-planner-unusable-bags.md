@@ -55,7 +55,7 @@ no longer rescue it, because the check runs before the attachment).
 - Produces: `private static func isUnusable(_ fileSession: ExportedSession) -> Bool`
   beside `wouldBeDroppedByStore`; the loop rejects when either is true.
 
-- [ ] **Step 1: Red.** Four tests (the suite builds `ExportedSession` values
+- [ ] **Step 1: Red.** Five tests (the suite builds `ExportedSession` values
   by hand — follow the neighbours): (a) SSH entry whose bag holds only
   `SSHField.keyPath` → `rejected == [name]`, `sessionsToImport` empty;
   (b) SSH entry with an empty bag plus `jumpHost`/`jumpUsername` →
@@ -68,7 +68,7 @@ no longer rescue it, because the check runs before the attachment).
   count for the mixed file is the sum, and the entries around them are
   still imported.
 - [ ] **Step 2: Implement.** `isUnusable`: start from
-  `BackendDescriptor.descriptor(for: kind).defaults` (the plain defaults —
+  `BackendDescriptor.descriptor(for: kind).defaultValues` (the plain defaults —
   NOT `editBaseline`, which is the edit form's toggle-only baseline and
   lacks the S3 region), overlay `fileSession.fields` via `setRaw`, and
   return `descriptor.firstViolation(in: values, requireSecrets: false) != nil`.
