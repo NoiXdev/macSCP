@@ -87,3 +87,23 @@ Order: the own-setup log and the TCP ping first (no privilege question,
 answers the maintainer's "what is it hanging on?"), then the ICMP/route
 halves behind the spike's verdict. Needs brainstorming → design →
 plan; not yet planned.
+
+## Decided 2026-09-02 (night) — order, and the shape: universal tools plus a per-protocol seam
+
+The maintainer set the order for what follows the fork work: the
+checksum column, then CLI completion, then THIS entry — ahead of the
+FTP/FTPS and SMB designs. And one more decision for the design: the
+tools are an **interface**. Ping (TCP attempt + ICMP echo) and trace
+(own-setup log + network trace) are universal — every backend gets them
+from one implementation — and beside them the surface carries a
+**per-protocol seam** for diagnostics only that protocol has, contributed
+the way `BackendDescriptor` already contributes file actions: SSH could
+offer the key-exchange and authentication negotiation as read from the
+client (algorithms offered/chosen, the host-key type, which auth method
+succeeded), S3 a signed probe request with the response status and
+headers, WebDAV an `OPTIONS`/`PROPFIND` probe with the DAV class the
+server claims. Which of those exist at first is the design's call; the
+seam is the requirement, so a fourth backend (FTP, SMB) adds its own
+without touching the universal half. No code path in the universal half
+branches on `ConnectionKind`.
+
