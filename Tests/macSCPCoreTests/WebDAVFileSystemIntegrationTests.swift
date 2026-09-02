@@ -49,9 +49,10 @@ struct WebDAVFileSystemIntegrationTests {
         return try await WebDAVFileSystem.connect(config, trustStore: store, decider: .asking { _ in true })
     }
 
-    /// Cushions reconnect throttling of the test container, mirroring
-    /// `CitadelFileSystemIntegrationTests.connectWithRetry` /
-    /// `CrossBackendTransferIntegrationTests.connectWithRetry` verbatim.
+    /// Cushions reconnect throttling of the test container, mirroring the
+    /// shared `connectWithRetry` in `Support/IntegrationConnect.swift`
+    /// verbatim (kept private under its own name because this suite also
+    /// has a WebDAV connect helper beside it).
     private func connectSSHWithRetry(
         _ make: () async throws -> CitadelFileSystem
     ) async throws -> CitadelFileSystem {

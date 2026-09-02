@@ -317,9 +317,15 @@ type the known-hosts store records:
 The RSA row is what the maintainer's question was about. NIOSSH's client
 offers `ssh-ed25519, ecdsa-sha2-nistp384, ecdsa-sha2-nistp256,
 ecdsa-sha2-nistp521` and nothing else
-(`SSHKeyExchangeStateMachine.bundledServerHostKeyAlgorithms`); Citadel
-registers no custom host-key algorithm (no assignment to
-`NIOSSHPublicKey.customPublicKeyAlgorithms` in its sources). So a server
+(`SSHKeyExchangeStateMachine.bundledServerHostKeyAlgorithms`). Citadel
+registers only what a caller passes in `SSHAlgorithms.publicKeyAlgorihtms`
+(its `Client.swift`, through `NIOSSHAlgorithms.register(publicKey:signature:)`),
+and macSCP passes no `SSHAlgorithms` at all, so nothing is registered —
+and the one RSA type Citadel ships is `ssh-rsa` over SHA-1, which the
+server on port 2235 does not offer. (An earlier draft of this paragraph
+gave a grep for an assignment to `customPublicKeyAlgorithms` as the
+evidence; that is a computed getter nothing assigns, so the grep could
+never have matched — corrected 2026-09-02 in the final review.) So a server
 with only an RSA host key cannot be connected to at all — not a TOFU
 question, a key-exchange one. The test pins the observed failure and
 carries the comment that flips it the day the fork can negotiate RSA.

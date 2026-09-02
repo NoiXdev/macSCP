@@ -67,9 +67,11 @@ struct HostKeyTypeIntegrationTests {
     /// restricts `HostKeyAlgorithms` to `rsa-sha2-512,rsa-sha2-256`): the
     /// client offers no RSA host-key algorithm during key exchange at all
     /// (NIOSSH's `bundledServerHostKeyAlgorithms` is ed25519 + the three
-    /// NIST curves, and a search of the checked-out dependency graph found
-    /// no `NIOSSHPublicKey.customPublicKeyAlgorithms` registration for RSA
-    /// anywhere Citadel or macSCP wires in), so key exchange itself fails
+    /// NIST curves; Citadel registers only what a caller passes in
+    /// `SSHAlgorithms.publicKeyAlgorihtms` — through
+    /// `NIOSSHAlgorithms.register(publicKey:signature:)`, Client.swift — and
+    /// macSCP passes no `SSHAlgorithms` at all, so nothing is registered; and
+    /// Citadel's only RSA type is `ssh-rsa` over SHA-1), so key exchange itself fails
     /// before any host key is ever presented to `TOFUHostKeyValidator` —
     /// the connect throws `RemoteFSError.connectionFailed(reason:
     /// "NIOSSHError.keyExchangeNegotiationFailure")` (captured verbatim via

@@ -25,19 +25,9 @@ struct CrossBackendTransferIntegrationTests {
         return try await S3FileSystem.connect(config)
     }
 
-    /// Cushions reconnect throttling of the test container: on a transient
-    /// transport error, wait briefly and connect once more. Mirrors
-    /// `CitadelFileSystemIntegrationTests.connectWithRetry` verbatim.
-    private func connectWithRetry(
-        _ make: () async throws -> CitadelFileSystem
-    ) async throws -> CitadelFileSystem {
-        do {
-            return try await make()
-        } catch {
-            try? await Task.sleep(for: .milliseconds(500))
-            return try await make()
-        }
-    }
+    // Connects that must succeed go through the shared `connectWithRetry`
+    // in `Support/IntegrationConnect.swift`; the private copy that used to
+    // sit here shadowed it with an identical body.
 
     private func connectSSH(port: Int = 2222) async throws -> CitadelFileSystem {
         let config = try SSHConnectionConfig(

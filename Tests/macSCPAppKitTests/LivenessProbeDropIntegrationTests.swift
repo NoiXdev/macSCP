@@ -38,8 +38,8 @@ private let dropServerPort = 2224
 /// so two tests sharing a port would still be two containers, and giving
 /// each its own port keeps a leftover from one measurement out of the
 /// other's bind. Clear of 2222/2223 and of every mapping in `compose.yml`
-/// (checked against that file in this pass: 2222, 2223, 19000, 19001,
-/// 18080, 18081, 18443, 18090).
+/// (checked against that file on 2026-09-02: 2222, 2223, 2231, 2232,
+/// 2233, 2234, 2235, 19000, 19001, 18080, 18081, 18443, 18090).
 private let shellDropServerPort = 2225
 /// How long `teardownAgainstAStillFrozenPeerTerminates` waits for the
 /// give-up path before calling it hung.

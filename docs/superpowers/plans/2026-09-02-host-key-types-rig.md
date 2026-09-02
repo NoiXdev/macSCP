@@ -12,10 +12,11 @@ is a stock `linuxserver/openssh-server` offering `ssh-ed25519`,
 `ecdsa-sha2-nistp256` and `ssh-rsa` host keys together; the client
 (NIOSSH, `SSHKeyExchangeStateMachine.bundledServerHostKeyAlgorithms`)
 prefers `ssh-ed25519`, then the three ECDSA curves, and knows RSA only if
-Citadel registers a custom algorithm — and a search of Citadel's sources on
-2026-09-02 found no assignment to `NIOSSHPublicKey.customPublicKeyAlgorithms`
-at all, so the RSA row is expected red and Task 2 measures it rather than
-assumes it. So every existing TOFU test
+Citadel registers a custom algorithm — and Citadel registers only what a caller
+passes in `SSHAlgorithms.publicKeyAlgorihtms` (which macSCP never does;
+corrected 2026-09-02 — this sentence first cited a grep for an assignment
+to a computed getter, which could never match), so the RSA row is
+expected red and Task 2 measures it rather than assumes it. So every existing TOFU test
 exercises ed25519 and nothing else. The plan adds one sshd service per
 host-key type, each restricted with `HostKeyAlgorithms` in its own
 `sshd_config.d` directory (the image's `sshd_config` has
