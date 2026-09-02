@@ -35,10 +35,21 @@ public struct StoredS3Config: Equatable, Codable, Sendable {
         case accessKeyID, region, endpoint, bucket, usePathStyle, startsAtBucketList
     }
 
-    // `encode(to:)` stays SYNTHESIZED from the keys above, so a field added
-    // later cannot be left out of it — only the reading half needs a hand,
-    // and only for the one absent-key default. The consequence is that a
-    // re-encode is NOT byte-identical to what an older macSCP wrote: the
+    // `encode(to:)` stays synthesized, from EXACTLY the keys above — which
+    // is a smaller promise than an earlier version of this comment made
+    // (Task 3 review, I-3). It claimed a field added later could not be
+    // left out of the encoded form; it can. With an explicit `CodingKeys`,
+    // a property missing from that enum is neither encoded nor decoded, and
+    // a round-trip test that compares two values by `==` stays green
+    // because the field sits at its default on both sides.
+    //
+    // What is actually load-bearing is BELOW: the hand-written
+    // `init(from:)` fails to compile for a new property declared without a
+    // default. A property declared WITH one compiles and is silently lost
+    // on every save — which is why `everyStoredPropertyReachesTheEncodedForm`
+    // counts the encoded keys against `Mirror`'s stored-property count.
+    //
+    // A re-encode is NOT byte-identical to what an older macSCP wrote: the
     // `false` that file left absent is written out. That is the intended
     // direction — every writer here rewrites the whole block anyway, and an
     // omitted `false` would make "never had the toggle" and "toggle turned

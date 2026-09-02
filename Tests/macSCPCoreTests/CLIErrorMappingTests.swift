@@ -64,4 +64,66 @@ struct CLIErrorMappingTests {
         let message = CLIErrorMapping.message(for: PasswordCommandError.commandFailed(status: 1))
         #expect(message == "Error: --password-command failed: commandFailed(status: 1)")
     }
+
+    // MARK: - The S3 bucket-list outcomes (Task 3 review, I-2)
+
+    /// None of the three S3 cases had a test, so their sentences had never
+    /// been read by anything but their author — which is how
+    /// "macSCP does not createDirectory buckets" shipped.
+    @Test func theBucketListOutcomesExitWithTheirOwnCodesAndSayWhy() {
+        #expect(CLIErrorMapping.exitCode(for: RemoteFSError.bucketListForbidden) == .auth)
+        #expect(CLIErrorMapping.exitCode(for: RemoteFSError.bucketListEmpty) == .remote)
+
+        let forbidden = CLIErrorMapping.message(for: RemoteFSError.bucketListForbidden)
+        #expect(forbidden == "Error: this key may not list the account's buckets")
+        let empty = CLIErrorMapping.message(for: RemoteFSError.bucketListEmpty)
+        #expect(empty == "Error: this key may list buckets, but the account has none")
+    }
+
+    /// Every operation, iterated rather than enumerated: a case added to
+    /// `BucketLevelOperation` cannot reach the CLI without a sentence,
+    /// because the mapping's own `switch` is exhaustive — and it cannot
+    /// reach it with a RAW one, because of the check below.
+    ///
+    /// "Raw" is decided by CASE, not by the whole identifier: `write`,
+    /// `delete` and `rename` are ordinary English words that a written
+    /// sentence may legitimately contain, while a rawValue carrying an
+    /// interior capital (`createDirectory`, `deleteTree`, `presignedURL`)
+    /// can only ever be an identifier that leaked. That is exactly the
+    /// defect this replaces ("macSCP does not createDirectory buckets"),
+    /// and the floor below keeps the rule from scanning nothing if the
+    /// enum ever loses its multi-word cases.
+    @Test func everyBucketLevelRefusalPrintsProseAndNamesThePath() {
+        var camelCased = 0
+        for operation in RemoteFSError.BucketLevelOperation.allCases {
+            let error = RemoteFSError.bucketLevelRefused(
+                operation: operation, path: "/mybucket")
+            #expect(CLIErrorMapping.exitCode(for: error) == .remote)
+
+            let message = CLIErrorMapping.message(for: error)
+            #expect(message.contains("/mybucket"))
+            #expect(message.hasPrefix("Error: "))
+
+            guard operation.rawValue.contains(where: \.isUppercase) else { continue }
+            camelCased += 1
+            #expect(!message.contains(operation.rawValue), """
+                the CLI sentence for \(operation) still carries the raw identifier: \(message)
+                """)
+        }
+        #expect(camelCased >= 3, """
+            only \(camelCased) operation(s) carry an interior capital — the identifier-leak \
+            half of this check scanned almost nothing.
+            """)
+    }
+
+    /// …and no two operations share a sentence, so the `switch` is really
+    /// six answers and not one answer written six times.
+    @Test func theSixRefusalSentencesAreSixDifferentSentences() {
+        let messages = RemoteFSError.BucketLevelOperation.allCases.map {
+            CLIErrorMapping.message(for: RemoteFSError.bucketLevelRefused(
+                operation: $0, path: "/mybucket"))
+        }
+        #expect(Set(messages).count == messages.count)
+        #expect(messages.count == RemoteFSError.BucketLevelOperation.allCases.count)
+    }
 }

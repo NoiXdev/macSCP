@@ -43,11 +43,16 @@
 "core.connect.s3BucketRequired" = "Wprowadź bucket — to pierwszy folder, który widzisz. Aby zamiast tego przeglądać wszystkie buckety konta, włącz „Zacznij od listy bucketów”.";
 "core.connect.s3RegionRequired" = "Wprowadź region. Jest częścią podpisu żądania, więc nie może być pusty; większość dostawców kompatybilnych z S3 akceptuje us-east-1.";
 
-/* Przełącznik listy bucketów i jego trzy wyniki (2026-09-02). */
+/* Przełącznik listy bucketów i jego komunikaty (2026-09-02). */
 "core.connect.s3StartsAtBucketList" = "Zacznij od listy bucketów";
 "core.connect.s3BucketListForbidden" = "Ten klucz nie może wyświetlać listy bucketów. Wyłącz „Zacznij od listy bucketów” i wprowadź bucket.";
 "core.connect.s3BucketListEmpty" = "Ten klucz może wyświetlić listę bucketów, ale konto nie ma żadnego.";
-"core.connect.s3BucketLevelRefused" = "Tego nie można zrobić na samym buckecie. Otwórz najpierw bucket.";
+"core.connect.s3BucketLevelRefused.write" = "macSCP nie może zapisywać do samego bucketa. Otwórz bucket i umieść w nim plik.";
+"core.connect.s3BucketLevelRefused.delete" = "macSCP nie może usunąć bucketa. Otwórz bucket, aby usunąć to, co jest w środku.";
+"core.connect.s3BucketLevelRefused.createDirectory" = "macSCP nie może utworzyć folderu obok bucketów. Otwórz najpierw bucket.";
+"core.connect.s3BucketLevelRefused.deleteTree" = "macSCP nie może opróżnić bucketa. Otwórz bucket i usuń to, co jest w środku.";
+"core.connect.s3BucketLevelRefused.rename" = "macSCP nie może zmienić nazwy bucketa. Otwórz bucket, aby zmienić nazwę tego, co jest w środku.";
+"core.connect.s3BucketLevelRefused.presignedURL" = "macSCP nie może udostępnić linku do samego bucketa. Otwórz bucket i udostępnij plik z jego wnętrza.";
 
 /* ConnectionViewModel WebDAV form validation (M21/T9) */
 "core.connect.webdavFieldRequired" = "Wprowadź adres URL serwera WebDAV.";

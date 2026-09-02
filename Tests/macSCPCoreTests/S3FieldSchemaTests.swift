@@ -220,6 +220,54 @@ struct S3FieldSchemaTests {
         #expect(S3FieldSchema.values(from: off).raw[toggleKey] == "false")
     }
 
+    // MARK: - In list mode there is no bucket (Task 3 review, I-4)
+
+    /// Hiding a field does not clear its value — `SchemaFormView` only
+    /// filters what it RENDERS. So a user who types a bucket, then turns
+    /// the toggle on, then saves, would otherwise persist a bucket the
+    /// connection never reads, and that stale value enters the import
+    /// identity key.
+    ///
+    /// Both boundaries out of the value bag therefore write `""` for the
+    /// bucket while the toggle is on. The bag itself is left alone, which
+    /// is what keeps a toggle flipped on and back off again inside one
+    /// unsaved form from losing what the user typed.
+    @Test func listModeCarriesNoBucketOutOfTheForm() throws {
+        var values = filledValues()
+        values[bool: S3Field.startsAtBucketList] = true
+        #expect(values[S3Field.bucket] == "backups", "the fixture lost its stale bucket")
+
+        guard case .s3(let config) = try S3FieldSchema.makeConfig(values, "s") else {
+            Issue.record("expected .s3")
+            return
+        }
+        #expect(config.bucket == "")
+        #expect(config.startsAtBucketList == true)
+
+        let stored = S3FieldSchema.stored(from: values)
+        #expect(stored.bucket == "")
+        #expect(stored.startsAtBucketList == true)
+        #expect(S3FieldSchema.values(from: stored)[S3Field.bucket] == "")
+
+        // The bag the form still holds is untouched: turning the toggle back
+        // off before saving must not have cost the user their typing.
+        #expect(values[S3Field.bucket] == "backups")
+    }
+
+    /// …and with the toggle off both boundaries carry the bucket exactly as
+    /// they did before — the positive check beside the blanking above.
+    @Test func bucketModeStillCarriesTheBucketOutOfTheForm() throws {
+        var values = filledValues()
+        values[bool: S3Field.startsAtBucketList] = false
+
+        guard case .s3(let config) = try S3FieldSchema.makeConfig(values, "s") else {
+            Issue.record("expected .s3")
+            return
+        }
+        #expect(config.bucket == "backups")
+        #expect(S3FieldSchema.stored(from: values).bucket == "backups")
+    }
+
     /// Every `sessions.json` already on disk was written without this key.
     /// It must decode — as OFF — rather than throwing `keyNotFound`, which
     /// would take the whole session file down with it.
@@ -243,16 +291,58 @@ struct S3FieldSchemaTests {
         #expect(stored.usePathStyle == true)
     }
 
-    /// …and a config that DOES carry it survives the same round trip.
-    @Test func aStoredConfigCarryingTheToggleEncodesAndDecodesIt() throws {
-        let stored = StoredS3Config(
-            accessKeyID: "AKIA", region: "us-east-1", endpoint: "https://minio.local:9000",
-            bucket: "", usePathStyle: true, startsAtBucketList: true)
+    /// …and a config in which EVERY field carries a non-default value
+    /// survives the round trip.
+    ///
+    /// "Non-default" is the whole point (Task 3 review, I-3): a field left
+    /// at its default on both sides compares equal after a round trip that
+    /// never carried it, so a value built with defaults would stay green
+    /// while the field silently never reached disk.
+    @Test func aFullyPopulatedStoredConfigSurvivesTheRoundTrip() throws {
+        let stored = fullyPopulatedStoredConfig()
 
         let back = try JSONDecoder().decode(
             StoredS3Config.self, from: try JSONEncoder().encode(stored))
 
         #expect(back == stored)
         #expect(back.startsAtBucketList == true)
+    }
+
+    /// The pin that equality cannot give (Task 3 review, I-3). With an
+    /// explicit `CodingKeys`, a property left OUT of that enum is neither
+    /// encoded nor decoded — and if it was declared with a default, the
+    /// hand-written `init(from:)` still compiles and the round trip above
+    /// still passes. Nothing would be red while the field is lost on every
+    /// save.
+    ///
+    /// So: count the keys the encoder actually wrote and compare against
+    /// the number of stored properties, taken from `Mirror` rather than
+    /// from a literal. Adding a property without adding a coding key fails
+    /// here, in the same commit that adds it.
+    @Test func everyStoredPropertyReachesTheEncodedForm() throws {
+        let stored = fullyPopulatedStoredConfig()
+
+        let data = try JSONEncoder().encode(stored)
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            "the encoded form is not a JSON object")
+
+        let properties = Mirror(reflecting: stored).children.count
+        #expect(properties > 0, "Mirror found no stored properties — this check scanned nothing")
+        #expect(object.count == properties, """
+            \(properties) stored propert(ies) but \(object.count) encoded key(s): \
+            \(object.keys.sorted()) — a property is missing from `CodingKeys`, and it is \
+            neither written nor read.
+            """)
+    }
+
+    /// Every field away from the value a fresh `StoredS3Config` would carry
+    /// — `usePathStyle` and `startsAtBucketList` `true`, and no empty
+    /// string among the four text fields.
+    private func fullyPopulatedStoredConfig() -> StoredS3Config {
+        StoredS3Config(
+            accessKeyID: "AKIA", region: "eu-central-1",
+            endpoint: "https://minio.local:9000", bucket: "backups",
+            usePathStyle: true, startsAtBucketList: true)
     }
 }

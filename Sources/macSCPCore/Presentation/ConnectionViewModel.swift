@@ -438,7 +438,7 @@ public final class ConnectionViewModel {
     // S3 and WebDAV field pass-throughs used to live here. Since M22 made the
     // form data-driven, production reads and writes `values` directly and
     // none of them has a caller left in `MacSCPApp`/`MacSCPCLI` (confirmed by
-    // deleting all eight and rebuilding both executable targets clean — only
+    // deleting all nine and rebuilding both executable targets clean — only
     // test files failed to compile). They still exist as
     // `ConnectionViewModelTests`-only convenience accessors; see
     // `Tests/macSCPCoreTests/ConnectionViewModelTestAccessors.swift`.
@@ -1785,8 +1785,15 @@ public final class ConnectionViewModel {
             return .failed(
                 message: CoreL10n.string("core.connect.authFailed"),
                 field: nil)
-        // The two S3 bucket-list outcomes (2026-09-02). Both are connect-time
-        // only, and both are reachable ONLY with `startsAtBucketList` on.
+        // The two S3 bucket-list outcomes (2026-09-02), both reachable ONLY
+        // with `startsAtBucketList` on.
+        //
+        // `.bucketListEmpty` is connect-time only — `connect` is its single
+        // thrower. `.bucketListForbidden` is NOT (Task 3 review, M-3):
+        // `listBuckets` runs again whenever `/` is listed and on a `stat` of
+        // a bucket, so a revoked policy can raise it mid-session, where
+        // `RemoteBrowserViewModel.message(for:path:)` renders it instead of
+        // this function.
         //
         // `.bucketListForbidden` is deliberately NOT `authFailed` above: the
         // credentials are good and one permission is missing, so the fix is

@@ -909,8 +909,17 @@ public final class RemoteBrowserViewModel {
         // offers on a bucket row is OPEN, and `S3FileSystem` refuses the
         // rest itself. Its own case, so this is a written sentence rather
         // than the `default:` dump of an operation name and a path.
-        case RemoteFSError.bucketLevelRefused:
-            return CoreL10n.string("core.connect.s3BucketLevelRefused")
+        case RemoteFSError.bucketLevelRefused(let operation, _):
+            return CoreL10n.string(operation.refusalMessageKey)
+        // `.bucketListForbidden` is NOT connect-time only (Task 3 review,
+        // M-3): `listBuckets` runs again on every listing of `/` and on a
+        // `stat` of a bucket, so a policy revoked mid-session lands here.
+        // Without this arm it printed `core.error.unexpected
+        // bucketListForbidden`. `.bucketListEmpty` needs no arm — `connect`
+        // is its only thrower, and a later empty account is an empty
+        // browser, not an error.
+        case RemoteFSError.bucketListForbidden:
+            return CoreL10n.string("core.connect.s3BucketListForbidden")
         case RemoteFSError.protocolError(let reason):
             return String(format: CoreL10n.string("core.browse.protocolError %@"), reason)
         case RemoteFSError.connectionFailed(let reason):

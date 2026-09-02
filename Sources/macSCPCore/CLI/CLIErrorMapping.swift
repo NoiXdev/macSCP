@@ -63,6 +63,33 @@ public enum CLIErrorMapping {
         }
     }
 
+    /// Why a bucket-level operation was refused, in plain English (this
+    /// file's own policy — CLI output is not localized).
+    ///
+    /// An exhaustive `switch` over a closed enum, which is the structural
+    /// half of Task 3 review I-2: the previous version interpolated the raw
+    /// method name and printed "macSCP does not createDirectory buckets".
+    /// A case added to `BucketLevelOperation` now fails to compile here
+    /// until someone writes its sentence.
+    private static func refusalReason(
+        _ operation: RemoteFSError.BucketLevelOperation
+    ) -> String {
+        switch operation {
+        case .write:
+            return "macSCP does not write to a bucket itself"
+        case .delete:
+            return "macSCP does not delete buckets"
+        case .createDirectory:
+            return "macSCP does not create folders beside the buckets"
+        case .deleteTree:
+            return "macSCP does not empty buckets"
+        case .rename:
+            return "macSCP does not rename buckets"
+        case .presignedURL:
+            return "macSCP does not sign links for a bucket itself"
+        }
+    }
+
     /// A readable line for stderr. `ExitCode`'s own message is empty by
     /// design (see the CLI's `main()` override), so without this the user
     /// would see nothing at all rather than a bare case name — this is
@@ -155,7 +182,7 @@ public enum CLIErrorMapping {
             case .bucketListEmpty:
                 return "Error: this key may list buckets, but the account has none"
             case .bucketLevelRefused(let operation, let path):
-                return "Error: \(path) is a bucket; macSCP does not \(operation) buckets"
+                return "Error: \(path) is a bucket; \(Self.refusalReason(operation))"
             }
         default:
             // Stringifying an arbitrary, unmapped error is a FLOOR, not a

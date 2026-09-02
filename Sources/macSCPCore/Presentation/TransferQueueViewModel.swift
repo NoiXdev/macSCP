@@ -1326,6 +1326,16 @@ public final class TransferQueueViewModel {
             return String(format: CoreL10n.string("core.error.connectionLost %@"), reason)
         case RemoteFSError.protocolError(let reason):
             return String(format: CoreL10n.string("core.transfer.failed %@"), reason)
+        // The SECOND `message(for:)` this project has (Task 3 review, I-1).
+        // A folder dropped onto an S3 bucket-list root makes
+        // `TransferEngine` call `createDirectory("/name")`, which
+        // `S3FileSystem` refuses — and this switch's `default:` below
+        // renders `String(describing:)`, so without this arm the queue
+        // showed the raw case. It reads exactly like the browser's arm in
+        // `RemoteBrowserViewModel.message(for:path:)`, deliberately: a new
+        // `RemoteFSError` case has two dumping `default:`s to close, not one.
+        case RemoteFSError.bucketLevelRefused(let operation, _):
+            return CoreL10n.string(operation.refusalMessageKey)
         default:
             return String(format: CoreL10n.string("core.transfer.failed %@"), String(describing: error))
         }

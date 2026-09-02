@@ -2730,6 +2730,26 @@ struct TransferQueueViewModelTests {
         #expect(message == String(format: CoreL10n.string("core.transfer.notFound %@"), "/a.txt"))
     }
 
+    /// The SECOND `message(for:)` in this project (Task 3 review, I-1). A
+    /// folder dropped onto the bucket-list root makes `TransferEngine` call
+    /// `createDirectory("/name")`, which `S3FileSystem` refuses — and until
+    /// this arm existed the queue rendered the raw case through
+    /// `default:`. Every operation, so a case added later cannot slip
+    /// through with a dump.
+    @Test func everyBucketLevelRefusalGetsAWrittenSentenceInTheQueue() {
+        for operation in RemoteFSError.BucketLevelOperation.allCases {
+            let error = RemoteFSError.bucketLevelRefused(operation: operation, path: "/photos")
+            let message = TransferQueueViewModel.message(for: error)
+
+            #expect(message == CoreL10n.string(operation.refusalMessageKey))
+            // The catalog answered (a missing key comes back AS the key),
+            // and the raw dump is not what came out.
+            #expect(message != operation.refusalMessageKey)
+            #expect(message != String(
+                format: CoreL10n.string("core.transfer.failed %@"), String(describing: error)))
+        }
+    }
+
     // MARK: - 43 (M6b/T1)
 
     /// `TransferConflict.isPartOfFolderTransfer` distinguishes a lone-file

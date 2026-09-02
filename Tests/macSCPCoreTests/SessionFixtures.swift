@@ -107,7 +107,15 @@ func s3ExportFields(
     region: String = "eu-central-1",
     endpoint: String = "https://s3.example.com",
     bucket: String = "bucket",
-    usePathStyle: Bool = false
+    usePathStyle: Bool = false,
+    /// OPTIONAL, and absent by default, because a bag without this key is a
+    /// real shape and one this file's callers rely on: `SessionExportCodec
+    /// .upgradeV1Columns` folds five S3 columns out of a v1 file and writes
+    /// no toggle at all, so `ExportEnvelopeCodecTests`' golden-file
+    /// expectation must not carry one either. Writing "false"
+    /// unconditionally here made both of those tests red — which is the
+    /// fixture doing its job.
+    startsAtBucketList: Bool? = nil
 ) -> [String: String] {
     var values = FieldValues()
     values[S3Field.accessKeyID] = accessKeyID
@@ -115,6 +123,9 @@ func s3ExportFields(
     values[S3Field.endpoint] = endpoint
     values[S3Field.bucket] = bucket
     values[bool: S3Field.usePathStyle] = usePathStyle
+    if let startsAtBucketList {
+        values[bool: S3Field.startsAtBucketList] = startsAtBucketList
+    }
     return values.raw
 }
 

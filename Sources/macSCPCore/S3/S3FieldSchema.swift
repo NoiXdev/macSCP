@@ -39,10 +39,19 @@ public enum S3FieldSchema {
             //
             // NOT identifying, for the same reason `usePathStyle` is not:
             // it decides where the browser OPENS, not which account or
-            // bucket is reached. Two sessions differing only here are the
-            // same connection seen from two starting points — and with the
-            // toggle on the bucket is blank, so the identity key already
-            // tells the two apart through `bucket` itself.
+            // bucket is reached.
+            //
+            // What makes that decision safe is `bucketToCarry` below, not
+            // this sentence: with the toggle on, the bucket that leaves
+            // these values is the EMPTY string, so a bucket-list session
+            // and a session for one bucket of the same account differ in
+            // `bucket` and are told apart by the identity key. Two
+            // bucket-list sessions on one endpoint with one key are then
+            // the SAME connection, which is the intended reading — same
+            // account, same credentials, same thing browsed
+            // (`twoBucketListSessionsForTheSameAccountAreOneConnection`).
+            // An earlier version of this comment asserted the blank bucket
+            // as a premise while nothing enforced it (Task 3 review, I-4).
             ConnectionField(id: S3Field.startsAtBucketList.rawValue,
                             labelKey: "connection.s3.startsAtBucketList",
                             labelDefault: "Start at the bucket list", kind: .toggle),
@@ -154,6 +163,27 @@ public enum S3FieldSchema {
         ],
         presets: [])
 
+    /// The bucket these values describe: the trimmed field, or the EMPTY
+    /// string while the connection starts at the bucket list (Task 3
+    /// review, I-4).
+    ///
+    /// Hiding a field does not clear its value — `SchemaFormView` filters
+    /// only what it renders — so without this a user who types a bucket and
+    /// then turns the toggle on saves a bucket the connection never reads.
+    /// That stale value is not merely untidy: `identifyingFields` ignores
+    /// visibility, so it enters the import duplicate key, where it made a
+    /// bucket-list session collide with the plain session for that same
+    /// bucket and offer Replace — which takes over the stored session's id.
+    ///
+    /// The BAG is deliberately left alone. Only the two boundaries out of
+    /// it (the runtime config and the stored config) blank the bucket, so
+    /// a toggle flipped on and back off inside one unsaved form still shows
+    /// what the user typed.
+    private static func bucketToCarry(_ values: FieldValues) -> String {
+        guard !values[bool: S3Field.startsAtBucketList] else { return "" }
+        return values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     public static func makeConfig(
         _ values: FieldValues, _ secret: String
     ) throws -> ConnectionConfig {
@@ -217,7 +247,7 @@ public enum S3FieldSchema {
             secretAccessKey: secret.trimmingCharacters(in: .whitespacesAndNewlines),
             region: values[S3Field.region].trimmingCharacters(in: .whitespacesAndNewlines),
             endpoint: values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines),
-            bucket: values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines),
+            bucket: bucketToCarry(values),
             usePathStyle: values[bool: S3Field.usePathStyle],
             sessionToken: nil,
             startsAtBucketList: values[bool: S3Field.startsAtBucketList]))
@@ -282,7 +312,7 @@ public enum S3FieldSchema {
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             region: values[S3Field.region].trimmingCharacters(in: .whitespacesAndNewlines),
             endpoint: values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines),
-            bucket: values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines),
+            bucket: bucketToCarry(values),
             usePathStyle: values[bool: S3Field.usePathStyle],
             startsAtBucketList: values[bool: S3Field.startsAtBucketList])
     }

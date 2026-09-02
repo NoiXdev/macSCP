@@ -293,18 +293,33 @@ struct RemoteBrowserViewModelTests {
     /// so it gets its own sentence instead of falling into `default:` and
     /// dumping `String(describing:)` — which would print the operation name
     /// and the path at the user.
-    @Test func aBucketLevelRefusalGetsItsOwnMessageRatherThanARawDump() {
-        let error = RemoteFSError.bucketLevelRefused(
-            operation: "delete", path: "/macscp-seed")
+    @Test func everyBucketLevelRefusalGetsItsOwnMessageRatherThanARawDump() {
+        for operation in RemoteFSError.BucketLevelOperation.allCases {
+            let error = RemoteFSError.bucketLevelRefused(
+                operation: operation, path: "/macscp-seed")
 
-        let message = RemoteBrowserViewModel.message(for: error, path: "/macscp-seed")
+            let message = RemoteBrowserViewModel.message(for: error, path: "/macscp-seed")
 
-        #expect(message == CoreL10n.string("core.connect.s3BucketLevelRefused"))
-        // Positive check beside it: the catalog answered (a missing key
-        // comes back as the key itself), and the raw dump is NOT what came
-        // out.
-        #expect(CoreL10n.string("core.connect.s3BucketLevelRefused")
-            != "core.connect.s3BucketLevelRefused")
+            #expect(message == CoreL10n.string(operation.refusalMessageKey))
+            // Positive check beside it: the catalog answered (a missing key
+            // comes back as the key itself), and the raw dump is NOT what
+            // came out.
+            #expect(message != operation.refusalMessageKey)
+            #expect(message != String(
+                format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)))
+        }
+    }
+
+    /// `.bucketListForbidden` reaches a BROWSE action too (Task 3 review,
+    /// M-3): `listBuckets` runs again on every listing of `/` and on a
+    /// `stat` of a bucket, so a policy revoked mid-session lands here — and
+    /// used to print `core.error.unexpected bucketListForbidden`.
+    @Test func aForbiddenBucketListMidSessionIsNotAnUnexpectedError() {
+        let error = RemoteFSError.bucketListForbidden
+
+        let message = RemoteBrowserViewModel.message(for: error, path: "/")
+
+        #expect(message == CoreL10n.string("core.connect.s3BucketListForbidden"))
         #expect(message != String(
             format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)))
     }

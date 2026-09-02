@@ -613,6 +613,48 @@ struct LocalizationParityTests {
         #expect(matched > 0, "no catalog declared \(key) -- this check scanned nothing")
     }
 
+    /// Every refused bucket-level operation carries its own sentence, in
+    /// every locale (Task 3 review, I-2). The three renderers DERIVE the
+    /// key from the case (`BucketLevelOperation.refusalMessageKey`), and a
+    /// derived lookup cannot fail loudly — `CoreL10n.string` falls back to
+    /// the key text — so this is the check that a case added without its
+    /// catalog entries is red.
+    ///
+    /// Only the reference catalogs are asked for the key;
+    /// `everyTranslationDeclaresExactlyTheEnglishKeys` above already holds
+    /// every translation to exactly the English key set, so a key present
+    /// in `en` is present in all four or that check is red instead.
+    @Test func everyBucketLevelOperationHasItsOwnSentence() throws {
+        var seen: [String: String] = [:]
+        var declaringCatalogs = 0
+        for (reference, _) in try Self.allCatalogs() {
+            guard reference.entries[RemoteFSError.BucketLevelOperation.write.refusalMessageKey]
+                != nil
+            else { continue }
+            declaringCatalogs += 1
+            for operation in RemoteFSError.BucketLevelOperation.allCases {
+                let key = operation.refusalMessageKey
+                let value = reference.entries[key]
+                #expect(value != nil, """
+                    \(reference.label) has no sentence for \(operation): \(key) is missing, \
+                    so the refusal renders as its own key.
+                    """)
+                guard let value else { continue }
+                // Two operations sharing a sentence means one of them was
+                // pasted rather than written.
+                #expect(seen[value] == nil, """
+                    \(reference.label) uses the same sentence for \(operation) and for \
+                    \(seen[value] ?? "?"): \(value)
+                    """)
+                seen[value] = operation.rawValue
+            }
+        }
+        #expect(declaringCatalogs == 1, """
+            \(declaringCatalogs) reference catalog(s) declare these keys — expected exactly \
+            the Core one; zero means this check scanned nothing.
+            """)
+    }
+
     /// The toggle's name exists THREE times: once as the label the form
     /// renders (the App catalog, keyed by `ConnectionField.labelKey`), once
     /// as Core's own spelling of it, and once inside every message that

@@ -190,8 +190,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     ///
     /// `operation` names the call being refused, so the error says which
     /// rule stopped what — and so a test can assert the refusal per
-    /// operation instead of settling for an aggregate request count.
-    private func refuseBucketLevelOperation(_ operation: String, path: String) throws {
+    /// operation instead of settling for an aggregate request count. It is
+    /// an enum, so every renderer of the refusal is compile-forced to have
+    /// a sentence for it.
+    private func refuseBucketLevelOperation(
+        _ operation: RemoteFSError.BucketLevelOperation, path: String
+    ) throws {
         guard case .bucketList = mode else { return }
         guard try mode.resolve(path: path).key.isEmpty else { return }
         throw RemoteFSError.bucketLevelRefused(operation: operation, path: path)
@@ -311,7 +315,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `TransferEngine` only ever hands an S3 destination `.overwrite` — a
     /// resumed `.append` write from a non-zero offset never reaches here.
     public func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
-        try refuseBucketLevelOperation("write", path: path)
+        try refuseBucketLevelOperation(.write, path: path)
         try await S3Uploader().upload(key: Self.objectKey(forPath: path), contents: contents, using: self)
     }
 
@@ -320,7 +324,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// non-2xx (403/404/other) is still mapped through `sendExpectingSuccess`
     /// like any other request. Delegates to the raw-key overload below.
     public func delete(path: String) async throws {
-        try refuseBucketLevelOperation("delete", path: path)
+        try refuseBucketLevelOperation(.delete, path: path)
         let (bucket, key) = try mode.resolve(path: path)
         try await delete(bucket: bucket, key: key)
     }
@@ -345,7 +349,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// recognizes this marker). Idempotent: re-PUTting the same marker is
     /// harmless.
     public func createDirectory(at path: String) async throws {
-        try refuseBucketLevelOperation("createDirectory", path: path)
+        try refuseBucketLevelOperation(.createDirectory, path: path)
         let (bucket, key) = try mode.resolve(path: path)
         let markerKey = key + "/"
         let request = try buildSignedRequest(
@@ -373,8 +377,8 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     public func rename(from: String, to: String) async throws {
         // Both ends, and before the destination pre-check, so a refused
         // rename issues no request at all.
-        try refuseBucketLevelOperation("rename", path: from)
-        try refuseBucketLevelOperation("rename", path: to)
+        try refuseBucketLevelOperation(.rename, path: from)
+        try refuseBucketLevelOperation(.rename, path: to)
         do {
             _ = try await stat(path: to)
             throw RemoteFSError.protocolError(reason: "Destination already exists: \(to)")
@@ -426,7 +430,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// substring check on the body is enough to catch a partial failure
     /// without a full XML parse.
     public func deleteTree(at path: String) async throws {
-        try refuseBucketLevelOperation("deleteTree", path: path)
+        try refuseBucketLevelOperation(.deleteTree, path: path)
         let (bucket, treePrefix) = try resolvePrefix(path: path)
         let keys = try await allObjectKeys(bucket: bucket, underPrefix: treePrefix)
         for batch in keys.chunked(into: 1000) {
@@ -989,7 +993,7 @@ extension S3FileSystem: PresignedURLProvider {
         // `CreateBucket`, signed and handed to a third party. `.get` is
         // refused by the same line and for its own reason: a signed GET on
         // a bucket root is that bucket's whole listing.
-        try refuseBucketLevelOperation("presignedURL", path: "/" + key)
+        try refuseBucketLevelOperation(.presignedURL, path: "/" + key)
         let (bucket, objectKey) = try mode.resolve(path: "/" + key)
         // Base object URL (no query yet).
         let base = try Self.keyRequestURL(

@@ -41,7 +41,7 @@
 "core.connect.s3BucketRequired" = "Enter the bucket — it is the first folder you see. To browse every bucket of the account instead, turn on “Start at the bucket list”.";
 "core.connect.s3RegionRequired" = "Enter the region. It is part of the request signature, so it cannot be left empty; most S3-compatible providers accept us-east-1.";
 
-/* The bucket-list toggle and its three outcomes (2026-09-02). The toggle's
+/* The bucket-list toggle and its messages (2026-09-02). The toggle's
    own name is a key here because the messages that instruct the user to
    work it quote it verbatim, and the label the user actually reads lives in
    the App catalog; `theMessagesThatNameTheToggleQuoteTheLabelTheUserSees`
@@ -49,7 +49,16 @@
 "core.connect.s3StartsAtBucketList" = "Start at the bucket list";
 "core.connect.s3BucketListForbidden" = "This key may not list buckets. Turn off “Start at the bucket list” and enter the bucket.";
 "core.connect.s3BucketListEmpty" = "This key can list buckets, but the account has none.";
-"core.connect.s3BucketLevelRefused" = "That can't be done on a bucket itself. Open the bucket first.";
+/* One sentence per refused operation (`RemoteFSError.BucketLevelOperation`),
+   keyed by the case's raw value so the three renderers derive the key rather
+   than spell it. `everyBucketLevelOperationHasItsOwnSentence` iterates
+   `allCases`, so a case added without these four entries is red. */
+"core.connect.s3BucketLevelRefused.write" = "macSCP can't write to a bucket itself. Open the bucket and put the file inside it.";
+"core.connect.s3BucketLevelRefused.delete" = "macSCP can't delete a bucket. Open the bucket to delete what is inside it.";
+"core.connect.s3BucketLevelRefused.createDirectory" = "macSCP can't create a folder beside the buckets. Open a bucket first.";
+"core.connect.s3BucketLevelRefused.deleteTree" = "macSCP can't empty a bucket. Open the bucket and delete what is inside it.";
+"core.connect.s3BucketLevelRefused.rename" = "macSCP can't rename a bucket. Open the bucket to rename what is inside it.";
+"core.connect.s3BucketLevelRefused.presignedURL" = "macSCP can't share a link to a bucket itself. Open the bucket and share a file inside it.";
 
 /* ConnectionViewModel WebDAV form validation (M21/T9) */
 "core.connect.webdavFieldRequired" = "Enter the WebDAV server URL.";

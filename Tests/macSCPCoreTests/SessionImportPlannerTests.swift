@@ -1242,6 +1242,86 @@ struct SessionImportPlannerTests {
         #expect(plan.skipped.count == 1)
     }
 
+    /// A bucket-list session addresses the ACCOUNT, so it carries no bucket
+    /// (`S3FieldSchema.stored(from:)` writes `""` while the toggle is on).
+    /// Two of them on the same endpoint with the same key are therefore one
+    /// connection — which is the intended reading: same account, same
+    /// credentials, same thing browsed. The toggle is deliberately not part
+    /// of the key.
+    ///
+    /// The stored side is built through `stored(from:)` from a bag that
+    /// still carries a bucket the user typed BEFORE flipping the toggle —
+    /// the exact shape Task 3 review I-4 is about — so this test measures
+    /// the save path and not a hand-written `StoredS3Config`.
+    @Test func twoBucketListSessionsForTheSameAccountAreOneConnection() async {
+        let existing = s3Session(
+            name: "s3-account",
+            config: S3FieldSchema.stored(from: bucketListFormValues(
+                staleBucket: "photos", accessKeyID: "AKIAEXAMPLE",
+                endpoint: "https://s3.eu-central-1.amazonaws.com")))
+        let file = ExportedSession(
+            id: UUID(), name: "s3-account-copy", kind: .s3,
+            fields: s3ExportFields(
+                accessKeyID: "AKIAEXAMPLE", region: "us-east-1",
+                endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "",
+                usePathStyle: true, startsAtBucketList: true))
+        let plan = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([file]),
+            arbiter: skipEverything)
+
+        #expect(plan.sessionsToImport.isEmpty)
+        #expect(plan.skipped.count == 1)
+    }
+
+    /// …and the half the stale bucket broke (Task 3 review, I-4): a
+    /// bucket-list session and a session for ONE bucket of the same account
+    /// are different connections.
+    ///
+    /// They were not while the hidden bucket field kept its typed value and
+    /// was persisted: the stored session below is saved from a form in
+    /// which `my-bucket` was typed and the toggle then turned on, so
+    /// without the blanking in `stored(from:)` its duplicate key carries
+    /// `my-bucket`, matches the incoming plain session for that bucket, and
+    /// the planner offers Replace — which takes over the stored session's
+    /// id.
+    @Test func aBucketListSessionIsNotTheSameConnectionAsOneOfItsBuckets() async {
+        let existing = s3Session(
+            name: "s3-account",
+            config: S3FieldSchema.stored(from: bucketListFormValues(
+                staleBucket: "my-bucket", accessKeyID: "AKIAEXAMPLE",
+                endpoint: "https://s3.eu-central-1.amazonaws.com")))
+        #expect(existing.s3?.startsAtBucketList == true)
+        let file = ExportedSession(
+            id: UUID(), name: "s3-one-bucket", kind: .s3,
+            fields: s3ExportFields(
+                accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+                endpoint: "https://s3.eu-central-1.amazonaws.com", bucket: "my-bucket",
+                usePathStyle: false))
+        let plan = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([file]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.sessionsToImport.first?.replacesExisting == false)
+        #expect(plan.sessionsToImport.first?.session.id != existing.id)
+    }
+
+    /// A form bag as it stands when the user typed a bucket and THEN turned
+    /// the toggle on: the field is hidden but its value is still in the bag,
+    /// because `SchemaFormView` filters only what it renders.
+    private func bucketListFormValues(
+        staleBucket: String, accessKeyID: String, endpoint: String
+    ) -> FieldValues {
+        var values = FieldValues()
+        values[S3Field.accessKeyID] = accessKeyID
+        values[S3Field.region] = "eu-central-1"
+        values[S3Field.endpoint] = endpoint
+        values[S3Field.bucket] = staleBucket
+        values[bool: S3Field.usePathStyle] = false
+        values[bool: S3Field.startsAtBucketList] = true
+        return values
+    }
+
     /// SSH semantics must not shift: the endpoint triple still is the key,
     /// against the store and within one file.
     @Test func identicalSSHEndpointsStillCollide() async {

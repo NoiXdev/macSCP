@@ -372,7 +372,7 @@ struct S3FileSystemTests {
     /// that test was the request count. Here the case itself is the
     /// assertion, and the transport's exhaustion error cannot satisfy it.
     private func expectBucketRefusal(
-        _ expectedOperation: String, _ expectedPath: String,
+        _ expectedOperation: RemoteFSError.BucketLevelOperation, _ expectedPath: String,
         sourceLocation: SourceLocation = #_sourceLocation,
         _ operation: () async throws -> Void
     ) async {
@@ -1340,26 +1340,26 @@ struct S3FileSystemTests {
     @Test func aBucketItselfIsNotAThingToWriteRenameOrDelete() async throws {
         let (fs, transport) = try await connectAtBucketList(responses: [])
 
-        await expectBucketRefusal("delete", "/macscp-seed") {
+        await expectBucketRefusal(.delete, "/macscp-seed") {
             try await fs.delete(path: "/macscp-seed")
         }
-        await expectBucketRefusal("deleteTree", "/macscp-seed") {
+        await expectBucketRefusal(.deleteTree, "/macscp-seed") {
             try await fs.deleteTree(at: "/macscp-seed")
         }
-        await expectBucketRefusal("createDirectory", "/macscp-seed") {
+        await expectBucketRefusal(.createDirectory, "/macscp-seed") {
             try await fs.createDirectory(at: "/macscp-seed")
         }
-        await expectBucketRefusal("write", "/macscp-seed") {
+        await expectBucketRefusal(.write, "/macscp-seed") {
             try await fs.write(
                 path: "/macscp-seed", mode: .overwrite,
                 contents: AsyncThrowingStream<Data, Error> { $0.finish() })
         }
         // Both ends of a rename, and the refusal names the END that was a
         // bucket — the source here, the DESTINATION below.
-        await expectBucketRefusal("rename", "/macscp-seed") {
+        await expectBucketRefusal(.rename, "/macscp-seed") {
             try await fs.rename(from: "/macscp-seed", to: "/macscp-third")
         }
-        await expectBucketRefusal("rename", "/macscp-third") {
+        await expectBucketRefusal(.rename, "/macscp-third") {
             try await fs.rename(from: "/macscp-seed/a.txt", to: "/macscp-third")
         }
 
@@ -1391,7 +1391,7 @@ struct S3FileSystemTests {
                     Issue.record("expected .bucketLevelRefused for \(method), got \(error)")
                     continue
                 }
-                #expect(operation == "presignedURL")
+                #expect(operation == .presignedURL)
                 #expect(path == "/macscp-third")
             }
         }
