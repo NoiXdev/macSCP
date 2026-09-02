@@ -14,7 +14,10 @@ struct GetCommand: AsyncParsableCommand {
         commandName: "get", abstract: "Download a remote file into a local directory.")
 
     @OptionGroup var options: GlobalOptions
-    @Argument(help: "Remote source file, e.g. prod:/var/log/app.log") var source: String
+    @Argument(
+        help: "Remote source file, e.g. prod:/var/log/app.log",
+        completion: SessionNameCompletion.kind)
+    var source: String
     @Argument(help: "Local destination directory (the file keeps its remote name)")
     var destination: String
 

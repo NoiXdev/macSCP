@@ -10,7 +10,8 @@ struct RmCommand: AsyncParsableCommand {
         commandName: "rm", abstract: "Delete a remote file or directory.")
 
     @OptionGroup var options: GlobalOptions
-    @Argument(help: "Remote path, e.g. prod:/tmp/old.log") var target: String
+    @Argument(help: "Remote path, e.g. prod:/tmp/old.log", completion: SessionNameCompletion.kind)
+    var target: String
 
     /// Recursive deletion is opt-in. `deleteTree(at:)` walks a whole
     /// subtree, and that is not something a typo should be able to trigger.

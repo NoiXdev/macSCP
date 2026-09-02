@@ -10,7 +10,8 @@ struct MkdirCommand: AsyncParsableCommand {
         commandName: "mkdir", abstract: "Create a remote directory.")
 
     @OptionGroup var options: GlobalOptions
-    @Argument(help: "Remote path, e.g. prod:/var/www/new") var target: String
+    @Argument(help: "Remote path, e.g. prod:/var/www/new", completion: SessionNameCompletion.kind)
+    var target: String
 
     func run() async throws {
         let reference = SessionReference.parse(target)

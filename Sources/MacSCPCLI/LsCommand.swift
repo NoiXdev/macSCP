@@ -7,7 +7,8 @@ struct LsCommand: AsyncParsableCommand {
         commandName: "ls", abstract: "List a remote directory.")
 
     @OptionGroup var options: GlobalOptions
-    @Argument(help: "Session reference, e.g. prod:/var/www") var target: String
+    @Argument(help: "Session reference, e.g. prod:/var/www", completion: SessionNameCompletion.kind)
+    var target: String
 
     func run() async throws {
         let reference = SessionReference.parse(target)

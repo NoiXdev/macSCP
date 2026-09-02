@@ -11,7 +11,10 @@ struct PutCommand: AsyncParsableCommand {
 
     @OptionGroup var options: GlobalOptions
     @Argument(help: "Local source file") var source: String
-    @Argument(help: "Remote destination directory, e.g. prod:/tmp/") var destination: String
+    @Argument(
+        help: "Remote destination directory, e.g. prod:/tmp/",
+        completion: SessionNameCompletion.kind)
+    var destination: String
 
     @Option(name: .long, help: "What to do if the destination exists: fail, skip or overwrite.")
     var onConflict: ConflictAction = .fail
