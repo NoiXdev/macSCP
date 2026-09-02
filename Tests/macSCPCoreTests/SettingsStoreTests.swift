@@ -855,10 +855,13 @@ struct SettingsStoreTests {
         #expect(reloaded.keepAliveIntervalSeconds == 15)
     }
 
-    /// Pins `SettingsStore.defaultKeepAliveIntervalSeconds` (Task 9's
-    /// Settings UI resumes the Keep-Alive stepper at this value when the
-    /// probe is turned back on from "off") against a FRESH store's own
-    /// default — same tie, and same reason to pin it, as
+    /// Pins `SettingsStore.defaultKeepAliveIntervalSeconds` — a single
+    /// source of truth for the literal `60` (`SettingsView.swift`'s
+    /// Keep-Alive stepper used to read it directly to resume at this value
+    /// when the probe was turned back on from "off"; 2026-09-02's
+    /// two-settings rebind removed that read, and `keepAliveIntervalSeconds`
+    /// itself now falls back to this same default) — against a FRESH
+    /// store's own default — same tie, and same reason to pin it, as
     /// `defaultConnectTimeoutSecondsMatchesAFreshStore` below.
     @Test func defaultKeepAliveIntervalSecondsMatchesAFreshStore() {
         let dir = makeTempDirectory()

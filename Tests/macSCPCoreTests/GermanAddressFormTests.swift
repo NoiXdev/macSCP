@@ -35,7 +35,7 @@ import Testing
 /// `connection.lost.body.needsPerson`,
 /// `connection.lost.hint.noSavedSession`, `connection.saveName.replaces %@`,
 /// `settings.cli.footer`, `settings.cli.status.translocated.detail`,
-/// `settings.cli.systemWide.footer`, `settings.connection.keepAlive.footer`,
+/// `settings.cli.systemWide.footer`, `settings.connection.keepAlive.footer %lld`,
 /// `settings.general.updateCheckHint`,
 /// `settings.terminal.target.builtInFallback.footer`,
 /// `snippets.dryRun.rehearsalNote`,

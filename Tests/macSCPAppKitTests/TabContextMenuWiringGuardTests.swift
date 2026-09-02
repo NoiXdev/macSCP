@@ -25,7 +25,7 @@ import Testing
 /// Why a guard at all: `TabContextMenuTests` proves what the decision
 /// FUNCTION answers, and it stays green whether or not anything calls it.
 /// This project has no SwiftUI rendering harness (the same boundary
-/// `PaneRenderConditionGuardTests` and `KeepAliveStepperWiringGuardTests`
+/// `PaneRenderConditionGuardTests` and `ConnectTimeoutAppWiringGuardTests`
 /// document), so a menu that quietly re-derives visibility in the view —
 /// the exact shape the design rejects — can only be caught by reading the
 /// source.
@@ -140,7 +140,7 @@ struct TabContextMenuWiringGuardTests {
     /// `<repoRoot>/Tests/macSCPAppKitTests/TabContextMenuWiringGuardTests.swift`;
     /// three `deletingLastPathComponent()` calls recover the repo root
     /// regardless of `swift test`'s working directory (same trick as
-    /// `KeepAliveStepperWiringGuardTests`).
+    /// `ConnectTimeoutAppWiringGuardTests`).
     private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()

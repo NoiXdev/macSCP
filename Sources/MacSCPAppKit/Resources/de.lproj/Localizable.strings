@@ -70,7 +70,7 @@
 "settings.connection.keepAlive.header" = "Keep-Alive";
 "settings.connection.keepAlive" = "Verbindung im Leerlauf prüfen";
 "settings.connection.keepAliveInterval %lld" = "Alle %lld Sekunden";
-"settings.connection.keepAlive.footer" = "Sendet in ruhigen Momenten einen kleinen Prüfimpuls, damit ein Verbindungsabbruch auffällt, bevor du die Verbindung nutzen willst. Ausgeschaltet bemerkt macSCP das erst, wenn du etwas tust. Wird die Prüfung ausgeschaltet, merkt sich macSCP das gewählte Intervall und stellt es beim erneuten Einschalten wieder her. Gespeichert wird das nicht: Nach einem Neustart – und womöglich schon, wenn du diesen Bereich verlässt – beginnt das Intervall wieder beim Standardwert.";
+"settings.connection.keepAlive.footer %lld" = "Eingeschaltet prüft macSCP eine ruhige Verbindung alle %lld Sekunden. Ausgeschaltet bleibt das eingestellte Intervall erhalten, bis du die Prüfung wieder einschaltest.";
 "settings.connection.reconnect.header" = "Wiederverbindung";
 "settings.connection.reconnect" = "Wenn eine Verbindung getrennt wird";
 "settings.connection.reconnect.offerOnly" = "Wiederverbindung anbieten";

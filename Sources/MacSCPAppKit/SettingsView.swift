@@ -832,59 +832,6 @@ private struct ShortcutsSettingsTab: View {
     }
 }
 
-/// The pure mapping behind the Keep-Alive toggle and interval stepper
-/// (Task 9). `SettingsStore.keepAliveIntervalSeconds` is a SINGLE stored
-/// integer where `0` means "off" — unlike `autoRefreshEnabled`/
-/// `autoRefreshIntervalSeconds` above, which are two separate settings, so
-/// their toggle and stepper each bind straight to their own property. This
-/// task deliberately added no second persisted setting for Keep-Alive, so
-/// the toggle and stepper both have to be derived from that one integer
-/// plus a view-local "what to resume at" value the view remembers while
-/// probing is off (see `SSHSettingsSection.lastKnownKeepAliveInterval`).
-///
-/// Pulled out for the same reason as `LivenessDotPlan` in TabStripView.swift
-/// — nothing in this project renders SwiftUI in a test, so this static,
-/// no-SwiftUI mapping is what a test CAN prove about the two controls: what
-/// each shows, and which is enabled, for a given stored value.
-enum KeepAliveControlPlan {
-    /// The toggle's own state: on iff the stored value is not the "off"
-    /// sentinel `0`.
-    static func isEnabled(storedSeconds: Int) -> Bool {
-        storedSeconds != 0
-    }
-
-    /// What the interval stepper displays. While probing is off, the
-    /// stored value IS `0` — showing that in a "every N seconds" field
-    /// would read as a broken stepper, not "no probe" — so it falls back
-    /// to `lastKnownInterval`, the view's own remembered on-value.
-    static func displayedInterval(storedSeconds: Int, lastKnownInterval: Int) -> Int {
-        storedSeconds != 0 ? storedSeconds : lastKnownInterval
-    }
-
-    /// What to persist when the toggle flips. Off writes the sentinel `0`
-    /// directly. On restores `lastKnownInterval` rather than
-    /// `SettingsStore`'s own clamp default, so turning probing off and
-    /// back on returns to what the user had before, not to the default 60.
-    static func storedValue(togglingTo isOn: Bool, lastKnownInterval: Int) -> Int {
-        isOn ? lastKnownInterval : 0
-    }
-
-    /// What to persist when the interval stepper itself commits a value
-    /// (fix round 1 — the stepper's `set` closure used to write
-    /// `store.keepAliveIntervalSeconds` straight from the committed value,
-    /// bypassing this plan entirely; it was safe only because the
-    /// Stepper's own `15...600` range and `.disabled` state kept `0` out,
-    /// not because anything tested said so). `isEnabled` is the SAME
-    /// `isEnabled(storedSeconds:)` check the toggle and the `.disabled`
-    /// modifier already use — passed in here rather than re-derived, so
-    /// this stays a pure function of its own two inputs. A commit that
-    /// somehow still reaches this while disabled clamps to the sentinel
-    /// instead of leaking a stray interval into the store.
-    static func storedValue(forIntervalChangeTo newInterval: Int, isEnabled: Bool) -> Int {
-        isEnabled ? newInterval : 0
-    }
-}
-
 /// The "SSH" protocol section (M18/T7): the external-terminal target picker
 /// (moved out of the former "Terminal" tab).
 ///
@@ -893,29 +840,16 @@ enum KeepAliveControlPlan {
 /// overlays in one list. External-terminal target was, for a while, the
 /// only setting left here — Task 9 ended that by adding three more
 /// sections below it: connect timeout, keep-alive probing, and reconnect
-/// behaviour, all three read straight off `SettingsStore` (the Keep-Alive
-/// pair through `KeepAliveControlPlan` above, the other two directly).
+/// behaviour, all four settings (Task 9's connect timeout and reconnect
+/// behaviour, plus keep-alive's two settings since 2026-09-02) read
+/// straight off `SettingsStore` and bind directly, the same way
+/// `autoRefreshEnabled`/`autoRefreshIntervalSeconds` do above.
 private struct SSHSettingsSection: View {
     @Bindable var store: SettingsStore
     /// Drives the custom-terminal-app picker (M11d/T2) — same
     /// `.fileImporter` pattern as `OpenWithSettingsTab`'s default-editor
     /// picker.
     @State private var showCustomAppPicker = false
-    /// Remembers the keep-alive interval across turning the probe off —
-    /// `store.keepAliveIntervalSeconds` collapses to `0` while off (Task 9's
-    /// "no second setting" constraint), so without this the stepper would
-    /// have nothing of its own to show and re-enabling would always land
-    /// back on `SettingsStore.defaultKeepAliveIntervalSeconds` instead of
-    /// what the user had. View-local only — never persisted, resets to the
-    /// stored value (or the default, if that is `0`) on every fresh launch.
-    @State private var lastKnownKeepAliveInterval: Int
-
-    init(store: SettingsStore) {
-        self.store = store
-        let current = store.keepAliveIntervalSeconds
-        _lastKnownKeepAliveInterval = State(
-            initialValue: current != 0 ? current : SettingsStore.defaultKeepAliveIntervalSeconds)
-    }
 
     /// Display name for `store.customTerminalAppPath`, or a placeholder when
     /// none is chosen yet — same idea as `OpenWithSettingsTab.appDisplayName`
@@ -1017,84 +951,44 @@ private struct SSHSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
 
-            // Keep-Alive (Task 9): the idle-connection probe interval.
-            // `0` means "off" and is the ONLY value the toggle/stepper
-            // pair below writes outside 15...600 — see
-            // `KeepAliveControlPlan` for the pure mapping and
-            // `lastKnownKeepAliveInterval` for why a disabled stepper
-            // still shows a sensible number.
+            // Keep-Alive (Task 9; rebound to two settings 2026-09-02):
+            // `keepAliveEnabled` and `keepAliveIntervalSeconds` are each
+            // their own persisted setting now, so the toggle and stepper
+            // bind straight to `store`, the same shape as the auto-refresh
+            // toggle/stepper above.
             Section {
                 Toggle(
                     L10n.string(
                         "settings.connection.keepAlive", "Check the connection while idle"),
-                    isOn: Binding(
-                        get: { KeepAliveControlPlan.isEnabled(storedSeconds: store.keepAliveIntervalSeconds) },
-                        set: { isOn in
-                            store.keepAliveIntervalSeconds = KeepAliveControlPlan.storedValue(
-                                togglingTo: isOn, lastKnownInterval: lastKnownKeepAliveInterval)
-                        }
-                    ))
+                    isOn: $store.keepAliveEnabled)
                 Stepper(
                     value: Binding(
-                        get: {
-                            KeepAliveControlPlan.displayedInterval(
-                                storedSeconds: store.keepAliveIntervalSeconds,
-                                lastKnownInterval: lastKnownKeepAliveInterval)
-                        },
-                        set: { newValue in
-                            lastKnownKeepAliveInterval = newValue
-                            // Routed through the plan (fix round 1) — every
-                            // write to `keepAliveIntervalSeconds` now goes
-                            // through `KeepAliveControlPlan`, not just the
-                            // toggle's; see `KeepAliveStepperWiringGuardTests`.
-                            store.keepAliveIntervalSeconds = KeepAliveControlPlan.storedValue(
-                                forIntervalChangeTo: newValue,
-                                isEnabled: KeepAliveControlPlan.isEnabled(
-                                    storedSeconds: store.keepAliveIntervalSeconds))
-                        }
+                        get: { store.keepAliveIntervalSeconds },
+                        set: { store.keepAliveIntervalSeconds = $0 }
                     ),
                     in: 15...600
                 ) {
                     Text(String(
                         format: L10n.string(
                             "settings.connection.keepAliveInterval %lld", "Every %lld seconds"),
-                        KeepAliveControlPlan.displayedInterval(
-                            storedSeconds: store.keepAliveIntervalSeconds,
-                            lastKnownInterval: lastKnownKeepAliveInterval)))
+                        store.keepAliveIntervalSeconds))
                 }
-                .disabled(!KeepAliveControlPlan.isEnabled(storedSeconds: store.keepAliveIntervalSeconds))
+                .disabled(!store.keepAliveEnabled)
             } header: {
                 Text(L10n.string("settings.connection.keepAlive.header", "Keep-Alive"))
             } footer: {
-                // The last two sentences describe what the toggle actually
-                // does with the interval, corrected by the whole-branch
-                // final review (finding I-2). A previous wording claimed
-                // the interval is NOT remembered, which
-                // `KeepAliveControlPlan.storedValue(togglingTo:
-                // lastKnownInterval:)` contradicts and
-                // `KeepAliveControlPlanTests
-                // .togglingOnRestoresTheRememberedValueNotTheStoreDefault`
-                // pins: turning probing back on restores what the user had.
-                // How LONG that memory lasts is the part this project
-                // cannot verify — `lastKnownKeepAliveInterval` is `@State`
-                // on this view, so a relaunch certainly loses it and
-                // leaving this section may, and nothing here can render a
-                // view to find out which. Hence a sentence that promises
-                // the restore and hedges only the lifetime, rather than
-                // one that denies the restore to stay safe.
-                //
-                // The fallback text spells the whole footer out, unlike
-                // the shorter one it replaced: a fallback that says less
-                // than the catalog is a second, quieter version of the
-                // disclosure for anyone whose catalog fails to load.
-                Text(L10n.string(
-                    "settings.connection.keepAlive.footer",
-                    "Sends a small probe on a quiet connection so a dropped network shows "
-                        + "up before you try to use it. Off, macSCP only notices when you "
-                        + "act. Turning this off remembers the interval you chose, and "
-                        + "turning it back on restores it. That memory is not saved: after "
-                        + "a relaunch, and possibly as soon as you leave this section, the "
-                        + "interval starts over at the default."))
+                // Turning the toggle off no longer touches the interval at
+                // all (2026-09-02: two settings, not one sentinel) — the
+                // stepper's own value just sits there, disabled, until the
+                // toggle is switched back on. No "remembered while off,
+                // lost on relaunch" hedge to write here any more: there is
+                // nothing transient to describe.
+                Text(String(
+                    format: L10n.string(
+                        "settings.connection.keepAlive.footer %lld",
+                        "While on, macSCP checks an idle connection every %lld seconds. Off "
+                            + "keeps the interval for when you turn it back on."),
+                    store.keepAliveIntervalSeconds))
                     .foregroundStyle(.secondary)
             }
 
