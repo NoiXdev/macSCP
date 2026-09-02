@@ -1,8 +1,9 @@
 # Backlog: unbounded file closes
 
 **Logged:** 2026-08-28, as a side finding of two measurements on
-teardown against a frozen peer. **Not a design, and explicitly not a
-measured bug** — a read observation with a known precedent beside it.
+teardown against a frozen peer. **Not a design.** Logged as a read
+observation with a known precedent beside it; **partially confirmed by
+measurement 2026-09-02** — see below.
 
 ## Where this comes from
 
@@ -70,10 +71,75 @@ postcondition is read **before** the thaw. One run of this series was
 green while the defect was present, because it only queried the state
 afterward. This has stood as a rule in `CLAUDE.md` since 2026-08-28.
 
+## Measured 2026-09-02
+
+Full measurement: `.superpowers/sdd/2026-09-02-unbounded-file-closes-measurement/task-1-report.md`.
+
+Setup: a disposable OpenSSH container on its own ports (2226–2229), never
+the shared rig's 2222; an 8 MB file uploaded; `docker pause` to freeze the
+peer; every postcondition captured before `docker unpause`; a 10 s bound;
+three runs per measurement.
+
+**Measured, and confirmed:** `SFTPFile.close()` alone — no request in
+flight, no cancellation — hangs against a frozen peer. Opened through
+Citadel's `SFTPClient.openFile` exactly as `CitadelFileSystem` does (via
+`BoundedSFTPSession`'s passthrough). 6 of 6 runs never returned within the
+bound:
+
+| Path | `elapsed` (3 runs) |
+|---|---|
+| read handle | 10.424879708999999 s / 10.556509084 s / 10.365250416 s |
+| write file | 10.6655905 s / 10.600569125 s / 10.564797167 s |
+
+Against a live peer the same close returned in ~1 ms (0.001006042 s read,
+0.001760375 s write). This confirms the entry's suspicion for the two
+counted sites this measurement covered — `readStream`'s and `write`'s
+`catch is CancellationError` closes. **The other six counted sites were
+not measured** and stay in the "read, not measured" register above.
+
+**Measured, not part of the counted finding — a separate, new result:** a
+cancelled Swift `Task` does not interrupt an in-flight SFTP read or write
+against a frozen peer. `SFTPClient.sendRequest`
+(`.build/checkouts/Citadel/Sources/Citadel/SFTP/Client/SFTPClient.swift:87-100`)
+awaits a bare `EventLoopFuture.get()` with no cancellation handler, and
+none of `SFTPFile.read`, `.write`, `.close()` check `Task.isCancelled`
+anywhere. 6 of 6 runs:
+
+| Path | `elapsed` (3 runs) |
+|---|---|
+| read | 10.104154583 s / 10.323723167 s / 10.637901167 s |
+| write | 10.129350249999998 s / 10.150931375 s / 10.2078625 s |
+
+A round-1 review caught that the first version of this measurement
+conflated the two findings above — read as "the cancellation-branch
+`close()` hangs," when in fact the in-flight request ahead of it never
+returns, so the `catch is CancellationError` arm (and its `close()`) is
+never reached while the peer stays silent. **Consequence for a fix:** a
+bounded `close()` alone would not be reached by the `readStream`/`write`
+cancellation branches as they exist today — the in-flight request ahead of
+it is what does not return first. This is a new, measured finding in its
+own right — a transfer cancelled against a dead peer stays stuck until the
+peer answers — with its fix direction left open (a deadline/race around
+the request itself, or channel-level teardown on cancel; not designed
+here).
+
+**What this means for the entry:** "not a confirmed bug" is withdrawn for
+`SFTPFile.close()` — two of the eight counted sites are now confirmed to
+hang, structurally, not by coincidence. `BoundedClose` is the shape for a
+fix. Nothing was committed: four gated tests sit red against these two
+real defects in the SDD workspace (two assert `returned == true` for the
+close-only sites, turning green once close is bounded; the two
+cancellation tests are the separate defect above and will not turn green
+from a close-only fix).
+
 ## What this is not
 
-- **Not a confirmed bug.** Nobody has seen a hanging file close; it is a
-  shape similarity to two cases that did hang.
+- **Withdrawn 2026-09-02 for `SFTPFile.close()`: this is now a confirmed
+  bug**, not just a shape similarity — measured hanging in isolation, 6 of
+  6 runs, for the two counted sites this measurement covered (`readStream`'s
+  and `write`'s cancellation-branch closes). See "Measured 2026-09-02"
+  above. The other six counted sites remain unmeasured and the withdrawal
+  does not extend to them.
 - **No reason to touch `deinit`.** The detached close there is a
   separate question (a leaked task, not a hang) and does not belong in
   the same change.
