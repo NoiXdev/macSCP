@@ -64,16 +64,24 @@ private let seedFileName = "hello.txt"
 /// leftover container must not be able to collide with another's bind.
 /// Clear of every port named in the doc comment on `shellDropServerPort`.
 /// Back the close()-alone measurements, which bypass `CitadelFileSystem`
-/// entirely — see `connectRawSFTP`.
+/// but not macSCP's own SFTP session — see `connectBoundedSFTP`.
 private let isolatedReadCloseServerPort = 2228
 private let isolatedWriteCloseServerPort = 2229
 
 /// Bound for every file-close measurement in this section: how long
-/// `close()` is given to return once it is racing a peer that is STILL
-/// FROZEN. Unlike `teardownBoundSeconds`, this is not derived from a
-/// production deadline — there is no bound on `SFTPReadHandle.close()` /
-/// `SFTPFile.close()` to derive from; whether one is needed is exactly what
-/// these tests measure. 10s, per the measurement plan
+/// `BoundedSFTPFile.closeBounded()` is given to return once it is racing a
+/// peer that is STILL FROZEN.
+///
+/// Deliberately NOT derived from the production bound it measures, unlike
+/// `teardownBoundSeconds` — and that is the point, not an oversight. The
+/// production bound is `BoundedSFTPSession.closeBoundSeconds`; a test that
+/// spelled the same number could only ever answer "did the bound fire at
+/// exactly its own value", which is a tautology about `BoundedClose`. This
+/// number is larger on purpose, so what it answers is the question the
+/// measurement asked: does the close return AT ALL against a peer that has
+/// stopped answering. It has to stay comfortably above the production bound
+/// for that to keep working; at 10s against 5s it has a factor of two.
+/// 10s, per the measurement plan
 /// (`.superpowers/sdd/2026-09-02-unbounded-file-closes-measurement/task-1-brief.md`).
 private let fileCloseBoundSeconds = 10
 
@@ -112,24 +120,35 @@ private func connectToSSHServer(port: Int) async throws -> CitadelFileSystem {
 }
 
 /// Connects to an SSH server on `port` through Citadel DIRECTLY, bypassing
-/// `CitadelFileSystem` entirely, and opens an SFTP subchannel on it.
+/// `CitadelFileSystem`, and opens macSCP's own SFTP session on it.
 ///
 /// Needed for the isolate-close() measurements below
 /// (`aReadHandleCloseAgainstAStillFrozenPeerReturnsInsideTheBound` and
 /// `aWriteFileCloseAgainstAStillFrozenPeerReturnsInsideTheBound`): those
-/// tests measure `SFTPFile.close()` alone, and
-/// `CitadelFileSystem.readStream`/`.write` never hand the raw `SFTPFile`
-/// handle back to a caller — closing it happens only inside those methods'
-/// own bodies, which is not a path either test can reach from outside it.
+/// tests measure one file close alone, and
+/// `CitadelFileSystem.readStream`/`.write` never hand their file handle
+/// back to a caller — closing it happens only inside those methods' own
+/// bodies, which is not a path either test can reach from outside it.
 /// Retries past the disposable container's own startup, the same shape and
 /// reason as `DisposableSSHServer.connect()`.
+///
+/// What is bypassed is `CitadelFileSystem`, and nothing below it: the
+/// session handed back is a `BoundedSFTPSession`, so the file it opens is a
+/// `BoundedSFTPFile` and the close these tests measure is
+/// `closeBounded()` — the call the product makes. While the measurement was
+/// being taken (Task 1) this returned Citadel's own `SFTPClient` and the
+/// tests closed a raw `SFTPFile`, because there was then nothing else to
+/// close; measuring that now would measure Citadel rather than macSCP, and
+/// would go on passing if `BoundedSFTPFile` were deleted.
 ///
 /// No host-key persistence, unlike `connectToSSHServer`: this dials a
 /// throwaway disposable container once per test, so there is nothing
 /// worth pinning past that single connection, and `.acceptAnything()` is
 /// the same TOFU-bypass posture the rest of this file's raw fixture
 /// connections use.
-private func connectRawSFTP(port: Int) async throws -> (client: SSHClient, sftp: SFTPClient) {
+private func connectBoundedSFTP(
+    port: Int
+) async throws -> (client: SSHClient, sftp: BoundedSFTPSession) {
     let deadline = ContinuousClock.now.advanced(by: .seconds(90))
     var lastError: Error?
     while ContinuousClock.now < deadline {
@@ -139,7 +158,7 @@ private func connectRawSFTP(port: Int) async throws -> (client: SSHClient, sftp:
                 authenticationMethod: .passwordBased(username: "testuser", password: "testpass"),
                 hostKeyValidator: .acceptAnything(),
                 reconnect: .never)
-            let sftp = try await client.openSFTP()
+            let sftp = try await BoundedSFTPSession.open(on: client)
             return (client, sftp)
         } catch {
             lastError = error
@@ -147,27 +166,7 @@ private func connectRawSFTP(port: Int) async throws -> (client: SSHClient, sftp:
         }
     }
     throw DockerError.serverNeverAccepted(
-        name: "raw SFTP on port \(port)", underlying: String(describing: lastError))
-}
-
-/// Wraps a non-`Sendable` Citadel value so it can cross into an
-/// unstructured `Task` — the same crossing `DataBox` above makes for a
-/// `Process`'s background drain, generalized. Safe here because each
-/// isolate-close() test below touches the wrapped handle strictly
-/// sequentially (open, one read or write, freeze, close) and never
-/// concurrently; nothing else ever reaches into the box. A `sending`
-/// parameter was tried first and rejected by the compiler even though
-/// nothing in these tests actually uses the value again afterward — the
-/// checker cannot verify that once the value has been captured into an
-/// escaping closure passed to another function (`BoundedRun.run` /
-/// `Task.init`), so this sidesteps the check with an explicit, narrow,
-/// justified `@unchecked Sendable` instead, the same trade this project
-/// already makes at the Citadel boundary in
-/// `Sources/macSCPCore/SSH/CitadelFileSystem.swift`'s own top-of-file
-/// comment.
-private final class UncheckedBox<Wrapped>: @unchecked Sendable {
-    let value: Wrapped
-    init(_ value: Wrapped) { self.value = value }
+        name: "bounded SFTP on port \(port)", underlying: String(describing: lastError))
 }
 
 /// Closes `client`, discarding any error.
@@ -1326,27 +1325,28 @@ struct LivenessProbeDropIntegrationTests {
         #expect(sessionAtBound == nil)
     }
 
-    // MARK: - Unbounded file closes (measurement, not a fix)
+    // MARK: - Bounded file closes
 
-    /// Isolates `SFTPFile.close()` (read handle) on its own, with nothing
-    /// else in flight, against a peer that is STILL FROZEN.
+    /// Isolates one read-handle close on its own, with nothing else in
+    /// flight, against a peer that is STILL FROZEN.
     ///
-    /// Reaches the raw `SFTPFile` through `connectRawSFTP`, bypassing
-    /// `CitadelFileSystem.readStream` entirely — that method never hands
-    /// its handle back to a caller, so there is no way to isolate its
-    /// close from outside it. This connects through Citadel directly, the
-    /// same Citadel this project already depends on
+    /// Reaches a `BoundedSFTPFile` through `connectBoundedSFTP`, bypassing
+    /// `CitadelFileSystem.readStream` — that method never hands its handle
+    /// back to a caller, so there is no way to isolate its close from
+    /// outside it. The connection underneath is opened through Citadel
+    /// directly, the same Citadel this project already depends on
     /// (`Package.swift`'s `Citadel` product), the way `connectToSSHServer`
     /// connects through `CitadelFileSystem` for every other test in this
-    /// file.
+    /// file; what is measured on top of it is macSCP's own
+    /// `closeBounded()`, not Citadel's `close()`.
     ///
     /// Shape: upload the fixture through the normal path (so the server
     /// answering is proven before anything freezes), open a SECOND,
-    /// independent handle on it directly through Citadel, read ONE chunk
-    /// and await its return — proof the handle is real and nothing is
-    /// left in flight — freeze the peer, then call `close()` on that idle
-    /// handle and measure it alone against the bound, the same
-    /// before-thaw-capture discipline as every other test in this file.
+    /// independent handle on it, read ONE chunk and await its return —
+    /// proof the handle is real and nothing is left in flight — freeze the
+    /// peer, then call `closeBounded()` on that idle handle and measure it
+    /// alone against the bound, the same before-thaw-capture discipline as
+    /// every other test in this file.
     @Test func aReadHandleCloseAgainstAStillFrozenPeerReturnsInsideTheBound() async throws {
         let server = try DisposableSSHServer.start(port: isolatedReadCloseServerPort)
         let watchdog = DisposableSSHServer.pruneAfter(seconds: fileCloseBoundSeconds + 180)
@@ -1358,7 +1358,7 @@ struct LivenessProbeDropIntegrationTests {
         let remotePath = "/config/macscp-isolated-read-close-\(UUID().uuidString).bin"
         try await uploadCloseFixtureFile(to: fs, path: remotePath)
 
-        let (rawClient, sftp) = try await connectRawSFTP(port: isolatedReadCloseServerPort)
+        let (rawClient, sftp) = try await connectBoundedSFTP(port: isolatedReadCloseServerPort)
         let handle = try await sftp.openFile(filePath: remotePath, flags: .read)
 
         // ONE read, awaited to completion against the STILL-LIVE peer:
@@ -1375,30 +1375,34 @@ struct LivenessProbeDropIntegrationTests {
         try server.freeze()
         // No request is in flight here: the read above already returned,
         // and nothing else has been issued on this handle since. What
-        // races the bound below is `close()` alone.
+        // races the bound below is `closeBounded()` alone.
 
-        // Routed through its own `Task` — `Task<Void, Never>` IS `Sendable`
-        // (its `Success`/`Failure` are), so `BoundedRun.run`'s escaping
-        // operation closure can capture and await IT without capturing the
-        // non-`Sendable` `handle` itself into an escaping context (which
-        // the compiler cannot prove is exclusive across a `sending` call —
-        // same pattern the write-path sibling below uses for its own
-        // `closeTask`.
-        let handleBox = UncheckedBox(handle)
-        let closeTask = Task<Void, Never> {
-            try? await handleBox.value.close()
-        }
+        // Captured straight into the escaping closure, where the
+        // measurement had to route it through an `UncheckedBox` and a
+        // `Task`: `BoundedSFTPFile` is `Sendable`, which the raw `SFTPFile`
+        // it replaced is not. The box and its two uses went with the raw
+        // handle.
+        //
+        // `closeFinishedInsideItsOwnBound` is what `closeBounded()` itself
+        // answers — false when the production bound fired and the close was
+        // abandoned, which is the expected outcome against a frozen peer.
+        // Recorded and printed, deliberately not asserted: the property
+        // this test is named for is that the CALL returns, and a peer that
+        // somehow answered would satisfy that too.
+        var closeFinishedInsideItsOwnBound: Bool?
         let startedAt = ContinuousClock.now
         let returned = await BoundedRun.run(boundSeconds: fileCloseBoundSeconds) {
-            _ = await closeTask.value
+            closeFinishedInsideItsOwnBound = await handle.closeBounded()
         }
         let elapsed = startedAt.duration(to: .now)
         let returnedBeforeThaw = returned
+        let innerAnswerBeforeThaw = closeFinishedInsideItsOwnBound
 
         print("""
-            [close-alone] read handle close against a STILL-frozen peer, \
-            no request in flight: returned=\(returnedBeforeThaw) after \
-            \(elapsed) (bound \(fileCloseBoundSeconds)s)
+            [close-alone] read handle closeBounded against a STILL-frozen \
+            peer, no request in flight: returned=\(returnedBeforeThaw) after \
+            \(elapsed) (bound \(fileCloseBoundSeconds)s); the close itself \
+            answered \(String(describing: innerAnswerBeforeThaw))
             """)
 
         try? server.thaw()
@@ -1409,21 +1413,21 @@ struct LivenessProbeDropIntegrationTests {
         await closeIgnoringErrors(rawClient)
 
         #expect(returnedBeforeThaw, """
-            `SFTPFile.close()` (read handle) did not return within \
-            \(fileCloseBoundSeconds)s against a peer that is still \
+            `BoundedSFTPFile.closeBounded()` (read handle) did not return \
+            within \(fileCloseBoundSeconds)s against a peer that is still \
             frozen, with no other request in flight on this handle.
             """)
     }
 
     /// The write-path sibling of `aReadHandleCloseAgainstAStillFrozenPeerReturnsInsideTheBound`:
-    /// isolates `SFTPFile.close()` (write handle) on its own, against a
-    /// peer that is STILL FROZEN, with nothing else in flight.
+    /// isolates one write-handle close on its own, against a peer that is
+    /// STILL FROZEN, with nothing else in flight.
     ///
-    /// Shape: open a handle directly through Citadel (`connectRawSFTP`,
+    /// Shape: open a handle on a bare connection (`connectBoundedSFTP`,
     /// same reasoning as the read-path sibling), write ONE 1 MB chunk and
     /// await its return — proof the handle works and the write is no
-    /// longer in flight — freeze the peer, then call `close()` alone and
-    /// measure it against the bound.
+    /// longer in flight — freeze the peer, then call `closeBounded()`
+    /// alone and measure it against the bound.
     @Test func aWriteFileCloseAgainstAStillFrozenPeerReturnsInsideTheBound() async throws {
         let server = try DisposableSSHServer.start(port: isolatedWriteCloseServerPort)
         let watchdog = DisposableSSHServer.pruneAfter(seconds: fileCloseBoundSeconds + 180)
@@ -1435,8 +1439,8 @@ struct LivenessProbeDropIntegrationTests {
         // test needs `CitadelFileSystem` at all, unlike the read-path
         // sibling, which still uploads its fixture through the normal
         // path. The write handle IS opened, written to, and closed
-        // entirely through the raw Citadel connection below.
-        let (rawClient, sftp) = try await connectRawSFTP(port: isolatedWriteCloseServerPort)
+        // entirely through the bare connection below.
+        let (rawClient, sftp) = try await connectBoundedSFTP(port: isolatedWriteCloseServerPort)
         let remotePath = "/config/macscp-isolated-write-close-\(UUID().uuidString).bin"
         let handle = try await sftp.openFile(
             filePath: remotePath, flags: [.create, .write, .truncate])
@@ -1448,26 +1452,25 @@ struct LivenessProbeDropIntegrationTests {
 
         try server.freeze()
         // No request is in flight here: the write above already returned.
-        // What races the bound below is `close()` alone.
+        // What races the bound below is `closeBounded()` alone.
 
-        // Same reasoning as the read-path sibling: routed through its own
-        // `Task` rather than captured directly into `BoundedRun.run`'s
-        // escaping closure.
-        let handleBox = UncheckedBox(handle)
-        let closeTask = Task<Void, Never> {
-            try? await handleBox.value.close()
-        }
+        // Same reasoning as the read-path sibling: captured straight into
+        // the escaping closure now that `BoundedSFTPFile` is `Sendable`,
+        // and the close's own answer recorded before the thaw below.
+        var closeFinishedInsideItsOwnBound: Bool?
         let startedAt = ContinuousClock.now
         let returned = await BoundedRun.run(boundSeconds: fileCloseBoundSeconds) {
-            _ = await closeTask.value
+            closeFinishedInsideItsOwnBound = await handle.closeBounded()
         }
         let elapsed = startedAt.duration(to: .now)
         let returnedBeforeThaw = returned
+        let innerAnswerBeforeThaw = closeFinishedInsideItsOwnBound
 
         print("""
-            [close-alone] write handle close against a STILL-frozen peer, \
-            no request in flight: returned=\(returnedBeforeThaw) after \
-            \(elapsed) (bound \(fileCloseBoundSeconds)s)
+            [close-alone] write handle closeBounded against a STILL-frozen \
+            peer, no request in flight: returned=\(returnedBeforeThaw) after \
+            \(elapsed) (bound \(fileCloseBoundSeconds)s); the close itself \
+            answered \(String(describing: innerAnswerBeforeThaw))
             """)
 
         try? server.thaw()
@@ -1476,8 +1479,8 @@ struct LivenessProbeDropIntegrationTests {
         await closeIgnoringErrors(rawClient)
 
         #expect(returnedBeforeThaw, """
-            `SFTPFile.close()` (write handle) did not return within \
-            \(fileCloseBoundSeconds)s against a peer that is still \
+            `BoundedSFTPFile.closeBounded()` (write handle) did not return \
+            within \(fileCloseBoundSeconds)s against a peer that is still \
             frozen, with no other request in flight on this handle.
             """)
     }

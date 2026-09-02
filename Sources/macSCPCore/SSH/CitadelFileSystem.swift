@@ -9,9 +9,13 @@
 // types in this file. Moving an `SFTPFile`, an `SFTPClient` or any other
 // Citadel value across an isolation boundary now compiles in silence,
 // whether or not it is actually safe. Every such crossing in this file
-// therefore has to carry its own argument for why it holds; the file handle
-// a read stream carries is written up at `SFTPReadHandle`, alongside the
-// argument `readStream` makes for the box itself.
+// therefore has to carry its own argument for why it holds — and, counted in
+// this pass, there is no longer one to argue: the SFTP session and the SFTP
+// file this class works through are `BoundedSFTPSession` and
+// `BoundedSFTPFile`, both of which are `Sendable`, and the crossings they
+// make are argued in their own file. What is left of this suppression is the
+// SSH client and its NIO stack, still reached directly by `disconnect()`,
+// `openShell` and `standardOutput(of:)`.
 @preconcurrency import Citadel
 import Foundation
 import NIOCore
@@ -725,11 +729,14 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         //
         // The closure below is the ONLY owner of `handle`, and that is what
         // closes the SFTP file on the paths the closure never sees — see
-        // `SFTPReadHandle`. Nothing here may capture the underlying Citadel
-        // handle directly: a second owner would keep the box alive past the
+        // `SFTPReadHandle`. Nothing here may capture the file handle
+        // directly: a second owner would keep the box alive past the
         // stream, or release it while the stream still reads.
         //
-        // `handle` is a non-`Sendable` box captured by a `@Sendable` closure.
+        // `handle` is a `Sendable` box captured by a `@Sendable` closure — it
+        // was `@unchecked` while it carried Citadel's own file handle, and
+        // the argument below is why that was sound then and why the box is
+        // still the only reader now.
         // Why there is no race: `openFile` hands back a fresh handle per call,
         // this method neither stores it nor returns it, so the `unfolding:`
         // closure is the only code that can reach this one. Two concurrent
@@ -753,7 +760,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 let buffer = try await handle.read(
                     from: currentOffset, length: UInt32(TransferChunk.size))
                 guard buffer.readableBytes > 0 else {
-                    try await handle.close()
+                    _ = await handle.closeBounded()
                     return nil
                 }
                 currentOffset += UInt64(buffer.readableBytes)
@@ -763,11 +770,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 // throws `CancellationError` on task cancellation — pass it
                 // through unchanged, do NOT map it to protocolError, otherwise
                 // the item would end `.failed` instead of `.cancelled`. The
-                // channel stays usable (handle.close).
-                try? await handle.close()
+                // channel stays usable (handle.closeBounded).
+                _ = await handle.closeBounded()
                 throw CancellationError()
             } catch {
-                try? await handle.close()
+                _ = await handle.closeBounded()
                 throw Self.mapSFTPError(error, path: path)
             }
         })
@@ -786,7 +793,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         case .overwrite: flags = [.create, .write, .truncate]
         case .append: flags = [.create, .write, .append]
         }
-        let file: SFTPFile
+        let file: BoundedSFTPFile
         do {
             file = try await sftp.openFile(filePath: path, flags: flags)
         } catch {
@@ -801,7 +808,31 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 try await file.write(ByteBuffer(bytes: chunk), at: offset)
                 offset += UInt64(chunk.count)
             }
-            try await file.close()
+            // The close of a write that completed — the one place in this
+            // file where the close's own outcome could have meant something.
+            // Its `false` is NOT an error to the caller, following
+            // `disconnect()`, which discards the session's `false` and goes
+            // on to close the connection. Three reasons, in order of weight:
+            // every chunk above was individually awaited and acknowledged
+            // before this line was reached, so an abandoned close says
+            // nothing about whether the bytes arrived; a `false` here means
+            // the peer has stopped answering, which the next operation on
+            // this connection reports anyway; and reporting a completed
+            // upload as failed is the worse of the two wrong answers.
+            //
+            // What this gives up, said plainly rather than left for a
+            // reader to find: `try await file.close()` used to propagate a
+            // non-`ok` close STATUS from the server — a server that only
+            // reports a full disk when the handle is closed would have
+            // failed the write here, and now does not. `closeBounded()`
+            // swallows that error the way the session's close already does.
+            // Nothing else in the product catches it either: `copyFile`
+            // ends on a `Task.checkCancellation()`, not on a size or
+            // checksum comparison, and the checksum feature
+            // (`ChecksumRequest`) is something a user asks for on a file,
+            // not a step every transfer runs. That is a real, narrow loss,
+            // recorded here so it is a decision and not an accident.
+            _ = await file.closeBounded()
         } catch is CancellationError {
             // Cooperative cancellation (M5c/T2): normally the counting stream
             // from copyFile runs out SILENTLY on cancellation (it ends,
@@ -810,10 +841,10 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             // task cancellation, pass it through unchanged here (do NOT map
             // to protocolError), otherwise the item would end `.failed`
             // instead of `.cancelled`. Channel stays usable.
-            try? await file.close()
+            _ = await file.closeBounded()
             throw CancellationError()
         } catch {
-            try? await file.close()
+            _ = await file.closeBounded()
             throw Self.mapSFTPError(error, path: path)
         }
     }
@@ -1100,8 +1131,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     }
 }
 
-/// Sole owner of one `SFTPFile` opened for reading, so that the handle is
-/// closed on the server whenever the read stream built around it goes away.
+/// Sole owner of one `BoundedSFTPFile` opened for reading, so that the
+/// handle is closed on the server whenever the read stream built around it
+/// goes away.
 ///
 /// `AsyncThrowingStream(unfolding:)` has no termination hook, and the paths
 /// that abandon a read stream never run its closure again. A destination
@@ -1117,23 +1149,27 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
 /// Binding the close to that release is what covers those paths without
 /// giving up the pull-based shape the stream is chosen for. The close is
 /// fire-and-forget by necessity — `deinit` cannot await — and unconditional,
-/// because `SFTPFile.close()` invalidates the handle before it sends
-/// anything: a second close is a silent no-op, so the eager close on the
-/// paths the closure DOES see (EOF, a read error, a cancelled in-flight read)
-/// stays exactly as it was and this only catches the rest.
+/// because Citadel's `close()` under `BoundedSFTPFile` invalidates the handle
+/// before it sends anything: a second close is a silent no-op, so the eager
+/// close on the paths the closure DOES see (EOF, a read error, a cancelled
+/// in-flight read) stays exactly as it was and this only catches the rest.
 ///
-/// `@unchecked Sendable` because it carries a non-`Sendable` Citadel handle
-/// into a `@Sendable` closure. The argument is the one `readStream` makes for
-/// the stream's own state: `openFile` returns a fresh handle per call, the box
-/// is created and captured there and nowhere else, and an `AsyncSequence` has
-/// a single consumer pulling sequentially — so one task at a time reaches the
-/// handle, and `deinit` runs only once that task has released the closure.
-/// A read in flight holds the closure alive for its own duration, so the
+/// Plainly `Sendable` since `BoundedSFTPFile` took over the Citadel handle:
+/// this box carries a `Sendable` value now, so it no longer needs the
+/// `@unchecked` escape hatch it was written with, and the compiler checks
+/// what that annotation used to assert by hand. The reasoning it asserted is
+/// not gone, it moved: `BoundedSFTPFile`'s own doc comment carries the
+/// ownership argument, and the part that is this box's alone still holds —
+/// `openFile` returns a fresh handle per call, the box is created and
+/// captured in `readStream` and nowhere else, and an `AsyncSequence` has a
+/// single consumer pulling sequentially, so one task at a time reaches the
+/// handle and `deinit` runs only once that task has released the closure. A
+/// read in flight holds the closure alive for its own duration, so the
 /// deinit close can never overlap a read.
-private final class SFTPReadHandle: @unchecked Sendable {
-    private let file: SFTPFile
+private final class SFTPReadHandle: Sendable {
+    private let file: BoundedSFTPFile
 
-    init(_ file: SFTPFile) {
+    init(_ file: BoundedSFTPFile) {
         self.file = file
     }
 
@@ -1141,8 +1177,14 @@ private final class SFTPReadHandle: @unchecked Sendable {
         try await file.read(from: offset, length: length)
     }
 
-    func close() async throws {
-        try await file.close()
+    /// Named for the property, not for the operation: there is no unbounded
+    /// close to distinguish it from any more, and a `close()` here would
+    /// read like one at all three call sites in `readStream`. Not
+    /// `@discardableResult`, for the reason `BoundedSFTPFile.closeBounded`
+    /// gives: the answer is dropped at every site in this file, and each of
+    /// those drops should be written down.
+    func closeBounded() async -> Bool {
+        await file.closeBounded()
     }
 
     deinit {
@@ -1150,8 +1192,16 @@ private final class SFTPReadHandle: @unchecked Sendable {
         // the box in its own deinit would be undefined, and the handle is a
         // separate object whose life the task legitimately extends until the
         // close has been sent.
+        //
+        // What the bounded type changed here, and only this: the call is now
+        // `closeBounded()`, so this detached task cannot sit on a frozen peer
+        // forever. It still leaks a task in the sense the backlog entry
+        // recorded — nothing awaits it, nothing observes its answer — and
+        // that question is exactly as open as it was; the bound shortens the
+        // leak's life from unbounded to `closeBoundSeconds`, it does not
+        // answer it.
         let file = self.file
-        Task { try? await file.close() }
+        Task { _ = await file.closeBounded() }
     }
 }
 

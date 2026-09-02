@@ -1,5 +1,6 @@
 import Citadel
 import Foundation
+import NIOCore
 
 /// The project's only handle on an open Citadel SFTP session — and the
 /// reason `try? await sftp.close()` is not an expression this module can
@@ -47,10 +48,12 @@ import Foundation
 ///    **visibility** — the change stands at the definition, in a file named
 ///    after the guarantee, instead of at a call site a thousand lines away.
 ///
-/// And one thing it was never asked to cover: the `SFTPFile.close()` calls
-/// in `CitadelFileSystem` are unbounded round trips of the same kind. They
-/// are a recorded backlog observation, not a silent gap in this type —
-/// counted and broken down in
+/// The one thing this type was never asked to cover — the `SFTPFile.close()`
+/// calls in `CitadelFileSystem`, unbounded round trips of the same kind — is
+/// now covered by `BoundedSFTPFile` below, for the same reason and by the
+/// same move: `openFile` hands out that type instead of Citadel's, so the
+/// unbounded file close is likewise not an expression this module can form.
+/// What that measurement found is in
 /// `docs/superpowers/specs/2026-08-28-backlog-unbounded-file-closes.md`.
 /// The other call of that shape, `CitadelShell.close()`, is NOT among them:
 /// it is unbounded in itself, but the App layer runs it inside
@@ -139,8 +142,11 @@ final class BoundedSFTPSession: Sendable {
         try await raw.getAttributes(at: filePath)
     }
 
-    func openFile(filePath: String, flags: SFTPOpenFileFlags) async throws -> SFTPFile {
-        try await raw.openFile(filePath: filePath, flags: flags)
+    /// Opens a file on this session and hands back the only file handle this
+    /// module has — see `BoundedSFTPFile`. Citadel's `SFTPFile` does not
+    /// leave this file.
+    func openFile(filePath: String, flags: SFTPOpenFileFlags) async throws -> BoundedSFTPFile {
+        BoundedSFTPFile(raw: try await raw.openFile(filePath: filePath, flags: flags))
     }
 
     func remove(at filePath: String) async throws {
@@ -165,5 +171,104 @@ final class BoundedSFTPSession: Sendable {
 
     func getRealPath(atPath path: String) async throws -> String {
         try await raw.getRealPath(atPath: path)
+    }
+}
+
+/// The project's only handle on an open Citadel SFTP FILE — and the reason
+/// `try? await file.close()` is not an expression `CitadelFileSystem` can
+/// form either.
+///
+/// One level down from `BoundedSFTPSession`, for the same reason and by the
+/// same move. `7ac7f7e` bounded the session close and left the file closes
+/// alone; they were then measured against a `docker pause`d peer and behave
+/// exactly like the session close did — the numbers, the shape of the
+/// measurement and what it did NOT establish are in
+/// `docs/superpowers/specs/2026-08-28-backlog-unbounded-file-closes.md`
+/// ("Measured 2026-09-02"), which is where they stay rather than being
+/// copied here to drift.
+///
+/// Why the raw file must not escape: counted in this pass,
+/// `CitadelFileSystem` closed a file at eight call sites — five directly on
+/// the handle (three in `write`, one in `SFTPReadHandle.closeBounded`, one
+/// in its `deinit`) and three through that box, in `readStream` — and a
+/// bound written at each would be eight copies of one decision, any of which
+/// a later edit could drop without anything failing.
+/// Withdrawing the ability is the same trade the session type argues for at
+/// length above — read its "What this boundary does not prevent" section
+/// before trusting this one further than it goes, because all three limits
+/// hold here unchanged: the close can be deleted, a second handle can be
+/// opened to close, and whoever edits this file has edited it.
+///
+/// A `final class` rather than a `struct`, matching `BoundedSFTPSession`:
+/// one open file on a server is an identity, not a value. A struct would be
+/// copyable, and every copy would name the same server-side handle — while
+/// `SFTPReadHandle` in `CitadelFileSystem` is documented as the SOLE owner
+/// of one open file and binds its close to its own deallocation, which is a
+/// claim about identity that only a reference type can carry.
+///
+/// `@unchecked Sendable`, where the session type gets `Sendable` for free:
+/// Citadel's `SFTPClient` is `Sendable` and its `SFTPFile` is not. The
+/// crossing is real and narrow — `closeBounded()` hands `self` to a task
+/// that may outlive the call, exactly as the session's does. What makes it
+/// safe is ownership, not luck: `openFile` returns a fresh handle per call,
+/// each of this project's two callers (`readStream`, `write`) keeps its own
+/// and never shares it, and the abandoned task's only remaining act is the
+/// one close it was handed — after which the handle is invalid to everyone,
+/// because Citadel's `close()` clears `isActive` before it sends anything.
+final class BoundedSFTPFile: @unchecked Sendable {
+    private let raw: SFTPFile
+
+    /// `fileprivate`, so `BoundedSFTPSession.openFile` is the only way to
+    /// get one: the point of the type is that a raw `SFTPFile` cannot be
+    /// named outside this file, and a wrapper anyone could construct would
+    /// need the raw value at its call site to do it.
+    fileprivate init(raw: SFTPFile) {
+        self.raw = raw
+    }
+
+    /// Closes this file against `BoundedSFTPSession.closeBoundSeconds`, and
+    /// answers whether it finished inside that bound.
+    ///
+    /// The bound is that constant and not one of this type's own: it bounds
+    /// the same round trip to the same peer, so a second number here would
+    /// be a second copy of one decision — the mistake the session type's doc
+    /// comment records rejecting for `closeBounded(boundSeconds:)`.
+    ///
+    /// `false` means the bound elapsed and the close was ABANDONED (see
+    /// `BoundedClose`): the caller continues, and the handle stays open on
+    /// the far side until the connection falls. That is the trade — one
+    /// stranded server-side handle on a connection that has already stopped
+    /// answering, against a transfer that never returns.
+    ///
+    /// Like the session's, this swallows the close's ERROR as well as its
+    /// wait. A close that answers a non-`ok` status is reported as `true`
+    /// here (it did return), which is a loss against the `try await
+    /// file.close()` this replaced in `CitadelFileSystem.write`; see the
+    /// comment at that call site for why the loss is accepted there.
+    ///
+    /// NOT `@discardableResult`, where `BoundedSFTPSession.closeBounded` is
+    /// — the one place the two types part company, and for a reason that is
+    /// about arithmetic rather than taste. The session's close has a single
+    /// caller, `disconnect()`, whose handling of the answer is argued in
+    /// twenty lines beside it. This one has eight, and an answer that eight
+    /// sites may drop by saying nothing is an answer nobody decided about.
+    /// `_ = await file.closeBounded()` costs two characters and makes each
+    /// of those a visible choice.
+    func closeBounded() async -> Bool {
+        await BoundedClose.run(boundSeconds: BoundedSFTPSession.closeBoundSeconds) { [self] in
+            try? await raw.close()
+        }
+    }
+
+    func read(from offset: UInt64, length: UInt32) async throws -> ByteBuffer {
+        try await raw.read(from: offset, length: length)
+    }
+
+    func write(_ data: ByteBuffer, at offset: UInt64) async throws {
+        try await raw.write(data, at: offset)
+    }
+
+    func readAttributes() async throws -> SFTPFileAttributes {
+        try await raw.readAttributes()
     }
 }
