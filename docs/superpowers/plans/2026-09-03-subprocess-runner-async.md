@@ -36,7 +36,7 @@ Swift Testing; CLAUDE.md "Tests never block the cooperative pool".
   `futureResult.wait()` outside a named allowlist (each allowed site
   carries a one-line reason in the allowlist, and the allowlist is
   expected to be EMPTY after Task 1 unless a site proves it cannot be
-  async — `LivenessProbeDropIntegrationTests.swift:311`'s `drained.wait()`
+  async — `Tests/macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift` (the `drained.wait()` at its frozen-peer close)'s `drained.wait()`
   is a candidate to convert, not to allow). Positive anchor: the runner
   file exists and the CLI suites call it.
 - The four converted suites keep their assertions byte-for-byte; only
@@ -46,22 +46,68 @@ Swift Testing; CLAUDE.md "Tests never block the cooperative pool".
 
 ---
 
-### Task 1: The runner, the four suites, the guard
+### Task 1: The runner, the long waits, the guard
+
+Measured 2026-09-03 (grep over `Tests/` for `DispatchGroup…wait(`,
+`DispatchSemaphore`, `waitUntilExit()`, `syncShutdownGracefully(`,
+`futureResult.wait()`, `Thread.sleep`, `usleep(`): about seventy sites in
+thirty files. Most wait a few milliseconds on `ssh-keygen`, `rm`, `dd`,
+`stat` children. The ones that park a thread for seconds are the target of
+this task; the rest are Task 1b.
 
 **Files:**
 - Create: `Tests/macSCPCoreTests/Support/SubprocessRunner.swift`
-- Modify: the three CLI suites (delete their private `runProcess`, call
-  the runner, tests `async throws`), `EmbeddedKeyPorterTests.swift`
-  (the semaphore'd child at ~:122 and the `keygen.waitUntilExit()` at
-  ~:844 — read what each waits for), any other `Process()` user under
-  `Tests/` that waits synchronously (grep `waitUntilExit`, `DispatchSemaphore`,
-  `.wait(`; `LoopbackTLSStub.swift:77` and `LivenessProbeDropIntegrationTests.swift:311`
-  included — convert or allowlist with a reason)
-- Test: `SubprocessRunnerTests` (timeout path; big-output path; exit
-  status and both pipes) and the guard `TestsNeverBlockThePoolGuardTests`.
+- Modify — the long waits, every one converted here:
+  - `CLISessionsJSONRoundtripTests.swift` `runProcess` (60 s `group.wait` + `waitUntilExit`)
+  - `CLISessionNameCompletionTests.swift` (same shape, :109)
+  - `CLIRootHelpTests.swift` (same shape, :95)
+  - `CLIRoundtripITests.swift` (same shape, :381–393; gated suite, convert anyway)
+  - `EmbeddedKeyPorterTests.swift` :122–147 (`DispatchSemaphore`, 10 s, twice)
+  - `LoopbackTLSStub.swift` :77–110 (`DispatchSemaphore` 60 s readiness wait) and :193
+  - `Tests/macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift` :311–312 (`drained.wait()` + `waitUntilExit`) and :478 (`Thread.sleep` — read what it does; convert if it runs on a pool thread)
+- Test: `SubprocessRunnerTests` (timeout path with an owned `sleep 30` child: throws within the bound and the child is gone; big-output path: a child printing 256 KB to both pipes is drained without deadlock; exit status and both pipes for a normal child) and the guard `TestsNeverBlockThePoolGuardTests`.
 
-- [ ] Red first for the runner's tests; then the suites green; full unit suite; commit
+**The runner:**
+
+```swift
+struct SubprocessResult: Sendable { let status: Int32; let stdout: Data; let stderr: Data }
+struct SubprocessTimeout: Error { let stderrSoFar: Data }
+
+enum SubprocessRunner {
+    /// Runs `executable` with `arguments`, drains both pipes, and awaits
+    /// termination without parking a cooperative-pool thread: the pipes are
+    /// read on `DispatchQueue.global()`, termination arrives through
+    /// `Process.terminationHandler`, and the wait is a continuation.
+    static func run(_ executable: URL, arguments: [String], environment: [String: String]? = nil,
+                    currentDirectory: URL? = nil, stdin: Data? = nil,
+                    timeout: Duration = .seconds(60)) async throws -> SubprocessResult
+}
+```
+
+Timeout: race the continuation against `Task.sleep(for: timeout)`; on
+expiry `terminate()`, then after two seconds `kill(pid, SIGKILL)`, resume
+once (a flag guards exactly-once), throw `SubprocessTimeout`. The
+readers finish on their own queue and are joined through a second
+continuation or an `AsyncStream` — never `DispatchGroup.wait`.
+
+**The guard** (`TestsNeverBlockThePoolGuardTests`): scans every `.swift`
+under `Tests/` for the five patterns above outside comments. Files still
+carrying short child waits are listed in an allowlist INSIDE the guard,
+each with the pattern it is allowed to carry; the list is what Task 1b
+shrinks to empty. Positive anchors: `SubprocessRunner.swift` exists and
+defines `run(`; each of the four CLI suites calls `SubprocessRunner.run(`.
+The allowlist is derived from the measured grep, not typed from memory —
+run the grep, paste the file names.
+
+- [ ] Red first for the runner's tests; convert the long waits; guard green; the CLI suites and the four converted files green; full unit suite green (the gated ITEST suites run if the rig is up); zero warnings; commit
   `test: subprocess tests await their children instead of parking pool threads`.
+
+### Task 1b: The short waits
+
+- [ ] Replace every remaining `waitUntilExit()` / semaphore under `Tests/`
+  with `SubprocessRunner.run(` (test helpers become `async`; `try!` helpers
+  become `throws`), shrink the guard's allowlist to empty, full suite green,
+  commit `test: every child process in the suite is awaited`.
 
 ### Task 2: Prove it where it failed
 
