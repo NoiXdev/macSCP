@@ -99,17 +99,6 @@ struct ChecksumColumnWiringGuardTests {
         return false
     }
 
-    private static func occurrences(of needle: String, in text: String) -> Int {
-        guard !needle.isEmpty else { return 0 }
-        var count = 0
-        var searchStart = text.startIndex
-        while let range = text.range(of: needle, range: searchStart..<text.endIndex) {
-            count += 1
-            searchStart = range.upperBound
-        }
-        return count
-    }
-
     // MARK: - The ledger has one writer, and it is the request path
 
     private static var ledgerName: String { String(describing: ChecksumLedger.self) }
@@ -117,46 +106,220 @@ struct ChecksumColumnWiringGuardTests {
 
     /// The writer exists at all — the positive anchor under everything
     /// below, which is otherwise a set of claims about how RARE a call is.
-    @Test func theLedgerDeclaresExactlyOneWriter() throws {
-        let ledger = try Self.code(at: Self.fileDeclaring(Self.ledgerName))
-        #expect(Self.occurrences(of: "mutating func record(", in: ledger) == 1)
-    }
-
-    /// The files whose code mentions the ledger type at all — the whole
-    /// world the count below is a claim about (review M1).
     ///
-    /// The denominator used to be the package. `.record(` is a generic
-    /// selector, and one unrelated transfer-rate window spells it, so
-    /// renaming THAT method would have turned a checksum guard red and
-    /// pointed the next reader here. Scoped to files that name the type, a
-    /// write can still only appear where there is a ledger to write to.
-    private static func filesMentioningTheLedger() throws -> [URL] {
-        try swiftFiles().filter { try code(at: $0).contains(ledgerName) }
+    /// Derived, not spelled: the ledger's write is whichever of its
+    /// functions takes a request result, and `ledgerWrite()` asserts there
+    /// is exactly one. Its labels are what every count below matches on, so
+    /// this is also the check that those counts are matching on something
+    /// real. `mutating` is a keyword rather than a name, and it is what
+    /// makes the write a write.
+    @Test func theLedgerDeclaresExactlyOneWriter() throws {
+        let write = try Self.ledgerWrite()
+        let ledger = try Self.code(at: Self.fileDeclaring(Self.ledgerName))
+
+        #expect(write.requiredLabels.isEmpty == false)
+        #expect(ledger.contains("mutating func \(write.name)("))
     }
 
-    /// Exactly ONE write, in the file that also builds the run — counted
-    /// over the files above in the pass that writes this sentence, where it
-    /// is one. A second one anywhere is the edit this guard exists to stop:
-    /// a listing, a refresh or a column toggle quietly filling the ledger,
-    /// i.e. computing without being asked.
-    @Test func theLedgerIsWrittenFromOnePlaceAndItIsTheRequestPath() throws {
-        let files = try Self.filesMentioningTheLedger()
-        #expect(files.count >= 2, "the ledger is declared in one file and used in others")
+    // MARK: - Reading a call shape off its declaration
 
-        var callSites: [URL] = []
-        var total = 0
-        for url in files {
-            let count = Self.occurrences(of: ".record(", in: try Self.code(at: url))
-            if count > 0 {
-                total += count
-                callSites.append(url)
+    /// One function's name and argument labels, read off its declaration
+    /// rather than spelled in a test — `"_"` for an unlabelled argument.
+    ///
+    /// This exists because a guard has to tell TWO calls apart that share a
+    /// name. `.record(` is a generic selector: the ledger's write and an
+    /// unrelated transfer-rate window both spell it, and the first attempt
+    /// to separate them picked the files that happened to name the ledger
+    /// type. That denominator then SHRANK on its own — a later fix moved the
+    /// last `ChecksumLedger()` literal out of the file that builds both
+    /// panes, and with it the whole file left the guard's world, so a
+    /// compute-and-record planted there was invisible. A denominator that
+    /// can quietly stop containing the place a violation would be written is
+    /// not a scope, it is a leak.
+    ///
+    /// So the world is now every Swift file under `Sources/`, with no
+    /// exclusion by name, and the two calls are told apart by their argument
+    /// LABELS — which come from the declaration, so renaming the ledger's
+    /// method or its labels moves this with it.
+    private struct CallShape: Equatable {
+        let name: String
+        let labels: [String]
+
+        /// The labels a call must carry to be this function's call, in the
+        /// spelling a call site uses.
+        var requiredLabels: [String] { labels.filter { $0 != "_" }.map { "\($0):" } }
+    }
+
+    /// Every function declared in `text`, with its parameter list and its
+    /// declared return type (empty when it returns nothing).
+    private static func declaredFunctions(
+        in text: String
+    ) -> [(shape: CallShape, parameters: String, returns: String)] {
+        var found: [(CallShape, String, String)] = []
+        var searchStart = text.startIndex
+        while let keyword = text.range(of: "func ", range: searchStart..<text.endIndex) {
+            searchStart = keyword.upperBound
+            guard let open = text[keyword.upperBound...].firstIndex(of: "("),
+                let close = matchingParenthesis(from: open, in: text)
+            else { continue }
+            let name = String(text[keyword.upperBound..<open])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" })
+            else { continue }
+            let parameters = String(text[text.index(after: open)..<close])
+            let tail = text[close...].prefix(while: { $0 != "{" && $0 != "\n" })
+            let returns = tail.range(of: "-> ").map {
+                String(tail[$0.upperBound...]).trimmingCharacters(in: .whitespaces)
+            } ?? ""
+            found.append(
+                (CallShape(name: name, labels: labels(inParameterList: parameters)),
+                 parameters, returns))
+            searchStart = close
+        }
+        return found
+    }
+
+    /// The label of each parameter in `list`: the first word of each
+    /// top-level component, which is `_` for an unlabelled one.
+    private static func labels(inParameterList list: String) -> [String] {
+        var components: [String] = []
+        var depth = 0
+        var current = ""
+        for character in list {
+            switch character {
+            case "(", "[", "<": depth += 1
+            case ")", "]", ">": depth -= 1
+            default: break
+            }
+            if character == ",", depth == 0 {
+                components.append(current)
+                current = ""
+            } else {
+                current.append(character)
             }
         }
+        components.append(current)
+        return components.compactMap { component in
+            let trimmed = component.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return trimmed.split(whereSeparator: { $0 == " " || $0 == ":" }).first.map(String.init)
+        }
+    }
+
+    /// The index of the `)` closing the `(` at `open`.
+    private static func matchingParenthesis(
+        from open: String.Index, in text: String
+    ) -> String.Index? {
+        var depth = 0
+        var index = open
+        while index < text.endIndex {
+            if text[index] == "(" { depth += 1 }
+            if text[index] == ")" {
+                depth -= 1
+                if depth == 0 { return index }
+            }
+            index = text.index(after: index)
+        }
+        return nil
+    }
+
+    /// How many calls of `shape` — the right name AND every one of its
+    /// labels — appear in `text`.
+    private static func callCount(of shape: CallShape, in text: String) -> Int {
+        var count = 0
+        var searchStart = text.startIndex
+        while let call = text.range(
+            of: ".\(shape.name)(", range: searchStart..<text.endIndex) {
+            let open = text.index(before: call.upperBound)
+            searchStart = call.upperBound
+            guard let close = matchingParenthesis(from: open, in: text) else { continue }
+            let arguments = text[text.index(after: open)..<close]
+            if shape.requiredLabels.allSatisfy({ arguments.contains($0) }) { count += 1 }
+            searchStart = close
+        }
+        return count
+    }
+
+    /// Every call of `shape` in the package, as (file, count) — no file is
+    /// excluded, by name or by what it happens to mention.
+    private static func callSites(of shape: CallShape) throws -> [(file: URL, count: Int)] {
+        var sites: [(URL, Int)] = []
+        for url in try swiftFiles() {
+            let count = callCount(of: shape, in: try code(at: url))
+            if count > 0 { sites.append((url, count)) }
+        }
+        return sites
+    }
+
+    /// The one function in `text` whose parameter list names `type`.
+    private static func shape(takingParameterOfType type: String, in text: String) throws
+        -> CallShape {
+        let matches = declaredFunctions(in: text).filter { $0.parameters.contains(type) }
+        #expect(matches.count == 1, "expected one function taking a \(type)")
+        return try #require(matches.first?.shape)
+    }
+
+    /// The one function in `text` whose declared return type is `type`.
+    private static func shape(returning type: String, in text: String) throws -> CallShape {
+        let matches = declaredFunctions(in: text).filter { $0.returns == type }
+        #expect(matches.count == 1, "expected one function returning \(type)")
+        return try #require(matches.first?.shape)
+    }
+
+    /// The ledger's write, read off `ChecksumLedger`'s own declaration.
+    private static func ledgerWrite() throws -> CallShape {
+        try shape(
+            takingParameterOfType: String(describing: ChecksumRequestResult.self),
+            in: try code(at: fileDeclaring(ledgerName)))
+    }
+
+    // MARK: - The scan itself is measured before it is trusted
+
+    /// The matcher tells the ledger's call from another `record(` that
+    /// shares its name — checked against text this test owns, so it holds
+    /// whatever the package currently contains.
+    ///
+    /// Without this, "one write in the package" could be true because the
+    /// matcher matches almost nothing. It is the positive anchor under a
+    /// count whose whole job is to be small.
+    @Test func theCallMatcherTellsTheLedgersWriteFromAnotherRecordCall() throws {
+        let write = try Self.ledgerWrite()
+
+        let ledgerCall = "checksumLedger.record(result, for: item)"
+        let otherCall = "rateWindow.record(bytes: progress.bytesTransferred, at: now())"
+        let wrappedLedgerCall = "ledger.record(\n    result,\n    for: item)"
+
+        #expect(Self.callCount(of: write, in: ledgerCall) == 1)
+        #expect(Self.callCount(of: write, in: wrappedLedgerCall) == 1)
+        #expect(Self.callCount(of: write, in: otherCall) == 0)
+        #expect(Self.callCount(of: write, in: ledgerCall + otherCall) == 1)
+    }
+
+    /// The scan reaches the whole package. 258 Swift files under `Sources/`
+    /// when this was written; the floor is deliberately well below that, so
+    /// it survives ordinary growth and shrinkage while still failing loudly
+    /// if the enumeration ever comes back with a handful of files or none.
+    @Test func theScanReadsEverySwiftFileInThePackage() throws {
+        #expect(try Self.swiftFiles().count >= 200)
+    }
+
+    /// Exactly ONE write into the ledger in the WHOLE package, and it is in
+    /// the file that also builds the run.
+    ///
+    /// A second one anywhere is the edit this guard exists to stop: a
+    /// listing, a refresh or a column toggle quietly filling the ledger,
+    /// i.e. computing without being asked. "Anywhere" is the point — the
+    /// previous version of this test asked only the files that mentioned the
+    /// ledger type, and a compute-and-record planted in the file that builds
+    /// both panes was invisible to it.
+    @Test func theLedgerIsWrittenFromOnePlaceAndItIsTheRequestPath() throws {
+        let sites = try Self.callSites(of: Self.ledgerWrite())
+        let total = sites.reduce(0) { $0 + $1.count }
 
         #expect(total == 1, "expected 1 ledger write in Sources, found \(total)")
-        #expect(callSites.count == 1)
+        #expect(sites.count == 1)
 
-        let requestPath = try #require(callSites.first)
+        let requestPath = try #require(sites.first?.file)
         #expect(try Self.code(at: requestPath).contains("\(Self.batchName)("))
     }
 
@@ -168,18 +331,26 @@ struct ChecksumColumnWiringGuardTests {
     /// read in the info sheet left the column empty for the very file it
     /// had just been computed for, and asking again cost a second
     /// server-side hash of the whole file. What holds that shut is a count:
-    /// ONE call to the view model's checksum operation in the whole request
-    /// path, in the same file as the single write above. Anchored by
-    /// positive checks that this file really does present both sheets.
+    /// ONE call to the view model's checksum operation in the whole
+    /// PACKAGE, and it is in the file that also holds the single write
+    /// above. Package-wide for the same reason as the write: a third
+    /// surface added in another file would otherwise bypass the ledger with
+    /// nothing going red.
     @Test func bothChecksumSurfacesAskThroughTheOnePlaceThatRemembers() throws {
-        let requestPath = try Self.fileDeclaring(String(describing: BrowserPane.self))
-        let code = try Self.code(at: requestPath)
+        let ask = try Self.shape(
+            returning: String(describing: ChecksumRequestResult.self),
+            in: try Self.code(
+                at: Self.fileDeclaring(String(describing: RemoteBrowserViewModel.self))))
+        let sites = try Self.callSites(of: ask)
+        let total = sites.reduce(0) { $0 + $1.count }
 
+        #expect(total == 1, "expected 1 call asking for a checksum, found \(total)")
+        let asking = try #require(sites.first?.file)
+
+        let code = try Self.code(at: asking)
         #expect(code.contains("\(String(describing: ChecksumBatchSheet.self))("))
         #expect(code.contains("\(String(describing: InfoPermissionsSheet.self))("))
-
-        #expect(Self.occurrences(of: ".checksum(of:", in: code) == 1)
-        #expect(Self.occurrences(of: ".record(", in: code) == 1)
+        #expect(Self.callCount(of: try Self.ledgerWrite(), in: code) == 1)
     }
 
     /// The ledger is NOT the pane's own state (review I2): a value the user
