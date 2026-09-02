@@ -165,3 +165,27 @@ wrong. It came from a **correlation** — both sightings occurred during
 a build — and was only refuted once someone measured without load and
 the rate rose. A cause inferred from coincidence is a hypothesis until
 a round has deliberately tried to rule it out.
+
+## Noted 2026-09-02 — the main-actor liveness suite in the full gated run
+
+`ConnectMainActorLivenessTests` ("Connect against an unresponsive host:
+main-actor liveness") derives its ceiling from an ambient gap measurement
+and compares a wall-clock gap against it. Measured today, on the same
+machine, no code change to dialing in between:
+
+| run | context | result |
+|---|---|---|
+| full gated run | under load (clean build + review agent in parallel) | **red**, suite-level |
+| full gated run | unloaded | green |
+| full gated run | unloaded | green |
+| full gated run | unloaded | **red**: `largestGap 0.70099 s` vs `ceiling 0.69847 s` — 2.5 ms over |
+| suite alone, ×6 | unloaded | green, 4.87–4.89 s each |
+
+Two red of four full runs, six of six green alone. The failing assertion
+is a wall-clock ceiling — the shape `TeardownStageTests` was moved away
+from on 2026-08-28 for the same reason. This is the "test harness stalls
+its own main actor" side finding from B-1 (2026-08-28), now with a
+sensitivity number attached. Not fixed here; not a defect of the code
+under test. Whoever takes it on: the assertion needs a form that does not
+race the rest of the suite, and the entry above holds the M20 hang this
+probably shares a cause with.
