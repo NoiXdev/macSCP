@@ -170,4 +170,26 @@ struct SessionCatalogTests {
         let expectedFieldNames: Set<String> = ["name", "kind", "groupPath", "tags", "target"]
         #expect(fieldNames == expectedFieldNames)
     }
+
+    // MARK: - (i) groupPath: ancestors joined top-down, empty at top level
+
+    /// `groupPath` itself had no direct pin before this: the group-filter
+    /// test above (b) exercises the same "Work > Prod" nesting but only
+    /// reads `\.name`, never `\.groupPath` — so a `groupPath` that joined
+    /// ancestors in the wrong order, or with the wrong separator, could
+    /// regress unnoticed (final-branch-review finding, 2026-09-02).
+    @Test func groupPathJoinsAncestorsTopDownAndIsEmptyAtTopLevel() {
+        let work = StoredGroup(name: "Work")
+        let prod = StoredGroup(name: "Prod", parentID: work.id)
+        let nested = sshSession(name: "nested", groupID: prod.id)
+        let topLevel = sshSession(name: "top-level")
+
+        let catalog = SessionCatalog(sessions: [nested, topLevel], groups: [work, prod])
+        let rows = Dictionary(uniqueKeysWithValues: catalog.rows(matching: .init()).map { ($0.name, $0) })
+
+        let nestedPathIsWorkThenProd = rows["nested"]?.groupPath == "Work / Prod"
+        let topLevelPathIsEmpty = rows["top-level"]?.groupPath == ""
+        #expect(nestedPathIsWorkThenProd)
+        #expect(topLevelPathIsEmpty)
+    }
 }
