@@ -146,6 +146,66 @@ struct SessionTabTests {
     // both toolbar buttons live inside `if let session = activeTab.session`.
     // The assertions themselves are unchanged.
 
+    // MARK: - What the tab remembers about checksums
+
+    /// A digest the user asked for is remembered by the SESSION, not by the
+    /// pane that showed it (review I2). Every value in there cost a
+    /// server-side hash of a whole file, so it must outlive everything that
+    /// merely rebuilds a view: switching to another tab and back (the pane
+    /// subtree is deliberately remounted per tab), hiding and showing the
+    /// Files pane, entering terminal-only mode.
+    ///
+    /// Hiding the Files pane is the one of those this type can drive
+    /// directly, and it goes through the same session storage the others
+    /// do.
+    @Test func aRecordedChecksumSurvivesHidingAndShowingTheFilesPane() throws {
+        let tab = makeTab()
+        attachSession(to: tab)
+        let item = RemoteFileItem(
+            name: "report.csv", path: "/report.csv", kind: .file, size: 42,
+            modifiedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let digest = try #require(
+            FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "a", count: 64)))
+
+        tab.session?.remoteChecksums.record(.checksum(digest), for: item)
+
+        tab.showsFiles = false
+        tab.showsFiles = true
+
+        #expect(tab.session?.remoteChecksums.value(for: item, algorithm: .sha256) == digest)
+    }
+
+    /// The two panes' ledgers are separate: two file systems, and a path
+    /// means nothing across them. A local `/report.csv` must never show the
+    /// digest of a remote one.
+    @Test func theTwoPanesRememberSeparately() throws {
+        let tab = makeTab()
+        attachSession(to: tab)
+        let item = RemoteFileItem(name: "a", path: "/a", kind: .file, size: 1)
+        let digest = try #require(
+            FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "b", count: 64)))
+
+        tab.session?.remoteChecksums.record(.checksum(digest), for: item)
+
+        #expect(tab.session?.localChecksums.value(for: item, algorithm: .sha256) == nil)
+    }
+
+    /// The lifetime it SHOULD have: a reconnect builds a fresh session, and
+    /// with it a fresh ledger — nothing about the previous connection's
+    /// bytes survives into the next one.
+    @Test func reconnectingStartsWithNothingRemembered() throws {
+        let tab = makeTab()
+        attachSession(to: tab)
+        let item = RemoteFileItem(name: "a", path: "/a", kind: .file, size: 1)
+        let digest = try #require(
+            FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "c", count: 64)))
+        tab.session?.remoteChecksums.record(.checksum(digest), for: item)
+
+        attachSession(to: tab)
+
+        #expect(tab.session?.remoteChecksums.value(for: item, algorithm: .sha256) == nil)
+    }
+
     /// A fresh tab shows files and hides the terminal — the same starting
     /// point `TerminalPanelViewModel.isVisible`'s own default (`false`)
     /// already implies for `showsTerminal`.

@@ -107,18 +107,6 @@ struct ChecksumLedgerTests {
         #expect(ledger.value(for: file, algorithm: .md5) == nil)
     }
 
-    @Test func forgetDropsEveryAlgorithmForThatPath() {
-        var ledger = ChecksumLedger()
-        let file = Self.item()
-        ledger.record(.checksum(Self.digest(.sha256)), for: file)
-        ledger.record(.checksum(Self.digest(.md5, hex: "c")), for: file)
-
-        ledger.forget(path: file.path)
-
-        #expect(ledger.value(for: file, algorithm: .sha256) == nil)
-        #expect(ledger.value(for: file, algorithm: .md5) == nil)
-    }
-
     @Test func twoPathsDoNotInterfere() {
         var ledger = ChecksumLedger()
         let first = Self.item(path: "/a.csv")
@@ -130,11 +118,6 @@ struct ChecksumLedgerTests {
         ledger.record(.checksum(secondValue), for: second)
 
         #expect(ledger.value(for: first, algorithm: .sha256) == firstValue)
-        #expect(ledger.value(for: second, algorithm: .sha256) == secondValue)
-
-        ledger.forget(path: first.path)
-
-        #expect(ledger.value(for: first, algorithm: .sha256) == nil)
         #expect(ledger.value(for: second, algorithm: .sha256) == secondValue)
     }
 }

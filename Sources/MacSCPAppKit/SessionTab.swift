@@ -41,6 +41,25 @@ struct BrowserSession {
     /// liveness probe `stat` it without a second round trip to find its own
     /// target.
     let homePath: String
+    /// What the user has asked this session to compute, one ledger per pane
+    /// (2026-09-02, review I2). The checksum column reads these and nothing
+    /// else.
+    ///
+    /// They live on the SESSION for the same reason `showsFiles` does, and
+    /// the argument is stronger here: every value in one cost a server-side
+    /// hash of a whole file, and the pane that showed it is remounted by
+    /// things that have nothing to do with the file — switching tabs (the
+    /// detail subtree carries `.id(tab.id)`, deliberately, so no pane state
+    /// crosses tabs), hiding the Files pane, entering terminal-only mode. As
+    /// view state those digests died on every one of those; here they die
+    /// only with the connection they were computed over, which is the one
+    /// event that makes them meaningless.
+    ///
+    /// Two, not one: two panes are two file systems, and a path means
+    /// nothing across them. A shared ledger could show a local file the
+    /// digest of a remote file of the same size and date.
+    var localChecksums = ChecksumLedger()
+    var remoteChecksums = ChecksumLedger()
 }
 
 /// One window tab (M8a): bundles what used to be window-wide state, per

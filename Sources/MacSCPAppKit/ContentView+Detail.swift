@@ -337,6 +337,20 @@ extension ContentView {
                                     },
                                     visibleColumns: settingsStore.visibleColumns,
                                     checksumAlgorithm: settingsStore.checksumAlgorithm,
+                                    // The ledger belongs to the SESSION, not
+                                    // to the pane (checksum-column review,
+                                    // I2): this subtree is remounted per tab
+                                    // (`.id(tab.id)` below) and again
+                                    // whenever the Files half is hidden and
+                                    // shown, and a digest the user paid a
+                                    // server-side hash for must survive all
+                                    // of that. Written through the binding
+                                    // by the pane's one checksum path; it
+                                    // dies with the connection, which is the
+                                    // one event that makes it meaningless.
+                                    checksumLedger: Binding(
+                                        get: { tab.session?.localChecksums ?? ChecksumLedger() },
+                                        set: { tab.session?.localChecksums = $0 }),
                                     // "local" is not a `ConnectionKind`, so
                                     // there is no descriptor and no capability
                                     // flag to read here — the local file
@@ -432,6 +446,14 @@ extension ContentView {
                                     },
                                     visibleColumns: settingsStore.visibleColumns,
                                     checksumAlgorithm: settingsStore.checksumAlgorithm,
+                                    // The remote side's own ledger — see the
+                                    // local pane's above for why it lives on
+                                    // the session. Two, because two panes are
+                                    // two file systems and a path means
+                                    // nothing across them.
+                                    checksumLedger: Binding(
+                                        get: { tab.session?.remoteChecksums ?? ChecksumLedger() },
+                                        set: { tab.session?.remoteChecksums = $0 }),
                                     // The capability, not the kind. Every
                                     // backend conforms to the checksum
                                     // protocol — WebDAV does so in order to

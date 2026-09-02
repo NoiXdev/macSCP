@@ -48,10 +48,14 @@ public struct ChecksumLedger: Sendable, Equatable {
         return entries[identity]?[algorithm]
     }
 
-    /// Drops every recorded value for `path`, under every identity and every
-    /// algorithm — used when the path itself is gone (deleted, renamed away)
-    /// rather than merely changed.
-    public mutating func forget(path: String) {
-        entries = entries.filter { $0.key.path != path }
-    }
+    // There is deliberately no `forget(path:)` (removed in the review of
+    // 2026-09-02, where it had no caller). It was built for "the path is
+    // gone — deleted, renamed away", but the key already answers that: a
+    // value is only readable for the exact `(path, size, modifiedAt)` it was
+    // recorded under, so a deleted path is unreadable and a recreated one
+    // would have to match the old size AND the old whole-second timestamp to
+    // read as the same file. An eviction call would therefore buy no
+    // correctness, only memory — and the ledger dies with its session.
+    // Whoever needs it for memory should add it with the call site that
+    // makes it necessary, rather than ahead of one.
 }

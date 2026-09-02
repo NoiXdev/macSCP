@@ -70,12 +70,33 @@ struct ChecksumColumnWiringGuardTests {
     private static func fileDeclaring(_ name: String) throws -> URL {
         var matches: [URL] = []
         for url in try swiftFiles() {
-            let text = try code(at: url)
-            let declarations = ["struct \(name)", "final class \(name)", "class \(name)", "enum \(name)"]
-            if declarations.contains(where: { text.contains($0) }) { matches.append(url) }
+            if declares(name, in: try code(at: url)) { matches.append(url) }
         }
         #expect(matches.count == 1, "expected exactly one file declaring \(name)")
         return try #require(matches.first)
+    }
+
+    /// Whether `text` declares a type called exactly `name`.
+    ///
+    /// The name has to END where it is written: a plain `contains` of
+    /// "struct BrowserPane" also matched the file declaring
+    /// `BrowserPaneSide`, and `fileDeclaring` then reported two candidates.
+    /// It failed loudly — the count is a positive check — which is the only
+    /// reason this was a five-minute fix rather than a guard reading the
+    /// wrong file.
+    private static func declares(_ name: String, in text: String) -> Bool {
+        let keywords = ["struct ", "final class ", "class ", "enum ", "actor "]
+        for keyword in keywords {
+            var searchStart = text.startIndex
+            while let range = text.range(
+                of: keyword + name, range: searchStart..<text.endIndex) {
+                searchStart = range.upperBound
+                guard searchStart < text.endIndex else { return true }
+                let next = text[searchStart]
+                if !next.isLetter && !next.isNumber && next != "_" { return true }
+            }
+        }
+        return false
     }
 
     private static func occurrences(of needle: String, in text: String) -> Int {
@@ -101,17 +122,30 @@ struct ChecksumColumnWiringGuardTests {
         #expect(Self.occurrences(of: "mutating func record(", in: ledger) == 1)
     }
 
-    /// Counted in the pass that writes this sentence, over comment-stripped
-    /// sources: TWO `.record(` calls exist in the whole package — the
-    /// ledger write below, and one unrelated transfer-rate window. Both are
-    /// asserted, so this is not a claim about a number nobody looked at: a
-    /// third one anywhere turns this red, which is precisely the edit this
-    /// guard exists to stop (a listing, a refresh or a column toggle
-    /// quietly filling the ledger, i.e. computing without being asked).
+    /// The files whose code mentions the ledger type at all — the whole
+    /// world the count below is a claim about (review M1).
+    ///
+    /// The denominator used to be the package. `.record(` is a generic
+    /// selector, and one unrelated transfer-rate window spells it, so
+    /// renaming THAT method would have turned a checksum guard red and
+    /// pointed the next reader here. Scoped to files that name the type, a
+    /// write can still only appear where there is a ledger to write to.
+    private static func filesMentioningTheLedger() throws -> [URL] {
+        try swiftFiles().filter { try code(at: $0).contains(ledgerName) }
+    }
+
+    /// Exactly ONE write, in the file that also builds the run — counted
+    /// over the files above in the pass that writes this sentence, where it
+    /// is one. A second one anywhere is the edit this guard exists to stop:
+    /// a listing, a refresh or a column toggle quietly filling the ledger,
+    /// i.e. computing without being asked.
     @Test func theLedgerIsWrittenFromOnePlaceAndItIsTheRequestPath() throws {
+        let files = try Self.filesMentioningTheLedger()
+        #expect(files.count >= 2, "the ledger is declared in one file and used in others")
+
         var callSites: [URL] = []
         var total = 0
-        for url in try Self.swiftFiles() {
+        for url in files {
             let count = Self.occurrences(of: ".record(", in: try Self.code(at: url))
             if count > 0 {
                 total += count
@@ -119,20 +153,55 @@ struct ChecksumColumnWiringGuardTests {
             }
         }
 
-        #expect(total == 2, "expected 2 `.record(` calls in Sources, found \(total)")
-        #expect(callSites.count == 2)
+        #expect(total == 1, "expected 1 ledger write in Sources, found \(total)")
+        #expect(callSites.count == 1)
 
-        // The ledger's own call site is the file that also builds the batch
-        // — the request path. The other call site is the unrelated one, and
-        // it must NOT be that file.
-        let withBatch = try callSites.filter { url in
-            try Self.code(at: url).contains("\(Self.batchName)(")
-        }
-        #expect(withBatch.count == 1)
-        let requestPath = try #require(withBatch.first)
-        let requestPathCode = try Self.code(at: requestPath)
-        #expect(Self.occurrences(of: ".record(", in: requestPathCode) == 1)
-        #expect(requestPathCode.contains(Self.ledgerName))
+        let requestPath = try #require(callSites.first)
+        #expect(try Self.code(at: requestPath).contains("\(Self.batchName)("))
+    }
+
+    /// Both surfaces that can ask for a digest ask through ONE place, and
+    /// that place is the one that remembers (review C1).
+    ///
+    /// The info sheet and the batch sheet each called the view model
+    /// themselves, and only the batch's answer was recorded — so a digest
+    /// read in the info sheet left the column empty for the very file it
+    /// had just been computed for, and asking again cost a second
+    /// server-side hash of the whole file. What holds that shut is a count:
+    /// ONE call to the view model's checksum operation in the whole request
+    /// path, in the same file as the single write above. Anchored by
+    /// positive checks that this file really does present both sheets.
+    @Test func bothChecksumSurfacesAskThroughTheOnePlaceThatRemembers() throws {
+        let requestPath = try Self.fileDeclaring(String(describing: BrowserPane.self))
+        let code = try Self.code(at: requestPath)
+
+        #expect(code.contains("\(String(describing: ChecksumBatchSheet.self))("))
+        #expect(code.contains("\(String(describing: InfoPermissionsSheet.self))("))
+
+        #expect(Self.occurrences(of: ".checksum(of:", in: code) == 1)
+        #expect(Self.occurrences(of: ".record(", in: code) == 1)
+    }
+
+    /// The ledger is NOT the pane's own state (review I2): a value the user
+    /// paid a server-side hash for must not die when the pane is rebuilt —
+    /// a tab switch, hiding the Files pane, a reconnect. Its home is the
+    /// session, which `SessionTabTests` reads from the value side.
+    ///
+    /// Reads DECLARATIONS rather than a spelled property name: every stored
+    /// property of the ledger's type in that file has to be a binding, so a
+    /// renamed property is still covered and a re-added pane-owned one is
+    /// caught whatever it is called. The positive half — that there is such
+    /// a declaration at all — is what keeps this from passing over a file
+    /// that stopped mentioning the ledger entirely.
+    @Test func thePanesLedgerIsBoundFromOutsideRatherThanOwnedByThePane() throws {
+        let pane = try Self.code(at: Self.fileDeclaring(String(describing: BrowserPane.self)))
+
+        let declarations = pane
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { $0.contains("var ") && $0.contains(": \(Self.ledgerName)") }
+
+        #expect(declarations.count == 1, "the pane declares one ledger property")
+        #expect(declarations.allSatisfy { $0.contains("@Binding") })
     }
 
     /// The negative: nothing on the browse/listing path writes the ledger.

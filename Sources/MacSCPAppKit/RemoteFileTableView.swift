@@ -251,6 +251,48 @@ struct RemoteFileTableView: NSViewRepresentable {
         }
     }
 
+    /// What one cell of `column` says when the pointer rests on it, or
+    /// `nil` for no tooltip at all.
+    ///
+    /// Exhaustive over `FileColumn` for the same reason `cellText` is, and
+    /// pulled out of the styling switch so the recycling rule — a reused
+    /// cell must be told its tooltip on EVERY pass, `nil` included — is
+    /// stated once instead of once per branch. Two columns have one: the
+    /// name of a symlink says it is one, and a digest carries its whole
+    /// value because the column truncates it in the middle.
+    static func cellToolTip(for column: FileColumn, item: RemoteFileItem, text: String)
+        -> String? {
+        switch column {
+        case .name: return item.kind == .symlink ? symlinkDescription : nil
+        case .checksum: return text.isEmpty ? nil : text
+        case .size, .modified, .permissions, .owner, .group, .type: return nil
+        }
+    }
+
+    /// The word for a symlink, shown both as the marker's accessibility
+    /// description and as the name cell's tooltip — one lookup, so the two
+    /// cannot come apart.
+    static var symlinkDescription: String {
+        L10n.string("filetable.symlinkTooltip", "Symbolic link")
+    }
+
+    /// Whether a change in the inputs `buildColumns` reads means the table's
+    /// columns have to be torn down and built again.
+    ///
+    /// A rebuild is not free: it discards every width the user dragged. A
+    /// changed column SET is worth that (the user just changed the columns).
+    /// A changed algorithm is worth it only while the checksum column is
+    /// actually shown — it is the one column whose header names the
+    /// algorithm, and with it hidden a rebuild resets everyone's widths for
+    /// a header nobody can see (review I3).
+    static func columnsNeedRebuild(
+        lastVisible: Set<FileColumn>?, visible: Set<FileColumn>,
+        lastAlgorithm: ChecksumAlgorithm?, algorithm: ChecksumAlgorithm
+    ) -> Bool {
+        if lastVisible != visible { return true }
+        return visible.contains(.checksum) && lastAlgorithm != algorithm
+    }
+
     /// Localized word for the "Type" column (M11m/T2) — `Core` never
     /// formats `kind` to text itself (see `FileColumnFormatter`'s doc
     /// comment): this is the App-layer lookup its comment points to.
@@ -376,6 +418,15 @@ struct RemoteFileTableView: NSViewRepresentable {
         // same items, so `needsReload` above cannot see it — diffed here
         // against what the coordinator itself last held, the same
         // discipline every other diff in this function uses.
+        //
+        // Cost, measured by reading rather than by profiling (review M4): a
+        // run over N files reloads the whole listing N times, once per value
+        // that lands, plus the selection reconciliation below. It is a full
+        // reload because a value can change any visible row's text and the
+        // ledger does not say which. Acceptable as it stands — the run's
+        // sheet is modal over the table while it happens — and the place to
+        // narrow it, if a large batch over a huge directory ever feels slow,
+        // is a per-row reload keyed on the item that changed.
         let checksumTextChanged =
             context.coordinator.checksumLedger != checksumLedger
             || context.coordinator.checksumAlgorithm != checksumAlgorithm
@@ -403,10 +454,12 @@ struct RemoteFileTableView: NSViewRepresentable {
         //
         // The algorithm setting is part of this diff and not only of the
         // cell text: it is in the checksum column's HEADER, and a header is
-        // built here and nowhere else.
-        let columnsChanged =
-            context.coordinator.lastVisibleColumns != visibleColumns
-            || context.coordinator.lastChecksumAlgorithm != checksumAlgorithm
+        // built here and nowhere else — but only while that column is
+        // shown, see `columnsNeedRebuild`.
+        let columnsChanged = Self.columnsNeedRebuild(
+            lastVisible: context.coordinator.lastVisibleColumns, visible: visibleColumns,
+            lastAlgorithm: context.coordinator.lastChecksumAlgorithm,
+            algorithm: checksumAlgorithm)
         if columnsChanged {
             context.coordinator.lastVisibleColumns = visibleColumns
             context.coordinator.lastChecksumAlgorithm = checksumAlgorithm
@@ -712,7 +765,7 @@ struct RemoteFileTableView: NSViewRepresentable {
                 // height, text baseline, 12pt text indent) is byte-for-byte
                 // what M5g froze: `field`'s own leading constraint above is
                 // untouched.
-                if columnID == "name" {
+                if column == .name {
                     let marker = NSImageView()
                     marker.translatesAutoresizingMaskIntoConstraints = false
                     marker.contentTintColor = DesignTokens.inkTertiaryNS
@@ -725,58 +778,54 @@ struct RemoteFileTableView: NSViewRepresentable {
                         marker.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 1),
                         marker.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                     ])
+                    marker.image = NSImage(
+                        systemSymbolName: "arrow.up.forward",
+                        accessibilityDescription: RemoteFileTableView.symlinkDescription)
                 }
             }
+            cell.toolTip = RemoteFileTableView.cellToolTip(
+                for: column, item: item, text: text)
             cell.textField?.stringValue = text
-            switch columnID {
-            case "name":
+            // Typed and exhaustive, like `cellText(for:)` above (review I1):
+            // this used to switch on the identifier STRING and end in a
+            // `default`, so renaming the enum's raw value would have been a
+            // compile error in the text mapping and a silent fall-through
+            // here — the digest losing its monospacing and, worse, the
+            // tooltip that is the only way to read a middle-truncated
+            // 64-digit value.
+            switch column {
+            case .name:
                 cell.textField?.font = .systemFont(ofSize: 12.5)
                 cell.textField?.textColor = DesignTokens.inkNS
                 cell.textField?.alignment = .natural
-                // Recycling hygiene (M11h/T1, critical): both `isHidden` and
-                // `toolTip` are set UNCONDITIONALLY on every reuse, the same
-                // way `stringValue`/font/color above already are — a row
-                // that scrolls from a symlink to a plain file must not keep
-                // showing either, since `makeView(withIdentifier:)` hands
-                // back the exact same `NSTableCellView` instance.
-                let isSymlink = item.kind == .symlink
-                cell.imageView?.isHidden = !isSymlink
-                if isSymlink {
-                    let description = L10n.string("filetable.symlinkTooltip", "Symbolic link")
-                    cell.imageView?.image = NSImage(
-                        systemSymbolName: "arrow.up.forward",
-                        accessibilityDescription: description)
-                    cell.toolTip = description
-                } else {
-                    cell.toolTip = nil
-                }
-            case "size":
+                // Recycling hygiene (M11h/T1, critical): `isHidden` is set
+                // UNCONDITIONALLY on every reuse, the same way
+                // `stringValue`/font/color already are — a row that scrolls
+                // from a symlink to a plain file must not keep showing the
+                // marker, since `makeView(withIdentifier:)` hands back the
+                // exact same `NSTableCellView` instance. Only the VISIBILITY
+                // varies per row now: the marker's image never does, so it
+                // is set once where the marker is built, beside the hover
+                // hint that explains it.
+                cell.imageView?.isHidden = item.kind != .symlink
+            case .size:
                 cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
                 cell.textField?.textColor = DesignTokens.inkSecondaryNS
                 cell.textField?.alignment = .right
-            case "modified":
+            case .modified:
                 cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
                 cell.textField?.textColor = DesignTokens.inkSecondaryNS
                 cell.textField?.alignment = .natural
-            case "permissions":
-                // Monospaced like "size" (M11m/T2 brief) so the fixed-width
-                // rwx string's columns of letters/dashes stay vertically
-                // aligned between rows, even though it's not digits.
+            // Monospaced like "size" (M11m/T2 brief) so the fixed-width rwx
+            // string's columns of letters/dashes stay vertically aligned
+            // between rows, even though it is not digits; the digest is
+            // monospaced for the same reason and because two hex values are
+            // compared by eye, digit under digit.
+            case .permissions, .checksum:
                 cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
                 cell.textField?.textColor = DesignTokens.inkSecondaryNS
                 cell.textField?.alignment = .natural
-            case "checksum":
-                cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
-                cell.textField?.textColor = DesignTokens.inkSecondaryNS
-                cell.textField?.alignment = .natural
-                // The resting column is narrower than a SHA-256 (see
-                // `columnSpecs`), so the whole value lives in the tooltip.
-                // Set on EVERY reuse, empty text included — the same
-                // recycling hygiene the "name" branch above documents: a
-                // cell that scrolls from a row with a value onto one
-                // without must not keep showing the old digest.
-                cell.toolTip = text.isEmpty ? nil : text
-            default: // "owner", "group", "type"
+            case .owner, .group, .type:
                 cell.textField?.font = .systemFont(ofSize: 12.5)
                 cell.textField?.textColor = DesignTokens.inkSecondaryNS
                 cell.textField?.alignment = .natural

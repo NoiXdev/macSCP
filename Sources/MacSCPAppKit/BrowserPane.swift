@@ -50,6 +50,20 @@ struct BrowserPane: View {
     /// `SettingsStore.checksumAlgorithm`, app-global like the other display
     /// settings.
     var checksumAlgorithm: ChecksumAlgorithm = .preferred
+    /// What this pane has been asked to compute, per file (2026-09-02) —
+    /// the checksum column's only source.
+    ///
+    /// A BINDING, because the value is the session's and not this view's
+    /// (review I2): a digest costs a server-side hash of a whole file, and
+    /// it must outlive every remount of the pane that shows it. There is no
+    /// default, so no call site can quietly get a private one that dies with
+    /// the view.
+    ///
+    /// Written in exactly one place — the pane's one checksum path, below —
+    /// and read in exactly one, the table. Nothing on the listing or refresh
+    /// path touches it, which is what keeps the column empty until the user
+    /// asks; `ChecksumColumnWiringGuardTests` holds both.
+    @Binding var checksumLedger: ChecksumLedger
     /// Whether this pane's backend can answer the checksum question. The
     /// remote pane's call site reads the capability
     /// (`ChecksumAvailability.isOffered(for:)`); the local one asks the
@@ -77,6 +91,33 @@ struct BrowserPane: View {
         BrowserScope(
             rootIsContainerList: fileSystem.rootIsContainerList,
             currentPath: viewModel.currentPath)
+    }
+
+    /// The pane's one checksum path: every surface that asks for a digest
+    /// asks here, and this is the only place an answer is remembered
+    /// (2026-09-02, review C1).
+    ///
+    /// It exists because there are two surfaces — the info sheet, for one
+    /// file, and the run started from the context menu, for a selection —
+    /// and they used to ask the view model separately. Only one of the two
+    /// answers was kept, so a digest read in the sheet left the column empty
+    /// for exactly the file it had just been computed for, and asking again
+    /// cost a second hash of the whole file on the far side. One funnel
+    /// makes "asked for" and "remembered" the same event rather than two
+    /// that have to be kept in step.
+    ///
+    /// Remembering here rather than after the run's own cancel filter
+    /// changes nothing about what is kept: the ledger already stores only a
+    /// value with file-content provenance, and the run's filter only ever
+    /// drops a failure caused by a cancel — the two agree exactly on which
+    /// results survive.
+    @MainActor
+    private func computeChecksum(
+        of item: RemoteFileItem, algorithm: ChecksumAlgorithm
+    ) async -> ChecksumRequestResult {
+        let result = await viewModel.checksum(of: item, algorithm: algorithm)
+        checksumLedger.record(result, for: item)
+        return result
     }
 
     /// Whether a local-file drop may land here at all: the pane has a drop
@@ -119,16 +160,6 @@ struct BrowserPane: View {
     /// chosen until the sheet is closed. Held here rather than built inside
     /// the sheet so the run and the sheet have the same lifetime.
     @State private var checksumBatch: ChecksumBatch?
-    /// What this pane has been asked to compute, per file (2026-09-02) —
-    /// the `checksum` column's only source, and per PANE for the same
-    /// reason the view model is: two panes are two file systems, and a path
-    /// means nothing across them.
-    ///
-    /// Written in exactly one place (the run's result report, below) and
-    /// read in exactly one (the table). Nothing on the listing or refresh
-    /// path touches it, which is what keeps the column empty until the user
-    /// asks — `ChecksumColumnWiringGuardTests` holds that.
-    @State private var checksumLedger = ChecksumLedger()
     /// Set only when a symlink double-click's `navigate(to:)` call FAILS
     /// (M11h/T1 review fix — see `onOpenSymlink` below): forwarded to
     /// `PathBar`, which reuses its existing failure overlay to show the
@@ -264,10 +295,7 @@ struct BrowserPane: View {
                         case .delete: deleteRequest = selection
                         case .computeChecksum:
                             checksumBatch = ChecksumBatch(
-                                selection: selection, algorithm: checksumAlgorithm,
-                                onResult: { result, item in
-                                    checksumLedger.record(result, for: item)
-                                })
+                                selection: selection, algorithm: checksumAlgorithm)
                         default: onMenuAction?(entry, selection)
                         }
                     },
@@ -391,13 +419,13 @@ struct BrowserPane: View {
                 checksumAlgorithm: checksumAlgorithm,
                 supportsChecksum: supportsChecksum,
                 onComputeChecksum: {
-                    await viewModel.checksum(of: target, algorithm: checksumAlgorithm)
+                    await computeChecksum(of: target, algorithm: checksumAlgorithm)
                 },
                 supportsPermissions: supportsPermissions)
         }
         .sheet(item: $checksumBatch) { batch in
             ChecksumBatchSheet(batch: batch) { item in
-                await viewModel.checksum(of: item, algorithm: batch.algorithm)
+                await computeChecksum(of: item, algorithm: batch.algorithm)
             }
         }
         .alert(

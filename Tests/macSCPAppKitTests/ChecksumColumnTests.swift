@@ -11,6 +11,12 @@ import macSCPCore
 @Suite("Checksum column")
 @MainActor
 struct ChecksumColumnTests {
+    /// `#filePath` is
+    /// `<repoRoot>/Tests/macSCPAppKitTests/ChecksumColumnTests.swift`.
+    private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+
     private static let referenceDate = Date(timeIntervalSince1970: 1_700_000_000)
 
     private static func file(
@@ -127,9 +133,104 @@ struct ChecksumColumnTests {
     /// The checkbox in Settings names the column without the algorithm: the
     /// setting is about showing the column, and the algorithm it shows is
     /// its own setting elsewhere on the same pane.
-    @Test func theColumnsOwnTitleResolvesFromTheCatalog() {
-        #expect(FileColumn.checksum.localizedTitle != "filetable.column.checksum")
-        #expect(FileColumn.checksum.localizedTitle.isEmpty == false)
+    ///
+    /// Read from the CATALOG, not from `localizedTitle` (review M2): the
+    /// lookup returns its English default when a key is missing, so an
+    /// expectation over the returned string is green with the catalogs
+    /// emptied. What has to be true is that the key is declared — the four
+    /// translations are then held to it by `LocalizationParityTests`.
+    @Test func bothChecksumHeaderKeysAreDeclaredInTheEnglishCatalog() throws {
+        let catalog = try String(
+            contentsOf: Self.repoRoot.appendingPathComponent(
+                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
+            encoding: .utf8)
+
+        #expect(catalog.contains("\"filetable.column.\(FileColumn.checksum.rawValue)\" ="))
+        #expect(catalog.contains("\"filetable.column.checksum.withAlgorithm %@\" ="))
+    }
+
+    // MARK: - The tooltip
+
+    /// The resting column is narrower than a 64-digit digest and truncates
+    /// in the MIDDLE, so the tooltip is the only way to read the whole
+    /// value. Nothing else in the suite touches it, and it hangs off the
+    /// styling path rather than the text path.
+    @Test func theChecksumCellCarriesTheWholeDigestAsItsTooltip() {
+        let item = Self.file()
+        let ledger = Self.ledger(holding: .sha256, for: item)
+        let text = RemoteFileTableView.cellText(
+            for: .checksum, item: item, ledger: ledger, algorithm: .sha256)
+
+        #expect(
+            RemoteFileTableView.cellToolTip(for: .checksum, item: item, text: text)
+                == Self.digest(.sha256).hex)
+    }
+
+    /// The recycling half: a cell that scrolls from a row with a value onto
+    /// one without must not keep showing the old digest.
+    @Test func aChecksumCellWithNoValueCarriesNoTooltip() {
+        let item = Self.file()
+        #expect(
+            RemoteFileTableView.cellToolTip(for: .checksum, item: item, text: "") == nil)
+    }
+
+    /// The other tooltip the table has, unchanged: a symlink's name cell
+    /// says so, and a plain file's does not.
+    @Test func onlyASymlinkNameCellCarriesATooltip() {
+        let symlink = Self.file(kind: .symlink)
+        let plain = Self.file()
+
+        #expect(RemoteFileTableView.cellToolTip(for: .name, item: symlink, text: "x") != nil)
+        #expect(RemoteFileTableView.cellToolTip(for: .name, item: plain, text: "x") == nil)
+    }
+
+    /// No other column has one, so a copied branch shows a stray tooltip.
+    @Test(arguments: FileColumn.allCases.filter { $0 != .name && $0 != .checksum })
+    func noOtherColumnCarriesATooltip(column: FileColumn) {
+        #expect(
+            RemoteFileTableView.cellToolTip(for: column, item: Self.file(), text: "x") == nil)
+    }
+
+    // MARK: - When the columns are rebuilt
+
+    /// A rebuild throws away every width the user dragged, so it has to be
+    /// worth it. A changed algorithm is worth it only when the column that
+    /// names the algorithm is actually on screen (review I3).
+    @Test func aChangedAlgorithmRebuildsTheColumnsOnlyWhileTheChecksumColumnIsShown() {
+        let withColumn: Set<FileColumn> = [.name, .checksum]
+        let withoutColumn: Set<FileColumn> = [.name, .size]
+
+        #expect(
+            RemoteFileTableView.columnsNeedRebuild(
+                lastVisible: withColumn, visible: withColumn,
+                lastAlgorithm: .sha256, algorithm: .md5) == true)
+        #expect(
+            RemoteFileTableView.columnsNeedRebuild(
+                lastVisible: withoutColumn, visible: withoutColumn,
+                lastAlgorithm: .sha256, algorithm: .md5) == false)
+    }
+
+    /// The two diffs it already had, unchanged: a changed set always
+    /// rebuilds, an unchanged everything never does.
+    @Test func aChangedColumnSetAlwaysRebuildsAndAnUnchangedOneNeverDoes() {
+        #expect(
+            RemoteFileTableView.columnsNeedRebuild(
+                lastVisible: [.name], visible: [.name, .size],
+                lastAlgorithm: .sha256, algorithm: .sha256) == true)
+        #expect(
+            RemoteFileTableView.columnsNeedRebuild(
+                lastVisible: [.name, .checksum], visible: [.name, .checksum],
+                lastAlgorithm: .sha256, algorithm: .sha256) == false)
+    }
+
+    /// Turning the column ON under a different algorithm than the headers
+    /// were built with rebuilds through the FIRST clause — the header would
+    /// otherwise name the old digest over the new column.
+    @Test func switchingTheColumnOnUnderANewAlgorithmStillRebuilds() {
+        #expect(
+            RemoteFileTableView.columnsNeedRebuild(
+                lastVisible: [.name], visible: [.name, .checksum],
+                lastAlgorithm: .sha256, algorithm: .md5) == true)
     }
 
     // MARK: - Structure
