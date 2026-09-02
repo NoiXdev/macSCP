@@ -41,20 +41,37 @@ import Testing
 /// parked in a synchronous wait for the connector's WHOLE duration — 30 s
 /// in the app, and here at least 5 s, because each timing test makes its
 /// own dial last that long on purpose. NOISE is the harness stalling its
-/// own main actor while ~256 suites queue onto one executor: milliseconds
-/// to a second and a bit, never two. Hence `ceiling(forAmbient:)`.
+/// own main actor while ~256 suites queue onto one executor. How large
+/// that is, stated as what was recorded rather than as a rule: every red
+/// row of the 2026-09-02 tally that wrote a number down recorded a gap
+/// between 0.67 s and 1.32 s. The 4.7 s above is NOT a counterexample the
+/// ceiling ignores — it is the same quantity, measured 2026-08-28 with a
+/// bare ticker over a different suite population, and it is larger than
+/// anything the ceiling can return. So the noise is bounded by
+/// measurement, not by argument, and the bound is an observation with a
+/// date on it. Hence `ceiling(forAmbient:)`, and hence its cap.
 /// `ambientGap(over:)` — the same ticker, same process, moments earlier,
 /// with nothing under test — stays, because it scales the ceiling when a
 /// run really is loaded and because it puts that load into the failure
 /// message.
 ///
 /// What keeps that from being a check that can never fail is measurement,
-/// not argument. Measured 2026-09-02, night, with the ceiling below: a
-/// 5-second synchronous wait planted on the main actor around either
-/// awaited connect is red in 10 of 10 runs — gaps of 5.000–5.019 s against
-/// a 2.0 s ceiling — and unplanted this suite is green in 10 of 10 FULL
-/// gated runs. And test 3 blocks the main actor on purpose and requires
-/// the gap to show up: the suite carries its own positive control.
+/// not argument. A 5-second synchronous wait planted on the main actor
+/// around either awaited connect below, with the ceiling as it stands:
+/// red in 10 of 10 runs of this suite alone (2026-09-02, gaps
+/// 5.000–5.019 s, ambient 0.025–0.044 s), and red in both timing tests in
+/// one run under `MACSCP_ITEST=1` (2026-09-03, gaps 5.028 s and 5.010 s).
+/// Unplanted: green in 10 of 10 full gated runs (2026-09-02).
+///
+/// That loaded run is why `ceiling(forAmbient:)` has a cap, and it is the
+/// measurement that turned the cap from prudence into a fix. Test 1's
+/// ambient window in it recorded **5.726 seconds** — so an uncapped
+/// `ambient * 3` would have set the ceiling at 17.2 s, and the planted 5 s
+/// block would have passed green. The blind zone is not hypothetical on
+/// this machine; it was one loaded run away.
+///
+/// And test 3 blocks the main actor on purpose and requires the gap to
+/// show up: the suite carries its own positive control.
 ///
 /// `.serialized` is load-bearing, not tidiness: every test in here measures
 /// the SAME main actor, and the third one deliberately blocks it. Run in
@@ -138,19 +155,53 @@ struct ConnectMainActorLivenessTests {
     }
 
     /// The ceiling a measured gap has to stay under to count as "the main
-    /// actor kept running": three times the ambient noise, or two seconds,
-    /// whichever is larger.
+    /// actor kept running": three times the ambient noise, at least two
+    /// seconds, and never more than four.
     ///
     /// It sits between the two magnitudes rather than on top of one of
-    /// them. Each timing test below dials for at least 5 s, so the defect —
-    /// a synchronous wait holding the main thread for the dial's duration —
-    /// shows as a gap of at least 5 s. Scheduling noise in a full parallel
-    /// run was measured at 0.67–1.32 s across twenty runs on 2026-09-02 and
-    /// never reached 2 s. The previous ceiling, the ambient gap itself, sat
-    /// inside that noise and went red in seventeen of those twenty runs;
-    /// this one keeps better than a factor of two of headroom on each side.
+    /// them, and the CAP is what keeps it there. `ambient * 3` alone has no
+    /// upper bound, and an unbounded ceiling in a loaded run can grow past
+    /// the very block it exists to catch: test 1's detectable block is 5 s,
+    /// so an ambient above 1.667 s would make the assertion unfailable
+    /// while reading exactly like a satisfied one. That regime is reachable
+    /// here — under `MACSCP_ITEST=1` test 1 has taken 51.8 s for a 5 s dial
+    /// (2026-09-02, ten full runs). Capped at four, the block is over the
+    /// ceiling on every path.
+    ///
+    /// The two margins, as ratios rather than adjectives. Block side:
+    /// test 1's 5 s and test 2's ~6 s against the largest ceiling this can
+    /// return, 4 s — 1.25× and 1.5×; against the 2 s floor, 2.5× and 3×.
+    /// Noise side: the largest gap the 2026-09-02 tally recorded is
+    /// 1.324 s, which is 1.51× under the floor (1.67× if that run's own
+    /// ambient, 0.739 s, had lifted the ceiling to 2.217 s). So the block
+    /// side clears two only at the floor, and the noise side does not clear
+    /// two at all. The previous ceiling — the ambient gap itself, no floor
+    /// — sat inside the noise and went red in seventeen of twenty runs.
+    ///
+    /// The "block is the dial's duration" premise holds for ONE of the two
+    /// defect shapes the tests below name, and the two are caught by
+    /// different halves of the measurement. A caller-side blocking bridge —
+    /// `ConnectionViewModel.connect()` parking the main thread for the
+    /// whole dial, the shape `AgentBackedPrivateKey` has and test 3
+    /// measures — produces a gap of the dial's full duration, and that is
+    /// what this ceiling catches. The other shape, the connector body
+    /// inheriting main-actor isolation, puts only the SYNCHRONOUS part of
+    /// the dial on the main actor: 600 ms in test 1, which is under the
+    /// floor, so the timing half stays green in its presence. That shape is
+    /// caught deterministically by `ranOnMainThread == false` instead, and
+    /// the old 300 ms ceiling used to catch it too. Raising the floor
+    /// traded that redundancy for an assertion that survives a loaded run;
+    /// the trade is only sound because the thread-identity check is not a
+    /// timing measurement and cannot be moved by load.
+    ///
+    /// What this does NOT bound is the instrument's own floor as measured
+    /// on 2026-08-28 and recorded at the top of this file: 4.7 s with a
+    /// bare ticker. That is above the cap, so a run in that regime is a
+    /// false red rather than a blind pass — the direction this suite
+    /// prefers, since a false red is visible and a blind pass is not. No
+    /// run of the rebuilt assertion has reached it (2026-09-02).
     private func ceiling(forAmbient ambient: Duration) -> Duration {
-        max(ambient * 3, .seconds(2))
+        min(max(ambient * 3, .seconds(2)), .seconds(4))
     }
 
     // MARK: - 1. The boundary itself
@@ -167,7 +218,12 @@ struct ConnectMainActorLivenessTests {
     /// load: whichever thread ran the connector body, it was not the main
     /// one. The gap is the timing half, and is stated against the ceiling —
     /// which requires the dial to last long enough that a block of the
-    /// dial's duration clears two seconds. Hence the 5 s connector.
+    /// dial's duration clears the ceiling. Hence the 5 s connector, and
+    /// hence the `elapsed` assertion below: the gap check is a negative
+    /// check, and its whole meaning rests on the dial having lasted 5 s.
+    /// Trim the connector's sleep and the ceiling becomes several times the
+    /// whole dial — an assertion that cannot fail and reads like one that
+    /// is satisfied. `elapsed` is the positive check beside it.
     @MainActor
     @Test func awaitingTheConnectorDoesNotKeepTheMainActor() async {
         let ambient = await ambientGap(over: .milliseconds(600))
@@ -195,10 +251,14 @@ struct ConnectMainActorLivenessTests {
         vm.password = "secret"
 
         let (ticker, log) = await startTicker()
+        let started = ContinuousClock.now
         _ = await vm.connect()
+        let elapsed = ContinuousClock.now - started
         await closeWindow(ticker)
 
         #expect(ranOnMainThread.value == false)
+        // The dial really lasted what the ceiling is calibrated against.
+        #expect(elapsed > .seconds(4), "the dial was only \(elapsed)")
         #expect(
             log.largestGap <= ceiling(forAmbient: ambient),
             "gap \(log.largestGap) over \(log.stamps.count) ticks, ambient \(ambient)")
