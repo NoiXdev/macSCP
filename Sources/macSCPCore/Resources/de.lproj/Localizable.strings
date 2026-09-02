@@ -68,7 +68,8 @@
 "core.connect.keyNotFound %@" = "SSH-Key nicht gefunden: %@";
 "core.connect.keyPassphraseRequired" = "Der SSH-Key ist verschlüsselt — Passphrase angeben.";
 "core.connect.keyWrongPassphrase" = "Passphrase ist falsch.";
-"core.connect.keyTypeNotLoadable %@" = "Das ist ein %@-Schlüssel. macSCP öffnet aus einer Datei ed25519-, RSA- und ECDSA-Schlüssel; dieser Typ gehört nicht dazu.";
+"core.connect.keyTypeNotLoadable %@" = "Das ist ein %@-Schlüssel. macSCP öffnet aus einer Datei nur OpenSSH-ed25519-Schlüssel — lade diesen Schlüssel in den ssh-agent (ssh-add) und wähle den Agenten als Anmeldung.";
+"core.connect.keyTypeNotLoadableRSANote" = "Hinweis für RSA-Schlüssel: Server, die auf Gos SSH-Bibliothek aufbauen — Gitea, Forgejo, SFTPGo, gitlab-sshd —, lehnen einen über den Agenten angebotenen RSA-Schlüssel ab. Ein ed25519-Schlüssel funktioniert überall.";
 "core.connect.keyPEMNotSupported" = "Dieser Schlüssel liegt im PEM-Format vor. macSCP öffnet Schlüssel im OpenSSH-Format — konvertiere ihn mit ssh-keygen -p (die Passphrase bleibt erhalten), oder lade ihn in den ssh-agent und wähle den Agenten als Anmeldung.";
 "core.connect.keyUnsupportedFormat" = "Diese Datei konnte nicht als SSH-Key gelesen werden. macSCP öffnet aus einer Datei nur OpenSSH-ed25519-Schlüssel; andere Typen funktionieren über den ssh-agent.";
 

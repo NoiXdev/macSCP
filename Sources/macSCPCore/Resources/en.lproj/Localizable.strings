@@ -79,7 +79,8 @@
 "core.connect.keyNotFound %@" = "SSH key not found: %@";
 "core.connect.keyPassphraseRequired" = "The SSH key is encrypted — enter a passphrase.";
 "core.connect.keyWrongPassphrase" = "The passphrase is incorrect.";
-"core.connect.keyTypeNotLoadable %@" = "This is an %@ key. macSCP opens ed25519, RSA and ECDSA keys from a file; this type is not one of them.";
+"core.connect.keyTypeNotLoadable %@" = "This is an %@ key. macSCP opens only OpenSSH ed25519 keys from a file — load this key into the ssh-agent (ssh-add) and choose the agent as the login instead.";
+"core.connect.keyTypeNotLoadableRSANote" = "Note for RSA keys: servers built on Go's SSH library — Gitea, Forgejo, SFTPGo, gitlab-sshd — reject an RSA key offered through the agent. An ed25519 key works everywhere.";
 "core.connect.keyPEMNotSupported" = "This key is in PEM format. macSCP opens OpenSSH-format keys — convert it with ssh-keygen -p (the passphrase stays), or load it into the ssh-agent and choose the agent as the login.";
 "core.connect.keyUnsupportedFormat" = "This file could not be read as an SSH key. macSCP opens OpenSSH ed25519 keys from a file; other types work through the ssh-agent.";
 
