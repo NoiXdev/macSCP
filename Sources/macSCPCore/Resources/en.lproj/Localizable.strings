@@ -57,7 +57,7 @@
 "core.connect.keyWrongPassphrase" = "The passphrase is incorrect.";
 "core.connect.keyTypeNotLoadable %@" = "This is an %@ key. macSCP opens ed25519, RSA and ECDSA keys from a file; this type is not one of them.";
 "core.connect.keyPEMNotSupported" = "This key is in PEM format. macSCP opens OpenSSH-format keys — convert it with ssh-keygen -p (the passphrase stays), or load it into the ssh-agent and choose the agent as the login.";
-"core.connect.keyUnsupportedFormat" = "This file could not be read as an SSH key. macSCP opens OpenSSH ed25519 keys from a file; other types work through the ssh-agent.";
+"core.connect.keyUnsupportedFormat" = "This file could not be read as an SSH key. macSCP opens OpenSSH-format private keys (ed25519, RSA, ECDSA); a PEM key is reported separately.";
 
 /* ConnectionViewModel.failedState(for:) — ssh-agent (M10d/T4) */
 "core.connect.agentSocketUnavailable" = "No SSH agent reachable (SSH_AUTH_SOCK).";

@@ -1,17 +1,25 @@
 import Foundation
 
-/// The kind of SSH key (M17). Only ed25519 keys can be used to CONNECT in
-/// macSCP today (the loader is ed25519-only); rsa/ecdsa keys can be
-/// generated and their public key exported, but are not offered as a login.
+/// The kind of SSH key (M17). All three cases can be used to CONNECT in
+/// macSCP: `SSHPrivateKeyLoader` opens OpenSSH-format ed25519, RSA and
+/// ECDSA (P-256/384/521) private key files (`fa67138`); DSA, `sk-*`
+/// security-key types and PEM-format keys are not modelled here at all and
+/// never reach `KeyType`.
 public enum KeyType: Equatable, Sendable, Codable {
     case ed25519
     case rsa(bits: Int)
     case ecdsa
 
-    /// True only for ed25519 — the one type `SSHPrivateKeyLoader` can load.
+    /// Whether `SSHPrivateKeyLoader` can load a key of this type — true for
+    /// all three cases. This is about the LOADER's reach, not about whether
+    /// a given key is USEFUL to connect with: an RSA key this weak that a
+    /// server refuses (OpenSSH's `RequiredRSASize` defaults to 1024, so a
+    /// short key server-config can reject) is still loadable, and that
+    /// rejection is the server's decision, not a case this property makes.
     public var isConnectable: Bool {
-        if case .ed25519 = self { return true }
-        return false
+        switch self {
+        case .ed25519, .rsa, .ecdsa: return true
+        }
     }
 }
 
