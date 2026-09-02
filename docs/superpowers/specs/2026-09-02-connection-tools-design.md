@@ -1,7 +1,10 @@
 # Connection Tools: Universal Ping and Trace, Plus a Seam per Protocol — Design Proposal
 
-**Status:** proposal, 2026-09-02 (night), **awaiting the maintainer's
-review** before any plan. Written from the decisions recorded in
+**Status:** decided 2026-09-02 (night) — the maintainer answered the two
+questions at the end: the diagnosis runs **only on the button**, never
+automatically after a failed connect; "Copy report" offers **both**
+plain text and Markdown, as two entries of one menu. Ready for the
+spike (§5) and then a plan. Written from the decisions recorded in
 `2026-08-25-backlog-connection-tools.md` (ping = TCP attempt AND ICMP
 echo; trace = own-setup log AND network trace; entry points: the tab,
 the context menu, the error dialog; the tools are an interface with a
@@ -124,8 +127,5 @@ do not wait for the spike.
 5. First seam contributions: S3 access probe (item 18), SSH negotiation
    (needs the fork's observer), WebDAV OPTIONS.
 
-*Decisions for the maintainer:* (1) does the universal half run
-automatically after a FAILED connect (one click saved, one extra dial
-made) or only on the button (recommended: only on the button — a failed
-dial should not fan out into more dials on its own); (2) is "Copy
-report" plain text or Markdown (recommended: plain text).
+*Decided 2026-09-02:* (1) only on the button; (2) both, as a two-entry
+copy menu (plain text and Markdown).

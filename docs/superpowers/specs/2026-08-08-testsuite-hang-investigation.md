@@ -277,3 +277,15 @@ above forbids; the fix is an async runner (`terminationHandler` bridged
 through a continuation) shared by the three. Recorded by the review of
 `d3e25bd`, which copied the sibling's pattern faithfully.
 
+## Decided 2026-09-02 (night) — the liveness assertion gets rebuilt
+
+Sixteen red of nineteen full gated runs today, twenty-five of
+twenty-five green alone: the property (`ConnectMainActorLivenessTests`:
+the main actor keeps running while a real dial stalls) is real, the
+shape (a wall-clock gap under a fixed ceiling, while 3700 other tests
+compete for the same cores) is not. The maintainer chose the rebuild
+over an isolated run and over leaving it. Plan to follow:
+`2026-09-03-liveness-assertion-rebuild.md` — the measurement stays, the
+comparison becomes relative to a control measured under the same load
+in the same run (or the dial's stall is proved by a probe that cannot be
+starved), and the full-run tally in this entry stops growing.

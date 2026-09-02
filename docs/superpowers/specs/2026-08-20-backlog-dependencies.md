@@ -747,3 +747,12 @@ plan was corrected and the fix went where 0.3.9's host-key split went.
   are one change conceptually); the Citadel prefix split only after the
   NIOSSH one lands.
 
+## Decided 2026-09-02 (night) — third-party notices, generated
+
+With `_CryptoExtras` (swift-crypto's vendored BoringSSL) linked into the
+app since the RSA host-key work, the repository still carries no file of
+third-party licence notices. The maintainer chose a GENERATED one: a
+script reads `Package.resolved`, collects each checkout's licence file
+into `THIRD_PARTY_NOTICES.md`, and a test pins that every pinned identity
+appears there — so a new dependency cannot land without its notice.
+Plan: `2026-09-03-third-party-notices.md`.

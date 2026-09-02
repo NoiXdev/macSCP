@@ -87,3 +87,12 @@ CLI completion → connection tools → FTP/FTPS → SMB) stands first.
     the work already agreed. Items 2–12 are candidates for a "sidebar and
     explorer polish" plan once the current strand is through; items
     13–22 each want a brainstorm.
+
+## Decided 2026-09-02 (night) — what goes first
+
+From the list above the maintainer picked, for the first polish plan:
+**the terminal-resize bug (item 1)** — measured first — and **the
+transfers items (7 and 9)**: cancel one or all active transfers beside
+the clean-up button, and full source/destination paths in a row. The
+first feature to get a brainstorm: **detachable, optionally sticky tabs
+(item 17)**. Everything else in the list waits.
