@@ -139,3 +139,49 @@ proposal in `docs/superpowers/specs/2026-09-02-s3-bucket-browser-design.md`,
 awaiting the maintainer: no `ListBuckets`, no provider type, no
 bucket-level browser, no change to how an existing session with an empty
 region behaves (it stays as it is and gets the new message on connect).
+
+## Done 2026-09-02 — the real half: the bucket list as the first folder
+
+Designed in `2026-09-02-s3-bucket-browser-design.md` (decided the same
+evening: visible toggle, presets only), planned in
+`../plans/2026-09-02-s3-bucket-browser.md`. Commits: `763c6b2` (rig:
+second bucket `macscp-second`, scoped key `macscp-scoped` without
+`s3:ListAllMyBuckets`), `3bbafcd` (Core: `startsAtBucketList`, a
+`RootMode` resolver, `ListBuckets` on connect, bucket rows as directory
+items, a guard refusing bucket-level writes), `f325ce3` + `539dc59`
+(form toggle, hidden bucket field, persistence with a read-side default,
+`BucketLevelOperation` enum with a sentence per case in every renderer,
+list mode stores an empty bucket), `8f727f2` + `2818eb6` + `2d911fc`
+(browser: a bucket row opens and nothing else, the drop target declines
+at the bucket list, every transfer entry point — context menu, keyboard,
+drop, window toolbar, local-pane transfer actions, cross-session targets
+— asks one `BrowserScope`-based predicate in both directions; readStream
+and cross-bucket rename refused; list-mode error paths name the bucket;
+the toggle clears the bucket field when it goes on).
+
+**Measured against the rig:** root key + toggle → two bucket rows,
+opening either shows its objects, a transfer routes into the named
+bucket; **the scoped key gets a filtered one-bucket list, not a 403** —
+this MinIO release answers `ListBuckets` that way even with an explicit
+Deny on `s3:ListAllMyBuckets` (proofs in the rig README); opening the
+other bucket is refused; toggle off + bucket → today's connect. The
+403 → "this key may not list buckets" path (what AWS documents; not
+measured here, no AWS key in the rig) and the empty-account path are
+pinned with the mock transport.
+
+**What the reviews caught and the fix rounds closed:** a stale bucket
+persisted under the toggle (now empty in list mode); the queue and the
+CLI rendering raw enum dumps (now a sentence per operation); a
+hand-written `init(from:)` whose comment overclaimed (now a round-trip
+test with every field non-default); and, Critical, the window toolbar's
+Upload/Download and the local pane's transfer actions bypassing the
+bucket-row gate — a selected bucket row could download a whole bucket
+(now the same predicate, both directions, ten guard checks including one
+that reads the derivation of the destination scope).
+
+**Left open, named:** `permissionModel` is read by no UI, so S3/WebDAV
+FILES still offer a permissions editor whose Apply throws — a separate
+entry; 28 catalog strings for seven bucket-level operations; the toolbar
+buttons are pinned by source scan only (this project renders no view in a
+test); Servinga's `ListBuckets` behaviour stays unmeasured.
+

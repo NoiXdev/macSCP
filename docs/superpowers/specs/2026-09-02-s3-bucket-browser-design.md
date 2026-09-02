@@ -1,6 +1,6 @@
 # S3: the Bucket as the First Folder — Design Proposal
 
-**Status:** decided 2026-09-02 (evening) — the maintainer chose the **visible toggle** (section 1) and **presets only, no provider type** (section 3); the plan follows in `../plans/2026-09-02-s3-bucket-browser.md`
+**Status:** decided 2026-09-02 (evening) — visible toggle, presets only — and **implemented the same night** through `../plans/2026-09-02-s3-bucket-browser.md`; the record of what was measured is the "Done" section of `2026-08-31-backlog-s3-without-bucket.md`
 (marked below). Written while the maintainer was away, from
 `docs/superpowers/specs/2026-08-31-backlog-s3-without-bucket.md` and the
 maintainer's own suggestion recorded there. Nothing here is implemented.
