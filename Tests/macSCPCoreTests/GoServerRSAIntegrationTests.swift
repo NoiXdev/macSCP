@@ -56,20 +56,18 @@ struct GoServerRSAIntegrationTests {
     /// check for the ABSENCE of a refusal read that way is a check on the
     /// rig's history instead of on this connect. `--since` takes unix seconds,
     /// which sidesteps the container clock being UTC while the host is not.
-    private func sftpGoLog(since moment: Date) -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        process.arguments = [
-            "logs", SFTPGoRig.containerName,
-            "--since", String(Int(moment.timeIntervalSince1970)),
-        ]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try? process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(data: data, encoding: .utf8) ?? ""
+    private func sftpGoLog(since moment: Date) async -> String {
+        let result = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: [
+                "logs", SFTPGoRig.containerName,
+                "--since", String(Int(moment.timeIntervalSince1970)),
+            ])
+        // `docker logs` interleaves stdout and stderr; the runner keeps them
+        // apart, so both are stitched back together the way the single pipe
+        // used to deliver them.
+        guard let result else { return "" }
+        return result.stdoutText + result.stderrText
     }
 
     // MARK: - The rig itself
@@ -138,7 +136,7 @@ struct GoServerRSAIntegrationTests {
                 SFTPGo refused the RSA login.
                 error: \(String(reflecting: error))
                 SFTPGo log since the connect:
-                \(sftpGoLog(since: start))
+                \(await sftpGoLog(since: start))
                 """)
             throw error
         }
@@ -149,7 +147,7 @@ struct GoServerRSAIntegrationTests {
         let items = try await fs.list(path: "/")
 
         #expect(items.contains { $0.name == "hello.txt" })
-        let log = sftpGoLog(since: start)
+        let log = await sftpGoLog(since: start)
         #expect(log.contains(fingerprint))
         #expect(log.contains(Self.refusalBeforeTheFix) == false)
     }
@@ -200,9 +198,9 @@ struct GoServerRSAIntegrationTests {
     func rsaAgentIdentityConnects() async throws {
         let (dir, keyPath, publicKey) = try await makeSFTPGoInstalledKey(type: "rsa", bits: 2048)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: keyPath, to: agent)
+        try await addKey(atPath: keyPath, to: agent)
         let (store, khDir) = freshKnownHosts("sftpgo-rsa-agent")
         defer { try? FileManager.default.removeItem(at: khDir) }
         let config = try config(auth: .agent)

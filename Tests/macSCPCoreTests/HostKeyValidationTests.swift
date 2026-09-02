@@ -38,18 +38,17 @@ struct HostKeyValidationTests {
 struct TOFUHostKeyValidatorTests {
     /// A real key, generated at runtime — no key material in the repo, the
     /// rule `HostKeyFingerprintTests` already follows.
-    private func makeHostKey() throws -> NIOSSHPublicKey {
+    private func makeHostKey() async throws -> NIOSSHPublicKey {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-tofu-key-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let keyURL = dir.appendingPathComponent("id_ed25519")
-        let keygen = Process()
-        keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
-        keygen.arguments = ["-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
-                            "-N", "", "-q", "-C", "tofu-test"]
-        try keygen.run(); keygen.waitUntilExit()
-        #expect(keygen.terminationStatus == 0)
+        let keygenResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/ssh-keygen"),
+            arguments: ["-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
+                        "-N", "", "-q", "-C", "tofu-test"])
+        #expect(keygenResult.status == 0)
         let pubLine = try String(
             contentsOfFile: keyURL.path(percentEncoded: false) + ".pub", encoding: .utf8)
         return try NIOSSHPublicKey(openSSHPublicKey: pubLine)
@@ -84,14 +83,14 @@ struct TOFUHostKeyValidatorTests {
     /// store would re-run TOFU and overwrite the remembered key, so
     /// `HostKeyError.mismatch` — the hard stop — could never fire for that
     /// host again.
-    @Test func corruptStoreFailsClosedInsteadOfLookingUnknown() throws {
+    @Test func corruptStoreFailsClosedInsteadOfLookingUnknown() async throws {
         let dir = try makeStoreDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         try "not valid json".write(to: dir.appendingPathComponent("known_hosts.json"),
                                    atomically: true, encoding: .utf8)
 
         let (result, accepted) = runValidator(
-            store: KnownHostsStore(directory: dir), key: try makeHostKey())
+            store: KnownHostsStore(directory: dir), key: try await makeHostKey())
 
         #expect(accepted == false)
         guard case .lookupFailed(let reason) = try #require(result) else {
@@ -115,7 +114,7 @@ struct TOFUHostKeyValidatorTests {
     /// `localizedDescription` says only that the data is missing. The
     /// coding path is macSCP's own — its `Codable` keys and the file's own
     /// indices — so it can be printed without printing Foundation's table.
-    @Test func wronglyShapedStoreNamesTheMissingKeyAndItsPath() throws {
+    @Test func wronglyShapedStoreNamesTheMissingKeyAndItsPath() async throws {
         let dir = try makeStoreDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         try #"[{"host":"nas.local","port":22,"publicKeyBase64":"QUJD"}]"#
@@ -123,7 +122,7 @@ struct TOFUHostKeyValidatorTests {
                    atomically: true, encoding: .utf8)
 
         let (result, accepted) = runValidator(
-            store: KnownHostsStore(directory: dir), key: try makeHostKey())
+            store: KnownHostsStore(directory: dir), key: try await makeHostKey())
 
         #expect(accepted == false)
         guard case .lookupFailed(let reason) = try #require(result) else {
@@ -137,12 +136,12 @@ struct TOFUHostKeyValidatorTests {
     /// holds nothing yields `.unknown` — the arm that leads to the prompt.
     /// Without this, "fails closed" could just be the validator refusing
     /// everything.
-    @Test func readableEmptyStoreReportsUnknownAndAsks() throws {
+    @Test func readableEmptyStoreReportsUnknownAndAsks() async throws {
         let dir = try makeStoreDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let (result, accepted) = runValidator(
-            store: KnownHostsStore(directory: dir), key: try makeHostKey())
+            store: KnownHostsStore(directory: dir), key: try await makeHostKey())
 
         #expect(accepted == false)   // the hook cannot await; the box carries the question
         guard case .unknown = try #require(result) else {
@@ -153,10 +152,10 @@ struct TOFUHostKeyValidatorTests {
 
     /// A remembered, identical key is accepted inside the hook and leaves
     /// the box empty — nothing to ask, nothing to report.
-    @Test func rememberedIdenticalKeyIsAcceptedSilently() throws {
+    @Test func rememberedIdenticalKeyIsAcceptedSilently() async throws {
         let dir = try makeStoreDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let key = try makeHostKey()
+        let key = try await makeHostKey()
         let candidate = HostKeyCandidate(host: "nas.local", port: 22, publicKey: key)
         let store = KnownHostsStore(directory: dir)
         try store.upsert(KnownHostKey(

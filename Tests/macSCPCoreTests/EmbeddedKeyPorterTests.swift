@@ -832,22 +832,20 @@ struct EmbeddedKeyPorterTests {
     /// PEM for every type (`pemNotSupported`); the way to carry a PEM key here
     /// is to export WITH its passphrase, which lands in the strong
     /// `ssh-keygen -y -P` branch.
-    @Test func materializeRejectsALegacyPEMEncryptedKeyExportedWithoutItsPassphrase() throws {
+    @Test func materializeRejectsALegacyPEMEncryptedKeyExportedWithoutItsPassphrase() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
         let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
 
         let legacy = dir.appendingPathComponent("legacy")
-        let keygen = Process()
-        keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
-        keygen.arguments = [
-            "-t", "rsa", "-b", "2048", "-m", "PEM", "-N", "s3cr3t", "-q",
-            "-C", "legacy", "-f", legacy.path(percentEncoded: false),
-        ]
-        keygen.standardInput = FileHandle.nullDevice
-        try keygen.run(); keygen.waitUntilExit()
-        #expect(keygen.terminationStatus == 0)
+        let keygenResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/ssh-keygen"),
+            arguments: [
+                "-t", "rsa", "-b", "2048", "-m", "PEM", "-N", "s3cr3t", "-q",
+                "-C", "legacy", "-f", legacy.path(percentEncoded: false),
+            ])
+        #expect(keygenResult.status == 0)
 
         let payload = EmbeddedKey(
             fileContents: try Data(contentsOf: legacy),

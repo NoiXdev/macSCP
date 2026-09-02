@@ -24,18 +24,13 @@ struct AskPassHelperError: Error {
 /// Starts a BRAND-NEW `ssh-agent -s` process this test owns exclusively
 /// (parsed from its own stdout) — never the maintainer's real agent.
 /// Killed in the caller's `defer`.
-func spawnAgent() throws -> SpawnedAgent {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-agent")
-    process.arguments = ["-s"]
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    try process.run()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
-        throw AgentSpawnError(detail: "ssh-agent -s exited \(process.terminationStatus)")
+func spawnAgent() async throws -> SpawnedAgent {
+    let result = try await SubprocessRunner.run(
+        URL(fileURLWithPath: "/usr/bin/ssh-agent"), arguments: ["-s"])
+    guard result.status == 0 else {
+        throw AgentSpawnError(detail: "ssh-agent -s exited \(result.status)")
     }
-    let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let output = result.stdoutText
     func value(named name: String) -> String? {
         for line in output.split(separator: "\n") where line.hasPrefix("\(name)=") {
             return String(line.dropFirst(name.count + 1).prefix { $0 != ";" })
@@ -52,12 +47,14 @@ func spawnAgent() throws -> SpawnedAgent {
 
 /// Terminates the spawned agent process (teardown — never touches the
 /// user's own agent, only the PID this test itself started).
+///
+/// The raw `kill(2)` syscall, not a spawned `/bin/kill`: this runs from
+/// every caller's `defer`, which cannot `await` a
+/// `SubprocessRunner.run(`, and sending a signal needs no child process at
+/// all — `SubprocessRunner`'s own reap path uses the same call for the
+/// same reason.
 func killAgent(_ agent: SpawnedAgent) {
-    let kill = Process()
-    kill.executableURL = URL(fileURLWithPath: "/bin/kill")
-    kill.arguments = ["-TERM", String(agent.pid)]
-    try? kill.run()
-    kill.waitUntilExit()
+    kill(agent.pid, SIGTERM)
     // ssh-agent removes its own socket on a TERM it receives while still
     // alive, so this is a no-op on the common path. It matters when TERM
     // never reached a live agent (the test process died first, or the
@@ -82,10 +79,7 @@ func killAgent(_ agent: SpawnedAgent) {
 /// gets any partially-written file cleaned up; `removeItem` on a path
 /// that was never created is a harmless `try?`.
 func addKey(atPath keyPath: String, to agent: SpawnedAgent,
-                    passphrase: String? = nil, helperDirectory: URL? = nil) throws {
-    let add = Process()
-    add.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-add")
-    add.arguments = [keyPath]
+                    passphrase: String? = nil, helperDirectory: URL? = nil) async throws {
     var environment = [
         "SSH_AUTH_SOCK": agent.socketPath,
         "PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin",
@@ -122,10 +116,9 @@ func addKey(atPath keyPath: String, to agent: SpawnedAgent,
         environment["SSH_ASKPASS_REQUIRE"] = "force"
         environment["DISPLAY"] = ":0"
     }
-    add.environment = environment
-    try add.run()
-    add.waitUntilExit()
-    #expect(add.terminationStatus == 0)
+    let result = try await SubprocessRunner.run(
+        URL(fileURLWithPath: "/usr/bin/ssh-add"), arguments: [keyPath], environment: environment)
+    #expect(result.status == 0)
 }
 
 /// Points THIS test process's `SSH_AUTH_SOCK` at `agent` for the

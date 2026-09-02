@@ -14,9 +14,13 @@ import Testing
 struct AsyncSignalTests {
     /// The positive half. Without it the cancellation test below would go on
     /// passing against a `wait()` that answers `.cancelled` for everything.
-    @Test func aRaisedLatchReportsSignalled() async {
+    @Test func aRaisedLatchReportsSignalled() async throws {
         let signal = AsyncSignal()
         async let waited = signal.wait()
+        // Long enough for the waiter to have registered, so this measures a
+        // signal that arrives DURING the wait rather than winning a race
+        // against registration.
+        try await Task.sleep(for: .milliseconds(100))
         // Raised from a thread that is not the waiter's, which is the only
         // way this type is ever used.
         DispatchQueue.global().async { signal.signal() }

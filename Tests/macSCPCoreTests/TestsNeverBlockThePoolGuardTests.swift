@@ -48,23 +48,24 @@ struct TestsNeverBlockThePoolGuardTests {
         case usleep = "usleep("
     }
 
-    /// Files that still carry a SHORT child wait — `ssh-keygen`, `rm`, `dd`,
-    /// `stat`, `docker` — keyed by their path under `Tests/`.
+    /// Files that still carry a blocking wait `Task 1b` did not convert,
+    /// keyed by their path under `Tests/`.
     ///
-    /// Produced by running the grep over the tree on 2026-09-03, after the
-    /// long waits were converted, and pasting what it reported: seventeen
-    /// files, sixteen of them a `waitUntilExit()` on a child that finishes in
-    /// milliseconds. Task 1b replaces those with `SubprocessRunner.run` and
-    /// empties this list.
+    /// The seventeen files the 2026-09-03 grep found (after the long waits
+    /// were converted) are down to these two: Task 1b replaced every
+    /// `Process`/`waitUntilExit()` short child wait in `macSCPCoreTests`
+    /// with `SubprocessRunner.run` — fifteen files, thirteen of them a test
+    /// suite plus `Support/InstalledKey.swift` and `Support/SpawnedAgent.swift`.
+    /// Only the two entries below are left, and neither is Task 1b's to
+    /// remove; see each entry's own comment.
     ///
     /// `everyAllowlistEntryIsStillNeeded` below is what keeps the list
     /// honest: an entry whose file no longer carries its pattern is a
     /// failure, not a leftover.
     static let allowed: [String: Set<BlockingWait>] = [
-        // The one entry that is not a subprocess wait, and not Task 1b's to
-        // remove: a deliberate main-thread block, planted on a
-        // `DispatchQueue.global()` thread to prove the connect path does not
-        // need the main actor. Blocking is the measurement there.
+        // Not a subprocess wait: a deliberate main-thread block, planted on
+        // a `DispatchQueue.global()` thread to prove the connect path does
+        // not need the main actor. Blocking is the measurement there.
         "macSCPCoreTests/ConnectMainActorLivenessTests.swift": [.usleep],
 
         // `Docker.run`: sub-second docker calls behind `defer`, unbounded by
@@ -78,24 +79,6 @@ struct TestsNeverBlockThePoolGuardTests {
         // decision.
         "macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift":
             [.dispatchGroup, .waitUntilExit],
-
-        // `ssh-keygen`, `rm`, `dd`, `stat` and friends: short-lived children,
-        // Task 1b.
-        "macSCPCoreTests/CitadelFileSystemIntegrationTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/ConnectFailureSecrecyTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/CrossBackendTransferIntegrationTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/EmbeddedKeyPorterTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/FileKeyTypeIntegrationTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/GoServerRSAIntegrationTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/HostKeyFingerprintTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/HostKeyValidationTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/RSASHA2HostKeyTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/SSHKeyImporterTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/SSHPrivateKeyLoaderTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/ShellQuotingExecutionTests.swift": [.waitUntilExit],
-        "macSCPCoreTests/Support/InstalledKey.swift": [.waitUntilExit],
-        "macSCPCoreTests/Support/SpawnedAgent.swift": [.waitUntilExit],
-        "macSCPCoreTests/WebDAVFileSystemIntegrationTests.swift": [.waitUntilExit],
     ]
 
     // MARK: - The negative check
@@ -208,7 +191,7 @@ struct TestsNeverBlockThePoolGuardTests {
     @Test func theGuardsOwnSourceCarriesEveryPatternItLooksFor() throws {
         let files = try Self.testSources()
         #expect(files.contains(Self.ownRelativePath))
-        // Measured 2026-09-03: 314 `.swift` files under `Tests/`. A lower
+        // Measured 2026-09-03: 316 `.swift` files under `Tests/`. A lower
         // bound rather than the number, so adding a test file is not a
         // failure — but an enumeration that collapses is.
         #expect(files.count > 200, "the scan enumerated only \(files.count) files")

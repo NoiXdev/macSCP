@@ -80,12 +80,10 @@ struct WebDAVFileSystemIntegrationTests {
     /// Best-effort recursive removal of an SSH-side path via the test
     /// container's shell, mirroring `CrossBackendTransferIntegrationTests
     /// .cleanupSSHPath` verbatim.
-    private func cleanupSSHPath(_ path: String, container: String = "macscp-test-sshd") {
-        let rm = Process()
-        rm.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        rm.arguments = ["exec", container, "rm", "-rf", path]
-        try? rm.run()
-        rm.waitUntilExit()
+    private func cleanupSSHPath(_ path: String, container: String = "macscp-test-sshd") async {
+        _ = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", container, "rm", "-rf", path])
     }
 
     // MARK: - Stream helpers
@@ -490,7 +488,7 @@ struct WebDAVFileSystemIntegrationTests {
             caught = error
         }
         try? await webdavFS.delete(path: sourcePath)
-        cleanupSSHPath(destinationPath)
+        await cleanupSSHPath(destinationPath)
         if let caught { throw caught }
     }
 
@@ -530,7 +528,7 @@ struct WebDAVFileSystemIntegrationTests {
         } catch {
             caught = error
         }
-        cleanupSSHPath(sourcePath)
+        await cleanupSSHPath(sourcePath)
         try? await webdavFS.delete(path: destinationPath)
         if let caught { throw caught }
     }

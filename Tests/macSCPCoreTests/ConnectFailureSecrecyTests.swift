@@ -155,18 +155,16 @@ struct ConnectFailureSecrecyTests {
 
     /// An ed25519 key generated at runtime — never checked in, same as
     /// `SSHPrivateKeyLoaderTests`.
-    private func makeEncryptedKey(in directory: URL) throws -> String {
+    private func makeEncryptedKey(in directory: URL) async throws -> String {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let keyURL = directory.appendingPathComponent("id_ed25519")
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
-        process.arguments = [
-            "-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
-            "-N", Secret.passphrase, "-q", "-C", "macscp-secrecy-test",
-        ]
-        try process.run()
-        process.waitUntilExit()
-        #expect(process.terminationStatus == 0)
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/ssh-keygen"),
+            arguments: [
+                "-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
+                "-N", Secret.passphrase, "-q", "-C", "macscp-secrecy-test",
+            ])
+        #expect(result.status == 0)
         return keyURL.path(percentEncoded: false)
     }
 
@@ -231,7 +229,7 @@ struct ConnectFailureSecrecyTests {
     func sshPrivateKeyDialFailureCarriesNoSecret() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let keyPath = try makeEncryptedKey(in: directory)
+        let keyPath = try await makeEncryptedKey(in: directory)
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: Self.deadPort, username: "tester",
             auth: .privateKey(keyPath: keyPath, passphrase: Secret.passphrase))
@@ -259,7 +257,7 @@ struct ConnectFailureSecrecyTests {
     func privateKeyLoadFailuresCarryNoSecret() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let keyPath = try makeEncryptedKey(in: directory)
+        let keyPath = try await makeEncryptedKey(in: directory)
 
         func loadExpectingFailure(_ path: String, passphrase: String?, _ what: String) async {
             do {

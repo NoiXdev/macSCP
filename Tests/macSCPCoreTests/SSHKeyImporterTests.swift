@@ -11,19 +11,16 @@ struct SSHKeyImporterTests {
         return dir
     }
 
-    private func keygen(_ args: [String]) {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
-        p.arguments = args
-        p.standardInput = FileHandle.nullDevice
-        try! p.run(); p.waitUntilExit()
-        #expect(p.terminationStatus == 0)
+    private func keygen(_ args: [String]) async throws {
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/ssh-keygen"), arguments: args)
+        #expect(result.status == 0)
     }
 
-    @Test func inspectsAnUnencryptedEd25519Key() throws {
+    @Test func inspectsAnUnencryptedEd25519Key() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let key = dir.appendingPathComponent("id_ed25519")
-        keygen(["-t", "ed25519", "-f", key.path, "-N", "", "-q", "-C", "import-test"])
+        try await keygen(["-t", "ed25519", "-f", key.path, "-N", "", "-q", "-C", "import-test"])
 
         let info = try SSHKeyImporter.inspect(privateKeyURL: key, passphrase: nil)
         #expect(info.type == .ed25519)
@@ -33,10 +30,10 @@ struct SSHKeyImporterTests {
         _ = try SSHPrivateKeyLoader.authentication(username: "t", keyPath: key.path, passphrase: nil)
     }
 
-    @Test func encryptedKeyNeedsThePassphrase() throws {
+    @Test func encryptedKeyNeedsThePassphrase() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let key = dir.appendingPathComponent("id_ed25519")
-        keygen(["-t", "ed25519", "-f", key.path, "-N", "s3cr3t", "-q"])
+        try await keygen(["-t", "ed25519", "-f", key.path, "-N", "s3cr3t", "-q"])
 
         // Wrong/empty passphrase: public-key derivation (ssh-keygen -y) fails.
         #expect(throws: (any Error).self) {
@@ -54,14 +51,14 @@ struct SSHKeyImporterTests {
     /// mismatch: plant key B's `.pub` next to key A's private key, then
     /// assert the returned fingerprint still matches the returned public key
     /// (i.e. both describe key A, never key B).
-    @Test func fingerprintMatchesThePublicKeyEvenWithAStaleSiblingPubFile() throws {
+    @Test func fingerprintMatchesThePublicKeyEvenWithAStaleSiblingPubFile() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
 
         let keyA = dir.appendingPathComponent("id_ed25519_a")
-        keygen(["-t", "ed25519", "-f", keyA.path, "-N", "", "-q", "-C", "key-a"])
+        try await keygen(["-t", "ed25519", "-f", keyA.path, "-N", "", "-q", "-C", "key-a"])
 
         let keyB = dir.appendingPathComponent("id_ed25519_b")
-        keygen(["-t", "ed25519", "-f", keyB.path, "-N", "", "-q", "-C", "key-b"])
+        try await keygen(["-t", "ed25519", "-f", keyB.path, "-N", "", "-q", "-C", "key-b"])
 
         // Overwrite key A's sibling .pub with key B's .pub, simulating a
         // stale/foreign public key file sitting next to the private key.
@@ -88,10 +85,10 @@ struct SSHKeyImporterTests {
     /// connectable" badge with an RSA key's fingerprint — two halves of two
     /// different keys shown as one. An OpenSSH key blob names its own
     /// algorithm in its first field, so the prefix is checkable against it.
-    @Test func aPublicKeyLineWhoseTypeContradictsItsBlobIsRejected() throws {
+    @Test func aPublicKeyLineWhoseTypeContradictsItsBlobIsRejected() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let rsa = dir.appendingPathComponent("id_rsa")
-        keygen(["-t", "rsa", "-b", "2048", "-f", rsa.path, "-N", "", "-q", "-C", "rsa-key"])
+        try await keygen(["-t", "rsa", "-b", "2048", "-f", rsa.path, "-N", "", "-q", "-C", "rsa-key"])
         let rsaLine = try String(contentsOf: URL(fileURLWithPath: rsa.path + ".pub"), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let blob = String(rsaLine.split(separator: " ")[1])
@@ -113,10 +110,10 @@ struct SSHKeyImporterTests {
     /// The identity an `openssh-key-v1` FILE carries in cleartext, read with
     /// no passphrase — the check `EmbeddedKeyPorter` needs for an encrypted
     /// key imported without its passphrase.
-    @Test func fingerprintOfAPrivateKeyFileReadsTheFileEvenWhenEncrypted() throws {
+    @Test func fingerprintOfAPrivateKeyFileReadsTheFileEvenWhenEncrypted() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let key = dir.appendingPathComponent("id_ed25519")
-        keygen(["-t", "ed25519", "-f", key.path, "-N", "s3cr3t", "-q", "-C", "enc"])
+        try await keygen(["-t", "ed25519", "-f", key.path, "-N", "s3cr3t", "-q", "-C", "enc"])
         let expected = try String(contentsOf: URL(fileURLWithPath: key.path + ".pub"), encoding: .utf8)
         let blob = String(expected.split(separator: " ")[1])
         // The sibling `.pub` is what `ssh-keygen -l -f` would rather read, so
@@ -140,12 +137,12 @@ struct SSHKeyImporterTests {
     /// tell, so the sibling is refused outright rather than read around. Today
     /// no macSCP code writes a `.pub` beside a materialized key; the day one
     /// does, this fails loudly instead of quietly weakening the check.
-    @Test func fingerprintOfAPrivateKeyFileRefusesToReadASiblingPubFile() throws {
+    @Test func fingerprintOfAPrivateKeyFileRefusesToReadASiblingPubFile() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let keyA = dir.appendingPathComponent("id_ed25519_a")
-        keygen(["-t", "ed25519", "-f", keyA.path, "-N", "s3cr3t", "-q", "-C", "key-a"])
+        try await keygen(["-t", "ed25519", "-f", keyA.path, "-N", "s3cr3t", "-q", "-C", "key-a"])
         let keyB = dir.appendingPathComponent("id_ed25519_b")
-        keygen(["-t", "ed25519", "-f", keyB.path, "-N", "", "-q", "-C", "key-b"])
+        try await keygen(["-t", "ed25519", "-f", keyB.path, "-N", "", "-q", "-C", "key-b"])
 
         // Key B's public line planted next to key A's private key: exactly what
         // `-l -f` would report instead of key A.

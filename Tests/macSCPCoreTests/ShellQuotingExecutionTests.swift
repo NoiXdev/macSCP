@@ -46,13 +46,13 @@ struct ShellQuotingExecutionTests {
     private static let markedQuote = "'\u{0308}"
 
     /// A scratch directory that exists for the duration of one test.
-    private func withScratchDirectory<T>(_ body: (URL) throws -> T) throws -> T {
+    private func withScratchDirectory<T>(_ body: (URL) async throws -> T) async throws -> T {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-quoting-\(UUID().uuidString)")
         try FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        return try body(directory)
+        return try await body(directory)
     }
 
     /// The installed `bash`'s own answer to "what builtins and reserved
@@ -67,8 +67,8 @@ struct ShellQuotingExecutionTests {
     /// on macOS, so this process cannot see what bash 5 or zsh do — and a
     /// previous version of this test read the same enumeration as a proof of
     /// completeness while three `-v` shapes ran on the other side.
-    private func bashWords(_ compgenFlag: String) throws -> [String] {
-        try shellWords(binary: "/bin/bash", arguments: ["-c", "compgen \(compgenFlag)"])
+    private func bashWords(_ compgenFlag: String) async throws -> [String] {
+        try await shellWords(binary: "/bin/bash", arguments: ["-c", "compgen \(compgenFlag)"])
     }
 
     /// The same question asked of any locally installed shell.
@@ -87,18 +87,10 @@ struct ShellQuotingExecutionTests {
     /// bound to a path (`/opt/ast/bin/cat`), and a path is not a name this
     /// table classifies — a template using one is read as an ordinary
     /// command name, which is what it is.
-    private func shellWords(binary: String, arguments: [String]) throws -> [String] {
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = arguments
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        try process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (String(data: data, encoding: .utf8) ?? "")
+    private func shellWords(binary: String, arguments: [String]) async throws -> [String] {
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: binary), arguments: arguments)
+        return result.stdoutText
             .split(whereSeparator: { $0 == "\n" || $0 == " " })
             .map(String.init)
             .filter { !$0.isEmpty && !$0.contains("/") }
@@ -108,8 +100,8 @@ struct ShellQuotingExecutionTests {
     /// inherited output, and waits for it. The exit status is ignored on
     /// purpose: a payload that fails to run and a payload that runs are both
     /// interesting only through the marker file.
-    private func runInBash(_ command: String, in directory: URL) throws {
-        try run(command, with: "/bin/bash", in: directory)
+    private func runInBash(_ command: String, in directory: URL) async throws {
+        try await run(command, with: "/bin/bash", in: directory)
     }
 
     /// The same, with a shell named explicitly. macOS ships more than one,
@@ -117,16 +109,9 @@ struct ShellQuotingExecutionTests {
     /// reproducible in `bash`: `&>` is an operator there and a background
     /// separator in `/bin/dash` and `/bin/ksh`, and `{fd}>` is syntax
     /// `/bin/bash` 3.2.57 does not have at all.
-    private func run(_ command: String, with shell: String, in directory: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: shell)
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = directory
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
+    private func run(_ command: String, with shell: String, in directory: URL) async throws {
+        _ = try await SubprocessRunner.run(
+            URL(fileURLWithPath: shell), arguments: ["-c", command], currentDirectory: directory)
     }
 
     private func markerExists(_ name: String, in directory: URL) -> Bool {
@@ -152,7 +137,7 @@ struct ShellQuotingExecutionTests {
     /// snippet editor's own help text. Before the fix this resolved to
     /// `echo ''̈; touch MARKER; '̈'`, where `''` is an empty word, the
     /// combining mark is literal bytes, and `;` ends the command.
-    @Test func aValueWhoseQuotesCarryACombiningMarkCannotBreakOut() throws {
+    @Test func aValueWhoseQuotesCarryACombiningMarkCannotBreakOut() async throws {
         let marker = "marker-placeholder"
         let value = "\(Self.markedQuote); touch \(marker); \(Self.markedQuote)"
         let variables = [placeholder("X")]
@@ -162,8 +147,8 @@ struct ShellQuotingExecutionTests {
         let resolved = SnippetVariableSubstitution.resolve(
             command: "echo {{X}}", variables: variables, values: ["X": value])
 
-        try withScratchDirectory { directory in
-            try runInBash(resolved, in: directory)
+        try await withScratchDirectory { directory in
+            try await runInBash(resolved, in: directory)
             #expect(
                 !markerExists(marker, in: directory),
                 "the value escaped its single quotes and ran as a command")
@@ -182,13 +167,13 @@ struct ShellQuotingExecutionTests {
             "'\u{20E3}; touch marker-decorated ;#",
             "'\u{200D}; touch marker-decorated; '\u{200D}",
         ])
-    func aDecoratedQuoteInAValueCannotBreakOut(value: String) throws {
+    func aDecoratedQuoteInAValueCannotBreakOut(value: String) async throws {
         let variables = [placeholder("X")]
         let resolved = SnippetVariableSubstitution.resolve(
             command: "echo {{X}}", variables: variables, values: ["X": value])
 
-        try withScratchDirectory { directory in
-            try runInBash(resolved, in: directory)
+        try await withScratchDirectory { directory in
+            try await runInBash(resolved, in: directory)
             #expect(
                 !markerExists("marker-decorated", in: directory),
                 "the value escaped its single quotes and ran as a command")
@@ -201,14 +186,14 @@ struct ShellQuotingExecutionTests {
     /// survey never sees this path (it is scoped to
     /// commands that declare a placeholder), so the quoter is the only thing
     /// standing between an imported default value and a shell here.
-    @Test func anEnvironmentValueWhoseQuotesCarryACombiningMarkCannotBreakOut() throws {
+    @Test func anEnvironmentValueWhoseQuotesCarryACombiningMarkCannotBreakOut() async throws {
         let marker = "marker-environment"
         let value = "\(Self.markedQuote); touch \(marker); \(Self.markedQuote)"
         let resolved = SnippetVariableSubstitution.resolve(
             command: "echo $V", variables: [environment("V")], values: ["V": value])
 
-        try withScratchDirectory { directory in
-            try runInBash(resolved, in: directory)
+        try await withScratchDirectory { directory in
+            try await runInBash(resolved, in: directory)
             #expect(
                 !markerExists(marker, in: directory),
                 "the assignment's value escaped its single quotes and ran as a command")
@@ -229,7 +214,7 @@ struct ShellQuotingExecutionTests {
     /// Executed against a stub `ssh` on `PATH` rather than the real one: the
     /// question is whether the shell splits the line into more than one
     /// command, not what `ssh` does with it.
-    @Test func anSSHCommandLineCannotBeBrokenByAMarkedQuoteInTheKeyPath() throws {
+    @Test func anSSHCommandLineCannotBeBrokenByAMarkedQuoteInTheKeyPath() async throws {
         let marker = "marker-ssh"
         let hostile = "/keys/\(Self.markedQuote); touch \(marker); \(Self.markedQuote)"
         let config = try SSHConnectionConfig(
@@ -237,7 +222,7 @@ struct ShellQuotingExecutionTests {
             auth: .privateKey(keyPath: hostile, passphrase: nil))
         let command = SSHCommandBuilder.shellCommand(for: config)
 
-        try withScratchDirectory { directory in
+        try await withScratchDirectory { directory in
             let binDirectory = directory.appendingPathComponent("bin")
             try FileManager.default.createDirectory(
                 at: binDirectory, withIntermediateDirectories: true)
@@ -246,7 +231,7 @@ struct ShellQuotingExecutionTests {
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o755], ofItemAtPath: stub.path)
 
-            try runInBash("PATH='\(binDirectory.path)':\"$PATH\"; \(command)", in: directory)
+            try await runInBash("PATH='\(binDirectory.path)':\"$PATH\"; \(command)", in: directory)
             #expect(
                 !markerExists(marker, in: directory),
                 "an ssh argument escaped its single quotes and ran as a command")
@@ -318,7 +303,7 @@ struct ShellQuotingExecutionTests {
     @Test(
         "a decorated = does not hide an eval command name",
         arguments: ["\u{0308}", "\u{FE0F}", "\u{0301}", "\u{20E3}", "\u{200D}"])
-    func aDecoratedEqualsDoesNotHideAnEvalCommandName(decoration: String) throws {
+    func aDecoratedEqualsDoesNotHideAnEvalCommandName(decoration: String) async throws {
         let marker = "marker-decorated-assignment"
         let templates = [
             "A=\(decoration)1 eval {{X}}",
@@ -335,8 +320,8 @@ struct ShellQuotingExecutionTests {
             let resolved = SnippetVariableSubstitution.resolve(
                 command: command, variables: [placeholder("X")],
                 values: ["X": "$(touch \(marker))"])
-            try withScratchDirectory { directory in
-                try runInBash(resolved, in: directory)
+            try await withScratchDirectory { directory in
+                try await runInBash(resolved, in: directory)
                 #expect(
                     markerExists(marker, in: directory),
                     """
@@ -377,7 +362,7 @@ struct ShellQuotingExecutionTests {
     @Test(
         "a comment is not ended by a terminator bash reads straight through",
         arguments: ["\u{000D}", "\u{000B}", "\u{000C}", "\u{0085}", "\u{2028}", "\u{2029}"])
-    func aCommentIsNotEndedByATerminatorBashReadsThrough(terminator: String) throws {
+    func aCommentIsNotEndedByATerminatorBashReadsThrough(terminator: String) async throws {
         let marker = "marker-comment"
         let command = "ls # note\(terminator)echo {{X}}"
         #expect(
@@ -388,8 +373,8 @@ struct ShellQuotingExecutionTests {
         let resolved = SnippetVariableSubstitution.resolve(
             command: command, variables: [placeholder("X")],
             values: ["X": "\ntouch \(marker)\n"])
-        try withScratchDirectory { directory in
-            try runInBash(resolved, in: directory)
+        try await withScratchDirectory { directory in
+            try await runInBash(resolved, in: directory)
             #expect(
                 markerExists(marker, in: directory),
                 """
@@ -409,7 +394,7 @@ struct ShellQuotingExecutionTests {
     @Test(
         "a comment ended by a real line feed leaves the next command's argument safe",
         arguments: ["\n", "\r\n"])
-    func aCommentEndedByALineFeedLeavesTheNextArgumentSafe(terminator: String) throws {
+    func aCommentEndedByALineFeedLeavesTheNextArgumentSafe(terminator: String) async throws {
         let marker = "marker-comment-clean"
         let command = "ls # note\(terminator)echo {{X}}"
         #expect(
@@ -420,8 +405,8 @@ struct ShellQuotingExecutionTests {
         let resolved = SnippetVariableSubstitution.resolve(
             command: command, variables: [placeholder("X")],
             values: ["X": "\ntouch \(marker)\n"])
-        try withScratchDirectory { directory in
-            try runInBash(resolved, in: directory)
+        try await withScratchDirectory { directory in
+            try await runInBash(resolved, in: directory)
             #expect(
                 !markerExists(marker, in: directory),
                 "a newline in the value escaped its single quotes and ran as a command")
@@ -441,15 +426,15 @@ struct ShellQuotingExecutionTests {
     /// green.
     ///
     /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
-    @Test func theRefusedMarkedQuoteTemplateWouldOtherwiseExecute() throws {
+    @Test func theRefusedMarkedQuoteTemplateWouldOtherwiseExecute() async throws {
         let marker = "marker-marked-template"
         let command = "echo x'\u{0308}{{X}}'\u{0308}"
         let resolved = SnippetVariableSubstitution.resolve(
             command: command, variables: [placeholder("X")],
             values: ["X": "$(touch \(marker))"])
 
-        try withScratchDirectory { directory in
-            try runInBash(resolved, in: directory)
+        try await withScratchDirectory { directory in
+            try await runInBash(resolved, in: directory)
             #expect(
                 markerExists(marker, in: directory),
                 """
@@ -471,9 +456,9 @@ struct ShellQuotingExecutionTests {
     /// bash 5.2 and zsh 5.9; this test only refuses to let a name the local
     /// shell knows go unclassified. Its failure message says which way round
     /// that is, because reading it the other way is exactly what happened.
-    @Test func everyLocalShellWordIsInTheTable() throws {
-        let builtins = try bashWords("-b")
-        let keywords = try bashWords("-k")
+    @Test func everyLocalShellWordIsInTheTable() async throws {
+        let builtins = try await bashWords("-b")
+        let keywords = try await bashWords("-k")
         #expect(builtins.count > 30, "compgen -b returned nothing usable")
         #expect(keywords.count > 10, "compgen -k returned nothing usable")
 
@@ -484,12 +469,12 @@ struct ShellQuotingExecutionTests {
         // layout of /bin — but present on macOS 15, which is what CI runs.
         var otherWords: [String] = []
         if FileManager.default.isExecutableFile(atPath: "/bin/zsh") {
-            otherWords += try shellWords(
+            otherWords += try await shellWords(
                 binary: "/bin/zsh",
                 arguments: ["-fc", "print -l ${(k)builtins} ${(k)reswords}"])
         }
         if FileManager.default.isExecutableFile(atPath: "/bin/ksh") {
-            otherWords += try shellWords(binary: "/bin/ksh", arguments: ["-c", "builtin"])
+            otherWords += try await shellWords(binary: "/bin/ksh", arguments: ["-c", "builtin"])
         }
 
         for word in builtins + keywords + otherWords {
@@ -741,7 +726,7 @@ struct ShellQuotingExecutionTests {
                     + "chmod +x reparse_hashed.sh\n",
                 suffix: "\nzzz"),
         ])
-    func aReparsingBuiltinIsRefusedAndWouldOtherwiseRun(testCase: ReparseCase) throws {
+    func aReparsingBuiltinIsRefusedAndWouldOtherwiseRun(testCase: ReparseCase) async throws {
         // The command name is the template's first word in every case here,
         // and the reach of that name decides which refusal is the right one
         // — the whole template for `eval` and `source`, this command's
@@ -756,8 +741,8 @@ struct ShellQuotingExecutionTests {
         let resolved = SnippetVariableSubstitution.resolve(
             command: testCase.template, variables: [placeholder("X")],
             values: ["X": testCase.value])
-        try withScratchDirectory { directory in
-            try runInBash(testCase.prefix + resolved + testCase.suffix, in: directory)
+        try await withScratchDirectory { directory in
+            try await runInBash(testCase.prefix + resolved + testCase.suffix, in: directory)
             #expect(
                 markerExists("MARKER", in: directory), """
                 this template no longer executes its payload; the refusal above may now be \
@@ -776,7 +761,7 @@ struct ShellQuotingExecutionTests {
     /// placeholder in plain argument position and the gate would accept it.
     ///
     /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
-    @Test func aConditionalExpressionKeywordIsRefusedAndWouldOtherwiseRun() throws {
+    @Test func aConditionalExpressionKeywordIsRefusedAndWouldOtherwiseRun() async throws {
         let command = "[[ 1 -eq {{X}} ]]"
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
@@ -787,8 +772,8 @@ struct ShellQuotingExecutionTests {
         let resolved = SnippetVariableSubstitution.resolve(
             command: command, variables: [placeholder("X")],
             values: ["X": "a[$(touch MARKER)]"])
-        try withScratchDirectory { directory in
-            try runInBash(resolved, in: directory)
+        try await withScratchDirectory { directory in
+            try await runInBash(resolved, in: directory)
             #expect(
                 markerExists("MARKER", in: directory), """
                 this template no longer executes its payload; the refusal above may now be \
@@ -818,7 +803,7 @@ struct ShellQuotingExecutionTests {
     /// spellings, even when its body is harmless.
     ///
     /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
-    @Test func aFunctionDefinitionIsRefusedAndWouldOtherwiseRun() throws {
+    @Test func aFunctionDefinitionIsRefusedAndWouldOtherwiseRun() async throws {
         let command = "function f { eval {{X}}; }; f"
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
@@ -833,8 +818,8 @@ struct ShellQuotingExecutionTests {
 
         let resolved = SnippetVariableSubstitution.resolve(
             command: command, variables: [placeholder("X")], values: ["X": "touch MARKER"])
-        try withScratchDirectory { directory in
-            try runInBash(resolved, in: directory)
+        try await withScratchDirectory { directory in
+            try await runInBash(resolved, in: directory)
             #expect(
                 markerExists("MARKER", in: directory), """
                 this template no longer executes its payload; the refusal above may now be \
@@ -962,7 +947,7 @@ struct ShellQuotingExecutionTests {
             "ls {{X}} 2>&1",
             "ls {{X}} > out.log 2>&1",
         ])
-    func aNarrowedRefusalAcceptsAndStaysSafe(command: String) throws {
+    func aNarrowedRefusalAcceptsAndStaysSafe(command: String) async throws {
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
                 command: command, variables: [placeholder("X")]) == nil,
@@ -974,8 +959,8 @@ struct ShellQuotingExecutionTests {
         let resolved = SnippetVariableSubstitution.resolve(
             command: command, variables: [placeholder("X")],
             values: ["X": "$(touch MARKER)"])
-        try withScratchDirectory { directory in
-            try runInBash(resolved, in: directory)
+        try await withScratchDirectory { directory in
+            try await runInBash(resolved, in: directory)
             #expect(
                 !markerExists("MARKER", in: directory),
                 "an accepted template executed its value; the narrowing opened a hole")
@@ -1030,7 +1015,7 @@ struct ShellQuotingExecutionTests {
     /// instead of passing quietly.
     ///
     /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
-    @Test func anOperatorTheShellsSplitOnIsRefusedAndWouldOtherwiseRun() throws {
+    @Test func anOperatorTheShellsSplitOnIsRefusedAndWouldOtherwiseRun() async throws {
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
                 command: "ls &>out.log {{X}}", variables: [placeholder("X")])
@@ -1048,11 +1033,11 @@ struct ShellQuotingExecutionTests {
             """)
 
         for shell in shells {
-            try withScratchDirectory { directory in
+            try await withScratchDirectory { directory in
                 let resolved = SnippetVariableSubstitution.resolve(
                     command: "ls &>out.log {{X}}", variables: [placeholder("X")],
                     values: ["X": "./split_operator.sh"])
-                try run(
+                try await run(
                     "printf '#!/bin/sh\\ntouch MARKER\\n' > split_operator.sh\n"
                         + "chmod +x split_operator.sh\n" + resolved,
                     with: shell, in: directory)
@@ -1060,11 +1045,11 @@ struct ShellQuotingExecutionTests {
                     markerExists("MARKER", in: directory),
                     "\(shell) no longer runs the value as a command name behind `&>`")
             }
-            try withScratchDirectory { directory in
+            try await withScratchDirectory { directory in
                 let resolved = SnippetVariableSubstitution.resolve(
                     command: "ls &>out.log eval {{X}}", variables: [placeholder("X")],
                     values: ["X": "touch MARKER"])
-                try run(resolved, with: shell, in: directory)
+                try await run(resolved, with: shell, in: directory)
                 #expect(
                     markerExists("MARKER", in: directory),
                     "\(shell) no longer reaches the `eval` behind `&>`")
@@ -1083,7 +1068,7 @@ struct ShellQuotingExecutionTests {
     /// shell on THIS machine that demonstrates it.
     ///
     /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
-    @Test func aDescriptorVariablePrefixIsRefusedAndWouldOtherwiseRun() throws {
+    @Test func aDescriptorVariablePrefixIsRefusedAndWouldOtherwiseRun() async throws {
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
                 command: "{fd}>f eval {{X}}", variables: [placeholder("X")])
@@ -1098,8 +1083,8 @@ struct ShellQuotingExecutionTests {
         let resolved = SnippetVariableSubstitution.resolve(
             command: "{fd}>f eval {{X}}", variables: [placeholder("X")],
             values: ["X": "touch MARKER"])
-        try withScratchDirectory { directory in
-            try run(resolved, with: "/bin/ksh", in: directory)
+        try await withScratchDirectory { directory in
+            try await run(resolved, with: "/bin/ksh", in: directory)
             #expect(
                 markerExists("MARKER", in: directory),
                 "/bin/ksh no longer runs the command behind a `{fd}>` prefix")
@@ -1122,7 +1107,7 @@ struct ShellQuotingExecutionTests {
     /// `builtin`, and `builtin` does not list aliases.
     ///
     /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
-    @Test func aDefaultAliasInCommandNamePositionIsRefusedAndWouldOtherwiseRun() throws {
+    @Test func aDefaultAliasInCommandNamePositionIsRefusedAndWouldOtherwiseRun() async throws {
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
                 command: "redirect {{X}}", variables: [placeholder("X")])
@@ -1137,8 +1122,8 @@ struct ShellQuotingExecutionTests {
         let resolved = SnippetVariableSubstitution.resolve(
             command: "redirect {{X}}", variables: [placeholder("X")],
             values: ["X": "./aliased_command.sh"])
-        try withScratchDirectory { directory in
-            try run(
+        try await withScratchDirectory { directory in
+            try await run(
                 "printf '#!/bin/sh\\ntouch MARKER\\n' > aliased_command.sh\n"
                     + "chmod +x aliased_command.sh\n" + resolved,
                 with: "/bin/ksh", in: directory)
@@ -1173,7 +1158,7 @@ struct ShellQuotingExecutionTests {
     /// prefix form is built by hand here, run through the same shells, and
     /// must NOT produce those markers. It is what `resolve` emitted before
     /// this round.
-    @Test func anEnvironmentValueReachesTheCommandsAfterAnOperator() throws {
+    @Test func anEnvironmentValueReachesTheCommandsAfterAnOperator() async throws {
         let body = #"true && touch "and-$V"; true; touch "semi-$V"; true | touch "pipe-$V""#
         let resolved = SnippetVariableSubstitution.resolve(
             command: body, variables: [environment("V")], values: ["V": "reached"])
@@ -1181,16 +1166,16 @@ struct ShellQuotingExecutionTests {
 
         #expect(!installedShells.isEmpty, "no shell to ask")
         for shell in installedShells {
-            try withScratchDirectory { directory in
-                try run(resolved, with: shell, in: directory)
+            try await withScratchDirectory { directory in
+                try await run(resolved, with: shell, in: directory)
                 for marker in ["and-reached", "semi-reached", "pipe-reached"] {
                     #expect(
                         markerExists(marker, in: directory),
                         "\(shell): the exported value did not reach \(marker)")
                 }
             }
-            try withScratchDirectory { directory in
-                try run("V='reached' " + body, with: shell, in: directory)
+            try await withScratchDirectory { directory in
+                try await run("V='reached' " + body, with: shell, in: directory)
                 for marker in ["and-reached", "semi-reached", "pipe-reached"] {
                     #expect(
                         !markerExists(marker, in: directory), """
@@ -1210,7 +1195,7 @@ struct ShellQuotingExecutionTests {
     /// The contrast half is the unexported statement, which is what
     /// `resolve` emitted for a multi-line body before this round: the shell
     /// running the body sees the value, `sh -c` does not.
-    @Test func anEnvironmentValueReachesAChildProcess() throws {
+    @Test func anEnvironmentValueReachesAChildProcess() async throws {
         let body = #"sh -c 'touch "child-$V"'"#
         let resolved = SnippetVariableSubstitution.resolve(
             command: body, variables: [environment("V")], values: ["V": "reached"])
@@ -1218,14 +1203,14 @@ struct ShellQuotingExecutionTests {
 
         #expect(!installedShells.isEmpty, "no shell to ask")
         for shell in installedShells {
-            try withScratchDirectory { directory in
-                try run(resolved, with: shell, in: directory)
+            try await withScratchDirectory { directory in
+                try await run(resolved, with: shell, in: directory)
                 #expect(
                     markerExists("child-reached", in: directory),
                     "\(shell): the exported value did not reach the child process")
             }
-            try withScratchDirectory { directory in
-                try run("V='reached'\n" + body, with: shell, in: directory)
+            try await withScratchDirectory { directory in
+                try await run("V='reached'\n" + body, with: shell, in: directory)
                 #expect(
                     !markerExists("child-reached", in: directory), """
                     \(shell): an unexported assignment now reaches a child process, so the \
@@ -1263,15 +1248,15 @@ struct ShellQuotingExecutionTests {
             "x\ntouch MARKER",
             "*",
         ])
-    func aHostileEnvironmentValueStaysDataInEveryShell(value: String) throws {
+    func aHostileEnvironmentValueStaysDataInEveryShell(value: String) async throws {
         let body = #"[ "$V" = "# + PosixQuoting.singleQuoted(value) + #" ] && touch SAME"#
         let resolved = SnippetVariableSubstitution.resolve(
             command: body, variables: [environment("V")], values: ["V": value])
 
         #expect(!installedShells.isEmpty, "no shell to ask")
         for shell in installedShells {
-            try withScratchDirectory { directory in
-                try run(resolved, with: shell, in: directory)
+            try await withScratchDirectory { directory in
+                try await run(resolved, with: shell, in: directory)
                 #expect(
                     !markerExists("MARKER", in: directory),
                     "\(shell): the value escaped the emitted assignment and ran as a command")
@@ -1298,7 +1283,7 @@ struct ShellQuotingExecutionTests {
     /// no marker appears.
     ///
     /// EXECUTES THE PAYLOAD, on purpose, in a fresh scratch directory.
-    @Test func exportInATemplateReparsesItsArgumentWhileTheEmittedOneDoesNot() throws {
+    @Test func exportInATemplateReparsesItsArgumentWhileTheEmittedOneDoesNot() async throws {
         let payload = "a[$(touch MARKER)]=1"
         #expect(
             SnippetVariableSubstitution.firstDeclarationProblem(
@@ -1308,8 +1293,8 @@ struct ShellQuotingExecutionTests {
         if FileManager.default.isExecutableFile(atPath: "/bin/zsh") {
             let asATemplate = SnippetVariableSubstitution.resolve(
                 command: "export {{X}}", variables: [placeholder("X")], values: ["X": payload])
-            try withScratchDirectory { directory in
-                try run(asATemplate, with: "/bin/zsh", in: directory)
+            try await withScratchDirectory { directory in
+                try await run(asATemplate, with: "/bin/zsh", in: directory)
                 #expect(
                     markerExists("MARKER", in: directory), """
                     /bin/zsh no longer evaluates the subscript of a word handed to `export`, \
@@ -1328,8 +1313,8 @@ struct ShellQuotingExecutionTests {
             command: "echo done", variables: [environment("V")], values: ["V": payload])
         #expect(emitted == "export V='a[$(touch MARKER)]=1'; echo done")
         for shell in installedShells {
-            try withScratchDirectory { directory in
-                try run(emitted, with: shell, in: directory)
+            try await withScratchDirectory { directory in
+                try await run(emitted, with: shell, in: directory)
                 #expect(
                     !markerExists("MARKER", in: directory),
                     "\(shell): the emitted export re-parsed its own value")

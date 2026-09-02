@@ -51,20 +51,14 @@ struct FileKeyTypeIntegrationTests {
     /// The rig's `sshd` log, tail-end, for the report. Read AFTER the
     /// connect under measurement, and filtered to the lines that name the
     /// public-key exchange.
-    private func sshdAuthLogTail(lines: Int = 30) -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        process.arguments = [
-            "exec", "macscp-test-sshd", "sh", "-c",
-            "tail -n \(lines) /config/logs/openssh/current",
-        ]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(data: data, encoding: .utf8) ?? ""
+    private func sshdAuthLogTail(lines: Int = 30) async -> String {
+        let result = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: [
+                "exec", "macscp-test-sshd", "sh", "-c",
+                "tail -n \(lines) /config/logs/openssh/current",
+            ])
+        return result?.stdoutText ?? ""
     }
 
     // MARK: - Step 0: does the server accept the blob type this fork writes?
@@ -90,7 +84,7 @@ struct FileKeyTypeIntegrationTests {
     /// signature's algorithm name to equal `pkalg`.
     @Test("Step 0: OpenSSH accepts the RFC 8332 public key offer")
     func rigAcceptsTheForksRSASHA2Offer() async throws {
-        let (dir, keyPath) = try makeInstalledKey(type: "rsa", bits: 2048)
+        let (dir, keyPath) = try await makeInstalledKey(type: "rsa", bits: 2048)
         defer { try? FileManager.default.removeItem(at: dir) }
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-step0-\(UUID().uuidString)")
@@ -116,7 +110,7 @@ struct FileKeyTypeIntegrationTests {
                 Step 0 FAILED — the rig refused the fork's rsa-sha2 offer.
                 error: \(String(reflecting: error))
                 sshd log tail:
-                \(sshdAuthLogTail())
+                \(await sshdAuthLogTail())
                 """)
             throw error
         }
@@ -164,7 +158,7 @@ struct FileKeyTypeIntegrationTests {
           arguments: KeyShape.all, [false, true])
     func fileKeyAuthenticatesThroughMacSCP(shape: KeyShape, encrypted: Bool) async throws {
         let passphrase = encrypted ? "itest-\(UUID().uuidString)" : nil
-        let (dir, keyPath) = try makeInstalledKey(
+        let (dir, keyPath) = try await makeInstalledKey(
             type: shape.type, bits: shape.bits, passphrase: passphrase)
         defer { try? FileManager.default.removeItem(at: dir) }
 

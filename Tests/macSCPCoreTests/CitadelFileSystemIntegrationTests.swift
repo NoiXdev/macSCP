@@ -159,21 +159,18 @@ struct CitadelFileSystemIntegrationTests {
         defer { try? FileManager.default.removeItem(at: localDir) }
         let localFile = localDir.appendingPathComponent("big.bin")
 
-        let dd = Process()
-        dd.executableURL = URL(fileURLWithPath: "/bin/dd")
-        dd.arguments = ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
-                        "bs=1m", "count=128"]
-        dd.standardError = FileHandle.nullDevice
-        try dd.run()
-        dd.waitUntilExit()
-        #expect(dd.terminationStatus == 0)
+        let ddResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/bin/dd"),
+            arguments: ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
+                        "bs=1m", "count=128"])
+        #expect(ddResult.status == 0)
         let sourceSize = try FileManager.default
             .attributesOfItem(atPath: localFile.path(percentEncoded: false))[.size] as? Int ?? 0
         #expect(sourceSize == 128 * 1024 * 1024)
 
         let remoteName = "macscp-cancel-upload-\(UUID().uuidString).bin"
         let remotePath = "/config/\(remoteName)"
-        defer { cleanupConfigPath(remotePath) }
+        defer { Task { await cleanupConfigPath(remotePath) } }
 
         // Cancel after the FIRST progress event.
         let progressSeen = CallCounterBox()
@@ -205,18 +202,11 @@ struct CitadelFileSystemIntegrationTests {
         }
 
         // Remote partial file is GENUINELY smaller than the source (docker exec stat).
-        let stat = Process()
-        stat.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        stat.arguments = ["exec", "macscp-test-sshd", "stat", "-c", "%s", remotePath]
-        let pipe = Pipe()
-        stat.standardOutput = pipe
-        stat.standardError = FileHandle.nullDevice
-        try stat.run()
-        stat.waitUntilExit()
-        #expect(stat.terminationStatus == 0)
-        let out = String(
-            data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let statResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", "macscp-test-sshd", "stat", "-c", "%s", remotePath])
+        #expect(statResult.status == 0)
+        let out = statResult.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
         let remoteSize = Int(out) ?? -1
         #expect(remoteSize >= 0)
         #expect(remoteSize < sourceSize)   // GENUINELY smaller — cancellation caught mid-transfer
@@ -247,22 +237,20 @@ struct CitadelFileSystemIntegrationTests {
         var uploads: [Upload] = []
         for index in 0..<3 {
             let localFile = localDir.appendingPathComponent("src-\(index).bin")
-            let dd = Process()
-            dd.executableURL = URL(fileURLWithPath: "/bin/dd")
-            dd.arguments = ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
-                            "bs=1m", "count=8"]
-            dd.standardError = FileHandle.nullDevice
-            try dd.run()
-            dd.waitUntilExit()
-            #expect(dd.terminationStatus == 0)
+            let ddResult = try await SubprocessRunner.run(
+                URL(fileURLWithPath: "/bin/dd"),
+                arguments: ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
+                            "bs=1m", "count=8"])
+            #expect(ddResult.status == 0)
 
             let remoteName = "macscp-parallel-\(UUID().uuidString)-\(index).bin"
             uploads.append(Upload(
                 localPath: localFile.path(percentEncoded: false),
                 remoteName: remoteName, remotePath: "/config/\(remoteName)",
-                md5: localMD5(localFile.path(percentEncoded: false))))
+                md5: await localMD5(localFile.path(percentEncoded: false))))
         }
-        defer { for upload in uploads { cleanupConfigPath(upload.remotePath) } }
+        let uploadRemotePaths = uploads.map(\.remotePath)
+        defer { Task { for remotePath in uploadRemotePaths { await cleanupConfigPath(remotePath) } } }
 
         // Drive all three uploads TRULY concurrently over the single channel.
         let source = LocalFileSystem()
@@ -280,7 +268,7 @@ struct CitadelFileSystemIntegrationTests {
 
         // Byte-identical arrival: remote md5 (docker exec) must equal source md5.
         for upload in uploads {
-            #expect(remoteMD5(upload.remotePath) == upload.md5)
+            #expect(await remoteMD5(upload.remotePath) == upload.md5)
         }
     }
 
@@ -301,22 +289,20 @@ struct CitadelFileSystemIntegrationTests {
         var uploads: [Upload] = []
         for index in 0..<5 {
             let localFile = localDir.appendingPathComponent("q-\(index).bin")
-            let dd = Process()
-            dd.executableURL = URL(fileURLWithPath: "/bin/dd")
-            dd.arguments = ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
-                            "bs=1m", "count=4"]
-            dd.standardError = FileHandle.nullDevice
-            try dd.run()
-            dd.waitUntilExit()
-            #expect(dd.terminationStatus == 0)
+            let ddResult = try await SubprocessRunner.run(
+                URL(fileURLWithPath: "/bin/dd"),
+                arguments: ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
+                            "bs=1m", "count=4"])
+            #expect(ddResult.status == 0)
 
             let remoteName = "macscp-queue-parallel-\(UUID().uuidString)-\(index).bin"
             uploads.append(Upload(
                 localPath: localFile.path(percentEncoded: false),
                 remoteName: remoteName, remotePath: "/config/\(remoteName)",
-                md5: localMD5(localFile.path(percentEncoded: false))))
+                md5: await localMD5(localFile.path(percentEncoded: false))))
         }
-        defer { for upload in uploads { cleanupConfigPath(upload.remotePath) } }
+        let uploadRemotePaths = uploads.map(\.remotePath)
+        defer { Task { for remotePath in uploadRemotePaths { await cleanupConfigPath(remotePath) } } }
 
         let vm = TransferQueueViewModel()
         vm.maxConcurrent = 3
@@ -338,86 +324,56 @@ struct CitadelFileSystemIntegrationTests {
         #expect(vm.items.allSatisfy { $0.status == .finished })
 
         for upload in uploads {
-            #expect(remoteMD5(upload.remotePath) == upload.md5)
+            #expect(await remoteMD5(upload.remotePath) == upload.md5)
         }
     }
 
     /// Local md5 via `/sbin/md5 -q` (returns just the hash).
-    private func localMD5(_ path: String) -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/sbin/md5")
-        process.arguments = ["-q", path]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
-        process.waitUntilExit()
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    private func localMD5(_ path: String) async -> String {
+        let result = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/sbin/md5"), arguments: ["-q", path])
+        return result?.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
     /// Remote md5 via `docker exec macscp-test-sshd md5sum <path>` (first field).
-    private func remoteMD5(_ path: String) -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        process.arguments = ["exec", "macscp-test-sshd", "md5sum", path]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
-        process.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    private func remoteMD5(_ path: String) async -> String {
+        let result = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", "macscp-test-sshd", "md5sum", path])
+        let out = result?.stdoutText ?? ""
         return out.split(whereSeparator: { $0 == " " || $0 == "\n" }).first.map(String.init) ?? ""
     }
 
     /// Remote file size via `docker exec stat -c %s` (M5d/T2 resume tests).
-    private func remoteSize(_ path: String) -> Int {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        process.arguments = ["exec", "macscp-test-sshd", "stat", "-c", "%s", path]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
-        process.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    private func remoteSize(_ path: String) async -> Int {
+        let result = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", "macscp-test-sshd", "stat", "-c", "%s", path])
+        let out = result?.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return Int(out) ?? -1
     }
 
     /// Remote POSIX mode as an octal string (e.g. `"644"`) via
     /// `docker exec stat -c %a` (M11c/T4 recursive-permissions test).
-    private func remotePermissions(_ path: String) -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        process.arguments = ["exec", "macscp-test-sshd", "stat", "-c", "%a", path]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
-        process.waitUntilExit()
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    private func remotePermissions(_ path: String) async -> String {
+        let result = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", "macscp-test-sshd", "stat", "-c", "%a", path])
+        return result?.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
     /// Remote mtime (epoch seconds) via `docker exec stat -c %Y` (M5d/T2
     /// "resume on complete file writes nothing" test).
-    private func remoteMtime(_ path: String) -> Int {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        process.arguments = ["exec", "macscp-test-sshd", "stat", "-c", "%Y", path]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
-        process.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    private func remoteMtime(_ path: String) async -> Int {
+        let result = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", "macscp-test-sshd", "stat", "-c", "%Y", path])
+        let out = result?.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return Int(out) ?? -1
     }
 
     @Test func privateKeyAuthConnectsAndLists() async throws {
-        let (dir, keyPath) = try makeInstalledKey()
+        let (dir, keyPath) = try await makeInstalledKey()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let config = try SSHConnectionConfig(
@@ -525,12 +481,10 @@ struct CitadelFileSystemIntegrationTests {
     /// Cleans up a test folder under /config via `docker exec rm -rf`. Used
     /// for directories and as a catch-all after a test's own `fs.delete`
     /// (RemoteFileSystem only deletes FILES, no rmdir/remove for directories).
-    private func cleanupConfigPath(_ path: String, container: String = "macscp-test-sshd") {
-        let rm = Process()
-        rm.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        rm.arguments = ["exec", container, "rm", "-rf", path]
-        try? rm.run()
-        rm.waitUntilExit()
+    private func cleanupConfigPath(_ path: String, container: String = "macscp-test-sshd") async {
+        _ = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", container, "rm", "-rf", path])
     }
 
     /// M18a final review (Important-1): the S3 counterpart of
@@ -545,7 +499,7 @@ struct CitadelFileSystemIntegrationTests {
         defer { Task { await fs.disconnect() } }
         let base = "/config/macscp-createfile-\(UUID().uuidString)"
         try await fs.createDirectory(at: base)
-        defer { cleanupConfigPath(base) }
+        defer { Task { await cleanupConfigPath(base) } }
 
         let vm = RemoteBrowserViewModel(fs: fs, startPath: base)
         await vm.load()
@@ -574,7 +528,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let base = "/config/macscp-mkdir-test-\(UUID().uuidString)"
-        defer { cleanupConfigPath(base) }
+        defer { Task { await cleanupConfigPath(base) } }
 
         try await fs.createDirectory(at: base)
 
@@ -587,7 +541,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let base = "/config/macscp-mkdir-test-\(UUID().uuidString)"
-        defer { cleanupConfigPath(base) }
+        defer { Task { await cleanupConfigPath(base) } }
         let sub = base + "/sub"
 
         try await fs.createDirectory(at: base)
@@ -601,7 +555,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let base = "/config/macscp-mkdir-test-\(UUID().uuidString)"
-        defer { cleanupConfigPath(base) }
+        defer { Task { await cleanupConfigPath(base) } }
 
         try await fs.createDirectory(at: base)
         // Second call on the same path must NOT throw (idempotent).
@@ -615,7 +569,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let path = "/config/macscp-mkdir-test-\(UUID().uuidString).txt"
-        defer { cleanupConfigPath(path) }
+        defer { Task { await cleanupConfigPath(path) } }
 
         let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
         continuation.yield(Data("mkdir-collision".utf8))
@@ -639,7 +593,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let remotePath = "/config/macscp-offset-test-\(UUID().uuidString).bin"
-        defer { cleanupConfigPath(remotePath) }
+        defer { Task { await cleanupConfigPath(remotePath) } }
 
         // Spans multiple chunks so the offset lands mid-stream, not just in the first chunk.
         let payload = Data((0..<(TransferChunk.size * 2 + 123)).map { UInt8($0 % 251) })
@@ -660,7 +614,7 @@ struct CitadelFileSystemIntegrationTests {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let remotePath = "/config/macscp-offset-eof-test-\(UUID().uuidString).bin"
-        defer { cleanupConfigPath(remotePath) }
+        defer { Task { await cleanupConfigPath(remotePath) } }
 
         let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
         continuation.yield(Data("short".utf8))
@@ -692,10 +646,10 @@ struct CitadelFileSystemIntegrationTests {
         let secondPart = Data((0..<(TransferChunk.size / 2 + 77)).map { UInt8(($0 + 17) % 199) })
         let referenceFile = localDir.appendingPathComponent("reference.bin")
         try (firstPart + secondPart).write(to: referenceFile)
-        let referenceMD5 = localMD5(referenceFile.path(percentEncoded: false))
+        let referenceMD5 = await localMD5(referenceFile.path(percentEncoded: false))
 
         let remotePath = "/config/macscp-append-test-\(UUID().uuidString).bin"
-        defer { cleanupConfigPath(remotePath) }
+        defer { Task { await cleanupConfigPath(remotePath) } }
 
         let (stream1, continuation1) = AsyncThrowingStream<Data, Error>.makeStream()
         continuation1.yield(firstPart)
@@ -707,7 +661,7 @@ struct CitadelFileSystemIntegrationTests {
         continuation2.finish()
         try await fs.write(path: remotePath, mode: .append, contents: stream2)
 
-        #expect(remoteMD5(remotePath) == referenceMD5)
+        #expect(await remoteMD5(remotePath) == referenceMD5)
     }
 
     @Test func deleteRemovesFileConfirmedByListAndSecondDeleteThrowsNotFound() async throws {
@@ -715,7 +669,7 @@ struct CitadelFileSystemIntegrationTests {
         defer { Task { await fs.disconnect() } }
         let remoteName = "macscp-delete-test-\(UUID().uuidString).bin"
         let remotePath = "/config/\(remoteName)"
-        defer { cleanupConfigPath(remotePath) }
+        defer { Task { await cleanupConfigPath(remotePath) } }
 
         let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
         continuation.yield(Data("delete me".utf8))
@@ -753,22 +707,19 @@ struct CitadelFileSystemIntegrationTests {
         defer { try? FileManager.default.removeItem(at: localDir) }
         let localFile = localDir.appendingPathComponent("big.bin")
 
-        let dd = Process()
-        dd.executableURL = URL(fileURLWithPath: "/bin/dd")
-        dd.arguments = ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
-                        "bs=1m", "count=32"]
-        dd.standardError = FileHandle.nullDevice
-        try dd.run()
-        dd.waitUntilExit()
-        #expect(dd.terminationStatus == 0)
+        let ddResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/bin/dd"),
+            arguments: ["if=/dev/urandom", "of=\(localFile.path(percentEncoded: false))",
+                        "bs=1m", "count=32"])
+        #expect(ddResult.status == 0)
         let sourceSize = try FileManager.default
             .attributesOfItem(atPath: localFile.path(percentEncoded: false))[.size] as? Int ?? 0
         #expect(sourceSize == 32 * 1024 * 1024)
-        let sourceMD5 = localMD5(localFile.path(percentEncoded: false))
+        let sourceMD5 = await localMD5(localFile.path(percentEncoded: false))
 
         let remoteName = "macscp-resume-upload-\(UUID().uuidString).bin"
         let remotePath = "/config/\(remoteName)"
-        defer { cleanupConfigPath(remotePath) }
+        defer { Task { await cleanupConfigPath(remotePath) } }
 
         // Cancel after the FIRST progress event — same pattern as M5c/T2.
         let progressSeen = CallCounterBox()
@@ -798,7 +749,7 @@ struct CitadelFileSystemIntegrationTests {
         }
 
         // Partial file is GENUINELY smaller than the source.
-        let partialSize = remoteSize(remotePath)
+        let partialSize = await remoteSize(remotePath)
         #expect(partialSize >= 0)
         #expect(partialSize < sourceSize)
 
@@ -809,8 +760,8 @@ struct CitadelFileSystemIntegrationTests {
             resume: true,
             onProgress: { _ in })
 
-        #expect(remoteSize(remotePath) == sourceSize)
-        #expect(remoteMD5(remotePath) == sourceMD5)   // byte-identical after resume
+        #expect(await remoteSize(remotePath) == sourceSize)
+        #expect(await remoteMD5(remotePath) == sourceMD5)   // byte-identical after resume
     }
 
     /// Resuming an ALREADY-COMPLETE remote file must not write anything at
@@ -830,7 +781,7 @@ struct CitadelFileSystemIntegrationTests {
 
         let remoteName = "macscp-resume-complete-\(UUID().uuidString).bin"
         let remotePath = "/config/\(remoteName)"
-        defer { cleanupConfigPath(remotePath) }
+        defer { Task { await cleanupConfigPath(remotePath) } }
 
         let source = LocalFileSystem()
         // First, a full plain transfer completes the file.
@@ -839,8 +790,8 @@ struct CitadelFileSystemIntegrationTests {
             to: fs, destinationDirectory: "/config", fileName: remoteName,
             onProgress: { _ in })
 
-        let beforeSize = remoteSize(remotePath)
-        let beforeMtime = remoteMtime(remotePath)
+        let beforeSize = await remoteSize(remotePath)
+        let beforeMtime = await remoteMtime(remotePath)
         #expect(beforeSize == payload.count)
 
         // Let the filesystem's mtime clock tick forward so a spurious write
@@ -854,8 +805,8 @@ struct CitadelFileSystemIntegrationTests {
             resume: true,
             onProgress: { _ in })
 
-        #expect(remoteSize(remotePath) == beforeSize)
-        #expect(remoteMtime(remotePath) == beforeMtime)   // no write occurred
+        #expect(await remoteSize(remotePath) == beforeSize)
+        #expect(await remoteMtime(remotePath) == beforeMtime)   // no write occurred
     }
 
     // MARK: - M7a/T1: rename + setPermissions
@@ -873,9 +824,11 @@ struct CitadelFileSystemIntegrationTests {
         let newName = "\(base)-new.bin"
         let otherName = "\(base)-other.bin"
         defer {
-            cleanupConfigPath(oldName)
-            cleanupConfigPath(newName)
-            cleanupConfigPath(otherName)
+            Task {
+                await cleanupConfigPath(oldName)
+                await cleanupConfigPath(newName)
+                await cleanupConfigPath(otherName)
+            }
         }
 
         let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
@@ -931,25 +884,23 @@ struct CitadelFileSystemIntegrationTests {
         defer { Task { await fs.disconnect() } }
 
         let base = "/config/macscp-rename-probe-\(UUID().uuidString)"
-        defer { cleanupConfigPath(base) }
+        defer { Task { await cleanupConfigPath(base) } }
         let source = "\(base)/source.bin"
         let destination = "\(base)/blocked/destination.bin"
 
-        let seed = Process()
-        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        seed.arguments = [
-            "exec", "macscp-test-sshd", "sh", "-c",
-            // `docker exec` runs as root, so `base` is chowned to testuser
-            // (uid 1000, the SFTP user) to make the source writable over
-            // SFTP. `blocked` keeps mode 000 — testuser owns it but, not
-            // being root, is still denied traversal, so stat of anything
-            // inside it fails with EACCES rather than ENOENT.
-            "mkdir -p '\(base)/blocked' && chown -R 1000:1000 '\(base)'"
-                + " && chmod 000 '\(base)/blocked'",
-        ]
-        try seed.run()
-        seed.waitUntilExit()
-        #expect(seed.terminationStatus == 0)
+        let seedResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: [
+                "exec", "macscp-test-sshd", "sh", "-c",
+                // `docker exec` runs as root, so `base` is chowned to testuser
+                // (uid 1000, the SFTP user) to make the source writable over
+                // SFTP. `blocked` keeps mode 000 — testuser owns it but, not
+                // being root, is still denied traversal, so stat of anything
+                // inside it fails with EACCES rather than ENOENT.
+                "mkdir -p '\(base)/blocked' && chown -R 1000:1000 '\(base)'"
+                    + " && chmod 000 '\(base)/blocked'",
+            ])
+        #expect(seedResult.status == 0)
 
         let body = Data("do not move me".utf8)
         let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
@@ -992,30 +943,30 @@ struct CitadelFileSystemIntegrationTests {
         let victimPath = "/config/macscp-deletetree-victim-\(UUID().uuidString).txt"
         let outsideDir = "/config/macscp-deletetree-outsidedir-\(UUID().uuidString)"
         defer {
-            cleanupConfigPath(base)
-            cleanupConfigPath(victimPath)
-            cleanupConfigPath(outsideDir)
+            Task {
+                await cleanupConfigPath(base)
+                await cleanupConfigPath(victimPath)
+                await cleanupConfigPath(outsideDir)
+            }
         }
 
-        let seed = Process()
-        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        seed.arguments = [
-            "exec", "macscp-test-sshd", "sh", "-c",
-            "mkdir -p '\(sub)' && mkdir -p '\(outsideDir)' && echo keep > '\(outsideDir)/keep.txt'"
-                + " && echo victim > '\(victimPath)'"
-                + " && echo hi > '\(base)/a.txt' && ln -s '\(victimPath)' '\(base)/link'"
-                + " && ln -s '\(outsideDir)' '\(sub)/dirlink'"
-                // `docker exec` runs as root, so everything under `base` is
-                // root-owned (0755) by default — testuser (the SFTP user,
-                // uid 1000) could list it but not unlink entries inside.
-                // chown to testuser (matching the file's existing .ssh-seed
-                // convention) so the SFTP-side deleteTree walk can actually
-                // remove the seeded entries.
-                + " && chown -R 1000:1000 '\(base)'",
-        ]
-        try seed.run()
-        seed.waitUntilExit()
-        #expect(seed.terminationStatus == 0)
+        let seedResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: [
+                "exec", "macscp-test-sshd", "sh", "-c",
+                "mkdir -p '\(sub)' && mkdir -p '\(outsideDir)' && echo keep > '\(outsideDir)/keep.txt'"
+                    + " && echo victim > '\(victimPath)'"
+                    + " && echo hi > '\(base)/a.txt' && ln -s '\(victimPath)' '\(base)/link'"
+                    + " && ln -s '\(outsideDir)' '\(sub)/dirlink'"
+                    // `docker exec` runs as root, so everything under `base` is
+                    // root-owned (0755) by default — testuser (the SFTP user,
+                    // uid 1000) could list it but not unlink entries inside.
+                    // chown to testuser (matching the file's existing .ssh-seed
+                    // convention) so the SFTP-side deleteTree walk can actually
+                    // remove the seeded entries.
+                    + " && chown -R 1000:1000 '\(base)'",
+            ])
+        #expect(seedResult.status == 0)
 
         try await fs.deleteTree(at: base)
 
@@ -1024,23 +975,17 @@ struct CitadelFileSystemIntegrationTests {
         }
 
         // Symlink TARGET (outside the deleted tree) survives (docker exec test -f).
-        let testFile = Process()
-        testFile.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        testFile.arguments = ["exec", "macscp-test-sshd", "test", "-f", victimPath]
-        try testFile.run()
-        testFile.waitUntilExit()
-        #expect(testFile.terminationStatus == 0)
+        let testFileResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", "macscp-test-sshd", "test", "-f", victimPath])
+        #expect(testFileResult.status == 0)
 
         // The in-tree symlink-to-DIRECTORY's target survives with its
         // contents intact (docker exec test -f on the nested keep.txt).
-        let testOutsideKeep = Process()
-        testOutsideKeep.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        testOutsideKeep.arguments = [
-            "exec", "macscp-test-sshd", "test", "-f", "\(outsideDir)/keep.txt",
-        ]
-        try testOutsideKeep.run()
-        testOutsideKeep.waitUntilExit()
-        #expect(testOutsideKeep.terminationStatus == 0)
+        let testOutsideKeepResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", "macscp-test-sshd", "test", "-f", "\(outsideDir)/keep.txt"])
+        #expect(testOutsideKeepResult.status == 0)
     }
 
     /// Review CRITICAL-1: `deleteTree` called DIRECTLY on a top-level
@@ -1056,20 +1001,20 @@ struct CitadelFileSystemIntegrationTests {
         let outsideDir = "/config/macscp-deletetree-dirlink-outside-\(UUID().uuidString)"
         let link = "/config/macscp-deletetree-dirlink-\(UUID().uuidString)"
         defer {
-            cleanupConfigPath(outsideDir)
-            cleanupConfigPath(link)
+            Task {
+                await cleanupConfigPath(outsideDir)
+                await cleanupConfigPath(link)
+            }
         }
 
-        let seed = Process()
-        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        seed.arguments = [
-            "exec", "macscp-test-sshd", "sh", "-c",
-            "mkdir -p '\(outsideDir)' && echo keep > '\(outsideDir)/keep.txt'"
-                + " && ln -s '\(outsideDir)' '\(link)'",
-        ]
-        try seed.run()
-        seed.waitUntilExit()
-        #expect(seed.terminationStatus == 0)
+        let seedResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: [
+                "exec", "macscp-test-sshd", "sh", "-c",
+                "mkdir -p '\(outsideDir)' && echo keep > '\(outsideDir)/keep.txt'"
+                    + " && ln -s '\(outsideDir)' '\(link)'",
+            ])
+        #expect(seedResult.status == 0)
 
         try await fs.deleteTree(at: link)
 
@@ -1078,12 +1023,10 @@ struct CitadelFileSystemIntegrationTests {
         #expect(!siblings.contains { $0.path == link })
 
         // The target directory AND its contents survive (docker exec test -f).
-        let testKeep = Process()
-        testKeep.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        testKeep.arguments = ["exec", "macscp-test-sshd", "test", "-f", "\(outsideDir)/keep.txt"]
-        try testKeep.run()
-        testKeep.waitUntilExit()
-        #expect(testKeep.terminationStatus == 0)
+        let testKeepResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", "macscp-test-sshd", "test", "-f", "\(outsideDir)/keep.txt"])
+        #expect(testKeepResult.status == 0)
     }
 
     /// A trailing slash on a symlink argument defeats `topLevelKind`'s exact
@@ -1098,20 +1041,20 @@ struct CitadelFileSystemIntegrationTests {
         let outsideDir = "/config/macscp-deletetree-tslash-outside-\(UUID().uuidString)"
         let link = "/config/macscp-deletetree-tslash-\(UUID().uuidString)"
         defer {
-            cleanupConfigPath(outsideDir)
-            cleanupConfigPath(link)
+            Task {
+                await cleanupConfigPath(outsideDir)
+                await cleanupConfigPath(link)
+            }
         }
 
-        let seed = Process()
-        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        seed.arguments = [
-            "exec", "macscp-test-sshd", "sh", "-c",
-            "mkdir -p '\(outsideDir)' && echo keep > '\(outsideDir)/keep.txt'"
-                + " && ln -s '\(outsideDir)' '\(link)'",
-        ]
-        try seed.run()
-        seed.waitUntilExit()
-        #expect(seed.terminationStatus == 0)
+        let seedResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: [
+                "exec", "macscp-test-sshd", "sh", "-c",
+                "mkdir -p '\(outsideDir)' && echo keep > '\(outsideDir)/keep.txt'"
+                    + " && ln -s '\(outsideDir)' '\(link)'",
+            ])
+        #expect(seedResult.status == 0)
 
         try await fs.deleteTree(at: link + "/")
 
@@ -1120,12 +1063,10 @@ struct CitadelFileSystemIntegrationTests {
         #expect(!siblings.contains { $0.path == link })
 
         // The target directory AND its contents survive (docker exec test -f).
-        let testKeep = Process()
-        testKeep.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        testKeep.arguments = ["exec", "macscp-test-sshd", "test", "-f", "\(outsideDir)/keep.txt"]
-        try testKeep.run()
-        testKeep.waitUntilExit()
-        #expect(testKeep.terminationStatus == 0)
+        let testKeepResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", "macscp-test-sshd", "test", "-f", "\(outsideDir)/keep.txt"])
+        #expect(testKeepResult.status == 0)
     }
 
     /// A ~50-file tree is seeded (docker-exec), `deleteTree` is started in a
@@ -1139,17 +1080,15 @@ struct CitadelFileSystemIntegrationTests {
         defer { Task { await fs.disconnect() } }
 
         let base = "/config/macscp-deletetree-cancel-\(UUID().uuidString)"
-        defer { cleanupConfigPath(base) }
+        defer { Task { await cleanupConfigPath(base) } }
 
-        let seed = Process()
-        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        seed.arguments = [
-            "exec", "macscp-test-sshd", "sh", "-c",
-            "mkdir -p '\(base)' && for i in $(seq 1 50); do echo x > '\(base)/f$i.txt'; done",
-        ]
-        try seed.run()
-        seed.waitUntilExit()
-        #expect(seed.terminationStatus == 0)
+        let seedResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: [
+                "exec", "macscp-test-sshd", "sh", "-c",
+                "mkdir -p '\(base)' && for i in $(seq 1 50); do echo x > '\(base)/f$i.txt'; done",
+            ])
+        #expect(seedResult.status == 0)
 
         let task = Task { try await fs.deleteTree(at: base) }
         task.cancel()
@@ -1194,30 +1133,30 @@ struct CitadelFileSystemIntegrationTests {
         let linkPath = "\(base)/link"
         let outsideFile = "/config/macscp-permstree-outside-\(UUID().uuidString).txt"
         defer {
-            cleanupConfigPath(base)
-            cleanupConfigPath(outsideFile)
+            Task {
+                await cleanupConfigPath(base)
+                await cleanupConfigPath(outsideFile)
+            }
         }
 
-        let seed = Process()
-        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        seed.arguments = [
-            "exec", "macscp-test-sshd", "sh", "-c",
-            "mkdir -p '\(sub)' && echo root > '\(rootFile)' && echo sub > '\(subFile)'"
-                + " && echo outside > '\(outsideFile)' && chmod 600 '\(outsideFile)'"
-                + " && chown 1000:1000 '\(outsideFile)'"
-                + " && ln -s '\(outsideFile)' '\(linkPath)'"
-                // docker exec runs as root, so everything under `base` is
-                // root-owned by default (matching the deleteTree symlink
-                // test's convention) — chown to testuser (uid 1000) so the
-                // SFTP-side setPermissions calls below can actually chmod
-                // the seeded entries.
-                + " && chown -R 1000:1000 '\(base)'",
-        ]
-        try seed.run()
-        seed.waitUntilExit()
-        #expect(seed.terminationStatus == 0)
+        let seedResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: [
+                "exec", "macscp-test-sshd", "sh", "-c",
+                "mkdir -p '\(sub)' && echo root > '\(rootFile)' && echo sub > '\(subFile)'"
+                    + " && echo outside > '\(outsideFile)' && chmod 600 '\(outsideFile)'"
+                    + " && chown 1000:1000 '\(outsideFile)'"
+                    + " && ln -s '\(outsideFile)' '\(linkPath)'"
+                    // docker exec runs as root, so everything under `base` is
+                    // root-owned by default (matching the deleteTree symlink
+                    // test's convention) — chown to testuser (uid 1000) so the
+                    // SFTP-side setPermissions calls below can actually chmod
+                    // the seeded entries.
+                    + " && chown -R 1000:1000 '\(base)'",
+            ])
+        #expect(seedResult.status == 0)
 
-        let originalOutsideMode = remotePermissions(outsideFile)
+        let originalOutsideMode = await remotePermissions(outsideFile)
         #expect(originalOutsideMode == "600")
 
         let result = await PermissionsTreeApplier.apply(
@@ -1231,17 +1170,17 @@ struct CitadelFileSystemIntegrationTests {
         #expect(result.cancelled == false)
 
         // Every real entry now carries the new mode (docker exec stat -c %a).
-        #expect(remotePermissions(base) == "755")
-        #expect(remotePermissions(rootFile) == "644")
-        #expect(remotePermissions(sub) == "755")
-        #expect(remotePermissions(subFile) == "644")
+        #expect(await remotePermissions(base) == "755")
+        #expect(await remotePermissions(rootFile) == "644")
+        #expect(await remotePermissions(sub) == "755")
+        #expect(await remotePermissions(subFile) == "644")
 
         // SECURITY: the symlink's target OUTSIDE the tree keeps its
         // original, distinctive mode — proves `setPermissions` was never
         // called through the link (it would have changed to 0o644, since
         // the target is a regular file the walk's file-permissions branch
         // would apply were it ever handed the link's resolved target).
-        #expect(remotePermissions(outsideFile) == originalOutsideMode)
+        #expect(await remotePermissions(outsideFile) == originalOutsideMode)
     }
 
     @Test func tamperedKnownKeyFailsHardWithMismatch() async throws {
@@ -1293,8 +1232,10 @@ struct CitadelFileSystemIntegrationTests {
         let destinationName = "macscp-r2r-dest-\(UUID().uuidString).bin"
         let destinationPath = "/config/\(destinationName)"
         defer {
-            cleanupConfigPath(sourcePath, container: "macscp-test-sshd")
-            cleanupConfigPath(destinationPath, container: "macscp-test-sshd-2")
+            Task {
+                await cleanupConfigPath(sourcePath, container: "macscp-test-sshd")
+                await cleanupConfigPath(destinationPath, container: "macscp-test-sshd-2")
+            }
         }
 
         // ~256 KiB random payload, written to server 1 only.
@@ -1526,11 +1467,11 @@ struct CitadelFileSystemIntegrationTests {
     /// offers it, and `list("/data/seed")` proves the SSH+SFTP session is
     /// actually usable afterward.
     @Test func agentAuthConnectsEd25519() async throws {
-        let (dir, keyPath) = try makeInstalledKey(type: "ed25519")
+        let (dir, keyPath) = try await makeInstalledKey(type: "ed25519")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: keyPath, to: agent)
+        try await addKey(atPath: keyPath, to: agent)
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
@@ -1561,11 +1502,11 @@ struct CitadelFileSystemIntegrationTests {
     /// satisfies both is the RFC's, and either row alone can be bought by a
     /// wrong one.
     @Test func agentAuthConnectsRSA() async throws {
-        let (dir, keyPath) = try makeInstalledKey(type: "rsa", bits: 2048)
+        let (dir, keyPath) = try await makeInstalledKey(type: "rsa", bits: 2048)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: keyPath, to: agent)
+        try await addKey(atPath: keyPath, to: agent)
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
@@ -1594,17 +1535,15 @@ struct CitadelFileSystemIntegrationTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let keyURL = dir.appendingPathComponent("id_ed25519")
-        let keygen = Process()
-        keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
-        keygen.arguments = ["-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
-                            "-N", "", "-q", "-C", "macscp-itest-wrong"]
-        try keygen.run()
-        keygen.waitUntilExit()
-        #expect(keygen.terminationStatus == 0)
+        let keygenResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/ssh-keygen"),
+            arguments: ["-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
+                        "-N", "", "-q", "-C", "macscp-itest-wrong"])
+        #expect(keygenResult.status == 0)
 
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: keyURL.path(percentEncoded: false), to: agent)
+        try await addKey(atPath: keyURL.path(percentEncoded: false), to: agent)
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
@@ -1636,22 +1575,20 @@ struct CitadelFileSystemIntegrationTests {
         try FileManager.default.createDirectory(at: firstDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: firstDir) }
         let firstKeyURL = firstDir.appendingPathComponent("id_ed25519")
-        let keygen = Process()
-        keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
-        keygen.arguments = ["-t", "ed25519", "-f", firstKeyURL.path(percentEncoded: false),
-                            "-N", "", "-q", "-C", "macscp-itest-not-installed"]
-        try keygen.run()
-        keygen.waitUntilExit()
-        #expect(keygen.terminationStatus == 0)
+        let keygenResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/ssh-keygen"),
+            arguments: ["-t", "ed25519", "-f", firstKeyURL.path(percentEncoded: false),
+                        "-N", "", "-q", "-C", "macscp-itest-not-installed"])
+        #expect(keygenResult.status == 0)
 
         // Second identity: installed in authorized_keys via the shared helper.
-        let (secondDir, secondKeyPath) = try makeInstalledKey(type: "ed25519")
+        let (secondDir, secondKeyPath) = try await makeInstalledKey(type: "ed25519")
         defer { try? FileManager.default.removeItem(at: secondDir) }
 
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: firstKeyURL.path(percentEncoded: false), to: agent)
-        try addKey(atPath: secondKeyPath, to: agent)
+        try await addKey(atPath: firstKeyURL.path(percentEncoded: false), to: agent)
+        try await addKey(atPath: secondKeyPath, to: agent)
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
@@ -1679,11 +1616,11 @@ struct CitadelFileSystemIntegrationTests {
     /// reconnect loop works correctly when it is the JUMP hop's attempts
     /// being retried (not just the already-covered target hop).
     @Test func agentAuthOnJumpHop() async throws {
-        let (dir, keyPath) = try makeInstalledKey(type: "ed25519")
+        let (dir, keyPath) = try await makeInstalledKey(type: "ed25519")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: keyPath, to: agent)
+        try await addKey(atPath: keyPath, to: agent)
 
         let config = try SSHConnectionConfig(
             host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
@@ -1719,17 +1656,15 @@ struct CitadelFileSystemIntegrationTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let keyURL = dir.appendingPathComponent("id_ed25519")
-        let keygen = Process()
-        keygen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
-        keygen.arguments = ["-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
-                            "-N", "", "-q", "-C", "macscp-itest-jump-wrong"]
-        try keygen.run()
-        keygen.waitUntilExit()
-        #expect(keygen.terminationStatus == 0)
+        let keygenResult = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/ssh-keygen"),
+            arguments: ["-t", "ed25519", "-f", keyURL.path(percentEncoded: false),
+                        "-N", "", "-q", "-C", "macscp-itest-jump-wrong"])
+        #expect(keygenResult.status == 0)
 
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: keyURL.path(percentEncoded: false), to: agent)
+        try await addKey(atPath: keyURL.path(percentEncoded: false), to: agent)
 
         let config = try SSHConnectionConfig(
             host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
@@ -1751,11 +1686,11 @@ struct CitadelFileSystemIntegrationTests {
     /// `AgentSigningAlgorithm` family macSCP offers (`AgentAlgorithm.ECDSAP256`)
     /// had no live-server coverage before this test.
     @Test func agentAuthConnectsECDSA() async throws {
-        let (dir, keyPath) = try makeInstalledKey(type: "ecdsa", bits: 256)
+        let (dir, keyPath) = try await makeInstalledKey(type: "ecdsa", bits: 256)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: keyPath, to: agent)
+        try await addKey(atPath: keyPath, to: agent)
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
@@ -1780,11 +1715,11 @@ struct CitadelFileSystemIntegrationTests {
     /// all three NIST curves connect through the agent, measured only by a
     /// throwaway script, not by a test in the tree.
     @Test func agentAuthConnectsECDSAP384() async throws {
-        let (dir, keyPath) = try makeInstalledKey(type: "ecdsa", bits: 384)
+        let (dir, keyPath) = try await makeInstalledKey(type: "ecdsa", bits: 384)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: keyPath, to: agent)
+        try await addKey(atPath: keyPath, to: agent)
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
@@ -1807,11 +1742,11 @@ struct CitadelFileSystemIntegrationTests {
     /// T4/Step 1: an ECDSA P-521 identity through the agent, mirroring
     /// `agentAuthConnectsECDSA` (P-256) — see `agentAuthConnectsECDSAP384`.
     @Test func agentAuthConnectsECDSAP521() async throws {
-        let (dir, keyPath) = try makeInstalledKey(type: "ecdsa", bits: 521)
+        let (dir, keyPath) = try await makeInstalledKey(type: "ecdsa", bits: 521)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: keyPath, to: agent)
+        try await addKey(atPath: keyPath, to: agent)
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
@@ -1851,11 +1786,11 @@ struct CitadelFileSystemIntegrationTests {
     ] as [(String, Int?)])
     func agentAuthConnectsWithPassphraseProtectedKey(type: String, bits: Int?) async throws {
         let testPassphrase = "macscp-itest-passphrase"
-        let (dir, keyPath) = try makeInstalledKey(type: type, bits: bits, passphrase: testPassphrase)
+        let (dir, keyPath) = try await makeInstalledKey(type: type, bits: bits, passphrase: testPassphrase)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let agent = try spawnAgent()
+        let agent = try await spawnAgent()
         defer { killAgent(agent) }
-        try addKey(atPath: keyPath, to: agent, passphrase: testPassphrase, helperDirectory: dir)
+        try await addKey(atPath: keyPath, to: agent, passphrase: testPassphrase, helperDirectory: dir)
 
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser", auth: .agent)
@@ -1922,17 +1857,14 @@ struct CitadelFileSystemIntegrationTests {
     /// Seeds a file of `bytes` random bytes at `path` inside the container and
     /// hands it to the SFTP user. `docker exec` runs as root, so the chown is
     /// what makes the file readable over SFTP as testuser.
-    private func seedRemoteFile(atPath path: String, bytes: Int) {
-        let seed = Process()
-        seed.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        seed.arguments = [
-            "exec", "macscp-test-sshd", "sh", "-c",
-            "head -c \(bytes) /dev/urandom > '\(path)' && chown 1000:1000 '\(path)'",
-        ]
-        seed.standardError = FileHandle.nullDevice
-        try? seed.run()
-        seed.waitUntilExit()
-        #expect(seed.terminationStatus == 0)
+    private func seedRemoteFile(atPath path: String, bytes: Int) async {
+        let result = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: [
+                "exec", "macscp-test-sshd", "sh", "-c",
+                "head -c \(bytes) /dev/urandom > '\(path)' && chown 1000:1000 '\(path)'",
+            ])
+        #expect(result?.status == 0)
     }
 
     /// How many descriptors the SERVER still holds on a file of that name,
@@ -1944,29 +1876,23 @@ struct CitadelFileSystemIntegrationTests {
     /// The same descriptor shows up under several `/proc` entries, so the
     /// number itself carries no meaning — only "some" versus "none" does.
     /// Callers compare against 0, never against an expected count.
-    private func serverDescriptorCount(forFileNamed name: String) -> Int {
-        let list = Process()
-        list.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        list.arguments = [
-            // `--privileged`: resolving another process's `/proc/<pid>/fd`
-            // symlinks needs CAP_SYS_PTRACE, which a plain `docker exec` does
-            // not carry — without it every link reads back "Permission
-            // denied" and the count is silently always zero. The sftp-server
-            // runs as testuser under the sshd session, so this is exactly the
-            // case that needs it.
-            "exec", "--privileged", "macscp-test-sshd", "sh", "-c",
-            // `grep -c` exits non-zero when it counts nothing, so the exit
-            // status carries no information here — stdout is the answer.
-            "ls -l /proc/[0-9]*/fd 2>/dev/null | grep -c '\(name)'",
-        ]
-        let pipe = Pipe()
-        list.standardOutput = pipe
-        list.standardError = FileHandle.nullDevice
-        guard (try? list.run()) != nil else { return -1 }
-        let out = String(
-            data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        list.waitUntilExit()
+    private func serverDescriptorCount(forFileNamed name: String) async -> Int {
+        guard let result = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: [
+                // `--privileged`: resolving another process's `/proc/<pid>/fd`
+                // symlinks needs CAP_SYS_PTRACE, which a plain `docker exec` does
+                // not carry — without it every link reads back "Permission
+                // denied" and the count is silently always zero. The sftp-server
+                // runs as testuser under the sshd session, so this is exactly the
+                // case that needs it.
+                "exec", "--privileged", "macscp-test-sshd", "sh", "-c",
+                // `grep -c` exits non-zero when it counts nothing, so the exit
+                // status carries no information here — stdout is the answer.
+                "ls -l /proc/[0-9]*/fd 2>/dev/null | grep -c '\(name)'",
+            ])
+        else { return -1 }
+        let out = result.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
         return Int(out) ?? -1
     }
 
@@ -1975,11 +1901,11 @@ struct CitadelFileSystemIntegrationTests {
     /// stream is gone, so the assertion has to be "closes promptly", not
     /// "is closed by the time this line runs".
     private func waitForServerToCloseDescriptors(forFileNamed name: String) async -> Int {
-        var remaining = serverDescriptorCount(forFileNamed: name)
+        var remaining = await serverDescriptorCount(forFileNamed: name)
         var polls = 0
         while remaining != 0 && polls < 40 {
             try? await Task.sleep(for: .milliseconds(50))
-            remaining = serverDescriptorCount(forFileNamed: name)
+            remaining = await serverDescriptorCount(forFileNamed: name)
             polls += 1
         }
         return remaining
@@ -1995,8 +1921,8 @@ struct CitadelFileSystemIntegrationTests {
 
         let name = "macscp-abandoned-read-\(UUID().uuidString).bin"
         let path = "/config/\(name)"
-        seedRemoteFile(atPath: path, bytes: 4 * TransferChunk.size)
-        defer { cleanupConfigPath(path) }
+        await seedRemoteFile(atPath: path, bytes: 4 * TransferChunk.size)
+        defer { Task { await cleanupConfigPath(path) } }
 
         // A nested frame so the stream and its iterator are released on
         // return rather than at the end of the test.
@@ -2008,7 +1934,7 @@ struct CitadelFileSystemIntegrationTests {
             // Measured while the stream is still alive: proves the probe
             // above really sees this handle, so a later zero means "closed"
             // and not "never looked in the right place".
-            #expect(serverDescriptorCount(forFileNamed: name) > 0)
+            #expect(await serverDescriptorCount(forFileNamed: name) > 0)
         }
         try await pullOneChunkThenAbandon()
 
@@ -2025,8 +1951,8 @@ struct CitadelFileSystemIntegrationTests {
 
         let name = "macscp-failed-destination-\(UUID().uuidString).bin"
         let path = "/config/\(name)"
-        seedRemoteFile(atPath: path, bytes: 4 * TransferChunk.size)
-        defer { cleanupConfigPath(path) }
+        await seedRemoteFile(atPath: path, bytes: 4 * TransferChunk.size)
+        defer { Task { await cleanupConfigPath(path) } }
 
         // A directory that was never created: `LocalFileSystem.write` cannot
         // create the file there and throws before draining a single chunk.
@@ -2053,8 +1979,8 @@ struct CitadelFileSystemIntegrationTests {
 
         let name = "macscp-cancelled-download-\(UUID().uuidString).bin"
         let path = "/config/\(name)"
-        seedRemoteFile(atPath: path, bytes: 32 * 1024 * 1024)
-        defer { cleanupConfigPath(path) }
+        await seedRemoteFile(atPath: path, bytes: 32 * 1024 * 1024)
+        defer { Task { await cleanupConfigPath(path) } }
 
         let destinationDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-cancelled-download-\(UUID().uuidString)")

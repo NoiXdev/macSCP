@@ -37,37 +37,35 @@ struct SSHPrivateKeyLoaderTests {
     /// `extra` is appended to the ssh-keygen argument list (e.g. `["-b", "384"]`,
     /// `["-m", "PEM"]`).
     private func makeKey(type: String = "ed25519", passphrase: String = "",
-                         extra: [String] = []) throws -> (dir: URL, keyPath: String) {
+                         extra: [String] = []) async throws -> (dir: URL, keyPath: String) {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-key-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let keyURL = dir.appendingPathComponent("id_\(type)")
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
-        process.arguments = ["-t", type, "-f", keyURL.path(percentEncoded: false),
-                             "-N", passphrase, "-q", "-C", "macscp-test"] + extra
-        try process.run()
-        process.waitUntilExit()
-        #expect(process.terminationStatus == 0)
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/ssh-keygen"),
+            arguments: ["-t", type, "-f", keyURL.path(percentEncoded: false),
+                        "-N", passphrase, "-q", "-C", "macscp-test"] + extra)
+        #expect(result.status == 0)
         return (dir, keyURL.path(percentEncoded: false))
     }
 
-    @Test func loadsUnencryptedKey() throws {
-        let (dir, keyPath) = try makeKey(passphrase: "")
+    @Test func loadsUnencryptedKey() async throws {
+        let (dir, keyPath) = try await makeKey(passphrase: "")
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try SSHPrivateKeyLoader.authentication(
             username: "tim", keyPath: keyPath, passphrase: nil)
     }
 
-    @Test func loadsEncryptedKeyWithCorrectPassphrase() throws {
-        let (dir, keyPath) = try makeKey(passphrase: "geheime-phrase")
+    @Test func loadsEncryptedKeyWithCorrectPassphrase() async throws {
+        let (dir, keyPath) = try await makeKey(passphrase: "geheime-phrase")
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try SSHPrivateKeyLoader.authentication(
             username: "tim", keyPath: keyPath, passphrase: "geheime-phrase")
     }
 
-    @Test func encryptedKeyWithoutPassphraseThrowsPassphraseRequired() throws {
-        let (dir, keyPath) = try makeKey(passphrase: "geheime-phrase")
+    @Test func encryptedKeyWithoutPassphraseThrowsPassphraseRequired() async throws {
+        let (dir, keyPath) = try await makeKey(passphrase: "geheime-phrase")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(throws: SSHKeyError.passphraseRequired) {
             _ = try SSHPrivateKeyLoader.authentication(
@@ -75,8 +73,8 @@ struct SSHPrivateKeyLoaderTests {
         }
     }
 
-    @Test func encryptedKeyWithWrongPassphraseThrowsWrongPassphrase() throws {
-        let (dir, keyPath) = try makeKey(passphrase: "geheime-phrase")
+    @Test func encryptedKeyWithWrongPassphraseThrowsWrongPassphrase() async throws {
+        let (dir, keyPath) = try await makeKey(passphrase: "geheime-phrase")
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(throws: SSHKeyError.wrongPassphrase) {
             _ = try SSHPrivateKeyLoader.authentication(
@@ -113,16 +111,16 @@ struct SSHPrivateKeyLoaderTests {
     }
 
     @Test("an RSA key loads")
-    func loadsRSAKey() throws {
-        let (dir, keyPath) = try makeKey(type: "rsa", extra: ["-b", "2048"])
+    func loadsRSAKey() async throws {
+        let (dir, keyPath) = try await makeKey(type: "rsa", extra: ["-b", "2048"])
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try SSHPrivateKeyLoader.authentication(
             username: "tim", keyPath: keyPath, passphrase: nil)
     }
 
     @Test("an ECDSA key loads on each curve", arguments: [256, 384, 521])
-    func loadsECDSAKey(bits: Int) throws {
-        let (dir, keyPath) = try makeKey(type: "ecdsa", extra: ["-b", String(bits)])
+    func loadsECDSAKey(bits: Int) async throws {
+        let (dir, keyPath) = try await makeKey(type: "ecdsa", extra: ["-b", String(bits)])
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try SSHPrivateKeyLoader.authentication(
             username: "tim", keyPath: keyPath, passphrase: nil)
@@ -136,7 +134,7 @@ struct SSHPrivateKeyLoaderTests {
           arguments: [(256, "ecdsa-sha2-nistp256"), (384, "ecdsa-sha2-nistp384"),
                       (521, "ecdsa-sha2-nistp521")])
     func ecdsaCurveReachesItsOwnOffer(bits: Int, expectedPrefix: String) async throws {
-        let (dir, keyPath) = try makeKey(type: "ecdsa", extra: ["-b", String(bits)])
+        let (dir, keyPath) = try await makeKey(type: "ecdsa", extra: ["-b", String(bits)])
         defer { try? FileManager.default.removeItem(at: dir) }
         let method = try SSHPrivateKeyLoader.authentication(
             username: "tim", keyPath: keyPath, passphrase: nil)
@@ -172,7 +170,7 @@ struct SSHPrivateKeyLoaderTests {
     /// equality fails.
     @Test("an RSA key is offered as rsa-sha2 only, never as ssh-rsa")
     func rsaKeyOffersSHA2Only() async throws {
-        let (dir, keyPath) = try makeKey(type: "rsa", extra: ["-b", "2048"])
+        let (dir, keyPath) = try await makeKey(type: "rsa", extra: ["-b", "2048"])
         defer { try? FileManager.default.removeItem(at: dir) }
         let method = try SSHPrivateKeyLoader.authentication(
             username: "tim", keyPath: keyPath, passphrase: nil)
@@ -192,8 +190,8 @@ struct SSHPrivateKeyLoaderTests {
     /// is only the verdict: an encrypted RSA key now asks for its passphrase
     /// instead of being turned away for its type.
     @Test("an encrypted RSA key without a passphrase asks for one")
-    func encryptedRSAKeyWithoutPassphraseThrowsPassphraseRequired() throws {
-        let (dir, keyPath) = try makeKey(type: "rsa", passphrase: "geheime-phrase", extra: ["-b", "2048"])
+    func encryptedRSAKeyWithoutPassphraseThrowsPassphraseRequired() async throws {
+        let (dir, keyPath) = try await makeKey(type: "rsa", passphrase: "geheime-phrase", extra: ["-b", "2048"])
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(throws: SSHKeyError.passphraseRequired) {
             _ = try SSHPrivateKeyLoader.authentication(username: "tim", keyPath: keyPath, passphrase: nil)
@@ -201,8 +199,8 @@ struct SSHPrivateKeyLoaderTests {
     }
 
     @Test("an encrypted RSA key with the wrong passphrase says so")
-    func encryptedRSAKeyWithWrongPassphraseThrowsWrongPassphrase() throws {
-        let (dir, keyPath) = try makeKey(type: "rsa", passphrase: "geheime-phrase", extra: ["-b", "2048"])
+    func encryptedRSAKeyWithWrongPassphraseThrowsWrongPassphrase() async throws {
+        let (dir, keyPath) = try await makeKey(type: "rsa", passphrase: "geheime-phrase", extra: ["-b", "2048"])
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(throws: SSHKeyError.wrongPassphrase) {
             _ = try SSHPrivateKeyLoader.authentication(username: "tim", keyPath: keyPath, passphrase: "falsch")
@@ -218,8 +216,8 @@ struct SSHPrivateKeyLoaderTests {
     /// the loader's `map` must reach the same two verdicts here.
     @Test("an encrypted ECDSA key maps the same two failures",
           arguments: [256, 384, 521])
-    func encryptedECDSAKeyMapsPassphraseFailures(bits: Int) throws {
-        let (dir, keyPath) = try makeKey(
+    func encryptedECDSAKeyMapsPassphraseFailures(bits: Int) async throws {
+        let (dir, keyPath) = try await makeKey(
             type: "ecdsa", passphrase: "geheime-phrase", extra: ["-b", String(bits)])
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(throws: SSHKeyError.passphraseRequired) {
@@ -420,8 +418,8 @@ struct SSHPrivateKeyLoaderTests {
     }
 
     @Test("a PEM-format key is reported as PEM, not as garbage")
-    func pemKeyIsReported() throws {
-        let (dir, keyPath) = try makeKey(type: "rsa", extra: ["-b", "2048", "-m", "PEM"])
+    func pemKeyIsReported() async throws {
+        let (dir, keyPath) = try await makeKey(type: "rsa", extra: ["-b", "2048", "-m", "PEM"])
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(throws: SSHKeyError.pemNotSupported) {
             _ = try SSHPrivateKeyLoader.authentication(username: "tim", keyPath: keyPath, passphrase: nil)

@@ -40,16 +40,12 @@ struct RSASHA2HostKeyTests {
     }
 
     @discardableResult
-    private static func run(_ executable: String, _ arguments: [String]) throws -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        try process.run()
-        process.waitUntilExit()
-        return process.terminationStatus
+    private static func run(_ executable: String, _ arguments: [String]) async throws -> Int32 {
+        let result = try await SubprocessRunner.run(URL(fileURLWithPath: executable), arguments: arguments)
+        return result.status
     }
 
-    private static func makeFixture() throws -> Fixture {
+    private static func makeFixture() async throws -> Fixture {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-rsa-hostkey-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -59,7 +55,7 @@ struct RSASHA2HostKeyTests {
         // `-m PEM` only changes how the PRIVATE key file is written, so that
         // `openssl dgst -sign` can read it; `id_rsa.pub` is the ordinary
         // OpenSSH blob either way, and it is the only half this suite parses.
-        let keygenStatus = try run(
+        let keygenStatus = try await run(
             "/usr/bin/ssh-keygen",
             ["-t", "rsa", "-b", "2048", "-m", "PEM", "-N", "", "-q",
              "-C", "macscp-rsa-hostkey-test", "-f", keyPath])
@@ -74,9 +70,9 @@ struct RSASHA2HostKeyTests {
         let dataPath = dir.appendingPathComponent("payload.bin").path(percentEncoded: false)
         try signedData.write(to: URL(fileURLWithPath: dataPath))
 
-        func sign(digest: String, into name: String) throws -> Data {
+        func sign(digest: String, into name: String) async throws -> Data {
             let signaturePath = dir.appendingPathComponent(name).path(percentEncoded: false)
-            let status = try run(
+            let status = try await run(
                 "/usr/bin/openssl",
                 ["dgst", digest, "-sign", keyPath, "-out", signaturePath, dataPath])
             #expect(status == 0)
@@ -87,8 +83,8 @@ struct RSASHA2HostKeyTests {
             openSSHPublicKey: fields[0...1].joined(separator: " "),
             publicKeyBlob: blob,
             signedData: signedData,
-            sha512Signature: try sign(digest: "-sha512", into: "payload.sha512.sig"),
-            sha256Signature: try sign(digest: "-sha256", into: "payload.sha256.sig"))
+            sha512Signature: try await sign(digest: "-sha512", into: "payload.sha512.sig"),
+            sha256Signature: try await sign(digest: "-sha256", into: "payload.sha256.sig"))
     }
 
     /// Splits a host key blob the way NIOSSH does before dispatching to a
@@ -141,14 +137,15 @@ struct RSASHA2HostKeyTests {
 
     // MARK: - Parsing and re-serialization
 
-    @Test func theBlobsOwnIdentifierIsTheRSAPrefixAndItsBodyParses() throws {
-        let fixture = try Self.makeFixture()
+    @Test func theBlobsOwnIdentifierIsTheRSAPrefixAndItsBodyParses() async throws {
+        let fixture = try await Self.makeFixture()
         let parsed = try Self.parse(fixture.publicKeyBlob)
 
         #expect(parsed.identifier == RSASHA2HostKey.publicKeyPrefix)
         // 2048-bit modulus: `mpint n` is 257 bytes (256 plus the leading
         // zero an mpint takes when the top bit is set), `mpint e` 3.
-        #expect(parsed.key.rawRepresentation.count == 4 + 3 + 4 + 257)
+        let expectedByteCount: Int = 4 + 3 + 4 + 257
+        #expect(parsed.key.rawRepresentation.count == expectedByteCount)
     }
 
     /// The re-serialization NIOSSH performs while computing the exchange
@@ -157,8 +154,8 @@ struct RSASHA2HostKeyTests {
     /// server sent, or the hash — and with it the whole handshake — fails.
     /// Driven here through NIOSSH's own public round trip rather than the
     /// type's, so what is measured is the path the handshake takes.
-    @Test func theBlobSurvivesTheRoundTripThatBuildsTheExchangeHash() throws {
-        let fixture = try Self.makeFixture()
+    @Test func theBlobSurvivesTheRoundTripThatBuildsTheExchangeHash() async throws {
+        let fixture = try await Self.makeFixture()
         HostKeyAlgorithms.registerOnce()
 
         let key = try NIOSSHPublicKey(openSSHPublicKey: fixture.openSSHPublicKey)
@@ -166,8 +163,8 @@ struct RSASHA2HostKeyTests {
         #expect(String(openSSHPublicKey: key) == fixture.openSSHPublicKey)
     }
 
-    @Test func aBlobWithoutItsModulusIsRejected() throws {
-        let fixture = try Self.makeFixture()
+    @Test func aBlobWithoutItsModulusIsRejected() async throws {
+        let fixture = try await Self.makeFixture()
         let body = [UInt8](AgentWireFormat.stripLeadingSSHString(from: fixture.publicKeyBlob))
         try #require(body.count > 4)
         // Keep `mpint e` — its own uint32 length prefix plus that many
@@ -201,20 +198,21 @@ struct RSASHA2HostKeyTests {
         let sha512Signature: Data?
     }
 
-    private static func makeAssembledFixture(bits: Int, signing: Bool) throws -> AssembledFixture {
+    private static func makeAssembledFixture(bits: Int, signing: Bool) async throws -> AssembledFixture {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-rsa-hostkey-\(bits)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let keyPath = dir.appendingPathComponent("key.pem").path(percentEncoded: false)
-        let generateStatus = try run("/usr/bin/openssl", ["genrsa", "-out", keyPath, String(bits)])
+        let generateStatus = try await run("/usr/bin/openssl", ["genrsa", "-out", keyPath, String(bits)])
         #expect(generateStatus == 0)
 
+        let modulusOutput = try await capture(
+            "/usr/bin/openssl", ["rsa", "-in", keyPath, "-noout", "-modulus"])
         let modulusHex = try #require(
-            capture("/usr/bin/openssl", ["rsa", "-in", keyPath, "-noout", "-modulus"])
-                .split(separator: "=", maxSplits: 1).last.map(String.init))
-        let text = try capture("/usr/bin/openssl", ["rsa", "-in", keyPath, "-noout", "-text"])
+            modulusOutput.split(separator: "=", maxSplits: 1).last.map(String.init))
+        let text = try await capture("/usr/bin/openssl", ["rsa", "-in", keyPath, "-noout", "-text"])
         let exponentLine = try #require(
             text.split(separator: "\n").first { $0.contains("publicExponent:") })
         let exponent = try #require(
@@ -230,7 +228,7 @@ struct RSASHA2HostKeyTests {
             let dataPath = dir.appendingPathComponent("payload.bin").path(percentEncoded: false)
             try signedData.write(to: URL(fileURLWithPath: dataPath))
             let signaturePath = dir.appendingPathComponent("payload.sig").path(percentEncoded: false)
-            let status = try run(
+            let status = try await run(
                 "/usr/bin/openssl",
                 ["dgst", "-sha512", "-sign", keyPath, "-out", signaturePath, dataPath])
             #expect(status == 0)
@@ -241,17 +239,10 @@ struct RSASHA2HostKeyTests {
             publicKeyBlob: Data(blob), signedData: signedData, sha512Signature: signature)
     }
 
-    private static func capture(_ executable: String, _ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        try process.run()
-        let output = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        #expect(process.terminationStatus == 0)
-        return String(decoding: output, as: UTF8.self)
+    private static func capture(_ executable: String, _ arguments: [String]) async throws -> String {
+        let result = try await SubprocessRunner.run(URL(fileURLWithPath: executable), arguments: arguments)
+        #expect(result.status == 0)
+        return result.stdoutText
     }
 
     private static func bytes(fromHex hex: String) -> [UInt8] {
@@ -288,8 +279,8 @@ struct RSASHA2HostKeyTests {
 
     // MARK: - Verification
 
-    @Test func aParsedHostKeyVerifiesTheSignatureItsPrivateHalfMade() throws {
-        let fixture = try Self.makeFixture()
+    @Test func aParsedHostKeyVerifiesTheSignatureItsPrivateHalfMade() async throws {
+        let fixture = try await Self.makeFixture()
         let key = try Self.parse(fixture.publicKeyBlob).key
 
         let signature = RSASHA2Signature(rawRepresentation: fixture.sha512Signature)
@@ -297,8 +288,8 @@ struct RSASHA2HostKeyTests {
         #expect(key.isValidSignature(signature, for: fixture.signedData))
     }
 
-    @Test func oneFlippedSignatureByteFailsVerification() throws {
-        let fixture = try Self.makeFixture()
+    @Test func oneFlippedSignatureByteFailsVerification() async throws {
+        let fixture = try await Self.makeFixture()
         let key = try Self.parse(fixture.publicKeyBlob).key
         var tampered = fixture.sha512Signature
         tampered[tampered.startIndex] ^= 0x01
@@ -314,8 +305,8 @@ struct RSASHA2HostKeyTests {
             for: fixture.signedData))
     }
 
-    @Test func oneFlippedDataByteFailsVerification() throws {
-        let fixture = try Self.makeFixture()
+    @Test func oneFlippedDataByteFailsVerification() async throws {
+        let fixture = try await Self.makeFixture()
         let key = try Self.parse(fixture.publicKeyBlob).key
         var tampered = fixture.signedData
         tampered[tampered.startIndex] ^= 0x01
@@ -329,8 +320,8 @@ struct RSASHA2HostKeyTests {
     /// padding — only SHA-256 instead of SHA-512, which is what an
     /// `rsa-sha2-256` signature carries. A verifier that hashed with
     /// anything but SHA-512 would accept it.
-    @Test func aSHA256SignatureIsRejectedByTheSHA512Verifier() throws {
-        let fixture = try Self.makeFixture()
+    @Test func aSHA256SignatureIsRejectedByTheSHA512Verifier() async throws {
+        let fixture = try await Self.makeFixture()
         let key = try Self.parse(fixture.publicKeyBlob).key
 
         #expect(key.isValidSignature(
@@ -346,8 +337,8 @@ struct RSASHA2HostKeyTests {
     /// verify. macSCP registers no `ssh-rsa` signature type, so NIOSSH would
     /// reject such a blob before this point — this is the second lock, on
     /// the type itself.
-    @Test func aSignatureTypedForSHA1IsRejectedEvenThoughItsBytesAreValid() throws {
-        let fixture = try Self.makeFixture()
+    @Test func aSignatureTypedForSHA1IsRejectedEvenThoughItsBytesAreValid() async throws {
+        let fixture = try await Self.makeFixture()
         let key = try Self.parse(fixture.publicKeyBlob).key
 
         #expect(key.isValidSignature(
@@ -367,8 +358,8 @@ struct RSASHA2HostKeyTests {
     /// reconstructed by an attacker yields the SAME fingerprint, so the
     /// mismatch hard stop would never fire against it. The stop has to
     /// happen before the key is remembered at all.
-    @Test func aModulusBelowTheFloorIsRejectedAtParse() throws {
-        let fixture = try Self.makeAssembledFixture(bits: 512, signing: false)
+    @Test func aModulusBelowTheFloorIsRejectedAtParse() async throws {
+        let fixture = try await Self.makeAssembledFixture(bits: 512, signing: false)
 
         #expect(throws: (any Error).self) {
             _ = try Self.parse(fixture.publicKeyBlob)
@@ -380,8 +371,8 @@ struct RSASHA2HostKeyTests {
     /// mpint to 128 — and a floor that multiplied that byte count by 8
     /// would read 1024 and let the key through. Counting the minimal
     /// encoding reads 1016 and refuses it.
-    @Test func aModulusJustBelowTheFloorIsRejectedThoughItsMPIntIsWideEnough() throws {
-        let fixture = try Self.makeAssembledFixture(bits: 1016, signing: false)
+    @Test func aModulusJustBelowTheFloorIsRejectedThoughItsMPIntIsWideEnough() async throws {
+        let fixture = try await Self.makeAssembledFixture(bits: 1016, signing: false)
         let mpintBytes = AgentWireFormat.stripLeadingSSHString(from: fixture.publicKeyBlob).count
         // The premise of the probe, asserted rather than assumed: the blob's
         // two fields are 4 + 3 for `e` and 4 + 128 for the padded `n`.
@@ -396,8 +387,8 @@ struct RSASHA2HostKeyTests {
     /// itself, parses AND verifies a signature its own private half made. So
     /// the rejection above is the size and not the builder, and the floor is
     /// inclusive.
-    @Test func aModulusAtTheFloorIsAcceptedAndVerifies() throws {
-        let fixture = try Self.makeAssembledFixture(
+    @Test func aModulusAtTheFloorIsAcceptedAndVerifies() async throws {
+        let fixture = try await Self.makeAssembledFixture(
             bits: RSASHA2HostKey.minimumModulusBits, signing: true)
         let key = try Self.parse(fixture.publicKeyBlob).key
         let signature = RSASHA2Signature(rawRepresentation: try #require(fixture.sha512Signature))
@@ -425,16 +416,16 @@ struct RSASHA2HostKeyTests {
     /// acceptance at the floor comes first. It goes red the moment a second
     /// claimant is registered ahead of this one — which is what would happen
     /// if a dial were ever given an `algorithms:` argument.
-    @Test func theRegisteredSshRsaClaimantIsTheOneWithTheModulusFloor() throws {
+    @Test func theRegisteredSshRsaClaimantIsTheOneWithTheModulusFloor() async throws {
         HostKeyAlgorithms.registerOnce()
 
-        let atTheFloor = try Self.makeAssembledFixture(
+        let atTheFloor = try await Self.makeAssembledFixture(
             bits: RSASHA2HostKey.minimumModulusBits, signing: false)
         #expect(throws: Never.self) {
             _ = try NIOSSHPublicKey(openSSHPublicKey: Self.openSSHLine(atTheFloor.publicKeyBlob))
         }
 
-        let belowTheFloor = try Self.makeAssembledFixture(bits: 512, signing: false)
+        let belowTheFloor = try await Self.makeAssembledFixture(bits: 512, signing: false)
         #expect(throws: (any Error).self) {
             _ = try NIOSSHPublicKey(openSSHPublicKey: Self.openSSHLine(belowTheFloor.publicKeyBlob))
         }

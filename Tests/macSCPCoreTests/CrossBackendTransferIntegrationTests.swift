@@ -52,12 +52,10 @@ struct CrossBackendTransferIntegrationTests {
     /// Best-effort recursive removal of an SSH-side path via the test
     /// container's shell — mirrors `CitadelFileSystemIntegrationTests
     /// .cleanupConfigPath` verbatim (writable base is `/config` on the rig).
-    private func cleanupSSHPath(_ path: String, container: String = "macscp-test-sshd") {
-        let rm = Process()
-        rm.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        rm.arguments = ["exec", container, "rm", "-rf", path]
-        try? rm.run()
-        rm.waitUntilExit()
+    private func cleanupSSHPath(_ path: String, container: String = "macscp-test-sshd") async {
+        _ = try? await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", container, "rm", "-rf", path])
     }
 
     /// Writes a single in-memory `Data` blob to `path` on `fs` in one shot.
@@ -134,7 +132,7 @@ struct CrossBackendTransferIntegrationTests {
             caught = error
         }
         // Best-effort cleanup on both sides so re-runs stay reproducible.
-        cleanupSSHPath(sourcePath)
+        await cleanupSSHPath(sourcePath)
         try? await s3FS.delete(path: "/\(destinationKey)")
         if let caught { throw caught }
     }
@@ -168,7 +166,7 @@ struct CrossBackendTransferIntegrationTests {
             caught = error
         }
         try? await s3FS.delete(path: "/\(sourceKey)")
-        cleanupSSHPath(destinationPath)
+        await cleanupSSHPath(destinationPath)
         if let caught { throw caught }
     }
 
@@ -214,7 +212,7 @@ struct CrossBackendTransferIntegrationTests {
         // Best-effort cleanup on both sides so re-runs stay reproducible.
         // `deleteTree` removes every object under the prefix INCLUDING the
         // 0-byte folder markers `createDirectory` left behind (M13/T8).
-        cleanupSSHPath(sourceBase)
+        await cleanupSSHPath(sourceBase)
         try? await s3FS.deleteTree(at: destBase)
         if let caught { throw caught }
     }
@@ -253,7 +251,7 @@ struct CrossBackendTransferIntegrationTests {
         } catch {
             caught = error
         }
-        cleanupSSHPath(sourcePath)
+        await cleanupSSHPath(sourcePath)
         try? await s3FS.delete(path: "/\(destinationKey)")
         if let caught { throw caught }
     }
