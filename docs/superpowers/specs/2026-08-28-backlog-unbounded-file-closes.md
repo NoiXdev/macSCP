@@ -163,11 +163,10 @@ any path this file system uses.
 other six counted sites — recounted against the tree
 (`grep -n "closeBounded()" Sources/macSCPCore/SSH/CitadelFileSystem.swift`)
 rather than carried forward from the 2026-08-28 count — split as **four
-direct** (`write`'s `CancellationError` arm, `write`'s error arm,
+direct** (`write`'s successful-completion close, `write`'s error arm,
 `SFTPReadHandle.closeBounded()`'s own body, `SFTPReadHandle.deinit`) and
-**two box-routed** (`readStream`'s `CancellationError` arm, `readStream`'s
-error arm — both call `handle.closeBounded()`, not `file.closeBounded()`
-directly). The two measured sites are `readStream`'s `CancellationError`
+**two box-routed** (`readStream`'s EOF close, `readStream`'s error arm —
+both call `handle.closeBounded()`, not `file.closeBounded()` directly). The two measured sites are `readStream`'s `CancellationError`
 arm (box-routed) and `write`'s `CancellationError` arm (direct); an
 earlier draft of this paragraph said "five direct plus one further
 `SFTPReadHandle` site", which does not match either the original
@@ -233,8 +232,10 @@ number that goes stale in prose is to drop it and keep the description.
 and prose) and in prose inside `CitadelFileSystem.swift`'s top-of-file
 `@preconcurrency` comment. Plain `grep -rn "SFTPFile\b" Sources/` is NOT
 that proof: `\b` only requires a word boundary after the match, so it
-also matches the `SFTPFile` substring inside `BoundedSFTPFile` — 22 hits
-against the `-w` form's 9 on this tree, checked 2026-09-02.
+also matches the `SFTPFile` substring inside `BoundedSFTPFile`. (A first
+draft of this sentence carried the two hit counts; they were wrong the day
+they were written, and a count that has to be retaken on every read is
+not a proof — the `-w` command is.)
 
 **The `deinit`, what changed and what did not.** Forced by the type and
 nothing beyond it: the call became
