@@ -294,25 +294,25 @@ struct ConnectionViewModelTests {
             field: .schema("SSHField.passphrase")))
     }
 
-    /// `SSHKeyError.typeNotLoadable` (Task 1: a key whose `openssh-key-v1`
-    /// header names a non-ed25519 algorithm) names the algorithm in the
-    /// message, the same way `keyNotFound %@` names the path.
+    /// `SSHKeyError.typeNotLoadable` (a key whose `openssh-key-v1` header
+    /// names a type the loader cannot hand to a connection) names the
+    /// algorithm in the message, the same way `keyNotFound %@` names the path.
     ///
-    /// Uses ECDSA rather than RSA on purpose: RSA additionally appends the
-    /// Go-server note (`typeNotLoadableAppendsRSANoteForRSAOnly` below), and
-    /// this test's job is the plain "the algorithm is named" mapping, not
-    /// that interaction.
+    /// The algorithm is a wire name here, not an `SSHKeyType.description`:
+    /// since the loader loads all five types `SSHKeyType` models, everything
+    /// that still reaches this case is a type Citadel has no symbol for, and
+    /// `SSHKeyDetection` hands its raw header string back verbatim.
     @Test func typeNotLoadableMapsToLocalizedMessageWithAlgorithm() async {
         let vm = makeVM(connector: { _, _ in
-            throw SSHKeyError.typeNotLoadable(algorithm: SSHKeyType.ecdsaP256.description)
+            throw SSHKeyError.typeNotLoadable(algorithm: Self.unmodelledKeyType)
         })
         vm.authChoice = .privateKey
-        vm.keyPath = "~/.ssh/id_ecdsa"
+        vm.keyPath = "~/.ssh/id_dsa"
         _ = await vm.connect()
         #expect(vm.state == .failed(
             message: String(
                 format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"),
-                SSHKeyType.ecdsaP256.description),
+                Self.unmodelledKeyType),
             field: .schema("SSHField.keyPath")))
     }
 
@@ -321,20 +321,15 @@ struct ConnectionViewModelTests {
     /// `core.connect.keyTypeNotLoadable %@` goes red here rather than only
     /// changing what the user sees.
     ///
-    /// Deliberately NOT RSA: RSA also appends
-    /// `core.connect.keyTypeNotLoadableRSANote`, whose fixed text contains
-    /// the word "RSA" on its own -- so with RSA a dropped `%@` would still
-    /// leave the message containing "RSA" through the note, and this guard
-    /// would pass right through the regression it exists to catch. ECDSA
-    /// carries no such note, so the substring can only come from the `%@`
-    /// substitution actually happening.
+    /// The substring can only come from the `%@` substitution actually
+    /// happening: no catalog's fixed text contains this name.
     @Test func typeNotLoadableMessageNamesTheAlgorithm() async {
-        let algorithm = SSHKeyType.ecdsaP521.description
+        let algorithm = Self.unmodelledKeyType
         let vm = makeVM(connector: { _, _ in
             throw SSHKeyError.typeNotLoadable(algorithm: algorithm)
         })
         vm.authChoice = .privateKey
-        vm.keyPath = "~/.ssh/id_ecdsa521"
+        vm.keyPath = "~/.ssh/id_dsa"
         _ = await vm.connect()
         let names: Bool
         if case .failed(let message, _) = vm.state {
@@ -345,43 +340,11 @@ struct ConnectionViewModelTests {
         #expect(names)
     }
 
-    /// The Go-server RSA caveat is VERIFIED (`AgentBackedPrivateKey.swift:92-115`
-    /// -- checked directly against Go's `x/crypto/ssh`, not read secondhand),
-    /// and the message must carry it, but only for the algorithm it is
-    /// actually true of: ed25519 and ECDSA agent identities never hit the
-    /// wire-tag collision the note describes, because for those algorithms
-    /// the blob's embedded type tag and the signature/algorithm name are
-    /// already the same string.
-    @Test func typeNotLoadableAppendsRSANoteForRSAOnly() async {
-        let rsaVM = makeVM(connector: { _, _ in
-            throw SSHKeyError.typeNotLoadable(algorithm: SSHKeyType.rsa.description)
-        })
-        rsaVM.authChoice = .privateKey
-        rsaVM.keyPath = "~/.ssh/id_rsa"
-        _ = await rsaVM.connect()
-        let rsaNote = CoreL10n.string("core.connect.keyTypeNotLoadableRSANote")
-        let rsaMessageHasNote: Bool
-        if case .failed(let message, _) = rsaVM.state {
-            rsaMessageHasNote = message.contains(rsaNote)
-        } else {
-            rsaMessageHasNote = false
-        }
-        #expect(rsaMessageHasNote)
-
-        let ecdsaVM = makeVM(connector: { _, _ in
-            throw SSHKeyError.typeNotLoadable(algorithm: SSHKeyType.ecdsaP384.description)
-        })
-        ecdsaVM.authChoice = .privateKey
-        ecdsaVM.keyPath = "~/.ssh/id_ecdsa"
-        _ = await ecdsaVM.connect()
-        let ecdsaMessageHasNote: Bool
-        if case .failed(let message, _) = ecdsaVM.state {
-            ecdsaMessageHasNote = message.contains(rsaNote)
-        } else {
-            ecdsaMessageHasNote = true
-        }
-        #expect(!ecdsaMessageHasNote)
-    }
+    /// A key type Citadel models no symbol for, spelled because there is
+    /// nothing to read it from: `SSHKeyType` carries exactly the five types
+    /// the loader loads, so any name that still reaches `typeNotLoadable` is
+    /// by definition one no type in either project declares.
+    nonisolated static let unmodelledKeyType = "ssh-dss"
 
     /// `SSHKeyError.pemNotSupported` (Task 1: a PEM-boundary file, not an
     /// `openssh-key-v1` one) gets its own catalog entry rather than falling
