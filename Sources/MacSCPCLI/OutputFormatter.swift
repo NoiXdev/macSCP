@@ -34,6 +34,37 @@ enum OutputFormatter {
         }
     }
 
+    static func print(rows: [SessionCatalog.Row], asJSON: Bool) {
+        if asJSON {
+            for row in rows {
+                // Unlike `items:`'s `size`, neither field here has a
+                // "known but absent" state to distinguish from "empty by
+                // construction" — `groupPath` is already `""` for a
+                // top-level session and `tags` is already `[]` for an
+                // untagged one (`SessionCatalog.Row`'s own values, not a
+                // placeholder standing in for something unread), so both
+                // serialize as their own empty value rather than `null`.
+                let object: [String: Any] = [
+                    "name": row.name,
+                    "kind": row.kind.rawValue,
+                    "target": row.target,
+                    "group": row.groupPath,
+                    "tags": row.tags,
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: object),
+                   let line = String(data: data, encoding: .utf8) {
+                    Swift.print(line)
+                }
+            }
+        } else {
+            for row in rows {
+                Swift.print(
+                    "\(row.name)\t\(row.kind.rawValue)\t\(row.target)\t\(row.groupPath)\t"
+                        + row.tags.joined(separator: ","))
+            }
+        }
+    }
+
     /// Diagnostics go to stderr so `macscp-cli ls --json | jq` stays clean.
     static func note(_ message: String) {
         FileHandle.standardError.write(Data("\(message)\n".utf8))

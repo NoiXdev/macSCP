@@ -20,7 +20,9 @@ import macSCPCore
 
 /// Root dispatcher: subcommands do the work, this type just lists them.
 /// `get`/`put` landed in M20 Task 10; `rm`/`mkdir` complete the set in
-/// M20 Task 11.
+/// M20 Task 11; `sessions` (2026-09-02 CLI-sessions-list plan, Task 2) is
+/// the sixth and, unlike the other five, opens no connection. Six
+/// subcommands total — recount this comment on the next addition.
 @main
 struct MacSCPCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -28,7 +30,7 @@ struct MacSCPCLI: AsyncParsableCommand {
         abstract: "Work with stored macSCP sessions over SFTP and S3.",
         subcommands: [
             LsCommand.self, GetCommand.self, PutCommand.self,
-            RmCommand.self, MkdirCommand.self,
+            RmCommand.self, MkdirCommand.self, SessionsCommand.self,
         ]
     )
 

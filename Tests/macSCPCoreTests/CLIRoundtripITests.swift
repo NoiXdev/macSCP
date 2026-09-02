@@ -112,6 +112,46 @@ struct CLIRoundtripITests {
         #expect(!namesAfterRemoval.contains(remoteFileName), "rm did not actually remove the file")
     }
 
+    /// `sessions --json` reads the store only — no rig, no connection, no
+    /// `--accept-new` — so this seeds a session straight into a temp store
+    /// (same `SessionStore(directory:).upsert(...)` the roundtrip test above
+    /// uses) and runs the binary against it. Confirms the whole path end to
+    /// end through the real subprocess: the tag and group filters, and that
+    /// `--json` emits one line whose fields match what was stored.
+    @Test func sessionsJSONListsAStoredSessionWithItsGroupAndTags() async throws {
+        let binary = try Self.locateCLIBinary()
+        let storageDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-sessions-storage")
+        defer { try? FileManager.default.removeItem(at: storageDirectory) }
+
+        let store = SessionStore(directory: storageDirectory)
+        let group = StoredGroup(name: "Work")
+        try store.upsertGroup(group)
+        var session = sshSession(
+            name: "m2-sessions-list", host: "example.org", port: 2200,
+            username: "alice", groupID: group.id)
+        session.tags = ["prod"]
+        try store.upsert(session)
+
+        let result = try Self.runCLI(
+            binary, ["sessions", "--json"], storageDirectory: storageDirectory)
+        #expect(result.status == 0, "sessions failed: \(result.stderr)")
+
+        let lines = result.stdout.split(separator: "\n")
+        #expect(lines.count == 1, "expected exactly one session line, got \(lines.count)")
+        guard let line = lines.first,
+              let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            Issue.record("sessions --json did not emit a parseable JSON line: \(result.stdout)")
+            return
+        }
+        #expect(object["name"] as? String == "m2-sessions-list")
+        #expect(object["kind"] as? String == "ssh")
+        #expect(object["target"] as? String == "alice@example.org:2200")
+        #expect(object["group"] as? String == "Work")
+        #expect(object["tags"] as? [String] == ["prod"])
+    }
+
     /// The promise every automation relies on: no terminal, unknown host,
     /// and the CLI refuses instead of asking — with exit code 11, not 0 —
     /// and without silently trusting (and persisting) the very key it just
