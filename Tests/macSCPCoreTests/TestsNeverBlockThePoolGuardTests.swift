@@ -67,10 +67,15 @@ struct TestsNeverBlockThePoolGuardTests {
         // need the main actor. Blocking is the measurement there.
         "macSCPCoreTests/ConnectMainActorLivenessTests.swift": [.usleep],
 
-        // `docker` children, plus the `DispatchGroup` that drains their
-        // pipes. Converting these needs the suite's `defer`-based teardown
-        // restructured first — a `defer` body cannot `await` — and this file
-        // lives in the other test target, which cannot see `SubprocessRunner`.
+        // `Docker.run`: sub-second docker calls behind `defer`, unbounded by
+        // contract. Sub-second is what they measure — `docker ps`, `rm -f`,
+        // `pause` — but nothing in the code says so, and `pruneLeftovers`'s
+        // retry loop calls three of them per iteration for up to fifteen
+        // seconds, so the reduction there is real but partial. Converting
+        // needs a shared test-support target: this file is in
+        // `macSCPAppKitTests`, which cannot see `SubprocessRunner`, and its
+        // six `defer`-bound teardowns cannot host an `await`. Task 1b
+        // decision.
         "macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift":
             [.dispatchGroup, .waitUntilExit],
 

@@ -143,7 +143,7 @@ struct EmbeddedKeyPorterTests {
             finished.signal()
         }
 
-        if await finished.wait(timeout: .seconds(10)) == false {
+        if await finished.wait(timeout: .seconds(10)) != .signalled {
             Issue.record("embed opened an external key path (blocked reading the FIFO)")
             // Unblock the stuck reader so it does not linger for the rest of
             // the suite: opening the FIFO for writing releases its open().

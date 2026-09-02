@@ -473,6 +473,12 @@ private struct DisposableSSHServer {
     /// the machine has cores, so a prune that spun to its deadline held one
     /// of a three-core runner's three for fifteen seconds (CLAUDE.md, "Tests
     /// never block the cooperative pool").
+    ///
+    /// Reduced, not removed: `leftoverIDs()` twice and `Docker.run` once per
+    /// iteration are still synchronous, and `Docker.run`'s own wait is
+    /// unbounded. Those are sub-second `docker` calls in practice, but
+    /// nothing in the code makes that a contract — see the allowlist entry
+    /// for this file in `TestsNeverBlockThePoolGuardTests`.
     static func pruneLeftovers() async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(15))
         while true {

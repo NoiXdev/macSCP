@@ -82,6 +82,68 @@ struct SubprocessRunnerTests {
         #expect(stillThere == false, "pid \(pid) survived the timeout")
     }
 
+    /// Cancellation is an outcome of its own, not a quiet "it settled".
+    ///
+    /// An `AsyncStream` finishes when its awaiting task is cancelled just as
+    /// it does when someone finishes it, so a wait that cannot tell the two
+    /// apart reports the child as settled the moment an enclosing
+    /// `.timeLimit` or task group fires — and then reads `terminationStatus`
+    /// off a child that is still running and walks away leaving it there.
+    ///
+    /// Both halves are checked here: the error that comes back out is a
+    /// `CancellationError`, and the child is gone. The child announces its
+    /// own pid into a file and then `exec`s `sleep`, so the pid on disk IS
+    /// the process the runner owns.
+    @Test func aCancelledRunKillsItsChildAndReportsCancellation() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-runner-cancel-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pidFile = directory.appendingPathComponent("pid")
+        let pidPath = pidFile.path(percentEncoded: false)
+
+        let task = Task { () -> SubprocessResult in
+            try await SubprocessRunner.run(
+                Self.shell,
+                arguments: ["-c", "echo $$ > '\(pidPath)'; exec sleep 30"],
+                timeout: .seconds(120))
+        }
+
+        // Cancel a RUNNING child, not the spawn: without this the test could
+        // pass against a runner that only ever refuses to start.
+        var announced: pid_t?
+        for _ in 0..<200 where announced == nil {
+            if let text = try? String(contentsOf: pidFile, encoding: .utf8),
+               text.hasSuffix("\n"),
+               let value = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                announced = value
+            } else {
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+        }
+        let childPID = try #require(announced, "the child never announced its pid")
+
+        let started = ContinuousClock.now
+        task.cancel()
+        var thrown: (any Error)?
+        do {
+            _ = try await task.value
+            Issue.record("a cancelled run returned a result instead of reporting cancellation")
+        } catch {
+            thrown = error
+        }
+        let elapsed = ContinuousClock.now - started
+        #expect(thrown is CancellationError, "cancellation surfaced as \(String(describing: thrown))")
+        #expect(elapsed < .seconds(20), "the cancelled run took \(elapsed) to come back")
+
+        var stillThere = true
+        for _ in 0..<50 where stillThere {
+            stillThere = kill(childPID, 0) == 0
+            if stillThere { try? await Task.sleep(for: .milliseconds(100)) }
+        }
+        #expect(stillThere == false, "pid \(childPID) outlived the cancelled run")
+    }
+
     /// 128 KB in, so the writer proves it does not deadlock either: a runner
     /// that wrote stdin before starting to read would stall the moment the
     /// child's output filled a pipe nobody was draining.

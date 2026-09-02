@@ -65,6 +65,10 @@ enum SubprocessRunner {
     /// is asked to terminate, then killed, so the pipes reach EOF and the
     /// readers finish; `SubprocessTimeout` carries what stderr held by then.
     ///
+    /// A cancelled task gets the same ending and a `CancellationError`: the
+    /// caller who stopped waiting — a `.timeLimit` trait, an enclosing task
+    /// group — has no way to reach the child, so this leaves none behind.
+    ///
     /// - Parameter stdin: written to the child and the write end closed, so
     ///   the child sees EOF. `nil` gives the child the null device, which is
     ///   what a test wants for a command that must not read a terminal.
@@ -128,31 +132,56 @@ enum SubprocessRunner {
         // has buffered bytes to collect, and reading `terminationStatus`
         // before the handler has fired is reading a status that does not
         // exist yet.
-        let settled: @Sendable (Duration) async -> Bool = { bound in
+        //
+        // A wait that is cut short says `.cancelled` rather than joining
+        // `.signalled`, and the difference is load-bearing: on `.cancelled`
+        // the child is still running, so `terminationStatus` must not be read
+        // (Foundation raises on a live child) and the child must not be left
+        // behind.
+        let settled: @Sendable (Duration) async -> AsyncSignal.WaitOutcome = { bound in
             await AsyncSignal.race(timeout: bound) {
-                await stdoutDrained.wait()
-                await stderrDrained.wait()
-                await exited.wait()
+                if await stdoutDrained.wait() == .cancelled { return .cancelled }
+                if await stderrDrained.wait() == .cancelled { return .cancelled }
+                return await exited.wait()
             }
         }
 
-        if await settled(timeout) == false {
-            process.terminate()
-            if await settled(.seconds(2)) == false {
-                kill(process.processIdentifier, SIGKILL)
-                _ = await settled(.seconds(5))
-            }
+        // Ends the child and joins its readers. Runs DETACHED, because one of
+        // the two callers below is the cancellation path: a task group child
+        // that inherited that cancellation would find every `Task.sleep`
+        // throwing at once, and the two-second grace before `SIGKILL` would
+        // be no grace at all. A detached task inherits no cancellation, so
+        // the escalation is the same on both paths.
+        let pid = process.processIdentifier
+        let reap: @Sendable () async -> Void = {
+            await Task.detached {
+                guard !exited.isRaised else { return }
+                kill(pid, SIGTERM)
+                if await settled(.seconds(2)) != .signalled {
+                    guard !exited.isRaised else { return }
+                    kill(pid, SIGKILL)
+                    _ = await settled(.seconds(5))
+                }
+            }.value
+        }
+
+        switch await settled(timeout) {
+        case .signalled:
+            return SubprocessResult(
+                status: process.terminationStatus,
+                stdout: stdoutBox.read(),
+                stderr: stderrBox.read())
+        case .timedOut:
+            await reap()
             throw SubprocessTimeout(
                 executable: executable.lastPathComponent,
                 arguments: arguments,
                 timeout: timeout,
                 stderrSoFar: stderrBox.read())
+        case .cancelled:
+            await reap()
+            throw CancellationError()
         }
-
-        return SubprocessResult(
-            status: process.terminationStatus,
-            stdout: stdoutBox.read(),
-            stderr: stderrBox.read())
     }
 
     /// Where a background pipe read puts what it collected.

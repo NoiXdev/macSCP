@@ -104,7 +104,7 @@ final class LoopbackTLSStub: @unchecked Sendable {
         // parked thread (see `make`), so waiting longer costs nothing the
         // rest of the suite needs. It stays bounded so a listener that never
         // arrives fails the test instead of wedging the whole run.
-        guard await ready.wait(timeout: .seconds(60)) else {
+        guard await ready.wait(timeout: .seconds(60)) == .signalled else {
             listener.cancel()
             throw StubError.listenerNeverBecameReady
         }
