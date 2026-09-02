@@ -11,21 +11,6 @@ import Testing
     .serialized
 )
 struct CitadelFileSystemIntegrationTests {
-    /// Cushions reconnect throttling of the test container: on a transient
-    /// transport error, wait briefly and connect once more.
-    /// Use ONLY for connects that are SUPPOSED to succeed — not for
-    /// mismatch/reject tests (there the error is intentional).
-    private func connectWithRetry(
-        _ make: () async throws -> CitadelFileSystem
-    ) async throws -> CitadelFileSystem {
-        do {
-            return try await make()
-        } catch {
-            try? await Task.sleep(for: .milliseconds(500))
-            return try await make()
-        }
-    }
-
     private func connect(port: Int = 2222) async throws -> CitadelFileSystem {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1",
