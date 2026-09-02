@@ -401,7 +401,13 @@ list has no `ssh-rsa`) rather than on a log line — the review recommends
 a throwaway `LogLevel DEBUG1` container to READ `pkalg`, and an
 `ssh-rsa`-only container that must refuse, as a follow-up; and one server
 implementation was measured — Dropbear, libssh, Tectia and appliances
-were not.
+were not. **Known refusal, carried over from the agent path:** the blob
+is typed `rsa-sha2-512` where RFC 8332 says `ssh-rsa`, and the Go-based
+servers verified in `2026-09-01-backlog-rsa-agent-go-servers.md`
+(Gitea/Forgejo, SFTPGo, gitlab-sshd) refuse that for RSA — now for file
+keys too, with the caveat message gone. Not a message to restore but a
+fork change to make: a user-auth algorithm name beside `keyPrefix` in
+NIOSSH, mirror of `hostKeyAlgorithmNames` (0.3.9).
 
 **The loader now:** ed25519 as before; RSA through
 `SSHAuthenticationMethod.rsaSHA2(username:privateKey:includeSHA1Fallback: false)`

@@ -44,10 +44,22 @@ incompatibility, checked directly against Go's `golang.org/x/crypto/ssh`:
   The incompatibility is specific to RSA's `rsa-sha2-*` vs. `ssh-rsa`
   split.
 
-As of the final review, `core.connect.keyTypeNotLoadableRSANote` (all
-four catalogs) carries this caveat in the message a user sees when
-macSCP declines to load an RSA key from a file, appended only when the
-named algorithm is RSA.
+As of the final review of 2026-09-01, `core.connect.keyTypeNotLoadableRSANote`
+(all four catalogs) carried this caveat in the message a user saw when
+macSCP declined to load an RSA key from a file. **Since 2026-09-02 that
+message is gone** — the loader loads RSA files (`fa67138`, Citadel fork
+`0.12.1-noix.2`), and the note with it. The incompatibility itself is
+NOT gone: an RSA file key now offers the same `rsa-sha2-512`-tagged blob
+the agent path offers (upstream PR #135 writes the blob type from the
+algorithm name, the same NIOSSH conflation), so the Go-based servers
+verified above refuse RSA file logins exactly as they refuse RSA agent
+logins; OpenSSH 10.3 accepts both (measured, see
+`2026-08-31-backlog-ssh-key-formats.md`). The user sees the server's
+plain "authentication failed" for it, with no caveat any more. The clean
+fix is one NIOSSH fork change — a user-auth algorithm name beside
+`keyPrefix` on `NIOSSHPrivateKeyProtocol`, the mirror of the
+`hostKeyAlgorithmNames` that fixed the host-key side in 0.3.9 — and that
+is the next fork item, not a message.
 
 ## Why it exists
 
