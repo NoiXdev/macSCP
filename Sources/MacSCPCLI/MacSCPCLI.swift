@@ -27,7 +27,17 @@ import macSCPCore
 struct MacSCPCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "macscp-cli",
-        abstract: "Work with stored macSCP sessions over SFTP and S3.",
+        abstract: "Work with stored macSCP sessions over SFTP, S3 and WebDAV.",
+        discussion: """
+            Every command below addresses its target as name:/path: name is \
+            a session saved in the app, the one shown in the sidebar, and \
+            everything after the first colon is the path, passed through \
+            as-is — write name: alone, with nothing after the colon, for \
+            the session's root. Run sessions to see the names on file, or \
+            start typing one and press Tab: --generate-completion-script \
+            zsh|bash|fish wires that into your shell once, and this binary \
+            offers the rest from the session store afterward.
+            """,
         subcommands: [
             LsCommand.self, GetCommand.self, PutCommand.self,
             RmCommand.self, MkdirCommand.self, SessionsCommand.self,
