@@ -103,3 +103,50 @@ That does not make the fix designed, scoped, or safe:
 
 This entry records the corrected premise and where the fix would live if
 someone designs it. It does not design the fix.
+
+## Fixed 2026-09-02 (night) — the blob is typed `ssh-rsa`, the name stays `rsa-sha2-512`
+
+Plan `../plans/2026-09-02-rsa-blob-typing-rfc8332.md`; the fork record in
+`2026-08-20-backlog-dependencies.md` ("the user-auth split").
+
+**Measured first, on a real Go server.** The rig gained an SFTPGo service
+(`drakkan/sftpgo:v2.6.6`, port 2240, admin API on 18091; `a6518dd`), and
+the gated `GoServerRSAIntegrationTests` (`513e34e`) pinned today's
+refusal for both paths: an RSA file key and an RSA agent identity are
+both dropped with macSCP seeing
+`RemoteFSError.connectionFailed(reason: "Disconnected()")` and SFTPGo
+logging `ssh: unknown key algorithm: rsa-sha2-512` (`login_type:
+"no_auth_tried"`). That corrects the sentence above: the user did NOT
+see "authentication failed" — `x/crypto/ssh` cannot parse the blob and
+disconnects before any auth request is judged. ed25519 against the same
+server was green, so the rig itself was proved.
+
+**Where the fix went, and why not where the plan first said.** The plan
+assumed NIOSSH wrote `pkalg` and the blob from two identifiers; the
+Citadel implementer measured one (`NIOSSHPublicKey.keyPrefix` feeds all
+three: `pkalg`, the blob's type, the signed payload's copy) and stopped,
+because a blob-only flip yields `pkalg = ssh-rsa`, which OpenSSH ≥ 8.8
+refuses. So: swift-nio-ssh `0.3.10` adds `userAuthAlgorithmName` beside
+`publicKeyPrefix` (the sibling of 0.3.9's `hostKeyAlgorithmNames`),
+Citadel `0.12.1-noix.3` sets both members on its RSA-SHA2 types, and
+macSCP's own agent-backed RSA type sets the same two. Wire read back
+from a serialised request: `rsa-sha2-512 / ssh-rsa / rsa-sha2-512`.
+
+**Measured after the fix (`002af4a`, `6740c2a`), against the same rig:**
+SFTPGo accepts both — file key: `User "testuser" logged in with
+"publickey: SHA256:kZQ/jj4ICRGi5Sa8H7MpuoPktDxQtb4QNyWIf23qyNc:macscp-itest"`;
+agent identity: `…publickey: SHA256:8JyOqFoTRYERLdK9lW79VS8a1Z9HQ6J6xVTnaVxibRs:macscp-itest`.
+OpenSSH kept accepting: the ten-cell file matrix on 2222, the agent
+matrix, and the RSA host key on 2235 all green. Two probes stand in for
+a server log that never names the algorithm: reverting the blob type
+alone reds SFTPGo's agent row with the old `Disconnected()`; deleting
+`userAuthAlgorithmName` reds BOTH servers (SFTPGo: `ssh: algorithm
+"ssh-rsa" not accepted`). Registration: four types declare the `ssh-rsa`
+blob prefix, exactly one is registered in macSCP's process
+(`RSASHA2HostKey`; Citadel's registrations run only through an
+`algorithms:` argument macSCP never passes) — that ordering is
+load-bearing for host-key parsing; since `0d09d6b` an ungated test pins
+that the registered claimant is the one with the modulus floor (a
+floor-less claimant registered ahead of it turns the test red), and the
+agent type's two identifiers are pinned ungated as well.
+

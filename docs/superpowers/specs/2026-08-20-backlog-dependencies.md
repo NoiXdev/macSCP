@@ -689,3 +689,61 @@ measurement — the rig has no jump path to 2235.
   ECDSA parser, against `orlandos-nl/Citadel` (dormant since 2026-04-04
   as of this measurement).
 
+## Done 2026-09-02 (night) — the user-auth split: swift-nio-ssh 0.3.10, Citadel 0.12.1-noix.3
+
+Plan `../plans/2026-09-02-rsa-blob-typing-rfc8332.md`. The plan's first
+Architecture paragraph claimed NIOSSH already wrote `pkalg` and the key
+blob from two identifiers; the Citadel implementer measured otherwise
+with a serialised `UserAuthRequestMessage` — `pkalg`, the blob's type
+and the signed payload's copy all come from `NIOSSHPublicKey.keyPrefix`,
+i.e. the custom type's `publicKeyPrefix` — and stopped, because flipping
+the blob alone yields `pkalg = ssh-rsa`, which OpenSSH ≥ 8.8 refuses. The
+plan was corrected and the fix went where 0.3.9's host-key split went.
+
+- **swift-nio-ssh `0.3.10`** (`0cab3b2` on `citadel2`, "userAuthAlgorithmName
+  for custom public-key types"): `NIOSSHPublicKeyProtocol.userAuthAlgorithmName`
+  with a protocol-extension default of `publicKeyPrefix`;
+  `NIOSSHPublicKey.userAuthAlgorithmName` (`.custom` → the member, bundled
+  and `.certified` → `keyPrefix`); six read sites switched — `pkalg`, the
+  `PK_OK` echo, the signed payload's copy, the two server-role parse
+  checks, and `knownAlgorithms` (the parse-side gate; the KEX host-key
+  offer is untouched, it reads `bundledServerHostKeyAlgorithms +
+  hostKeyAlgorithmNames`). Red observed: 16 tests, 5 failing at 0.3.9.
+  Eight hex fixtures recorded from 0.3.9 before the change — ed25519, the
+  three ECDSA curves, a certified ed25519 request, a custom type without
+  the override, two signable payloads — byte-identical after. Green: 390
+  tests (368 + 22). Review: Spec ✅, Quality approved. **Known limit,
+  server role only:** with several registered types sharing the `ssh-rsa`
+  blob prefix, the server-side parse checks resolve the blob to the FIRST
+  registered type and compare `pkalg` against that type's name, so an
+  `rsa-sha2-256` client would be rejected by a NIOSSH *server* that
+  registered the 512 variant first. macSCP is a client; recorded here for
+  whoever runs the fork as a server. Also unenforced: NIOSSH has no
+  `sshkey_check_sigtype` equivalent, so the RFC's "signature type equals
+  `pkalg`" is the caller's obligation.
+- **Citadel `0.12.1-noix.3`** (`186b1a8` on `noix`): `Package.swift` now
+  depends on `NoiXdev/swift-nio-ssh` `exact: "0.3.10"` (the fork's first
+  divergence in its dependency graph — Citadel upstream points at
+  `Wellz26`); `SHA2PublicKey.publicKeyPrefix = "ssh-rsa"` AND
+  `userAuthAlgorithmName = Variant.algorithmName` — both, because either
+  alone is a regression (measured by reverting each: the name-only revert
+  turns the SHA-2-only-default test red). Wire read back from a serialised
+  request: `rsa-sha2-512 / ssh-rsa / rsa-sha2-512`. Fork suite 62 tests,
+  the one pre-existing `testSFTPUpload` failure (port 2222 held by the
+  rig). Side effect, documented in the type: the two SHA-2 wrappers and
+  the SHA-1 `Insecure.RSA.PublicKey` now compare equal by
+  `publicKeyPrefix` + `rawRepresentation` — the review named the concrete
+  place that reads such equality, `SSHHostKeyValidator.trustedKeys`'s
+  `Set<NIOSSHPublicKey>` (`ClientSession.swift:283-311`), unreachable from
+  macSCP's shipped TOFU path (which fingerprints with SHA-256 through
+  `.custom`), and recorded here for anyone who uses that API. Review:
+  Spec ✅, Quality approved.
+- **Fork item for 0.3.11:** `NIOSSHPublicKey.userAuthAlgorithmName` is an
+  internal instance property (the protocol requirement is public); macSCP's
+  loader test reads it through `@testable import NIOSSH`, which a
+  `-c release` test build cannot do. Make it public.
+- **Upstream PR candidates:** `userAuthAlgorithmName` against
+  `apple/swift-nio-ssh` (with `hostKeyAlgorithmNames` from 0.3.9 — the two
+  are one change conceptually); the Citadel prefix split only after the
+  NIOSSH one lands.
+

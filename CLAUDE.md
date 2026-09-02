@@ -236,9 +236,11 @@ Measured 2026-09-01/02: two dependencies are consumed from forks under
 the NoiXdev org, both wired by same-identity override in `Package.swift`
 with an `exact:` tag — `NoiXdev/swift-nio-ssh` (from `Wellz26`, itself a
 fork of `apple/swift-nio-ssh`; tags 0.3.7 = pre-line fix, 0.3.8 = the
-upstream security patches, 0.3.9 = `hostKeyAlgorithmNames`) and
+upstream security patches, 0.3.9 = `hostKeyAlgorithmNames`, 0.3.10 =
+`userAuthAlgorithmName`) and
 `NoiXdev/Citadel` (from `orlandos-nl/Citadel` at 0.12.1; tags
-`0.12.1-noix.N` carry upstream PR #135 and the ECDSA parser). The record
+`0.12.1-noix.N` carry upstream PR #135, the ECDSA parser and the RFC 8332
+blob typing, and from `.3` on depend on the NoiXdev nio-ssh fork). The record
 of what each fork carries and why lives in
 `docs/superpowers/specs/2026-08-20-backlog-dependencies.md`; every fork
 change is written there with the measurement that justified it.

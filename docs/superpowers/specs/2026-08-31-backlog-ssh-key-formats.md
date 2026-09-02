@@ -443,3 +443,17 @@ measured on both paths, with and without a passphrase.** Not covered, by
 decision: PEM containers, PuTTY `.ppk`, DSA, FIDO2 `sk-*` keys,
 certificates.
 
+## Done 2026-09-02 (night) — RSA on Go-based servers, both paths
+
+The refusal carried over from the agent path is gone: an RSA file key
+and an RSA agent identity both log in to the rig's SFTPGo (`x/crypto/ssh`)
+since `6740c2a`, with OpenSSH unchanged. The mechanism, the measurement
+before and after, and the two fork tags it took (swift-nio-ssh 0.3.10,
+Citadel 0.12.1-noix.3) are recorded in
+`2026-09-01-backlog-rsa-agent-go-servers.md` ("Fixed") and
+`2026-08-20-backlog-dependencies.md` ("the user-auth split"). With that,
+every key type this project handles is measured on OpenSSH AND on a Go
+server, on both paths, with and without a passphrase — except the
+host-key side on Go (SFTPGo's own host key is ed25519 in the rig; an
+RSA-only Go host key is not measured).
+
