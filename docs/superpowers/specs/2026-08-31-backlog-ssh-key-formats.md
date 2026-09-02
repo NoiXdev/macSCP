@@ -292,3 +292,45 @@ algorithm is RSA (`ConnectionViewModel`'s `typeNotLoadable` arm compares
 against `SSHKeyType.rsa.description`, not a string literal). See
 `docs/superpowers/specs/2026-09-01-backlog-rsa-agent-go-servers.md` for
 what is and is not measured about a fix.
+
+## Measured 2026-09-02 — host-key types, one rig service per type
+
+Planned in `../plans/2026-09-02-host-key-types-rig.md`; rig in
+`docker/test-server/compose.yml` (`2f1f735`), tests in
+`Tests/macSCPCoreTests/HostKeyTypeIntegrationTests.swift` (`b5af04e`).
+
+Until today every TOFU test negotiated ed25519: the stock rig offers
+three host-key types at once and the client prefers that one. The rig
+now has one sshd per type, each restricted with `HostKeyAlgorithms` in
+its own include, proved with `ssh-keyscan` (one type per port, pasted in
+`docker/test-server/README.md`), and a gated test per port pins the key
+type the known-hosts store records:
+
+| port | server offers | outcome |
+|---|---|---|
+| 2231 | `ssh-ed25519` | green — recorded `ssh-ed25519` |
+| 2232 | `ecdsa-sha2-nistp256` | green — recorded `ecdsa-sha2-nistp256` |
+| 2233 | `ecdsa-sha2-nistp384` | green — recorded `ecdsa-sha2-nistp384` |
+| 2234 | `ecdsa-sha2-nistp521` | green — recorded `ecdsa-sha2-nistp521` |
+| 2235 | `rsa-sha2-512,rsa-sha2-256` (key type `ssh-rsa`) | **red** — `RemoteFSError.connectionFailed(reason: "NIOSSHError.keyExchangeNegotiationFailure")`, before any key reaches the validator; the store records nothing |
+
+The RSA row is what the maintainer's question was about. NIOSSH's client
+offers `ssh-ed25519, ecdsa-sha2-nistp384, ecdsa-sha2-nistp256,
+ecdsa-sha2-nistp521` and nothing else
+(`SSHKeyExchangeStateMachine.bundledServerHostKeyAlgorithms`); Citadel
+registers no custom host-key algorithm (no assignment to
+`NIOSSHPublicKey.customPublicKeyAlgorithms` in its sources). So a server
+with only an RSA host key cannot be connected to at all — not a TOFU
+question, a key-exchange one. The test pins the observed failure and
+carries the comment that flips it the day the fork can negotiate RSA.
+That is a new backlog row, opened with this measurement.
+
+A mismatch test on `ecdsa-sha2-nistp256` (tampered key seeded, hard stop,
+decider never asked) proves the hard stop is not an ed25519-only
+property.
+
+**File keys per type** were already pinned before this plan:
+`SSHPrivateKeyLoaderTests` names RSA, ECDSA P-256/384/521 and an
+encrypted RSA key as `typeNotLoadable`, so the plan's Task 3 needed no
+change. Agent authentication per type was covered by B-2.
+
