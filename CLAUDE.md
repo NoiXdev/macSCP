@@ -212,6 +212,47 @@ race rather than a guard.
    second one the old fixture had let through. One red run is not evidence
    that a check catches something; it is evidence that it can.
 
+## Forks are a debt with a review date
+
+Measured 2026-09-01/02: two dependencies are consumed from forks under
+the NoiXdev org, both wired by same-identity override in `Package.swift`
+with an `exact:` tag — `NoiXdev/swift-nio-ssh` (from `Wellz26`, itself a
+fork of `apple/swift-nio-ssh`; tags 0.3.7 = pre-line fix, 0.3.8 = the
+upstream security patches, 0.3.9 = `hostKeyAlgorithmNames`) and
+`NoiXdev/Citadel` (from `orlandos-nl/Citadel` at 0.12.1; tags
+`0.12.1-noix.N` carry upstream PR #135 and the ECDSA parser). The record
+of what each fork carries and why lives in
+`docs/superpowers/specs/2026-08-20-backlog-dependencies.md`; every fork
+change is written there with the measurement that justified it.
+
+A fork exists to carry a fix upstream does not have yet. That is a debt,
+and its interest is paid by checking, not by remembering:
+
+1. **Check both forks at every release and before every fork change**
+   (a rebase, a cherry-pick, a new tag). For each: `git fetch upstream`
+   in the fork clone, `git log --oneline <fork-base>..upstream/main`
+   classified security / correctness / feature / noise, and
+   `gh api repos/<upstream>/security-advisories`. A security commit
+   upstream is cherry-picked first, before any feature work, as 0.3.8
+   was. Write the count and the date into the dependencies record even
+   when the count is zero — a zero measured on a date is evidence, a
+   zero remembered is not.
+2. **Ask, each time, whether the fork can be retired.** The fork is done
+   when upstream carries what the fork carries: the RSA-SHA2 PR merged,
+   an equivalent of `hostKeyAlgorithmNames` landed, the pre-line fix
+   applied. When that is true, the override in `Package.swift` goes back
+   to the upstream URL and a released tag, the fork record gets a
+   "Retired" line, and the fork repository is archived — not deleted,
+   the record points into it.
+3. **Upstream what the fork carries.** Every change the fork makes that
+   is not a cherry-pick is a PR candidate against upstream; open it, and
+   name the PR in the fork record. A fork that never sends anything back
+   grows its distance forever.
+4. **A fork change is reviewed like any code here**, red first, with the
+   fork's own suite green, a real observed red in the commit message and
+   no fabricated hash (both happened once, 2026-09-01, and were caught
+   before the push).
+
 ## Git
 
 - Conventional Commits (enforced by CI); commit messages in English.
