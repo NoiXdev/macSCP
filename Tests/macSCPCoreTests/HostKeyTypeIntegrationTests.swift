@@ -86,10 +86,17 @@ struct HostKeyTypeIntegrationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = KnownHostsStore(directory: dir)
 
-        await #expect(throws: RemoteFSError.connectionFailed(
-            reason: "NIOSSHError.keyExchangeNegotiationFailure")
-        ) {
+        // Matched on macSCP's own case plus the NIOSSH reason as a substring,
+        // not on the exact string: a fork bump that merely renames the NIOSSH
+        // case must fail this test for THAT reason (the `contains` line), not
+        // look like RSA had started to negotiate. A connect that succeeds is
+        // the flip this test waits for, and lands in the `Issue.record`.
+        do {
             _ = try await connect(port: 2235, knownHosts: store)
+            Issue.record("an RSA-only host key negotiated — the fork can do RSA now; flip this test")
+        } catch RemoteFSError.connectionFailed(let reason) {
+            let isKeyExchangeFailure = reason.contains("keyExchangeNegotiationFailure")
+            #expect(isKeyExchangeFailure, "unexpected connect failure reason: \(reason)")
         }
         #expect(try store.find(host: "127.0.0.1", port: 2235) == nil)
     }
