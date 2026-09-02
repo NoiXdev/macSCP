@@ -397,6 +397,33 @@ struct SnippetCommandEditorGuardTests {
             """)
     }
 
+    /// The negative half of finding 10 — `isSaveDisabled` must not consult
+    /// either hint — is the one check here that a rename could silence
+    /// without turning anything red, so it gets the same self-test the
+    /// positive scans have: a gate planted as a DIRECT call to the
+    /// presentation function (no property, capital letter only) must be
+    /// caught by the folded scan, and must have been missed by a
+    /// case-sensitive one — which is what this proves it against.
+    @Test("the hint-gate scan reacts to a gate written as a direct call")
+    func theHintGateScanReactsToADirectCall() throws {
+        let planted = """
+            private var isSaveDisabled: Bool {
+                variablesFault != nil
+                    || snippetEnvironmentPlaceholderHint(command: command, variables: variables) != nil
+                    || snippetUndeclaredPlaceholderHint(command: command, variables: variables) != nil
+            }
+            """
+        let body = try Self.functionBody(
+            containing: "private var isSaveDisabled: Bool {", in: planted)
+        let foldedBody = body.lowercased()
+        #expect(foldedBody.contains("environmentplaceholder"))
+        #expect(foldedBody.contains("undeclaredplaceholder"))
+        // The hole the folded scan closes: the same body passes a
+        // case-sensitive scan for the property names.
+        #expect(!body.contains("environmentPlaceholder"))
+        #expect(!body.contains("undeclaredPlaceholder"))
+    }
+
     @Test("the isSaveDisabled scan reacts to a reverted, variables-blind gate")
     func isSaveDisabledScanReactsToRegression() throws {
         let reverted = """
@@ -843,13 +870,18 @@ struct SnippetCommandEditorGuardTests {
             Sanity check: isSaveDisabled must still gate on the declaration fault, or the \
             check below would pass over a gate that had been rewritten entirely.
             """)
-        #expect(!body.contains("undeclaredPlaceholder"), """
+        // Scanned case-folded: the property is `undeclaredPlaceholderHint`,
+        // the presentation function `snippetUndeclaredPlaceholderHint(` — a
+        // gate written as a direct call to the function carries the name
+        // only with a capital U, and a case-sensitive scan would let it by.
+        let foldedBody = body.lowercased()
+        #expect(!foldedBody.contains("undeclaredplaceholder"), """
             isSaveDisabled must NOT consult the undeclared-placeholder hint. An undeclared \
             `{{NAME}}` was savable and sendable before the hint existed and stays so -- it \
             just goes out literally. A check that blocked it would be a behaviour change \
             wearing a display's clothes. Scanned body: \(body)
             """)
-        #expect(!body.contains("environmentPlaceholder"), """
+        #expect(!foldedBody.contains("environmentplaceholder"), """
             isSaveDisabled must NOT consult the environment-placeholder hint either. A \
             `{{NAME}}` declared as an environment variable was savable and sendable before \
             this hint existed and stays so -- it just goes out literally. A check that \

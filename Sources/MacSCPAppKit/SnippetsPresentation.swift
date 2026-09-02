@@ -750,11 +750,10 @@ private func snippetPlaceholderNames(in command: String) -> [String] {
 /// A declaration whose placement is the ENVIRONMENT counts as a
 /// declaration here. The sentence this feeds says the name is not declared,
 /// and for such a name that would be false — the mistake it makes is a
-/// different one, and naming it wrongly is worse than not naming it. (It is
-/// a real gap: `{{DB}}` for an environment declaration is left standing by
-/// `resolve` exactly like an undeclared one, and nothing says so. Recorded
-/// in the branch report rather than fixed here, because a second sentence
-/// is a design decision, not a rename.)
+/// different one, and naming it wrongly is worse than not naming it. That
+/// case has its own sentence: `snippetEnvironmentPlaceholders` below
+/// answers for it, and the two lists are disjoint by construction (one
+/// filters on "no declaration", the other on "declared as environment").
 func snippetUndeclaredPlaceholders(
     in command: String, variables: [SnippetVariable]
 ) -> [String] {
