@@ -44,9 +44,19 @@ struct CLISessionsCommandGuardTests {
     /// The APIs that would reach a secret or open a connection. Any one of
     /// these appearing in `SessionsCommand.swift` is the violation this
     /// guard exists to catch.
+    ///
+    /// `openConnection(`, `StoredSessionConnectionConfig` and
+    /// `RemoteFileSystem` joined the original six on 2026-09-02: `"connect("`
+    /// alone does not catch a connection opened through the backend layer —
+    /// `StoredSessionConnectionConfig.build(for:secret:)` +
+    /// `BackendDescriptor.openConnection(…)` dials out without ever writing
+    /// the substring `connect(`, and agent-auth SSH needs no secret at all —
+    /// see `scannerFlagsAPlantedOpenConnectionCall` for the fixture that was
+    /// red against the original six.
     private static let forbiddenIdentifiers = [
         "SecretStore", "SecretResolver", "secretSources(", "connect(",
-        "withConnection(", "KnownHostsStore",
+        "withConnection(", "KnownHostsStore", "openConnection(",
+        "StoredSessionConnectionConfig", "RemoteFileSystem",
     ]
 
     // MARK: - Positive: the file exists and does the real work
@@ -97,6 +107,37 @@ struct CLISessionsCommandGuardTests {
         #expect(found == ["secretSources("], """
             expected the scanner to flag exactly the planted secretSources( \
             call, found \(found) instead.
+            """)
+    }
+
+    /// `"connect("` alone does not catch a connection opened through the
+    /// backend layer: `StoredSessionConnectionConfig.build(for:secret:)` +
+    /// `BackendDescriptor.openConnection(…)` dials out without ever writing
+    /// the substring `connect(` (case-sensitive, and `openConnection(` does
+    /// not contain it as a substring), and agent-auth SSH needs no secret at
+    /// all — so a command built that way would sail past the original list
+    /// untouched (final-branch-review finding, 2026-09-02). This fixture
+    /// plants exactly that call and nothing else the original list would
+    /// have caught, so it is red until `openConnection(` (and its two
+    /// siblings, `StoredSessionConnectionConfig` and `RemoteFileSystem`)
+    /// join `forbiddenIdentifiers`.
+    @Test func scannerFlagsAPlantedOpenConnectionCall() {
+        let fixture = """
+            struct FixtureCommand {
+                func run() async throws {
+                    let store = SessionStore(directory: SessionStore.defaultDirectory)
+                    let catalog = SessionCatalog(sessions: [], groups: [])
+                    let config = try StoredSessionConnectionConfig.build(for: session, secret: nil)
+                    let fs: any RemoteFileSystem = try await BackendDescriptor.openConnection(
+                        config, hostKey: decider, certificate: .refusing, timeoutSeconds: 5)
+                }
+            }
+            """
+        let found = Self.forbiddenMatches(in: fixture)
+        #expect(found == ["openConnection(", "StoredSessionConnectionConfig", "RemoteFileSystem"], """
+            expected the scanner to flag the planted openConnection(/
+            StoredSessionConnectionConfig/RemoteFileSystem call, found \(found) \
+            instead.
             """)
     }
 
