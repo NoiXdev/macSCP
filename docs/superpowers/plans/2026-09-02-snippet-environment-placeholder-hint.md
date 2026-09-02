@@ -69,7 +69,7 @@ that sentence.
   job — and a test that the two lists are disjoint for a command carrying
   one of each); (d) repeats collapse, order is declaration order when two
   environment names appear; (e) the hint's text names every such name and
-  contains the literal `$DB` form for the first one (compute the Bool
+  contains the literal `$NAME` advice from the string (compute the Bool
   first); (f) no environment placeholders → `nil`.
 - [ ] **Step 2: Strings**, `en` exact:
 
