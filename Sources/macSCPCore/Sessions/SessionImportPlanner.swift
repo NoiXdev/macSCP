@@ -46,9 +46,13 @@ public struct SessionImportPlan: Equatable, Sendable {
     public var replaced: [String]
     public var renamed: [String]
     /// Trimmed names of entries the planner refused to import at all, in file
-    /// order, because the record they would build is one `SessionStore.load()`
-    /// removes on sight (`SessionStore.dropsOnLoad`). Distinct from `skipped`,
-    /// which the USER chose: nobody is asked about these, and they are not
+    /// order — for one of two reasons: the record they would build is one
+    /// `SessionStore.load()` removes on sight (`SessionStore.dropsOnLoad`),
+    /// or the record's own backend schema refuses it as undialable — a
+    /// required field left blank, a value that will not parse
+    /// (`BackendDescriptor.firstViolation`, judged by
+    /// `SessionImportPlanner.isUnusable`). Distinct from `skipped`, which
+    /// the USER chose: nobody is asked about these, and they are not
     /// duplicates. Reported as a COUNT to the user — a rejected entry may
     /// carry a secret, and no part of it is logged.
     public var rejected: [String]
@@ -462,14 +466,34 @@ public enum SessionImportPlanner {
     /// plain new-form defaults, not `editBaseline` (S3's edit-form baseline
     /// exists to withhold the region ASSUMPTION from an existing session,
     /// which has nothing to do with judging an import) — rather than judged
-    /// alone. `firstViolation`'s numeric check treats an ABSENT key exactly
-    /// like an empty string (`Int("") == nil`, same as `Int("not a number")`
-    /// == nil), and an omitted `SSHField.port` is an entirely ordinary
-    /// export: the connect path has always fallen back to 22 for it.
-    /// Overlaying the defaults first means that fallback applies here too —
-    /// an omitted port reads as the default "22" — while any key the bag
-    /// DOES carry still wins, because `setRaw` overwrites the default
-    /// unconditionally.
+    /// alone, and a PRESENT-but-BLANK raw value overlays as if it were
+    /// ABSENT: only a non-empty value overwrites a default. `firstViolation`'s
+    /// numeric check treats an absent key exactly like an empty string
+    /// (`Int("") == nil`, same as `Int("not a number")` == nil), and an
+    /// omitted OR blank `SSHField.port` is an entirely ordinary export: the
+    /// connect path (`SSHFieldSchema.apply`'s own `?? 22`) has always fallen
+    /// back to 22 for either. Overlaying the defaults first, and skipping a
+    /// blank value on the way in, means that fallback applies here too — an
+    /// omitted or blank port reads as the default "22" — while any key the
+    /// bag carries a REAL value for still wins, because `setRaw` overwrites
+    /// the default unconditionally for that key.
+    ///
+    /// This makes the question this function answers precisely "could this
+    /// be dialed after the FORM's own defaults fill in what the bag left
+    /// blank or absent" — not "does `apply` end up writing a non-blank value
+    /// for every field", which is a different, stricter question this
+    /// function deliberately does not ask: `apply` (`S3FieldSchema
+    /// .stored(from:)` among others) carries no defaulting of its own beyond
+    /// trimming, so a blank `S3Field.region` this gate now WAVES THROUGH
+    /// (the default "us-east-1" satisfies `firstViolation` here) still ends
+    /// up stored as the blank the bag actually held — `session.s3?.region ==
+    /// ""`, not "us-east-1". That is deliberate, not a gap: an exported
+    /// session whose STORED region was already blank (the shape
+    /// `BackendDescriptor.editBaseline`'s own doc names — a pre-M23 S3
+    /// session the app itself created with no region filled in) must keep
+    /// importing exactly as it did before this task, editable and
+    /// recoverable in the form, rather than being silently dropped by a gate
+    /// stricter than the connection form it is modeled on.
     ///
     /// `requireSecrets: false`: the secret travels in its own column
     /// (`ExportedSession.password` / `s3SecretAccessKey`), never inside
@@ -482,7 +506,11 @@ public enum SessionImportPlanner {
         let descriptor = BackendDescriptor.descriptor(for: kind)
         guard descriptor.hasStoredConfiguration(probe.session) else { return false }
         var values = descriptor.defaultValues
-        for (key, value) in fileSession.fields { values.setRaw(key, to: value) }
+        // A PRESENT but BLANK raw value overlays as if it were ABSENT: only a
+        // non-empty value overwrites the default. See the doc comment above
+        // for why ("could this be dialed after the form's own defaults", not
+        // "does every key the bag names carry a value").
+        for (key, value) in fileSession.fields where !value.isEmpty { values.setRaw(key, to: value) }
         return descriptor.firstViolation(in: values, requireSecrets: false) != nil
     }
 
@@ -517,9 +545,13 @@ public enum SessionImportPlanner {
         //
         // An EMPTY bag means the file carried no block for this kind, which
         // is what `sessionValues` writes for an `.s3`/`.webdav` session
-        // whose block is nil, and what a pre-M21 export left for a WebDAV
-        // entry. Applying it would invent a server the file never named, so
-        // the session keeps no block at all — as before the bag.
+        // whose block is nil, and what a pre-M23 export left for a WebDAV
+        // entry (WebDAV itself shipped at M21; the planner did not build a
+        // `StoredWebDAVConfig` from the bag until M23 —
+        // `webdavFileSessionWithoutColumnsKeepsKindAndHasNoConfig` and
+        // `preFixExportFileStillImports` both name that fix, not M21, as
+        // "this fix"). Applying it would invent a server the file never
+        // named, so the session keeps no block at all — as before the bag.
         //
         // The guard earns its place ONLY for `.s3`/`.webdav`, where it
         // preserves v1's all-columns-required gate. Removing it fails eight

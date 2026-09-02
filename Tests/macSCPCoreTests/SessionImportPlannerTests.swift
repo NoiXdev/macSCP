@@ -828,16 +828,31 @@ struct SessionImportPlannerTests {
     /// Same rule the skipped-duplicate case already obeys: a group nothing
     /// imported references must not be created. Pinned at the new branch too,
     /// so a rejected entry cannot leave a ghost group behind.
+    ///
+    /// Two entries share the group, rejected by DIFFERENT judges: `broken`
+    /// is the M27 `wouldBeDroppedByStore` shape (empty bag, no jump);
+    /// `schema-broken` is a schema-rejected (`isUnusable`) shape, a bag
+    /// holding only `keyPath`. Both judges share one `guard`/`continue`
+    /// (the loop's own comment), so the property holds for either by
+    /// construction -- proven here rather than only argued, since the
+    /// schema path had no test of its own for it before this fix round.
     @Test func groupReferencedOnlyByARejectedEntryIsNotCreated() async {
         let fileGroup = ExportedGroup(id: UUID(), name: "Staging")
-        let file = ExportedSession(
-            id: UUID(), name: "broken", kind: .ssh, fields: [:], groupID: fileGroup.id)
+        var keyPathOnly = FieldValues()
+        keyPathOnly[SSHField.keyPath] = "/Users/tim/.ssh/id_ed25519"
+        let files = [
+            ExportedSession(
+                id: UUID(), name: "broken", kind: .ssh, fields: [:], groupID: fileGroup.id),
+            ExportedSession(
+                id: UUID(), name: "schema-broken", kind: .ssh, fields: keyPathOnly.raw,
+                groupID: fileGroup.id),
+        ]
         let plan = await SessionImportPlanner.plan(
             existing: [], existingGroups: [],
-            incoming: incoming([file], groups: [fileGroup]), arbiter: neverAsked)
+            incoming: incoming(files, groups: [fileGroup]), arbiter: neverAsked)
 
         #expect(plan.groupsToCreate.isEmpty)
-        #expect(plan.rejected == ["broken"])
+        #expect(plan.rejected == ["broken", "schema-broken"])
     }
 
     /// The coupling this whole M27 fix exists to create, pinned directly
@@ -977,6 +992,56 @@ struct SessionImportPlannerTests {
         #expect(plan.sessionsToImport[0].session.ssh?.port == 22)
     }
 
+    /// A PRESENT-but-blank numeric key is judged the same as an absent one:
+    /// the gate answers "could this be dialed after the form's own
+    /// defaults", the same question `apply` already answers for the stored
+    /// record (`SSHFieldSchema.apply`'s own `?? 22` fallback). A hand-edited
+    /// export, or one from a third-party generator, can easily carry
+    /// `"SSHField.port": ""` rather than omitting the key outright — this
+    /// must import exactly like the omitted-key case above, not be rejected
+    /// as though the blank value were a real, unparsable one.
+    @Test func sshBagWithBlankPortIsTreatedAsAbsentAndImportsOnPort22() async {
+        var values = FieldValues()
+        values[SSHField.host] = "web-01"
+        values[SSHField.username] = "root"
+        values[SSHField.port] = ""
+        let file = ExportedSession(id: UUID(), name: "blank-port", kind: .ssh, fields: values.raw)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        #expect(plan.rejected.isEmpty)
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.sessionsToImport[0].session.ssh?.port == 22)
+    }
+
+    /// The same rule for a REQUIRED text field, and the shape it exists for:
+    /// a pre-M23 S3 session whose stored `region` was never filled
+    /// (`BackendDescriptor.editBaseline`'s own doc explains why the store
+    /// never invents one) exports `"S3Field.region": ""`, not an absent key
+    /// (`S3FieldSchema.values(from:)` always writes the key). Blank-as-absent
+    /// in the GATE lets that session import — same as before this task —
+    /// while the STORED session still gets the blank region verbatim,
+    /// because `apply` overlays the bag as written, with no defaults of its
+    /// own: `S3FieldSchema.stored(from:)` only trims, it does not default.
+    /// The two halves of this test (gate lets it through; the stored value
+    /// is still blank) are the two different questions `isUnusable`'s own
+    /// doc comment distinguishes -- "could this be dialed after the form's
+    /// own defaults" is not "what does the form's own defaults get stored".
+    @Test func s3BagWithBlankRegionIsTreatedAsAbsentByTheGateButStoresBlank() async {
+        var values = FieldValues()
+        values[S3Field.endpoint] = "https://s3.example.com"
+        values[S3Field.bucket] = "my-bucket"
+        values[S3Field.accessKeyID] = "AKIAEXAMPLE"
+        values[S3Field.region] = ""
+        let file = ExportedSession(id: UUID(), name: "blank-region", kind: .s3, fields: values.raw)
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: incoming([file]), arbiter: neverAsked)
+
+        #expect(plan.rejected.isEmpty)
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.sessionsToImport[0].session.s3?.region == "")
+    }
+
     /// S3's non-empty-bag equivalent of the SSH keyPath-only case: an
     /// endpoint and an access key describe half a connection. `bucket` is
     /// required (`S3FieldSchema.connection`) and absent here, so the schema
@@ -1045,19 +1110,29 @@ struct SessionImportPlannerTests {
         #expect(plan.rejected == ["keypath-only", "jump-only", "s3-no-bucket", "dav-no-url"])
     }
 
-    /// The secret-non-leak guarantee stated on `SessionImportPlan.rejected`:
-    /// a rejected entry may carry a secret, and no part of it is logged or
-    /// planned. `isUnusable` runs BEFORE `makePlanned` is ever called for this
-    /// entry, so no `PlannedSession` carrying the file's password is built at
-    /// all — pinned here by checking `sessionsToImport` for one rather than by
-    /// a spy on `makePlanned`, which this file has no seam for.
+    /// The secret-non-leak guarantee stated on `SessionImportPlan.rejected`'s
+    /// own doc: a rejected entry may carry a secret, and no part of it is
+    /// logged or planned.
+    ///
+    /// A probe `PlannedSession` carrying the file's password IS built for a
+    /// rejected entry -- the loop's shared guard calls `makePlanned` once
+    /// and hands the result to both `wouldBeDroppedByStore` and `isUnusable`
+    /// before either judges it -- so this does NOT pin "no `PlannedSession`
+    /// is ever constructed"; it pins the narrower, actually-true property:
+    /// the probe is read only for `.session`, then dropped on the floor at
+    /// the end of the loop iteration, so no planned session carrying the
+    /// password ever reaches `sessionsToImport`, and `rejected` holds only
+    /// the trimmed name -- never a value derived from the secret. Checking
+    /// `sessionsToImport` this way, rather than a spy on `makePlanned`,
+    /// which this file has no seam for, is what keeps the pin honest about
+    /// which property holds.
     ///
     /// The comparison is computed into a named `Bool` before the `#expect`
     /// (project convention): `#expect` reports the SOURCE TEXT of the
     /// expression it checks, so writing the password literal directly into
     /// the expectation would leak it through a failure message — the very
     /// thing this test exists to rule out.
-    @Test func rejectedEntryWithAPasswordBuildsNoPlannedSessionCarryingIt() async {
+    @Test func rejectedEntrysPasswordReachesNoPlannedSessionOrReport() async {
         let filePassword = "super-secret-password"
         var keyPathOnly = FieldValues()
         keyPathOnly[SSHField.keyPath] = "/Users/tim/.ssh/id_ed25519"
