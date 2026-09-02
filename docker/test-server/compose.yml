@@ -57,17 +57,50 @@ services:
   # bucket, and puts a couple of objects (incl. one under a "sub/" prefix)
   # so the gated S3FileSystemIntegrationTests can assert both a file and a
   # directory (CommonPrefixes) appear in a root listing.
+  #
+  # Also (2026-09-02, S3 bucket browser): a second bucket, `macscp-second`,
+  # so the bucket-list case is a real two-bucket listing rather than a
+  # single-bucket root; and a second S3 identity, `macscp-scoped`, whose
+  # policy grants ListBucket/GetObject/PutObject/DeleteObject on
+  # `macscp-seed` only and deliberately omits `s3:ListAllMyBuckets` --
+  # this is the "key scoped to one bucket, cannot list the account's
+  # buckets" case the gated suite needs to exercise. The policy document
+  # lives in ./minio/scoped-seed-policy.json, mounted read-only below.
+  #
+  # Every mc call here is written to be idempotent -- this container reruns
+  # on every `docker compose up`, against a MinIO volume that already has
+  # last run's state:
+  #   - `mc mb --ignore-existing` / `mc pipe` already tolerate a rerun.
+  #   - `mc admin user add` and `mc admin policy create` both overwrite in
+  #     place, so re-adding the same user/policy is a no-op in effect.
+  #   - `mc admin policy attach` is NOT idempotent: MinIO rejects a repeat
+  #     attach ("Specified policy update has no net effect") with a
+  #     non-zero exit. So it only runs when `mc admin policy entities`
+  #     shows the attachment is not already there (verified against a live
+  #     rig: first run attaches, a second run with no state change hits the
+  #     "already attached" branch and exits 0).
   minio-init:
     image: minio/mc:RELEASE.2024-07-15T17-46-06Z
     container_name: macscp-test-minio-init
     depends_on:
       - minio
+    volumes:
+      - ./minio/scoped-seed-policy.json:/policies/scoped-seed-policy.json:ro
     entrypoint: >
       /bin/sh -c "
       until mc alias set local http://minio:9000 macscp macscpsecretkey; do sleep 1; done &&
       mc mb --ignore-existing local/macscp-seed &&
       echo 'hello a' | mc pipe local/macscp-seed/a.txt &&
-      echo 'hello b' | mc pipe local/macscp-seed/sub/b.txt
+      echo 'hello b' | mc pipe local/macscp-seed/sub/b.txt &&
+      mc mb --ignore-existing local/macscp-second &&
+      echo 'hello second' | mc pipe local/macscp-second/second.txt &&
+      mc admin user add local macscp-scoped macscpscopedsecret &&
+      mc admin policy create local scoped-seed /policies/scoped-seed-policy.json &&
+      attached=\$$(mc admin policy entities local --user macscp-scoped) &&
+      case \"\$$attached\" in
+        *scoped-seed*) true ;;
+        *) mc admin policy attach local scoped-seed --user macscp-scoped ;;
+      esac
       "
 
   # Apache/mod_dav rig (M21/Task 11) backing WebDAVFileSystemIntegrationTests:

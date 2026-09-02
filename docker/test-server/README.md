@@ -4,6 +4,81 @@
 checkout (never from a git worktree — the seed mounts are relative to this
 compose file).
 
+## MinIO / S3 rig
+
+`minio` (host ports 19000/19001) is seeded by the one-shot `minio-init`
+service, which reruns on every `up` and is idempotent. Two buckets and
+two identities:
+
+| identity | access key / secret | can list buckets? | access |
+|---|---|---|---|
+| root | `macscp` / `macscpsecretkey` | yes (all) | full admin |
+| scoped | `macscp-scoped` / `macscpscopedsecret` | see below | `macscp-seed` only (List/Get/Put/Delete); no access to `macscp-second` |
+
+Buckets: `macscp-seed` (root's original seed bucket — `a.txt` and
+`sub/b.txt`) and `macscp-second` (added 2026-09-02, holds one object,
+`second.txt`, seeded so the bucket-list case is a genuine two-bucket
+listing).
+
+The scoped identity's policy (`docker/test-server/minio/scoped-seed-policy.json`,
+policy name `scoped-seed` on the server) grants `s3:ListBucket` on
+`arn:aws:s3:::macscp-seed` and `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject`
+on `arn:aws:s3:::macscp-seed/*` — nothing else, and deliberately no
+`s3:ListAllMyBuckets`.
+
+**Measured deviation from the original task brief:** the brief expected an
+account-level bucket listing (`mc ls scoped`, no bucket given) to fail
+outright with `AccessDenied` once `s3:ListAllMyBuckets` is omitted. That is
+not what this MinIO version (`RELEASE.2024-07-16T23-46-41Z`) does: MinIO's
+`ListBuckets` implementation returns every bucket the caller has *any*
+access to, regardless of `s3:ListAllMyBuckets` — confirmed by adding an
+explicit `Deny` statement for that action to a throwaway test policy and
+re-running the same call: the result was unchanged, still the filtered
+one-bucket list, never `AccessDenied` (the throwaway policy was removed and
+the user's policy set back to `scoped-seed` afterwards; see the fork/rig
+discipline this repo already applies — measure, then record). So the
+achievable, verified behavior for a bucket-scoped key on this rig is: an
+account-level listing returns only the bucket(s) it is scoped to (here,
+exactly one — `macscp-seed`), and reading any *other* bucket's contents is
+a hard `AccessDenied`. There is no policy shape on this MinIO version that
+makes the account-level listing itself return `AccessDenied` while the key
+still has any bucket access at all. Whoever writes the Swift-side test for
+"a key scoped to one bucket" should assert the single-bucket-filtered list
+and the cross-bucket `AccessDenied`, not an `AccessDenied` on the listing
+call itself.
+
+### Proof, measured 2026-09-02
+
+From inside `minio-init`'s image (`docker compose -f
+docker/test-server/compose.yml run --rm --entrypoint sh minio-init -c
+'...'`), with `local` aliased to the root credentials and `scoped` aliased
+to the scoped credentials:
+
+```
+--- 1: root mc ls local ---
+[2026-09-02 10:22:29 UTC]     0B macscp-second/
+[2026-09-01 09:04:36 UTC]     0B macscp-seed/
+--- 2: scoped mc ls scoped ---
+[2026-09-01 09:04:36 UTC]     0B macscp-seed/
+--- 3: scoped mc ls scoped/macscp-seed ---
+[2026-09-02 10:24:31 UTC]     8B STANDARD a.txt
+[2026-09-02 10:26:15 UTC]     0B sub/
+--- 4: scoped mc ls scoped/macscp-second ---
+mc: <ERROR> Unable to list folder. Access Denied.
+```
+
+Root sees both buckets (1). The scoped key's account-level listing shows
+only the one bucket it has access to, not both — see the deviation note
+above (2). The scoped key can list and read inside `macscp-seed` (3). The
+scoped key gets a hard `AccessDenied` reading `macscp-second`, the bucket
+its policy does not name (4).
+
+`docker compose up -d` against an already-running rig recreates only
+`minio-init` — `minio`, both `sshd`, `webdav` and the five
+`sshd-hostkey-*` containers keep their existing container IDs (checked via
+`docker ps --format '{{.ID}} {{.Names}}'` before and after; every ID
+matched).
+
 ## SSH host-key-types rig (2026-09-02)
 
 `sshd` and `sshd2` offer all three host-key types the base image generates
