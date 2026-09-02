@@ -335,8 +335,10 @@ struct CLIRoundtripITests {
     /// `SubprocessRunner`, which awaits the child instead of parking a
     /// cooperative-pool thread on it — see that type's doc comment, and
     /// CLAUDE.md's "Tests never block the cooperative pool". Its
-    /// `SubprocessTimeout` carries the argument list too, so a stalled
-    /// invocation still names itself.
+    /// `SubprocessTimeout` names the executable, the argument COUNT, what
+    /// each escalation phase cost and what the child had written — but never
+    /// an argument value, because elsewhere in this suite an argument is a
+    /// passphrase.
     private static func runCLI(
         _ binary: String, _ arguments: [String], storageDirectory: URL
     ) async throws -> (status: Int32, stdout: String, stderr: String) {

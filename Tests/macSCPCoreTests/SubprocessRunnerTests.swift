@@ -69,7 +69,10 @@ struct SubprocessRunnerTests {
         let error = try #require(timeout)
         let announced = String(decoding: error.stderrSoFar, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let pid = try #require(pid_t(announced), "the child did not announce a pid: '\(announced)'")
+        // The whole error, not just the field: it names each reader's drained
+        // state and how long every escalation phase took, which is what CI run
+        // 33693297919 could not say when this line failed on an empty stderr.
+        let pid = try #require(pid_t(announced), "the child announced no pid. \(error)")
 
         // Foundation reaps the child on its own thread once it dies, and
         // `kill(pid, 0)` still succeeds against a zombie — so this allows a
@@ -80,6 +83,85 @@ struct SubprocessRunnerTests {
             if stillThere { try? await Task.sleep(for: .milliseconds(100)) }
         }
         #expect(stillThere == false, "pid \(pid) survived the timeout")
+    }
+
+    /// `stderrSoFar` means what it says: what the child wrote before the
+    /// bound, whether or not the pipe ever reaches EOF.
+    ///
+    /// `readDataToEndOfFile()` returns ONLY at EOF, so a box filled that way
+    /// holds everything or nothing — and "nothing" is what a caller gets
+    /// exactly when the child is stuck, which is the only time this field is
+    /// read. The child here backgrounds a second `sleep` that inherits the
+    /// stderr write end, so killing the direct child does not close the pipe
+    /// and EOF never arrives inside the escalation at all.
+    ///
+    /// CI run 33693297919 failed on the empty half of this: a timeout whose
+    /// `stderrSoFar` was `""` could not say whether the child had written
+    /// nothing or the reader had not got there, which is also why the error
+    /// now reports each reader's drained state.
+    @Test func aTimeoutReportsWhatTheChildWroteBeforeTheBound() async throws {
+        let marker = "wrote-before-the-bound-\(UUID().uuidString)"
+        var thrown: SubprocessTimeout?
+        do {
+            _ = try await SubprocessRunner.run(
+                Self.shell,
+                arguments: ["-c", "echo '\(marker)' >&2; sleep 60 & exec sleep 60"],
+                timeout: .seconds(2))
+            Issue.record("a child sleeping for 60 s returned inside a 2 s bound")
+        } catch let error as SubprocessTimeout {
+            thrown = error
+        }
+
+        let error = try #require(thrown)
+        let text = String(decoding: error.stderrSoFar, as: UTF8.self)
+        #expect(
+            text.contains(marker),
+            "stderr written before the bound was lost; the error said: \(error)")
+        // The grandchild still holds the write end, so this is the case the
+        // description has to be able to explain rather than merely survive.
+        #expect(error.reap.stderrDrained == false)
+        #expect("\(error)".contains("stderr reader"))
+    }
+
+    /// No argument VALUE reaches the failure message.
+    ///
+    /// Since the short waits were converted, `ssh-keygen -N <passphrase>` runs
+    /// through this runner (`ConnectFailureSecrecyTests`,
+    /// `Support/InstalledKey.swift`), so an argument is a secret's value and a
+    /// rendered argument list is that secret sitting in a public CI log.
+    ///
+    /// The test itself is the second exit, and it is shut here too: `#expect`
+    /// reports the SOURCE TEXT of the expression it checks, so a secret named
+    /// inside an expectation leaks through the failure it is meant to prevent
+    /// (CLAUDE.md, "A value a test must not leak has two exits, not one").
+    /// Every `Bool` below is therefore computed first, and no message
+    /// interpolates the rendered error.
+    @Test func aTimeoutNamesNoArgumentValue() async throws {
+        let secret = "passphrase-\(UUID().uuidString)"
+        var thrown: SubprocessTimeout?
+        do {
+            _ = try await SubprocessRunner.run(
+                Self.shell,
+                arguments: ["-c", "exec sleep 60", secret],
+                timeout: .seconds(1))
+            Issue.record("a child sleeping for 60 s returned inside a 1 s bound")
+        } catch let error as SubprocessTimeout {
+            thrown = error
+        }
+
+        let error = try #require(thrown)
+        let rendered = "\(error)"
+        let rendersTheValue = rendered.contains(secret)
+        #expect(rendersTheValue == false, "an argument value reached the failure message")
+
+        // The positive half: the message still says enough to identify the
+        // invocation. Without it, a `description` that rendered nothing at all
+        // would satisfy the check above.
+        let namesTheExecutable = rendered.contains("sh")
+        let namesTheCount = rendered.contains("\(error.arguments.count) arguments")
+        #expect(namesTheExecutable)
+        #expect(namesTheCount)
+        #expect(error.arguments.count == 3)
     }
 
     /// Cancellation is an outcome of its own, not a quiet "it settled".

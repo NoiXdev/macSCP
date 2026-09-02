@@ -18,18 +18,64 @@ struct SubprocessResult: Sendable {
 /// Thrown when a child outlives the bound it was run with.
 ///
 /// Carries the stderr collected up to that point: when a CLI stalls, the
-/// half-written diagnostic is usually the only thing that says why.
+/// half-written diagnostic is usually the only thing that says why. It also
+/// carries what the escalation actually did, because a stalled child on a
+/// loaded CI runner is the one case nobody can attach a debugger to — the
+/// error is the entire report, and an error that says only "empty" cannot
+/// distinguish a child that wrote nothing from a reader that never got
+/// there. CI run 33693297919 was exactly that ambiguity.
 struct SubprocessTimeout: Error, CustomStringConvertible {
+    /// What the escalation did, and how long each phase really took.
+    struct ReapReport: Sendable {
+        /// Wall-clock spent on the bounded wait. On a saturated runner this
+        /// overruns `timeout` — a deadline is when a sleeping task becomes
+        /// RUNNABLE, not when it runs — and saying so by how much is the
+        /// difference between "the bound is wrong" and "the machine is busy".
+        let bound: Duration
+        /// `nil` when the phase was not reached (the child had already been
+        /// reaped, so nothing was signalled).
+        let sigtermGrace: Duration?
+        let sigkillGrace: Duration?
+        /// Whether each reader had seen EOF by the time the error was built.
+        /// A reader still open after `SIGKILL` means something OTHER than the
+        /// child holds the write end — a grandchild that inherited it, most
+        /// likely — and that is a fact about the child, not about the runner.
+        let stdoutDrained: Bool
+        let stderrDrained: Bool
+    }
+
     let executable: String
+
+    /// The argument list, for a test or a debugger that needs it — never for
+    /// a message. `description` names only how MANY there were.
+    ///
+    /// Since the short waits were converted, `ConnectFailureSecrecyTests` and
+    /// `Support/InstalledKey.swift` run `ssh-keygen -N <passphrase>` through
+    /// this runner, so an argument value is a secret's value and a rendered
+    /// argument list is that secret in a CI log. Nothing here renders one, and
+    /// `aTimeoutNamesNoArgumentValue` holds this type to it.
     let arguments: [String]
+
     let timeout: Duration
     let stderrSoFar: Data
+    let reap: ReapReport
 
     var description: String {
         let text = String(decoding: stderrSoFar, as: UTF8.self)
+        let phases = [
+            "waited \(reap.bound) for the \(timeout) bound",
+            reap.sigtermGrace.map { "\($0) after SIGTERM" },
+            reap.sigkillGrace.map { "\($0) after SIGKILL" },
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
         return """
-            \(executable) did not exit within \(timeout): \
-            \(arguments.joined(separator: " "))
+            \(executable) did not exit within \(timeout), given \
+            \(arguments.count) arguments (values withheld: an argument can be \
+            a passphrase)
+            \(phases)
+            stdout reader: \(reap.stdoutDrained ? "drained" : "still open"); \
+            stderr reader: \(reap.stderrDrained ? "drained" : "still open")
             stderr so far: \(text.isEmpty ? "(empty)" : text)
             """
     }
@@ -112,12 +158,25 @@ enum SubprocessRunner {
         process.terminationHandler = { _ in exited.signal() }
         try process.run()
 
+        // Incrementally, not `readDataToEndOfFile()`. That call returns only
+        // at EOF, so a box filled by it holds everything or nothing — and
+        // nothing is what it holds exactly when the child is stuck, which is
+        // the only time the timeout path reads it. `availableData` blocks
+        // until there are bytes and answers an empty `Data` at EOF, so the
+        // box tracks what the child has written all along and the latch still
+        // means EOF.
         DispatchQueue.global().async {
-            stdoutBox.store(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
+            let handle = stdoutPipe.fileHandleForReading
+            while case let chunk = handle.availableData, !chunk.isEmpty {
+                stdoutBox.append(chunk)
+            }
             stdoutDrained.signal()
         }
         DispatchQueue.global().async {
-            stderrBox.store(stderrPipe.fileHandleForReading.readDataToEndOfFile())
+            let handle = stderrPipe.fileHandleForReading
+            while case let chunk = handle.availableData, !chunk.isEmpty {
+                stderrBox.append(chunk)
+            }
             stderrDrained.signal()
         }
         if let stdin, let stdinPipe {
@@ -152,47 +211,67 @@ enum SubprocessRunner {
         // throwing at once, and the two-second grace before `SIGKILL` would
         // be no grace at all. A detached task inherits no cancellation, so
         // the escalation is the same on both paths.
+        //
+        // It reports how long each phase really took, because those are the
+        // numbers that separate "the escalation is broken" from "the runner
+        // is time-slicing a three-core box across three thousand tests".
         let pid = process.processIdentifier
-        let reap: @Sendable () async -> Void = {
-            await Task.detached {
-                guard !exited.isRaised else { return }
+        let reap: @Sendable () async -> (sigterm: Duration?, sigkill: Duration?) = {
+            await Task.detached { () -> (sigterm: Duration?, sigkill: Duration?) in
+                guard !exited.isRaised else { return (nil, nil) }
                 kill(pid, SIGTERM)
-                if await settled(.seconds(2)) != .signalled {
-                    guard !exited.isRaised else { return }
-                    kill(pid, SIGKILL)
-                    _ = await settled(.seconds(5))
+                let afterTerminate = ContinuousClock.now
+                let settledAfterTerminate = await settled(.seconds(2))
+                let sigtermGrace = ContinuousClock.now - afterTerminate
+                guard settledAfterTerminate != .signalled, !exited.isRaised else {
+                    return (sigtermGrace, nil)
                 }
+                kill(pid, SIGKILL)
+                let afterKill = ContinuousClock.now
+                _ = await settled(.seconds(5))
+                return (sigtermGrace, ContinuousClock.now - afterKill)
             }.value
         }
 
-        switch await settled(timeout) {
+        let boundStarted = ContinuousClock.now
+        let outcome = await settled(timeout)
+        let bound = ContinuousClock.now - boundStarted
+
+        switch outcome {
         case .signalled:
             return SubprocessResult(
                 status: process.terminationStatus,
                 stdout: stdoutBox.read(),
                 stderr: stderrBox.read())
         case .timedOut:
-            await reap()
+            let grace = await reap()
             throw SubprocessTimeout(
                 executable: executable.lastPathComponent,
                 arguments: arguments,
                 timeout: timeout,
-                stderrSoFar: stderrBox.read())
+                stderrSoFar: stderrBox.read(),
+                reap: SubprocessTimeout.ReapReport(
+                    bound: bound,
+                    sigtermGrace: grace.sigterm,
+                    sigkillGrace: grace.sigkill,
+                    stdoutDrained: stdoutDrained.isRaised,
+                    stderrDrained: stderrDrained.isRaised))
         case .cancelled:
-            await reap()
+            _ = await reap()
             throw CancellationError()
         }
     }
 
-    /// Where a background pipe read puts what it collected.
+    /// Where a background pipe read accumulates what it has collected.
     ///
-    /// Locked rather than a bare `var` behind `@unchecked Sendable`: on the
-    /// timeout path the collected stderr is read while the reader may still
-    /// be running, so there is no happens-before edge to lean on.
+    /// Locked rather than a bare `var` behind `@unchecked Sendable`, and the
+    /// lock is doing real work here: on the timeout path the collected stderr
+    /// is read WHILE the reader is still appending to it, so there is no
+    /// happens-before edge to lean on and no quiet moment to read in.
     private final class OutputBox: Sendable {
         private let storage = Mutex(Data())
 
-        func store(_ value: Data) { storage.withLock { $0 = value } }
+        func append(_ chunk: Data) { storage.withLock { $0.append(chunk) } }
         func read() -> Data { storage.withLock { $0 } }
     }
 }
