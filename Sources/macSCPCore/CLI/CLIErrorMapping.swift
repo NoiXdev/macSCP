@@ -57,6 +57,10 @@ public enum CLIErrorMapping {
             // still a remote-side fact from the caller's point of view.
             case .bucketLevelRefused:
                 return .remote
+            // Same reading for the cross-bucket rename: our own rule said
+            // no about a remote-side arrangement of objects.
+            case .crossBucketRenameRefused:
+                return .remote
             }
         default:
             return .connection
@@ -87,6 +91,8 @@ public enum CLIErrorMapping {
             return "macSCP does not rename buckets"
         case .presignedURL:
             return "macSCP does not sign links for a bucket itself"
+        case .readStream:
+            return "macSCP does not download a bucket as a file"
         }
     }
 
@@ -183,6 +189,11 @@ public enum CLIErrorMapping {
                 return "Error: this key may list buckets, but the account has none"
             case .bucketLevelRefused(let operation, let path):
                 return "Error: \(path) is a bucket; \(Self.refusalReason(operation))"
+            // Its OWN frame, not the one above: neither end is a bucket
+            // here, so "<path> is a bucket" would say something false.
+            case .crossBucketRenameRefused(let from, let to):
+                return "Error: cannot rename \(from) to \(to); "
+                    + "macSCP does not move objects between buckets"
             }
         default:
             // Stringifying an arbitrary, unmapped error is a FLOOR, not a

@@ -88,7 +88,8 @@ struct CLIErrorMappingTests {
     /// "Raw" is decided by CASE, not by the whole identifier: `write`,
     /// `delete` and `rename` are ordinary English words that a written
     /// sentence may legitimately contain, while a rawValue carrying an
-    /// interior capital (`createDirectory`, `deleteTree`, `presignedURL`)
+    /// interior capital (`createDirectory`, `deleteTree`, `presignedURL`,
+    /// `readStream` — four, counted against the enum in this pass)
     /// can only ever be an identifier that leaked. That is exactly the
     /// defect this replaces ("macSCP does not createDirectory buckets"),
     /// and the floor below keeps the rule from scanning nothing if the
@@ -117,13 +118,31 @@ struct CLIErrorMappingTests {
     }
 
     /// …and no two operations share a sentence, so the `switch` is really
-    /// six answers and not one answer written six times.
-    @Test func theSixRefusalSentencesAreSixDifferentSentences() {
+    /// one answer per case and not one answer written N times. Deliberately
+    /// carries no cardinality: the count is `allCases`, and a name that
+    /// spells it is a second copy that goes stale the next time a case is
+    /// added (it did, when `readStream` made six seven).
+    @Test func everyRefusalSentenceIsItsOwnSentence() {
         let messages = RemoteFSError.BucketLevelOperation.allCases.map {
             CLIErrorMapping.message(for: RemoteFSError.bucketLevelRefused(
                 operation: $0, path: "/mybucket"))
         }
         #expect(Set(messages).count == messages.count)
         #expect(messages.count == RemoteFSError.BucketLevelOperation.allCases.count)
+    }
+
+    /// The cross-bucket rename has its OWN frame, and deliberately not the
+    /// "<path> is a bucket" one: neither end of such a rename is a bucket,
+    /// so borrowing that sentence would print something false.
+    @Test func aCrossBucketRenameSaysWhatItRefusedAndNamesBothEnds() {
+        let error = RemoteFSError.crossBucketRenameRefused(
+            from: "/one/a.txt", to: "/two/a.txt")
+
+        #expect(CLIErrorMapping.exitCode(for: error) == .remote)
+
+        let message = CLIErrorMapping.message(for: error)
+        #expect(message.contains("/one/a.txt"))
+        #expect(message.contains("/two/a.txt"))
+        #expect(!message.contains("is a bucket"))
     }
 }

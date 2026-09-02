@@ -2750,6 +2750,23 @@ struct TransferQueueViewModelTests {
         }
     }
 
+    /// And the second new case, in the second `message(for:)` — unreachable
+    /// from a transfer today (nothing in the queue renames), but the arm
+    /// exists for the same reason its sibling does: a `default:` that dumps
+    /// `String(describing:)` is what a missing arm looks like to a user.
+    @Test func aCrossBucketRenameRefusalGetsAWrittenSentenceInTheQueueToo() {
+        let error = RemoteFSError.crossBucketRenameRefused(
+            from: "/one/a.txt", to: "/two/a.txt")
+        let key = "core.connect.s3CrossBucketRename"
+
+        let message = TransferQueueViewModel.message(for: error)
+
+        #expect(message == CoreL10n.string(key))
+        #expect(message != key)
+        #expect(message != String(
+            format: CoreL10n.string("core.transfer.failed %@"), String(describing: error)))
+    }
+
     // MARK: - 43 (M6b/T1)
 
     /// `TransferConflict.isPartOfFolderTransfer` distinguishes a lone-file

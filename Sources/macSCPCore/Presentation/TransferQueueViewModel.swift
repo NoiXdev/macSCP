@@ -1336,6 +1336,11 @@ public final class TransferQueueViewModel {
         // `RemoteFSError` case has two dumping `default:`s to close, not one.
         case RemoteFSError.bucketLevelRefused(let operation, _):
             return CoreL10n.string(operation.refusalMessageKey)
+        // The second arm the same lesson asks for: a new `RemoteFSError`
+        // case has TWO dumping `default:`s to close, in two view models
+        // both called `message(for:)`.
+        case RemoteFSError.crossBucketRenameRefused:
+            return CoreL10n.string("core.connect.s3CrossBucketRename")
         default:
             return String(format: CoreL10n.string("core.transfer.failed %@"), String(describing: error))
         }

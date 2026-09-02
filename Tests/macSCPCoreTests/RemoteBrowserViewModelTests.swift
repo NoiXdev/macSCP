@@ -310,6 +310,22 @@ struct RemoteBrowserViewModelTests {
         }
     }
 
+    /// The cross-bucket rename refusal is a SECOND new case, and therefore
+    /// a second `default:` to close in each of the two `message(for:)`s —
+    /// the lesson Task 3's fix round drew and this task had to apply again.
+    @Test func aCrossBucketRenameRefusalGetsItsOwnMessageToo() {
+        let error = RemoteFSError.crossBucketRenameRefused(
+            from: "/one/a.txt", to: "/two/a.txt")
+        let key = "core.connect.s3CrossBucketRename"
+
+        let message = RemoteBrowserViewModel.message(for: error, path: "/one/a.txt")
+
+        #expect(message == CoreL10n.string(key))
+        #expect(message != key)
+        #expect(message != String(
+            format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)))
+    }
+
     /// `.bucketListForbidden` reaches a BROWSE action too (Task 3 review,
     /// M-3): `listBuckets` runs again on every listing of `/` and on a
     /// `stat` of a bucket, so a policy revoked mid-session lands here — and

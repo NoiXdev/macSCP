@@ -59,6 +59,11 @@
 "core.connect.s3BucketLevelRefused.deleteTree" = "macSCP can't empty a bucket. Open the bucket and delete what is inside it.";
 "core.connect.s3BucketLevelRefused.rename" = "macSCP can't rename a bucket. Open the bucket to rename what is inside it.";
 "core.connect.s3BucketLevelRefused.presignedURL" = "macSCP can't share a link to a bucket itself. Open the bucket and share a file inside it.";
+"core.connect.s3BucketLevelRefused.readStream" = "A bucket isn't a file to download. Open it and pick what is inside.";
+/* Refusing a rename whose two ends are in different buckets
+   (`RemoteFSError.crossBucketRenameRefused`). Its own key, not one of the
+   per-operation sentences above: neither end IS a bucket here. */
+"core.connect.s3CrossBucketRename" = "macSCP can't move something from one bucket into another.";
 
 /* ConnectionViewModel WebDAV form validation (M21/T9) */
 "core.connect.webdavFieldRequired" = "Enter the WebDAV server URL.";
