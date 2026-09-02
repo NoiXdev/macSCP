@@ -64,7 +64,7 @@ changes it in the entry and at most updates the line here to match.
 | Entry | |
 |---|---|
 | [Swift 6 warnings](superpowers/specs/2026-08-19-backlog-swift6-warnings.md) | done 2026-08-26: all six targets on `.v6`, warning-free, CI gate proved red and green |
-| [Keep-alive as two settings](superpowers/specs/2026-08-25-backlog-keepalive-two-settings.md) | done 2026-09-02: `keepAliveEnabled` + a sentinel-free 15…600 interval, read-side migration for old `0`-interval files, the probe loop keyed on the switch, and the view-local memory (`KeepAliveControlPlan`) deleted rather than kept |
+| [Keep-alive as two settings](superpowers/specs/2026-08-25-backlog-keepalive-two-settings.md) | done 2026-09-02: `keepAliveEnabled` + a sentinel-free 15…600 interval, read-side migration for old `0`-interval files, the probe loop keyed on the switch, and the sentinel-mapping enum (`KeepAliveControlPlan`) plus the view-local memory (`SSHSettingsSection.lastKnownKeepAliveInterval`) deleted rather than kept |
 | [Snippet editor part 3: declared variables](superpowers/specs/2026-08-19-backlog-snippet-part-3.md) | implemented, ten review rounds |
 | [M6a polish backlog](superpowers/specs/2026-07-26-m6a-polish-backlog-design.md) | milestone completed |
 | [M11e backlog sweep](superpowers/specs/2026-07-29-m11e-backlog-sweep-design.md) | milestone completed |

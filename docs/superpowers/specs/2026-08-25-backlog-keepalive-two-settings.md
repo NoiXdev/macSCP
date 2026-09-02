@@ -88,8 +88,9 @@ Shipped in six commits, listed in the order they landed: `726ffb9`,
   `keepAliveEnabled` before the interval on every lap, replacing the old
   `interval > 0` gate — the interval always reads 15…600 now, so it could
   never again signal "off". `LivenessProbeWiringGuardTests` gained an
-  ordered claim that the enabled-check precedes the interval-read inside
-  the loop body, proved red against the pre-change loop.
+  ordered claim, a source-scanning guard, that the enabled-check precedes
+  the interval-read inside the loop body, proved red against the
+  pre-change loop.
   `ConnectionLiveness.idleRecheckSeconds`'s doc comment was corrected to
   describe the switch instead of the retired zero-interval sentinel
   (`192ed54`).
@@ -114,9 +115,17 @@ Shipped in six commits, listed in the order they landed: `726ffb9`,
   No downgrade guarantee: an older build reading a file with
   `keepAliveEnabled: false` and interval `60` would still probe, the same
   accepted shape as the auto-refresh pair this entry named as the
-  pattern to follow in the first place.
+  pattern to follow in the first place. The mirror case is the same gap
+  in the other direction: re-enable keep-alive on a store migrated from
+  an old off-file, and only `keepAliveEnabled` gets written — the file
+  still carries `"keepAliveIntervalSeconds": 0` until the interval is
+  next written explicitly. An older build reading that file sees `0` and
+  reads it as OFF, even though the user just turned keep-alive back on
+  (pinned by `aWriteAfterTheOldOffMigrationPersistsBothKeys` in
+  `Tests/macSCPCoreTests/SettingsStoreTests.swift`).
 
 The connection-state ledger's parked item — "the stepper guard proves
-the call is reached, not its arguments; not closable without a SwiftUI
-harness" — is closed by removing the thing that needed the harness,
-rather than by building one.
+the sanctioned call is REACHED, not that its arguments are right —
+storedValue(forIntervalChangeTo: 999, isEnabled: true) passes 11/11. Not
+closable without a SwiftUI harness." — is closed by removing the thing
+that needed the harness, rather than by building one.
