@@ -1,5 +1,5 @@
 {
-  "originHash" : "a2c2faab64a0a7ea3a2d72a77188ea8a1d1734653d24004d43b2da3ce152d07d",
+  "originHash" : "15e85c9c9413bf082ebc2876a702e3e9df984877b46780e73d3f628ff6b340d4",
   "pins" : [
     {
       "identity" : "bigint",
@@ -13,10 +13,10 @@
     {
       "identity" : "citadel",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/NoiXdev/Citadel.git",
+      "location" : "https://github.com/orlandos-nl/Citadel.git",
       "state" : {
-        "revision" : "b1f1dfd594f7d1e7e7c1f354b4b6a95022c5b7c8",
-        "version" : "0.12.1-noix.2"
+        "revision" : "ae8562f895de06ccb86fdb1cbb65fd99c8976e12",
+        "version" : "0.12.1"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
       "state" : {
-        "revision" : "3ffafb9722d5d918c614feb496c8789a3b59d222",
-        "version" : "1.15.0"
+        "revision" : "a878e7f8f46cfc0e1125e565b5c08e7d5272dc9a",
+        "version" : "1.14.0"
       }
     },
     {

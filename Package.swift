@@ -11,17 +11,7 @@ let package = Package(
         .executable(name: "macSCP", targets: ["MacSCPMain"]),
     ],
     dependencies: [
-        // Citadel from our own fork, same package identity (`Citadel`) at a
-        // different URL — the shape the swift-nio-ssh override below already
-        // has. `exact:` makes every change to it a deliberate bump here.
-        // 0.12.1-noix.2 = upstream 0.12.1 + upstream PR #135 (RFC 8332
-        // `rsa-sha2-256`/`-512` signing) with its SHA-1 fallback flipped OFF
-        // by default, + an ECDSA `openssh-key-v1` private-key parser
-        // (`P256/P384/P521.Signing.PrivateKey.init(sshEcdsa:decryptionKey:)`
-        // and the public `OpenSSHKeyTypeMismatch`). Both are what lets
-        // `SSHPrivateKeyLoader` load an RSA or ECDSA key FILE at all; see
-        // .superpowers/sdd/2026-09-02-file-keys-without-agent.
-        .package(url: "https://github.com/NoiXdev/Citadel.git", exact: "0.12.1-noix.2"),
+        .package(url: "https://github.com/orlandos-nl/Citadel.git", from: "0.12.1"),
         // Citadel depends on Wellz26/swift-nio-ssh, a fork with a deleted
         // parent that is behind Apple on signature validation and mangles
         // RFC 4253 §4.2 preamble lines into the version string. This root
@@ -105,10 +95,6 @@ let package = Package(
                 // `ByteBuffer` and hands the result to NIOSSH's key/signature
                 // protocols directly.
                 .product(name: "NIOCore", package: "swift-nio"),
-                // `SSHPrivateKeyLoaderTests` drains a built
-                // `SSHAuthenticationMethod` the way NIOSSH does, on a real
-                // event loop, to read the algorithm names it would offer.
-                .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
             ],
             // `LegacyStoreCompatibilityTests` copies these into a temporary
