@@ -56,7 +56,7 @@ changes it in the entry and at most updates the line here to match.
 |---|---|
 | [CLI: completion, help, host list](superpowers/specs/2026-08-20-backlog-cli-completion-hosts.md) | **Item 1 done 2026-09-02.** `macscp-cli sessions` lists sessions via `SessionCatalog`, filterable by `--group`/`--kind`/`--name`/`--tag` (`--name` is a case-insensitive substring, not a pattern), `--json` included; a source-scanning guard pins that the command touches no secret or connection API. **Open: item 2** (autocompletion — session names only vs. remote paths is still an open design question) **and item 3** (a root-command `discussion` explaining `name:/path`). |
 | [Dependencies](superpowers/specs/2026-08-20-backlog-dependencies.md) | swift-nio-ssh comes in as a **foreign fork** via Citadel — the actual finding. Also: SwiftTerm hangs off a bare revision, swift-crypto is two major versions behind. |
-| [Import planner](superpowers/specs/2026-08-19-backlog-import-planner.md) | Half-filled field bags on import. Before taking this on, check how much of it the snippet branch has already handled. |
+| [Import planner](superpowers/specs/2026-08-19-backlog-import-planner.md) | **Done 2026-09-02.** A bag the backend's own schema cannot dial (half bag, jump-only twin) is rejected and counted, judged over the schema's defaults so a port-less entry still imports. Left as is: the pre-M23 column-less S3/WebDAV entry, a documented store exception. |
 
 ---
 
