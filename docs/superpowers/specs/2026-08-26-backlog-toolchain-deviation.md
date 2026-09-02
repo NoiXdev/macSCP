@@ -60,3 +60,26 @@ needs a measurement before implementation.
 `ContentView+Lifecycle.swift` was the only spot found. However, the
 compiler aborts the file at the first error; whether further spots of
 the same class lie behind this line only a green run will show.
+
+## Measured 2026-09-02 — a non-`Sendable` Citadel value crossing into a `@MainActor` test
+
+`Tests/macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift` gained a
+nonisolated helper returning `(client: SSHClient, sftp: BoundedSFTPSession)`
+to a `@MainActor` suite, and a `sending SSHClient` parameter to close it.
+
+| shape | workstation (Swift 6.3.3, SE-0461 region isolation) | CI (older Swift 6) |
+|---|---|---|
+| nonisolated helper, tuple return, `sending` close | compiles | **rejected**: "non-sendable result type '(client: SSHClient, sftp: BoundedSFTPSession)' cannot be sent from nonisolated context" (run 33584973939) |
+| both helpers `@MainActor`, no `sending` | **rejected**: "sending 'client' risks causing data races" at `client.close()` | not tried — the first rejection made the second pointless |
+| `@preconcurrency import Citadel` on the original shape | compiles, 0 warning locations | run 33585643143 (see below) |
+
+No shape both toolchains accept was found without `@preconcurrency`; the
+file now carries it with this table in its header comment, the same
+remedy `Sources/macSCPCore/SSH/CitadelFileSystem.swift` has. Two process
+errors on the way, recorded because they are the kind this project keeps:
+the first hotfix was committed and pushed by a script whose `swift build`
+exit code a `| grep` had masked (`38b7434` does not compile locally), and
+the push before it ran unconditionally after a gated run that was red
+(`ConnectMainActorLivenessTests`, a wall-clock flake, but the script did
+not look). Both scripts now check the exit code with `set -o pipefail` and
+push only on a green gate.
