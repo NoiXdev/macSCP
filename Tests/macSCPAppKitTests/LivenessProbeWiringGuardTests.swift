@@ -4,7 +4,7 @@ import Testing
 /// Guards the shape of the liveness-probe loop in `ContentView+Detail.swift`
 /// (connection-liveness plan, Task 4; fix round 1 moved the loop from
 /// `ContentView.detail` into `LivenessProbeRunner.body`, still in the same
-/// file — see that type's own doc comment for why): four claims about that
+/// file — see that type's own doc comment for why): five claims about that
 /// loop, each checked by scanning source text rather than by running it.
 ///
 /// 1. The keep-alive interval is read INSIDE the `while`, every lap — not
@@ -25,6 +25,12 @@ import Testing
 ///    proves the guarded function refuses it; this claim is what keeps the
 ///    loop asking that function rather than inlining a second, unguarded
 ///    copy — the same split as claim 3.
+/// 5. `settingsStore.keepAliveEnabled` is checked BEFORE the interval is
+///    read, every lap (keep-alive-two-settings plan, Task 2). Since Task 1
+///    made `keepAliveIntervalSeconds` always read 15…600 — a stored `0` now
+///    reads as the default, not as "off" — an enabled check placed AFTER
+///    the interval read, or missing outright, would leave the loop with no
+///    way left to skip probing at all.
 ///
 /// Claim 3 used to assert the `.giveUp` case called `teardown(_:)`
 /// literally, which a reviewer defeated (fix round 3) by swapping that
@@ -80,6 +86,32 @@ struct LivenessProbeWiringGuardTests {
             `settingsStore.keepAliveIntervalSeconds` inside the `while` — a read \
             hoisted outside the loop would freeze the interval at the loop's \
             first lap and ignore a setting changed mid-session.
+            """)
+    }
+
+    @Test func theLoopChecksKeepAliveEnabledBeforeReadingTheInterval() throws {
+        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let body = try Self.loopBody(after: Self.anchor, in: source)
+        guard let enabledRange = body.range(of: "guard settingsStore.keepAliveEnabled else") else {
+            Issue.record("""
+                the probe loop's body no longer calls \
+                `guard settingsStore.keepAliveEnabled else` — with \
+                `keepAliveIntervalSeconds` always reading 15…600 (Task 1: a \
+                stored `0` reads as the default), the switch is the only thing \
+                left that can turn probing off at all.
+                """)
+            return
+        }
+        guard let intervalRange = body.range(of: "settingsStore.keepAliveIntervalSeconds") else {
+            Issue.record("the probe loop's body no longer reads `settingsStore.keepAliveIntervalSeconds` — re-anchor this guard.")
+            return
+        }
+        #expect(enabledRange.lowerBound < intervalRange.lowerBound, """
+            `settingsStore.keepAliveIntervalSeconds` is read before \
+            `settingsStore.keepAliveEnabled` is checked — a store with the \
+            switch off but an interval configured (always ≥ 15 now) would \
+            fall through to probing, since there is no `0` sentinel left to \
+            catch it.
             """)
     }
 
@@ -167,6 +199,10 @@ struct LivenessProbeWiringGuardTests {
         let source = """
             // Liveness probe (Task 4)
             while !Task.isCancelled {
+                guard settingsStore.keepAliveEnabled else {
+                    try? await Task.sleep(for: .seconds(LivenessProbePolicy.idleRecheckSeconds))
+                    continue
+                }
                 let interval = settingsStore.keepAliveIntervalSeconds
                 let action = LivenessProbePolicy.decide(
                     queueIsBusy: tab.transferQueue.isActive, consecutiveFailures: failures)
@@ -174,6 +210,54 @@ struct LivenessProbeWiringGuardTests {
             """
         let body = try Self.loopBody(after: Self.anchor, in: source)
         #expect(body.contains("settingsStore.keepAliveIntervalSeconds"))
+    }
+
+    @Test func scannerFlagsALoopThatNeverChecksKeepAliveEnabled() throws {
+        let source = """
+            // Liveness probe (Task 4)
+            while !Task.isCancelled {
+                let interval = settingsStore.keepAliveIntervalSeconds
+                try? await Task.sleep(for: .seconds(interval))
+            }
+            """
+        let body = try Self.loopBody(after: Self.anchor, in: source)
+        #expect(!body.contains("guard settingsStore.keepAliveEnabled else"))
+    }
+
+    @Test func scannerAcceptsALoopThatChecksKeepAliveEnabledBeforeTheInterval() throws {
+        let source = """
+            // Liveness probe (Task 4)
+            while !Task.isCancelled {
+                guard settingsStore.keepAliveEnabled else {
+                    try? await Task.sleep(for: .seconds(LivenessProbePolicy.idleRecheckSeconds))
+                    continue
+                }
+                let interval = settingsStore.keepAliveIntervalSeconds
+                try? await Task.sleep(for: .seconds(interval))
+            }
+            """
+        let body = try Self.loopBody(after: Self.anchor, in: source)
+        let enabledRange = try #require(body.range(of: "guard settingsStore.keepAliveEnabled else"))
+        let intervalRange = try #require(body.range(of: "settingsStore.keepAliveIntervalSeconds"))
+        #expect(enabledRange.lowerBound < intervalRange.lowerBound)
+    }
+
+    @Test func scannerFlagsALoopThatChecksKeepAliveEnabledAfterTheInterval() throws {
+        let source = """
+            // Liveness probe (Task 4)
+            while !Task.isCancelled {
+                let interval = settingsStore.keepAliveIntervalSeconds
+                guard settingsStore.keepAliveEnabled else {
+                    try? await Task.sleep(for: .seconds(LivenessProbePolicy.idleRecheckSeconds))
+                    continue
+                }
+                try? await Task.sleep(for: .seconds(interval))
+            }
+            """
+        let body = try Self.loopBody(after: Self.anchor, in: source)
+        let enabledRange = try #require(body.range(of: "guard settingsStore.keepAliveEnabled else"))
+        let intervalRange = try #require(body.range(of: "settingsStore.keepAliveIntervalSeconds"))
+        #expect(!(enabledRange.lowerBound < intervalRange.lowerBound))
     }
 
     @Test func scannerFlagsAnInlineDecisionRewrite() throws {

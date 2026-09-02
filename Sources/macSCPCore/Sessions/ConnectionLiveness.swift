@@ -35,12 +35,12 @@ public enum LivenessProbePolicy {
         max(1, min(10, interval / 2))
     }
 
-    /// How long the probe loop sleeps before rechecking
-    /// `keepAliveIntervalSeconds` while that setting reads `0` ("no probe at
-    /// all") — a fixed, short beat, not a zero-length sleep (which would
-    /// spin the loop) and not the interval itself (which does not exist
-    /// while the probe is off). This bounds only how quickly turning the
-    /// probe back ON takes effect. NARROWING an already-running interval
+    /// How long the probe loop sleeps before rechecking `keepAliveEnabled`
+    /// while that switch reads `false` ("no probe at all") — a fixed, short
+    /// beat, not a zero-length sleep (which would spin the loop) and not the
+    /// interval itself (which is not read while the probe is off). This
+    /// bounds only how quickly turning the probe back ON takes effect.
+    /// NARROWING an already-running interval
     /// (e.g. 600 seconds down to 15) is the case that actually matters: it
     /// only takes effect once the current sleep completes, up to the OLD,
     /// LARGER interval's own length — up to ten minutes before a user who

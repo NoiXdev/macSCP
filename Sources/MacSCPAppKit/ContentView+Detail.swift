@@ -935,20 +935,23 @@ struct LivenessProbeRunner: View {
                 // just sleep on — the same shape `detail`'s own auto-refresh
                 // loop uses.
                 while !Task.isCancelled {
-                    let interval = settingsStore.keepAliveIntervalSeconds
-                    // `0` means no probe at all (design spec, connection-
-                    // liveness plan §6) — sleep a fixed beat and recheck
-                    // rather than spin, so turning the setting back on later
+                    // The switch, not a sentinel interval, decides whether
+                    // this tab probes at all — `keepAliveIntervalSeconds`
+                    // always reads 15…600 now (a stored `0` reads back as
+                    // the default), so there is no interval value left that
+                    // could mean "off". Sleep a fixed beat and recheck
+                    // rather than spin, so turning the switch back on later
                     // takes effect without restarting the tab. NARROWING an
                     // already-running interval instead only takes effect
                     // once the current sleep call completes, up to the OLD,
                     // LARGER interval's own length — see
                     // `LivenessProbePolicy.idleRecheckSeconds`'s own doc
                     // comment for that asymmetry stated precisely.
-                    guard interval > 0 else {
+                    guard settingsStore.keepAliveEnabled else {
                         try? await Task.sleep(for: .seconds(LivenessProbePolicy.idleRecheckSeconds))
                         continue
                     }
+                    let interval = settingsStore.keepAliveIntervalSeconds
                     try? await Task.sleep(for: .seconds(interval))
                     guard !Task.isCancelled else { continue }
                     probing: while !Task.isCancelled {
