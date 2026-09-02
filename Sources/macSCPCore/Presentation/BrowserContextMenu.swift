@@ -55,18 +55,43 @@ public enum BrowserContextMenu {
     /// Defaulted to `false`, so a call site that predates checksums keeps
     /// exactly the menu it had.
     ///
-    /// `scope` is the bucket-list gate (2026-09-02). It is a parameter of
-    /// THIS function and of nothing else, because this function is already
-    /// the ONE predicate both the context menu and the keyboard resolver
-    /// consult — see `BrowserKeyCommand`, whose whole doc comment is about
-    /// why those two must never drift. Defaulted to `.ordinary`, which is
-    /// what every SSH, WebDAV and single-bucket S3 pane is.
+    /// `scope` is THIS pane — the rows being acted on, and the source of any
+    /// transfer. `destination` is the OTHER pane of the same window, the one
+    /// `.transferToOtherPane` would send to. Both default to `.ordinary`,
+    /// which is what every SSH, WebDAV and single-bucket S3 pane is, and
+    /// what every LOCAL pane always is.
+    ///
+    /// **Two directions, one function, four consumers** — counted in the
+    /// tree in the pass that writes this, and listed so the next door added
+    /// is added HERE rather than beside it:
+    ///
+    /// 1. the context menu (`RemoteFileTableView.menuNeedsUpdate`);
+    /// 2. the keyboard (`BrowserKeyCommand.resolve`);
+    /// 3. the window toolbar's **Upload** button;
+    /// 4. the window toolbar's **Download** button.
+    ///
+    /// Four CONSUMERS, six call sites: the resolver asks four times, once
+    /// per key it gates, and the two toolbar buttons share one through
+    /// `ContentView.offersTransfer`. The two numbers differ, so neither is
+    /// left to be inferred from the other.
+    ///
+    /// Items 3 and 4 joined in fix round 1: review C-1 found them deciding
+    /// for themselves with `.disabled(!selected.contains { $0.kind !=
+    /// .symlink })`, which a bucket row satisfies — a selected bucket
+    /// enabled Download and one click enqueued the whole bucket. Asking
+    /// here also retires that second copy of the symlink rule.
+    ///
+    /// The drop target is deliberately NOT in that list: it carries no
+    /// selection, so it asks the destination-side question directly
+    /// (`BrowserScope.acceptsIncomingFiles`, which names its own call
+    /// sites).
     public static func entries(
         for selection: [RemoteFileItem], side: BrowserPaneSide,
         crossSessionTargets: [CrossSessionTarget] = [],
         fileActions: [FileActionContribution] = [],
         supportsChecksum: Bool = false,
-        scope: BrowserScope = .ordinary
+        scope: BrowserScope = .ordinary,
+        destination: BrowserScope = .ordinary
     ) -> [BrowserMenuEntry] {
         // A bucket is a container, not a folder. The design offers exactly
         // one action on a bucket row — OPEN it — and open is not an entry
@@ -92,8 +117,20 @@ public enum BrowserContextMenu {
         }
         var entries: [BrowserMenuEntry] = []
         if selection.contains(where: { $0.kind != .symlink }) {
-            entries.append(.transferToOtherPane)
-            // M8b: append per-session targets (same transferability gate)
+            // The DESTINATION side (review C-1): the other pane of this
+            // window cannot receive while it sits at a bucket list, so the
+            // entry that sends there is not offered. `.transferToSession`
+            // aims at a DIFFERENT destination — another tab's remote pane —
+            // and is filtered where each target's own scope is known
+            // (`CrossSessionTargets.targets`), which is why it survives here.
+            if destination.acceptsIncomingFiles {
+                entries.append(.transferToOtherPane)
+            }
+            // M8b: append per-session targets (same transferability gate).
+            // The AppKit builder reads these as a run that FOLLOWS
+            // `.transferToOtherPane` when it is present and stands alone
+            // when it is not; that order is pinned by
+            // `crossSessionTargetsSurviveARefusingOtherPaneAndKeepTheirOrder`.
             entries.append(contentsOf: crossSessionTargets.map { .transferToSession($0) })
         }
         if selection.count == 1, let only = selection.first {

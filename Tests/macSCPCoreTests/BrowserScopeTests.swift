@@ -56,21 +56,22 @@ struct BrowserScopeTests {
         #expect(!BrowserScope.ordinary.isContainerListRoot)
     }
 
-    /// The value the drop target consults. A local folder dropped on the
-    /// bucket list would ask for a bucket to be created; the queue refuses
-    /// it, but the drop is declined before that — and, one level in, drops
-    /// work exactly as they always did.
-    @Test func aDropOntoTheBucketListIsDeclinedAndOneLevelInIsNot() {
-        #expect(!BrowserScope(rootIsContainerList: true, currentPath: "/").acceptsDroppedFiles)
-        #expect(!BrowserScope(rootIsContainerList: true, currentPath: "//").acceptsDroppedFiles)
+    /// The DESTINATION-side value — asked by every way a transfer can be
+    /// aimed at a pane, not only by the drop (review C-1). A transfer into
+    /// the bucket list would ask for a bucket to be created; the queue
+    /// refuses it, but nothing is offered before that — and, one level in,
+    /// everything works exactly as it always did.
+    @Test func nothingCanBeSentIntoTheBucketListAndOneLevelInEverythingCan() {
+        #expect(!BrowserScope(rootIsContainerList: true, currentPath: "/").acceptsIncomingFiles)
+        #expect(!BrowserScope(rootIsContainerList: true, currentPath: "//").acceptsIncomingFiles)
         #expect(BrowserScope(rootIsContainerList: true, currentPath: "/macscp-seed")
-            .acceptsDroppedFiles)
+            .acceptsIncomingFiles)
         #expect(BrowserScope(rootIsContainerList: true, currentPath: "/macscp-seed/dir")
-            .acceptsDroppedFiles)
-        // Toggle off — and every SSH/WebDAV pane: `/` is an ordinary
-        // directory and has always taken drops.
-        #expect(BrowserScope(rootIsContainerList: false, currentPath: "/").acceptsDroppedFiles)
-        #expect(BrowserScope.ordinary.acceptsDroppedFiles)
+            .acceptsIncomingFiles)
+        // Toggle off — and every SSH/WebDAV pane, and every LOCAL pane: `/`
+        // is an ordinary directory and has always received transfers.
+        #expect(BrowserScope(rootIsContainerList: false, currentPath: "/").acceptsIncomingFiles)
+        #expect(BrowserScope.ordinary.acceptsIncomingFiles)
     }
 
     /// The default a caller that says nothing gets. Every pane that
@@ -80,5 +81,6 @@ struct BrowserScopeTests {
         #expect(BrowserScope.ordinary.rootIsContainerList == false)
         #expect(BrowserScope.ordinary.isContainerListRoot == false)
         #expect(BrowserScope.ordinary.isContainerRow(path: "/anything") == false)
+        #expect(BrowserScope.ordinary.acceptsIncomingFiles)
     }
 }

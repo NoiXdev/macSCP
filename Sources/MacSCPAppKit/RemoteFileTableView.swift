@@ -99,6 +99,14 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// every pane but an S3 bucket-list one is) yields exactly the menu and
     /// the key handling this view had before.
     var scope: BrowserScope = .ordinary
+    /// The OTHER pane of this window — where "Transfer ▸ To the other pane"
+    /// and the Space key would send (review C-1). A CLOSURE, not a value, so
+    /// it is read fresh at each `menuNeedsUpdate`/key press, the same
+    /// discipline `crossSessionTargets` and `fileActions` above already use:
+    /// the other pane's current directory changes without this view being
+    /// re-created. `nil` yields `.ordinary`, which is what every pane whose
+    /// counterpart is a local pane or a non-bucket-list remote one is.
+    var destinationScope: (() -> BrowserScope)? = nil
 
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect, side: side)
@@ -113,6 +121,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.supportsChecksum = supportsChecksum
         coordinator.onSortChange = onSortChange
         coordinator.scope = scope
+        coordinator.destinationScope = destinationScope
         return coordinator
     }
 
@@ -238,6 +247,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.supportsChecksum = supportsChecksum
         context.coordinator.onSortChange = onSortChange
         context.coordinator.scope = scope
+        context.coordinator.destinationScope = destinationScope
         guard let table = nsView.documentView as? NSTableView else { return }
         // Column rebuild (M11m/T2): diffed against the last SET the
         // COORDINATOR itself recorded (`lastVisibleColumns`) — the same
@@ -457,6 +467,11 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// bucket list is reflected in the next menu the user opens and in
         /// the next key they press.
         var scope: BrowserScope = .ordinary
+        var destinationScope: (() -> BrowserScope)?
+        /// The other pane's scope right now — `.ordinary` when no closure was
+        /// supplied, which is the answer for every pane whose counterpart
+        /// cannot be a bucket list.
+        var currentDestinationScope: BrowserScope { destinationScope?() ?? .ordinary }
         let side: BrowserPaneSide
         weak var table: NSTableView?
         var suppressSelectionCallback = false
@@ -673,7 +688,8 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// through to `super` (native type-select / focus handling).
         func dispatch(key: BrowserKey, selection: [RemoteFileItem]) -> Bool {
             guard let action = BrowserKeyCommand.resolve(
-                key: key, selection: selection, side: side, scope: scope)
+                key: key, selection: selection, side: side, scope: scope,
+                destination: currentDestinationScope)
             else {
                 return false
             }
@@ -792,7 +808,8 @@ struct RemoteFileTableView: NSViewRepresentable {
             let entries = BrowserContextMenu.entries(
                 for: selection, side: side, crossSessionTargets: crossSessionTargets?() ?? [],
                 fileActions: fileActions?() ?? [],
-                supportsChecksum: supportsChecksum, scope: scope)
+                supportsChecksum: supportsChecksum, scope: scope,
+                destination: currentDestinationScope)
             // `.transferToOtherPane` is immediately followed (per the Core
             // model, `BrowserContextMenu.entries`) by zero or more
             // `.transferToSession` entries — those join the SAME "Transfer"
@@ -800,17 +817,31 @@ struct RemoteFileTableView: NSViewRepresentable {
             // requirement 2). Consumed together here; without any cross-
             // session targets this produces the exact same single-item
             // submenu as before M8b (byte-identical flat structure).
+            //
+            // Since fix round 1 of the bucket-list task the run can also
+            // START with a `.transferToSession`: the other pane of THIS
+            // window may be unable to receive (a bucket list) while another
+            // TAB's remote pane can, so `entries` drops `.transferToOtherPane`
+            // and keeps the targets. The submenu is then built without its
+            // first item. The order is the Core model's contract, pinned by
+            // `crossSessionTargetsSurviveARefusingOtherPaneAndKeepTheirOrder`.
             var index = 0
             while index < entries.count {
                 let entry = entries[index]
-                if entry == .transferToOtherPane {
+                let startsATransferRun: Bool
+                if case .transferToSession = entry { startsATransferRun = true }
+                else { startsATransferRun = entry == .transferToOtherPane }
+                if startsATransferRun {
+                    let includesOtherPane = entry == .transferToOtherPane
                     var targets: [CrossSessionTarget] = []
-                    index += 1
+                    if includesOtherPane { index += 1 }
                     while index < entries.count, case .transferToSession(let target) = entries[index] {
                         targets.append(target)
                         index += 1
                     }
-                    menu.addItem(makeTransferItem(selection: selection, targets: targets))
+                    menu.addItem(makeTransferItem(
+                        selection: selection, targets: targets,
+                        includesOtherPane: includesOtherPane))
                     continue
                 }
                 if entry == .delete, menu.items.isEmpty == false {
@@ -827,17 +858,26 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// via `menu.transfer.toSession.kind` (target title + backend badge)
         /// with the target's remote path as the item's subtitle (M8b/T4
         /// requirement 2; backend badge added in M16 T4).
+        ///
+        /// `includesOtherPane` is `false` when the Core model withheld
+        /// `.transferToOtherPane` because this window's other pane cannot
+        /// receive (fix round 1). The separator goes with it: it exists to
+        /// divide that first item from the targets, and with nothing above
+        /// it would open the submenu with a rule.
         private func makeTransferItem(
-            selection: [RemoteFileItem], targets: [CrossSessionTarget]
+            selection: [RemoteFileItem], targets: [CrossSessionTarget],
+            includesOtherPane: Bool = true
         ) -> NSMenuItem {
             let parent = NSMenuItem(
                 title: L10n.string("menu.transfer", "Transfer"), action: nil, keyEquivalent: "")
             let submenu = NSMenu()
-            submenu.addItem(actionItem(
-                title: L10n.string("menu.transfer.otherPane", "To the other pane"),
-                entry: .transferToOtherPane, selection: selection))
+            if includesOtherPane {
+                submenu.addItem(actionItem(
+                    title: L10n.string("menu.transfer.otherPane", "To the other pane"),
+                    entry: .transferToOtherPane, selection: selection))
+            }
             if !targets.isEmpty {
-                submenu.addItem(.separator())
+                if includesOtherPane { submenu.addItem(.separator()) }
                 for target in targets {
                     let item = actionItem(
                         title: String(

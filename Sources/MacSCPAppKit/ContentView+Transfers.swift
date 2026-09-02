@@ -12,9 +12,51 @@ import macSCPCore
 extension ContentView {
     // MARK: - Transfers
 
+    /// This window's two pane scopes: which rows each pane is showing, and
+    /// therefore what may be done with them and what may be sent into them.
+    /// Both toolbar buttons below read them, and both are computed the same
+    /// way `BrowserPane` computes its own — from the connection's answer and
+    /// the pane's current directory (review C-1).
+    func localScope(_ session: BrowserSession) -> BrowserScope {
+        BrowserScope(
+            rootIsContainerList: session.localFS.rootIsContainerList,
+            currentPath: session.local.currentPath)
+    }
+
+    func remoteScope(_ session: BrowserSession) -> BrowserScope {
+        BrowserScope(
+            rootIsContainerList: session.remoteFS.rootIsContainerList,
+            currentPath: session.remote.currentPath)
+    }
+
+    /// Whether the toolbar may offer a transfer of `selection` out of `side`.
+    ///
+    /// **Asks the same Core predicate the context menu and the keyboard ask**
+    /// (review C-1). Before this, each button carried its own rule —
+    /// `!selected.contains { $0.kind != .symlink }` — which was both a second
+    /// copy of the symlink eligibility rule AND blind to the bucket-list
+    /// gates: a bucket row is a non-symlink, so selecting one (without
+    /// opening it) enabled Download, and one click enqueued
+    /// `enqueueTree(direction: .download, sourceDirectory: "/<bucket>")` —
+    /// the entire bucket, refused by nothing, since `list` and `stat` are
+    /// exactly the two calls a bucket legitimately answers.
+    ///
+    /// Both directions in one call: `scope` rejects a source row that is a
+    /// bucket, `destination` rejects a target pane sitting at a bucket list.
+    private func offersTransfer(
+        _ selection: [RemoteFileItem], from side: BrowserPaneSide, in session: BrowserSession
+    ) -> Bool {
+        BrowserContextMenu.entries(
+            for: selection, side: side,
+            scope: side == .local ? localScope(session) : remoteScope(session),
+            destination: side == .local ? remoteScope(session) : localScope(session)
+        ).contains(.transferToOtherPane)
+    }
+
     /// Locally selected files/folders → current remote directory.
     /// Symlinks in the selection are skipped silently (not a meaningful
-    /// transfer target); enabled when at least one non-symlink is selected.
+    /// transfer target); enabled exactly when the menu would offer the same
+    /// transfer — see `offersTransfer`.
     @ViewBuilder
     func uploadButton(in tab: SessionTab, session: BrowserSession) -> some View {
         let selected = session.local.selectedItems
@@ -24,14 +66,15 @@ extension ContentView {
             Label(L10n.string("browser.upload", "Upload"), systemImage: "arrow.up")
         }
         .tint(DesignTokens.localAmber)
-        .disabled(!selected.contains { $0.kind != .symlink })
+        .disabled(!offersTransfer(selected, from: .local, in: session))
         .help(L10n.string(
             "browser.uploadHelp", "Upload the selected local file/folder to the remote directory"))
     }
 
     /// Remotely selected files/folders → current local directory.
     /// Symlinks in the selection are skipped silently (not a meaningful
-    /// transfer target); enabled when at least one non-symlink is selected.
+    /// transfer target); enabled exactly when the menu would offer the same
+    /// transfer — see `offersTransfer`.
     @ViewBuilder
     func downloadButton(in tab: SessionTab, session: BrowserSession) -> some View {
         let selected = session.remote.selectedItems
@@ -41,7 +84,7 @@ extension ContentView {
             Label(L10n.string("browser.download", "Download"), systemImage: "arrow.down")
         }
         .tint(DesignTokens.remoteBlue)
-        .disabled(!selected.contains { $0.kind != .symlink })
+        .disabled(!offersTransfer(selected, from: .remote, in: session))
         .help(L10n.string(
             "browser.downloadHelp", "Download the selected remote file/folder to the local directory"))
     }

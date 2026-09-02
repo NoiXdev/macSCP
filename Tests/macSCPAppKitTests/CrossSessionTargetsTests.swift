@@ -20,14 +20,20 @@ struct CrossSessionTargetsTests {
     }
 
     /// Attaches a live session to `tab`, the same shape `ContentView.
-    /// startSession(in:with:)` builds, but using `LocalFileSystem` as the
+    /// startSession(in:with:)` builds, defaulting to `LocalFileSystem` as the
     /// "remote" side — a real `RemoteFileSystem` conformer that needs no
     /// network and never has its I/O methods called by
-    /// `CrossSessionTargets.targets`, which only reads `remote.currentPath`
-    /// (set synchronously by `RemoteBrowserViewModel.init`).
-    private func attachSession(to tab: SessionTab, remotePath: String) {
+    /// `CrossSessionTargets.targets`, which reads `remote.currentPath` (set
+    /// synchronously by `RemoteBrowserViewModel.init`) and
+    /// `remoteFS.rootIsContainerList` (a stored answer, no I/O).
+    ///
+    /// `remoteFS` is a parameter since fix round 1 of the bucket-list task:
+    /// the third rule needs a remote whose root IS a container list, and
+    /// `LocalFileSystem` takes the protocol default and can never say so.
+    private func attachSession(
+        to tab: SessionTab, remotePath: String, remoteFS: any RemoteFileSystem = LocalFileSystem()
+    ) {
         let sessionID = UUID()
-        let remoteFS = LocalFileSystem()
         tab.session = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(),
@@ -63,6 +69,39 @@ struct CrossSessionTargetsTests {
         #expect(targets.isEmpty)
     }
 
+    /// A tab whose remote pane sits at a BUCKET LIST is not offered either
+    /// (review C-1): nothing can be written there, so a cross-session
+    /// transfer aimed at it would be enqueued and then refused by Core
+    /// (`bucketLevelRefused`) — the "offered and then refused" shape this
+    /// task closed at every other door.
+    ///
+    /// The destination question is the same function every other door asks,
+    /// `BrowserScope.acceptsIncomingFiles`; this is simply the one place
+    /// each target's OWN destination is known.
+    @Test func aTabSittingAtItsBucketListIsNotOfferedAsATarget() {
+        let mine = makeTab()
+        let other = makeTab()
+        attachSession(to: other, remotePath: "/", remoteFS: BucketListFileSystem())
+
+        let targets = CrossSessionTargets.targets(excluding: mine.id, in: [mine, other])
+
+        #expect(targets.isEmpty)
+    }
+
+    /// The positive check beside it, and the one that proves the filter is
+    /// about the DIRECTORY and not about the backend: the very same
+    /// bucket-list connection, one level inside a bucket, IS offered.
+    @Test func theSameBucketListTabIsOfferedOnceItIsInsideABucket() {
+        let mine = makeTab()
+        let other = makeTab()
+        attachSession(to: other, remotePath: "/macscp-seed", remoteFS: BucketListFileSystem())
+
+        let targets = CrossSessionTargets.targets(excluding: mine.id, in: [mine, other])
+
+        #expect(targets.count == 1)
+        #expect(targets.first?.remotePath == "/macscp-seed")
+    }
+
     /// A connected OTHER tab IS offered, carrying its own id, display title,
     /// current remote path and connection kind through unchanged. This is
     /// the positive case the two empty-result tests above cannot prove: a
@@ -82,4 +121,38 @@ struct CrossSessionTargetsTests {
         #expect(targets.first?.remotePath == "/var/www")
         #expect(targets.first?.kind == .s3)
     }
+}
+
+/// A remote whose ROOT lists containers — what `S3FileSystem` is with
+/// "Start at the bucket list" on. Only `rootIsContainerList` is answered;
+/// `CrossSessionTargets.targets` calls nothing else, and a `fatalError`
+/// everywhere else is what says so.
+private struct BucketListFileSystem: RemoteFileSystem {
+    var rootIsContainerList: Bool { true }
+
+    func list(path: String) async throws -> [RemoteFileItem] {
+        fatalError("not exercised by this test")
+    }
+    func stat(path: String) async throws -> RemoteFileItem {
+        fatalError("not exercised by this test")
+    }
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        fatalError("not exercised by this test")
+    }
+    func write(
+        path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
+    ) async throws {
+        fatalError("not exercised by this test")
+    }
+    func delete(path: String) async throws { fatalError("not exercised by this test") }
+    func createDirectory(at path: String) async throws { fatalError("not exercised by this test") }
+    func rename(from: String, to: String) async throws { fatalError("not exercised by this test") }
+    func setPermissions(path: String, permissions: UInt32) async throws {
+        fatalError("not exercised by this test")
+    }
+    func deleteTree(at path: String) async throws { fatalError("not exercised by this test") }
+    func homeDirectoryPath() async throws -> String { "/" }
+    func disconnect() async {}
 }

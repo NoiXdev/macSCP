@@ -35,6 +35,11 @@ struct BrowserPane: View {
     /// `nil` for the local pane's call site (`ContentView`), since the local
     /// file system never contributes any.
     var fileActions: (() -> [FileActionContribution])? = nil
+    /// The OTHER pane of this window — where this pane's "Transfer ▸ To the
+    /// other pane" and its Space key would send (review C-1). Forwarded
+    /// verbatim to `RemoteFileTableView`; see that property's doc comment for
+    /// why it is a closure. `nil` yields `.ordinary`.
+    var destinationScope: (() -> BrowserScope)? = nil
     /// Which columns the file list shows (M11m/T2) — mirrors
     /// `SettingsStore.visibleColumns`, app-global like the other display
     /// settings (`showHiddenFiles` etc.), so both panes always show the
@@ -67,11 +72,12 @@ struct BrowserPane: View {
     }
 
     /// Whether a local-file drop may land here at all: the pane has a drop
-    /// handler AND this listing is not the bucket list. See
-    /// `BrowserScope.acceptsDroppedFiles` for why the refusal Core already
-    /// makes is not enough on its own.
-    private var acceptsDroppedFiles: Bool {
-        onDropURLs != nil && scope.acceptsDroppedFiles
+    /// handler AND this listing can receive. The second half is the shared
+    /// destination-side question — see `BrowserScope.acceptsIncomingFiles`,
+    /// which the toolbar buttons and the cross-pane transfer entries ask
+    /// too, and which lists its call sites.
+    private var acceptsDrop: Bool {
+        onDropURLs != nil && scope.acceptsIncomingFiles
     }
 
     @State private var isDropTargeted = false
@@ -226,16 +232,25 @@ struct BrowserPane: View {
                         // 2026-09-02, in the pass that added the bucket-row
                         // gate below it.
                         //
-                        // What is true now, measured: `permissionModel` is
-                        // read by no UI in the tree (`grep -rn permissionModel
-                        // Sources/` — the only hits are the descriptors that
-                        // declare it and this comment), so an S3 or WebDAV
-                        // file DOES offer "Info & Permissions", whose apply
-                        // then throws. A real gap, older and wider than this
-                        // task — it is about a file inside a bucket, not
+                        // What is true now, measured: `permissionModel` has
+                        // no READER anywhere in Sources — only declarations
+                        // (its property, the initializer parameter and its
+                        // assignment on `ProtocolCapabilities`, and the three
+                        // descriptors that set it), one doc comment in
+                        // `WebDAVFileSystem`, and this comment. So an S3 or
+                        // WebDAV file DOES offer "Info & Permissions", whose
+                        // apply then throws. A real gap, older and wider than
+                        // this task — it is about a file inside a bucket, not
                         // about a bucket row — and deliberately left for the
                         // task that gates on the capability rather than
                         // widened into this one.
+                        //
+                        // The parenthetical this replaced quoted a grep and
+                        // then promised a different set than that grep
+                        // returns (review m-1): nine lines, three descriptors,
+                        // not "the descriptors and this comment". The claim
+                        // above it was true; the enumeration beside it was
+                        // written rather than counted.
                         case .infoAndPermissions: infoTarget = selection.first
                         case .newFolder: showNewFolderSheet = true
                         case .newFile: showNewFileSheet = true
@@ -262,7 +277,8 @@ struct BrowserPane: View {
                         viewModel.sortKey = key
                         viewModel.sortAscending = ascending
                     },
-                    scope: scope
+                    scope: scope,
+                    destinationScope: destinationScope
                 )
                 .allowsHitTesting(viewModel.state == .loaded)
 
@@ -284,11 +300,11 @@ struct BrowserPane: View {
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(tint, lineWidth: isDropTargeted && acceptsDroppedFiles ? 2.5 : 0)
+                    .strokeBorder(tint, lineWidth: isDropTargeted && acceptsDrop ? 2.5 : 0)
                     .padding(2)
             )
             .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
-                guard let onDropURLs, acceptsDroppedFiles else { return false }
+                guard let onDropURLs, acceptsDrop else { return false }
                 Task {
                     var urls: [URL] = []
                     for provider in providers {

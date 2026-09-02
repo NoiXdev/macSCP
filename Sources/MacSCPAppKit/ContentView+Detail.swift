@@ -323,6 +323,18 @@ extension ContentView {
                                         }
                                     },
                                     crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
+                                    // Where this pane's "Transfer ▸ To the
+                                    // other pane" would send (review C-1): the
+                                    // REMOTE pane, which cannot receive while
+                                    // it sits at a bucket list. A closure, so
+                                    // the remote pane's current directory is
+                                    // read at menu-build time rather than
+                                    // baked into this view's identity.
+                                    destinationScope: {
+                                        BrowserScope(
+                                            rootIsContainerList: session.remoteFS.rootIsContainerList,
+                                            currentPath: session.remote.currentPath)
+                                    },
                                     visibleColumns: settingsStore.visibleColumns,
                                     checksumAlgorithm: settingsStore.checksumAlgorithm,
                                     // "local" is not a `ConnectionKind`, so
@@ -400,6 +412,20 @@ extension ContentView {
                                     fileActions: {
                                         BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
                                             .fileActions
+                                    },
+                                    // The mirror of the local pane's line
+                                    // above. `LocalFileSystem` takes the
+                                    // protocol default (`rootIsContainerList
+                                    // == false`), so this always answers
+                                    // "yes" today — asked through the same
+                                    // function anyway, rather than assumed,
+                                    // so a local pane that ever grows a
+                                    // container root is covered by
+                                    // construction.
+                                    destinationScope: {
+                                        BrowserScope(
+                                            rootIsContainerList: session.localFS.rootIsContainerList,
+                                            currentPath: session.local.currentPath)
                                     },
                                     visibleColumns: settingsStore.visibleColumns,
                                     checksumAlgorithm: settingsStore.checksumAlgorithm,

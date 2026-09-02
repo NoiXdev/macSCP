@@ -42,10 +42,14 @@ public enum CLIErrorMapping {
                 return .connection
             case .notFound, .permissionDenied, .protocolError:
                 return .remote
-            // Both are S3 bucket-list outcomes, reachable only from a
-            // connection with `startsAtBucketList` on — which no stored
-            // session can carry yet. The arms exist because this switch is
-            // exhaustive, and they classify what the outcome IS: a missing
+            // Both are S3 bucket-list outcomes, reachable from a connection
+            // with `startsAtBucketList` on. This used to add "which no
+            // stored session can carry yet" — true when the arms were
+            // written, false since `f325ce3` put the field on
+            // `StoredS3Config`, and the CLI connects stored sessions for
+            // every backend through `SessionConnecting.connect`. So both are
+            // reachable from the CLI today (review m-2). The classification
+            // is unaffected: it says what the outcome IS — a missing
             // permission on the key is an auth problem, an account with no
             // buckets is a remote-side fact.
             case .bucketListForbidden:

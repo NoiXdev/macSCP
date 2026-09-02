@@ -157,6 +157,22 @@ struct BrowserKeyCommandTests {
             key: .commandUp, selection: [only], side: .remote, scope: listRoot) == .goUp)
     }
 
+    /// Space is the keyboard's transfer, so it asks the destination
+    /// question too (review C-1) — the resolver forwards `destination` to
+    /// `entries` and re-decides nothing, exactly as it forwards `scope`.
+    @Test func spaceIsRefusedWhenTheOtherPaneCannotReceive() {
+        let localFile = RemoteFileItem(name: "a.txt", path: "/Users/me/a.txt", kind: .file, size: 1)
+
+        #expect(BrowserKeyCommand.resolve(
+            key: .space, selection: [localFile], side: .local,
+            scope: .ordinary, destination: listRoot) == nil)
+        // Positive check beside it: the very same press with a destination
+        // that can receive still transfers.
+        #expect(BrowserKeyCommand.resolve(
+            key: .space, selection: [localFile], side: .local,
+            scope: .ordinary, destination: .ordinary) == .transfer([localFile]))
+    }
+
     /// The positive check beside them: the same keys on the same-shaped row
     /// in an ordinary session are unchanged, and the defaulted call and the
     /// explicit `.ordinary` one agree.

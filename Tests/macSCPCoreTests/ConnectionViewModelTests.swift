@@ -433,6 +433,43 @@ struct ConnectionViewModelTests {
         #expect(vm.s3Bucket == "typed-while-hidden")
     }
 
+    /// The whole sequence the change is about, walked end to end (review
+    /// m-4): type a bucket, turn the toggle ON, turn it OFF again.
+    ///
+    /// The three tests above each pin one step. What none of them shows is
+    /// the state the user actually lands in — and that state is the reason
+    /// clearing at the flip is safe: the bucket row comes BACK, visible and
+    /// empty and required, and `firstViolation` blocks connect with its own
+    /// message. A visible required field with a sentence beats a silent save
+    /// of a bucket the user could no longer see, which is what the
+    /// save-time discard did.
+    @Test func flippingTheToggleOnAndOffLeavesAVisibleRequiredEmptyBucket() {
+        let vm = makeVM()
+        vm.s3Endpoint = "https://minio.local"
+        vm.s3Region = "us-east-1"
+        vm.s3AccessKeyID = "AKIA"
+        vm.s3Bucket = "photos"
+
+        vm.selectBucketListMode(true)
+        // Hidden while on — so the clearing above is not something the user
+        // can watch happen, which is exactly why it must not wait for save.
+        let hiddenWhileOn = S3FieldSchema.connection
+            .visibleFields(in: vm.values, namespace: S3Field.namespace).map(\.id)
+        #expect(!hiddenWhileOn.contains(S3Field.bucket.rawValue))
+
+        vm.selectBucketListMode(false)
+
+        let visibleAgain = S3FieldSchema.connection
+            .visibleFields(in: vm.values, namespace: S3Field.namespace).map(\.id)
+        #expect(visibleAgain.contains(S3Field.bucket.rawValue))
+        #expect(vm.s3Bucket.isEmpty)
+
+        let violation = S3FieldSchema.connection.firstViolation(
+            in: vm.values, namespace: S3Field.namespace, requireSecrets: false)
+        #expect(violation?.messageKey == "core.connect.s3BucketRequired")
+        #expect(violation?.fieldKey == "\(S3Field.namespace).\(S3Field.bucket.rawValue)")
+    }
+
     /// Review finding (M11d fix round 1): the disconnect-time scrub must
     /// forget `lastConnectedConfig` too, not just the form's own password --
     /// otherwise it survives in `SessionTab.connectionViewModel` across every

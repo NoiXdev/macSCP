@@ -263,6 +263,100 @@ struct BrowserContextMenuTests {
             == [.newFolder, .newFile])
     }
 
+    // MARK: - The destination side (review C-1)
+
+    /// The toolbar's **Download** button, decided here rather than by a
+    /// second `.disabled(...)` rule of its own.
+    ///
+    /// Before C-1 the button's only gate was "at least one non-symlink is
+    /// selected", which a bucket row satisfies — so selecting a bucket
+    /// WITHOUT opening it enabled Download, and one click enqueued
+    /// `enqueueTree(direction: .download, sourceDirectory: "/macscp-seed")`.
+    /// Nothing refused it: `list` and `stat` are exactly the two calls a
+    /// bucket legitimately answers, so the whole bucket came down.
+    ///
+    /// The button now asks for `.transferToOtherPane`, which is what the
+    /// context menu and the Space key already ask for — so the symlink rule
+    /// is no longer a second copy either.
+    @Test func aSelectedBucketRowOffersNoTransferSoDownloadIsDisabled() {
+        let entries = BrowserContextMenu.entries(
+            for: [bucket("macscp-seed")], side: .remote, scope: listRoot)
+
+        #expect(!entries.contains(.transferToOtherPane))
+    }
+
+    /// The positive check beside it: an object row one level in still
+    /// offers the transfer, so Download is still enabled where it should be.
+    @Test func anObjectRowInsideABucketStillOffersTheTransfer() {
+        let object = RemoteFileItem(name: "a.txt", path: "/macscp-seed/a.txt", kind: .file, size: 1)
+
+        #expect(BrowserContextMenu.entries(for: [object], side: .remote, scope: insideABucket)
+            .contains(.transferToOtherPane))
+    }
+
+    /// The toolbar's **Upload** button and the LOCAL pane's "Transfer ▸ To
+    /// the other pane", which are the same decision seen from the other end:
+    /// the rows are ordinary local files, and it is the DESTINATION that
+    /// cannot receive.
+    ///
+    /// Core refuses the resulting `write("/name")` after the fact
+    /// (`bucketLevelRefused`), which is precisely the treatment this task
+    /// closed for the drop target two files away. Same action, other door,
+    /// so: same answer.
+    @Test func nothingIsOfferedToAPaneSittingAtTheBucketList() {
+        let localFile = RemoteFileItem(name: "a.txt", path: "/Users/me/a.txt", kind: .file, size: 1)
+
+        let entries = BrowserContextMenu.entries(
+            for: [localFile], side: .local, scope: .ordinary, destination: listRoot)
+
+        #expect(!entries.contains(.transferToOtherPane))
+        // Everything else the local row could do is untouched: the
+        // destination's trouble is not this row's.
+        #expect(entries.contains(.rename))
+        #expect(entries.contains(.delete))
+        #expect(entries.contains(.copyPath))
+    }
+
+    /// The positive check beside it, twice: the same local row offers the
+    /// transfer when the destination is one level inside a bucket, and when
+    /// the destination is an ordinary pane — which is every SSH, WebDAV and
+    /// single-bucket S3 session, and the defaulted call.
+    @Test func aPaneThatCanReceiveStillGetsOfferedTheTransfer() {
+        let localFile = RemoteFileItem(name: "a.txt", path: "/Users/me/a.txt", kind: .file, size: 1)
+
+        #expect(BrowserContextMenu.entries(
+            for: [localFile], side: .local, scope: .ordinary, destination: insideABucket)
+            .contains(.transferToOtherPane))
+        #expect(BrowserContextMenu.entries(
+            for: [localFile], side: .local, scope: .ordinary, destination: .ordinary)
+            .contains(.transferToOtherPane))
+        #expect(BrowserContextMenu.entries(for: [localFile], side: .local)
+            .contains(.transferToOtherPane))
+    }
+
+    /// Cross-session targets survive a destination that cannot receive:
+    /// another TAB's remote pane is a different destination, and
+    /// `CrossSessionTargets.targets` is what excludes the ones that are
+    /// themselves at a bucket list. The AppKit menu builder relies on the
+    /// ORDER here — targets follow `.transferToOtherPane` when it is
+    /// present, and stand alone when it is not — so the contract is pinned
+    /// rather than left to be read.
+    @Test func crossSessionTargetsSurviveARefusingOtherPaneAndKeepTheirOrder() {
+        let localFile = RemoteFileItem(name: "a.txt", path: "/Users/me/a.txt", kind: .file, size: 1)
+        let target = CrossSessionTarget(
+            id: UUID(), title: "other", remotePath: "/var", kind: .ssh)
+
+        let refused = BrowserContextMenu.entries(
+            for: [localFile], side: .local, crossSessionTargets: [target],
+            scope: .ordinary, destination: listRoot)
+        #expect(refused.first == .transferToSession(target))
+
+        let accepted = BrowserContextMenu.entries(
+            for: [localFile], side: .local, crossSessionTargets: [target],
+            scope: .ordinary, destination: .ordinary)
+        #expect(Array(accepted.prefix(2)) == [.transferToOtherPane, .transferToSession(target)])
+    }
+
     /// A selection can only ever be rows of ONE listing, so "some rows are
     /// buckets" is not a shape the browser produces — but the gate reads
     /// the ROWS, not the pane, so a caller that mixes them is still held to

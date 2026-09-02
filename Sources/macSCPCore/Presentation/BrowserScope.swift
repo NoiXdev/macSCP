@@ -41,22 +41,44 @@ public struct BrowserScope: Equatable, Sendable {
     /// This listing IS the container list: its rows are buckets, and there
     /// is nothing here to create, upload into or drop onto.
     ///
-    /// The pane-level half of the question, for the two callers that have no
-    /// row to point at — the background context menu and the drop target.
+    /// The pane-level half of the question, for the callers that have no row
+    /// to point at — the background context menu, and `acceptsIncomingFiles`
+    /// below.
     public var isContainerListRoot: Bool {
         rootIsContainerList && RemotePath.normalizedAbsolute(currentPath) == "/"
     }
 
-    /// Whether this pane may accept local files dropped onto it at all.
+    /// **The DESTINATION-side question: may files move INTO this pane, at
+    /// the directory it is showing?**
     ///
-    /// The drop target's own question, and the third caller of the same
-    /// rule. A folder dropped on the bucket list makes `TransferEngine` call
-    /// `createDirectory("/<name>")`, which `S3FileSystem` refuses — the
-    /// queue then shows a written sentence (that arm exists since
-    /// `539dc59`), but a refusal after the fact is not the same as not
-    /// offering: "only show what is possible" means the drop is declined
-    /// and never highlighted, so no transfer is ever queued.
-    public var acceptsDroppedFiles: Bool { !isContainerListRoot }
+    /// The bucket list is not a directory anything can be put in. Enqueuing
+    /// into it makes `TransferEngine` call `createDirectory("/<name>")` or
+    /// `write("/<name>")`, which `S3FileSystem` refuses
+    /// (`RemoteFSError.bucketLevelRefused`, since `539dc59`) and the queue
+    /// explains — correct, and still not what the design asks: a refusal
+    /// after the fact is not the same as not offering.
+    ///
+    /// **Every way a transfer can be aimed at a pane asks THIS function.**
+    /// Three places READ it — counted in the tree in the pass that writes
+    /// this, and they are reads, not mentions: a grep for the name also
+    /// finds this declaration and the comments that point here, which is a
+    /// larger number and the reason this sentence quotes no command.
+    ///
+    /// 1. `BrowserContextMenu.entries(…, destination:)` — which gates
+    ///    `.transferToOtherPane`, and through it the toolbar's Upload and
+    ///    Download buttons and the Space key, since all three ask `entries`
+    ///    rather than re-deciding.
+    /// 2. `BrowserPane.acceptsDrop` — the Finder drop, at both of its doors
+    ///    (the `.onDrop` guard and the highlight).
+    /// 3. `CrossSessionTargets.targets(excluding:in:)` — another tab is not
+    ///    offered as a destination while its remote pane sits at a bucket
+    ///    list.
+    ///
+    /// It was `acceptsDroppedFiles` and asked by the drop alone. Review
+    /// C-1 found the other three doors ungated: a selected bucket row
+    /// enabled the toolbar's Download and one click enqueued a whole-bucket
+    /// tree. The rename is deliberate — the question was never about drops.
+    public var acceptsIncomingFiles: Bool { !isContainerListRoot }
 
     /// `path` names a container itself: the root lists containers, and this
     /// is one path component below it.
