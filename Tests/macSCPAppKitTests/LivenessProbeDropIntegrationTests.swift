@@ -129,8 +129,9 @@ private let repoRoot: URL = URL(fileURLWithPath: #filePath)
 
 /// Connects to an SSH server on `port` with the rig's own credentials,
 /// pinning its host key in a throwaway directory. Same retry cushion as
-/// `CitadelFileSystemIntegrationTests.connectWithRetry`, for the same
-/// reason: the container throttles repeated connects.
+/// the shared `connectWithRetry` in the Core tests'
+/// `Support/IntegrationConnect.swift` (a different test target, hence a
+/// copy), for the same reason: the container throttles repeated connects.
 private func connectToSSHServer(port: Int) async throws -> CitadelFileSystem {
     let config = try SSHConnectionConfig(
         host: "127.0.0.1", port: port, username: "testuser",
