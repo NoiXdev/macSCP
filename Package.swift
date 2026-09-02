@@ -22,8 +22,13 @@ let package = Package(
         // bump here. 0.3.8 = Wellz26 0.3.6 + Apple 0.14.1 ECDSA mpint
         // validation + preamble handling + three Apple correctness fixes
         // the fork lacked (window update after local close, ByteBuffer
-        // resize, sealed-box construction).
-        .package(url: "https://github.com/NoiXdev/swift-nio-ssh.git", exact: "0.3.8"),
+        // resize, sealed-box construction). 0.3.9 adds
+        // `NIOSSHPublicKeyProtocol.hostKeyAlgorithmNames`, which separates a
+        // custom host key's negotiated ALGORITHM NAME from the identifier its
+        // wire blob carries — the split RFC 8332 requires, and what lets
+        // `RSASHA2HostKey` be offered as `rsa-sha2-512` while its blob stays
+        // `ssh-rsa` (see .superpowers/sdd/2026-09-02-rsa-host-key-fork-change).
+        .package(url: "https://github.com/NoiXdev/swift-nio-ssh.git", exact: "0.3.9"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "d5ee56e1c74777120f3af688600d336de4201bd2"),
@@ -41,6 +46,10 @@ let package = Package(
                 // (AgentBackedPrivateKey); naming the product here is what
                 // makes the root-level swift-nio-ssh dependency "used".
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
+                // RSA host-key verification (`RSASHA2HostKey`): PKCS#1 v1.5
+                // over SHA-512 lives in `_RSA.Signing`, which `Crypto` does
+                // not vend.
+                .product(name: "_CryptoExtras", package: "swift-crypto"),
             ],
             resources: [
                 .process("Resources/en.lproj"),
@@ -82,6 +91,11 @@ let package = Package(
             dependencies: [
                 "macSCPCore",
                 .product(name: "Crypto", package: "swift-crypto"),
+                // `RSASHA2HostKeyTests` parses a host-key blob into
+                // `ByteBuffer` and hands the result to NIOSSH's key/signature
+                // protocols directly.
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOSSH", package: "swift-nio-ssh"),
             ],
             // `LegacyStoreCompatibilityTests` copies these into a temporary
             // directory and loads them through the real stores, addressing
