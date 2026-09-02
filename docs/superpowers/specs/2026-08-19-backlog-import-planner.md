@@ -70,9 +70,10 @@ judge for the empty-`.ssh`-bag-without-jump shape: `isUnusable` declines
 to judge an entry for which no config block would be built at all
 (`hasStoredConfiguration`), and the comments in the planner say so.
 
-**Tests** (9 new in `SessionImportPlannerTests`, one extended): the half
+**Tests** (10 new in `SessionImportPlannerTests`, one extended): the half
 bag, the jump-only twin, the port-less bag that still imports, a bag with
-a blank port that still imports, an S3 bag without a bucket, an S3 bag
+a blank port that still imports, one with a whitespace-only port likewise
+(the overlay trims as `firstViolation` trims), an S3 bag without a bucket, an S3 bag
 with a blank region that imports with the region kept empty, a WebDAV bag
 without a base URL, a mixed file that rejects the unusable entries and
 imports the rest, and the property that a rejected entry's password
