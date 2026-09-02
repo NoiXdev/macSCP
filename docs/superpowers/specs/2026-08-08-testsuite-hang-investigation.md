@@ -266,3 +266,14 @@ triggered no workflow run (PRs 4, 5 and the sampler's second push), while
 PR creation and pushes to `develop` did — so the verification ran on
 `develop` itself, with the fix pushed alone ahead of unreviewed work.
 
+**Follow-up named 2026-09-02 (night):** three ungated CLI suites run the
+built binary and wait with `Process.waitUntilExit()` /
+`DispatchGroup.wait` inside a synchronous `@Test`
+(`CLISessionsJSONRoundtripTests`, `CLISessionNameCompletionTests`,
+`CLIRootHelpTests`) — the same pool-blocking shape, parked one thread
+each while a subprocess runs. Not yet a hang (the waits are short and the
+runner has more threads than such tests), but exactly the shape the rule
+above forbids; the fix is an async runner (`terminationHandler` bridged
+through a continuation) shared by the three. Recorded by the review of
+`d3e25bd`, which copied the sibling's pattern faithfully.
+
