@@ -223,7 +223,7 @@ struct RSASHA2Signature: NIOSSHSignatureProtocol, Sendable {
 ///    `SSHClient.connect` takes Citadel's default `SSHAlgorithms()`;
 ///  - the jump target (stage 2) is dialed as
 ///    `jumpClient.jump(to: settings)` (`CitadelFileSystem.swift:419`), and
-///    `SSHClientSettings.algorithms` (`ClientSession.swift:105`) is a second
+///    `SSHClientSettings.algorithms` (`ClientSession.swift:106`) is a second
 ///    entry point for the same argument, also defaulted to
 ///    `SSHAlgorithms()`. That path needs no registration of its own: it runs
 ///    inside a process where stage 1 already went through the funnel.
