@@ -76,7 +76,7 @@ struct LivenessProbeWiringGuardTests {
 
     private enum ScanError: Error { case anchorNotFound, openBraceNotFound, unbalancedBraces }
 
-    // MARK: - The three guarded claims, run against the real file
+    // MARK: - The five guarded claims, run against the real file
 
     @Test func theLoopReadsTheIntervalInsideItself() throws {
         let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
@@ -167,7 +167,7 @@ struct LivenessProbeWiringGuardTests {
 
     /// Fail-closed check, same reasoning as
     /// `ConnectTimeoutAppWiringGuardTests.theAnchorAppearsExactlyOnceInTheRealFile`:
-    /// if the anchor ever stops being unique, the three claims this suite
+    /// if the anchor ever stops being unique, the five claims this suite
     /// makes could be scanning the wrong loop silently.
     @Test func theAnchorAppearsExactlyOnceInTheRealFile() throws {
         let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
@@ -258,6 +258,29 @@ struct LivenessProbeWiringGuardTests {
         let enabledRange = try #require(body.range(of: "guard settingsStore.keepAliveEnabled else"))
         let intervalRange = try #require(body.range(of: "settingsStore.keepAliveIntervalSeconds"))
         #expect(!(enabledRange.lowerBound < intervalRange.lowerBound))
+    }
+
+    /// A raw-text scan cannot tell a real guard from a comment quoting it —
+    /// this fixture has the real `guard settingsStore.keepAliveEnabled else`
+    /// removed entirely and only a comment spelling that same text out.
+    /// `loopBody` has to strip `//` line comments from the body before the
+    /// claims run, or this fixture would read as if the guard were present.
+    @Test func scannerFlagsAGuardWrittenOnlyAsAComment() throws {
+        let source = """
+            // Liveness probe (Task 4)
+            while !Task.isCancelled {
+                // The real guard used to read:
+                // guard settingsStore.keepAliveEnabled else { continue }
+                let interval = settingsStore.keepAliveIntervalSeconds
+                try? await Task.sleep(for: .seconds(interval))
+            }
+            """
+        let body = try Self.loopBody(after: Self.anchor, in: source)
+        #expect(!body.contains("guard settingsStore.keepAliveEnabled else"), """
+            a comment quoting the real guard's text satisfied this check with \
+            the real guard removed — `loopBody` must strip line comments \
+            before the claims run.
+            """)
     }
 
     @Test func scannerFlagsAnInlineDecisionRewrite() throws {
@@ -411,7 +434,8 @@ struct LivenessProbeWiringGuardTests {
 
     /// The probe loop's body text: everything between the `while` block's
     /// own opening `{` (the first one found after `anchor`) and its
-    /// balanced-brace close. Throws rather than returning `nil` so a
+    /// balanced-brace close, with `//` line comments stripped (see
+    /// `stripLineComments(from:)`). Throws rather than returning `nil` so a
     /// missing anchor or an unbalanced file fails the calling test loudly,
     /// not as a silently-empty string that would make every `contains`
     /// check in the calling tests trivially false.
@@ -430,12 +454,33 @@ struct LivenessProbeWiringGuardTests {
                 depth -= 1
                 if depth == 0 {
                     let bodyStart = afterAnchor.index(after: openBraceIndex)
-                    return String(afterAnchor[bodyStart..<index])
+                    return stripLineComments(from: String(afterAnchor[bodyStart..<index]))
                 }
             }
             index = afterAnchor.index(after: index)
         }
         throw ScanError.unbalancedBraces
+    }
+
+    /// Drops everything from the first `//` on each line to that line's end.
+    ///
+    /// Every claim below is a `contains`/`range(of:)` scan of raw text, so a
+    /// comment that quotes the very code a claim looks for — e.g. `// guard
+    /// settingsStore.keepAliveEnabled else { continue }` describing a guard
+    /// that was actually deleted — would satisfy the scan exactly as if the
+    /// real guard were still there. Stripping comments before the claims run
+    /// closes that: only executable text remains for them to match against.
+    /// No string-literal awareness, deliberately — this is a heuristic
+    /// source scan, not a parser, and none of the loop's own source (real
+    /// file or fixtures) puts `//` inside a string literal that a claim
+    /// needs to see.
+    private static func stripLineComments(from text: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> Substring in
+                guard let commentRange = line.range(of: "//") else { return line }
+                return line[line.startIndex..<commentRange.lowerBound]
+            }
+            .joined(separator: "\n")
     }
 
     /// The text of one `case <marker>:` arm, from just after its colon up to
