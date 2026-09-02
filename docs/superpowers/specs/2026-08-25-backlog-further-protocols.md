@@ -67,3 +67,11 @@ If one goes first: **SMB**, because the integration already exists and
 the descriptor already prescribes most of it. FTP first needs the
 decision on library and variant, and that isn't an implementation
 question.
+
+## Decided 2026-09-02 — both halves deferred
+
+The maintainer's decision: **no fourth backend now.** The entry stays
+with its measured costs (FTP needs an own implementation over NIO since
+Apple dropped FTP from the URL loading system; SMB/AFP is integration
+with no TOFU counterpart) so the next person starts from the numbers,
+not from the wish.

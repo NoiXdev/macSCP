@@ -96,3 +96,15 @@ Do not build this as one change. Points 1 and 2 are the same thing at two
 sizes (one file, several files) and **on request** — that is a
 manageable, honest change. Point 3 is its own, and it should only be
 taken up once question 3 above is answered.
+
+## Decided 2026-09-02 — question 3
+
+The maintainer's answer to "what does the column show while nothing has
+been computed": **empty, and computing is an action.** Nothing is
+computed for a whole listing automatically; the user asks for a file's
+checksum (context menu / selection, the same `ChecksumCommandLine` path
+as today) and the column fills for that file. A value that came from the
+listing (an ETag) appears in the column only when it is provably the
+file's hash — the multipart case stays "not the checksum". Question 4
+stands as written (SHA-256 default; MD5/SHA-1 offered only with the
+warning at the setting). Item 3 is plannable now.

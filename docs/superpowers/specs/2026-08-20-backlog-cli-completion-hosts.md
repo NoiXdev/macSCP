@@ -96,3 +96,13 @@ Specifically missing:
 **1 → 3 → 2.** The listing is the data source for completion and at the
 same time what the help wants to point to. Completion comes last because
 it is the only one that raises a shipping question.
+
+## Decided 2026-09-02 — item 2
+
+The maintainer chose **static completion scripts plus dynamic session
+names**: `swift-argument-parser`'s generated zsh/bash/fish scripts for
+subcommands and flags, and `@Argument(completion: .custom { … })` for
+session names read from the store through `SessionCatalog` — no secret,
+no keychain, no connection touched (the same forbidden-symbol guard the
+`sessions` subcommand carries). Item 3 (the `discussion` for
+`name:/path` on the root command) rides along. Plannable now.

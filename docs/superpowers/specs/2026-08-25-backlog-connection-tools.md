@@ -61,3 +61,29 @@ narrowly scoped: check whether someone answers there — not log in, not
 save anything, not pin anything. In particular, an attempt from this
 field must **not write any trust decision**; exactly this mix-up was the
 most serious finding of this branch.
+
+## Decided 2026-09-02 — what ping and trace mean here, and where they live
+
+The maintainer's answers to the three questions above:
+
+- **Ping: both.** A TCP connection attempt to the target port with timing
+  (no privileges, answers "is anyone accepting connections there?") AND
+  an ICMP echo. The ICMP half needs a measurement before a design: macOS
+  allows an unprivileged ICMP datagram socket
+  (`socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP)`) for echo requests, but
+  the sandbox/entitlement situation for the App Store build and IPv6
+  (`IPPROTO_ICMPV6`) must be measured, not assumed — a spike task.
+- **Trace: both.** A log of macSCP's own connection setup (name resolved,
+  TCP up, handshake, authentication, channel open, with timings — fully
+  within its own control) AND a network trace. The network half is again
+  a privilege question: receiving ICMP time-exceeded for UDP/TCP probes
+  ordinarily needs a raw socket; whether the unprivileged ICMP socket
+  delivers those on macOS is the same spike.
+- **Where: in the tab, in the context menu, and from the error dialog.**
+  Three entry points onto one tool surface, so the design must make the
+  surface a value the three call, not three implementations.
+
+Order: the own-setup log and the TCP ping first (no privilege question,
+answers the maintainer's "what is it hanging on?"), then the ICMP/route
+halves behind the spike's verdict. Needs brainstorming → design →
+plan; not yet planned.
