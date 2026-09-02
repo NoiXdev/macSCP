@@ -92,6 +92,13 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// back through the existing reload/reconcile path in `updateNSView`,
     /// never sorted by AppKit itself.
     var onSortChange: ((FileSortKey, Bool) -> Void)? = nil
+    /// What this pane is looking at, for the bucket-list action gate
+    /// (2026-09-02) — forwarded verbatim to `BrowserContextMenu.entries`
+    /// and `BrowserKeyCommand.resolve`, which are the one predicate the menu
+    /// and the keyboard already shared. `.ordinary` (the default, and what
+    /// every pane but an S3 bucket-list one is) yields exactly the menu and
+    /// the key handling this view had before.
+    var scope: BrowserScope = .ordinary
 
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect, side: side)
@@ -105,6 +112,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.fileActions = fileActions
         coordinator.supportsChecksum = supportsChecksum
         coordinator.onSortChange = onSortChange
+        coordinator.scope = scope
         return coordinator
     }
 
@@ -229,6 +237,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.fileActions = fileActions
         context.coordinator.supportsChecksum = supportsChecksum
         context.coordinator.onSortChange = onSortChange
+        context.coordinator.scope = scope
         guard let table = nsView.documentView as? NSTableView else { return }
         // Column rebuild (M11m/T2): diffed against the last SET the
         // COORDINATOR itself recorded (`lastVisibleColumns`) — the same
@@ -443,6 +452,11 @@ struct RemoteFileTableView: NSViewRepresentable {
         var fileActions: (() -> [FileActionContribution])?
         var supportsChecksum = false
         var onSortChange: ((FileSortKey, Bool) -> Void)?
+        /// Refreshed on every `updateNSView`, like `supportsChecksum` and
+        /// `crossSessionTargets` above, so a navigation into (or out of) the
+        /// bucket list is reflected in the next menu the user opens and in
+        /// the next key they press.
+        var scope: BrowserScope = .ordinary
         let side: BrowserPaneSide
         weak var table: NSTableView?
         var suppressSelectionCallback = false
@@ -658,7 +672,8 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// `NSTableView` subclass knows whether to swallow the event or fall
         /// through to `super` (native type-select / focus handling).
         func dispatch(key: BrowserKey, selection: [RemoteFileItem]) -> Bool {
-            guard let action = BrowserKeyCommand.resolve(key: key, selection: selection, side: side)
+            guard let action = BrowserKeyCommand.resolve(
+                key: key, selection: selection, side: side, scope: scope)
             else {
                 return false
             }
@@ -777,7 +792,7 @@ struct RemoteFileTableView: NSViewRepresentable {
             let entries = BrowserContextMenu.entries(
                 for: selection, side: side, crossSessionTargets: crossSessionTargets?() ?? [],
                 fileActions: fileActions?() ?? [],
-                supportsChecksum: supportsChecksum)
+                supportsChecksum: supportsChecksum, scope: scope)
             // `.transferToOtherPane` is immediately followed (per the Core
             // model, `BrowserContextMenu.entries`) by zero or more
             // `.transferToSession` entries — those join the SAME "Transfer"

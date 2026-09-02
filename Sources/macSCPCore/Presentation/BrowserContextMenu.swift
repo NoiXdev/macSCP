@@ -54,13 +54,42 @@ public enum BrowserContextMenu {
     ///
     /// Defaulted to `false`, so a call site that predates checksums keeps
     /// exactly the menu it had.
+    ///
+    /// `scope` is the bucket-list gate (2026-09-02). It is a parameter of
+    /// THIS function and of nothing else, because this function is already
+    /// the ONE predicate both the context menu and the keyboard resolver
+    /// consult — see `BrowserKeyCommand`, whose whole doc comment is about
+    /// why those two must never drift. Defaulted to `.ordinary`, which is
+    /// what every SSH, WebDAV and single-bucket S3 pane is.
     public static func entries(
         for selection: [RemoteFileItem], side: BrowserPaneSide,
         crossSessionTargets: [CrossSessionTarget] = [],
         fileActions: [FileActionContribution] = [],
-        supportsChecksum: Bool = false
+        supportsChecksum: Bool = false,
+        scope: BrowserScope = .ordinary
     ) -> [BrowserMenuEntry] {
-        guard !selection.isEmpty else { return [.newFolder, .newFile] }
+        // A bucket is a container, not a folder. The design offers exactly
+        // one action on a bucket row — OPEN it — and open is not an entry
+        // here: it is the double-click and Cmd-O, which take a row and never
+        // ask this model. Refresh is a pane button, likewise not a row
+        // action. What is left that a bucket can actually answer is
+        // `copyPath`, a clipboard write; everything else would mutate the
+        // bucket, move bytes in or out of it, or ask it a question it has no
+        // answer to — and `S3FileSystem` refuses those anyway
+        // (`RemoteFSError.bucketLevelRefused`). An entry whose only possible
+        // outcome is that refusal is not an offer.
+        //
+        // Read per ROW, not per pane, so a selection that somehow mixes
+        // levels is held to the rule rather than escaping it.
+        if selection.contains(where: { scope.isContainerRow(path: $0.path) }) {
+            return [.copyPath]
+        }
+        // The background click at the bucket list: "New Folder" there means
+        // a new BUCKET, which macSCP does not create, and `createDirectory`
+        // at that level is refused. Same reasoning, one level up.
+        guard !selection.isEmpty else {
+            return scope.isContainerListRoot ? [] : [.newFolder, .newFile]
+        }
         var entries: [BrowserMenuEntry] = []
         if selection.contains(where: { $0.kind != .symlink }) {
             entries.append(.transferToOtherPane)

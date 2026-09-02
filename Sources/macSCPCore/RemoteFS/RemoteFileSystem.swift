@@ -66,6 +66,18 @@ public protocol RemoteFileSystem: Sendable {
     /// destinations that return `false`, so a size-mismatched existing object
     /// is never corrupted by an append tail (M13).
     var supportsAppendResume: Bool { get }
+    /// Whether this connection's ROOT lists containers rather than files —
+    /// `true` only for an S3 session started at the bucket list
+    /// (2026-09-02). The browser turns it into a `BrowserScope`, which is
+    /// what every action gate reads.
+    ///
+    /// A property of the CONNECTION, not of the protocol: two S3 sessions to
+    /// the same endpoint disagree about it, which is exactly why it is here
+    /// and not on `ProtocolCapabilities`. And the smallest thing that could
+    /// be exposed — a `Bool`, not the config — because the browser needs to
+    /// know that `/` holds containers and nothing else about how they are
+    /// addressed.
+    var rootIsContainerList: Bool { get }
 }
 
 extension RemoteFileSystem {
@@ -85,4 +97,12 @@ extension RemoteFileSystem {
     /// (including test doubles) compiles unchanged; only backends that
     /// cannot append (e.g. `S3FileSystem`) override to `false` (M13).
     public var supportsAppendResume: Bool { true }
+
+    /// Default: an ordinary file system whose root holds files and folders.
+    /// True of the local file system, of SSH, of WebDAV, and of an S3
+    /// session pointed at one bucket — everything but `S3FileSystem` in
+    /// bucket-list mode, which is the sole overrider. Kept defaulted for the
+    /// same reason as `supportsAppendResume`: every conformer, test doubles
+    /// included, compiles unchanged.
+    public var rootIsContainerList: Bool { false }
 }

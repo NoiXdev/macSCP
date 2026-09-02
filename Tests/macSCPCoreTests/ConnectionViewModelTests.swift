@@ -380,6 +380,59 @@ struct ConnectionViewModelTests {
         #expect(vm.password == "aus-dem-schluesselbund")
     }
 
+    /// The bucket-list toggle is a COMMAND too, for the same reason the auth
+    /// picker is one (2026-09-02, Task 4).
+    ///
+    /// Task 3 shipped the toggle with the value bag untouched: the typed
+    /// bucket survived a flip, and only SAVING discarded it
+    /// (`S3FieldSchema.bucketToCarry`). That is a loss the user cannot see
+    /// happen — the bucket row is HIDDEN while the toggle is on, so "flip on
+    /// and back off keeps what you typed" is invisible either way, while
+    /// "type a bucket, turn the toggle on, save, turn it off, the field is
+    /// empty" happens minutes later with no explanation. Clearing at the
+    /// moment of the flip makes the loss visible where it is caused.
+    @Test func turningTheBucketListToggleOnClearsTheBucketAtOnce() {
+        let vm = makeVM()
+        vm.s3Bucket = "photos"
+
+        vm.selectBucketListMode(true)
+
+        #expect(vm.s3StartsAtBucketList)
+        #expect(vm.s3Bucket.isEmpty)
+    }
+
+    /// Turning it OFF is not a command that discards anything — there is
+    /// nothing to discard, and the field the user is about to type into
+    /// must not be touched. The positive check beside the clearing above.
+    @Test func turningTheBucketListToggleOffTouchesNothingElse() {
+        let vm = makeVM()
+        vm.s3Bucket = "photos"
+        vm.s3Endpoint = "https://minio.local"
+
+        vm.selectBucketListMode(false)
+
+        #expect(vm.s3StartsAtBucketList == false)
+        #expect(vm.s3Bucket == "photos")
+        #expect(vm.s3Endpoint == "https://minio.local")
+    }
+
+    /// A write that changes nothing changes nothing — same guard shape as
+    /// `selectAuthChoice`, and the reason it matters here is the same: the
+    /// form re-sends the current value on any re-render, and a command that
+    /// acted on that would wipe a field nobody touched.
+    @Test func rewritingTheSameBucketListValueIsNotACommand() {
+        let vm = makeVM()
+        vm.s3Bucket = "photos"
+
+        vm.selectBucketListMode(false)
+        #expect(vm.s3Bucket == "photos")
+
+        vm.selectBucketListMode(true)
+        vm.s3Bucket = "typed-while-hidden"
+        vm.selectBucketListMode(true)
+        #expect(vm.s3Bucket == "typed-while-hidden")
+    }
+
     /// Review finding (M11d fix round 1): the disconnect-time scrub must
     /// forget `lastConnectedConfig` too, not just the form's own password --
     /// otherwise it survives in `SessionTab.connectionViewModel` across every

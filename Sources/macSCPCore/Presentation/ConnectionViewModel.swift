@@ -1177,6 +1177,30 @@ public final class ConnectionViewModel {
         clearPassword()
     }
 
+    /// User-initiated flip of S3's "Start at the bucket list" toggle
+    /// (2026-09-02, Task 4) — a COMMAND, not a value change, for the same
+    /// reason `selectAuthChoice` above is one: turning it ON discards the
+    /// bucket the user typed, because a bucket-list session carries no
+    /// bucket out of the form (`S3FieldSchema.bucketToCarry`) and the field
+    /// is hidden from that moment on.
+    ///
+    /// Without this the loss still happened — on SAVE, silently, minutes
+    /// later, to a field the user could no longer see. Doing it at the flip
+    /// puts the loss where its cause is.
+    ///
+    /// Turning it OFF clears nothing: the bucket is already empty, and the
+    /// row the user is about to type into must not be touched. Called from
+    /// `ConnectionFormView.interceptEdit`, which runs BEFORE the write, so
+    /// the guard below still sees the old value — which is what makes a
+    /// re-render's identical write a no-op rather than a wipe.
+    public func selectBucketListMode(_ startsAtBucketList: Bool) {
+        guard startsAtBucketList != values[bool: S3Field.startsAtBucketList] else { return }
+        values[bool: S3Field.startsAtBucketList] = startsAtBucketList
+        if startsAtBucketList {
+            values[S3Field.bucket] = ""
+        }
+    }
+
     /// User-initiated mode switch (picker) for the JUMP's own auth choice
     /// (final review M-2): mirrors `selectAuthChoice` above -- clears
     /// `jumpPassword` so it doesn't carry over into the other mode instead

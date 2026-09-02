@@ -208,6 +208,13 @@ struct ConnectionFormView: View {
     private static let authKindKey =
         "\(SSHField.namespace).\(SSHField.authKind.rawValue)"
 
+    /// The stored key of S3's bucket-list toggle, intercepted below.
+    /// Derived from the field enum, like `authKindKey` — a second spelling
+    /// of a field id is exactly what this project's rules about second
+    /// copies are about.
+    private static let s3BucketListKey =
+        "\(S3Field.namespace).\(S3Field.startsAtBucketList.rawValue)"
+
     /// Sends the auth-kind picker's write through `selectAuthChoice` instead
     /// of letting it land in `values` (M22/T8 fix round 1).
     ///
@@ -220,10 +227,24 @@ struct ConnectionFormView: View {
     /// bypassed it and left `selectAuthChoice` with no production caller at
     /// all.
     ///
+    /// TWO fields need it now (counted here, against the arms below): SSH's
+    /// auth kind, and S3's "Start at the bucket list" toggle. Turning that
+    /// toggle on discards the bucket the user typed — a value change cannot
+    /// express that, and a post-hoc `.onChange` fires when `values` already
+    /// holds the new value, so `selectBucketListMode`'s own "did this change?"
+    /// guard could no longer tell. Exactly the shape the auth picker needed.
+    ///
     /// Returns false for every other field, which is then written normally.
     /// A value that names no auth kind — the "—" row — is deliberately NOT
     /// treated as a switch; it is written raw, exactly as before.
     private func interceptEdit(_ key: String, _ newValue: String) -> Bool {
+        if key == Self.s3BucketListKey {
+            // The same "true"/"false" spelling `FieldValues`'s boolean
+            // subscript and `SchemaFormView.boolBinding` both write, so the
+            // command stores exactly what a plain write would have.
+            viewModel.selectBucketListMode(newValue == "true")
+            return true
+        }
         guard key == Self.authKindKey,
               let choice = ConnectionViewModel.AuthChoice(rawValue: newValue)
         else { return false }

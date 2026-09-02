@@ -519,6 +519,18 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// S3 has no append; a re-PUT replaces the whole object (M13).
     public var supportsAppendResume: Bool { false }
 
+    /// The one overrider in the tree (2026-09-02): with the toggle on, `/`
+    /// is the account's bucket list and its rows are buckets. With it off
+    /// this is a bucket's own root, which holds objects like any directory,
+    /// so the answer is the protocol's default.
+    ///
+    /// Derived from `mode`, not from `config.startsAtBucketList`, so it can
+    /// only ever agree with the resolver that decides what every path means.
+    public var rootIsContainerList: Bool {
+        if case .bucketList = mode { return true }
+        return false
+    }
+
     // MARK: - S3RequestBuilder conformance (thin wrappers for S3Uploader, M13/T5)
 
     /// `S3RequestBuilder.signedRequest`: a thin pass-through to

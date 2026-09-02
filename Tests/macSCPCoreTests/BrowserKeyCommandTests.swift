@@ -114,4 +114,63 @@ struct BrowserKeyCommandTests {
         #expect(BrowserKeyCommand.resolve(key: .escape, selection: [], side: .remote) == .clearSelection)
         #expect(BrowserKeyCommand.resolve(key: .escape, selection: [file("a")], side: .remote) == .clearSelection)
     }
+
+    // MARK: - A bucket row opens, nothing else (2026-09-02, Task 4)
+
+    private func bucket(_ name: String) -> RemoteFileItem {
+        RemoteFileItem(name: name, path: "/\(name)", kind: .directory)
+    }
+    private var listRoot: BrowserScope {
+        BrowserScope(rootIsContainerList: true, currentPath: "/")
+    }
+
+    /// This resolver's whole reason for existing is that the keyboard must
+    /// never be more permissive than the menu. The bucket gate lives in
+    /// `entries`, so threading the scope through is the entire change — and
+    /// this test is what proves it was threaded, in every direction the
+    /// keyboard can go.
+    @Test func theKeyboardIsNoMorePermissiveOnABucketRowThanTheMenu() {
+        let selection = [bucket("macscp-seed")]
+
+        #expect(BrowserKeyCommand.resolve(
+            key: .returnKey, selection: selection, side: .remote, scope: listRoot) == nil)
+        #expect(BrowserKeyCommand.resolve(
+            key: .commandDelete, selection: selection, side: .remote, scope: listRoot) == nil)
+        #expect(BrowserKeyCommand.resolve(
+            key: .commandI, selection: selection, side: .remote, scope: listRoot) == nil)
+        #expect(BrowserKeyCommand.resolve(
+            key: .space, selection: selection, side: .remote, scope: listRoot) == nil)
+    }
+
+    /// …and the one action the design DOES offer still resolves, from both
+    /// of its keys. Open takes a row and never asks the menu model, which
+    /// is exactly why it survives the gate — stated here so a later reader
+    /// does not "fix" the asymmetry.
+    @Test func aBucketRowStillOpensFromTheKeyboard() {
+        let only = bucket("macscp-seed")
+
+        #expect(BrowserKeyCommand.resolve(
+            key: .commandDown, selection: [only], side: .remote, scope: listRoot) == .open(only))
+        #expect(BrowserKeyCommand.resolve(
+            key: .commandO, selection: [only], side: .remote, scope: listRoot) == .open(only))
+        #expect(BrowserKeyCommand.resolve(
+            key: .commandUp, selection: [only], side: .remote, scope: listRoot) == .goUp)
+    }
+
+    /// The positive check beside them: the same keys on the same-shaped row
+    /// in an ordinary session are unchanged, and the defaulted call and the
+    /// explicit `.ordinary` one agree.
+    @Test func anOrdinarySessionsKeysAreUnchangedForTheSameShapedRow() {
+        let folder = RemoteFileItem(name: "var", path: "/var", kind: .directory)
+
+        #expect(BrowserKeyCommand.resolve(
+            key: .returnKey, selection: [folder], side: .remote, scope: .ordinary)
+            == .rename(folder))
+        #expect(BrowserKeyCommand.resolve(
+            key: .returnKey, selection: [folder], side: .remote)
+            == .rename(folder))
+        #expect(BrowserKeyCommand.resolve(
+            key: .commandDelete, selection: [folder], side: .remote, scope: .ordinary)
+            == .delete([folder]))
+    }
 }

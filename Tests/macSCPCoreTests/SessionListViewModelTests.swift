@@ -649,6 +649,73 @@ struct SessionListViewModelTests {
         #expect(noSecretsResult.missingPasswordCount == 0)
     }
 
+    /// Does a bucket-list session's export actually CARRY the toggle?
+    /// (Re-review 3, open item 2.)
+    ///
+    /// It was covered only indirectly: `s3ExportFields` gained the optional
+    /// parameter, and the two planner tests that set it built
+    /// `ExportedSession.fields` from that fixture directly — bypassing the
+    /// codec. So the fixture proved what the fixture writes, and nothing
+    /// proved what `exportPayload` + `SessionExportCodec.encode`/`decode`
+    /// write. This starts from a SAVED session and goes through both.
+    ///
+    /// The `bucket` half is asserted beside it: a list-mode session stores
+    /// no bucket (`S3FieldSchema.bucketToCarry`), so a file that carried one
+    /// would re-import a session claiming both.
+    @Test func aBucketListSessionExportsItsToggleThroughTheCodec() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        var values = BackendDescriptor.descriptor(for: .s3).defaultValues
+        values[S3Field.endpoint] = "https://minio.example.com"
+        values[S3Field.region] = "us-east-1"
+        values[S3Field.accessKeyID] = "AKIA"
+        // Typed BEFORE the toggle was flipped — the shape the save path is
+        // supposed to drop, and the one a fixture-built bag never has.
+        values[S3Field.bucket] = "photos"
+        values[bool: S3Field.startsAtBucketList] = true
+        _ = vm.save(name: "account", values: values, password: "sk", kind: .s3)
+
+        let payload = vm.exportPayload(
+            for: .all, includeGroups: false, includePasswords: false).payload
+        let decoded = try SessionExportCodec.decode(
+            SessionExportCodec.encode(payload, password: nil))
+
+        let exported = try #require(decoded.sessions.first)
+        let fields = FieldValues(raw: exported.fields)
+        #expect(fields[bool: S3Field.startsAtBucketList])
+        #expect(fields[S3Field.bucket].isEmpty)
+    }
+
+    /// The positive check beside it: a session pointed at ONE bucket
+    /// exports the toggle too — as `false`, with its bucket intact. Without
+    /// this, a codec that dropped the key entirely would still satisfy the
+    /// test above (an absent key reads as `false`... only when the toggle is
+    /// meant to be off).
+    @Test func aSingleBucketSessionExportsTheToggleOffAndItsBucket() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        var values = BackendDescriptor.descriptor(for: .s3).defaultValues
+        values[S3Field.endpoint] = "https://minio.example.com"
+        values[S3Field.region] = "us-east-1"
+        values[S3Field.accessKeyID] = "AKIA"
+        values[S3Field.bucket] = "photos"
+        _ = vm.save(name: "one-bucket", values: values, password: "sk", kind: .s3)
+
+        let payload = vm.exportPayload(
+            for: .all, includeGroups: false, includePasswords: false).payload
+        let decoded = try SessionExportCodec.decode(
+            SessionExportCodec.encode(payload, password: nil))
+
+        let exported = try #require(decoded.sessions.first)
+        // The KEY is present, not merely absent-and-therefore-false: that is
+        // the half the test above cannot see.
+        let key = "\(S3Field.namespace).\(S3Field.startsAtBucketList.rawValue)"
+        #expect(exported.fields[key] == "false")
+        #expect(FieldValues(raw: exported.fields)[S3Field.bucket] == "photos")
+    }
+
     /// The export carries the TREE, not just which folder a session sits in:
     /// a nested folder's parent and everyone's rank travel with it. The
     /// ancestor travels too, even though no session sits in it directly —

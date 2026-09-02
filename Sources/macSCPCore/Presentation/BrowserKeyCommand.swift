@@ -39,8 +39,15 @@ public enum BrowserKeyAction: Equatable, Sendable {
 /// present. That keeps the two call sites backed by one source of truth, so
 /// menu and keyboard can never drift apart as the eligibility rules evolve.
 public enum BrowserKeyCommand {
+    /// `scope` is forwarded verbatim to `entries` and read nowhere else
+    /// here (2026-09-02): the bucket-list gate is one of the eligibility
+    /// rules this resolver deliberately does not re-encode, exactly like
+    /// "single selection only" and "never a symlink". `.open` and `.goUp`
+    /// survive it because they never ask `entries` at all — which is the
+    /// design's "a bucket row opens, nothing else", not an oversight.
     public static func resolve(
-        key: BrowserKey, selection: [RemoteFileItem], side: BrowserPaneSide
+        key: BrowserKey, selection: [RemoteFileItem], side: BrowserPaneSide,
+        scope: BrowserScope = .ordinary
     ) -> BrowserKeyAction? {
         switch key {
         case .commandUp:
@@ -54,7 +61,7 @@ public enum BrowserKeyCommand {
             // if the menu ever allowed multi-rename, the keyboard would follow
             // automatically instead of being frozen by a hardcoded count guard.
             guard let only = selection.first else { return nil }
-            let entries = BrowserContextMenu.entries(for: selection, side: side)
+            let entries = BrowserContextMenu.entries(for: selection, side: side, scope: scope)
             guard entries.contains(.rename) else { return nil }
             return .rename(only)
         case .commandDown, .commandO:
@@ -62,7 +69,7 @@ public enum BrowserKeyCommand {
             return .open(only)
         case .commandDelete:
             guard !selection.isEmpty else { return nil }
-            let entries = BrowserContextMenu.entries(for: selection, side: side)
+            let entries = BrowserContextMenu.entries(for: selection, side: side, scope: scope)
             guard entries.contains(.delete) else { return nil }
             return .delete(selection)
         case .commandI:
@@ -70,12 +77,12 @@ public enum BrowserKeyCommand {
             // and the never-for-symlink rule, so it is the whole check — no
             // hardcoded cardinality guard to drift out of sync with the menu.
             guard let only = selection.first else { return nil }
-            let entries = BrowserContextMenu.entries(for: selection, side: side)
+            let entries = BrowserContextMenu.entries(for: selection, side: side, scope: scope)
             guard entries.contains(.infoAndPermissions) else { return nil }
             return .info(only)
         case .space:
             guard !selection.isEmpty else { return nil }
-            let entries = BrowserContextMenu.entries(for: selection, side: side)
+            let entries = BrowserContextMenu.entries(for: selection, side: side, scope: scope)
             guard entries.contains(.transferToOtherPane) else { return nil }
             return .transfer(selection)
         }

@@ -53,6 +53,27 @@ struct BrowserPane: View {
     /// that says why — never into a disabled control.
     var supportsChecksum: Bool = false
 
+    /// What this pane is looking at, for every "is this action possible
+    /// here" question (2026-09-02). Computed rather than injected: both
+    /// halves are already in hand — the connection's own answer, and the
+    /// directory the pane is showing — and a computed value cannot go stale
+    /// against a navigation the way a parameter threaded from `ContentView`
+    /// would. The local pane's `LocalFileSystem` takes the protocol default
+    /// (`false`), so its menus are byte-identical to what they were.
+    private var scope: BrowserScope {
+        BrowserScope(
+            rootIsContainerList: fileSystem.rootIsContainerList,
+            currentPath: viewModel.currentPath)
+    }
+
+    /// Whether a local-file drop may land here at all: the pane has a drop
+    /// handler AND this listing is not the bucket list. See
+    /// `BrowserScope.acceptsDroppedFiles` for why the refusal Core already
+    /// makes is not enough on its own.
+    private var acceptsDroppedFiles: Bool {
+        onDropURLs != nil && scope.acceptsDroppedFiles
+    }
+
     @State private var isDropTargeted = false
     /// Whether this pane's search bar is showing (M11k/T2) — per-PANE, not
     /// shared: each `BrowserPane` instance owns its own `RemoteBrowserViewModel`
@@ -166,12 +187,14 @@ struct BrowserPane: View {
                     onOpen: { item in Task { await viewModel.open(item) } },
                     onSelect: { viewModel.selectedItems = $0 },
                     onOpenFile: onOpenFile,
-                    // No capability gate needed here either (M12/T7b): the
-                    // symlink marker/double-click is governed by
-                    // `ProtocolCapabilities.supportsSymlinks`, but `item.kind`
-                    // can never be `.symlink` for an S3 session today — same
-                    // "nothing loads" reason as `.infoAndPermissions` above
-                    // (`S3FileSystem` listing throws, deferred to M13).
+                    // No capability gate needed here either: the symlink
+                    // marker/double-click is governed by
+                    // `ProtocolCapabilities.supportsSymlinks`, and `item.kind`
+                    // can never be `.symlink` for an S3 session — a
+                    // `ListObjectsV2` response has no such shape to report,
+                    // so nothing constructs one. Unlike the note below, this
+                    // reason did NOT expire with M13; it is a property of the
+                    // listing, not of what was implemented yet.
                     onOpenSymlink: { item in
                         Task {
                             // Navigates DIRECTLY (M11h/T1 review fix),
@@ -194,17 +217,25 @@ struct BrowserPane: View {
                     onMenuAction: { entry, selection in
                         switch entry {
                         case .rename: renameTarget = selection.first
-                        // No capability gate needed here (M12/T7b): the
-                        // permissions editor is governed by
-                        // `ProtocolCapabilities.permissionModel`, but an S3
-                        // session can never populate `selection` in the
-                        // first place today — `S3FileSystem`'s listing/read/
-                        // write/delete/rename all throw `.protocolError`
-                        // ("not supported yet (M13)"), so the remote pane
-                        // never loads any items to select for `.s3`. Gating
-                        // this menu entry now would be dead code; M13 (real
-                        // S3 listing) is where `permissionModel == .none`
-                        // actually needs to suppress it.
+                        // This comment used to say no capability gate was
+                        // needed because an S3 session could never populate
+                        // `selection` at all — every `S3FileSystem` operation
+                        // threw "not supported yet (M13)". M13 shipped, so
+                        // that premise expired, and the note it left behind
+                        // read as a decision rather than as a wait. Corrected
+                        // 2026-09-02, in the pass that added the bucket-row
+                        // gate below it.
+                        //
+                        // What is true now, measured: `permissionModel` is
+                        // read by no UI in the tree (`grep -rn permissionModel
+                        // Sources/` — the only hits are the descriptors that
+                        // declare it and this comment), so an S3 or WebDAV
+                        // file DOES offer "Info & Permissions", whose apply
+                        // then throws. A real gap, older and wider than this
+                        // task — it is about a file inside a bucket, not
+                        // about a bucket row — and deliberately left for the
+                        // task that gates on the capability rather than
+                        // widened into this one.
                         case .infoAndPermissions: infoTarget = selection.first
                         case .newFolder: showNewFolderSheet = true
                         case .newFile: showNewFileSheet = true
@@ -230,7 +261,8 @@ struct BrowserPane: View {
                     onSortChange: { key, ascending in
                         viewModel.sortKey = key
                         viewModel.sortAscending = ascending
-                    }
+                    },
+                    scope: scope
                 )
                 .allowsHitTesting(viewModel.state == .loaded)
 
@@ -252,11 +284,11 @@ struct BrowserPane: View {
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(tint, lineWidth: isDropTargeted && onDropURLs != nil ? 2.5 : 0)
+                    .strokeBorder(tint, lineWidth: isDropTargeted && acceptsDroppedFiles ? 2.5 : 0)
                     .padding(2)
             )
             .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
-                guard let onDropURLs else { return false }
+                guard let onDropURLs, acceptsDroppedFiles else { return false }
                 Task {
                     var urls: [URL] = []
                     for provider in providers {

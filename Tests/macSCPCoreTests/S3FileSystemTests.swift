@@ -344,6 +344,17 @@ struct S3FileSystemTests {
         #expect(fs.supportsAppendResume == false)
     }
 
+    /// The one thing the browser has to learn from the connection to gate a
+    /// bucket row (2026-09-02): whether `/` lists containers. Both answers,
+    /// so the flag cannot be a constant.
+    @Test func onlyABucketListSessionSaysItsRootListsContainers() async throws {
+        let (listMode, _) = try await connectAtBucketList(responses: [])
+        #expect(listMode.rootIsContainerList)
+
+        let (oneBucket, _) = try await connect(responses: [])
+        #expect(oneBucket.rootIsContainerList == false)
+    }
+
     // MARK: - M13 stubs: every mutating method throws protocolError
 
     /// Runs `operation` and asserts it throws specifically
