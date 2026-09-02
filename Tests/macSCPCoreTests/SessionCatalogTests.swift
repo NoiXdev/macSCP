@@ -9,23 +9,31 @@ struct SessionCatalogTests {
     // MARK: - (a) No filter: every session, in sidebar order
 
     @Test func noFilterReturnsEverySessionInSidebarOrder() {
-        // Two top-level groups (Alpha before Beta), one session inside each,
-        // and one top-level session that sorts after both groups — the same
-        // (position, kind) merge `SidebarOrdering.children` performs.
-        let alpha = StoredGroup(name: "Alpha", position: 0)
-        let beta = StoredGroup(name: "Beta", position: 1)
-        var inAlpha = sshSession(name: "in-alpha", groupID: alpha.id)
-        inAlpha.position = 0
-        var inBeta = sshSession(name: "in-beta", groupID: beta.id)
-        inBeta.position = 0
-        var top = sshSession(name: "top")
-        top.position = 2
+        // Position order and name order are made to DIVERGE on purpose: name
+        // order would read ["apple", "middle", "zebra"], position order (via
+        // `SidebarOrdering`) reads ["zebra", "middle", "apple"]. A naive
+        // `sorted { $0.name < $1.name }` walk — see the sensitivity check
+        // below — passes the alphabetical-by-accident version of this test
+        // this one is a fix for; this shape only passes a real
+        // `SidebarOrdering`-derived walk.
+        //
+        // Top level, by position: "zebra" (a session, position 0), then
+        // "zz-first" (a group, position 1), then "aa-second" (a group,
+        // position 2). "zz-first" holds "middle"; "aa-second" holds "apple".
+        let zzFirst = StoredGroup(name: "zz-first", position: 1)
+        let aaSecond = StoredGroup(name: "aa-second", position: 2)
+        var zebra = sshSession(name: "zebra")
+        zebra.position = 0
+        var middle = sshSession(name: "middle", groupID: zzFirst.id)
+        middle.position = 0
+        var apple = sshSession(name: "apple", groupID: aaSecond.id)
+        apple.position = 0
 
         let catalog = SessionCatalog(
-            sessions: [top, inBeta, inAlpha], groups: [beta, alpha])
+            sessions: [apple, middle, zebra], groups: [aaSecond, zzFirst])
         let names = catalog.rows(matching: .init()).map(\.name)
 
-        #expect(names == ["in-alpha", "in-beta", "top"])
+        #expect(names == ["zebra", "middle", "apple"])
     }
 
     // MARK: - (b) group matches ancestor name
@@ -126,6 +134,24 @@ struct SessionCatalogTests {
         let catalog = SessionCatalog(sessions: [session], groups: [])
 
         #expect(catalog.rows(matching: .init()).first?.target == "tim@box.example.com:22")
+    }
+
+    /// A blockless `.s3`/`.webdav` session is reachable: `SessionStore`'s
+    /// load-time hygiene drops a blockless `.ssh` record but has no such
+    /// drop for `.s3`/`.webdav` (`SessionStore.swift` ~96-112) — those two
+    /// backends never had inventing accessors, so a missing block there has
+    /// always been "the empty bag", not a record needing removal. `target`
+    /// answers "" rather than fabricating a placeholder host/bucket/URL.
+    @Test func blocklessS3AndWebDAVSessionsHaveAnEmptyTarget() {
+        let s3 = StoredSession(name: "a", kind: .s3)
+        let webdav = StoredSession(name: "b", kind: .webdav)
+        let catalog = SessionCatalog(sessions: [s3, webdav], groups: [])
+        let rows = Dictionary(uniqueKeysWithValues: catalog.rows(matching: .init()).map { ($0.name, $0) })
+
+        let s3TargetIsEmpty = rows["a"]?.target == ""
+        let webdavTargetIsEmpty = rows["b"]?.target == ""
+        #expect(s3TargetIsEmpty)
+        #expect(webdavTargetIsEmpty)
     }
 
     // MARK: - (h) secrecy shape

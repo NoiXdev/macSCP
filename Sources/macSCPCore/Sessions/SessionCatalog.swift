@@ -111,6 +111,15 @@ public struct SessionCatalog: Sendable {
             target: target(for: session))
     }
 
+    /// A missing block (`ssh`/`s3`/`webdav` all `nil` on `kind`'s own
+    /// backend) answers `""` rather than inventing a target, for every kind
+    /// alike — not just because a blockless record is reachable (`SessionStore`
+    /// drops a blockless `.ssh` record on load, but has no such drop for
+    /// `.s3`/`.webdav`; `SessionStore.swift` ~96-112), but because those two
+    /// backends never had inventing accessors to begin with: a missing block
+    /// there has always been "the empty bag", the same term that hygiene
+    /// comment uses. `""` continues that answer instead of introducing a
+    /// fabricated host/bucket/URL placeholder alongside it.
     private func target(for session: StoredSession) -> String {
         switch session.kind {
         case .ssh:
@@ -120,7 +129,8 @@ public struct SessionCatalog: Sendable {
             guard let s3 = session.s3 else { return "" }
             return "\(s3.bucket) @ \(s3.endpoint)"
         case .webdav:
-            return session.webdav?.baseURL ?? ""
+            guard let webdav = session.webdav else { return "" }
+            return webdav.baseURL
         }
     }
 }
