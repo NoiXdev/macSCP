@@ -66,5 +66,37 @@
             <string>%lld d’entre eux reçoivent des transferts d’autres onglets ; la fermeture annule ces transferts.</string>
         </dict>
     </dict>
+    <key>settings.connection.keepAliveInterval %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Toutes les %lld seconde</string>
+            <key>other</key>
+            <string>Toutes les %lld secondes</string>
+        </dict>
+    </dict>
+    <key>settings.connection.keepAlive.footer %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Activée, macSCP vérifie une connexion inactive toutes les %lld seconde. Désactivée, l'intervalle choisi est conservé pour quand vous réactiverez la vérification.</string>
+            <key>other</key>
+            <string>Activée, macSCP vérifie une connexion inactive toutes les %lld secondes. Désactivée, l'intervalle choisi est conservé pour quand vous réactiverez la vérification.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

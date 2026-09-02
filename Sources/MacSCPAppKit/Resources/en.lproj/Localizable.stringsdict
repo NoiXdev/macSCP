@@ -66,5 +66,37 @@
             <string>%lld of them are receiving transfers from other tabs; closing cancels those.</string>
         </dict>
     </dict>
+    <key>settings.connection.keepAliveInterval %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Every %lld second</string>
+            <key>other</key>
+            <string>Every %lld seconds</string>
+        </dict>
+    </dict>
+    <key>settings.connection.keepAlive.footer %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>While on, macSCP checks an idle connection every %lld second. Off keeps the interval for when you turn it back on.</string>
+            <key>other</key>
+            <string>While on, macSCP checks an idle connection every %lld seconds. Off keeps the interval for when you turn it back on.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

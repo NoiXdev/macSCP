@@ -74,5 +74,41 @@
             <string>%lld kart odbiera transfery z innych kart; ich zamknięcie anuluje te transfery.</string>
         </dict>
     </dict>
+    <key>settings.connection.keepAliveInterval %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Co %lld sekundę</string>
+            <key>few</key>
+            <string>Co %lld sekundy</string>
+            <key>many</key>
+            <string>Co %lld sekund</string>
+        </dict>
+    </dict>
+    <key>settings.connection.keepAlive.footer %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Włączone — macSCP sprawdza bezczynne połączenie co %lld sekundę. Wyłączone — ustawiony odstęp zostaje zachowany, dopóki ponownie nie włączysz sprawdzania.</string>
+            <key>few</key>
+            <string>Włączone — macSCP sprawdza bezczynne połączenie co %lld sekundy. Wyłączone — ustawiony odstęp zostaje zachowany, dopóki ponownie nie włączysz sprawdzania.</string>
+            <key>many</key>
+            <string>Włączone — macSCP sprawdza bezczynne połączenie co %lld sekund. Wyłączone — ustawiony odstęp zostaje zachowany, dopóki ponownie nie włączysz sprawdzania.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

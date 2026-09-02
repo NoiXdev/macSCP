@@ -66,5 +66,37 @@
             <string>%lld davon empfangen Übertragungen von anderen Tabs; das Schließen bricht diese ab.</string>
         </dict>
     </dict>
+    <key>settings.connection.keepAliveInterval %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Alle %lld Sekunde</string>
+            <key>other</key>
+            <string>Alle %lld Sekunden</string>
+        </dict>
+    </dict>
+    <key>settings.connection.keepAlive.footer %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Eingeschaltet prüft macSCP eine ruhige Verbindung alle %lld Sekunde. Ausgeschaltet bleibt das eingestellte Intervall erhalten, bis du die Prüfung wieder einschaltest.</string>
+            <key>other</key>
+            <string>Eingeschaltet prüft macSCP eine ruhige Verbindung alle %lld Sekunden. Ausgeschaltet bleibt das eingestellte Intervall erhalten, bis du die Prüfung wieder einschaltest.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>
