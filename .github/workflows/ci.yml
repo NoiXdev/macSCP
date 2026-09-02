@@ -43,10 +43,27 @@ jobs:
         run: |
           set -o pipefail
           swift build 2>&1 | tee "$RUNNER_TEMP/build.log"
-      - name: Unit-Tests
+      - name: Unit-Tests (sampled on hang — bisect branch only)
         run: |
-          set -o pipefail
-          swift test 2>&1 | tee "$RUNNER_TEMP/test.log"
+          swift --version
+          swift test > "$RUNNER_TEMP/test.log" 2>&1 &
+          TEST_PID=$!
+          sleep 150
+          if kill -0 "$TEST_PID" 2>/dev/null; then
+            echo "=== still running after 150 s: sampling ==="
+            ps -ef | grep -i "swiftpm-testing\|xctest\|macSCPPackageTests" | grep -v grep
+            for pid in $(pgrep -f "swiftpm-testing-helper|macSCPPackageTests"); do
+              echo "##### sample of pid $pid #####"
+              sample "$pid" 3 -file "$RUNNER_TEMP/sample-$pid.txt" || true
+              cat "$RUNNER_TEMP/sample-$pid.txt" | head -400
+            done
+            echo "=== test.log tail ==="; tail -30 "$RUNNER_TEMP/test.log"
+            echo "=== ✔ count: $(grep -c '✔' "$RUNNER_TEMP/test.log") started: $(grep -c 'started\.' "$RUNNER_TEMP/test.log") ==="
+            kill "$TEST_PID" || true
+            exit 1
+          fi
+          wait "$TEST_PID"
+          tail -5 "$RUNNER_TEMP/test.log"
       - name: Warning gate
         # Why this step exists: the warning stack regrew unnoticed once
         # already. Dozens of sites had accumulated by 2026-08-26, six of them
