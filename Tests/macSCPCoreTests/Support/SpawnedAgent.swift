@@ -138,9 +138,11 @@ func addKey(atPath keyPath: String, to agent: SpawnedAgent,
 /// `AgentEnvLock` (M11e/T2, see its doc comment) serializes this against
 /// every OTHER suite that mutates the same process-global `SSH_AUTH_SOCK`
 /// — a suite's own `.serialized` only protects against interleaving within
-/// itself, and three suites reach this function now (`AgentAuthTests`
-/// mutates the variable directly; `CitadelFileSystemIntegrationTests` and
-/// `GoServerRSAIntegrationTests` call in here — counted 2026-09-02).
+/// itself. Two suites reach this function (`CitadelFileSystemIntegrationTests`
+/// and `GoServerRSAIntegrationTests`); two more mutate the variable under
+/// the same lock without it (`AgentAuthTests`, `ConnectFailureSecrecyTests`)
+/// — four suites on one lock, counted 2026-09-02 after a review found the
+/// first count one short.
 @discardableResult
 func withAgentEnv<T>(
     _ agent: SpawnedAgent, _ body: () async throws -> T
