@@ -312,7 +312,7 @@ type the known-hosts store records:
 | 2232 | `ecdsa-sha2-nistp256` | green — recorded `ecdsa-sha2-nistp256` |
 | 2233 | `ecdsa-sha2-nistp384` | green — recorded `ecdsa-sha2-nistp384` |
 | 2234 | `ecdsa-sha2-nistp521` | green — recorded `ecdsa-sha2-nistp521` |
-| 2235 | `rsa-sha2-512,rsa-sha2-256` (key type `ssh-rsa`) | **red** — `RemoteFSError.connectionFailed(reason: "NIOSSHError.keyExchangeNegotiationFailure")`, before any key reaches the validator; the store records nothing |
+| 2235 | `rsa-sha2-512,rsa-sha2-256` (key type `ssh-rsa`) | **red on 2026-09-02 morning** — `RemoteFSError.connectionFailed(reason: "NIOSSHError.keyExchangeNegotiationFailure")`, before any key reached the validator; **green the same evening** with fork 0.3.9 + `RSASHA2HostKey` (`3e66d86`): recorded `ssh-rsa`, fingerprint `SHA256:Cx5M3QK63oku6+YGU7DMU6ZaLCZOSdExs7CzpgLm72Q`, identical to `ssh-keyscan`'s |
 
 The RSA row is what the maintainer's question was about. NIOSSH's client
 offers `ssh-ed25519, ecdsa-sha2-nistp384, ecdsa-sha2-nistp256,

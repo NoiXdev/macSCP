@@ -608,3 +608,50 @@ working.
 So the ECDSA half needs **only a parser**, not a signer — a third `KeyType`
 case and an `OpenSSHPrivateKey` conformance for the three curves. That is a
 separate fork patch and a separate task, not part of the cherry-pick.
+
+## Done 2026-09-02 (evening) — fork tag 0.3.9, and macSCP verifies RSA host keys
+
+Plan `../plans/2026-09-02-rsa-host-key-fork-change.md`.
+
+**Fork:** `d756a67` on `citadel2`, tag **`0.3.9`** ("hostKeyAlgorithmNames
+for custom host-key types"). `NIOSSHPublicKeyProtocol` gained
+`static var hostKeyAlgorithmNames: [String]` with a protocol-extension
+default of `[publicKeyPrefix]`; three sites read the names instead of the
+prefix — the KEXINIT offer, the client's identity check on the KEX reply,
+and `knownAlgorithms` (as a union; the prefix stays). Blob lookup and the
+`K_S` write are untouched. Red run observed: 5 tests, 3 failing, the
+offer listing `blob-x` where `alg-x` was expected; each changed line was
+mutation-checked alone. Green: 368 tests, 0 failures (361 before the new
+class). Not changed, confirmed: the signature blob is matched on
+`signaturePrefix`, which RFC 8332 types with the negotiated name already.
+Left as is: user-auth public keys still compare algorithm name and key
+prefix strictly (`SSHMessages.swift:688`/`:759` at 0.3.9) — the place to
+look if RSA client-key auth without `ssh-rsa` blob typing is ever
+wanted; certified custom keys do not inherit their base type's names.
+The `soundness.sh` formatter was not run (no `swiftformat` here).
+Upstream PR candidate: this change, against `apple/swift-nio-ssh`.
+
+**macSCP:** `e084d69` (fork `exact: "0.3.9"`, `_CryptoExtras` for Core),
+`38b8781` (`Sources/macSCPCore/SSH/RSASHA2HostKey.swift`: the pair, and
+`registerOnce()` before both `SSHClient.connect` sites), `3e66d86` (the
+RSA row flips; a tampered-RSA hard stop). Unit suite `RSASHA2HostKeyTests`
+9/9; gated `HostKeyTypeIntegrationTests` 4/4; full gated run 3489/3489 on
+the first attempt. Planted defects, measured after the compile-red:
+SHA-512→SHA-256 red in 5 of 9; signature-type guard removed 1 of 9;
+`write(to:)` re-encoding the mpints (the `K_S` path the spike could only
+read) 2 of 9; `hostKeyAlgorithmNames = [publicKeyPrefix]` 1 of 9.
+Fix round after the task review (`14f3ed3`, `08d5ef3`): a modulus below
+1024 bits — OpenSSH's own `RequiredRSASize` default — is a parse failure,
+never a key (bits counted from the mpint's minimal encoding, not its byte
+length: a 1016-bit probe pads to 128 bytes and would pass a byte-length
+floor); both `SSHClient.connect` sites now go through one private dial
+helper that registers the algorithms first, pinned by a guard whose
+ordering check is whole-line equality on the statement (a `defer`-wrapped
+probe had passed a looser one); the stale claim in
+`HostKeyValidation.swift` that the fork was not a package dependency is
+gone. Port 2235 now records `ssh-rsa`, blob fingerprint
+`SHA256:Cx5M3QK63oku6+YGU7DMU6ZaLCZOSdExs7CzpgLm72Q` (3072-bit), identical
+to `ssh-keyscan`'s reading. Only `rsa-sha2-512` is offered. The jump
+target hop is covered by reasoning (the hop registers first), not by a
+measurement — the rig has no jump path to 2235.
+
