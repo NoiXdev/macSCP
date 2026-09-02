@@ -19,10 +19,15 @@ let package = Package(
         // by default, + an ECDSA `openssh-key-v1` private-key parser
         // (`P256/P384/P521.Signing.PrivateKey.init(sshEcdsa:decryptionKey:)`
         // and the public `OpenSSHKeyTypeMismatch`). Both are what lets
-        // `SSHPrivateKeyLoader` load an RSA or ECDSA key FILE at all; the
-        // fork record with the measurements behind each tag is in
+        // `SSHPrivateKeyLoader` load an RSA or ECDSA key FILE at all.
+        // 0.12.1-noix.3 types the RSA public key BLOB `ssh-rsa` again
+        // (`SHA2PublicKey.publicKeyPrefix`) and moves the RFC 8332 name to
+        // the new `userAuthAlgorithmName` that swift-nio-ssh 0.3.10 below
+        // reads — the split that makes a Go-based server accept an RSA
+        // login. It therefore requires 0.3.10 exactly. The fork record with
+        // the measurements behind each tag is in
         // docs/superpowers/specs/2026-08-20-backlog-dependencies.md.
-        .package(url: "https://github.com/NoiXdev/Citadel.git", exact: "0.12.1-noix.2"),
+        .package(url: "https://github.com/NoiXdev/Citadel.git", exact: "0.12.1-noix.3"),
         // Citadel depends on Wellz26/swift-nio-ssh, a fork with a deleted
         // parent that is behind Apple on signature validation and mangles
         // RFC 4253 §4.2 preamble lines into the version string. This root
@@ -39,7 +44,14 @@ let package = Package(
         // wire blob carries — the split RFC 8332 requires, and what lets
         // `RSASHA2HostKey` be offered as `rsa-sha2-512` while its blob stays
         // `ssh-rsa` (see .superpowers/sdd/2026-09-02-rsa-host-key-fork-change).
-        .package(url: "https://github.com/NoiXdev/swift-nio-ssh.git", exact: "0.3.9"),
+        // 0.3.10 does the same for the USER-AUTH path, which 0.3.9 left
+        // coupled: `NIOSSHPublicKeyProtocol.userAuthAlgorithmName` (default
+        // `publicKeyPrefix`, so every bundled and existing custom type is
+        // unaffected) is what the client now writes as `pkalg` and into the
+        // signed payload, while the key blob keeps carrying
+        // `publicKeyPrefix` — RFC 8332 §3's three identifiers, at last
+        // independently choosable for a CLIENT key.
+        .package(url: "https://github.com/NoiXdev/swift-nio-ssh.git", exact: "0.3.10"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "d5ee56e1c74777120f3af688600d336de4201bd2"),
