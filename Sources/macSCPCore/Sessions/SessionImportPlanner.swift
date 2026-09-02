@@ -230,20 +230,50 @@ public enum SessionImportPlanner {
             // accepts a blockless record on disk in the first place (see
             // `BackendDescriptor`'s note on the representable shape).
             //
-            // Two independent judges, checked in this order:
-            // `wouldBeDroppedByStore` asks whether `SessionStore.load()`
-            // would remove the record on its very next read; `isUnusable`
-            // asks whether the backend's OWN schema — the same one
-            // `ConnectionViewModel`'s Connect/Save buttons enforce — could
-            // ever dial the bag at all. A bag can fail either without failing
-            // the other: the store only cares whether `.ssh`'s config block
-            // ends up nil (a non-empty bag, or a jump, is enough to avoid
-            // that), while the schema cares whether the fields IN that block
-            // describe a connection anyone could reach. They agree on one
-            // shape — an empty `.ssh` bag with no jump at all — and that
-            // overlap is fine: two different questions landing on the same
-            // answer is not a reason to drop either question.
-            guard !wouldBeDroppedByStore(fileSession), !isUnusable(fileSession) else {
+            // One throwaway probe, built ONCE here via `makePlanned` — the
+            // same builder every accepted path uses, so both judges below see
+            // exactly what would actually be stored — and handed to both.
+            // Id, name and group take no part in either judge's rule, so the
+            // probe passes throwaway values for them; the record it builds is
+            // discarded once this guard is evaluated, whichever way it goes.
+            // The probe carries the entry's secret exactly as a planned
+            // session would (`makePlanned` puts it in `PlannedSession.password`
+            // / `jumpPassword`, same as on every accepted path) — neither
+            // judge below reads that field, so the secret plays no part in
+            // either verdict and is never returned from this guard.
+            //
+            // The two judges are NOT independent verdicts that happen to
+            // agree on some shape. `wouldBeDroppedByStore` asks whether
+            // `SessionStore.load()` would remove the record on its very next
+            // read (`SessionStore.dropsOnLoad`, the store's own rule).
+            // `isUnusable` asks whether the backend's OWN schema — the same
+            // one `ConnectionViewModel`'s Connect/Save buttons enforce —
+            // could ever dial the bag, but ONLY when the probe's session
+            // carries a real (non-nil) config block (`hasStoredConfiguration`,
+            // checked first inside `isUnusable`): for a bag that builds no
+            // block at all, `isUnusable` returns `false` WITHOUT ever
+            // reaching `firstViolation` — it does not independently judge
+            // that shape "usable" and land on the same answer as the other
+            // guard; it declines to judge the shape at all and defers
+            // entirely to `wouldBeDroppedByStore`.
+            //
+            // That deferral matters for exactly one shape: an empty `.ssh`
+            // bag with no jump, where `wouldBeDroppedByStore` is the ONLY
+            // guard that ever flags the entry (`isUnusable`'s own doc
+            // comment traces why). Dropping `wouldBeDroppedByStore` from this
+            // guard on the theory that `isUnusable` already covers its ground
+            // would silently reopen the M27 defect it exists to close: a
+            // blockless `.ssh` entry would import again, uncaught, because
+            // `isUnusable` was never the guard watching that shape.
+            //
+            // For `.s3`/`.webdav`, `wouldBeDroppedByStore` never fires at all
+            // (`SessionStore.dropsOnLoad` is `.ssh`-only), so a wholly empty
+            // `.s3`/`.webdav` bag is caught by NEITHER guard here and still
+            // imports with no config block — a pre-existing, deliberately
+            // kept exception (see `isUnusable`'s doc comment), not a gap this
+            // guard introduces.
+            let probe = makePlanned(from: fileSession, id: UUID(), name: "", groupID: nil)
+            guard !wouldBeDroppedByStore(probe), !isUnusable(fileSession, probe: probe) else {
                 rejected.append(trimmedName)
                 continue
             }
@@ -373,25 +403,23 @@ public enum SessionImportPlanner {
             liftedGroups: liftedGroups, cancelled: false)
     }
 
-    /// True when this file entry would build a record the store removes the
-    /// moment it reads the file back.
+    /// True when `probe` — a record this file entry would build — is one the
+    /// store removes the moment it reads the file back.
     ///
-    /// The shape is built by `makePlanned` — the same builder every accepted
-    /// path uses, so what is judged here is what would actually be stored —
-    /// and judged by `SessionStore.dropsOnLoad`, the store's own rule rather
-    /// than a second copy of it.
+    /// `probe` comes from the loop's own guard, built ONCE via `makePlanned`
+    /// — the same builder every accepted path uses, so what is judged here is
+    /// what would actually be stored — and shared with `isUnusable` below
+    /// rather than rebuilt per judge (see the loop's own comment for the full
+    /// reasoning on the sharing and what it costs to skip). Judged by
+    /// `SessionStore.dropsOnLoad`, the store's own rule rather than a second
+    /// copy of it.
     ///
-    /// Id, name and group take no part in that rule, so the probe passes
-    /// throwaway values for them; the record it builds is discarded either
-    /// way. The probe carries the entry's secret exactly as a planned
-    /// session would — `makePlanned` puts it in `PlannedSession.password`
-    /// (or `jumpPassword`) the same as on every accepted path — but this
-    /// function never reads that field: it returns a `Bool` computed from
-    /// `probe.session` alone, so the whole `PlannedSession`, secret
-    /// included, is discarded here and never reported or stored.
-    private static func wouldBeDroppedByStore(_ fileSession: ExportedSession) -> Bool {
-        let probe = makePlanned(from: fileSession, id: UUID(), name: "", groupID: nil)
-        return SessionStore.dropsOnLoad(probe.session)
+    /// `probe.session` is all this reads. The rest of `probe` — its secret,
+    /// carried in `password`/`jumpPassword` exactly as a real planned session
+    /// would carry it — plays no part in the answer and is never returned
+    /// from here.
+    private static func wouldBeDroppedByStore(_ probe: PlannedSession) -> Bool {
+        SessionStore.dropsOnLoad(probe.session)
     }
 
     /// True when this file entry's field bag describes a connection the
@@ -406,22 +434,29 @@ public enum SessionImportPlanner {
     /// through; a schema addition or change updates both call sites for free
     /// because there is only one.
     ///
-    /// Only asked when a real config block would actually be BUILT for this
-    /// entry — `hasStoredConfiguration` on the same probe `wouldBeDroppedByStore`
-    /// builds, so this reads exactly what `makePlanned` would produce, not a
-    /// second guess at it. A `.s3`/`.webdav` entry whose bag is entirely empty
-    /// builds no block at all (`makePlanned`'s own `if
-    /// !fileSession.fields.isEmpty` guard skips `apply`), which is the
-    /// pre-M23 legacy shape `webdavFileSessionWithoutColumnsKeepsKindAndHasNoConfig`
-    /// and `preFixExportFileStillImports` pin as a DELIBERATE import: kind
+    /// `probe` is the SAME `PlannedSession` the loop's guard also hands to
+    /// `wouldBeDroppedByStore` — one throwaway `makePlanned` call per
+    /// candidate entry, not two (see the loop's own comment). This function
+    /// only judges the bag against the schema when `probe.session` carries a
+    /// real (non-nil) config block (`hasStoredConfiguration`); otherwise it
+    /// returns `false` immediately, WITHOUT calling `firstViolation` at all —
+    /// it declines to judge, it does not clear the bag as usable. A
+    /// `.s3`/`.webdav` entry whose bag is entirely empty builds no block at
+    /// all (`makePlanned`'s own `if !fileSession.fields.isEmpty` guard skips
+    /// `apply`), which is the pre-M23 legacy shape
+    /// `webdavFileSessionWithoutColumnsKeepsKindAndHasNoConfig` and
+    /// `preFixExportFileStillImports` pin as a DELIBERATE import: kind
     /// preserved, no config, nothing to judge yet because nothing was built.
-    /// Skipping the schema check there is not a gap this task leaves open —
+    /// Leaving that shape unjudged here is not a gap this task leaves open —
     /// it is the one shape this task must not touch, on pain of failing two
-    /// existing tests that name it on purpose. An `.ssh` entry reaches this
-    /// function with a REAL block even from an empty bag whenever a jump is
-    /// attached (`makePlanned`'s jump attachment runs regardless of the bag),
-    /// so `hasStoredConfiguration` is true there and the check proceeds —
-    /// which is exactly case (b) below.
+    /// existing tests that name it on purpose, and it is not caught by
+    /// `wouldBeDroppedByStore` either (`SessionStore.dropsOnLoad` only ever
+    /// drops `.ssh`), so it imports with no config block exactly as before
+    /// this task. An `.ssh` entry reaches this function with a REAL block
+    /// even from an empty bag whenever a jump is attached (`makePlanned`'s
+    /// jump attachment runs regardless of the bag), so `hasStoredConfiguration`
+    /// is true there and the check proceeds to `firstViolation`, which is
+    /// what rejects the jump-only shape (`sshEmptyBagWithJumpFieldsIsRejected`).
     ///
     /// The bag is overlaid ON TOP OF `BackendDescriptor.defaultValues` — the
     /// plain new-form defaults, not `editBaseline` (S3's edit-form baseline
@@ -442,10 +477,9 @@ public enum SessionImportPlanner {
     /// planner has ever produced, and every `includesSecrets == false` file a
     /// user hands it — is a legal import, not evidence the connection cannot
     /// be dialed.
-    private static func isUnusable(_ fileSession: ExportedSession) -> Bool {
+    private static func isUnusable(_ fileSession: ExportedSession, probe: PlannedSession) -> Bool {
         let kind = fileSession.kind ?? .ssh
         let descriptor = BackendDescriptor.descriptor(for: kind)
-        let probe = makePlanned(from: fileSession, id: UUID(), name: "", groupID: nil)
         guard descriptor.hasStoredConfiguration(probe.session) else { return false }
         var values = descriptor.defaultValues
         for (key, value) in fileSession.fields { values.setRaw(key, to: value) }
@@ -507,44 +541,48 @@ public enum SessionImportPlanner {
         // that arm.
         //
         // Since M27, an empty bag with NO jump fields is rejected before
-        // `makePlanned` is ever called from an accepted path: the guard in
-        // the loop above calls `wouldBeDroppedByStore`, which runs such an
-        // entry through this same function and asks
-        // `SessionStore.dropsOnLoad`, which reads true for it (`ssh` stays
-        // nil) — so the only call that reaches this arm for that exact
-        // shape is `wouldBeDroppedByStore`'s own probe, and the probe's
-        // `PlannedSession` is thrown away, never planned.
+        // `makePlanned` is ever called from an accepted path: the loop's
+        // guard builds ONE probe through this same function and hands it to
+        // both `wouldBeDroppedByStore` and `isUnusable`. For this shape,
+        // `wouldBeDroppedByStore` asks `SessionStore.dropsOnLoad`, which
+        // reads true for it (`ssh` stays nil) — so the only call that
+        // reaches this arm for that exact shape is the loop guard's shared
+        // probe, and the probe's `PlannedSession` is thrown away, never
+        // planned.
         //
         // An empty bag that ALSO carries `jumpHost`/`jumpUsername` is NOT
-        // caught by that guard: the jump attachment below gives the session a
-        // non-nil `ssh` block regardless of the bag, so `dropsOnLoad` reads
-        // false for it. That shape used to reach this arm through the
-        // ordinary accepted paths, same as any other file entry — a session
-        // nobody could dial (its own `host`/`username` blank) landing in
-        // `sessionsToImport` anyway, with only its jump hop resolved.
+        // caught by `wouldBeDroppedByStore`: the jump attachment below gives
+        // the session a non-nil `ssh` block regardless of the bag, so
+        // `dropsOnLoad` reads false for it. That shape used to reach this arm
+        // through the ordinary accepted paths, same as any other file entry —
+        // a session nobody could dial (its own `host`/`username` blank)
+        // landing in `sessionsToImport` anyway, with only its jump hop
+        // resolved.
         //
-        // It no longer does: the loop's OTHER guard, `isUnusable`, runs its
-        // OWN probe through this same function first, and only judges the
-        // bag against the backend's schema when that probe's `session` ends
-        // up with a real (non-nil) config block (`hasStoredConfiguration`) —
-        // which for `.ssh` is true precisely when EITHER the bag was
-        // non-empty OR a jump attached, i.e. exactly the condition that
-        // decides whether this arm is even reached for a real accepted path.
-        // For the jump-only shape, the jump attachment below is what makes
-        // that probe's `ssh` non-nil, `isUnusable` then finds `host` and
-        // `username` blank against the schema, and the entry is rejected —
-        // so `isUnusable`'s judgment does depend on the jump, just not
-        // directly: it depends on it through the very same attachment this
-        // function performs, on its own separate probe.
+        // It no longer does: `isUnusable` (fed the SAME shared probe, not a
+        // second one of its own) only judges the bag against the backend's
+        // schema when that probe's `session` ends up with a real (non-nil)
+        // config block (`hasStoredConfiguration`) — which for `.ssh` is true
+        // precisely when EITHER the bag was non-empty OR a jump attached,
+        // i.e. exactly the condition that decides whether this arm is even
+        // reached for a real accepted path. For the jump-only shape, the jump
+        // attachment below is what makes the shared probe's `ssh` non-nil,
+        // `isUnusable` then finds `host` and `username` blank against the
+        // schema, and the entry is rejected — so `isUnusable`'s judgment does
+        // depend on the jump, just not directly: it depends on it through
+        // the very same attachment this function performs, on the one probe
+        // both guards share.
         //
-        // So both empty-bag shapes are now rejected before this function
-        // ever builds a real, planned session from them; only their REASON
-        // differs — `wouldBeDroppedByStore` for the one with no jump,
-        // `isUnusable` for the one with a jump — and on the no-jump shape the
-        // two reasons simply agree, which is not a conflict either guard
-        // needs to resolve. `wouldBeDroppedByStore` still exists, unchanged,
-        // because "would the store discard this record on load" is the
-        // store's own rule, not `isUnusable`'s to duplicate.
+        // For the NO-jump empty-bag shape, `isUnusable` takes no part in the
+        // rejection at all: `hasStoredConfiguration` reads false for it (no
+        // block was ever built), so `isUnusable` returns `false` without
+        // reaching `firstViolation` — it declines to judge that shape, it
+        // does not independently agree that the shape is bad.
+        // `wouldBeDroppedByStore` is the ONLY guard that ever flags it, which
+        // is exactly why it still exists, unchanged, alongside `isUnusable`
+        // rather than being folded into it: "would the store discard this
+        // record on load" is the store's own rule, and for this one shape it
+        // is the ONLY rule doing any rejecting.
         var session = StoredSession(id: id, name: name, groupID: groupID, kind: kind)
         // `?? .filesOnly`, same pattern as `kind ?? .ssh` a few lines up:
         // `nil` means a payload written before this field existed, and
