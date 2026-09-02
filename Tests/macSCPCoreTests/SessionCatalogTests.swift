@@ -192,4 +192,28 @@ struct SessionCatalogTests {
         #expect(nestedPathIsWorkThenProd)
         #expect(topLevelPathIsEmpty)
     }
+
+    // MARK: - (j) a duplicated id does not trap
+
+    /// `Dictionary(uniqueKeysWithValues:)` traps the whole process on a
+    /// duplicate key — a store file written or merged by two installations
+    /// (or corrupted by hand) can carry a duplicated UUID, and that trap
+    /// would take the CLI down rather than fail one command
+    /// (final-branch-review finding, 2026-09-02). Deliberately not built
+    /// red-first against the OLD `uniqueKeysWithValues:` implementation: the
+    /// defect there is a fatal trap, not a graceful test failure, so running
+    /// this against it would crash the whole test process instead of
+    /// reporting one failing test — the fix landed first, this confirms it.
+    @Test func aDuplicatedSessionIDDoesNotTrapAndTheFirstOccurrenceWins() {
+        let sharedID = UUID()
+        let first = sshSession(id: sharedID, name: "first", host: "first.example.com")
+        let second = sshSession(id: sharedID, name: "second", host: "second.example.com")
+
+        let catalog = SessionCatalog(sessions: [first, second], groups: [])
+        let rows = catalog.rows(matching: .init())
+
+        let everyRowMatchesTheFirstSession = rows.allSatisfy { $0.target == "tim@first.example.com:22" }
+        #expect(!rows.isEmpty)
+        #expect(everyRowMatchesTheFirstSession)
+    }
 }

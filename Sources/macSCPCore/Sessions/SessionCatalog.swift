@@ -63,8 +63,15 @@ public struct SessionCatalog: Sendable {
     /// sidebar shows.
     public func rows(matching filter: Filter) -> [Row] {
         let tree = SidebarOrdering.Tree(groups: groups, sessions: sessions)
-        let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
-        let groupsByID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+        // `uniqueKeysWithValues:` traps the whole process on a duplicate id —
+        // not a graceful failure a caller can catch, a crash. A store file
+        // written or merged by two installations (or corrupted by hand) can
+        // carry a duplicated UUID; `uniquingKeysWith:` keeps the FIRST
+        // occurrence instead, matching this array's own iteration order,
+        // rather than letting one bad record take the CLI down
+        // (final-branch-review finding, 2026-09-02).
+        let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let groupsByID = Dictionary(groups.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         var ordered: [(session: StoredSession, ancestry: [String])] = []
         func walk(parentID: UUID?, ancestry: [String]) {
