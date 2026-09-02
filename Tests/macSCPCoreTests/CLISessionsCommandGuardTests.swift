@@ -41,14 +41,25 @@ struct CLISessionsCommandGuardTests {
     private static let sessionsCommandFile = repoRoot
         .appendingPathComponent("Sources/MacSCPCLI/SessionsCommand.swift")
 
-    /// The completer wired onto every `name:/path` target's `@Argument`
-    /// (2026-09-02 CLI-completion plan, Task 1) — pinned by the same "no
-    /// secret, no keychain, no connection" constraint as `SessionsCommand`,
-    /// plus its own: it runs silently in a subprocess a shell spawns, so it
-    /// must never write to stdout or stderr on its own (see
+    /// The `CompletionKind` wiring for every `name:/path` target's
+    /// `@Argument` (2026-09-02 CLI-completion plan, Task 1) — pinned by the
+    /// same "no secret, no keychain, no connection" constraint as
+    /// `SessionsCommand`, plus its own: it (and the Core file below, which
+    /// does the actual work) run silently in a subprocess a shell spawns,
+    /// so neither may write to stdout or stderr on its own (see
     /// `completionForbiddenIdentifiers` below).
     private static let completionCommandFile = repoRoot
         .appendingPathComponent("Sources/MacSCPCLI/SessionNameCompletion.swift")
+
+    /// The decision logic behind the completer — prefix filtering,
+    /// sorting, the store-opening convenience — moved to Core in the fix
+    /// round after `ae0078c`'s review (Important finding I-2: decision
+    /// logic belongs in Core, the CLI stays wiring). Carries the same
+    /// silence constraint as `completionCommandFile` above; between the
+    /// two of them, this is the one that actually constructs a
+    /// `SessionCatalog(`.
+    private static let completionCoreFile = repoRoot
+        .appendingPathComponent("Sources/macSCPCore/Sessions/SessionNameCompleter.swift")
 
     /// The APIs that would reach a secret or open a connection. Any one of
     /// these appearing in `SessionsCommand.swift` is the violation this
@@ -188,27 +199,52 @@ struct CLISessionsCommandGuardTests {
         identifiers.filter { source.contains($0) }
     }
 
-    // MARK: - The completer: same shape, plus silence
+    // MARK: - The completer: same shape, plus silence — two files, both scanned
 
-    @Test func theCompletionFileExists() {
+    @Test func theCompletionWrapperFileExists() {
         #expect(FileManager.default.fileExists(atPath: Self.completionCommandFile.path))
     }
 
-    @Test func theCompletionFileBuildsItsListFromTheCatalog() throws {
+    @Test func theCompletionWrapperWiresTheCoreCompleter() throws {
         let source = try String(contentsOf: Self.completionCommandFile, encoding: .utf8)
-        #expect(source.contains("SessionCatalog("), """
-            SessionNameCompletion.swift no longer constructs a SessionCatalog( \
-            — the positive anchor beside the negative check below has \
-            nothing to confirm the scanner is reading a real implementation.
+        #expect(source.contains("SessionNameCompleter.complete("), """
+            SessionNameCompletion.swift no longer calls \
+            SessionNameCompleter.complete( — the positive anchor beside the \
+            negative check below has nothing to confirm the scanner is \
+            reading a real implementation.
             """)
     }
 
-    @Test func theCompletionFileNamesNoForbiddenAPI() throws {
+    @Test func theCompletionWrapperNamesNoForbiddenAPI() throws {
         let source = try String(contentsOf: Self.completionCommandFile, encoding: .utf8)
         let found = Self.forbiddenMatches(
             in: source, identifiers: Self.completionForbiddenIdentifiers)
         #expect(found.isEmpty, """
             SessionNameCompletion.swift names \(found) — the completer reads \
+            the session store and nothing else, and must stay silent (no \
+            secret, no keychain, no connection, no stdout, no stderr).
+            """)
+    }
+
+    @Test func theCompletionCoreFileExists() {
+        #expect(FileManager.default.fileExists(atPath: Self.completionCoreFile.path))
+    }
+
+    @Test func theCompletionCoreFileBuildsItsListFromTheCatalog() throws {
+        let source = try String(contentsOf: Self.completionCoreFile, encoding: .utf8)
+        #expect(source.contains("SessionCatalog("), """
+            SessionNameCompleter.swift no longer constructs a SessionCatalog( \
+            — the positive anchor beside the negative check below has \
+            nothing to confirm the scanner is reading a real implementation.
+            """)
+    }
+
+    @Test func theCompletionCoreFileNamesNoForbiddenAPI() throws {
+        let source = try String(contentsOf: Self.completionCoreFile, encoding: .utf8)
+        let found = Self.forbiddenMatches(
+            in: source, identifiers: Self.completionForbiddenIdentifiers)
+        #expect(found.isEmpty, """
+            SessionNameCompleter.swift names \(found) — the completer reads \
             the session store and nothing else, and must stay silent (no \
             secret, no keychain, no connection, no stdout, no stderr).
             """)
@@ -290,9 +326,20 @@ struct CLISessionsCommandGuardTests {
     /// carrying the completer.
     @Test func everySessionTargetCommandCarriesTheCompletion() throws {
         let cliDirectory = Self.repoRoot.appendingPathComponent("Sources/MacSCPCLI")
-        let swiftFiles = try FileManager.default.contentsOfDirectory(
-            at: cliDirectory, includingPropertiesForKeys: nil
-        ).filter { $0.pathExtension == "swift" }
+        // Recursive (`enumerator`, not `contentsOfDirectory`): `Sources/MacSCPCLI`
+        // is flat today, but a future reorganization into subfolders (the
+        // project already does this elsewhere, e.g.
+        // `Sources/macSCPCore/Sessions/`) must not let a command file
+        // silently escape this scan (final-branch-review finding,
+        // 2026-09-02, minor).
+        guard let enumerator = FileManager.default.enumerator(
+            at: cliDirectory, includingPropertiesForKeys: nil)
+        else {
+            Issue.record("could not enumerate \(cliDirectory.path)")
+            return
+        }
+        let swiftFiles = enumerator.compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
         #expect(!swiftFiles.isEmpty, "found no .swift files under Sources/MacSCPCLI to scan")
 
         let targetCommandFiles = try swiftFiles.filter {

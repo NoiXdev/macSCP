@@ -1,111 +1,22 @@
 import Foundation
 import Testing
-@testable import MacSCPCLI
-@testable import macSCPCore
 
-/// `SessionNameCompletion.complete(prefix:)` — the CLI's shell-completion
-/// source for the `name:` half of a `name:/path` target. Ungated: it drives
-/// a temp `SessionStore` in-process, the same way `SessionsCommand` does,
-/// through the real `MACSCP_STORAGE_DIRECTORY` injection point rather than
-/// through a subprocess (`SessionStore.defaultDirectory`'s doc comment
-/// names what that variable is for and why it exists).
+/// The CLI wiring for `name:` shell completion — everything that is
+/// actually CLI-specific about it, which is only that
+/// `--generate-completion-script` emits a script naming every subcommand.
 ///
-/// `.serialized`: every test here overwrites the real process environment
-/// variable `MACSCP_STORAGE_DIRECTORY` for the span of one call.
-/// `@Suite(.serialized)` only serializes WITHIN this suite (see
-/// `AgentEnvLock`'s doc comment for the cross-suite shape of this same
-/// problem) — sufficient here because no other suite touches this variable
-/// on the real process: every other CLI test hands it to a CHILD process's
-/// own environment dictionary instead
-/// (`CLISessionsJSONRoundtripTests.runCLI`), which never reaches this
-/// process's real environment at all.
-@Suite("CLI session name completion", .serialized)
+/// The decision logic itself (prefix filtering, sorting, the `"name:"`
+/// formatting, the store-opening convenience) lives in `macSCPCore` as
+/// `SessionNameCompleter` and is tested directly there
+/// (`SessionNameCompleterTests`) — moved out of this file in the fix round
+/// after `ae0078c`'s review (Important finding I-2): decision logic belongs
+/// in Core, the CLI stays wiring, and `macSCPCoreTests` has no business
+/// depending on the `MacSCPCLI` executable target to test a pure function.
+/// This file is left with exactly what remains CLI-only: whether the
+/// generated script actually wires the completer's subcommands in, proven
+/// against the real built binary rather than assumed.
+@Suite("CLI session name completion")
 struct CLISessionNameCompletionTests {
-    // MARK: - Fixture
-
-    /// Seeds a temp `SessionStore` with one SSH session per name in
-    /// `sessionNames`, points `MACSCP_STORAGE_DIRECTORY` at it for the
-    /// duration of `body`, then restores both the environment variable and
-    /// the temp directory's permissions before removing it — regardless of
-    /// how `body` returns.
-    private func withTempStore(
-        sessionNames: [String], unreadable: Bool = false,
-        _ body: () throws -> Void
-    ) throws {
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent(
-                "macscp-cli-completion-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true)
-        let fileURL = directory.appendingPathComponent("sessions-v2.json")
-        defer {
-            // Permission bits are restored before removal: `chmod` itself
-            // needs no read permission on the target (only ownership), but
-            // `removeItem` on a directory whose file is unreadable can still
-            // leave debris if this is skipped.
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: 0o644], ofItemAtPath: fileURL.path(percentEncoded: false))
-            try? FileManager.default.removeItem(at: directory)
-        }
-
-        let store = SessionStore(directory: directory)
-        for name in sessionNames {
-            try store.upsert(sshSession(name: name))
-        }
-
-        if unreadable {
-            // Mode 0000 on the store's own file — not the directory — so
-            // `SessionStore.load()` actually reaches `Data(contentsOf:)` and
-            // throws, rather than failing an earlier `fileExists` check and
-            // silently returning an empty store: the point of this test is
-            // that `complete(prefix:)` catches a real thrown error, not that
-            // an empty catalog happens to answer `[]` too (same idiom as
-            // `EmbeddedKeyPorterTests`'s "locked_key" fixture).
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o000], ofItemAtPath: fileURL.path(percentEncoded: false))
-        }
-
-        let previous = ProcessInfo.processInfo.environment["MACSCP_STORAGE_DIRECTORY"]
-        setenv("MACSCP_STORAGE_DIRECTORY", directory.path(percentEncoded: false), 1)
-        defer {
-            if let previous {
-                setenv("MACSCP_STORAGE_DIRECTORY", previous, 1)
-            } else {
-                unsetenv("MACSCP_STORAGE_DIRECTORY")
-            }
-        }
-
-        try body()
-    }
-
-    // MARK: - Tests
-
-    @Test func matchesByPrefixSortedWithATrailingColon() throws {
-        try withTempStore(sessionNames: ["Work", "Web-01", "Prod / DB"]) {
-            #expect(SessionNameCompletion.complete(prefix: "W") == ["Web-01:", "Work:"])
-        }
-    }
-
-    @Test func anEmptyPrefixListsEveryStoredName() throws {
-        try withTempStore(sessionNames: ["Work", "Web-01", "Prod / DB"]) {
-            #expect(
-                SessionNameCompletion.complete(prefix: "")
-                    == ["Prod / DB:", "Web-01:", "Work:"])
-        }
-    }
-
-    @Test func onceThePathHasStartedThereIsNothingToOffer() throws {
-        try withTempStore(sessionNames: ["Work", "Web-01", "Prod / DB"]) {
-            #expect(SessionNameCompletion.complete(prefix: "Web-01:/") == [])
-        }
-    }
-
-    @Test func anUnreadableStoreAnswersEmptyRatherThanThrowing() throws {
-        try withTempStore(sessionNames: ["Work"], unreadable: true) {
-            #expect(SessionNameCompletion.complete(prefix: "") == [])
-        }
-    }
-
     // MARK: - Binary-level: the generated script names every subcommand
 
     /// `swift-argument-parser`'s generator writes the static half of

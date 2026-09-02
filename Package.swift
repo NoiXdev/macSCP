@@ -113,12 +113,6 @@ let package = Package(
             name: "macSCPCoreTests",
             dependencies: [
                 "macSCPCore",
-                // `CLISessionNameCompletionTests` calls
-                // `SessionNameCompletion.complete(prefix:)` directly, in
-                // process, rather than through a subprocess — the only
-                // dependency edge in this test target onto the CLI
-                // executable, added for that one file.
-                "MacSCPCLI",
                 .product(name: "Crypto", package: "swift-crypto"),
                 // `RSASHA2HostKeyTests` parses a host-key blob into
                 // `ByteBuffer` and hands the result to NIOSSH's key/signature
