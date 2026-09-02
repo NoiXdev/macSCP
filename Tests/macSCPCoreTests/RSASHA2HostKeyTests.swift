@@ -180,6 +180,112 @@ struct RSASHA2HostKeyTests {
         }
     }
 
+    // MARK: - Fixtures for sizes ssh-keygen refuses to touch
+
+    /// A key `ssh-keygen` will neither generate nor read: it stops at
+    /// "Invalid RSA key length: minimum is 1024 bits", and `-y` on a smaller
+    /// PEM key answers "Invalid key length". Undersized keys are exactly what
+    /// the modulus floor has to be fed, so they come from `openssl genrsa`
+    /// instead and their blob is assembled here from the modulus and public
+    /// exponent `openssl` reports.
+    ///
+    /// The assembly is the same for every size, so a rejection at 512 bits
+    /// and an acceptance at 1024 differ in nothing but the size — which is
+    /// what makes the pair a measurement of the floor rather than of the
+    /// builder.
+    private struct AssembledFixture {
+        let publicKeyBlob: Data
+        let signedData: Data
+        /// `nil` where the modulus is too short to sign a SHA-512 digest at
+        /// all, which is its own comment on keys that size.
+        let sha512Signature: Data?
+    }
+
+    private static func makeAssembledFixture(bits: Int, signing: Bool) throws -> AssembledFixture {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-rsa-hostkey-\(bits)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let keyPath = dir.appendingPathComponent("key.pem").path(percentEncoded: false)
+        let generateStatus = try run("/usr/bin/openssl", ["genrsa", "-out", keyPath, String(bits)])
+        #expect(generateStatus == 0)
+
+        let modulusHex = try #require(
+            capture("/usr/bin/openssl", ["rsa", "-in", keyPath, "-noout", "-modulus"])
+                .split(separator: "=", maxSplits: 1).last.map(String.init))
+        let text = try capture("/usr/bin/openssl", ["rsa", "-in", keyPath, "-noout", "-text"])
+        let exponentLine = try #require(
+            text.split(separator: "\n").first { $0.contains("publicExponent:") })
+        let exponent = try #require(
+            UInt64(exponentLine.drop { !$0.isNumber }.prefix { $0.isNumber }))
+
+        var blob = sshStringField(Array(RSASHA2HostKey.publicKeyPrefix.utf8))
+        blob += sshStringField(mpint(bigEndianBytes(of: exponent)))
+        blob += sshStringField(mpint(bytes(fromHex: modulusHex)))
+
+        let signedData = Data("macSCP rsa-sha2-512 host-key verification fixture".utf8)
+        var signature: Data?
+        if signing {
+            let dataPath = dir.appendingPathComponent("payload.bin").path(percentEncoded: false)
+            try signedData.write(to: URL(fileURLWithPath: dataPath))
+            let signaturePath = dir.appendingPathComponent("payload.sig").path(percentEncoded: false)
+            let status = try run(
+                "/usr/bin/openssl",
+                ["dgst", "-sha512", "-sign", keyPath, "-out", signaturePath, dataPath])
+            #expect(status == 0)
+            signature = try Data(contentsOf: URL(fileURLWithPath: signaturePath))
+        }
+
+        return AssembledFixture(
+            publicKeyBlob: Data(blob), signedData: signedData, sha512Signature: signature)
+    }
+
+    private static func capture(_ executable: String, _ arguments: [String]) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        let output = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        return String(decoding: output, as: UTF8.self)
+    }
+
+    private static func bytes(fromHex hex: String) -> [UInt8] {
+        let digits = Array(hex.filter { $0.isHexDigit })
+        return stride(from: 0, to: digits.count - 1, by: 2).compactMap {
+            UInt8(String(digits[$0...$0 + 1]), radix: 16)
+        }
+    }
+
+    private static func bigEndianBytes(of value: UInt64) -> [UInt8] {
+        var bytes = withUnsafeBytes(of: value.bigEndian) { [UInt8]($0) }
+        while bytes.first == 0, bytes.count > 1 {
+            bytes.removeFirst()
+        }
+        return bytes
+    }
+
+    /// RFC 4251 mpint: minimal big-endian magnitude, prefixed with `0x00`
+    /// when the top bit would otherwise read as a sign bit.
+    private static func mpint(_ magnitude: [UInt8]) -> [UInt8] {
+        var bytes = magnitude
+        while bytes.first == 0, bytes.count > 1 {
+            bytes.removeFirst()
+        }
+        if let first = bytes.first, first & 0x80 != 0 {
+            bytes.insert(0, at: 0)
+        }
+        return bytes
+    }
+
+    private static func sshStringField(_ bytes: [UInt8]) -> [UInt8] {
+        withUnsafeBytes(of: UInt32(bytes.count).bigEndian) { [UInt8]($0) } + bytes
+    }
+
     // MARK: - Verification
 
     @Test func aParsedHostKeyVerifiesTheSignatureItsPrivateHalfMade() throws {
@@ -250,5 +356,60 @@ struct RSASHA2HostKeyTests {
         #expect(key.isValidSignature(
             RSASHA2Signature(rawRepresentation: fixture.sha512Signature),
             for: fixture.signedData))
+    }
+
+    // MARK: - Modulus floor
+
+    /// A modulus below the floor is not a key here — the blob fails to
+    /// parse, which fails the handshake inside NIOSSH's
+    /// `readPublicKeyWithoutPrefixForIdentifier`, before `TOFUHostKeyValidator`
+    /// is ever handed anything. That order matters: a factorable modulus
+    /// reconstructed by an attacker yields the SAME fingerprint, so the
+    /// mismatch hard stop would never fire against it. The stop has to
+    /// happen before the key is remembered at all.
+    @Test func aModulusBelowTheFloorIsRejectedAtParse() throws {
+        let fixture = try Self.makeAssembledFixture(bits: 512, signing: false)
+
+        #expect(throws: (any Error).self) {
+            _ = try Self.parse(fixture.publicKeyBlob)
+        }
+    }
+
+    /// 1016 bits is the probe that pins HOW the bits are counted. Its
+    /// modulus is 127 bytes with the top bit set, so RFC 4251 pads the
+    /// mpint to 128 — and a floor that multiplied that byte count by 8
+    /// would read 1024 and let the key through. Counting the minimal
+    /// encoding reads 1016 and refuses it.
+    @Test func aModulusJustBelowTheFloorIsRejectedThoughItsMPIntIsWideEnough() throws {
+        let fixture = try Self.makeAssembledFixture(bits: 1016, signing: false)
+        let mpintBytes = AgentWireFormat.stripLeadingSSHString(from: fixture.publicKeyBlob).count
+        // The premise of the probe, asserted rather than assumed: the blob's
+        // two fields are 4 + 3 for `e` and 4 + 128 for the padded `n`.
+        #expect(mpintBytes == 4 + 3 + 4 + 128)
+
+        #expect(throws: (any Error).self) {
+            _ = try Self.parse(fixture.publicKeyBlob)
+        }
+    }
+
+    /// The positive half of the pair: the same assembly, at the floor
+    /// itself, parses AND verifies a signature its own private half made. So
+    /// the rejection above is the size and not the builder, and the floor is
+    /// inclusive.
+    @Test func aModulusAtTheFloorIsAcceptedAndVerifies() throws {
+        let fixture = try Self.makeAssembledFixture(
+            bits: RSASHA2HostKey.minimumModulusBits, signing: true)
+        let key = try Self.parse(fixture.publicKeyBlob).key
+        let signature = RSASHA2Signature(rawRepresentation: try #require(fixture.sha512Signature))
+
+        #expect(key.isValidSignature(signature, for: fixture.signedData))
+    }
+
+    /// The floor is OpenSSH's own `RequiredRSASize` default. Spelled out as
+    /// well as read off the type: the derived form ties the two tests above
+    /// to whatever the constant says, this one pins what it is allowed to
+    /// say.
+    @Test func theFloorIsOpenSSHsRequiredRSASizeDefault() {
+        #expect(RSASHA2HostKey.minimumModulusBits == 1024)
     }
 }

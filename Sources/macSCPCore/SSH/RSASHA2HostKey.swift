@@ -27,6 +27,18 @@ struct RSASHA2HostKey: NIOSSHPublicKeyProtocol, Sendable {
     /// through verification.
     static let hostKeyAlgorithmNames = [RSASHA2Signature.signaturePrefix]
 
+    /// The smallest modulus this type will accept, in bits.
+    ///
+    /// 1024 is OpenSSH's own `RequiredRSASize` default (`ssh_config`), and
+    /// the reason to match it rather than raise it is compatibility: a
+    /// server OpenSSH connects to should not be a server macSCP refuses.
+    /// Below it, factoring is what breaks the trust model rather than
+    /// theft — and a factored host key reconstructs the SAME public key, so
+    /// TOFU's mismatch stop never fires against the impersonation. The
+    /// refusal therefore has to happen at parse, before anything is
+    /// remembered.
+    static let minimumModulusBits = 1024
+
     struct ParseError: Error, Equatable {
         let reason: String
     }
@@ -44,6 +56,10 @@ struct RSASHA2HostKey: NIOSSHPublicKeyProtocol, Sendable {
     private let verifier: _RSA.Signing.PublicKey
 
     private init(exponent: [UInt8], modulus: [UInt8]) throws {
+        let modulusBits = Self.bitWidth(of: modulus)
+        guard modulusBits >= Self.minimumModulusBits else {
+            throw ParseError(reason: "RSA host key of \(modulusBits) bits is below the accepted minimum")
+        }
         self.exponent = exponent
         self.modulus = modulus
         do {
@@ -97,6 +113,16 @@ struct RSASHA2HostKey: NIOSSHPublicKeyProtocol, Sendable {
             _RSA.Signing.RSASignature(rawRepresentation: signature.rawRepresentation),
             for: SHA512.hash(data: Data(data)),
             padding: .insecurePKCS1v1_5)
+    }
+
+    /// The width of an mpint's value, counted from its minimal encoding —
+    /// an mpint's byte count answers a different question, since it carries
+    /// a leading `0x00` whenever the top bit is set (which an RSA modulus
+    /// always has).
+    private static func bitWidth(of mpint: [UInt8]) -> Int {
+        let magnitude = strippingLeadingZeros(mpint)
+        guard let first = magnitude.first, first != 0 else { return 0 }
+        return (magnitude.count - 1) * 8 + (UInt8.bitWidth - first.leadingZeroBitCount)
     }
 
     private static func strippingLeadingZeros(_ bytes: [UInt8]) -> [UInt8] {
