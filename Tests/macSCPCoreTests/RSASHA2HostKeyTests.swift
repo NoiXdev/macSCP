@@ -405,6 +405,48 @@ struct RSASHA2HostKeyTests {
         #expect(key.isValidSignature(signature, for: fixture.signedData))
     }
 
+    /// Which registered type parses an incoming `ssh-rsa` blob — the
+    /// property `HostKeyAlgorithms`' doc comment reasons about, measured
+    /// instead.
+    ///
+    /// FIVE `NIOSSHPublicKeyProtocol` conformances in this dependency graph
+    /// declare `publicKeyPrefix == "ssh-rsa"` (they are enumerated there),
+    /// and NIOSSH resolves a blob by taking the FIRST REGISTERED one whose
+    /// prefix matches. Every one of them writes and reads the same bytes —
+    /// `ssh-rsa`, `mpint e`, `mpint n` — so a round trip cannot tell them
+    /// apart. The modulus floor can: `RSASHA2HostKey` is the only one that
+    /// enforces it (checked in Citadel `RSA.swift:111-125` and
+    /// `RSASHA2.swift:136-138`, both of which accept any `e`/`n` pair). So a
+    /// blob NIOSSH's OWN reader refuses for its size is proof that this type
+    /// won the lookup.
+    ///
+    /// Both halves are here on purpose: the refusal alone would also be
+    /// satisfied by nothing at all parsing `ssh-rsa`, which is why the
+    /// acceptance at the floor comes first. It goes red the moment a second
+    /// claimant is registered ahead of this one — which is what would happen
+    /// if a dial were ever given an `algorithms:` argument.
+    @Test func theRegisteredSshRsaClaimantIsTheOneWithTheModulusFloor() throws {
+        HostKeyAlgorithms.registerOnce()
+
+        let atTheFloor = try Self.makeAssembledFixture(
+            bits: RSASHA2HostKey.minimumModulusBits, signing: false)
+        #expect(throws: Never.self) {
+            _ = try NIOSSHPublicKey(openSSHPublicKey: Self.openSSHLine(atTheFloor.publicKeyBlob))
+        }
+
+        let belowTheFloor = try Self.makeAssembledFixture(bits: 512, signing: false)
+        #expect(throws: (any Error).self) {
+            _ = try NIOSSHPublicKey(openSSHPublicKey: Self.openSSHLine(belowTheFloor.publicKeyBlob))
+        }
+    }
+
+    /// The two-field OpenSSH public key line `NIOSSHPublicKey(openSSHPublicKey:)`
+    /// parses: the blob's own type name, then the blob in base64. The name is
+    /// read off the type rather than spelled, like everywhere else here.
+    private static func openSSHLine(_ blob: Data) -> String {
+        "\(RSASHA2HostKey.publicKeyPrefix) \(blob.base64EncodedString())"
+    }
+
     /// The floor is OpenSSH's own `RequiredRSASize` default. Spelled out as
     /// well as read off the type: the derived form ties the two tests above
     /// to whatever the constant says, this one pins what it is allowed to

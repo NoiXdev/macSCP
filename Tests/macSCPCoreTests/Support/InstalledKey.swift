@@ -116,9 +116,15 @@ struct SFTPGoAPIError: Error, CustomStringConvertible {
 ///
 /// The whole exchange goes through `URLSession`'s async API — no process, no
 /// `.wait()`, nothing that blocks a cooperative-pool thread.
+///
+/// Unlike `makeInstalledKey` this also hands back the public key LINE, which
+/// `generateKeyPair` has already read: `GoServerRSAIntegrationTests` needs it
+/// to derive the `SHA256:` fingerprint SFTPGo logs for an accepted login, and
+/// re-deriving the `.pub` path at the call site would be a second copy of a
+/// convention that lives here.
 func makeSFTPGoInstalledKey(
     type: String = "ed25519", bits: Int? = nil, passphrase: String? = nil
-) async throws -> (dir: URL, keyPath: String) {
+) async throws -> (dir: URL, keyPath: String, publicKey: String) {
     let generated = try generateKeyPair(type: type, bits: bits, passphrase: passphrase)
     do {
         let token = try await sftpGoAdminToken()
@@ -127,7 +133,7 @@ func makeSFTPGoInstalledKey(
         keys.append(generated.publicKey)
         user["public_keys"] = keys
         try await sftpGoPutUser(user, token: token)
-        return (generated.dir, generated.keyPath)
+        return generated
     } catch {
         try? FileManager.default.removeItem(at: generated.dir)
         throw error

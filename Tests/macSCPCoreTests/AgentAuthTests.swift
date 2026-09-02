@@ -1,4 +1,8 @@
 import Citadel
+// `Insecure` is Crypto's namespace; Citadel hangs its `RSA` types off it, and
+// `theRSAAgentKeyTypesItsBlobSshRsaAndOffersItAsSHA2` reads its blob prefix
+// from `Insecure.RSA.PublicKey` rather than spelling `ssh-rsa`.
+import Crypto
 import Foundation
 import NIOCore
 import NIOPosix
@@ -183,10 +187,72 @@ struct AgentAuthTests {
         #expect(written == Data(Self.sshBytes(sigBlob)))
     }
 
+    /// The wire-tag half of THE RSA RISK, ungated — the identifiers an RSA
+    /// agent identity puts on the wire, read off the offer the production
+    /// delegate produces.
+    ///
+    /// RFC 8332 §3 gives the request three identifiers: the blob is typed
+    /// `ssh-rsa`, while `pkalg` and the signature say `rsa-sha2-512`. Both
+    /// halves are needed and neither is enough: with only the blob retyped,
+    /// OpenSSH and SFTPGo alike refuse the offer; with only the algorithm
+    /// name, a Go-based server drops the connection.
+    ///
+    /// Those two failures are measured against real servers by
+    /// `CitadelFileSystemIntegrationTests.agentAuthConnectsRSA` and
+    /// `GoServerRSAIntegrationTests.rsaAgentIdentityConnects` — both of which
+    /// need `MACSCP_ITEST=1` and the Docker rig, which CI does not run.
+    /// Deleting either member left the whole ungated suite green until this
+    /// test existed; it is the same gap
+    /// `CitadelFileSystemHostKeyAlgorithmWiringGuardTests` was written for.
+    ///
+    /// No identifier is spelled here: each is read off the type that owns it,
+    /// so a rename moves the expectation with the code. The last assertion is
+    /// the positive that makes the blob check more than a string comparison —
+    /// the offered key reconstructs the agent's OWN blob byte for byte, which
+    /// it can only do while the prefix NIOSSH writes is the one the agent
+    /// reported.
+    @Test func theRSAAgentKeyTypesItsBlobSshRsaAndOffersItAsSHA2() async throws {
+        typealias RSAKey = AgentBackedPublicKey<AgentAlgorithm.RSASha512>
+        #expect(RSAKey.publicKeyPrefix == Insecure.RSA.PublicKey.publicKeyPrefix)
+        #expect(RSAKey.userAuthAlgorithmName == RSASHA2Signature.signaturePrefix)
+        // The split itself: one type, two different identifiers.
+        #expect(RSAKey.publicKeyPrefix != RSAKey.userAuthAlgorithmName)
+
+        let identity = Self.makeIdentity(
+            keyType: Insecure.RSA.PublicKey.publicKeyPrefix,
+            material: Self.sshBytes([0x01]) + Self.sshBytes([0x02]), comment: "rsa")
+        let client = SSHAgentClient(transport: MockAgentTransport(responses: []))
+        let delegate = AgentAuthDelegate(
+            username: "tester", identities: [identity], client: client)
+
+        try await withEventLoopGroup { group in
+            let offer = try await nextOffer(delegate, group: group)
+            guard case .privateKey(let offered) = offer.offer else {
+                Issue.record("expected a privateKey offer for the RSA identity")
+                return
+            }
+            // The bytes NIOSSH would put on the wire, not the static that is
+            // supposed to produce them: a key blob opens with an SSH string
+            // naming its type.
+            var buffer = ByteBuffer()
+            offered.publicKey.write(to: &buffer)
+            guard let length = buffer.readInteger(as: UInt32.self),
+                  let blobType = buffer.readString(length: Int(length))
+            else {
+                Issue.record("the serialized offer carries no leading SSH string")
+                return
+            }
+            #expect(blobType == RSAKey.publicKeyPrefix)
+            #expect(String(openSSHPublicKey: offered.publicKey)
+                == "\(identity.keyType) \(identity.publicKeyBlob.base64EncodedString())")
+        }
+    }
+
     /// An `ssh-rsa`-blob identity signs with `SSH_AGENT_RSA_SHA2_512` (4);
     /// an ed25519 identity signs with flags 0 — the RSA risk's sign-side
-    /// half (the wire-tag half is covered by the gated `agentAuthConnectsRSA`
-    /// integration test).
+    /// half. Its wire-tag half is the test above, and the two servers'
+    /// verdicts on the same offer are the gated `agentAuthConnectsRSA` and
+    /// `rsaAgentIdentityConnects`.
     @Test func rsaBlobUsesSha2Flags() async throws {
         let rsaIdentity = Self.makeIdentity(
             keyType: "ssh-rsa", material: Self.sshBytes([0x01]) + Self.sshBytes([0x02]),

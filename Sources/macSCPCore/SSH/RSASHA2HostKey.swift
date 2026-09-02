@@ -190,26 +190,56 @@ struct RSASHA2Signature: NIOSSHSignatureProtocol, Sendable {
 /// NIOSSH resolves an incoming key blob by walking its registration list and
 /// taking the FIRST registered type whose `publicKeyPrefix` matches. Since
 /// Citadel `0.12.1-noix.3` typed its RSA user keys `ssh-rsa` again (RFC 8332
-/// §3), FOUR types in this dependency graph declare that prefix: this one,
-/// Citadel's `Insecure.RSA.SHA2PublicKey<RSASHA2_256>` and
-/// `<RSASHA2_512>`, and Citadel's SHA-1 `Insecure.RSA.PublicKey`.
+/// §3), FIVE `NIOSSHPublicKeyProtocol` conformances in this dependency graph
+/// declare that prefix — counted 2026-09-02 by grepping the conformances in
+/// `Sources/` and in `.build/checkouts/Citadel/Sources/`:
 ///
-/// Only a REGISTERED type takes part in that lookup, and in macSCP's process
-/// exactly ONE of the four is registered: this one. Counted 2026-09-02 —
+///  1. this one, `RSASHA2HostKey` — the only one macSCP registers;
+///  2. `AgentBackedPublicKey<AgentAlgorithm.RSASha512>`
+///     (`AgentBackedPrivateKey.swift`, whose `publicKeyPrefix` reads the
+///     marker's `blobType`) — offer-only and never registered: it is written
+///     into outgoing user-auth offers and its `read(from:)` throws;
+///  3. Citadel's SHA-1 `Insecure.RSA.PublicKey`;
+///  4. `Insecure.RSA.SHA2PublicKey<RSASHA2_256>`;
+///  5. `Insecure.RSA.SHA2PublicKey<RSASHA2_512>` (a second Swift type from
+///     the same generic).
+///
+/// Citadel's `Insecure.RSA.PrivateKey.publicKeyPrefix` (`SSHCert.swift:115`)
+/// is deliberately NOT in that list: it satisfies Citadel's own
+/// `OpenSSHPrivateKey`, not `NIOSSHPublicKeyProtocol`, so it is not a
+/// registry candidate.
+///
+/// Only a REGISTERED type takes part in the lookup, and in macSCP's process
+/// exactly ONE of the five is registered: this one.
 /// `NIOSSHAlgorithms.register(publicKey:signature:)` is reached from one
 /// place in macSCP (the `registration` below) and from two places in Citadel
 /// (`Client.swift:49` and `:53`), both inside
 /// `SSHAlgorithms.Modification.register()`, which runs only for an
-/// `algorithms:` argument passed to a connect. macSCP passes none — its only
-/// dial is `CitadelFileSystem.connectWithRegisteredAlgorithms`, which takes
-/// Citadel's default `SSHAlgorithms()`, whose three `Modification` fields are
-/// all `nil` — and nothing in Citadel uses its own `SSHAlgorithms.all`.
-/// Citadel's RSA user keys are only ever WRITTEN, and the write path never
-/// consults the registry: it writes the concrete instance's own prefix.
+/// `algorithms:` argument reaching a dial. macSCP has TWO dials and passes it
+/// at neither:
 ///
-/// So this type wins the `ssh-rsa` lookup by being the only candidate, and
-/// the host-key path it serves is pinned live by `HostKeyTypeIntegrationTests`
-/// against the rig's RSA-only `sshd` on port 2235.
+///  - stage 1 and the non-jump case go through
+///    `CitadelFileSystem.connectWithRegisteredAlgorithms`, whose
+///    `SSHClient.connect` takes Citadel's default `SSHAlgorithms()`;
+///  - the jump target (stage 2) is dialed as
+///    `jumpClient.jump(to: settings)` (`CitadelFileSystem.swift:419`), and
+///    `SSHClientSettings.algorithms` (`ClientSession.swift:105`) is a second
+///    entry point for the same argument, also defaulted to
+///    `SSHAlgorithms()`. That path needs no registration of its own: it runs
+///    inside a process where stage 1 already went through the funnel.
+///
+/// Nothing in Citadel uses its own `SSHAlgorithms.all` (the value that WOULD
+/// register `Insecure.RSA.PublicKey`), and Citadel's RSA user keys are only
+/// ever WRITTEN, a path that never consults the registry — it writes the
+/// concrete instance's own prefix.
+///
+/// So this type wins the `ssh-rsa` lookup by being the only candidate.
+/// `RSASHA2HostKeyTests.theRegisteredSshRsaClaimantIsTheOneWithTheModulusFloor`
+/// pins that ungated, through NIOSSH's own reader; the host-key path it
+/// serves is pinned live by `HostKeyTypeIntegrationTests` against the rig's
+/// RSA-only `sshd` on port 2235. Note that
+/// `CitadelFileSystemHostKeyAlgorithmWiringGuardTests` scans for
+/// `SSHClient.connect(` only, so the `jump(to:)` dial is outside it.
 enum HostKeyAlgorithms {
     /// A `static let` runs its initializer at most once, on first access,
     /// however many threads reach it.

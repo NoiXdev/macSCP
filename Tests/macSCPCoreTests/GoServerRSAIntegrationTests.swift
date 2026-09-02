@@ -76,7 +76,7 @@ struct GoServerRSAIntegrationTests {
 
     @Test("an ed25519 file key logs in to SFTPGo and lists the home directory")
     func ed25519FileKeyConnects() async throws {
-        let (dir, keyPath) = try await makeSFTPGoInstalledKey(type: "ed25519")
+        let (dir, keyPath, _) = try await makeSFTPGoInstalledKey(type: "ed25519")
         defer { try? FileManager.default.removeItem(at: dir) }
         let (store, khDir) = freshKnownHosts("sftpgo-ed25519")
         defer { try? FileManager.default.removeItem(at: khDir) }
@@ -122,10 +122,10 @@ struct GoServerRSAIntegrationTests {
     /// login happened": a run in which a different identity authenticated
     /// fails it.
     private func expectAcceptedLogin(
-        forKeyAt keyPath: String,
+        forPublicKey publicKey: String,
         connecting connect: () async throws -> CitadelFileSystem
     ) async throws {
-        let fingerprint = try Self.sha256Fingerprint(ofPublicKeyAt: keyPath + ".pub")
+        let fingerprint = try Self.sha256Fingerprint(ofPublicKeyLine: publicKey)
         // One second of slack: `docker logs --since` is second-granular, so a
         // line written in the same second as this timestamp would otherwise be
         // outside the window.
@@ -142,8 +142,11 @@ struct GoServerRSAIntegrationTests {
                 """)
             throw error
         }
+        // The rig suites' shape: a `list` that throws must not leave the
+        // connection and its event-loop group alive for the rest of the
+        // process.
+        defer { Task { await fs.disconnect() } }
         let items = try await fs.list(path: "/")
-        await fs.disconnect()
 
         #expect(items.contains { $0.name == "hello.txt" })
         let log = sftpGoLog(since: start)
@@ -154,11 +157,10 @@ struct GoServerRSAIntegrationTests {
     /// OpenSSH's `SHA256:` fingerprint of a public key line: the base64 blob's
     /// SHA-256, base64-encoded without padding. It is what SFTPGo writes into
     /// its `logged in with "publickey: SHA256:…"` line.
-    private static func sha256Fingerprint(ofPublicKeyAt path: String) throws -> String {
-        let line = try String(contentsOfFile: path, encoding: .utf8)
+    private static func sha256Fingerprint(ofPublicKeyLine line: String) throws -> String {
         let fields = line.split(separator: " ")
         guard fields.count >= 2, let blob = Data(base64Encoded: String(fields[1])) else {
-            throw FingerprintError.notAPublicKeyLine(path: path)
+            throw FingerprintError.notAPublicKeyLine(line)
         }
         let digest = Data(SHA256.hash(data: blob)).base64EncodedString()
             .replacingOccurrences(of: "=", with: "")
@@ -166,7 +168,7 @@ struct GoServerRSAIntegrationTests {
     }
 
     private enum FingerprintError: Error {
-        case notAPublicKeyLine(path: String)
+        case notAPublicKeyLine(String)
     }
 
     /// An RSA key FILE, through macSCP's own connect path. The same key type
@@ -176,13 +178,13 @@ struct GoServerRSAIntegrationTests {
     /// outcome: refused at `513e34e`, accepted since.
     @Test("an RSA file key logs in to SFTPGo")
     func rsaFileKeyConnects() async throws {
-        let (dir, keyPath) = try await makeSFTPGoInstalledKey(type: "rsa", bits: 2048)
+        let (dir, keyPath, publicKey) = try await makeSFTPGoInstalledKey(type: "rsa", bits: 2048)
         defer { try? FileManager.default.removeItem(at: dir) }
         let (store, khDir) = freshKnownHosts("sftpgo-rsa-file")
         defer { try? FileManager.default.removeItem(at: khDir) }
         let config = try config(auth: .privateKey(keyPath: keyPath, passphrase: nil))
 
-        try await expectAcceptedLogin(forKeyAt: keyPath) {
+        try await expectAcceptedLogin(forPublicKey: publicKey) {
             try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30), knownHosts: store,
                 onUnknownHostKey: .asking { _ in true })
@@ -196,7 +198,7 @@ struct GoServerRSAIntegrationTests {
     /// same fact, refused at `513e34e` and accepted since.
     @Test("an RSA agent identity logs in to SFTPGo")
     func rsaAgentIdentityConnects() async throws {
-        let (dir, keyPath) = try await makeSFTPGoInstalledKey(type: "rsa", bits: 2048)
+        let (dir, keyPath, publicKey) = try await makeSFTPGoInstalledKey(type: "rsa", bits: 2048)
         defer { try? FileManager.default.removeItem(at: dir) }
         let agent = try spawnAgent()
         defer { killAgent(agent) }
@@ -206,7 +208,7 @@ struct GoServerRSAIntegrationTests {
         let config = try config(auth: .agent)
 
         try await withAgentEnv(agent) {
-            try await expectAcceptedLogin(forKeyAt: keyPath) {
+            try await expectAcceptedLogin(forPublicKey: publicKey) {
                 try await CitadelFileSystem.connect(
                     config: config, connectTimeout: .seconds(30), knownHosts: store,
                     onUnknownHostKey: .asking { _ in true })

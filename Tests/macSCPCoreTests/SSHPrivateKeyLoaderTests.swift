@@ -4,13 +4,29 @@ import Foundation
 import NIOCore
 import NIOPosix
 import Testing
-// `@testable` for ONE member: `NIOSSHPublicKey.userAuthAlgorithmName`, the
-// internal property NIOSSH writes as `pkalg` (`SSHMessages.swift:1314`) and
-// into the signed payload. Reading it is what keeps the RSA offer test below
-// about the algorithm NAME rather than about the blob type, which since
-// swift-nio-ssh 0.3.10 / Citadel 0.12.1-noix.3 is `ssh-rsa` for every RSA
-// offer. There is no public accessor for it, and re-deriving the name from
-// the offered key's Swift type would be a second copy of it.
+// `@testable` for ONE member, and specifically for its INSTANCE form:
+// `NIOSSHPublicKey.userAuthAlgorithmName`, which NIOSSH writes as `pkalg`
+// (`SSHMessages.swift:1314`) and into the signed payload. It sits in an
+// internal `extension NIOSSHPublicKey` (`NIOSSHPublicKey.swift:162`),
+// alongside the equally internal `keyPrefix` and `hostKeyAlgorithms`.
+//
+// The STATIC reads below (`Insecure.RSA.SHA2PublicKey<…>.userAuthAlgorithmName`,
+// `Insecure.RSA.PublicKey.userAuthAlgorithmName`) need none of this: the
+// protocol requirement and its default are public (`CustomKeys.swift:85`,
+// `:106`). Nothing else in this file should lean on the wider import.
+//
+// Reading the instance property is what keeps the RSA offer test about the
+// algorithm NAME rather than the blob type, which since swift-nio-ssh 0.3.10
+// / Citadel 0.12.1-noix.3 is `ssh-rsa` for every RSA offer; re-deriving the
+// name from the offered key's Swift type would be a second copy of it.
+//
+// What it costs: `swift test -c release` cannot compile this file
+// ("module 'NIOSSH' was not compiled for testing"), because SwiftPM passes
+// `-enable-testing` only in debug. Acceptable for the debug suite this
+// project runs — and a FORK ITEM: expose a public accessor for
+// `userAuthAlgorithmName` on `NIOSSHPublicKey` in `NoiXdev/swift-nio-ssh`
+// (0.3.11), offer it upstream as `apple/swift-nio-ssh` would need it too,
+// and record it in the dependencies spec. This import goes away with it.
 @testable import NIOSSH
 @testable import macSCPCore
 
