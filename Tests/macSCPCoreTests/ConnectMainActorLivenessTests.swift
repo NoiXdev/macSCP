@@ -28,13 +28,33 @@ import Testing
 /// executor. Run this suite alone and the same ticker shows a 30 ms
 /// maximum.
 ///
-/// So an absolute threshold on the gap is a coin flip in CI. Every negative
-/// measurement below is therefore stated against `ambientGap(over:)` — the
-/// same ticker, same process, moments earlier, with nothing under test —
-/// and asserts only that the dial did not stall the main actor beyond what
-/// this run was stalling it anyway. What keeps that from being a check that
-/// can never fail is test 3, which blocks the main actor on purpose and
-/// requires the gap to show up: the suite carries its own positive control.
+/// So an absolute threshold on the gap is a coin flip in CI — and so is a
+/// threshold that merely has to beat the ambient noise. Measured on
+/// 2026-09-02, with no change to dialing in between: seventeen of twenty
+/// full gated runs red on gaps of 0.67–1.32 s against ceilings of
+/// 0.30–0.74 s, and twenty-six of twenty-six runs of this suite alone
+/// green.
+///
+/// The two magnitudes the assertion has to tell apart are an order apart,
+/// so the ceiling is placed BETWEEN them instead of on top of the noise. A
+/// BLOCK is the defect these tests were written against: the main thread
+/// parked in a synchronous wait for the connector's WHOLE duration — 30 s
+/// in the app, and here at least 5 s, because each timing test makes its
+/// own dial last that long on purpose. NOISE is the harness stalling its
+/// own main actor while ~256 suites queue onto one executor: milliseconds
+/// to a second and a bit, never two. Hence `ceiling(forAmbient:)`.
+/// `ambientGap(over:)` — the same ticker, same process, moments earlier,
+/// with nothing under test — stays, because it scales the ceiling when a
+/// run really is loaded and because it puts that load into the failure
+/// message.
+///
+/// What keeps that from being a check that can never fail is measurement,
+/// not argument. Measured 2026-09-02, night, with the ceiling below: a
+/// 5-second synchronous wait planted on the main actor around either
+/// awaited connect is red in 10 of 10 runs — gaps of 5.000–5.019 s against
+/// a 2.0 s ceiling — and unplanted this suite is green in 10 of 10 FULL
+/// gated runs. And test 3 blocks the main actor on purpose and requires
+/// the gap to show up: the suite carries its own positive control.
 ///
 /// `.serialized` is load-bearing, not tidiness: every test in here measures
 /// the SAME main actor, and the third one deliberately blocks it. Run in
@@ -118,11 +138,19 @@ struct ConnectMainActorLivenessTests {
     }
 
     /// The ceiling a measured gap has to stay under to count as "the main
-    /// actor kept running": the ambient noise, or 300 ms, whichever is
-    /// larger. 300 ms is the floor for an uncontended run, where ambient is
-    /// a few tens of milliseconds and a real block would be hundreds.
+    /// actor kept running": three times the ambient noise, or two seconds,
+    /// whichever is larger.
+    ///
+    /// It sits between the two magnitudes rather than on top of one of
+    /// them. Each timing test below dials for at least 5 s, so the defect —
+    /// a synchronous wait holding the main thread for the dial's duration —
+    /// shows as a gap of at least 5 s. Scheduling noise in a full parallel
+    /// run was measured at 0.67–1.32 s across twenty runs on 2026-09-02 and
+    /// never reached 2 s. The previous ceiling, the ambient gap itself, sat
+    /// inside that noise and went red in seventeen of those twenty runs;
+    /// this one keeps better than a factor of two of headroom on each side.
     private func ceiling(forAmbient ambient: Duration) -> Duration {
-        max(ambient, .milliseconds(300))
+        max(ambient * 3, .seconds(2))
     }
 
     // MARK: - 1. The boundary itself
@@ -137,8 +165,9 @@ struct ConnectMainActorLivenessTests {
     /// is the worst case the real one could ever be, and read two ways. The
     /// thread identity is the deterministic half and survives any amount of
     /// load: whichever thread ran the connector body, it was not the main
-    /// one. The gap is the timing half, and is stated against the ambient
-    /// control.
+    /// one. The gap is the timing half, and is stated against the ceiling —
+    /// which requires the dial to last long enough that a block of the
+    /// dial's duration clears two seconds. Hence the 5 s connector.
     @MainActor
     @Test func awaitingTheConnectorDoesNotKeepTheMainActor() async {
         let ambient = await ambientGap(over: .milliseconds(600))
@@ -146,7 +175,15 @@ struct ConnectMainActorLivenessTests {
         let ranOnMainThread = OneShotFlag()
         let vm = ConnectionViewModel(connector: { _, _ in
             ranOnMainThread.set(onMainThread())
+            // 5 s in total, of which the first 600 ms hold the thread
+            // outright — that part is what makes the thread-identity check
+            // above worth making, and it is capped at 600 ms so this test
+            // never parks a cooperative-pool thread for the whole dial. The
+            // remaining wait is a suspension: it stretches the dial to the
+            // duration a real block would have to match, and costs the pool
+            // nothing.
             blockThisThread(forMilliseconds: 600)
+            try? await Task.sleep(for: .milliseconds(4400))
             throw HostKeyError.rejectedByUser
         })
         // TEST-NET-1 (RFC 5737), never dialed: this connector is injected
@@ -176,7 +213,11 @@ struct ConnectMainActorLivenessTests {
     /// under test is what the main actor did in the meantime.
     ///
     /// Bounded by the injected `connectTimeout`, so it cannot hang the
-    /// suite: 1.5 s of stall, then a thrown error either way.
+    /// suite: 6 s of stall, then a thrown error either way. Six rather than
+    /// the 1.5 s this test used to dial with, for the reason
+    /// `ceiling(forAmbient:)` gives — a block lasts the dial's duration, and
+    /// the assertion can only separate it from scheduling noise if that
+    /// duration is the larger magnitude.
     @MainActor
     @Test(.enabled(if: StalledLoopbackEndpoint.isAvailable))
     func theMainActorKeepsRunningWhileARealDialStalls() async throws {
@@ -202,7 +243,7 @@ struct ConnectMainActorLivenessTests {
         do {
             let fs = try await CitadelFileSystem.connect(
                 config: config,
-                connectTimeout: .milliseconds(1500),
+                connectTimeout: .seconds(6),
                 knownHosts: store,
                 onUnknownHostKey: .refusing)
             await fs.disconnect()
@@ -215,7 +256,7 @@ struct ConnectMainActorLivenessTests {
         // The endpoint really stalled rather than refusing: had the SYN been
         // answered with a reset, this would have come back in milliseconds.
         #expect(thrown != nil)
-        #expect(elapsed > .milliseconds(1200))
+        #expect(elapsed > .seconds(5))
         // And the main actor ran the whole time it was stalling.
         #expect(
             log.largestGap <= ceiling(forAmbient: ambient),
