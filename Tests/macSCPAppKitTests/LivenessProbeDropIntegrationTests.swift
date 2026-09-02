@@ -1,3 +1,4 @@
+import Citadel
 import Foundation
 import NIOCore
 import Testing
@@ -57,6 +58,25 @@ private let teardownBoundSeconds =
 private let seedFilePath = "/data/seed/hello.txt"
 private let seedFileName = "hello.txt"
 
+/// The two isolate-close() measurements' own disposable servers (bounded-
+/// file-closes plan, Task 1). Two ports rather than a shared one, for
+/// `DisposableSSHServer.start`'s own reason given above: each measurement's
+/// leftover container must not be able to collide with another's bind.
+/// Clear of every port named in the doc comment on `shellDropServerPort`.
+/// Back the close()-alone measurements, which bypass `CitadelFileSystem`
+/// entirely — see `connectRawSFTP`.
+private let isolatedReadCloseServerPort = 2228
+private let isolatedWriteCloseServerPort = 2229
+
+/// Bound for every file-close measurement in this section: how long
+/// `close()` is given to return once it is racing a peer that is STILL
+/// FROZEN. Unlike `teardownBoundSeconds`, this is not derived from a
+/// production deadline — there is no bound on `SFTPReadHandle.close()` /
+/// `SFTPFile.close()` to derive from; whether one is needed is exactly what
+/// these tests measure. 10s, per the measurement plan
+/// (`.superpowers/sdd/2026-09-02-unbounded-file-closes-measurement/task-1-brief.md`).
+private let fileCloseBoundSeconds = 10
+
 /// `#filePath` here is
 /// `<repoRoot>/Tests/macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift`;
 /// three `deletingLastPathComponent()` calls recover the repo root
@@ -89,6 +109,70 @@ private func connectToSSHServer(port: Int) async throws -> CitadelFileSystem {
         try? await Task.sleep(for: .milliseconds(500))
         return try await attempt()
     }
+}
+
+/// Connects to an SSH server on `port` through Citadel DIRECTLY, bypassing
+/// `CitadelFileSystem` entirely, and opens an SFTP subchannel on it.
+///
+/// Needed for the isolate-close() measurements below
+/// (`aReadHandleCloseAgainstAStillFrozenPeerReturnsInsideTheBound` and
+/// `aWriteFileCloseAgainstAStillFrozenPeerReturnsInsideTheBound`): those
+/// tests measure `SFTPFile.close()` alone, and
+/// `CitadelFileSystem.readStream`/`.write` never hand the raw `SFTPFile`
+/// handle back to a caller — closing it happens only inside those methods'
+/// own bodies, which is not a path either test can reach from outside it.
+/// Retries past the disposable container's own startup, the same shape and
+/// reason as `DisposableSSHServer.connect()`.
+///
+/// No host-key persistence, unlike `connectToSSHServer`: this dials a
+/// throwaway disposable container once per test, so there is nothing
+/// worth pinning past that single connection, and `.acceptAnything()` is
+/// the same TOFU-bypass posture the rest of this file's raw fixture
+/// connections use.
+private func connectRawSFTP(port: Int) async throws -> (client: SSHClient, sftp: SFTPClient) {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(90))
+    var lastError: Error?
+    while ContinuousClock.now < deadline {
+        do {
+            let client = try await SSHClient.connect(
+                host: "127.0.0.1", port: port,
+                authenticationMethod: .passwordBased(username: "testuser", password: "testpass"),
+                hostKeyValidator: .acceptAnything(),
+                reconnect: .never)
+            let sftp = try await client.openSFTP()
+            return (client, sftp)
+        } catch {
+            lastError = error
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+    }
+    throw DockerError.serverNeverAccepted(
+        name: "raw SFTP on port \(port)", underlying: String(describing: lastError))
+}
+
+/// Wraps a non-`Sendable` Citadel value so it can cross into an
+/// unstructured `Task` — the same crossing `DataBox` above makes for a
+/// `Process`'s background drain, generalized. Safe here because each
+/// isolate-close() test below touches the wrapped handle strictly
+/// sequentially (open, one read or write, freeze, close) and never
+/// concurrently; nothing else ever reaches into the box. A `sending`
+/// parameter was tried first and rejected by the compiler even though
+/// nothing in these tests actually uses the value again afterward — the
+/// checker cannot verify that once the value has been captured into an
+/// escaping closure passed to another function (`BoundedRun.run` /
+/// `Task.init`), so this sidesteps the check with an explicit, narrow,
+/// justified `@unchecked Sendable` instead, the same trade this project
+/// already makes at the Citadel boundary in
+/// `Sources/macSCPCore/SSH/CitadelFileSystem.swift`'s own top-of-file
+/// comment.
+private final class UncheckedBox<Wrapped>: @unchecked Sendable {
+    let value: Wrapped
+    init(_ value: Wrapped) { self.value = value }
+}
+
+/// Closes `client`, discarding any error.
+private func closeIgnoringErrors(_ client: sending SSHClient) async {
+    try? await client.close()
 }
 
 private enum DockerError: Error, CustomStringConvertible {
@@ -1242,6 +1326,162 @@ struct LivenessProbeDropIntegrationTests {
         #expect(sessionAtBound == nil)
     }
 
+    // MARK: - Unbounded file closes (measurement, not a fix)
+
+    /// Isolates `SFTPFile.close()` (read handle) on its own, with nothing
+    /// else in flight, against a peer that is STILL FROZEN.
+    ///
+    /// Reaches the raw `SFTPFile` through `connectRawSFTP`, bypassing
+    /// `CitadelFileSystem.readStream` entirely — that method never hands
+    /// its handle back to a caller, so there is no way to isolate its
+    /// close from outside it. This connects through Citadel directly, the
+    /// same Citadel this project already depends on
+    /// (`Package.swift`'s `Citadel` product), the way `connectToSSHServer`
+    /// connects through `CitadelFileSystem` for every other test in this
+    /// file.
+    ///
+    /// Shape: upload the fixture through the normal path (so the server
+    /// answering is proven before anything freezes), open a SECOND,
+    /// independent handle on it directly through Citadel, read ONE chunk
+    /// and await its return — proof the handle is real and nothing is
+    /// left in flight — freeze the peer, then call `close()` on that idle
+    /// handle and measure it alone against the bound, the same
+    /// before-thaw-capture discipline as every other test in this file.
+    @Test func aReadHandleCloseAgainstAStillFrozenPeerReturnsInsideTheBound() async throws {
+        let server = try DisposableSSHServer.start(port: isolatedReadCloseServerPort)
+        let watchdog = DisposableSSHServer.pruneAfter(seconds: fileCloseBoundSeconds + 180)
+        defer { watchdog.cancel() }
+        defer { server.remove() }
+        defer { try? server.thaw() }
+
+        let fs = try await server.connect()
+        let remotePath = "/config/macscp-isolated-read-close-\(UUID().uuidString).bin"
+        try await uploadCloseFixtureFile(to: fs, path: remotePath)
+
+        let (rawClient, sftp) = try await connectRawSFTP(port: isolatedReadCloseServerPort)
+        let handle = try await sftp.openFile(filePath: remotePath, flags: .read)
+
+        // ONE read, awaited to completion against the STILL-LIVE peer:
+        // proof the handle actually works, with the request it made
+        // already finished by the time the peer freezes below — nothing
+        // left in flight for `close()` to compete with.
+        let firstRead = try await handle.read(from: 0, length: UInt32(TransferChunk.size))
+        #expect(firstRead.readableBytes > 0, """
+            the live-peer read that was meant to prove this handle works \
+            returned no bytes — the close measured below would then not \
+            be a close of a handle that had ever done anything.
+            """)
+
+        try server.freeze()
+        // No request is in flight here: the read above already returned,
+        // and nothing else has been issued on this handle since. What
+        // races the bound below is `close()` alone.
+
+        // Routed through its own `Task` — `Task<Void, Never>` IS `Sendable`
+        // (its `Success`/`Failure` are), so `BoundedRun.run`'s escaping
+        // operation closure can capture and await IT without capturing the
+        // non-`Sendable` `handle` itself into an escaping context (which
+        // the compiler cannot prove is exclusive across a `sending` call —
+        // same pattern the write-path sibling below uses for its own
+        // `closeTask`.
+        let handleBox = UncheckedBox(handle)
+        let closeTask = Task<Void, Never> {
+            try? await handleBox.value.close()
+        }
+        let startedAt = ContinuousClock.now
+        let returned = await BoundedRun.run(boundSeconds: fileCloseBoundSeconds) {
+            _ = await closeTask.value
+        }
+        let elapsed = startedAt.duration(to: .now)
+        let returnedBeforeThaw = returned
+
+        print("""
+            [close-alone] read handle close against a STILL-frozen peer, \
+            no request in flight: returned=\(returnedBeforeThaw) after \
+            \(elapsed) (bound \(fileCloseBoundSeconds)s)
+            """)
+
+        try? server.thaw()
+        // Best-effort, not deferred: leaving this unclosed on an early
+        // throw is harmless (the container is force-removed regardless by
+        // the defers above), and closing it earlier would race the very
+        // `close()` this test measures.
+        await closeIgnoringErrors(rawClient)
+
+        #expect(returnedBeforeThaw, """
+            `SFTPFile.close()` (read handle) did not return within \
+            \(fileCloseBoundSeconds)s against a peer that is still \
+            frozen, with no other request in flight on this handle.
+            """)
+    }
+
+    /// The write-path sibling of `aReadHandleCloseAgainstAStillFrozenPeerReturnsInsideTheBound`:
+    /// isolates `SFTPFile.close()` (write handle) on its own, against a
+    /// peer that is STILL FROZEN, with nothing else in flight.
+    ///
+    /// Shape: open a handle directly through Citadel (`connectRawSFTP`,
+    /// same reasoning as the read-path sibling), write ONE 1 MB chunk and
+    /// await its return — proof the handle works and the write is no
+    /// longer in flight — freeze the peer, then call `close()` alone and
+    /// measure it against the bound.
+    @Test func aWriteFileCloseAgainstAStillFrozenPeerReturnsInsideTheBound() async throws {
+        let server = try DisposableSSHServer.start(port: isolatedWriteCloseServerPort)
+        let watchdog = DisposableSSHServer.pruneAfter(seconds: fileCloseBoundSeconds + 180)
+        defer { watchdog.cancel() }
+        defer { server.remove() }
+        defer { try? server.thaw() }
+
+        // Not through `server.connect()` this time: nothing about this
+        // test needs `CitadelFileSystem` at all, unlike the read-path
+        // sibling, which still uploads its fixture through the normal
+        // path. The write handle IS opened, written to, and closed
+        // entirely through the raw Citadel connection below.
+        let (rawClient, sftp) = try await connectRawSFTP(port: isolatedWriteCloseServerPort)
+        let remotePath = "/config/macscp-isolated-write-close-\(UUID().uuidString).bin"
+        let handle = try await sftp.openFile(
+            filePath: remotePath, flags: [.create, .write, .truncate])
+
+        // ONE write, awaited to completion against the STILL-LIVE peer:
+        // proof the handle works, with the request already finished by
+        // the time the peer freezes below.
+        try await handle.write(ByteBuffer(bytes: Data(repeating: 0x5A, count: 1 << 20)), at: 0)
+
+        try server.freeze()
+        // No request is in flight here: the write above already returned.
+        // What races the bound below is `close()` alone.
+
+        // Same reasoning as the read-path sibling: routed through its own
+        // `Task` rather than captured directly into `BoundedRun.run`'s
+        // escaping closure.
+        let handleBox = UncheckedBox(handle)
+        let closeTask = Task<Void, Never> {
+            try? await handleBox.value.close()
+        }
+        let startedAt = ContinuousClock.now
+        let returned = await BoundedRun.run(boundSeconds: fileCloseBoundSeconds) {
+            _ = await closeTask.value
+        }
+        let elapsed = startedAt.duration(to: .now)
+        let returnedBeforeThaw = returned
+
+        print("""
+            [close-alone] write handle close against a STILL-frozen peer, \
+            no request in flight: returned=\(returnedBeforeThaw) after \
+            \(elapsed) (bound \(fileCloseBoundSeconds)s)
+            """)
+
+        try? server.thaw()
+        // Best-effort, not deferred — same reasoning as the read-path
+        // sibling.
+        await closeIgnoringErrors(rawClient)
+
+        #expect(returnedBeforeThaw, """
+            `SFTPFile.close()` (write handle) did not return within \
+            \(fileCloseBoundSeconds)s against a peer that is still \
+            frozen, with no other request in flight on this handle.
+            """)
+    }
+
     /// Demonstrated, not assumed — the standard `ConnectAttemptHandoffTests`
     /// set for any suite on this branch that builds a real `ContentView`.
     /// This suite drives `handleLivenessGiveUp(_:)` with a live connection
@@ -1335,6 +1575,33 @@ struct LivenessProbeDropIntegrationTests {
     }
 
     // MARK: - Fixtures
+
+    /// Step 1 of the unbounded-file-closes measurement: uploads an 8 MB
+    /// fixture file to `fs` at `path` through `fs.write(...)` — the same
+    /// call the app itself uses — so
+    /// `aReadHandleCloseAgainstAStillFrozenPeerReturnsInsideTheBound` has a
+    /// real remote file to read, not a stand-in. Confirmed with `fs.stat`,
+    /// not merely assumed from a write that
+    /// returned without throwing.
+    private func uploadCloseFixtureFile(
+        to fs: CitadelFileSystem, path: String, size: Int = 8 << 20
+    ) async throws {
+        let payload = Data(repeating: 0x5A, count: size)
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(payload)
+        continuation.finish()
+        try await fs.write(path: path, mode: .overwrite, contents: stream)
+        let uploaded = try await fs.stat(path: path)
+        guard uploaded.size == UInt64(size) else {
+            Issue.record("""
+                the close-path fixture upload at \(path) reports size \
+                \(String(describing: uploaded.size)), not the expected \
+                \(size) — the freeze the calling test performs would then \
+                be racing a smaller (or absent) file than intended.
+                """)
+            return
+        }
+    }
 
     private static var realSessionsFileURL: URL {
         SessionStore.defaultDirectory.appendingPathComponent("sessions-v2.json")
