@@ -791,3 +791,61 @@ func snippetUndeclaredPlaceholderHint(
             "Not declared as a variable: %@. Nothing is filled in there — the text goes to the shell exactly as it stands."),
         quoted)
 }
+
+/// The `{{NAME}}` placeholders in `command` whose declaration carries
+/// `placement == .environment`, in declaration order (the `variables`
+/// array), without repeats.
+///
+/// Declaration order rather than the order names appear in `command`: every
+/// name in this list has a declaration to order by, unlike
+/// `snippetUndeclaredPlaceholders`, where there is none. Disjoint from that
+/// list by construction — a name here has a declaration, so it cannot be
+/// undeclared, and a name there has none, so it cannot carry
+/// `.environment` either. Which is also why this is a second function and
+/// not a reworded `snippetUndeclaredPlaceholders`: "declared" is the wrong
+/// word for `{{DB}}` when `DB` is an environment declaration — it IS
+/// declared — but `resolve` still leaves the placeholder standing, because
+/// an environment declaration is prepended as an assignment, not
+/// substituted into the text. Naming that gap wrongly would be worse than
+/// not naming it, which is why the undeclared sentence excludes it, and why
+/// this one exists to say what actually happened instead.
+func snippetEnvironmentPlaceholders(
+    in command: String, variables: [SnippetVariable]
+) -> [String] {
+    let mentioned = Set(snippetPlaceholderNames(in: command))
+    var seen: Set<String> = []
+    return variables
+        .filter { $0.placement == .environment && mentioned.contains($0.name) }
+        .map(\.name)
+        .filter { seen.insert($0).inserted }
+}
+
+/// What the editor says about a `{{NAME}}` that IS declared, but as an
+/// environment variable, or `nil` when there is none.
+///
+/// **A display, not a gate**, for the same reason
+/// `snippetUndeclaredPlaceholderHint` is one: `SnippetVariableSubstitution`
+/// decides what may be sent and none of that changed. `{{DB}}` for an
+/// environment declaration was left standing by `resolve` before this
+/// sentence existed and stays left standing — it goes to the shell as the
+/// literal characters it is, exactly like an undeclared placeholder does,
+/// which is precisely why the user is told: the command then does
+/// something other than what its author believes.
+///
+/// Every name at once rather than the first, for the same reason as the
+/// sibling hint: this sentence blocks nothing, so there is no "fix this
+/// one, then see the next" to walk through.
+func snippetEnvironmentPlaceholderHint(
+    command: String, variables: [SnippetVariable]
+) -> String? {
+    let environment = snippetEnvironmentPlaceholders(in: command, variables: variables)
+    guard !environment.isEmpty else { return nil }
+    let quoted = environment
+        .map { String(format: L10n.string("snippets.variables.quotedName %@", "“%@”"), $0) }
+        .joined(separator: ", ")
+    return String(
+        format: L10n.string(
+            "snippets.variables.environmentPlaceholder %@",
+            "Declared as an environment variable, not a placeholder: %@. Nothing is filled in there either — write it as $NAME to use the exported value."),
+        quoted)
+}

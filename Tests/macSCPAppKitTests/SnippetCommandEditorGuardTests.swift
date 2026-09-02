@@ -83,14 +83,16 @@ import Testing
 ///    placement says — its value is prepended as an assignment, so the
 ///    placeholder would be text nothing fills in. The sheet must also hand
 ///    the editor its declarations, or the list fails as silence.
-/// 10. **The undeclared hint is a display and stays one.**
-///    `variablesSection` must show it and `undeclaredPlaceholderHint` must
-///    come from `snippetUndeclaredPlaceholderHint` — but `isSaveDisabled`
-///    must NOT consult it, and `SnippetVariableSubstitution.Problem` must
-///    still carry six cases. An undeclared `{{NAME}}` was savable and
-///    sendable before the hint existed and stays so; a check that refused
-///    it would be a behaviour change at the one gate this project treats
-///    as security-critical.
+/// 10. **The undeclared and environment hints are displays and stay one.**
+///    `variablesSection` must show both `undeclaredPlaceholderHint` and
+///    `environmentPlaceholderHint`, each must come from its own
+///    presentation function (`snippetUndeclaredPlaceholderHint`,
+///    `snippetEnvironmentPlaceholderHint`) — but `isSaveDisabled` must NOT
+///    consult either, and `SnippetVariableSubstitution.Problem` must still
+///    carry six cases. A `{{NAME}}` nothing declares, or one declared as an
+///    environment variable, was savable and sendable before either hint
+///    existed and stays so; a check that refused one would be a behaviour
+///    change at the one gate this project treats as security-critical.
 ///
 /// Each is a SOURCE-TEXT scan, same shape and same blind spots as
 /// `SnippetActionSheetKeyboardShortcutGuardTests`/
@@ -785,7 +787,7 @@ struct SnippetCommandEditorGuardTests {
         #expect(!completions.contains("snippetPlaceholderCompletions("))
     }
 
-    // MARK: - Finding 10: the undeclared hint is a display, and stays one
+    // MARK: - Finding 10: the undeclared and environment hints are displays, and stay one
 
     /// Shown, and computed by the one function that decides it.
     @Test("the variables section shows the hint about an undeclared placeholder")
@@ -803,6 +805,27 @@ struct SnippetCommandEditorGuardTests {
             containing: "private var undeclaredPlaceholderHint: String? {", in: source)
         #expect(hint.contains("snippetUndeclaredPlaceholderHint("), """
             the editor's hint must come from snippetUndeclaredPlaceholderHint -- it is where \
+            the rule is tested without a view. Scanned body: \(hint)
+            """)
+    }
+
+    /// Same proof, for the sibling sentence about a `{{NAME}}` that IS
+    /// declared, but as an environment variable.
+    @Test("the variables section shows the hint about an environment-declared placeholder")
+    func variablesSectionShowsTheEnvironmentHint() throws {
+        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let section = try Self.functionBody(
+            containing: "private var variablesSection: some View {", in: source)
+        #expect(section.contains("if let environmentPlaceholderHint {"), """
+            variablesSection must render the hint about a `{{NAME}}` declared as an \
+            environment variable -- nothing is substituted there either, and without it \
+            the command goes on doing something other than what its author believes. \
+            Scanned body: \(section)
+            """)
+        let hint = try Self.functionBody(
+            containing: "private var environmentPlaceholderHint: String? {", in: source)
+        #expect(hint.contains("snippetEnvironmentPlaceholderHint("), """
+            the editor's hint must come from snippetEnvironmentPlaceholderHint -- it is where \
             the rule is tested without a view. Scanned body: \(hint)
             """)
     }
@@ -825,6 +848,13 @@ struct SnippetCommandEditorGuardTests {
             `{{NAME}}` was savable and sendable before the hint existed and stays so -- it \
             just goes out literally. A check that blocked it would be a behaviour change \
             wearing a display's clothes. Scanned body: \(body)
+            """)
+        #expect(!body.contains("environmentPlaceholder"), """
+            isSaveDisabled must NOT consult the environment-placeholder hint either. A \
+            `{{NAME}}` declared as an environment variable was savable and sendable before \
+            this hint existed and stays so -- it just goes out literally. A check that \
+            blocked it would be a behaviour change wearing a display's clothes. \
+            Scanned body: \(body)
             """)
     }
 

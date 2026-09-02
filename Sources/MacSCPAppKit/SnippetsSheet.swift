@@ -726,6 +726,19 @@ private struct SnippetEditorView: View {
         snippetUndeclaredPlaceholderHint(command: command, variables: variables)
     }
 
+    /// What the editor says about a `{{NAME}}` that IS declared, but as an
+    /// environment variable, or `nil`.
+    ///
+    /// The sibling of `undeclaredPlaceholderHint`, not a reworded version of
+    /// it: an environment declaration IS a declaration, so calling it
+    /// undeclared would be wrong in a different way than for a name nothing
+    /// declares. Same reason it stays out of `isSaveDisabled` too —
+    /// `SnippetVariableSubstitution` decides what may be sent and none of
+    /// that changed here either.
+    private var environmentPlaceholderHint: String? {
+        snippetEnvironmentPlaceholderHint(command: command, variables: variables)
+    }
+
     /// The rows the variables section draws, each carrying whether the
     /// current fault is about it — the input the fold rule reads.
     ///
@@ -1103,6 +1116,18 @@ private struct SnippetEditorView: View {
             // the sheet's fixed width truncates it mid-word.
             if let undeclaredPlaceholderHint {
                 Text(undeclaredPlaceholderHint)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // Same amber, same reasoning: this sentence blocks nothing
+            // either. Two sentences rather than one merged string, so each
+            // catalog entry stays a whole sentence and both may show at
+            // once when a command carries one of each.
+            if let environmentPlaceholderHint {
+                Text(environmentPlaceholderHint)
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)

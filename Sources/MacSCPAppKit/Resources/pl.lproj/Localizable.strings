@@ -914,6 +914,7 @@
 "snippets.variables.insert" = "Wstaw do polecenia";
 "snippets.variables.quotedName %@" = "„%@”";
 "snippets.variables.undeclared %@" = "Niezadeklarowane jako zmienna: %@. Nic nie zostanie tam wstawione — tekst trafi do powłoki dokładnie w tej postaci.";
+"snippets.variables.environmentPlaceholder %@" = "Zadeklarowane jako zmienna środowiskowa, a nie symbol zastępczy: %@. Tam też nic nie zostanie wstawione — zapisz to jako $NAME, aby użyć wyeksportowanej wartości.";
 "snippets.editor.skipPlacementCheck" = "Nie sprawdzaj, gdzie w tym poleceniu znajdują się wartości";
 "snippets.editor.skipPlacementCheck.hint" = "Dotyczy tylko tego fragmentu i nie jest przenoszone: zaimportowany fragment zawsze przychodzi z włączonym sprawdzaniem. Wartości nadal są cytowane, ale macSCP nie wymaga już, aby każda z nich była zwykłym, niecytowanym argumentem — a gdy tak nie jest, samo cytowanie nie powstrzyma odczytania wartości jako kodu powłoki.";
 "snippets.editor.preview" = "Podgląd";

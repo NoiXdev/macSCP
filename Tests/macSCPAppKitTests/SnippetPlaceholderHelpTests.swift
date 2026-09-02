@@ -253,4 +253,74 @@ struct SnippetPlaceholderHelpTests {
         #expect(snippetUndeclaredPlaceholderHint(
             command: "echo {{DB}} {{USED}}", variables: [Self.variable("USED")]) != nil)
     }
+
+    // MARK: - The hint about a placeholder declared as an environment variable
+
+    @Test func anEnvironmentDeclaredPlaceholderIsReported() {
+        #expect(snippetEnvironmentPlaceholders(
+            in: "echo {{DB}}",
+            variables: [Self.variable("DB", placement: .environment)]) == ["DB"])
+    }
+
+    /// A `.placeholder` declaration is the OTHER sentence's business —
+    /// `{{DB}}` there is filled in as designed, so it is not reported here.
+    @Test func aPlaceholderPlacementDeclarationIsNotReportedHere() {
+        #expect(snippetEnvironmentPlaceholders(
+            in: "echo {{DB}}",
+            variables: [Self.variable("DB", placement: .placeholder)]).isEmpty)
+    }
+
+    /// An undeclared `{{DB}}` is `snippetUndeclaredPlaceholders`'s business,
+    /// not this one's — there is no environment declaration to name.
+    @Test func anUndeclaredPlaceholderIsNotReportedHere() {
+        #expect(snippetEnvironmentPlaceholders(in: "echo {{DB}}", variables: []).isEmpty)
+    }
+
+    /// The two lists never share a name: a name in one has exactly the
+    /// declaration status the other requires to be empty of it.
+    @Test func theEnvironmentAndUndeclaredListsAreDisjoint() {
+        let variables = [Self.variable("DB", placement: .environment)]
+        let command = "echo {{DB}} {{MISSING}}"
+        let environment = snippetEnvironmentPlaceholders(in: command, variables: variables)
+        let undeclared = snippetUndeclaredPlaceholders(in: command, variables: variables)
+        #expect(environment == ["DB"])
+        #expect(undeclared == ["MISSING"])
+        #expect(Set(environment).isDisjoint(with: Set(undeclared)))
+    }
+
+    /// Repeats collapse, and the order follows the DECLARATION order (the
+    /// `variables` array), not the order the names happen to appear in the
+    /// command text — unlike `snippetUndeclaredPlaceholders`, every name
+    /// here has a declaration to order by.
+    @Test func repeatsCollapseAndOrderIsDeclarationOrderForEnvironmentNames() {
+        let names = snippetEnvironmentPlaceholders(
+            in: "echo {{DB}} {{HOST}} {{DB}}",
+            variables: [
+                Self.variable("HOST", placement: .environment),
+                Self.variable("DB", placement: .environment),
+            ])
+        #expect(names == ["HOST", "DB"])
+    }
+
+    @Test func noEnvironmentPlaceholdersProduceNoHint() {
+        #expect(snippetEnvironmentPlaceholderHint(command: "ls -la", variables: []) == nil)
+    }
+
+    /// The hint names every such name, and carries the `$NAME` advice from
+    /// the catalog entry verbatim — computed as booleans first, so neither
+    /// the rendered string nor its spelling can reach a failure message.
+    @Test func theEnvironmentHintNamesEveryNameAndAdvisesTheDollarForm() {
+        let hint = snippetEnvironmentPlaceholderHint(
+            command: "echo {{DB}} {{HOST}}",
+            variables: [
+                Self.variable("DB", placement: .environment),
+                Self.variable("HOST", placement: .environment),
+            ])
+        let namesDB = hint?.contains("DB") == true
+        let namesHost = hint?.contains("HOST") == true
+        let advisesTheDollarForm = hint?.contains("$NAME") == true
+        #expect(namesDB)
+        #expect(namesHost)
+        #expect(advisesTheDollarForm)
+    }
 }
