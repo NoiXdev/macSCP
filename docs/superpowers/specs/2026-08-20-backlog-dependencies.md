@@ -499,3 +499,111 @@ target without two `Sendable` warnings; the probes registered through
 The registry is process-global with no public undo, so each probe was
 env-gated and run alone.
 
+## Done 2026-09-02 — the second fork: Citadel, and it starts at zero distance
+
+**`https://github.com/NoiXdev/Citadel`**, forked from `orlandos-nl/Citadel`
+(`gh` reports `isFork: true`, parent `orlandos-nl/Citadel`). Branch `noix`
+at tag **`0.12.1`** = `ae8562f`, which is the revision macSCP's
+`Package.resolved` already pinned. The fork's default branch is untouched
+and `noix` carries no commits of its own yet.
+
+### The measurement that shaped the task
+
+`git log --oneline 0.12.1..upstream/main` is **empty**. `upstream/main` *is*
+the `0.12.1` tag — same SHA, `git rev-list --count` = 0 — and its tip is
+dated 2026-04-04. `0.12.1` is also the newest tag. Upstream has not moved in
+five months.
+
+So the classification the fork record for NIOSSH needed — 91 commits
+triaged, one advisory chased — has **zero rows** here. There is no upstream
+drift to inherit, no advisory backlog, no divergence to maintain. That is
+the opposite of the NIOSSH situation and it should be re-measured before any
+future rebase, not assumed to still hold.
+
+| class | count |
+|---|---|
+| security | 0 |
+| correctness | 0 |
+| feature | 0 |
+| noise | 0 |
+
+Thirteen unmerged branches exist upstream (`feature/ssh-server`, several
+`jo/*`, one dependabot). None was triaged — they are work-in-progress and
+out of scope.
+
+### Why the fork exists: PR #135
+
+`orlandos-nl/Citadel#135`, "Add RFC 8332 rsa-sha2-256 / rsa-sha2-512
+signature algorithms", by `mburlac`. **OPEN, `mergedAt: null`**, created
+2026-07-25, **0 reviews, 0 comments** after 39 days against a repository
+whose `main` has been still for five months. Waiting for the merge is not a
+plan; that is what the fork is for.
+
+Distance to `0.12.1`: **zero.** The PR branches directly off `ae8562f`.
+
+| check | result |
+|---|---|
+| `git merge-base pr135 0.12.1` | `ae8562f` — the tag itself |
+| `git cherry-pick -n 0d0b839 9f55d61` | exit 0, **0 conflicts** |
+| `git apply --check` of the PR diff | exit 0 |
+| `swift build --target Citadel` | complete, **0 warnings** naming either PR file |
+| `swift test --filter RSASHA2` | **6 tests, 0 failures** |
+
+Files: `RSASHA2.swift` (+166, new), `SSHAuthenticationMethod.swift` (+39/-2,
+the two deletions are whitespace), `RSASHA2Tests.swift` (+109, new), and
+`Package.resolved` — the last is pure v1→v2 format churn plus a
+`Joannis`→`Wellz26` URL rename **at an unchanged revision**, and SwiftPM
+ignores a dependency's own lockfile. Drop that hunk when cherry-picking.
+**No `RSA.swift` change**: the PR is additive and leaves the SHA-1 `ssh-rsa`
+path exactly as it was.
+
+### The constraint, and the one keyword that decides it
+
+The plan requires that no SHA-1 signature leaves the app. PR #135 hashes
+with `SHA512`/`SHA256` into `RSA_sign` under `NID_sha512`/`NID_sha256` and
+emits the `rsa-sha2-512` / `rsa-sha2-256` prefixes — correct on both counts.
+But `rsaSHA2(username:privateKey:includeSHA1Fallback:)` defaults
+`includeSHA1Fallback` to **`true`**, appending a legacy `ssh-rsa` offer.
+
+That offer is not a harmless advertisement. swift-nio-ssh signs at offer
+time — `UserAuthenticationMethod.swift:216`, `let signature = try
+privateKeyRequest.privateKey.sign(dataToSign)` — with no two-phase probe, so
+a rejected SHA-2 offer is followed by a real SHA-1 signature on the wire.
+**macSCP must pass `includeSHA1Fallback: false`, and pin it with a test**,
+because the safe value is not the default.
+
+Unreproduced, and the claim that matters most: RFC 8332 has the userauth
+algorithm name differ from the key blob's type (`rsa-sha2-512` vs
+`ssh-rsa`), while swift-nio-ssh writes both from one `publicKeyPrefix`. The
+PR argues OpenSSH accepts the result because it resolves the blob type by
+name, and reports a live test against Alpine OpenSSH 9.x. We have not
+verified it. It decides whether authentication actually works, so it is the
+first thing to test against the rig.
+
+### Why not write the signer ourselves
+
+The option considered was a ~40-line `rsa-sha2-512` signer in macSCP instead
+of a fork. **It cannot be written there.** Signing needs the private
+exponent, and `RSA.swift:171` declares it `internal` with no public getter —
+`PublicKey.rawRepresentation` yields `e` and `n`, never `d`. The
+alternatives are to write the same lines *inside* the fork (the cherry-pick,
+minus tests and attribution, plus our own bugs) or to reimplement
+`openssh-key-v1` in macSCP: `OpenSSHKey.swift` is 466 lines, `enum OpenSSH`
+is `internal` so none of it is reusable, and it would mean rewriting the
+aes-ctr ciphers and the bcrypt KDF to keep passphrase-protected keys
+working.
+
+### Scope this fork does not yet cover
+
+`OpenSSH.KeyType` in 0.12.1 has exactly two cases, `ssh-rsa` and
+`ssh-ed25519`. ECDSA is absent entirely.
+
+| | parse from file | sign |
+|---|---|---|
+| ed25519 | public API, works today | works |
+| RSA | public API, works today (`init(sshRsa:decryptionKey:)`) | SHA-1 only — the gap PR #135 fills |
+| ECDSA | **missing** | already in NIOSSH: `NIOSSHPrivateKey(p256Key:)`/`(p384Key:)`/`(p521Key:)` are public |
+
+So the ECDSA half needs **only a parser**, not a signer — a third `KeyType`
+case and an `OpenSSHPrivateKey` conformance for the three curves. That is a
+separate fork patch and a separate task, not part of the cherry-pick.
