@@ -340,3 +340,29 @@ property.
 encrypted RSA key as `typeNotLoadable`, so the plan's Task 3 needed no
 change. Agent authentication per type was covered by B-2.
 
+## Measured 2026-09-02 — the agent passphrase matrix
+
+Planned in `../plans/2026-09-02-agent-key-passphrase-matrix.md`
+(`9a8ad65`). `agentAuthConnectsWithPassphraseProtectedKey` is now
+parameterised over the five key types; the five unencrypted per-type
+tests are unchanged, so the agent path is a ten-cell matrix:
+
+| type | without passphrase | with passphrase |
+|---|---|---|
+| ed25519 | green (existing) | green |
+| RSA 2048 | green (existing) | green |
+| ECDSA P-256 | green (existing) | green |
+| ECDSA P-384 | green (existing) | green |
+| ECDSA P-521 | green (existing) | green |
+
+No cell was red, so nothing was pinned as a measured failure: `ssh-add`
+decrypts every type the same way, and the passphrase reaches it through
+the same 0600 file and `SSH_ASKPASS` helper as before — never an argument,
+the environment, a log line or an expectation's source text. The point
+of the matrix is that this was an assumption until today; it is now a
+measurement that reruns with every gated pass.
+
+File keys with a passphrase are still ed25519-only here, because the
+loader still refuses the other types — see
+`../plans/2026-09-02-file-keys-without-agent.md`.
+
