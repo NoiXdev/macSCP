@@ -463,3 +463,39 @@ written with a claim of a red test run that had not actually been observed —
 a grep that matched nothing, read as "no failure". Both were rewritten before
 anything was pushed, with the red that was then really seen (a trap, not an
 assertion). A commit message is a measurement record too.
+
+## Measured 2026-09-02 — RSA host keys need one fork change
+
+Spike plan `../plans/2026-09-02-rsa-host-key-spike.md`; probes kept as
+patches in the plan's workspace, nothing committed (verdict (b)). Every
+error below is `String(reflecting:)` output; every server line is from
+`/config/logs/openssh/current` inside the rig container (the linuxserver
+image does not put sshd's per-connection lines on `docker logs`).
+
+| route | registered | client offer (sshd's log) | result |
+|---|---|---|---|
+| 1 | Citadel's `ssh-rsa` pair (SHA-1) | `ssh-ed25519,ecdsa-sha2-nistp384,ecdsa-sha2-nistp256,ecdsa-sha2-nistp521,ssh-rsa` | `NIOSSHError.keyExchangeNegotiationFailure` — the server offers only `rsa-sha2-512,rsa-sha2-256`; registration itself works |
+| 2 | an `rsa-sha2-512` pair (PKCS#1 v1.5 over SHA-512 via `_CryptoExtras`) | negotiated, no rejection line | `NIOSSHError.unknownPublicKey: ssh-rsa` — the blob lookup keys on the blob's own prefix; the parser was never called |
+| 2b | both pairs | negotiated | blob parsed once, then `NIOSSHError.invalidHostKeyForKeyExchange: Expected rsa-sha2-512, got ssh-rsa` — the identity check compares blob type to negotiated name |
+
+So NIOSSH's `NIOSSHPublicKeyProtocol.publicKeyPrefix` serves as the
+offered host-key algorithm name (`SSHKeyExchangeStateMachine.swift:555-559`,
+`NIOSSHPublicKey.swift:206-208`), the identity check
+(`SSHKeyExchangeStateMachine.swift:254-256`), the blob lookup
+(`NIOSSHPublicKey.swift:456`) and the `K_S` re-serialisation
+(`NIOSSHPublicKey.swift:400-402`). RFC 8332 needs the first two to say
+`rsa-sha2-512` while the last two say `ssh-rsa`. **The fork change:** a
+`static var hostKeyAlgorithmNames: [String]` on the protocol, defaulting
+to `[publicKeyPrefix]`, consulted by the offer and the identity check
+only.
+
+Not reached: whether the exchange hash then matches (the `K_S` write
+path was read, not exercised), and the `_CryptoExtras` verification
+itself (its log stayed empty in every run — Task 3 of the follow-up plan
+must prove it, not assume it). Also measured: Citadel's
+`SSHAlgorithms.publicKeyAlgorihtms` cannot be populated from a `.v6`
+target without two `Sendable` warnings; the probes registered through
+`NIOSSHAlgorithms.register` directly (same registry, `Client.swift:43-56`).
+The registry is process-global with no public undo, so each probe was
+env-gated and run alone.
+
