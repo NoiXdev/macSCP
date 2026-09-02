@@ -47,8 +47,29 @@ public struct SessionCatalog: Sendable {
     private let sessions: [StoredSession]
     private let groups: [StoredGroup]
 
+    /// Normalizes `sessions` on the way in: a `groupID` naming no group in
+    /// `groups` is set to `nil`, the same rule `SessionStore.load()` applies
+    /// to what it reads from disk (`SessionStore.swift`, the "Defensive: a
+    /// groupID whose group no longer exists behaves like nil" comment).
+    /// `SessionCatalog` is not always fed a store's own hygiene-swept
+    /// output, though — every unit test here hand-builds a `[StoredSession]`,
+    /// and a future completion caller (this type's other stated purpose)
+    /// might do the same — so a dangling `groupID` normalized here rather
+    /// than merely documented as a precondition means the walk in
+    /// `rows(matching:)` can never silently drop a session by falling out of
+    /// `SidebarOrdering.children(of:in:)`'s filter for every `parentID` it
+    /// visits (final-branch-review finding, 2026-09-02; see
+    /// `aSessionWithADanglingGroupIDSurfacesAtTopLevelRatherThanBeingDropped`
+    /// in `SessionCatalogTests`).
     public init(sessions: [StoredSession], groups: [StoredGroup]) {
-        self.sessions = sessions
+        let knownGroupIDs = Set(groups.map(\.id))
+        self.sessions = sessions.map { session in
+            var session = session
+            if let groupID = session.groupID, !knownGroupIDs.contains(groupID) {
+                session.groupID = nil
+            }
+            return session
+        }
         self.groups = groups
     }
 

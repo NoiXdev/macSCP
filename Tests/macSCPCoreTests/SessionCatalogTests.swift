@@ -216,4 +216,27 @@ struct SessionCatalogTests {
         #expect(!rows.isEmpty)
         #expect(everyRowMatchesTheFirstSession)
     }
+
+    // MARK: - (k) a dangling groupID is treated as top level, not dropped
+
+    /// `SidebarOrdering.children(of:in:)` only ever returns a session under
+    /// a `parentID` that is either `nil` or names a real group in `tree
+    /// .groups` — a session whose `groupID` names NO group in `groups` never
+    /// matches any `parentID` the walk in `rows(matching:)` visits, so
+    /// without normalization it would vanish from every result silently,
+    /// with no error and no trap (final-branch-review finding, 2026-09-02).
+    /// `SessionCatalog.init` now nils such a `groupID`, the same rule
+    /// `SessionStore.load()` applies on disk — so the session surfaces at
+    /// the top level instead of disappearing.
+    @Test func aSessionWithADanglingGroupIDSurfacesAtTopLevelRatherThanBeingDropped() {
+        let session = sshSession(name: "orphan", groupID: UUID())
+        let catalog = SessionCatalog(sessions: [session], groups: [])
+
+        let rows = catalog.rows(matching: .init())
+
+        let orphanSurfaced = rows.map(\.name) == ["orphan"]
+        let orphanIsAtTopLevel = rows.first?.groupPath == ""
+        #expect(orphanSurfaced)
+        #expect(orphanIsAtTopLevel)
+    }
 }
