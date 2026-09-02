@@ -110,3 +110,35 @@ FTP/FTPS first (own code, nothing to license), SMB second (a C
 dependency is a supply-chain decision the fork rule in CLAUDE.md
 applies to as well).
 
+## Measured 2026-09-02 — the candidates
+
+Full record: `2026-09-02-protocols-library-measurement.md` (scratch builds
+under this machine's Swift 6.3 toolchain, `.swiftLanguageMode(.v6)`,
+arm64).
+
+- **SMB — two viable routes, one recommended.** `kishikawakatsumi/SMBClient`
+  (MIT, pure Swift, no C dependency, dialects SMB 2.0.2–3.1.1, builds
+  clean under `.v6`: 0 warnings, 0 errors) is recommended over
+  `libsmb2` + `AMSMB2` (also builds clean at AMSMB2 ≥ 4.0.0, but the
+  shipped product becomes LGPL-2.1 through the statically linked C
+  library, and AMSMB2 3.x fails SwiftPM's unsafe-flags check). The
+  measured risk of the recommendation: SMBClient implements signing but
+  **no SMB3 encryption** (AES-CCM/GCM; confirmed by source search and its
+  own open issue), and carries an open, unresolved thread-safety report
+  (`SequenceNumber`). Kerberos: neither is required for the maintainer's
+  case; NTLMv2 is what both do.
+- **FTP/FTPS — own code.** No NIO-based FTP library exists on GitHub at
+  all; the three candidates with any track record are archived,
+  FTPS-less, or GPL-3.0 with no users. So: a from-scratch control channel
+  over swift-nio, TLS through NIOSSL. **NIOSSL is not in the dependency
+  graph today** (absent from `Package.resolved`; neither swift-nio,
+  Citadel nor swift-nio-ssh pulls it in) — adding it is a supply-chain
+  decision of its own, made under the fork rule's review discipline.
+- **Rig.** Both researched FTPS images have a real gap (no native arm64
+  build, or no TLS); an implicit-FTPS rig may need a custom image. SMB:
+  a Samba image exists for arm64 — see the record's §5.
+
+Next: brainstorming → design for FTP/FTPS first (own code, NIOSSL as the
+one new dependency), then SMB on `SMBClient` with the encryption gap
+named in the design as a limit, not a surprise.
+
