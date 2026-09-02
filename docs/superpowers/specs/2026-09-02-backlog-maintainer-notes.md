@@ -96,3 +96,12 @@ transfers items (7 and 9)**: cancel one or all active transfers beside
 the clean-up button, and full source/destination paths in a row. The
 first feature to get a brainstorm: **detachable, optionally sticky tabs
 (item 17)**. Everything else in the list waits.
+
+## Brainstormed 2026-09-02/03 — item 17
+
+Detachable, optionally sticky tabs: four questions answered by the
+maintainer, design written in `2026-09-03-detachable-tabs-design.md`
+(a detached tab is a full window; sticky = above all windows; tabs move
+both ways and an emptied window closes unless it is the last; restoration
+is a setting, default off, and restores windows without connections).
+
