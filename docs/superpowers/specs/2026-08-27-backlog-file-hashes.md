@@ -144,7 +144,13 @@ a second switch spelled the same string — replaced by an exhaustive
 `switch` over `FileColumn` (a forgotten column is now a compile error,
 CLAUDE.md's "structural boundary beats a scanner"); and a guard's
 `fileDeclaring("struct BrowserPane")` matched `BrowserPaneSide` too — it
-now requires the name to end where it is written. Still open in this
-entry: no progress within a file; no dedicated case for "this algorithm
-does not exist here".
+now requires the name to end where it is written. **One more limit the final review named:** on S3 the request under the
+default SHA-256 comes back as an MD5 ETag (what the object store has),
+so the sheet shows a value while the column — keyed by the SELECTED
+algorithm — stays empty for that row until the setting is MD5. The
+column shows only what was asked for under the algorithm it names;
+showing "the value that came back" under another algorithm's header
+would be the lie the sheet's own qualification avoids. Recorded, not
+changed. Still open in this entry: no progress within a file; no
+dedicated case for "this algorithm does not exist here".
 
