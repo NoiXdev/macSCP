@@ -43,10 +43,35 @@ jobs:
         run: |
           set -o pipefail
           swift build 2>&1 | tee "$RUNNER_TEMP/build.log"
-      - name: Unit-Tests
+      - name: Unit-Tests (sampled while the CLI children hang — diagnostic branch)
         run: |
-          set -o pipefail
-          swift test 2>&1 | tee "$RUNNER_TEMP/test.log"
+          swift --version
+          swift test > "$RUNNER_TEMP/test.log" 2>&1 &
+          TEST_PID=$!
+          for i in $(seq 1 40); do
+            sleep 5
+            if pgrep -f "macscp-cli" >/dev/null; then
+              echo "=== macscp-cli child seen at t=$((i*5))s ==="
+              ps -ef | grep -v grep | grep -i "macscp-cli\|swiftpm-testing\|macSCPPackageTests" | cut -c1-200
+              for pid in $(pgrep -f "macscp-cli"); do
+                echo "##### sample of macscp-cli pid $pid #####"
+                sample "$pid" 2 -file "$RUNNER_TEMP/child-$pid.txt" || true
+                sed -n '1,120p' "$RUNNER_TEMP/child-$pid.txt"
+                echo "##### lsof of pid $pid #####"; lsof -p "$pid" 2>/dev/null | head -30 || true
+              done
+              for pid in $(pgrep -f "swiftpm-testing-helper|macSCPPackageTests"); do
+                echo "##### sample of test process $pid (top 150 lines) #####"
+                sample "$pid" 2 -file "$RUNNER_TEMP/parent-$pid.txt" || true
+                grep -n "runProcess\|readDataToEndOfFile\|waitUntilExit\|group.wait\|semaphore_wait\|posix_spawn" "$RUNNER_TEMP/parent-$pid.txt" | head -40 || true
+              done
+              break
+            fi
+            kill -0 "$TEST_PID" 2>/dev/null || break
+          done
+          wait "$TEST_PID"; RC=$?
+          echo "=== test.log: ✘ lines (not skipped) ==="; grep '✘' "$RUNNER_TEMP/test.log" | grep -v skipped | head -30
+          grep "Test run with" "$RUNNER_TEMP/test.log" | tail -1
+          exit $RC
       - name: Warning gate
         # Why this step exists: the warning stack regrew unnoticed once
         # already. Dozens of sites had accumulated by 2026-08-26, six of them
