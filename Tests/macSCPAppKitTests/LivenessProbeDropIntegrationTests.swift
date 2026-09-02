@@ -1,4 +1,19 @@
-import Citadel
+// `@preconcurrency`: `connectBoundedSFTP` hands a Citadel `SSHClient` — not
+// declared `Sendable` upstream — from a nonisolated helper into the
+// `@MainActor` suite, and `closeIgnoringErrors` takes it back as `sending`.
+// The workstation toolchain (Swift 6.3, region isolation per SE-0461)
+// accepts that; CI's older one rejected it — "non-sendable result type
+// '(client: SSHClient, sftp: BoundedSFTPSession)' cannot be sent from
+// nonisolated context" (run 33584973939). Moving both helpers onto the main
+// actor instead fails the other way on 6.3 ("sending 'client' risks causing
+// data races" at the `client.close()` call), so the two toolchains leave no
+// shape both accept without this. Same divergence and same remedy as
+// `Sources/macSCPCore/SSH/CitadelFileSystem.swift`; see
+// `docs/superpowers/specs/2026-08-26-backlog-toolchain-deviation.md`. What
+// stops being checked: Sendable diagnostics involving Citadel's types in
+// THIS test file — every such value here lives for one test and is handed
+// across exactly once.
+@preconcurrency import Citadel
 import Foundation
 import NIOCore
 import Testing
@@ -164,18 +179,6 @@ private func connectToSSHServer(port: Int) async throws -> CitadelFileSystem {
 /// worth pinning past that single connection, and `.acceptAnything()` is
 /// the same TOFU-bypass posture the rest of this file's raw fixture
 /// connections use.
-// `@MainActor`, like the suite that calls it: the tuple carries an
-// `SSHClient`, which Citadel does not declare `Sendable`, and returning it
-// from a nonisolated function into a main-actor test is a boundary
-// crossing. The workstation toolchain (Swift 6.3, region isolation per
-// SE-0461) accepted that; CI's older one rejected it —
-// "non-sendable result type '(client: SSHClient, sftp: BoundedSFTPSession)'
-// cannot be sent from nonisolated context" at the two call sites (run
-// 33584973939). Same divergence as
-// `docs/superpowers/specs/2026-08-26-backlog-toolchain-deviation.md`. With the
-// helper on the same actor as its callers there is no crossing to check on
-// either toolchain — no `@preconcurrency`, no box.
-@MainActor
 private func connectBoundedSFTP(
     port: Int
 ) async throws -> (client: SSHClient, sftp: BoundedSFTPSession) {
