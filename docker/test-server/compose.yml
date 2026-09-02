@@ -62,10 +62,15 @@ services:
   # so the bucket-list case is a real two-bucket listing rather than a
   # single-bucket root; and a second S3 identity, `macscp-scoped`, whose
   # policy grants ListBucket/GetObject/PutObject/DeleteObject on
-  # `macscp-seed` only and deliberately omits `s3:ListAllMyBuckets` --
-  # this is the "key scoped to one bucket, cannot list the account's
-  # buckets" case the gated suite needs to exercise. The policy document
-  # lives in ./minio/scoped-seed-policy.json, mounted read-only below.
+  # `macscp-seed` only and deliberately omits `s3:ListAllMyBuckets`.
+  # Measured 2026-09-02 against this MinIO release (proofs in README.md):
+  # such a key does NOT get AccessDenied on the account-level bucket
+  # listing -- MinIO returns the FILTERED list (macscp-seed only), and an
+  # explicit Deny on s3:ListAllMyBuckets does not change that; what it
+  # does deny is any access to macscp-second. So the case this identity
+  # exercises is "a key that sees one bucket", not "a key that is refused
+  # the list". The policy document lives in ./minio/scoped-seed-policy.json,
+  # mounted read-only below.
   #
   # Every mc call here is written to be idempotent -- this container reruns
   # on every `docker compose up`, against a MinIO volume that already has

@@ -43,7 +43,7 @@ error case with its own catalog string:
 |---|---|---|
 | 200 with buckets | works | none — the browser opens on the list |
 | 200 with zero buckets | key may list, account has none | "This key can list buckets, but the account has none." |
-| 403 `AccessDenied` | key lacks `s3:ListAllMyBuckets` (AWS behaves so; **MinIO does not** — measured 2026-09-02, it returns the filtered list instead, see the rig README) | "This key may not list buckets. Turn off 'Start at the bucket list' and enter the bucket." |
+| 403 `AccessDenied` | key lacks `s3:ListAllMyBuckets` (AWS is documented to answer 403 here — not measured by this project, no AWS key in the rig; **MinIO does not** — measured 2026-09-02, it returns the filtered list instead, see the rig README) | "This key may not list buckets. Turn off 'Start at the bucket list' and enter the bucket." |
 | anything else | provider does not implement `ListBuckets`, or an endpoint/region problem | today's `connectionFailed` path |
 
 The check happens **once, on connect**, so the failure is where the user
