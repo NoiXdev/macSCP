@@ -92,6 +92,13 @@ struct InfoPermissionsSheet: View {
     /// opening the sheet: a checksum reads the whole file on the far side,
     /// so it happens because somebody asked for it.
     let onComputeChecksum: @MainActor () async -> ChecksumRequestResult
+    /// Whether this pane's backend has a permission model the editor
+    /// speaks (`PermissionsAvailability`). `false` does NOT produce a
+    /// greyed-out grid — it produces the sentence that says so, exactly as
+    /// `supportsChecksum` does for its block. Whether the ENTRY carried
+    /// bits is the other question, and `PermissionsPresentation` keeps the
+    /// two apart.
+    let supportsPermissions: Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var permissions = PosixPermissions(rawValue: 0)
@@ -139,7 +146,11 @@ struct InfoPermissionsSheet: View {
     /// until the user closes it themselves.
     @State private var recursiveResult: PermissionsTreeResult?
 
-    private var hasPermissions: Bool { item.permissions != nil }
+    /// The one decision the permissions block and the Apply button share.
+    private var presentation: PermissionsPresentation {
+        PermissionsPresentation.of(
+            supportsPermissions: supportsPermissions, permissions: item.permissions)
+    }
 
     /// The octal field's parse state gates Apply (T3 review): while the
     /// user types an invalid intermediate value, `permissions` keeps the
@@ -173,104 +184,12 @@ struct InfoPermissionsSheet: View {
             Divider()
             Text(L10n.string("info.permissions", "Permissions"))
                 .font(.system(size: 12, weight: .semibold))
-            if hasPermissions {
-                if applyRecursively && recursiveMode == .separate {
-                    Text(L10n.string("info.recursive.filesLabel", "Files"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(DesignTokens.inkSecondary)
-                }
-                permissionsGrid
-                HStack(spacing: 8) {
-                    Text(L10n.string("info.octal", "Octal"))
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(DesignTokens.inkSecondary)
-                    // Typing NEVER echoes a reformatted value back into the
-                    // field (T3 review: the zero-padded echo corrupted
-                    // digit-by-digit entry) — the field only updates the
-                    // grid; the grid's toggles write the field explicitly.
-                    TextField("", text: $octalText)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 70)
-                        // Locked only during an actual recursive run, NOT
-                        // during a plain single-item apply — the M7b field
-                        // was never disabled during `isWorking` there, and
-                        // spec §4.5 requires that path stay byte-for-byte
-                        // unchanged.
-                        .disabled(recursiveTask != nil)
-                        .onChange(of: octalText) { _, newValue in
-                            if let parsed = PosixPermissions(octalString: newValue) {
-                                permissions = parsed
-                            }
-                        }
-                    if !octalIsValid {
-                        Text(L10n.string("info.octalInvalid", "Invalid octal value"))
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                if item.kind == .directory {
-                    Divider()
-                    Toggle(
-                        L10n.string("info.recursive.toggle", "Apply to all enclosed items"),
-                        isOn: $applyRecursively
-                    )
-                    .disabled(isWorking)
-
-                    if applyRecursively {
-                        Picker("", selection: $recursiveMode) {
-                            Text(L10n.string("info.recursive.same", "Same permissions"))
-                                .tag(RecursiveMode.same)
-                            Text(L10n.string("info.recursive.separate", "Separate"))
-                                .tag(RecursiveMode.separate)
-                        }
-                        .pickerStyle(.segmented)
-                        .disabled(isWorking)
-                        .onChange(of: recursiveMode) { _, newValue in
-                            if newValue == .separate && !directoryGridSeeded {
-                                let seeded = PosixPermissions.directoryDefault(from: permissions.rawValue)
-                                directoryPermissions = PosixPermissions(rawValue: seeded)
-                                directoryOctalText = directoryPermissions.octalString
-                                directoryGridSeeded = true
-                            }
-                        }
-
-                        if recursiveMode == .separate {
-                            Text(L10n.string("info.recursive.directoriesLabel", "Folders"))
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(DesignTokens.inkSecondary)
-                            directoryPermissionsGrid
-                            HStack(spacing: 8) {
-                                Text(L10n.string("info.octal", "Octal"))
-                                    .font(.system(size: 12.5))
-                                    .foregroundStyle(DesignTokens.inkSecondary)
-                                // Independent one-way field, mirroring the
-                                // file grid's field above — no echo back
-                                // from `directoryPermissions` either.
-                                TextField("", text: $directoryOctalText)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 70)
-                                    .disabled(isWorking)
-                                    .onChange(of: directoryOctalText) { _, newValue in
-                                        if let parsed = PosixPermissions(octalString: newValue) {
-                                            directoryPermissions = parsed
-                                        }
-                                    }
-                                if !directoryOctalIsValid {
-                                    Text(L10n.string("info.octalInvalid", "Invalid octal value"))
-                                        .font(.caption)
-                                        .foregroundStyle(.red)
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                Text(L10n.string(
-                    "info.permissionsUnavailable",
-                    "Permissions are not available for this entry."))
+            if let sentence = presentation.sentence {
+                Text(sentence)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else {
+                permissionsEditor
             }
             checksumSection
             if let errorMessage {
@@ -313,7 +232,7 @@ struct InfoPermissionsSheet: View {
                 Button(L10n.string("common.close", "Close"), role: .cancel) { dismiss() }
                     .buttonStyle(.polished)
                     .disabled(isWorking)
-                if hasPermissions {
+                if presentation == .editor {
                     Button(applyRecursively
                         ? L10n.string("info.recursive.applyButton", "Apply Recursively")
                         : L10n.string("common.apply", "Apply")
@@ -432,6 +351,105 @@ struct InfoPermissionsSheet: View {
             Text(value).textSelection(.enabled)
         }
         .font(.system(size: 12))
+    }
+
+    /// The grid, the octal field and — for a directory — the recursive
+    /// controls: everything that exists only where `presentation` is
+    /// `.editor`. Moved out of `body` verbatim when the sentence cases
+    /// became two; the code inside is the M7b/M11c editor unchanged.
+    @ViewBuilder
+    private var permissionsEditor: some View {
+        if applyRecursively && recursiveMode == .separate {
+            Text(L10n.string("info.recursive.filesLabel", "Files"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DesignTokens.inkSecondary)
+        }
+        permissionsGrid
+        HStack(spacing: 8) {
+            Text(L10n.string("info.octal", "Octal"))
+                .font(.system(size: 12.5))
+                .foregroundStyle(DesignTokens.inkSecondary)
+            // Typing NEVER echoes a reformatted value back into the
+            // field (T3 review: the zero-padded echo corrupted
+            // digit-by-digit entry) — the field only updates the
+            // grid; the grid's toggles write the field explicitly.
+            TextField("", text: $octalText)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 70)
+                // Locked only during an actual recursive run, NOT
+                // during a plain single-item apply — the M7b field
+                // was never disabled during `isWorking` there, and
+                // spec §4.5 requires that path stay byte-for-byte
+                // unchanged.
+                .disabled(recursiveTask != nil)
+                .onChange(of: octalText) { _, newValue in
+                    if let parsed = PosixPermissions(octalString: newValue) {
+                        permissions = parsed
+                    }
+                }
+            if !octalIsValid {
+                Text(L10n.string("info.octalInvalid", "Invalid octal value"))
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+
+        if item.kind == .directory {
+            Divider()
+            Toggle(
+                L10n.string("info.recursive.toggle", "Apply to all enclosed items"),
+                isOn: $applyRecursively
+            )
+            .disabled(isWorking)
+
+            if applyRecursively {
+                Picker("", selection: $recursiveMode) {
+                    Text(L10n.string("info.recursive.same", "Same permissions"))
+                        .tag(RecursiveMode.same)
+                    Text(L10n.string("info.recursive.separate", "Separate"))
+                        .tag(RecursiveMode.separate)
+                }
+                .pickerStyle(.segmented)
+                .disabled(isWorking)
+                .onChange(of: recursiveMode) { _, newValue in
+                    if newValue == .separate && !directoryGridSeeded {
+                        let seeded = PosixPermissions.directoryDefault(from: permissions.rawValue)
+                        directoryPermissions = PosixPermissions(rawValue: seeded)
+                        directoryOctalText = directoryPermissions.octalString
+                        directoryGridSeeded = true
+                    }
+                }
+
+                if recursiveMode == .separate {
+                    Text(L10n.string("info.recursive.directoriesLabel", "Folders"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(DesignTokens.inkSecondary)
+                    directoryPermissionsGrid
+                    HStack(spacing: 8) {
+                        Text(L10n.string("info.octal", "Octal"))
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(DesignTokens.inkSecondary)
+                        // Independent one-way field, mirroring the
+                        // file grid's field above — no echo back
+                        // from `directoryPermissions` either.
+                        TextField("", text: $directoryOctalText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 70)
+                            .disabled(isWorking)
+                            .onChange(of: directoryOctalText) { _, newValue in
+                                if let parsed = PosixPermissions(octalString: newValue) {
+                                    directoryPermissions = parsed
+                                }
+                            }
+                        if !directoryOctalIsValid {
+                            Text(L10n.string("info.octalInvalid", "Invalid octal value"))
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var permissionsGrid: some View {

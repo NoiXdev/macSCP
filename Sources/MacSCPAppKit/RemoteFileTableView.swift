@@ -71,6 +71,13 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// leaves the entry OUT where this is `false` rather than adding a
     /// disabled one.
     var supportsChecksum: Bool = false
+    /// Whether this pane's backend has a permission model the info sheet's
+    /// editor speaks (see `PermissionsAvailability`). Read here for one
+    /// thing only: the TITLE of the entry that opens that sheet — "Info &
+    /// Permissions" where there is an editor, "Info" where the sheet will
+    /// say there is none (`PermissionsPresentation.infoMenuTitle`). The
+    /// entry itself is offered either way.
+    var supportsPermissions: Bool = false
     /// Which columns to build, in `FileColumn.allCases` order (M11m/T2) —
     /// mirrors `SettingsStore.visibleColumns`. Defaults to the pre-M11m
     /// fixed three (`name`/`size`/`modified`) so any call site that doesn't
@@ -119,6 +126,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.crossSessionTargets = crossSessionTargets
         coordinator.fileActions = fileActions
         coordinator.supportsChecksum = supportsChecksum
+        coordinator.supportsPermissions = supportsPermissions
         coordinator.onSortChange = onSortChange
         coordinator.scope = scope
         coordinator.destinationScope = destinationScope
@@ -245,6 +253,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.crossSessionTargets = crossSessionTargets
         context.coordinator.fileActions = fileActions
         context.coordinator.supportsChecksum = supportsChecksum
+        context.coordinator.supportsPermissions = supportsPermissions
         context.coordinator.onSortChange = onSortChange
         context.coordinator.scope = scope
         context.coordinator.destinationScope = destinationScope
@@ -461,6 +470,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var crossSessionTargets: (() -> [CrossSessionTarget])?
         var fileActions: (() -> [FileActionContribution])?
         var supportsChecksum = false
+        var supportsPermissions = false
         var onSortChange: ((FileSortKey, Bool) -> Void)?
         /// Refreshed on every `updateNSView`, like `supportsChecksum` and
         /// `crossSessionTargets` above, so a navigation into (or out of) the
@@ -921,7 +931,9 @@ struct RemoteFileTableView: NSViewRepresentable {
             case .rename:
                 return actionItem(title: L10n.string("menu.rename", "Rename…"), entry: entry, selection: selection)
             case .infoAndPermissions:
-                return actionItem(title: L10n.string("menu.info", "Info & Permissions…"), entry: entry, selection: selection)
+                return actionItem(
+                    title: PermissionsPresentation.infoMenuTitle(supportsPermissions: supportsPermissions),
+                    entry: entry, selection: selection)
             case .newFolder:
                 return actionItem(title: L10n.string("menu.newFolder", "New Folder…"), entry: entry, selection: selection)
             case .newFile:

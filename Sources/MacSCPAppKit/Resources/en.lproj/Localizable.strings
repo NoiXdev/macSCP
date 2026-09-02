@@ -300,6 +300,7 @@
 "menu.openEditor" = "Open";
 "menu.rename" = "Rename…";
 "menu.info" = "Info & Permissions…";
+"menu.infoOnly" = "Info…";
 "menu.newFolder" = "New Folder…";
 "menu.newFile" = "New File…";
 "menu.copyPath" = "Copy Path";
@@ -331,6 +332,7 @@
 "info.octal" = "Octal";
 "info.octalInvalid" = "Invalid octal value";
 "info.permissionsUnavailable" = "Permissions are not available for this entry.";
+"info.permissionsUnavailableOnThisServer" = "This server does not have file permissions.";
 "info.kind.directory" = "Folder";
 "info.kind.file" = "File";
 "info.kind.symlink" = "Symbolic link";

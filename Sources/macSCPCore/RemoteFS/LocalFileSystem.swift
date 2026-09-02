@@ -17,6 +17,18 @@ public struct LocalFileSystem: RemoteFileSystem {
         self.fetchesOwnerGroup = fetchesOwnerGroup
     }
 
+    /// How this file system expresses permissions — the one capability of
+    /// the local pane that a surface reads (`PermissionsAvailability`).
+    /// macOS is a POSIX system and `setPermissions` below writes a mode, so
+    /// this is `.posixMode`; declared here, beside the code that makes it
+    /// true, the way each remote backend's descriptor declares its own.
+    ///
+    /// The listing leaves `RemoteFileItem.permissions` nil (`item(for:)`
+    /// reads no mode), so on the local pane the editor is OFFERED and the
+    /// sheet then says the entry carried no bits — the entry sentence, and
+    /// a true one.
+    public static let permissionModel: PermissionModel = .posixMode
+
     public func list(path: String) async throws -> [RemoteFileItem] {
         let url = URL(fileURLWithPath: path)
         // Uses the STRING-path API (`contentsOfDirectory(atPath:)`), not the

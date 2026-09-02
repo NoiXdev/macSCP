@@ -303,6 +303,7 @@
 "menu.openEditor" = "Otwórz";
 "menu.rename" = "Zmień nazwę…";
 "menu.info" = "Informacje i uprawnienia…";
+"menu.infoOnly" = "Informacje…";
 "menu.newFolder" = "Nowy folder…";
 "menu.newFile" = "Nowy plik…";
 "menu.copyPath" = "Kopiuj ścieżkę";
@@ -334,6 +335,7 @@
 "info.octal" = "Ósemkowo";
 "info.octalInvalid" = "Nieprawidłowa wartość ósemkowa";
 "info.permissionsUnavailable" = "Uprawnienia nie są dostępne dla tego elementu.";
+"info.permissionsUnavailableOnThisServer" = "Ten serwer nie obsługuje uprawnień plików.";
 "info.kind.directory" = "Folder";
 "info.kind.file" = "Plik";
 "info.kind.symlink" = "Dowiązanie symboliczne";

@@ -57,6 +57,14 @@ struct BrowserPane: View {
     /// the menu entry and turns the info sheet's block into the sentence
     /// that says why — never into a disabled control.
     var supportsChecksum: Bool = false
+    /// Whether this pane's backend has a permission model the info sheet's
+    /// editor speaks — `PermissionsAvailability.isOffered(for:)` for the
+    /// remote pane, the local file system's own declaration for the local
+    /// one. `false` keeps the menu entry (the sheet is still where size,
+    /// dates and checksum live) but titles it "Info" rather than "Info &
+    /// Permissions", and turns the sheet's permissions block into the
+    /// sentence that says why — never into a disabled grid.
+    var supportsPermissions: Bool = false
 
     /// What this pane is looking at, for every "is this action possible
     /// here" question (2026-09-02). Computed rather than injected: both
@@ -198,9 +206,10 @@ struct BrowserPane: View {
                     // `ProtocolCapabilities.supportsSymlinks`, and `item.kind`
                     // can never be `.symlink` for an S3 session — a
                     // `ListObjectsV2` response has no such shape to report,
-                    // so nothing constructs one. Unlike the note below, this
-                    // reason did NOT expire with M13; it is a property of the
-                    // listing, not of what was implemented yet.
+                    // so nothing constructs one. This reason did NOT expire
+                    // with M13 (the way the one `.infoAndPermissions` below
+                    // once rested on did); it is a property of the listing,
+                    // not of what was implemented yet.
                     onOpenSymlink: { item in
                         Task {
                             // Navigates DIRECTLY (M11h/T1 review fix),
@@ -223,34 +232,22 @@ struct BrowserPane: View {
                     onMenuAction: { entry, selection in
                         switch entry {
                         case .rename: renameTarget = selection.first
-                        // This comment used to say no capability gate was
-                        // needed because an S3 session could never populate
-                        // `selection` at all — every `S3FileSystem` operation
-                        // threw "not supported yet (M13)". M13 shipped, so
-                        // that premise expired, and the note it left behind
-                        // read as a decision rather than as a wait. Corrected
-                        // 2026-09-02, in the pass that added the bucket-row
-                        // gate below it.
-                        //
-                        // What is true now, measured: `permissionModel` has
-                        // no READER anywhere in Sources — only declarations
-                        // (its property, the initializer parameter and its
-                        // assignment on `ProtocolCapabilities`, and the three
-                        // descriptors that set it), one doc comment in
-                        // `WebDAVFileSystem`, and this comment. So an S3 or
-                        // WebDAV file DOES offer "Info & Permissions", whose
-                        // apply then throws. A real gap, older and wider than
-                        // this task — it is about a file inside a bucket, not
-                        // about a bucket row — and deliberately left for the
-                        // task that gates on the capability rather than
-                        // widened into this one.
-                        //
-                        // The parenthetical this replaced quoted a grep and
-                        // then promised a different set than that grep
-                        // returns (review m-1): nine lines, three descriptors,
-                        // not "the descriptors and this comment". The claim
-                        // above it was true; the enumeration beside it was
-                        // written rather than counted.
+                        // The ENTRY is not gated on
+                        // `ProtocolCapabilities.permissionModel`, and that is
+                        // a decision rather than a wait: the sheet it opens
+                        // is where size, dates and checksum live, and those
+                        // are as true of an object in a bucket as of a file
+                        // over SFTP. What the capability shapes is the
+                        // entry's TITLE (`RemoteFileTableView` drops the
+                        // "& Permissions" where there are none) and the
+                        // sheet's permissions block — `supportsPermissions`,
+                        // handed to the sheet where it is built below, turns
+                        // the editor into the sentence that says this server
+                        // has no file permissions, instead of a grid whose
+                        // Apply the backend would refuse. The decision is
+                        // `PermissionsPresentation`; the wiring per pane is
+                        // `ContentView`'s; `PermissionsSurfaceGuardTests`
+                        // holds both in place.
                         case .infoAndPermissions: infoTarget = selection.first
                         case .newFolder: showNewFolderSheet = true
                         case .newFile: showNewFileSheet = true
@@ -270,6 +267,7 @@ struct BrowserPane: View {
                     crossSessionTargets: crossSessionTargets,
                     fileActions: fileActions,
                     supportsChecksum: supportsChecksum,
+                    supportsPermissions: supportsPermissions,
                     visibleColumns: visibleColumns,
                     sortKey: viewModel.sortKey,
                     sortAscending: viewModel.sortAscending,
@@ -379,7 +377,8 @@ struct BrowserPane: View {
                 supportsChecksum: supportsChecksum,
                 onComputeChecksum: {
                     await viewModel.checksum(of: target, algorithm: checksumAlgorithm)
-                })
+                },
+                supportsPermissions: supportsPermissions)
         }
         .sheet(item: $checksumBatch) { batch in
             ChecksumBatchSheet(batch: batch) { item in

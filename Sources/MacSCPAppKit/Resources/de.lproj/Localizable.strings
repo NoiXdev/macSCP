@@ -301,6 +301,7 @@
 "menu.openEditor" = "Öffnen";
 "menu.rename" = "Umbenennen…";
 "menu.info" = "Informationen & Rechte…";
+"menu.infoOnly" = "Informationen…";
 "menu.newFolder" = "Neuer Ordner…";
 "menu.newFile" = "Neue Datei…";
 "menu.copyPath" = "Pfad kopieren";
@@ -332,6 +333,7 @@
 "info.octal" = "Oktal";
 "info.octalInvalid" = "Ungültiger Oktalwert";
 "info.permissionsUnavailable" = "Für diesen Eintrag sind keine Rechte verfügbar.";
+"info.permissionsUnavailableOnThisServer" = "Dieser Server kennt keine Dateirechte.";
 "info.kind.directory" = "Ordner";
 "info.kind.file" = "Datei";
 "info.kind.symlink" = "Symbolischer Link";

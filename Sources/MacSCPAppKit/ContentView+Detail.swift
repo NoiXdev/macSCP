@@ -344,7 +344,10 @@ extension ContentView {
                                     // the same question. See
                                     // `ChecksumAvailability`.
                                     supportsChecksum: ChecksumAvailability.isOffered(
-                                        byLocalFileSystem: session.localFS)
+                                        byLocalFileSystem: session.localFS),
+                                    // Likewise off the local file system's own
+                                    // declaration, since there is no descriptor.
+                                    supportsPermissions: PermissionsAvailability.isOfferedByTheLocalFileSystem
                                 )
                                 .frame(minWidth: 280)
 
@@ -435,6 +438,11 @@ extension ContentView {
                                     // SAY it has none — so only the flag can
                                     // tell an offer from an empty one.
                                     supportsChecksum: ChecksumAvailability.isOffered(
+                                        for: tab.connectionViewModel.kind),
+                                    // Same shape: the descriptor's permission
+                                    // model, read through the one function
+                                    // that turns it into an offer.
+                                    supportsPermissions: PermissionsAvailability.isOffered(
                                         for: tab.connectionViewModel.kind)
                                 )
                                 .frame(minWidth: 280)

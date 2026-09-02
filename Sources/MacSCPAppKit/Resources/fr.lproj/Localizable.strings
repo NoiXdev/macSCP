@@ -304,6 +304,7 @@
 "menu.openEditor" = "Ouvrir";
 "menu.rename" = "Renommer…";
 "menu.info" = "Infos et autorisations…";
+"menu.infoOnly" = "Infos…";
 "menu.newFolder" = "Nouveau dossier…";
 "menu.newFile" = "Nouveau fichier…";
 "menu.copyPath" = "Copier le chemin";
@@ -335,6 +336,7 @@
 "info.octal" = "Octal";
 "info.octalInvalid" = "Valeur octale invalide";
 "info.permissionsUnavailable" = "Les autorisations ne sont pas disponibles pour cet élément.";
+"info.permissionsUnavailableOnThisServer" = "Ce serveur ne gère pas les autorisations de fichiers.";
 "info.kind.directory" = "Dossier";
 "info.kind.file" = "Fichier";
 "info.kind.symlink" = "Lien symbolique";
