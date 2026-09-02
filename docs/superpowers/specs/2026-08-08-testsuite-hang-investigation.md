@@ -291,3 +291,106 @@ over an isolated run and over leaving it. Plan to follow:
 comparison becomes relative to a control measured under the same load
 in the same run (or the dial's stall is proved by a probe that cannot be
 starved), and the full-run tally in this entry stops growing.
+
+**Closed 2026-09-03** — see "Rebuilt 2026-09-03 — the ceiling, the numbers, what stays open" below.
+
+## Rebuilt 2026-09-03 — the ceiling, the numbers, what stays open
+
+The tally in "Noted 2026-09-02" above closes at **seventeen of twenty
+full gated runs red, twenty-six of twenty-six green alone**, under the
+old ceiling (`max(ambient, .milliseconds(300))`). It does not grow
+further; everything measured against the rebuilt assertion is recorded
+here instead. This section is data copied from the rebuild's own
+records — `.superpowers/sdd/2026-09-03-liveness-assertion-rebuild/`
+(`task-1-report.md`, `task-1b-report.md`, `task-1-review.md`,
+`task-1-rereview.md`) — not re-derived.
+
+### The rebuilt assertion
+
+`ceiling(forAmbient:)` is now
+`min(max(ambient * 3, .seconds(2)), .seconds(4))`. Both timing dials now
+run at least 5 s: the fake connector's total dial is 5.0 s (an unchanged
+600 ms synchronous block, deliberately capped there, plus a 4400 ms
+`Task.sleep` suspension); the stalled-dial test's `connectTimeout` is 6 s,
+with an elapsed guard of `> 5 s`. A second elapsed guard was added to the
+fake-connector test this round, pinning `> 4 s`.
+
+### The measurements
+
+- **Planted (5 s main-actor block), suite alone, ×10:** 10 of 10 red in
+  both timing tests, gaps 5.000–5.019 s against a 2.0 s ceiling, ambient
+  0.025–0.044 s.
+- **Unplanted, suite alone, ×10:** 10 of 10 green, 13.75–13.85 s per run.
+- **`MACSCP_ITEST=1 swift test` ×10:** the liveness suite green 10 of 10
+  (23.1–61.5 s per run; both timing tests actually executed every time,
+  never skipped by the endpoint's availability probe). Of those ten full
+  runs, run 2 was red elsewhere
+  (`TerminalPanelViewModelTests.neverFiresWhenTheOpenFails`) and run 4
+  **hung** in
+  `aReadHandleCloseAgainstAStillFrozenPeerReturnsInsideTheBound`
+  (`macSCPAppKitTests`), killed after 2215 s — the hang family this
+  record tracks, reproduced 2026-09-03. It did not recur in the two full
+  runs of fix round 1.
+- **Fix round 1's planted full gated run** (2026-09-03,
+  `MACSCP_ITEST=1 swift test`, 3723 tests, 95.684 s): test 1 red with a
+  gap of 5.028 s against a ceiling of 4.0 s at an ambient of 5.726 s — the
+  uncapped `ambient * 3` would have set 17.2 s and let the plant pass;
+  test 2 red with a gap of 5.010 s against a ceiling of 2.0 s at an
+  ambient of 0.030 s. After the fix: alone, green in 13.809 s; the full
+  gated run green, 3723 tests in 87.772 s, the liveness suite in
+  22.722 s.
+- **A green run now prints its numbers.** The two lines, alone, green:
+
+  ```
+  liveness: test1 ambient=0.029770375 seconds gap=0.03185825 seconds ceiling=2.0 seconds
+  liveness: test2 ambient=0.036180709 seconds gap=0.03333475 seconds ceiling=2.0 seconds
+  ```
+
+- **First measurement on the 3-core CI runner:** run 33693297919 at
+  `e16b14ae` (2026-09-02 23:03–23:10 UTC): the liveness suite passed in
+  40.681 s, the whole suite ran 3732 tests in 40.691 s (the run was red
+  for one unrelated new SubprocessRunner test, tracked in its own plan).
+  This is one green, not a tally.
+
+### Deferred minors, recorded rather than actioned
+
+- The 600 ms `usleep` in the fake connector parks a cooperative-pool
+  thread by design — bounded, pre-existing, and load-bearing: it is what
+  makes the `ranOnMainThread == false` check worth making, as the worst
+  case a real connector's synchronous body could produce. It is the one
+  allowed exception to this file's rule against a blocking wait in a test
+  target, named here so the next person does not rediscover it as a
+  violation.
+- The "0.67–1.32 s" noise range quoted in the suite's doc comment covers
+  only the twelve of the seventeen red tally rows above that recorded a
+  gap; five red rows recorded no number.
+- The elapsed guards (`> 4 s` on the fake-connector test, `> 5 s` on the
+  stalled-dial test) pin the dial's floor, not its ceiling: they prove
+  the dial ran at least that long, not that it did not run far longer
+  under load. Test 1 took 14.6 s in the fix round 1 green full run and
+  20.3 s in its planted run, for a 5 s dial — the guard does not see
+  that, and is not meant to; it exists to catch a trimmed sleep, not slow
+  scheduling.
+
+### What stays open
+
+- **The frozen-peer hang is reproduced, its cause not measured.** Run 4
+  of the ten `MACSCP_ITEST=1 swift test` runs above hung in
+  `aReadHandleCloseAgainstAStillFrozenPeerReturnsInsideTheBound`
+  (`macSCPAppKitTests`), killed after 2215 s. It did not recur in fix
+  round 1's two full runs, but one non-reproduction is not evidence it is
+  gone. This is the hang family the top of this entry tracks.
+- **The false-red regime above the 4 s cap is reachable.** An ambient of
+  5.726 s was observed in a full gated run (fix round 1's planted run,
+  above) — above the cap and above the 4.7 s instrument floor named in
+  the suite's own doc comment (measured 2026-08-28, a bare ticker over a
+  different suite population, not re-measured here). No *unplanted* gap
+  above 4 s has been seen yet,
+  so whether noise alone ever produces one is unmeasured. The two printed
+  lines make this countable going forward: a grep over CI output for
+  `liveness: test` lines against an ambient of 1.333 s (where the cap
+  starts to bind) or a gap approaching 4.0 s turns the open question into
+  a log search instead of another planted run.
+- **The elapsed guard pins only the floor**, as recorded above under
+  deferred minors — a run where load stretches the dial itself is still
+  invisible to it.
