@@ -68,10 +68,45 @@ the descriptor already prescribes most of it. FTP first needs the
 decision on library and variant, and that isn't an implementation
 question.
 
-## Decided 2026-09-02 — both halves deferred
+## Decided 2026-09-02 — revised the same evening: both, and standalone
 
-The maintainer's decision: **no fourth backend now.** The entry stays
-with its measured costs (FTP needs an own implementation over NIO since
-Apple dropped FTP from the URL loading system; SMB/AFP is integration
-with no TOFU counterpart) so the next person starts from the numbers,
-not from the wish.
+The first answer of the evening ("no fourth backend now") was withdrawn
+by the maintainer within the hour, with two harder requirements:
+
+1. **FTP AND FTPS must both work.** Not FTPS only. Plain FTP carries
+   credentials in cleartext, so it goes through the existing
+   `PlaintextTransportGate` (`TransportSecurity.plaintext`, the same
+   confirmation WebDAV over `http://` gets) — a warning the user
+   confirms, not a refusal. FTPS in both forms the servers out there
+   use: explicit (`AUTH TLS` on port 21) and implicit (TLS from the
+   first byte on 990). TLS trust runs through the existing
+   `TrustedCertificateStore`/decider the WebDAV backend already uses, so
+   the guarantee shape is WebDAV's, not SSH's.
+2. **SMB must run natively, standalone** — no mount, no share added in
+   macOS, no Finder involvement. An SMB2/3 client inside macSCP, talking
+   to the server itself, so `connect` is a connection and the secret
+   stays in `SecretStore`. That retires the "integration" reading above:
+   the mount path is out, and with it the question of who owns the
+   secret. AFP is not asked for and stays out (deprecated by Apple).
+
+What this costs is not decided by wish. Before a design, one measurement
+task answers, per protocol: (a) is there a library worth depending on —
+for SMB the userspace candidates are `libsmb2` (C, userspace SMB2/3
+client, no kernel mount) with the Swift wrapper `AMSMB2`; for FTP the
+Swift ecosystem has next to nothing maintained over NIO, so the likely
+answer is an own implementation of the control channel over NIO with
+NIOSSL for FTPS and a small set of listing dialects (`MLSD` first, `LIST`
+Unix-style as the fallback) — (b) licence, Swift 6 strict-concurrency
+compatibility, SwiftPM support, maintenance state, and whether the thing
+builds in this toolchain today, measured in a scratch package, not
+assumed; (c) how each maps onto `BackendDescriptor`'s 13 required
+fields and `ProtocolCapabilities` (SMB: real directories, rename atomic,
+permissions = ACL-ish; FTP: `directoriesAreReal` true, `atomicRename`
+via `RNFR/RNTO`, resume via `REST`, no checksum unless `XSHA256`/`HASH`
+is measured on a server).
+
+Order: measurement → brainstorming → one design per protocol → plans.
+FTP/FTPS first (own code, nothing to license), SMB second (a C
+dependency is a supply-chain decision the fork rule in CLAUDE.md
+applies to as well).
+

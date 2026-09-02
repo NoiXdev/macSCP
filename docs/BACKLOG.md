@@ -48,7 +48,7 @@ changes it in the entry and at most updates the line here to match.
 
 | Entry | Core |
 |---|---|
-| [FTP and SMB/AFP](superpowers/specs/2026-08-25-backlog-further-protocols.md) | Two very different halves under one word. macOS already speaks SMB/AFP — it would be about integration, and the usual TOFU guarantees have no counterpart there. FTP would first need a decision on library and variant, since bare FTP transmits credentials in plaintext. **Do not take on together.** **Decided 2026-09-02: both halves deferred.** |
+| [FTP and SMB/AFP](superpowers/specs/2026-08-25-backlog-further-protocols.md) | Two very different halves under one word. macOS already speaks SMB/AFP — it would be about integration, and the usual TOFU guarantees have no counterpart there. FTP would first need a decision on library and variant, since bare FTP transmits credentials in plaintext. **Do not take on together.** **Revised 2026-09-02 (same evening): both, and standalone** — FTP and FTPS must both work (plain FTP behind the plaintext gate), SMB as a native SMB2/3 client with no mount. Measurement of the candidate libraries first (`libsmb2`/`AMSMB2` for SMB; likely own NIO code for FTP), then a design per protocol. |
 | [Tools for inspecting a connection](superpowers/specs/2026-08-25-backlog-connection-tools.md) | Ping and trace per connection, even without a saved host. The open question is what both should mean here — a log of macSCP's own connection setup is probably more useful than a traceroute and needs no elevated privileges. **Decided 2026-09-02:** ping = TCP attempt AND ICMP echo; trace = own-setup log AND network trace; entry points tab, context menu, error dialog. Privilege halves behind a spike; needs a design first. |
 
 ## Tooling and maintenance
