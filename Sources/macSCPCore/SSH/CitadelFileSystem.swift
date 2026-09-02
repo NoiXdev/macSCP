@@ -385,12 +385,16 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 jumpClient = try await connectHop(
                     auth: jump.auth, username: jump.username, agent: jumpAgent, box: jumpBox
                 ) { method in
+                    // NIOSSH builds its host-key offer from the registry at
+                    // key-exchange time, so the RSA type has to be in it
+                    // before the dial, not after.
+                    HostKeyAlgorithms.registerOnce()
                     // I-2: `group` is the dedicated event-loop group `connect()`
                     // creates whenever either hop uses `.agent`; the target
                     // hop's `jump(to:)` call below inherits THIS group's loop
                     // via the jump client's own channel, so passing it only
                     // here still covers both hops.
-                    try await SSHClient.connect(
+                    return try await SSHClient.connect(
                         host: jump.host,
                         port: jump.port,
                         authenticationMethod: method,
@@ -439,8 +443,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         let client = try await connectHop(
             auth: config.auth, username: config.username, agent: targetAgent, box: targetBox
         ) { method in
+            // See the jump-hop call above: registered before the dial, so
+            // the key exchange can offer `rsa-sha2-512`.
+            HostKeyAlgorithms.registerOnce()
             // I-2: see the jump-hop call above — same dedicated group.
-            try await SSHClient.connect(
+            return try await SSHClient.connect(
                 host: config.host,
                 port: config.port,
                 authenticationMethod: method,
