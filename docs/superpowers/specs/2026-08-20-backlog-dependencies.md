@@ -634,9 +634,13 @@ Upstream PR candidate: this change, against `apple/swift-nio-ssh`.
 **macSCP:** `e084d69` (fork `exact: "0.3.9"`, `_CryptoExtras` for Core),
 `38b8781` (`Sources/macSCPCore/SSH/RSASHA2HostKey.swift`: the pair, and
 `registerOnce()` before both `SSHClient.connect` sites), `3e66d86` (the
-RSA row flips; a tampered-RSA hard stop). Unit suite `RSASHA2HostKeyTests`
-9/9; gated `HostKeyTypeIntegrationTests` 4/4; full gated run 3489/3489 on
-the first attempt. Planted defects, measured after the compile-red:
+RSA row flips; a tampered-RSA hard stop). At that point: unit suite
+`RSASHA2HostKeyTests` 9/9; gated `HostKeyTypeIntegrationTests` 4/4; full
+gated run 3489/3489 on the first attempt. After the fix round below the
+unit suite is 13/13 and the full run 3503 (the difference of 14 is the
+four modulus-floor tests, the new registration guard's tests, and the
+re-anchored timeout guard's two replaced tests — the fix round's own
+report says "+13", which is off by one). Planted defects, measured after the compile-red:
 SHA-512→SHA-256 red in 5 of 9; signature-type guard removed 1 of 9;
 `write(to:)` re-encoding the mpints (the `K_S` path the spike could only
 read) 2 of 9; `hostKeyAlgorithmNames = [publicKeyPrefix]` 1 of 9.
