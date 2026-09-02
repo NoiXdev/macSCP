@@ -590,23 +590,6 @@ public final class SettingsStore {
     /// duplicating the literal `10` a second time somewhere easy to drift.
     public nonisolated static let defaultConnectTimeoutSeconds = Defaults.connectTimeoutSeconds
 
-    /// `keepAliveIntervalSeconds`'s own default, reachable without a
-    /// `SettingsStore` instance for the same reason as
-    /// `defaultConnectTimeoutSeconds` above — a single source of truth
-    /// instead of duplicating the literal `60` elsewhere.
-    ///
-    /// `SettingsView.swift`'s Keep-Alive section used to read this to seed
-    /// the stepper before the user had committed an interval of their own
-    /// (Task 9's one-sentinel design). 2026-09-02's two-settings rebind
-    /// (Task 3) removed that read — the stepper now binds straight to
-    /// `keepAliveIntervalSeconds`, which already carries its own default —
-    /// so the sole remaining reader is
-    /// `defaultKeepAliveIntervalSecondsMatchesAFreshStore`, pinning this
-    /// constant against a fresh store the same way
-    /// `defaultConnectTimeoutSecondsMatchesAFreshStore` pins
-    /// `defaultConnectTimeoutSeconds` above.
-    public nonisolated static let defaultKeepAliveIntervalSeconds = Defaults.keepAliveIntervalSeconds
-
     /// Convenience: association lookup with the SAME normalization applied.
     public func associatedApp(forExtension ext: String) -> String? {
         let normalizedExtension = Self.normalizeExtension(ext)

@@ -855,21 +855,6 @@ struct SettingsStoreTests {
         #expect(reloaded.keepAliveIntervalSeconds == 15)
     }
 
-    /// Pins `SettingsStore.defaultKeepAliveIntervalSeconds` — a single
-    /// source of truth for the literal `60` (`SettingsView.swift`'s
-    /// Keep-Alive stepper used to read it directly to resume at this value
-    /// when the probe was turned back on from "off"; 2026-09-02's
-    /// two-settings rebind removed that read, and `keepAliveIntervalSeconds`
-    /// itself now falls back to this same default) — against a FRESH
-    /// store's own default — same tie, and same reason to pin it, as
-    /// `defaultConnectTimeoutSecondsMatchesAFreshStore` below.
-    @Test func defaultKeepAliveIntervalSecondsMatchesAFreshStore() {
-        let dir = makeTempDirectory()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let store = SettingsStore(directory: dir)
-        #expect(SettingsStore.defaultKeepAliveIntervalSeconds == store.keepAliveIntervalSeconds)
-    }
-
     // MARK: - keepAliveEnabled (2026-09-02: two settings, not one sentinel)
 
     @Test func keepAliveEnabledDefaultsTrueAndRoundtrips() throws {
@@ -887,6 +872,34 @@ struct SettingsStoreTests {
         #expect(try persistedRaw(dir)["keepAliveEnabled"] == .bool(true))
         let reloadedOn = SettingsStore(directory: dir)
         #expect(reloadedOn.keepAliveEnabled == true)
+    }
+
+    /// Direct replacement for coverage lost when `KeepAliveControlPlanTests`
+    /// was deleted (Task 3): that suite pinned "toggling off does not touch
+    /// the interval; toggling on leaves it as it was" against the plan's
+    /// pure functions. With two independent settings instead of one
+    /// sentinel-collapsed integer, the same property is pinned here at the
+    /// store level instead — `keepAliveEnabled` and `keepAliveIntervalSeconds`
+    /// write two different keys, so there is no shared storage left for a
+    /// toggle to collide with. Asserted through the persisted file, not
+    /// just the getter, for the same reason as
+    /// `theKeepAliveIntervalIsClampedOnBothEnds`.
+    @Test func togglingKeepAliveEnabledNeverTouchesTheInterval() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+
+        store.keepAliveIntervalSeconds = 300
+        #expect(store.keepAliveIntervalSeconds == 300)
+        #expect(try persistedRaw(dir)["keepAliveIntervalSeconds"] == .number(300))
+
+        store.keepAliveEnabled = false
+        #expect(store.keepAliveIntervalSeconds == 300)
+        #expect(try persistedRaw(dir)["keepAliveIntervalSeconds"] == .number(300))
+
+        store.keepAliveEnabled = true
+        #expect(store.keepAliveIntervalSeconds == 300)
+        #expect(try persistedRaw(dir)["keepAliveIntervalSeconds"] == .number(300))
     }
 
     /// Read-side migration: a file written before 2026-09-02 stored "off" as
