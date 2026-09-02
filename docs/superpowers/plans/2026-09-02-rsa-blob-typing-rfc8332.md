@@ -10,26 +10,41 @@ Go-based servers that refuse today's `rsa-sha2-512`-typed blob
 path, inherited by file keys on 2026-09-02) accept it, proved against an
 SFTPGo container in the rig, while OpenSSH keeps accepting it.
 
-**Architecture:** Measured 2026-09-02 in the fork checkouts: NIOSSH writes
-`pkalg` from the PRIVATE key's `keyPrefix` (`SSHMessages.swift:1307`) and
-the blob through `writeSSHHostKey(key)`, i.e. from the PUBLIC key's
-`publicKeyPrefix` (`NIOSSHPublicKey.swift:425/449`). The two are already
-separate identifiers on the wire path — no NIOSSH change is needed for
-the client to write RFC-shaped bytes. What is wrong is the public-key
-types: Citadel's `RSASHA2.SHA2PublicKey.publicKeyPrefix` returns the
-algorithm name (`RSASHA2.swift:71`) and macSCP's own agent-backed RSA
-public key type does the same. The fix is one line in each: the public
-key's blob prefix becomes `ssh-rsa`; `keyPrefix` (pkalg) and
-`signaturePrefix` stay the algorithm name. Registration by prefix: two
-public-key types would now share `ssh-rsa` with Citadel's SHA-1
-`Insecure.RSA.PublicKey`; NIOSSH's blob lookup takes the first
-registered type (`NIOSSHPublicKey.swift:481`). That matters only where
-the CLIENT parses an RSA blob — the host-key path (already handled by
-`RSASHA2HostKey`, registered first, `ssh-rsa` blob) and `PK_OK`, which a
-signed-at-offer request never receives. Task 1 measures exactly that
-instead of assuming it. The strict server-side checks at
-`SSHMessages.swift:694/768` are NIOSSH's server role and do not run in
-macSCP.
+**Architecture (corrected 2026-09-02, night — the first version of this
+paragraph was wrong and is kept below for the record):** NIOSSH writes
+the user-auth request from ONE identifier. The `key` in
+`.publicKey(.known(key:signature:))` is a `NIOSSHPublicKey`
+(`SSHMessages.swift:151-154`), and its `keyPrefix` for a custom key is
+the public key type's `publicKeyPrefix` (`NIOSSHPublicKey.swift:195-196`);
+`SSHMessages.swift:1307` writes that as `pkalg`, `writeSSHHostKey` writes
+it as the blob's type, and `UserAuthSignablePayload.swift:48` copies it
+into the signed payload. `SHA2PrivateKey.keyPrefix` never reaches the
+request. Measured by the Task 2 implementer with a serialised
+`UserAuthRequestMessage` under `@testable import NIOSSH`: today
+`pkalg/blob/sig = rsa-sha2-512/rsa-sha2-512/rsa-sha2-512`; with Citadel's
+blob prefix flipped alone, `ssh-rsa/ssh-rsa/rsa-sha2-512` — which OpenSSH
+≥ 8.8 REFUSES (`sshkey_check_sigtype` requires the signature type to equal
+`pkalg`, and `ssh-rsa` is no longer an accepted `pkalg`). So the
+one-liner in Citadel alone is a regression, and the fix belongs in the
+NIOSSH fork, as the sibling of what 0.3.9 did for host keys: a
+`userAuthAlgorithmName` (default `publicKeyPrefix`) on
+`NIOSSHPublicKeyProtocol`, written as `pkalg` and into the signed
+payload, while the blob keeps `publicKeyPrefix`. Then Citadel's RSA-SHA2
+public key sets `publicKeyPrefix = "ssh-rsa"` and
+`userAuthAlgorithmName = <algorithm name>`, and macSCP's agent-backed
+RSA type does the same. Registration by prefix matters only on the read
+path (host keys — `RSASHA2HostKey` is registered first; `PK_OK` — never
+received because Citadel signs at offer time); the write path reads the
+concrete instance. Side effect to record: the 256/512 wrappers and the
+SHA-1 `Insecure.RSA.PublicKey` become `==` and hash alike, since
+`BackingKey`'s equality is `publicKeyPrefix` + `rawRepresentation`.
+
+*The withdrawn paragraph said:* "NIOSSH writes `pkalg` from the PRIVATE
+key's `keyPrefix` (`SSHMessages.swift:1307`) and the blob … from the
+PUBLIC key's `publicKeyPrefix` … so no NIOSSH change is needed." That was
+read from a grep of the two writer lines without following the type of
+`key`, and it sent the first Task 2 dispatch after a one-liner that would
+have broken OpenSSH logins. The implementer stopped on the measurement.
 
 **Tech Stack:** Citadel fork (`noix` branch → tag `0.12.1-noix.3`),
 `Sources/macSCPCore/SSH/AgentBackedPrivateKey.swift`, the rig (a new
@@ -83,12 +98,44 @@ test-only container, not linked), gated tests.
 - [ ] Prove the container from the main checkout; record the two refusals
   before touching anything; commit — `build(rig): an SFTPGo service, and the RSA blob refusal measured`.
 
-### Task 2: Citadel fork `0.12.1-noix.3` — the blob is `ssh-rsa`
+### Task 2a: NIOSSH fork `0.3.10` — a user-auth algorithm name beside the blob prefix
+
+**Files (fork clone at the scratchpad `fork/swift-nio-ssh`, branch `citadel2` at 0.3.9):**
+- Modify: `Sources/NIOSSH/Keys And Signatures/CustomKeys.swift`
+  (`NIOSSHPublicKeyProtocol`: `static var userAuthAlgorithmName: String { get }`,
+  protocol-extension default `publicKeyPrefix`), `NIOSSHPublicKey.swift`
+  (a `userAuthAlgorithmName` computed property beside `keyPrefix`: bundled
+  types → their prefix; `.custom` → the type's member; `.certified` → as
+  today), `SSHMessages.swift:1307` and `:1341` (`pkalg` and the `PK_OK`
+  echo write `userAuthAlgorithmName`), `UserAuthSignablePayload.swift:48`
+  (the signed copy likewise), and the two parse-side checks at
+  `SSHMessages.swift:694`/`:768` (accept a blob whose type's
+  `userAuthAlgorithmName` equals the received name — server role, kept
+  consistent).
+- Test (fork): a custom type with `publicKeyPrefix = "blob-x"` and
+  `userAuthAlgorithmName = "alg-x"`: a serialised user-auth request reads
+  `pkalg = alg-x`, blob type `blob-x`; the signable payload carries
+  `alg-x`; a type without the override serialises exactly as before
+  (byte-identical against a recorded fixture); bundled ed25519/ECDSA
+  requests byte-identical.
+
+- [ ] Red first; the fork's suite; tag `0.3.10`; push (`GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=20"`, fallback `-o HostName=ssh.github.com -p 443`); fast-forward `citadel2`.
+
+### Task 2: Citadel fork `0.12.1-noix.3` — the blob is `ssh-rsa`, `pkalg` stays the algorithm
 
 **Files (fork clone `scratchpad/fork/Citadel`, branch `noix`):**
-- Modify: `Sources/Citadel/Algorithms/RSASHA2.swift:70-71`
-  (`SHA2PublicKey.publicKeyPrefix` → `"ssh-rsa"`; a doc comment citing
-  RFC 8332 §3 and naming the three identifiers)
+- Modify: `Package.swift` (the fork's `swift-nio-ssh` dependency →
+  `https://github.com/NoiXdev/swift-nio-ssh.git` `exact: "0.3.10"`; this is
+  what makes the new protocol member visible to Citadel),
+  `Sources/Citadel/Algorithms/RSASHA2.swift:70-71`
+  (`SHA2PublicKey.publicKeyPrefix` → `"ssh-rsa"`, plus
+  `static var userAuthAlgorithmName: String { Variant.algorithmName }`; a
+  doc comment citing RFC 8332 §3 and naming the three identifiers and the
+  NIOSSH field that reads each)
+- Test (fork): the preserved
+  `.superpowers/sdd/2026-09-02-rsa-blob-typing-rfc8332/RSAUserAuthBlobTypingTests.swift`
+  — red today, green exactly when the wire reads
+  `rsa-sha2-512 / ssh-rsa / rsa-sha2-512`
 - Test (fork): serialise a user-auth request through NIOSSH's writer (the
   test target has `SSHMessage.UserAuthRequestMessage` reachable via
   `@testable import NIOSSH`? — if not, assert on
@@ -103,9 +150,9 @@ test-only container, not linked), gated tests.
 ### Task 3: macSCP — the agent-backed RSA type, the bump, the flip
 
 **Files:**
-- Modify: `Package.swift` (`exact: "0.12.1-noix.3"`),
+- Modify: `Package.swift` (swift-nio-ssh `exact: "0.3.10"`, Citadel `exact: "0.12.1-noix.3"`),
   `Sources/macSCPCore/SSH/AgentBackedPrivateKey.swift` (the RSA public key
-  type's `publicKeyPrefix` → `"ssh-rsa"`; the doc comment at ~92-115 that
+  type's `publicKeyPrefix` → `"ssh-rsa"` and `userAuthAlgorithmName = "rsa-sha2-512"`; the doc comment at ~92-115 that
   documents the Go-server refusal is rewritten to the fix and the
   measurement), `docs/superpowers/specs/2026-09-01-backlog-rsa-agent-go-servers.md`
   ("Fixed" section), the registration order note in `RSASHA2HostKey.swift`
@@ -126,6 +173,6 @@ test-only container, not linked), gated tests.
 
 ## What is explicitly not in this plan
 
-- No NIOSSH fork change (measured unnecessary for the client's write
-  path; if Task 1/2 measure otherwise, this plan stops and says so).
+- (Withdrawn: "no NIOSSH fork change" — Task 2 measured otherwise; the
+  NIOSSH change is Task 2a.) No change to the host-key path of 0.3.9.
 - No `rsa-sha2-256` unless a server requires it.
