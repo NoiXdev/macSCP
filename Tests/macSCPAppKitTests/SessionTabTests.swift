@@ -155,10 +155,16 @@ struct SessionTabTests {
     /// subtree is deliberately remounted per tab), hiding and showing the
     /// Files pane, entering terminal-only mode.
     ///
-    /// Hiding the Files pane is the one of those this type can drive
-    /// directly, and it goes through the same session storage the others
-    /// do.
-    @Test func aRecordedChecksumSurvivesHidingAndShowingTheFilesPane() throws {
+    /// What THIS test measures is the storage location, not a remount
+    /// (re-review N4): no view exists here to be rebuilt — this target has
+    /// no rendering harness — and toggling the Files pane writes another
+    /// stored property of the same `BrowserSession`. So what it pins is that
+    /// the two live on one value without clobbering each other, which is the
+    /// half a value test can reach. Survival across an actual remount
+    /// follows from the ledger no longer being view state, and is held by
+    /// `ChecksumColumnWiringGuardTests`.
+    @Test func theLedgerAndThePaneVisibilityFlagShareASessionWithoutClobberingEachOther()
+        throws {
         let tab = makeTab()
         attachSession(to: tab)
         let item = RemoteFileItem(
@@ -203,6 +209,84 @@ struct SessionTabTests {
 
         attachSession(to: tab)
 
+        #expect(tab.session?.remoteChecksums.value(for: item, algorithm: .sha256) == nil)
+    }
+
+    // MARK: - A hash that is still in flight when the connection changes
+
+    /// A digest belongs to the connection it was computed over, and to no
+    /// other (re-review N2).
+    ///
+    /// The hazard is real rather than theoretical: the info sheet's compute
+    /// runs in an unstructured task that nothing cancels when the pane goes
+    /// away, so a disconnect and reconnect can land underneath it. Whichever
+    /// ledger the write RESOLVES to at that moment is the one it fills — and
+    /// resolving it late means filling the new connection's, with a digest
+    /// of another host's bytes. This is the same trap the liveness probe
+    /// already names and defends against one screen away.
+    ///
+    /// So the binding names its session when it is made, and refuses to
+    /// write once that session is gone. Reading is refused too: a stale
+    /// binding must not show the new connection's values either.
+    @Test func aChecksumThatLandsAfterAReconnectStaysOutOfTheNewSessionsLedger() throws {
+        let tab = makeTab()
+        attachSession(to: tab)
+        let session = try #require(tab.session)
+        let ledgerBinding = tab.checksumLedgerBinding(for: .remote, in: session)
+        let item = RemoteFileItem(name: "big.iso", path: "/big.iso", kind: .file, size: 9)
+        let digest = try #require(
+            FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "d", count: 64)))
+
+        // The hash was started against `session`; the tab reconnects while
+        // it is still running.
+        attachSession(to: tab)
+
+        // …and only now does the answer arrive and get written, exactly as
+        // the funnel writes it.
+        var landing = ledgerBinding.wrappedValue
+        landing.record(.checksum(digest), for: item)
+        ledgerBinding.wrappedValue = landing
+
+        #expect(tab.session?.remoteChecksums.value(for: item, algorithm: .sha256) == nil)
+        #expect(ledgerBinding.wrappedValue.value(for: item, algorithm: .sha256) == nil)
+    }
+
+    /// The positive half, over the same sequence: with no reconnect in the
+    /// middle, the digest lands. Without this, a binding that refused every
+    /// write would satisfy the test above.
+    @Test func aChecksumWrittenThroughTheBindingLandsInItsOwnSessionsLedger() throws {
+        let tab = makeTab()
+        attachSession(to: tab)
+        let session = try #require(tab.session)
+        let ledgerBinding = tab.checksumLedgerBinding(for: .remote, in: session)
+        let item = RemoteFileItem(name: "big.iso", path: "/big.iso", kind: .file, size: 9)
+        let digest = try #require(
+            FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "e", count: 64)))
+
+        var landing = ledgerBinding.wrappedValue
+        landing.record(.checksum(digest), for: item)
+        ledgerBinding.wrappedValue = landing
+
+        #expect(tab.session?.remoteChecksums.value(for: item, algorithm: .sha256) == digest)
+        #expect(ledgerBinding.wrappedValue.value(for: item, algorithm: .sha256) == digest)
+    }
+
+    /// The side is part of what the binding names: the local pane's binding
+    /// writes the local ledger and leaves the remote one alone.
+    @Test func eachSidesBindingWritesItsOwnLedger() throws {
+        let tab = makeTab()
+        attachSession(to: tab)
+        let session = try #require(tab.session)
+        let item = RemoteFileItem(name: "a", path: "/a", kind: .file, size: 1)
+        let digest = try #require(
+            FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "f", count: 64)))
+
+        let localBinding = tab.checksumLedgerBinding(for: .local, in: session)
+        var landing = localBinding.wrappedValue
+        landing.record(.checksum(digest), for: item)
+        localBinding.wrappedValue = landing
+
+        #expect(tab.session?.localChecksums.value(for: item, algorithm: .sha256) == digest)
         #expect(tab.session?.remoteChecksums.value(for: item, algorithm: .sha256) == nil)
     }
 

@@ -344,13 +344,14 @@ extension ContentView {
                                     // whenever the Files half is hidden and
                                     // shown, and a digest the user paid a
                                     // server-side hash for must survive all
-                                    // of that. Written through the binding
-                                    // by the pane's one checksum path; it
-                                    // dies with the connection, which is the
-                                    // one event that makes it meaningless.
-                                    checksumLedger: Binding(
-                                        get: { tab.session?.localChecksums ?? ChecksumLedger() },
-                                        set: { tab.session?.localChecksums = $0 }),
+                                    // of that. The binding names THIS
+                                    // session and refuses to write once it
+                                    // is gone, so a hash still in flight
+                                    // across a reconnect cannot land in the
+                                    // next connection's ledger — see
+                                    // `checksumLedgerBinding(for:in:)`.
+                                    checksumLedger: tab.checksumLedgerBinding(
+                                        for: .local, in: session),
                                     // "local" is not a `ConnectionKind`, so
                                     // there is no descriptor and no capability
                                     // flag to read here — the local file
@@ -451,9 +452,8 @@ extension ContentView {
                                     // the session. Two, because two panes are
                                     // two file systems and a path means
                                     // nothing across them.
-                                    checksumLedger: Binding(
-                                        get: { tab.session?.remoteChecksums ?? ChecksumLedger() },
-                                        set: { tab.session?.remoteChecksums = $0 }),
+                                    checksumLedger: tab.checksumLedgerBinding(
+                                        for: .remote, in: session),
                                     // The capability, not the kind. Every
                                     // backend conforms to the checksum
                                     // protocol — WebDAV does so in order to

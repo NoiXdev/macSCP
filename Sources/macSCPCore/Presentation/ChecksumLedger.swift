@@ -3,10 +3,18 @@ import Foundation
 /// What the user has asked this tab to compute, remembered per file.
 ///
 /// Nothing in this type computes a checksum. It only remembers the result of
-/// a request that already happened (`ChecksumBatch`, driven by the
-/// context-menu action and the info sheet) so a later column can show it
-/// without asking again. A row that was never asked about reads as absent —
-/// there is no default, no placeholder, and no background fill.
+/// a request that already happened: `BrowserPane.computeChecksum(of:
+/// algorithm:)` asks and records in one step, and it has exactly TWO callers
+/// — the info sheet, for one file, and the run started from the context
+/// menu, for a selection (counted in the App target in the pass that writes
+/// this). A row that was never asked about reads as absent: there is no
+/// default, no placeholder, and no background fill.
+///
+/// (This paragraph named `ChecksumBatch` as the writer until 2026-09-02.
+/// The run reports nothing onward any more — naming a type that writes
+/// nothing is exactly the stale-caller comment this project's rules are
+/// about, and it survived the commit that retired the sink because the
+/// sentence carried no number to re-count.)
 ///
 /// The key is `(path, size, modifiedAt)`, not `path` alone: a value recorded
 /// for one set of bytes must not survive under the same path once the file

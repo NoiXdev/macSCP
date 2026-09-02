@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import macSCPCore
 
 struct BrowserSession {
@@ -516,5 +517,53 @@ final class SessionTab: Identifiable {
         let next = effectivePaneVisibility(terminalIsVisible: terminalIsVisible, hasShell: hasShell)
             .applyingClick(on: .files, hasShell: hasShell)
         showsFiles = next.showsFiles
+    }
+}
+
+extension SessionTab {
+    /// A write path to one side's checksum ledger, naming the session it
+    /// belongs to at the moment it is made (re-review N2).
+    ///
+    /// The naming is the whole point. A digest arrives long after it was
+    /// asked for — that is what a hash of a large file over a connection
+    /// is — and the surfaces that ask do not stop when the pane goes away:
+    /// the info sheet's compute runs in an unstructured task nothing
+    /// cancels, and a row of a run that is already awaiting still finishes.
+    /// A write that resolved `session` at the moment it lands would
+    /// therefore drop a digest of the OLD connection's bytes into the ledger
+    /// of whatever session happens to be current, i.e. into the new one
+    /// after a reconnect — and two hosts can easily hold a file at the same
+    /// path with the same size and the same whole-second timestamp.
+    ///
+    /// So both halves compare `id` first: a stale binding writes nothing,
+    /// and reads as empty rather than as the new connection's values. This
+    /// is the same defence, for the same reason, that the liveness probe
+    /// already applies to its own in-flight answers.
+    ///
+    /// It exists as a named method rather than as two closure literals at
+    /// the call sites so that "the pane's ledger comes from a session" is a
+    /// property a test can hold — and does, in `SessionTabTests` — instead
+    /// of a shape someone has to re-read a view body to check.
+    func checksumLedgerBinding(
+        for side: BrowserPaneSide, in session: BrowserSession
+    ) -> Binding<ChecksumLedger> {
+        let sessionID = session.id
+        return Binding(
+            get: { [weak self] in
+                guard let current = self?.session, current.id == sessionID else {
+                    return ChecksumLedger()
+                }
+                switch side {
+                case .local: return current.localChecksums
+                case .remote: return current.remoteChecksums
+                }
+            },
+            set: { [weak self] newValue in
+                guard let self, self.session?.id == sessionID else { return }
+                switch side {
+                case .local: self.session?.localChecksums = newValue
+                case .remote: self.session?.remoteChecksums = newValue
+                }
+            })
     }
 }

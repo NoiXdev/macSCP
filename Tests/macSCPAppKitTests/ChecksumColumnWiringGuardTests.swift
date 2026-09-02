@@ -187,6 +187,99 @@ struct ChecksumColumnWiringGuardTests {
     /// a tab switch, hiding the Files pane, a reconnect. Its home is the
     /// session, which `SessionTabTests` reads from the value side.
     ///
+    /// Both panes get their ledger from the session, and the check does not
+    /// spell the way they do it (re-review N3).
+    ///
+    /// This was the one unguarded link. `checksumLedger: .constant(…)` at
+    /// both call sites keeps every other check in this file green — the
+    /// property is still a binding, the write is still one — and undoes the
+    /// whole of "the ledger lives with the tab" with a suite that reports
+    /// success. The failure it produces is visible (a column that never
+    /// fills) rather than wrong, which is why it is a guard and not a
+    /// redesign.
+    ///
+    /// Derived end to end: the factory's NAME is read out of the session
+    /// type's own file as the one function returning a binding of the
+    /// ledger, and the argument label is read out of the pane's own
+    /// declaration. Rename either and this follows it.
+    @Test func bothPanesTakeTheirLedgerFromTheSessionsOwnBindingFactory() throws {
+        let sessionFile = try Self.code(at: Self.fileDeclaring(String(describing: SessionTab.self)))
+        let factories = Self.functionNames(returning: "Binding<\(Self.ledgerName)>", in: sessionFile)
+        #expect(factories.count == 1, "one factory binds a pane to a session's ledger")
+        let factory = try #require(factories.first)
+
+        let label = try #require(try Self.ledgerArgumentLabel())
+        let regions = try Self.paneConstructionRegions()
+        #expect(regions.count == 2, "the window builds a local pane and a remote one")
+
+        for region in regions {
+            #expect(region.contains("\(label):"), "a pane is built without a ledger")
+            #expect(region.contains("\(factory)("), "a pane's ledger does not come from a session")
+        }
+    }
+
+    /// The names of the functions in `text` whose declared return type is
+    /// exactly `returnType`.
+    ///
+    /// Walks BACK from the return type to the nearest preceding `func `
+    /// rather than reading one line, because a signature wraps: the factory
+    /// this guard looks for puts its parameters on their own line, so
+    /// `func` and `-> …` are not on the same one. A line-at-a-time version
+    /// found nothing and said so — the count is a positive check — which is
+    /// how this shape was noticed rather than silently tolerated.
+    private static func functionNames(returning returnType: String, in text: String) -> [String] {
+        var names: [String] = []
+        var searchStart = text.startIndex
+        while let arrow = text.range(
+            of: "-> \(returnType)", range: searchStart..<text.endIndex) {
+            searchStart = arrow.upperBound
+            guard let keyword = text.range(
+                of: "func ", options: .backwards, range: text.startIndex..<arrow.lowerBound),
+                let parenthesis = text[keyword.upperBound..<arrow.lowerBound].firstIndex(of: "(")
+            else { continue }
+            names.append(String(text[keyword.upperBound..<parenthesis]))
+        }
+        return names
+    }
+
+    /// The pane's own argument label for the ledger, read off its
+    /// declaration instead of spelled here.
+    private static func ledgerArgumentLabel() throws -> String? {
+        let pane = try code(at: fileDeclaring(String(describing: BrowserPane.self)))
+        for line in pane.split(separator: "\n", omittingEmptySubsequences: false)
+        where line.contains("var ") && line.contains(": \(ledgerName)") {
+            guard let variable = line.range(of: "var "),
+                let colon = line[variable.upperBound...].firstIndex(of: ":")
+            else { continue }
+            return String(line[variable.upperBound..<colon]).trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    /// One slice of source per `BrowserPane(` construction, each running to
+    /// the start of the next (or to the end of the file) — the same shape
+    /// `BucketListTransferGuardTests` already uses on this file, so a check
+    /// about one pane cannot be satisfied by the other pane's arguments.
+    private static func paneConstructionRegions() throws -> [String] {
+        let paneName = String(describing: BrowserPane.self)
+        let files = try swiftFiles().filter { try code(at: $0).contains("\(paneName)(") }
+        let constructing = files.filter { !declares(paneName, in: (try? code(at: $0)) ?? "") }
+        #expect(constructing.count == 1, "one file builds the panes")
+        guard let file = constructing.first else { return [] }
+
+        let source = try code(at: file)
+        var starts: [String.Index] = []
+        var searchStart = source.startIndex
+        while let found = source.range(of: "\(paneName)(", range: searchStart..<source.endIndex) {
+            starts.append(found.lowerBound)
+            searchStart = found.upperBound
+        }
+        return starts.indices.map { index in
+            let end = index + 1 < starts.count ? starts[index + 1] : source.endIndex
+            return String(source[starts[index]..<end])
+        }
+    }
+
     /// Reads DECLARATIONS rather than a spelled property name: every stored
     /// property of the ledger's type in that file has to be a binding, so a
     /// renamed property is still covered and a re-added pane-owned one is
