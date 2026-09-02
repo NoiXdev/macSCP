@@ -179,9 +179,30 @@ bucket-row gate — a selected bucket row could download a whole bucket
 (now the same predicate, both directions, ten guard checks including one
 that reads the derivation of the destination scope).
 
-**Left open, named:** `permissionModel` is read by no UI, so S3/WebDAV
-FILES still offer a permissions editor whose Apply throws — a separate
-entry; 28 catalog strings for seven bucket-level operations; the toolbar
-buttons are pinned by source scan only (this project renders no view in a
-test); Servinga's `ListBuckets` behaviour stays unmeasured.
+**A follow-up that landed the same night, from another session
+(`78a0916f`, "the permissions editor follows the capability"):** the
+S3 browser task found `ProtocolCapabilities.permissionModel` declared by
+every descriptor and read by no surface, so an S3 or WebDAV file was
+offered "Info & Permissions" and then told "not available for this
+entry" — the wrong sentence about a server that has no file permissions.
+The maintainer started the spawned follow-up task, and its session
+committed straight onto `develop` in the main checkout. What it does:
+`PermissionsAvailability.isOffered(for:)` reads the descriptor (pinned to
+`.posixMode`; the local pane reads `LocalFileSystem.permissionModel`),
+the sheet keeps size, dates and checksum and is titled "Info" where there
+is nothing to edit, `PermissionsPresentation` chooses between the editor
+and two sentences, Apply reads the same decision, a source guard holds
+the wiring. **This changes what every WebDAV and `.bucket`-mode S3
+session shows** (title and sentence) — the one deliberate exception to
+"toggle off = today" on this branch; SSH and the local pane are
+byte-identical (verified in the final review). Its commit message says
+"3624 tests in 315 suites"; the diff adds 15 tests and 3 suites to a
+tree at 3623, so the number in the message is not the number the gate
+measures — the gate below is the record. It was reviewed in this
+branch's final review like the plan's own commits.
+
+**Left open, named:** 28 catalog strings for seven bucket-level
+operations; the toolbar buttons are pinned by source scan only (this
+project renders no view in a test); Servinga's `ListBuckets` behaviour
+stays unmeasured.
 
