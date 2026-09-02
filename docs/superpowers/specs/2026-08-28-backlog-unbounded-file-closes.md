@@ -160,11 +160,23 @@ below). `SFTPFile.close()` no longer hangs against a frozen peer through
 any path this file system uses.
 
 **Assumed, per the plan and unmeasured beyond the two red tests:** the
-other six counted sites (five direct plus one further `SFTPReadHandle`
-site) were "read, not measured" in this entry and stayed that way — the
-fix closes them by construction (the raw `SFTPFile` type is no longer
-reachable from `CitadelFileSystem.swift` at all), not because each was
-independently measured hanging.
+other six counted sites — recounted against the tree
+(`grep -n "closeBounded()" Sources/macSCPCore/SSH/CitadelFileSystem.swift`)
+rather than carried forward from the 2026-08-28 count — split as **four
+direct** (`write`'s `CancellationError` arm, `write`'s error arm,
+`SFTPReadHandle.closeBounded()`'s own body, `SFTPReadHandle.deinit`) and
+**two box-routed** (`readStream`'s `CancellationError` arm, `readStream`'s
+error arm — both call `handle.closeBounded()`, not `file.closeBounded()`
+directly). The two measured sites are `readStream`'s `CancellationError`
+arm (box-routed) and `write`'s `CancellationError` arm (direct); an
+earlier draft of this paragraph said "five direct plus one further
+`SFTPReadHandle` site", which does not match either the original
+2026-08-28 breakdown (five direct, three box-routed) or which two sites
+the measurement actually covered. All six were "read, not measured" in
+this entry and stayed that way — the fix closes them by construction
+(the raw `SFTPFile` type is no longer reachable from
+`CitadelFileSystem.swift` at all), not because each was independently
+measured hanging.
 
 **The type.** `Sources/macSCPCore/SSH/BoundedSFTPSession.swift` gained
 `BoundedSFTPFile`: `private let raw: SFTPFile`, `fileprivate init(raw:)`,
@@ -199,24 +211,30 @@ SFTP channel could still be opened and a raw file obtained from it — a
 new and different gap, not the old one persisting.
 
 **The eight moved sites**, matching this entry's 2026-08-28 count of
-eight (five direct, three through `SFTPReadHandle`); line numbers post-change,
-from `task-2-report.md`:
+eight (five direct, three through `SFTPReadHandle`). Line numbers are
+deliberately not given here: the ones first recorded (from
+`task-2-report.md`, pinned at `55e6830`) had already shifted by the very
+next commit (`17abf12`), and this project's stated preference for a
+number that goes stale in prose is to drop it and keep the description.
 
 | # | Site | Was | Now |
 | --- | --- | --- | --- |
-| 1 | `readStream`, EOF arm (`:763`) | `try await handle.close()` | `_ = await handle.closeBounded()` |
-| 2 | `readStream`, `CancellationError` arm (`:774`) | `try? await handle.close()` | `_ = await handle.closeBounded()` |
-| 3 | `readStream`, error arm (`:777`) | `try? await handle.close()` | `_ = await handle.closeBounded()` |
-| 4 | `write`, successful completion (`:835`) | `try await file.close()` | `_ = await file.closeBounded()` + a decision comment |
-| 5 | `write`, `CancellationError` arm (`:844`) | `try? await file.close()` | `_ = await file.closeBounded()` |
-| 6 | `write`, error arm (`:847`) | `try? await file.close()` | `_ = await file.closeBounded()` |
-| 7 | `SFTPReadHandle.close()` body (`:1186`–`:1187`) | `try await file.close()` | renamed `closeBounded() async -> Bool`, body `await file.closeBounded()` |
-| 8 | `SFTPReadHandle.deinit` (`:1204`) | `Task { try? await file.close() }` | `Task { _ = await file.closeBounded() }` |
+| 1 | `readStream`, EOF arm | `try await handle.close()` | `_ = await handle.closeBounded()` |
+| 2 | `readStream`, `CancellationError` arm | `try? await handle.close()` | `_ = await handle.closeBounded()` |
+| 3 | `readStream`, error arm | `try? await handle.close()` | `_ = await handle.closeBounded()` |
+| 4 | `write`, successful completion | `try await file.close()` | `_ = await file.closeBounded()` + a decision comment |
+| 5 | `write`, `CancellationError` arm | `try? await file.close()` | `_ = await file.closeBounded()` |
+| 6 | `write`, error arm | `try? await file.close()` | `_ = await file.closeBounded()` |
+| 7 | `SFTPReadHandle.close()` body | `try await file.close()` | renamed `closeBounded() async -> Bool`, body `await file.closeBounded()` |
+| 8 | `SFTPReadHandle.deinit` | `Task { try? await file.close() }` | `Task { _ = await file.closeBounded() }` |
 
-`grep -rn "SFTPFile\b" Sources/` now finds `SFTPFile` only inside
+`grep -rnw "SFTPFile" Sources/` now finds `SFTPFile` only inside
 `BoundedSFTPSession.swift` (the stored property, the `fileprivate init`,
 and prose) and in prose inside `CitadelFileSystem.swift`'s top-of-file
-`@preconcurrency` comment.
+`@preconcurrency` comment. Plain `grep -rn "SFTPFile\b" Sources/` is NOT
+that proof: `\b` only requires a word boundary after the match, so it
+also matches the `SFTPFile` substring inside `BoundedSFTPFile` — 22 hits
+against the `-w` form's 9 on this tree, checked 2026-09-02.
 
 **The `deinit`, what changed and what did not.** Forced by the type and
 nothing beyond it: the call became
@@ -251,6 +269,28 @@ re-run. The review-fix commit (`17abf12`) touched only comments and one
 new ungated test, so the gated suite was not re-run against it —
 argued in `task-2-report.md` as no measured code having changed.
 
+**One more measured consequence, not itself a new number.**
+`readStream`'s and `write`'s cancellation and error arms now cost up to
+`closeBoundSeconds` (5 s) on the path where they previously never
+returned at all against a frozen peer — strictly better, since "up to
+5 s" replaces "forever", but it is a cost that did not exist before this
+fix and is worth naming rather than leaving for the next person to
+rediscover by timing something. It bears on a number already on the
+record: `LivenessProbeDropIntegrationTests`' `teardownBoundSeconds`
+comment cites `cancelAll` returning in 0.0056 s, three for three,
+against this same frozen-peer scenario, and treats that as evidence
+`cancelAll` "contributes nothing" to the sum it derives. That 0.0056 s
+run is not evidence `cancelAll` is always fast — this entry's own
+"Measured, not part of the counted finding" section above records why:
+a cancelled `Task` does not interrupt an in-flight SFTP request against
+a frozen peer, so a cancellation landing while a request is still
+outstanding never reaches the cancellation arm's close at all in that
+scenario. The fast number came from the arm never running, not from the
+arm running quickly. The next time that lap is measured — with a
+cancellation that DOES land after the in-flight request resolves, so the
+arm's `closeBounded()` actually executes — expect the bound to show up
+in the total, up to 5 s, where the current comment shows none.
+
 **`@preconcurrency import Citadel` — measured still load-bearing, not
 assumed.** Removing it from `CitadelFileSystem.swift` fails to build;
 first error, quoted verbatim from `task-2-report.md`:
@@ -266,24 +306,36 @@ detached task) rather than enumerating call sites, after a first attempt
 at enumerating them (three names) was itself found short during review
 (`17abf12`).
 
-**Parked for the maintainer — an open decision, not a fix.** `write`'s
-success path used to `try await file.close()`, which throws
+**Parked for the maintainer — an open decision, not a fix.** Two sites,
+not one: `write`'s successful-completion close and `readStream`'s EOF
+close both used to `try await handle/file.close()`, which throws
 (`SFTPError.errorStatus`) on a non-`ok` CLOSE status — the class of
 error a server defers to close time, e.g. `ENOSPC`/`EDQUOT` reported only
 when the last write is flushed. `closeBounded()` answers only a `Bool`,
-so that status is now swallowed and the upload reports success. This is
-not the same question as an abandoned close: a close abandoned because
-the bound fired **is** correctly reported as success, because every
-chunk was individually awaited and acknowledged before the close was
-ever reached — the abandonment says nothing about whether the bytes
-arrived. The swallowed case is different — a close that **completed**
-and came back with a failing status, which today is indistinguishable
-from one that came back `ok`. The review's suggested shape: a
-three-case outcome on `closeBounded()` (`closed` / `failed(Error)` /
-`abandoned`) so `write` can map `failed` to a `RemoteFSError`. Not built
-here — it touches `BoundedSFTPSession`/`BoundedSFTPFile`, which this
-plan barred changing beyond adding the file type. Left for the
-maintainer to decide.
+so that status is now swallowed at both sites — the upload reports
+success, and the read's EOF is treated the same as any other clean EOF.
+This is not the same question as an abandoned close: a close abandoned
+because the bound fired **is** correctly reported as success/clean-EOF,
+because every chunk was individually awaited and acknowledged (write) or
+already delivered to the caller (read) before the close was ever
+reached — the abandonment says nothing about whether the bytes arrived
+or were fully read. The swallowed case is different — a close that
+**completed** and came back with a failing status, which today is
+indistinguishable from one that came back `ok`. The review's suggested
+shape: a three-case outcome on `closeBounded()` (`closed` /
+`failed(Error)` / `abandoned`) so both call sites can map `failed` to a
+`RemoteFSError`. Its cost, corrected here: this needs NO change to
+`BoundedClose` or to `BoundedSFTPSession` — `BoundedClose.run` already
+returns whether the bound won, and the operation closure inside
+`BoundedSFTPFile.closeBounded()` can capture `raw.close()`'s own
+success/failure locally and fold it into a three-case return without
+either of those two types changing at all. Only `BoundedSFTPFile`'s
+return type and its two call sites would move. An earlier version of
+this paragraph said the change "touches `BoundedSFTPSession`/
+`BoundedSFTPFile`, which this plan barred changing beyond adding the
+file type" — that reason was inaccurate; the actual barrier is simply
+that this plan did not ask for it. Left for the maintainer to decide,
+not implemented here.
 
 **The cancellation finding stays open, unchanged.** Measured 2026-09-02
 above: a cancelled Swift `Task` does not interrupt an in-flight SFTP
