@@ -208,10 +208,22 @@ final class BoundedSFTPSession: Sendable {
 ///
 /// `@unchecked Sendable`, where the session type gets `Sendable` for free:
 /// Citadel's `SFTPClient` is `Sendable` and its `SFTPFile` is not. The
-/// crossing is real and narrow — `closeBounded()` hands `self` to a task
-/// that may outlive the call, exactly as the session's does. What makes it
-/// safe is ownership, not luck: `openFile` returns a fresh handle per call,
-/// each of this project's two callers (`readStream`, `write`) keeps its own
+/// crossing is real and narrow — `closeBounded()` hands a value to a task
+/// that may outlive the call, the same shape the session's does, but not
+/// the same capture. The session's operation closure captures `[raw]`
+/// directly: `SFTPClient` is `Sendable`, so naming it in a `@Sendable`
+/// closure is legal on its own. `raw` here is `SFTPFile`, which is NOT
+/// `Sendable` — the closure cannot name it directly, so it captures
+/// `[self]` instead, which is legal only because this type carries the
+/// `@unchecked Sendable` this paragraph is on. `[self]` does more than
+/// satisfy the compiler: it is also what keeps `raw` alive for a close
+/// that is still parked after the object that asked for it is gone — see
+/// `SFTPReadHandle.deinit` below, where the box that requested this close
+/// can deallocate while the close itself is still parked past the bound;
+/// the operation closure's own reference to `self` is what the parked
+/// task keeps running on once that box is gone. What makes it safe is
+/// ownership, not luck: `openFile` returns a fresh handle per call, each
+/// of this project's two callers (`readStream`, `write`) keeps its own
 /// and never shares it, and the abandoned task's only remaining act is the
 /// one close it was handed.
 ///
@@ -220,14 +232,31 @@ final class BoundedSFTPSession: Sendable {
 /// parked inside Citadel's `sendRequest`, and the caller then drops the
 /// stream — so `SFTPReadHandle.deinit` starts a SECOND close on the same
 /// non-`Sendable` `SFTPFile` while the first is still suspended in it. Two
-/// tasks, one object. What separates them is that Citadel's `close()` writes
-/// `isActive = false` BEFORE it sends anything
+/// tasks, one object.
+///
+/// What keeps that safe here is a race that does not bite, not a guarantee
+/// the type gives. `isActive` is Citadel's own `public private(set) var`
+/// (`Citadel/Sources/Citadel/SFTP/Client/SFTPFile.swift:13`) — a plain
+/// property, no lock, no actor isolation, nothing that puts a
+/// synchronisation edge between one task's write to it and another task's
+/// read. `close()` writes `isActive = false` BEFORE it sends anything
 /// (`Citadel/Sources/Citadel/SFTP/Client/SFTPFile.swift:264`), and the
-/// parked task wrote it on its way in: the second call reaches the
-/// `guard self.isActive` at the top and returns without reading or writing
-/// anything the first one is using. It is not that the second close is
-/// harmless because the handle is stale — it is that the second close never
-/// gets past its first line.
+/// parked task performs that write, synchronously, before it ever suspends
+/// at `sendRequest`. The second call can only be issued once
+/// `SFTPReadHandle.deinit` runs, and in this exact scenario that cannot
+/// happen before the caller drops the stream — which happens only after
+/// `closeBounded()` has already returned, i.e. at least `closeBoundSeconds`
+/// after the parked task's write. So the second call's
+/// `guard self.isActive` sees `false` because that much has already
+/// happened, in ordinary wall-clock and scheduling terms, by the time it
+/// runs — not because anything here promises the write is visible.
+/// Nothing forces that ordering to hold; it is a property of THIS call
+/// shape (write, then a multi-second wait, then the second call), not of
+/// the type. If it somehow did not hold, the second close would instead
+/// send a real request over the same wire — and since it is itself a
+/// `closeBounded()` against the same frozen peer, it would just also hit
+/// `BoundedClose`'s bound and be abandoned the same way. Either outcome is
+/// a second abandoned close, never a torn write or a skipped one.
 final class BoundedSFTPFile: @unchecked Sendable {
     private let raw: SFTPFile
 

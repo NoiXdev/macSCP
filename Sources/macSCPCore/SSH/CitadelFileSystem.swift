@@ -13,7 +13,7 @@
 // when the SFTP path moved behind `BoundedSFTPSession` and `BoundedSFTPFile`
 // is the SHAPE of what is left, not the amount of care owed: both of those
 // are `Sendable`, and the crossings they make are argued in their own file,
-// so no crossing of a Citadel value remains in this one. The suppression
+// so no crossing of a Citadel SFTP value remains in this one. The suppression
 // still covers everything this class does with the SSH client itself and the
 // NIO stack under it — created, jumped through, stored, closed on every
 // failure arm of the connect path, handed to child channels, and captured by
@@ -771,6 +771,10 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 let buffer = try await handle.read(
                     from: currentOffset, length: UInt32(TransferChunk.size))
                 guard buffer.readableBytes > 0 else {
+                    // The other site where a close's own outcome could
+                    // have meant something — see the comment on `write`'s
+                    // completion close below for what changed here and why
+                    // swallowing it is accepted.
                     _ = await handle.closeBounded()
                     return nil
                 }
@@ -819,17 +823,33 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 try await file.write(ByteBuffer(bytes: chunk), at: offset)
                 offset += UInt64(chunk.count)
             }
-            // The close of a write that completed — the one place in this
-            // file where the close's own outcome could have meant something.
-            // Its `false` is NOT an error to the caller, following
-            // `disconnect()`, which discards the session's `false` and goes
-            // on to close the connection. Three reasons, in order of weight:
-            // every chunk above was individually awaited and acknowledged
-            // before this line was reached, so an abandoned close says
-            // nothing about whether the bytes arrived; a `false` here means
-            // the peer has stopped answering, which the next operation on
-            // this connection reports anyway; and reporting a completed
-            // upload as failed is the worse of the two wrong answers.
+            // The close of a write that completed. Two sites in this file
+            // changed from an unbounded close to `closeBounded()` where the
+            // close's own outcome could have meant something: this one, and
+            // `readStream`'s EOF arm above — not "the one place", which
+            // this comment claimed until it was checked against the base
+            // commit it was describing (`391b6aa`).
+            //
+            // The read side's change is not only a like-for-like swap: at
+            // `391b6aa`, `readStream`'s EOF arm was a bare
+            // `try await handle.close()`, and Citadel's `close()` THROWS on
+            // a non-`ok` CLOSE status — that throw propagated straight out
+            // of the `unfolding:` closure, UNMAPPED, past `mapSFTPError`
+            // and past the `RemoteFSError` contract every other error on
+            // this stream goes through. `closeBounded()` (see
+            // `BoundedSFTPFile`) swallows it instead. That is a real
+            // change in behavior, stated here rather than left silent.
+            //
+            // Here specifically: its `false` is NOT an error to the caller,
+            // following `disconnect()`, which discards the session's
+            // `false` and goes on to close the connection. Three reasons,
+            // in order of weight: every chunk above was individually
+            // awaited and acknowledged before this line was reached, so an
+            // abandoned close says nothing about whether the bytes
+            // arrived; a `false` here means the peer has stopped
+            // answering, which the next operation on this connection
+            // reports anyway; and reporting a completed upload as failed
+            // is the worse of the two wrong answers.
             //
             // What this gives up, said plainly rather than left for a
             // reader to find: `try await file.close()` used to propagate a
@@ -839,10 +859,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             // swallows that error the way the session's close already does.
             // Nothing else in the product catches it either: `copyFile`
             // ends on a `Task.checkCancellation()`, not on a size or
-            // checksum comparison, and the checksum feature
-            // (`ChecksumRequest`) is something a user asks for on a file,
-            // not a step every transfer runs. That is a real, narrow loss,
-            // recorded here so it is a decision and not an accident.
+            // checksum comparison, and the checksum capability
+            // (`RemoteChecksumProvider.remoteChecksum`) is something a
+            // user asks for on a file, not a step every transfer runs.
+            // That is a real, narrow loss, recorded here so it is a
+            // decision and not an accident.
             _ = await file.closeBounded()
         } catch is CancellationError {
             // Cooperative cancellation (M5c/T2): normally the counting stream
