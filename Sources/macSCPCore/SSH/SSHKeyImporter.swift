@@ -157,8 +157,10 @@ public enum SSHKeyImporter {
     /// `.unsupportedOrEncrypted` rather than mislabeling an unknown type as
     /// RSA. `KeyType` intentionally gets no new case here: `.rsa`/`.ecdsa`
     /// are exhaustively switched over in the picker/badge/`isConnectable`
-    /// call sites, and none of them need to distinguish "unsupported" from
-    /// the types already known.
+    /// call sites, and every one of those already treats ed25519, RSA and
+    /// ECDSA alike — `SSHPrivateKeyLoader` opens all three (`fa67138`), so
+    /// none of them needs to distinguish "unsupported" from the types
+    /// already known.
     ///
     /// Matched EXACTLY, never by prefix: `ssh-ed25519-cert-v01@openssh.com`
     /// starts with `ssh-ed25519` but is a certificate, not a key macSCP can

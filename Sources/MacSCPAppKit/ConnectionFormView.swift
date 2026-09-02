@@ -911,8 +911,9 @@ struct ConnectionFormView: View {
             // Declared in the schema, catalog keys and all -- nothing to look up.
             return options
         case .managedKeys:
-            // Same filter the hand-written SSH key picker uses: only ed25519
-            // keys with a resolvable file are offerable.
+            // Same filter the hand-written SSH key picker uses: only keys
+            // `SSHPrivateKeyLoader` can open (ed25519, RSA, ECDSA) with a
+            // resolvable file are offerable.
             return ManagedKeysLoad.connectableKeys().map { key in
                 FieldOption(
                     id: key.id.uuidString, labelKey: "",

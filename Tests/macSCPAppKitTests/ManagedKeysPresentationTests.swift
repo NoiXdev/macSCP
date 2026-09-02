@@ -71,16 +71,22 @@ struct ManagedKeysPresentationTests {
     }
 
     /// Positive control for the two tests below: without it, a filter that
-    /// always returned nothing would satisfy them both.
-    @Test func onlyEd25519KeysWithAUsableFileNameAreOfferable() throws {
+    /// always returned nothing would satisfy them both. Covers all three
+    /// `KeyType` cases the loader can open (ed25519, RSA, ECDSA) — the
+    /// positive half — beside the negative half, a key whose `fileName`
+    /// escapes the key directory, which stays excluded regardless of type.
+    @Test func everyLoadableKeyTypeWithAUsableFileNameIsOfferable() throws {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let offerable = key(name: "laptop", type: .ed25519, fileName: "id_ed25519")
-        try store.add(offerable)
-        try store.add(key(name: "legacy", type: .rsa(bits: 4096), fileName: "id_rsa"))
+        let ed25519Key = key(name: "laptop", type: .ed25519, fileName: "id_ed25519")
+        let rsaKey = key(name: "server", type: .rsa(bits: 4096), fileName: "id_rsa")
+        let ecdsaKey = key(name: "backup", type: .ecdsa, fileName: "id_ecdsa")
+        try store.add(ed25519Key)
+        try store.add(rsaKey)
+        try store.add(ecdsaKey)
         try store.add(key(name: "escaping", type: .ed25519, fileName: "../outside"))
 
-        #expect(ManagedKeysLoad.connectableKeys(in: store) == [offerable])
+        #expect(ManagedKeysLoad.connectableKeys(in: store) == [ed25519Key, rsaKey, ecdsaKey])
     }
 
     @Test func nothingIsOfferableFromAnUnreadableStore() throws {
