@@ -41,14 +41,16 @@ final class LoopbackTLSStub: @unchecked Sendable {
     /// Builds a stub without occupying a thread of the Swift concurrency
     /// cooperative pool.
     ///
-    /// The initializer below blocks twice — `openssl` through
-    /// `Process.waitUntilExit`, then the listener's readiness through a
-    /// semaphore. Called straight from an `async` test, both blocks land on
-    /// a cooperative-pool thread, and that pool is only as wide as the
-    /// machine has cores — so on a small CI runner one such construction
-    /// holds a real share of the whole package's concurrency for as long as
-    /// it waits. Hopping onto a global dispatch queue moves the waiting
-    /// onto a pool that grows a thread instead of starving.
+    /// Construction waits twice — for `openssl`, and for the listener to
+    /// become ready. Both waits used to be blocking (`Process.waitUntilExit`
+    /// and a `DispatchSemaphore`), which on a cooperative-pool thread holds
+    /// a real share of the whole package's concurrency: that pool is only as
+    /// wide as the machine has cores (CLAUDE.md, "Tests never block the
+    /// cooperative pool"). An earlier version hopped the whole initializer
+    /// onto `DispatchQueue.global()` to move the blocking somewhere that
+    /// grows a thread instead of starving; now neither wait blocks at all —
+    /// `openssl` is awaited through `SubprocessRunner` and readiness through
+    /// an `AsyncSignal` — so the hop is gone with the blocking it hid.
     ///
     /// This is a hazard removed, not the diagnosis of a specific failure:
     /// what CI actually reported was `listenerNeverBecameReady` after the
@@ -57,15 +59,11 @@ final class LoopbackTLSStub: @unchecked Sendable {
     /// because of this blocking or merely alongside it is not established
     /// here.
     static func make(response: String) async throws -> LoopbackTLSStub {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(with: Result { try LoopbackTLSStub(response: response) })
-            }
-        }
+        try await LoopbackTLSStub(response: response)
     }
 
-    init(response: String) throws {
-        let identity = try Self.makeEphemeralIdentity()
+    init(response: String) async throws {
+        let identity = try await Self.makeEphemeralIdentity()
 
         let tls = NWProtocolTLS.Options()
         sec_protocol_options_set_local_identity(tls.securityProtocolOptions, identity)
@@ -74,7 +72,7 @@ final class LoopbackTLSStub: @unchecked Sendable {
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
         listener = try NWListener(using: parameters)
 
-        let ready = DispatchSemaphore(value: 0)
+        let ready = AsyncSignal()
         let failure = FailureBox()
         listener.stateUpdateHandler = { state in
             switch state {
@@ -102,12 +100,11 @@ final class LoopbackTLSStub: @unchecked Sendable {
         }
         listener.start(queue: .global())
 
-        // Generous rather than tight: this wait now runs on a global
-        // dispatch queue (see `make`), so waiting longer costs a thread
-        // that pool is willing to grow, not one of the cooperative pool's
-        // few. It stays bounded so a listener that never arrives fails the
-        // test instead of wedging the whole run.
-        guard ready.wait(timeout: .now() + 60) == .success else {
+        // Generous rather than tight: this wait is a suspension, not a
+        // parked thread (see `make`), so waiting longer costs nothing the
+        // rest of the suite needs. It stays bounded so a listener that never
+        // arrives fails the test instead of wedging the whole run.
+        guard await ready.wait(timeout: .seconds(60)) else {
             listener.cancel()
             throw StubError.listenerNeverBecameReady
         }
@@ -139,7 +136,7 @@ final class LoopbackTLSStub: @unchecked Sendable {
 
     /// Generates a throwaway key pair and self-signed certificate and
     /// returns them as an identity held only in memory.
-    private static func makeEphemeralIdentity() throws -> sec_identity_t {
+    private static func makeEphemeralIdentity() async throws -> sec_identity_t {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-tls-stub-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -150,12 +147,12 @@ final class LoopbackTLSStub: @unchecked Sendable {
         let bundlePath = directory.appendingPathComponent("bundle.p12").path(percentEncoded: false)
         let passphrase = UUID().uuidString
 
-        try runOpenSSL([
+        try await runOpenSSL([
             "req", "-x509", "-newkey", "rsa:2048", "-nodes",
             "-keyout", keyPath, "-out", certPath,
             "-days", "1", "-subj", "/CN=127.0.0.1",
         ])
-        try runOpenSSL([
+        try await runOpenSSL([
             "pkcs12", "-export", "-inkey", keyPath, "-in", certPath,
             "-out", bundlePath, "-passout", "pass:\(passphrase)", "-name", "macscp-test",
         ])
@@ -183,16 +180,11 @@ final class LoopbackTLSStub: @unchecked Sendable {
         return identity
     }
 
-    private static func runOpenSSL(_ arguments: [String]) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
-        process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw StubError.opensslFailed(arguments.first ?? "?", process.terminationStatus)
+    private static func runOpenSSL(_ arguments: [String]) async throws {
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/openssl"), arguments: arguments)
+        guard result.status == 0 else {
+            throw StubError.opensslFailed(arguments.first ?? "?", result.status)
         }
     }
 

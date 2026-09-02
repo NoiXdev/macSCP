@@ -348,14 +348,14 @@ private struct DisposableSSHServer {
     let name: String
     let port: Int
 
-    static func start(port: Int) throws -> DisposableSSHServer {
+    static func start(port: Int) async throws -> DisposableSSHServer {
         // Prune FIRST, and by prefix: a leftover from an earlier run holds
         // port 2224, and its name carries that run's suffix, not this one's
         // — so removing "the name this run is about to use" could never have
         // found it. The first version of this code did exactly that, and a
         // container left paused by a hung run failed every later run with
         // `Bind for 0.0.0.0:2224 failed: port is already allocated`.
-        try pruneLeftovers()
+        try await pruneLeftovers()
         let name = "\(namePrefix)\(UUID().uuidString.prefix(8))"
         // No `--rm`: an auto-removing container is removed by the daemon in
         // the BACKGROUND once it stops, which raced the prune — the second
@@ -460,11 +460,20 @@ private struct DisposableSSHServer {
         Task.detached {
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
-            try? pruneLeftovers()
+            try? await pruneLeftovers()
         }
     }
 
-    static func pruneLeftovers() throws {
+    /// Retries for up to fifteen seconds, and the pause between attempts is
+    /// an `await`.
+    ///
+    /// It used to be `Thread.sleep`, which parks whatever thread this runs
+    /// on — and one of the two callers is the detached watchdog above, whose
+    /// thread is a cooperative-pool thread. That pool is exactly as wide as
+    /// the machine has cores, so a prune that spun to its deadline held one
+    /// of a three-core runner's three for fifteen seconds (CLAUDE.md, "Tests
+    /// never block the cooperative pool").
+    static func pruneLeftovers() async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(15))
         while true {
             let ids = try leftoverIDs()
@@ -475,7 +484,7 @@ private struct DisposableSSHServer {
             guard ContinuousClock.now < deadline else {
                 throw DockerError.pruneFailed(remaining)
             }
-            Thread.sleep(forTimeInterval: 0.2)
+            try? await Task.sleep(for: .milliseconds(200))
         }
     }
 
@@ -975,7 +984,7 @@ struct LivenessProbeDropIntegrationTests {
     @Test func aRealDropIsNoticedAndLeavesTheTabLost() async throws {
         let fixture = makeFixture()
         defer { fixture.cleanup() }
-        let server = try DisposableSSHServer.start(port: dropServerPort)
+        let server = try await DisposableSSHServer.start(port: dropServerPort)
         defer { server.remove() }
         let fs = try await server.connect()
         let home = try await fs.homeDirectoryPath()
@@ -1043,7 +1052,7 @@ struct LivenessProbeDropIntegrationTests {
     @Test func aSilentlyFrozenPeerIsNoticedByTheDeadline() async throws {
         let fixture = makeFixture()
         defer { fixture.cleanup() }
-        let server = try DisposableSSHServer.start(port: dropServerPort)
+        let server = try await DisposableSSHServer.start(port: dropServerPort)
         defer { server.remove() }
         let fs = try await server.connect()
         let home = try await fs.homeDirectoryPath()
@@ -1128,7 +1137,7 @@ struct LivenessProbeDropIntegrationTests {
     @Test func teardownAgainstAStillFrozenPeerTerminates() async throws {
         let fixture = makeFixture()
         defer { fixture.cleanup() }
-        let server = try DisposableSSHServer.start(port: dropServerPort)
+        let server = try await DisposableSSHServer.start(port: dropServerPort)
         let watchdog = DisposableSSHServer.pruneAfter(seconds: teardownBoundSeconds + 180)
         defer { watchdog.cancel() }
         defer { server.remove() }
@@ -1244,7 +1253,7 @@ struct LivenessProbeDropIntegrationTests {
     @Test func teardownWithAnOpenShellAgainstAStillFrozenPeerTerminates() async throws {
         let fixture = makeFixture()
         defer { fixture.cleanup() }
-        let server = try DisposableSSHServer.start(port: shellDropServerPort)
+        let server = try await DisposableSSHServer.start(port: shellDropServerPort)
         let watchdog = DisposableSSHServer.pruneAfter(seconds: teardownBoundSeconds + 180)
         defer { watchdog.cancel() }
         defer { server.remove() }
@@ -1382,7 +1391,7 @@ struct LivenessProbeDropIntegrationTests {
     /// alone against the bound, the same before-thaw-capture discipline as
     /// every other test in this file.
     @Test func aReadHandleCloseAgainstAStillFrozenPeerReturnsInsideTheBound() async throws {
-        let server = try DisposableSSHServer.start(port: isolatedReadCloseServerPort)
+        let server = try await DisposableSSHServer.start(port: isolatedReadCloseServerPort)
         let watchdog = DisposableSSHServer.pruneAfter(seconds: fileCloseBoundSeconds + 180)
         defer { watchdog.cancel() }
         defer { server.remove() }
@@ -1463,7 +1472,7 @@ struct LivenessProbeDropIntegrationTests {
     /// longer in flight — freeze the peer, then call `closeBounded()`
     /// alone and measure it against the bound.
     @Test func aWriteFileCloseAgainstAStillFrozenPeerReturnsInsideTheBound() async throws {
-        let server = try DisposableSSHServer.start(port: isolatedWriteCloseServerPort)
+        let server = try await DisposableSSHServer.start(port: isolatedWriteCloseServerPort)
         let watchdog = DisposableSSHServer.pruneAfter(seconds: fileCloseBoundSeconds + 180)
         defer { watchdog.cancel() }
         defer { server.remove() }

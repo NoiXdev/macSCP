@@ -13,9 +13,9 @@ import Testing
 /// that path at all.
 @Suite("CLI root --help")
 struct CLIRootHelpTests {
-    @Test func theRootHelpExplainsNameColonPath() throws {
+    @Test func theRootHelpExplainsNameColonPath() async throws {
         let binary = try Self.locateCLIBinary()
-        let result = try Self.runProcess(binary, ["--help"])
+        let result = try await Self.runProcess(binary, ["--help"])
         #expect(result.status == 0, "--help failed: \(result.stderr)")
         #expect(result.stdout.contains("name:/path"), "root help does not mention name:/path")
         #expect(result.stdout.contains("sessions"), "root help does not mention sessions")
@@ -60,50 +60,16 @@ struct CLIRootHelpTests {
         return binaryPath
     }
 
+    /// Draining, the bound and the kill escalation all live in
+    /// `SubprocessRunner`, which awaits the child instead of parking a
+    /// cooperative-pool thread on it — see that type's doc comment, and
+    /// CLAUDE.md's "Tests never block the cooperative pool".
     private static func runProcess(
         _ executable: String, _ arguments: [String]
-    ) throws -> (status: Int32, stdout: String, stderr: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.standardInput = FileHandle.nullDevice
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        try process.run()
-
-        // Drain both pipes concurrently rather than sequentially — reading
-        // stdout to EOF before touching stderr can deadlock if the child
-        // fills the stderr pipe's kernel buffer while blocked writing to it
-        // (same hazard `CLISessionsJSONRoundtripTests.runProcess` guards
-        // against).
-        let stdoutBox = CollectedOutput()
-        let stderrBox = CollectedOutput()
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global().async {
-            stdoutBox.data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        group.enter()
-        DispatchQueue.global().async {
-            stderrBox.data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        _ = group.wait(timeout: .now() + 60)
-        process.waitUntilExit()
-
-        return (
-            process.terminationStatus,
-            String(data: stdoutBox.data, encoding: .utf8) ?? "",
-            String(data: stderrBox.data, encoding: .utf8) ?? ""
-        )
-    }
-
-    private final class CollectedOutput: @unchecked Sendable {
-        var data = Data()
+    ) async throws -> (status: Int32, stdout: String, stderr: String) {
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: executable), arguments: arguments)
+        return (result.status, result.stdoutText, result.stderrText)
     }
 
     private struct HarnessError: Error, CustomStringConvertible {

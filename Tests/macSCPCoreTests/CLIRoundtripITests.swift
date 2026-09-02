@@ -58,61 +58,70 @@ struct CLIRoundtripITests {
         // and this test's cleanup — the rig has no other way to remove what
         // this run uploads. It's fine for it to run even if an earlier step
         // already failed the test.
-        defer {
-            _ = try? Self.runCLI(
+        // `defer` bodies cannot `await` — the compiler rejects it — so the
+        // cleanup that used to sit in one is a closure both exits call, the
+        // throwing one included, which is the whole reason it was a `defer`.
+        let removeUploadedFile: @Sendable () async -> Void = {
+            _ = try? await Self.runCLI(
                 binary, ["rm", "--accept-new", "\(remoteDirectory)/\(remoteFileName)"],
                 storageDirectory: storageDirectory)
         }
 
-        let putResult = try Self.runCLI(
-            binary,
-            ["put", "--accept-new", localSourceFile.path(percentEncoded: false), remoteDirectory + "/"],
-            storageDirectory: storageDirectory)
-        #expect(putResult.status == 0, "put failed: \(putResult.stderr)")
+        do {
+            let putResult = try await Self.runCLI(
+                binary,
+                ["put", "--accept-new", localSourceFile.path(percentEncoded: false), remoteDirectory + "/"],
+                storageDirectory: storageDirectory)
+            #expect(putResult.status == 0, "put failed: \(putResult.stderr)")
 
-        let lsResult = try Self.runCLI(
-            binary, ["ls", "--accept-new", "--json", remoteDirectory],
-            storageDirectory: storageDirectory)
-        #expect(lsResult.status == 0, "ls failed: \(lsResult.stderr)")
-        let listedNames = lsResult.stdout
-            .split(separator: "\n")
-            .compactMap { line -> String? in
-                guard let data = line.data(using: .utf8),
-                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else { return nil }
-                return object["name"] as? String
-            }
-        #expect(listedNames.contains(remoteFileName), "ls did not report the uploaded file")
+            let lsResult = try await Self.runCLI(
+                binary, ["ls", "--accept-new", "--json", remoteDirectory],
+                storageDirectory: storageDirectory)
+            #expect(lsResult.status == 0, "ls failed: \(lsResult.stderr)")
+            let listedNames = lsResult.stdout
+                .split(separator: "\n")
+                .compactMap { line -> String? in
+                    guard let data = line.data(using: .utf8),
+                          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    else { return nil }
+                    return object["name"] as? String
+                }
+            #expect(listedNames.contains(remoteFileName), "ls did not report the uploaded file")
 
-        let getResult = try Self.runCLI(
-            binary,
-            ["get", "--accept-new", "\(remoteDirectory)/\(remoteFileName)",
-             downloadDirectory.path(percentEncoded: false)],
-            storageDirectory: storageDirectory)
-        #expect(getResult.status == 0, "get failed: \(getResult.stderr)")
-        let downloadedFile = downloadDirectory.appendingPathComponent(remoteFileName)
-        let downloadedContent = try String(contentsOf: downloadedFile, encoding: .utf8)
-        #expect(downloadedContent == payload, "downloaded bytes do not match the uploaded payload")
+            let getResult = try await Self.runCLI(
+                binary,
+                ["get", "--accept-new", "\(remoteDirectory)/\(remoteFileName)",
+                 downloadDirectory.path(percentEncoded: false)],
+                storageDirectory: storageDirectory)
+            #expect(getResult.status == 0, "get failed: \(getResult.stderr)")
+            let downloadedFile = downloadDirectory.appendingPathComponent(remoteFileName)
+            let downloadedContent = try String(contentsOf: downloadedFile, encoding: .utf8)
+            #expect(downloadedContent == payload, "downloaded bytes do not match the uploaded payload")
 
-        let rmResult = try Self.runCLI(
-            binary, ["rm", "--accept-new", "\(remoteDirectory)/\(remoteFileName)"],
-            storageDirectory: storageDirectory)
-        #expect(rmResult.status == 0, "rm failed: \(rmResult.stderr)")
+            let rmResult = try await Self.runCLI(
+                binary, ["rm", "--accept-new", "\(remoteDirectory)/\(remoteFileName)"],
+                storageDirectory: storageDirectory)
+            #expect(rmResult.status == 0, "rm failed: \(rmResult.stderr)")
 
-        // Confirms `rm` actually removed it, rather than merely exiting 0.
-        let lsAfterRemoval = try Self.runCLI(
-            binary, ["ls", "--accept-new", "--json", remoteDirectory],
-            storageDirectory: storageDirectory)
-        #expect(lsAfterRemoval.status == 0, "ls after rm failed: \(lsAfterRemoval.stderr)")
-        let namesAfterRemoval = lsAfterRemoval.stdout
-            .split(separator: "\n")
-            .compactMap { line -> String? in
-                guard let data = line.data(using: .utf8),
-                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else { return nil }
-                return object["name"] as? String
-            }
-        #expect(!namesAfterRemoval.contains(remoteFileName), "rm did not actually remove the file")
+            // Confirms `rm` actually removed it, rather than merely exiting 0.
+            let lsAfterRemoval = try await Self.runCLI(
+                binary, ["ls", "--accept-new", "--json", remoteDirectory],
+                storageDirectory: storageDirectory)
+            #expect(lsAfterRemoval.status == 0, "ls after rm failed: \(lsAfterRemoval.stderr)")
+            let namesAfterRemoval = lsAfterRemoval.stdout
+                .split(separator: "\n")
+                .compactMap { line -> String? in
+                    guard let data = line.data(using: .utf8),
+                          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    else { return nil }
+                    return object["name"] as? String
+                }
+            #expect(!namesAfterRemoval.contains(remoteFileName), "rm did not actually remove the file")
+        } catch {
+            await removeUploadedFile()
+            throw error
+        }
+        await removeUploadedFile()
     }
 
     /// The promise every automation relies on: no terminal, unknown host,
@@ -140,7 +149,7 @@ struct CLIRoundtripITests {
         // exists to pin. `--non-interactive` is passed too so the same
         // refusal is exercised via the documented flag, not only via the
         // absence of a TTY.
-        let result = try Self.runCLI(
+        let result = try await Self.runCLI(
             binary, ["ls", "--non-interactive", "\(session.name):/"],
             storageDirectory: storageDirectory)
 
@@ -186,48 +195,57 @@ struct CLIRoundtripITests {
 
         let remoteDirectory = "\(session.name):/config"
 
-        defer {
-            _ = try? Self.runCLI(
+        // `defer` bodies cannot `await` — the compiler rejects it — so the
+        // cleanup that used to sit in one is a closure both exits call, the
+        // throwing one included, which is the whole reason it was a `defer`.
+        let removeUploadedFile: @Sendable () async -> Void = {
+            _ = try? await Self.runCLI(
                 binary, ["rm", "--accept-new", "\(remoteDirectory)/\(remoteFileName)"],
                 storageDirectory: storageDirectory)
         }
 
-        let firstPut = try Self.runCLI(
-            binary,
-            ["put", "--accept-new", localSourceFile.path(percentEncoded: false), remoteDirectory + "/"],
-            storageDirectory: storageDirectory)
-        #expect(firstPut.status == 0, "first put failed: \(firstPut.stderr)")
+        do {
+            let firstPut = try await Self.runCLI(
+                binary,
+                ["put", "--accept-new", localSourceFile.path(percentEncoded: false), remoteDirectory + "/"],
+                storageDirectory: storageDirectory)
+            #expect(firstPut.status == 0, "first put failed: \(firstPut.stderr)")
 
-        // Overwrite the LOCAL file's content: if `.fail` were not actually
-        // the default (e.g. it silently regressed to `.overwrite`), the
-        // second `put` below would clobber the remote copy with THIS
-        // content instead of refusing — which is exactly what the final
-        // assertion below would catch.
-        try Data(secondPayload.utf8).write(to: localSourceFile)
+            // Overwrite the LOCAL file's content: if `.fail` were not actually
+            // the default (e.g. it silently regressed to `.overwrite`), the
+            // second `put` below would clobber the remote copy with THIS
+            // content instead of refusing — which is exactly what the final
+            // assertion below would catch.
+            try Data(secondPayload.utf8).write(to: localSourceFile)
 
-        let secondPut = try Self.runCLI(
-            binary,
-            ["put", "--accept-new", localSourceFile.path(percentEncoded: false), remoteDirectory + "/"],
-            storageDirectory: storageDirectory)
-        let conflictMessage = "put with no --on-conflict flag must refuse an existing destination "
-            + "by default; stderr: \(secondPut.stderr)"
-        #expect(secondPut.status == CLIExitCode.conflict.rawValue, "\(conflictMessage)")
-        #expect(secondPut.status == 15)
+            let secondPut = try await Self.runCLI(
+                binary,
+                ["put", "--accept-new", localSourceFile.path(percentEncoded: false), remoteDirectory + "/"],
+                storageDirectory: storageDirectory)
+            let conflictMessage = "put with no --on-conflict flag must refuse an existing destination "
+                + "by default; stderr: \(secondPut.stderr)"
+            #expect(secondPut.status == CLIExitCode.conflict.rawValue, "\(conflictMessage)")
+            #expect(secondPut.status == 15)
 
-        let downloadDirectory = localDirectory.appendingPathComponent("download", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: downloadDirectory, withIntermediateDirectories: true)
-        let getResult = try Self.runCLI(
-            binary,
-            ["get", "--accept-new", "\(remoteDirectory)/\(remoteFileName)",
-             downloadDirectory.path(percentEncoded: false)],
-            storageDirectory: storageDirectory)
-        #expect(getResult.status == 0, "get failed: \(getResult.stderr)")
-        let downloadedFile = downloadDirectory.appendingPathComponent(remoteFileName)
-        let downloadedContent = try String(contentsOf: downloadedFile, encoding: .utf8)
-        #expect(
-            downloadedContent == originalPayload,
-            "remote content changed despite the conflicting put being refused")
+            let downloadDirectory = localDirectory.appendingPathComponent("download", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: downloadDirectory, withIntermediateDirectories: true)
+            let getResult = try await Self.runCLI(
+                binary,
+                ["get", "--accept-new", "\(remoteDirectory)/\(remoteFileName)",
+                 downloadDirectory.path(percentEncoded: false)],
+                storageDirectory: storageDirectory)
+            #expect(getResult.status == 0, "get failed: \(getResult.stderr)")
+            let downloadedFile = downloadDirectory.appendingPathComponent(remoteFileName)
+            let downloadedContent = try String(contentsOf: downloadedFile, encoding: .utf8)
+            #expect(
+                downloadedContent == originalPayload,
+                "remote content changed despite the conflicting put being refused")
+        } catch {
+            await removeUploadedFile()
+            throw error
+        }
+        await removeUploadedFile()
     }
 
     // MARK: - Test harness
@@ -312,99 +330,22 @@ struct CLIRoundtripITests {
     /// directory and rig credentials, and no controlling terminal (stdin is
     /// the null device) — so a test never depends on whether the process
     /// running `swift test` happens to have one attached.
+    ///
+    /// Draining, the bound and the kill escalation all live in
+    /// `SubprocessRunner`, which awaits the child instead of parking a
+    /// cooperative-pool thread on it — see that type's doc comment, and
+    /// CLAUDE.md's "Tests never block the cooperative pool". Its
+    /// `SubprocessTimeout` carries the argument list too, so a stalled
+    /// invocation still names itself.
     private static func runCLI(
         _ binary: String, _ arguments: [String], storageDirectory: URL
-    ) throws -> (status: Int32, stdout: String, stderr: String) {
+    ) async throws -> (status: Int32, stdout: String, stderr: String) {
         var environment = ProcessInfo.processInfo.environment
         environment["MACSCP_STORAGE_DIRECTORY"] = storageDirectory.path(percentEncoded: false)
         environment["MACSCP_PASSWORD"] = rigPassword
-        return try runProcess(binary, arguments, environment: environment, stdinIsNullDevice: true)
-    }
-
-    /// Thrown when a child outlives `timeout`. Carries the argument list so a
-    /// failure names WHICH invocation stalled — without it the suite just sits
-    /// there and the log says nothing about where.
-    struct CLIProcessTimeout: Error, CustomStringConvertible {
-        let arguments: [String]
-        let seconds: TimeInterval
-        let stderrSoFar: String
-
-        var description: String {
-            """
-            macscp-cli did not exit within \(Int(seconds))s: \
-            \(arguments.joined(separator: " "))
-            stderr so far: \(stderrSoFar.isEmpty ? "(empty)" : stderrSoFar)
-            """
-        }
-    }
-
-    @discardableResult
-    private static func runProcess(
-        _ executable: String, _ arguments: [String],
-        environment: [String: String]? = nil,
-        stdinIsNullDevice: Bool = false,
-        timeout: TimeInterval = 60
-    ) throws -> (status: Int32, stdout: String, stderr: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        if let environment { process.environment = environment }
-        if stdinIsNullDevice { process.standardInput = FileHandle.nullDevice }
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        try process.run()
-
-        // Drain both pipes concurrently rather than sequentially: reading
-        // stdout to EOF before touching stderr can deadlock if the child
-        // fills the stderr pipe's kernel buffer while blocked writing to
-        // it — the same hazard `PasswordCommandSecretSource` guards against
-        // (`Sources/macSCPCore/Sessions/CLISecretSources.swift`).
-        let stdoutBox = CollectedOutput()
-        let stderrBox = CollectedOutput()
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global().async {
-            stdoutBox.data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        group.enter()
-        DispatchQueue.global().async {
-            stderrBox.data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        // Bounded, because an unbounded wait turns "the CLI stalled" into "the
-        // suite hangs forever with no clue which call did it". On expiry the
-        // child is killed so the pipes reach EOF and the readers finish.
-        if group.wait(timeout: .now() + timeout) == .timedOut {
-            process.terminate()
-            if group.wait(timeout: .now() + 5) == .timedOut {
-                kill(process.processIdentifier, SIGKILL)
-                _ = group.wait(timeout: .now() + 5)
-            }
-            process.waitUntilExit()
-            throw CLIProcessTimeout(
-                arguments: arguments,
-                seconds: timeout,
-                stderrSoFar: String(data: stderrBox.data, encoding: .utf8) ?? "")
-        }
-        process.waitUntilExit()
-
-        return (
-            process.terminationStatus,
-            String(data: stdoutBox.data, encoding: .utf8) ?? "",
-            String(data: stderrBox.data, encoding: .utf8) ?? ""
-        )
-    }
-
-    /// Plain reference-type box for a background pipe-read result. Written
-    /// once from a background queue, read once afterward from the calling
-    /// thread once `group.wait()` has returned — that establishes the
-    /// happens-before edge, so the lack of a lock is safe.
-    private final class CollectedOutput: @unchecked Sendable {
-        var data = Data()
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: binary), arguments: arguments, environment: environment)
+        return (result.status, result.stdoutText, result.stderrText)
     }
 
     private struct HarnessError: Error, CustomStringConvertible {

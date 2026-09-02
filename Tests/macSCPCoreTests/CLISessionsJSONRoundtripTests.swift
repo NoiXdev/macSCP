@@ -30,7 +30,7 @@ struct CLISessionsJSONRoundtripTests {
         session.tags = ["prod"]
         try store.upsert(session)
 
-        let result = try Self.runCLI(
+        let result = try await Self.runCLI(
             binary, ["sessions", "--json"], storageDirectory: storageDirectory)
         #expect(result.status == 0, "sessions failed: \(result.stderr)")
 
@@ -99,88 +99,18 @@ struct CLISessionsJSONRoundtripTests {
 
     /// Runs the built CLI binary as a subprocess with an isolated storage
     /// directory and no controlling terminal (stdin is the null device).
+    /// Draining, the bound and the kill escalation all live in
+    /// `SubprocessRunner`, which awaits the child instead of parking a
+    /// cooperative-pool thread on it — see that type's doc comment, and
+    /// CLAUDE.md's "Tests never block the cooperative pool".
     private static func runCLI(
         _ binary: String, _ arguments: [String], storageDirectory: URL
-    ) throws -> (status: Int32, stdout: String, stderr: String) {
+    ) async throws -> (status: Int32, stdout: String, stderr: String) {
         var environment = ProcessInfo.processInfo.environment
         environment["MACSCP_STORAGE_DIRECTORY"] = storageDirectory.path(percentEncoded: false)
-        return try runProcess(binary, arguments, environment: environment, stdinIsNullDevice: true)
-    }
-
-    @discardableResult
-    private static func runProcess(
-        _ executable: String, _ arguments: [String],
-        environment: [String: String]? = nil,
-        stdinIsNullDevice: Bool = false,
-        timeout: TimeInterval = 60
-    ) throws -> (status: Int32, stdout: String, stderr: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        if let environment { process.environment = environment }
-        if stdinIsNullDevice { process.standardInput = FileHandle.nullDevice }
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        try process.run()
-
-        // Drain both pipes concurrently rather than sequentially — reading
-        // stdout to EOF before touching stderr can deadlock if the child
-        // fills the stderr pipe's kernel buffer while blocked writing to
-        // it (same hazard `CLIRoundtripITests.runProcess` guards against).
-        let stdoutBox = CollectedOutput()
-        let stderrBox = CollectedOutput()
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global().async {
-            stdoutBox.data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        group.enter()
-        DispatchQueue.global().async {
-            stderrBox.data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        if group.wait(timeout: .now() + timeout) == .timedOut {
-            process.terminate()
-            if group.wait(timeout: .now() + 5) == .timedOut {
-                kill(process.processIdentifier, SIGKILL)
-                _ = group.wait(timeout: .now() + 5)
-            }
-            process.waitUntilExit()
-            throw CLIProcessTimeout(
-                arguments: arguments,
-                seconds: timeout,
-                stderrSoFar: String(data: stderrBox.data, encoding: .utf8) ?? "")
-        }
-        process.waitUntilExit()
-
-        return (
-            process.terminationStatus,
-            String(data: stdoutBox.data, encoding: .utf8) ?? "",
-            String(data: stderrBox.data, encoding: .utf8) ?? ""
-        )
-    }
-
-    /// Thrown when a child outlives `timeout`.
-    private struct CLIProcessTimeout: Error, CustomStringConvertible {
-        let arguments: [String]
-        let seconds: TimeInterval
-        let stderrSoFar: String
-
-        var description: String {
-            """
-            macscp-cli did not exit within \(Int(seconds))s: \
-            \(arguments.joined(separator: " "))
-            stderr so far: \(stderrSoFar.isEmpty ? "(empty)" : stderrSoFar)
-            """
-        }
-    }
-
-    private final class CollectedOutput: @unchecked Sendable {
-        var data = Data()
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: binary), arguments: arguments, environment: environment)
+        return (result.status, result.stdoutText, result.stderrText)
     }
 
     private struct HarnessError: Error, CustomStringConvertible {
