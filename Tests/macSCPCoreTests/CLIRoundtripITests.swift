@@ -269,6 +269,12 @@ struct CLIRoundtripITests {
 
     // MARK: - Test harness
 
+    /// Exists only so `locateCLIBinary()` has a class defined in THIS file to
+    /// hand `Bundle(for:)` — any class in the test target would resolve to
+    /// the same `.xctest` bundle, but naming one here (rather than reaching
+    /// for some unrelated type) makes the intent legible at the call site.
+    private final class TestBundleAnchor {}
+
     /// Creates the directory, rather than only naming it. The earlier version
     /// returned a path and left the directory uncreated — which went unnoticed
     /// for the storage directory (`SessionStore` creates its own on write) but
@@ -298,6 +304,21 @@ struct CLIRoundtripITests {
     /// sibling next to the bundle IS the current source tree's output.
     /// `MACSCP_CLI_BINARY` overrides for anyone running the bundle from
     /// somewhere unusual.
+    ///
+    /// The lookup is BUNDLE-relative, not repo-root-relative — an earlier
+    /// version read `<repoRoot>/.build/debug/macscp-cli` directly, which only
+    /// matches the default `swift test` invocation. It hard-failed under
+    /// `swift test --scratch-path <tmp>` (products land in `<tmp>/debug`, not
+    /// `<repoRoot>/.build/debug`) and under `swift test -c release` (products
+    /// land in `.build/release`) — both real invocations (`scripts/hang-hunt`
+    /// uses `--scratch-path`), and both silently pointed this test at a
+    /// binary that was never built (final-branch-review finding, 2026-09-02).
+    /// `Bundle(for:)` on `TestBundleAnchor`, a class defined right here, always
+    /// resolves to the `.xctest` bundle `swift test` just built and loaded
+    /// this code from; `.build/main` and `.build/release` both put the
+    /// `macscp-cli` product as that bundle's own sibling, so walking up one
+    /// level from the bundle finds it regardless of which products directory
+    /// this particular run used.
     private static func locateCLIBinary() throws -> String {
         if let override = ProcessInfo.processInfo.environment["MACSCP_CLI_BINARY"],
            !override.isEmpty {
@@ -308,16 +329,10 @@ struct CLIRoundtripITests {
         }
         // `Bundle.main` is NOT usable here: under `swift test` it resolves to
         // swiftpm-testing-helper inside the toolchain, not to the test bundle.
-        // So derive the repo root from this file's path — the same trick
-        // `LocalizableStringsTests` and `IconTooltipLintTests` use — and read
-        // `.build/debug`, the symlink SwiftPM maintains to the current
-        // triple's debug products.
-        let repoRoot = URL(fileURLWithPath: #filePath)
+        let productsDirectory = Bundle(for: TestBundleAnchor.self).bundleURL
             .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let binaryPath = repoRoot
-            .appendingPathComponent(".build/debug/macscp-cli")
+        let binaryPath = productsDirectory
+            .appendingPathComponent("macscp-cli")
             .path(percentEncoded: false)
         guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
             throw HarnessError("""
