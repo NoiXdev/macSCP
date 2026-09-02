@@ -1865,9 +1865,9 @@ public final class ConnectionViewModel {
         // first (the jump, per `CitadelFileSystem.connect`'s jump-first
         // ordering, if the jump itself uses `.agent`) is guaranteed to be the
         // one that hits it. A bad key FILE is the opposite: a per-hop fact.
-        // If both hops used `.privateKey` and it was the target's file that
-        // was RSA while the jump's own ed25519 file loaded fine, attributing
-        // by `jumpAuthChoice` alone would blame the jump instead. That is
+        // If both hops used `.privateKey` and it was the target's file whose
+        // type is not loadable while the jump's own file loaded fine,
+        // attributing by `jumpAuthChoice` alone would blame the jump. That is
         // exactly the shape `AgentError.refused`/`.protocolError` are kept
         // OUT of the jump-attributed cases for, by the comment above:
         // "these can equally originate from either hop, and there's no
@@ -1877,22 +1877,21 @@ public final class ConnectionViewModel {
         // TARGET's key path, the common single-hop case where there is no
         // jump host to misattribute to in the first place. The imprecision
         // this comment describes is narrower than a wrong field, not zero:
-        // with a jump host whose OWN key is the one that is RSA (or another
-        // non-ed25519 type), this error can still originate at the jump hop
-        // while the target's row is the one that gets outlined.
+        // with a jump host whose OWN key file is the unloadable one, this
+        // error can still originate at the jump hop while the target's row is
+        // the one that gets outlined.
         case SSHKeyError.typeNotLoadable(let algorithm):
-            var message = String(format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"), algorithm)
-            // The Go-server incompatibility is VERIFIED, not claimed (see
-            // `AgentBackedPrivateKey.swift:92-115`): only an RSA identity's
-            // agent-signed blob collides on wire tag; ed25519 and ECDSA are
-            // unaffected because their blob tag and signature algorithm are
-            // already the same string. Read the symbol the check watches,
-            // not a copy of its spelling, so a rename of the case does not
-            // silently stop appending the note.
-            if algorithm == SSHKeyType.rsa.description {
-                message += " " + CoreL10n.string("core.connect.keyTypeNotLoadableRSANote")
-            }
-            return .failed(message: message, field: Self.sshField(.keyPath))
+            // No RSA note any more. It existed because an RSA key FILE could
+            // not be loaded at all and the user's only remaining route was the
+            // agent, where an RSA identity does collide on wire tag against
+            // Go-based servers (`AgentBackedPrivateKey.swift:92-115`). Since
+            // the loader loads RSA files directly, RSA never reaches this case,
+            // and a note about the agent route on an error the agent route
+            // cannot produce was advice pointing at nothing.
+            return .failed(
+                message: String(
+                    format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"), algorithm),
+                field: Self.sshField(.keyPath))
         case SSHKeyError.pemNotSupported:
             return .failed(
                 message: CoreL10n.string("core.connect.keyPEMNotSupported"),
