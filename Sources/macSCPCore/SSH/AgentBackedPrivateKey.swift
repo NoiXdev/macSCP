@@ -20,18 +20,31 @@ import NIOCore
 
 /// Identifies the SSH wire algorithm name an agent-backed key signs as.
 ///
-/// `NIOSSHPublicKeyProtocol.publicKeyPrefix`/`NIOSSHSignatureProtocol.signaturePrefix`
-/// are `static var` requirements (swift-nio-ssh `CustomKeys.swift:46-64` /
-/// `:23-38`) — i.e. fixed PER SWIFT TYPE, not per instance. An ssh-agent can
-/// report several different key algorithms, so a single generic
-/// `AgentBackedPrivateKey`/`AgentBackedPublicKey`/`AgentSignature` trio is
-/// parameterized over this marker; one marker type exists per algorithm
-/// family macSCP offers through the agent. `signFlags` is the
-/// `SSH_AGENT_RSA_SHA2_*` value sent with the agent's SIGN_REQUEST (0 for
-/// non-RSA algorithms).
+/// `NIOSSHPublicKeyProtocol.publicKeyPrefix`/`.userAuthAlgorithmName` and
+/// `NIOSSHSignatureProtocol.signaturePrefix` are `static var` requirements
+/// (swift-nio-ssh `CustomKeys.swift`) — i.e. fixed PER SWIFT TYPE, not per
+/// instance. An ssh-agent can report several different key algorithms, so a
+/// single generic `AgentBackedPrivateKey`/`AgentBackedPublicKey`/
+/// `AgentSignature` trio is parameterized over this marker; one marker type
+/// exists per algorithm family macSCP offers through the agent.
+///
+/// `name` is the ALGORITHM name: what the user-auth request carries as
+/// `pkalg`, what the signed payload repeats, and what the signature blob is
+/// tagged with. `blobType` is the type string the PUBLIC KEY BLOB carries,
+/// which RFC 8332 §3 keeps at `ssh-rsa` for every RSA key however it signs;
+/// for every other algorithm here the two strings are the same, which is why
+/// it defaults to `name`. `signFlags` is the `SSH_AGENT_RSA_SHA2_*` value
+/// sent with the agent's SIGN_REQUEST (0 for non-RSA algorithms).
 protocol AgentSigningAlgorithm {
     static var name: String { get }
+    static var blobType: String { get }
     static var signFlags: UInt32 { get }
+}
+
+extension AgentSigningAlgorithm {
+    /// The default an algorithm takes when its blob type and its algorithm
+    /// name are one string — true for every marker below except the RSA one.
+    static var blobType: String { name }
 }
 
 /// The closed set of algorithms macSCP offers through the agent — the
@@ -60,68 +73,59 @@ enum AgentAlgorithm {
         static let signFlags: UInt32 = 0
     }
 
-    /// THE RSA RISK (M10d Task 2, brief point 2): an `ssh-rsa`-blob identity
-    /// must authenticate using the `rsa-sha2-512` signature algorithm
-    /// (RFC 8332), not legacy SHA-1. Per RFC 8332 the "public key algorithm
-    /// name" field in the userauth request and the signature's own format
-    /// tag become `rsa-sha2-512`, while the PUBLIC KEY BLOB's embedded type
-    /// tag is supposed to stay `ssh-rsa` — those are three independently
-    /// choosable strings in the protocol.
+    /// RSA is the one algorithm here whose blob type and algorithm name are
+    /// different strings, and the only marker that declares `blobType`.
     ///
-    /// swift-nio-ssh's `.custom` write path does NOT allow that
-    /// independence for a single key value: `UserAuthSignablePayload.init`
-    /// (`User Authentication/UserAuthSignablePayload.swift:48-51`) writes
-    /// the outer algorithm-name field as `publicKey.keyPrefix`, THEN writes
-    /// the blob via `buffer.writeSSHHostKey(publicKey)`
-    /// (`Keys And Signatures/NIOSSHPublicKey.swift:400-402`), whose `.custom`
-    /// case ALSO writes `key.publicKeyPrefix` as the blob's own leading type
-    /// string before calling `key.write(to:)`. The client-side wire writer
-    /// `writeUserAuthRequestMessage` (`SSHMessages.swift:1307-1310`)
-    /// duplicates the same coupling: `self.writeSSHString(key.keyPrefix)`
-    /// for the outer field, then `writeSSHHostKey(key)` for the blob — both
-    /// driven by the exact same `NIOSSHPublicKeyProtocol.publicKeyPrefix`.
-    /// There is no unforked hook to make the blob's embedded tag diverge
-    /// from the outer algorithm name for a custom key.
+    /// RFC 8332 §3 gives an RSA user-auth request THREE identifiers, and
+    /// they are not all the same:
     ///
-    /// Given that constraint, this marker's `name` is `rsa-sha2-512` and is
-    /// used for BOTH fields (outer algorithm name AND the blob's own type
-    /// tag) plus the signature tag — internally self-consistent (all three
-    /// agree, which is what real servers actually check pairwise), but the
-    /// blob's wire tag is `rsa-sha2-512` rather than the RFC's `ssh-rsa`.
+    ///  1. the public key ALGORITHM name — `rsa-sha2-512` — sent as `pkalg`
+    ///     and repeated inside the signed payload. NIOSSH reads it from
+    ///     `NIOSSHPublicKeyProtocol.userAuthAlgorithmName`, at
+    ///     `SSHMessages.swift:1314` (`writeUserAuthRequestMessage`) and
+    ///     `UserAuthSignablePayload.swift:50`.
+    ///  2. the public key BLOB's own type string — `ssh-rsa`, whatever
+    ///     digest the signature uses, because it names the KEY FORMAT and an
+    ///     RSA key has exactly one. NIOSSH reads it from
+    ///     `publicKeyPrefix` (via `NIOSSHPublicKey.keyPrefix`, `:195-196`)
+    ///     in `writeSSHHostKey`'s `.custom` case, `:450-452`.
+    ///  3. the SIGNATURE's own format tag — `rsa-sha2-512` again, which
+    ///     OpenSSH's `sshkey_check_sigtype` requires to equal `pkalg`.
+    ///     NIOSSH reads it from `NIOSSHSignatureProtocol.signaturePrefix`,
+    ///     i.e. from `AgentSignature`, which spells `Algorithm.name`.
     ///
-    /// KNOWN, VERIFIED INCOMPATIBILITY (T2 review, not hypothetical):
-    /// OpenSSH's key-type table treats `rsa-sha2-256`/`rsa-sha2-512` as
-    /// valid (if normally sig-only) names for `KEY_RSA` and matches
-    /// `authorized_keys` by parsed key material rather than by wire tag —
-    /// so a real OpenSSH `sshd` accepts this blob (proven live by the gated
-    /// `agentAuthConnectsRSA` integration test against the Docker rig).
-    /// Go's `golang.org/x/crypto/ssh`, however, parses the public-key blob's
-    /// leading string strictly as a KEY FORMAT, not merely a signature
-    /// algorithm, and does not recognize `rsa-sha2-512` there. Verified
-    /// directly against `x/crypto/ssh` (`ParsePublicKey` on a blob tagged
-    /// `rsa-sha2-512`), it rejects with:
+    /// Until swift-nio-ssh 0.3.10 there was no way to say (1) and (2)
+    /// separately for a custom key: both came from `publicKeyPrefix`, so
+    /// this marker's single `name` typed the blob `rsa-sha2-512` as well.
+    /// OpenSSH accepted that — its key-type table treats `rsa-sha2-*` as
+    /// valid names for `KEY_RSA` and matches `authorized_keys` by parsed key
+    /// material, not by wire tag — but Go's `golang.org/x/crypto/ssh` reads
+    /// the blob's leading string strictly as a key format and refuses
+    /// outright with `ssh: unknown key algorithm: rsa-sha2-512`, dropping
+    /// the connection before any authentication is attempted. Measured
+    /// against SFTPGo on 2026-09-02 (`513e34e`), for this agent path and for
+    /// a key FILE alike.
     ///
-    /// ```
-    /// ssh: signature algorithm "rsa-sha2-512" isn't a key format; key is
-    /// malformed and should be re-encoded with type "ssh-rsa"
-    /// ```
+    /// 0.3.10 adds `userAuthAlgorithmName` beside `publicKeyPrefix` (the
+    /// user-auth sibling of the `hostKeyAlgorithmNames` split 0.3.9 added
+    /// for host keys), so `AgentBackedPublicKey` now declares both: blob
+    /// `ssh-rsa`, name `rsa-sha2-512`. Both, or neither — declaring only the
+    /// blob type would send `pkalg = ssh-rsa` around a `rsa-sha2-512`
+    /// signature, which OpenSSH refuses and which is the regression the
+    /// Citadel fork measured before 0.3.10 existed. Both servers now accept
+    /// this identity: the gated `agentAuthConnectsRSA` against the rig's
+    /// OpenSSH `sshd`, and `rsaAgentIdentityConnects` against SFTPGo.
     ///
-    /// Any server built on that library — Gitea, Forgejo, Gogs,
-    /// `gitlab-sshd`, SFTPGo, and others — therefore refuses an RSA-backed
-    /// agent identity through macSCP, even though the identical key works
-    /// fine over OpenSSH `sshd`. ed25519 and ECDSA identities are NOT
-    /// affected: for those algorithms the blob's embedded type tag and the
-    /// signature/algorithm name are the SAME string already (e.g.
-    /// `ssh-ed25519`), so there is no three-way divergence for swift-nio-ssh
-    /// to collapse in the first place — this incompatibility is specific to
-    /// RSA's `rsa-sha2-*` vs. `ssh-rsa` split. The actual fix requires
-    /// upstream swift-nio-ssh to let a `.custom` key's blob-embedded type
-    /// tag diverge from its signature/algorithm name (i.e. stop deriving
-    /// both from the single `publicKeyPrefix`/`keyPrefix` static) — out of
-    /// scope for macSCP itself; tracked as a known limitation, not patched
-    /// here.
+    /// ed25519 and ECDSA identities never had the problem: for those the
+    /// blob type and the algorithm name are the same string already, which
+    /// is exactly what `AgentSigningAlgorithm.blobType`'s default says.
     struct RSASha512: AgentSigningAlgorithm {
         static let name = "rsa-sha2-512"
+        /// RFC 8332 §3: an RSA key blob is typed `ssh-rsa` regardless of the
+        /// signature digest — and it is what the agent itself reports the
+        /// identity as, so the blob macSCP re-emits is the agent's own,
+        /// byte for byte.
+        static let blobType = "ssh-rsa"
         static let signFlags: UInt32 = SSHAgentCodec.rsaSHA2_512
     }
 
@@ -189,7 +193,16 @@ enum AgentWireFormat {
 /// `publicKeyPrefix`). Never parsed from the wire — this type only ever
 /// appears in OUTGOING client user-auth offers.
 struct AgentBackedPublicKey<Algorithm: AgentSigningAlgorithm>: NIOSSHPublicKeyProtocol {
-    static var publicKeyPrefix: String { Algorithm.name }
+    /// The type string the key BLOB carries. For RSA that is `ssh-rsa` and
+    /// not the algorithm name below — see `AgentAlgorithm.RSASha512`.
+    static var publicKeyPrefix: String { Algorithm.blobType }
+
+    /// The algorithm name the user-auth request carries as `pkalg` and the
+    /// signed payload repeats. Declaring it is what keeps the blob's type
+    /// string free to differ (swift-nio-ssh 0.3.10); the protocol's own
+    /// default is `publicKeyPrefix`, which is the right answer for every
+    /// marker except the RSA one.
+    static var userAuthAlgorithmName: String { Algorithm.name }
 
     private let identity: AgentIdentity
 

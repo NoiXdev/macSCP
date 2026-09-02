@@ -1,3 +1,4 @@
+import Crypto
 import Foundation
 import Testing
 @testable import macSCPCore
@@ -12,10 +13,14 @@ import Testing
 /// `rsa-sha2-512` there, where RFC 8332 §3 keeps the blob typed `ssh-rsa` and
 /// puts the algorithm name only in `pkalg` and the signature.
 ///
-/// macSCP writes `rsa-sha2-512` in all three places today (see
-/// `docs/superpowers/specs/2026-09-01-backlog-rsa-agent-go-servers.md`). Until
-/// 2026-09-02 that was measured against the library directly, never against a
-/// server. These tests are that measurement.
+/// macSCP wrote `rsa-sha2-512` in all three places until this commit, and
+/// SFTPGo refused both RSA rows below for it — measured at `513e34e`, the
+/// refusal being `ssh: unknown key algorithm: rsa-sha2-512` with the
+/// connection dropped before any authentication was attempted. They are
+/// accepted since: swift-nio-ssh `0.3.10` separated the algorithm name from
+/// the blob type on the user-auth path, Citadel `0.12.1-noix.3` typed its RSA
+/// key blobs `ssh-rsa` again, and `AgentAlgorithm.RSASha512` does the same
+/// for the agent path.
 ///
 /// A suite-level `.enabled(if:)` trait disables every contained test
 /// regardless of that test's own traits (see the note above
@@ -42,12 +47,22 @@ struct GoServerRSAIntegrationTests {
         return (KnownHostsStore(directory: dir), dir)
     }
 
-    /// SFTPGo's own log, tail-end. The service runs at `SFTPGO_LOG_LEVEL=debug`
-    /// so the refused offer is named, not merely counted.
-    private func sftpGoLogTail(lines: Int = 20) -> String {
+    /// SFTPGo's own log, from `moment` onwards. The service runs at
+    /// `SFTPGO_LOG_LEVEL=debug`, so a refused offer is named there and not
+    /// merely counted.
+    ///
+    /// Scoped by time rather than by a line count, because the container's log
+    /// is its whole life: a `--tail 200` reaches back into earlier runs, and a
+    /// check for the ABSENCE of a refusal read that way is a check on the
+    /// rig's history instead of on this connect. `--since` takes unix seconds,
+    /// which sidesteps the container clock being UTC while the host is not.
+    private func sftpGoLog(since moment: Date) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
-        process.arguments = ["logs", SFTPGoRig.containerName, "--tail", String(lines)]
+        process.arguments = [
+            "logs", SFTPGoRig.containerName,
+            "--since", String(Int(moment.timeIntervalSince1970)),
+        ]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -78,70 +93,96 @@ struct GoServerRSAIntegrationTests {
         #expect(items.contains { $0.name == "hello.txt" })
     }
 
-    // MARK: - The measurement, pinned
+    // MARK: - The measurement
 
-    /// What macSCP's connect throws today when SFTPGo refuses the offered RSA
-    /// blob, copied verbatim from the run of 2026-09-02.
+    /// The refusal these two tests pinned until this commit, kept as the
+    /// history the assertions below replaced.
     ///
-    /// It is `connectionFailed`, NOT `authenticationFailed` — worth reading
-    /// twice, because the refusal is not "this key is not authorized". Go's
-    /// `x/crypto/ssh` cannot PARSE the blob at all, so it aborts the whole
-    /// connection rather than answering the userauth request with a failure;
-    /// SFTPGo's own log calls the login type `no_auth_tried`. A user sees a
-    /// dropped connection, not a rejected key.
-    static let measuredRSAFailure =
-        #"macSCPCore.RemoteFSError.connectionFailed(reason: "Disconnected()")"#
-
-    /// The line SFTPGo writes for it, at `SFTPGO_LOG_LEVEL=debug`, quoted from
-    /// the same run. The full record sits in
-    /// `.superpowers/sdd/2026-09-02-rsa-blob-typing-rfc8332/task-1-report.md`;
-    /// this is the substring the assertions below anchor on.
-    static let measuredSFTPGoRefusal = "ssh: unknown key algorithm: rsa-sha2-512"
-
-    /// The shared body of both measurements: run `connect`, and hold BOTH the
-    /// error macSCP surfaces and the line SFTPGo logs against what 2026-09-02
-    /// measured.
+    /// At `513e34e`, with the key blob typed `rsa-sha2-512`, both rows failed
+    /// with `RemoteFSError.connectionFailed(reason: "Disconnected()")` —
+    /// `connectionFailed`, NOT `authenticationFailed`, because Go's
+    /// `x/crypto/ssh` could not PARSE the blob and aborted the connection
+    /// instead of answering the userauth request; SFTPGo logged
+    /// `ssh: unknown key algorithm: rsa-sha2-512` with `login_type:
+    /// no_auth_tried`. The full record is
+    /// `.superpowers/sdd/2026-09-02-rsa-blob-typing-rfc8332/task-1-report.md`.
     ///
-    /// A connect that SUCCEEDS is the interesting future: it means the blob is
-    /// no longer typed `rsa-sha2-512`, so the refusal this pins is gone and the
-    /// assertions below have to be rewritten into their positive form.
-    private func expectTodaysRefusal(
+    /// What the fix has to keep true is that this string is ABSENT from the
+    /// log of a run — a negative check, so it never stands alone: the
+    /// fingerprint check beside it is the positive, SFTPGo's own log naming
+    /// THIS key as logged in, which no refusal can satisfy.
+    static let refusalBeforeTheFix = "ssh: unknown key algorithm: rsa-sha2-512"
+
+    /// The shared body of both measurements: connect, list, and hold the
+    /// listing AND SFTPGo's own account of the login against the key that was
+    /// installed.
+    ///
+    /// The fingerprint is computed from the generated public key rather than
+    /// spelled, so the check names the key under test and not merely "some
+    /// login happened": a run in which a different identity authenticated
+    /// fails it.
+    private func expectAcceptedLogin(
+        forKeyAt keyPath: String,
         connecting connect: () async throws -> CitadelFileSystem
-    ) async {
+    ) async throws {
+        let fingerprint = try Self.sha256Fingerprint(ofPublicKeyAt: keyPath + ".pub")
+        // One second of slack: `docker logs --since` is second-granular, so a
+        // line written in the same second as this timestamp would otherwise be
+        // outside the window.
+        let start = Date().addingTimeInterval(-1)
+        let fs: CitadelFileSystem
         do {
-            let fs = try await connect()
-            let items = try? await fs.list(path: "/")
-            await fs.disconnect()
-            // Expected once the key blob is typed ssh-rsa (RFC 8332): this test
-            // turns red then, and the assertion flips.
-            Issue.record("""
-                SFTPGo ACCEPTED the RSA login (listing: \(items?.map(\.name) ?? [])).
-                The refusal measured on 2026-09-02 is gone — flip this test to
-                assert the successful listing instead.
-                """)
+            fs = try await connect()
         } catch {
-            // Expected once the key blob is typed ssh-rsa (RFC 8332): this test
-            // turns red then, and the assertion flips.
-            #expect(String(reflecting: error) == Self.measuredRSAFailure)
-            // A POSITIVE check, deliberately: it fails loudly the moment
-            // SFTPGo stops writing this line, rather than going quiet.
-            #expect(sftpGoLogTail().contains(Self.measuredSFTPGoRefusal))
+            Issue.record("""
+                SFTPGo refused the RSA login.
+                error: \(String(reflecting: error))
+                SFTPGo log since the connect:
+                \(sftpGoLog(since: start))
+                """)
+            throw error
         }
+        let items = try await fs.list(path: "/")
+        await fs.disconnect()
+
+        #expect(items.contains { $0.name == "hello.txt" })
+        let log = sftpGoLog(since: start)
+        #expect(log.contains(fingerprint))
+        #expect(log.contains(Self.refusalBeforeTheFix) == false)
+    }
+
+    /// OpenSSH's `SHA256:` fingerprint of a public key line: the base64 blob's
+    /// SHA-256, base64-encoded without padding. It is what SFTPGo writes into
+    /// its `logged in with "publickey: SHA256:…"` line.
+    private static func sha256Fingerprint(ofPublicKeyAt path: String) throws -> String {
+        let line = try String(contentsOfFile: path, encoding: .utf8)
+        let fields = line.split(separator: " ")
+        guard fields.count >= 2, let blob = Data(base64Encoded: String(fields[1])) else {
+            throw FingerprintError.notAPublicKeyLine(path: path)
+        }
+        let digest = Data(SHA256.hash(data: blob)).base64EncodedString()
+            .replacingOccurrences(of: "=", with: "")
+        return "SHA256:\(digest)"
+    }
+
+    private enum FingerprintError: Error {
+        case notAPublicKeyLine(path: String)
     }
 
     /// An RSA key FILE, through macSCP's own connect path. The same key type
     /// authenticates against the rig's OpenSSH `sshd` on 2222 — that is the ten
-    /// -cell matrix in `FileKeyTypeIntegrationTests`, green since 2026-09-02.
-    /// The only difference here is the server.
-    @Test("an RSA file key is refused by SFTPGo, blob typing and all")
-    func rsaFileKeyIsRefused() async throws {
+    /// -cell matrix in `FileKeyTypeIntegrationTests`. The only difference here
+    /// is the server, and until this commit that difference decided the
+    /// outcome: refused at `513e34e`, accepted since.
+    @Test("an RSA file key logs in to SFTPGo")
+    func rsaFileKeyConnects() async throws {
         let (dir, keyPath) = try await makeSFTPGoInstalledKey(type: "rsa", bits: 2048)
         defer { try? FileManager.default.removeItem(at: dir) }
         let (store, khDir) = freshKnownHosts("sftpgo-rsa-file")
         defer { try? FileManager.default.removeItem(at: khDir) }
         let config = try config(auth: .privateKey(keyPath: keyPath, passphrase: nil))
 
-        await expectTodaysRefusal {
+        try await expectAcceptedLogin(forKeyAt: keyPath) {
             try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30), knownHosts: store,
                 onUnknownHostKey: .asking { _ in true })
@@ -149,11 +190,12 @@ struct GoServerRSAIntegrationTests {
     }
 
     /// The same RSA key offered through a test-owned ssh-agent instead of from
-    /// a file — macSCP's `AgentBackedPrivateKey` path, whose own RSA public key
-    /// type spells the same prefix. `agentAuthConnectsRSA` proves this route
-    /// green against OpenSSH; this is the Go-server half of the same fact.
-    @Test("an RSA agent identity is refused by SFTPGo, blob typing and all")
-    func rsaAgentIdentityIsRefused() async throws {
+    /// a file — macSCP's `AgentBackedPrivateKey` path, which types its blob in
+    /// its own code rather than in Citadel's. `agentAuthConnectsRSA` proves
+    /// this route green against OpenSSH; this is the Go-server half of the
+    /// same fact, refused at `513e34e` and accepted since.
+    @Test("an RSA agent identity logs in to SFTPGo")
+    func rsaAgentIdentityConnects() async throws {
         let (dir, keyPath) = try await makeSFTPGoInstalledKey(type: "rsa", bits: 2048)
         defer { try? FileManager.default.removeItem(at: dir) }
         let agent = try spawnAgent()
@@ -163,8 +205,8 @@ struct GoServerRSAIntegrationTests {
         defer { try? FileManager.default.removeItem(at: khDir) }
         let config = try config(auth: .agent)
 
-        await withAgentEnv(agent) {
-            await expectTodaysRefusal {
+        try await withAgentEnv(agent) {
+            try await expectAcceptedLogin(forKeyAt: keyPath) {
                 try await CitadelFileSystem.connect(
                     config: config, connectTimeout: .seconds(30), knownHosts: store,
                     onUnknownHostKey: .asking { _ in true })

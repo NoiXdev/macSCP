@@ -3,8 +3,15 @@ import Crypto
 import Foundation
 import NIOCore
 import NIOPosix
-import NIOSSH
 import Testing
+// `@testable` for ONE member: `NIOSSHPublicKey.userAuthAlgorithmName`, the
+// internal property NIOSSH writes as `pkalg` (`SSHMessages.swift:1314`) and
+// into the signed payload. Reading it is what keeps the RSA offer test below
+// about the algorithm NAME rather than about the blob type, which since
+// swift-nio-ssh 0.3.10 / Citadel 0.12.1-noix.3 is `ssh-rsa` for every RSA
+// offer. There is no public accessor for it, and re-deriving the name from
+// the offered key's Swift type would be a second copy of it.
+@testable import NIOSSH
 @testable import macSCPCore
 
 /// Test keys are generated at RUNTIME (ssh-keygen) — never checked in.
@@ -117,20 +124,32 @@ struct SSHPrivateKeyLoaderTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let method = try SSHPrivateKeyLoader.authentication(
             username: "tim", keyPath: keyPath, passphrase: nil)
-        let prefixes = try await offeredPublicKeyPrefixes(method)
-        #expect(prefixes == [expectedPrefix])
+        let offers = try await offeredKeys(method)
+        // Both identifiers, because for ECDSA they ARE the same string — the
+        // split RFC 8332 forces on RSA does not exist here.
+        #expect(offers == [OfferedKey(algorithmName: expectedPrefix, blobType: expectedPrefix)])
     }
 
     /// The whole reason an RSA key FILE can be used at all is that the offer
-    /// carries an RFC 8332 SHA-2 algorithm name. This reads the names back
-    /// out of the SERIALIZED public key blobs the loader's method would put
-    /// on the wire, the way NIOSSH does — not from a property that merely
-    /// happens to agree with those bytes.
+    /// carries an RFC 8332 SHA-2 algorithm NAME — and, since Citadel
+    /// `0.12.1-noix.3`, that it carries it in the right field: `pkalg` and the
+    /// signed payload, while the key BLOB stays typed `ssh-rsa` the way a Go
+    /// server insists on. Both halves are read back off the offer the way
+    /// NIOSSH does — the name from the property NIOSSH writes, the blob type
+    /// from the SERIALIZED bytes — not from a property that merely happens to
+    /// agree with them.
     ///
-    /// The equality is the positive half: without it the `ssh-rsa` check
-    /// below would pass against an empty list, which is the silent-negative
-    /// shape `CLAUDE.md` names. Every name is read from a symbol rather than
-    /// spelled, so a rename in Citadel fails here instead of going quiet.
+    /// The name equality is the positive half: without it the SHA-1 check
+    /// would pass against an empty list, which is the silent-negative shape
+    /// `CLAUDE.md` names. The blob-type equality is the second positive, and
+    /// the one that would have caught the older, coupled wire: it fails the
+    /// moment an RSA blob is typed anything but `ssh-rsa`. Note that the
+    /// SHA-1 check has to read an ALGORITHM name — every RSA blob is
+    /// `ssh-rsa` now, so the same check against the blob type could never
+    /// match and would pass on a SHA-1 offer.
+    ///
+    /// Every name is read from a symbol rather than spelled, so a rename in
+    /// Citadel fails here instead of going quiet.
     ///
     /// This is also the pin for the loader passing `includeSHA1Fallback:
     /// false` explicitly: with `true` the list gains a third entry and the
@@ -142,12 +161,14 @@ struct SSHPrivateKeyLoaderTests {
         let method = try SSHPrivateKeyLoader.authentication(
             username: "tim", keyPath: keyPath, passphrase: nil)
 
-        let prefixes = try await offeredPublicKeyPrefixes(method)
-        #expect(prefixes == [
-            Insecure.RSA.SHA2PrivateKey<RSASHA2_512>.keyPrefix,
-            Insecure.RSA.SHA2PrivateKey<RSASHA2_256>.keyPrefix,
+        let offers = try await offeredKeys(method)
+        #expect(offers.map(\.algorithmName) == [
+            Insecure.RSA.SHA2PublicKey<RSASHA2_512>.userAuthAlgorithmName,
+            Insecure.RSA.SHA2PublicKey<RSASHA2_256>.userAuthAlgorithmName,
         ])
-        #expect(!prefixes.contains(Insecure.RSA.PrivateKey.keyPrefix))
+        #expect(Set(offers.map(\.blobType)) == [Insecure.RSA.PublicKey.publicKeyPrefix])
+        #expect(!offers.map(\.algorithmName)
+            .contains(Insecure.RSA.PublicKey.userAuthAlgorithmName))
     }
 
     /// The header is cleartext even when the private half is encrypted, so
@@ -276,16 +297,29 @@ struct SSHPrivateKeyLoaderTests {
             + "\n-----END OPENSSH PRIVATE KEY-----\n"
     }
 
-    /// Drives the delegate until it runs out of offers, and returns the
-    /// algorithm name each offered public key puts on the wire.
+    /// One offered public key, in the two identifiers RFC 8332 §3 keeps
+    /// apart: the algorithm name the request carries as `pkalg`, and the type
+    /// string inside the key blob itself. They are one string for every
+    /// algorithm here except RSA.
+    struct OfferedKey: Equatable, Sendable, CustomStringConvertible {
+        let algorithmName: String
+        let blobType: String
+
+        var description: String { "\(algorithmName) in a \(blobType) blob" }
+    }
+
+    /// Drives the delegate until it runs out of offers, and returns both
+    /// identifiers of each offered public key.
     ///
     /// The offer list is private to `SSHAuthenticationMethod`, so the only
     /// way to observe it is the way NIOSSH does: ask for the next offer
-    /// until the delegate refuses. The name is read back out of the
-    /// SERIALIZED key blob, which begins with an SSH string holding the
-    /// algorithm name — not from a property that merely happens to agree
-    /// with those bytes. Adapted from the fork's own
-    /// `RSASHA2Tests.offeredPublicKeyPrefixes`, with one change forced by
+    /// until the delegate refuses. The blob type is read back out of the
+    /// SERIALIZED key blob, which begins with an SSH string holding it — not
+    /// from a property that merely happens to agree with those bytes — and
+    /// the algorithm name from `NIOSSHPublicKey.userAuthAlgorithmName`, which
+    /// is the property NIOSSH itself writes into the request. Adapted from
+    /// the fork's own `RSASHA2Tests.offeredPublicKeys`, with one change
+    /// forced by
     /// this package's Swift 6 language mode: `NIOSSHUserAuthenticationOffer`
     /// is not `Sendable`, so it is never carried out of the completion
     /// callback — the name is extracted there and only a `String` crosses.
@@ -298,65 +332,68 @@ struct SSHPrivateKeyLoaderTests {
     /// occupied all three threads inside the shutdown semaphore, so no test
     /// in the whole suite could finish (measured 2026-09-02 with `sample`
     /// on the hung process; locally, with ten cores, it never showed).
-    private func offeredPublicKeyPrefixes(
+    private func offeredKeys(
         _ method: SSHAuthenticationMethod,
         sourceLocation: SourceLocation = #_sourceLocation
-    ) async throws -> [String] {
+    ) async throws -> [OfferedKey] {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let loop = group.next()
-        let prefixes = await collectOfferPrefixes(method, on: loop, sourceLocation: sourceLocation)
+        let offers = await collectOfferedKeys(method, on: loop, sourceLocation: sourceLocation)
         try await group.shutdownGracefully()
-        return prefixes
+        return offers
     }
 
-    private func collectOfferPrefixes(
+    private func collectOfferedKeys(
         _ method: SSHAuthenticationMethod, on loop: any EventLoop,
         sourceLocation: SourceLocation
-    ) async -> [String] {
+    ) async -> [OfferedKey] {
 
-        var prefixes: [String] = []
+        var offers: [OfferedKey] = []
         // The list is finite and short; the cap only stops a runaway loop
         // from hanging the suite if the delegate ever stops draining itself.
         for _ in 0..<16 {
             let offerPromise = loop.makePromise(of: NIOSSHUserAuthenticationOffer?.self)
-            let namePromise = loop.makePromise(of: String.self)
+            let keyPromise = loop.makePromise(of: OfferedKey.self)
             offerPromise.futureResult.whenComplete { result in
                 switch result {
                 case .failure(let error):
                     // The delegate is out of offers — this is the loop's exit.
-                    namePromise.fail(error)
+                    keyPromise.fail(error)
                 case .success(let offer):
                     guard case .privateKey(let privateKey)? = offer?.offer else {
-                        namePromise.fail(OfferShape.notAPrivateKey)
+                        keyPromise.fail(OfferShape.notAPrivateKey)
                         return
                     }
+                    let publicKey = privateKey.publicKey
                     var buffer = ByteBuffer()
-                    privateKey.publicKey.write(to: &buffer)
+                    publicKey.write(to: &buffer)
                     guard let length = buffer.readInteger(as: UInt32.self),
-                          let prefix = buffer.readString(length: Int(length))
+                          let blobType = buffer.readString(length: Int(length))
                     else {
-                        namePromise.fail(OfferShape.noLeadingSSHString)
+                        keyPromise.fail(OfferShape.noLeadingSSHString)
                         return
                     }
-                    namePromise.succeed(prefix)
+                    keyPromise.succeed(OfferedKey(
+                        algorithmName: String(publicKey.userAuthAlgorithmName),
+                        blobType: blobType))
                 }
             }
             method.nextAuthenticationType(
                 availableMethods: .publicKey, nextChallengePromise: offerPromise)
 
             do {
-                prefixes.append(try await namePromise.futureResult.get())
+                offers.append(try await keyPromise.futureResult.get())
             } catch let shape as OfferShape {
-                Issue.record("offer \(prefixes.count) is unreadable: \(shape)",
+                Issue.record("offer \(offers.count) is unreadable: \(shape)",
                              sourceLocation: sourceLocation)
-                return prefixes
+                return offers
             } catch {
-                return prefixes
+                return offers
             }
         }
 
         Issue.record("delegate never ran out of offers", sourceLocation: sourceLocation)
-        return prefixes
+        return offers
     }
 
     /// Why an offer could not be named. Distinct from the delegate simply

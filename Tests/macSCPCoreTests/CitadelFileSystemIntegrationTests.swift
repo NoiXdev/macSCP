@@ -1552,8 +1552,14 @@ struct CitadelFileSystemIntegrationTests {
 
     /// THE RSA RISK test: an `ssh-rsa`-blob identity must authenticate via
     /// `rsa-sha2-512` against a REAL OpenSSH `sshd` — the only way to prove
-    /// the algorithm-name/blob-tag shape `AgentAlgorithm.RSASha512` settles
-    /// for (see that type's doc comment) is actually accepted end to end.
+    /// the three-identifier shape `AgentAlgorithm.RSASha512` declares (see
+    /// that type's doc comment) is actually accepted end to end.
+    ///
+    /// It is one half of a pair: this row is what an OpenSSH server makes of
+    /// the offer, and `GoServerRSAIntegrationTests.rsaAgentIdentityConnects`
+    /// is what a Go-based one makes of the same offer. The shape that
+    /// satisfies both is the RFC's, and either row alone can be bought by a
+    /// wrong one.
     @Test func agentAuthConnectsRSA() async throws {
         let (dir, keyPath) = try makeInstalledKey(type: "rsa", bits: 2048)
         defer { try? FileManager.default.removeItem(at: dir) }

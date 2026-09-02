@@ -74,19 +74,21 @@ struct FileKeyTypeIntegrationTests {
     /// wire.
     ///
     /// RFC 8332 §3 keeps a public-key blob typed `ssh-rsa` while only the
-    /// userauth algorithm-name field becomes `rsa-sha2-512`. NIOSSH writes
-    /// both from one `publicKeyPrefix`, so the fork's `rsaSHA2` offer puts
-    /// `rsa-sha2-512` in BOTH places (fork review I-1). Whether a server
-    /// accepts that was unmeasured until this test ran: if OpenSSH compares
-    /// the decoded blob's type against `pkalg` and refuses, no amount of
-    /// loader work makes an RSA key file usable, and the fix belongs in
-    /// NIOSSH — a userauth algorithm name beside `keyPrefix` on
-    /// `NIOSSHPrivateKeyProtocol`, the mirror of the `hostKeyAlgorithmNames`
-    /// split that 0.3.9 added for host keys.
+    /// userauth algorithm-name field becomes `rsa-sha2-512`. Until
+    /// swift-nio-ssh 0.3.10 NIOSSH wrote both from one `publicKeyPrefix`, so
+    /// the fork's `rsaSHA2` offer put `rsa-sha2-512` in BOTH places (fork
+    /// review I-1) — and this test measured that OpenSSH accepts that too,
+    /// which is why an RSA key file was usable at all. 0.3.10 added the
+    /// userauth algorithm name beside the blob prefix (the mirror of the
+    /// `hostKeyAlgorithmNames` split 0.3.9 added for host keys) and Citadel
+    /// `0.12.1-noix.3` took it up, so the offer this test now makes is the
+    /// RFC's: `pkalg = rsa-sha2-512` around an `ssh-rsa` blob.
     ///
     /// A green run here is therefore evidence about the SERVER, not about
-    /// macSCP.
-    @Test("Step 0: OpenSSH accepts the rsa-sha2-512-typed public key blob")
+    /// macSCP — and it is the row that would go red if only the blob type had
+    /// been changed, since OpenSSH's `sshkey_check_sigtype` requires the
+    /// signature's algorithm name to equal `pkalg`.
+    @Test("Step 0: OpenSSH accepts the RFC 8332 public key offer")
     func rigAcceptsTheForksRSASHA2Offer() async throws {
         let (dir, keyPath) = try makeInstalledKey(type: "rsa", bits: 2048)
         defer { try? FileManager.default.removeItem(at: dir) }

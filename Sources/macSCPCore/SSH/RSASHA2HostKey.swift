@@ -184,6 +184,32 @@ struct RSASHA2Signature: NIOSSHSignatureProtocol, Sendable {
 /// which is `Sendable`, so populating it from a `.swiftLanguageMode(.v6)`
 /// target emits Sendable warnings that no import attribute suppresses
 /// (`.superpowers/sdd/2026-09-02-rsa-host-key-spike`).
+///
+/// ### Who parses an incoming `ssh-rsa` blob
+///
+/// NIOSSH resolves an incoming key blob by walking its registration list and
+/// taking the FIRST registered type whose `publicKeyPrefix` matches. Since
+/// Citadel `0.12.1-noix.3` typed its RSA user keys `ssh-rsa` again (RFC 8332
+/// §3), FOUR types in this dependency graph declare that prefix: this one,
+/// Citadel's `Insecure.RSA.SHA2PublicKey<RSASHA2_256>` and
+/// `<RSASHA2_512>`, and Citadel's SHA-1 `Insecure.RSA.PublicKey`.
+///
+/// Only a REGISTERED type takes part in that lookup, and in macSCP's process
+/// exactly ONE of the four is registered: this one. Counted 2026-09-02 —
+/// `NIOSSHAlgorithms.register(publicKey:signature:)` is reached from one
+/// place in macSCP (the `registration` below) and from two places in Citadel
+/// (`Client.swift:49` and `:53`), both inside
+/// `SSHAlgorithms.Modification.register()`, which runs only for an
+/// `algorithms:` argument passed to a connect. macSCP passes none — its only
+/// dial is `CitadelFileSystem.connectWithRegisteredAlgorithms`, which takes
+/// Citadel's default `SSHAlgorithms()`, whose three `Modification` fields are
+/// all `nil` — and nothing in Citadel uses its own `SSHAlgorithms.all`.
+/// Citadel's RSA user keys are only ever WRITTEN, and the write path never
+/// consults the registry: it writes the concrete instance's own prefix.
+///
+/// So this type wins the `ssh-rsa` lookup by being the only candidate, and
+/// the host-key path it serves is pinned live by `HostKeyTypeIntegrationTests`
+/// against the rig's RSA-only `sshd` on port 2235.
 enum HostKeyAlgorithms {
     /// A `static let` runs its initializer at most once, on first access,
     /// however many threads reach it.
