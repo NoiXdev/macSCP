@@ -40,6 +40,32 @@ public enum S3ListParser {
         return (delegate.items, delegate.continuationToken, delegate.eTags)
     }
 
+    /// Parses a `ListBuckets` (`ListAllMyBucketsResult`) response into one
+    /// row per bucket (2026-09-02, design §4).
+    ///
+    /// A bucket is a second kind of directory: it carries a name and a
+    /// creation date and nothing else — no size, no permissions, no owner —
+    /// so the `RemoteFileItem` it becomes leaves all of those `nil` and puts
+    /// the creation date in `modifiedAt`, which is the only date the bucket
+    /// level has. Its `path` is `"/<name>"`: the path that opens it, and the
+    /// one `S3FileSystem.RootMode.resolve` splits back into a bucket.
+    ///
+    /// The `<Name>` guard is on `Bucket` as the parent element, not on the
+    /// element name alone: the same response carries an `<Owner>` whose
+    /// `<DisplayName>`/`<ID>` sit at the same depth, and a real MinIO
+    /// answer has one.
+    public static func parseBuckets(_ data: Data) throws -> [RemoteFileItem] {
+        let delegate = BucketsParserDelegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        guard parser.parse() else {
+            let reason = parser.parserError?.localizedDescription ?? "unknown XML error"
+            throw RemoteFSError.protocolError(
+                reason: "Failed to parse S3 ListBuckets response: \(reason)")
+        }
+        return delegate.items
+    }
+
     /// ISO8601 with fractional seconds (`2024-01-02T03:04:05.000Z`, the
     /// usual `LastModified` shape) — falls back to the plain form without
     /// fractional seconds for servers that omit them.
@@ -84,6 +110,59 @@ public enum S3ListParser {
             leaf = String(leaf.dropLast())
         }
         return leaf
+    }
+
+    /// `ListAllMyBucketsResult` -> one directory row per `<Bucket>`.
+    private final class BucketsParserDelegate: NSObject, XMLParserDelegate {
+        private(set) var items: [RemoteFileItem] = []
+
+        private var elementStack: [String] = []
+        private var currentText = ""
+        private var currentName: String?
+        private var currentCreationDate: Date?
+
+        func parser(
+            _ parser: XMLParser, didStartElement elementName: String,
+            namespaceURI: String?, qualifiedName qName: String?,
+            attributes attributeDict: [String: String] = [:]
+        ) {
+            elementStack.append(elementName)
+            currentText = ""
+            if elementName == "Bucket" {
+                currentName = nil
+                currentCreationDate = nil
+            }
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) {
+            currentText += string
+        }
+
+        func parser(
+            _ parser: XMLParser, didEndElement elementName: String,
+            namespaceURI: String?, qualifiedName qName: String?
+        ) {
+            let trimmed = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parent = elementStack.count >= 2 ? elementStack[elementStack.count - 2] : nil
+
+            switch elementName {
+            case "Name" where parent == "Bucket":
+                currentName = trimmed
+            case "CreationDate" where parent == "Bucket":
+                currentCreationDate = S3ListParser.parseDate(trimmed)
+            case "Bucket":
+                if let name = currentName, !name.isEmpty {
+                    items.append(RemoteFileItem(
+                        name: name, path: "/" + name, kind: .directory,
+                        size: nil, modifiedAt: currentCreationDate))
+                }
+            default:
+                break
+            }
+
+            elementStack.removeLast()
+            currentText = ""
+        }
     }
 
     private final class ParserDelegate: NSObject, XMLParserDelegate {

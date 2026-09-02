@@ -575,4 +575,129 @@ struct S3FileSystemIntegrationTests {
         try? await fs.delete(path: "/\(largeKey)")
         if let caught { throw caught }
     }
+
+    // MARK: - The bucket list against the rig (2026-09-02)
+
+    /// The rig's ROOT key with the toggle on: it may list every bucket.
+    private func connectAtBucketList(
+        accessKeyID: String = "macscp", secretAccessKey: String = "macscpsecretkey"
+    ) async throws -> S3FileSystem {
+        let config = S3ConnectionConfig(
+            accessKeyID: accessKeyID, secretAccessKey: secretAccessKey,
+            region: "us-east-1", endpoint: "http://127.0.0.1:19000",
+            bucket: "", usePathStyle: true, sessionToken: nil, startsAtBucketList: true)
+        return try await S3FileSystem.connect(config)
+    }
+
+    /// The root key sees both seeded buckets as directory rows carrying
+    /// MinIO's real creation dates.
+    @Test func rootKeyWithTheToggleListsBothBuckets() async throws {
+        let fs = try await connectAtBucketList()
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/")
+        let names = Set(items.map(\.name))
+        #expect(names.contains("macscp-seed"))
+        #expect(names.contains("macscp-second"))
+        #expect(items.allSatisfy { $0.kind == .directory })
+        #expect(items.allSatisfy { $0.modifiedAt != nil })
+        #expect(items.allSatisfy { $0.size == nil })
+        #expect(items.first { $0.name == "macscp-seed" }?.path == "/macscp-seed")
+    }
+
+    /// Opening a bucket row from that listing shows the bucket's contents,
+    /// and every row carries the bucket-qualified path the next navigation
+    /// will be handed back.
+    @Test func openingASeedBucketUnderTheBucketListShowsItsContents() async throws {
+        let fs = try await connectAtBucketList()
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/macscp-seed")
+        let names = items.map(\.name)
+        #expect(names.contains("a.txt"))
+        #expect(names.contains("sub"))
+        #expect(items.first { $0.name == "a.txt" }?.path == "/macscp-seed/a.txt")
+        #expect(items.first { $0.name == "sub" }?.kind == .directory)
+
+        let deeper = try await fs.list(path: "/macscp-seed/sub")
+        #expect(deeper.map(\.name).contains("b.txt"))
+
+        let second = try await fs.list(path: "/macscp-second")
+        #expect(second.map(\.name).contains("second.txt"))
+    }
+
+    /// A transfer under the bucket list really moves bytes into the bucket
+    /// the path names — `stat` and `readStream` route there too.
+    @Test func aTransferUnderTheBucketListRoutesIntoTheNamedBucket() async throws {
+        let fs = try await connectAtBucketList()
+        defer { Task { await fs.disconnect() } }
+        let path = "/macscp-second/bucketlist-\(UUID().uuidString).txt"
+        let body = Data("routed into the bucket from the path".utf8)
+        var caught: Error?
+        do {
+            try await fs.write(path: path, mode: .overwrite, contents: AsyncThrowingStream { continuation in
+                continuation.yield(body)
+                continuation.finish()
+            })
+            let item = try await fs.stat(path: path)
+            #expect(item.size == UInt64(body.count))
+            #expect(item.path == path)
+            var received = Data()
+            for try await chunk in try await fs.readStream(path: path, fromOffset: 0) {
+                received.append(chunk)
+            }
+            #expect(received == body)
+        } catch {
+            caught = error
+        }
+        try? await fs.delete(path: path)
+        if let caught { throw caught }
+    }
+
+    /// The scoped key, measured 2026-09-02 against this MinIO release
+    /// (`RELEASE.2024-07-16T23-46-41Z`): its account-level listing does NOT
+    /// fail with `AccessDenied` — MinIO returns the FILTERED list of the
+    /// buckets the key can touch, even with an explicit `Deny` on
+    /// `s3:ListAllMyBuckets` (docker/test-server/README.md). So what the rig
+    /// can prove is the filtered list, and the `bucketListForbidden` case —
+    /// which is what AWS answers — is pinned with a canned 403 in
+    /// `S3FileSystemTests` instead.
+    @Test func scopedKeyWithTheToggleSeesOnlyItsOwnBucket() async throws {
+        let fs = try await connectAtBucketList(
+            accessKeyID: "macscp-scoped", secretAccessKey: "macscpscopedsecret")
+        defer { Task { await fs.disconnect() } }
+
+        let items = try await fs.list(path: "/")
+        #expect(items.count == 1)
+        #expect(items.first?.name == "macscp-seed")
+        #expect(items.first?.kind == .directory)
+    }
+
+    /// The other half of that measurement: the bucket the scoped key's
+    /// policy does not name is a hard refusal when opened.
+    @Test func scopedKeyOpeningTheOtherBucketIsRefused() async throws {
+        let fs = try await connectAtBucketList(
+            accessKeyID: "macscp-scoped", secretAccessKey: "macscpscopedsecret")
+        defer { Task { await fs.disconnect() } }
+
+        await #expect(throws: RemoteFSError.authenticationFailed) {
+            _ = try await fs.list(path: "/macscp-second")
+        }
+    }
+
+    /// The "usual case" the backlog entry names: a key scoped to one
+    /// bucket, with the toggle OFF, connects and lists exactly as before —
+    /// the toggle changes nothing for it.
+    @Test func scopedKeyWithTheToggleOffConnectsToItsOwnBucket() async throws {
+        let config = S3ConnectionConfig(
+            accessKeyID: "macscp-scoped", secretAccessKey: "macscpscopedsecret",
+            region: "us-east-1", endpoint: "http://127.0.0.1:19000",
+            bucket: "macscp-seed", usePathStyle: true, sessionToken: nil)
+        let fs = try await S3FileSystem.connect(config)
+        defer { Task { await fs.disconnect() } }
+
+        let names = try await fs.list(path: "/").map(\.name)
+        #expect(names.contains("a.txt"))
+        #expect(names.contains("sub"))
+    }
 }

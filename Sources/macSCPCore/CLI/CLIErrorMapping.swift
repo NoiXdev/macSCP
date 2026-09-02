@@ -42,6 +42,16 @@ public enum CLIErrorMapping {
                 return .connection
             case .notFound, .permissionDenied, .protocolError:
                 return .remote
+            // Both are S3 bucket-list outcomes, reachable only from a
+            // connection with `startsAtBucketList` on — which no stored
+            // session can carry yet. The arms exist because this switch is
+            // exhaustive, and they classify what the outcome IS: a missing
+            // permission on the key is an auth problem, an account with no
+            // buckets is a remote-side fact.
+            case .bucketListForbidden:
+                return .auth
+            case .bucketListEmpty:
+                return .remote
             }
         default:
             return .connection
@@ -135,6 +145,10 @@ public enum CLIErrorMapping {
                 return "Error: permission denied: \(path)"
             case .protocolError(let reason):
                 return "Error: \(reason)"
+            case .bucketListForbidden:
+                return "Error: this key may not list the account's buckets"
+            case .bucketListEmpty:
+                return "Error: this key may list buckets, but the account has none"
             }
         default:
             // Stringifying an arbitrary, unmapped error is a FLOOR, not a

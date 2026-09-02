@@ -932,4 +932,426 @@ struct S3FileSystemTests {
     @Test func theS3CapabilityAgreesThatItCanAnswerTheChecksumQuestion() {
         #expect(BackendDescriptor.descriptor(for: .s3).capabilities.supportsRemoteChecksum)
     }
+
+    // MARK: - The bucket list: a connection may start at it (2026-09-02)
+
+    /// A two-bucket `ListBuckets` response, shaped the way S3 and MinIO
+    /// answer `GET /`: an `<Owner>` (whose `<ID>`/`<DisplayName>` must NOT
+    /// be mistaken for a bucket's `<Name>`) followed by `<Buckets>`.
+    private let bucketListXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+        <Owner>
+            <ID>02d6176db174dc93cb1b899f7c6078f08654445fe8cf1b6ce98d8855f66bdbf4</ID>
+            <DisplayName>minio</DisplayName>
+        </Owner>
+        <Buckets>
+            <Bucket>
+                <Name>macscp-seed</Name>
+                <CreationDate>2024-01-02T03:04:05.000Z</CreationDate>
+            </Bucket>
+            <Bucket>
+                <Name>macscp-second</Name>
+                <CreationDate>2024-02-03T04:05:06.000Z</CreationDate>
+            </Bucket>
+        </Buckets>
+    </ListAllMyBucketsResult>
+    """
+
+    /// The key may list buckets; the account has none.
+    private let emptyBucketListXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+        <Owner><ID>owner</ID><DisplayName>minio</DisplayName></Owner>
+        <Buckets></Buckets>
+    </ListAllMyBucketsResult>
+    """
+
+    /// What AWS answers a key without `s3:ListAllMyBuckets`. MinIO does NOT
+    /// answer this — measured 2026-09-02, it returns the FILTERED list
+    /// instead (docker/test-server/README.md), which is why this outcome is
+    /// pinned here with a canned response and in the rig only as the
+    /// filtered list plus a cross-bucket `AccessDenied`.
+    private let accessDeniedXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <Error><Code>AccessDenied</Code><Message>Access Denied.</Message></Error>
+    """
+
+    /// The same rig-shaped connection as `config`, with the toggle ON. The
+    /// bucket field is empty on purpose: in this mode nothing may read it,
+    /// and an empty one turns any leftover reader into a visible failure
+    /// rather than a silent listing of the wrong bucket.
+    private var bucketListConfig: S3ConnectionConfig {
+        S3ConnectionConfig(
+            accessKeyID: "AK", secretAccessKey: "SK", region: "us-east-1",
+            endpoint: "http://127.0.0.1:9000", bucket: "", usePathStyle: true,
+            sessionToken: nil, startsAtBucketList: true)
+    }
+
+    /// Connects with the toggle on, feeding the connect-time `ListBuckets`
+    /// its own canned two-bucket answer first — the bucket-list counterpart
+    /// of `connect(responses:)` above.
+    private func connectAtBucketList(
+        _ config: S3ConnectionConfig? = nil, responses: [(Data, HTTPURLResponse)]
+    ) async throws -> (S3FileSystem, FakeS3Transport) {
+        let transport = FakeS3Transport(
+            responses: [(Data(bucketListXML.utf8), httpResponse(status: 200))] + responses)
+        let fs = try await S3FileSystem.connect(config ?? bucketListConfig, transport: transport)
+        return (fs, transport)
+    }
+
+    /// `"<bucket>|<key>"` for one resolution, so the path table below reads
+    /// as a table instead of as ten destructuring statements.
+    private func resolved(_ mode: S3FileSystem.RootMode, _ path: String) throws -> String {
+        let (bucket, key) = try mode.resolve(path: path)
+        return "\(bucket)|\(key)"
+    }
+
+    /// The path table of the design's §4, both modes, in one place.
+    @Test func rootModeResolvesEveryPathToItsBucketAndKey() throws {
+        // Toggle off: the bucket comes from the config, the whole path is
+        // the key — byte for byte what `objectKey(forPath:)` produced.
+        #expect(try resolved(.bucket("only"), "/") == "only|")
+        #expect(try resolved(.bucket("only"), "/x") == "only|x")
+        #expect(try resolved(.bucket("only"), "/x/y") == "only|x/y")
+        #expect(try resolved(.bucket("only"), "//x//y/") == "only|x/y")
+
+        // Toggle on: the FIRST component names the bucket.
+        #expect(try resolved(.bucketList, "/b") == "b|")
+        #expect(try resolved(.bucketList, "/b/") == "b|")
+        #expect(try resolved(.bucketList, "/b/x/y") == "b|x/y")
+        #expect(try resolved(.bucketList, "//b//x/y") == "b|x/y")
+    }
+
+    /// The one path that has no bucket to route to. It must be an ERROR —
+    /// never a request against `/`, which is a different resource entirely
+    /// (the account's bucket list) and would delete or overwrite something
+    /// nobody named.
+    @Test func aPathWithoutABucketIsAnErrorInBucketListMode() throws {
+        do {
+            _ = try S3FileSystem.RootMode.bucketList.resolve(path: "/")
+            Issue.record("expected throw")
+        } catch let error as RemoteFSError {
+            guard case .protocolError = error else {
+                Issue.record("expected .protocolError, got \(error)")
+                return
+            }
+        }
+    }
+
+    /// …and the file system must not send anything when it happens.
+    @Test func aBucketlessPathSendsNoRequestAtAll() async throws {
+        let (fs, transport) = try await connectAtBucketList(responses: [])
+
+        await expectProtocolError { try await fs.delete(path: "/") }
+
+        // Only the connect-time ListBuckets, nothing after it.
+        let sent = await transport.requests.count
+        #expect(sent == 1)
+    }
+
+    /// Outcome 1 of the design's §2 table: 200 with buckets. `connect` asks
+    /// for the ACCOUNT's buckets — `GET /` on the bare endpoint, no query,
+    /// signed — instead of probing one bucket with `ListObjectsV2`.
+    @Test func connectAsksForTheBucketListInsteadOfProbingOneBucket() async throws {
+        let transport = FakeS3Transport(
+            responses: [(Data(bucketListXML.utf8), httpResponse(status: 200))])
+        let fs = try await S3FileSystem.connect(bucketListConfig, transport: transport)
+        await fs.disconnect()
+
+        let requests = await transport.requests
+        #expect(requests.count == 1)
+        let request = try #require(requests.first)
+        let url = try #require(request.url)
+        #expect(request.httpMethod == "GET")
+        #expect(url.path == "/")
+        #expect(url.query == nil)
+        #expect(request.value(forHTTPHeaderField: "Authorization")?.hasPrefix("AWS4-HMAC-SHA256") == true)
+    }
+
+    /// The positive check beside the negative ones: with the toggle OFF,
+    /// connect still probes the configured bucket with `ListObjectsV2` —
+    /// so "no ListObjectsV2 on connect" above is a property of the mode,
+    /// not of a probe that quietly stopped happening.
+    @Test func withTheToggleOffConnectStillProbesTheConfiguredBucket() async throws {
+        let transport = FakeS3Transport(
+            responses: [(Data(emptyListingXML.utf8), httpResponse(status: 200))])
+        let fs = try await S3FileSystem.connect(config, transport: transport)
+        await fs.disconnect()
+
+        let url = try #require(await transport.requests.first?.url)
+        #expect(url.path == "/macscp-seed")
+        #expect((url.query ?? "").contains("list-type=2"))
+    }
+
+    /// Outcome 2: 200 with zero buckets. The key may list, the account has
+    /// none — its own case, because "an empty browser" is not an answer the
+    /// form can explain.
+    @Test func aBucketListWithNoBucketsIsItsOwnOutcome() async throws {
+        let config = bucketListConfig
+        let transport = FakeS3Transport(
+            responses: [(Data(emptyBucketListXML.utf8), httpResponse(status: 200))])
+        await #expect(throws: RemoteFSError.bucketListEmpty) {
+            _ = try await S3FileSystem.connect(config, transport: transport)
+        }
+    }
+
+    /// Outcome 3: 403 `AccessDenied` on `ListBuckets` — a key without
+    /// `s3:ListAllMyBuckets`, which is what AWS answers.
+    @Test func aForbiddenBucketListIsItsOwnOutcome() async throws {
+        let config = bucketListConfig
+        let transport = FakeS3Transport(
+            responses: [(Data(accessDeniedXML.utf8), httpResponse(status: 403))])
+        await #expect(throws: RemoteFSError.bucketListForbidden) {
+            _ = try await S3FileSystem.connect(config, transport: transport)
+        }
+    }
+
+    /// Outcome 4: anything else stays what it was. A 500 on `ListBuckets`
+    /// is a `protocolError`, not one of the two new cases — a provider that
+    /// does not implement `ListBuckets` must not be reported as a key
+    /// without the permission.
+    @Test func anyOtherBucketListFailureStaysWhatItWas() async throws {
+        let config = bucketListConfig
+        let transport = FakeS3Transport(responses: [(Data(), httpResponse(status: 500))])
+        do {
+            _ = try await S3FileSystem.connect(config, transport: transport)
+            Issue.record("expected throw")
+        } catch let error as RemoteFSError {
+            guard case .protocolError = error else {
+                Issue.record("expected .protocolError, got \(error)")
+                return
+            }
+        }
+    }
+
+    /// The root listing IS the bucket list: one directory row per bucket,
+    /// carrying the creation date as `modifiedAt` and nothing else — no
+    /// size, no permissions, no owner (§4).
+    @Test func theRootListingIsOneDirectoryRowPerBucket() async throws {
+        let (fs, _) = try await connectAtBucketList(
+            responses: [(Data(bucketListXML.utf8), httpResponse(status: 200))])
+
+        let items = try await fs.list(path: "/")
+
+        #expect(items.count == 2)
+        #expect(items.map(\.name) == ["macscp-seed", "macscp-second"])
+        let seed = try #require(items.first { $0.name == "macscp-seed" })
+        #expect(seed.kind == .directory)
+        #expect(seed.path == "/macscp-seed")
+        #expect(seed.modifiedAt != nil)
+        #expect(seed.size == nil)
+        #expect(seed.permissions == nil)
+        #expect(seed.owner == nil)
+        #expect(seed.group == nil)
+    }
+
+    /// A bucket row's path is the path that opens it: listing `/b` lists
+    /// the ROOT of bucket `b`, and every item it hands back carries the
+    /// bucket-qualified path — otherwise the browser's next navigation
+    /// would resolve `/a.txt` against a bucket nobody chose.
+    @Test func openingABucketListsItsRootAndItemsCarryTheBucketInTheirPath() async throws {
+        let (fs, transport) = try await connectAtBucketList(
+            responses: [(Data(rootListingXML.utf8), httpResponse(status: 200))])
+
+        let items = try await fs.list(path: "/macscp-second")
+
+        let url = try #require(await transport.requests.last?.url)
+        #expect(url.path == "/macscp-second")
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        #expect((components.queryItems ?? []).contains(URLQueryItem(name: "prefix", value: "")))
+        #expect(items.first { $0.name == "a.txt" }?.path == "/macscp-second/a.txt")
+        #expect(items.first { $0.name == "sub" }?.path == "/macscp-second/sub")
+    }
+
+    /// A path deeper than the bucket splits into the bucket and the key
+    /// prefix inside it.
+    @Test func aDeeperPathBecomesThatBucketsKeyPrefix() async throws {
+        let (fs, transport) = try await connectAtBucketList(
+            responses: [(Data(emptyListingXML.utf8), httpResponse(status: 200))])
+
+        _ = try await fs.list(path: "/macscp-second/sub")
+
+        let url = try #require(await transport.requests.last?.url)
+        #expect(url.path == "/macscp-second")
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        #expect((components.queryItems ?? []).contains(URLQueryItem(name: "prefix", value: "sub/")))
+    }
+
+    /// `stat` of a BUCKET has no parent listing to be found in — its entry
+    /// exists one level up, in the bucket list itself.
+    @Test func statOfABucketComesFromTheBucketList() async throws {
+        let (fs, _) = try await connectAtBucketList(
+            responses: [(Data(bucketListXML.utf8), httpResponse(status: 200))])
+
+        let item = try await fs.stat(path: "/macscp-seed")
+
+        #expect(item.kind == .directory)
+        #expect(item.path == "/macscp-seed")
+    }
+
+    @Test func statOfABucketThatIsNotThereIsNotFound() async throws {
+        let (fs, _) = try await connectAtBucketList(
+            responses: [(Data(bucketListXML.utf8), httpResponse(status: 200))])
+
+        await #expect(throws: RemoteFSError.notFound(path: "/nope")) {
+            _ = try await fs.stat(path: "/nope")
+        }
+    }
+
+    /// `stat` INSIDE a bucket lists that bucket's parent prefix, and the
+    /// entry it returns carries the bucket-qualified path.
+    @Test func statInsideABucketAddressesThatBucket() async throws {
+        let (fs, transport) = try await connectAtBucketList(
+            responses: [(Data(rootListingXML.utf8), httpResponse(status: 200))])
+
+        let item = try await fs.stat(path: "/macscp-second/a.txt")
+
+        #expect(item.path == "/macscp-second/a.txt")
+        #expect(item.size == 12)
+        let url = try #require(await transport.requests.last?.url)
+        #expect(url.path == "/macscp-second")
+    }
+
+    /// A transfer routes into the bucket named by the path — the upload
+    /// seam (`S3RequestBuilder.signedRequest`) resolves it too, not just
+    /// the listing path.
+    @Test func aWriteRoutesIntoTheBucketNamedByThePath() async throws {
+        let (fs, transport) = try await connectAtBucketList(
+            responses: [(Data(), httpResponse(status: 200))])
+        let body = Data("hello".utf8)
+        let stream = AsyncThrowingStream<Data, Error> { continuation in
+            continuation.yield(body)
+            continuation.finish()
+        }
+
+        try await fs.write(path: "/macscp-second/dir/file.txt", mode: .overwrite, contents: stream)
+
+        let request = try #require(await transport.requests.last)
+        #expect(request.httpMethod == "PUT")
+        #expect(request.url?.path(percentEncoded: true) == "/macscp-second/dir/file.txt")
+        #expect(request.httpBody == body)
+    }
+
+    @Test func aDeleteRoutesIntoTheBucketNamedByThePath() async throws {
+        let (fs, transport) = try await connectAtBucketList(
+            responses: [(Data(), httpResponse(status: 204))])
+
+        try await fs.delete(path: "/macscp-second/dir/file.txt")
+
+        let request = try #require(await transport.requests.last)
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.path(percentEncoded: true) == "/macscp-second/dir/file.txt")
+    }
+
+    @Test func aDownloadRoutesIntoTheBucketNamedByThePath() async throws {
+        let (fs, transport) = try await connectAtBucketList(
+            responses: [(Data("bytes".utf8), httpResponse(status: 206))])
+
+        for try await _ in try await fs.readStream(path: "/macscp-second/a.txt", fromOffset: 0) {}
+
+        let request = try #require(await transport.requests.last)
+        #expect(request.url?.path(percentEncoded: true) == "/macscp-second/a.txt")
+        #expect(request.value(forHTTPHeaderField: "Range") == "bytes=0-")
+    }
+
+    /// The presigned-URL seam takes a KEY, and in this mode a key is the
+    /// browser path without its leading slash — so it names the bucket too.
+    @Test func aPresignedURLRoutesIntoTheBucketNamedByTheKey() async throws {
+        let (fs, _) = try await connectAtBucketList(responses: [])
+
+        let url = try fs.presignedURL(
+            method: .get, key: "macscp-second/dir/file.txt", expiresIn: 600)
+
+        #expect(url.path == "/macscp-second/dir/file.txt")
+    }
+
+    /// Virtual-hosted addressing, where the trap is: `ListBuckets` is an
+    /// ACCOUNT-level call and always goes to the BARE endpoint host. There
+    /// is no bucket to put in front of it, and `.<host>` with an empty
+    /// bucket would resolve to a different name entirely.
+    @Test func virtualHostedListBucketsGoesToTheBareEndpointHost() async throws {
+        let config = S3ConnectionConfig(
+            accessKeyID: "AK", secretAccessKey: "SK", region: "us-east-1",
+            endpoint: "http://s3.example.test", bucket: "", usePathStyle: false,
+            sessionToken: nil, startsAtBucketList: true)
+        let transport = FakeS3Transport(
+            responses: [(Data(bucketListXML.utf8), httpResponse(status: 200))])
+        let fs = try await S3FileSystem.connect(config, transport: transport)
+        await fs.disconnect()
+
+        let url = try #require(await transport.requests.first?.url)
+        #expect(url.host == "s3.example.test")
+        #expect(url.path == "/")
+    }
+
+    /// …and once inside a bucket, virtual-hosted addressing puts THAT
+    /// bucket — the one from the path — in front of the host.
+    @Test func virtualHostedListingInsideABucketUsesThatBucketsHost() async throws {
+        let config = S3ConnectionConfig(
+            accessKeyID: "AK", secretAccessKey: "SK", region: "us-east-1",
+            endpoint: "http://s3.example.test", bucket: "", usePathStyle: false,
+            sessionToken: nil, startsAtBucketList: true)
+        let (fs, transport) = try await connectAtBucketList(
+            config, responses: [(Data(rootListingXML.utf8), httpResponse(status: 200))])
+
+        _ = try await fs.list(path: "/macscp-second")
+
+        let url = try #require(await transport.requests.last?.url)
+        #expect(url.host == "macscp-second.s3.example.test")
+    }
+
+    /// A bucket is a second kind of directory, and the only action the
+    /// design offers on one is OPEN (§4). Core refuses the rest itself
+    /// rather than trusting the browser to hide them: `rename("/b1", "/b2")`
+    /// would otherwise re-key every object of one bucket into another and
+    /// delete the originals, and `deleteTree("/b1")` would empty it — both
+    /// from a single keystroke on a row that looks like a folder.
+    @Test func aBucketItselfIsNotAThingToWriteRenameOrDelete() async throws {
+        let (fs, transport) = try await connectAtBucketList(responses: [])
+
+        await expectProtocolError { try await fs.delete(path: "/macscp-seed") }
+        await expectProtocolError { try await fs.deleteTree(at: "/macscp-seed") }
+        await expectProtocolError { try await fs.createDirectory(at: "/macscp-seed") }
+        await expectProtocolError {
+            try await fs.write(
+                path: "/macscp-seed", mode: .overwrite,
+                contents: AsyncThrowingStream<Data, Error> { $0.finish() })
+        }
+        await expectProtocolError { try await fs.rename(from: "/macscp-seed", to: "/macscp-third") }
+        await expectProtocolError { try await fs.rename(from: "/macscp-seed/a.txt", to: "/macscp-third") }
+
+        // Refused BEFORE the wire, every time: only the connect-time
+        // ListBuckets was ever sent.
+        let sent = await transport.requests.count
+        #expect(sent == 1)
+    }
+
+    /// The positive check beside it: one level deeper, inside the bucket,
+    /// the very same operations go through — so the refusal above is a
+    /// property of the bucket LEVEL, not of a mode that refuses everything.
+    @Test func oneLevelInsideABucketTheSameOperationsGoThrough() async throws {
+        let (fs, transport) = try await connectAtBucketList(responses: [
+            (Data(), httpResponse(status: 204)),
+        ])
+
+        try await fs.delete(path: "/macscp-seed/a.txt")
+
+        let request = try #require(await transport.requests.last)
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.path(percentEncoded: true) == "/macscp-seed/a.txt")
+    }
+
+    /// …and with the toggle OFF nothing is refused at all: `"/"` is the
+    /// bucket ROOT there, where these calls have always been the caller's
+    /// business, and this guard must not change that.
+    @Test func withTheToggleOffTheRootIsStillTheCallersBusiness() async throws {
+        let (fs, transport) = try await connect(responses: [(Data(), httpResponse(status: 204))])
+
+        try await fs.delete(path: "/")
+
+        let request = try #require(await transport.requests.last)
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.path(percentEncoded: true) == "/macscp-seed")
+    }
 }

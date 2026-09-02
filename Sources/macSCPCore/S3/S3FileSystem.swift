@@ -28,10 +28,53 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// redirect policy, if it has one, is the caller's business.
     private let redirectPolicy: S3RedirectSessionDelegate?
 
+    /// Where this connection's root sits, decided once in `connect` from
+    /// `S3ConnectionConfig.startsAtBucketList` and never re-derived.
+    ///
+    /// `resolve` is the ONE place a browser path becomes an addressed S3
+    /// resource, so the request builders below take a bucket and a key and
+    /// never branch on strings themselves — the structural half of the
+    /// bucket-list design (2026-09-02, design §4).
+    enum RootMode: Equatable, Sendable {
+        /// Today: the root IS one bucket, and the whole path is a key in it.
+        case bucket(String)
+        /// The root is the account's bucket list; the FIRST path component
+        /// names the bucket, the rest is the key inside it.
+        case bucketList
+
+        /// `path` split into the bucket that answers for it and the key
+        /// inside that bucket. `"/"` has no key (it is the bucket root in
+        /// `.bucket` mode, and has no bucket at all in `.bucketList` mode,
+        /// where it is the bucket list itself and callers must handle it
+        /// before asking).
+        func resolve(path: String) throws -> (bucket: String, key: String) {
+            let components = RemotePath.normalizedAbsolute(path)
+                .split(separator: "/").map(String.init)
+            switch self {
+            case .bucket(let bucket):
+                return (bucket, components.joined(separator: "/"))
+            case .bucketList:
+                // Never fall back to the endpoint root: `GET /` is the
+                // ACCOUNT's bucket list, so a bucketless path sent there
+                // would address a different resource entirely — and a
+                // DELETE or PUT would address it too.
+                guard let bucket = components.first else {
+                    throw RemoteFSError.protocolError(
+                        reason: "S3: this connection starts at the bucket list, "
+                            + "and \"\(path)\" names no bucket")
+                }
+                return (bucket, components.dropFirst().joined(separator: "/"))
+            }
+        }
+    }
+
+    private let mode: RootMode
+
     private init(
         config: S3ConnectionConfig, transport: any HTTPTransport, session: URLSession?,
         redirectPolicy: S3RedirectSessionDelegate?
     ) {
+        self.mode = config.startsAtBucketList ? .bucketList : .bucket(config.bucket)
         self.config = config
         self.transport = transport
         self.session = session
@@ -80,7 +123,19 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 session: session, redirectPolicy: redirectPolicy)
         }
         do {
-            _ = try await fs.fetchPage(prefix: "", continuationToken: nil)
+            switch fs.mode {
+            case .bucket(let bucket):
+                _ = try await fs.fetchPage(bucket: bucket, prefix: "", continuationToken: nil)
+            case .bucketList:
+                // The permission is checked HERE, once, so the failure lands
+                // on the form the user is looking at rather than deep in the
+                // browser (design §2). An account with no buckets is its own
+                // outcome for the same reason: an empty browser explains
+                // nothing.
+                if try await fs.listBuckets().isEmpty {
+                    throw RemoteFSError.bucketListEmpty
+                }
+            }
         } catch {
             // A dial that fails still built a session, and nothing else will
             // ever hold this file system. Same reason `WebDAVFileSystem.connect`
@@ -92,15 +147,54 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     }
 
     public func list(path: String) async throws -> [RemoteFileItem] {
-        let prefix = Self.s3Prefix(forPath: path)
+        if isBucketListRoot(path) { return try await listBuckets() }
+        let (bucket, prefix) = try resolvePrefix(path: path)
         var items: [RemoteFileItem] = []
         var token: String?
         repeat {
-            let page = try await fetchPage(prefix: prefix, continuationToken: token)
+            let page = try await fetchPage(bucket: bucket, prefix: prefix, continuationToken: token)
             items.append(contentsOf: page.items)
             token = page.continuationToken
         } while token != nil
         return items
+    }
+
+    /// True for the one path that IS the bucket list rather than something
+    /// inside a bucket. `RootMode.resolve` refuses it (there is no bucket to
+    /// route to), so every caller that can answer it must ask first.
+    private func isBucketListRoot(_ path: String) -> Bool {
+        guard case .bucketList = mode else { return false }
+        return RemotePath.normalizedAbsolute(path) == "/"
+    }
+
+    /// Refuses an operation whose target IS a bucket rather than something
+    /// inside one — the resolved key is empty.
+    ///
+    /// Only in `.bucketList` mode: with the toggle off the very same path
+    /// is the bucket ROOT, where these calls have always been the caller's
+    /// business, and this must change nothing there.
+    ///
+    /// The design offers exactly one action on a bucket row — open it — and
+    /// this is that rule where it cannot be bypassed, rather than a promise
+    /// the browser makes. `rename("/b1", "/b2")` would otherwise re-key
+    /// every object of one bucket into another and delete the originals;
+    /// `deleteTree("/b1")` would empty it. Both from one keystroke on a row
+    /// that looks like a folder.
+    private func refuseBucketLevelWrite(path: String) throws {
+        guard case .bucketList = mode else { return }
+        guard try mode.resolve(path: path).key.isEmpty else { return }
+        throw RemoteFSError.protocolError(
+            reason: "S3: \"\(path)\" is a bucket; macSCP does not create, rename, "
+                + "overwrite or delete buckets")
+    }
+
+    /// The bucket that answers for `path` and the KEY PREFIX inside it —
+    /// `RootMode.resolve` plus the trailing slash a `ListObjectsV2` prefix
+    /// carries (`""` for a bucket root, `"sub/"` under `sub`). The former
+    /// `s3Prefix(forPath:)`, now that the bucket is part of the answer.
+    private func resolvePrefix(path: String) throws -> (bucket: String, prefix: String) {
+        let (bucket, key) = try mode.resolve(path: path)
+        return (bucket, key.isEmpty ? "" : key + "/")
     }
 
     /// The entry at `path`, found the way `listedEntry` describes below.
@@ -133,12 +227,22 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             return ListedEntry(
                 item: RemoteFileItem(name: "/", path: "/", kind: .directory), eTag: nil)
         }
+        if case .bucketList = mode, normalized.split(separator: "/").count == 1 {
+            // A BUCKET's own entry does not live in any bucket listing: the
+            // level above it is the account's bucket list, so that is where
+            // it is looked up. Never an ETag — a bucket is not an object.
+            guard let row = try await listBuckets().first(where: { $0.path == normalized }) else {
+                throw RemoteFSError.notFound(path: path)
+            }
+            return ListedEntry(item: row, eTag: nil)
+        }
         let leafName = normalized.split(separator: "/").last.map(String.init) ?? normalized
-        let parentPrefix = Self.s3Prefix(forPath: RemotePath.parent(of: normalized))
+        let (bucket, parentPrefix) = try resolvePrefix(path: RemotePath.parent(of: normalized))
 
         var token: String?
         repeat {
-            let page = try await fetchPage(prefix: parentPrefix, continuationToken: token)
+            let page = try await fetchPage(
+                bucket: bucket, prefix: parentPrefix, continuationToken: token)
             if let match = page.items.first(where: { $0.name == leafName }) {
                 return ListedEntry(item: match, eTag: page.eTags[match.path])
             }
@@ -158,9 +262,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// require `Range` to be signed, and signing it here would just be
     /// extra surface for a byte-identical-header bug with no benefit.
     public func readStream(path: String, fromOffset offset: UInt64) async throws -> AsyncThrowingStream<Data, Error> {
-        let key = Self.objectKey(forPath: path)
+        let (bucket, key) = try mode.resolve(path: path)
         var request = try buildSignedRequest(
-            method: "GET", key: key, query: [], payloadHash: SigV4Signer.emptyPayloadHash)
+            bucket: bucket, method: "GET", key: key, query: [],
+            payloadHash: SigV4Signer.emptyPayloadHash)
         request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
 
         // The streaming counterpart of `send`, kept here rather than folded
@@ -197,6 +302,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `TransferEngine` only ever hands an S3 destination `.overwrite` — a
     /// resumed `.append` write from a non-zero offset never reaches here.
     public func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
+        try refuseBucketLevelWrite(path: path)
         try await S3Uploader().upload(key: Self.objectKey(forPath: path), contents: contents, using: self)
     }
 
@@ -205,7 +311,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// non-2xx (403/404/other) is still mapped through `sendExpectingSuccess`
     /// like any other request. Delegates to the raw-key overload below.
     public func delete(path: String) async throws {
-        try await delete(key: Self.objectKey(forPath: path))
+        try refuseBucketLevelWrite(path: path)
+        let (bucket, key) = try mode.resolve(path: path)
+        try await delete(bucket: bucket, key: key)
     }
 
     /// Raw-key counterpart to `delete(path:)`, for callers that already hold
@@ -215,9 +323,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// keys, including a directory's own trailing-slash marker key, which
     /// `objectKey(forPath:)` cannot address (it always strips trailing
     /// slashes).
-    private func delete(key: String) async throws {
+    private func delete(bucket: String, key: String) async throws {
         let request = try buildSignedRequest(
-            method: "DELETE", key: key, query: [],
+            bucket: bucket, method: "DELETE", key: key, query: [],
             payloadHash: SigV4Signer.emptyPayloadHash)
         try await sendExpectingSuccess(request, path: "/" + key)
     }
@@ -228,9 +336,11 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// recognizes this marker). Idempotent: re-PUTting the same marker is
     /// harmless.
     public func createDirectory(at path: String) async throws {
-        let markerKey = Self.objectKey(forPath: path) + "/"
+        try refuseBucketLevelWrite(path: path)
+        let (bucket, key) = try mode.resolve(path: path)
+        let markerKey = key + "/"
         let request = try buildSignedRequest(
-            method: "PUT", key: markerKey, query: [], body: Data(),
+            bucket: bucket, method: "PUT", key: markerKey, query: [], body: Data(),
             payloadHash: SigV4Signer.emptyPayloadHash)
         try await sendExpectingSuccess(request, path: path)
     }
@@ -252,6 +362,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// destination and the rest still at the source, with no rollback (v1—
     /// S3 has no multi-object transaction to lean on here).
     public func rename(from: String, to: String) async throws {
+        // Both ends, and before the destination pre-check, so a refused
+        // rename issues no request at all.
+        try refuseBucketLevelWrite(path: from)
+        try refuseBucketLevelWrite(path: to)
         do {
             _ = try await stat(path: to)
             throw RemoteFSError.protocolError(reason: "Destination already exists: \(to)")
@@ -260,16 +374,22 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         }
         let fromKind = try await stat(path: from).kind
         if fromKind == .directory {
-            let fromPrefix = Self.s3Prefix(forPath: from)
-            let toPrefix = Self.s3Prefix(forPath: to)
-            for key in try await allObjectKeys(underPrefix: fromPrefix) {
+            let (fromBucket, fromPrefix) = try resolvePrefix(path: from)
+            let (toBucket, toPrefix) = try resolvePrefix(path: to)
+            for key in try await allObjectKeys(bucket: fromBucket, underPrefix: fromPrefix) {
                 let destKey = toPrefix + key.dropFirst(fromPrefix.count)
-                try await copyObject(fromKey: key, toKey: String(destKey))
-                try await delete(key: key)
+                try await copyObject(
+                    sourceBucket: fromBucket, fromKey: key,
+                    destinationBucket: toBucket, toKey: String(destKey))
+                try await delete(bucket: fromBucket, key: key)
             }
         } else {
-            try await copyObject(fromKey: Self.objectKey(forPath: from), toKey: Self.objectKey(forPath: to))
-            try await delete(key: Self.objectKey(forPath: from))
+            let (fromBucket, fromKey) = try mode.resolve(path: from)
+            let (toBucket, toKey) = try mode.resolve(path: to)
+            try await copyObject(
+                sourceBucket: fromBucket, fromKey: fromKey,
+                destinationBucket: toBucket, toKey: toKey)
+            try await delete(bucket: fromBucket, key: fromKey)
         }
     }
 
@@ -297,13 +417,15 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// substring check on the body is enough to catch a partial failure
     /// without a full XML parse.
     public func deleteTree(at path: String) async throws {
-        let keys = try await allObjectKeys(underPrefix: Self.s3Prefix(forPath: path))
+        try refuseBucketLevelWrite(path: path)
+        let (bucket, treePrefix) = try resolvePrefix(path: path)
+        let keys = try await allObjectKeys(bucket: bucket, underPrefix: treePrefix)
         for batch in keys.chunked(into: 1000) {
             try Task.checkCancellation()
             let body = try Self.deleteObjectsXML(keys: batch)
             let md5 = Data(Insecure.MD5.hash(data: body)).base64EncodedString()
             let request = try buildSignedRequest(
-                method: "POST", key: "", query: [(name: "delete", value: "")],
+                bucket: bucket, method: "POST", key: "", query: [(name: "delete", value: "")],
                 extraHeaders: ["Content-MD5": md5], body: body,
                 payloadHash: SigV4Signer.hexSHA256(body))
 
@@ -354,9 +476,13 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         method: String, key: String, query: [(name: String, value: String)],
         extraHeaders: [String: String], body: Data?, payloadHash: String
     ) throws -> URLRequest {
-        try buildSignedRequest(
-            method: method, key: key, query: query, extraHeaders: extraHeaders,
-            body: body, payloadHash: payloadHash)
+        // `key` crossed a seam that knows nothing about buckets, so it is
+        // the mode key `objectKey(forPath:)` produced — split it again
+        // through the one resolver rather than assuming a bucket here.
+        let (bucket, objectKey) = try mode.resolve(path: "/" + key)
+        return try buildSignedRequest(
+            bucket: bucket, method: method, key: objectKey, query: query,
+            extraHeaders: extraHeaders, body: body, payloadHash: payloadHash)
     }
 
     /// `S3RequestBuilder.perform`: a thin pass-through to `send`, so an
@@ -406,17 +532,87 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// 404 → `.notFound`, any other non-2xx → `.protocolError`, and a
     /// transport-level (network) failure → `.connectionFailed`.
     private func fetchPage(
-        prefix: String, continuationToken: String?
+        bucket: String, prefix: String, continuationToken: String?
     ) async throws -> (items: [RemoteFileItem], continuationToken: String?, eTags: [String: String]) {
-        let request = try buildListRequest(prefix: prefix, continuationToken: continuationToken)
+        let request = try buildListRequest(
+            bucket: bucket, prefix: prefix, continuationToken: continuationToken)
         let (data, response) = try await send(request)
 
         switch response.statusCode {
         case 200..<300:
-            return try S3ListParser.parse(data, prefix: prefix)
+            let page = try S3ListParser.parse(data, prefix: prefix)
+            return rerootedIntoBucket(bucket, page)
         default:
             throw Self.mapErrorStatus(response.statusCode, path: "/" + prefix)
         }
+    }
+
+    /// The listing's items carry BUCKET-relative paths (`"/a.txt"`), because
+    /// that is all a `ListObjectsV2` response knows. In bucket-list mode a
+    /// browser path starts with the bucket, so every path handed back is
+    /// prefixed with it — the exact inverse of `RootMode.resolve`, without
+    /// which the next navigation would resolve `/a.txt` against whatever
+    /// bucket its first component happened to name. A no-op in
+    /// `.bucket` mode, where the two are the same string.
+    private func rerootedIntoBucket(
+        _ bucket: String,
+        _ page: (items: [RemoteFileItem], continuationToken: String?, eTags: [String: String])
+    ) -> (items: [RemoteFileItem], continuationToken: String?, eTags: [String: String]) {
+        guard case .bucketList = mode else { return page }
+        let root = "/" + bucket
+        let items = page.items.map {
+            RemoteFileItem(
+                name: $0.name, path: root + $0.path, kind: $0.kind, size: $0.size,
+                modifiedAt: $0.modifiedAt, permissions: $0.permissions,
+                owner: $0.owner, group: $0.group)
+        }
+        let eTags = Dictionary(uniqueKeysWithValues: page.eTags.map { (root + $0.key, $0.value) })
+        return (items, page.continuationToken, eTags)
+    }
+
+    /// One signed `GET /` on the BARE endpoint — S3's account-level
+    /// `ListBuckets` — parsed into one directory row per bucket. Called on
+    /// connect in bucket-list mode, and again whenever `/` is listed.
+    ///
+    /// 403 is `bucketListForbidden` rather than `.authenticationFailed`:
+    /// the key authenticated fine, it just may not enumerate the account's
+    /// buckets. Everything else keeps the mapping every other request has,
+    /// so a provider that does not implement `ListBuckets` at all is not
+    /// reported as a missing permission.
+    private func listBuckets() async throws -> [RemoteFileItem] {
+        let url = try Self.bucketListURL(config: config)
+        let request = try S3RequestSigning.signedRequest(
+            url: url, method: "GET", canonicalPath: "/", query: [], extraHeaders: [:],
+            body: nil, payloadHash: SigV4Signer.emptyPayloadHash, config: config)
+        let (data, response) = try await send(request)
+
+        switch response.statusCode {
+        case 200..<300:
+            return try S3ListParser.parseBuckets(data)
+        case 403:
+            throw RemoteFSError.bucketListForbidden
+        default:
+            throw Self.mapErrorStatus(response.statusCode, path: "/")
+        }
+    }
+
+    /// `ListBuckets` is an ACCOUNT-level call: it is always `GET /` on the
+    /// endpoint's own host, in BOTH addressing styles. Virtual-hosted
+    /// addressing has no bucket to put in front of the host here — and with
+    /// an empty one, `"\(bucket).\(host)"` would resolve to a different
+    /// name entirely — so this deliberately does not go through
+    /// `requestURL`.
+    private static func bucketListURL(config: S3ConnectionConfig) throws -> URL {
+        guard var components = URLComponents(string: config.endpoint) else {
+            throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
+        }
+        components.percentEncodedPath = "/"
+        components.percentEncodedQuery = nil
+        guard let url = components.url else {
+            throw RemoteFSError.connectionFailed(
+                reason: "Failed to build S3 request URL for endpoint: \(config.endpoint)")
+        }
+        return url
     }
 
     /// A signed `PUT {toKey}` carrying `x-amz-copy-source` — S3's
@@ -446,10 +642,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// only remaining copy of the data. A real `CopyObjectResult` body never
     /// contains an `<Error` element, so a plain substring check is enough to
     /// catch this without a full XML parse.
-    private func copyObject(fromKey: String, toKey: String) async throws {
-        let copySource = "/\(config.bucket)/\(SigV4Signer.canonicalURI(path: fromKey))"
+    private func copyObject(
+        sourceBucket: String, fromKey: String, destinationBucket: String, toKey: String
+    ) async throws {
+        let copySource = "/\(sourceBucket)/\(SigV4Signer.canonicalURI(path: fromKey))"
         let request = try buildSignedRequest(
-            method: "PUT", key: toKey, query: [],
+            bucket: destinationBucket, method: "PUT", key: toKey, query: [],
             extraHeaders: ["x-amz-copy-source": copySource], body: Data(),
             payloadHash: SigV4Signer.emptyPayloadHash)
 
@@ -471,11 +669,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// into one list of keys — exactly what `rename` needs to re-key a
     /// directory (and what `deleteTree`, M13/T8, will need to remove one).
     /// Follows `NextContinuationToken` pagination the same way `list` does.
-    private func allObjectKeys(underPrefix prefix: String) async throws -> [String] {
+    private func allObjectKeys(bucket: String, underPrefix prefix: String) async throws -> [String] {
         var keys: [String] = []
         var token: String?
         repeat {
-            let request = try buildListRequest(prefix: prefix, continuationToken: token, delimiter: false)
+            let request = try buildListRequest(
+                bucket: bucket, prefix: prefix, continuationToken: token, delimiter: false)
             let (data, response) = try await send(request)
             guard (200..<300).contains(response.statusCode) else {
                 throw Self.mapErrorStatus(response.statusCode, path: "/" + prefix)
@@ -581,10 +780,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     }
 
     private func buildListRequest(
-        prefix: String, continuationToken: String?, delimiter: Bool = true
+        bucket: String, prefix: String, continuationToken: String?, delimiter: Bool = true
     ) throws -> URLRequest {
         let queryPairs = Self.queryPairs(prefix: prefix, continuationToken: continuationToken, delimiter: delimiter)
-        let url = try Self.requestURL(config: config, queryPairs: queryPairs)
+        let url = try Self.requestURL(config: config, bucket: bucket, queryPairs: queryPairs)
         return try S3RequestSigning.signedRequest(
             url: url, method: "GET", canonicalPath: url.path.isEmpty ? "/" : url.path,
             query: queryPairs, extraHeaders: [:], body: nil,
@@ -603,14 +802,15 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// AWS does not require it to be signed) must set it on the returned
     /// `URLRequest` directly, never pass it here.
     private func buildSignedRequest(
-        method: String, key: String, query: [(name: String, value: String)],
+        bucket: String, method: String, key: String, query: [(name: String, value: String)],
         extraHeaders: [String: String] = [:], body: Data? = nil,
         payloadHash: String
     ) throws -> URLRequest {
-        let url = try Self.keyRequestURL(config: config, key: key, queryPairs: query)
+        let url = try Self.keyRequestURL(config: config, bucket: bucket, key: key, queryPairs: query)
         return try S3RequestSigning.signedRequest(
             url: url, method: method,
-            canonicalPath: Self.canonicalKeyPath(config: config, key: key), query: query,
+            canonicalPath: Self.canonicalKeyPath(config: config, bucket: bucket, key: key),
+            query: query,
             extraHeaders: extraHeaders, body: body, payloadHash: payloadHash, config: config)
     }
 
@@ -627,19 +827,22 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `URLComponents` re-encode a key or query value with its own (looser)
     /// rules would desync the wire request from what the signer signed.
     private static func keyRequestURL(
-        config: S3ConnectionConfig, key: String, queryPairs: [(name: String, value: String)]
+        config: S3ConnectionConfig, bucket: String, key: String,
+        queryPairs: [(name: String, value: String)]
     ) throws -> URL {
         guard var components = URLComponents(string: config.endpoint) else {
             throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
         }
         if config.usePathStyle {
-            components.percentEncodedPath = SigV4Signer.canonicalURI(path: canonicalKeyPath(config: config, key: key))
+            components.percentEncodedPath = SigV4Signer.canonicalURI(
+                path: canonicalKeyPath(config: config, bucket: bucket, key: key))
         } else {
             guard let host = components.host else {
                 throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint host: \(config.endpoint)")
             }
-            components.host = "\(config.bucket).\(host)"
-            components.percentEncodedPath = SigV4Signer.canonicalURI(path: canonicalKeyPath(config: config, key: key))
+            components.host = "\(bucket).\(host)"
+            components.percentEncodedPath = SigV4Signer.canonicalURI(
+                path: canonicalKeyPath(config: config, bucket: bucket, key: key))
         }
 
         components.percentEncodedQuery = queryPairs.isEmpty ? nil : SigV4Signer.canonicalQueryString(query: queryPairs)
@@ -661,9 +864,11 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `"/\(bucket)/\(key)"` concatenation would leave behind, matching
     /// `requestURL`'s bucket-root path (`"/" + bucket`, no trailing slash)
     /// used for `ListObjectsV2`.
-    private static func canonicalKeyPath(config: S3ConnectionConfig, key: String) -> String {
+    private static func canonicalKeyPath(
+        config: S3ConnectionConfig, bucket: String, key: String
+    ) -> String {
         guard config.usePathStyle else { return "/\(key)" }
-        return key.isEmpty ? "/\(config.bucket)" : "/\(config.bucket)/\(key)"
+        return key.isEmpty ? "/\(bucket)" : "/\(bucket)/\(key)"
     }
 
     /// Builds the `<Delete>` XML body for one `DeleteObjects` batch — an
@@ -678,9 +883,15 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         return Data(xml.utf8)
     }
 
-    /// Maps an absolute browser path to the S3 object key used for a FILE
-    /// (unlike `s3Prefix`, no trailing slash — a key names one object, not
-    /// a "directory" prefix): no leading slash, no trailing slash.
+    /// Maps an absolute browser path to the KEY the seams outside this file
+    /// speak in — `S3RequestBuilder.signedRequest` (the uploader) and
+    /// `PresignedURLProvider.presignedURL` (the App): the path with no
+    /// leading and no trailing slash. In `.bucket` mode that IS the S3
+    /// object key; in `.bucketList` mode it still carries the bucket as its
+    /// first component, and both seams hand it straight back to
+    /// `RootMode.resolve` to split it again. `write` is its only caller
+    /// here — everything else resolves the path to a `(bucket, key)` pair
+    /// directly.
     private static func objectKey(forPath path: String) -> String {
         let normalized = RemotePath.normalizedAbsolute(path)
         if normalized == "/" { return "" }
@@ -728,18 +939,18 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// space, and rejected as a signature mismatch (HTTP 403). See M12
     /// review finding I-1.
     private static func requestURL(
-        config: S3ConnectionConfig, queryPairs: [(name: String, value: String)]
+        config: S3ConnectionConfig, bucket: String, queryPairs: [(name: String, value: String)]
     ) throws -> URL {
         guard var components = URLComponents(string: config.endpoint) else {
             throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
         }
         if config.usePathStyle {
-            components.path = "/" + config.bucket
+            components.path = "/" + bucket
         } else {
             guard let host = components.host else {
                 throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint host: \(config.endpoint)")
             }
-            components.host = "\(config.bucket).\(host)"
+            components.host = "\(bucket).\(host)"
             components.path = ""
         }
 
@@ -750,16 +961,6 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         }
         return url
     }
-
-    /// Maps an absolute browser path (`"/"`, `"/sub"`, …) to the S3 key
-    /// prefix used in the query (`""`, `"sub/"`, …): no leading slash,
-    /// trailing slash except for the empty (root) prefix.
-    private static func s3Prefix(forPath path: String) -> String {
-        let normalized = RemotePath.normalizedAbsolute(path)
-        if normalized == "/" { return "" }
-        let trimmed = String(normalized.dropFirst())
-        return trimmed.hasSuffix("/") ? trimmed : trimmed + "/"
-    }
 }
 
 /// M14/T2: `PresignedURLProvider` conformance — a time-limited signed URL
@@ -768,8 +969,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
 extension S3FileSystem: PresignedURLProvider {
     public func presignedURL(method: PresignedMethod, key: String, expiresIn: TimeInterval) throws -> URL {
         let seconds = Int(max(1, min(604_800, expiresIn))) // SigV4 max 7 days
+        // Same seam as `signedRequest` above: a `key` from outside is a mode
+        // key, and only `RootMode.resolve` knows which bucket it names.
+        let (bucket, objectKey) = try mode.resolve(path: "/" + key)
         // Base object URL (no query yet).
-        let base = try Self.keyRequestURL(config: config, key: key, queryPairs: [])
+        let base = try Self.keyRequestURL(
+            config: config, bucket: bucket, key: objectKey, queryPairs: [])
         guard let host = base.host else {
             throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
         }
@@ -779,7 +984,7 @@ extension S3FileSystem: PresignedURLProvider {
             region: config.region, service: "s3", sessionToken: config.sessionToken)
         let query = signer.presignedQuery(
             method: method.rawValue, host: hostHeader,
-            path: Self.canonicalKeyPath(config: config, key: key),
+            path: Self.canonicalKeyPath(config: config, bucket: bucket, key: objectKey),
             expiresInSeconds: seconds, date: Date())
         guard var comps = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
             throw RemoteFSError.protocolError(reason: "Failed to build presigned URL")
