@@ -26,6 +26,21 @@ public enum RemoteFSError: Error, Equatable, Sendable {
     /// on an empty browser explains nothing at the form, which is where the
     /// user is looking.
     case bucketListEmpty
+    /// An operation whose target IS a bucket rather than something inside
+    /// one, refused by `S3FileSystem` (2026-09-02). `operation` names the
+    /// `RemoteFileSystem` call that was refused; `path` is the browser path
+    /// that resolved to a bucket root.
+    ///
+    /// Its own case rather than a `.protocolError` with a sentence in it,
+    /// for two reasons. The refusal is a RULE, so a test can assert the
+    /// rule was what refused — a `.protocolError` check is satisfied by any
+    /// transport hiccup that happens to carry the same case (Task 2 review,
+    /// I-2). And it gives the UI something to map to a written message
+    /// instead of rendering a raw `reason` at the user.
+    ///
+    /// Only reachable in bucket-list mode: with the toggle off the same
+    /// path is the bucket ROOT, which has always been the caller's business.
+    case bucketLevelRefused(operation: String, path: String)
 
     /// True only for `.connectionFailed`. The transfer queue (M5d/T3) uses
     /// this — and ONLY this — to classify a mid-transfer error as

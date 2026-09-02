@@ -362,6 +362,36 @@ struct S3FileSystemTests {
         }
     }
 
+    /// Runs `operation` and asserts the BUCKET-LEVEL guard is what refused
+    /// it — its own error case, naming the operation and the path.
+    ///
+    /// `expectProtocolError` above cannot make that claim and never could:
+    /// `FakeS3Transport` throws `.protocolError` when it runs out of canned
+    /// responses, so every one of those checks passed with the guard
+    /// deleted (Task 2 review, I-2). The only load-bearing assertion in
+    /// that test was the request count. Here the case itself is the
+    /// assertion, and the transport's exhaustion error cannot satisfy it.
+    private func expectBucketRefusal(
+        _ expectedOperation: String, _ expectedPath: String,
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ operation: () async throws -> Void
+    ) async {
+        do {
+            try await operation()
+            Issue.record("expected throw", sourceLocation: sourceLocation)
+        } catch let error as RemoteFSError {
+            guard case .bucketLevelRefused(let operationName, let path) = error else {
+                Issue.record(
+                    "expected .bucketLevelRefused, got \(error)", sourceLocation: sourceLocation)
+                return
+            }
+            #expect(operationName == expectedOperation, sourceLocation: sourceLocation)
+            #expect(path == expectedPath, sourceLocation: sourceLocation)
+        } catch {
+            Issue.record("unexpected error type: \(error)", sourceLocation: sourceLocation)
+        }
+    }
+
     @Test func readStreamThrowsProtocolError() async throws {
         let (fs, _) = try await connect(responses: [])
         await expectProtocolError {
@@ -1310,21 +1340,84 @@ struct S3FileSystemTests {
     @Test func aBucketItselfIsNotAThingToWriteRenameOrDelete() async throws {
         let (fs, transport) = try await connectAtBucketList(responses: [])
 
-        await expectProtocolError { try await fs.delete(path: "/macscp-seed") }
-        await expectProtocolError { try await fs.deleteTree(at: "/macscp-seed") }
-        await expectProtocolError { try await fs.createDirectory(at: "/macscp-seed") }
-        await expectProtocolError {
+        await expectBucketRefusal("delete", "/macscp-seed") {
+            try await fs.delete(path: "/macscp-seed")
+        }
+        await expectBucketRefusal("deleteTree", "/macscp-seed") {
+            try await fs.deleteTree(at: "/macscp-seed")
+        }
+        await expectBucketRefusal("createDirectory", "/macscp-seed") {
+            try await fs.createDirectory(at: "/macscp-seed")
+        }
+        await expectBucketRefusal("write", "/macscp-seed") {
             try await fs.write(
                 path: "/macscp-seed", mode: .overwrite,
                 contents: AsyncThrowingStream<Data, Error> { $0.finish() })
         }
-        await expectProtocolError { try await fs.rename(from: "/macscp-seed", to: "/macscp-third") }
-        await expectProtocolError { try await fs.rename(from: "/macscp-seed/a.txt", to: "/macscp-third") }
+        // Both ends of a rename, and the refusal names the END that was a
+        // bucket — the source here, the DESTINATION below.
+        await expectBucketRefusal("rename", "/macscp-seed") {
+            try await fs.rename(from: "/macscp-seed", to: "/macscp-third")
+        }
+        await expectBucketRefusal("rename", "/macscp-third") {
+            try await fs.rename(from: "/macscp-seed/a.txt", to: "/macscp-third")
+        }
 
         // Refused BEFORE the wire, every time: only the connect-time
         // ListBuckets was ever sent.
         let sent = await transport.requests.count
         #expect(sent == 1)
+    }
+
+    /// The seam that hands write capability OUT of the process (Task 2
+    /// review, I-1). `PresignedURLSheet` lets the user type the target key
+    /// for a PUT, and every key ever typed there was bucket-relative — so
+    /// in this mode a plain `x.txt` resolves to the bucket `x.txt` with an
+    /// EMPTY key. Path-style, a presigned PUT to a bucket root is
+    /// `CreateBucket`, and the URL is by design handed to a third party.
+    ///
+    /// Refused for `.get` too, and not only for the `CreateBucket` shape: a
+    /// signed GET on a bucket root is a listing of somebody's whole bucket,
+    /// handed out with the same clipboard button.
+    @Test func aPresignedURLForABucketItselfIsRefusedByTheSameGuard() async throws {
+        let (fs, _) = try await connectAtBucketList(responses: [])
+
+        for method in [PresignedMethod.put, .get] {
+            do {
+                _ = try fs.presignedURL(method: method, key: "macscp-third", expiresIn: 600)
+                Issue.record("expected throw for \(method)")
+            } catch let error as RemoteFSError {
+                guard case .bucketLevelRefused(let operation, let path) = error else {
+                    Issue.record("expected .bucketLevelRefused for \(method), got \(error)")
+                    continue
+                }
+                #expect(operation == "presignedURL")
+                #expect(path == "/macscp-third")
+            }
+        }
+    }
+
+    /// The positive check beside it: one level in, the same seam still
+    /// signs a URL — so the refusal above is about the bucket LEVEL and not
+    /// about this mode. (`aPresignedURLRoutesIntoTheBucketNamedByTheKey`
+    /// above pins the routing; this pins that the guard did not swallow it.)
+    @Test func aPresignedURLOneLevelInsideABucketIsStillSigned() async throws {
+        let (fs, _) = try await connectAtBucketList(responses: [])
+
+        let url = try fs.presignedURL(method: .put, key: "macscp-third/x.txt", expiresIn: 600)
+
+        #expect(url.path == "/macscp-third/x.txt")
+    }
+
+    /// …and with the toggle OFF the very same typed key still signs, byte
+    /// for byte as before: there the key is bucket-relative by definition
+    /// and names an object, not a bucket.
+    @Test func withTheToggleOffAPresignedURLForATypedKeyIsUnchanged() async throws {
+        let (fs, _) = try await connect(responses: [])
+
+        let url = try fs.presignedURL(method: .put, key: "macscp-third", expiresIn: 600)
+
+        #expect(url.path == "/macscp-seed/macscp-third")
     }
 
     /// The positive check beside it: one level deeper, inside the bucket,

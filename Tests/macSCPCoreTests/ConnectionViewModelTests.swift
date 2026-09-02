@@ -1443,6 +1443,65 @@ struct ConnectionViewModelTests {
             field: .schema("S3Field.bucket")))
     }
 
+    /// The form's own path, end to end: with the toggle ON a blank bucket
+    /// is no longer a pre-dial refusal, and the config that reaches the
+    /// connector carries the toggle. The counterpart of
+    /// `connectWithS3KindAndMissingBucketFailsBeforeConnecting` above,
+    /// which still refuses the same blank with the toggle off.
+    @Test func connectWithTheToggleOnDialsWithNoBucketAtAll() async {
+        let vm = makeVM(connector: { config, _ in
+            guard case .s3(let s3) = config else {
+                Issue.record("expected .s3 config")
+                throw RemoteFSError.protocolError(reason: "expected .s3 config")
+            }
+            #expect(s3.startsAtBucketList == true)
+            #expect(s3.bucket == "")
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+        vm.kind = .s3
+        vm.s3AccessKeyID = "AKIAEXAMPLE"
+        vm.s3SecretAccessKey = "shh-secret"
+        vm.s3Region = "eu-central-1"
+        vm.s3Endpoint = "https://s3.eu-central-1.amazonaws.com"
+        vm.s3Bucket = ""
+        vm.s3StartsAtBucketList = true
+
+        let fs = await vm.connect()
+
+        #expect(fs != nil)
+        #expect(vm.state == .idle)
+    }
+
+    // MARK: - The two bucket-list connect outcomes (2026-09-02)
+
+    /// `ListBuckets` refused with 403: the credentials are fine and ONE
+    /// permission is missing, so the answer is the toggle, not the key —
+    /// and the toggle is the row the form highlights.
+    @Test func aForbiddenBucketListPointsAtTheToggleAndNotAtTheCredentials() {
+        let state = ConnectionViewModel.failedState(for: RemoteFSError.bucketListForbidden)
+
+        #expect(state == .failed(
+            message: CoreL10n.string("core.connect.s3BucketListForbidden"),
+            field: .schema("\(S3Field.namespace).\(S3Field.startsAtBucketList.rawValue)")))
+        // The positive check beside it: the catalog really answered. A
+        // missing key comes back AS the key (`CoreL10n.string`), which the
+        // expectation above would happily compare equal to itself.
+        #expect(CoreL10n.string("core.connect.s3BucketListForbidden")
+            != "core.connect.s3BucketListForbidden")
+    }
+
+    /// `ListBuckets` succeeded and the account holds nothing. Nothing in the
+    /// form is wrong, so no row is highlighted — the message says what the
+    /// account is.
+    @Test func anEmptyBucketListIsItsOwnMessageWithNoFieldToBlame() {
+        let state = ConnectionViewModel.failedState(for: RemoteFSError.bucketListEmpty)
+
+        #expect(state == .failed(
+            message: CoreL10n.string("core.connect.s3BucketListEmpty"), field: nil))
+        #expect(CoreL10n.string("core.connect.s3BucketListEmpty")
+            != "core.connect.s3BucketListEmpty")
+    }
+
     @Test @MainActor func validateForEditSaveWithS3KindBuildsStoredSessionWithSecretFreeConfig() {
         let vm = makeVM()
         let stored = s3Session(name: "s3-prod")

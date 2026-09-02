@@ -289,6 +289,26 @@ struct RemoteBrowserViewModelTests {
         #expect(await fs.writeModes["/neu.txt"] == nil)
     }
 
+    /// A bucket-level refusal (2026-09-02) is its own `RemoteFSError` case,
+    /// so it gets its own sentence instead of falling into `default:` and
+    /// dumping `String(describing:)` — which would print the operation name
+    /// and the path at the user.
+    @Test func aBucketLevelRefusalGetsItsOwnMessageRatherThanARawDump() {
+        let error = RemoteFSError.bucketLevelRefused(
+            operation: "delete", path: "/macscp-seed")
+
+        let message = RemoteBrowserViewModel.message(for: error, path: "/macscp-seed")
+
+        #expect(message == CoreL10n.string("core.connect.s3BucketLevelRefused"))
+        // Positive check beside it: the catalog answered (a missing key
+        // comes back as the key itself), and the raw dump is NOT what came
+        // out.
+        #expect(CoreL10n.string("core.connect.s3BucketLevelRefused")
+            != "core.connect.s3BucketLevelRefused")
+        #expect(message != String(
+            format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)))
+    }
+
     /// The deliberate asymmetry to the test above (M18a final review): the
     /// SAME probe guards `createFolder`, but `createDirectory` is idempotent
     /// by contract — it cannot destroy data — so an unverifiable probe there

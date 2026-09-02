@@ -135,6 +135,7 @@
 "connection.s3.endpoint" = "Endpunkt";
 "connection.s3.region" = "Region";
 "connection.s3.bucket" = "Bucket";
+"connection.s3.startsAtBucketList" = "Mit der Bucket-Liste starten";
 "connection.s3.accessKey" = "Access Key ID";
 "connection.s3.secretKey" = "Secret Access Key";
 "connection.s3.pathStyle" = "Path-Style-URLs verwenden";

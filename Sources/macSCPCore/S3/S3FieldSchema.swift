@@ -4,6 +4,7 @@ import Foundation
 /// factory and its persistence adapter (M22).
 public enum S3Field: String, CaseIterable, BackendFieldID {
     case endpoint, region, bucket, accessKeyID, secretAccessKey, usePathStyle
+    case startsAtBucketList
 
     public static let namespace = "S3Field"
 }
@@ -32,9 +33,39 @@ public enum S3FieldSchema {
                             kind: .text,
                             isRequired: true,
                             invalidMessageKey: "core.connect.s3RegionRequired"),
+            // BEFORE the bucket, because it decides whether the bucket row
+            // is there at all: a control that removes the row above itself
+            // reads as a glitch.
+            //
+            // NOT identifying, for the same reason `usePathStyle` is not:
+            // it decides where the browser OPENS, not which account or
+            // bucket is reached. Two sessions differing only here are the
+            // same connection seen from two starting points — and with the
+            // toggle on the bucket is blank, so the identity key already
+            // tells the two apart through `bucket` itself.
+            ConnectionField(id: S3Field.startsAtBucketList.rawValue,
+                            labelKey: "connection.s3.startsAtBucketList",
+                            labelDefault: "Start at the bucket list", kind: .toggle),
+            // Hidden while the connection starts at the bucket LIST, where
+            // there is no one bucket to name (2026-09-02). `firstViolation`
+            // walks `visibleFields`, so a hidden bucket is not a blank
+            // required field either — and `makeConfig` carries the same
+            // exemption, because it never sees the schema.
+            //
+            // The condition compares against the string "false" rather than
+            // negating "true", because `FieldCondition` has no negation and
+            // is not being given one for this. That makes an ABSENT key read
+            // as "not visible", so both baselines below write the toggle out
+            // explicitly and `bothBaselinesWriteTheToggleOutAsOff` holds them
+            // to it. Nothing else in the tree hands this schema a bag that
+            // skipped them: `values(from:)` writes the key, and
+            // `SessionImportPlanner` overlays a file's bag onto
+            // `defaultValues`.
             ConnectionField(id: S3Field.bucket.rawValue,
                             labelKey: "connection.s3.bucket", labelDefault: "Bucket",
                             kind: .text,
+                            visibleWhen: FieldCondition(
+                                field: S3Field.startsAtBucketList.rawValue, equals: "false"),
                             isRequired: true,
                             invalidMessageKey: "core.connect.s3BucketRequired",
                             identity: .verbatim),
@@ -92,6 +123,10 @@ public enum S3FieldSchema {
     public static let editBaseline: FieldValues = {
         var values = FieldValues()
         values[bool: S3Field.usePathStyle] = false
+        // Written out for the same reason as `usePathStyle` — and for one
+        // more: the bucket field's `visibleWhen` compares against the
+        // literal "false", so an absent key would hide the bucket row.
+        values[bool: S3Field.startsAtBucketList] = false
         return values
     }()
 
@@ -131,12 +166,19 @@ public enum S3FieldSchema {
         for field in S3Field.allCases {
             switch field {
             case .bucket:
+                // Not required while the connection starts at the bucket
+                // list: there is no one bucket then, and the form does not
+                // show the field. The same exemption `visibleWhen` gives
+                // `firstViolation`, restated here because this factory
+                // reads the values and not the schema.
+                guard !values[bool: S3Field.startsAtBucketList] else { break }
                 guard !values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 else { throw RemoteFSError.connectionFailed(reason: "Enter the bucket") }
             case .endpoint:
                 guard !values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 else { throw RemoteFSError.connectionFailed(reason: "Enter the endpoint") }
-            case .region, .accessKeyID, .secretAccessKey, .usePathStyle:
+            case .region, .accessKeyID, .secretAccessKey, .usePathStyle,
+                 .startsAtBucketList:
                 // `region` needs no check HERE, but it is not optional: the
                 // schema marks it `isRequired: true` above, and
                 // `BackendDescriptor.firstViolation` enforces that before this
@@ -149,8 +191,9 @@ public enum S3FieldSchema {
                 // — which one depends on what else about the request is off,
                 // but both mean AWS rejected it. A server that ignores the
                 // field is not evidence the field is unneeded, only that
-                // it isn't the one enforcing it. `usePathStyle` is a toggle
-                // whose every value is valid. The two credential fields belong
+                // it isn't the one enforcing it. `usePathStyle` and
+                // `startsAtBucketList` are toggles whose every value is
+                // valid. The two credential fields belong
                 // to the LOGIN, not the bucket: both `connect()` and
                 // `validateForEditSave()` check them against the schema's own
                 // `isRequired` via `BackendDescriptor.firstViolation` (M23/T6)
@@ -176,12 +219,19 @@ public enum S3FieldSchema {
             endpoint: values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines),
             bucket: values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines),
             usePathStyle: values[bool: S3Field.usePathStyle],
-            sessionToken: nil))
+            sessionToken: nil,
+            startsAtBucketList: values[bool: S3Field.startsAtBucketList]))
     }
 
-    /// Bucket and endpoint host — what identifies an S3 connection to a human.
+    /// Bucket and endpoint host — what identifies an S3 connection to a
+    /// human. Rendered in the sidebar subtitle and in audit lines.
+    ///
+    /// With the toggle on there is no bucket, and the "bucket @ host" shape
+    /// would degrade to a leading " @ " with nothing in front of it. The
+    /// host alone is what such a connection actually is.
     public static func displaySummary(_ values: FieldValues) -> String {
         let host = URL(string: values[S3Field.endpoint])?.host() ?? values[S3Field.endpoint]
+        guard !values[bool: S3Field.startsAtBucketList] else { return host }
         return "\(values[S3Field.bucket]) @ \(host)"
     }
 
@@ -195,6 +245,7 @@ public enum S3FieldSchema {
         values[S3Field.bucket] = stored.bucket
         values[S3Field.accessKeyID] = stored.accessKeyID
         values[bool: S3Field.usePathStyle] = stored.usePathStyle
+        values[bool: S3Field.startsAtBucketList] = stored.startsAtBucketList
         // secretAccessKey deliberately absent: it lives in the Keychain.
         return values
     }
@@ -232,7 +283,8 @@ public enum S3FieldSchema {
             region: values[S3Field.region].trimmingCharacters(in: .whitespacesAndNewlines),
             endpoint: values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines),
             bucket: values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines),
-            usePathStyle: values[bool: S3Field.usePathStyle])
+            usePathStyle: values[bool: S3Field.usePathStyle],
+            startsAtBucketList: values[bool: S3Field.startsAtBucketList])
     }
 
     /// Writes ONLY the fields `S3Field` covers, mirroring

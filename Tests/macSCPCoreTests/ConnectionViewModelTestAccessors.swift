@@ -4,7 +4,7 @@ import Foundation
 // S3 and WebDAV pass-through accessors `ConnectionViewModel` carried in
 // production before M22 made the connection form data-driven. Production
 // code now reads and writes `values` directly and has no caller left for
-// any of these eight (verified by deleting them from `ConnectionViewModel`
+// any of these nine (verified by deleting them from `ConnectionViewModel`
 // and rebuilding `MacSCPApp`/`MacSCPCLI` clean — only test files failed to
 // compile). They stay here as test-only convenience so the ~69 existing call
 // sites across the test target keep reading `vm.s3Bucket`/`vm.webdavBaseURL`/
@@ -42,6 +42,11 @@ extension ConnectionViewModel {
     var s3UsePathStyle: Bool {
         get { values[bool: S3Field.usePathStyle] }
         set { values[bool: S3Field.usePathStyle] = newValue }
+    }
+
+    var s3StartsAtBucketList: Bool {
+        get { values[bool: S3Field.startsAtBucketList] }
+        set { values[bool: S3Field.startsAtBucketList] = newValue }
     }
 
     var webdavBaseURL: String {

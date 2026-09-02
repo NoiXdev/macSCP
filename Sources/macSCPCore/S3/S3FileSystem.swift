@@ -180,12 +180,21 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// every object of one bucket into another and delete the originals;
     /// `deleteTree("/b1")` would empty it. Both from one keystroke on a row
     /// that looks like a folder.
-    private func refuseBucketLevelWrite(path: String) throws {
+    ///
+    /// SCOPE: the mutating operations, plus `presignedURL` — the one seam
+    /// that hands write capability OUT of this process, where a PUT to a
+    /// path-style bucket root is `CreateBucket` (Task 2 review, I-1). Plain
+    /// READS at bucket level are deliberately NOT refused here: a bucket row
+    /// is a `.directory`, so the browser reaches its contents through `list`
+    /// and never through `readStream`.
+    ///
+    /// `operation` names the call being refused, so the error says which
+    /// rule stopped what — and so a test can assert the refusal per
+    /// operation instead of settling for an aggregate request count.
+    private func refuseBucketLevelOperation(_ operation: String, path: String) throws {
         guard case .bucketList = mode else { return }
         guard try mode.resolve(path: path).key.isEmpty else { return }
-        throw RemoteFSError.protocolError(
-            reason: "S3: \"\(path)\" is a bucket; macSCP does not create, rename, "
-                + "overwrite or delete buckets")
+        throw RemoteFSError.bucketLevelRefused(operation: operation, path: path)
     }
 
     /// The bucket that answers for `path` and the KEY PREFIX inside it —
@@ -302,7 +311,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `TransferEngine` only ever hands an S3 destination `.overwrite` — a
     /// resumed `.append` write from a non-zero offset never reaches here.
     public func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
-        try refuseBucketLevelWrite(path: path)
+        try refuseBucketLevelOperation("write", path: path)
         try await S3Uploader().upload(key: Self.objectKey(forPath: path), contents: contents, using: self)
     }
 
@@ -311,7 +320,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// non-2xx (403/404/other) is still mapped through `sendExpectingSuccess`
     /// like any other request. Delegates to the raw-key overload below.
     public func delete(path: String) async throws {
-        try refuseBucketLevelWrite(path: path)
+        try refuseBucketLevelOperation("delete", path: path)
         let (bucket, key) = try mode.resolve(path: path)
         try await delete(bucket: bucket, key: key)
     }
@@ -336,7 +345,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// recognizes this marker). Idempotent: re-PUTting the same marker is
     /// harmless.
     public func createDirectory(at path: String) async throws {
-        try refuseBucketLevelWrite(path: path)
+        try refuseBucketLevelOperation("createDirectory", path: path)
         let (bucket, key) = try mode.resolve(path: path)
         let markerKey = key + "/"
         let request = try buildSignedRequest(
@@ -364,8 +373,8 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     public func rename(from: String, to: String) async throws {
         // Both ends, and before the destination pre-check, so a refused
         // rename issues no request at all.
-        try refuseBucketLevelWrite(path: from)
-        try refuseBucketLevelWrite(path: to)
+        try refuseBucketLevelOperation("rename", path: from)
+        try refuseBucketLevelOperation("rename", path: to)
         do {
             _ = try await stat(path: to)
             throw RemoteFSError.protocolError(reason: "Destination already exists: \(to)")
@@ -417,7 +426,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// substring check on the body is enough to catch a partial failure
     /// without a full XML parse.
     public func deleteTree(at path: String) async throws {
-        try refuseBucketLevelWrite(path: path)
+        try refuseBucketLevelOperation("deleteTree", path: path)
         let (bucket, treePrefix) = try resolvePrefix(path: path)
         let keys = try await allObjectKeys(bucket: bucket, underPrefix: treePrefix)
         for batch in keys.chunked(into: 1000) {
@@ -971,6 +980,16 @@ extension S3FileSystem: PresignedURLProvider {
         let seconds = Int(max(1, min(604_800, expiresIn))) // SigV4 max 7 days
         // Same seam as `signedRequest` above: a `key` from outside is a mode
         // key, and only `RootMode.resolve` knows which bucket it names.
+        //
+        // Refused at bucket level like the mutating operations (Task 2
+        // review, I-1). `PresignedURLSheet` lets the user TYPE the target
+        // key for a PUT, and every key ever typed there was bucket-relative
+        // — so in this mode a plain `x.txt` resolves to the bucket `x.txt`
+        // with an empty key, and a path-style PUT to a bucket root is
+        // `CreateBucket`, signed and handed to a third party. `.get` is
+        // refused by the same line and for its own reason: a signed GET on
+        // a bucket root is that bucket's whole listing.
+        try refuseBucketLevelOperation("presignedURL", path: "/" + key)
         let (bucket, objectKey) = try mode.resolve(path: "/" + key)
         // Base object URL (no query yet).
         let base = try Self.keyRequestURL(

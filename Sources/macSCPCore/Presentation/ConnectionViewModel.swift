@@ -76,6 +76,13 @@ public final class ConnectionViewModel {
         .schema("\(SSHField.namespace).\(field.rawValue)")
     }
 
+    /// An S3 field as a `Field.schema` key, derived exactly like
+    /// `sshField` above — for the bucket-list outcomes below, which are the
+    /// only S3 failures `failedState` attributes to a row.
+    static func s3Field(_ field: S3Field) -> Field {
+        .schema("\(S3Field.namespace).\(field.rawValue)")
+    }
+
     /// `Sendable` spelled out, like every other nested type here that is
     /// handed around: both payloads are value types that already are, and
     /// under the Swift 6 language mode the enclosing `@MainActor` no longer
@@ -1777,6 +1784,22 @@ public final class ConnectionViewModel {
         case RemoteFSError.authenticationFailed:
             return .failed(
                 message: CoreL10n.string("core.connect.authFailed"),
+                field: nil)
+        // The two S3 bucket-list outcomes (2026-09-02). Both are connect-time
+        // only, and both are reachable ONLY with `startsAtBucketList` on.
+        //
+        // `.bucketListForbidden` is deliberately NOT `authFailed` above: the
+        // credentials are good and one permission is missing, so the fix is
+        // the toggle — which is the row this highlights. `.bucketListEmpty`
+        // blames no row, because nothing in the form is wrong: the account
+        // has no buckets.
+        case RemoteFSError.bucketListForbidden:
+            return .failed(
+                message: CoreL10n.string("core.connect.s3BucketListForbidden"),
+                field: Self.s3Field(.startsAtBucketList))
+        case RemoteFSError.bucketListEmpty:
+            return .failed(
+                message: CoreL10n.string("core.connect.s3BucketListEmpty"),
                 field: nil)
         // Jump host refusing TCP forwarding (M10c/T1 review hand-off,
         // finding 2): Citadel/NIOSSH surfaces this as a plain

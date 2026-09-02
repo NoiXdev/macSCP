@@ -613,6 +613,73 @@ struct LocalizationParityTests {
         #expect(matched > 0, "no catalog declared \(key) -- this check scanned nothing")
     }
 
+    /// The toggle's name exists THREE times: once as the label the form
+    /// renders (the App catalog, keyed by `ConnectionField.labelKey`), once
+    /// as Core's own spelling of it, and once inside every message that
+    /// tells the user to go and work it. In four languages that is twelve
+    /// strings for one name, which is exactly the shape that drifts — and
+    /// the drift is invisible, because each string reads fine on its own.
+    ///
+    /// So: per locale, the label the user SEES and the name Core's messages
+    /// SPELL must be the same string, and every instructing message must
+    /// quote it. The label key is walked back from the schema rather than
+    /// spelled here, so renaming the field moves this check with it.
+    @Test func theMessagesThatNameTheToggleQuoteTheLabelTheUserSees() throws {
+        let toggle = try #require(
+            S3FieldSchema.connection.fields
+                .first { $0.id == S3Field.startsAtBucketList.rawValue },
+            "the S3 connection schema declares no such field — this check scanned nothing")
+        let nameKey = "core.connect.s3StartsAtBucketList"
+        // The two messages that instruct the user about the toggle BY NAME.
+        // A message that stops mentioning it belongs out of this list, not
+        // out of the catalog.
+        let instructingKeys = ["core.connect.s3BucketRequired",
+                               "core.connect.s3BucketListForbidden"]
+
+        var byLocale: [String: [Catalog]] = [:]
+        for (reference, translations) in try Self.allCatalogs() {
+            for catalog in [reference] + translations {
+                byLocale[catalog.locale, default: []].append(catalog)
+            }
+        }
+
+        var comparedLabels = 0
+        var comparedMessages = 0
+        for (locale, catalogs) in byLocale {
+            guard let name = catalogs.compactMap({ $0.entries[nameKey] }).first else { continue }
+            for catalog in catalogs {
+                if let label = catalog.entries[toggle.labelKey] {
+                    comparedLabels += 1
+                    #expect(label == name, """
+                        \(catalog.label) renders the toggle as "\(label)" while \(nameKey) \
+                        spells it "\(name)" — the label the user sees and the name the \
+                        messages quote have drifted apart in \(locale).
+                        """)
+                }
+                for key in instructingKeys {
+                    guard let message = catalog.entries[key] else { continue }
+                    comparedMessages += 1
+                    #expect(message.contains(name), """
+                        \(catalog.label)'s \(key) tells the user to work a toggle it never \
+                        names: it does not contain "\(name)".
+                        """)
+                }
+            }
+        }
+
+        // Floors, not exact counts: adding a language must not be a test
+        // edit. Without them a lookup that came back empty would leave both
+        // loops iterating nothing and reporting success.
+        #expect(comparedLabels >= 4, """
+            only \(comparedLabels) catalog(s) declare the toggle's label \
+            (\(toggle.labelKey)) — the App half of this check scanned almost nothing.
+            """)
+        #expect(comparedMessages >= 8, """
+            only \(comparedMessages) message(s) were checked against the toggle's name — \
+            the Core half of this check scanned almost nothing.
+            """)
+    }
+
     /// The derivation every check above rides on. Without this, a lookup
     /// that came back empty would leave all five of them iterating nothing
     /// and reporting success — which is the failure this whole file was

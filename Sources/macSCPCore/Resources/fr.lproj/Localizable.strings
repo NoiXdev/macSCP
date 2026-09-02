@@ -40,8 +40,14 @@
 
 /* S3 blank-bucket/region messages — each names why the field is required
    rather than pointing at "some S3 field" (v1.3.0 user report) */
-"core.connect.s3BucketRequired" = "Renseignez le bucket. macSCP ouvre un seul bucket par connexion – c'est le premier dossier que vous voyez. Lister tous les buckets d'un compte n'est pas encore pris en charge.";
+"core.connect.s3BucketRequired" = "Renseignez le bucket – c'est le premier dossier que vous voyez. Pour parcourir plutôt tous les buckets du compte, activez « Démarrer sur la liste des buckets ».";
 "core.connect.s3RegionRequired" = "Renseignez la région. Elle fait partie de la signature de la requête et ne peut donc pas être vide ; la plupart des fournisseurs compatibles S3 acceptent us-east-1.";
+
+/* Le commutateur de liste de buckets et ses trois issues (2026-09-02). */
+"core.connect.s3StartsAtBucketList" = "Démarrer sur la liste des buckets";
+"core.connect.s3BucketListForbidden" = "Cette clé n'est pas autorisée à lister les buckets. Désactivez « Démarrer sur la liste des buckets » et renseignez le bucket.";
+"core.connect.s3BucketListEmpty" = "Cette clé peut lister les buckets, mais le compte n'en possède aucun.";
+"core.connect.s3BucketLevelRefused" = "Impossible de faire cela sur un bucket lui-même. Ouvrez d'abord le bucket.";
 
 /* ConnectionViewModel WebDAV form validation (M21/T9) */
 "core.connect.webdavFieldRequired" = "Saisissez l'URL du serveur WebDAV.";

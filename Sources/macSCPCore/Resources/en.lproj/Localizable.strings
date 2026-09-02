@@ -38,8 +38,18 @@
 
 /* S3 blank-bucket/region messages — each names why the field is required
    rather than pointing at "some S3 field" (v1.3.0 user report) */
-"core.connect.s3BucketRequired" = "Enter the bucket. macSCP opens one bucket per connection — the bucket is the first folder you see. Listing every bucket of an account is not supported yet.";
+"core.connect.s3BucketRequired" = "Enter the bucket — it is the first folder you see. To browse every bucket of the account instead, turn on “Start at the bucket list”.";
 "core.connect.s3RegionRequired" = "Enter the region. It is part of the request signature, so it cannot be left empty; most S3-compatible providers accept us-east-1.";
+
+/* The bucket-list toggle and its three outcomes (2026-09-02). The toggle's
+   own name is a key here because the messages that instruct the user to
+   work it quote it verbatim, and the label the user actually reads lives in
+   the App catalog; `theMessagesThatNameTheToggleQuoteTheLabelTheUserSees`
+   holds this spelling, that label and those messages together. */
+"core.connect.s3StartsAtBucketList" = "Start at the bucket list";
+"core.connect.s3BucketListForbidden" = "This key may not list buckets. Turn off “Start at the bucket list” and enter the bucket.";
+"core.connect.s3BucketListEmpty" = "This key can list buckets, but the account has none.";
+"core.connect.s3BucketLevelRefused" = "That can't be done on a bucket itself. Open the bucket first.";
 
 /* ConnectionViewModel WebDAV form validation (M21/T9) */
 "core.connect.webdavFieldRequired" = "Enter the WebDAV server URL.";

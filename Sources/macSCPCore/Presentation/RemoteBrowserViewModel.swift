@@ -905,6 +905,12 @@ public final class RemoteBrowserViewModel {
         // throws.
         case RemoteFSError.authenticationFailed:
             return String(format: CoreL10n.string("core.error.permissionDenied %@"), path)
+        // A bucket is not a folder (2026-09-02): the one action the design
+        // offers on a bucket row is OPEN, and `S3FileSystem` refuses the
+        // rest itself. Its own case, so this is a written sentence rather
+        // than the `default:` dump of an operation name and a path.
+        case RemoteFSError.bucketLevelRefused:
+            return CoreL10n.string("core.connect.s3BucketLevelRefused")
         case RemoteFSError.protocolError(let reason):
             return String(format: CoreL10n.string("core.browse.protocolError %@"), reason)
         case RemoteFSError.connectionFailed(let reason):

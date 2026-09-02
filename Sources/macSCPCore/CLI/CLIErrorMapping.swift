@@ -52,6 +52,11 @@ public enum CLIErrorMapping {
                 return .auth
             case .bucketListEmpty:
                 return .remote
+            // A bucket is not a thing this tool writes to, renames or
+            // deletes — the remote side said no by our own rule, which is
+            // still a remote-side fact from the caller's point of view.
+            case .bucketLevelRefused:
+                return .remote
             }
         default:
             return .connection
@@ -149,6 +154,8 @@ public enum CLIErrorMapping {
                 return "Error: this key may not list the account's buckets"
             case .bucketListEmpty:
                 return "Error: this key may list buckets, but the account has none"
+            case .bucketLevelRefused(let operation, let path):
+                return "Error: \(path) is a bucket; macSCP does not \(operation) buckets"
             }
         default:
             // Stringifying an arbitrary, unmapped error is a FLOOR, not a

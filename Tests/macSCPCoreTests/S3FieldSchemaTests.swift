@@ -88,4 +88,171 @@ struct S3FieldSchemaTests {
     @Test func displaySummaryNamesTheBucketAndEndpointHost() {
         #expect(S3FieldSchema.displaySummary(filledValues()) == "backups @ minio.local")
     }
+
+    // MARK: - `startsAtBucketList`: the form's toggle (2026-09-02)
+
+    /// With the toggle on there is no bucket to put in front of the host,
+    /// and "` @ host`" is not a summary of anything.
+    @Test func theSummaryOfABucketListConnectionIsJustTheHost() {
+        var values = filledValues()
+        values[S3Field.bucket] = ""
+        values[bool: S3Field.startsAtBucketList] = true
+        #expect(S3FieldSchema.displaySummary(values) == "minio.local")
+    }
+
+
+    /// The toggle's own namespaced key, derived rather than spelled — the
+    /// only way to ask whether a value bag carries it AT ALL, which
+    /// `values[bool:]` cannot answer (absent and "false" read alike).
+    private var toggleKey: String {
+        "\(S3Field.namespace).\(S3Field.startsAtBucketList.rawValue)"
+    }
+
+    /// With the toggle ON the bucket field is not on screen at all — and a
+    /// field that is not on screen has no say in `firstViolation`, so a
+    /// blank bucket is not a violation either.
+    ///
+    /// The `!contains` here is a NEGATIVE check, so the two positive checks
+    /// beside it are load-bearing: the toggle itself must be visible (the
+    /// schema really was walked), and the bucket must be visible with the
+    /// toggle off (the test below) — otherwise a condition that hides
+    /// everything would read exactly like this passing.
+    @Test func theBucketFieldDisappearsWhenTheConnectionStartsAtTheBucketList() {
+        var values = filledValues()
+        values[S3Field.bucket] = ""
+        values[bool: S3Field.startsAtBucketList] = true
+
+        let visible = S3FieldSchema.connection
+            .visibleFields(in: values, namespace: S3Field.namespace).map(\.id)
+
+        #expect(!visible.contains(S3Field.bucket.rawValue))
+        #expect(visible.contains(S3Field.startsAtBucketList.rawValue))
+        #expect(S3FieldSchema.connection.firstViolation(
+            in: values, namespace: S3Field.namespace, requireSecrets: false) == nil)
+    }
+
+    /// …and with the toggle OFF nothing changed: the bucket is shown, and a
+    /// blank one is still the same refusal, naming the same message key and
+    /// the same field.
+    @Test func withTheToggleOffTheBucketIsShownAndStillRequired() {
+        var values = filledValues()
+        values[S3Field.bucket] = ""
+        values[bool: S3Field.startsAtBucketList] = false
+
+        let visible = S3FieldSchema.connection
+            .visibleFields(in: values, namespace: S3Field.namespace).map(\.id)
+        #expect(visible.contains(S3Field.bucket.rawValue))
+
+        let violation = S3FieldSchema.connection.firstViolation(
+            in: values, namespace: S3Field.namespace, requireSecrets: false)
+        #expect(violation?.messageKey == "core.connect.s3BucketRequired")
+        #expect(violation?.fieldKey == "\(S3Field.namespace).\(S3Field.bucket.rawValue)")
+    }
+
+    /// The factory carries the toggle into the runtime config, both ways.
+    @Test func makeConfigCarriesTheToggleBothWays() throws {
+        var on = filledValues()
+        on[S3Field.bucket] = ""
+        on[bool: S3Field.startsAtBucketList] = true
+        guard case .s3(let listMode) = try S3FieldSchema.makeConfig(on, "s") else {
+            Issue.record("expected .s3")
+            return
+        }
+        #expect(listMode.startsAtBucketList == true)
+
+        var off = filledValues()
+        off[bool: S3Field.startsAtBucketList] = false
+        guard case .s3(let bucketMode) = try S3FieldSchema.makeConfig(off, "s") else {
+            Issue.record("expected .s3")
+            return
+        }
+        #expect(bucketMode.startsAtBucketList == false)
+        #expect(bucketMode.bucket == "backups")
+    }
+
+    /// The blank bucket the toggle makes legal reaches the factory too:
+    /// `firstViolation` never sees a hidden field, so this guard is the
+    /// second half of the same rule and must move with it.
+    @Test func makeConfigAcceptsABlankBucketOnlyWhileStartingAtTheBucketList() throws {
+        var values = filledValues()
+        values[S3Field.bucket] = ""
+        values[bool: S3Field.startsAtBucketList] = true
+        _ = try S3FieldSchema.makeConfig(values, "s")
+
+        values[bool: S3Field.startsAtBucketList] = false
+        #expect(throws: (any Error).self) { _ = try S3FieldSchema.makeConfig(values, "s") }
+    }
+
+    /// A value bag written before this field existed carries no such key —
+    /// and absent must mean OFF, i.e. today's behaviour byte for byte.
+    @Test func aValueBagWithoutTheKeyStartsAtOneBucket() throws {
+        let values = filledValues()
+        #expect(values.raw[toggleKey] == nil, "the fixture already carries the key — nothing to prove")
+
+        guard case .s3(let s3) = try S3FieldSchema.makeConfig(values, "s") else {
+            Issue.record("expected .s3")
+            return
+        }
+        #expect(s3.startsAtBucketList == false)
+    }
+
+    /// Both baselines write the toggle OUT rather than leaving it absent,
+    /// for the reason `defaults`' own comment gives about `usePathStyle`:
+    /// the checkbox must read "off" from a real value. It is also what
+    /// keeps the bucket field's visibility condition — which compares
+    /// against the string "false" — answering correctly on a fresh form.
+    @Test func bothBaselinesWriteTheToggleOutAsOff() {
+        #expect(S3FieldSchema.defaults.raw[toggleKey] == "false")
+        #expect(S3FieldSchema.editBaseline.raw[toggleKey] == "false")
+    }
+
+    /// The persistence adapter round-trips it in both directions.
+    @Test func theToggleRoundTripsThroughTheStoredConfig() {
+        var values = filledValues()
+        values[bool: S3Field.startsAtBucketList] = true
+        let stored = S3FieldSchema.stored(from: values)
+        #expect(stored.startsAtBucketList == true)
+        #expect(S3FieldSchema.values(from: stored)[bool: S3Field.startsAtBucketList] == true)
+
+        values[bool: S3Field.startsAtBucketList] = false
+        let off = S3FieldSchema.stored(from: values)
+        #expect(off.startsAtBucketList == false)
+        #expect(S3FieldSchema.values(from: off).raw[toggleKey] == "false")
+    }
+
+    /// Every `sessions.json` already on disk was written without this key.
+    /// It must decode — as OFF — rather than throwing `keyNotFound`, which
+    /// would take the whole session file down with it.
+    ///
+    /// The fixture is spelled out as JSON rather than produced by encoding
+    /// a value, because what is being measured is exactly what an OLDER
+    /// writer produced: a value built here would carry the new key and
+    /// prove nothing.
+    @Test func aStoredConfigWrittenBeforeThisFieldDecodesWithTheToggleOff() throws {
+        let json = Data("""
+            {"accessKeyID":"AKIA","region":"us-east-1","endpoint":"https://minio.local:9000",\
+            "bucket":"backups","usePathStyle":true}
+            """.utf8)
+
+        let stored = try JSONDecoder().decode(StoredS3Config.self, from: json)
+
+        #expect(stored.startsAtBucketList == false)
+        // The positive check beside it: the rest of the block really was
+        // read, so the default above is a default and not an empty decode.
+        #expect(stored.bucket == "backups")
+        #expect(stored.usePathStyle == true)
+    }
+
+    /// …and a config that DOES carry it survives the same round trip.
+    @Test func aStoredConfigCarryingTheToggleEncodesAndDecodesIt() throws {
+        let stored = StoredS3Config(
+            accessKeyID: "AKIA", region: "us-east-1", endpoint: "https://minio.local:9000",
+            bucket: "", usePathStyle: true, startsAtBucketList: true)
+
+        let back = try JSONDecoder().decode(
+            StoredS3Config.self, from: try JSONEncoder().encode(stored))
+
+        #expect(back == stored)
+        #expect(back.startsAtBucketList == true)
+    }
 }
