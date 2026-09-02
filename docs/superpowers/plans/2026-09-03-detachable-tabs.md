@@ -75,7 +75,7 @@ disconnected.
 ### Task 2: A second window, "Move Tab to New Window", the last-window rule
 
 **Files:**
-- Modify: `Sources/MacSCPMain/Main.swift` (the `WindowGroup` takes a
+- Modify: the `AppMain` scene in `Sources/MacSCPAppKit` (grep `WindowGroup`; the `WindowGroup` takes a
   `WindowSeed` value; the primary window is the seedless one — read how
   SwiftUI treats `WindowGroup(for:)` with an optional value), `Sources/MacSCPAppKit/ContentView.swift`
   (+Lifecycle: on appear claim the seed's tabs; on close release what it
