@@ -167,12 +167,7 @@ struct SessionCatalogTests {
         let row = catalog.rows(matching: .init())[0]
 
         let fieldNames = Set(Mirror(reflecting: row).children.compactMap(\.label))
-        #expect(!fieldNames.contains("keyPath"))
-        #expect(!fieldNames.contains("loginSetID"))
-        #expect(!fieldNames.contains("secretID"))
-        // Positive half of the check: the row actually has fields to scan,
-        // so the three assertions above are testing an inspected structure
-        // rather than vacuously passing on an empty one.
-        #expect(fieldNames.contains("name"))
+        let expectedFieldNames: Set<String> = ["name", "kind", "groupPath", "tags", "target"]
+        #expect(fieldNames == expectedFieldNames)
     }
 }
