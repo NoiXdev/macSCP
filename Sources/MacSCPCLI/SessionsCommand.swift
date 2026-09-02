@@ -18,7 +18,7 @@ struct SessionsCommand: AsyncParsableCommand {
             the keychain or opens a connection.
             """)
 
-    @OptionGroup var options: GlobalOptions
+    @OptionGroup var options: JSONOptions
 
     @Option(name: .long, help: "Only sessions in this group or one of its subgroups.")
     var group: String?
@@ -38,4 +38,23 @@ struct SessionsCommand: AsyncParsableCommand {
         let rows = catalog.rows(matching: .init(group: group, kind: kind, name: name, tag: tag))
         OutputFormatter.print(rows: rows, asJSON: options.json)
     }
+}
+
+/// `sessions` reads no secret, resolves no login set and opens no
+/// connection — so `GlobalOptions`' other flags (`--verbose`,
+/// `--non-interactive`, `--accept-new`, `--password-command`) describe
+/// choices this command never makes. Handing it the whole of
+/// `GlobalOptions` anyway advertised all four in `sessions --help`, on the
+/// one command whose entire point is that none of them apply
+/// (final-branch-review finding, 2026-09-02). `--json`'s help text is
+/// copied verbatim from `GlobalOptions.json` rather than shared, the same
+/// way `ConflictAction`'s and `ConnectionKind`'s `ExpressibleByArgument`
+/// conformances live as siblings rather than a shared base — the two
+/// options happen to agree today, not because one is defined in terms of
+/// the other.
+struct JSONOptions: ParsableArguments {
+    @Flag(name: .long, help: "Emit one JSON object per line instead of columns.")
+    var json = false
+
+    init() {}
 }
