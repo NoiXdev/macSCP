@@ -756,3 +756,41 @@ script reads `Package.resolved`, collects each checkout's licence file
 into `THIRD_PARTY_NOTICES.md`, and a test pins that every pinned identity
 appears there — so a new dependency cannot land without its notice.
 Plan: `2026-09-03-third-party-notices.md`.
+
+## Done 2026-09-03 — third-party notices generated, tested, and BoringSSL's terms measured
+
+Task 1, commit `9b86f1d3` — `scripts/third-party-notices` (bash +
+python3 heredoc), `THIRD_PARTY_NOTICES.md` (generated, 2323 lines), two
+lines added under README's `## License`. All 12 identities in
+`Package.resolved` matched a checkout under `.build/checkouts` and got a
+`## <identity>` section; the two forks (`citadel`, `swift-nio-ssh`) each
+carry a "consumed from a fork; upstream project: …" line naming the
+upstream repository. `--check` proved idempotent (clean regeneration, no
+diff) and both failure paths (a stale file, a missing checkout) exit 1
+with the offending name and write nothing.
+
+Task 2, commit `e16b14ae` — `Tests/macSCPCoreTests/ThirdPartyNoticesTests.swift`
+parses `Package.resolved`'s `pins[].identity` and asserts each has a
+`## <identity>` heading in the notices file; two positive anchors (pin
+count > 5, at least one section exists) sit beside the pin so it cannot
+go stale in silence. Proven red first by renaming one heading
+(`everyNoticeSectionExists` failed, the two anchors stayed green), green
+after restoring it. Full suite: 3732 tests, 326 suites, green.
+
+**Correction to this plan's premise, measured 2026-09-03 on the pinned
+swift-crypto 3.15.1:** the plan assumed BoringSSL's LICENSE sits under
+swift-crypto's `Sources/CCryptoBoringSSL`. Searched that checkout at
+every depth for `*LICENSE*`, `*LICENCE*`, `*COPYING*`, `*NOTICE*`: the
+only matches anywhere in the checkout are the top-level `LICENSE.txt`
+and `NOTICE.txt`. `Sources/CCryptoBoringSSL` (625 files) has no
+standalone licence file — BoringSSL's copyright is carried per-file, as
+Apache-2.0 header comments naming "The OpenSSL Project Authors" and "The
+BoringSSL Authors" (verified by reading `crypto/crypto.cc`), not as a
+vendored `LICENSE` the way swift-nio's vendored `CNIOLLHTTP` carries
+one. swift-crypto's own `NOTICE.txt` credits wycheproof and SwiftNIO
+derivations, not BoringSSL. `THIRD_PARTY_NOTICES.md` therefore holds
+swift-crypto's own `LICENSE.txt` and `NOTICE.txt` under the
+`## swift-crypto` section and does not name BoringSSL separately — the
+generator faithfully reports what is on disk in this checkout. If a
+later swift-crypto pin adds a vendored BoringSSL `LICENSE`, the
+generator picks it up unchanged; the test does not check for it.
