@@ -112,12 +112,13 @@ struct SSHPrivateKeyLoaderTests {
     @Test("each ECDSA curve reaches its own offer",
           arguments: [(256, "ecdsa-sha2-nistp256"), (384, "ecdsa-sha2-nistp384"),
                       (521, "ecdsa-sha2-nistp521")])
-    func ecdsaCurveReachesItsOwnOffer(bits: Int, expectedPrefix: String) throws {
+    func ecdsaCurveReachesItsOwnOffer(bits: Int, expectedPrefix: String) async throws {
         let (dir, keyPath) = try makeKey(type: "ecdsa", extra: ["-b", String(bits)])
         defer { try? FileManager.default.removeItem(at: dir) }
         let method = try SSHPrivateKeyLoader.authentication(
             username: "tim", keyPath: keyPath, passphrase: nil)
-        #expect(try offeredPublicKeyPrefixes(method) == [expectedPrefix])
+        let prefixes = try await offeredPublicKeyPrefixes(method)
+        #expect(prefixes == [expectedPrefix])
     }
 
     /// The whole reason an RSA key FILE can be used at all is that the offer
@@ -135,13 +136,13 @@ struct SSHPrivateKeyLoaderTests {
     /// false` explicitly: with `true` the list gains a third entry and the
     /// equality fails.
     @Test("an RSA key is offered as rsa-sha2 only, never as ssh-rsa")
-    func rsaKeyOffersSHA2Only() throws {
+    func rsaKeyOffersSHA2Only() async throws {
         let (dir, keyPath) = try makeKey(type: "rsa", extra: ["-b", "2048"])
         defer { try? FileManager.default.removeItem(at: dir) }
         let method = try SSHPrivateKeyLoader.authentication(
             username: "tim", keyPath: keyPath, passphrase: nil)
 
-        let prefixes = try offeredPublicKeyPrefixes(method)
+        let prefixes = try await offeredPublicKeyPrefixes(method)
         #expect(prefixes == [
             Insecure.RSA.SHA2PrivateKey<RSASHA2_512>.keyPrefix,
             Insecure.RSA.SHA2PrivateKey<RSASHA2_256>.keyPrefix,
@@ -288,13 +289,30 @@ struct SSHPrivateKeyLoaderTests {
     /// this package's Swift 6 language mode: `NIOSSHUserAuthenticationOffer`
     /// is not `Sendable`, so it is never carried out of the completion
     /// callback — the name is extracted there and only a `String` crosses.
+    ///
+    /// Async on purpose, and every wait in it is an `await`: this helper
+    /// runs on Swift Testing's cooperative thread pool, which is as wide as
+    /// the machine has cores. Its first version blocked that pool twice —
+    /// `futureResult.wait()` per offer and `syncShutdownGracefully()` in a
+    /// `defer` — and on the three-core CI runner three parameterised cases
+    /// occupied all three threads inside the shutdown semaphore, so no test
+    /// in the whole suite could finish (measured 2026-09-02 with `sample`
+    /// on the hung process; locally, with ten cores, it never showed).
     private func offeredPublicKeyPrefixes(
         _ method: SSHAuthenticationMethod,
         sourceLocation: SourceLocation = #_sourceLocation
-    ) throws -> [String] {
+    ) async throws -> [String] {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        defer { try? group.syncShutdownGracefully() }
         let loop = group.next()
+        let prefixes = await collectOfferPrefixes(method, on: loop, sourceLocation: sourceLocation)
+        try await group.shutdownGracefully()
+        return prefixes
+    }
+
+    private func collectOfferPrefixes(
+        _ method: SSHAuthenticationMethod, on loop: any EventLoop,
+        sourceLocation: SourceLocation
+    ) async -> [String] {
 
         var prefixes: [String] = []
         // The list is finite and short; the cap only stops a runaway loop
@@ -327,7 +345,7 @@ struct SSHPrivateKeyLoaderTests {
                 availableMethods: .publicKey, nextChallengePromise: offerPromise)
 
             do {
-                prefixes.append(try namePromise.futureResult.wait())
+                prefixes.append(try await namePromise.futureResult.get())
             } catch let shape as OfferShape {
                 Issue.record("offer \(prefixes.count) is unreadable: \(shape)",
                              sourceLocation: sourceLocation)
