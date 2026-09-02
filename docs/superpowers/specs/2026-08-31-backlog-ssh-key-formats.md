@@ -356,9 +356,15 @@ tests are unchanged, so the agent path is a ten-cell matrix:
 | ECDSA P-521 | green (existing) | green |
 
 No cell was red, so nothing was pinned as a measured failure: `ssh-add`
-decrypts every type the same way, and the passphrase reaches it through
-the same 0600 file and `SSH_ASKPASS` helper as before — never an argument,
-the environment, a log line or an expectation's source text. The point
+decrypts every type the same way, and the passphrase reaches `ssh-add`
+through the same 0600 file and `SSH_ASKPASS` helper as before — not an
+argument, the environment, a log line or an expectation's source text on
+that path. One exit stays open by design: `makeInstalledKey` hands the
+same passphrase to `ssh-keygen -N` on its argument list when it GENERATES
+the key (`CitadelFileSystemIntegrationTests.swift:436`), a local process
+on the test machine, visible in `ps` for the moment it runs. It is a test
+constant, not a secret; the rule protects real passphrases on the agent
+path, and that is the path measured here. The point
 of the matrix is that this was an assumption until today; it is now a
 measurement that reruns with every gated pass.
 

@@ -479,7 +479,8 @@ image does not put sshd's per-connection lines on `docker logs`).
 | 2b | both pairs | negotiated | blob parsed once, then `NIOSSHError.invalidHostKeyForKeyExchange: Expected rsa-sha2-512, got ssh-rsa` — the identity check compares blob type to negotiated name |
 
 So NIOSSH's `NIOSSHPublicKeyProtocol.publicKeyPrefix` serves as the
-offered host-key algorithm name (`SSHKeyExchangeStateMachine.swift:555-559`,
+offered host-key algorithm name (line numbers as of fork tag 0.3.8,
+`d58f304` — 0.3.9 moves them: `SSHKeyExchangeStateMachine.swift:555-559`,
 `NIOSSHPublicKey.swift:206-208`), the identity check
 (`SSHKeyExchangeStateMachine.swift:254-256`), the blob lookup
 (`NIOSSHPublicKey.swift:456`) and the `K_S` re-serialisation

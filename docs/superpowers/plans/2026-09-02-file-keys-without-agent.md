@@ -54,8 +54,15 @@ question is an input to Task 3's RSA signature type name.
   (and `rsa-sha2-256` if a measured server needs it) only.
 - **No key material committed**, anywhere. Test keys are generated at
   runtime with `ssh-keygen`; the fork's own tests likewise.
-- **The passphrase never reaches an argument, the environment, a log or
-  an expectation's source text** (the existing loader rules).
+- **On the connect path the passphrase never reaches an argument, the
+  environment, a log or an expectation's source text** (the existing
+  loader rules; test key generation via `ssh-keygen -N` on argv is the
+  known, non-secret exception the helpers already make).
+- **`includeSHA1Fallback` is `false` on every macSCP call**, and a test
+  pins it: PR #135's `rsaSHA2(username:privateKey:includeSHA1Fallback:)`
+  defaults it to `true` upstream, and nio-ssh signs at offer time, so a
+  fallback offer is a real SHA-1 signature on the wire. The fork flips
+  the default to `false` (Task 2); macSCP still passes it explicitly.
 - **The fork carries every upstream security patch first**, like the
   NIOSSH fork did: Task 1 lists upstream commits since 0.12.1 and
   classifies them before feature work.
@@ -97,21 +104,25 @@ question is an input to Task 3's RSA signature type name.
 
 ### Task 2: The fork — RSA-SHA2 signing
 
-**Files (fork):**
-- Modify: `Sources/Citadel/Algorithms/RSA.swift` (a `rsa-sha2-512`
-  signature type beside the SHA-1 one; the private key gains
-  `signature(for:algorithm:)` or a second conforming wrapper type
-  `RSASHA2PrivateKey` whose `keyPrefix` is `rsa-sha2-512` — pick the shape
-  that lets macSCP register it without touching the SHA-1 path)
-- Test (fork): a test that signs with the new type and verifies with
-  BoringSSL's own `RSA_verify(NID_sha512, …)`, plus a round trip through
-  `NIOSSHPrivateKey.custom` against NIOSSH's server-side verifier if the
-  fork's test target can reach one — otherwise the macSCP gated test in
-  Task 4 is the round trip, say so.
+**Files (fork) — reconciled 2026-09-02 with the Task 1 measurement:**
+- Cherry-pick (`-x`) upstream PR #135's two commits, minus the
+  `Package.resolved` hunk: `Sources/Citadel/RSASHA2.swift` (new, +166: the
+  `rsa-sha2-256`/`rsa-sha2-512` signer, SHA-512/256 into `RSA_sign` under
+  `NID_sha512`/`NID_sha256`), `Sources/Citadel/SSHAuthenticationMethod.swift`
+  (+39: `rsaSHA2(username:privateKey:includeSHA1Fallback:)`),
+  `Tests/CitadelTests/RSASHA2Tests.swift` (+109). `RSA.swift` is untouched;
+  the SHA-1 `ssh-rsa` path stays as it was.
+- Modify (our own commit): the default of `includeSHA1Fallback` → `false`,
+  with a test that the default offer list carries no `ssh-rsa` entry.
 
-- [ ] Red first in the fork; tag `0.12.1-noix.1`; push with
-  `GIT_SSH_COMMAND="ssh -o BatchMode=yes"`; commit message
-  `feat(rsa): rsa-sha2-512 signatures beside ssh-rsa`.
+- [ ] Both commits red/green against the fork's own suite; tag
+  `0.12.1-noix.1`; push with `GIT_SSH_COMMAND="ssh -o BatchMode=yes"`.
+  The one PR claim not reproduced by Task 1 — that OpenSSH accepts a
+  userauth key blob typed by the algorithm name rather than `ssh-rsa`,
+  since nio-ssh writes both from one `publicKeyPrefix`
+  (`SSHMessages.swift:688/759` in the 0.3.9 fork still compare them
+  strictly) — is Task 4's FIRST measurement against the rig, before any
+  loader change.
 
 ### Task 3: The fork — ECDSA private keys from the OpenSSH container
 
@@ -134,7 +145,9 @@ question is an input to Task 3's RSA signature type name.
 - Modify: `Package.swift` (Citadel → `https://github.com/NoiXdev/Citadel.git`,
   `exact: "0.12.1-noix.2"`, with the same explanatory comment shape as the
   NIOSSH override), `Sources/macSCPCore/SSH/SSHPrivateKeyLoader.swift`
-  (RSA → `.custom(RSASHA2PrivateKey)` — the type name from Task 2; ECDSA →
+  (RSA → the `rsaSHA2(username:privateKey:includeSHA1Fallback: false)`
+  authentication method from Task 2, and the loader keeps its
+  `passphraseRequired`/`wrongPassphrase` mapping; ECDSA →
   `NIOSSHPrivateKey(p256Key:)` etc.; `typeNotLoadable` remains for what is
   still not loadable, e.g. DSA), `ConnectionViewModel` (the RSA note
   appended to `keyTypeNotLoadable` goes away or shrinks — read it)

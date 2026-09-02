@@ -28,10 +28,14 @@ answered it: with-passphrase only for ed25519, on every path.
 ## Global Constraints
 
 - English only; Conventional Commits; footer exactly `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- **The passphrase never reaches an argument list, the environment, a log
-  line or an `#expect`'s source text.** Keep the existing 0600-file +
-  `SSH_ASKPASS` mechanism; keep the value in the existing named constant;
-  compute any Bool before the expectation.
+- **On the agent path the passphrase never reaches an argument list, the
+  environment, a log line or an `#expect`'s source text.** Keep the
+  existing 0600-file + `SSH_ASKPASS` mechanism for `ssh-add`; keep the
+  value in the existing named constant; compute any Bool before the
+  expectation. (Key GENERATION is the exception the existing helper
+  already makes: `makeInstalledKey` passes the test constant to
+  `ssh-keygen -N` on argv — a local process, a non-secret value; this
+  plan does not change that.)
 - **No key material committed**; keys are generated at runtime into a
   temp dir and removed in `defer`; the agent is killed and its socket file
   removed as the existing tests do (`killAgent`).
