@@ -924,6 +924,33 @@ struct SettingsStoreTests {
         #expect(store.keepAliveIntervalSeconds == 60)
     }
 
+    /// The migration in `oldOffFileWithoutKeepAliveEnabledKeyMigratesOnRead`
+    /// is read-only until the user actually changes a setting — this pins
+    /// the other half: once they do, the write is not swallowed. A setter
+    /// that no-opped because the in-memory value already "read" as the
+    /// migrated one would pass the read-only test above and still be
+    /// broken.
+    @Test func aWriteAfterTheOldOffMigrationPersistsBothKeys() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = #"{"keepAliveIntervalSeconds": 0}"#
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.keepAliveEnabled == false)
+
+        store.keepAliveEnabled = true
+
+        let raw = try persistedRaw(dir)
+        #expect(raw["keepAliveEnabled"] == .bool(true))
+        #expect(raw["keepAliveIntervalSeconds"] == .number(0))
+
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.keepAliveEnabled == true)
+        #expect(reloaded.keepAliveIntervalSeconds == 60)
+    }
+
     /// Asserts through the persisted file, not just the getter — see
     /// `theKeepAliveIntervalIsClampedOnBothEnds`'s comment for why.
     @Test func theConnectTimeoutIsClampedAndDefaultsBelowCitadelsThirty() throws {

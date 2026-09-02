@@ -590,13 +590,13 @@ public final class SettingsStore {
     /// duplicating the literal `10` a second time somewhere easy to drift.
     public nonisolated static let defaultConnectTimeoutSeconds = Defaults.connectTimeoutSeconds
 
-    /// The non-zero default `keepAliveIntervalSeconds` falls back to once a
-    /// probe is turned back ON after having been off (Task 9's Settings UI:
-    /// the view has no other source for "what interval to resume at" the
-    /// first time it ever sees the "off" sentinel `0`). Reachable without a
+    /// `keepAliveIntervalSeconds`'s own default, reachable without a
     /// `SettingsStore` instance for the same reason as
     /// `defaultConnectTimeoutSeconds` above — a single source of truth
-    /// instead of the literal `60` duplicated in `SettingsView.swift`.
+    /// instead of duplicating the literal `60` elsewhere. `SettingsView.swift`'s
+    /// Keep-Alive section init reads this today, to seed the stepper before
+    /// the user has committed an interval of their own; Task 3 removes that
+    /// read when the Settings UI moves to `keepAliveEnabled`.
     public nonisolated static let defaultKeepAliveIntervalSeconds = Defaults.keepAliveIntervalSeconds
 
     /// Convenience: association lookup with the SAME normalization applied.
