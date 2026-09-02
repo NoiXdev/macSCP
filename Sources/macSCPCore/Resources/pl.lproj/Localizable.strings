@@ -53,6 +53,8 @@
 "core.connect.s3BucketLevelRefused.deleteTree" = "macSCP nie może opróżnić bucketa. Otwórz bucket i usuń to, co jest w środku.";
 "core.connect.s3BucketLevelRefused.rename" = "macSCP nie może zmienić nazwy bucketa. Otwórz bucket, aby zmienić nazwę tego, co jest w środku.";
 "core.connect.s3BucketLevelRefused.presignedURL" = "macSCP nie może udostępnić linku do samego bucketa. Otwórz bucket i udostępnij plik z jego wnętrza.";
+"core.connect.s3BucketLevelRefused.readStream" = "Bucket nie jest plikiem do pobrania. Otwórz go i wybierz to, co jest w środku.";
+"core.connect.s3CrossBucketRename" = "macSCP nie może przenieść niczego z jednego bucketa do innego.";
 
 /* ConnectionViewModel WebDAV form validation (M21/T9) */
 "core.connect.webdavFieldRequired" = "Wprowadź adres URL serwera WebDAV.";

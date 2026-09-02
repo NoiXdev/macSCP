@@ -1447,4 +1447,154 @@ struct S3FileSystemTests {
         #expect(request.httpMethod == "DELETE")
         #expect(request.url?.path(percentEncoded: true) == "/macscp-seed")
     }
+
+    // MARK: - Task 4: reads at bucket level, cross-bucket rename, error paths
+
+    /// Task 2 review M-3, decided in Task 4: a bucket is REFUSED as a read
+    /// too, not merely unreachable.
+    ///
+    /// `readStream("/macscp-seed")` in this mode used to resolve to bucket
+    /// `macscp-seed` with an empty key and issue a ranged `GET` on the
+    /// bucket ROOT, which S3 and MinIO answer with a `ListObjectsV2` XML
+    /// body — so the caller received a "file" whose contents are somebody's
+    /// bucket listing. Nothing in the browser or the CLI could ask for that
+    /// today, but "cannot be asked for from the two front doors we know
+    /// about" is an argument about callers, and this project's guard rules
+    /// prefer a boundary that does not depend on one.
+    @Test func aBucketIsNotAFileToDownloadEither() async throws {
+        let (fs, transport) = try await connectAtBucketList(responses: [])
+
+        await expectBucketRefusal(.readStream, "/macscp-seed") {
+            _ = try await fs.readStream(path: "/macscp-seed", fromOffset: 0)
+        }
+
+        // Refused before the wire: only the connect-time ListBuckets went out.
+        let sent = await transport.requests.count
+        #expect(sent == 1)
+    }
+
+    /// The positive check beside it: one level in, the same call still
+    /// streams — the refusal is about the bucket LEVEL, not about this mode.
+    @Test func oneLevelInsideABucketADownloadStillStreams() async throws {
+        let (fs, transport) = try await connectAtBucketList(responses: [
+            (Data("hello".utf8), httpResponse(status: 200)),
+        ])
+
+        _ = try await fs.readStream(path: "/macscp-seed/a.txt", fromOffset: 0)
+
+        let request = try #require(await transport.requests.last)
+        #expect(request.httpMethod == "GET")
+        #expect(request.url?.path(percentEncoded: true) == "/macscp-seed/a.txt")
+    }
+
+    /// …and with the toggle OFF the very same path is an OBJECT key inside
+    /// the configured bucket, which has always been downloadable.
+    @Test func withTheToggleOffADownloadOfTheSamePathIsUnchanged() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data("hello".utf8), httpResponse(status: 200)),
+        ])
+
+        _ = try await fs.readStream(path: "/macscp-seed", fromOffset: 0)
+
+        let request = try #require(await transport.requests.last)
+        #expect(request.url?.path(percentEncoded: true) == "/macscp-seed/macscp-seed")
+    }
+
+    /// Task 2 review (b), decided in Task 4: a rename never spans two
+    /// buckets.
+    ///
+    /// `rename` is a copy+delete per object with no rollback — documented
+    /// and accepted INSIDE one bucket, where a half-failure leaves the
+    /// objects in one place the user can see. Across buckets the same
+    /// half-failure splits them over a permission boundary (and possibly two
+    /// regions), which is a behaviour nobody has designed. Refused until
+    /// someone does.
+    @Test func aRenameNeverCrossesFromOneBucketIntoAnother() async throws {
+        let (fs, transport) = try await connectAtBucketList(responses: [])
+
+        var thrown: (any Error)?
+        do {
+            try await fs.rename(from: "/macscp-seed/a.txt", to: "/macscp-second/a.txt")
+        } catch {
+            thrown = error
+        }
+
+        // No early `return` on a wrong case: that would skip the request
+        // count below, which is the half that proves the refusal happened
+        // BEFORE the destination pre-check went out.
+        if case .crossBucketRenameRefused(let from, let to)? = thrown as? RemoteFSError {
+            #expect(from == "/macscp-seed/a.txt")
+            #expect(to == "/macscp-second/a.txt")
+        } else {
+            Issue.record("expected .crossBucketRenameRefused, got \(String(describing: thrown))")
+        }
+
+        // Refused before the destination pre-check, so nothing was sent.
+        let sent = await transport.requests.count
+        #expect(sent == 1)
+    }
+
+    /// The positive check beside it: inside ONE bucket the same rename
+    /// still runs — it reaches the destination pre-check (`stat`), which is
+    /// the first thing on the wire.
+    @Test func aRenameInsideOneBucketStillRuns() async throws {
+        let (fs, transport) = try await connectAtBucketList(responses: [
+            (Data(rootListingXML.utf8), httpResponse(status: 200)),
+        ])
+
+        do {
+            // `a.txt` IS in the canned listing, so the destination pre-check
+            // reports it taken — which is proof the call got that far, past
+            // the cross-bucket guard and onto the wire.
+            try await fs.rename(from: "/macscp-seed/b.txt", to: "/macscp-seed/a.txt")
+            Issue.record("expected throw")
+        } catch let error as RemoteFSError {
+            guard case .protocolError(let reason) = error else {
+                Issue.record("expected .protocolError, got \(error)")
+                return
+            }
+            #expect(reason.hasPrefix("Destination already exists"))
+        }
+
+        let sent = await transport.requests.count
+        #expect(sent == 2)
+    }
+
+    /// Task 2 review M-2: an error raised in list mode names a path the
+    /// browser can recognize — `"/<bucket>/<key>"`, not the bucket-relative
+    /// `"/<key>"` that names a real object in some OTHER bucket.
+    @Test func anErrorInListModeNamesThePathWithItsBucket() async throws {
+        let (fs, _) = try await connectAtBucketList(responses: [
+            (Data(), httpResponse(status: 404)),
+        ])
+
+        do {
+            try await fs.delete(path: "/macscp-second/dir/file.txt")
+            Issue.record("expected throw")
+        } catch let error as RemoteFSError {
+            guard case .notFound(let path) = error else {
+                Issue.record("expected .notFound, got \(error)")
+                return
+            }
+            #expect(path == "/macscp-second/dir/file.txt")
+        }
+    }
+
+    /// The positive check beside it: with the toggle OFF the reported path
+    /// is unchanged, because there the browser path and the key really are
+    /// the same string.
+    @Test func withTheToggleOffAnErrorNamesTheSamePathAsBefore() async throws {
+        let (fs, _) = try await connect(responses: [(Data(), httpResponse(status: 404))])
+
+        do {
+            try await fs.delete(path: "/dir/file.txt")
+            Issue.record("expected throw")
+        } catch let error as RemoteFSError {
+            guard case .notFound(let path) = error else {
+                Issue.record("expected .notFound, got \(error)")
+                return
+            }
+            #expect(path == "/dir/file.txt")
+        }
+    }
 }

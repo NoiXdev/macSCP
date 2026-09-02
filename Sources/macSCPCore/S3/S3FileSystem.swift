@@ -181,12 +181,14 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `deleteTree("/b1")` would empty it. Both from one keystroke on a row
     /// that looks like a folder.
     ///
-    /// SCOPE: the mutating operations, plus `presignedURL` — the one seam
-    /// that hands write capability OUT of this process, where a PUT to a
-    /// path-style bucket root is `CreateBucket` (Task 2 review, I-1). Plain
-    /// READS at bucket level are deliberately NOT refused here: a bucket row
-    /// is a `.directory`, so the browser reaches its contents through `list`
-    /// and never through `readStream`.
+    /// SCOPE: every operation that addresses a bucket as if it were an
+    /// object — the mutating ones, `presignedURL` (the one seam that hands
+    /// write capability OUT of this process, where a PUT to a path-style
+    /// bucket root is `CreateBucket`, Task 2 review I-1), and `readStream`
+    /// (Task 2 review M-3, closed in Task 4: a ranged GET on a bucket root
+    /// is answered with the bucket's LISTING, delivered as file bytes).
+    /// `list` and `stat` are the two calls a bucket legitimately answers,
+    /// and they are the two that do not come through here.
     ///
     /// `operation` names the call being refused, so the error says which
     /// rule stopped what — and so a test can assert the refusal per
@@ -199,6 +201,29 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         guard case .bucketList = mode else { return }
         guard try mode.resolve(path: path).key.isEmpty else { return }
         throw RemoteFSError.bucketLevelRefused(operation: operation, path: path)
+    }
+
+    /// The BROWSER path a caller would recognize for an addressed S3
+    /// resource — the exact inverse of `RootMode.resolve`, and the string
+    /// every error raised below the resolver names.
+    ///
+    /// Task 2 review M-2: those errors used to be built as `"/" + key`,
+    /// which in bucket-list mode drops the bucket. A 404 deleting
+    /// `/second/dir/file.txt` then reported `.notFound(path: "/dir/file.txt")`
+    /// — a path that exists in no browser and can name a real object in a
+    /// DIFFERENT bucket. In `.bucket` mode the two are the same string, so
+    /// nothing there changes.
+    ///
+    /// `key` may be a listing PREFIX (trailing slash and all); it is not
+    /// re-normalized, so whatever shape the caller reports stays that shape
+    /// under its bucket.
+    private func reportedPath(bucket: String, key: String) -> String {
+        switch mode {
+        case .bucket:
+            return "/" + key
+        case .bucketList:
+            return key.isEmpty ? "/" + bucket : "/" + bucket + "/" + key
+        }
     }
 
     /// The bucket that answers for `path` and the KEY PREFIX inside it —
@@ -275,6 +300,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// require `Range` to be signed, and signing it here would just be
     /// extra surface for a byte-identical-header bug with no benefit.
     public func readStream(path: String, fromOffset offset: UInt64) async throws -> AsyncThrowingStream<Data, Error> {
+        try refuseBucketLevelOperation(.readStream, path: path)
         let (bucket, key) = try mode.resolve(path: path)
         var request = try buildSignedRequest(
             bucket: bucket, method: "GET", key: key, query: [],
@@ -340,7 +366,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         let request = try buildSignedRequest(
             bucket: bucket, method: "DELETE", key: key, query: [],
             payloadHash: SigV4Signer.emptyPayloadHash)
-        try await sendExpectingSuccess(request, path: "/" + key)
+        try await sendExpectingSuccess(request, path: reportedPath(bucket: bucket, key: key))
     }
 
     /// Creates a 0-byte marker object whose key ends in "/" — the universal
@@ -374,11 +400,24 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// partway through leaves some objects already copied to the
     /// destination and the rest still at the source, with no rollback (v1—
     /// S3 has no multi-object transaction to lean on here).
+    ///
+    /// In bucket-list mode the two ends could name two different buckets,
+    /// which would spread exactly that half-failure across a permission
+    /// boundary. They may not: see the guard below and
+    /// `RemoteFSError.crossBucketRenameRefused`.
     public func rename(from: String, to: String) async throws {
         // Both ends, and before the destination pre-check, so a refused
         // rename issues no request at all.
         try refuseBucketLevelOperation(.rename, path: from)
         try refuseBucketLevelOperation(.rename, path: to)
+        // ...and neither may this rename leave the bucket it started in.
+        // `copyObject` can address two buckets since 2026-09-02, which is
+        // what made the shape reachable at all; see
+        // `RemoteFSError.crossBucketRenameRefused` for why it is refused
+        // rather than performed.
+        guard try mode.resolve(path: from).bucket == mode.resolve(path: to).bucket else {
+            throw RemoteFSError.crossBucketRenameRefused(from: from, to: to)
+        }
         do {
             _ = try await stat(path: to)
             throw RemoteFSError.protocolError(reason: "Destination already exists: \(to)")
@@ -556,7 +595,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             let page = try S3ListParser.parse(data, prefix: prefix)
             return rerootedIntoBucket(bucket, page)
         default:
-            throw Self.mapErrorStatus(response.statusCode, path: "/" + prefix)
+            throw Self.mapErrorStatus(response.statusCode, path: reportedPath(bucket: bucket, key: prefix))
         }
     }
 
@@ -666,7 +705,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
 
         let (data, response) = try await send(request)
         guard (200..<300).contains(response.statusCode) else {
-            throw Self.mapErrorStatus(response.statusCode, path: "/" + toKey)
+            throw Self.mapErrorStatus(response.statusCode, path: reportedPath(bucket: destinationBucket, key: toKey))
         }
         let body = String(data: data, encoding: .utf8) ?? ""
         if body.contains("<Error") || !body.contains("<CopyObjectResult") {
@@ -690,7 +729,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 bucket: bucket, prefix: prefix, continuationToken: token, delimiter: false)
             let (data, response) = try await send(request)
             guard (200..<300).contains(response.statusCode) else {
-                throw Self.mapErrorStatus(response.statusCode, path: "/" + prefix)
+                throw Self.mapErrorStatus(response.statusCode, path: reportedPath(bucket: bucket, key: prefix))
             }
             let page = try Self.parseObjectKeys(data)
             keys.append(contentsOf: page.keys)
