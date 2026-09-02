@@ -107,6 +107,30 @@ struct ChecksumLedgerTests {
         #expect(ledger.value(for: file, algorithm: .md5) == nil)
     }
 
+    /// Two algorithms for ONE file, both readable — the ledger's central
+    /// shape, and the one nothing else tested.
+    ///
+    /// The setting that picks the algorithm is changeable mid-session, so a
+    /// file asked about under SHA-256 and then under MD5 has two right
+    /// answers and the ledger holds a dictionary per identity to keep both.
+    /// Recording the second must MERGE into that dictionary; replacing it
+    /// loses the first value silently, and the column simply reads empty
+    /// again for a digest the user already paid a server-side hash for.
+    /// Measured: with the merge turned into an assignment, every other test
+    /// in this suite stays green.
+    @Test func twoAlgorithmsForOneFileAreBothKept() {
+        var ledger = ChecksumLedger()
+        let file = Self.item()
+        let sha = Self.digest(.sha256, hex: "a")
+        let md5 = Self.digest(.md5, hex: "c")
+
+        ledger.record(.checksum(sha), for: file)
+        ledger.record(.checksum(md5), for: file)
+
+        #expect(ledger.value(for: file, algorithm: .sha256) == sha)
+        #expect(ledger.value(for: file, algorithm: .md5) == md5)
+    }
+
     @Test func twoPathsDoNotInterfere() {
         var ledger = ChecksumLedger()
         let first = Self.item(path: "/a.csv")
