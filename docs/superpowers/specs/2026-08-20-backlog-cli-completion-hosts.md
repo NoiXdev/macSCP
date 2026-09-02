@@ -19,6 +19,25 @@ by example in individual argument help texts.
 
 ## 1. Host list with filters — build first
 
+**Done 2026-09-02 — item 1.** `macscp-cli sessions` (`--group`, `--kind`,
+`--name`, `--tag`, `--json`) reads `SessionCatalog`
+(`Sources/macSCPCore/Sessions/SessionCatalog.swift`) over the session
+store; the value it returns is `SessionCatalog.Row` — name, kind, target,
+group, tags, structurally nothing a secret could hide behind (a `Mirror`
+test pins that). The security constraint below is held by
+`CLISessionsCommandGuardTests`
+(`Tests/macSCPCoreTests/CLISessionsCommandGuardTests.swift`), a
+source-scanning guard that pins that `SessionsCommand.swift` names none of
+`SecretStore`, `SecretResolver`, `secretSources(`, `connect(`,
+`withConnection(`, `KnownHostsStore`. Filters are as specified here, not
+more: `--name` is a case-insensitive **substring**, not a pattern — `pro*`
+matches nothing against `Production`; `--group` matches the session's own
+group or any ancestor by name; `--tag` is exact, case-insensitive;
+`--kind` is exact; all four AND together. Still open: item 2
+(autocompletion) and item 3 (the `discussion` explaining `name:/path` on
+the root command) are unbuilt; the CLI reads no remote path and resolves
+no login set or keychain entry anywhere in this command.
+
 A subcommand that outputs the saved sessions, with filter arguments
 (group, backend kind, name pattern). `--json` is already set as a
 pattern and should apply here.
