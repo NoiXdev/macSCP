@@ -1,9 +1,13 @@
 import Foundation
 import NIOCore
-// NIOSSH is provided transitively via Citadel (already in the build graph as
-// a checked-out dependency). An explicit package dependency on the
-// swift-nio-ssh fork was deliberately NOT added: Auto-Mode blocks the fork
-// URL and the module is already available anyway.
+// NIOSSH here is the NoiXdev fork of swift-nio-ssh, named as a ROOT
+// dependency in Package.swift at an exact tag. That entry is not redundant
+// with Citadel's own dependency — it IS the mechanism: both carry the
+// package identity `swift-nio-ssh`, and SwiftPM resolves the root one in
+// place of the abandoned fork Citadel names, which is behind Apple on
+// signature validation. Deleting it as "unused" would quietly resolve that
+// weaker fork back in. Measured in
+// docs/superpowers/specs/2026-08-20-backlog-dependencies.md.
 import NIOSSH
 
 /// A host key presented by the server, as a plain value (for TOFU decisions

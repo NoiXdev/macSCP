@@ -16,8 +16,13 @@ import Testing
 /// function's own parameter, passed straight through), not a literal, not a
 /// differently-named local.
 ///
-/// Two call sites forward `SSHClient.connect(` — the jump hop and the
-/// target — and BOTH must forward the parameter: one alone would leave a
+/// Both hops now dial through one funnel,
+/// `connectWithRegisteredAlgorithms` (added so that registering the custom
+/// host-key algorithms cannot come apart from the dial — see
+/// `CitadelFileSystemHostKeyAlgorithmWiringGuardTests`). So the timeout has
+/// two legs to travel, and this guard checks both: the funnel's own
+/// `SSHClient.connect(` must forward the funnel's `connectTimeout`, and each
+/// of the two hops must forward its own. One leg alone would leave a
 /// jump-through chain with its jump hop still stuck on Citadel's old
 /// 30-second wait.
 ///
@@ -48,36 +53,59 @@ struct CitadelFileSystemConnectTimeoutWiringGuardTests {
     private static let citadelFileSystemFile = repoRoot
         .appendingPathComponent("Sources/macSCPCore/SSH/CitadelFileSystem.swift")
 
-    // MARK: - The guard
+    /// The funnel every hop dials through. Its own declaration line is not a
+    /// call site and is skipped by the scanner (see `callStartLines`).
+    private static let funnelCall = "connectWithRegisteredAlgorithms("
 
-    @Test func everySSHClientConnectCallForwardsTheCallersConnectTimeout() throws {
-        let source = try String(contentsOf: Self.citadelFileSystemFile, encoding: .utf8)
-        let lines = source.components(separatedBy: "\n")
-        let violations = Self.callsNotForwardingConnectTimeout(in: lines)
-        #expect(violations.isEmpty, """
-            `SSHClient.connect(` call(s) not forwarding the caller's own \
-            `connectTimeout` value found at 1-based line(s) \(violations) in \
-            CitadelFileSystem.swift — either the `connectTimeout:` label is \
-            missing (Citadel's own 30-second default silently applies) or it \
-            carries something other than the `connectTimeout` parameter \
-            itself (a hardcoded literal defeats `SettingsStore.connectTimeoutSeconds`
-            exactly as effectively as an absent label does).
-            """)
+    /// Both legs the caller's timeout has to survive: the hops that call the
+    /// funnel, and the funnel's own dial.
+    private static let dialNeedles = ["SSHClient.connect(", funnelCall]
+
+    private static func sourceLines() throws -> [String] {
+        try String(contentsOf: citadelFileSystemFile, encoding: .utf8)
+            .components(separatedBy: "\n")
     }
 
-    /// Fail-closed check: if the scanner ever finds a DIFFERENT number of
-    /// `SSHClient.connect(` call sites than the two this guard was written
-    /// against (jump hop, target), the guard above could be passing for the
-    /// wrong reason — nothing left to check, rather than everything checked
-    /// and clean. Counted by hand against the file at the time this guard
-    /// was written: exactly two.
-    @Test func exactlyTwoCallSitesAreRecognized() throws {
-        let source = try String(contentsOf: Self.citadelFileSystemFile, encoding: .utf8)
-        let lines = source.components(separatedBy: "\n")
-        let count = Self.callStartLines(in: lines).count
-        #expect(count == 2, """
-            expected 2 `SSHClient.connect(` call sites (jump hop + target) in \
-            CitadelFileSystem.swift, found \(count) — re-anchor this guard.
+    // MARK: - The guard
+
+    @Test func everyDialForwardsTheCallersConnectTimeout() throws {
+        let lines = try Self.sourceLines()
+        for needle in Self.dialNeedles {
+            let violations = Self.callsNotForwardingConnectTimeout(in: lines, calling: needle)
+            #expect(violations.isEmpty, """
+                `\(needle)` call(s) not forwarding the caller's own \
+                `connectTimeout` value found at 1-based line(s) \(violations) in \
+                CitadelFileSystem.swift — either the `connectTimeout:` label is \
+                missing (Citadel's own 30-second default silently applies) or it \
+                carries something other than the `connectTimeout` parameter \
+                itself (a hardcoded literal defeats `SettingsStore.connectTimeoutSeconds`
+                exactly as effectively as an absent label does).
+                """)
+        }
+    }
+
+    /// Fail-closed check: if the scanner ever finds DIFFERENT numbers of call
+    /// sites than the shape this guard was written against, the test above
+    /// could be passing for the wrong reason — nothing left to check, rather
+    /// than everything checked and clean. Counted by hand against the file at
+    /// the time this guard was re-anchored on the funnel: one dial inside
+    /// `connectWithRegisteredAlgorithms`, and two hops calling it (jump,
+    /// target).
+    ///
+    /// This is also the check that noticed the funnel arriving: it was the
+    /// one test that failed the moment the two dials became one.
+    @Test func theCallSiteCountsAreTheOnesThisGuardWasWrittenAgainst() throws {
+        let lines = try Self.sourceLines()
+        let dials = Self.callStartLines(in: lines).count
+        let hops = Self.callStartLines(in: lines, calling: Self.funnelCall).count
+        #expect(dials == 1, """
+            expected 1 `SSHClient.connect(` call site (inside \
+            `connectWithRegisteredAlgorithms`) in CitadelFileSystem.swift, \
+            found \(dials) — re-anchor this guard.
+            """)
+        #expect(hops == 2, """
+            expected 2 `\(Self.funnelCall)` call sites (jump hop + target) in \
+            CitadelFileSystem.swift, found \(hops) — re-anchor this guard.
             """)
     }
 
@@ -177,17 +205,27 @@ struct CitadelFileSystemConnectTimeoutWiringGuardTests {
     // Deliberately line/paren-based, like the project's other wiring guards
     // (see `PaneVisibilityWiringGuardTests`'s `endLineOfCall`).
 
-    /// 1-based line numbers where an `SSHClient.connect(` call starts.
-    private static func callStartLines(in lines: [String]) -> [Int] {
-        lines.indices.filter { lines[$0].contains("SSHClient.connect(") }.map { $0 + 1 }
+    /// 1-based line numbers where a call to `needle` starts. A line
+    /// declaring the funnel is not a call of it, so `func ` lines are
+    /// skipped — that the declaration exists at all is asserted by
+    /// `CitadelFileSystemHostKeyAlgorithmWiringGuardTests`, which fails
+    /// closed when it cannot find it.
+    private static func callStartLines(
+        in lines: [String], calling needle: String = "SSHClient.connect("
+    ) -> [Int] {
+        lines.indices
+            .filter { lines[$0].contains(needle) && !lines[$0].contains("func ") }
+            .map { $0 + 1 }
     }
 
     /// 1-based line numbers of `SSHClient.connect(` calls whose
     /// `connectTimeout:` argument is either absent or is not exactly the
     /// bare identifier `connectTimeout` — from the opening paren to its
     /// matching close, however many lines the call spans.
-    private static func callsNotForwardingConnectTimeout(in lines: [String]) -> [Int] {
-        callStartLines(in: lines).compactMap { lineNumber in
+    private static func callsNotForwardingConnectTimeout(
+        in lines: [String], calling needle: String = "SSHClient.connect("
+    ) -> [Int] {
+        callStartLines(in: lines, calling: needle).compactMap { lineNumber in
             let startIndex = lineNumber - 1
             guard let endIndex = endLineOfCall(startingAt: startIndex, in: lines) else {
                 return lineNumber  // unbalanced parens: fail closed, don't shrug it off

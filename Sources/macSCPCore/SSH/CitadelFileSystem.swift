@@ -385,22 +385,17 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 jumpClient = try await connectHop(
                     auth: jump.auth, username: jump.username, agent: jumpAgent, box: jumpBox
                 ) { method in
-                    // NIOSSH builds its host-key offer from the registry at
-                    // key-exchange time, so the RSA type has to be in it
-                    // before the dial, not after.
-                    HostKeyAlgorithms.registerOnce()
                     // I-2: `group` is the dedicated event-loop group `connect()`
                     // creates whenever either hop uses `.agent`; the target
                     // hop's `jump(to:)` call below inherits THIS group's loop
                     // via the jump client's own channel, so passing it only
                     // here still covers both hops.
-                    return try await SSHClient.connect(
+                    try await connectWithRegisteredAlgorithms(
                         host: jump.host,
                         port: jump.port,
-                        authenticationMethod: method,
-                        hostKeyValidator: .custom(jumpValidator),
-                        reconnect: .never,
-                        group: group ?? .singleton,
+                        method: method,
+                        validator: jumpValidator,
+                        group: group,
                         connectTimeout: connectTimeout
                     )
                 }
@@ -443,17 +438,13 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         let client = try await connectHop(
             auth: config.auth, username: config.username, agent: targetAgent, box: targetBox
         ) { method in
-            // See the jump-hop call above: registered before the dial, so
-            // the key exchange can offer `rsa-sha2-512`.
-            HostKeyAlgorithms.registerOnce()
             // I-2: see the jump-hop call above — same dedicated group.
-            return try await SSHClient.connect(
+            try await connectWithRegisteredAlgorithms(
                 host: config.host,
                 port: config.port,
-                authenticationMethod: method,
-                hostKeyValidator: .custom(validator),
-                reconnect: .never,
-                group: group ?? .singleton,
+                method: method,
+                validator: validator,
+                group: group,
                 connectTimeout: connectTimeout
             )
         }
@@ -465,6 +456,36 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             try? await client.close()
             throw error
         }
+    }
+
+    /// The one place in this file where a hop is dialed.
+    ///
+    /// Both hops funnel through here so that registering macSCP's custom
+    /// host-key algorithms cannot come apart from the dial. NIOSSH builds
+    /// its key-exchange offer out of that process-global registry, so a dial
+    /// that ran without it would simply stop negotiating RSA — and nothing
+    /// in the ungated suite can observe a key-exchange offer, which is why
+    /// the property is held by a source-scanning guard
+    /// (`CitadelFileSystemHostKeyAlgorithmWiringGuardTests`) over a funnel
+    /// rather than by a test over two call sites.
+    private static func connectWithRegisteredAlgorithms(
+        host: String,
+        port: Int,
+        method: SSHAuthenticationMethod,
+        validator: TOFUHostKeyValidator,
+        group: MultiThreadedEventLoopGroup?,
+        connectTimeout: TimeAmount
+    ) async throws -> SSHClient {
+        HostKeyAlgorithms.registerOnce()
+        return try await SSHClient.connect(
+            host: host,
+            port: port,
+            authenticationMethod: method,
+            hostKeyValidator: .custom(validator),
+            reconnect: .never,
+            group: group ?? .singleton,
+            connectTimeout: connectTimeout
+        )
     }
 
     /// Builds the `SSHAuthenticationMethod` for ONE connect attempt and
