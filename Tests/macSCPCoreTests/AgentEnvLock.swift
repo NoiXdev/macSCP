@@ -4,9 +4,11 @@ import Foundation
 /// environment variable (M11e/T2).
 ///
 /// `@Suite(.serialized)` only serializes tests WITHIN one suite —
-/// `AgentAuthTests` and the gated agent tests in
-/// `CitadelFileSystemIntegrationTests` are two DIFFERENT suites, and Swift
-/// Testing is free to run different suites concurrently. Both suites
+/// `AgentAuthTests`, the gated agent tests in
+/// `CitadelFileSystemIntegrationTests`, and the gated agent test in
+/// `GoServerRSAIntegrationTests` are three DIFFERENT suites (counted
+/// 2026-09-02), and Swift Testing is free to run different suites
+/// concurrently. All of them
 /// temporarily overwrite the same process-global `SSH_AUTH_SOCK` variable
 /// (set it to a test-owned socket, run a connect, restore the original), so
 /// without a lock that spans suites, one suite's mutation could interleave
