@@ -19,8 +19,9 @@ let package = Package(
         // by default, + an ECDSA `openssh-key-v1` private-key parser
         // (`P256/P384/P521.Signing.PrivateKey.init(sshEcdsa:decryptionKey:)`
         // and the public `OpenSSHKeyTypeMismatch`). Both are what lets
-        // `SSHPrivateKeyLoader` load an RSA or ECDSA key FILE at all; see
-        // .superpowers/sdd/2026-09-02-file-keys-without-agent.
+        // `SSHPrivateKeyLoader` load an RSA or ECDSA key FILE at all; the
+        // fork record with the measurements behind each tag is in
+        // docs/superpowers/specs/2026-08-20-backlog-dependencies.md.
         .package(url: "https://github.com/NoiXdev/Citadel.git", exact: "0.12.1-noix.2"),
         // Citadel depends on Wellz26/swift-nio-ssh, a fork with a deleted
         // parent that is behind Apple on signature validation and mangles
