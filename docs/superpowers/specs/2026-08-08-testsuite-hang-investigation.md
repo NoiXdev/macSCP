@@ -206,3 +206,53 @@ sensitivity number attached. Not fixed here; not a defect of the code
 under test. Whoever takes it on: the assertion needs a form that does not
 race the rest of the suite, and the entry above holds the M20 hang this
 probably shares a cause with.
+
+## Measured 2026-09-02 — one hang, sampled on CI, and its cause
+
+The push `539dc59` (file keys of every type + S3 bucket list) hung CI
+deterministically: on macos-15 (Xcode 16.4, Swift 6.1.2, three cores) the
+Unit-Tests step printed all 3340 `started` lines within two seconds and
+then nothing — zero completions in six minutes, twice. Locally (Swift
+6.3.3, ten cores) the same tree ran green in 12 s, repeatedly.
+
+Bisected with draft PRs: the tree minus the file-keys commits was green in
+two minutes; the last green base plus only the file-keys commits hung. A
+sampler branch then ran `swift test` in the background, waited 150 s, and
+took `sample <pid> 3` of the still-running test process. The call graph
+shows the process idle (0:13 CPU): the main thread in its run loop, one
+NIO event-loop thread in `kevent`, and **three Swift Testing worker
+threads all in the same place** —
+`SSHPrivateKeyLoaderTests.offeredPublicKeyPrefixes` → `$defer #1` →
+`EventLoopGroup.syncShutdownGracefully()` → `_dispatch_semaphore_wait_slow`
+(`ecdsaCurveReachesItsOwnOffer` twice, `rsaKeyOffersSHA2Only` once). The
+helper also blocked on `futureResult.wait()` per offer.
+
+Why that stops everything: Swift Testing runs tests on the cooperative
+thread pool, whose width is the core count. Three cores, three threads;
+three parameterised cases each blocked a thread in a semaphore; no other
+test — 3300 of them — could be scheduled. It is not a lock cycle and not
+a slow test: it is a pool with every thread parked. Ten cores hide it
+because the blocked three leave seven.
+
+**Fix (`cdf46be`):** the helper is async and every wait is an `await`
+(`futureResult.get()`, `shutdownGracefully()`); verified by CI run
+33645664083 on that push: Unit-Tests green in 2 min 55 s where the two
+runs before it had produced nothing in six. **What it does not settle:** whether the intermittent M20 hang
+at the top of this entry has the same shape. It has the same symptom (a
+test process parked at 0 % CPU) and this tree has more blocking waits on
+the cooperative pool — `SSHAgentClientTests` waits on `EmbeddedChannel`
+futures (which complete synchronously, so the wait returns at once),
+`EmbeddedKeyPorterTests` and the gated `LivenessProbeDropIntegrationTests`
+use a `DispatchSemaphore` — and production code parks a thread in
+`AgentBackedPrivateKey` (NIOSSH's synchronous signing API) too. Each of
+those is a candidate for the M20 hang on a small machine; none is
+measured. A guard that forbids `syncShutdownGracefully(` and
+`DispatchSemaphore` in test targets outside a named allowlist would keep
+the fixed shape from coming back; the `sample` step on a branch is the
+tool that finds the next one.
+
+Process note: pushes to an existing pull-request branch from this session
+triggered no workflow run (PRs 4, 5 and the sampler's second push), while
+PR creation and pushes to `develop` did — so the verification ran on
+`develop` itself, with the fix pushed alone ahead of unreviewed work.
+

@@ -73,6 +73,24 @@
   via `ssh-keygen`. Secrets live exclusively in the macOS Keychain
   (`SecretStore`); JSON stores never contain them.
 
+## Tests never block the cooperative pool
+
+Measured on 2026-09-02, with `sample` on a hung CI process: three test
+threads parked in `EventLoopGroup.syncShutdownGracefully()` inside a
+`defer`, one more `futureResult.wait()` per offer above it. Swift Testing
+runs every test on the cooperative thread pool, and that pool is exactly
+as wide as the machine has cores. The CI runner has three; three
+parameterised cases blocked three threads; the other 3300 tests never got
+a thread, and the run sat at 0 % CPU until the timeout. Ten local cores
+hid it completely — the suite was green here every time.
+
+So, in test targets: no `syncShutdownGracefully()`, no
+`futureResult.wait()`, no `DispatchSemaphore.wait()` — every wait is an
+`await` (`shutdownGracefully()`, `.get()`, an `AsyncStream` or a
+continuation). A blocking wait that "returns at once" today is a hang on
+a smaller machine tomorrow. The record of the measurement is
+`docs/superpowers/specs/2026-08-08-testsuite-hang-investigation.md`.
+
 ## Architecture invariants
 
 - TOFU host-key handling is security-critical: a key **mismatch is a hard
