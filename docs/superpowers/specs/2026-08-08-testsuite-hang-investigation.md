@@ -180,9 +180,10 @@ machine, no code change to dialing in between:
 | full gated run | unloaded | green |
 | full gated run | unloaded | **red**: `largestGap 0.70099 s` vs `ceiling 0.69847 s` — 2.5 ms over |
 | full gated run | reviewer agent active, run took 90 s | **red**, 2 issues (later the same day) |
-| suite alone, ×9 | unloaded | green, 4.86–4.91 s each |
+| full gated run | re-review agent active, run took 107 s | **red**, 1 issue (later still) |
+| suite alone, ×12 | unloaded | green, 4.85–4.91 s each |
 
-Three red of five full runs, nine of nine green alone. The failing assertion
+Four red of six full runs, twelve of twelve green alone. The failing assertion
 is a wall-clock ceiling — the shape `TeardownStageTests` was moved away
 from on 2026-08-28 for the same reason. This is the "test harness stalls
 its own main actor" side finding from B-1 (2026-08-28), now with a
