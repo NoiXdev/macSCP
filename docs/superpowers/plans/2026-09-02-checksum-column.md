@@ -46,8 +46,13 @@ and `.checksumAlgorithm`, `RemoteFileTableView` (`buildColumns`, the
   scroll or column toggle triggers a checksum request. A guard pins that
   the ledger is only WRITTEN from the request path (`ChecksumBatch`) —
   a negative scan with a positive anchor.
-- **A value never outlives its bytes.** The ledger key includes `size`
-  and `modifiedAt`; a row with a different identity reads empty. Pinned.
+- **A value never outlives its bytes — as far as a listing can tell.** The
+  ledger key includes `size` and `modifiedAt`; a row with a different
+  identity reads empty. Pinned. The review of Task 1 named the gap the
+  key cannot close: a same-size rewrite within one modification-time
+  tick (SFTP and WebDAV carry whole seconds) keeps the old value on
+  screen. The closeout states that limit; the info sheet has the same
+  blindness, so the column is no worse than what exists.
 - **Provenance intact.** Only `FileChecksum` values with digest provenance
   enter the ledger; a multipart ETag result does not (the sheet's own
   sentence for it stays the only place it shows). Pinned.
