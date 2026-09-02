@@ -64,6 +64,22 @@ sensitivity is a number).
   liveness suite's result each time (the whole point).
 - [ ] **Step 3: Commit** — `test(ssh): the liveness ceiling separates a block from scheduling noise`
 
+### Task 1b: A green run prints its numbers
+
+Measured in fix round 1 of Task 1 (2026-09-03): one planted full gated
+run showed an ambient of 5.73 s on test 1 — above the 4 s cap — while every
+green run before it printed nothing, so nobody can say how often the cap
+binds. A green run that prints `ambient` and `largestGap` for both timing
+tests (one line each, through the same `print` the red path already
+uses, e.g. `liveness: <test> ambient=<s> gap=<s> ceiling=<s>`) makes
+that a question a grep over CI logs answers.
+
+**Files:** `Tests/macSCPCoreTests/ConnectMainActorLivenessTests.swift` only.
+
+- [ ] Add the two lines; run the suite alone once and paste the two
+  printed lines into the report; zero warnings; commit
+  `test(ssh): the liveness tests print their ambient and gap on green as well`.
+
 ### Task 2: The entry closes its tally
 
 **Files:**
