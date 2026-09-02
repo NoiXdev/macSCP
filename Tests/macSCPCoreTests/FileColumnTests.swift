@@ -9,10 +9,10 @@ import Testing
 /// four new ones default OFF.
 @Suite("FileColumn")
 struct FileColumnTests {
-    @Test func allCasesAreThePlannedSevenColumns() {
+    @Test func allCasesAreThePlannedEightColumns() {
         #expect(
             FileColumn.allCases == [
-                .name, .size, .modified, .permissions, .owner, .group, .type,
+                .name, .size, .modified, .permissions, .owner, .group, .type, .checksum,
             ])
     }
 
@@ -21,7 +21,7 @@ struct FileColumnTests {
     }
 
     @Test(arguments: [
-        FileColumn.size, .modified, .permissions, .owner, .group, .type,
+        FileColumn.size, .modified, .permissions, .owner, .group, .type, .checksum,
     ])
     func everyOtherColumnIsToggleable(column: FileColumn) {
         #expect(column.isToggleable == true)
@@ -35,6 +35,7 @@ struct FileColumnTests {
         #expect(FileColumn.owner.defaultVisible == false)
         #expect(FileColumn.group.defaultVisible == false)
         #expect(FileColumn.type.defaultVisible == false)
+        #expect(FileColumn.checksum.defaultVisible == false)
     }
 
     // MARK: - Formatters
@@ -61,5 +62,74 @@ struct FileColumnTests {
         let item = RemoteFileItem(name: "a", path: "/a", kind: .file)
         #expect(FileColumnFormatter.ownerText(for: item) == nil)
         #expect(FileColumnFormatter.groupText(for: item) == nil)
+    }
+
+    // MARK: - Checksum column
+
+    private static let referenceDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+    private static func file(
+        kind: RemoteFileKind = .file, size: UInt64? = 42
+    ) -> RemoteFileItem {
+        RemoteFileItem(
+            name: "report.csv", path: "/report.csv", kind: kind, size: size,
+            modifiedAt: referenceDate)
+    }
+
+    private static func digest(_ algorithm: ChecksumAlgorithm) -> FileChecksum {
+        FileChecksum.computedOnRemote(
+            algorithm, hex: String(repeating: "a", count: algorithm.hexDigitCount))!
+    }
+
+    /// The column shows what the ledger holds, and shows it as the hex the
+    /// user asked for — never a re-derived or re-formatted spelling.
+    @Test func checksumTextIsTheRecordedHex() {
+        let item = Self.file()
+        var ledger = ChecksumLedger()
+        let value = Self.digest(.sha256)
+        ledger.record(.checksum(value), for: item)
+
+        #expect(
+            FileColumnFormatter.checksumText(for: item, in: ledger, algorithm: .sha256)
+                == value.hex)
+    }
+
+    /// The whole point of the column: a file nobody asked about has no
+    /// text at all, not a placeholder and not a dash.
+    @Test func checksumTextIsNilWhenNothingWasAsked() {
+        #expect(
+            FileColumnFormatter.checksumText(for: Self.file(), in: ChecksumLedger(), algorithm: .sha256)
+                == nil)
+    }
+
+    @Test func checksumTextIsNilUnderAnotherAlgorithm() {
+        let item = Self.file()
+        var ledger = ChecksumLedger()
+        ledger.record(.checksum(Self.digest(.sha256)), for: item)
+
+        #expect(FileColumnFormatter.checksumText(for: item, in: ledger, algorithm: .md5) == nil)
+    }
+
+    /// A row whose bytes changed under the same path reads empty again —
+    /// the ledger's own key rule, seen from the column.
+    @Test func checksumTextIsNilOnceTheFileChanged() {
+        var ledger = ChecksumLedger()
+        ledger.record(.checksum(Self.digest(.sha256)), for: Self.file(size: 42))
+
+        #expect(
+            FileColumnFormatter.checksumText(
+                for: Self.file(size: 43), in: ledger, algorithm: .sha256) == nil)
+    }
+
+    /// A directory has no digest, so its cell is empty even if a value was
+    /// somehow recorded under the same identity: the column asks the kind
+    /// itself rather than trusting the ledger to have refused.
+    @Test(arguments: [RemoteFileKind.directory, .symlink, .other])
+    func checksumTextIsNilForEverythingThatIsNotAFile(kind: RemoteFileKind) {
+        let item = Self.file(kind: kind)
+        var ledger = ChecksumLedger()
+        ledger.record(.checksum(Self.digest(.sha256)), for: item)
+
+        #expect(FileColumnFormatter.checksumText(for: item, in: ledger, algorithm: .sha256) == nil)
     }
 }

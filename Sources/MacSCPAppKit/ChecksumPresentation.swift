@@ -170,9 +170,25 @@ final class ChecksumBatch: Identifiable {
 
     private var task: Task<Void, Never>?
 
-    init(selection: [RemoteFileItem], algorithm: ChecksumAlgorithm) {
+    /// Told about each result the moment it stands, with the file it is
+    /// about — how a value the user asked for reaches anything beyond this
+    /// sheet (the pane's `ChecksumLedger`, which the checksum column reads).
+    ///
+    /// A report, not a second computation: it is called with what was
+    /// already recorded into `rows`, exactly once per row that got an
+    /// answer, and never for a row the cancel interrupted. Defaulted to a
+    /// no-op so a surface that only wants the sheet stays a two-argument
+    /// construction.
+    private let onResult: (ChecksumRequestResult, RemoteFileItem) -> Void
+
+    init(
+        selection: [RemoteFileItem],
+        algorithm: ChecksumAlgorithm,
+        onResult: @escaping (ChecksumRequestResult, RemoteFileItem) -> Void = { _, _ in }
+    ) {
         self.rows = selection.filter { $0.kind == .file }.map { Row(item: $0, result: nil) }
         self.algorithm = algorithm
+        self.onResult = onResult
     }
 
     var finishedCount: Int { rows.filter { $0.result != nil }.count }
@@ -198,6 +214,7 @@ final class ChecksumBatch: Identifiable {
                     result, cancelled: Task.isCancelled)
                 else { break }
                 self.rows[index].result = result
+                self.onResult(result, self.rows[index].item)
             }
             self.wasCancelled = Task.isCancelled
             self.isRunning = false

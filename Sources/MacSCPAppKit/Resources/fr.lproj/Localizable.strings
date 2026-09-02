@@ -225,6 +225,8 @@
 "filetable.column.owner" = "Propriétaire";
 "filetable.column.group" = "Groupe";
 "filetable.column.type" = "Type";
+"filetable.column.checksum" = "Somme de contrôle";
+"filetable.column.checksum.withAlgorithm %@" = "Somme de contrôle (%@)";
 
 /* Marqueur de lien symbolique (M11h/T1) : infobulle sur la cellule de nom
    d'une ligne de lien symbolique, sert aussi de description d'accessibilité

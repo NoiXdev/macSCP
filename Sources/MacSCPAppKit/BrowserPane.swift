@@ -119,6 +119,16 @@ struct BrowserPane: View {
     /// chosen until the sheet is closed. Held here rather than built inside
     /// the sheet so the run and the sheet have the same lifetime.
     @State private var checksumBatch: ChecksumBatch?
+    /// What this pane has been asked to compute, per file (2026-09-02) —
+    /// the `checksum` column's only source, and per PANE for the same
+    /// reason the view model is: two panes are two file systems, and a path
+    /// means nothing across them.
+    ///
+    /// Written in exactly one place (the run's result report, below) and
+    /// read in exactly one (the table). Nothing on the listing or refresh
+    /// path touches it, which is what keeps the column empty until the user
+    /// asks — `ChecksumColumnWiringGuardTests` holds that.
+    @State private var checksumLedger = ChecksumLedger()
     /// Set only when a symlink double-click's `navigate(to:)` call FAILS
     /// (M11h/T1 review fix — see `onOpenSymlink` below): forwarded to
     /// `PathBar`, which reuses its existing failure overlay to show the
@@ -254,7 +264,10 @@ struct BrowserPane: View {
                         case .delete: deleteRequest = selection
                         case .computeChecksum:
                             checksumBatch = ChecksumBatch(
-                                selection: selection, algorithm: checksumAlgorithm)
+                                selection: selection, algorithm: checksumAlgorithm,
+                                onResult: { result, item in
+                                    checksumLedger.record(result, for: item)
+                                })
                         default: onMenuAction?(entry, selection)
                         }
                     },
@@ -269,6 +282,8 @@ struct BrowserPane: View {
                     supportsChecksum: supportsChecksum,
                     supportsPermissions: supportsPermissions,
                     visibleColumns: visibleColumns,
+                    checksumLedger: checksumLedger,
+                    checksumAlgorithm: checksumAlgorithm,
                     sortKey: viewModel.sortKey,
                     sortAscending: viewModel.sortAscending,
                     onSortChange: { key, ascending in

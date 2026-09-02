@@ -223,6 +223,8 @@
 "filetable.column.owner" = "Besitzer";
 "filetable.column.group" = "Gruppe";
 "filetable.column.type" = "Typ";
+"filetable.column.checksum" = "Prüfsumme";
+"filetable.column.checksum.withAlgorithm %@" = "Prüfsumme (%@)";
 
 /* Symlink-Markierung (M11h/T1): Tooltip auf der Namens-Zelle einer
    Symlink-Zeile, dient zugleich als Accessibility-Beschreibung des

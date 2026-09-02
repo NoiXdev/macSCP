@@ -225,6 +225,8 @@
 "filetable.column.owner" = "Właściciel";
 "filetable.column.group" = "Grupa";
 "filetable.column.type" = "Typ";
+"filetable.column.checksum" = "Suma kontrolna";
+"filetable.column.checksum.withAlgorithm %@" = "Suma kontrolna (%@)";
 
 /* Znacznik dowiązania symbolicznego (M11h/T1): podpowiedź na komórce nazwy
    wiersza dowiązania symbolicznego, służy też jako opis ułatwień dostępu

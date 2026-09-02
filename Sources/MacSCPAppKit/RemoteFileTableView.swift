@@ -83,6 +83,19 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// fixed three (`name`/`size`/`modified`) so any call site that doesn't
     /// thread the setting through yet keeps today's exact layout.
     var visibleColumns: Set<FileColumn> = Set(FileColumn.allCases.filter(\.defaultVisible))
+    /// What this pane has already been asked to compute (2026-09-02) — the
+    /// only source the `checksum` column reads, and a plain value, so the
+    /// table can neither start a request nor learn of one it was not told
+    /// about. Threaded in exactly like `visibleColumns` above: the pane owns
+    /// it, this view renders it. The empty default is the correct one for
+    /// every call site: a table nobody has asked anything of shows an empty
+    /// column.
+    var checksumLedger: ChecksumLedger = ChecksumLedger()
+    /// Which digest the `checksum` column shows, and names in its header —
+    /// mirrors `SettingsStore.checksumAlgorithm`. A value recorded under
+    /// another algorithm is not shown under this one (the ledger keys on it),
+    /// so switching the setting empties the column until the user asks again.
+    var checksumAlgorithm: ChecksumAlgorithm = .preferred
     /// This pane's current sort column/direction (M11l/T2) — mirrors
     /// `RemoteBrowserViewModel.sortKey`/`sortAscending`. Threaded in from the
     /// VM rather than read off `NSTableView.sortDescriptors` because Core
@@ -127,6 +140,8 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.fileActions = fileActions
         coordinator.supportsChecksum = supportsChecksum
         coordinator.supportsPermissions = supportsPermissions
+        coordinator.checksumLedger = checksumLedger
+        coordinator.checksumAlgorithm = checksumAlgorithm
         coordinator.onSortChange = onSortChange
         coordinator.scope = scope
         coordinator.destinationScope = destinationScope
@@ -147,8 +162,10 @@ struct RemoteFileTableView: NSViewRepresentable {
         table.headerView = NSTableHeaderView(
             frame: NSRect(x: 0, y: 0, width: 0, height: 22))
 
-        Self.buildColumns(visible: visibleColumns, in: table)
+        Self.buildColumns(
+            visible: visibleColumns, checksumAlgorithm: checksumAlgorithm, in: table)
         context.coordinator.lastVisibleColumns = visibleColumns
+        context.coordinator.lastChecksumAlgorithm = checksumAlgorithm
 
         table.dataSource = context.coordinator
         table.delegate = context.coordinator
@@ -189,6 +206,87 @@ struct RemoteFileTableView: NSViewRepresentable {
         old != new
     }
 
+    /// What one cell of `column` says about `item`.
+    ///
+    /// A `switch` over `FileColumn` and not over the identifier STRING
+    /// (2026-09-02): the string switch this replaces needed a `default`, so
+    /// a new column could be added to the enum, built into the table, given
+    /// a header — and render blank forever, with nothing red. The
+    /// exhaustiveness check now refuses to compile that, which is the
+    /// boundary a source-scanning guard was standing in for. (It was
+    /// standing badly: a scan of this file for the column's identifier was
+    /// satisfied by the STYLING switch below, whose `default` swallows most
+    /// columns, so the case it was watching could be deleted from here and
+    /// the scan stayed green. Measured while writing this.)
+    ///
+    /// Pure and static so the whole mapping is decidable in a test without
+    /// an `NSTableView`, the same reason `needsReload` is.
+    static func cellText(
+        for column: FileColumn, item: RemoteFileItem, ledger: ChecksumLedger,
+        algorithm: ChecksumAlgorithm
+    ) -> String {
+        switch column {
+        case .name: return FileListFormatter.displayName(for: item)
+        case .size: return FileListFormatter.sizeString(for: item)
+        case .modified: return FileListFormatter.dateString(for: item)
+        // M11m/T2: `permissions`/`owner`/`group` reuse the Core formatters
+        // (T1) and substitute the localized "—" placeholder for `nil`;
+        // `type` has no Core formatter at all by design (Core stays free of
+        // hardcoded user-facing strings) so it is mapped straight from
+        // `item.kind` by the App-layer lookup below.
+        case .permissions:
+            return FileColumnFormatter.permissionsText(for: item) ?? emptyCellPlaceholder
+        case .owner:
+            return FileColumnFormatter.ownerText(for: item) ?? emptyCellPlaceholder
+        case .group:
+            return FileColumnFormatter.groupText(for: item) ?? emptyCellPlaceholder
+        case .type: return typeText(for: item.kind)
+        // The one column that shows nothing rather than a placeholder when
+        // it has nothing (2026-09-02): "—" would say the listing did not
+        // carry the value, and there is no listing that carries this one.
+        // An empty cell says what is true — nobody has asked about this
+        // file.
+        case .checksum:
+            return checksumCellText(for: item, in: ledger, algorithm: algorithm)
+        }
+    }
+
+    /// Localized word for the "Type" column (M11m/T2) — `Core` never
+    /// formats `kind` to text itself (see `FileColumnFormatter`'s doc
+    /// comment): this is the App-layer lookup its comment points to.
+    private static func typeText(for kind: RemoteFileKind) -> String {
+        switch kind {
+        case .directory: return L10n.string("filetable.type.folder", "Folder")
+        case .file: return L10n.string("filetable.type.file", "File")
+        case .symlink: return L10n.string("filetable.type.symlink", "Symbolic Link")
+        case .other: return L10n.string("filetable.type.other", "Other")
+        }
+    }
+
+    /// Localized placeholder for a `nil` permissions/owner/group value
+    /// (M11m/T2) — `RemoteFileItem.owner`/`.group` are legitimately `nil`
+    /// (per the M11m data-source rules: no `longname`, no numeric fallback
+    /// either), and a single-`stat` lookup never carries `owner`/`group` at
+    /// all (only a directory listing does).
+    static var emptyCellPlaceholder: String {
+        L10n.string("filetable.cell.placeholder", "—")
+    }
+
+    /// The `checksum` column's cell text (2026-09-02): the hex the user
+    /// already asked for, or the empty string.
+    ///
+    /// A lookup and nothing else — the Core formatter it defers to takes the
+    /// ledger by value and has no way to request anything, so drawing,
+    /// scrolling or switching on this column cannot cause work on the far
+    /// side. Pulled out as a static helper for the same reason `needsReload`
+    /// is: it is the whole behaviour of the column, and a test can read it
+    /// without an `NSTableView`.
+    static func checksumCellText(
+        for item: RemoteFileItem, in ledger: ChecksumLedger, algorithm: ChecksumAlgorithm
+    ) -> String {
+        FileColumnFormatter.checksumText(for: item, in: ledger, algorithm: algorithm) ?? ""
+    }
+
     /// Per-column width and default click-to-sort direction (M11m/T2),
     /// keyed by `FileColumn` — display order itself always comes from
     /// `FileColumn.allCases`, never from this dictionary's own iteration
@@ -199,7 +297,15 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// ("a sensible default — pick and note it"): descending puts the
     /// most-permissive files first, mirroring "biggest first" for size, a
     /// more useful first click than "least permissive first" would be.
-    private static let columnSpecs: [FileColumn: (width: CGFloat, defaultAscending: Bool)] = [
+    ///
+    /// `defaultAscending` is OPTIONAL, and `nil` means the column carries no
+    /// sort-descriptor prototype at all — an unclickable header, which is
+    /// what `checksum` needs (2026-09-02). Sorting by a column that is empty
+    /// for every row nobody asked about would order the listing by what the
+    /// user happened to ask for, and `FileSortKey` has no case for it either
+    /// (Core is the only sort authority; a header click it cannot express is
+    /// a header click that must not be offered).
+    static let columnSpecs: [FileColumn: (width: CGFloat, defaultAscending: Bool?)] = [
         .name: (260, true),
         .size: (90, false),
         .modified: (160, true),
@@ -210,6 +316,12 @@ struct RemoteFileTableView: NSViewRepresentable {
         .owner: (110, true),
         .group: (110, true),
         .type: (90, true),
+        // 300: a full SHA-256 is 64 monospaced digits (~480pt at 12.5pt plus
+        // the 2x12pt insets), which would be a wider default column than the
+        // file names beside it. So the resting width shows a prefix, the
+        // column stays user-resizable like every other, and the cell carries
+        // the whole value as its tooltip.
+        .checksum: (300, nil),
     ]
 
     /// Builds `table`'s columns from scratch, in `FileColumn.allCases` order
@@ -225,15 +337,20 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// implies (restoring the sort indicator, reloading data) — this
     /// function only ever adds columns, it never touches selection, sort
     /// state, or existing columns (callers must remove those first).
-    private static func buildColumns(visible: Set<FileColumn>, in table: NSTableView) {
+    private static func buildColumns(
+        visible: Set<FileColumn>, checksumAlgorithm: ChecksumAlgorithm, in table: NSTableView
+    ) {
         for column in FileColumn.allCases where column == .name || visible.contains(column) {
             guard let spec = columnSpecs[column] else { continue }
             let tableColumn = NSTableColumn(identifier: .init(column.rawValue))
-            let header = PolishedHeaderCell(textCell: column.localizedTitle)
+            let header = PolishedHeaderCell(
+                textCell: column.localizedHeaderTitle(checksumAlgorithm: checksumAlgorithm))
             tableColumn.headerCell = header
             tableColumn.width = spec.width
-            tableColumn.sortDescriptorPrototype = NSSortDescriptor(
-                key: column.rawValue, ascending: spec.defaultAscending)
+            if let ascending = spec.defaultAscending {
+                tableColumn.sortDescriptorPrototype = NSSortDescriptor(
+                    key: column.rawValue, ascending: ascending)
+            }
             table.addTableColumn(tableColumn)
         }
     }
@@ -254,6 +371,16 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.fileActions = fileActions
         context.coordinator.supportsChecksum = supportsChecksum
         context.coordinator.supportsPermissions = supportsPermissions
+        // A newly recorded checksum (or a different algorithm setting)
+        // changes the TEXT of rows that are otherwise byte-for-byte the
+        // same items, so `needsReload` above cannot see it — diffed here
+        // against what the coordinator itself last held, the same
+        // discipline every other diff in this function uses.
+        let checksumTextChanged =
+            context.coordinator.checksumLedger != checksumLedger
+            || context.coordinator.checksumAlgorithm != checksumAlgorithm
+        context.coordinator.checksumLedger = checksumLedger
+        context.coordinator.checksumAlgorithm = checksumAlgorithm
         context.coordinator.onSortChange = onSortChange
         context.coordinator.scope = scope
         context.coordinator.destinationScope = destinationScope
@@ -273,13 +400,22 @@ struct RemoteFileTableView: NSViewRepresentable {
         // `itemsChanged` branch below already accounts for — the same
         // selection-reconciliation block further down restores it
         // unconditionally, so no separate restore is needed here.
-        if context.coordinator.lastVisibleColumns != visibleColumns {
+        //
+        // The algorithm setting is part of this diff and not only of the
+        // cell text: it is in the checksum column's HEADER, and a header is
+        // built here and nowhere else.
+        let columnsChanged =
+            context.coordinator.lastVisibleColumns != visibleColumns
+            || context.coordinator.lastChecksumAlgorithm != checksumAlgorithm
+        if columnsChanged {
             context.coordinator.lastVisibleColumns = visibleColumns
+            context.coordinator.lastChecksumAlgorithm = checksumAlgorithm
             context.coordinator.suppressSelectionCallback = true
             for column in table.tableColumns {
                 table.removeTableColumn(column)
             }
-            Self.buildColumns(visible: visibleColumns, in: table)
+            Self.buildColumns(
+                visible: visibleColumns, checksumAlgorithm: checksumAlgorithm, in: table)
             context.coordinator.updateSortIndicators(activeKey: sortKey, ascending: sortAscending)
             table.reloadData()
             context.coordinator.suppressSelectionCallback = false
@@ -302,7 +438,10 @@ struct RemoteFileTableView: NSViewRepresentable {
             ]
             context.coordinator.updateSortIndicators(activeKey: sortKey, ascending: sortAscending)
         }
-        if itemsChanged {
+        // `!columnsChanged` because that branch has already reloaded — the
+        // rows would otherwise be reloaded twice in the one update where a
+        // toggle and a fresh checksum arrive together.
+        if !columnsChanged && (itemsChanged || checksumTextChanged) {
             // reloadData() clears the selection without a delegate call —
             // the reconciliation below restores it right after.
             context.coordinator.suppressSelectionCallback = true
@@ -499,6 +638,16 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// comment at its `updateNSView` call site. `nil` only before
         /// `makeNSView` runs its initial build.
         var lastVisibleColumns: Set<FileColumn>?
+        /// The algorithm the CURRENT headers were built with (2026-09-02) —
+        /// the checksum column's header names it, so a changed setting has
+        /// to rebuild the columns and not merely the cells. `nil` only
+        /// before `makeNSView` runs its initial build.
+        var lastChecksumAlgorithm: ChecksumAlgorithm?
+        /// What this pane has already been asked to compute, and under which
+        /// algorithm to read it — the `checksum` column's only source. Pushed
+        /// in from the view on every update; see those properties there.
+        var checksumLedger = ChecksumLedger()
+        var checksumAlgorithm: ChecksumAlgorithm = .preferred
 
         init(
             onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping ([RemoteFileItem]) -> Void,
@@ -528,29 +677,14 @@ struct RemoteFileTableView: NSViewRepresentable {
             viewFor tableColumn: NSTableColumn?,
             row: Int
         ) -> NSView? {
-            guard row < items.count, let columnID = tableColumn?.identifier.rawValue else {
+            guard row < items.count, let columnID = tableColumn?.identifier.rawValue,
+                let column = FileColumn(rawValue: columnID)
+            else {
                 return nil
             }
             let item = items[row]
-            let text: String
-            switch columnID {
-            case "name": text = FileListFormatter.displayName(for: item)
-            case "size": text = FileListFormatter.sizeString(for: item)
-            case "modified": text = FileListFormatter.dateString(for: item)
-            // M11m/T2: `permissions`/`owner`/`group` reuse the Core
-            // formatters (T1) and substitute the localized "—" placeholder
-            // for `nil`; `type` has no Core formatter at all by design (Core
-            // stays free of hardcoded user-facing strings) so it's mapped
-            // straight from `item.kind` via `Self.typeText`.
-            case "permissions":
-                text = FileColumnFormatter.permissionsText(for: item) ?? Self.emptyCellPlaceholder
-            case "owner":
-                text = FileColumnFormatter.ownerText(for: item) ?? Self.emptyCellPlaceholder
-            case "group":
-                text = FileColumnFormatter.groupText(for: item) ?? Self.emptyCellPlaceholder
-            case "type": text = Self.typeText(for: item.kind)
-            default: return nil
-            }
+            let text = RemoteFileTableView.cellText(
+                for: column, item: item, ledger: checksumLedger, algorithm: checksumAlgorithm)
 
             let reuseID = NSUserInterfaceItemIdentifier("cell-\(columnID)")
             let cell: NSTableCellView
@@ -631,33 +765,23 @@ struct RemoteFileTableView: NSViewRepresentable {
                 cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
                 cell.textField?.textColor = DesignTokens.inkSecondaryNS
                 cell.textField?.alignment = .natural
+            case "checksum":
+                cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
+                cell.textField?.textColor = DesignTokens.inkSecondaryNS
+                cell.textField?.alignment = .natural
+                // The resting column is narrower than a SHA-256 (see
+                // `columnSpecs`), so the whole value lives in the tooltip.
+                // Set on EVERY reuse, empty text included — the same
+                // recycling hygiene the "name" branch above documents: a
+                // cell that scrolls from a row with a value onto one
+                // without must not keep showing the old digest.
+                cell.toolTip = text.isEmpty ? nil : text
             default: // "owner", "group", "type"
                 cell.textField?.font = .systemFont(ofSize: 12.5)
                 cell.textField?.textColor = DesignTokens.inkSecondaryNS
                 cell.textField?.alignment = .natural
             }
             return cell
-        }
-
-        /// Localized word for the "Type" column (M11m/T2) — `Core` never
-        /// formats `kind` to text itself (see `FileColumnFormatter`'s doc
-        /// comment): this is the App-layer lookup its comment points to.
-        private static func typeText(for kind: RemoteFileKind) -> String {
-            switch kind {
-            case .directory: return L10n.string("filetable.type.folder", "Folder")
-            case .file: return L10n.string("filetable.type.file", "File")
-            case .symlink: return L10n.string("filetable.type.symlink", "Symbolic Link")
-            case .other: return L10n.string("filetable.type.other", "Other")
-            }
-        }
-
-        /// Localized placeholder for a `nil` permissions/owner/group value
-        /// (M11m/T2) — `RemoteFileItem.owner`/`.group` are legitimately
-        /// `nil` (per the M11m data-source rules: no `longname`, no numeric
-        /// fallback either), and a single-`stat` lookup never carries
-        /// `owner`/`group` at all (only a directory listing does).
-        private static var emptyCellPlaceholder: String {
-            L10n.string("filetable.cell.placeholder", "—")
         }
 
         @objc func doubleClicked(_ sender: Any?) {
@@ -1118,8 +1242,26 @@ extension FileColumn {
         case .owner: fallback = "Owner"
         case .group: fallback = "Group"
         case .type: fallback = "Type"
+        case .checksum: fallback = "Checksum"
         }
         return L10n.string("filetable.column.\(rawValue)", fallback)
+    }
+
+    /// The title the table's HEADER carries, which for the checksum column
+    /// is not the same string as the one the Settings checkbox carries
+    /// (2026-09-02).
+    ///
+    /// A column of hex over a bare "Checksum" would leave out the one thing
+    /// somebody comparing against a published figure has to know: which
+    /// digest these are. The setting names the column; the header names
+    /// what is in it. `ChecksumAlgorithm.displayName` is deliberately not
+    /// localized (see its own doc comment) — it is a standard's spelling,
+    /// and translating it would make the comparison harder.
+    func localizedHeaderTitle(checksumAlgorithm: ChecksumAlgorithm) -> String {
+        guard self == .checksum else { return localizedTitle }
+        return String(
+            format: L10n.string("filetable.column.checksum.withAlgorithm %@", "Checksum (%@)"),
+            checksumAlgorithm.displayName)
     }
 }
 

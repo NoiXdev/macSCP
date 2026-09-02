@@ -223,6 +223,8 @@
 "filetable.column.owner" = "Owner";
 "filetable.column.group" = "Group";
 "filetable.column.type" = "Type";
+"filetable.column.checksum" = "Checksum";
+"filetable.column.checksum.withAlgorithm %@" = "Checksum (%@)";
 
 /* Symlink marker (M11h/T1): tooltip on a symlink row's name cell, also
    used as the marker symbol's accessibility description. */

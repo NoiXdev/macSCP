@@ -721,6 +721,35 @@ struct SettingsStoreTests {
         #expect(store.visibleColumns == [.name, .owner])
     }
 
+    /// The checksum column is persisted exactly like every other optional
+    /// one — no separate key, no separate default.
+    @Test func visibleColumnsRoundtripsTheChecksumColumn() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.visibleColumns = [.name, .size, .checksum]
+
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.visibleColumns == [.name, .size, .checksum])
+    }
+
+    /// A settings.json written before the checksum column existed keeps its
+    /// columns and does NOT gain it — the column is off until asked for,
+    /// the same way its cells are empty until asked for.
+    @Test func aStoredColumnListWithoutTheChecksumColumnLeavesItHidden() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"visibleColumns": ["name", "size", "modified", "owner"]}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.visibleColumns == [.name, .size, .modified, .owner])
+        #expect(store.visibleColumns.contains(.checksum) == false)
+    }
+
     @Test func visibleColumnsSurvivesAlongsideUnknownKeys() throws {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

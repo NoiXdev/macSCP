@@ -186,6 +186,47 @@ struct ChecksumBatchTests {
         #expect(batch.rows[1].result == Self.digest("1"))
     }
 
+    // MARK: - What the run reports onwards
+
+    /// Every result the run records is also handed to whoever asked to be
+    /// told (2026-09-02) — the pane's ledger, which is what lets the
+    /// checksum column show a value the user asked for. Same value, same
+    /// item, once each: the sink is a report of what happened, not a second
+    /// computation.
+    @Test func everyRecordedResultIsReportedOnceWithItsItem() async {
+        let reported = ResultRecorder()
+        let batch = ChecksumBatch(
+            selection: [Self.file("a"), Self.file("b")], algorithm: .sha256,
+            onResult: { result, item in reported.append(result, item) })
+
+        await batch.start { item in
+            item.path == "/a" ? Self.digest("1") : .unavailableOnThisConnection
+        }.value
+
+        #expect(reported.paths == ["/a", "/b"])
+        #expect(reported.results == [Self.digest("1"), .unavailableOnThisConnection])
+    }
+
+    /// A file whose only "result" was the cancel interrupting it has no
+    /// answer, so nothing is reported for it either — the sink sees exactly
+    /// what the rows see, never more.
+    @Test func aRowTheCancelInterruptedIsNotReported() async {
+        let reported = ResultRecorder()
+        let blocked = Blocker()
+        let batch = ChecksumBatch(
+            selection: [Self.file("a"), Self.file("b")], algorithm: .sha256,
+            onResult: { result, item in reported.append(result, item) })
+
+        let task = batch.start { _ in
+            await blocked.waitUntilCancelled()
+            return .failed("interrupted")
+        }
+        batch.cancel()
+        await task.value
+
+        #expect(reported.paths.isEmpty)
+    }
+
     // MARK: - The rule both surfaces apply
 
     /// Stated once, so the info sheet (one file) and the run (a selection)
@@ -205,6 +246,17 @@ struct ChecksumBatchTests {
 private final class Recorder {
     private(set) var paths: [String] = []
     func append(_ path: String) { paths.append(path) }
+}
+
+/// Records what the run reported onwards, in the order it reported it.
+@MainActor
+private final class ResultRecorder {
+    private(set) var results: [ChecksumRequestResult] = []
+    private(set) var paths: [String] = []
+    func append(_ result: ChecksumRequestResult, _ item: RemoteFileItem) {
+        results.append(result)
+        paths.append(item.path)
+    }
 }
 
 /// Suspends until the surrounding task is cancelled, cooperatively and
