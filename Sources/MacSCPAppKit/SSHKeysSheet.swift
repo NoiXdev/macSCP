@@ -604,7 +604,7 @@ private struct GenerateKeySheet: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
-            if typeChoice != .ed25519 {
+            if !resolvedType.isConnectable {
                 Text(L10n.string(
                     "keys.notConnectable", "Not usable as a macSCP login (public key export only)"))
                     .font(.caption)
