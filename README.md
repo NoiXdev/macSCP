@@ -220,3 +220,7 @@ its own.
 ## License
 
 [MIT](LICENSE) — © 2026 noix.
+
+Third-party dependency licences are listed, with their full text, in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — generated from
+`Package.resolved` by `scripts/third-party-notices`.

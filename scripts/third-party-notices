@@ -1,0 +1,268 @@
+#!/bin/bash
+# Generates THIRD_PARTY_NOTICES.md from Package.resolved and the licence
+# files inside the resolved checkouts under .build/checkouts/.
+#
+# Usage:
+#   scripts/third-party-notices          # regenerate THIRD_PARTY_NOTICES.md
+#   scripts/third-party-notices --check  # regenerate to a temp file, diff
+#                                         # against the committed one, exit 1
+#                                         # on any difference (for CI)
+#
+# Requires the checkouts to already exist (run `swift package resolve`
+# first if they don't) — this script never resolves packages itself and
+# does no network I/O of its own.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+MODE="generate"
+if [ "${1:-}" = "--check" ]; then
+    MODE="check"
+fi
+
+OUT_FILE="THIRD_PARTY_NOTICES.md"
+
+generate() {
+    python3 - "$1" <<'PYEOF'
+import json
+import os
+import sys
+
+repo_root = os.getcwd()
+dest = sys.argv[1]
+
+resolved_path = os.path.join(repo_root, "Package.resolved")
+with open(resolved_path, "r", encoding="utf-8") as f:
+    resolved = json.load(f)
+
+pins = resolved.get("pins", [])
+if not pins:
+    sys.exit("error: Package.resolved has no pins")
+
+checkouts_root = os.path.join(repo_root, ".build", "checkouts")
+try:
+    available = os.listdir(checkouts_root)
+except FileNotFoundError:
+    sys.exit(
+        f"error: {checkouts_root} does not exist — run "
+        "`swift package resolve` first (this script does not resolve "
+        "packages itself)"
+    )
+available_by_lower = {name.lower(): name for name in available}
+
+LICENCE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "NOTICE")
+PRUNE_DIRS = {".build", "Tests", "test", ".git"}
+
+# The two dependencies consumed from NoiXdev forks (see
+# docs/superpowers/specs/2026-08-20-backlog-dependencies.md for the
+# fork record): the notice names the fork AND the upstream project it
+# was forked from, so provenance stays readable.
+FORK_UPSTREAM = {
+    "citadel": "https://github.com/orlandos-nl/Citadel",
+    "swift-nio-ssh": "https://github.com/apple/swift-nio-ssh",
+}
+
+
+def repo_name_from_location(location):
+    name = location.rstrip("/")
+    name = name.rsplit("/", 1)[-1]
+    if name.endswith(".git"):
+        name = name[: -len(".git")]
+    return name
+
+
+def find_checkout_dir(identity, location):
+    candidates = [identity, repo_name_from_location(location)]
+    for candidate in candidates:
+        match = available_by_lower.get(candidate.lower())
+        if match:
+            return match
+    return None
+
+
+def display_version(state):
+    version = state.get("version")
+    if version:
+        return version
+    revision = state.get("revision")
+    branch = state.get("branch")
+    if branch and revision:
+        return f"{branch} @ {revision[:7]}"
+    if revision:
+        return f"{revision[:7]} (revision, untagged)"
+    return "unknown"
+
+
+def find_licence_files(checkout_dir):
+    """Every LICENSE/LICENCE/COPYING/NOTICE file under checkout_dir, at any
+    depth, skipping .build/Tests/test(/.git) directories. Returns a sorted
+    list of (relative_path, content) pairs."""
+    found = []
+    for dirpath, dirnames, filenames in os.walk(checkout_dir):
+        dirnames[:] = [d for d in dirnames if d not in PRUNE_DIRS]
+        for filename in filenames:
+            if filename.startswith(LICENCE_PREFIXES):
+                full_path = os.path.join(dirpath, filename)
+                rel_path = os.path.relpath(full_path, checkout_dir)
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+                found.append((rel_path, content))
+    found.sort(key=lambda pair: pair[0])
+    return found
+
+
+def guess_licence_name(licence_files):
+    """First non-empty line of the most LICENSE-like file found, preferring
+    an exact 'LICENSE' file, then common suffixed variants, then whatever
+    sorts first."""
+    if not licence_files:
+        return "unknown (no LICENSE/LICENCE/COPYING/NOTICE file found)"
+
+    def priority(item):
+        rel_path, _ = item
+        basename = os.path.basename(rel_path)
+        order = [
+            "LICENSE",
+            "LICENSE.txt",
+            "LICENSE.md",
+        ]
+        if basename in order:
+            return (0, order.index(basename))
+        if basename.startswith("LICENSE"):
+            return (1, basename)
+        if basename.startswith("LICENCE"):
+            return (2, basename)
+        if basename.startswith("COPYING"):
+            return (3, basename)
+        return (4, basename)
+
+    best = sorted(licence_files, key=priority)[0]
+    for line in best[1].splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return "unknown (LICENSE file is empty)"
+
+
+def fence_for(content):
+    longest_run = 0
+    run = 0
+    for ch in content:
+        if ch == "`":
+            run += 1
+            longest_run = max(longest_run, run)
+        else:
+            run = 0
+    return "`" * max(3, longest_run + 1)
+
+
+entries = []
+missing = []
+for pin in pins:
+    identity = pin["identity"]
+    location = pin.get("location", "")
+    state = pin.get("state", {})
+    checkout_name = find_checkout_dir(identity, location)
+    if checkout_name is None:
+        missing.append(identity)
+        continue
+    checkout_dir = os.path.join(checkouts_root, checkout_name)
+    licence_files = find_licence_files(checkout_dir)
+    entries.append(
+        {
+            "identity": identity,
+            "location": location,
+            "version": display_version(state),
+            "licence_files": licence_files,
+            "licence_name": guess_licence_name(licence_files),
+        }
+    )
+
+if missing:
+    sys.exit(
+        "error: no checkout found under .build/checkouts for: "
+        + ", ".join(sorted(missing))
+        + " — run `swift package resolve` first"
+    )
+
+entries.sort(key=lambda e: e["identity"])
+
+lines = []
+lines.append("# Third-Party Notices")
+lines.append("")
+lines.append(
+    "**This file is generated. Do not edit it by hand.** Run "
+    "`scripts/third-party-notices` from the repository root to "
+    "regenerate it from `Package.resolved` and the licence files inside "
+    "the resolved checkouts under `.build/checkouts/`. Licence text is "
+    "copied verbatim; the \"Licence\" column is a guess taken from the "
+    "first non-empty line of the licence file, not a legal "
+    "classification."
+)
+lines.append("")
+lines.append("## Dependencies")
+lines.append("")
+lines.append("| Identity | Version | Licence | Source |")
+lines.append("|---|---|---|---|")
+for e in entries:
+    source = e["location"]
+    if source.endswith(".git"):
+        source = source[: -len(".git")]
+    licence_cell = e["licence_name"].replace("|", "\\|")
+    lines.append(
+        f"| {e['identity']} | {e['version']} | {licence_cell} | {source} |"
+    )
+lines.append("")
+
+for e in entries:
+    lines.append(f"## {e['identity']}")
+    lines.append("")
+    source = e["location"]
+    if source.endswith(".git"):
+        source = source[: -len(".git")]
+    lines.append(f"Source: <{source}>")
+    lines.append("")
+    upstream = FORK_UPSTREAM.get(e["identity"])
+    if upstream and "NoiXdev" in e["location"]:
+        lines.append(
+            f"This dependency is consumed from a fork; upstream project: "
+            f"<{upstream}>. See "
+            "`docs/superpowers/specs/2026-08-20-backlog-dependencies.md` "
+            "for why the fork exists."
+        )
+        lines.append("")
+    if not e["licence_files"]:
+        lines.append(
+            "No LICENSE/LICENCE/COPYING/NOTICE file was found in this "
+            "checkout."
+        )
+        lines.append("")
+    for rel_path, content in e["licence_files"]:
+        lines.append(f"### {rel_path}")
+        lines.append("")
+        fence = fence_for(content)
+        lines.append(fence)
+        lines.append(content.rstrip("\n"))
+        lines.append(fence)
+        lines.append("")
+
+output = "\n".join(lines).rstrip("\n") + "\n"
+with open(dest, "w", encoding="utf-8") as f:
+    f.write(output)
+PYEOF
+}
+
+if [ "$MODE" = "check" ]; then
+    TMP_FILE="$(mktemp -t third-party-notices)"
+    trap 'rm -f "$TMP_FILE"' EXIT
+    generate "$TMP_FILE"
+    if diff -u "$OUT_FILE" "$TMP_FILE"; then
+        echo "$OUT_FILE is up to date"
+        exit 0
+    else
+        echo "error: $OUT_FILE is stale — run scripts/third-party-notices to regenerate" >&2
+        exit 1
+    fi
+else
+    generate "$OUT_FILE"
+    echo "wrote $OUT_FILE"
+fi
