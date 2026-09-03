@@ -492,25 +492,27 @@ extension ContentView {
         // record of an attempt that failed is describing something the tab
         // has been taken past.
         tab.connectFailure = nil
-        // And the diagnosis of a connection this window is leaving.
+        // And the run of a diagnosis of THIS tab — the run, not the panel.
         //
-        // Explicitly, not by letting the sheet's own `.onDisappear` do it:
-        // `DiagnosticsViewModel.run()` starts a free `Task`, which no view
-        // teardown touches, and closing a tab does not dismiss the sheet at
-        // all. Without this line the walk continues — the remaining steps
-        // under their budgets, and the SSH dial holding Citadel's
-        // uncancellable `openSFTP` timer — authenticating against a server the
+        // Stopping it explicitly, not by letting the sheet's own
+        // `.onDisappear` do it: `DiagnosticsViewModel.run()` starts a free
+        // `Task`, which no view teardown touches, and closing a tab does not
+        // dismiss the sheet at all. Without this the walk continues — the
+        // remaining steps under their budgets, and the SSH dial holding
+        // Citadel's uncancellable `openSFTP` timer — dialling a server the
         // window has just finished with. CLAUDE.md, "The UI owns lifecycles
-        // explicitly … no `deinit` cleanup"; `DiagnosticsLifecycleTests
-        // .tearingTheTabDownCancelsTheRunningDiagnosis` runs this path for
-        // real rather than reading it.
+        // explicitly … no `deinit` cleanup".
         //
-        // The window has ONE panel, so tearing down any tab ends it, not only
-        // the tab it was opened from. Deliberate, and in the cheap direction:
-        // a withdrawn diagnosis costs one button press to ask again, while a
-        // dial that outlives the window it belongs to costs a login attempt
-        // on somebody's server that nobody is watching.
-        endDiagnostics()
+        // What it does NOT do any more is close the panel. This function has
+        // six callers and `handleLivenessGiveUp` is not a user action at all:
+        // the session dropping is exactly why somebody opened Diagnose… on
+        // this tab, and dismissing the sheet there threw away the only thing
+        // that could say whether the host stopped resolving, the port stopped
+        // accepting, or the auth started failing. Two of the others
+        // (`performCloseOthers`, the reconnect-in-place branch) were closing a
+        // panel belonging to a different connection entirely.
+        // `DiagnosticsLifecycleTests` drives all three cases for real.
+        stopDiagnostics(of: tab)
     }
 
     /// The liveness probe's own route off a session (connection-liveness

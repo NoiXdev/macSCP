@@ -65,59 +65,99 @@ public actor ConnectionDiagnostics {
         self.appVersion = appVersion
     }
 
+    /// The whole diagnosis, with nothing to watch it happen.
+    ///
+    /// `run(onStep:)` is the real one; this is the spelling for a caller that
+    /// only wants the finished report — the CLI, and every test that is about
+    /// what was measured rather than when.
     public func run() async -> DiagnosticReport {
+        await run(onStep: { _ in })
+    }
+
+    /// The whole diagnosis, handing over each step as it finishes.
+    ///
+    /// `onStep` is called with a step the moment it is appended, before the
+    /// next one starts, and it is `async` so a `@MainActor` renderer can be
+    /// awaited rather than hopped to and forgotten.
+    ///
+    /// **Why the seam exists.** The report used to be one value returned at
+    /// the end, and the trace's budget is 20 s: an internet-facing host whose
+    /// last hops are firewalled finishes resolve, TCP, echo and dial in under
+    /// a second, then spends twenty more walking silence. The reader saw a
+    /// spinner for 21+ seconds with four finished rows sitting in the local
+    /// below, and cancelling cost them those rows as well.
+    public func run(onStep: @escaping DiagnosticStepObserver) async -> DiagnosticReport {
         guard let endpoint = descriptor.endpoint(values) else {
             // Not `failed`: nothing was measured and nothing is wrong with
             // the server. The form is incomplete, and the row has to say that
             // rather than report a lookup that never happened.
             let timer = Self.timer(for: DiagnosticStepID.resolve)
+            let step = timer.finish(.unavailable(DiagnosticReason.noHost), "")
+            await onStep(step)
             return DiagnosticReport(
-                endpoint: Endpoint(host: "", port: 0),
-                steps: [timer.finish(.unavailable(DiagnosticReason.noHost), "")],
-                appVersion: appVersion)
+                endpoint: Endpoint(host: "", port: 0), steps: [step], appVersion: appVersion)
         }
 
         var steps: [DiagnosticStep] = []
         func report() -> DiagnosticReport {
             DiagnosticReport(endpoint: endpoint, steps: steps, appVersion: appVersion)
         }
+        /// Hands a finished step to the observer and gives it back, so the
+        /// publish and the append read as one expression at every site.
+        ///
+        /// Shaped as "publish, then return" rather than as a function that
+        /// appends: a nested function capturing `steps` and awaiting inside it
+        /// is sending a mutable local across a suspension, which Swift 6
+        /// refuses — correctly, since the observer it awaits is `@Sendable`
+        /// and could be anything.
+        func published(_ step: DiagnosticStep) async -> DiagnosticStep {
+            await onStep(step)
+            return step
+        }
 
         guard !Task.isCancelled else { return report() }
         let (resolveStep, addresses) = await resolve(endpoint)
         guard !Task.isCancelled else { return report() }
-        steps.append(resolveStep)
+        steps.append(await published(resolveStep))
 
         guard !Task.isCancelled else { return report() }
         let tcpStep = await ping(addresses, port: endpoint.port)
         guard !Task.isCancelled else { return report() }
-        steps.append(tcpStep)
+        steps.append(await published(tcpStep))
 
         guard !Task.isCancelled else { return report() }
         let icmpStep = await echo(addresses)
         guard !Task.isCancelled else { return report() }
-        steps.append(icmpStep)
+        steps.append(await published(icmpStep))
 
         if let dial = descriptor.dial {
             guard !Task.isCancelled else { return report() }
             let step = await bounded(dial)
             guard !Task.isCancelled else { return report() }
-            steps.append(step)
+            steps.append(await published(step))
         }
 
-        // After the dial and before the contributions: the trace is the
-        // slowest universal step and the least likely to change a verdict, so
-        // the rows a reader looks at first — did it connect at all — are
-        // already there while it walks.
+        // After the dial and before the contributions, and now that IS what
+        // the reader gets: the trace is the slowest universal step and the
+        // least likely to change a verdict, so the rows somebody looks at
+        // first — did it resolve, did anything accept, did the dial get in —
+        // are on screen through `onStep` while it walks.
+        //
+        // The comment here said exactly this before `onStep` existed, when
+        // `run()` returned one value at the end and the panel's own comment
+        // said so in as many words. Two comments in one feature, each
+        // asserting the negation of the other; this round made the claim true
+        // rather than deleting it.
         guard !Task.isCancelled else { return report() }
         let traceStep = await trace(addresses)
         guard !Task.isCancelled else { return report() }
-        steps.append(traceStep)
+        steps.append(await published(traceStep))
 
         for contribution in descriptor.diagnostics {
             guard !Task.isCancelled else { return report() }
             let step = await bounded(contribution)
             guard !Task.isCancelled else { return report() }
-            steps.append(step)
+            steps.append(await published(step))
         }
         return report()
     }

@@ -57,7 +57,7 @@ struct DiagnosticsLifecycleTests {
         var hasStarted: Bool { lock.withLock { started } }
 
         func runner() -> DiagnosticsViewModel.Runner {
-            { [self] in
+            { [self] _ in
                 await withTaskCancellationHandler {
                     lock.withLock { started = true }
                     // Never returns of its own accord within any run of this
@@ -124,10 +124,12 @@ struct DiagnosticsLifecycleTests {
     /// purpose: that entry builds the REAL `ConnectionDiagnostics`, which
     /// would resolve a name and open sockets. What is under test here is the
     /// lifecycle, not the probes.
-    private func presentRunningPanel(on view: ContentView) async -> ParkedRun {
+    private func presentRunningPanel(
+        on view: ContentView, for tab: SessionTab? = nil
+    ) async -> ParkedRun {
         let parked = ParkedRun()
         let model = DiagnosticsViewModel(name: "Test session", runner: parked.runner())
-        view.diagnostics.present(model)
+        view.diagnostics.present(model, for: tab?.id)
         model.run()
         while !parked.hasStarted { await Task.yield() }
         return parked
@@ -154,28 +156,85 @@ struct DiagnosticsLifecycleTests {
         #expect(view.diagnostics.open == nil)
     }
 
-    /// Tearing the tab down stops it too, and does not wait for the sheet's
-    /// own disappearance to do it.
+    /// Tearing down the tab the panel was opened FOR stops the run — and
+    /// keeps what it measured on screen.
     ///
-    /// Explicitly, rather than through the view lifecycle: clearing the
-    /// presented panel dismisses the sheet, and SwiftUI decides when — and
-    /// whether — `.onDisappear` runs. Leaning on that would be exactly the
-    /// `deinit`-shaped cleanup CLAUDE.md's invariant forbids.
-    @Test func tearingTheTabDownCancelsTheRunningDiagnosis() async {
+    /// Two halves, and the second is the one fix round 1 got wrong. Stopping
+    /// is right: the walk is dialling a connection the window has finished
+    /// with, and closing a tab does not dismiss the sheet by itself, so
+    /// nothing else would stop it. DISMISSING is not: `teardown` runs for six
+    /// callers, and `handleLivenessGiveUp` is not a user action at all — the
+    /// session dropping is precisely WHY the panel is open, and throwing the
+    /// rows away at that moment discards the only thing that could say whether
+    /// the host stopped resolving, the port stopped accepting or the auth
+    /// started failing. The sheet stays until the person closes it.
+    @Test func tearingDownTheDiagnosedTabStopsTheRunAndKeepsTheRows() async {
         let (view, cleanup) = makeContentView()
         defer { cleanup() }
         let tab = makeTab()
-        let parked = await presentRunningPanel(on: view)
+        let parked = await presentRunningPanel(on: view, for: tab)
         #expect(parked.wasCancelled == false)
 
         await view.teardown(tab, reason: .userRequested)
 
         #expect(parked.wasCancelled, """
-            leaving a connection must stop the diagnosis of it. Closing the tab does not even \
-            dismiss the sheet by itself, so without this the walk continues against a server \
-            the window no longer has anything to do with.
+            leaving a connection must stop the diagnosis of it — the walk would otherwise \
+            keep dialling a server the window is done with.
             """)
-        #expect(view.diagnostics.open == nil)
+        #expect(view.diagnostics.open != nil, """
+            …and must NOT take the panel with it: a finished or partial report is what the \
+            user opened it for, and there is no way back to it except re-dialling.
+            """)
+    }
+
+    /// The path that is not a user action at all: the liveness probe giving
+    /// up. The rows survive it.
+    @Test func aLivenessGiveUpOnTheDiagnosedTabKeepsTheRows() async {
+        let (view, cleanup) = makeContentView()
+        defer { cleanup() }
+        let tab = makeTab()
+        let parked = await presentRunningPanel(on: view, for: tab)
+        let model = view.diagnostics.open
+        model?.run()
+        while !parked.hasStarted { await Task.yield() }
+
+        await view.handleLivenessGiveUp(tab)
+
+        #expect(parked.wasCancelled)
+        #expect(view.diagnostics.open === model, """
+            the connection dropping is the reason the panel is open. Closing it here is the \
+            one moment the measurement was worth most.
+            """)
+    }
+
+    /// A different tab's teardown touches neither the run nor the panel.
+    @Test func tearingDownAnUnrelatedTabLeavesTheDiagnosisAlone() async {
+        let (view, cleanup) = makeContentView()
+        defer { cleanup() }
+        let diagnosed = makeTab()
+        let unrelated = makeTab()
+        let parked = await presentRunningPanel(on: view, for: diagnosed)
+
+        await view.teardown(unrelated, reason: .userRequested)
+
+        #expect(parked.wasCancelled == false, """
+            closing one connection must not stop the diagnosis of another — before this, \
+            `performCloseOthers` and the reconnect-in-place branch both did.
+            """)
+        #expect(view.diagnostics.open != nil)
+    }
+
+    /// A panel opened from the sidebar belongs to no tab, so no teardown may
+    /// claim it.
+    @Test func aPanelOpenedFromNoTabSurvivesEveryTeardown() async {
+        let (view, cleanup) = makeContentView()
+        defer { cleanup() }
+        let parked = await presentRunningPanel(on: view)
+
+        await view.teardown(makeTab(), reason: .userRequested)
+
+        #expect(parked.wasCancelled == false)
+        #expect(view.diagnostics.open != nil)
     }
 
     /// The presenter never leaves an older run walking behind a newer panel:
@@ -187,7 +246,7 @@ struct DiagnosticsLifecycleTests {
 
         let second = ParkedRun()
         view.diagnostics.present(
-            DiagnosticsViewModel(name: "Another session", runner: second.runner()))
+            DiagnosticsViewModel(name: "Another session", runner: second.runner()), for: nil)
 
         #expect(first.wasCancelled, """
             a panel replaced without being dismissed leaves its run with nothing on screen to \

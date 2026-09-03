@@ -28,6 +28,15 @@ extension ContentView {
     enum DiagnosticsSource {
         case tab(SessionTab)
         case stored(StoredSession)
+
+        /// Which tab's teardown is allowed to stop this diagnosis. A panel
+        /// opened from the sidebar names no tab, and no teardown claims it.
+        var tabID: UUID? {
+            switch self {
+            case .tab(let tab): return tab.id
+            case .stored: return nil
+            }
+        }
     }
 
     func showDiagnostics(for source: DiagnosticsSource) {
@@ -58,7 +67,9 @@ extension ContentView {
                 values: values,
                 sessionID: Self.secretSlot(stored))
         }
-        diagnostics.present(DiagnosticsViewModel(target: target, secrets: diagnosticsSecrets))
+        diagnostics.present(
+            DiagnosticsViewModel(target: target, secrets: diagnosticsSecrets),
+            for: source.tabID)
     }
 
     /// Closes the panel and stops whatever it was measuring.
@@ -69,6 +80,16 @@ extension ContentView {
     /// cancel, then forget.
     func endDiagnostics() {
         diagnostics.end()
+    }
+
+    /// Stops a diagnosis of `tab`, and leaves its rows on screen.
+    ///
+    /// Called from `teardown(_:reason:)` — see `DiagnosticsPresenter
+    /// .stopRun(openedFor:)` for why stopping and dismissing are two
+    /// different decisions, and why only one of them belongs on a path that
+    /// runs for a liveness give-up nobody asked for.
+    func stopDiagnostics(of tab: SessionTab) {
+        diagnostics.stopRun(openedFor: tab.id)
     }
 
     /// The Keychain slot this session's secret actually lives in.

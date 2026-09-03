@@ -277,6 +277,116 @@ struct ConnectionDiagnosticsTests {
             ])
     }
 
+    /// Every step reaches the observer AS IT FINISHES — not in a batch at the
+    /// end — in the order the report ends up printing.
+    ///
+    /// The seam exists because the report used to arrive as one value at the
+    /// end. The trace's budget is 20 s, so an internet-facing host whose last
+    /// hops are firewalled left the panel showing a spinner for 21+ seconds
+    /// with four finished rows already measured and nowhere to put them.
+    ///
+    /// **How "as it finishes" is told apart from "all at the end".** A check
+    /// that only reads the delivered ids, or even how many had arrived when
+    /// the last one did, is satisfied by a run that walks the whole thing and
+    /// then flushes — measured, by planting exactly that. So the dial counts
+    /// its own runs, and every observation records how many dials had happened
+    /// when it fired: under incremental delivery the resolve step arrives
+    /// before the dial has run at all, and under a flush it arrives after.
+    @Test func everyStepReachesTheObserverAsItFinishes() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let dials = Ticker()
+        let diagnostics = ConnectionDiagnostics(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: listener.port),
+                dial: DiagnosticContribution(
+                    id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe"
+                ) { _, _ in
+                    let timer = DiagnosticStepTimer(
+                        id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
+                    await dials.tick()
+                    return timer.finish(.ok, "dialled")
+                }),
+            values: FieldValues(), secrets: nil)
+
+        let observed = StepLog()
+        let report = await diagnostics.run(
+            onStep: { step in await observed.append(step.id, marked: await dials.count) })
+
+        let seen = await observed.entries
+        #expect(seen.map(\.id) == report.steps.map(\.id), """
+            the observer must see every step the report carries, in the same order — got \
+            \(seen.map(\.id)) against \(report.steps.map(\.id))
+            """)
+        #expect(seen.first?.marker == 0, """
+            the resolve step must arrive BEFORE the dial has run — it arrived after \
+            \(seen.first?.marker ?? -1) dial(s), which is what a walk that publishes \
+            everything at the end looks like
+            """)
+        #expect(seen.first(where: { $0.id == DiagnosticStepID.dial })?.marker == 1, """
+            …and the dial's own row must arrive after it: \(seen)
+            """)
+    }
+
+    /// A cancelled run publishes what it measured to the observer too — the
+    /// partial walk is the answer to "where did it get stuck", and it must
+    /// not exist only in the returned value.
+    @Test func theObserverSeesTheStepsOfACancelledRun() async throws {
+        let port = try #require(LoopbackSocket.closedPort())
+        let gate = Gate()
+        let observed = StepLog()
+        let diagnostics = ConnectionDiagnostics(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: port),
+                dial: DiagnosticContribution(
+                    id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe"
+                ) { _, _ in
+                    let timer = DiagnosticStepTimer(
+                        id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
+                    await gate.open()
+                    try? await Task.sleep(for: .seconds(30))
+                    return timer.finish(.ok, "never reached")
+                }),
+            values: FieldValues(), secrets: nil, stepTimeout: .seconds(30))
+
+        let task = Task { await diagnostics.run(onStep: { await observed.append($0.id) }) }
+        await gate.opened()
+        task.cancel()
+        let report = await task.value
+
+        #expect(await observed.ids == report.steps.map(\.id))
+        #expect(await observed.ids == [
+            DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+        ])
+    }
+
+    /// The observer-less spelling still produces the whole report — it is
+    /// what the CLI and every other caller use.
+    @Test func theObserverlessRunStillProducesTheWholeReport() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let report = await Self.run(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: listener.port), dial: nil))
+        #expect(report.steps.map(\.id) == [
+            DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+            DiagnosticStepID.trace,
+        ])
+    }
+
+    /// Even the one step a session with no endpoint produces reaches the
+    /// observer: the panel draws rows from what it is told, so a row the
+    /// report carries and the observer never saw is a row nobody sees.
+    @Test func theEndpointlessRunStillTellsTheObserverItsOneStep() async {
+        let observed = StepLog()
+        let diagnostics = ConnectionDiagnostics(
+            descriptor: Self.probeDescriptor(endpoint: nil, dial: nil),
+            values: FieldValues(), secrets: nil)
+        let report = await diagnostics.run(onStep: { await observed.append($0.id) })
+        #expect(await observed.ids == report.steps.map(\.id))
+        #expect(await observed.ids == [DiagnosticStepID.resolve])
+    }
+
     @Test func aDescriptorThatNamesNoEndpointProbesNothing() async {
         let report = await Self.run(
             descriptor: Self.probeDescriptor(endpoint: nil, dial: nil))
@@ -809,6 +919,31 @@ private struct FixedSecretSource: SecretSource {
 /// One-shot signal: the dial contribution opens it, the test waits for it,
 /// so a cancellation lands while the dial is genuinely in flight rather than
 /// at whatever point a sleep happened to leave it.
+/// Records the steps an observer is handed, each with a marker read at the
+/// moment it arrived.
+///
+/// The marker is the load-bearing half: the ids alone are the same list under
+/// incremental delivery and under a flush at the end, and so is "how many had
+/// arrived when the last one did". What differs is how far the WALK had got
+/// when each row was handed over.
+private actor StepLog {
+    struct Entry: Equatable { let id: String; let marker: Int }
+
+    private(set) var entries: [Entry] = []
+    var ids: [String] { entries.map(\.id) }
+
+    func append(_ id: String, marked marker: Int = 0) {
+        entries.append(Entry(id: id, marker: marker))
+    }
+}
+
+/// Counts how many times something has happened, so an observation can record
+/// what the run had reached when it fired.
+private actor Ticker {
+    private(set) var count = 0
+    func tick() { count += 1 }
+}
+
 private actor Gate {
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []

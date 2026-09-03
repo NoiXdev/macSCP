@@ -1,28 +1,32 @@
 import Foundation
 import Testing
 
-/// Guards the three doors onto the diagnostics panel, and the two rules the
-/// panel itself was decided under (design §1/§4, decisions of 2026-09-02).
+/// Guards the doors onto the diagnostics panel, and the rules the panel itself
+/// was decided under (design §1/§4, decisions of 2026-09-02).
 ///
-/// Four properties, in the order they matter:
+/// **The properties are the `@Test` names below, and this comment does not
+/// list them.** It listed four while the suite guarded seven, twice — a
+/// header enumeration is a claim about the rest of the file, and it goes stale
+/// the moment a test is added, which is exactly when nobody is looking at the
+/// header. What the two decisions ARE is worth writing down; which checks
+/// happen to encode them is not.
 ///
-/// 1. **One entry.** Every door reaches the panel through the SAME function on
-///    the window. Four surfaces offer "Diagnose…" — the toolbar of a connected
-///    tab, the failed-connect surface, the session context menu and the
-///    connect-error dialog — and a second entry beside the first is how one of
-///    them quietly stops carrying a rule the others do (the secret source, the
-///    session id the dial resolves under, the app version in the report).
-/// 2. **Every door is a control the user presses.** The maintainer decided on
-///    2026-09-02 that the diagnosis runs when the user asks for it, never
-///    automatically after a failed connect. The shape that breaks that is an
-///    `.onAppear` (or `.task`) whose body opens or runs the diagnosis — at a
-///    door, or in the panel — and it is the violation this suite is written
-///    against.
-/// 3. **"Copy report" is a menu with two entries**, plain text and Markdown,
-///    the second half of the same decision.
-/// 4. **The panel starts no run of its own on appear**, stated separately from
-///    2 because the panel is where an appear-time run would be written most
-///    naturally.
+/// The decisions:
+///
+/// * **A diagnosis runs when the user presses the button** — never on appear,
+///   never after a failed connect, never from the entry that opens the panel.
+///   It dials the user's server, and the SSH dial authenticates while doing
+///   it; opening a panel is not consent to that. Every negative check here is
+///   written against that.
+/// * **"Copy report" offers plain text and Markdown**, as two entries of one
+///   menu.
+/// * **One entry.** Four surfaces offer "Diagnose…" — the toolbar of a
+///   connected tab, the failed-connect surface, the session context menu and
+///   the connect-error dialog — and they reach the panel through one function
+///   on the window, because what a door has to get right is not the button but
+///   the secret source, the descriptor and the session id the dial resolves
+///   under. A second entry beside the first is how one of them quietly stops
+///   carrying a rule the others do.
 ///
 /// ## Nothing here spells a symbol it could read
 ///
@@ -32,7 +36,11 @@ import Testing
 /// * the target type is the single `Identifiable` struct that file declares;
 /// * the window's entry function is the single function, anywhere else in the
 ///   app target, that CONSTRUCTS that type;
-/// * the run entry is the single method of the view model that starts a task;
+/// * the run entry is the single method of the view model that starts a task,
+///   and the cancel entry the single one that cancels it;
+/// * the view model's own type is the one that owns the run entry, and the
+///   presenter's "show this" method the single function in that file taking
+///   one;
 /// * each door's callback name is read out of the wiring that hands it the
 ///   entry, so the control-side check names nothing of its own.
 ///
@@ -130,23 +138,63 @@ struct DiagnosticsDoorsGuardTests {
         return names[0]
     }
 
-    /// The window's one entry: the single function in the app target, outside
-    /// the view model's own file, whose body constructs the target type.
-    static func entryFunctionName() throws -> String {
+    /// The window's one entry, and the file it lives in: the single function
+    /// in the app target, outside the view model's own file, whose body
+    /// constructs the target type.
+    static func entrySite() throws -> (file: String, function: String) {
         let target = try targetTypeName()
         var owners: Set<String> = []
+        var files: Set<String> = []
         for file in try appTargetFiles() where file != viewModelPath {
             let lines = try strictSource(of: file).components(separatedBy: "\n")
             for (index, line) in lines.enumerated() where line.contains("\(target)(") {
                 guard let owner = enclosingFunctionName(in: lines, at: index) else { continue }
                 owners.insert(owner)
+                files.insert(file)
             }
         }
-        guard owners.count == 1, let name = owners.first else {
+        guard owners.count == 1, let name = owners.first,
+              files.count == 1, let file = files.first
+        else {
             throw ScanError.derivation("""
                 exactly ONE function outside \(viewModelPath) may build \(target) — that \
                 function is the window's single entry onto the panel — found \
+                \(owners.count) in \(files.count) files: \(owners.sorted())
+                """)
+        }
+        return (file, name)
+    }
+
+    static func entryFunctionName() throws -> String { try entrySite().function }
+
+    /// The view model itself: the type whose body owns the run entry.
+    static func viewModelTypeName() throws -> String {
+        let lines = try strictSource(of: viewModelPath).components(separatedBy: "\n")
+        var owners: Set<String> = []
+        for (index, line) in lines.enumerated() where line.contains("Task {") {
+            guard let owner = enclosingTypeName(in: lines, at: index) else { continue }
+            owners.insert(owner)
+        }
+        guard owners.count == 1, let name = owners.first else {
+            throw ScanError.derivation("""
+                exactly ONE type in \(viewModelPath) may start the diagnosis task — found \
                 \(owners.count): \(owners.sorted())
+                """)
+        }
+        return name
+    }
+
+    /// The presenter's "show this panel" method: the single function in the
+    /// view model's file that TAKES a view model. Derived rather than
+    /// spelled, so the entry-body check below names nothing of its own.
+    static func presenterOpenMethodName() throws -> String {
+        let model = try viewModelTypeName()
+        let source = collapsingWhitespace(try strictSource(of: viewModelPath))
+        let names = matches(of: #"func\s+(\w+)\s*\([^)]*:\s*\#(model)\b"#, in: source)
+        guard names.count == 1, let name = names.first else {
+            throw ScanError.derivation("""
+                exactly ONE function in \(viewModelPath) may take a \(model) — the one that \
+                puts a panel on screen — found \(names.count): \(names)
                 """)
         }
         return name
@@ -345,6 +393,65 @@ struct DiagnosticsDoorsGuardTests {
         }
     }
 
+    /// The entry itself starts nothing.
+    ///
+    /// The fifth form, and the one no other check in this suite could see:
+    /// `thePanelStartsNoRunOnAppear` reads the panel, and
+    /// `noDoorStartsTheDiagnosisOnAppear` reads each door's CALL SITES — never
+    /// the entry's own body. Appending `.run()` where the entry presents the
+    /// model is a one-liner, and until fix round 2 the whole suite stayed
+    /// green over it.
+    ///
+    /// Not hypothetical: design §4 said for a while that the error dialog's
+    /// button "runs it immediately", so "restoring the design" is the exact
+    /// edit a reader makes, in exactly this function.
+    ///
+    /// Positive and negative, as always: the body must still put a panel on
+    /// screen (so the check cannot be satisfied by an entry that presents
+    /// nothing), and it must not mention the run entry.
+    @Test func theEntryOpensThePanelWithoutStartingIt() throws {
+        let (file, entry) = try Self.entrySite()
+        let run = try Self.runEntryName()
+        let show = try Self.presenterOpenMethodName()
+        let lines = try Self.strictSource(of: file).components(separatedBy: "\n")
+        let body = try Self.functionBody(named: entry, in: lines)
+
+        #expect(body.contains("\(show)("), """
+            \(file): \(entry)(…) must still hand the panel to the presenter through \
+            \(show)(…) — without that, "it starts no run" is satisfied by an entry that \
+            opens nothing.
+            """)
+        #expect(!Self.mentions(run, in: body), """
+            \(file): \(entry)(…) starts the diagnosis itself. Opening the panel is not \
+            consent to dial the user's server — the panel's own button is (decision of \
+            2026-09-02). Body: \(body)
+            """)
+    }
+
+    /// Nothing in the panel starts a run except a button.
+    ///
+    /// Stronger than the modifier list `automaticStarts` walks, and
+    /// deliberately so: that list is an enumeration, and the most likely
+    /// automatic start in this file is not on it at all — `DiagnosticsPanel`
+    /// has a hand-written `init`, and `model.run()` inside it is a modifier of
+    /// no kind. This check needs no enumeration: every mention of the run
+    /// entry in the whole file has to sit inside a `Button` invocation.
+    @Test func thePanelStartsARunOnlyFromAButton() throws {
+        let run = try Self.runEntryName()
+        let source = try Self.strictSource(of: Self.panelPath)
+        let inButtons = Self.invocations(of: "Button", in: source)
+            .reduce(0) { $0 + Self.wordCount(of: run, in: $1) }
+        let total = Self.wordCount(of: run, in: source)
+        #expect(inButtons >= 1, """
+            the panel must start the diagnosis from a Button — found no \(run) inside one.
+            """)
+        #expect(total == inButtons, """
+            \(Self.panelPath) mentions \(run) \(total) times but only \(inButtons) of them \
+            are inside a Button. Everything else — a lifecycle modifier, the view's own \
+            init, a computed property — starts a diagnosis nobody asked for.
+            """)
+    }
+
     /// The panel draws no detail line Core wrote without putting it through
     /// the renderer.
     ///
@@ -370,11 +477,16 @@ struct DiagnosticsDoorsGuardTests {
     @Test func thePanelRendersTheDetailThroughItsRenderer() throws {
         let renderer = try Self.presentationTypeName()
         let source = try Self.strictSource(of: Self.panelPath)
+        // `>= 1`, not `== 1`: the count is of SOURCE call sites, and a second
+        // correct one — a summary line, a `.help` tooltip, a collapsed/
+        // expanded pair — is a panel doing exactly the right thing. What this
+        // half is for is that the renderer is called AT ALL, so the negative
+        // half below cannot be satisfied by a panel that draws no detail.
         let calls = Self.occurrences(of: "\(renderer).detail(", in: source)
-        #expect(calls == 1, """
-            the panel must render a step's detail through \(renderer).detail(of:) exactly \
-            once — found \(calls). Without the call, the trace's budget marker prints as \
-            the English Core composed, in all four languages.
+        #expect(calls >= 1, """
+            the panel must render a step's detail through \(renderer).detail(of:) — found \
+            \(calls) call sites. Without one, the trace's markers print as the English Core \
+            composed, in all four languages.
             """)
         for drawn in Self.invocations(of: "Text", in: source)
         where Self.mentions("detail", in: drawn) {
@@ -475,8 +587,13 @@ struct DiagnosticsDoorsGuardTests {
 
     /// Every spelling of an automatic start must be visible to the scanner —
     /// one synthetic body per form, read by the same function the real checks
-    /// use. Two of these five were invisible until fix round 1, and the suite
-    /// reported compliance over both.
+    /// use.
+    ///
+    /// Three of these six were invisible until fix round 1: both
+    /// `perform:` spellings, and `.onChange`, which was not on the round-0
+    /// list at all (`appearModifiers = [".onAppear", ".task"]`). The report's
+    /// mutation table said four plants went green; that comment said two, and
+    /// two was the number that was wrong. `.onReceive` was added in round 2.
     @Test func scannerSeesEveryFormOfAnAutomaticStart() {
         let forms: [(String, String)] = [
             (".onAppear trailing closure", ".onAppear { model.run() }"),
@@ -484,6 +601,7 @@ struct DiagnosticsDoorsGuardTests {
             (".onAppear(perform:) as a closure", ".onAppear(perform: { model.run() })"),
             (".task trailing closure", ".task { model.run() }"),
             (".onChange trailing closure", ".onChange(of: endpoint) { _, _ in model.run() }"),
+            (".onReceive trailing closure", ".onReceive(timer) { _ in model.run() }"),
         ]
         for (what, source) in forms {
             let offences = Self.automaticStarts(of: ["run"], in: source)
@@ -622,6 +740,47 @@ struct DiagnosticsDoorsGuardTests {
         #expect(Self.interpolatedStepKeys(in: source).isEmpty)
     }
 
+    @Test func scannerReadsTheEnclosingTypeName() {
+        let lines = """
+            @MainActor
+            final class Model {
+                func run() {
+                    runTask = Task {
+                        await work()
+                    }
+                }
+            }
+            """.components(separatedBy: "\n")
+        #expect(Self.enclosingTypeName(in: lines, at: 3) == "Model")
+        #expect(Self.enclosingFunctionName(in: lines, at: 3) == "run")
+    }
+
+    @Test func scannerReadsAFunctionsWholeBody() throws {
+        let lines = """
+            extension ContentView {
+                func showDiagnostics(for source: Source) {
+                    let target = Target(kind: source.kind)
+                    diagnostics.present(Model(target: target), for: nil)
+                }
+
+                func endDiagnostics() {
+                    diagnostics.end()
+                }
+            }
+            """.components(separatedBy: "\n")
+        let body = try Self.functionBody(named: "showDiagnostics", in: lines)
+        #expect(body.contains("present("))
+        #expect(!body.contains("end()"), """
+            the span must stop at the function's own closing brace, or a neighbouring \
+            function's body would satisfy — or violate — a check about this one
+            """)
+    }
+
+    @Test func scannerCountsWholeIdentifiersOnly() {
+        #expect(Self.wordCount(of: "run", in: "model.run(); model.run()") == 2)
+        #expect(Self.wordCount(of: "run", in: "isRunning; rerun(); runner") == 0)
+    }
+
     @Test func scannerReadsTheEnclosingFunctionName() {
         let lines = """
             extension ContentView {
@@ -692,15 +851,24 @@ struct DiagnosticsDoorsGuardTests {
 
     enum SourceView { case strict, literals }
 
-    /// Every SwiftUI modifier that can fire a closure without anybody
-    /// pressing anything.
+    /// The SwiftUI modifiers this scan knows can fire a closure without
+    /// anybody pressing anything. Four, counted here.
     ///
-    /// Three, and the third was added in fix round 1 along with the two
-    /// SPELLINGS the scan had been blind to. `.onChange` is here because a
-    /// panel wired to re-run whenever the endpoint changes would be exactly
-    /// as automatic as `.onAppear`, and reads as a feature while it is
-    /// written.
-    private static let automaticModifiers = [".onAppear", ".task", ".onChange"]
+    /// **An enumeration, and it states its own blind spot.** It is not every
+    /// such modifier — `.refreshable`, `.onOpenURL` and `.onGeometryChange`
+    /// are not on it — and the likeliest automatic start in the panel is not
+    /// a modifier at all: `DiagnosticsPanel` has a hand-written `init`, and
+    /// `model.run()` inside one is invisible to every list of this shape.
+    /// `thePanelStartsARunOnlyFromAButton` is what actually covers the panel,
+    /// without enumerating anything; this list is what covers the DOOR spans,
+    /// where a whole-file rule cannot apply because those files legitimately
+    /// mention the entry elsewhere.
+    ///
+    /// `.onChange` and `.onReceive` earn their places for the same reason: a
+    /// panel wired to re-run when the endpoint changes, or on a timer, is
+    /// exactly as automatic as `.onAppear` and reads as a feature while it is
+    /// being written.
+    private static let automaticModifiers = [".onAppear", ".task", ".onChange", ".onReceive"]
 
     /// Every automatic-start offence in `source`: an occurrence of one of the
     /// modifiers above whose invocation mentions one of `names`.
@@ -932,6 +1100,29 @@ struct DiagnosticsDoorsGuardTests {
         return results
     }
 
+    /// The name of the type whose body contains line `index` — the same
+    /// backwards brace walk as `enclosingFunctionName`, stopping at a type
+    /// declaration instead of a function.
+    static func enclosingTypeName(in lines: [String], at index: Int) -> String? {
+        let pattern = #"(?:final\s+)?(?:class|struct|actor|enum|extension)\s+(\w+)"#
+        var depth = 0
+        var line = index
+        while line >= 0 {
+            if line != index {
+                for character in lines[line].reversed() {
+                    if character == "}" { depth += 1 }
+                    if character == "{" { depth -= 1 }
+                }
+            }
+            if depth < 0 {
+                if let name = matches(of: pattern, in: lines[line]).first { return name }
+                depth = 0
+            }
+            line -= 1
+        }
+        return nil
+    }
+
     /// The name of the `func` whose body contains line `index`.
     static func enclosingFunctionName(in lines: [String], at index: Int) -> String? {
         // A body written on its own declaration's line owns itself. Checked
@@ -952,6 +1143,25 @@ struct DiagnosticsDoorsGuardTests {
             line -= 1
         }
         return nil
+    }
+
+    /// How many times `name` occurs in `source` as a whole identifier.
+    static func wordCount(of name: String, in source: String) -> Int {
+        matches(of: #"\b(\#(name))\b"#, in: source).count
+    }
+
+    /// The brace-balanced body of the named function.
+    static func functionBody(named name: String, in lines: [String]) throws -> String {
+        guard let start = lines.firstIndex(where: {
+            !matches(of: #"func\s+(\w+)"#, in: $0).filter { $0 == name }.isEmpty
+        }) else {
+            throw ScanError.spanNotFound("no `func \(name)` in this file")
+        }
+        let source = lines[start...].joined(separator: "\n")
+        guard let body = bodies(after: "func \(name)", in: source).first else {
+            throw ScanError.spanNotFound("`func \(name)` opens no brace-balanced body")
+        }
+        return body
     }
 
     static func occurrences(of substring: String, in source: String) -> Int {

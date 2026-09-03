@@ -78,26 +78,29 @@ struct DiagnosticsPanel: View {
 
     @ViewBuilder
     private var content: some View {
-        if let report = model.report {
+        // Rows first, whether or not the run has finished: each one is drawn
+        // the moment `ConnectionDiagnostics` hands it over
+        // (`DiagnosticStepObserver`). Before this the report arrived as one
+        // value at the end, and a host whose last hops are firewalled left the
+        // panel showing nothing but a spinner for the trace's whole 20 s
+        // budget — with four finished rows already measured.
+        if !model.steps.isEmpty {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(report.steps) { step in
+                    ForEach(model.steps) { step in
                         row(step)
                     }
+                    // The step in flight has no row yet — a row exists once it
+                    // has an outcome and a duration — so the indicator sits
+                    // where its row is about to appear.
+                    if model.isRunning { measuring }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else if model.isRunning {
-            // The very first run has no rows yet. A partial report is not
-            // published mid-run — `ConnectionDiagnostics` returns one value at
-            // the end — so what there is to say here is that it is working.
-            VStack(alignment: .leading, spacing: 8) {
-                ProgressView()
-                L10n.text("diagnostics.running", "Measuring…")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            // Nothing has finished yet: the first step is still going.
+            measuring
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 L10n.text(
@@ -112,6 +115,15 @@ struct DiagnosticsPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var measuring: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            L10n.text("diagnostics.running", "Measuring…")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -196,6 +208,11 @@ struct DiagnosticsPanel: View {
                     model.copyMarkdown()
                 }
             }
+            // Enabled the moment a run ENDS — including a cancel, which
+            // publishes the rows it measured. Not during the walk: a report
+            // carries an endpoint and a build line that only the finished run
+            // supplies, and inventing them for a value whose whole job is to
+            // be pasted into a bug report would be the wrong trade.
             .disabled(model.report == nil)
             .fixedSize()
             Spacer(minLength: 0)

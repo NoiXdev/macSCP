@@ -39,13 +39,16 @@ struct DiagnosticsTarget: Identifiable {
 ///
 /// **A run starts only when `run()` is called**, and `run()` is called only
 /// from the panel's button (decision of 2026-09-02; `DiagnosticsDoorsGuardTests`
-/// holds every door and the panel to it). Nothing in this type reacts to a view
-/// appearing, and nothing constructs it eagerly: the panel builds one when the
-/// sheet is presented, and it has measured nothing until asked.
+/// holds the panel, every door and the entry that opens it to that). Nothing in
+/// this type reacts to a view appearing, and a freshly built one has measured
+/// nothing.
 ///
-/// Owned by the window scope — the panel's `@State`, created from the target a
-/// door handed it — never by a singleton (CLAUDE.md, "Architecture
-/// invariants"). Two windows diagnosing two connections hold two of these.
+/// Built by `ContentView.showDiagnostics(for:)` and held by that window's
+/// `DiagnosticsPresenter`; the panel receives it. Window scope, never a
+/// singleton (CLAUDE.md, "Architecture invariants") — two windows diagnosing
+/// two connections hold two of these. The window owns it rather than the sheet
+/// because stopping a run has to be possible from paths the panel is not on:
+/// the tab's teardown, and a panel replaced rather than dismissed.
 ///
 /// The runner is injected rather than built in place, so the suite can drive
 /// run/cancel/report over a fake and never open a socket. Production passes the
@@ -59,16 +62,37 @@ final class DiagnosticsViewModel: Identifiable {
     /// while an observable change inside a live one does not.
     nonisolated let id = UUID()
 
-    /// One diagnosis, start to finish. Cancellation reaches it through the
-    /// task that runs it — `ConnectionDiagnostics.run()` answers a cancelled
-    /// task with the steps it had already measured, which is why a cancelled
-    /// run still publishes a report here.
-    typealias Runner = @Sendable () async -> DiagnosticReport
+    /// One diagnosis, start to finish, told about each step as it finishes.
+    ///
+    /// The observer is the argument rather than a property because a fake in a
+    /// test has to be able to emit rows and then park — which is what pins
+    /// "the rows are on screen while the walk is still walking".
+    /// Cancellation reaches the runner through the task that runs it, and
+    /// `ConnectionDiagnostics` answers a cancelled task with the steps it had
+    /// already measured.
+    typealias Runner = @Sendable (@escaping DiagnosticStepObserver) async -> DiagnosticReport
 
     /// What the header calls this connection.
     let name: String
 
-    /// The last completed diagnosis, or `nil` while none has been asked for.
+    /// Every step measured by the run in flight, or by the last one — in the
+    /// order they finished, appended as each one arrives.
+    ///
+    /// This is what the panel draws. It exists beside `report` rather than
+    /// inside it because a report carries an endpoint and a build line that
+    /// only the finished run can supply, while a row is complete the moment it
+    /// is measured; the alternative was inventing an endpoint for a report
+    /// that is not one yet, in a value whose whole job is to be pasted into a
+    /// bug report.
+    ///
+    /// Cleared when a new run starts, never by a cancellation: the partial
+    /// measurement IS the measurement.
+    private(set) var steps: [DiagnosticStep] = []
+
+    /// The last diagnosis as a copyable artifact — set when a run ENDS,
+    /// whether it ended by finishing or by being cancelled. `nil` until then,
+    /// which is what leaves the copy menu disabled over a run that has
+    /// measured nothing.
     private(set) var report: DiagnosticReport?
 
     /// Whether a diagnosis is in flight. Drives the panel's progress row and
@@ -116,7 +140,7 @@ final class DiagnosticsViewModel: Identifiable {
         let diagnostics = ConnectionDiagnostics(
             descriptor: descriptor, values: target.values, secrets: secrets,
             sessionID: target.sessionID, appVersion: Self.appVersion)
-        self.init(name: target.name, runner: { await diagnostics.run() })
+        self.init(name: target.name, runner: { onStep in await diagnostics.run(onStep: onStep) })
     }
 
     /// Starts a diagnosis. The ONLY thing that does.
@@ -130,33 +154,50 @@ final class DiagnosticsViewModel: Identifiable {
         let myAttempt = UUID()
         attempt = myAttempt
         isRunning = true
+        steps = []
+        report = nil
         let runner = self.runner
         runTask = Task { [weak self] in
-            let produced = await runner()
+            let produced = await runner { step in
+                // Every row is checked against the attempt that produced it.
+                // A superseded run keeps walking until its cancellation
+                // reaches it, and its late rows would otherwise append to the
+                // list the reader is looking at.
+                await MainActor.run { self?.append(step, from: myAttempt) }
+            }
             guard let self, self.attempt == myAttempt else { return }
-            // A report with no steps is not a result. `ConnectionDiagnostics
-            // .run()` answers a task cancelled before the resolve step with
-            // exactly that, and publishing it would swap the panel's idle
-            // explanation for an empty rows area, offer "Run again" and
-            // enable the Copy menu — three controls describing a measurement
-            // that never happened. The run is over either way, so
-            // `isRunning` clears regardless.
+            // A report with no steps is not a result. `ConnectionDiagnostics`
+            // answers a task cancelled before the resolve step with exactly
+            // that, and publishing it would swap the panel's idle explanation
+            // for an empty rows area, offer "Run again" and enable the Copy
+            // menu — three controls describing a measurement that never
+            // happened. The run is over either way, so `isRunning` clears
+            // regardless.
             if !produced.steps.isEmpty { self.report = produced }
             self.isRunning = false
         }
     }
 
-    /// Stops the running diagnosis. What it measured before the stop still
-    /// lands: the runner returns the finished steps, and they are the answer
-    /// to "where did it get stuck".
+    /// One finished row, from the run that is allowed to write.
+    private func append(_ step: DiagnosticStep, from producer: UUID) {
+        guard attempt == producer else { return }
+        steps.append(step)
+    }
+
+    /// Stops the running diagnosis. What it measured before the stop stays:
+    /// `steps` is not cleared, and the runner hands back the rows it finished,
+    /// which are the answer to "where did it get stuck".
     ///
-    /// Called from four places, and every one of them is the user withdrawing:
-    /// the panel's own Cancel button, the panel going away
-    /// (`DiagnosticsPanel`'s `.onDisappear`), the window dropping the panel
-    /// (`DiagnosticsPresenter.end()`), and the tab's teardown. The last two
-    /// exist because `runTask` is a free `Task`: tearing a view down does not
-    /// touch it, and a diagnosis nobody can see is still an SSH dial
-    /// authenticating against somebody's server.
+    /// Reached from `run()` (superseding whatever was in flight), the panel's
+    /// Cancel button, `DiagnosticsPanel`'s `.onDisappear`,
+    /// `DiagnosticsPresenter.end()` — which is where a dismissal arrives —
+    /// and `DiagnosticsPresenter.stopRun(openedFor:)`, which is where a
+    /// teardown of the diagnosed tab arrives. Named, not counted: the number
+    /// is what goes stale.
+    ///
+    /// The last two exist because `runTask` is a free `Task`: tearing a view
+    /// down does not touch it, and a diagnosis nobody can see is still an SSH
+    /// dial authenticating against somebody's server.
     func cancel() {
         runTask?.cancel()
     }
@@ -210,21 +251,55 @@ final class DiagnosticsViewModel: Identifiable {
 final class DiagnosticsPresenter {
     private(set) var open: DiagnosticsViewModel?
 
+    /// The tab the open panel was opened FOR, or `nil` for one opened from
+    /// the sidebar, which belongs to no tab.
+    ///
+    /// Recorded so that a teardown can tell "the connection this panel is
+    /// about is over" from "some other connection in this window is over".
+    /// Without it, closing an unrelated tab stopped a diagnosis of a different
+    /// server — `performCloseOthers` and the reconnect-in-place branch both
+    /// did.
+    private(set) var openedFor: UUID?
+
     /// Shows a panel, stopping whatever the last one was doing.
     ///
     /// A panel replaced rather than dismissed has nothing on screen left to
     /// stop its run, so the replacement does it.
-    func present(_ model: DiagnosticsViewModel) {
+    func present(_ model: DiagnosticsViewModel, for tabID: UUID?) {
         end()
         open = model
+        openedFor = tabID
     }
 
-    /// Drops the panel and stops its diagnosis. Cancel FIRST: the reference
-    /// is the only way to reach the run, so forgetting it first would leave
-    /// the walk going with nothing able to stop it.
+    /// Drops the panel and stops its diagnosis — the dismissal path, and the
+    /// only one that discards anything. Cancel FIRST: the reference is the
+    /// only way to reach the run, so forgetting it first would leave the walk
+    /// going with nothing able to stop it.
     func end() {
         open?.cancel()
         open = nil
+        openedFor = nil
+    }
+
+    /// Stops the run of a panel opened for `tabID`, and leaves the panel
+    /// standing.
+    ///
+    /// The teardown path, and the split that fix round 2 exists for. Stopping
+    /// is right — the walk is dialling a connection the window has finished
+    /// with, and closing a tab does not dismiss the sheet by itself, so
+    /// nothing else would stop it. DISMISSING is not: `teardown` runs for six
+    /// callers and `handleLivenessGiveUp` is not a user action at all. The
+    /// session dropping is precisely why the panel is open, and the rows are
+    /// the only thing that can say whether the host stopped resolving, the
+    /// port stopped accepting, or the auth started failing. They stay until
+    /// the person closes the sheet.
+    ///
+    /// A panel that belongs to no tab (`openedFor == nil`, the sidebar door)
+    /// is claimed by no teardown: `nil == nil` would have every teardown stop
+    /// it, which is the bug in a different spelling.
+    func stopRun(openedFor tabID: UUID) {
+        guard openedFor == tabID else { return }
+        open?.cancel()
     }
 }
 

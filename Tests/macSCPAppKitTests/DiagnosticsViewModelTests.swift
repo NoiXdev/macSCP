@@ -39,6 +39,14 @@ struct DiagnosticsViewModelTests {
         func write(_ text: String) { written.append(text) }
     }
 
+    /// A runner that measures nothing and reports it, for the tests that are
+    /// about something other than the rows.
+    nonisolated private static func finishing(
+        with report: @autoclosure @escaping @Sendable () -> DiagnosticReport
+    ) -> DiagnosticsViewModel.Runner {
+        { _ in report() }
+    }
+
     private static func model(
         runner: @escaping DiagnosticsViewModel.Runner, clipboard: Clipboard
     ) -> DiagnosticsViewModel {
@@ -53,14 +61,14 @@ struct DiagnosticsViewModelTests {
     /// measured nothing. Whatever the panel does on appear, it cannot be
     /// showing a report it never ran.
     @Test func aFreshModelHasNotRunAnything() {
-        let model = Self.model(runner: { Self.report([]) }, clipboard: Clipboard())
+        let model = Self.model(runner: Self.finishing(with: Self.report([])), clipboard: Clipboard())
         #expect(model.report == nil)
         #expect(model.isRunning == false)
     }
 
     @Test func runPublishesTheRunnersReport() async {
         let expected = Self.report([Self.step(id: DiagnosticStepID.resolve)])
-        let model = Self.model(runner: { expected }, clipboard: Clipboard())
+        let model = Self.model(runner: Self.finishing(with: expected), clipboard: Clipboard())
         model.run()
         await model.runTask?.value
         #expect(model.report == expected)
@@ -70,7 +78,7 @@ struct DiagnosticsViewModelTests {
     @Test func isRunningIsSetBeforeTheRunnerAnswers() async {
         let gate = Gate()
         let model = Self.model(
-            runner: { await gate.wait(); return Self.report([]) }, clipboard: Clipboard())
+            runner: { _ in await gate.wait(); return Self.report([]) }, clipboard: Clipboard())
         model.run()
         #expect(model.isRunning, "the panel must be able to show progress while the run is in flight")
         await gate.open()
@@ -85,7 +93,7 @@ struct DiagnosticsViewModelTests {
     @Test func cancelKeepsTheStepsTheRunHadAlreadyMeasured() async {
         let partial = Self.report([Self.step(id: DiagnosticStepID.resolve)])
         let model = Self.model(
-            runner: {
+            runner: { _ in
                 // Returns the moment the task is cancelled; the duration is a
                 // park that a working cancel never waits out, not a deadline
                 // anything here asserts on.
@@ -116,7 +124,7 @@ struct DiagnosticsViewModelTests {
         let current = Self.report([Self.step(id: DiagnosticStepID.tcp)])
         let calls = Calls()
         let model = Self.model(
-            runner: {
+            runner: { _ in
                 if await calls.next() == 1 {
                     // Returns the moment `run()`'s second call cancels it; the
                     // duration is a park a working cancel never waits out.
@@ -150,7 +158,7 @@ struct DiagnosticsViewModelTests {
         let observed = CancellationFlag()
         let started = Gate()
         let model = Self.model(
-            runner: { [observed, started] in
+            runner: { [observed, started] _ in
                 await withTaskCancellationHandler {
                     await started.open()
                     try? await Task.sleep(for: .seconds(600))
@@ -181,7 +189,7 @@ struct DiagnosticsViewModelTests {
     /// and enables the Copy menu over a report with no rows — three controls
     /// describing a measurement that never happened.
     @Test func aRunThatMeasuredNothingPublishesNothing() async {
-        let model = Self.model(runner: { Self.report([]) }, clipboard: Clipboard())
+        let model = Self.model(runner: Self.finishing(with: Self.report([])), clipboard: Clipboard())
         model.run()
         await model.runTask?.value
         #expect(model.report == nil, """
@@ -194,10 +202,134 @@ struct DiagnosticsViewModelTests {
     /// The same rule must not throw away a report that DID measure something.
     @Test func aRunThatMeasuredOneStepPublishesIt() async {
         let partial = Self.report([Self.step(id: DiagnosticStepID.resolve)])
-        let model = Self.model(runner: { partial }, clipboard: Clipboard())
+        let model = Self.model(runner: Self.finishing(with: partial), clipboard: Clipboard())
         model.run()
         await model.runTask?.value
         #expect(model.report == partial)
+    }
+
+    // MARK: - Rows as they arrive
+
+    /// The rows appear while the walk is still walking.
+    ///
+    /// The defect (trace re-review, Important 1): the report was published
+    /// once, at the end. A host whose last hops are firewalled finishes
+    /// resolve, TCP, echo and dial in under a second and then spends the
+    /// trace's whole 20 s budget walking silent hops — so the panel showed a
+    /// spinner and nothing else for 21+ seconds, with four finished rows
+    /// sitting in a local variable nobody could see.
+    ///
+    /// Read while the runner is still parked: the steps are visible BEFORE
+    /// anything completes, which is the whole claim.
+    @Test func rowsAppearAsEachStepFinishes() async {
+        let emitted = [
+            Self.step(id: DiagnosticStepID.resolve), Self.step(id: DiagnosticStepID.tcp),
+        ]
+        let parked = Gate()
+        let model = Self.model(
+            runner: { onStep in
+                for step in emitted { await onStep(step) }
+                await parked.wait()
+                return Self.report(emitted)
+            },
+            clipboard: Clipboard())
+        model.run()
+        while model.steps.count < emitted.count { await Task.yield() }
+
+        #expect(model.steps.map(\.id) == emitted.map(\.id), """
+            both finished steps must be on screen while the run is still going — that is what \
+            the 21-second spinner cost the reader
+            """)
+        #expect(model.isRunning, "and the run is genuinely still in flight")
+        #expect(model.report == nil, "nothing has been published as a finished report yet")
+
+        await parked.open()
+        await model.runTask?.value
+        #expect(model.steps.map(\.id) == emitted.map(\.id))
+        #expect(model.report?.steps == emitted, """
+            when the run ends, the report and the visible rows describe the same measurement
+            """)
+    }
+
+    /// Cancelling keeps the rows that were already on screen.
+    ///
+    /// Before this, a cancel returned whatever `ConnectionDiagnostics` handed
+    /// back — and a run cancelled mid-trace drops the step it is inside — so
+    /// pressing Cancel after twenty seconds of spinner could cost the reader
+    /// rows that had been ready the whole time.
+    @Test func cancellingKeepsTheRowsAlreadyMeasured() async {
+        let emitted = [
+            Self.step(id: DiagnosticStepID.resolve), Self.step(id: DiagnosticStepID.tcp),
+        ]
+        let model = Self.model(
+            runner: { onStep in
+                for step in emitted { await onStep(step) }
+                try? await Task.sleep(for: .seconds(600))
+                return Self.report(emitted)
+            },
+            clipboard: Clipboard())
+        model.run()
+        while model.steps.count < emitted.count { await Task.yield() }
+
+        model.cancel()
+        await model.runTask?.value
+
+        #expect(model.steps.map(\.id) == emitted.map(\.id), """
+            the partial measurement IS the measurement — cancelling must not throw away the \
+            rows the walk had already finished
+            """)
+        #expect(model.isRunning == false)
+    }
+
+    /// A second run starts from an empty list rather than growing the first
+    /// one's.
+    @Test func runningAgainClearsTheRowsOfTheRunBefore() async {
+        let first = Self.step(id: DiagnosticStepID.resolve)
+        let second = Self.step(id: DiagnosticStepID.tcp)
+        let calls = Calls()
+        let model = Self.model(
+            runner: { onStep in
+                let step = await calls.next() == 1 ? first : second
+                await onStep(step)
+                return Self.report([step])
+            },
+            clipboard: Clipboard())
+        model.run()
+        await model.runTask?.value
+        model.run()
+        await model.runTask?.value
+        #expect(model.steps.map(\.id) == [second.id])
+    }
+
+    /// A superseded run's late row must not land in the run that replaced it —
+    /// the same attempt token the report has always been guarded by.
+    @Test func aSupersededRunsLateRowIsDropped() async {
+        let stale = Self.step(id: DiagnosticStepID.icmp)
+        let current = Self.step(id: DiagnosticStepID.tcp)
+        let calls = Calls()
+        let released = Gate()
+        let model = Self.model(
+            runner: { onStep in
+                if await calls.next() == 1 {
+                    await released.wait()
+                    await onStep(stale)
+                    return Self.report([stale])
+                }
+                await onStep(current)
+                return Self.report([current])
+            },
+            clipboard: Clipboard())
+        model.run()
+        let abandoned = model.runTask
+        model.run()
+        await model.runTask?.value
+        await released.open()
+        await abandoned?.value
+
+        #expect(model.steps.map(\.id) == [current.id], """
+            the abandoned run emits its row after the replacement has published; without the \
+            attempt token it would append to the list the reader is looking at
+            """)
     }
 
     // MARK: - Copying
@@ -205,7 +337,7 @@ struct DiagnosticsViewModelTests {
     @Test func bothCopyEntriesReachThePasteboard() async {
         let expected = Self.report([Self.step(id: DiagnosticStepID.resolve, detail: "A 127.0.0.1")])
         let clipboard = Clipboard()
-        let model = Self.model(runner: { expected }, clipboard: clipboard)
+        let model = Self.model(runner: Self.finishing(with: expected), clipboard: clipboard)
         model.run()
         await model.runTask?.value
 
@@ -222,7 +354,7 @@ struct DiagnosticsViewModelTests {
     @Test func theTwoCopyShapesDiffer() async {
         let expected = Self.report([Self.step(id: DiagnosticStepID.tcp)])
         let clipboard = Clipboard()
-        let model = Self.model(runner: { expected }, clipboard: clipboard)
+        let model = Self.model(runner: Self.finishing(with: expected), clipboard: clipboard)
         model.run()
         await model.runTask?.value
         model.copyPlainText()
@@ -233,7 +365,7 @@ struct DiagnosticsViewModelTests {
 
     @Test func copyingBeforeARunWritesNothing() {
         let clipboard = Clipboard()
-        let model = Self.model(runner: { Self.report([]) }, clipboard: clipboard)
+        let model = Self.model(runner: Self.finishing(with: Self.report([])), clipboard: clipboard)
         model.copyPlainText()
         model.copyMarkdown()
         #expect(clipboard.written.isEmpty, """
@@ -348,11 +480,10 @@ struct DiagnosticsViewModelTests {
 
     // MARK: - Support
 
-    /// Opens once, for the "is running" observation. An actor rather than a
-    /// semaphore: nothing in this target may block the cooperative pool
-    /// (CLAUDE.md, "Tests never block the cooperative pool").
     /// Records a cancellation the moment it happens, from whatever thread
-    /// `Task.cancel()` runs the handler on.
+    /// `Task.cancel()` runs the handler on. An `NSLock` rather than an actor
+    /// because `withTaskCancellationHandler`'s `onCancel` is synchronous and
+    /// cannot await anything.
     nonisolated private final class CancellationFlag: @unchecked Sendable {
         private let lock = NSLock()
         private var flag = false
@@ -370,6 +501,9 @@ struct DiagnosticsViewModelTests {
         }
     }
 
+    /// Opens once, and lets either side arrive first. An actor rather than a
+    /// semaphore: nothing in this target may block the cooperative pool
+    /// (CLAUDE.md, "Tests never block the cooperative pool").
     private actor Gate {
         private var waiter: CheckedContinuation<Void, Never>?
         private var opened = false

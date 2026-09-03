@@ -178,6 +178,13 @@ enum DurationText {
     }
 }
 
+/// Told about each step the moment it finishes, before the next one starts.
+///
+/// `async` on purpose: the one real implementation is a `@MainActor` view
+/// model appending a row, and awaiting it means the runner cannot outrun the
+/// renderer or drop a step into a hop that never lands.
+public typealias DiagnosticStepObserver = @Sendable (DiagnosticStep) async -> Void
+
 /// One row of the diagnosis: what was tried, how long it took, how it ended.
 public struct DiagnosticStep: Sendable, Equatable, Identifiable {
     /// `resolve`, `tcp`, `dial`, or a contribution's own id.
