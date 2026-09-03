@@ -75,9 +75,16 @@ struct ThirdPartyNoticesTests {
     /// file's own fence past the longest backtick run already present in
     /// that licence's text, so a fence-length check pinned to exactly
     /// ``` would itself go stale the moment a quoted licence needed a
-    /// longer one; matching any run of three or more keeps every open/close
-    /// pair recognized regardless of length, since each pair only needs to
-    /// toggle the same boolean, not agree on a specific count.
+    /// longer one. But matching any run of three or more is not sound in
+    /// general: a run SHORTER than the block's own fence can still appear
+    /// inside that licence's text, and this scanner would toggle on it —
+    /// from there the rest of that licence text is scanned as top-level,
+    /// and the real closing fence toggles the parity for everything after
+    /// it. Today no licence in the file carries such a run (all 34 fence
+    /// lines are exactly three backticks, measured 2026-09-03), so this is
+    /// provably inert here — but it is a residual, not a proof. The fix
+    /// when a shorter run does appear is to match the opening fence's
+    /// exact length rather than any run of three or more.
     private static func sectionHeadings(in notices: String) -> Set<String> {
         var headings: Set<String> = []
         var insideFence = false

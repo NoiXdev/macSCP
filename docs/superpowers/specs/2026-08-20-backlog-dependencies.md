@@ -777,12 +777,30 @@ go stale in silence. Proven red first by renaming one heading
 (`everyNoticeSectionExists` failed, the two anchors stayed green), green
 after restoring it. Full suite: 3732 tests, 326 suites, green.
 
+Commit `0ef63269` — `test(notices): a heading inside a licence fence is not
+a section`. A `## ` line inside a fenced licence block would have stood in
+for a real section; `sectionHeadings(in:)` now tracks fence state and only
+collects `## ` lines outside one. A fourth test,
+`aHeadingLineInsideALicenceFenceIsNotASection`, proves it: red both as a
+fixture and against the real file with a planted decoy, green after the
+fix. `ThirdPartyNoticesTests` now holds 4 tests; full suite 3735 tests
+green on 2026-09-03.
+
+**Residual, not wired:** `scripts/third-party-notices --check` is not
+wired into CI — a pin bump leaves the notices file stale while all four
+tests stay green (the test pins identity → heading, not version or
+licence text). Wiring it is a one-line workflow step, open.
+
+**Residual, packaged app:** the packaged `.app` (`scripts/package-app`)
+ships no licence text; `THIRD_PARTY_NOTICES.md` exists only in the
+repository — a legal-notice gap for distributed builds, open.
+
 **Correction to this plan's premise, measured 2026-09-03 on the pinned
 swift-crypto 3.15.1:** the plan assumed BoringSSL's LICENSE sits under
-swift-crypto's `Sources/CCryptoBoringSSL`. Searched that checkout at
-every depth for `*LICENSE*`, `*LICENCE*`, `*COPYING*`, `*NOTICE*`: the
-only matches anywhere in the checkout are the top-level `LICENSE.txt`
-and `NOTICE.txt`. `Sources/CCryptoBoringSSL` (625 files) has no
+swift-crypto's `Sources/CCryptoBoringSSL`. Searched that checkout
+case-sensitively at every depth for `*LICENSE*`, `*LICENCE*`,
+`*COPYING*`, `*NOTICE*`: the only matches anywhere in the checkout are
+the top-level `LICENSE.txt` and `NOTICE.txt`. `Sources/CCryptoBoringSSL` (625 files) has no
 standalone licence file — BoringSSL's copyright is carried per-file, as
 Apache-2.0 header comments naming "The OpenSSL Project Authors" and "The
 BoringSSL Authors" (verified by reading `crypto/crypto.cc`), not as a

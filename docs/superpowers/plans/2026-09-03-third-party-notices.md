@@ -20,6 +20,12 @@ checkout for `LICENSE` files at every depth and keep each with its
 relative path), and writes one Markdown file: a table (identity, version,
 licence name guessed from the first line, URL) and then every licence's
 full text under a heading naming the dependency and the file's path.
+
+  Corrected 2026-09-03: measured on the pinned swift-crypto 3.15.1, no
+  standalone LICENSE or NOTICE exists under `Sources/CCryptoBoringSSL`;
+  the vendored sources carry per-file Apache-2.0 headers, and the notices
+  file holds swift-crypto's own LICENSE.txt and NOTICE.txt.
+
 The generator is deterministic (sorted by identity) so the file diffs
 only when a dependency changes. The test
 (`Tests/macSCPCoreTests/ThirdPartyNoticesTests.swift`) reads
@@ -56,7 +62,7 @@ readable.
 - Modify: `README.md` (one line under the licence/credits section
   pointing at the file; if no such section exists, add two lines)
 
-- [ ] Run it; read the result once by eye (every dependency in
+- [x] Run it; read the result once by eye (every dependency in
   `Package.resolved` has a section; BoringSSL's notice present under
   swift-crypto; the two forks name upstream); commit —
   `build(notices): third-party notices generated from Package.resolved`
@@ -71,13 +77,15 @@ readable.
   one section in a temp copy — or by asserting against a fixture pin
   that is not in the file)
 
-- [ ] Commit — `test(notices): every pinned dependency has a notice`
+- [x] Commit — `test(notices): every pinned dependency has a notice`
 
 ### Task 3: Closeout
 
-- [ ] `docs/superpowers/specs/2026-08-20-backlog-dependencies.md` ("Done"
+- [x] `docs/superpowers/specs/2026-08-20-backlog-dependencies.md` ("Done"
   under the notices decision), `docs/BACKLOG.md` row; commit
   `docs(backlog): third-party notices, generated and pinned`.
+  (committed as `a96c6f79` `docs(notices): the notices are generated,
+  tested, and BoringSSL's terms are measured, not assumed`)
 
 ## What is explicitly not in this plan
 
