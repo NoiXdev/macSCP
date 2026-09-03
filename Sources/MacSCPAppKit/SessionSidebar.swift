@@ -456,20 +456,9 @@ struct SessionSidebar: View {
                 if !isShown { tagFilter = tagFilter.cleared() }
             }
 
-            if let errorMessage = viewModel.errorMessage {
-                Text(errorMessage)
-                    .foregroundStyle(.red)
-                    .font(.caption)
-                    .padding(8)
-            }
+            groupMoveErrorBanner
 
-            if let jumpRestoreErrorMessage {
-                Text(jumpRestoreErrorMessage)
-                    .foregroundStyle(.red)
-                    .font(.caption)
-                    .lineLimit(2)
-                    .padding(8)
-            }
+            jumpRestoreErrorBanner
 
             if let hiddenImportsErrorMessage {
                 Text(hiddenImportsErrorMessage)
@@ -554,6 +543,92 @@ struct SessionSidebar: View {
                 "%lld connections use this connection as their jump host and will keep its data directly."),
             count)
         return base + "\n\n" + jumpNote
+    }
+
+    // MARK: - Error banners
+
+    /// How long a dismissible red caption in this sidebar stays before it
+    /// clears itself (dev-build follow-up, 2026-09-03: the maintainer saw
+    /// `core.session.groupMoveCycle` sit on screen with nothing to close
+    /// it). Six seconds is long enough to read a sentence, short enough that
+    /// a resolved refusal does not linger. Named so
+    /// `SessionSidebarErrorGuardTests` can read it from the source instead
+    /// of pinning a repeated literal.
+    private static let errorAutoDismissDelay: Duration = .seconds(6)
+
+    /// `viewModel.errorMessage` (`core.session.groupMoveCycle` and the other
+    /// `SessionListViewModel` failures) as a closable caption: the button
+    /// calls `dismissError()` directly, and `.task(id:)` restarts the
+    /// six-second countdown every time the message itself changes — a new
+    /// refusal after an old one was dismissed gets its own full six seconds,
+    /// since SwiftUI cancels and re-runs a `.task(id:)` whose id changed.
+    /// The countdown is cancelled, and so never fires, whenever this whole
+    /// view goes away — including the moment the message becomes `nil`,
+    /// since that is exactly when the enclosing `if let` stops drawing it.
+    @ViewBuilder
+    private var groupMoveErrorBanner: some View {
+        if let errorMessage = viewModel.errorMessage {
+            HStack(alignment: .top, spacing: 6) {
+                Text(errorMessage)
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                Spacer(minLength: 0)
+                Button {
+                    viewModel.dismissError()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .help(L10n.string("sidebar.error.dismiss", "Dismiss"))
+                .accessibilityLabel(L10n.string("sidebar.error.dismiss", "Dismiss"))
+            }
+            .padding(8)
+            .task(id: viewModel.errorMessage) {
+                do {
+                    try await Task.sleep(for: Self.errorAutoDismissDelay)
+                    viewModel.dismissError()
+                } catch {
+                    // Cancelled by a message change or the view going away —
+                    // either way, not this task's job to clear anything.
+                }
+            }
+        }
+    }
+
+    /// Same closable-and-self-clearing treatment as `groupMoveErrorBanner`,
+    /// for the partial keychain-restore notice set at `sessionPendingDelete`
+    /// above (M11a/T3) — local `@State`, so its own close button and
+    /// auto-dismiss task write `jumpRestoreErrorMessage` directly rather than
+    /// going through the view model.
+    @ViewBuilder
+    private var jumpRestoreErrorBanner: some View {
+        if let jumpRestoreErrorMessage {
+            HStack(alignment: .top, spacing: 6) {
+                Text(jumpRestoreErrorMessage)
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+                Button {
+                    self.jumpRestoreErrorMessage = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .help(L10n.string("sidebar.error.dismiss", "Dismiss"))
+                .accessibilityLabel(L10n.string("sidebar.error.dismiss", "Dismiss"))
+            }
+            .padding(8)
+            .task(id: jumpRestoreErrorMessage) {
+                do {
+                    try await Task.sleep(for: Self.errorAutoDismissDelay)
+                    self.jumpRestoreErrorMessage = nil
+                } catch {
+                    // Cancelled by a message change or the view going away —
+                    // either way, not this task's job to clear anything.
+                }
+            }
+        }
     }
 
     // MARK: - Row builders

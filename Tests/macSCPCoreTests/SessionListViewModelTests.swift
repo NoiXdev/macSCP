@@ -462,6 +462,41 @@ struct SessionListViewModelTests {
         #expect(vm.errorMessage != nil)
     }
 
+    /// `dismissError()` is the sidebar's close button's whole job (dev-build
+    /// follow-up, 2026-09-03): the cycle refusal above leaves a message on
+    /// screen until something clears it, and this is the "something".
+    @Test func dismissErrorClearsTheMessage() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outer = vm.createGroup(named: "Outer")!
+        let inner = vm.createGroup(named: "Inner")!
+        #expect(vm.move(.group(inner.id), intoGroup: outer.id) == nil)
+        #expect(vm.move(.group(outer.id), intoGroup: inner.id) == .wouldCycle)
+        #expect(vm.errorMessage != nil)
+
+        vm.dismissError()
+
+        #expect(vm.errorMessage == nil)
+    }
+
+    /// A dismissal must not latch the channel shut: a later, unrelated
+    /// refusal has to show again, not be swallowed because the last one was
+    /// closed.
+    @Test func aNewErrorAfterDismissalShowsAgain() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outer = vm.createGroup(named: "Outer")!
+        let inner = vm.createGroup(named: "Inner")!
+        #expect(vm.move(.group(inner.id), intoGroup: outer.id) == nil)
+        #expect(vm.move(.group(outer.id), intoGroup: inner.id) == .wouldCycle)
+        vm.dismissError()
+        #expect(vm.errorMessage == nil)
+
+        #expect(vm.move(.group(outer.id), intoGroup: inner.id) == .wouldCycle)
+
+        #expect(vm.errorMessage != nil)
+    }
+
     /// The one-shot sort, through the view model that owns the write.
     @Test func sortingAFoldersChildrenByNamePersists() throws {
         let (vm, _, dir) = makeVM()

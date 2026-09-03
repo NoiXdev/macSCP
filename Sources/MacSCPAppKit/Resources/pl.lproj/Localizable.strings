@@ -180,6 +180,7 @@
 "sidebar.importedHelp" = "Z ~/.ssh/config — wypełnia formularz (dane poufne nie są importowane)";
 "sidebar.imported.hide" = "Ukryj";
 "sidebar.hiddenImports.error %1$@ %2$@" = "Nie udało się zaktualizować ukrytych importów: %1$@ — możesz usunąć %2$@, aby zresetować listę.";
+"sidebar.error.dismiss" = "Ukryj";
 
 /* Arkusz konfliktu transferu */
 "conflict.title" = "Plik już istnieje";

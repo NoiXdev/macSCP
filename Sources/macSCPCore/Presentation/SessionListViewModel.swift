@@ -100,6 +100,14 @@ public final class SessionListViewModel {
         }
     }
 
+    /// Clears `errorMessage` — the sidebar's close button on the red caption,
+    /// and also what its own six-second auto-dismiss calls. Does not touch
+    /// anything else `reload()` sets; a later failure still shows again,
+    /// because nothing here latches the channel shut.
+    public func dismissError() {
+        errorMessage = nil
+    }
+
     /// Sessions belonging to the given group, or ungrouped sessions when
     /// `groupID` is `nil`.
     public func sessions(inGroup groupID: UUID?) -> [StoredSession] {

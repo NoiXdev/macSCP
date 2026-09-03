@@ -180,6 +180,7 @@
 "sidebar.importedHelp" = "Depuis ~/.ssh/config — remplit le formulaire (les secrets ne sont pas importés)";
 "sidebar.imported.hide" = "Masquer";
 "sidebar.hiddenImports.error %1$@ %2$@" = "Impossible de mettre à jour les imports masqués : %1$@ — vous pouvez supprimer %2$@ pour réinitialiser la liste.";
+"sidebar.error.dismiss" = "Masquer";
 
 /* Feuille de conflit de transfert */
 "conflict.title" = "Le fichier existe déjà";
