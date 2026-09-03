@@ -1107,3 +1107,42 @@
 "diagnostics.reason.traceNeedsIPv4" = "The route check needs an IPv4 address.";
 "diagnostics.reason.traceStoppedByBudget" = "The route check stopped at its own time budget after hop %@ — the path may go further.";
 "diagnostics.reason.traceHopLimitReached" = "The route check reached its own hop limit after hop %@ — the path may go further.";
+
+/* Import from another program — Cyberduck (2026-09-03). The menu entry, the
+   preview sheet, the two switches and the group picker, plus the field names
+   the change list of a "Changed:" row is composed from (the keys come from
+   ImportPreviewPlanner.FieldKey in Core, which has no UI language of its own). */
+"menu.importFromCyberduck" = "From Cyberduck…";
+"import.source.cyberduck" = "Cyberduck";
+"import.cyberduck.title %@" = "Import from %@";
+"import.cyberduck.count %lld" = "%lld bookmarks";
+"import.cyberduck.empty" = "No bookmarks were found in this folder.";
+"import.cyberduck.error.folder %@" = "Could not read the folder: %@";
+"import.cyberduck.selectAll" = "Select All";
+"import.cyberduck.selectNone" = "Select None";
+"import.cyberduck.status.new" = "New";
+"import.cyberduck.status.unchanged" = "Known, unchanged";
+"import.cyberduck.status.changed %@" = "Changed: %@";
+"import.cyberduck.status.unsupported" = "Not supported yet";
+"import.cyberduck.status.unreadable" = "Not readable";
+"import.cyberduck.change %1$@ %2$@ %3$@" = "%1$@ %2$@ → %3$@";
+"import.cyberduck.target.s3 %1$@ %2$@" = "%1$@ · %2$@";
+"import.cyberduck.target.allBuckets" = "all buckets";
+"import.cyberduck.takeSecrets" = "Take passwords and S3 secrets from the keychain (macOS asks per entry)";
+"import.cyberduck.takeGroupAndLabels" = "Put into a group, labels as tags";
+"import.cyberduck.group" = "Group";
+"import.cyberduck.group.none" = "No group";
+"import.cyberduck.group.create %@" = "New group “%@”";
+"import.cyberduck.summary %1$lld %2$lld %3$lld %4$lld" = "%1$lld to import, %2$lld of them updates · %3$lld skipped · %4$lld not supported";
+"import.cyberduck.action" = "Import";
+"import.field.host" = "Host";
+"import.field.port" = "Port";
+"import.field.username" = "User name";
+"import.field.keyPath" = "Key file";
+"import.field.authKind" = "Login method";
+"import.field.endpoint" = "Endpoint";
+"import.field.bucket" = "Bucket";
+"import.field.name" = "Name";
+"import.field.labels" = "Labels";
+"import.result.updated %lld" = "Existing sessions updated: %lld";
+"import.result.secretsNotRead %lld" = "Passwords that could not be read from the keychain: %lld";

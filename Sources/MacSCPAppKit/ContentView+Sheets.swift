@@ -275,6 +275,27 @@ extension ContentView {
                 }
             )
         }
+        // Import from another program (Cyberduck import, 2026-09-03): the
+        // folder picker for the case where the source's own folder is not
+        // where it should be, and the preview sheet.
+        //
+        // Pressing Import DISMISSES first and applies afterwards, for the
+        // same reason the password sheet does (see `showImportPasswordSheet`
+        // above): planning can open the connection-conflict sheet, and
+        // SwiftUI presents one sheet per view at a time.
+        .fileImporter(
+            isPresented: $showExternalImportFolderPicker,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            handleExternalImportFolderSelection(result)
+        }
+        .sheet(item: $externalImport) { model in
+            ImportFromSourceSheet(model: model) {
+                externalImport = nil
+                Task { await applyExternalImport(model) }
+            }
+        }
         // Shared import conflict sheet (M19/T7) for SESSION imports — the
         // login-set import presents the same view through the same modifier
         // inside `LoginSetsSheet`, so the resumption contract documented on

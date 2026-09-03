@@ -1110,3 +1110,43 @@
 "diagnostics.reason.traceNeedsIPv4" = "Sprawdzanie trasy wymaga adresu IPv4.";
 "diagnostics.reason.traceStoppedByBudget" = "Sprawdzanie trasy wyczerpało swój limit czasu po przeskoku %@ — trasa może biec dalej.";
 "diagnostics.reason.traceHopLimitReached" = "Sprawdzanie trasy osiągnęło własny limit przeskoków po przeskoku %@ — trasa może biec dalej.";
+
+/* Import z innego programu — Cyberduck (2026-09-03). Pozycja menu, arkusz
+   podglądu, dwa przełączniki i wybór grupy, a także nazwy pól, z których
+   składa się lista zmian w wierszu „Zmienione:” (klucze pochodzą z
+   ImportPreviewPlanner.FieldKey w Core, który nie ma własnego języka
+   interfejsu). */
+"menu.importFromCyberduck" = "Z Cyberduck…";
+"import.source.cyberduck" = "Cyberduck";
+"import.cyberduck.title %@" = "Import z %@";
+"import.cyberduck.count %lld" = "%lld zakładek";
+"import.cyberduck.empty" = "W tym folderze nie znaleziono zakładek.";
+"import.cyberduck.error.folder %@" = "Nie można odczytać folderu: %@";
+"import.cyberduck.selectAll" = "Zaznacz wszystkie";
+"import.cyberduck.selectNone" = "Odznacz wszystkie";
+"import.cyberduck.status.new" = "Nowe";
+"import.cyberduck.status.unchanged" = "Znane, bez zmian";
+"import.cyberduck.status.changed %@" = "Zmienione: %@";
+"import.cyberduck.status.unsupported" = "Jeszcze nieobsługiwane";
+"import.cyberduck.status.unreadable" = "Nieczytelne";
+"import.cyberduck.change %1$@ %2$@ %3$@" = "%1$@ %2$@ → %3$@";
+"import.cyberduck.target.s3 %1$@ %2$@" = "%1$@ · %2$@";
+"import.cyberduck.target.allBuckets" = "wszystkie kubełki";
+"import.cyberduck.takeSecrets" = "Przenieś hasła i sekrety S3 z pęku kluczy (macOS pyta o każdy wpis)";
+"import.cyberduck.takeGroupAndLabels" = "Umieść w grupie, etykiety jako tagi";
+"import.cyberduck.group" = "Grupa";
+"import.cyberduck.group.none" = "Bez grupy";
+"import.cyberduck.group.create %@" = "Nowa grupa „%@”";
+"import.cyberduck.summary %1$lld %2$lld %3$lld %4$lld" = "%1$lld do zaimportowania, w tym %2$lld aktualizacji · %3$lld pominiętych · %4$lld nieobsługiwanych";
+"import.cyberduck.action" = "Importuj";
+"import.field.host" = "Host";
+"import.field.port" = "Port";
+"import.field.username" = "Nazwa użytkownika";
+"import.field.keyPath" = "Plik klucza";
+"import.field.authKind" = "Sposób logowania";
+"import.field.endpoint" = "Punkt końcowy";
+"import.field.bucket" = "Kubełek";
+"import.field.name" = "Nazwa";
+"import.field.labels" = "Etykiety";
+"import.result.updated %lld" = "Zaktualizowane istniejące sesje: %lld";
+"import.result.secretsNotRead %lld" = "Hasła, których nie udało się odczytać z pęku kluczy: %lld";

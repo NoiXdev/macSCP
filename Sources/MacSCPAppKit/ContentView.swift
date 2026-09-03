@@ -490,6 +490,20 @@ struct ContentView: View {
     @State var showImportResultAlert = false
     @State var importErrorMessage: String?
 
+    // MARK: - Import from another program (Cyberduck import, 2026-09-03)
+
+    /// The loaded preview the import sheet is showing, or nil while no such
+    /// import is running. Built and LOADED by `beginExternalImport()` before
+    /// the sheet is presented (design §4) — so a missing default folder can
+    /// raise the picker below instead of an error inside a sheet, and the
+    /// sheet itself starts nothing when it appears.
+    @State var externalImport: ImportFromSourceViewModel?
+    /// The folder picker shown when the source's own bookmark folder is not
+    /// where it should be (the program is not installed, or its data lives
+    /// elsewhere). `.folder` rather than a file type: what is picked is the
+    /// directory the source reads its bookmarks out of.
+    @State var showExternalImportFolderPicker = false
+
     // MARK: - External terminal (M11d/T2)
 
     /// One requested external-terminal open, captured between the moment the

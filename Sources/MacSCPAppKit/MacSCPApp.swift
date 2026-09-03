@@ -78,6 +78,12 @@ final class TabCommands {
     /// picker armed. Exporting logins lives in that sheet only (it needs a
     /// selection to scope), so there is no menu counterpart for it.
     var importLogins: (() -> Void)?
+    /// "From Cyberduck…" (2026-09-03) — reads Cyberduck's bookmark folder
+    /// and opens the import preview. Its own entry rather than a mode of
+    /// `importSessions` above: that one takes a `.macscpsessions` file the
+    /// user picks, this one takes another program's data directory and shows
+    /// a preview before anything is written.
+    var importFromCyberduck: (() -> Void)?
     /// Terminal menu (M11d/T2): these two entries always offer BOTH ways to
     /// open a session's shell, regardless of `SettingsStore.terminalTarget`
     /// — the setting only picks what ⌘T/the toolbar button do, it never
@@ -355,6 +361,14 @@ struct MacSCPApp: App {
                 }
                 Button(L10n.string("menu.importLogins", "Import Logins…")) {
                     tabCommands.importLogins?()
+                }
+                // "From Cyberduck…" — beside the two entries above because
+                // it ends in the same place they do (the store), and reads
+                // as the third answer to "where do these sessions come
+                // from". No shortcut: it is a once-in-a-while migration,
+                // not a working action.
+                Button(L10n.string("menu.importFromCyberduck", "From Cyberduck…")) {
+                    tabCommands.importFromCyberduck?()
                 }
             }
             // "Terminal" menu (M11d/T2, spec §4): always offers BOTH ways to

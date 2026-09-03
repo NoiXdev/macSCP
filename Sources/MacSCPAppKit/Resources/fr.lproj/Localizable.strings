@@ -1111,3 +1111,43 @@
 "diagnostics.reason.traceNeedsIPv4" = "La vérification d’itinéraire nécessite une adresse IPv4.";
 "diagnostics.reason.traceStoppedByBudget" = "La vérification d’itinéraire a atteint son propre budget de temps après le saut %@ — le chemin continue peut-être.";
 "diagnostics.reason.traceHopLimitReached" = "La vérification d’itinéraire a atteint sa propre limite de sauts après le saut %@ — le chemin continue peut-être.";
+
+/* Import depuis un autre programme — Cyberduck (2026-09-03). L’entrée de
+   menu, la feuille d’aperçu, les deux interrupteurs et le sélecteur de
+   groupe, ainsi que les noms de champs qui composent la liste des
+   modifications d’une ligne « Modifié : » (les clés viennent de
+   ImportPreviewPlanner.FieldKey dans Core, qui n’a pas de langue d’interface). */
+"menu.importFromCyberduck" = "Depuis Cyberduck…";
+"import.source.cyberduck" = "Cyberduck";
+"import.cyberduck.title %@" = "Importer depuis %@";
+"import.cyberduck.count %lld" = "%lld signets";
+"import.cyberduck.empty" = "Aucun signet trouvé dans ce dossier.";
+"import.cyberduck.error.folder %@" = "Impossible de lire le dossier : %@";
+"import.cyberduck.selectAll" = "Tout sélectionner";
+"import.cyberduck.selectNone" = "Tout désélectionner";
+"import.cyberduck.status.new" = "Nouveau";
+"import.cyberduck.status.unchanged" = "Connu, inchangé";
+"import.cyberduck.status.changed %@" = "Modifié : %@";
+"import.cyberduck.status.unsupported" = "Pas encore pris en charge";
+"import.cyberduck.status.unreadable" = "Illisible";
+"import.cyberduck.change %1$@ %2$@ %3$@" = "%1$@ %2$@ → %3$@";
+"import.cyberduck.target.s3 %1$@ %2$@" = "%1$@ · %2$@";
+"import.cyberduck.target.allBuckets" = "tous les buckets";
+"import.cyberduck.takeSecrets" = "Reprendre les mots de passe et les secrets S3 du trousseau (macOS demande pour chaque entrée)";
+"import.cyberduck.takeGroupAndLabels" = "Classer dans un groupe, étiquettes comme tags";
+"import.cyberduck.group" = "Groupe";
+"import.cyberduck.group.none" = "Aucun groupe";
+"import.cyberduck.group.create %@" = "Nouveau groupe « %@ »";
+"import.cyberduck.summary %1$lld %2$lld %3$lld %4$lld" = "%1$lld à importer, dont %2$lld mises à jour · %3$lld ignorés · %4$lld non pris en charge";
+"import.cyberduck.action" = "Importer";
+"import.field.host" = "Hôte";
+"import.field.port" = "Port";
+"import.field.username" = "Nom d’utilisateur";
+"import.field.keyPath" = "Fichier de clé";
+"import.field.authKind" = "Méthode de connexion";
+"import.field.endpoint" = "Point de terminaison";
+"import.field.bucket" = "Bucket";
+"import.field.name" = "Nom";
+"import.field.labels" = "Étiquettes";
+"import.result.updated %lld" = "Sessions existantes mises à jour : %lld";
+"import.result.secretsNotRead %lld" = "Mots de passe illisibles dans le trousseau : %lld";

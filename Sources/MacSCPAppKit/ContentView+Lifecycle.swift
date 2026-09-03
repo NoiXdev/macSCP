@@ -704,6 +704,13 @@ extension ContentView {
             guard window?.isKeyWindow == true else { return }
             showImportFileImporter = true
         }
+        // "From Cyberduck…" — same key-window guard as every other entry on
+        // this bridge. Reading the folder happens here, before any sheet is
+        // presented, so an absent folder can raise the picker instead.
+        tabCommands.importFromCyberduck = {
+            guard window?.isKeyWindow == true else { return }
+            beginExternalImport()
+        }
         // "Terminal" menu bridge (M11d/T2) — same key-window guard as
         // the tab commands above. Unlike the toolbar button, these two
         // ALWAYS route to their own specific action regardless of

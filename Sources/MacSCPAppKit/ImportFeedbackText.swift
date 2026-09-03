@@ -5,6 +5,23 @@ import macSCPCore
 /// `ContentView` (M29-P2-Entkernung/T6) so the mapping is held by tests
 /// rather than by reading.
 enum ImportFeedbackText {
+    /// The two numbers an import from another program has to report that an
+    /// import from a file does not (Cyberduck import, 2026-09-03).
+    ///
+    /// `updated` is MEASURED, not promised: it is what the plan actually
+    /// overwrote, so an update whose record vanished between the preview and
+    /// the import — it fell back to a fresh session — is not counted here.
+    /// It is reported even when zero, because "nothing was updated" is the
+    /// answer to the question the preview raised.
+    ///
+    /// `secretsNotRead` counts the keychain items that were asked for and
+    /// not given: absent, refused, or a prompt the user cancelled. A COUNT,
+    /// like every other line here — never a name, and never a value.
+    struct ExternalImportOutcome: Equatable {
+        var updated: Int
+        var secretsNotRead: Int
+    }
+
     /// Shared formatter for non-typed read/decode failures on the import
     /// path — single source for the message so the three call sites cannot
     /// drift apart (T3 review).
@@ -46,9 +63,13 @@ enum ImportFeedbackText {
     /// rejected outright as unusable, the count of folders whose broken
     /// nesting the import straightened (D1), and an unencrypted-secrets
     /// notice when the file wasn't itself encrypted.
+    /// `external` is set only for an import read out of another program's
+    /// bookmarks; it adds the update count and, when the user asked for
+    /// secrets, the ones the keychain did not hand over.
     static func importResultText(
         _ result: SessionListViewModel.SessionImportResult, plan: SessionImportPlan,
-        includesSecrets: Bool, encrypted: Bool
+        includesSecrets: Bool, encrypted: Bool,
+        external: ExternalImportOutcome? = nil
     ) -> String {
         var lines = [String(format: L10n.string(
             "import.result.body %lld %lld %lld",
@@ -110,9 +131,24 @@ enum ImportFeedbackText {
                 "Folders moved to the top level because the file's nesting was broken: %lld"),
                 plan.liftedGroups.count))
         }
-        if includesSecrets && !encrypted {
+        if includesSecrets && !encrypted && external == nil {
             lines.append(L10n.string(
                 "import.result.plaintextNotice", "The file contained unencrypted passwords."))
+        }
+        // An external import has no file, so the plaintext notice above is
+        // suppressed for it: there was nothing on disk to be unencrypted.
+        // What it does have to say is how many records it overwrote, and how
+        // many secrets the keychain kept to itself.
+        if let external {
+            lines.append(String(format: L10n.string(
+                "import.result.updated %lld", "Existing sessions updated: %lld"),
+                external.updated))
+            if external.secretsNotRead > 0 {
+                lines.append(String(format: L10n.string(
+                    "import.result.secretsNotRead %lld",
+                    "Passwords that could not be read from the keychain: %lld"),
+                    external.secretsNotRead))
+            }
         }
         return lines.joined(separator: "\n")
     }

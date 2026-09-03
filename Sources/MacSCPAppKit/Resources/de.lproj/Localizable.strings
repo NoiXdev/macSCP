@@ -1108,3 +1108,43 @@
 "diagnostics.reason.traceNeedsIPv4" = "Die Routenprüfung braucht eine IPv4-Adresse.";
 "diagnostics.reason.traceStoppedByBudget" = "Die Routenprüfung hat nach Hop %@ ihr eigenes Zeitbudget erreicht — der Weg geht möglicherweise weiter.";
 "diagnostics.reason.traceHopLimitReached" = "Die Routenprüfung hat nach Hop %@ ihre eigene Hop-Grenze erreicht — der Weg geht möglicherweise weiter.";
+
+/* Import aus einem anderen Programm — Cyberduck (2026-09-03). Menüeintrag,
+   Vorschau-Sheet, die beiden Schalter und die Gruppenauswahl, dazu die
+   Feldnamen, aus denen die Änderungsliste einer „Geändert:“-Zeile besteht
+   (die Schlüssel kommen aus ImportPreviewPlanner.FieldKey im Core, der keine
+   eigene Oberflächensprache hat). */
+"menu.importFromCyberduck" = "Aus Cyberduck…";
+"import.source.cyberduck" = "Cyberduck";
+"import.cyberduck.title %@" = "Aus %@ importieren";
+"import.cyberduck.count %lld" = "%lld Lesezeichen";
+"import.cyberduck.empty" = "In diesem Ordner wurden keine Lesezeichen gefunden.";
+"import.cyberduck.error.folder %@" = "Der Ordner konnte nicht gelesen werden: %@";
+"import.cyberduck.selectAll" = "Alle auswählen";
+"import.cyberduck.selectNone" = "Keine auswählen";
+"import.cyberduck.status.new" = "Neu";
+"import.cyberduck.status.unchanged" = "Vorhanden, unverändert";
+"import.cyberduck.status.changed %@" = "Geändert: %@";
+"import.cyberduck.status.unsupported" = "Noch nicht unterstützt";
+"import.cyberduck.status.unreadable" = "Nicht lesbar";
+"import.cyberduck.change %1$@ %2$@ %3$@" = "%1$@ %2$@ → %3$@";
+"import.cyberduck.target.s3 %1$@ %2$@" = "%1$@ · %2$@";
+"import.cyberduck.target.allBuckets" = "alle Buckets";
+"import.cyberduck.takeSecrets" = "Passwörter und S3-Secrets aus dem Schlüsselbund mitnehmen (macOS fragt pro Eintrag)";
+"import.cyberduck.takeGroupAndLabels" = "In die Gruppe einsortieren, Labels als Tags";
+"import.cyberduck.group" = "Gruppe";
+"import.cyberduck.group.none" = "Keine Gruppe";
+"import.cyberduck.group.create %@" = "Neue Gruppe „%@“";
+"import.cyberduck.summary %1$lld %2$lld %3$lld %4$lld" = "%1$lld werden importiert, davon %2$lld Aktualisierungen · %3$lld übersprungen · %4$lld nicht unterstützt";
+"import.cyberduck.action" = "Importieren";
+"import.field.host" = "Host";
+"import.field.port" = "Port";
+"import.field.username" = "Benutzername";
+"import.field.keyPath" = "Schlüsseldatei";
+"import.field.authKind" = "Anmeldeart";
+"import.field.endpoint" = "Endpunkt";
+"import.field.bucket" = "Bucket";
+"import.field.name" = "Name";
+"import.field.labels" = "Labels";
+"import.result.updated %lld" = "Aktualisierte vorhandene Sitzungen: %lld";
+"import.result.secretsNotRead %lld" = "Passwörter, die nicht aus dem Schlüsselbund gelesen werden konnten: %lld";
