@@ -115,6 +115,12 @@ uses; (b) does it deliver ICMP time-exceeded for TTL-limited UDP probes;
 §2.3 and §2.5 get. The universal TCP/resolve/own-setup half and the seam
 do not wait for the spike.
 
+*Measured 2026-09-03, before the spike:* the app is not sandboxed —
+`scripts/release:48` passes no entitlements to `codesign`; the only
+entitlement either binary ever carried was a keychain access group. The
+spike's sandbox question collapses to "what an unprivileged process gets
+from macOS". Plan: `docs/superpowers/plans/2026-09-03-connection-tools-spike.md`.
+
 ## Order, if approved
 
 1. Spike (§5).
