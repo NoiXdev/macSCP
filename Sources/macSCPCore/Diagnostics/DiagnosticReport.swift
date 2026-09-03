@@ -17,14 +17,33 @@ public struct DiagnosticReport: Sendable, Equatable {
     /// see `GitHubReleaseFetcher`'s note for the same rule.
     public let appVersion: String
 
-    /// Whether the walk that produced this finished.
+    /// Whether the walk that produced this finished, and how it ended when it
+    /// did not.
     ///
     /// A report is pasted into an issue, and a PARTIAL one — copied while the
     /// diagnosis is still running, or after it was cancelled — has rows that
     /// were never measured rather than rows that were measured and found
     /// absent. Those two read identically once the text leaves the panel, so
     /// the renderers say which this is.
-    public let isComplete: Bool
+    public enum Completion: Sendable, Equatable {
+        /// The walk reached its end. Every row it was going to measure is
+        /// here.
+        case complete
+        /// A snapshot of a walk that is still walking, taken so the rows
+        /// already on screen can be copied before the slowest step returns.
+        case running
+        /// The walk was stopped. `afterSteps` is how many rows it had
+        /// finished — carried in the case so the marker can name it without
+        /// the renderer having to assume that the list it is printing is the
+        /// whole of what was measured.
+        case cancelled(afterSteps: Int)
+    }
+
+    public let completion: Completion
+
+    /// The yes/no question, for a caller that does not care which of the two
+    /// partial cases it is looking at.
+    public var isComplete: Bool { completion == .complete }
 
     /// No redaction pass here, unlike `DiagnosticStep.init`, and that is a
     /// decision rather than an omission: the only fields this prints besides
@@ -35,20 +54,35 @@ public struct DiagnosticReport: Sendable, Equatable {
     /// `withoutUserinfo` to act on anyway.
     public init(
         endpoint: Endpoint, steps: [DiagnosticStep], appVersion: String,
-        isComplete: Bool = true
+        completion: Completion = .complete
     ) {
         self.endpoint = endpoint
         self.steps = steps
         self.appVersion = appVersion
-        self.isComplete = isComplete
+        self.completion = completion
     }
 
     private static let title = "macSCP connection diagnostics"
 
-    /// The one line that marks an unfinished walk. English, like the rest of
-    /// this rendering: the report's audience is whoever reads the issue, not
-    /// whoever pasted it (see this type's own doc comment).
-    private static let incompleteMarker = "(run in progress)"
+    /// The one line that marks an unfinished walk, and says which of the two
+    /// ways it is unfinished. English, like the rest of this rendering: the
+    /// report's audience is whoever reads the issue, not whoever pasted it
+    /// (see this type's own doc comment).
+    ///
+    /// `nil` for a finished walk, which needs no marker at all: the rows are
+    /// the whole measurement, and a line saying so would be noise in every
+    /// report anyone ever pastes.
+    private static func marker(for completion: Completion) -> String? {
+        switch completion {
+        case .complete:
+            return nil
+        case .running:
+            return "(run in progress)"
+        case .cancelled(let afterSteps):
+            let rows = afterSteps == 1 ? "1 step" : "\(afterSteps) steps"
+            return "(cancelled after \(rows))"
+        }
+    }
 
     public func plainText() -> String {
         var lines = [
@@ -56,7 +90,7 @@ public struct DiagnosticReport: Sendable, Equatable {
             "Endpoint: \(endpoint.text)",
             "App version: \(appVersion)",
         ]
-        if !isComplete { lines.append(Self.incompleteMarker) }
+        if let marker = Self.marker(for: completion) { lines.append(marker) }
         lines.append("")
         for step in steps {
             var line = "\(step.id) — \(step.outcome.label) — \(Self.duration(step.duration))"
@@ -73,7 +107,7 @@ public struct DiagnosticReport: Sendable, Equatable {
             "- **Endpoint:** `\(endpoint.text)`",
             "- **App version:** \(appVersion)",
         ]
-        if !isComplete { lines.append("- **\(Self.incompleteMarker)**") }
+        if let marker = Self.marker(for: completion) { lines.append("- **\(marker)**") }
         lines.append(contentsOf: [
             "",
             "| Step | Outcome | Duration | Detail |",

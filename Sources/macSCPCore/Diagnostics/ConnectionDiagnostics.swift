@@ -19,7 +19,9 @@ import Foundation
 ///
 /// Cancellable through the calling task: `run()` returns the report with the
 /// steps that finished before the cancellation, and never a half-measured
-/// row.
+/// row. That report says it was cancelled and after how many steps
+/// (`DiagnosticReport.Completion`) — a partial measurement that presents
+/// itself as a whole one is what makes a pasted report unreadable.
 public actor ConnectionDiagnostics {
     private let descriptor: BackendDescriptor
     private let values: FieldValues
@@ -99,8 +101,32 @@ public actor ConnectionDiagnostics {
         }
 
         var steps: [DiagnosticStep] = []
-        func report() -> DiagnosticReport {
-            DiagnosticReport(endpoint: endpoint, steps: steps, appVersion: appVersion)
+        /// The report as it stands, labelled with how the walk ended.
+        ///
+        /// The label has NO default, and that is the whole point of its
+        /// shape. This helper used to take none and always produce a complete
+        /// report, so the twelve cancellation returns below handed back a
+        /// cut-short measurement that claimed, at the type level, to be a
+        /// finished one — and `DiagnosticReport.Completion`'s marker, which
+        /// exists precisely so a pasted partial cannot be read as "these
+        /// steps were measured and found absent", never appeared on the one
+        /// path a user reaches with the Cancel button. A required argument is
+        /// what makes the next return site decide instead of inherit.
+        func report(_ completion: DiagnosticReport.Completion) -> DiagnosticReport {
+            DiagnosticReport(
+                endpoint: endpoint, steps: steps, appVersion: appVersion,
+                completion: completion)
+        }
+        /// What every cancellation guard below returns.
+        ///
+        /// The count is read here rather than derived from `Task.isCancelled`
+        /// inside `report(_:)`: a cancellation that arrives after the last
+        /// step has been appended — while the walk is on its way to its
+        /// natural return — would make a finished measurement label itself
+        /// cancelled, which is the same misreading in the other direction.
+        /// Where the walk stopped is known at the site that stops it.
+        func cancelled() -> DiagnosticReport {
+            report(.cancelled(afterSteps: steps.count))
         }
         /// Hands a finished step to the observer and gives it back, so the
         /// publish and the append read as one expression at every site.
@@ -115,25 +141,25 @@ public actor ConnectionDiagnostics {
             return step
         }
 
-        guard !Task.isCancelled else { return report() }
+        guard !Task.isCancelled else { return cancelled() }
         let (resolveStep, addresses) = await resolve(endpoint)
-        guard !Task.isCancelled else { return report() }
+        guard !Task.isCancelled else { return cancelled() }
         steps.append(await published(resolveStep))
 
-        guard !Task.isCancelled else { return report() }
+        guard !Task.isCancelled else { return cancelled() }
         let tcpStep = await ping(addresses, port: endpoint.port)
-        guard !Task.isCancelled else { return report() }
+        guard !Task.isCancelled else { return cancelled() }
         steps.append(await published(tcpStep))
 
-        guard !Task.isCancelled else { return report() }
+        guard !Task.isCancelled else { return cancelled() }
         let icmpStep = await echo(addresses)
-        guard !Task.isCancelled else { return report() }
+        guard !Task.isCancelled else { return cancelled() }
         steps.append(await published(icmpStep))
 
         if let dial = descriptor.dial {
-            guard !Task.isCancelled else { return report() }
+            guard !Task.isCancelled else { return cancelled() }
             let step = await bounded(dial)
-            guard !Task.isCancelled else { return report() }
+            guard !Task.isCancelled else { return cancelled() }
             steps.append(await published(step))
         }
 
@@ -148,18 +174,18 @@ public actor ConnectionDiagnostics {
         // said so in as many words. Two comments in one feature, each
         // asserting the negation of the other; this round made the claim true
         // rather than deleting it.
-        guard !Task.isCancelled else { return report() }
+        guard !Task.isCancelled else { return cancelled() }
         let traceStep = await trace(addresses)
-        guard !Task.isCancelled else { return report() }
+        guard !Task.isCancelled else { return cancelled() }
         steps.append(await published(traceStep))
 
         for contribution in descriptor.diagnostics {
-            guard !Task.isCancelled else { return report() }
+            guard !Task.isCancelled else { return cancelled() }
             let step = await bounded(contribution)
-            guard !Task.isCancelled else { return report() }
+            guard !Task.isCancelled else { return cancelled() }
             steps.append(await published(step))
         }
-        return report()
+        return report(.complete)
     }
 
     // MARK: - The universal steps

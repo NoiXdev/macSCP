@@ -249,7 +249,17 @@ struct ConnectionDiagnosticsTests {
         _ = elapsed
     }
 
-    @Test func cancellationMidRunEndsWithTheStepsSoFar() async throws {
+    /// A cancelled walk ends with the steps it had — and the report SAYS it
+    /// was cancelled, and after how many.
+    ///
+    /// Both halves in one case because the second is what makes the first
+    /// readable. The report is pasted into an issue, and until 2026-09-03 a
+    /// cancelled walk built its report through the same helper the natural
+    /// return used: the rows were right and the label claimed a finished
+    /// diagnosis, so a reader of the issue could not tell the trace and the
+    /// dial from steps that had been measured and found absent. Nothing about
+    /// the rows had to be wrong for the artifact to mislead.
+    @Test func cancellationMidRunEndsWithTheStepsSoFarAndSaysItWasCancelled() async throws {
         let port = try #require(LoopbackSocket.closedPort())
         let gate = Gate()
         let diagnostics = ConnectionDiagnostics(
@@ -275,6 +285,17 @@ struct ConnectionDiagnosticsTests {
             report.steps.map(\.id) == [
                 DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
             ])
+        // Three, because the dial is where the park is: the resolve, the TCP
+        // ping and the echo finish before it and the cancellation lands on
+        // the guard around it. Written as a literal rather than as
+        // `report.steps.count`, which a report of no steps labelled
+        // `afterSteps: 0` would also satisfy.
+        #expect(report.completion == .cancelled(afterSteps: 3))
+        #expect(report.isComplete == false)
+        #expect(report.plainText().contains("(cancelled after 3 steps)"), """
+            the pasted report must name the cancel, or its missing rows read as steps that             were measured and found absent: \(report.plainText())
+            """)
+        #expect(report.markdown().contains("(cancelled after 3 steps)"))
     }
 
     /// Every step reaches the observer AS IT FINISHES — not in a batch at the
@@ -372,6 +393,11 @@ struct ConnectionDiagnosticsTests {
             DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
             DiagnosticStepID.trace,
         ])
+        // The positive half of the case above: a walk that reached its end
+        // carries no marker, so the marker means something when it is there.
+        #expect(report.completion == .complete)
+        #expect(report.plainText().contains("cancelled") == false)
+        #expect(report.plainText().contains("run in progress") == false)
     }
 
     /// Even the one step a session with no endpoint produces reaches the
@@ -434,6 +460,50 @@ struct ConnectionDiagnosticsTests {
             #expect(own.first?.contains(" ms |") == true)
         }
         #expect(report.steps.map(\.outcome).contains(.timedOut))
+    }
+
+    /// One marker line per way of being unfinished, and none for a finished
+    /// walk. On a report built by hand: what is under test is the rendering
+    /// of the label, and every walk that could produce one of these takes a
+    /// socket and a clock to provoke.
+    ///
+    /// The singular is not decoration. "cancelled after 1 steps" is the kind
+    /// of line that makes a reader distrust the rest of the artifact, and one
+    /// step measured before a cancel is the ordinary case — the resolve
+    /// finishes in milliseconds and everything after it can hang.
+    @Test func eachKindOfUnfinishedWalkGetsItsOwnMarkerAndAFinishedOneGetsNone() {
+        let steps = [
+            Self.constantStep(id: DiagnosticStepID.resolve),
+            Self.constantStep(id: DiagnosticStepID.tcp),
+        ]
+        func rendered(_ completion: DiagnosticReport.Completion) -> (String, String) {
+            let report = DiagnosticReport(
+                endpoint: Endpoint(host: "example.test", port: 22), steps: steps,
+                appVersion: "test", completion: completion)
+            return (report.plainText(), report.markdown())
+        }
+
+        let (completeText, completeMarkdown) = rendered(.complete)
+        #expect(completeText.contains("(cancelled") == false, """
+            a finished report carries no marker at all — a line in every report anyone \
+            pastes is a line nobody reads: \(completeText)
+            """)
+        #expect(completeText.contains("(run in progress)") == false)
+        #expect(completeMarkdown.contains("(cancelled") == false)
+        #expect(completeMarkdown.contains("(run in progress)") == false)
+
+        let (runningText, runningMarkdown) = rendered(.running)
+        #expect(runningText.contains("(run in progress)"))
+        #expect(runningMarkdown.contains("- **(run in progress)**"))
+
+        let (twoText, twoMarkdown) = rendered(.cancelled(afterSteps: 2))
+        #expect(twoText.contains("(cancelled after 2 steps)"))
+        #expect(twoMarkdown.contains("- **(cancelled after 2 steps)**"))
+
+        let (oneText, _) = rendered(.cancelled(afterSteps: 1))
+        #expect(oneText.contains("(cancelled after 1 step)"), """
+            one step is singular: \(oneText)
+            """)
     }
 
     @Test func theReportCarriesTheAppVersionItWasGiven() async {
@@ -879,6 +949,13 @@ struct ConnectionDiagnosticsTests {
             secretEnvironmentVariable: nil, requiresSecret: { _ in false },
             fileActions: [],
             endpoint: { _ in endpoint }, dial: dial, diagnostics: diagnostics)
+    }
+
+    /// One finished row, with nothing measured — the renderer cases need rows
+    /// to print and care about none of their contents.
+    private static func constantStep(id: String) -> DiagnosticStep {
+        DiagnosticStepTimer(id: id, titleKey: DiagnosticStepID.titleKey(for: id))
+            .finish(.ok, "")
     }
 
     private static func constantContribution(

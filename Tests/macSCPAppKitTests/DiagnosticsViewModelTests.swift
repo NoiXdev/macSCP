@@ -25,10 +25,17 @@ struct DiagnosticsViewModelTests {
             duration: .milliseconds(12), outcome: outcome, detail: detail)
     }
 
-    nonisolated private static func report(_ steps: [DiagnosticStep]) -> DiagnosticReport {
+    /// A report the way Core hands one back. `completion` is a parameter
+    /// rather than a default everywhere, because the cases below that cancel
+    /// have to stand in for what `ConnectionDiagnostics` actually produces —
+    /// a fake that always answers `.complete` would let the App launder a
+    /// cancel's label away and stay green.
+    nonisolated private static func report(
+        _ steps: [DiagnosticStep], completion: DiagnosticReport.Completion = .complete
+    ) -> DiagnosticReport {
         DiagnosticReport(
             endpoint: Endpoint(host: "example.test", port: 22), steps: steps,
-            appVersion: "0.0.0-test")
+            appVersion: "0.0.0-test", completion: completion)
     }
 
     /// A recording pasteboard: the seam the view model writes through, so a
@@ -92,7 +99,8 @@ struct DiagnosticsViewModelTests {
     /// them rather than throw the partial answer away — a half-finished
     /// diagnosis is exactly the artefact a hanging connection produces.
     @Test func cancelKeepsTheStepsTheRunHadAlreadyMeasured() async {
-        let partial = Self.report([Self.step(id: DiagnosticStepID.resolve)])
+        let partial = Self.report(
+            [Self.step(id: DiagnosticStepID.resolve)], completion: .cancelled(afterSteps: 1))
         let model = Self.model(
             runner: { _ in
                 // Returns the moment the task is cancelled; the duration is a
@@ -252,12 +260,19 @@ struct DiagnosticsViewModelTests {
             """)
     }
 
-    /// Cancelling keeps the rows that were already on screen.
+    /// Cancelling keeps the rows that were already on screen — and keeps the
+    /// label that says the walk was cut short.
     ///
     /// Before this, a cancel returned whatever `ConnectionDiagnostics` handed
     /// back — and a run cancelled mid-trace drops the step it is inside — so
     /// pressing Cancel after twenty seconds of spinner could cost the reader
     /// rows that had been ready the whole time.
+    ///
+    /// The completion is read HERE rather than only in the copy case below,
+    /// because the run's own answer is what the copy renders: the model
+    /// publishes the runner's report unchanged, and a model that re-decided
+    /// "complete" on the way in would leave both copy shapes silent about the
+    /// cancel with nothing else able to see it.
     @Test func cancellingKeepsTheRowsAlreadyMeasured() async {
         let emitted = [
             Self.step(id: DiagnosticStepID.resolve), Self.step(id: DiagnosticStepID.tcp),
@@ -266,7 +281,7 @@ struct DiagnosticsViewModelTests {
             runner: { onStep in
                 for step in emitted { await onStep(step) }
                 try? await Task.sleep(for: .seconds(600))
-                return Self.report(emitted)
+                return Self.report(emitted, completion: .cancelled(afterSteps: emitted.count))
             },
             clipboard: Clipboard())
         model.run()
@@ -279,7 +294,59 @@ struct DiagnosticsViewModelTests {
             the partial measurement IS the measurement — cancelling must not throw away the \
             rows the walk had already finished
             """)
+        #expect(model.report?.completion == .cancelled(afterSteps: 2), """
+            …and the report it publishes must still say the walk was cancelled, and after \
+            how many steps: \(String(describing: model.report?.completion))
+            """)
         #expect(model.isRunning == false)
+    }
+
+    /// Copying after a Cancel says the walk was cancelled.
+    ///
+    /// The scenario, measured as a real defect on 2026-09-03: a host answers
+    /// the resolve and the TCP ping quickly and then hangs, the user decides
+    /// two rows are enough evidence and presses Cancel, then copies. Every
+    /// piece was already in place — the rows survive the cancel, the copy
+    /// entry stays enabled — and the pasted text read exactly like a finished
+    /// two-step diagnosis, because `ConnectionDiagnostics` built its
+    /// cancellation returns through the same helper as its natural one.
+    /// Whoever read the issue had no way to tell that the dial and the trace
+    /// were never attempted from their having been attempted and found
+    /// absent.
+    ///
+    /// `copyableReport`'s first branch returns the published report as it
+    /// stands, so this is also the case that catches a model synthesising a
+    /// `.running` snapshot over a run that is over.
+    @Test func copyingAfterACancelSaysTheWalkWasCancelled() async {
+        let emitted = [
+            Self.step(id: DiagnosticStepID.resolve, detail: "A 127.0.0.1"),
+            Self.step(id: DiagnosticStepID.tcp),
+        ]
+        let clipboard = Clipboard()
+        let model = Self.model(
+            runner: { onStep in
+                for step in emitted { await onStep(step) }
+                try? await Task.sleep(for: .seconds(600))
+                return Self.report(emitted, completion: .cancelled(afterSteps: emitted.count))
+            },
+            clipboard: clipboard)
+        model.run()
+        await Self.yieldUntil("both rows arrive") { model.steps.count == emitted.count }
+
+        model.cancel()
+        await model.runTask?.value
+
+        model.copyPlainText()
+        model.copyMarkdown()
+        #expect(clipboard.written.count == 2)
+        for copied in clipboard.written {
+            #expect(copied.contains("(cancelled after 2 steps)"), """
+                a cancelled report pasted into an issue must say so: \(copied)
+                """)
+            #expect(copied.contains("run in progress") == false, """
+                …and must not claim to be still running, which it is not: \(copied)
+                """)
+        }
     }
 
     /// A second run starts from an empty list rather than growing the first
@@ -396,8 +463,8 @@ struct DiagnosticsViewModelTests {
         #expect(model.copyableReport != nil, "there is something to copy while it runs")
         model.copyPlainText()
 
-        let text = try? #require(clipboard.written.first)
-        let copied = text ?? ""
+        #expect(clipboard.written.count == 1, "one copy entry wrote once")
+        let copied = clipboard.written.first ?? ""
         #expect(copied.contains("example.test:22"), """
             the endpoint is known before the walk starts and belongs in the header: \(copied)
             """)

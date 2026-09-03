@@ -1196,7 +1196,6 @@ struct DiagnosticsDoorsGuardTests {
         matches(of: #"\b(\#(name))\b"#, in: source).count
     }
 
-    /// The brace-balanced body of the named function.
     /// EVERY brace-balanced body declared under this function name.
     ///
     /// A list, not the first one. Overloads share a name and differ only in

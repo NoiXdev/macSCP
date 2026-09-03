@@ -103,6 +103,11 @@ final class DiagnosticsViewModel: Identifiable {
     /// whether it ended by finishing or by being cancelled. `nil` until then,
     /// which is what leaves the copy menu disabled over a run that has
     /// measured nothing.
+    ///
+    /// Published exactly as the runner produced it, cancellation label
+    /// included: the runner is the only thing that knows whether the walk
+    /// reached its end, and re-deciding that here would be a second copy of
+    /// the answer.
     private(set) var report: DiagnosticReport?
 
     /// Whether a diagnosis is in flight. Drives the panel's progress row and
@@ -237,10 +242,13 @@ final class DiagnosticsViewModel: Identifiable {
     /// What "Copy report" would put on the pasteboard right now, or `nil`
     /// when there is nothing worth copying.
     ///
-    /// The finished report when there is one; otherwise the rows measured so
-    /// far, rendered as a report that says it is one — `isComplete: false`
-    /// puts "(run in progress)" under the header, so a partial paste cannot be
-    /// read as a walk whose missing steps were measured and found absent.
+    /// The report a finished or cancelled run produced when there is one —
+    /// carrying whatever `DiagnosticReport.Completion` the runner labelled it
+    /// with, so a cancel's "(cancelled after n steps)" marker reaches the
+    /// pasteboard as measured. Otherwise the rows measured so far, rendered as
+    /// a report that says it is one: `.running` puts "(run in progress)" under
+    /// the header, so a partial paste cannot be read as a walk whose missing
+    /// steps were measured and found absent.
     ///
     /// `nil` before the first row, and for a session with no endpoint to name:
     /// a header reading `:0` would be a fabrication in the one value whose job
@@ -249,7 +257,7 @@ final class DiagnosticsViewModel: Identifiable {
         if let report { return report }
         guard !steps.isEmpty, let endpoint else { return nil }
         return DiagnosticReport(
-            endpoint: endpoint, steps: steps, appVersion: appVersion, isComplete: false)
+            endpoint: endpoint, steps: steps, appVersion: appVersion, completion: .running)
     }
 
     func copyPlainText() {
