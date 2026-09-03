@@ -103,7 +103,7 @@ duration, one line of detail), then the protocol section, a "Run again"
 and a "Copy report" button. Rows for halves that this build cannot do
 say so in one sentence (§2.3/§2.5). The context-menu entry works for a
 saved session without connecting; the tab's entry pre-fills from the
-live connection; the error dialog's button runs it immediately.
+live connection; the error dialog's button opens the panel pre-filled from the failed attempt, with Run as the default button — it does not run by itself (decided 2026-09-02: diagnostics run only on the button; the earlier wording here said "runs it immediately" and was corrected 2026-09-03 after a guard review found it would have licensed exactly the automatic start the guard forbids).
 
 ## 5. The spike before the plan
 
