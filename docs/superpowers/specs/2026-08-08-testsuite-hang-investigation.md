@@ -285,9 +285,10 @@ output after 60 s on CI (run 33681669890, 22 issues, the other 3387 tests
 "passed after 80 s" — a whole-suite stall) and a diagnostic run of the
 same tree hung to the 20-minute timeout with no child ever observed. The
 waits were replaced by an `async` runner (`Tests/macSCPCoreTests/Support/
-SubprocessRunner.swift`: `Process.terminationHandler` resumes a
-continuation; readers are `FileHandle.readabilityHandler` sources, which
-park no thread), every child process in the suite goes through it, and a
+SubprocessRunner.swift`: `Process.terminationHandler` raises an
+`AsyncSignal` latch that the caller awaits — no `CheckedContinuation`, the
+shape round 1 rejected; readers are `FileHandle.readabilityHandler`
+sources, which park no thread), every child process in the suite goes through it, and a
 guard scans `Tests/` for the blocking patterns (allowlist: the AppKit
 target's `defer`-bound docker calls and the liveness plant). Three CI runs
 measured the fix on the three-core runner: 33693297919 at `e16b14ae`
@@ -412,9 +413,10 @@ there is far wider than the cap, the gaps are not):
 33701218149: liveness: test2 ambient=0.162261292 seconds gap=0.177697167 seconds ceiling=2.0 seconds
 ```
 
-Two green runs with an ambient of 9.4 s and 14.0 s against a 4 s cap: the
-cap binds on CI in every run so far, and the largest gap stayed under
-0.6 s. That is two data points, not a tally.
+Three runs — one red for a runner test (33698102652), two green — with an
+ambient of 9.4 s, 14.0 s and 15.0 s against a 4 s cap: the cap binds on CI
+in every run so far, and the largest gap stayed under 0.6 s. That is three
+data points, not a tally.
 
 ### What stays open
 

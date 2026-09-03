@@ -27,6 +27,19 @@ pipes above the 64 KB pipe buffer (both drained, no deadlock).
 **Tech Stack:** Foundation `Process`, Swift concurrency continuations,
 Swift Testing; CLAUDE.md "Tests never block the cooperative pool".
 
+**Shipped shape, 2026-09-03 (this paragraph overrides the architecture
+paragraph above where they differ):** the runner has no
+`CheckedContinuation` — `Process.terminationHandler` raises an
+`AsyncSignal` latch with three outcomes (`.signalled` / `.timedOut` /
+`.cancelled`); the pipes are read by `FileHandle.readabilityHandler`
+sources and stdin is written by a `writeabilityHandler` on a non-blocking
+descriptor, so no GCD thread is parked per pipe (the global-queue drains
+first written here starved on the three-core runner, run 33698102652); the
+guard's allowlist did not end empty — it holds the AppKit target's
+`defer`-bound docker calls and the liveness plant, each with its reason.
+Commits: `bfe0994d`, `c3f00bdd`, `15314c35`, `8bd7e1df`, `ae5501ff`,
+`126c5c88`, `aadbafca`, `c8eebbd3`; CI green at run 33707786680.
+
 ## Global Constraints
 
 - English only; Conventional Commits; footer exactly `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
@@ -99,12 +112,12 @@ defines `run(`; each of the four CLI suites calls `SubprocessRunner.run(`.
 The allowlist is derived from the measured grep, not typed from memory —
 run the grep, paste the file names.
 
-- [ ] Red first for the runner's tests; convert the long waits; guard green; the CLI suites and the four converted files green; full unit suite green (the gated ITEST suites run if the rig is up); zero warnings; commit
+- [x] Red first for the runner's tests; convert the long waits; guard green; the CLI suites and the four converted files green; full unit suite green (the gated ITEST suites run if the rig is up); zero warnings; commit
   `test: subprocess tests await their children instead of parking pool threads`.
 
 ### Task 1b: The short waits
 
-- [ ] Replace every remaining `waitUntilExit()` / semaphore under `Tests/`
+- [x] Replace every remaining `waitUntilExit()` / semaphore under `Tests/`
   with `SubprocessRunner.run(` (test helpers become `async`; `try!` helpers
   become `throws`), shrink the guard's allowlist to empty, full suite green,
   commit `test: every child process in the suite is awaited`.
@@ -126,7 +139,7 @@ run.
 
 ### Task 2: Prove it where it failed
 
-- [ ] Push (controller), watch CI: the Unit-Tests step back under four
+- [x] Push (controller), watch CI: the Unit-Tests step back under four
   minutes and green; record the run id in the hang entry's follow-up
   paragraph (the one dated 2026-09-02 night), and close that paragraph.
 

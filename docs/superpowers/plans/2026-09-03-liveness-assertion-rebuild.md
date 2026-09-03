@@ -55,14 +55,14 @@ sensitivity is a number).
   endpoint does today and keep the test's total under ~8 s); the doc
   comment at :32-45 and :120-125 rewritten to the new relation: "a block
   is the dial's duration; noise is milliseconds; the ceiling sits between").
-- [ ] **Step 1: the mutation probe first** — plant `blockThisThread(forMilliseconds: 5_000)`
+- [x] **Step 1: the mutation probe first** — plant `blockThisThread(forMilliseconds: 5_000)`
   on the main actor around the awaited connect in each timing test, run
   each 10 times (`for i in 1..10: swift test --filter ConnectMainActorLivenessTests`),
   record 10/10 red; remove.
-- [ ] **Step 2:** the new ceiling; run alone 10 times → green; then the
+- [x] **Step 2:** the new ceiling; run alone 10 times → green; then the
   full gated run (`MACSCP_ITEST=1 swift test`) 10 times → record the
   liveness suite's result each time (the whole point).
-- [ ] **Step 3: Commit** — `test(ssh): the liveness ceiling separates a block from scheduling noise`
+- [x] **Step 3: Commit** — `test(ssh): the liveness ceiling separates a block from scheduling noise`
 
 ### Task 1b: A green run prints its numbers
 
@@ -76,7 +76,7 @@ that a question a grep over CI logs answers.
 
 **Files:** `Tests/macSCPCoreTests/ConnectMainActorLivenessTests.swift` only.
 
-- [ ] Add the two lines; run the suite alone once and paste the two
+- [x] Add the two lines; run the suite alone once and paste the two
   printed lines into the report; zero warnings; commit
   `test(ssh): the liveness tests print their ambient and gap on green as well`.
 
@@ -87,9 +87,11 @@ that a question a grep over CI logs answers.
   (the "Noted 2026-09-02" table gets a closing row per run of Step 2;
   the sentence that the tally stops growing; what the ceiling means now)
 
-- [ ] Commit — `docs(spec): the liveness tally closes at N of N green under load`
+- [x] Commit — `docs(spec): the liveness tally closes at N of N green under load`
 
 ## What is explicitly not in this plan
 
 - No isolated gate run for the suite; no `.serialized` changes.
 - No change to the connect timeout in the app.
+
+**Done 2026-09-03:** `9d00aa90`, `0f9ebd2d` (fix round 1: the 4 s cap and the elapsed guard), `0b43601d` (the prints), `830961f7` and `92ca631d` (records). The closeout commit subject became `docs(tests): the liveness tally closes — the rebuilt ceiling, ten runs, one CI run`.
