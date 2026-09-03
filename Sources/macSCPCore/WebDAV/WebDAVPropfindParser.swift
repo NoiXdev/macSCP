@@ -15,14 +15,7 @@ public enum WebDAVPropfindParser {
     public static func parse(
         _ data: Data, base: WebDAVURL, requestedPath: String
     ) throws -> [RemoteFileItem] {
-        let delegate = Delegate()
-        let parser = XMLParser(data: data)
-        parser.delegate = delegate
-        parser.shouldProcessNamespaces = true
-        guard parser.parse() else {
-            throw RemoteFSError.protocolError(
-                reason: "WebDAV PROPFIND response is not valid XML")
-        }
+        let delegate = try parsed(data)
 
         var items: [RemoteFileItem] = []
         for entry in delegate.entries {
@@ -40,6 +33,36 @@ public enum WebDAVPropfindParser {
                 modifiedAt: entry.lastModified))
         }
         return items
+    }
+
+    /// Whether the FIRST response in a `multistatus` body describes a
+    /// collection — what a `Depth: 0` PROPFIND on the root answers, and the
+    /// "what does this server say it is" half of the WebDAV seam
+    /// contribution (design §3).
+    ///
+    /// `nil` when the body carries no response at all, which is a finding of
+    /// its own: a 207 with nothing in it is not a collection and not a file.
+    ///
+    /// Its own reader rather than `parse(_:base:requestedPath:)`: that one
+    /// EXCLUDES the requested resource (a browser must not list a directory
+    /// inside itself), which is exactly the one entry a depth-0 PROPFIND
+    /// returns, and it needs a `WebDAVURL` to map hrefs a probe has no
+    /// business re-deriving.
+    public static func firstResourceIsCollection(_ data: Data) throws -> Bool? {
+        try parsed(data).entries.first?.isCollection
+    }
+
+    /// One XML pass, shared by both readers above.
+    private static func parsed(_ data: Data) throws -> Delegate {
+        let delegate = Delegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        parser.shouldProcessNamespaces = true
+        guard parser.parse() else {
+            throw RemoteFSError.protocolError(
+                reason: "WebDAV PROPFIND response is not valid XML")
+        }
+        return delegate
     }
 
     private static func normalized(_ path: String) -> String {

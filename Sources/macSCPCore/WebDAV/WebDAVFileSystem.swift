@@ -256,18 +256,12 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     }
 
     private func propfind(path: String, depth: String, isDirectory: Bool) async throws -> Data {
-        var request = URLRequest(url: base.url(forPath: path, isDirectory: isDirectory))
-        request.httpMethod = "PROPFIND"
-        request.setValue(depth, forHTTPHeaderField: "Depth")
-        request.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        // An explicit prop set rather than allprop: allprop invites servers to
-        // return large, irrelevant property sets (Nextcloud especially).
-        request.httpBody = Data("""
-        <?xml version="1.0" encoding="utf-8"?>
-        <d:propfind xmlns:d="DAV:"><d:prop>
-          <d:resourcetype/><d:getcontentlength/><d:getlastmodified/>
-        </d:prop></d:propfind>
-        """.utf8)
+        // The request, its `Depth` and its prop set are built by
+        // `WebDAVRequest`, which `WebDAVClaimsProbe` also asks — the body
+        // names exactly the properties `WebDAVPropfindParser` reads, and two
+        // copies of it could drift apart without anything failing.
+        let request = WebDAVRequest.propfind(
+            url: base.url(forPath: path, isDirectory: isDirectory), depth: depth)
 
         let (data, response) = try await send(request)
         try Self.mapStatus(response.statusCode, path: path, method: "PROPFIND")

@@ -1080,6 +1080,8 @@
 "diagnostics.step.sshConnect" = "Połączenie SSH";
 "diagnostics.step.s3Endpoint" = "Punkt końcowy";
 "diagnostics.step.webdavOptions" = "Możliwości serwera";
+"diagnostics.contribution.s3Access" = "Uprawnienia klucza";
+"diagnostics.contribution.webdavClaims" = "Deklaracje serwera";
 "diagnostics.reason.noHost" = "To połączenie nie wskazuje żadnego hosta.";
 "diagnostics.reason.nothingResolvedToProbe" = "Nazwa nie rozwiązała się na żaden adres, więc nie było czego sprawdzać.";
 "diagnostics.reason.noSecret" = "Dla tego połączenia nie zapisano danych logowania. Zapisz je i uruchom sprawdzenie ponownie.";

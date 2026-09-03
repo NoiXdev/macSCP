@@ -1081,6 +1081,8 @@
 "diagnostics.step.sshConnect" = "Connexion SSH";
 "diagnostics.step.s3Endpoint" = "Point de terminaison";
 "diagnostics.step.webdavOptions" = "Capacités du serveur";
+"diagnostics.contribution.s3Access" = "Droits de la clé";
+"diagnostics.contribution.webdavClaims" = "Déclarations du serveur";
 "diagnostics.reason.noHost" = "Cette connexion ne nomme aucun hôte.";
 "diagnostics.reason.nothingResolvedToProbe" = "Le nom n’a donné aucune adresse ; il n’y avait donc rien à sonder.";
 "diagnostics.reason.noSecret" = "Aucun identifiant n’est enregistré pour cette connexion. Enregistrez-en un, puis relancez la vérification.";

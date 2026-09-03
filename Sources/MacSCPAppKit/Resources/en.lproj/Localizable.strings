@@ -1077,6 +1077,8 @@
 "diagnostics.step.sshConnect" = "SSH connect";
 "diagnostics.step.s3Endpoint" = "Endpoint";
 "diagnostics.step.webdavOptions" = "Server capabilities";
+"diagnostics.contribution.s3Access" = "Key access level";
+"diagnostics.contribution.webdavClaims" = "Server claims";
 "diagnostics.reason.noHost" = "This connection names no host.";
 "diagnostics.reason.nothingResolvedToProbe" = "The name resolved to no address, so there was nothing to probe.";
 "diagnostics.reason.noSecret" = "No credential is saved for this connection. Save one, then run the check again.";

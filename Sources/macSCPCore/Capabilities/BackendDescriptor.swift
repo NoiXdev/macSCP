@@ -114,9 +114,14 @@ public struct BackendDescriptor: Sendable {
     /// the runner counting elements.
     public let dial: DiagnosticContribution?
 
-    /// The protocol's own probes, run after the dial (design §3). Empty for
-    /// every backend today; the S3 access-level probe and the WebDAV
-    /// `PROPFIND` are the first two, and they are a separate task.
+    /// The protocol's own probes, run after the dial (design §3).
+    ///
+    /// S3 and WebDAV each carry one (`ContributionProbes`): what the key may
+    /// do, and what the server claims to be. SSH carries none — its question
+    /// is the negotiation NIOSSH already knows after a connect (KEX,
+    /// host-key type, cipher, which auth method succeeded), and the fork
+    /// exposes no observer to read it from yet, so the row would have to
+    /// guess at exactly the thing somebody opened the panel to check.
     public let diagnostics: [DiagnosticContribution]
 
     public static func descriptor(for kind: ConnectionKind) -> BackendDescriptor {
@@ -442,7 +447,7 @@ public struct BackendDescriptor: Sendable {
             FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
         ],
         endpoint: { values in S3FieldSchema.endpoint(values) },
-        dial: .s3EndpointHead, diagnostics: [])
+        dial: .s3EndpointHead, diagnostics: [.s3AccessLevel])
 
     /// The capability axes that deliberately differ from S3 (M21): real
     /// directories and atomic rename, the two WebDAV actually has and S3
@@ -482,7 +487,7 @@ public struct BackendDescriptor: Sendable {
         secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: { _ in true },
         fileActions: [],
         endpoint: { values in WebDAVFieldSchema.endpoint(values) },
-        dial: .webdavOptions, diagnostics: [])
+        dial: .webdavOptions, diagnostics: [.webdavClaims])
 }
 
 extension BackendDescriptor {

@@ -666,7 +666,14 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// an empty one, `"\(bucket).\(host)"` would resolve to a different
     /// name entirely — so this deliberately does not go through
     /// `requestURL`.
-    private static func bucketListURL(config: S3ConnectionConfig) throws -> URL {
+    ///
+    /// Module-internal rather than private, and so are `requestURL`,
+    /// `keyRequestURL` and `canonicalKeyPath` below: `S3AccessProbe` signs
+    /// these same three shapes without a connected file system, and a probe
+    /// that built its own URLs would be measuring requests this app never
+    /// sends. Still out of reach from outside Core, like everything else on
+    /// this dial path.
+    static func bucketListURL(config: S3ConnectionConfig) throws -> URL {
         guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {
             throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
         }
@@ -890,7 +897,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// for the same reason `requestURL` does (M12 review I-1): letting
     /// `URLComponents` re-encode a key or query value with its own (looser)
     /// rules would desync the wire request from what the signer signed.
-    private static func keyRequestURL(
+    static func keyRequestURL(
         config: S3ConnectionConfig, bucket: String, key: String,
         queryPairs: [(name: String, value: String)]
     ) throws -> URL {
@@ -928,7 +935,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `"/\(bucket)/\(key)"` concatenation would leave behind, matching
     /// `requestURL`'s bucket-root path (`"/" + bucket`, no trailing slash)
     /// used for `ListObjectsV2`.
-    private static func canonicalKeyPath(
+    static func canonicalKeyPath(
         config: S3ConnectionConfig, bucket: String, key: String
     ) -> String {
         guard config.usePathStyle else { return "/\(key)" }
@@ -1002,7 +1009,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// signed as `%2B` but sent as a literal `+`, decoded server-side as a
     /// space, and rejected as a signature mismatch (HTTP 403). See M12
     /// review finding I-1.
-    private static func requestURL(
+    static func requestURL(
         config: S3ConnectionConfig, bucket: String, queryPairs: [(name: String, value: String)]
     ) throws -> URL {
         guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {

@@ -1078,6 +1078,8 @@
 "diagnostics.step.sshConnect" = "SSH-Verbindung";
 "diagnostics.step.s3Endpoint" = "Endpunkt";
 "diagnostics.step.webdavOptions" = "Serverfähigkeiten";
+"diagnostics.contribution.s3Access" = "Zugriffsrechte des Schlüssels";
+"diagnostics.contribution.webdavClaims" = "Angaben des Servers";
 "diagnostics.reason.noHost" = "Diese Verbindung nennt keinen Host.";
 "diagnostics.reason.nothingResolvedToProbe" = "Der Name löste zu keiner Adresse auf, es gab also nichts zu prüfen.";
 "diagnostics.reason.noSecret" = "Für diese Verbindung sind keine Zugangsdaten gespeichert. Speichere sie und starte die Prüfung erneut.";
