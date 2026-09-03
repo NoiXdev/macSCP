@@ -487,9 +487,11 @@ public actor ConnectionDiagnostics {
     /// the only code it sends is 3.
     ///
     /// The outcome word is decided HERE and not on `NetworkTraceHop`, because
-    /// three of the four need the destination the walk was aimed at, which
-    /// the hop does not carry — the same reason `reachedDestination` lives on
-    /// the outcome. `destination` means what it means there: the answering
+    /// two of the four need the destination the walk was aimed at, which the
+    /// hop does not carry — the same reason `reachedDestination` lives on the
+    /// outcome. The two are `destination` and `unreachable (code …)`, which
+    /// the `.unreachable` arm below tells apart by exactly that comparison;
+    /// `answered` and `silent` never consult it. `destination` means what it means there: the answering
     /// address is the address the trace was aimed at. Anything else that
     /// answered destination-unreachable is reported as what it is, a refusal
     /// naming its code, whether or not the code is port-unreachable.

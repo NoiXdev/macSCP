@@ -1089,6 +1089,16 @@
 "diagnostics.trace.column.address" = "Adres";
 "diagnostics.trace.column.rtt" = "RTT";
 "diagnostics.trace.column.outcome" = "Wynik";
+"diagnostics.scope" = "Co sprawdzić";
+"diagnostics.scope.complete" = "Wszystko";
+"diagnostics.scope.ping" = "Ping";
+"diagnostics.scope.trace" = "Trace";
+"diagnostics.scope.dial" = "Połączenie";
+"diagnostics.scope.contributions" = "Sondy protokołu";
+"diagnostics.trace.outcome.answered" = "odpowiedział";
+"diagnostics.trace.outcome.silent" = "cisza";
+"diagnostics.trace.outcome.destination" = "cel";
+"diagnostics.trace.outcome.unreachable" = "nieosiągalny (kod %@)";
 "diagnostics.reason.noHost" = "To połączenie nie wskazuje żadnego hosta.";
 "diagnostics.reason.nothingResolvedToProbe" = "Nazwa nie rozwiązała się na żaden adres, więc nie było czego sprawdzać.";
 "diagnostics.reason.noSecret" = "Dla tego połączenia nie zapisano danych logowania. Zapisz je i uruchom sprawdzenie ponownie.";

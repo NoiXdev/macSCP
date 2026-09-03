@@ -46,12 +46,22 @@ struct DiagnosticsViewModelTests {
         func write(_ text: String) { written.append(text) }
     }
 
+    /// What each run asked the runner to measure, in the order the runs
+    /// started. A LIST rather than a last-value, because "the scope is read
+    /// when the button is pressed" is a claim about two runs of one model.
+    nonisolated private final class ScopeLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var scopes: [DiagnosticScope] = []
+        var recorded: [DiagnosticScope] { lock.withLock { scopes } }
+        func record(_ scope: DiagnosticScope) { lock.withLock { scopes.append(scope) } }
+    }
+
     /// A runner that measures nothing and reports it, for the tests that are
     /// about something other than the rows.
     nonisolated private static func finishing(
         with report: @autoclosure @escaping @Sendable () -> DiagnosticReport
     ) -> DiagnosticsViewModel.Runner {
-        { _ in report() }
+        { _, _ in report() }
     }
 
     private static func model(
@@ -86,7 +96,7 @@ struct DiagnosticsViewModelTests {
     @Test func isRunningIsSetBeforeTheRunnerAnswers() async {
         let gate = Gate()
         let model = Self.model(
-            runner: { _ in await gate.wait(); return Self.report([]) }, clipboard: Clipboard())
+            runner: { _, _ in await gate.wait(); return Self.report([]) }, clipboard: Clipboard())
         model.run()
         #expect(model.isRunning, "the panel must be able to show progress while the run is in flight")
         await gate.open()
@@ -102,7 +112,7 @@ struct DiagnosticsViewModelTests {
         let partial = Self.report(
             [Self.step(id: DiagnosticStepID.resolve)], completion: .cancelled(afterSteps: 1))
         let model = Self.model(
-            runner: { _ in
+            runner: { _, _ in
                 // Returns the moment the task is cancelled; the duration is a
                 // park that a working cancel never waits out, not a deadline
                 // anything here asserts on.
@@ -133,7 +143,7 @@ struct DiagnosticsViewModelTests {
         let current = Self.report([Self.step(id: DiagnosticStepID.tcp)])
         let calls = Calls()
         let model = Self.model(
-            runner: { _ in
+            runner: { _, _ in
                 if await calls.next() == 1 {
                     // Returns the moment `run()`'s second call cancels it; the
                     // duration is a park a working cancel never waits out.
@@ -167,7 +177,7 @@ struct DiagnosticsViewModelTests {
         let observed = CancellationFlag()
         let started = Gate()
         let model = Self.model(
-            runner: { [observed, started] _ in
+            runner: { [observed, started] _, _ in
                 await withTaskCancellationHandler {
                     await started.open()
                     try? await Task.sleep(for: .seconds(600))
@@ -217,6 +227,102 @@ struct DiagnosticsViewModelTests {
         #expect(model.report == partial)
     }
 
+    // MARK: - Scope
+
+    /// A panel nobody has touched runs the whole diagnosis — what every door
+    /// promised before the menu beside Run existed.
+    @Test func aModelNobodyHasTouchedRunsTheCompleteDiagnosis() async {
+        let asked = ScopeLog()
+        let model = Self.model(
+            runner: { [asked] scope, _ in
+                asked.record(scope)
+                return Self.report([])
+            },
+            clipboard: Clipboard())
+
+        #expect(model.scope == .complete, "the default is the whole walk")
+        model.run()
+        await model.runTask?.value
+        #expect(asked.recorded == [.complete], """
+            a run nobody scoped must reach the runner as the complete diagnosis — got \
+            \(asked.recorded)
+            """)
+    }
+
+    /// The menu decides what Run runs, and Run reads it when it is PRESSED.
+    ///
+    /// Two runs with two different scopes, over one model: a scope closed over
+    /// at construction — the shape this seam had before the menu — passes the
+    /// first test above and this one's first half, and sends the same walk
+    /// both times here.
+    @Test func runPassesTheScopeChosenAtTheMomentItIsPressed() async {
+        let asked = ScopeLog()
+        let model = Self.model(
+            runner: { [asked] scope, _ in
+                asked.record(scope)
+                return Self.report([])
+            },
+            clipboard: Clipboard())
+
+        model.scope = .trace
+        model.run()
+        await model.runTask?.value
+
+        model.scope = .contributions
+        model.run()
+        await model.runTask?.value
+
+        #expect(asked.recorded == [.trace, .contributions], """
+            each run must carry the scope that was chosen when its button was pressed — got \
+            \(asked.recorded)
+            """)
+    }
+
+    /// The mid-run snapshot is a report about a SCOPED walk, and says so.
+    ///
+    /// The one construction of a `DiagnosticReport` outside Core
+    /// (`copyableReport`): it took the initializer's `.complete` default, so a
+    /// trace-only run copied while it walked pasted a header claiming the
+    /// whole diagnosis and four rows that were never asked for. Read while the
+    /// runner is parked, so nothing has healed.
+    @Test func theMidRunSnapshotCarriesTheScopeThatIsWalking() async {
+        let emitted = [Self.step(id: DiagnosticStepID.resolve)]
+        let clipboard = Clipboard()
+        let model = Self.model(
+            runner: { _, onStep in
+                for step in emitted { await onStep(step) }
+                try? await Task.sleep(for: .seconds(600))
+                return Self.report(emitted)
+            },
+            clipboard: clipboard)
+        model.scope = .ping
+        model.run()
+        await Self.yieldUntil("the row arrives") { model.steps.count == emitted.count }
+
+        #expect(model.copyableReport?.scope == .ping, """
+            the snapshot must carry the scope its walk was started with, not the initializer's \
+            default
+            """)
+
+        // The menu moves while the walk goes on — nothing has re-run, and the
+        // rows on screen are still the ping's. A snapshot headed with what the
+        // menu says NOW names a scope nothing in it was measured under.
+        model.scope = .complete
+        #expect(model.copyableReport?.scope == .ping, """
+            touching the menu mid-run must not relabel the walk that is on screen
+            """)
+
+        model.copyPlainText()
+        let copied = clipboard.written.first ?? ""
+        #expect(copied.contains(DiagnosticScope.ping.rawValue), """
+            and the paste must name it, or a scoped run reads as a complete one whose missing \
+            rows went unmeasured: \(copied)
+            """)
+
+        model.cancel()
+        await model.runTask?.value
+    }
+
     // MARK: - Rows as they arrive
 
     /// The rows appear while the walk is still walking.
@@ -236,7 +342,7 @@ struct DiagnosticsViewModelTests {
         ]
         let parked = Gate()
         let model = Self.model(
-            runner: { onStep in
+            runner: { _, onStep in
                 for step in emitted { await onStep(step) }
                 await parked.wait()
                 return Self.report(emitted)
@@ -278,7 +384,7 @@ struct DiagnosticsViewModelTests {
             Self.step(id: DiagnosticStepID.resolve), Self.step(id: DiagnosticStepID.tcp),
         ]
         let model = Self.model(
-            runner: { onStep in
+            runner: { _, onStep in
                 for step in emitted { await onStep(step) }
                 try? await Task.sleep(for: .seconds(600))
                 return Self.report(emitted, completion: .cancelled(afterSteps: emitted.count))
@@ -324,7 +430,7 @@ struct DiagnosticsViewModelTests {
         ]
         let clipboard = Clipboard()
         let model = Self.model(
-            runner: { onStep in
+            runner: { _, onStep in
                 for step in emitted { await onStep(step) }
                 try? await Task.sleep(for: .seconds(600))
                 return Self.report(emitted, completion: .cancelled(afterSteps: emitted.count))
@@ -356,7 +462,7 @@ struct DiagnosticsViewModelTests {
         let second = Self.step(id: DiagnosticStepID.tcp)
         let calls = Calls()
         let model = Self.model(
-            runner: { onStep in
+            runner: { _, onStep in
                 let step = await calls.next() == 1 ? first : second
                 await onStep(step)
                 return Self.report([step])
@@ -377,7 +483,7 @@ struct DiagnosticsViewModelTests {
         let calls = Calls()
         let released = Gate()
         let model = Self.model(
-            runner: { onStep in
+            runner: { _, onStep in
                 if await calls.next() == 1 {
                     await released.wait()
                     await onStep(stale)
@@ -451,7 +557,7 @@ struct DiagnosticsViewModelTests {
         ]
         let clipboard = Clipboard()
         let model = Self.model(
-            runner: { onStep in
+            runner: { _, onStep in
                 for step in emitted { await onStep(step) }
                 try? await Task.sleep(for: .seconds(600))
                 return Self.report(emitted)
@@ -499,7 +605,7 @@ struct DiagnosticsViewModelTests {
         let emitted = [Self.step(id: DiagnosticStepID.resolve)]
         let clipboard = Clipboard()
         let model = Self.model(
-            runner: { onStep in
+            runner: { _, onStep in
                 for step in emitted { await onStep(step) }
                 try? await Task.sleep(for: .seconds(600))
                 return Self.report(emitted)
@@ -653,6 +759,81 @@ struct DiagnosticsViewModelTests {
         let step = Self.step(
             id: DiagnosticStepID.tcp, detail: "127.0.0.1:2222 accepted in 0.4 ms")
         #expect(DiagnosticsPresentation.detail(of: step) == step.detail)
+    }
+
+    /// Five scopes, five names, none of them the raw case.
+    @Test func everyScopeHasItsOwnNameInTheMenu() {
+        let names = DiagnosticScope.allCases.map(DiagnosticsPresentation.scopeName)
+        #expect(Set(names).count == DiagnosticScope.allCases.count, """
+            each scope must read as its own entry — two entries with one name is a menu whose \
+            user cannot tell what they picked: \(names)
+            """)
+        #expect(names.allSatisfy { !$0.isEmpty })
+        #expect(DiagnosticsPresentation.scopeName(.complete) != DiagnosticScope.complete.rawValue, """
+            the entries come out of the catalog, not out of the enum's spelling
+            """)
+    }
+
+    /// A column header is the catalogue entry for the key Core sent, and an
+    /// unknown key degrades to its last component — what the report prints for
+    /// the same column — rather than to the whole key.
+    @Test func aColumnHeaderIsLookedUpAndDegradesToTheColumnsOwnName() {
+        let hop = DiagnosticsPresentation.columnTitle(DiagnosticTraceColumn.hop)
+        #expect(hop != DiagnosticTraceColumn.hop, "the header is not the key itself")
+        #expect(!hop.isEmpty)
+        #expect(DiagnosticsPresentation.columnTitle("diagnostics.trace.column.doesNotExistYet")
+            == "doesNotExistYet")
+    }
+
+    /// The outcome column is the one Core writes WORDS into, and it is the
+    /// only one the panel looks up.
+    ///
+    /// What this cannot see: `en` renders those four words as the words Core
+    /// composed, so a lookup and a pass-through produce the same string here.
+    /// The lookup's EXISTENCE is guarded structurally instead — the four
+    /// `diagnostics.trace.outcome.*` keys are spelled only by that mapping,
+    /// and `DiagnosticsDoorsGuardTests` compares the keys the sources spell
+    /// against `en.lproj` for equality, so deleting the mapping turns that
+    /// check red. What is pinned here is the branching around it.
+    @Test func onlyTheOutcomeColumnIsLookedUpAndAnUnknownWordIsPassedThrough() {
+        let address = "10.0.0.1"
+        #expect(
+            DiagnosticsPresentation.cell(address, column: DiagnosticTraceColumn.address) == address,
+            """
+            a measured cell is copied through byte for byte — it is what somebody pastes into \
+            a bug report, and a translated address is one its reader cannot search for
+            """)
+        #expect(
+            DiagnosticsPresentation.cell(
+                DiagnosticTraceColumn.answered, column: DiagnosticTraceColumn.address)
+                == DiagnosticTraceColumn.answered,
+            "the outcome lookup is chosen by the COLUMN, not by the cell's text")
+
+        for key in [
+            "diagnostics.trace.outcome.answered", "diagnostics.trace.outcome.silent",
+            "diagnostics.trace.outcome.destination", "diagnostics.trace.outcome.unreachable",
+        ] {
+            let sentinel = "«no entry»"
+            #expect(L10n.string(key, sentinel) != sentinel, """
+                \(key) must exist in the catalog — the mapping looks it up, and a missing entry \
+                falls back to the English word in every language
+                """)
+        }
+
+        let refusal = DiagnosticTraceColumn.unreachable(code: 13)
+        let rendered = DiagnosticsPresentation.cell(refusal, column: DiagnosticTraceColumn.outcome)
+        #expect(rendered.contains("13"), """
+            the code the hop sent is the finding in that row and must survive the substitution: \
+            \(rendered)
+            """)
+
+        let unknown = "something Core has not composed yet"
+        #expect(
+            DiagnosticsPresentation.cell(unknown, column: DiagnosticTraceColumn.outcome) == unknown,
+            """
+            a word this mapping does not know is shown as measured rather than mangled into a \
+            format it does not fit
+            """)
     }
 
     @Test func aRowsDurationIsRenderedInTheReportsOwnFormat() {

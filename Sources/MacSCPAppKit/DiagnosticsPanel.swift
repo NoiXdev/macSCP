@@ -6,8 +6,10 @@ import macSCPCore
 /// surface), the session menu's, and the error dialog's.
 ///
 /// A sheet on the window: the connection it is pointed at, then the steps as
-/// rows — title, outcome badge, duration, one line of detail — and three
-/// controls: run (or cancel, while one is in flight), copy, close.
+/// rows — title, outcome badge, duration, one line of detail, and a grid where
+/// the step measured one (the trace's hops) — and four controls: run (or
+/// cancel, while one is in flight), the menu that says what a run measures,
+/// copy, close.
 ///
 /// **It runs nothing on its own.** There is no `.onAppear` and no `.task` here
 /// that starts a diagnosis, and that is a decision rather than an oversight
@@ -170,7 +172,52 @@ struct DiagnosticsPanel: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // The trace's hops, as the cells Core measured. Every other step
+            // carries no table and keeps the line above alone; the trace keeps
+            // it too, for the marker that says the walk stopped looking —
+            // which is a sentence about the check, not a hop.
+            if let measured = step.table {
+                grid(measured)
+            }
         }
+    }
+
+    /// A step's table under its row.
+    ///
+    /// `Grid` and not `Table`: `Table` is a scrollable, selectable,
+    /// column-resizing list that owns its own height, and this is three or
+    /// four rows sitting inside a row of another list.
+    ///
+    /// The identities are POSITIONS, not the values: a cell is a `String`, two
+    /// silent hops are the same three strings, and `id: \.self` would collapse
+    /// them into one row — the panel would then show one hop where the walk
+    /// measured two, which is the reading error this whole grid exists to
+    /// remove.
+    private func grid(_ measured: DiagnosticTable) -> some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 2) {
+            GridRow {
+                ForEach(Array(measured.columns.enumerated()), id: \.offset) { _, key in
+                    Text(DiagnosticsPresentation.columnTitle(key))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            ForEach(Array(measured.rows.enumerated()), id: \.offset) { _, cells in
+                GridRow {
+                    // Each cell with the key of the column it sits in, so the
+                    // renderer decides what to translate by NAME rather than
+                    // by position.
+                    ForEach(Array(zip(measured.columns, cells).enumerated()), id: \.offset) {
+                        _, cell in
+                        Text(DiagnosticsPresentation.cell(cell.1, column: cell.0))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(DesignTokens.inkTertiary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+        }
+        .padding(.top, 2)
     }
 
     /// `unavailable` and `skipped` are deliberately NOT the failure colour:
@@ -214,6 +261,25 @@ struct DiagnosticsPanel: View {
                 // guard rather than left to a reader to notice.
                 .keyboardShortcut(.defaultAction)
             }
+            // What the button above will measure. Choosing writes the model's
+            // state and does nothing else — no run starts here, which is the
+            // same decision the rest of this file is written under and the one
+            // the doors guard reads this control for. The binding is spelled
+            // out in place rather than bound to a local, so that the control's
+            // only effect is visible in the control.
+            Picker(
+                L10n.string("diagnostics.scope", "What to run"),
+                selection: Binding(get: { model.scope }, set: { model.scope = $0 })
+            ) {
+                // Every case the type declares, in its own order. A list
+                // written out here would be a second copy of an enum in Core,
+                // and it is the copy that stops growing.
+                ForEach(DiagnosticScope.allCases, id: \.self) { choice in
+                    Text(DiagnosticsPresentation.scopeName(choice)).tag(choice)
+                }
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
             Menu(L10n.string("diagnostics.copy", "Copy report")) {
                 Button(L10n.string("diagnostics.copy.plainText", "As plain text")) {
                     model.copyPlainText()

@@ -70,7 +70,13 @@ final class DiagnosticsViewModel: Identifiable {
     /// Cancellation reaches the runner through the task that runs it, and
     /// `ConnectionDiagnostics` answers a cancelled task with the steps it had
     /// already measured.
-    typealias Runner = @Sendable (@escaping DiagnosticStepObserver) async -> DiagnosticReport
+    ///
+    /// The scope is a PARAMETER rather than something the runner closes over,
+    /// because the user picks it between runs: a closure built once at
+    /// construction would carry whatever was chosen when the panel opened, and
+    /// the menu would change nothing.
+    typealias Runner = @Sendable (DiagnosticScope, @escaping DiagnosticStepObserver) async
+        -> DiagnosticReport
 
     /// What the header calls this connection.
     let name: String
@@ -110,6 +116,18 @@ final class DiagnosticsViewModel: Identifiable {
     /// the answer.
     private(set) var report: DiagnosticReport?
 
+    /// What the next run will measure — everything, or one probe.
+    ///
+    /// Settable, and settable is the point: the panel's menu writes it, and
+    /// writing it starts NOTHING (decision of 2026-09-02, and the reason the
+    /// doors guard reads the control). `run()` takes what it finds here at the
+    /// moment it is pressed, so a scope chosen while a walk is going changes
+    /// the next walk rather than the one on screen.
+    ///
+    /// `.complete` by default: a panel nobody has touched runs the whole
+    /// diagnosis, which is what every door promised before this menu existed.
+    var scope: DiagnosticScope = .complete
+
     /// Whether a diagnosis is in flight. Drives the panel's progress row and
     /// swaps its Run button for Cancel; it is not a second copy of "is the
     /// task alive", it is what the user is told.
@@ -126,6 +144,19 @@ final class DiagnosticsViewModel: Identifiable {
     /// the run that replaced it. Same shape, and the same reason, as
     /// `ConnectionViewModel.currentAttempt`.
     @ObservationIgnored private var attempt = UUID()
+
+    /// What the run in flight was started with — not what the menu says now.
+    ///
+    /// The two differ for exactly as long as a walk lasts and the user is free
+    /// to touch the menu, which is precisely the window in which a report gets
+    /// copied (`copyableReport`, and the reason Copy is enabled while a run
+    /// walks). A snapshot headed with the menu's current value would name a
+    /// scope nothing on screen was measured under.
+    ///
+    /// `@ObservationIgnored`, like `attempt`: it is written only where `steps`
+    /// is cleared, so every render that could read it is triggered by that
+    /// write anyway.
+    @ObservationIgnored private var walkingScope: DiagnosticScope = .complete
 
     @ObservationIgnored private let runner: Runner
     /// Where a copied report goes. A seam rather than a direct
@@ -169,15 +200,20 @@ final class DiagnosticsViewModel: Identifiable {
             // copy a partial report, before the walk has returned anything.
             endpoint: descriptor.endpoint(target.values),
             appVersion: version,
-            runner: { onStep in await diagnostics.run(onStep: onStep) })
+            runner: { scope, onStep in await diagnostics.run(scope: scope, onStep: onStep) })
     }
 
-    /// Starts a diagnosis. The ONLY thing that does.
+    /// Starts a diagnosis of whatever `scope` says. The ONLY thing that does.
     ///
     /// Stops whatever was running through `cancel()` rather than reaching for
     /// `runTask` itself — one method owns the cancellation, which is what
     /// lets `DiagnosticsDoorsGuardTests` DERIVE that method's name instead of
     /// spelling it.
+    ///
+    /// The scope is read HERE, at the press, and carried into the task as a
+    /// value: a run that read it again later would change what it is measuring
+    /// under a user who touched the menu while it walked, and the report it
+    /// hands back names the scope it was started with.
     func run() {
         cancel()
         let myAttempt = UUID()
@@ -186,8 +222,10 @@ final class DiagnosticsViewModel: Identifiable {
         steps = []
         report = nil
         let runner = self.runner
+        let scope = self.scope
+        walkingScope = scope
         runTask = Task { [weak self] in
-            let produced = await runner { [weak self] step in
+            let produced = await runner(scope) { [weak self] step in
                 // `[weak self]` again, and not redundantly: inside
                 // `Task { [weak self] … }` the name is an optional LOCAL, and
                 // a nested closure capturing it captures it strongly — the
@@ -260,11 +298,19 @@ final class DiagnosticsViewModel: Identifiable {
     /// end: Core's endpointless report carries no endpoint at all, and both
     /// renderers omit the header line rather than printing one nobody
     /// measured (`DiagnosticReport.endpoint`).
+    ///
+    /// The scope goes in too, and it is the WALKING one rather than the menu's
+    /// current value: Core stamps a finished report with what it was asked to
+    /// run, and this snapshot is the only report built outside Core. Without
+    /// it, a trace-only run copied while it walked pasted a header claiming
+    /// the complete diagnosis — and the steps it left out then read as steps
+    /// that were measured and found absent.
     var copyableReport: DiagnosticReport? {
         if let report { return report }
         guard !steps.isEmpty, let endpoint else { return nil }
         return DiagnosticReport(
-            endpoint: endpoint, steps: steps, appVersion: appVersion, completion: .running)
+            endpoint: endpoint, steps: steps, appVersion: appVersion, completion: .running,
+            scope: walkingScope)
     }
 
     func copyPlainText() {
@@ -443,6 +489,90 @@ enum DiagnosticsPresentation {
 
     /// How `ConnectionDiagnostics` joins the rows of a detail line.
     private static let rowSeparator = "; "
+
+    /// What the menu beside Run calls one choice.
+    ///
+    /// A switch rather than a key composed from the case's `rawValue`.
+    /// `DiagnosticsDoorsGuardTests` compares the `diagnostics.*` keys the
+    /// SOURCES spell against `en.lproj` for equality, and an interpolated key
+    /// is invisible to that scan — the five entries would be translations
+    /// nothing requires, in four catalogs, with the check green either way.
+    /// Being exhaustive, it also means a sixth scope in Core does not compile
+    /// until it has a name here.
+    static func scopeName(_ scope: DiagnosticScope) -> String {
+        switch scope {
+        case .complete:
+            return L10n.string("diagnostics.scope.complete", "Everything")
+        case .ping:
+            return L10n.string("diagnostics.scope.ping", "Ping")
+        case .trace:
+            return L10n.string("diagnostics.scope.trace", "Trace")
+        case .dial:
+            return L10n.string("diagnostics.scope.dial", "Connect")
+        case .contributions:
+            return L10n.string("diagnostics.scope.contributions", "Protocol probes")
+        }
+    }
+
+    /// One column header of a step's table.
+    ///
+    /// `DiagnosticTable.columns` are catalogue KEYS rather than text — Core
+    /// does not decide what language a window is in — so this is the lookup.
+    /// The fallback is the key's last component, which is exactly what the
+    /// report prints for the same column, so a key the catalogs do not carry
+    /// yet reads as `outcome` rather than as the whole key.
+    static func columnTitle(_ key: String) -> String {
+        L10n.string(key, key.components(separatedBy: ".").last ?? key)
+    }
+
+    /// One cell of a step's table, in the reader's language where it is a word
+    /// this project chose and byte for byte where it is a measurement.
+    ///
+    /// The measured cells — a hop number, an address, a round trip — are
+    /// copied through for the same reason the detail line is: they are what
+    /// somebody pastes into a bug report, and a translated address is one its
+    /// reader cannot search for. Only the outcome column holds words Core
+    /// COMPOSED, and which column that is comes from the table's own key
+    /// rather than from a position a reordering would silently change.
+    static func cell(_ text: String, column key: String) -> String {
+        guard key == DiagnosticTraceColumn.outcome else { return text }
+        return traceOutcome(text)
+    }
+
+    /// The trace's outcome word, looked up under its own key.
+    ///
+    /// The words are Core's constants and are never spelled here (CLAUDE.md,
+    /// "a guard that spells a symbol it could read"): a rename in Core drops
+    /// the lookup and shows the measured word, rather than translating a word
+    /// nothing produces any more.
+    private static func traceOutcome(_ cell: String) -> String {
+        switch cell {
+        case DiagnosticTraceColumn.answered:
+            return L10n.string("diagnostics.trace.outcome.answered", cell)
+        case DiagnosticTraceColumn.silent:
+            return L10n.string("diagnostics.trace.outcome.silent", cell)
+        case DiagnosticTraceColumn.destination:
+            return L10n.string("diagnostics.trace.outcome.destination", cell)
+        default:
+            guard let code = unreachableCode(in: cell) else { return cell }
+            return String(
+                format: L10n.string("diagnostics.trace.outcome.unreachable", cell), code)
+        }
+    }
+
+    /// The code out of `unreachable (code 13)`, or `nil` where the cell is not
+    /// that sentence at all.
+    ///
+    /// Read by composing Core's own spelling back from the number and
+    /// comparing: this file therefore holds no second copy of that format, and
+    /// a change to it in Core makes this return `nil` — the measured cell,
+    /// shown as measured — instead of quietly mis-parsing.
+    private static func unreachableCode(in cell: String) -> String? {
+        let digits = cell.filter(\.isNumber)
+        guard let code = UInt8(digits), DiagnosticTraceColumn.unreachable(code: code) == cell
+        else { return nil }
+        return digits
+    }
 
     /// The row's duration, in the same fixed-point milliseconds the report
     /// prints. The NUMBER is formatted against `en_US_POSIX` for the reason

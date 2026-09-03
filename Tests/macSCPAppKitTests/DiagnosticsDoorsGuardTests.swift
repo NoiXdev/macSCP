@@ -287,6 +287,87 @@ struct DiagnosticsDoorsGuardTests {
         return name
     }
 
+    /// The panel's own handle on the view model: the single stored property
+    /// the panel declares with the view model's type.
+    ///
+    /// Derived so that the scope check below spells neither the property nor
+    /// the type — a rename of either moves the check with it, and a second
+    /// handle (a panel holding two models) fails the scan rather than letting
+    /// it pick one.
+    static func panelModelPropertyName() throws -> String {
+        let model = try viewModelTypeName()
+        let source = collapsingWhitespace(try strictSource(of: panelPath))
+        let names = matches(of: #"(?:let|var)\s+(\w+)\s*:\s*\#(model)\b"#, in: source)
+        guard names.count == 1, let name = names.first else {
+            throw ScanError.derivation("""
+                \(panelPath) must declare exactly ONE stored \(model) — found \(names.count): \
+                \(names)
+                """)
+        }
+        return name
+    }
+
+    /// The control that chooses what Run will measure: the panel's single
+    /// `Picker` invocation, arguments AND trailing closure.
+    ///
+    /// Both halves, because the two things a check about this control needs
+    /// live in different ones: the binding that writes the state is an
+    /// argument, and the list of scopes it offers is the trailing closure.
+    static func scopeControl() throws -> String {
+        let source = try strictSource(of: panelPath)
+        let controls = invocations(of: "Picker", in: source)
+        guard controls.count == 1, let control = controls.first else {
+            throw ScanError.derivation("""
+                \(panelPath) must carry exactly ONE Picker — the scope menu beside Run — found \
+                \(controls.count). A second one makes "the control starts nothing" a claim \
+                about whichever this scan happened to read.
+                """)
+        }
+        return control
+    }
+
+    /// What the scope control writes: the single property of the panel's view
+    /// model that the control assigns to.
+    static func scopeStateName() throws -> String {
+        let property = try panelModelPropertyName()
+        let written = assignedProperties(of: property, in: try scopeControl())
+        guard written.count == 1, let name = written.first else {
+            throw ScanError.derivation("""
+                the scope control must write exactly ONE property of \(property) — found \
+                \(written.count): \(written.sorted()). Choosing a scope sets state and does \
+                nothing else (decision of 2026-09-02).
+                """)
+        }
+        return name
+    }
+
+    /// The value a step carries when its measurement is a GRID rather than a
+    /// sentence: the single struct in Core declaring both a `[String]` and a
+    /// `[[String]]` stored property.
+    ///
+    /// A fingerprint rather than a spelling — the panel's table check names
+    /// nothing of its own, a rename moves it, and a second struct of that
+    /// shape fails the scan instead of being picked between.
+    static func tableTypeName() throws -> String {
+        var found: Set<String> = []
+        for file in try swiftFiles(under: "Sources/macSCPCore") {
+            let source = try strictSource(of: file)
+            for name in Set(matches(of: #"struct\s+(\w+)"#, in: source)) {
+                for body in bodies(after: "struct \(name)", in: source)
+                where body.contains("[[String]]") && body.contains(": [String]") {
+                    found.insert(name)
+                }
+            }
+        }
+        guard found.count == 1, let name = found.first else {
+            throw ScanError.derivation("""
+                Core must declare exactly ONE struct carrying a column list and a row list — \
+                the table a step hands the panel — found \(found.count): \(found.sorted())
+                """)
+        }
+        return name
+    }
+
     /// The type that turns a step into what the panel draws: the single
     /// `enum` the view model's file declares.
     static func presentationTypeName() throws -> String {
@@ -593,6 +674,106 @@ struct DiagnosticsDoorsGuardTests {
             — Return would press something other than Run. The design says the panel opens \
             with Run as its default button; this is the only thing that makes that true.
             """)
+    }
+
+    /// The scope menu chooses what Run will measure, and choosing starts
+    /// nothing.
+    ///
+    /// The same decision as everything else in this suite, in the one place a
+    /// menu makes it tempting to break: a control that re-runs the diagnosis
+    /// the moment the user looks at another scope reads as a feature while it
+    /// is being written, and it dials the user's server without anybody
+    /// pressing anything. `automaticStarts` already covers the modifier forms
+    /// and `thePanelStartsARunOnlyFromAButton` covers the file; this reads the
+    /// CONTROL, so its two halves cannot drift apart.
+    ///
+    /// Positive first, as everywhere here: the control exists, it offers every
+    /// scope the type has rather than a list somebody maintains, it writes the
+    /// view model's state, that state is a property the view model declares,
+    /// and the run entry READS it — without which "the menu starts nothing"
+    /// would be satisfied by a menu that does nothing.
+    @Test func theScopeControlChoosesWhatRunWillDoAndStartsNothing() throws {
+        let run = try Self.runEntryName()
+        let scope = try Self.scopeStateName()
+        let control = try Self.scopeControl()
+        let viewModel = try Self.strictSource(of: Self.viewModelPath)
+
+        #expect(control.contains("allCases"), """
+            the scope menu must offer every scope the type declares — a list written out in \
+            the panel is a second copy of the enum, and it is the copy that stops growing. \
+            Control: \(control)
+            """)
+
+        let declarations = Self.matches(of: #"(var)\s+\#(scope)\b"#, in: viewModel)
+        #expect(declarations.count == 1, """
+            \(Self.viewModelPath) must declare exactly one settable `\(scope)` — the control \
+            writes it, and found \(declarations.count) declarations of it.
+            """)
+
+        for body in try Self.functionBodies(named: run, in: viewModel) {
+            #expect(Self.mentions(scope, in: body), """
+                \(Self.viewModelPath): \(run)() must read `\(scope)` — a menu whose choice the \
+                run never looks at is a control that changes nothing, and every negative check \
+                about it would still be green. Body: \(body)
+                """)
+        }
+
+        #expect(!Self.mentions(run, in: control), """
+            the scope control starts a diagnosis: \(control). Choosing what to measure is not \
+            asking for it to be measured — the button is (decision of 2026-09-02).
+            """)
+    }
+
+    /// The trace's hops are drawn from the table the step carries, and the
+    /// panel never takes a detail line apart to get them back.
+    ///
+    /// Core stopped joining the hops into `detail` when it started carrying
+    /// them as cells (2026-09-03): a panel that re-split a detail line would
+    /// be parsing text this project composes on the other side of the seam,
+    /// and it would go on "working" — showing nothing — the moment a cell
+    /// contains the separator.
+    ///
+    /// Positive and negative in one case: the panel must name the table type
+    /// and draw a grid from it, and it must still render details through the
+    /// renderer, so "nothing is split here" cannot be satisfied by a panel
+    /// that shows neither.
+    @Test func theTraceRowIsDrawnFromItsTableAndNoDetailIsSplitApart() throws {
+        let table = try Self.tableTypeName()
+        let renderer = try Self.presentationTypeName()
+        let source = try Self.strictSource(of: Self.panelPath)
+
+        #expect(Self.mentions(table, in: source), """
+            \(Self.panelPath) must draw a step's \(table) — without it the trace's hops reach \
+            the reader as nothing at all, which is the state this task found the panel in.
+            """)
+        // A GRID holding rows, and both halves are measured. `invocations(of:)`
+        // reads its needle as a prefix, so a bare search for `Grid` is
+        // satisfied by a `GridRow` — and each match CONTAINS its own needle,
+        // which made a first attempt at this line ("an invocation mentioning
+        // GridRow") a tautology: planting `VStack` in place of the enclosing
+        // `Grid` left it green, measured 2026-09-03. So the rows are excluded
+        // by their prefix, and what is left has to hold some.
+        let grids = Self.invocations(of: "Grid", in: source)
+            .filter { !$0.hasPrefix("GridRow") && $0.contains("GridRow") }
+        #expect(!grids.isEmpty, """
+            \(Self.panelPath) must lay the table out as a grid of rows — a \(table) rendered as \
+            one more line of text is the row people came to the panel for, unreadable again.
+            """)
+        #expect(Self.occurrences(of: "\(renderer).detail(", in: source) >= 1, """
+            the panel must still render the detail line through \(renderer).detail(of:) — the \
+            rows without a table are that line, and the trace's markers are looked up in it.
+            """)
+
+        // The negative half. Both spellings of taking a string apart: the
+        // panel receives its cells already separated, so either one is a
+        // renderer parsing what Core wrote.
+        for splitter in ["components(separatedBy", ".split("] {
+            #expect(Self.occurrences(of: splitter, in: source) == 0, """
+                \(Self.panelPath) takes a measured line apart itself (`\(splitter)`). The cells \
+                arrive as a \(table); re-parsing the text is how the two sides of that seam \
+                start disagreeing.
+                """)
+        }
     }
 
     /// The panel draws no detail line Core wrote without putting it through
@@ -970,6 +1151,18 @@ struct DiagnosticsDoorsGuardTests {
             """)
     }
 
+    /// The derivation the scope check rests on: a binding's SET half names the
+    /// state, and a comparison beside it must not.
+    @Test func scannerTellsAnAssignmentFromAComparison() {
+        let source = """
+            Picker(title, selection: Binding(get: { model.scope }, set: { model.scope = $0 }))
+                .disabled(model.isRunning == false)
+            """
+        #expect(Self.assignedProperties(of: "model", in: source) == ["scope"], """
+            got \(Self.assignedProperties(of: "model", in: source).sorted())
+            """)
+    }
+
     @Test func scannerCountsWholeIdentifiersOnly() {
         #expect(Self.wordCount(of: "run", in: "model.run(); model.run()") == 2)
         #expect(Self.wordCount(of: "run", in: "isRunning; rerun(); runner") == 0)
@@ -1097,6 +1290,15 @@ struct DiagnosticsDoorsGuardTests {
         !matches(of: #"\b(\#(name))\b"#, in: source).isEmpty
     }
 
+    /// Every property of `object` that `source` ASSIGNS.
+    ///
+    /// An assignment, not a comparison: `set: { model.scope = $0 }` writes the
+    /// state, `if model.scope == .ping` reads it, and a check about what a
+    /// control WRITES must not buy the second for the first.
+    static func assignedProperties(of object: String, in source: String) -> Set<String> {
+        Set(matches(of: #"\#(object)\.(\w+)\s*=(?!=)"#, in: collapsingWhitespace(source)))
+    }
+
     static func url(_ relativePath: String) -> URL {
         repoRoot.appendingPathComponent(relativePath)
     }
@@ -1114,7 +1316,14 @@ struct DiagnosticsDoorsGuardTests {
     /// Every Swift file of the app target, so the entry derivation looks at
     /// the whole target rather than at a list somebody has to maintain.
     static func appTargetFiles() throws -> [String] {
-        let root = url("Sources/MacSCPAppKit")
+        try swiftFiles(under: "Sources/MacSCPAppKit")
+    }
+
+    /// Every Swift file under one directory of the tree, repo-relative and
+    /// sorted. The app target's own list is this, and so is the walk that
+    /// fingerprints a type in Core.
+    static func swiftFiles(under relativeRoot: String) throws -> [String] {
+        let root = url(relativeRoot)
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
         else { return [] }
         let base = repoRoot.standardizedFileURL.path + "/"

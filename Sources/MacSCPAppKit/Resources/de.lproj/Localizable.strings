@@ -1087,6 +1087,16 @@
 "diagnostics.trace.column.address" = "Adresse";
 "diagnostics.trace.column.rtt" = "RTT";
 "diagnostics.trace.column.outcome" = "Ergebnis";
+"diagnostics.scope" = "Was geprüft wird";
+"diagnostics.scope.complete" = "Alles";
+"diagnostics.scope.ping" = "Ping";
+"diagnostics.scope.trace" = "Trace";
+"diagnostics.scope.dial" = "Verbinden";
+"diagnostics.scope.contributions" = "Protokollproben";
+"diagnostics.trace.outcome.answered" = "beantwortet";
+"diagnostics.trace.outcome.silent" = "stumm";
+"diagnostics.trace.outcome.destination" = "Ziel";
+"diagnostics.trace.outcome.unreachable" = "nicht erreichbar (Code %@)";
 "diagnostics.reason.noHost" = "Diese Verbindung nennt keinen Host.";
 "diagnostics.reason.nothingResolvedToProbe" = "Der Name löste zu keiner Adresse auf, es gab also nichts zu prüfen.";
 "diagnostics.reason.noSecret" = "Für diese Verbindung sind keine Zugangsdaten gespeichert. Speichere sie und starte die Prüfung erneut.";

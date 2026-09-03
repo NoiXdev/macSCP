@@ -1090,6 +1090,16 @@
 "diagnostics.trace.column.address" = "Adresse";
 "diagnostics.trace.column.rtt" = "RTT";
 "diagnostics.trace.column.outcome" = "Résultat";
+"diagnostics.scope" = "Ce qui est vérifié";
+"diagnostics.scope.complete" = "Tout";
+"diagnostics.scope.ping" = "Ping";
+"diagnostics.scope.trace" = "Trace";
+"diagnostics.scope.dial" = "Connexion";
+"diagnostics.scope.contributions" = "Sondes de protocole";
+"diagnostics.trace.outcome.answered" = "a répondu";
+"diagnostics.trace.outcome.silent" = "silencieux";
+"diagnostics.trace.outcome.destination" = "destination";
+"diagnostics.trace.outcome.unreachable" = "injoignable (code %@)";
 "diagnostics.reason.noHost" = "Cette connexion ne nomme aucun hôte.";
 "diagnostics.reason.nothingResolvedToProbe" = "Le nom n’a donné aucune adresse ; il n’y avait donc rien à sonder.";
 "diagnostics.reason.noSecret" = "Aucun identifiant n’est enregistré pour cette connexion. Enregistrez-en un, puis relancez la vérification.";

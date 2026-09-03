@@ -77,7 +77,7 @@ struct DiagnosticsLifecycleTests {
         var hasStarted: Bool { lock.withLock { started } }
 
         func runner() -> DiagnosticsViewModel.Runner {
-            { [self] onStep in
+            { [self] _, onStep in
                 await withTaskCancellationHandler {
                     for row in rows { await onStep(row) }
                     lock.withLock { started = true }
