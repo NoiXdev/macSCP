@@ -136,6 +136,8 @@
 "connection.badge.ssh" = "SSH";
 "connection.badge.s3" = "S3";
 "connection.s3.endpoint" = "Point de terminaison";
+"connection.s3.endpoint.understood %@" = "Se connecte à %@";
+"connection.s3.endpoint.unreadable" = "Ce n’est pas une adresse de serveur que macSCP peut lire.";
 "connection.s3.region" = "Région";
 "connection.s3.bucket" = "Bucket";
 "connection.s3.startsAtBucketList" = "Démarrer sur la liste des buckets";

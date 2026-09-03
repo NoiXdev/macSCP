@@ -68,6 +68,22 @@ struct SchemaFormView: View {
     /// see that it did.
     var interceptEdit: ((_ key: String, _ newValue: String) -> Bool)?
 
+    /// An advisory line drawn UNDER a field, saying what the app made of what
+    /// is typed there. Returns nil for a field that has nothing to say, which
+    /// is every field but one today.
+    ///
+    /// That one is S3's endpoint (2026-09-03): `host:9000` is a spelling the
+    /// parse now reads as `https://host:9000`, and a user who cannot see the
+    /// scheme that was assumed cannot tell why a plain-HTTP server refuses
+    /// them. The text is the caller's, out of the App's catalogs — Core
+    /// composes the origin (`S3FieldSchema.canonicalEndpoint`) and never a
+    /// sentence.
+    ///
+    /// A closure rather than a schema field, because the answer depends on
+    /// the VALUE and is recomputed as it is typed; `ConnectionField` carries
+    /// only what is true of the field itself.
+    var footnote: ((_ field: ConnectionField, _ value: String) -> String?)?
+
     /// The provider preset currently shown. Real state, mirroring the M12 S3
     /// picker: without it the field would snap back to blank after each pick.
     /// Starts unset -- applying a preset is always the user's own act, so a
@@ -98,6 +114,17 @@ struct SchemaFormView: View {
             leafRow(label: L10n.string(field.labelKey, field.labelDefault),
                     kind: leafKind, binding: binding(field.id))
                 .errorHighlight(failedFieldID == key(field.id))
+            // Drawn like this form's other inline message under a field (the
+            // name-conflict line in `ConnectionFormView`): a label-less
+            // `FormRow`, so it sits under the field it is about.
+            if let note = footnote?(field, values.raw[key(field.id)] ?? "") {
+                FormRow(label: "") {
+                    Text(note)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(DesignTokens.inkTertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
         } else {
             // A nil `asLeafKind` means `.group` -- the one kind without a leaf
             // twin, and the only one that nests.

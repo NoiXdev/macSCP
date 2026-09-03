@@ -611,13 +611,18 @@ public enum ImportPreviewPlanner {
     /// `Hostname` → endpoint (§3): Amazon's own host becomes S3's AWS preset
     /// endpoint; anything else becomes an https origin carrying the
     /// bookmark's port when it has one.
+    ///
+    /// The spelling is composed by `S3FieldSchema.endpointSpelling`, not
+    /// here: it is the same function the endpoint parse round-trips, so an
+    /// imported bookmark is dialable by construction rather than by
+    /// agreement. What this file wrote by hand before also bracketed no IPv6
+    /// literal — `https://::1:9000` parses to no host at all.
     private static func endpoint(of bookmark: ExternalBookmark) -> String {
         let host = trimmed(bookmark.host)
         guard host.caseInsensitiveCompare(awsHostname) != .orderedSame else {
             return awsEndpoint
         }
-        guard let port = bookmark.port else { return "https://\(host)" }
-        return "https://\(host):\(port)"
+        return S3FieldSchema.endpointSpelling(host: host, port: bookmark.port)
     }
 
     /// `Nickname`, falling back to the host (§3). A bookmark with neither is

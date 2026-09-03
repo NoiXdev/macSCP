@@ -184,30 +184,108 @@ public enum S3FieldSchema {
         return values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The scheme a schemeless endpoint is read as (see
+    /// `endpointComponents`). TLS, because that is what every hosted S3
+    /// provider speaks and because the wrong guess fails visibly — a plain
+    /// `http` server answers an `https` request with nothing, while the
+    /// reverse would send a signed request in the clear.
+    public static let assumedEndpointScheme = "https"
+
     /// The ONE parse of an S3 endpoint string in this project.
     ///
     /// Shared with the connect path — `S3FileSystem`'s three request-URL
     /// builders call it — so "what is a usable endpoint" is answered in one
-    /// place. That sharing is the point: an earlier version of the reader
-    /// below prepended `https://` to a schemeless endpoint while the connect
-    /// path parsed the same string verbatim, and a diagnosis then reported
-    /// resolve ok / tcp accepted / dial ok for a session the app cannot dial
-    /// at all (`S3RequestSigning.signedRequest` throws "S3 endpoint has no
-    /// host" for it).
+    /// place. That sharing is the point, and it is what makes the rule below
+    /// safe to state: an earlier version of the diagnosis reader prepended
+    /// `https://` HERE ONLY, while the connect path parsed the same string
+    /// verbatim, so a diagnosis reported resolve ok / tcp accepted / dial ok
+    /// for a session the app could not dial at all
+    /// (`S3RequestSigning.signedRequest` throws "S3 endpoint has no host"
+    /// for it).
+    ///
+    /// **A schemeless endpoint means `https`, and its port is honoured**
+    /// (2026-09-03, maintainer report: `host:9000` could not connect).
+    /// Foundation is the reason the rule needs code: `URLComponents(string:)`
+    /// reads `minio.lan:9000` as a SCHEME of `minio.lan` with no host at all,
+    /// and refuses `192.0.2.10:9000` outright because a scheme may not begin
+    /// with a digit. Five of the eight spellings in
+    /// `S3EndpointParsingTests`' table parsed without a host before the
+    /// prefix, and a host-less endpoint is refused by every URL builder in
+    /// `S3FileSystem` with "Invalid S3 endpoint".
+    ///
+    /// The trim happens BEFORE the scheme test, or a pasted leading space
+    /// would make ` https://host` look schemeless and earn a second prefix.
     ///
     /// Returns components, not a URL, because the connect path mutates them
     /// (path-style writes the path; virtual-hosted rewrites the host).
     public static func endpointComponents(_ endpoint: String) -> URLComponents? {
-        URLComponents(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines))
+        let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let qualified = hasScheme(trimmed) ? trimmed : "\(assumedEndpointScheme)://\(trimmed)"
+        return URLComponents(string: qualified)
+    }
+
+    /// Whether `text` already opens with a URL scheme — RFC 3986's
+    /// `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` followed by `://`.
+    ///
+    /// The `//` is part of the test on purpose. A bare colon is not evidence
+    /// of a scheme: `minio.lan:9000` and `[::1]:9000` both carry one and are
+    /// exactly the spellings this must treat as schemeless.
+    private static func hasScheme(_ text: String) -> Bool {
+        guard let separator = text.range(of: "://") else { return false }
+        let scheme = text[text.startIndex..<separator.lowerBound]
+        guard let first = scheme.first, first.isLetter, first.isASCII else { return false }
+        return scheme.allSatisfy { character in
+            character.isASCII
+                && (character.isLetter || character.isNumber || "+-.".contains(character))
+        }
     }
 
     /// The endpoint as a URL, or nil when the connect path could not use it
-    /// either — no scheme is invented here, for the reason above.
+    /// either — the two read the same string through the same parse.
     public static func endpointURL(_ values: FieldValues) -> URL? {
         guard let components = endpointComponents(values[S3Field.endpoint]),
             let host = components.host, !host.isEmpty
         else { return nil }
         return components.url
+    }
+
+    /// What this project understood an endpoint to mean: scheme, host and
+    /// port, with nothing else. Nil when the string names no host, which is
+    /// the same nil the connect path refuses on.
+    ///
+    /// The form shows this under the endpoint field, so a user who types
+    /// `minio.lan:9000` can see that it became `https://minio.lan:9000`
+    /// BEFORE a connection is attempted. Core composes the origin only; the
+    /// sentence around it is the App's, out of its catalogs.
+    ///
+    /// Deliberately origin-only: the connect path OVERWRITES the endpoint's
+    /// path with `/bucket/key`, so a path typed into the field takes no part
+    /// in any request, and repeating it here would claim otherwise.
+    public static func canonicalEndpoint(_ endpoint: String) -> String? {
+        guard let components = endpointComponents(endpoint),
+            let host = components.host, !host.isEmpty
+        else { return nil }
+        return spelling(
+            scheme: components.scheme ?? assumedEndpointScheme,
+            host: host, port: components.port)
+    }
+
+    /// The endpoint spelling for a host and an optional port — what the
+    /// Cyberduck importer writes for a custom endpoint, composed HERE so the
+    /// importer cannot grow a second idea of the canonical form. Round-trips
+    /// through `endpointComponents` by construction; `S3EndpointParsingTests`
+    /// holds it to that.
+    public static func endpointSpelling(host: String, port: Int?) -> String {
+        spelling(scheme: assumedEndpointScheme, host: host, port: port)
+    }
+
+    /// `scheme://host[:port]`, bracketing an IPv6 literal exactly once —
+    /// `::1` has to read as `[::1]:9000`, or it parses back as a host of
+    /// `` with the port `:1` (the same rule `Endpoint.text` follows).
+    private static func spelling(scheme: String, host: String, port: Int?) -> String {
+        let literal = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        return port.map { "\(scheme)://\(literal):\($0)" } ?? "\(scheme)://\(literal)"
     }
 
     /// Where a diagnosis points for this session (`BackendDescriptor
@@ -297,8 +375,14 @@ public enum S3FieldSchema {
     /// With the toggle on there is no bucket, and the "bucket @ host" shape
     /// would degrade to a leading " @ " with nothing in front of it. The
     /// host alone is what such a connection actually is.
+    ///
+    /// Reads the host through `endpointComponents` and not through a
+    /// `URL(string:)` of its own (2026-09-03): the second parse disagreed
+    /// with the first for exactly the spellings this task is about — for
+    /// `minio.lan:9000` it found no host and the sidebar fell back to
+    /// printing the whole endpoint string.
     public static func displaySummary(_ values: FieldValues) -> String {
-        let host = URL(string: values[S3Field.endpoint])?.host() ?? values[S3Field.endpoint]
+        let host = endpointComponents(values[S3Field.endpoint])?.host ?? values[S3Field.endpoint]
         guard !values[bool: S3Field.startsAtBucketList] else { return host }
         return "\(values[S3Field.bucket]) @ \(host)"
     }

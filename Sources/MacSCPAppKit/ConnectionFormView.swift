@@ -719,6 +719,35 @@ struct ConnectionFormView: View {
         if viewModel.kind == .ssh { sshJumpSection }
     }
 
+    /// What a field's value was UNDERSTOOD as, drawn under the field by
+    /// `SchemaFormView.footnote`. One field answers today: S3's endpoint.
+    ///
+    /// The parse behind it accepts spellings that are not URLs as typed — a
+    /// schemeless `minio.lan:9000` means `https://minio.lan:9000` since
+    /// 2026-09-03 — and a user who cannot see the assumed scheme cannot tell
+    /// why a plain-HTTP server (a local MinIO, say) refuses them. So the line
+    /// appears exactly when the canonical spelling DIFFERS from what was
+    /// typed: that is the case where the field's text and the request's
+    /// target are two different strings.
+    ///
+    /// It names a host and a port and nothing else — `canonicalEndpoint`
+    /// composes an origin, so no access key or secret can reach this text
+    /// even if one were typed into the endpoint field.
+    private func fieldFootnote(_ field: ConnectionField, _ value: String) -> String? {
+        guard viewModel.kind == .s3, field.id == S3Field.endpoint.rawValue else { return nil }
+        let typed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty else { return nil }
+        guard let canonical = S3FieldSchema.canonicalEndpoint(typed) else {
+            return L10n.string(
+                "connection.s3.endpoint.unreadable",
+                "Not a server address macSCP can read.")
+        }
+        guard canonical != typed else { return nil }
+        return String(
+            format: L10n.string("connection.s3.endpoint.understood %@", "Connects to %@"),
+            canonical)
+    }
+
     /// Browse-for-a-key-file and "Manage keys…", the two affordances that sit
     /// beside the schema-rendered `keyPath` row (M17/T5, M18/T5).
     ///
@@ -986,7 +1015,7 @@ struct ConnectionFormView: View {
                 schemas: [schema], values: $viewModel.values, namespace: namespace,
                 isEditMode: isEditMode, resolve: resolveOptions,
                 failedFieldID: failedFieldID, skipping: Self.customRenderedFields,
-                interceptEdit: interceptEdit)
+                interceptEdit: interceptEdit, footnote: fieldFootnote)
         case .loginModeSwitcher:
             loginModeSwitcher
         case .loginSetPicker:

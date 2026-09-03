@@ -68,29 +68,38 @@ struct BackendDescriptorEndpointTests {
     }
 
     /// A schemeless endpoint is what a user types when they think of the
-    /// field as a host name — and it is an endpoint this app CANNOT CONNECT
-    /// TO: the connect path parses the same string with
-    /// `URLComponents(string:)` (`S3FieldSchema.endpointComponents`, shared
-    /// by both since this review round) and `S3RequestSigning.signedRequest`
-    /// then throws "S3 endpoint has no host".
+    /// field as a host name, and since 2026-09-03 it is an endpoint this app
+    /// CONNECTS TO: `S3FieldSchema.endpointComponents` reads it as `https`
+    /// and honours the port, and the connect path goes through that same one
+    /// parse, so the diagnosis and the dial agree by construction.
     ///
-    /// So the reader refuses it too. An earlier version prepended `https://`
-    /// here and nowhere else, which made the diagnosis report resolve ok /
-    /// tcp accepted / dial ok for a session the app never dials that way —
-    /// a healthy diagnosis about a connection that cannot exist.
-    @Test func s3RefusesASchemelessEndpointBecauseTheConnectPathDoes() {
+    /// This test asserted the opposite until that date
+    /// (`s3RefusesASchemelessEndpointBecauseTheConnectPathDoes`): the rule
+    /// then was that the reader refuses what the connect path refuses. What
+    /// made the old rule necessary was an earlier reader that prepended
+    /// `https://` HERE AND NOWHERE ELSE — a diagnosis reporting resolve ok /
+    /// tcp accepted / dial ok for a session the app never dialed that way.
+    /// The requirement that survives both versions is the sharing, not the
+    /// refusal: whatever this reader makes of a string, the connect path must
+    /// make of it too. `S3EndpointParsingTests` measures both ends.
+    @Test func s3ReadsASchemelessEndpointAsHTTPSAndKeepsItsPort() {
         var values = FieldValues()
         values[S3Field.endpoint] = "minio.example.test:19000"
-        #expect(endpoint(.s3, values) == nil)
+        #expect(endpoint(.s3, values) == Endpoint(host: "minio.example.test", port: 19000))
     }
 
-    /// The Foundation fact the rule above rests on, measured rather than
-    /// believed: this spelling parses as a SCHEME of `minio.example.test`
-    /// with no host at all.
-    @Test func aSchemelessEndpointParsesWithNoHost() {
+    /// The Foundation fact the `https://` prefix exists for, measured rather
+    /// than believed: handed to `URLComponents` raw, this spelling parses as
+    /// a SCHEME of `minio.example.test` with no host at all — which is why
+    /// the endpoint field could not carry a port before the prefix.
+    @Test func aSchemelessEndpointParsesWithNoHostUntilItIsGivenAScheme() {
+        let raw = URLComponents(string: "minio.example.test:19000")
+        #expect(raw?.scheme == "minio.example.test")
+        #expect(raw?.host == nil)
+
         let components = S3FieldSchema.endpointComponents("minio.example.test:19000")
-        #expect(components?.scheme == "minio.example.test")
-        #expect(components?.host == nil)
+        #expect(components?.scheme == S3FieldSchema.assumedEndpointScheme)
+        #expect(components?.host == "minio.example.test")
     }
 
     /// An IPv6 literal endpoint, which is where a bracket is part of the

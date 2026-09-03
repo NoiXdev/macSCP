@@ -338,6 +338,44 @@ struct ImportPreviewPlannerTests {
         #expect(field(S3Field.endpoint, of: exported) == "https://objects.example.net:9000")
     }
 
+    /// The same import, asserted THROUGH the parse rather than against the
+    /// spelling: what an imported bookmark has to satisfy is that the app can
+    /// dial it, and the literal above is only one string that does. A planner
+    /// that wrote `objects.example.net:9000`, or bracketed nothing for an
+    /// IPv6 literal, would keep passing a literal comparison in one of the
+    /// two directions and fail here (2026-09-03).
+    @Test func anImportedS3EndpointIsOneTheParseAccepts() throws {
+        let rows = ImportPreviewPlanner.preview(
+            [s3Bookmark(host: "objects.example.net", port: 9000, username: "minio",
+                        path: "media")],
+            against: [], switches: ImportSwitches())
+        let exported = try #require(ImportPreviewPlanner.payload(
+            for: rows, sessions: [], groups: [], switches: ImportSwitches()).sessions.first)
+
+        let endpoint = field(S3Field.endpoint, of: exported)
+        let components = try #require(S3FieldSchema.endpointComponents(endpoint))
+        #expect(components.host == "objects.example.net")
+        #expect(components.port == 9000)
+        #expect(S3FieldSchema.canonicalEndpoint(endpoint) == endpoint)
+    }
+
+    /// An IPv6 bookmark, where composing `host:port` by hand produces
+    /// `https://::1:9000` — a string with no host at all. The planner asks
+    /// `S3FieldSchema.endpointSpelling` for the spelling instead, so the
+    /// bracket is not this file's business to remember.
+    @Test func anImportedIPv6S3EndpointIsBracketedAndParses() throws {
+        let rows = ImportPreviewPlanner.preview(
+            [s3Bookmark(host: "::1", port: 9000, username: "minio", path: "media")],
+            against: [], switches: ImportSwitches())
+        let exported = try #require(ImportPreviewPlanner.payload(
+            for: rows, sessions: [], groups: [], switches: ImportSwitches()).sessions.first)
+
+        let endpoint = field(S3Field.endpoint, of: exported)
+        let components = try #require(S3FieldSchema.endpointComponents(endpoint))
+        #expect(components.url?.host() == "::1")
+        #expect(components.port == 9000)
+    }
+
     @Test func anS3BookmarkWithoutAPathStartsAtTheBucketList() throws {
         let rows = ImportPreviewPlanner.preview(
             [s3Bookmark(host: "objects.example.net", port: nil, username: "minio", path: "")],
