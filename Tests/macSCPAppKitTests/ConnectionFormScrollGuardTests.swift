@@ -20,10 +20,24 @@ import Testing
 /// Reused rather than copied: `TransferQueueBarCancelGuardTests
 /// .declarationBodyRange(of:in:)`/`.slice(_:of:)` for the brace-balanced
 /// spans (`body` itself, and `ScrollView(`'s own trailing closure inside
-/// it), and `DiagnosticsDoorsGuardTests.matches(of:in:)` to derive the
-/// footer buttons' catalogue keys from the source instead of re-spelling
-/// them here — a second, hand-typed copy of a catalogue key is exactly what
-/// this project's rules about second copies are about.
+/// it), and `DiagnosticsDoorsGuardTests.matches(of:in:)` to derive
+/// catalogue keys from `Button(L10n.string(…))` calls in the source
+/// instead of re-spelling them here — a second, hand-typed copy of a
+/// catalogue key is exactly what this project's rules about second copies
+/// are about.
+///
+/// `bodyDeclaration` names `body`'s declaration WITHOUT its trailing `{`
+/// (fix round 1, 2026-09-04): `declarationBodyRange` opens its span at the
+/// first `{` found AFTER the declaration text, so a declaration that
+/// already included the brace made the scan skip `body`'s own opening
+/// brace and balance the top-level `VStack` instead — a span that excluded
+/// everything chained after it (`.padding`, `.fileImporter`, `.alert`,
+/// `.sheet`, `.onChange`). `body`'s true span reaches the `.alert`'s own
+/// two `Button(L10n.string(…))` calls too (`diagnostics.menu`,
+/// `common.ok`) — the key derivation below is over ALL of `body`, not only
+/// the footer, on purpose: see `buttonKeysInBody`'s own doc comment for
+/// why a wider net here only strengthens the negative check, never weakens
+/// it.
 ///
 /// ## The negative check has a positive partner beside it
 ///
@@ -49,7 +63,9 @@ struct ConnectionFormScrollGuardTests {
     private static let sourceFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ConnectionFormView.swift")
 
-    private static let bodyDeclaration = "var body: some View {"
+    /// No trailing `{` — see the suite's own doc comment for why the brace
+    /// must be left for `declarationBodyRange` to find on its own.
+    private static let bodyDeclaration = "var body: some View"
     private static let scrollAnchor = "ScrollView("
     private static let footerAnchor = "HStack {"
 
@@ -72,7 +88,11 @@ struct ConnectionFormScrollGuardTests {
         (try SwiftSource.blankingCommentsAndStrings(source), try SwiftSource.blankingComments(source))
     }
 
-    /// `body`'s own brace-balanced span, in both views.
+    /// `body`'s own brace-balanced span, in both views — from `body`'s
+    /// opening brace to its matching close, so it reaches everything
+    /// chained onto the outer `VStack` too (`.padding`, `.fileImporter`,
+    /// `.alert`, `.sheet`, `.onChange`), not only the `VStack`'s own
+    /// content.
     private static func bodySpan(
         of views: (code: String, withLiterals: String)
     ) throws -> (code: String, withLiterals: String) {
@@ -95,9 +115,23 @@ struct ConnectionFormScrollGuardTests {
                 TransferQueueBarCancelGuardTests.slice(range, of: body.withLiterals))
     }
 
-    /// The footer buttons' own catalogue keys, read out of `Button(L10n
-    /// .string("key", …))` calls rather than spelled a second time here.
-    private static func footerButtonKeys(in bodyWithLiterals: String) -> [String] {
+    /// Every catalogue key a `Button(L10n.string("key", …))` call passes,
+    /// read out of the given span rather than spelled a second time here.
+    ///
+    /// Deliberately run over `body`'s WHOLE span (every call site below
+    /// passes `body.withLiterals`, never a narrower footer-only slice):
+    /// the exact violation this suite exists to catch is a footer button
+    /// ending up somewhere it shouldn't — inside the `ScrollView` — so the
+    /// scan that looks for "is any such button inside the ScrollView?"
+    /// must not be confined to wherever the footer happens to be. Over the
+    /// real file this also picks up the connect-error `.alert`'s own two
+    /// buttons (`diagnostics.menu`, `common.ok`) — both legitimately
+    /// outside the `ScrollView` too, so checking them costs nothing and
+    /// only widens the negative check below, never narrows it.
+    /// `theFooterKeysActuallyOccurInBody` is the one check that cares which
+    /// keys these ought to be, via `expectedFooterKeys`, and it filters
+    /// down explicitly rather than trusting this derivation to be footer-only.
+    private static func buttonKeysInBody(_ bodyWithLiterals: String) -> [String] {
         DiagnosticsDoorsGuardTests.matches(
             of: #"Button\(L10n\.string\("([\w.]+)""#, in: bodyWithLiterals)
     }
@@ -154,7 +188,7 @@ struct ConnectionFormScrollGuardTests {
     /// found anything".
     @Test func theFooterKeysActuallyOccurInBody() throws {
         let body = try Self.realFileBody()
-        let keys = Self.footerButtonKeys(in: body.withLiterals)
+        let keys = Self.buttonKeysInBody(body.withLiterals)
         for expected in Self.expectedFooterKeys {
             #expect(keys.contains(expected), """
                 \(expected) is no longer among the catalogue keys a Button( \
@@ -171,7 +205,7 @@ struct ConnectionFormScrollGuardTests {
     @Test func noFooterButtonKeyIsInsideTheScrollView() throws {
         let body = try Self.realFileBody()
         let scroll = try Self.scrollSpan(of: body)
-        let keys = Self.footerButtonKeys(in: body.withLiterals)
+        let keys = Self.buttonKeysInBody(body.withLiterals)
         for key in keys {
             #expect(!scroll.withLiterals.contains("\"\(key)\""), """
                 \(key) — one of the footer's own catalogue keys — occurs \
@@ -204,7 +238,7 @@ struct ConnectionFormScrollGuardTests {
             """
         let body = try Self.bodySpan(of: try Self.views(of: source))
         let scroll = try Self.scrollSpan(of: body)
-        let keys = Self.footerButtonKeys(in: body.withLiterals)
+        let keys = Self.buttonKeysInBody(body.withLiterals)
         // Positive first: the derivation really does find both keys, so the
         // violation below is reported because one sits in the wrong place —
         // not because the derivation found nothing.
