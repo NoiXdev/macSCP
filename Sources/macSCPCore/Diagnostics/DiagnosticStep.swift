@@ -178,6 +178,41 @@ enum DurationText {
     }
 }
 
+/// A step's measurement when it is a GRID rather than a sentence.
+///
+/// The trace is the one step that measures a list of things — its hops — and
+/// joining them into a detail line made the row people came to the panel for
+/// the one row they could not read. A renderer cannot split
+/// `1 10.0.0.1 2.0 ms` back into cells without re-parsing text this module
+/// composed, so the step carries the cells apart and each renderer joins them
+/// its own way: aligned columns in the plain text, a Markdown table in the
+/// Markdown, a `Grid` in the panel.
+///
+/// `columns` are catalogue KEYS, never text. Core does not decide what
+/// language a window is in (`DiagnosticStep.titleKey` states the rule), so
+/// the panel resolves them and the report — which is English by design —
+/// prints each key's last component.
+public struct DiagnosticTable: Sendable, Equatable {
+    /// One catalogue key per column, in the order the cells are written.
+    public let columns: [String]
+    /// One entry per row, each with a cell per column.
+    public let rows: [[String]]
+
+    public init(columns: [String], rows: [[String]]) {
+        self.columns = columns
+        self.rows = rows
+    }
+
+    /// Every string in the table with any URL userinfo stripped out of it.
+    /// Applied by `DiagnosticStep.init`, so a cell cannot become the second
+    /// place a credential reaches a pasted report.
+    var redacted: DiagnosticTable {
+        DiagnosticTable(
+            columns: columns.map(URLText.withoutUserinfo),
+            rows: rows.map { $0.map(URLText.withoutUserinfo) })
+    }
+}
+
 /// Told about each step the moment it finishes, before the next one starts.
 ///
 /// `async` on purpose: the one real implementation is a `@MainActor` view
@@ -200,8 +235,15 @@ public struct DiagnosticStep: Sendable, Equatable, Identifiable {
     /// NEVER a credential — see `ConnectionDiagnosticsTests
     /// .theSSHDialNeverPutsTheSecretInTheReport`.
     public let detail: String
+    /// The rows this step measured, when it measured a list of things rather
+    /// than one — `nil` for every step but the trace.
+    ///
+    /// Beside `detail` rather than instead of it: the trace's detail keeps
+    /// the markers that say the walk STOPPED LOOKING, which are statements
+    /// about the walk and not rows of it.
+    public let table: DiagnosticTable?
 
-    /// Both free-text fields are stripped of URL userinfo on the way in.
+    /// Every free-text field is stripped of URL userinfo on the way in.
     ///
     /// HERE, in the one initializer every step in the product passes through,
     /// rather than at each producer: `https://KEY:SECRET@host` is ordinary
@@ -214,7 +256,7 @@ public struct DiagnosticStep: Sendable, Equatable, Identifiable {
     /// a server's own message — and not the first line of defence.
     public init(
         id: String, titleKey: String, started: Date, duration: Duration,
-        outcome: DiagnosticOutcome, detail: String
+        outcome: DiagnosticOutcome, detail: String, table: DiagnosticTable? = nil
     ) {
         self.id = id
         self.titleKey = titleKey
@@ -222,6 +264,7 @@ public struct DiagnosticStep: Sendable, Equatable, Identifiable {
         self.duration = duration
         self.outcome = outcome.redacted
         self.detail = URLText.withoutUserinfo(detail)
+        self.table = table?.redacted
     }
 }
 
@@ -246,11 +289,13 @@ public struct DiagnosticStepTimer: Sendable {
         self.mark = ContinuousClock().now
     }
 
-    public func finish(_ outcome: DiagnosticOutcome, _ detail: String) -> DiagnosticStep {
+    public func finish(
+        _ outcome: DiagnosticOutcome, _ detail: String, table: DiagnosticTable? = nil
+    ) -> DiagnosticStep {
         DiagnosticStep(
             id: id, titleKey: titleKey, started: started,
             duration: mark.duration(to: ContinuousClock().now),
-            outcome: outcome, detail: detail)
+            outcome: outcome, detail: detail, table: table)
     }
 }
 

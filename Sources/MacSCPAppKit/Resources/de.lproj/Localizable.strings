@@ -1082,6 +1082,11 @@
 "diagnostics.step.webdavOptions" = "Serverfähigkeiten";
 "diagnostics.contribution.s3Access" = "Zugriffsrechte des Schlüssels";
 "diagnostics.contribution.webdavClaims" = "Angaben des Servers";
+// Hop-Tabelle des Routenschritts (2026-09-03): die vier Spaltenüberschriften, die das Panel zeichnet. Die Zellen sind die Messung aus Core und werden nie übersetzt.
+"diagnostics.trace.column.hop" = "Hop";
+"diagnostics.trace.column.address" = "Adresse";
+"diagnostics.trace.column.rtt" = "RTT";
+"diagnostics.trace.column.outcome" = "Ergebnis";
 "diagnostics.reason.noHost" = "Diese Verbindung nennt keinen Host.";
 "diagnostics.reason.nothingResolvedToProbe" = "Der Name löste zu keiner Adresse auf, es gab also nichts zu prüfen.";
 "diagnostics.reason.noSecret" = "Für diese Verbindung sind keine Zugangsdaten gespeichert. Speichere sie und starte die Prüfung erneut.";

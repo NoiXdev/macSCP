@@ -1085,6 +1085,11 @@
 "diagnostics.step.webdavOptions" = "Capacités du serveur";
 "diagnostics.contribution.s3Access" = "Droits de la clé";
 "diagnostics.contribution.webdavClaims" = "Déclarations du serveur";
+// Tableau des sauts de l’étape d’itinéraire (2026-09-03) : les quatre en-têtes de colonne dessinés par le panneau. Les cellules sont la mesure du cœur et ne sont jamais traduites.
+"diagnostics.trace.column.hop" = "Saut";
+"diagnostics.trace.column.address" = "Adresse";
+"diagnostics.trace.column.rtt" = "RTT";
+"diagnostics.trace.column.outcome" = "Résultat";
 "diagnostics.reason.noHost" = "Cette connexion ne nomme aucun hôte.";
 "diagnostics.reason.nothingResolvedToProbe" = "Le nom n’a donné aucune adresse ; il n’y avait donc rien à sonder.";
 "diagnostics.reason.noSecret" = "Aucun identifiant n’est enregistré pour cette connexion. Enregistrez-en un, puis relancez la vérification.";

@@ -134,8 +134,54 @@ public struct DiagnosticReport: Sendable, Equatable {
             var line = "\(step.id) — \(step.outcome.label) — \(Self.duration(step.duration))"
             if !step.detail.isEmpty { line += " — \(step.detail)" }
             lines.append(line)
+            if let table = step.table { lines.append(contentsOf: Self.aligned(table)) }
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// A table as indented, aligned columns, directly under its own step's
+    /// line — so a reader can tell whose measurement it is without counting
+    /// rows, and so the columns line up in the monospaced places this text
+    /// gets pasted into.
+    ///
+    /// Padded to the widest cell in each column, the last one not at all:
+    /// trailing spaces on every row would be invisible here and visible in
+    /// whatever the text is pasted into.
+    private static func aligned(_ table: DiagnosticTable) -> [String] {
+        let rows = [table.columns.map(Self.header)] + table.rows
+        let widths = (0..<table.columns.count).map { column in
+            rows.map { $0.indices.contains(column) ? $0[column].count : 0 }.max() ?? 0
+        }
+        return rows.map { row in
+            let cells = row.enumerated().map { index, cell -> String in
+                // The last cell of the row is never padded, and neither is
+                // one in a row longer than the header — a ragged row is a
+                // producer's bug, and reading past `widths` would be this
+                // renderer's.
+                guard index < row.count - 1, index < widths.count else { return cell }
+                // Counted in Characters, and padded by hand for that reason:
+                // `padding(toLength:)` counts UTF-16 units, so one cell with
+                // an astral scalar in it would misalign the whole column.
+                return cell + String(repeating: " ", count: max(0, widths[index] - cell.count))
+            }
+            return Self.tableIndent + cells.joined(separator: "  ")
+        }
+    }
+
+    /// What a table's rows are set in from the step's own line.
+    private static let tableIndent = "    "
+
+    /// The English word a column key prints as: the key's last component.
+    ///
+    /// Derived rather than spelled a second time. A `DiagnosticTable` carries
+    /// catalogue keys because the panel resolves them
+    /// (`DiagnosticTable`'s own doc comment), this rendering is English by
+    /// design, and a renamed key must not leave the report naming a column
+    /// the panel no longer has. The lowercase that falls out of the key is
+    /// the register the rest of this rendering is already in — `step.id` and
+    /// `DiagnosticOutcome.label` are both printed as they are spelled.
+    private static func header(_ key: String) -> String {
+        String(key.split(separator: ".").last ?? Substring(key))
     }
 
     public func markdown() -> String {
@@ -154,7 +200,22 @@ public struct DiagnosticReport: Sendable, Equatable {
                 "| `\(step.id)` | \(Self.cell(step.outcome.label)) "
                     + "| \(Self.duration(step.duration)) | \(Self.cell(step.detail)) |")
         }
+        // Each table gets a section of its own BELOW the steps, headed by the
+        // step that measured it: Markdown has no nested table, and a grid
+        // spliced into the middle of the steps table would end it there.
+        for step in steps {
+            guard let table = step.table else { continue }
+            lines.append(contentsOf: ["", "## `\(step.id)`", ""])
+            lines.append(Self.row(table.columns.map(Self.header)))
+            lines.append(Self.row(table.columns.map { _ in "---" }))
+            lines.append(contentsOf: table.rows.map(Self.row))
+        }
         return lines.joined(separator: "\n")
+    }
+
+    /// One Markdown row, every cell escaped the way a detail cell is.
+    private static func row(_ cells: [String]) -> String {
+        "| " + cells.map(Self.cell).joined(separator: " | ") + " |"
     }
 
     private static func duration(_ duration: Duration) -> String {

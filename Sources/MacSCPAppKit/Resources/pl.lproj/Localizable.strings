@@ -1084,6 +1084,11 @@
 "diagnostics.step.webdavOptions" = "Możliwości serwera";
 "diagnostics.contribution.s3Access" = "Uprawnienia klucza";
 "diagnostics.contribution.webdavClaims" = "Deklaracje serwera";
+// Tabela przeskoków kroku trasy (2026-09-03): cztery nagłówki kolumn rysowane przez panel. Komórki są pomiarem z rdzenia i nigdy nie są tłumaczone.
+"diagnostics.trace.column.hop" = "Przeskok";
+"diagnostics.trace.column.address" = "Adres";
+"diagnostics.trace.column.rtt" = "RTT";
+"diagnostics.trace.column.outcome" = "Wynik";
 "diagnostics.reason.noHost" = "To połączenie nie wskazuje żadnego hosta.";
 "diagnostics.reason.nothingResolvedToProbe" = "Nazwa nie rozwiązała się na żaden adres, więc nie było czego sprawdzać.";
 "diagnostics.reason.noSecret" = "Dla tego połączenia nie zapisano danych logowania. Zapisz je i uruchom sprawdzenie ponownie.";

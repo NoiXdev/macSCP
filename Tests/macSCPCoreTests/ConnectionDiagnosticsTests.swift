@@ -576,8 +576,14 @@ struct ConnectionDiagnosticsTests {
         let markdown = report.markdown()
         let rows = markdown.split(separator: "\n").map(String.init).filter { $0.hasPrefix("|") }
 
-        // One header row, one separator row, one row per step.
-        #expect(rows.count == report.steps.count + 2)
+        // One header row, one separator row, one row per step — plus, since
+        // 2026-09-03, the rows of every step that carries a table of its own
+        // (the trace's hops), which are Markdown rows too. Counted off the
+        // tables that are there rather than assumed absent: a run against
+        // loopback measures one hop and would otherwise make this arithmetic
+        // wrong for a reason that has nothing to do with the property.
+        let tableRows = report.steps.compactMap(\.table).reduce(0) { $0 + $1.rows.count + 2 }
+        #expect(rows.count == report.steps.count + 2 + tableRows)
         for step in report.steps {
             let own = rows.filter { $0.hasPrefix("| `\(step.id)` |") }
             #expect(own.count == 1)
@@ -585,6 +591,141 @@ struct ConnectionDiagnosticsTests {
             #expect(own.first?.contains(" ms |") == true)
         }
         #expect(report.steps.map(\.outcome).contains(.timedOut))
+    }
+
+    // MARK: - A step that carries a table
+
+    /// A step's table is rendered under its row: aligned columns in the plain
+    /// text, a Markdown table in the Markdown — and a step without one
+    /// renders exactly as it did before.
+    ///
+    /// Pinned on a report built by hand, with a fixed duration, because the
+    /// property under test is the LAYOUT: a walk that produced the three
+    /// rows below takes a path with a silent hop in the middle of it, which
+    /// no fixture can arrange, and a measured duration would make the pinned
+    /// text unpinnable.
+    ///
+    /// The column headers are the last component of each catalogue key, not a
+    /// second spelling of the words: the report is English and unlocalized
+    /// (this type's own doc comment), the panel resolves the same keys
+    /// through its catalogs, and a renamed key must not leave one of the two
+    /// naming a column the other does not have.
+    @Test func aStepsTableRendersAsAlignedColumnsAndAsAMarkdownTable() {
+        let hops = DiagnosticTable(
+            columns: [
+                DiagnosticTraceColumn.hop, DiagnosticTraceColumn.address,
+                DiagnosticTraceColumn.rtt, DiagnosticTraceColumn.outcome,
+            ],
+            rows: [
+                ["1", "10.0.0.1", "2.0 ms", "answered"],
+                ["2", "*", "—", "silent"],
+                ["3", "203.0.113.9", "12.5 ms", "destination"],
+            ])
+        let trace = DiagnosticStep(
+            id: DiagnosticStepID.trace,
+            titleKey: DiagnosticStepID.titleKey(for: DiagnosticStepID.trace),
+            started: Date(timeIntervalSince1970: 0), duration: .milliseconds(12),
+            outcome: .ok, detail: DiagnosticReason.traceHopLimitReached(afterHop: 3),
+            table: hops)
+        let report = DiagnosticReport(
+            endpoint: Endpoint(host: "example.test", port: 22),
+            steps: [Self.constantStep(id: DiagnosticStepID.tcp), trace],
+            appVersion: "test")
+
+        // The table sits directly under its own step's line, so a reader can
+        // tell whose measurement it is without counting rows.
+        let plain = report.plainText()
+        let plainTable = [
+            "trace — ok — 12.0 ms — hop limit reached after hop 3",
+            "    hop  address      rtt      outcome",
+            "    1    10.0.0.1     2.0 ms   answered",
+            "    2    *            —        silent",
+            "    3    203.0.113.9  12.5 ms  destination",
+        ].joined(separator: "\n")
+        #expect(plain.contains(plainTable), """
+            the plain text does not carry the hop table in aligned columns \
+            under its step: \(plain)
+            """)
+
+        let markdown = report.markdown()
+        let markdownTable = [
+            "## `trace`",
+            "",
+            "| hop | address | rtt | outcome |",
+            "| --- | --- | --- | --- |",
+            "| 1 | 10.0.0.1 | 2.0 ms | answered |",
+            "| 2 | * | — | silent |",
+            "| 3 | 203.0.113.9 | 12.5 ms | destination |",
+        ].joined(separator: "\n")
+        #expect(markdown.contains(markdownTable), """
+            the Markdown does not carry the hop table as a table of its own: \
+            \(markdown)
+            """)
+
+        // The step that carries no table gains nothing at all — neither a
+        // section of its own nor an indented block under its line.
+        #expect(markdown.contains("## `\(DiagnosticStepID.tcp)`") == false)
+        #expect(plain.contains("\(DiagnosticStepID.tcp) — ok — ") )
+        #expect(plain.split(separator: "\n").filter { $0.hasPrefix("    ") }.count == 4)
+    }
+
+    /// A cell is free text like a detail line, and gets the same escaping: a
+    /// `|` in one would otherwise split the row it sits in.
+    @Test func aTableCellWithABarInItCannotSplitItsMarkdownRow() {
+        let step = DiagnosticStep(
+            id: DiagnosticStepID.trace, titleKey: "diagnostics.step.trace",
+            started: Date(timeIntervalSince1970: 0), duration: .milliseconds(1),
+            outcome: .ok, detail: "",
+            table: DiagnosticTable(
+                columns: [DiagnosticTraceColumn.hop, DiagnosticTraceColumn.address],
+                rows: [["1", "a|b"]]))
+        let markdown = DiagnosticReport(
+            endpoint: nil, steps: [step], appVersion: "test"
+        ).markdown()
+
+        #expect(markdown.contains("| 1 | a\\|b |"), "\(markdown)")
+    }
+
+    /// Two steps that differ only in their table are two different steps —
+    /// the view model diffs rows by equality, and a table that changed while
+    /// the step compared equal would leave the old grid on screen.
+    @Test func aStepsTableIsPartOfItsIdentity() {
+        func step(_ table: DiagnosticTable?) -> DiagnosticStep {
+            DiagnosticStep(
+                id: DiagnosticStepID.trace, titleKey: "diagnostics.step.trace",
+                started: Date(timeIntervalSince1970: 0), duration: .milliseconds(1),
+                outcome: .ok, detail: "", table: table)
+        }
+        let one = DiagnosticTable(columns: ["c"], rows: [["1"]])
+        let other = DiagnosticTable(columns: ["c"], rows: [["2"]])
+
+        #expect(step(one) == step(one))
+        #expect(step(one) != step(other))
+        #expect(step(one) != step(nil))
+        #expect(step(nil) == step(nil))
+    }
+
+    /// A cell is stripped of URL userinfo on the way in, exactly like the
+    /// detail line beside it — the rule lives in the one initializer every
+    /// step passes through, and a table added later must not become the
+    /// second place a credential can reach a pasted report.
+    @Test func aTableCellIsStrippedOfUserinfoLikeEveryOtherFreeTextOnAStep() {
+        let secret = "s3cr3t"
+        let step = DiagnosticStep(
+            id: "probe", titleKey: "diagnostics.step.probe",
+            started: Date(timeIntervalSince1970: 0), duration: .milliseconds(1),
+            outcome: .ok, detail: "",
+            table: DiagnosticTable(
+                columns: ["c"], rows: [["https://key:\(secret)@example.test/bucket"]]))
+        // Computed before the expectation, and never written into one: an
+        // `#expect` reports the source text of what it checks, so a secret
+        // spelled inside one leaks through the failure message (CLAUDE.md,
+        // "A value a test must not leak has two exits").
+        let cell = step.table?.rows.first?.first ?? ""
+        let leaks = cell.contains(secret)
+
+        #expect(leaks == false)
+        #expect(cell == "https://example.test/bucket")
     }
 
     /// One marker line per way of being unfinished, and none for a finished

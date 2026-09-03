@@ -269,8 +269,12 @@ struct NetworkTraceTests {
         // `.unavailable` would have thrown away.
         #expect(outcome.hops.map(\.ttl) == [1, 2, 3])
         #expect(ConnectionDiagnostics.traceOutcome(outcome) == .failed(refusal))
+        // The hops it measured are on the step's TABLE, which is where they
+        // moved on 2026-09-03; this used to read `detail.hasPrefix("1 10.0.0.1 ")`
+        // off the joined line the detail no longer carries.
+        #expect(ConnectionDiagnostics.traceTable(outcome)?.rows.first?.first == "1")
+        #expect(ConnectionDiagnostics.traceTable(outcome)?.rows.first?.dropFirst().first == "10.0.0.1")
         let detail = ConnectionDiagnostics.traceDetail(outcome)
-        #expect(detail.hasPrefix("1 10.0.0.1 "))
         // Neither marker: the trace did not stop looking and did not run out
         // of hops.
         #expect(detail.contains(DiagnosticReason.stoppedByBudget) == false)
@@ -399,6 +403,101 @@ struct NetworkTraceTests {
                 == .failed(DiagnosticReason.traceHopUnreachable(code: 13, hop: 4)))
     }
 
+    // MARK: - The hops as a table
+
+    /// The hops are carried on the step as a TABLE — one row per hop, the
+    /// silent ones included — and the detail line keeps only the markers.
+    ///
+    /// The maintainer's finding on the dev build (2026-09-03): a walk of
+    /// eight hops joined with `; ` is one line nobody can read. What the
+    /// panel and the two renderings need is the same four columns the walk
+    /// measured, which means the step has to carry them apart rather than
+    /// pre-joined — a renderer cannot split `1 10.0.0.1 2.0 ms` back into
+    /// cells without re-parsing text this module composed.
+    ///
+    /// The walk comes from the fake hop source, because the row that matters
+    /// most here is the silent one, and loopback answers at hop 1 every time.
+    @Test func theTraceCarriesItsHopsAsATableWithARowForTheSilentHop() throws {
+        let walked = Self.fakeWalk(
+            budget: .seconds(20), hopCost: .milliseconds(2), answering: 2, maxHops: 3)
+        // The anchor: three hops were measured, and the third is a silence.
+        #expect(walked.hops.map(\.ttl) == [1, 2, 3])
+        #expect(walked.hops.last?.outcome == .timedOut)
+
+        let table = try #require(ConnectionDiagnostics.traceTable(walked))
+        #expect(
+            table.columns == [
+                DiagnosticTraceColumn.hop, DiagnosticTraceColumn.address,
+                DiagnosticTraceColumn.rtt, DiagnosticTraceColumn.outcome,
+            ])
+        #expect(
+            table.rows == [
+                ["1", "10.0.0.1", "2.0 ms", "answered"],
+                ["2", "10.0.0.1", "2.0 ms", "answered"],
+                ["3", "*", "—", "silent"],
+            ])
+
+        // And the detail line is the marker alone. Everything a reader used
+        // to find there is in the table now; leaving the hops in both would
+        // print them twice in the artifact people paste.
+        #expect(
+            ConnectionDiagnostics.traceDetail(walked)
+                == DiagnosticReason.traceHopLimitReached(afterHop: 3))
+    }
+
+    /// The three outcome words that need an address to tell them apart, on
+    /// outcomes built by hand: the destination answering, a router refusing
+    /// with a code of its own, and a port-unreachable from an address the
+    /// trace was NOT aimed at — which is a refusal and never an arrival, the
+    /// same rule `reachedDestination` keeps.
+    @Test func anArrivalAndARefusalAreDifferentWordsInTheOutcomeColumn() {
+        func rows(lastHop: NetworkTraceHop, endedBy ending: NetworkTraceEnding)
+            -> [[String]]?
+        {
+            ConnectionDiagnostics.traceTable(
+                .measured(
+                    hops: [lastHop], destination: Self.documentationV4, ending: ending)
+            )?.rows
+        }
+        let arrival = NetworkTraceHop(
+            ttl: 2,
+            outcome: .unreachable(
+                address: Self.documentationV4, rtt: .milliseconds(3),
+                code: NetworkTrace.portUnreachableCode))
+        let elsewhere = NetworkTraceHop(
+            ttl: 2,
+            outcome: .unreachable(
+                address: "10.0.0.1", rtt: .milliseconds(3),
+                code: NetworkTrace.portUnreachableCode))
+        let blocked = NetworkTraceHop(
+            ttl: 2,
+            outcome: .unreachable(address: "10.0.0.1", rtt: .milliseconds(3), code: 13))
+
+        #expect(rows(lastHop: arrival, endedBy: .answered) == [["2", Self.documentationV4, "3.0 ms", "destination"]])
+        #expect(
+            rows(lastHop: elsewhere, endedBy: .answered)
+                == [["2", "10.0.0.1", "3.0 ms", "unreachable (code 3)"]])
+        #expect(
+            rows(lastHop: blocked, endedBy: .answered)
+                == [["2", "10.0.0.1", "3.0 ms", "unreachable (code 13)"]])
+
+        // An arrival ends the walk without a marker, so the detail line of a
+        // trace that simply worked is empty — the table is the whole row.
+        #expect(ConnectionDiagnostics.traceDetail(
+            .measured(hops: [arrival], destination: Self.documentationV4, ending: .answered)
+        ).isEmpty)
+    }
+
+    /// A trace this machine could not run at all has nothing to tabulate, and
+    /// an empty table would draw a header over no measurement.
+    @Test func aTraceThatNeverWalkedCarriesNoTableAtAll() {
+        #expect(ConnectionDiagnostics.traceTable(.unavailable("no route")) == nil)
+        #expect(
+            ConnectionDiagnostics.traceTable(
+                .measured(hops: [], destination: Self.documentationV4, ending: .budget))
+                == nil)
+    }
+
     /// The OUTER deadline — the margin `BlockingProbe` is given on top of the
     /// walk's own budget — must not throw away the hops the walk had already
     /// measured. Before the collector, an overrun there printed an empty
@@ -474,11 +573,15 @@ struct NetworkTraceTests {
     @Test func theTraceSpendsItsOwnBudgetRatherThanTheStepTimeout() async throws {
         let reached = try #require(await Self.traceStep(budget: .seconds(3)))
         #expect(reached.outcome == .ok)
-        #expect(reached.detail.hasPrefix("1 127.0.0.1 "))
+        // The hop moved from the detail line to the table on 2026-09-03; this
+        // used to read `reached.detail.hasPrefix("1 127.0.0.1 ")`.
+        #expect(reached.table?.rows.first?.prefix(2) == ["1", "127.0.0.1"])
 
         let cut = try #require(await Self.traceStep(budget: .zero))
         #expect(cut.outcome == .timedOut)
         #expect(cut.detail == DiagnosticReason.traceStoppedByBudget(afterHop: 0))
+        // Nothing was measured, so there is no grid to draw over it.
+        #expect(cut.table == nil)
     }
 
     // MARK: - What this step cannot do
@@ -542,8 +645,17 @@ struct NetworkTraceTests {
         let trace = try #require(report.steps.first { $0.id == DiagnosticStepID.trace })
         #expect(trace.outcome == .ok)
         #expect(trace.titleKey == "diagnostics.step.trace")
-        #expect(trace.detail.hasPrefix("1 127.0.0.1 "))
-        #expect(trace.detail.contains("port unreachable"))
+        // The hop rows are on the step's table since 2026-09-03. This used to
+        // read `detail.hasPrefix("1 127.0.0.1 ")` and
+        // `detail.contains("port unreachable")` off the joined line; the
+        // arrival is now a word in the outcome column, and it is the one the
+        // loopback destination earns by answering from the address the trace
+        // was aimed at.
+        let hops = try #require(trace.table)
+        #expect(hops.columns == DiagnosticTraceColumn.all)
+        #expect(hops.rows.first?.prefix(2) == ["1", "127.0.0.1"])
+        #expect(hops.rows.first?.last == DiagnosticTraceColumn.destination)
+        #expect(trace.detail.isEmpty)
     }
 
     /// Nothing resolved means nothing to trace — `skipped`, the same sentence

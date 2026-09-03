@@ -1081,6 +1081,11 @@
 "diagnostics.step.webdavOptions" = "Server capabilities";
 "diagnostics.contribution.s3Access" = "Key access level";
 "diagnostics.contribution.webdavClaims" = "Server claims";
+// The route step's hop table (2026-09-03): the four column headers the panel draws. The cells are Core's own measurement and are never translated.
+"diagnostics.trace.column.hop" = "Hop";
+"diagnostics.trace.column.address" = "Address";
+"diagnostics.trace.column.rtt" = "RTT";
+"diagnostics.trace.column.outcome" = "Outcome";
 "diagnostics.reason.noHost" = "This connection names no host.";
 "diagnostics.reason.nothingResolvedToProbe" = "The name resolved to no address, so there was nothing to probe.";
 "diagnostics.reason.noSecret" = "No credential is saved for this connection. Save one, then run the check again.";
