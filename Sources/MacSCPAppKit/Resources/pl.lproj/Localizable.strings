@@ -1133,7 +1133,7 @@
 "import.cyberduck.target.s3 %1$@ %2$@" = "%1$@ · %2$@";
 "import.cyberduck.target.allBuckets" = "wszystkie kubełki";
 "import.cyberduck.takeSecrets" = "Przenieś hasła i sekrety S3 z pęku kluczy (macOS pyta o każdy wpis)";
-"import.cyberduck.takeGroupAndLabels" = "Umieść w grupie, etykiety jako tagi";
+"import.cyberduck.takeGroupAndLabels" = "Nowe sesje trafiają do grupy, etykiety jako tagi";
 "import.cyberduck.group" = "Grupa";
 "import.cyberduck.group.none" = "Bez grupy";
 "import.cyberduck.group.create %@" = "Nowa grupa „%@”";

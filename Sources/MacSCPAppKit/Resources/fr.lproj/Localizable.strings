@@ -1134,7 +1134,7 @@
 "import.cyberduck.target.s3 %1$@ %2$@" = "%1$@ · %2$@";
 "import.cyberduck.target.allBuckets" = "tous les buckets";
 "import.cyberduck.takeSecrets" = "Reprendre les mots de passe et les secrets S3 du trousseau (macOS demande pour chaque entrée)";
-"import.cyberduck.takeGroupAndLabels" = "Classer dans un groupe, étiquettes comme tags";
+"import.cyberduck.takeGroupAndLabels" = "Les nouvelles sessions vont dans un groupe, étiquettes comme tags";
 "import.cyberduck.group" = "Groupe";
 "import.cyberduck.group.none" = "Aucun groupe";
 "import.cyberduck.group.create %@" = "Nouveau groupe « %@ »";

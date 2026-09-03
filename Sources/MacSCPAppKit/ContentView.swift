@@ -493,10 +493,13 @@ struct ContentView: View {
     // MARK: - Import from another program (Cyberduck import, 2026-09-03)
 
     /// The loaded preview the import sheet is showing, or nil while no such
-    /// import is running. Built and LOADED by `beginExternalImport()` before
-    /// the sheet is presented (design §4) — so a missing default folder can
-    /// raise the picker below instead of an error inside a sheet, and the
-    /// sheet itself starts nothing when it appears.
+    /// import is running. Built and LOADED by `presentExternalImport(folder:
+    /// securityScoped:)` — which `beginExternalImport()` and the picker
+    /// completion both reach — before the sheet is presented (design §4), so
+    /// a missing default folder can raise the picker below instead of an
+    /// error inside a sheet, and the sheet itself starts nothing when it
+    /// appears. Written on the main actor after an `await`: the folder read
+    /// itself runs off it.
     @State var externalImport: ImportFromSourceViewModel?
     /// The folder picker shown when the source's own bookmark folder is not
     /// where it should be (the program is not installed, or its data lives

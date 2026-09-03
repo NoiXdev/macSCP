@@ -180,7 +180,7 @@ extension ContentView {
         // The default folder is inside another app's Group Container, which
         // this process reaches by ordinary file permissions — there is no
         // security-scoped URL to open for it, unlike a folder the user picks.
-        presentExternalImport(folder: folder, securityScoped: false)
+        Task { await presentExternalImport(folder: folder, securityScoped: false) }
     }
 
     /// Folder-picker completion for the case above: the user pointed at the
@@ -191,19 +191,25 @@ extension ContentView {
             importErrorMessage = ImportFeedbackText.readErrorMessage(error)
         case .success(let urls):
             guard let folder = urls.first else { return }
-            presentExternalImport(folder: folder, securityScoped: true)
+            Task { await presentExternalImport(folder: folder, securityScoped: true) }
         }
     }
 
-    /// Builds the preview and hands it to the sheet. The whole read happens
-    /// inside the security-scoped access, so nothing the sheet does later
-    /// depends on the access still being held.
-    private func presentExternalImport(folder: URL, securityScoped: Bool) {
+    /// Builds the preview and hands it to the sheet.
+    ///
+    /// `async`, and the `await` sits INSIDE the security-scoped access: the
+    /// read itself runs off the main actor (`ImportFromSourceViewModel.load`),
+    /// and a `defer` in an async function runs after the awaited work, not
+    /// before it. Handing the read to a detached task the `defer` outruns
+    /// would release the scoped URL partway through — a picked folder on a
+    /// removable or network volume would then stop being readable halfway
+    /// down the file list.
+    private func presentExternalImport(folder: URL, securityScoped: Bool) async {
         let didAccess = securityScoped && folder.startAccessingSecurityScopedResource()
         defer { if didAccess { folder.stopAccessingSecurityScopedResource() } }
         let model = ImportFromSourceViewModel(
             sessions: sessionListViewModel.sessions, groups: sessionListViewModel.groups)
-        model.load(source: CyberduckBookmarkSource(), folder: folder)
+        await model.load(source: CyberduckBookmarkSource(), folder: folder)
         externalImport = model
     }
 
@@ -214,23 +220,65 @@ extension ContentView {
     ///
     /// The keychain is asked once per selected entry, and only behind the
     /// switch: each query may raise the macOS consent prompt, which belongs
-    /// to this click and to no other moment. A refusal or a missing item
-    /// leaves the entry secret-free and is counted — never logged, never
-    /// named, and never put in a message beside the session it belongs to.
+    /// to this click and to no other moment.
+    ///
+    /// Only `.notFound` is counted. `.notAttempted` means the reader made no
+    /// query at all — Cyberduck keeps no item for a bookmark without an
+    /// account — and reporting that as a failure would tell the user that
+    /// passwords "could not be read" about items that never existed. Which
+    /// bookmarks those are is the READER's rule and is not re-derived here;
+    /// the `switch` is exhaustive, so a fourth state cannot be silently
+    /// folded into either count.
     func applyExternalImport(_ model: ImportFromSourceViewModel) async {
         var payload = model.payload()
         var secretsNotRead = 0
         if model.switches.takeSecrets {
             let reader = CyberduckSecretReader()
-            let bookmarks = model.selectedBookmarksByID
-            for index in payload.sessions.indices {
-                guard let importID = payload.sessions[index].importID,
-                      let bookmark = bookmarks[importID]
-                else { continue }
-                guard let secret = await reader.secret(for: bookmark) else {
-                    secretsNotRead += 1
-                    continue
-                }
+            secretsNotRead = await ExternalImportSecrets.fill(
+                into: &payload, bookmarks: model.selectedBookmarksByID,
+                read: reader.secret(for:))
+        }
+        await applyImport(
+            PendingSessionImport(payload: payload, wasEncrypted: false),
+            externalSecretsNotRead: secretsNotRead)
+    }
+}
+
+/// The keychain half of an external import, lifted out of the `View`
+/// extension above so its two rules can be EXERCISED rather than scanned:
+/// which answers count as "not read", and which slot a secret lands in.
+///
+/// Both were previously inside `applyExternalImport`, where nothing could
+/// reach them — planting "count `.notAttempted` as a miss too" left the whole
+/// suite green (measured 2026-09-03, fix round 1). A guard that reads the
+/// source can say the call sits behind the switch; only a test can say what
+/// the loop does with the answer.
+enum ExternalImportSecrets {
+    /// Fills every entry that has a bookmark behind it, and returns how many
+    /// keychain queries RAN and came back empty.
+    ///
+    /// `read` is the seam: production passes
+    /// `CyberduckSecretReader().secret(for:)`, so the precondition deciding
+    /// `.notAttempted` stays the reader's alone and is not re-derived here.
+    /// `@Sendable` because the reader resumes its continuation from its own
+    /// dispatch queue, so the call genuinely crosses an isolation boundary.
+    /// The `switch` is exhaustive, so a fourth state cannot be folded into
+    /// either outcome by accident.
+    ///
+    /// Sequential, deliberately: each query may raise the macOS consent
+    /// prompt, and N prompts at once is not a thing to do to someone.
+    static func fill(
+        into payload: inout SessionExportPayload,
+        bookmarks: [String: ExternalBookmark],
+        read: @Sendable (ExternalBookmark) async -> CyberduckSecretLookup
+    ) async -> Int {
+        var notRead = 0
+        for index in payload.sessions.indices {
+            guard let importID = payload.sessions[index].importID,
+                  let bookmark = bookmarks[importID]
+            else { continue }
+            switch await read(bookmark) {
+            case .found(let secret):
                 // Which slot the secret belongs in is the same decision
                 // `SessionImportPlanner` makes on the way back out: an S3
                 // session's credential is its secret access key, everything
@@ -240,10 +288,12 @@ extension ContentView {
                 } else {
                     payload.sessions[index].password = secret
                 }
+            case .notFound:
+                notRead += 1
+            case .notAttempted:
+                continue
             }
         }
-        await applyImport(
-            PendingSessionImport(payload: payload, wasEncrypted: false),
-            externalSecretsNotRead: secretsNotRead)
+        return notRead
     }
 }

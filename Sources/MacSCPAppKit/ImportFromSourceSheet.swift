@@ -213,10 +213,15 @@ struct ImportFromSourceSheet: View {
                     "Take passwords and S3 secrets from the keychain (macOS asks per entry)"))
             }
             HStack(spacing: 8) {
+                // "NEW sessions" is load-bearing, not padding: an update
+                // keeps the group its stored record already has (the group is
+                // a macSCP-side property the source knows nothing about),
+                // while the labels half of the same line DOES apply to an
+                // update. See `ImportFromSourceViewModel.takesGroupAndLabels`.
                 Toggle(isOn: $model.takesGroupAndLabels) {
                     Text(L10n.string(
                         "import.cyberduck.takeGroupAndLabels",
-                        "Put into a group, labels as tags"))
+                        "New sessions go into a group, labels as tags"))
                 }
                 Picker(
                     L10n.string("import.cyberduck.group", "Group"),

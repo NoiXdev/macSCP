@@ -171,4 +171,89 @@ struct ImportFeedbackTextTests {
         #expect(encryptedSecrets.components(separatedBy: "\n").count == 1)
         #expect(noSecrets.components(separatedBy: "\n").count == 1)
     }
+
+    // MARK: - The two lines an import from another program adds
+
+    /// A one-session result and an empty plan, so the body is exactly one
+    /// line and every extra line below is attributable.
+    private static func oneImported() -> SessionListViewModel.SessionImportResult {
+        SessionListViewModel.SessionImportResult(
+            imported: 1, skipped: 0, passwordsImported: 0, passwordFailures: 0, storeFailures: 0)
+    }
+
+    /// Same shape as `importResultTextAddsALineOnlyWhenThereAreFailures` and
+    /// its lifted-folders twin: a count of zero adds nothing, a count above
+    /// zero adds exactly one line. Without this, an unconditional append
+    /// ends every clean Cyberduck import with "Existing sessions updated: 0",
+    /// which reads as a report about something that went wrong.
+    @Test func theUpdatedLineAppearsOnlyWhenSomethingWasUpdated() {
+        let quiet = ImportFeedbackText.importResultText(
+            Self.oneImported(), plan: SessionImportPlan(), includesSecrets: false,
+            encrypted: true,
+            external: ImportFeedbackText.ExternalImportOutcome(updated: 0, secretsNotRead: 0))
+        let updated = ImportFeedbackText.importResultText(
+            Self.oneImported(), plan: SessionImportPlan(), includesSecrets: false,
+            encrypted: true,
+            external: ImportFeedbackText.ExternalImportOutcome(updated: 2, secretsNotRead: 0))
+
+        #expect(quiet.components(separatedBy: "\n").count == 1)
+        #expect(updated.components(separatedBy: "\n").count == 2)
+    }
+
+    @Test func theUnreadSecretsLineAppearsOnlyWhenSomethingWasNotRead() {
+        let quiet = ImportFeedbackText.importResultText(
+            Self.oneImported(), plan: SessionImportPlan(), includesSecrets: true,
+            encrypted: true,
+            external: ImportFeedbackText.ExternalImportOutcome(updated: 0, secretsNotRead: 0))
+        let unread = ImportFeedbackText.importResultText(
+            Self.oneImported(), plan: SessionImportPlan(), includesSecrets: true,
+            encrypted: true,
+            external: ImportFeedbackText.ExternalImportOutcome(updated: 0, secretsNotRead: 3))
+
+        #expect(quiet.components(separatedBy: "\n").count == 1)
+        #expect(unread.components(separatedBy: "\n").count == 2)
+    }
+
+    /// The third behaviour the external argument carries: there is no file
+    /// behind an import read out of another program's bookmarks, so the
+    /// unencrypted-file notice must not appear for it.
+    ///
+    /// The positive anchor is in the same test: the SAME arguments without
+    /// `external` do produce the notice, so a suppression that stopped
+    /// matching would show up as the anchor failing rather than as an
+    /// absence that is always satisfied.
+    @Test func theUnencryptedFileNoticeIsSuppressedForAnExternalImport() {
+        let fileImport = ImportFeedbackText.importResultText(
+            Self.oneImported(), plan: SessionImportPlan(), includesSecrets: true,
+            encrypted: false)
+        let externalImport = ImportFeedbackText.importResultText(
+            Self.oneImported(), plan: SessionImportPlan(), includesSecrets: true,
+            encrypted: false,
+            external: ImportFeedbackText.ExternalImportOutcome(updated: 0, secretsNotRead: 0))
+
+        #expect(fileImport.components(separatedBy: "\n").count == 2,
+                "the anchor: a file import with plaintext secrets still gets the notice")
+        #expect(externalImport.components(separatedBy: "\n").count == 1)
+    }
+
+    /// The file import is untouched by the new parameter: omitting it must
+    /// produce byte-for-byte what it produced before, on a plan that
+    /// exercises several of the conditional lines at once.
+    @Test func aFileImportIsUnchangedByTheExternalParameter() {
+        var plan = SessionImportPlan()
+        plan.replaced = ["A"]
+        plan.rejected = ["B"]
+        let result = SessionListViewModel.SessionImportResult(
+            imported: 3, skipped: 1, passwordsImported: 1, passwordFailures: 1, storeFailures: 0)
+
+        let omitted = ImportFeedbackText.importResultText(
+            result, plan: plan, includesSecrets: true, encrypted: false)
+        let explicitlyNil = ImportFeedbackText.importResultText(
+            result, plan: plan, includesSecrets: true, encrypted: false, external: nil)
+
+        #expect(omitted == explicitlyNil)
+        #expect(omitted.contains(String(
+            format: L10n.string("import.result.updated %lld", "Existing sessions updated: %lld"), 0))
+            == false)
+    }
 }

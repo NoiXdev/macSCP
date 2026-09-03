@@ -77,7 +77,10 @@ struct CyberduckSecretReaderTests {
 
         let read = await CyberduckSecretReader().secret(
             for: bookmark(host: server, port: 22, username: account, protocolValue: .sftp))
-        let matches = read == expected
+        // The comparison is computed into a `Bool` BEFORE the expectation:
+        // `#expect` reports the SOURCE TEXT of what it checks, so a secret
+        // written into the expectation leaks through a failure message.
+        let matches = Self.isFound(read, equalTo: expected)
         #expect(matches)
     }
 
@@ -92,20 +95,23 @@ struct CyberduckSecretReaderTests {
 
         let read = await CyberduckSecretReader().secret(
             for: bookmark(host: server, port: 443, username: account, protocolValue: .s3))
-        let matches = read == expected
+        let matches = Self.isFound(read, equalTo: expected)
         #expect(matches)
     }
 
-    @Test func missingItemYieldsNil() async {
+    /// A query that RAN and matched nothing. This is the one state the
+    /// applier reports to the user, which is why it must be distinguishable
+    /// from the two below.
+    @Test func missingItemIsNotFound() async {
         let server = "keychain-test-missing.example.net"
         let account = "no-such-account-\(UUID().uuidString.prefix(8))"
         let read = await CyberduckSecretReader().secret(
             for: bookmark(host: server, port: 22, username: account, protocolValue: .sftp))
-        let isNil = read == nil
-        #expect(isNil)
+        #expect(Self.isNotFound(read))
+        #expect(Self.isNotAttempted(read) == false)
     }
 
-    @Test func noUsernameYieldsNilWithoutAQuery() async throws {
+    @Test func noUsernameIsNotAttemptedAndRunsNoQuery() async throws {
         let server = "keychain-test-nouser.example.net"
         let account = "someone-\(UUID().uuidString.prefix(8))"
         // An item DOES exist for this server, under some account: if the
@@ -122,12 +128,14 @@ struct CyberduckSecretReaderTests {
 
         let read = await CyberduckSecretReader().secret(
             for: bookmark(host: server, port: 22, username: nil, protocolValue: .sftp))
-        let isNil = read == nil
-        #expect(isNil)
+        #expect(Self.isNotAttempted(read))
+        // The distinction the applier's count hangs on: this is NOT the same
+        // answer as "the query ran and found nothing".
+        #expect(Self.isNotFound(read) == false)
 
         // Positive anchor: the item is still there, untouched — proof
-        // that the nil above came from the reader skipping the query,
-        // not from there being nothing to find.
+        // that the `.notAttempted` above came from the reader skipping the
+        // query, not from there being nothing to find.
         let query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
             kSecAttrServer as String: server,
@@ -141,12 +149,33 @@ struct CyberduckSecretReaderTests {
         #expect(itemStillExists)
     }
 
-    @Test func unsupportedProtocolYieldsNil() async {
+    @Test func unsupportedProtocolIsNotAttempted() async {
         let server = "keychain-test-unsupported.example.net"
         let account = "ftp-user-\(UUID().uuidString.prefix(8))"
         let read = await CyberduckSecretReader().secret(
             for: bookmark(host: server, port: 21, username: account, protocolValue: .unsupported("ftp")))
-        let isNil = read == nil
-        #expect(isNil)
+        #expect(Self.isNotAttempted(read))
+        #expect(Self.isNotFound(read) == false)
+    }
+
+    // MARK: - Reading a lookup without letting its value out
+
+    /// `CyberduckSecretLookup` is deliberately not `Equatable` and carries no
+    /// accessor for its value, so these three read it by pattern-matching and
+    /// hand back a `Bool`. The secret never becomes part of an expectation's
+    /// source text, and it never becomes part of a failure message.
+    private static func isFound(_ lookup: CyberduckSecretLookup, equalTo expected: String) -> Bool {
+        guard case .found(let value) = lookup else { return false }
+        return value == expected
+    }
+
+    private static func isNotFound(_ lookup: CyberduckSecretLookup) -> Bool {
+        if case .notFound = lookup { return true }
+        return false
+    }
+
+    private static func isNotAttempted(_ lookup: CyberduckSecretLookup) -> Bool {
+        if case .notAttempted = lookup { return true }
+        return false
     }
 }

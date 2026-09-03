@@ -11,12 +11,17 @@ enum ImportFeedbackText {
     /// `updated` is MEASURED, not promised: it is what the plan actually
     /// overwrote, so an update whose record vanished between the preview and
     /// the import — it fell back to a fresh session — is not counted here.
-    /// It is reported even when zero, because "nothing was updated" is the
-    /// answer to the question the preview raised.
     ///
     /// `secretsNotRead` counts the keychain items that were asked for and
-    /// not given: absent, refused, or a prompt the user cancelled. A COUNT,
-    /// like every other line here — never a name, and never a value.
+    /// not given: absent, refused, or a prompt the user cancelled. Only
+    /// `CyberduckSecretLookup.notFound` — a bookmark the reader never queried
+    /// because Cyberduck could hold no item for it is not a failure and is
+    /// not here. A COUNT, like every other line in this function — never a
+    /// name, and never a value.
+    ///
+    /// Both numbers produce a line only when they are above zero, the shape
+    /// every other conditional line here follows: "Existing sessions updated:
+    /// 0" on a clean run reads as a report about something that went wrong.
     struct ExternalImportOutcome: Equatable {
         var updated: Int
         var secretsNotRead: Int
@@ -139,10 +144,15 @@ enum ImportFeedbackText {
         // suppressed for it: there was nothing on disk to be unencrypted.
         // What it does have to say is how many records it overwrote, and how
         // many secrets the keychain kept to itself.
+        // Both lines follow the shape of every other conditional line above:
+        // a count of zero is not news, and a line reading "…: 0" on a clean
+        // run reads as a failure report.
         if let external {
-            lines.append(String(format: L10n.string(
-                "import.result.updated %lld", "Existing sessions updated: %lld"),
-                external.updated))
+            if external.updated > 0 {
+                lines.append(String(format: L10n.string(
+                    "import.result.updated %lld", "Existing sessions updated: %lld"),
+                    external.updated))
+            }
             if external.secretsNotRead > 0 {
                 lines.append(String(format: L10n.string(
                     "import.result.secretsNotRead %lld",

@@ -67,9 +67,20 @@ final class ImportFromSourceViewModel: Identifiable {
     }
 
     /// The second switch, which governs BOTH halves of one line the
-    /// maintainer accepted as one decision (design §4): the group the import
-    /// files into, and whether the source's labels become tags. Off, the
-    /// sessions land ungrouped and untagged and the picker is disabled.
+    /// maintainer accepted as one decision (design §4): the group NEW
+    /// sessions are filed into, and whether the source's labels become tags.
+    /// Off, new sessions land ungrouped and untagged and the picker is
+    /// disabled.
+    ///
+    /// **The group half applies to new sessions only.** An update keeps the
+    /// group its stored record already has (`ImportPreviewPlanner`'s two
+    /// update branches copy `stored.groupID`), because a session's place in
+    /// the sidebar is a macSCP-side property the source knows nothing about
+    /// and must not overwrite. The labels half is not like that: an update
+    /// does take the bookmark's labels as its tags when this is on. The two
+    /// halves of one line therefore behave differently for the same row,
+    /// which is why the switch's LABEL says "New sessions go into a group"
+    /// rather than promising something updates do not do.
     ///
     /// Changing it DOES re-plan: with labels in play, a bookmark whose
     /// labels differ from its session's tags stops being unchanged.
@@ -143,7 +154,20 @@ final class ImportFromSourceViewModel: Identifiable {
     /// `Source.id` and `Source.displayNameKey` — both static requirements —
     /// are reachable, and so a second source (FileZilla, Transmit) needs
     /// nothing here but its own conformer.
-    func load<Source: BookmarkSource>(source: Source, folder: URL) {
+    ///
+    /// **The read runs OFF the main actor.** `BookmarkSource.read(from:)` is
+    /// a directory listing plus one file read and one property-list parse per
+    /// bookmark, and the folder need not be a local one — the picker accepts
+    /// any directory, a mounted network share included. On the main actor
+    /// that is a frozen window with no spinner and no way out until the last
+    /// file is parsed. `Task.detached` rather than a plain `Task`, because a
+    /// plain one would inherit this actor and change nothing;
+    /// `BookmarkSource` is `Sendable` and so is `[ExternalBookmark]`, so the
+    /// hop needs no unsafe escape.
+    ///
+    /// Everything after the `await` is back on the main actor, which is where
+    /// `rows`, `loadError` and the group choices are written.
+    func load<Source: BookmarkSource>(source: Source, folder: URL) async {
         sourceID = Source.id
         // The catalog key is the source's own; the fallback is derived from
         // its id rather than written out, so a source that ships without a
@@ -155,7 +179,7 @@ final class ImportFromSourceViewModel: Identifiable {
         rebuildSwitches()
 
         do {
-            bookmarks = try source.read(from: folder)
+            bookmarks = try await Task.detached { try source.read(from: folder) }.value
             loadError = nil
         } catch {
             bookmarks = []

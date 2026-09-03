@@ -2,6 +2,40 @@ import Foundation
 import Security
 import os
 
+/// What one keychain lookup answered (Cyberduck import, fix round 1).
+///
+/// Three states, not two, because "there is no item" and "no item could
+/// exist, so nothing was asked" are different sentences and the caller
+/// reports one of them to the user. Collapsed into a single `nil`, an import
+/// of eight bookmarks — three of them written without a `Username`, which
+/// Cyberduck stores no item for — told the user that three passwords "could
+/// not be read from the keychain", about three items that do not exist and
+/// were never looked for.
+///
+/// The precondition that decides `.notAttempted` lives HERE and only here:
+/// a caller re-deriving it would hold a second copy of this reader's rule,
+/// and the copies would part company the first time the reader learns about
+/// another shape of bookmark.
+///
+/// Deliberately NOT `Equatable` and NOT `CustomStringConvertible`: the
+/// secret lives inside `.found`, and both of those would give it a way onto
+/// a screen or into a failure message. Callers pattern-match, which is also
+/// what makes a fourth state a compile error at every call site rather than
+/// a branch someone forgot.
+public enum CyberduckSecretLookup: Sendable {
+    /// The keychain returned an item. The associated value is the secret and
+    /// goes straight into the caller's own `SecretStore` slot.
+    case found(String)
+    /// The query ran and matched nothing — the item is absent, or the user
+    /// refused or cancelled the macOS consent prompt. This is the one state
+    /// worth reporting to the user.
+    case notFound
+    /// No query was made, because the bookmark cannot have an item:
+    /// Cyberduck stores none without an account, and none for a protocol it
+    /// does not keep credentials for. Nothing failed, so nothing is reported.
+    case notAttempted
+}
+
 /// Reads the Internet-password item Cyberduck stores in the login keychain
 /// for a bookmark. Cyberduck writes one `kSecClassInternetPassword` item per
 /// bookmark it has a credential for: `kSecAttrServer` is the host,
@@ -20,13 +54,13 @@ public struct CyberduckSecretReader: Sendable {
 
     public init() {}
 
-    /// `nil` when: the bookmark has no username (Cyberduck never stores an
-    /// item without an account, so no query is made at all); the bookmark's
-    /// protocol is one Cyberduck does not keep a keychain item for
-    /// (`.unsupported`); the item does not exist; or the user cancels or is
-    /// refused the macOS consent prompt. Any other `OSStatus` also resolves
-    /// to `nil` here — only the status code is logged, never the query or
-    /// the value.
+    /// `.notAttempted` when the bookmark has no username (Cyberduck never
+    /// stores an item without an account, so no query is made at all) or its
+    /// protocol is one Cyberduck keeps no keychain item for
+    /// (`.unsupported`). `.notFound` when the query ran and the item does not
+    /// exist, or the user cancelled or was refused the macOS consent prompt;
+    /// any other `OSStatus` resolves there too — only the status code is
+    /// logged, never the query and never the value.
     ///
     /// Runs on its own dispatch queue, awaited through a continuation: the
     /// macOS consent dialog for a not-yet-trusted item can block the calling
@@ -34,9 +68,10 @@ public struct CyberduckSecretReader: Sendable {
     /// process needs for anything else. The prompt itself belongs to
     /// whatever UI moment the caller is in — this function does not attempt
     /// to time it out or dismiss it.
-    public func secret(for bookmark: ExternalBookmark) async -> String? {
-        guard let username = bookmark.username, !username.isEmpty else { return nil }
-        guard let protocolName = Self.keychainProtocolName(for: bookmark.protocol) else { return nil }
+    public func secret(for bookmark: ExternalBookmark) async -> CyberduckSecretLookup {
+        guard let username = bookmark.username, !username.isEmpty else { return .notAttempted }
+        guard let protocolName = Self.keychainProtocolName(for: bookmark.protocol)
+        else { return .notAttempted }
 
         // Neither `[String: Any]` nor the `CFDictionary`/`CFString` it
         // bridges to is `Sendable`, so the query dictionary is built INSIDE
@@ -45,7 +80,8 @@ public struct CyberduckSecretReader: Sendable {
         let host = bookmark.host
         let port = bookmark.port
 
-        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+        return await withCheckedContinuation {
+            (continuation: CheckedContinuation<CyberduckSecretLookup, Never>) in
             DispatchQueue(label: "dev.noix.macSCP.cyberduck-secret-reader").async {
                 var query: [String: Any] = [
                     kSecClass as String: kSecClassInternetPassword,
@@ -63,19 +99,22 @@ public struct CyberduckSecretReader: Sendable {
                 let status = SecItemCopyMatching(query as CFDictionary, &result)
                 switch status {
                 case errSecSuccess:
+                    // An item that came back without decodable data is a
+                    // query that ran and produced no secret — `.notFound`,
+                    // not `.notAttempted`: something was asked for.
                     guard let data = result as? Data,
                         let value = String(data: data, encoding: .utf8)
                     else {
-                        continuation.resume(returning: nil)
+                        continuation.resume(returning: .notFound)
                         return
                     }
-                    continuation.resume(returning: value)
+                    continuation.resume(returning: .found(value))
                 case errSecItemNotFound, errSecUserCanceled, errSecAuthFailed,
                     errSecInteractionNotAllowed:
-                    continuation.resume(returning: nil)
+                    continuation.resume(returning: .notFound)
                 default:
                     Self.logger.debug("Cyberduck secret query failed, status \(status)")
-                    continuation.resume(returning: nil)
+                    continuation.resume(returning: .notFound)
                 }
             }
         }

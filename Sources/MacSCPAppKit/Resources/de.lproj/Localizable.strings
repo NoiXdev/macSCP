@@ -1131,7 +1131,7 @@
 "import.cyberduck.target.s3 %1$@ %2$@" = "%1$@ · %2$@";
 "import.cyberduck.target.allBuckets" = "alle Buckets";
 "import.cyberduck.takeSecrets" = "Passwörter und S3-Secrets aus dem Schlüsselbund mitnehmen (macOS fragt pro Eintrag)";
-"import.cyberduck.takeGroupAndLabels" = "In die Gruppe einsortieren, Labels als Tags";
+"import.cyberduck.takeGroupAndLabels" = "Neue Sitzungen kommen in die Gruppe, Labels als Tags";
 "import.cyberduck.group" = "Gruppe";
 "import.cyberduck.group.none" = "Keine Gruppe";
 "import.cyberduck.group.create %@" = "Neue Gruppe „%@“";

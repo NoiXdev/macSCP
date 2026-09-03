@@ -28,13 +28,30 @@ struct ImportFromSourceViewModelTests {
 
         var bookmarks: [ExternalBookmark] = []
         var failure: (any Error)?
+        /// Set only by the test that asks WHERE the read ran.
+        var recorder: Recorder?
 
         func locate(home: URL) -> URL? { nil }
 
         func read(from folder: URL) throws -> [ExternalBookmark] {
+            recorder?.record(isMainThread: Thread.isMainThread)
             if let failure { throw failure }
             return bookmarks
         }
+    }
+
+    /// Records the thread `read(from:)` ran on. A reference type because
+    /// `BookmarkSource` is `Sendable` and the source is passed BY VALUE — a
+    /// `var` on the struct would be written on a copy the test never sees.
+    /// `@unchecked Sendable` over a lock, the same shape
+    /// `DiagnosticsViewModelTests`' own recorders use.
+    private final class Recorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var wasMainThread: Bool?
+        /// `nil` until `read` has run at all — which is itself worth
+        /// distinguishing from "ran, and not on the main thread".
+        var ranOnMainThread: Bool? { lock.withLock { wasMainThread } }
+        func record(isMainThread: Bool) { lock.withLock { wasMainThread = isMainThread } }
     }
 
     private struct FolderUnreadable: Error {}
@@ -68,18 +85,23 @@ struct ImportFromSourceViewModelTests {
             importedAt: importID == nil ? nil : Date(timeIntervalSince1970: 0))
     }
 
-    /// One of each of the five statuses the sheet has to draw, in one model:
-    /// a bookmark nothing matches, one that matches unchanged, one that
-    /// matches with a differing port, an FTP one, and a file that would not
-    /// parse.
+    /// A model loaded from `fiveBookmarks()`. What the five rows come out AS
+    /// depends on what it is planned against, and only the store built by
+    /// `matchingStore()` produces one of each of the five statuses — called
+    /// bare (the default empty store), the first three rows are all `.new`.
+    /// The sentence is here rather than on the fixture list because it is a
+    /// claim about the PAIR, and it was written as if it held at every call
+    /// site, which is the enumeration-in-a-comment mistake CLAUDE.md names.
     private func loadedModel(
         sessions: [StoredSession] = [], groups: [StoredGroup] = []
-    ) -> ImportFromSourceViewModel {
+    ) async -> ImportFromSourceViewModel {
         let model = ImportFromSourceViewModel(sessions: sessions, groups: groups)
-        model.load(source: FakeSource(bookmarks: fiveBookmarks()), folder: Self.folder)
+        await model.load(source: FakeSource(bookmarks: fiveBookmarks()), folder: Self.folder)
         return model
     }
 
+    /// Five bookmarks: two ordinary sftp ones, one whose port moved, an FTP
+    /// one (a protocol with no backend) and a file that would not parse.
     private func fiveBookmarks() -> [ExternalBookmark] {
         [
             bookmark(id: "new", nickname: "Fresh", host: "fresh.example.net", port: 22,
@@ -115,9 +137,9 @@ struct ImportFromSourceViewModelTests {
 
     // MARK: - Loading
 
-    @Test func theRowsAreTheSourcesBookmarksJudgedAgainstTheStore() {
+    @Test func theRowsAreTheSourcesBookmarksJudgedAgainstTheStore() async {
         let store = matchingStore()
-        let model = loadedModel(sessions: store.sessions)
+        let model = await loadedModel(sessions: store.sessions)
 
         #expect(model.rows.map(\.id) == ["new", "same", "moved", "ftp", "broken.duck"])
         #expect(model.rows[0].status == .new)
@@ -130,25 +152,54 @@ struct ImportFromSourceViewModelTests {
     /// The default ticks are the planner's (`.new` and `.knownChanged` on,
     /// `.knownUnchanged` off, the two unimportable ones off and unticked) —
     /// the model must not invent its own.
-    @Test func theDefaultTicksAreThePlanners() {
+    @Test func theDefaultTicksAreThePlanners() async {
         let store = matchingStore()
-        let model = loadedModel(sessions: store.sessions)
+        let model = await loadedModel(sessions: store.sessions)
 
         #expect(model.rows.map(\.selected) == [true, false, true, false, false])
     }
 
-    @Test func aFolderTheSourceCannotReadLeavesNoRowsAndAMessage() {
+    @Test func aFolderTheSourceCannotReadLeavesNoRowsAndAMessage() async {
         let model = ImportFromSourceViewModel(sessions: [], groups: [])
-        model.load(source: FakeSource(failure: FolderUnreadable()), folder: Self.folder)
+        await model.load(source: FakeSource(failure: FolderUnreadable()), folder: Self.folder)
 
         #expect(model.rows.isEmpty)
         #expect(model.loadError != nil)
         #expect(model.canImport == false)
     }
 
-    @Test func aFolderWithNoBookmarksIsEmptyRatherThanBroken() {
+    /// The read runs OFF the main actor (I-3): `read(from:)` is a directory
+    /// listing plus one file read and one plist parse per bookmark, and the
+    /// folder may be on a network volume the picker happily accepted.
+    ///
+    /// `Thread.isMainThread` inside the source, recorded through a reference
+    /// the test still holds — the source is passed by value, so a flag on the
+    /// struct would be written on a copy nobody can read.
+    ///
+    /// The two expectations are separate on purpose: `ranOnMainThread` is an
+    /// optional, and a `!= true` on its own would also be satisfied by a read
+    /// that never happened.
+    @Test func theFolderIsReadOffTheMainActor() async {
+        let recorder = Recorder()
         let model = ImportFromSourceViewModel(sessions: [], groups: [])
-        model.load(source: FakeSource(), folder: Self.folder)
+
+        await model.load(
+            source: FakeSource(bookmarks: fiveBookmarks(), recorder: recorder),
+            folder: Self.folder)
+
+        #expect(recorder.ranOnMainThread != nil, "the anchor: the source was actually read")
+        #expect(recorder.ranOnMainThread == false, """
+            The bookmark folder was read on the main thread. A directory on a network volume \
+            would freeze the window with no spinner until the last file is parsed.
+            """)
+        // And the model is back on the main actor afterwards, holding what
+        // the read produced.
+        #expect(model.rows.count == fiveBookmarks().count)
+    }
+
+    @Test func aFolderWithNoBookmarksIsEmptyRatherThanBroken() async {
+        let model = ImportFromSourceViewModel(sessions: [], groups: [])
+        await model.load(source: FakeSource(), folder: Self.folder)
 
         #expect(model.rows.isEmpty)
         #expect(model.loadError == nil)
@@ -156,9 +207,9 @@ struct ImportFromSourceViewModelTests {
 
     // MARK: - The summary line
 
-    @Test func theSummaryCountsImportsUpdatesSkipsAndUnimportableRows() {
+    @Test func theSummaryCountsImportsUpdatesSkipsAndUnimportableRows() async {
         let store = matchingStore()
-        let model = loadedModel(sessions: store.sessions)
+        let model = await loadedModel(sessions: store.sessions)
 
         // `new` + `moved` ticked; `moved` is the update. `same` is the one
         // selectable row left unticked. `ftp` and `broken.duck` cannot be
@@ -173,9 +224,9 @@ struct ImportFromSourceViewModelTests {
     /// UPDATE, and the planner counts it in `plan.replaced`. So the summary
     /// has to count it as one too, or the user ticks a row that looks
     /// untouched and reads "1 replaced".
-    @Test func aTickedUnchangedRowCountsAsAnUpdate() throws {
+    @Test func aTickedUnchangedRowCountsAsAnUpdate() async throws {
         let store = matchingStore()
-        let model = loadedModel(sessions: store.sessions)
+        let model = await loadedModel(sessions: store.sessions)
         let unchanged = try #require(model.rows.first { $0.id == "same" })
 
         model.toggle(row: unchanged)
@@ -187,8 +238,8 @@ struct ImportFromSourceViewModelTests {
 
     // MARK: - Ticking
 
-    @Test func togglingARowFlipsItAndOnlyIt() throws {
-        let model = loadedModel()
+    @Test func togglingARowFlipsItAndOnlyIt() async throws {
+        let model = await loadedModel()
         let first = try #require(model.rows.first)
 
         model.toggle(row: first)
@@ -199,11 +250,11 @@ struct ImportFromSourceViewModelTests {
 
     /// The negative half of `PreviewStatus.isSelectable`, with the positive
     /// anchor beside it: a selectable row in the same model does flip.
-    @Test func anUnimportableRowCannotBeTicked() throws {
+    @Test func anUnimportableRowCannotBeTicked() async throws {
         // Against the store, so the anchor row starts UNTICKED: a toggle
         // that turned a ticked row off would prove nothing about a toggle
         // reaching a row at all.
-        let model = loadedModel(sessions: matchingStore().sessions)
+        let model = await loadedModel(sessions: matchingStore().sessions)
         let unsupported = try #require(model.rows.first { $0.id == "ftp" })
         let unreadable = try #require(model.rows.first { $0.id == "broken.duck" })
         let selectable = try #require(model.rows.first { $0.id == "same" })
@@ -217,8 +268,8 @@ struct ImportFromSourceViewModelTests {
         #expect(model.rows.first { $0.id == "same" }?.selected == true)
     }
 
-    @Test func selectAllAndSelectNoneOnlyTouchWhatCanBeImported() {
-        let model = loadedModel()
+    @Test func selectAllAndSelectNoneOnlyTouchWhatCanBeImported() async {
+        let model = await loadedModel()
 
         model.selectAll()
         #expect(model.rows.map(\.selected) == [true, true, true, false, false])
@@ -240,9 +291,9 @@ struct ImportFromSourceViewModelTests {
     /// a changed row starts ticked, so the tick would have survived by
     /// accident and the test would have been green with the restore deleted
     /// (measured 2026-09-03).
-    @Test func aTickSurvivesASwitchFlip() throws {
+    @Test func aTickSurvivesASwitchFlip() async throws {
         let store = matchingStore()
-        let model = loadedModel(sessions: store.sessions)
+        let model = await loadedModel(sessions: store.sessions)
         let ticked = try #require(model.rows.first { $0.id == "new" })
         model.toggle(row: ticked)
         #expect(model.rows.first { $0.id == "new" }?.selected == false,
@@ -258,9 +309,9 @@ struct ImportFromSourceViewModelTests {
     /// And the re-plan really happens: with the labels switch on, the stored
     /// session's empty tag list differs from the bookmark's `["prod"]`, so
     /// the row that was `.knownUnchanged` becomes `.knownChanged`.
-    @Test func theLabelsSwitchRePlansTheRows() throws {
+    @Test func theLabelsSwitchRePlansTheRows() async throws {
         let store = matchingStore()
-        let model = loadedModel(sessions: store.sessions)
+        let model = await loadedModel(sessions: store.sessions)
         #expect(model.rows.first { $0.id == "same" }?.status == .knownUnchanged(store.same))
 
         model.takesGroupAndLabels = true
@@ -272,17 +323,17 @@ struct ImportFromSourceViewModelTests {
 
     // MARK: - The group picker
 
-    @Test func theGroupDefaultsToANewGroupNamedAfterTheSource() {
-        let model = loadedModel()
+    @Test func theGroupDefaultsToANewGroupNamedAfterTheSource() async {
+        let model = await loadedModel()
 
         #expect(model.groupChoice == .create(model.sourceName))
         #expect(model.groupChoices.contains(.ungrouped))
         #expect(model.groupChoices.contains(.create(model.sourceName)))
     }
 
-    @Test func anExistingGroupOfThatNameIsChosenRatherThanASecondOne() {
+    @Test func anExistingGroupOfThatNameIsChosenRatherThanASecondOne() async {
         let existing = StoredGroup(name: "Fake")
-        let model = loadedModel(groups: [existing])
+        let model = await loadedModel(groups: [existing])
 
         #expect(model.sourceName == existing.name)
         #expect(model.groupChoice == .existing(existing.id))
@@ -291,9 +342,9 @@ struct ImportFromSourceViewModelTests {
 
     // MARK: - The payload
 
-    @Test func thePayloadCarriesOnlyTheTickedRows() {
+    @Test func thePayloadCarriesOnlyTheTickedRows() async {
         let store = matchingStore()
-        let model = loadedModel(sessions: store.sessions)
+        let model = await loadedModel(sessions: store.sessions)
 
         let payload = model.payload()
 
@@ -301,8 +352,8 @@ struct ImportFromSourceViewModelTests {
         #expect(payload.sessions.allSatisfy { $0.importSource == FakeSource.id })
     }
 
-    @Test func thePayloadFilesIntoTheChosenGroupOnlyWithTheSwitch() throws {
-        let model = loadedModel()
+    @Test func thePayloadFilesIntoTheChosenGroupOnlyWithTheSwitch() async throws {
+        let model = await loadedModel()
 
         #expect(model.payload().groups.isEmpty)
 
@@ -313,9 +364,9 @@ struct ImportFromSourceViewModelTests {
         #expect(payload.sessions.allSatisfy { $0.groupID == group.id })
     }
 
-    @Test func thePayloadTakesTheChosenExistingGroup() throws {
+    @Test func thePayloadTakesTheChosenExistingGroup() async throws {
         let existing = StoredGroup(name: "Servers")
-        let model = loadedModel(groups: [existing])
+        let model = await loadedModel(groups: [existing])
         model.takesGroupAndLabels = true
         model.groupChoice = .existing(existing.id)
 
@@ -325,8 +376,8 @@ struct ImportFromSourceViewModelTests {
         #expect(payload.sessions.allSatisfy { $0.groupID == group.id })
     }
 
-    @Test func thePayloadTakesNoGroupWhenTheChoiceIsNone() {
-        let model = loadedModel()
+    @Test func thePayloadTakesNoGroupWhenTheChoiceIsNone() async {
+        let model = await loadedModel()
         model.takesGroupAndLabels = true
         model.groupChoice = .ungrouped
 
@@ -336,8 +387,8 @@ struct ImportFromSourceViewModelTests {
         #expect(payload.sessions.allSatisfy { $0.groupID == nil })
     }
 
-    @Test func thePayloadAnnouncesSecretsOnlyWithTheirSwitch() {
-        let model = loadedModel()
+    @Test func thePayloadAnnouncesSecretsOnlyWithTheirSwitch() async {
+        let model = await loadedModel()
 
         #expect(model.payload().includesSecrets == false)
 
@@ -347,15 +398,110 @@ struct ImportFromSourceViewModelTests {
 
     /// The applier needs a bookmark per exported entry to ask the keychain
     /// with, and it must find one for exactly the rows the payload carries.
-    @Test func theTickedBookmarksAreReachableByTheirImportID() {
+    @Test func theTickedBookmarksAreReachableByTheirImportID() async {
         let store = matchingStore()
-        let model = loadedModel(sessions: store.sessions)
+        let model = await loadedModel(sessions: store.sessions)
 
         let byID = model.selectedBookmarksByID
         let payload = model.payload()
 
         #expect(Set(byID.keys) == ["new", "moved"])
         #expect(payload.sessions.allSatisfy { byID[$0.importID ?? ""] != nil })
+    }
+
+    // MARK: - The keychain half of an import
+
+    /// A stand-in for a secret. Held in a NAMED CONSTANT and compared into a
+    /// `Bool` before any expectation: `#expect` reports the SOURCE TEXT of
+    /// what it checks, so a value written into an expectation leaks through
+    /// the failure message — which is exactly when somebody is reading it.
+    /// Nothing here touches the real keychain; `read` is a closure.
+    /// `nonisolated` because the `read` seam is `@Sendable` — the reader it
+    /// stands in for resumes from its own queue, so the closure genuinely
+    /// leaves this actor.
+    nonisolated private static let stubSecret = "stand-in-not-a-real-credential"
+
+    private func exported(importID: String, kind: ConnectionKind) -> ExportedSession {
+        ExportedSession(
+            id: UUID(), name: importID, kind: kind, fields: [:], importSource: FakeSource.id,
+            importID: importID)
+    }
+
+    /// The rule I-1 exists for: only a query that RAN and found nothing is
+    /// reported. `.notAttempted` means the reader asked the keychain nothing,
+    /// because the bookmark cannot have an item — counting it told the user
+    /// that passwords "could not be read" about items that never existed.
+    ///
+    /// The positive anchor sits in the same test: the `.notFound` entry IS
+    /// counted, so a rule that stopped counting anything would fail here too.
+    @Test func onlyAQueryThatRanAndFoundNothingIsCounted() async {
+        var payload = SessionExportPayload(
+            includesSecrets: true, groups: [],
+            sessions: [
+                exported(importID: "found", kind: .ssh),
+                exported(importID: "missing", kind: .ssh),
+                exported(importID: "never-asked", kind: .ssh),
+            ])
+        let bookmarks = Dictionary(
+            uniqueKeysWithValues: ["found", "missing", "never-asked"].map {
+                ($0, bookmark(id: $0, host: "\($0).example.net", username: "deploy"))
+            })
+
+        let notRead = await ExternalImportSecrets.fill(
+            into: &payload, bookmarks: bookmarks,
+            read: { bookmark in
+                switch bookmark.id {
+                case "found": return .found(Self.stubSecret)
+                case "missing": return .notFound
+                default: return .notAttempted
+                }
+            })
+
+        #expect(notRead == 1)
+        let filledTheFoundOne = payload.sessions[0].password == Self.stubSecret
+        let leftTheMissingOneAlone = payload.sessions[1].password == nil
+        let leftTheUnaskedOneAlone = payload.sessions[2].password == nil
+        #expect(filledTheFoundOne)
+        #expect(leftTheMissingOneAlone)
+        #expect(leftTheUnaskedOneAlone)
+    }
+
+    /// An S3 session's credential is its secret access key, not a password —
+    /// the same split `SessionImportPlanner` makes on the way back out. Put
+    /// in the wrong slot it is silently dropped, and the session imports
+    /// without a credential.
+    @Test func anS3SecretLandsInTheAccessKeySlotAndNotThePassword() async {
+        var payload = SessionExportPayload(
+            includesSecrets: true, groups: [],
+            sessions: [exported(importID: "bucket", kind: .s3)])
+        let bookmarks = [
+            "bucket": bookmark(
+                id: "bucket", protocol: .s3, host: "s3.example.net", username: "AKIAEXAMPLE",
+                path: "backups")
+        ]
+
+        _ = await ExternalImportSecrets.fill(
+            into: &payload, bookmarks: bookmarks, read: { _ in .found(Self.stubSecret) })
+
+        let landedOnTheAccessKey = payload.sessions[0].s3SecretAccessKey == Self.stubSecret
+        let didNotLandOnThePassword = payload.sessions[0].password == nil
+        #expect(landedOnTheAccessKey)
+        #expect(didNotLandOnThePassword)
+    }
+
+    /// An entry with no bookmark behind it — its row was dropped, or the
+    /// payload carries something the preview did not produce — is skipped
+    /// without being counted as a failure.
+    @Test func anEntryWithNoBookmarkBehindItIsNeitherFilledNorCounted() async {
+        var payload = SessionExportPayload(
+            includesSecrets: true, groups: [],
+            sessions: [exported(importID: "orphan", kind: .ssh)])
+
+        let notRead = await ExternalImportSecrets.fill(
+            into: &payload, bookmarks: [:], read: { _ in .notFound })
+
+        #expect(notRead == 0)
+        #expect(payload.sessions[0].password == nil)
     }
 
     // MARK: - What the sheet draws

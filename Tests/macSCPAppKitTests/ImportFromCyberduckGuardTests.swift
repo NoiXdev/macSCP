@@ -177,23 +177,48 @@ struct ImportFromCyberduckGuardTests {
 
         let sheet = try Self.strictSource(Self.sheetFile)
         let owner = try Self.strictSource(Self.ownerFile)
+        let presentation = try Self.strictSource(Self.presentationFile)
 
-        let ownerLoads = owner.contains(".load(source:")
-        let sheetLoads = sheet.contains(".load(source:")
+        let ownerLoads = owner.contains(Self.loadMarker)
+        let sheetLoads = sheet.contains(Self.loadMarker)
         let sheetReadsTheSource = sheet.contains("BookmarkSource")
         let sheetRunsOnAppear = sheet.contains(".onAppear") || sheet.contains(".task")
+        // M-2: the property is about the PRESENTATION, not about one file.
+        // Planting `.onAppear { model.load(source: …) }` on the
+        // `ImportFromSourceSheet(model:)` call re-reads the folder on every
+        // re-presentation, and a scan of the sheet alone stays green.
+        let presentationLoads = presentation.contains(Self.loadMarker)
+        let presentationSite = try #require(
+            Self.declarationBody(after: Self.presentationMarker, in: presentation))
+        let siteRunsOnAppear =
+            presentationSite.contains(".onAppear") || presentationSite.contains(".task")
 
         #expect(ownerLoads, """
             Nothing reads the bookmark folder before the sheet is presented — re-anchor this \
             guard, or the sheet is opening on a model that was never loaded.
             """)
+        // The positive anchor for the two presentation-site negatives below:
+        // the site is where it is claimed to be, and it builds the sheet.
+        #expect(presentationSite.contains("ImportFromSourceSheet("), "\(presentationSite)")
         #expect(sheetLoads == false, "the sheet loads the folder itself")
         #expect(sheetReadsTheSource == false, "the sheet knows about bookmark sources")
         #expect(sheetRunsOnAppear == false, """
             The sheet does work when it appears. SwiftUI decides how often that happens; reading \
             a folder is not something to do that many times.
             """)
+        #expect(presentationLoads == false, "the presentation site reads the folder")
+        #expect(siteRunsOnAppear == false, """
+            The presentation site does work when the sheet appears — the same hazard as above, \
+            one file over.
+            """)
     }
+
+    /// The one call that reads a bookmark folder. Named once, so the four
+    /// checks above cannot drift apart from each other.
+    private static let loadMarker = ".load(source:"
+    /// Where the sheet is presented. The binding is the window's own state,
+    /// so this marker is also what `declarationBody` slices the site out of.
+    private static let presentationMarker = ".sheet(item: $externalImport)"
 
     // MARK: - Secrets
 
@@ -211,13 +236,31 @@ struct ImportFromCyberduckGuardTests {
 
         #expect(filesConstructingAReader == [Self.ownerFile], "\(filesConstructingAReader)")
 
+        // M-3: structural, not a substring anywhere in the file. The span is
+        // the `if` block's own braces on the strict view, so moving the query
+        // out of the gate — while leaving the words `switches.takeSecrets`
+        // above it, or in a `let` nothing reads — no longer satisfies this.
         let owner = try Self.strictSource(Self.ownerFile)
-        let readsBehindTheSwitch = owner.contains("switches.takeSecrets")
-        #expect(readsBehindTheSwitch, """
-            The applier reads Cyberduck's keychain items without consulting the switch — the \
-            macOS consent prompt would then appear for an import nobody asked to carry secrets.
+        let gate = try #require(
+            Self.declarationBody(after: Self.secretsGateMarker, in: owner), """
+                No `if model.switches.takeSecrets` block in the applier — either the gate is \
+                gone, or it is spelled some other way and this guard is reading nothing.
+                """)
+        #expect(gate.contains("CyberduckSecretReader("), "\(gate)")
+        #expect(gate.contains(Self.secretQueryMarker), """
+            The keychain query has left the switch's own block. Every import would then raise a \
+            consent prompt per bookmark, for a switch the user left off.
             """)
+        // The negative beside it: the query appears nowhere else in the file.
+        let queriesInTheFile = owner.components(separatedBy: Self.secretQueryMarker).count - 1
+        #expect(queriesInTheFile == 1, "\(queriesInTheFile) keychain queries in \(Self.ownerFile)")
     }
+
+    /// The gate and the query, named once each. `reader.secret(for:` rather
+    /// than the type name: what must sit inside the gate is the CALL, and the
+    /// reader's construction is checked separately above.
+    private static let secretsGateMarker = "if model.switches.takeSecrets"
+    private static let secretQueryMarker = "reader.secret(for:"
 
     // MARK: - Catalogs
 
