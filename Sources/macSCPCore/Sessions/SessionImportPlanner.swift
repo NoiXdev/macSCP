@@ -734,7 +734,14 @@ public enum SessionImportPlanner {
     /// constant (`"webdav||"`) and still self-collide within that file. That is
     /// exactly today's behaviour for those old files, not a regression, and it
     /// cannot be fixed on the import side — the data simply is not in the file.
-    private static func duplicateKey(kind: ConnectionKind, values: FieldValues) -> String {
+    ///
+    /// Module-internal rather than private, unlike the rest of this planner's
+    /// helpers: `ImportPreviewPlanner` asks the SAME question of a third-party
+    /// bookmark ("is this connection already on record?") and calls this
+    /// instead of deriving a key of its own, so the preview's "known" and this
+    /// planner's "duplicate" cannot drift apart. Still not `public` — the key
+    /// is an implementation detail of import, not a format.
+    static func duplicateKey(kind: ConnectionKind, values: FieldValues) -> String {
         let descriptor = BackendDescriptor.descriptor(for: kind)
         let namespace = descriptor.fieldNamespace
         var parts: [String] = [kind.rawValue]
@@ -746,7 +753,7 @@ public enum SessionImportPlanner {
         return parts.joined(separator: "|")
     }
 
-    private static func duplicateKey(for session: StoredSession) -> String {
+    static func duplicateKey(for session: StoredSession) -> String {
         let kind = session.kind
         let values = BackendDescriptor.descriptor(for: kind).sessionValues(session)
         return duplicateKey(kind: kind, values: values)
