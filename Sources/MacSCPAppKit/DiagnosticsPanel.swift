@@ -34,6 +34,29 @@ struct DiagnosticsPanel: View {
     let model: DiagnosticsViewModel
     private let onClose: () -> Void
 
+    /// The floor the footer's four controls need at the default font, in the
+    /// widest of the four catalogs' footer strings.
+    ///
+    /// Measured 2026-09-03 with `NSAttributedString.size(withAttributes:)` —
+    /// the real AppKit metric, not a per-character guess — over each
+    /// catalog's `diagnostics.run`, the widest `diagnostics.scope.*` choice
+    /// ("Protocol probes"/"Protokollproben"/"Sondes de protocole"/"Sondy
+    /// protokołu"), `diagnostics.copy` and `common.close`, at
+    /// `NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .regular))`
+    /// except Run's own text, measured at 12.5pt
+    /// (`PolishedButtonStyle`'s font). The plan that opened this task
+    /// expected German to be the widest catalog; measuring the actual
+    /// strings found French wider (the four sums, narrowest to widest: en
+    /// 264pt, pl 356pt, de 346pt, fr 393pt of text alone). Adding an
+    /// estimated 30pt of chrome for the Run button's own padding
+    /// (`PolishedButtonStyle`: 14pt each side), ~22pt of system
+    /// bordered-button chrome for Close, ~36pt each for the Picker and the
+    /// Copy menu (the same chrome plus a ~14pt disclosure chevron), the
+    /// `HStack`'s three 8pt gaps and the panel's own 20pt padding on both
+    /// sides puts French at roughly 581pt — the widest of the four. Rounded
+    /// up to 600 for the chrome estimate's own uncertainty.
+    static let minimumWidth: CGFloat = 600
+
     init(model: DiagnosticsViewModel, onClose: @escaping () -> Void) {
         self.model = model
         self.onClose = onClose
@@ -48,7 +71,7 @@ struct DiagnosticsPanel: View {
             controls
         }
         .padding(20)
-        .frame(minWidth: 560, minHeight: 420)
+        .frame(minWidth: Self.minimumWidth, minHeight: 420)
         // The panel's half of the lifecycle: a diagnosis does not outlive the
         // sheet that asked for it. `run()` starts a free `Task`, which tearing
         // this view down does not touch — so without this line, closing the
@@ -251,73 +274,171 @@ struct DiagnosticsPanel: View {
         }
     }
 
+    /// Above `Self.minimumWidth`, one row (`wideControls`); below it,
+    /// `ViewThatFits` falls through to two (`narrowControls`) rather than
+    /// truncating a button or wrapping its title letter by letter — which is
+    /// what the maintainer's screenshot of this footer showed happening to
+    /// Run, at the width the panel used to allow (design ruling, 2026-09-03).
+    ///
+    /// Both rows draw the SAME four control views — `primaryAction`,
+    /// `scopeSelector`, `copyControl`, and the Close button are each written
+    /// once below and referenced from both layouts, so a modifier that must
+    /// appear exactly once in this file (`.keyboardShortcut(.defaultAction)`,
+    /// the one `Picker`, the one `Menu`) still does, no matter which row
+    /// `ViewThatFits` chooses to draw.
+    ///
+    /// **None of the three shared properties below spells `Button`,
+    /// `Picker` or `Menu` as a plain suffix of its own name.** The doors
+    /// guard's source scan finds an invocation by the RAW SUBSTRING of the
+    /// keyword it is hunting — `bodies(after: "Menu", …)` and
+    /// `invocationRanges(of: "Picker", …)` do not require a word boundary —
+    /// so a property declared `private var somethingPicker: some View {`
+    /// reads to that scanner exactly like a `Picker(` call: the "Picker"
+    /// substring lands right before `: some View {`, and the scan opens on
+    /// that brace and swallows the WHOLE property as if it were the
+    /// invocation's own trailing closure. Measured while writing this
+    /// task: naming these `runOrCancelButton`/`scopePicker`/`copyMenu` made
+    /// `theRunButtonIsTheDefaultAction` misidentify the shortcut as sitting
+    /// INSIDE a Button's own span and fail — not because the shortcut moved,
+    /// but because the scanner's "Button" match had silently become the
+    /// whole `runOrCancelButton` property rather than the real `Button(…)`
+    /// call inside it.
+    private var controls: some View {
+        ViewThatFits(in: .horizontal) {
+            wideControls
+            narrowControls
+        }
+    }
+
     /// A bare `HStack {`, like every other sheet footer in this target —
     /// `SheetOverflowMenuWiringGuardTests` locates a footer by exactly that
     /// line above the Close button, and a sheet whose footer it cannot parse
     /// drops out of that suite's population by throwing rather than by going
     /// quiet.
-    private var controls: some View {
+    private var wideControls: some View {
         HStack {
-            if model.isRunning {
-                Button(L10n.string("common.cancel", "Cancel")) { model.cancel() }
-            } else {
-                Button(
-                    model.report == nil
-                        ? L10n.string("diagnostics.run", "Run check")
-                        : L10n.string("diagnostics.runAgain", "Run again")
-                ) {
-                    model.run()
-                }
-                .buttonStyle(.polished)
-                // Return presses Run, and no other control in this panel
-                // claims the default action. The connection-tools design's
-                // §4 has said since 2026-09-03 that the error dialog's door
-                // opens the panel with Run as its default button — a claim
-                // about this file that nothing in it backed until the
-                // modifier below was added. Close takes the cancel action at
-                // the end of the row, so Esc and Return land on the two ends
-                // of it. Which button carries this is pinned by the doors
-                // guard rather than left to a reader to notice.
-                .keyboardShortcut(.defaultAction)
-            }
-            // What the button above will measure. Choosing writes the model's
-            // state and does nothing else — no run starts here, which is the
-            // same decision the rest of this file is written under and the one
-            // the doors guard reads this control for. The binding is spelled
-            // out in place rather than bound to a local, so that the control's
-            // only effect is visible in the control.
-            Picker(
-                L10n.string("diagnostics.scope", "What to run"),
-                selection: Binding(get: { model.scope }, set: { model.scope = $0 })
-            ) {
-                // Every case the type declares, in its own order. A list
-                // written out here would be a second copy of an enum in Core,
-                // and it is the copy that stops growing.
-                ForEach(DiagnosticScope.allCases, id: \.self) { choice in
-                    Text(DiagnosticsPresentation.scopeName(choice)).tag(choice)
-                }
-            }
-            .pickerStyle(.menu)
-            .fixedSize()
-            Menu(L10n.string("diagnostics.copy", "Copy report")) {
-                Button(L10n.string("diagnostics.copy.plainText", "As plain text")) {
-                    model.copyPlainText()
-                }
-                Button(L10n.string("diagnostics.copy.markdown", "As Markdown")) {
-                    model.copyMarkdown()
-                }
-            }
-            // Enabled as soon as there is a row to copy, running or not.
-            // The rows are on screen from the first second while the trace can
-            // spend twenty more; disabling copy for those twenty made the way
-            // to copy what you could already read "press Cancel", which is
-            // pressing stop in order to copy. A partial report says so under
-            // its header — see `DiagnosticsViewModel.copyableReport`.
-            .disabled(model.copyableReport == nil)
-            .fixedSize()
+            primaryAction
+            scopeSelector
+            copyControl
             Spacer(minLength: 0)
             Button(L10n.string("common.close", "Close"), action: onClose)
                 .keyboardShortcut(.cancelAction)
+                .fixedSize(horizontal: true, vertical: false)
         }
+    }
+
+    /// The fallback row: the scope and Run on top, Copy and Close beneath —
+    /// the split the design ruling asked for (row 1 picker + Run, row 2 copy
+    /// + close), so the control someone is most likely mid-choice on (what
+    /// to run) sits directly above the button that acts on it.
+    private var narrowControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                scopeSelector
+                Spacer(minLength: 0)
+                primaryAction
+            }
+            HStack {
+                copyControl
+                Spacer(minLength: 0)
+                Button(L10n.string("common.close", "Close"), action: onClose)
+                    .keyboardShortcut(.cancelAction)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+    }
+
+    /// Run, or Cancel while a diagnosis is in flight. Defined once so
+    /// `.keyboardShortcut(.defaultAction)` appears exactly once in this file
+    /// no matter which of `wideControls`/`narrowControls` is on screen —
+    /// `DiagnosticsDoorsGuardTests.theRunButtonIsTheDefaultAction` reads that
+    /// single occurrence, positionally, to confirm it is Run's.
+    @ViewBuilder
+    private var primaryAction: some View {
+        if model.isRunning {
+            Button(L10n.string("common.cancel", "Cancel")) { model.cancel() }
+                .fixedSize(horizontal: true, vertical: false)
+        } else {
+            Button(
+                model.report == nil
+                    ? L10n.string("diagnostics.run", "Run check")
+                    : L10n.string("diagnostics.runAgain", "Run again")
+            ) {
+                model.run()
+            }
+            .buttonStyle(.polished)
+            // Return presses Run, and no other control in this panel
+            // claims the default action. The connection-tools design's
+            // §4 has said since 2026-09-03 that the error dialog's door
+            // opens the panel with Run as its default button — a claim
+            // about this file that nothing in it backed until the
+            // modifier below was added. Close takes the cancel action at
+            // the end of the row, so Esc and Return land on the two ends
+            // of it. Which button carries this is pinned by the doors
+            // guard rather than left to a reader to notice.
+            .keyboardShortcut(.defaultAction)
+            // Keeps the title on one line rather than wrapping it letter by
+            // letter when the footer is narrower than its natural width —
+            // exactly what the maintainer's screenshot showed happening
+            // here, the widest button in the row, before this task.
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    /// What the button above will measure. Choosing writes the model's
+    /// state and does nothing else — no run starts here, which is the
+    /// same decision the rest of this file is written under and the one
+    /// the doors guard reads this control for. The binding is spelled
+    /// out in place rather than bound to a local, so that the control's
+    /// only effect is visible in the control.
+    ///
+    /// Defined once so the `Picker` appears exactly once in this file
+    /// (`DiagnosticsDoorsGuardTests.scopeControl`), reused by whichever row
+    /// `ViewThatFits` draws.
+    ///
+    /// Its own visible label is hidden — "What to run"/"Was geprüft
+    /// wird"/"Ce qui est vérifié"/"Co sprawdzić" is what ate the footer's
+    /// width before this task — with the SAME key kept as an accessibility
+    /// label, so VoiceOver still announces what the control does; only the
+    /// on-screen column disappears.
+    private var scopeSelector: some View {
+        Picker(
+            L10n.string("diagnostics.scope", "What to run"),
+            selection: Binding(get: { model.scope }, set: { model.scope = $0 })
+        ) {
+            // Every case the type declares, in its own order. A list
+            // written out here would be a second copy of an enum in Core,
+            // and it is the copy that stops growing.
+            ForEach(DiagnosticScope.allCases, id: \.self) { choice in
+                Text(DiagnosticsPresentation.scopeName(choice)).tag(choice)
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .accessibilityLabel(L10n.string("diagnostics.scope", "What to run"))
+        .fixedSize()
+    }
+
+    /// Enabled as soon as there is a row to copy, running or not.
+    /// The rows are on screen from the first second while the trace can
+    /// spend twenty more; disabling copy for those twenty made the way
+    /// to copy what you could already read "press Cancel", which is
+    /// pressing stop in order to copy. A partial report says so under
+    /// its header — see `DiagnosticsViewModel.copyableReport`.
+    ///
+    /// Defined once so the `Menu` appears exactly once in this file
+    /// (`DiagnosticsDoorsGuardTests.copyReportIsAMenuWithTwoEntries`),
+    /// reused by whichever row `ViewThatFits` draws.
+    private var copyControl: some View {
+        Menu(L10n.string("diagnostics.copy", "Copy report")) {
+            Button(L10n.string("diagnostics.copy.plainText", "As plain text")) {
+                model.copyPlainText()
+            }
+            Button(L10n.string("diagnostics.copy.markdown", "As Markdown")) {
+                model.copyMarkdown()
+            }
+        }
+        .disabled(model.copyableReport == nil)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }

@@ -676,6 +676,131 @@ struct DiagnosticsDoorsGuardTests {
             """)
     }
 
+    /// Run keeps its title on one line rather than wrapping it letter by
+    /// letter — the exact defect the maintainer's screenshot showed (design
+    /// ruling, 2026-09-03).
+    ///
+    /// Read by POSITION, the same way `theRunButtonIsTheDefaultAction` reads
+    /// the default-action shortcut: `.fixedSize(horizontal: true, vertical:
+    /// false)` attaches after a Button's trailing closure and is therefore
+    /// outside that Button's own invocation, so the check asks which Button
+    /// is the last one to START before an occurrence of the modifier.
+    ///
+    /// `>= 1`, not `== 1`: every footer button carries this modifier (Close
+    /// and Cancel do too, so the footer wraps to two rows rather than
+    /// truncating any of its four controls), and a second correct occurrence
+    /// is the panel doing the right thing everywhere else. What this check
+    /// pins is that ONE of them sits on the button that starts Run.
+    @Test func theRunButtonKeepsItsWidthFixed() throws {
+        let run = try Self.runEntryName()
+        let source = try Self.strictSource(of: Self.panelPath)
+        let modifier = ".fixedSize(horizontal: true, vertical: false)"
+
+        let positions = Self.offsets(of: modifier, in: source)
+        #expect(!positions.isEmpty, """
+            \(Self.panelPath) must carry \(modifier) — without it on the panel's widest \
+            button, a narrow footer wraps that button's title letter by letter instead of \
+            keeping it on one line.
+            """)
+
+        let buttons = Self.invocationRanges(of: "Button", in: source)
+        let ownsRun = positions.contains { position in
+            guard let owner = buttons.last(where: { $0.lowerBound < position }) else {
+                return false
+            }
+            return Self.mentions(run, in: String(Array(source)[owner]))
+        }
+        #expect(ownsRun, """
+            \(Self.panelPath): no \(modifier) attaches to the Button that starts \(run)() — \
+            found \(positions.count) occurrence(s) of the modifier, none of them owned by \
+            Run.
+            """)
+    }
+
+    /// The scope picker's visible label is hidden — "What to run" is what
+    /// crowded Run and Close out of the footer before this task — and the
+    /// same wording stays reachable to VoiceOver as an accessibility label,
+    /// so hiding the column does not silence the control (design ruling,
+    /// 2026-09-03).
+    ///
+    /// Read by POSITION for the same reason as the two checks above:
+    /// `.labelsHidden()` and `.accessibilityLabel(…)` attach after a
+    /// Picker's trailing closure and are therefore outside `scopeControl()`
+    /// — the argument-and-trailing-closure span that check reads.
+    ///
+    /// Positive and negative in one case, as everywhere in this suite: both
+    /// modifiers must exist at all (so "hides nothing" cannot masquerade as
+    /// "hides safely"), and whichever Picker owns `.labelsHidden()` must be
+    /// the SAME one that owns `.accessibilityLabel(…)` — a hidden label with
+    /// no accessibility label standing in for it is a control VoiceOver
+    /// announces as nothing at all.
+    @Test func theScopePickerHidesItsLabelButKeepsAnAccessibilityLabel() throws {
+        // The positive anchor: exactly one Picker exists at all, so the
+        // position search below is unambiguous about which one it can mean.
+        _ = try Self.scopeControl()
+        let source = try Self.strictSource(of: Self.panelPath)
+        let pickers = Self.invocationRanges(of: "Picker", in: source)
+
+        let hidden = Self.offsets(of: ".labelsHidden()", in: source)
+        #expect(hidden.count == 1, """
+            \(Self.panelPath) must carry exactly one .labelsHidden() — found \(hidden.count). \
+            Two hidden labels is one too many controls to hide in this footer, and none \
+            leaves the wide "What to run" label crowding Run and Close out.
+            """)
+        let labelled = Self.offsets(of: ".accessibilityLabel(", in: source)
+        #expect(!labelled.isEmpty, """
+            \(Self.panelPath) must carry .accessibilityLabel(…) — without it, hiding the \
+            scope picker's visible label silences it for VoiceOver too.
+            """)
+
+        guard let hiddenPosition = hidden.first,
+              let hiddenOwner = pickers.last(where: { $0.lowerBound < hiddenPosition })
+        else {
+            Issue.record("\(Self.panelPath): .labelsHidden() sits before any Picker")
+            return
+        }
+        #expect(hiddenOwner.upperBound <= hiddenPosition, """
+            \(Self.panelPath): .labelsHidden() is INSIDE a Picker's own invocation rather \
+            than attached to it as a modifier — the position check below cannot mean what \
+            it says.
+            """)
+
+        let ownsLabel = labelled.contains { position in
+            guard let owner = pickers.last(where: { $0.lowerBound < position }) else {
+                return false
+            }
+            return owner == hiddenOwner
+        }
+        #expect(ownsLabel, """
+            \(Self.panelPath): .labelsHidden() and .accessibilityLabel(…) attach to \
+            different controls — the scope picker's hidden label must keep its OWN \
+            accessibility label, not borrow one meant for something else.
+            """)
+    }
+
+    /// A magic number inside `.frame(minWidth:)` is a floor nobody reading
+    /// the type can find or explain; a named constant is one a reader — or
+    /// the derivation in its own doc comment — can point at.
+    ///
+    /// The VALUE is not read here, only its presence and that it is
+    /// actually applied — this suite scans source text, not layout, so it
+    /// cannot confirm the number fits anything; that confirmation is the
+    /// doc comment's own measurement, stated where whoever changes the
+    /// footer's controls will read it.
+    @Test func thePanelDeclaresAMinimumWidth() throws {
+        let source = try Self.strictSource(of: Self.panelPath)
+        #expect(source.contains("static let minimumWidth: CGFloat"), """
+            \(Self.panelPath) must declare a named `minimumWidth` constant — without one, \
+            the footer's floor is a bare number nothing but a reader stumbling on \
+            .frame(minWidth:) can find.
+            """)
+        #expect(source.contains(".frame(minWidth: Self.minimumWidth"), """
+            \(Self.panelPath) declares minimumWidth but does not apply it through \
+            .frame(minWidth: Self.minimumWidth…) — a constant nothing reads changes \
+            nothing about the footer that used to wrap.
+            """)
+    }
+
     /// The scope menu chooses what Run will measure, and choosing starts
     /// nothing.
     ///
