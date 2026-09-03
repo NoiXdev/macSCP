@@ -25,6 +25,21 @@ import Testing
 /// router, which answers it; nothing leaves the local network. No other
 /// destination is ever contacted.
 ///
+/// **Why the reader filters on this file's own payload (added 2026-09-03).**
+/// `.serialized` orders a suite's own cases; Swift Testing still runs
+/// DIFFERENT suites in parallel, and an unfiltered `MACSCP_NETSPIKE=1 swift
+/// test` — exactly what a maintainer runs to refresh this record — enables
+/// `ICMPEchoTests` at the same time. An unprivileged ICMP DGRAM socket is not
+/// demultiplexed (measured 2026-09-03: a second socket's reply, and another
+/// PROCESS's `ping` replies, are both handed to a socket that did not ask for
+/// them), so a reader that accepted any datagram of the right type could
+/// print another suite's reply — or a stray `ping` — into the file whose
+/// whole purpose is to be the measurement record. Every `accept` below
+/// therefore also requires `Spike.payload` to come back in the datagram: for
+/// the echo cases as the echoed data, for the time-exceeded cases inside the
+/// quoted original datagram. The verdicts stay measurements of replies to
+/// THIS file's own requests.
+///
 /// **Why every socket call sits inside `onDedicatedQueue`.** `poll` and
 /// `recvfrom` block the thread they run on, and Swift Testing runs tests on
 /// the cooperative pool, which is exactly as wide as the machine has cores
@@ -184,7 +199,7 @@ struct ICMPSpikeTests {
             start: start,
             deadline: deadline,
             detail: &detail,
-            accept: { $0.type == replyType }
+            accept: { $0.type == replyType && $0.carriesSpikePayload }
         )
         guard let received else {
             detail.append("nothing matching arrived within \(Spike.waitMilliseconds) ms")
@@ -284,7 +299,7 @@ struct ICMPSpikeTests {
             start: start,
             deadline: deadline,
             detail: &detail,
-            accept: { $0.type == expectedType }
+            accept: { $0.type == expectedType && $0.carriesSpikePayload }
         )
         if let received {
             detail.append("time-exceeded after \(Self.format(received.elapsedMilliseconds)) ms: \(received.message)")
@@ -470,6 +485,13 @@ struct ICMPSpikeTests {
         var sequence: UInt16?
         var quoted: String?
         var source: String
+        /// Whether `Spike.payload` appears anywhere after the ICMP header —
+        /// as the echoed data for an echo reply, and inside the quoted
+        /// original datagram for a time-exceeded message. Searched rather
+        /// than read at a fixed offset because the quote carries the original
+        /// IP and UDP headers ahead of it, and their lengths are the router's
+        /// business, not this file's.
+        var carriesSpikePayload: Bool
 
         init?(bytes: [UInt8], family: Int32, source: String) {
             byteCount = bytes.count
@@ -495,6 +517,22 @@ struct ICMPSpikeTests {
             }
             let quotedBytes = bytes.count - (offset + 8)
             quoted = quotedBytes > 0 ? "\(quotedBytes) bytes of the original datagram" : nil
+            carriesSpikePayload = ICMPMessage.contains(
+                Array(Spike.payload.utf8), in: bytes, from: offset + 8)
+        }
+
+        /// Whether `marker` appears in `bytes` at or after `start`.
+        private static func contains(_ marker: [UInt8], in bytes: [UInt8], from start: Int)
+            -> Bool
+        {
+            guard !marker.isEmpty, start >= 0, bytes.count >= start + marker.count else {
+                return false
+            }
+            for offset in start...(bytes.count - marker.count)
+            where Array(bytes[offset..<(offset + marker.count)]) == marker {
+                return true
+            }
+            return false
         }
 
         var description: String {

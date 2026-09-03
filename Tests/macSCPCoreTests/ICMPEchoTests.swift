@@ -10,16 +10,19 @@ import Testing
 /// hands the IP header up with the payload and the IPv6 socket does not, and
 /// the ICMPv6 socket ALSO delivers this process's own outgoing request.
 ///
-/// **Where the packets go.** Loopback only — `127.0.0.1` and `::1`. No other
-/// destination is ever contacted, and nothing here is gated because an
-/// unprivileged ICMP socket to loopback needs neither the rig nor a route off
-/// the machine.
+/// **Where the packets go.** Loopback only — `127.0.0.1` and `::1`. Nothing
+/// is gated, because an unprivileged ICMP socket to loopback needs neither
+/// the rig nor a route off the machine. `2001:db8::1` is NAMED by the
+/// routeless case and never sent to: that case measures the route first and
+/// returns without calling the subject when one exists.
 ///
-/// **Why the suite is serialized.** Every case here opens an ICMP socket in
-/// the same process and matches replies by sequence, so two cases running at
-/// once could each take the other's answer. Serialized rather than made
-/// unique by identifier: the identifier is exactly the field the verdict says
-/// an implementation must not depend on.
+/// **Why the suite is serialized.** The two injection cases put datagrams
+/// into a socket space that is not demultiplexed (see
+/// `aForeignEchoReplyIsNotCountedAsThisProbesAnswer`) under sequences chosen
+/// by hand, so two of them running at once could take each other's. The
+/// probing cases are safe on their own — each socket's payload nonce is
+/// unique — but serializing the suite is cheaper than reasoning about which
+/// half needs it.
 ///
 /// **Why no test parks a thread.** `ICMPEcho` runs its whole socket sequence
 /// on a `DispatchQueue` of its own and is awaited through a continuation
@@ -32,19 +35,22 @@ struct ICMPEchoTests {
     /// report rather than a synthetic sentence.
     private static let unsupportedFamily: Int32 = 255
 
+    /// RFC 3849's documentation prefix — an address that is not routed on the
+    /// public internet and that the routeless case never sends to.
+    private static let documentationV6 = "2001:db8::1"
+
     // MARK: - IPv4
 
     /// The reply's TYPE is what pins the IPv4 header skip: an echo reply is
     /// type 0, and a reader that forgot to skip `ihl * 4` bytes would read
     /// the first byte of the IP header instead — `0x45`, i.e. 69.
-    @Test func anEchoToIPv4LoopbackIsAnsweredWithTheSentSequence() async throws {
+    @Test func anEchoToIPv4LoopbackIsAnsweredByAnEchoReply() async throws {
         let address = try #require(await Self.loopback("127.0.0.1"))
         let outcome = await ICMPEcho.probe(address: address, count: 1, timeout: .seconds(2))
         let reply = try #require(outcome.replies.first, "no echo reply from 127.0.0.1: \(outcome)")
 
         #expect(outcome.sent == 1)
         #expect(reply.type == ICMPEcho.ipv4EchoReply)
-        #expect(reply.sequence == 1)
         #expect(reply.rtt > .zero)
         #expect(reply.source == "127.0.0.1")
 
@@ -57,12 +63,21 @@ struct ICMPEchoTests {
                 + "(\(reply.identifier == ICMPEcho.identifier ? "unchanged" : "rewritten"))")
     }
 
+    /// Three probes, three round-trip times, three consecutive sequences.
+    ///
+    /// The expectation is DERIVED from the first reply's own sequence, never
+    /// written as `[1, 2, 3]`: the base is drawn at random per socket, so a
+    /// literal would be pinning a numbering that changes every run — and
+    /// pinning `1, 2, 3` is what let every pinger on the machine collide with
+    /// this one in the first place.
     @Test func threeProbesProduceThreeRoundTripTimes() async throws {
         let address = try #require(await Self.loopback("127.0.0.1"))
         let outcome = await ICMPEcho.probe(address: address, count: 3, timeout: .seconds(5))
+        let base = try #require(outcome.replies.first?.sequence, "no reply: \(outcome)")
 
         #expect(outcome.sent == 3)
-        #expect(outcome.replies.map(\.sequence) == [1, 2, 3])
+        #expect(outcome.replies.count == 3)
+        #expect(outcome.replies.map(\.sequence) == (0..<3).map { base &+ UInt16($0) })
         #expect(outcome.replies.allSatisfy { $0.rtt > .zero })
     }
 
@@ -80,8 +95,59 @@ struct ICMPEchoTests {
 
         #expect(reply.type == ICMPEcho.ipv6EchoReply)
         #expect(reply.type != ICMPEcho.ipv6EchoRequest)
-        #expect(reply.sequence == 1)
         #expect(reply.rtt > .zero)
+    }
+
+    // MARK: - A datagram this probe never provoked
+
+    /// **Measured 2026-09-03, and the reason this case exists.** An
+    /// unprivileged ICMP DGRAM socket is not demultiplexed: it is handed every
+    /// echo reply the machine receives. Two experiments, both on `127.0.0.1`:
+    /// a second socket in this process sent an echo with identifier 4242 and
+    /// sequence 77, and the *first* socket was handed the reply; and a plain
+    /// `ping -c 3 127.0.0.1` in a separate process put three replies into a
+    /// listening socket that had sent nothing at all.
+    ///
+    /// So "type and sequence" is not a match — a user with `ping` running in
+    /// Terminal while they press Diagnose would have collected someone else's
+    /// replies and read `3/3 replies` for a host that answered nothing. Only
+    /// the echoed payload distinguishes them, and RFC 792 requires the reply
+    /// to return it.
+    ///
+    /// The wait runs on a queue of its own: it polls and reads, which parks
+    /// the thread it is on (CLAUDE.md, "Tests never block the cooperative
+    /// pool").
+    @Test func aForeignEchoReplyIsNotCountedAsThisProbesAnswer() async throws {
+        let ours = ICMPEcho.probePayload()
+        let theirs = Array("not-this-probes-payload".utf8)
+        let result = await Self.onOwnQueue { Self.injectForeignReply(ours: ours, theirs: theirs) }
+
+        // The positive anchor, and it has to come first: the foreign datagram
+        // really did reach OUR socket, and the wait really does return a reply
+        // when it is asked for that datagram's own payload. Without this the
+        // negative below would be satisfied by a socket that received nothing.
+        #expect(result.acceptedWhenAskedForTheirPayload)
+        #expect(result.rejectedWhenAskedForOurPayload)
+    }
+
+    /// A datagram carrying THIS probe's payload but an earlier probe's
+    /// sequence is a late answer to that earlier request, and counting it for
+    /// this one would time probe 2 from probe 1's flight.
+    ///
+    /// The sequence half of the match therefore needs a case of its own: with
+    /// the payload check in place, no other case here can distinguish a
+    /// matcher that checks the sequence from one that does not — on loopback
+    /// each reply arrives long before the next request goes out, so a
+    /// mismatch never occurs by accident.
+    @Test func aReplyWithAnEarlierProbesSequenceIsNotCountedForThisOne() async throws {
+        let ours = ICMPEcho.probePayload()
+        let result = await Self.onOwnQueue { Self.injectStaleSequence(payload: ours) }
+
+        // Anchor first, same reasoning as above: the datagram reaches this
+        // socket and IS returned when the wait expects the sequence it
+        // carries.
+        #expect(result.acceptedForItsOwnSequence)
+        #expect(result.rejectedForAnotherSequence)
     }
 
     // MARK: - What this machine cannot do
@@ -102,22 +168,30 @@ struct ICMPEchoTests {
     }
 
     /// An IPv6 address this machine has no route to is `unavailable` with the
-    /// sentence the panel will render, and **nothing is sent**: the route
-    /// probe is a `connect` on an unconnected UDP socket, which only consults
-    /// the routing table.
+    /// sentence the panel will render, and **nothing is sent**.
     ///
-    /// Gated, and the gate is the point. The destination is RFC 3849's
-    /// documentation prefix, the same one the spike's (c) case uses, and the
-    /// case asserts a property of THE MACHINE — that it has no global IPv6
-    /// route, which is what verdict (c) recorded here on 2026-09-03. On a
-    /// machine that does have one, the route probe succeeds and this becomes
-    /// a measurement of something else entirely; `MACSCP_NETSPIKE=1` is the
-    /// declaration that the runner knows what its network does.
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSCP_NETSPIKE"] == "1"))
-    func anIPv6AddressWithNoRouteIsUnavailableAndSendsNothing() async throws {
-        let address = try #require(await Self.loopback("2001:db8::1"))
+    /// Ungated, and it still never leaves loopback, because the precondition
+    /// is MEASURED before anything is sent — the spike file's own rule, that
+    /// a "no" is a green test with a printed verdict. The destination is RFC
+    /// 3849's documentation prefix; this machine had no route to it on
+    /// 2026-09-03 (spike verdict (c)). On a machine that does have one, the
+    /// case prints that and returns without calling the subject at all, so no
+    /// packet goes anywhere in either branch.
+    ///
+    /// The precondition uses the TEST's own `connect` probe, not the
+    /// subject's: deciding the expectation with the code under test would
+    /// make the case tautological and would undo the mutation probe that pins
+    /// the route check. `connect` on an unconnected UDP socket sends nothing.
+    @Test func anIPv6AddressWithNoRouteIsUnavailableAndSendsNothing() async throws {
+        let address = try #require(await Self.loopback(Self.documentationV6))
+        guard await Self.onOwnQueue({ Self.hasNoRoute(to: Self.documentationV6) }) else {
+            print(
+                "ICMPEcho: this machine has a route to \(Self.documentationV6) — the routeless "
+                    + "branch is unmeasured here, and nothing was sent")
+            return
+        }
         let outcome = await ICMPEcho.probe(address: address, count: 3, timeout: .seconds(2))
-        #expect(outcome == .unavailable("no IPv6 route"))
+        #expect(outcome == .unavailable(ICMPEcho.noIPv6RouteReason))
         // The positive anchor for that sentence: nothing went out, which is
         // what separates "no route" from "sent and heard nothing back".
         #expect(outcome.sent == 0)
@@ -171,6 +245,137 @@ struct ICMPEchoTests {
     }
 
     // MARK: - Fixtures
+
+    /// What one foreign-injection run found.
+    private struct ForeignInjection: Sendable {
+        /// The wait returned nothing when it was told to expect OUR payload.
+        var rejectedWhenAskedForOurPayload = false
+        /// The same datagram WAS returned when the wait was told to expect the
+        /// foreign payload — the proof that it reached this socket at all.
+        var acceptedWhenAskedForTheirPayload = false
+    }
+
+    /// Sends an echo request from a SECOND socket and asks the first socket's
+    /// wait for it twice: once expecting this probe's payload, once expecting
+    /// the foreign one. Two sends, because a wait consumes the datagram it
+    /// rejects.
+    ///
+    /// Blocking, and only ever called from `onOwnQueue`.
+    private static func injectForeignReply(ours: [UInt8], theirs: [UInt8]) -> ForeignInjection {
+        var result = ForeignInjection()
+        let listener = socket(AF_INET, SOCK_DGRAM, Int32(IPPROTO_ICMP))
+        guard listener >= 0 else { return result }
+        defer { Darwin.close(listener) }
+        let foreignSequence: UInt16 = 0xBEEF
+
+        // The wait is asked for OUR payload; the datagram carries theirs.
+        guard send(payload: theirs, sequence: foreignSequence) else { return result }
+        result.rejectedWhenAskedForOurPayload = wait(
+            on: listener, sequence: foreignSequence, payload: ours) == nil
+
+        // The same datagram, and this time the wait is asked for the payload
+        // it actually carries.
+        guard send(payload: theirs, sequence: foreignSequence) else { return result }
+        result.acceptedWhenAskedForTheirPayload = wait(
+            on: listener, sequence: foreignSequence, payload: theirs) != nil
+        return result
+    }
+
+    /// What one stale-sequence run found.
+    private struct StaleSequence: Sendable {
+        var rejectedForAnotherSequence = false
+        var acceptedForItsOwnSequence = false
+    }
+
+    /// Sends this probe's own payload under one sequence and asks the wait
+    /// for it under another, then under its own. Blocking; only ever called
+    /// from `onOwnQueue`.
+    private static func injectStaleSequence(payload: [UInt8]) -> StaleSequence {
+        var result = StaleSequence()
+        let listener = socket(AF_INET, SOCK_DGRAM, Int32(IPPROTO_ICMP))
+        guard listener >= 0 else { return result }
+        defer { Darwin.close(listener) }
+        let earlier: UInt16 = 0x1000
+        let current: UInt16 = 0x1001
+
+        guard send(payload: payload, sequence: earlier) else { return result }
+        result.rejectedForAnotherSequence = wait(
+            on: listener, sequence: current, payload: payload) == nil
+
+        guard send(payload: payload, sequence: earlier) else { return result }
+        result.acceptedForItsOwnSequence = wait(
+            on: listener, sequence: earlier, payload: payload) != nil
+        return result
+    }
+
+    /// One echo request to `127.0.0.1` from a socket of its own — the "other
+    /// pinger on the machine". Built by the production packet writer so the
+    /// checksum is not a second implementation.
+    private static func send(payload: [UInt8], sequence: UInt16) -> Bool {
+        let sender = socket(AF_INET, SOCK_DGRAM, Int32(IPPROTO_ICMP))
+        guard sender >= 0 else { return false }
+        defer { Darwin.close(sender) }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let packet = ICMPEcho.request(
+            type: ICMPEcho.ipv4EchoRequest, identifier: 0xFEED, sequence: sequence,
+            payload: payload, computeChecksum: true)
+        let written = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { target in
+                packet.withUnsafeBytes { buffer in
+                    sendto(
+                        sender, buffer.baseAddress, buffer.count, 0, target,
+                        socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+        }
+        return written >= 0
+    }
+
+    private static func wait(
+        on descriptor: Int32, sequence: UInt16, payload: [UInt8]
+    ) -> ICMPEchoReply? {
+        let now = ContinuousClock().now
+        return ICMPEcho.waitForReply(
+            descriptor: descriptor, family: AF_INET, replyType: ICMPEcho.ipv4EchoReply,
+            sequence: sequence, payload: payload, started: now,
+            deadline: now.advanced(by: .milliseconds(500)))
+    }
+
+    /// The test's OWN route probe, independent of the subject's: `connect` on
+    /// an unconnected UDP socket consults the routing table and sends nothing.
+    /// Deliberately a second implementation of those six lines — using
+    /// `ICMPEcho`'s would decide the expectation with the code under test.
+    private static func hasNoRoute(to host: String) -> Bool {
+        let descriptor = socket(AF_INET6, SOCK_DGRAM, Int32(IPPROTO_UDP))
+        guard descriptor >= 0 else { return true }
+        defer { Darwin.close(descriptor) }
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_port = UInt16(33434).bigEndian
+        guard inet_pton(AF_INET6, host, &address.sin6_addr) == 1 else { return true }
+        return withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in6>.size))
+            }
+        } != 0
+    }
+
+    /// Runs a blocking socket sequence on a queue of its own and suspends the
+    /// caller on a continuation, so no cooperative-pool thread is parked in
+    /// `poll` or `recvfrom`.
+    private static func onOwnQueue<T: Sendable>(
+        _ body: @escaping @Sendable () -> T
+    ) async -> T {
+        await withCheckedContinuation { (continuation: CheckedContinuation<T, Never>) in
+            DispatchQueue(label: "macscp.tests.icmp-echo").async {
+                continuation.resume(returning: body())
+            }
+        }
+    }
 
     private static func loopback(_ host: String) async -> ResolvedAddress? {
         guard
