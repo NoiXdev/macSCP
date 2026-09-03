@@ -460,6 +460,90 @@ struct TerminalPanelViewModelTests {
             "attempts \(shell.attempts), accepted \(shell.accepted)")
     }
 
+    /// A window-change that returns AFTER its own shell is gone must not be
+    /// remembered for the next one.
+    ///
+    /// `lastSentSize` is written after the `await`, so the write no longer
+    /// sits in the synchronous step that owns the shell — and
+    /// `cancelPendingSends()` cannot prevent it: it names only the tail of the
+    /// chain, and cancellation is a flag that a NIO future ignores. So a
+    /// stalled window-change returns whenever it returns, and without an
+    /// identity check it writes onto whatever the view model has become.
+    ///
+    /// The sequence below is the whole failure, and every step is forced
+    /// rather than waited for:
+    ///
+    /// 1. shell A is running; a 100x30 window-change stalls on the link;
+    /// 2. shell A ends — `forgetGeometry()` clears `lastSentSize`;
+    /// 3. Reopen: `openIfNeeded()` clears it again and parks on the channel
+    ///    open, so the view model sits in `.opening` with `shell == nil`;
+    /// 4. INSIDE that window the stalled window-change returns;
+    /// 5. the remounted surface reports the same 100x30 — the window has not
+    ///    moved — and it is held in `pendingSize`;
+    /// 6. shell B opens.
+    ///
+    /// Unguarded, step 4 writes `lastSentSize = 100x30` while `shell` is
+    /// `nil`, step 6's `flushPendingSize` dedups against it, and shell B keeps
+    /// its open-time 80x24 for its whole life. That is not a degraded value —
+    /// it is the exact defect this task exists to fix, reached through the new
+    /// write path.
+    @Test func aWindowChangeReturningAfterItsShellEndedIsNotRememberedForTheNext() async throws {
+        let first = ParkedResizeShell()
+        let second = MockShell()
+        let secondOpen = ParkGate()
+        let attempts = Counter()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            await attempts.increment()
+            if await attempts.value == 1 { return first }
+            await secondOpen.wait()  // Hold shell B's channel open.
+            return second
+        })
+
+        // 1. Shell A, and a window-change that stalls inside it.
+        vm.openIfNeeded()
+        try await waitUntil(vm.state == .running)
+        vm.resize(cols: 100, rows: 30)
+        try await waitUntil(first.resizeGate.entered == 1)
+        #expect(first.acceptedResizes.isEmpty)
+
+        // 2. Shell A ends with the window-change still in flight.
+        first.endOutput()
+        try await waitUntil(vm.state == .ended(nil))
+
+        // 3. Reopen, parked on the channel open.
+        vm.openIfNeeded()
+        #expect(vm.state == .opening)
+        try await waitUntil(secondOpen.entered == 1)
+
+        // 4. The stalled window-change returns, inside that window.
+        first.resizeGate.release()
+        try await waitUntil(first.acceptedResizes.count == 1)
+        // The view model's own write happens when `shell.resize` RETURNS,
+        // i.e. in a MainActor continuation that is runnable the moment the
+        // line above observes the record. Yielding lets it run, so the rest
+        // of the test measures a view model that has already been written to
+        // rather than racing that write. If this yield were too short the
+        // test would go GREEN against the defect, which is why it is measured
+        // against the unguarded write rather than assumed (red 5 of 5).
+        try await Task.sleep(for: .milliseconds(100))
+
+        // 5. The remounted surface reports the unchanged geometry.
+        vm.resize(cols: 100, rows: 30)
+
+        // 6. Shell B opens.
+        secondOpen.release()
+        try await waitUntil(vm.state == .running)
+        try await waitUntil(!second.resizes.isEmpty)
+        #expect(
+            second.resizes.map { [$0.cols, $0.rows] } == [[100, 30]],
+            """
+            shell B saw \(second.resizes) — a window-change belonging to \
+            shell A was remembered across the reopen, so B keeps the 80x24 it \
+            was opened with.
+            """)
+        await vm.shutdown()
+    }
+
     /// A size reported while nothing is opening belongs to no shell: it must
     /// not be kept and replayed into one opened much later, the same rule
     /// `send(_:)`'s buffer follows. Otherwise a panel that was closed at one
@@ -550,6 +634,87 @@ final class LateFinishShell: RemoteShell, Sendable {
     func finish() {
         state.withLock { $0.finished = true }
     }
+}
+
+/// A gate that parks its caller until the test releases it, readable
+/// synchronously so a test can wait for "the call has arrived" without an
+/// `await` inside `waitUntil`'s autoclosure.
+///
+/// `NSLock` rather than an actor for exactly that reason: `entered` has to be
+/// readable from a non-async expression. Every WAIT is still an `await`.
+///
+/// Deliberately NOT cancellation-aware, unlike the gates in the AppKit sizing
+/// suite. This one stands in for `CitadelShell.resize` -> `TTYStdinWriter
+/// .changeSize` awaiting a NIO future, which does not observe cancellation
+/// either — a window-change that `cancelPendingSends()` has flagged still
+/// goes out and still returns. Making it cancellable would model away the
+/// very thing under test.
+final class ParkGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+    private var enteredCount = 0
+
+    /// How many callers have reached the gate, released or not.
+    var entered: Int { lock.lock(); defer { lock.unlock() }; return enteredCount }
+
+    func wait() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            enteredCount += 1
+            if isReleased {
+                lock.unlock()
+                c.resume()
+                return
+            }
+            continuation = c
+            lock.unlock()
+        }
+    }
+
+    /// Lets the parked caller through, and every later one. Takes the
+    /// continuation under the lock before resuming, so a second `release()`
+    /// cannot resume it twice.
+    func release() {
+        lock.lock()
+        isReleased = true
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume()
+    }
+}
+
+/// Shell whose `resize` parks on a `ParkGate` until the test releases it, so
+/// a window-change can be left IN FLIGHT across the end of its own shell and
+/// the opening of the next one. That is the shape of a real `resize` on a
+/// half-dead link: it is awaiting a NIO future, `cancelPendingSends()` can
+/// only flag it, and it returns whenever the future finally completes —
+/// possibly long after the shell it belongs to is gone.
+final class ParkedResizeShell: RemoteShell, Sendable {
+    let resizeGate = ParkGate()
+    private let accepted = Mutex<[(cols: Int, rows: Int)]>([])
+    let output: AsyncThrowingStream<[UInt8], Error>
+    private let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
+
+    /// The window-changes that got all the way through.
+    var acceptedResizes: [(cols: Int, rows: Int)] { accepted.withLock { $0 } }
+
+    init() {
+        (output, continuation) = AsyncThrowingStream<[UInt8], Error>.makeStream()
+    }
+
+    func send(_ bytes: [UInt8]) async throws {}
+
+    func resize(cols: Int, rows: Int) async throws {
+        await resizeGate.wait()
+        accepted.withLock { $0.append((cols, rows)) }
+    }
+
+    /// Ends the output stream the way a remote `exit` does, which is what
+    /// drives the panel to `.ended`.
+    func endOutput() { continuation.finish() }
+    func close() async { continuation.finish() }
 }
 
 /// Shell whose first `failures` window-changes throw before recording

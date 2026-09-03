@@ -82,8 +82,9 @@ struct SSHTerminalViewSizingTests {
     /// before it can await `shutdown()`.
     ///
     /// Measured 2026-09-03 (review of `2d0fa18f`): `shutdown()` cancels the
-    /// open task and then `await`s it
-    /// (`TerminalPanelViewModel.swift:386-387`). A gate that parks on a bare
+    /// open task and then `await`s its value. (Cited by symbol on purpose --
+    /// the line numbers this comment first carried were invalidated by the
+    /// same commit that wrote them.) A gate that parks on a bare
     /// `withCheckedContinuation` never observes that cancellation, so a test
     /// that throws while an open is held -- a `try #require` on the mounted
     /// surface, which runs BEFORE the gate is opened in two of these tests --
@@ -208,6 +209,16 @@ struct SSHTerminalViewSizingTests {
         /// Every held call, and every later one, goes through. Resuming from
         /// a drained local array is the exactly-once guard: a second call
         /// finds the list empty.
+        ///
+        /// Cancellation routes HERE rather than to `release()`, which makes
+        /// it deliberately all-or-nothing: cancelling one waiter converts the
+        /// permit gate into a permanent latch. That is right only because
+        /// cancellation happens at teardown, after every assertion. "The
+        /// second open is still held" is a negative property and would fail
+        /// silently -- a future test that cancels one open while meaning to
+        /// keep another parked would get the latch, measure the ordinary
+        /// running-resize path, and stay green. Such a test needs a
+        /// per-waiter cancellation, not this method.
         func releaseAll() {
             isOpenForever = true
             let pending = waiters
