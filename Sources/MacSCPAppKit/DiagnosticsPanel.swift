@@ -193,8 +193,27 @@ struct DiagnosticsPanel: View {
     /// them into one row — the panel would then show one hop where the walk
     /// measured two, which is the reading error this whole grid exists to
     /// remove.
+    ///
+    /// A row is expected to carry a cell per column, and `DiagnosticTable`
+    /// asks for that in prose without enforcing it. The `zip` below therefore
+    /// TRUNCATES a row that disagrees, in either direction: a short row loses
+    /// no cell it has, a long one loses the cells past the last column, and
+    /// nothing crashes in front of a user. The assertion says so out loud in a
+    /// debug build, where the producer is the thing to fix; the released panel
+    /// draws what it was given, and the pasted report — which pads to the
+    /// widest cell rather than zipping — may then print a column this grid
+    /// does not show.
     private func grid(_ measured: DiagnosticTable) -> some View {
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 2) {
+        assert(
+            measured.rows.allSatisfy { $0.count == measured.columns.count },
+            """
+            a table's rows must carry one cell per column; this one has \
+            \(measured.columns.count) columns and rows of \
+            \(Set(measured.rows.map(\.count)).sorted())
+            """)
+        return Grid(
+            alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 2
+        ) {
             GridRow {
                 ForEach(Array(measured.columns.enumerated()), id: \.offset) { _, key in
                     Text(DiagnosticsPresentation.columnTitle(key))

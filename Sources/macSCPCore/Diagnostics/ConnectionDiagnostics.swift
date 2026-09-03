@@ -73,7 +73,8 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
 /// The CELL words are English and unlocalized in Core, like every other word
 /// the report prints (`DiagnosticOutcome.label` states why); the panel maps
 /// them through `diagnostics.trace.outcome.*`. They are constants and not
-/// literals at the two switch arms for the same reason the reasons are: a
+/// literals at all three arms of `traceTable(_:)`'s switch — `.forwarded`,
+/// `.unreachable` and `.timedOut` — for the same reason the reasons are: a
 /// reworded word has to break the mapping loudly rather than quietly stop
 /// matching.
 public enum DiagnosticTraceColumn {
@@ -489,9 +490,12 @@ public actor ConnectionDiagnostics {
     /// The outcome word is decided HERE and not on `NetworkTraceHop`, because
     /// two of the four need the destination the walk was aimed at, which the
     /// hop does not carry — the same reason `reachedDestination` lives on the
-    /// outcome. The two are `destination` and `unreachable (code …)`, which
-    /// the `.unreachable` arm below tells apart by exactly that comparison;
-    /// `answered` and `silent` never consult it. `destination` means what it means there: the answering
+    /// outcome. The two are `destination` and `unreachable (code …)`, and the
+    /// `.unreachable` arm below tells them apart by that comparison AND the
+    /// code — both halves of a conjunction, not the address alone; `answered`
+    /// and `silent` never consult the destination at all.
+    ///
+    /// `destination` means what it means there: the answering
     /// address is the address the trace was aimed at. Anything else that
     /// answered destination-unreachable is reported as what it is, a refusal
     /// naming its code, whether or not the code is port-unreachable.

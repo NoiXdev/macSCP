@@ -785,16 +785,67 @@ struct DiagnosticsViewModelTests {
             == "doesNotExistYet")
     }
 
-    /// The outcome column is the one Core writes WORDS into, and it is the
-    /// only one the panel looks up.
+    /// Each of Core's four outcome words is looked up under ITS OWN key.
     ///
-    /// What this cannot see: `en` renders those four words as the words Core
-    /// composed, so a lookup and a pass-through produce the same string here.
-    /// The lookup's EXISTENCE is guarded structurally instead — the four
-    /// `diagnostics.trace.outcome.*` keys are spelled only by that mapping,
-    /// and `DiagnosticsDoorsGuardTests` compares the keys the sources spell
-    /// against `en.lproj` for equality, so deleting the mapping turns that
-    /// check red. What is pinned here is the branching around it.
+    /// The round trip — Core's constant, through the mapping, compared against
+    /// the string that key resolves to — and it is what a key SWAP fails.
+    /// Nothing else can see one: swapping two keys inside the mapping changes
+    /// no key set, so the catalogue equality stays green, and while `en`
+    /// rendered those words as the words Core composed it changed no string
+    /// either. Every answered hop would have displayed "silent", in all four
+    /// languages, with the suite green (review of 2026-09-03, Important 1).
+    ///
+    /// Which is why `en` now capitalizes them — `Answered`, `Silent`,
+    /// `Destination`, `Unreachable (code %@)`, the same shape as the
+    /// `diagnostics.outcome.*` badges beside them. That the rendered word
+    /// DIFFERS from Core's is asserted here too: it is the property that makes
+    /// the first assertion able to fail at all, and `en` sliding back to the
+    /// lowercase word would take the round trip's teeth with it.
+    ///
+    /// The pasted report is untouched by any of this — it prints Core's own
+    /// lowercase words, in English, by design (`DiagnosticReport`).
+    @Test func everyTraceOutcomeWordIsLookedUpUnderItsOwnKey() {
+        let outcome = DiagnosticTraceColumn.outcome
+        let missing = "«no entry»"
+        let words: [(word: String, key: String)] = [
+            (DiagnosticTraceColumn.answered, "diagnostics.trace.outcome.answered"),
+            (DiagnosticTraceColumn.silent, "diagnostics.trace.outcome.silent"),
+            (DiagnosticTraceColumn.destination, "diagnostics.trace.outcome.destination"),
+        ]
+        for (word, key) in words {
+            let rendered = DiagnosticsPresentation.cell(word, column: outcome)
+            let underItsOwnKey = rendered == L10n.string(key, missing)
+            let differsFromWhatCoreComposed = rendered != word
+            #expect(underItsOwnKey, """
+                `\(word)` must render as what \(key) resolves to — another key's entry reads as \
+                a hop that did something else, and no other check in this suite can see it. \
+                Got: \(rendered)
+                """)
+            #expect(differsFromWhatCoreComposed, """
+                the entry for \(key) must not be the word Core composed, or the assertion above \
+                is satisfied by a mapping that looks nothing up. Got: \(rendered)
+                """)
+        }
+
+        // The fourth, which carries a number: same round trip, through the
+        // format its own key resolves to.
+        let code = 13
+        let refusal = DiagnosticTraceColumn.unreachable(code: UInt8(code))
+        let rendered = DiagnosticsPresentation.cell(refusal, column: outcome)
+        let key = "diagnostics.trace.outcome.unreachable"
+        let underItsOwnKey =
+            rendered == String(format: L10n.string(key, missing), "\(code)")
+        #expect(underItsOwnKey, """
+            a refusal must render as \(key) with the measured code substituted — got \(rendered)
+            """)
+        #expect(rendered != refusal, """
+            and it must not be the sentence Core composed, or the assertion above cannot fail
+            """)
+    }
+
+    /// The outcome column is the one Core writes WORDS into, and it is the
+    /// only one the panel looks up. Which key each word takes is the round
+    /// trip above; what is pinned here is the branching around it.
     @Test func onlyTheOutcomeColumnIsLookedUpAndAnUnknownWordIsPassedThrough() {
         let address = "10.0.0.1"
         #expect(
@@ -808,17 +859,6 @@ struct DiagnosticsViewModelTests {
                 DiagnosticTraceColumn.answered, column: DiagnosticTraceColumn.address)
                 == DiagnosticTraceColumn.answered,
             "the outcome lookup is chosen by the COLUMN, not by the cell's text")
-
-        for key in [
-            "diagnostics.trace.outcome.answered", "diagnostics.trace.outcome.silent",
-            "diagnostics.trace.outcome.destination", "diagnostics.trace.outcome.unreachable",
-        ] {
-            let sentinel = "«no entry»"
-            #expect(L10n.string(key, sentinel) != sentinel, """
-                \(key) must exist in the catalog — the mapping looks it up, and a missing entry \
-                falls back to the English word in every language
-                """)
-        }
 
         let refusal = DiagnosticTraceColumn.unreachable(code: 13)
         let rendered = DiagnosticsPresentation.cell(refusal, column: DiagnosticTraceColumn.outcome)

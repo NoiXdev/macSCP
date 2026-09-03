@@ -1092,10 +1092,10 @@
 "diagnostics.scope.trace" = "Trace";
 "diagnostics.scope.dial" = "Connect";
 "diagnostics.scope.contributions" = "Protocol probes";
-"diagnostics.trace.outcome.answered" = "answered";
-"diagnostics.trace.outcome.silent" = "silent";
-"diagnostics.trace.outcome.destination" = "destination";
-"diagnostics.trace.outcome.unreachable" = "unreachable (code %@)";
+"diagnostics.trace.outcome.answered" = "Answered";
+"diagnostics.trace.outcome.silent" = "Silent";
+"diagnostics.trace.outcome.destination" = "Destination";
+"diagnostics.trace.outcome.unreachable" = "Unreachable (code %@)";
 "diagnostics.reason.noHost" = "This connection names no host.";
 "diagnostics.reason.nothingResolvedToProbe" = "The name resolved to no address, so there was nothing to probe.";
 "diagnostics.reason.noSecret" = "No credential is saved for this connection. Save one, then run the check again.";

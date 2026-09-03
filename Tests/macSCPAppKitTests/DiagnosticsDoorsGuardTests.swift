@@ -683,9 +683,21 @@ struct DiagnosticsDoorsGuardTests {
     /// menu makes it tempting to break: a control that re-runs the diagnosis
     /// the moment the user looks at another scope reads as a feature while it
     /// is being written, and it dials the user's server without anybody
-    /// pressing anything. `automaticStarts` already covers the modifier forms
-    /// and `thePanelStartsARunOnlyFromAButton` covers the file; this reads the
-    /// CONTROL, so its two halves cannot drift apart.
+    /// pressing anything.
+    ///
+    /// **What this check's span covers, and what it does not.** `control` is
+    /// the Picker's own invocation — its arguments and its trailing closure —
+    /// so the negative half below sees a run started from the binding's setter
+    /// or from a button inside the menu. It does NOT see a modifier attached
+    /// AFTER the Picker: `invocationRanges` stops at the closing brace of the
+    /// trailing closure, and `.onChange(of: model.scope) { model.run() }` —
+    /// the likeliest spelling of this defect — sits past it. That spelling is
+    /// owned by `thePanelStartsARunOnlyFromAButton`, which counts every
+    /// mention of the run entry in the whole file and requires each one to sit
+    /// inside a `Button`; planting it is red there and in
+    /// `thePanelStartsNoRunOnAppear`, measured 2026-09-03. Widening this span
+    /// to the modifier chain would be a second copy of that rule, and the
+    /// wrong one to trust: this check is about what the CONTROL does.
     ///
     /// Positive first, as everywhere here: the control exists, it offers every
     /// scope the type has rather than a list somebody maintains, it writes the
@@ -737,6 +749,19 @@ struct DiagnosticsDoorsGuardTests {
     /// and draw a grid from it, and it must still render details through the
     /// renderer, so "nothing is split here" cannot be satisfied by a panel
     /// that shows neither.
+    ///
+    /// **The negative half is scoped to the PANEL, and deliberately so.**
+    /// Splitting is legitimate one file over: the renderer takes the detail
+    /// apart on `; ` to find the trace's markers
+    /// (`DiagnosticsPresentation.detail(of:)`), and `columnTitle` splits a
+    /// catalogue key on `.` — that is the file where a measured line is
+    /// allowed to be parsed, and where the ONE parse of it lives. So the check
+    /// is a file boundary rather than a rule about the whole target, and it
+    /// cannot be written any wider without failing on the renderer it is
+    /// protecting. Planting a split in the renderer instead is therefore
+    /// invisible here; what makes that survivable is that there is exactly one
+    /// place to plant it, in a function whose own behaviour three tests in
+    /// `DiagnosticsViewModelTests` pin byte for byte.
     @Test func theTraceRowIsDrawnFromItsTableAndNoDetailIsSplitApart() throws {
         let table = try Self.tableTypeName()
         let renderer = try Self.presentationTypeName()
