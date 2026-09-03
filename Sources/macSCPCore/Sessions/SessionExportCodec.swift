@@ -139,6 +139,24 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     public var importID: String?
     public var importedAt: Date?
 
+    /// The STORED record this entry updates, if it updates one rather than
+    /// creating a session (external import, 2026-09-03). `nil` — the default,
+    /// and what every export this app writes carries — means a fresh import.
+    ///
+    /// A store id, not a file-local one: unlike `id` and `groupID`, it is NOT
+    /// rekeyed on import, because it names a record in the store the import is
+    /// running against. `SessionImportPlanner.plan` honours it by overwriting
+    /// that record in place — same id, this entry's fields over it — and asks
+    /// the arbiter nothing about a connection collision with it, because the
+    /// entry IS that record. An id no longer in the store falls back to an
+    /// ordinary import.
+    ///
+    /// Why the export path never sets it: `exportPayload` writes a file for
+    /// another machine, where a local record id means nothing.
+    /// `ImportPreviewPlanner.payload(for:sessions:groups:switches:)` is the one
+    /// producer, and it plans against the very store it read the id from.
+    public var replaces: UUID?
+
     // MARK: - Decode-only v1 columns (M23/P3)
     //
     // The columns a version-1 file carries instead of `fields`. They are read
@@ -191,7 +209,8 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         s3SecretAccessKey: String? = nil,
         importSource: String? = nil,
         importID: String? = nil,
-        importedAt: Date? = nil
+        importedAt: Date? = nil,
+        replaces: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -212,6 +231,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         self.importSource = importSource
         self.importID = importID
         self.importedAt = importedAt
+        self.replaces = replaces
     }
 
     /// The `legacy*` cases keep v1's original key names, so a v1 file decodes
@@ -220,7 +240,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         case id, name, groupID, kind, fields, paneVisibility, tags, position, password
         case jumpHost, jumpPort, jumpUsername, jumpAuthKind, jumpKeyPath, jumpPassword
         case s3SecretAccessKey
-        case importSource, importID, importedAt
+        case importSource, importID, importedAt, replaces
         case legacyHost = "host"
         case legacyPort = "port"
         case legacyUsername = "username"
@@ -260,6 +280,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         importSource = try c.decodeIfPresent(String.self, forKey: .importSource)
         importID = try c.decodeIfPresent(String.self, forKey: .importID)
         importedAt = try c.decodeIfPresent(Date.self, forKey: .importedAt)
+        replaces = try c.decodeIfPresent(UUID.self, forKey: .replaces)
         legacyHost = try c.decodeIfPresent(String.self, forKey: .legacyHost)
         legacyPort = try c.decodeIfPresent(Int.self, forKey: .legacyPort)
         legacyUsername = try c.decodeIfPresent(String.self, forKey: .legacyUsername)
@@ -300,6 +321,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         try c.encodeIfPresent(importSource, forKey: .importSource)
         try c.encodeIfPresent(importID, forKey: .importID)
         try c.encodeIfPresent(importedAt, forKey: .importedAt)
+        try c.encodeIfPresent(replaces, forKey: .replaces)
     }
 
     /// Folds a v1 file's columns into `fields` and clears them. A no-op on a

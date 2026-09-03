@@ -230,7 +230,7 @@ struct ImportPreviewPlannerTests {
         // And a ticked row of that shape still never reaches the payload.
         for index in rows.indices { rows[index].selected = true }
         #expect(ImportPreviewPlanner.payload(
-            for: rows, sessions: [], switches: ImportSwitches()).sessions.isEmpty)
+            for: rows, sessions: [], groups: [], switches: ImportSwitches()).sessions.isEmpty)
     }
 
     // MARK: - The payload
@@ -257,7 +257,7 @@ struct ImportPreviewPlannerTests {
         for index in rows.indices { rows[index].selected = true }
 
         let payload = ImportPreviewPlanner.payload(
-            for: rows, sessions: [stored], switches: ImportSwitches())
+            for: rows, sessions: [stored], groups: [], switches: ImportSwitches())
 
         #expect(payload.sessions.count == 2)
         #expect(payload.sessions.contains { $0.importID == "ftp-1" } == false)
@@ -271,7 +271,7 @@ struct ImportPreviewPlannerTests {
             var copy = row; copy.selected = false; return copy
         }
         #expect(ImportPreviewPlanner.payload(
-            for: noneSelected, sessions: [stored], switches: ImportSwitches())
+            for: noneSelected, sessions: [stored], groups: [], switches: ImportSwitches())
             .sessions.isEmpty)
     }
 
@@ -281,7 +281,7 @@ struct ImportPreviewPlannerTests {
                           username: "deploy", keyPath: "/keys/id_ed25519")],
             against: [], switches: ImportSwitches())
         let exported = try #require(ImportPreviewPlanner.payload(
-            for: rows, sessions: [], switches: ImportSwitches()).sessions.first)
+            for: rows, sessions: [], groups: [], switches: ImportSwitches()).sessions.first)
 
         #expect(exported.kind == .ssh)
         #expect(exported.name == "Web 01")
@@ -299,7 +299,7 @@ struct ImportPreviewPlannerTests {
                           username: "deploy")],
             against: [], switches: ImportSwitches())
         let exported = try #require(ImportPreviewPlanner.payload(
-            for: rows, sessions: [], switches: ImportSwitches()).sessions.first)
+            for: rows, sessions: [], groups: [], switches: ImportSwitches()).sessions.first)
 
         #expect(field(SSHField.authKind, of: exported)
                 == StoredSession.AuthKind.password.rawValue)
@@ -316,7 +316,7 @@ struct ImportPreviewPlannerTests {
                         username: "AKIAEXAMPLE", path: "backups")],
             against: [], switches: ImportSwitches())
         let exported = try #require(ImportPreviewPlanner.payload(
-            for: rows, sessions: [], switches: ImportSwitches()).sessions.first)
+            for: rows, sessions: [], groups: [], switches: ImportSwitches()).sessions.first)
 
         #expect(exported.kind == .s3)
         #expect(field(S3Field.endpoint, of: exported) == awsPresetEndpoint)
@@ -333,7 +333,7 @@ struct ImportPreviewPlannerTests {
                         path: "media")],
             against: [], switches: ImportSwitches())
         let exported = try #require(ImportPreviewPlanner.payload(
-            for: rows, sessions: [], switches: ImportSwitches()).sessions.first)
+            for: rows, sessions: [], groups: [], switches: ImportSwitches()).sessions.first)
 
         #expect(field(S3Field.endpoint, of: exported) == "https://objects.example.net:9000")
     }
@@ -343,20 +343,22 @@ struct ImportPreviewPlannerTests {
             [s3Bookmark(host: "objects.example.net", port: nil, username: "minio", path: "")],
             against: [], switches: ImportSwitches())
         let exported = try #require(ImportPreviewPlanner.payload(
-            for: rows, sessions: [], switches: ImportSwitches()).sessions.first)
+            for: rows, sessions: [], groups: [], switches: ImportSwitches()).sessions.first)
 
         #expect(field(S3Field.startsAtBucketList, of: exported) == "true")
         #expect(field(S3Field.bucket, of: exported).isEmpty)
         #expect(field(S3Field.endpoint, of: exported) == "https://objects.example.net")
     }
 
-    @Test func anUpdateKeepsTheStoredNameGroupAndTagsAndCarriesTheStoredID() throws {
+    @Test func anUpdateTakesTheNicknameAndReplacesItsRecordById() throws {
         let storedID = UUID()
-        let groupID = UUID()
-        let stored = sshSession(
+        let group = StoredGroup(name: "Servers")
+        var stored = sshSession(
             id: storedID, name: "The name the user chose", host: "web-01.example.net",
-            port: 22, username: "deploy", tags: ["prod"], groupID: groupID,
+            port: 22, username: "deploy", tags: ["prod"], groupID: group.id,
             importID: "known-1")
+        stored.position = 7
+        stored.paneVisibility = .bothVisible
         let bookmark = sftpBookmark(
             id: "known-1", nickname: "Cyberduck's own name", host: "web-01.example.net",
             port: 2222, username: "deploy", labels: ["staging"])
@@ -364,17 +366,23 @@ struct ImportPreviewPlannerTests {
         let rows = ImportPreviewPlanner.preview(
             [bookmark], against: [stored], switches: ImportSwitches())
         let exported = try #require(ImportPreviewPlanner.payload(
-            for: rows, sessions: [stored], switches: ImportSwitches()).sessions.first)
+            for: rows, sessions: [stored], groups: [group],
+            switches: ImportSwitches()).sessions.first)
 
-        // The stored record's id is what makes this an UPDATE rather than a
-        // second session: it is the id `PlannedSession.replacesExisting`
-        // overwrites in place.
+        // `replaces` is what makes this an UPDATE rather than a second
+        // session: `SessionImportPlanner` overwrites that record in place and
+        // asks the arbiter nothing about the connection.
+        #expect(exported.replaces == storedID)
         #expect(exported.id == storedID)
-        #expect(exported.name == "The name the user chose")
-        #expect(exported.groupID == groupID)
-        #expect(exported.tags == ["prod"])
-        // What Cyberduck knows IS replaced.
+        // The maintainer's decision (design §0 item 3): an update overwrites
+        // everything the source knows, and the nickname is one of those.
+        #expect(exported.name == "Cyberduck's own name")
         #expect(field(SSHField.port, of: exported) == "2222")
+        // What the source does not know is copied off the record.
+        #expect(exported.groupID == group.id)
+        #expect(exported.position == 7)
+        #expect(exported.paneVisibility == .bothVisible)
+        #expect(exported.tags == ["prod"])
     }
 
     @Test func theLabelsSwitchReplacesTheStoredTagsOnAnUpdate() throws {
@@ -390,7 +398,7 @@ struct ImportPreviewPlannerTests {
             switches: ImportSwitches(takeLabelsAsTags: true))
 
         let exported = try #require(ImportPreviewPlanner.payload(
-            for: rows, sessions: [stored],
+            for: rows, sessions: [stored], groups: [],
             switches: ImportSwitches(takeLabelsAsTags: true)).sessions.first)
 
         #expect(exported.tags == ["staging"])
@@ -409,7 +417,7 @@ struct ImportPreviewPlannerTests {
         let rows = ImportPreviewPlanner.preview(
             [bookmark], against: [stored], switches: ImportSwitches())
         let exported = try #require(ImportPreviewPlanner.payload(
-            for: rows, sessions: [stored], switches: ImportSwitches()).sessions.first)
+            for: rows, sessions: [stored], groups: [], switches: ImportSwitches()).sessions.first)
 
         #expect(field(S3Field.region, of: exported) == "eu-central-1")
         #expect(field(S3Field.usePathStyle, of: exported) == "true")
@@ -431,7 +439,7 @@ struct ImportPreviewPlannerTests {
         let rows = ImportPreviewPlanner.preview(
             bookmarks, against: [stored], switches: ImportSwitches())
         let payload = ImportPreviewPlanner.payload(
-            for: rows, sessions: [stored], switches: ImportSwitches())
+            for: rows, sessions: [stored], groups: [], switches: ImportSwitches())
 
         #expect(payload.sessions.count == 2)
         for exported in payload.sessions {
@@ -448,7 +456,7 @@ struct ImportPreviewPlannerTests {
             [sftpBookmark()], against: [], switches: switches)
 
         let payload = ImportPreviewPlanner.payload(
-            for: rows, sessions: [], switches: switches)
+            for: rows, sessions: [], groups: [], switches: switches)
 
         let group = try #require(payload.groups.first)
         #expect(payload.groups.count == 1)
@@ -457,16 +465,71 @@ struct ImportPreviewPlannerTests {
     }
 
     @Test func aChosenGroupWinsOverCreateGroupNamed() throws {
-        let groupID = UUID()
-        let switches = ImportSwitches(groupID: groupID, createGroupNamed: "Cyberduck")
+        let chosen = StoredGroup(name: "Servers")
+        let switches = ImportSwitches(groupID: chosen.id, createGroupNamed: "Cyberduck")
         let rows = ImportPreviewPlanner.preview(
             [sftpBookmark()], against: [], switches: switches)
 
         let payload = ImportPreviewPlanner.payload(
-            for: rows, sessions: [], switches: switches)
+            for: rows, sessions: [], groups: [chosen], switches: switches)
+
+        // Nothing named "Cyberduck" is created — the picker had an answer —
+        // and the answer it had is the group the payload carries.
+        #expect(payload.groups.map(\.name) == ["Servers"])
+        #expect(payload.sessions.first?.groupID == chosen.id)
+    }
+
+    /// `SessionImportPlanner` resolves `ExportedSession.groupID` against the
+    /// payload's OWN `groups` and drops a reference it does not carry, so a
+    /// chosen group that is not in the payload silently loses every session
+    /// it was meant to hold.
+    @Test func theChosenGroupIsCarriedIntoThePayload() throws {
+        let chosen = StoredGroup(name: "Servers")
+        let other = StoredGroup(name: "Not this one")
+        let switches = ImportSwitches(groupID: chosen.id)
+        let rows = ImportPreviewPlanner.preview(
+            [sftpBookmark()], against: [], switches: switches)
+
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [], groups: [other, chosen], switches: switches)
+
+        #expect(payload.groups.count == 1)
+        #expect(payload.groups.first?.id == chosen.id)
+        #expect(payload.groups.first?.name == "Servers")
+    }
+
+    /// The same rule for the group an UPDATE copied off its record: carried,
+    /// or the update moves the session to the top level.
+    @Test func theGroupAnUpdateCopiedFromTheStoreIsCarriedIntoThePayload() throws {
+        let group = StoredGroup(name: "Servers")
+        let stored = sshSession(
+            name: "Web 01", host: "web-01.example.net", port: 22, username: "deploy",
+            groupID: group.id, importID: "known-1")
+        let bookmark = sftpBookmark(
+            id: "known-1", nickname: "Web 01", host: "web-01.example.net", port: 2222,
+            username: "deploy")
+        let rows = ImportPreviewPlanner.preview(
+            [bookmark], against: [stored], switches: ImportSwitches())
+
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [stored], groups: [group], switches: ImportSwitches())
+
+        #expect(payload.sessions.first?.groupID == group.id)
+        #expect(payload.groups.map(\.id) == [group.id])
+    }
+
+    /// A group the catalogue does not know cannot be carried — the payload
+    /// names no group at all rather than a reference that resolves to nothing.
+    @Test func aGroupTheCatalogueDoesNotKnowIsNotCarried() throws {
+        let switches = ImportSwitches(groupID: UUID())
+        let rows = ImportPreviewPlanner.preview(
+            [sftpBookmark()], against: [], switches: switches)
+
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [], groups: [], switches: switches)
 
         #expect(payload.groups.isEmpty)
-        #expect(payload.sessions.first?.groupID == groupID)
+        #expect(payload.sessions.first?.groupID == nil)
     }
 
     @Test func theSecretsSwitchIsWhatThePayloadDeclares() {
@@ -474,10 +537,10 @@ struct ImportPreviewPlannerTests {
             [sftpBookmark()], against: [], switches: ImportSwitches())
 
         #expect(ImportPreviewPlanner.payload(
-            for: rows, sessions: [], switches: ImportSwitches())
+            for: rows, sessions: [], groups: [], switches: ImportSwitches())
             .includesSecrets == false)
         #expect(ImportPreviewPlanner.payload(
-            for: rows, sessions: [], switches: ImportSwitches(takeSecrets: true))
+            for: rows, sessions: [], groups: [], switches: ImportSwitches(takeSecrets: true))
             .includesSecrets == true)
     }
 

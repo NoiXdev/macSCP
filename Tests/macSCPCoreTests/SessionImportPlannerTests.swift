@@ -1607,4 +1607,159 @@ struct SessionImportPlannerTests {
 
         #expect(session.keyPath == "/legacy/key")
     }
+
+    // MARK: - Replace by id (the external-import update seam, 2026-09-03)
+
+    /// An entry that names the record it replaces updates THAT record, even
+    /// though its connection has moved and nothing on record shares the new
+    /// connection identity any more. Without this seam the entry keys on a
+    /// connection no stored session has, imports under a fresh id, and the
+    /// user ends up with the old session plus a second copy of it.
+    @Test func anEntryThatNamesTheRecordItReplacesUpdatesItInPlace() async {
+        let existing = sshSession(
+            name: "Web 01", host: "old.example.net", port: 22, username: "deploy")
+        let entry = ExportedSession(
+            id: existing.id, name: "Web 01", kind: .ssh,
+            fields: sshExportFields(host: "new.example.net", port: 2222, username: "deploy"),
+            replaces: existing.id)
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([entry]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.sessionsToImport.first?.session.id == existing.id)
+        #expect(plan.sessionsToImport.first?.replacesExisting == true)
+        #expect(plan.sessionsToImport.first?.session.ssh?.host == "new.example.net")
+        #expect(plan.sessionsToImport.first?.session.ssh?.port == 2222)
+        #expect(plan.replaced == ["Web 01"])
+    }
+
+    /// The arbiter is not asked about a connection collision with the very
+    /// record the entry replaces: it IS that record. `neverAsked` records an
+    /// issue if it is consulted at all.
+    @Test func replacingByIdRaisesNoConnectionConflictAgainstItsOwnRecord() async {
+        let existing = sshSession(
+            name: "Web 01", host: "web-01.example.net", port: 22, username: "deploy")
+        let fields = sshExportFields(host: "web-01.example.net", port: 22, username: "deploy")
+        let entry = ExportedSession(
+            id: existing.id, name: "Renamed in the source", kind: .ssh, fields: fields,
+            replaces: existing.id)
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([entry]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.sessionsToImport.first?.session.id == existing.id)
+        #expect(plan.sessionsToImport.first?.session.name == "Renamed in the source")
+    }
+
+    /// The positive anchor for the test above: the SAME entry without
+    /// `replaces` collides on the connection and IS put to the arbiter, so
+    /// "not asked" above is a property of `replaces` and not of the fixture.
+    @Test func theSameEntryWithoutReplacesStillRaisesAConnectionConflict() async {
+        let existing = sshSession(
+            name: "Web 01", host: "web-01.example.net", port: 22, username: "deploy")
+        let fields = sshExportFields(host: "web-01.example.net", port: 22, username: "deploy")
+        let entry = ExportedSession(
+            id: existing.id, name: "Renamed in the source", kind: .ssh, fields: fields)
+        let log = DeciderCallLog()
+
+        _ = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([entry]),
+            arbiter: ImportConflictArbiter(decider: fixedDecider(.skip, log: log)))
+
+        #expect(await log.names == ["Renamed in the source"])
+    }
+
+    /// A replace by id carries no secret of its own unless the entry does, so
+    /// the applier must leave the record's Keychain slot alone — unlike an
+    /// arbitrated `.replace`, where the file's session takes the record over
+    /// and a stale password must not survive (M19 finding 1).
+    @Test func replacingByIdWithoutAPasswordKeepsTheRecordsSecret() async {
+        let existing = sshSession(
+            name: "Web 01", host: "web-01.example.net", port: 22, username: "deploy")
+        let fields = sshExportFields(host: "web-01.example.net", port: 2222, username: "deploy")
+        let entry = ExportedSession(
+            id: existing.id, name: "Web 01", kind: .ssh, fields: fields,
+            replaces: existing.id)
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([entry]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.first?.keepsExistingSecret == true)
+        #expect(plan.sessionsToImport.first?.password == nil)
+    }
+
+    /// … and an entry that DOES carry one replaces the secret, so the flag
+    /// above tracks the entry rather than the mechanism.
+    @Test func replacingByIdWithAPasswordReplacesTheRecordsSecret() async {
+        let existing = sshSession(
+            name: "Web 01", host: "web-01.example.net", port: 22, username: "deploy")
+        let fields = sshExportFields(host: "web-01.example.net", port: 2222, username: "deploy")
+        let entry = ExportedSession(
+            id: existing.id, name: "Web 01", kind: .ssh, fields: fields,
+            password: "from-the-source", replaces: existing.id)
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([entry]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.first?.keepsExistingSecret == false)
+        let carried = plan.sessionsToImport.first?.password != nil
+        #expect(carried)
+    }
+
+    /// The record vanished between the preview and the import (deleted in
+    /// another window). The entry falls back to the ORDINARY path: a fresh
+    /// id, nothing replaced, nothing renamed — there is no record to
+    /// overwrite, and the name it wanted is free.
+    @Test func anEntryWhoseReplacedRecordIsGoneImportsAsAFreshSession() async {
+        let vanished = UUID()
+        let unrelated = sshSession(
+            name: "Something else", host: "elsewhere.example.net", port: 22, username: "root")
+        let entry = ExportedSession(
+            id: vanished, name: "Web 01", kind: .ssh,
+            fields: sshExportFields(host: "web-01.example.net", port: 22, username: "deploy"),
+            replaces: vanished)
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [unrelated], existingGroups: [], incoming: incoming([entry]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.sessionsToImport.first?.replacesExisting == false)
+        #expect(plan.sessionsToImport.first?.session.id != vanished)
+        #expect(plan.replaced.isEmpty)
+        #expect(plan.renamed.isEmpty)
+    }
+
+    /// Two entries naming the SAME record: `store.upsert` matches on id, so
+    /// the second one would silently swallow the first. The second falls back
+    /// to the ordinary path, exactly as the arbitrated `.replace` arm already
+    /// does for a record another entry has claimed.
+    @Test func aSecondEntryNamingAnAlreadyReplacedRecordFallsBack() async {
+        let existing = sshSession(
+            name: "Web 01", host: "web-01.example.net", port: 22, username: "deploy")
+        let first = ExportedSession(
+            id: existing.id, name: "First", kind: .ssh,
+            fields: sshExportFields(host: "a.example.net", port: 22, username: "deploy"),
+            replaces: existing.id)
+        let second = ExportedSession(
+            id: existing.id, name: "Second", kind: .ssh,
+            fields: sshExportFields(host: "b.example.net", port: 22, username: "deploy"),
+            replaces: existing.id)
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [existing], existingGroups: [], incoming: incoming([first, second]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.count == 2)
+        #expect(plan.sessionsToImport.filter(\.replacesExisting).count == 1)
+        let ids = Set(plan.sessionsToImport.map(\.session.id))
+        #expect(ids.count == 2)
+        #expect(plan.replaced == ["First"])
+    }
 }

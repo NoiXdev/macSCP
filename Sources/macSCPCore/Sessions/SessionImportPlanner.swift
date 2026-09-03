@@ -18,15 +18,36 @@ public struct PlannedSession: Equatable, Sendable {
     /// this field is the seam it uses). Defaults to `false` so call sites
     /// that only ever plan a fresh import need not repeat it.
     public var replacesExisting: Bool
+    /// Only meaningful together with `replacesExisting`: leave the replaced
+    /// record's Keychain slot exactly as it is (external import, 2026-09-03).
+    ///
+    /// The default is `false`, which is M19's rule and stays the rule for an
+    /// arbitrated `.replace`: the file's session TAKES OVER that record, so a
+    /// stale password the file never mentioned must not survive under the
+    /// reused id (`SessionListViewModel.applyImport` deletes it and reports
+    /// the removal).
+    ///
+    /// An external-import UPDATE is the other story. It replaces the record's
+    /// FIELDS from a bookmark source that holds no secret at all unless the
+    /// user ticked the keychain switch — and when they did, the secret arrives
+    /// in `password` and takes the ordinary save path. Deleting the stored
+    /// password because the source had nothing to say about it would log the
+    /// user out of a session they only re-imported.
+    ///
+    /// A flag rather than "no password means keep": those two cases are
+    /// distinguishable only by WHO produced the entry, which the entry itself
+    /// must therefore say.
+    public var keepsExistingSecret: Bool
 
     public init(
         session: StoredSession, password: String?, jumpPassword: String? = nil,
-        replacesExisting: Bool = false
+        replacesExisting: Bool = false, keepsExistingSecret: Bool = false
     ) {
         self.session = session
         self.password = password
         self.jumpPassword = jumpPassword
         self.replacesExisting = replacesExisting
+        self.keepsExistingSecret = keepsExistingSecret
     }
 }
 
@@ -284,6 +305,48 @@ public enum SessionImportPlanner {
 
             let key = duplicateKey(for: fileSession)
 
+            // An entry that NAMES the record it updates (2026-09-03): it is
+            // that record, so the connection question below is not asked — the
+            // entry is not a second session colliding with the first, it is
+            // the first, re-read from its source. This is the only path that
+            // can update a record whose connection has MOVED, which the key
+            // below cannot see: the entry's key no longer matches anything on
+            // record, so without this branch it would import under a fresh id
+            // and leave the user with two of the same session.
+            //
+            // A name collision with an UNRELATED session is untouched by this,
+            // exactly as before: this planner has never arbitrated names (its
+            // only conflict reason is `.sameConnection`), and the store does
+            // not enforce them unique.
+            //
+            // Two ways to fall through to the ordinary path below: the record
+            // is gone (deleted between the preview and the import), or an
+            // earlier entry in this same run already claimed it. Both are the
+            // same rule the arbitrated `.replace` arm follows — `store.upsert`
+            // matches on id, so two planned sessions sharing one id would end
+            // up as one — and both then import as ordinary entries, counted
+            // as ordinary entries: nothing was replaced, so nothing is
+            // reported as replaced.
+            if let replacesID = fileSession.replaces,
+               let match = existing.first(where: {
+                   $0.id == replacesID && !replacedExistingIDs.contains($0.id)
+               }) {
+                replacedExistingIDs.insert(match.id)
+                // The updated record now answers to the ENTRY's connection, so
+                // a later entry colliding with it must still be arbitrated.
+                // The record's former key is deliberately left in place: it may
+                // belong to a second stored session too, and removing it could
+                // hide a genuine collision.
+                summaryByKey[key] = displaySummary(for: fileSession)
+                takenNames.insert(normalizedName(trimmedName))
+                sessionsToImport.append(makePlanned(
+                    from: fileSession, id: match.id, name: trimmedName,
+                    groupID: resolvedGroupID, replacesExisting: true,
+                    keepsExistingSecret: true))
+                replaced.append(trimmedName)
+                continue
+            }
+
             guard let collidingSummary = summaryByKey[key] else {
                 summaryByKey[key] = displaySummary(for: fileSession)
                 takenNames.insert(normalizedName(trimmedName))
@@ -524,7 +587,7 @@ public enum SessionImportPlanner {
     /// apart in how they map the file's fields.
     private static func makePlanned(
         from fileSession: ExportedSession, id: UUID, name: String, groupID: UUID?,
-        replacesExisting: Bool = false
+        replacesExisting: Bool = false, keepsExistingSecret: Bool = false
     ) -> PlannedSession {
         // Jump fields are only present together (all-or-nothing from
         // `exportPayload`) -- `jumpHost`/`jumpUsername` gate construction.
@@ -684,7 +747,11 @@ public enum SessionImportPlanner {
             // since M23/T8, and a password for a hop nobody dials is an
             // orphan Keychain slot.
             jumpPassword: session.ssh?.jump != nil ? fileSession.jumpPassword : nil,
-            replacesExisting: replacesExisting)
+            replacesExisting: replacesExisting,
+            // Only an entry that carried nothing keeps what is there — and
+            // "nothing" here means what the applier means by it: an empty
+            // string is not a secret (`applyImport`'s `!password.isEmpty`).
+            keepsExistingSecret: keepsExistingSecret && (secret ?? "").isEmpty)
     }
 
     /// What makes two sessions "the same connection" for import purposes.

@@ -852,6 +852,34 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.first { $0.id == existing.id }?.ssh?.host == "new.example.com")
     }
 
+    /// The external-import update (2026-09-03) is NOT that case: the entry
+    /// replaces the record's FIELDS from its source, and the source knows
+    /// nothing about the password unless the user asked for it. Deleting the
+    /// stored one would log the user out of a session they only re-imported.
+    @Test func replacingByIdWithoutASecretKeepsTheStoredOne() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let existing = vm.save(
+            name: "web",
+            values: sshValues(host: "old.example.com", port: 22, username: "u"),
+            password: "kept-by-the-update")!
+
+        let update = sshSession(
+            id: existing.id, name: "web", host: "new.example.com", username: "u")
+        let result = vm.applyImport(SessionImportPlan(
+            sessionsToImport: [
+                PlannedSession(
+                    session: update, password: nil, replacesExisting: true,
+                    keepsExistingSecret: true),
+            ],
+            replaced: ["web"]))
+
+        #expect(result.secretsRemoved == 0)
+        #expect(result.imported == 1)
+        #expect(try secrets.password(for: existing.id) == "kept-by-the-update")
+        #expect(vm.sessions.first { $0.id == existing.id }?.ssh?.host == "new.example.com")
+    }
+
     /// M19/T8 review (leftover 4): the login-set twin (`applyLoginSetImport`)
     /// treats an EMPTY string the same as no secret at all (`!secret.isEmpty`
     /// guards its save branch); this applier did not, so a file carrying

@@ -1467,7 +1467,12 @@ public final class SessionListViewModel {
     /// EXISTING record's id, and `store.upsert` overwrites that record in
     /// place.
     ///
-    /// A replace is a replace of the SECRET too (M19). The import file
+    /// A replace is a replace of the SECRET too (M19), UNLESS the plan says
+    /// otherwise: `PlannedSession.keepsExistingSecret` (2026-09-03) marks an
+    /// external-import UPDATE, which replaces the record's fields from a
+    /// bookmark source that holds no secret unless the user asked for one —
+    /// there the stored password stays, untouched and unreported. The rest of
+    /// this paragraph is the ordinary, arbitrated replace: the import file
     /// decides which secret the replaced session ends up with:
     /// - it carries one (a non-empty string) → that one is saved under the
     ///   (reused) id;
@@ -1536,7 +1541,7 @@ public final class SessionListViewModel {
                 } catch {
                     passwordFailures += 1
                 }
-            } else if planned.replacesExisting {
+            } else if planned.replacesExisting, !planned.keepsExistingSecret {
                 // No secret came with the replacement: the old one must not
                 // survive under the reused id.
                 //

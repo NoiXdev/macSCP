@@ -19,12 +19,11 @@ public struct ImportSwitches: Sendable, Equatable {
     public var takeLabelsAsTags: Bool
     /// An EXISTING group, chosen in the sheet's picker.
     ///
-    /// Carried straight into `ExportedSession.groupID`. `SessionImportPlanner`
-    /// resolves that reference against the payload's OWN `groups` (a file's
-    /// group ids are file-local), so a caller passing a real store group id
-    /// must also put that group into the payload — by name, which is what the
-    /// planner matches on. `payload(for:)` cannot do it here: it is handed
-    /// sessions, never the group catalogue, so it does not know the name.
+    /// Resolved against the group catalogue `payload(for:sessions:groups:
+    /// switches:)` is handed, which then carries that group into the payload's
+    /// own `groups` — `SessionImportPlanner` drops a `groupID` the payload does
+    /// not name. An id the catalogue no longer knows leaves the sessions
+    /// ungrouped rather than pointing at nothing.
     public var groupID: UUID?
     /// A group to create for this import when `groupID` is nil. Becomes one
     /// `ExportedGroup` in the payload, which `SessionImportPlanner` either
@@ -306,13 +305,29 @@ public enum ImportPreviewPlanner {
     /// `SessionImportPlanner` → `applyImport` path.
     ///
     /// A `.new` row becomes a fresh `ExportedSession`. A `.knownChanged` row
-    /// becomes one carrying the STORED record's id — the handle
-    /// `PlannedSession.replacesExisting` needs to overwrite that record in
-    /// place instead of adding a second session — with everything the source
-    /// does not know copied off the record first: its name, its group, its
-    /// rank, its pane visibility, its tags (unless the labels switch replaces
-    /// them) and every backend field outside §3's table, such as an S3
-    /// region.
+    /// becomes one carrying the stored record's id in `replaces`, which makes
+    /// `SessionImportPlanner` overwrite that record in place — same id, no
+    /// arbiter question about the connection, because the entry IS that
+    /// record.
+    ///
+    /// An update overwrites everything the source knows, the session's NAME
+    /// included (design §0 item 3, the maintainer's decision): a bookmark
+    /// renamed in Cyberduck renames the session here. What the source does not
+    /// know is copied off the record instead — its group, its rank, its pane
+    /// visibility, its tags (unless the labels switch replaces them) and every
+    /// backend field outside §3's table, such as an S3 region. Those three
+    /// session properties are the whole list: `StoredSession` carries no notes
+    /// and no colour, so there is nothing else to copy.
+    ///
+    /// `groups` is the store's group catalogue, and it is needed rather than
+    /// convenient: `SessionImportPlanner` resolves `ExportedSession.groupID`
+    /// against the payload's OWN `groups` and drops a reference the payload
+    /// does not carry. So every group the rows reference — the one the picker
+    /// chose, the one an update copied off its record — is emitted here, under
+    /// its own id and name; the planner matches it to the existing group of
+    /// that name. A group the catalogue does not know is not emitted, and the
+    /// session then names no group at all rather than one that resolves to
+    /// nothing.
     ///
     /// Unsupported and unreadable rows are refused here as well as at preview
     /// time. That is not belt and braces: `PreviewRow.selected` is mutable,
@@ -322,18 +337,24 @@ public enum ImportPreviewPlanner {
     /// `importedAt` is ONE timestamp for the whole call, so a run of forty
     /// bookmarks is one import rather than forty.
     public static func payload(
-        for rows: [PreviewRow], sessions: [StoredSession], switches: ImportSwitches
+        for rows: [PreviewRow], sessions: [StoredSession], groups: [StoredGroup],
+        switches: ImportSwitches
     ) -> SessionExportPayload {
         let importedAt = Date()
-        var groups: [ExportedGroup] = []
+        var exportedGroups: [ExportedGroup] = []
         var createdGroupID: UUID?
         if switches.groupID == nil,
            let name = switches.createGroupNamed?
                .trimmingCharacters(in: .whitespacesAndNewlines),
            !name.isEmpty {
             let group = ExportedGroup(id: UUID(), name: name)
-            groups.append(group)
+            exportedGroups.append(group)
             createdGroupID = group.id
+        }
+        // The chosen group is resolved against the catalogue exactly like a
+        // copied one, so an id the store no longer knows names nothing.
+        let chosenGroupID = switches.groupID.flatMap { id in
+            groups.first { $0.id == id }?.id
         }
 
         var exported: [ExportedSession] = []
@@ -343,7 +364,7 @@ public enum ImportPreviewPlanner {
             case .new:
                 exported.append(newSession(
                     from: row.bookmark, kind: kind,
-                    groupID: switches.groupID ?? createdGroupID,
+                    groupID: chosenGroupID ?? createdGroupID,
                     switches: switches, importedAt: importedAt))
             case .knownChanged(let storedID, _):
                 guard let stored = sessions.first(where: { $0.id == storedID }) else { continue }
@@ -355,11 +376,23 @@ public enum ImportPreviewPlanner {
             }
         }
 
+        // Every group the sessions above actually reference, in catalogue
+        // order. `parentID` is deliberately not carried: a referenced group is
+        // matched to the existing one of that name, where its own nesting
+        // already holds, and a parent this payload does not carry would be
+        // repaired away anyway.
+        let referenced = Set(exported.compactMap(\.groupID))
+        for group in groups where referenced.contains(group.id)
+            && !exportedGroups.contains(where: { $0.id == group.id }) {
+            exportedGroups.append(
+                ExportedGroup(id: group.id, name: group.name, position: group.position))
+        }
+
         // `includesSecrets` describes what the payload is ALLOWED to carry,
         // not what it carries today: this planner never sees a secret, and
         // the App's applier fills the slots in before planning (Task 4/5).
         return SessionExportPayload(
-            includesSecrets: switches.takeSecrets, groups: groups, sessions: exported)
+            includesSecrets: switches.takeSecrets, groups: exportedGroups, sessions: exported)
     }
 
     private static func newSession(
@@ -395,7 +428,8 @@ public enum ImportPreviewPlanner {
         fields.merge(values(of: bookmark, kind: kind))
         return ExportedSession(
             id: stored.id,
-            name: stored.name,
+            // The source's own name wins — see this function's caller.
+            name: displayName(of: bookmark),
             kind: kind.connectionKind,
             fields: fields.raw,
             groupID: stored.groupID,
@@ -404,7 +438,8 @@ public enum ImportPreviewPlanner {
             position: stored.position,
             importSource: bookmark.source,
             importID: bookmark.id,
-            importedAt: importedAt)
+            importedAt: importedAt,
+            replaces: stored.id)
     }
 
     // MARK: - Translation (design §3)
