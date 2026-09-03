@@ -62,6 +62,48 @@ public final class TerminalPanelViewModel {
     /// bytes out must not be told they went.
     private var pendingDeliveries: [@MainActor () -> Void] = []
 
+    /// A terminal geometry, so the two properties below are one value that
+    /// can be compared in one step rather than two ints that can drift apart.
+    private struct Geometry: Equatable {
+        let cols: Int
+        let rows: Int
+    }
+
+    /// The geometry the surface last reported while no shell existed yet,
+    /// replayed the moment one does — the resize counterpart of
+    /// `pendingBytes`, and for the same reason.
+    ///
+    /// The app's order is open-then-layout: `toggle()` sets `isVisible` and
+    /// calls `openIfNeeded()` in one synchronous step, and the panel renders
+    /// its surface for `.opening` as well as `.running`. So SwiftTerm reports
+    /// the mount's geometry -- its only report for that mount, since
+    /// `sizeChanged` fires again only when the COMPUTED geometry changes --
+    /// while `shell` is still `nil`. Dropping it left the remote PTY at
+    /// `openIfNeeded()`'s hardcoded 80x24 for the rest of the shell's life
+    /// while the emulator drew the window's real size: long lines wrapped
+    /// wrong and full-screen programs painted an 80x24 screen. The `.ended`
+    /// -> "Reopen" path arrives here too: that branch of the panel's `switch`
+    /// tears the surface down, so Reopen mounts a fresh one, which reports
+    /// its geometry with `openIfNeeded()` having already set `.opening`.
+    ///
+    /// Belongs to ONE open attempt, exactly like `pendingBytes`: cleared when
+    /// an open starts, when one fails, when the shell ends, and on
+    /// `shutdown()`. A single value rather than a list -- only the latest
+    /// geometry is worth sending.
+    private var pendingSize: Geometry?
+
+    /// The geometry last handed to the CURRENT shell, or `nil` while none has
+    /// been sent to it.
+    ///
+    /// It is what a new report is compared against, and it is deliberately
+    /// not "the geometry the shell was opened at": comparing against the
+    /// open-time 80x24 would skip the send for a window whose laid-out
+    /// geometry happens to be exactly 80x24 -- a shell that then never hears
+    /// a size, and a pin that stays red after a correct fix. Reset with the
+    /// shell, since a new shell starts at its own open-time geometry and
+    /// knows nothing of what the previous one was told.
+    private var lastSentSize: Geometry?
+
     private let openShell: ShellOpener
     private var shell: (any RemoteShell)?
     private var readTask: Task<Void, Never>?
@@ -94,6 +136,7 @@ public final class TerminalPanelViewModel {
         replayBuffer = []
         replayBytes = 0
         discardPendingInput()
+        forgetGeometry()
         cancelPendingSends()
         generation += 1
         let myGeneration = generation
@@ -110,6 +153,14 @@ public final class TerminalPanelViewModel {
                 }
                 self.shell = shell
                 state = .running
+                // Before the bytes, not beside them: `flushPendingBytes()`
+                // can start a full-screen program (a menu snippet buffered
+                // by `ContentView.sendSnippet`, which opens the panel and
+                // sends in one step), and one that starts before the
+                // window-change starts at 80x24 and has to take a SIGWINCH
+                // afterwards. Both go through `sendTask`, so this order is
+                // the delivery order and not just the call order.
+                flushPendingSize(to: shell)
                 flushPendingBytes()
                 let readGeneration = myGeneration
                 readTask = Task { [weak self] in
@@ -142,6 +193,7 @@ public final class TerminalPanelViewModel {
                 // next `openIfNeeded()`/`shutdown()`. The `.ended` message
                 // below is what actually tells the user the input is gone.
                 discardPendingInput()
+                forgetGeometry()
                 state = .ended(String(
                     format: CoreL10n.string("core.terminal.openFailed %@"),
                     error.localizedDescription))
@@ -166,6 +218,7 @@ public final class TerminalPanelViewModel {
         shell = nil
         readTask = nil
         discardPendingInput()
+        forgetGeometry()
         cancelPendingSends()
         state = .ended(message)
     }
@@ -187,12 +240,6 @@ public final class TerminalPanelViewModel {
         sendTask = nil
     }
 
-    /// Sends what `send(_:)` buffered while the shell was opening.
-    ///
-    /// Called from the same synchronous step that sets `.running`, so no
-    /// later `send(_:)` can slip in front of the buffered bytes: order is
-    /// preserved without touching the `sendTask` chain, which takes over from
-    /// here.
     /// Drops buffered input AND the callbacks that belong to it. One helper
     /// rather than two assignments at each site, so a later drop path cannot
     /// clear the bytes and leave a callback behind that would then report a
@@ -202,6 +249,66 @@ public final class TerminalPanelViewModel {
         pendingDeliveries = []
     }
 
+    /// Forgets both geometries, because the shell they describe is starting,
+    /// failing or ending.
+    ///
+    /// Deliberately NOT folded into `discardPendingInput()`, which it
+    /// otherwise accompanies: that one has five call sites and this has the
+    /// same four lifecycle ones, but the fifth is `flushPendingBytes()`,
+    /// where `discardPendingInput()` means "the buffer is spent". Clearing
+    /// `lastSentSize` there would erase what the shell had just been told,
+    /// one line after it was told.
+    ///
+    /// `pendingSize` goes for `pendingBytes`' reason -- a geometry held for an
+    /// attempt that failed must not reach a shell opened later at a different
+    /// window size. `lastSentSize` goes because it describes a shell that is
+    /// gone: the next one starts at its own open-time geometry, having been
+    /// told nothing.
+    private func forgetGeometry() {
+        pendingSize = nil
+        lastSentSize = nil
+    }
+
+    /// Sends the geometry `resize(cols:rows:)` held while the shell was
+    /// opening, if there is one and it is not what the shell was last told.
+    ///
+    /// Called from the same synchronous step that sets `.running`, one line
+    /// after `self.shell` is assigned and after the generation check -- so it
+    /// can neither run before the shell exists nor write to a shell that
+    /// `shutdown()` has already disowned.
+    private func flushPendingSize(to shell: any RemoteShell) {
+        guard let size = pendingSize else { return }
+        pendingSize = nil
+        guard size != lastSentSize else { return }
+        sendWindowChange(size, to: shell)
+    }
+
+    /// Queues an SSH window-change on the SAME chain as `send(_:)`.
+    ///
+    /// Not a free `Task`: one would race the buffered bytes flushed beside
+    /// it, and the loser of that race is a full-screen program started at
+    /// the wrong size. Chaining also keeps two window-changes in order, so
+    /// the last one issued is the last one the remote sees.
+    private func sendWindowChange(_ size: Geometry, to shell: any RemoteShell) {
+        lastSentSize = size
+        let previous = sendTask
+        sendTask = Task {
+            await previous?.value
+            try? await shell.resize(cols: size.cols, rows: size.rows)
+        }
+    }
+
+    /// Sends what `send(_:)` buffered while the shell was opening.
+    ///
+    /// Called from the same synchronous step that sets `.running`, so no
+    /// later `send(_:)` can slip in front of the buffered bytes: order is
+    /// preserved without touching the `sendTask` chain, which takes over from
+    /// here. The one thing that IS ahead of them in that chain is the
+    /// window-change `flushPendingSize(to:)` queues one line earlier, which
+    /// is the point of doing it there.
+    ///
+    /// (The first two paragraphs sat on `discardPendingInput()` below, which
+    /// they do not describe, until 2026-09-03.)
     private func flushPendingBytes() {
         guard !pendingBytes.isEmpty else { return }
         let buffered = pendingBytes
@@ -247,9 +354,23 @@ public final class TerminalPanelViewModel {
     }
 
     /// Reports a new terminal size (SSH window-change).
+    ///
+    /// While the shell is still opening the geometry is HELD and sent as soon
+    /// as it runs (see `pendingSize`) -- the app lays the surface out after
+    /// it has started opening, so this is the normal case for the first
+    /// report of every mount, not an edge one. In every other shell-less
+    /// state (`.closed`, `.ended`) it is dropped: nothing is on its way that
+    /// could deliver it, and holding it would mean replaying a stale geometry
+    /// into a shell opened much later. The guard stays a guard either way --
+    /// no task is ever queued against a nil shell.
     public func resize(cols: Int, rows: Int) {
-        guard let shell else { return }
-        Task { try? await shell.resize(cols: cols, rows: rows) }
+        let size = Geometry(cols: cols, rows: rows)
+        guard let shell else {
+            if state == .opening { pendingSize = size }
+            return
+        }
+        guard size != lastSentSize else { return }
+        sendWindowChange(size, to: shell)
     }
 
     /// Closes the shell and resets the panel (disconnect/session switch).
@@ -278,6 +399,7 @@ public final class TerminalPanelViewModel {
         // `shutdown()` could block on a hanging `send()`.
         cancelPendingSends()
         discardPendingInput()
+        forgetGeometry()
         replayBuffer = []
         replayBytes = 0
         state = .closed

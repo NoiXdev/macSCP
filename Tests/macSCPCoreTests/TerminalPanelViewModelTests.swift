@@ -339,6 +339,106 @@ struct TerminalPanelViewModelTests {
         #expect(second.sent.flatMap { $0 } == [7])
     }
 
+    /// The app's order is open-then-layout: `toggle()` sets `.opening` in the
+    /// same synchronous step that shows the panel, so the surface reports the
+    /// geometry it was laid out at while `shell` is still `nil`. That report
+    /// used to be dropped, and the shell kept `openIfNeeded()`'s hardcoded
+    /// 80x24 for the rest of its life.
+    @Test func aSizeReportedWhileOpeningReachesTheShellOnceItRuns() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await Task.sleep(for: .milliseconds(100))
+            return shell
+        })
+
+        vm.openIfNeeded()
+        #expect(vm.state == .opening)
+        vm.resize(cols: 132, rows: 43)
+        #expect(shell.resizes.isEmpty)  // Nothing to resize yet.
+
+        try await waitUntil(vm.state == .running)
+        try await waitUntil(!shell.resizes.isEmpty)
+        #expect(shell.resizes.map { [$0.cols, $0.rows] } == [[132, 43]])
+    }
+
+    /// The ORDER, which is the half a separate `Task` cannot give: the
+    /// window-change has to be at the shell before the bytes that were
+    /// buffered beside it. `ContentView.sendSnippet` is the path that makes
+    /// this concrete — it opens the panel and buffers the snippet in one
+    /// step, so a flush that runs first starts a full-screen program at
+    /// 80x24 and leaves it to take SIGWINCH afterwards.
+    ///
+    /// The bytes are handed over BEFORE the size here, deliberately: what is
+    /// pinned is "the window-change precedes the flush", not "the calls keep
+    /// the order they were issued in". Issuing them the other way round would
+    /// let a fix that merely preserves issue order pass.
+    ///
+    /// `OrderedShell` rather than `MockShell` for the other half of the
+    /// property — that the two go through ONE FIFO instead of racing in
+    /// parallel tasks. See that class's doc comment for the measurement that
+    /// made the difference visible.
+    @Test func aWindowChangeRecordedWhileOpeningArrivesBeforeTheFlushedBytes() async throws {
+        let shell = OrderedShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in
+            try await Task.sleep(for: .milliseconds(100))
+            return shell
+        })
+        let snippet = Array("vim notes.txt\r".utf8)
+
+        vm.openIfNeeded()
+        vm.send(snippet)
+        vm.resize(cols: 132, rows: 43)
+        #expect(shell.events.isEmpty)
+
+        try await waitUntil(vm.state == .running)
+        try await waitUntil(shell.events.count == 2)
+        #expect(
+            shell.events == [.resized(cols: 132, rows: 43), .sent(snippet)],
+            "the shell saw \(shell.events)")
+    }
+
+    /// A geometry the shell has already been told is not sent again, and a
+    /// different one is — the comparison is against the last size SENT, so a
+    /// window that is genuinely 80x24 still gets its window-change (comparing
+    /// against `openIfNeeded()`'s open-time 80x24 would swallow exactly that
+    /// one).
+    @Test func anUnchangedSizeIsNotSentTwiceAndAChangedOneIs() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
+        vm.openIfNeeded()
+        try await waitUntil(vm.state == .running)
+
+        vm.resize(cols: 80, rows: 24)  // The shell's own open-time geometry.
+        try await waitUntil(shell.resizes.count == 1)
+        vm.resize(cols: 80, rows: 24)
+        vm.resize(cols: 80, rows: 24)
+        // Give a duplicate time to show up before asserting it didn't.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(shell.resizes.count == 1)
+
+        vm.resize(cols: 132, rows: 43)
+        try await waitUntil(shell.resizes.count == 2)
+        #expect(shell.resizes.map { [$0.cols, $0.rows] } == [[80, 24], [132, 43]])
+    }
+
+    /// A size reported while nothing is opening belongs to no shell: it must
+    /// not be kept and replayed into one opened much later, the same rule
+    /// `send(_:)`'s buffer follows. Otherwise a panel that was closed at one
+    /// window size would open its next shell at that stale geometry.
+    @Test func aSizeReportedWhileClosedIsNotReplayedIntoALaterShell() async throws {
+        let shell = MockShell()
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
+
+        #expect(vm.state == .closed)
+        vm.resize(cols: 200, rows: 60)
+
+        vm.openIfNeeded()
+        try await waitUntil(vm.state == .running)
+        // Give a mistaken replay time to show up before asserting it didn't.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(shell.resizes.isEmpty)
+    }
+
     /// The hold is bounded (64 KiB), so an open that never completes cannot
     /// let it grow without limit — same discipline as `replayBuffer`.
     @Test func bytesHeldWhileOpeningAreBounded() async throws {
@@ -411,6 +511,55 @@ final class LateFinishShell: RemoteShell, Sendable {
     func finish() {
         state.withLock { $0.finished = true }
     }
+}
+
+/// Shell that records sends and window-changes in ONE list, so a test can ask
+/// which reached it first — and whose `resize` SUSPENDS before recording,
+/// while `send` records at once.
+///
+/// That asymmetry is the whole fixture, and it was measured into existence:
+/// with a shell that records both immediately, the ordering test could not
+/// tell the shipped chain from a free `Task { shell.resize(…) }` — the free
+/// task is created first and wins on scheduling alone, so the mutation passed
+/// 5 of 5 runs. With `resize` sleeping first, the two implementations are
+/// distinguishable by construction rather than by timing:
+///
+/// - chained through `sendTask` (shipped): the flush's `send` waits for the
+///   resize task to COMPLETE, sleep included -> `[.resized, .sent]`, and no
+///   amount of load can reorder it;
+/// - a free `Task`: the send has nothing to wait for and records while the
+///   resize is still asleep -> `[.sent, .resized]`.
+///
+/// The delay is therefore not a race the test hopes to win. It is what makes
+/// the correct answer independent of scheduling.
+final class OrderedShell: RemoteShell, Sendable {
+    enum Event: Equatable, Sendable {
+        case sent([UInt8])
+        case resized(cols: Int, rows: Int)
+    }
+
+    private let recorded = Mutex<[Event]>([])
+    private let resizeDelay: Duration
+    let output: AsyncThrowingStream<[UInt8], Error>
+    private let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
+
+    var events: [Event] { recorded.withLock { $0 } }
+
+    init(resizeDelay: Duration = .milliseconds(50)) {
+        self.resizeDelay = resizeDelay
+        (output, continuation) = AsyncThrowingStream<[UInt8], Error>.makeStream()
+    }
+
+    func send(_ bytes: [UInt8]) async throws {
+        recorded.withLock { $0.append(.sent(bytes)) }
+    }
+
+    func resize(cols: Int, rows: Int) async throws {
+        try await Task.sleep(for: resizeDelay)
+        recorded.withLock { $0.append(.resized(cols: cols, rows: rows)) }
+    }
+
+    func close() async { continuation.finish() }
 }
 
 /// Shell whose `send(_:)` never returns on its own — it sleeps until the

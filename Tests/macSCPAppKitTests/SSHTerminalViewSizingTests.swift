@@ -109,6 +109,38 @@ struct SSHTerminalViewSizingTests {
         }
     }
 
+    /// `OpenGate` with one permit per call instead of a latch: `release()`
+    /// lets exactly one `openShell` through. A reopen test needs that — the
+    /// FIRST open must complete while the SECOND is held, so the surface can
+    /// be torn down, mounted again and laid out before the new shell exists.
+    /// A latch would let the second open straight through and the test would
+    /// measure the ordinary running-resize path instead of the reopen.
+    private actor OpenGates {
+        private var permits = 0
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var requested: [RecordingShell.Size] = []
+
+        /// The geometries `openShell` was called with, in order.
+        var openRequests: [RecordingShell.Size] { requested }
+
+        func wait(cols: Int, rows: Int) async {
+            requested.append(RecordingShell.Size(cols: cols, rows: rows))
+            if permits > 0 {
+                permits -= 1
+                return
+            }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        func release() {
+            if waiters.isEmpty {
+                permits += 1
+            } else {
+                waiters.removeFirst().resume()
+            }
+        }
+    }
+
     /// A view model whose shell is `shell`, already `.running`.
     private func runningViewModel(shell: RecordingShell) async throws -> TerminalPanelViewModel {
         let viewModel = TerminalPanelViewModel(openShell: { _, _, _ in shell })
@@ -118,13 +150,13 @@ struct SSHTerminalViewSizingTests {
         return viewModel
     }
 
-    /// A window with `root` hosted in it at `size`, laid out.
+    /// A window with `root` as its content view, not yet laid out.
     ///
     /// `isReleasedWhenClosed` is turned off because ARC owns this window:
     /// the default would have `close()` release it a second time.
-    private func mountPanel<Root: View>(
+    private func makeWindow<Root: View>(
         _ root: Root, size: NSSize
-    ) async throws -> (window: NSWindow, hosting: NSHostingView<Root>) {
+    ) -> (window: NSWindow, hosting: NSHostingView<Root>) {
         _ = NSApplication.shared
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
@@ -134,10 +166,40 @@ struct SSHTerminalViewSizingTests {
         window.isReleasedWhenClosed = false
         let hosting = NSHostingView(rootView: root)
         window.contentView = hosting
-        try await setContentSize(size, window: window, hosting: hosting) {
-            (firstTerminalView(in: hosting)?.frame.width ?? 0) > 0
-        }
         return (window, hosting)
+    }
+
+    /// Hosts `root` in a window of `size`, runs `body` against it, and tears
+    /// the window, the view model and the throwaway settings directory down
+    /// on EVERY exit — a thrown `try #require` included.
+    ///
+    /// The cleanup used to be a trailing `tearDown(...)` call, which a throw
+    /// between the window and that line skips: the window stays alive, the
+    /// read loop stays suspended on a stream that never finishes, and the
+    /// settings directory survives the run. It is not a `defer` because the
+    /// cleanup awaits (`shutdown()`) and a `defer` body may not — hence the
+    /// `Result` and the rethrow at the end.
+    private func withHostedPanel<Root: View>(
+        viewModel: TerminalPanelViewModel,
+        size: NSSize,
+        root: (SettingsStore) -> Root,
+        body: (NSWindow, NSHostingView<Root>) async throws -> Void
+    ) async throws {
+        let settings = try temporarySettingsStore()
+        let (window, hosting) = makeWindow(root(settings.store), size: size)
+        let outcome: Result<Void, any Error>
+        do {
+            try await setContentSize(size, window: window, hosting: hosting) {
+                (firstTerminalView(in: hosting)?.frame.width ?? 0) > 0
+            }
+            try await body(window, hosting)
+            outcome = .success(())
+        } catch {
+            outcome = .failure(error)
+        }
+        await tearDown(
+            window: window, viewModel: viewModel, settingsDirectory: settings.directory)
+        try outcome.get()
     }
 
     /// Resizes the window the way AppKit does on a user resize — the content
@@ -152,6 +214,20 @@ struct SSHTerminalViewSizingTests {
     ) async throws {
         window.setContentSize(size)
         hosting.frame = NSRect(origin: .zero, size: size)
+        for _ in 0..<200 {
+            hosting.layoutSubtreeIfNeeded()
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        hosting.layoutSubtreeIfNeeded()
+    }
+
+    /// Lays the hierarchy out repeatedly until `condition` holds, without
+    /// changing the window size — for a change that comes from the view
+    /// model rather than from AppKit (a state switch that mounts or unmounts
+    /// the terminal surface). Same bound and same reasoning as
+    /// `setContentSize(_:window:hosting:until:)`.
+    private func layOutUntil(_ hosting: NSView, _ condition: () -> Bool) async throws {
         for _ in 0..<200 {
             hosting.layoutSubtreeIfNeeded()
             if condition() { return }
@@ -223,6 +299,45 @@ struct SSHTerminalViewSizingTests {
         }
     }
 
+    /// `HostedPanel` plus the one thing it leaves out: the `switch` on
+    /// `state` that `ContentView+Detail.terminalPanel(_:)` wraps the surface
+    /// in (`:855-892`). `HostedPanel` renders the terminal unconditionally,
+    /// which is right for measuring a mount; it cannot show a REopen,
+    /// because the surface it mounts is never torn down.
+    ///
+    /// The `.ended` branch is the app's shape, not a placeholder: a message
+    /// and a Reopen button calling `openIfNeeded()`. The strings are literals
+    /// here rather than catalogue lookups — nothing in this file reads text,
+    /// and `L10n` is pinned where it belongs, in the localization suites.
+    private struct HostedStatefulPanel: View {
+        let viewModel: TerminalPanelViewModel
+        let settingsStore: SettingsStore
+
+        var body: some View {
+            ZStack {
+                Color(nsColor: DesignTokens.terminalBackground)
+                switch viewModel.state {
+                case .running, .opening:
+                    SSHTerminalView(
+                        viewModel: viewModel,
+                        settingsStore: settingsStore,
+                        snippetMenu: SnippetMenuModel.build(
+                            snippets: [], isConnected: true, supportsShell: true),
+                        onRunSnippet: { _, _ in })
+                        .padding(.horizontal, DesignTokens.terminalPanelInsetHorizontal)
+                        .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
+                case .ended(let message):
+                    VStack(spacing: 8) {
+                        Text(message ?? "Shell ended.")
+                        Button("Reopen") { viewModel.openIfNeeded() }
+                    }
+                case .closed:
+                    Color.clear
+                }
+            }
+        }
+    }
+
     /// The container the app actually has, which `HostedPanel` on its own
     /// does not: `ContentView+Detail.swift:290` puts the whole detail area in
     /// a `VSplitView`; the file-pane half above carries
@@ -265,40 +380,38 @@ struct SSHTerminalViewSizingTests {
     func windowResizeReachesTheHostedTerminalFrame() async throws {
         let shell = RecordingShell()
         let viewModel = try await runningViewModel(shell: shell)
-        let settings = try temporarySettingsStore()
-        let (window, hosting) = try await mountPanel(
-            HostedPanel(viewModel: viewModel, settingsStore: settings.store),
-            size: NSSize(width: 800, height: 600))
+        try await withHostedPanel(
+            viewModel: viewModel, size: NSSize(width: 800, height: 600),
+            root: { HostedPanel(viewModel: viewModel, settingsStore: $0) }
+        ) { window, hosting in
+            let terminal = try #require(
+                firstTerminalView(in: hosting),
+                "no TerminalView in the hosted hierarchy — re-anchor this measurement")
+            let frameBefore = terminal.frame
+            let sizeBefore = (
+                cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
 
-        let terminal = try #require(
-            firstTerminalView(in: hosting),
-            "no TerminalView in the hosted hierarchy — re-anchor this measurement")
-        let frameBefore = terminal.frame
-        let sizeBefore = (
-            cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
+            try await setContentSize(
+                NSSize(width: 1200, height: 900), window: window, hosting: hosting
+            ) { terminal.frame.width > frameBefore.width }
 
-        try await setContentSize(
-            NSSize(width: 1200, height: 900), window: window, hosting: hosting
-        ) { terminal.frame.width > frameBefore.width }
+            let frameAfter = terminal.frame
+            let sizeAfter = (
+                cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
 
-        let frameAfter = terminal.frame
-        let sizeAfter = (
-            cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
-
-        #expect(
-            frameAfter.width > frameBefore.width && frameAfter.height > frameBefore.height,
-            """
-            The hosted terminal's frame did not grow with the window: \
-            \(frameBefore.size) -> \(frameAfter.size). Cause (a).
-            """)
-        #expect(
-            sizeAfter.cols > sizeBefore.cols && sizeAfter.rows > sizeBefore.rows,
-            """
-            The emulator kept its geometry: \(sizeBefore) -> \(sizeAfter) \
-            (frame \(frameBefore.size) -> \(frameAfter.size)).
-            """)
-        await tearDown(
-            window: window, viewModel: viewModel, settingsDirectory: settings.directory)
+            #expect(
+                frameAfter.width > frameBefore.width && frameAfter.height > frameBefore.height,
+                """
+                The hosted terminal's frame did not grow with the window: \
+                \(frameBefore.size) -> \(frameAfter.size). Cause (a).
+                """)
+            #expect(
+                sizeAfter.cols > sizeBefore.cols && sizeAfter.rows > sizeBefore.rows,
+                """
+                The emulator kept its geometry: \(sizeBefore) -> \(sizeAfter) \
+                (frame \(frameBefore.size) -> \(frameAfter.size)).
+                """)
+        }
     }
 
     /// The same frame change with the view model taken out, so a red run
@@ -398,14 +511,7 @@ struct SSHTerminalViewSizingTests {
     /// postconditions BEFORE anything can heal them: the shell's record is
     /// snapshotted the moment the shell is running, not after a later
     /// resize.
-    @Test(
-        "The size the surface was laid out at reaches the shell that opens after it",
-        .disabled("""
-            measured 2026-09-03: cause (b) — the mount-time sizeChanged \
-            (88x36) is dropped by TerminalPanelViewModel.resize's \
-            `guard let shell` while the shell is still opening, and the shell \
-            then opens at openIfNeeded()'s hardcoded 80x24; fixed in Task 2
-            """))
+    @Test("The size the surface was laid out at reaches the shell that opens after it")
     func theMountSizeReachesTheShellThatOpensAfterIt() async throws {
         let shell = RecordingShell()
         let gate = OpenGate()
@@ -415,42 +521,42 @@ struct SSHTerminalViewSizingTests {
             await gate.wait()
             return shell
         })
-        let settings = try temporarySettingsStore()
 
         // The app's order: open first, render second.
         viewModel.openIfNeeded()
         #expect(viewModel.state == .opening)
-        let (window, hosting) = try await mountPanel(
-            HostedPanel(viewModel: viewModel, settingsStore: settings.store),
-            size: NSSize(width: 800, height: 600))
-        let terminal = try #require(
-            firstTerminalView(in: hosting),
-            "no TerminalView in the hosted hierarchy — re-anchor this measurement")
-        let laidOut = RecordingShell.Size(
-            cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
+        try await withHostedPanel(
+            viewModel: viewModel, size: NSSize(width: 800, height: 600),
+            root: { HostedPanel(viewModel: viewModel, settingsStore: $0) }
+        ) { _, hosting in
+            let terminal = try #require(
+                firstTerminalView(in: hosting),
+                "no TerminalView in the hosted hierarchy — re-anchor this measurement")
+            let laidOut = RecordingShell.Size(
+                cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
 
-        await gate.open()
-        try await waitUntil { viewModel.state == .running }
-        #expect(viewModel.state == .running)
-        // Give a forwarded resize the same room to arrive that the other
-        // tests give it, then snapshot — nothing below may resize the window
-        // first, or it would read the healed value.
-        try await Task.sleep(for: .milliseconds(200))
-        let seenByShell = shell.resizes
+            await gate.open()
+            try await waitUntil { viewModel.state == .running }
+            #expect(viewModel.state == .running)
+            // Give a forwarded resize the same room to arrive that the other
+            // tests give it, then snapshot — nothing below may resize the
+            // window first, or it would read the healed value.
+            try await waitUntil { !shell.resizes.isEmpty }
+            try await Task.sleep(for: .milliseconds(200))
+            let seenByShell = shell.resizes
 
-        #expect(
-            requested.withLock { $0 } == [RecordingShell.Size(cols: 80, rows: 24)],
-            "the shell is opened at openIfNeeded()'s hardcoded geometry")
-        #expect(
-            seenByShell.last == laidOut,
-            """
-            The surface was laid out at \(laidOut) while the shell was still \
-            opening; the shell then opened at \(requested.withLock { $0 }) and \
-            has seen \(seenByShell). The remote PTY therefore keeps the \
-            initial 80x24 while the emulator draws \(laidOut).
-            """)
-        await tearDown(
-            window: window, viewModel: viewModel, settingsDirectory: settings.directory)
+            #expect(
+                requested.withLock { $0 } == [RecordingShell.Size(cols: 80, rows: 24)],
+                "the shell is opened at openIfNeeded()'s hardcoded geometry")
+            #expect(
+                seenByShell.last == laidOut,
+                """
+                The surface was laid out at \(laidOut) while the shell was still \
+                opening; the shell then opened at \(requested.withLock { $0 }) and \
+                has seen \(seenByShell). The remote PTY therefore keeps the \
+                initial 80x24 while the emulator draws \(laidOut).
+                """)
+        }
     }
 
     /// The other half of the maintainer's report ("also in full screen"):
@@ -466,28 +572,27 @@ struct SSHTerminalViewSizingTests {
             await gate.wait()
             return shell
         })
-        let settings = try temporarySettingsStore()
 
         viewModel.openIfNeeded()
-        let (window, hosting) = try await mountPanel(
-            HostedPanel(viewModel: viewModel, settingsStore: settings.store),
-            size: NSSize(width: 800, height: 600))
-        await gate.open()
-        try await waitUntil { viewModel.state == .running }
+        try await withHostedPanel(
+            viewModel: viewModel, size: NSSize(width: 800, height: 600),
+            root: { HostedPanel(viewModel: viewModel, settingsStore: $0) }
+        ) { window, hosting in
+            await gate.open()
+            try await waitUntil { viewModel.state == .running }
 
-        let terminal = try #require(firstTerminalView(in: hosting))
-        let widthBefore = terminal.frame.width
-        try await setContentSize(
-            NSSize(width: 1200, height: 900), window: window, hosting: hosting
-        ) { terminal.frame.width > widthBefore }
-        let grown = RecordingShell.Size(
-            cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
-        try await waitUntil { !shell.resizes.isEmpty }
-        #expect(
-            shell.resizes.last == grown,
-            "the emulator grew to \(grown); the shell saw \(shell.resizes)")
-        await tearDown(
-            window: window, viewModel: viewModel, settingsDirectory: settings.directory)
+            let terminal = try #require(firstTerminalView(in: hosting))
+            let widthBefore = terminal.frame.width
+            try await setContentSize(
+                NSSize(width: 1200, height: 900), window: window, hosting: hosting
+            ) { terminal.frame.width > widthBefore }
+            let grown = RecordingShell.Size(
+                cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
+            try await waitUntil { shell.resizes.last == grown }
+            #expect(
+                shell.resizes.last == grown,
+                "the emulator grew to \(grown); the shell saw \(shell.resizes)")
+        }
     }
 
     /// The same question in the container the app actually has
@@ -502,14 +607,11 @@ struct SSHTerminalViewSizingTests {
     @Test(
         "A window resize in the app's split layout reaches the shell in both dimensions",
         .disabled("""
-            measured 2026-09-03: a SECOND defect, distinct from the mount \
-            drop the other disabled case names. Window 800x600 -> 1200x900 in \
-            the app's own container moves the terminal frame from \
-            (772.0, 104.0) to (1172.0, 104.0): cols 88 -> 135 reach the shell, \
-            rows stay at 6. The VSplitView's `layoutPriority(1)` sibling \
-            absorbs the added height, so the terminal strip holds its height \
-            and a full-screen toggle changes only one of the two numbers. Not \
-            covered by the view-model fix; needs its own decision
+            measured 2026-09-03: in the app's split layout a window resize \
+            changes cols (88→135) but not rows (6); the priority-1 sibling \
+            absorbs the height — intended split behaviour by the controller's \
+            ruling of 2026-09-03, kept as a characterisation, not a defect to \
+            fix
             """))
     func aWindowResizeInTheSplitLayoutReachesTheShellInBothDimensions() async throws {
         let shell = RecordingShell()
@@ -518,40 +620,120 @@ struct SSHTerminalViewSizingTests {
             await gate.wait()
             return shell
         })
-        let settings = try temporarySettingsStore()
 
         viewModel.openIfNeeded()
-        let (window, hosting) = try await mountPanel(
-            HostedSplitLayout(viewModel: viewModel, settingsStore: settings.store),
-            size: NSSize(width: 800, height: 600))
-        await gate.open()
-        try await waitUntil { viewModel.state == .running }
+        try await withHostedPanel(
+            viewModel: viewModel, size: NSSize(width: 800, height: 600),
+            root: { HostedSplitLayout(viewModel: viewModel, settingsStore: $0) }
+        ) { window, hosting in
+            await gate.open()
+            try await waitUntil { viewModel.state == .running }
 
-        let terminal = try #require(
-            firstTerminalView(in: hosting),
-            "no TerminalView in the hosted split layout — re-anchor this measurement")
-        let frameBefore = terminal.frame
-        let before = RecordingShell.Size(
-            cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
+            let terminal = try #require(
+                firstTerminalView(in: hosting),
+                "no TerminalView in the hosted split layout — re-anchor this measurement")
+            let frameBefore = terminal.frame
+            let before = RecordingShell.Size(
+                cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
 
-        try await setContentSize(
-            NSSize(width: 1200, height: 900), window: window, hosting: hosting
-        ) { terminal.frame.width > frameBefore.width }
-        let frameAfter = terminal.frame
-        let after = RecordingShell.Size(
-            cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
-        try await waitUntil { !shell.resizes.isEmpty }
-        let seenByShell = shell.resizes.last
+            try await setContentSize(
+                NSSize(width: 1200, height: 900), window: window, hosting: hosting
+            ) { terminal.frame.width > frameBefore.width }
+            let frameAfter = terminal.frame
+            let after = RecordingShell.Size(
+                cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
+            try await waitUntil { shell.resizes.last == after }
+            let seenByShell = shell.resizes.last
 
-        let detail = Comment(rawValue: """
-            split layout, window 800x600 -> 1200x900: terminal frame \
-            \(frameBefore.size) -> \(frameAfter.size), emulator \(before) -> \
-            \(after), shell saw \(String(describing: seenByShell)).
-            """)
-        #expect(after.cols > before.cols, detail)
-        #expect(after.rows > before.rows, detail)
-        #expect(seenByShell == after, detail)
-        await tearDown(
-            window: window, viewModel: viewModel, settingsDirectory: settings.directory)
+            let detail = Comment(rawValue: """
+                split layout, window 800x600 -> 1200x900: terminal frame \
+                \(frameBefore.size) -> \(frameAfter.size), emulator \(before) -> \
+                \(after), shell saw \(String(describing: seenByShell)).
+                """)
+            #expect(after.cols > before.cols, detail)
+            #expect(after.rows > before.rows, detail)
+            #expect(seenByShell == after, detail)
+        }
+    }
+
+    // MARK: - Reopen: the surface is torn down and mounted again
+
+    /// The `.ended` → "Reopen" path. `terminalPanel(_:)` renders
+    /// `SSHTerminalView` only for `case .running, .opening:`
+    /// (`ContentView+Detail.swift:855`) and the ended message plus its Reopen
+    /// button for `case .ended`, so the surface really is torn down when the
+    /// shell ends — its own doc comment says so deliberately ("mounted only
+    /// while the shell is active, so `onOutput` binds fresh on every
+    /// reopen"). Pressing Reopen therefore mounts a FRESH `TerminalView` at
+    /// `frame: .zero`, which reports its geometry once on its first layout —
+    /// and, since `openIfNeeded()` has already set `.opening` by then, that
+    /// report arrives with no shell behind it, exactly as on the first mount.
+    ///
+    /// `HostedStatefulPanel` reproduces that switch, so this measures the
+    /// teardown and remount rather than assuming them: the test asserts the
+    /// old `TerminalView` is gone before it presses Reopen, and reads the
+    /// NEW surface's geometry.
+    ///
+    /// The second shell is held on the gate until the remount has been laid
+    /// out, so what is measured is the reopen path and not an ordinary
+    /// resize arriving after `.running`.
+    @Test("A reopened shell learns the size of the surface mounted for it")
+    func aReopenedShellLearnsTheSizeOfTheSurfaceMountedForIt() async throws {
+        let shells = Mutex<[RecordingShell]>([])
+        let gates = OpenGates()
+        let viewModel = TerminalPanelViewModel(openShell: { _, cols, rows in
+            await gates.wait(cols: cols, rows: rows)
+            let shell = RecordingShell()
+            shells.withLock { $0.append(shell) }
+            return shell
+        })
+
+        viewModel.openIfNeeded()
+        try await withHostedPanel(
+            viewModel: viewModel, size: NSSize(width: 800, height: 600),
+            root: { HostedStatefulPanel(viewModel: viewModel, settingsStore: $0) }
+        ) { _, hosting in
+            await gates.release()
+            try await waitUntil { viewModel.state == .running }
+            let first = try #require(shells.withLock { $0.first })
+
+            // End the shell the way a remote `exit` does.
+            await first.close()
+            try await waitUntil { viewModel.state == .ended(nil) }
+            try await layOutUntil(hosting) { firstTerminalView(in: hosting) == nil }
+            #expect(
+                firstTerminalView(in: hosting) == nil,
+                """
+                the surface is still mounted after the shell ended — this test \
+                measures the teardown-and-remount path and there is nothing to \
+                remount; re-anchor it against terminalPanel(_:)'s switch
+                """)
+
+            // "Reopen": openIfNeeded() first, layout second — the app's order.
+            viewModel.openIfNeeded()
+            #expect(viewModel.state == .opening)
+            try await layOutUntil(hosting) {
+                (firstTerminalView(in: hosting)?.frame.width ?? 0) > 0
+            }
+            let remounted = try #require(
+                firstTerminalView(in: hosting),
+                "no TerminalView after Reopen — re-anchor this measurement")
+            let laidOut = RecordingShell.Size(
+                cols: remounted.getTerminal().cols, rows: remounted.getTerminal().rows)
+
+            await gates.release()
+            try await waitUntil { viewModel.state == .running }
+            let second = try #require(shells.withLock { $0.count == 2 ? $0[1] : nil })
+            try await waitUntil { !second.resizes.isEmpty }
+            let openedAt = await gates.openRequests
+            #expect(
+                second.resizes.last == laidOut,
+                """
+                the reopened surface was laid out at \(laidOut); the shells \
+                were opened at \(openedAt) and the second has seen \
+                \(second.resizes). A shell that never hears the size keeps the \
+                80x24 it was opened with.
+                """)
+        }
     }
 }
