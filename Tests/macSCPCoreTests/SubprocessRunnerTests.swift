@@ -125,10 +125,18 @@ struct SubprocessRunnerTests {
         // description has to be able to explain rather than merely survive.
         //
         // The `false` is a fact about THIS child, not a decision of the
-        // runner: the runner never closes its own read ends, so the handler
-        // stays installed until the grandchild exits. If that debt is ever
-        // paid — round 1's M-4 — both latches would raise here and this line
-        // would need revisiting on a runner that got strictly better.
+        // runner. For the whole of `run` the pipes are bound alive (re-review
+        // 3, N-2) and the handler stays installed, so the only thing that can
+        // raise the drained latch is EOF — and the grandchild withholds it.
+        // What happens AFTER the throw is a separate question: the frame
+        // releases its pipes, and — measured 2026-09-03 on a bare `Pipe` —
+        // Foundation's readability source does not retain the handle, so a
+        // released handle closes its fd and cancels its source at once. The
+        // runner's pipes are also held by its `Process`, whose release after
+        // the throw is not measured here; round 1's M-4 is at most that. If
+        // the runner ever closed its read ends itself, both latches would
+        // raise inside the escalation and this line would need revisiting on
+        // a runner that got strictly better.
         #expect(error.reap.stderrDrained == false)
         #expect("\(error)".contains("stderr reader"))
     }
@@ -136,12 +144,48 @@ struct SubprocessRunnerTests {
     /// A reader must not need a free Dispatch global-queue thread.
     ///
     /// This is the shape CI run 33698102652 failed in, reproduced without CI
-    /// load. Ninety-six blocks are parked in `read(2)` on pipes nobody writes
-    /// to — the very thing the old readers did, one pair per child, for every
-    /// child in a suite that now awaits all of them. Dispatch's global pool
-    /// has a finite width and blocked threads count against it, so a reader
+    /// load. Blocks are parked in `read(2)` on pipes nobody writes to — the
+    /// very thing the old readers did, one pair per child, for every child in
+    /// a suite that now awaits all of them. Dispatch's global pool has a
+    /// finite width and blocked threads count against it, so a reader
     /// submitted behind them never runs at all and the box stays empty however
     /// incrementally it would have filled.
+    ///
+    /// How many blocks is derived at run time, not assumed: the width is a
+    /// property of the kernel's workqueue on the machine running the test,
+    /// not of this code, and an earlier version parked a constant 96 that
+    /// happened to exceed the width seen on one ten-core box. A wider pool
+    /// would have let the parked-thread reader get its thread, and this test
+    /// would have stayed green with the defect present — insensitive, which
+    /// from the outside reads exactly like satisfied.
+    ///
+    /// Two numbers, and what each one is:
+    ///
+    /// - The pool's width is READ, from `kern.wq_max_constrained_threads` —
+    ///   the kernel's limit on constrained (non-overcommit) workqueue
+    ///   threads, which is the pool `DispatchQueue.global()` draws from. The
+    ///   count parked is that plus a margin, so once the pool is full of
+    ///   these blocks the margin sits queued behind it whatever else the
+    ///   parallel suite is doing, and a reader block submitted after them
+    ///   cannot start.
+    /// - The FREE width at this moment is MEASURED, by submitting blocks one
+    ///   at a time and waiting for each to start: the first that does not
+    ///   start within a short bound is the saturation, and the number before
+    ///   it is how many threads the pool had to give. Alone on the machine
+    ///   that equals the limit; inside the parallel suite it is whatever
+    ///   the other tests left, and measured 2026-09-03 in 3 of 3 full runs
+    ///   it was ZERO — the first block started 1.35 s to 3.27 s late, because
+    ///   other tests already held every thread. So the free width is
+    ///   asserted to be at most the limit, and not to be positive.
+    ///
+    /// Measured 2026-09-03 on the ten-core development machine, alone:
+    /// limit 64, free width 64, in 3 of 3 runs of this test.
+    ///
+    /// The positive anchor for the mechanism is at the end: after the write
+    /// ends are closed, every parked block is required to have run and
+    /// returned. A block that ran reached its first instruction, so the
+    /// start signal the measurement rests on is proven to work even when the
+    /// measured free width is zero — and no thread is left behind.
     ///
     /// Measured 2026-09-03 under exactly this saturation: an `availableData`
     /// loop on a `DispatchQueue.global()` block captured 0 bytes; the
@@ -150,16 +194,56 @@ struct SubprocessRunnerTests {
     /// The blockers are parked on pipe reads rather than a sleep because a
     /// blocking sleep is precisely what this suite forbids (CLAUDE.md, "Tests
     /// never block the cooperative pool"), and closing the write ends releases
-    /// every one of them deterministically.
+    /// every one of them deterministically, on every exit path, including a
+    /// failed `#require`.
     @Test func readersDoNotNeedAFreeGlobalQueueThread() async throws {
+        let limit = try #require(
+            Self.constrainedWorkqueueThreadLimit(),
+            "kern.wq_max_constrained_threads is not readable here; the test cannot know the pool's width")
+        try #require(limit > 0, "the kernel reports a constrained-thread limit of \(limit)")
+        let margin = 16
+        let startBound = Duration.milliseconds(250)
+
         var writeEnds: [FileHandle] = []
-        for _ in 0..<96 {
+        var finished: [AsyncSignal] = []
+        defer { for handle in writeEnds { try? handle.close() } }
+
+        // Parks one block. `started` is raised on the block's first
+        // instruction, so a wait on it that times out means the pool had no
+        // thread to give; `done` is raised when the block returns, which it
+        // does once its write end is closed.
+        let park: (AsyncSignal?) -> Void = { started in
             let pipe = Pipe()
             writeEnds.append(pipe.fileHandleForWriting)
             let readEnd = pipe.fileHandleForReading
-            DispatchQueue.global().async { _ = readEnd.availableData }
+            let done = AsyncSignal()
+            finished.append(done)
+            DispatchQueue.global().async {
+                started?.signal()
+                _ = readEnd.availableData
+                done.signal()
+            }
         }
-        defer { for handle in writeEnds { try? handle.close() } }
+
+        // The loop is allowed to run PAST the limit, so that `freeWidth <=
+        // limit` below is a measurement of libdispatch honouring the
+        // kernel's number and not a restatement of the loop's own bound.
+        var freeWidth = 0
+        var saturated = false
+        while freeWidth < 2 * limit {
+            let started = AsyncSignal()
+            park(started)
+            if await started.wait(timeout: startBound) == .timedOut {
+                saturated = true
+                break
+            }
+            freeWidth += 1
+        }
+        #expect(freeWidth <= limit, "\(freeWidth) blocks started on a pool the kernel limits to \(limit)")
+        try #require(
+            saturated,
+            "\(writeEnds.count) blocks all started on a pool the kernel limits to \(limit): not saturated")
+        while writeEnds.count < limit + margin { park(nil) }
 
         let marker = "under-saturation-\(UUID().uuidString)"
         var thrown: SubprocessTimeout?
@@ -177,7 +261,33 @@ struct SubprocessRunnerTests {
         let text = String(decoding: error.stderrSoFar, as: UTF8.self)
         #expect(
             text.contains(marker),
-            "a saturated global queue silenced the reader; the error said: \(error)")
+            """
+            a saturated global queue (limit \(limit), free width \(freeWidth) when \
+            this test began, \(writeEnds.count) blocks parked) silenced the \
+            reader; the error said: \(error)
+            """)
+
+        // Release, then require that every block ran and returned. The bound
+        // is generous because a block that has not started yet gets its
+        // thread only when the parallel suite's other blockers let go.
+        for handle in writeEnds { try? handle.close() }
+        var released = 0
+        for done in finished {
+            if await done.wait(timeout: .seconds(10)) == .signalled { released += 1 }
+        }
+        #expect(released == finished.count, "\(finished.count - released) parked blocks never returned")
+    }
+
+    /// `kern.wq_max_constrained_threads`: the kernel's per-process limit on
+    /// constrained workqueue threads, which is the width of the pool behind
+    /// the non-overcommit global queues. `nil` if the sysctl is not there.
+    private static func constrainedWorkqueueThreadLimit() -> Int? {
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname("kern.wq_max_constrained_threads", &value, &size, nil, 0) == 0,
+              size == MemoryLayout<Int32>.size
+        else { return nil }
+        return Int(value)
     }
 
     /// No argument VALUE reaches the failure message.

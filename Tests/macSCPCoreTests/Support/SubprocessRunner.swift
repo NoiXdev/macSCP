@@ -95,10 +95,22 @@ struct SubprocessTimeout: Error, CustomStringConvertible, Sendable {
 /// block the cooperative pool"; the measurement is in
 /// `docs/superpowers/specs/2026-08-08-testsuite-hang-investigation.md`).
 ///
-/// So every wait here is a suspension. The pipes are read on
-/// `DispatchQueue.global()`, which grows a thread rather than starving;
+/// So every wait here is a suspension, and no thread is parked on the
+/// child's behalf either: the pipes are read by `FileHandle.readabilityHandler`
+/// — a Dispatch source that runs a short block per readable event — rather
+/// than by a block that sits in `read(2)` for the child's whole life;
 /// termination arrives through `Process.terminationHandler`; and the caller
-/// waits on `AsyncSignal`s, which are `AsyncStream`s, not semaphores.
+/// waits on `AsyncSignal`s, which are `AsyncStream`s, not semaphores. The
+/// one block that does park is the stdin writer, for as long as the child
+/// takes to accept its input.
+///
+/// An earlier version of this comment said the pipes were read on
+/// `DispatchQueue.global()`, "which grows a thread rather than starving".
+/// CI run 33698102652 refuted both halves: Dispatch's global pool has a
+/// finite width that blocked threads count against, and once the parallel
+/// suite had parked enough readers, a newly submitted one never got a
+/// thread at all — the child exited, and its output was never read. The
+/// comment at the readers below carries the log line.
 enum SubprocessRunner {
     /// Runs `executable` with `arguments`, drains both pipes, and awaits
     /// termination without parking a cooperative-pool thread.
@@ -111,8 +123,11 @@ enum SubprocessRunner {
     ///
     /// Bounded, because an unbounded wait turns "the command stalled" into
     /// "the suite hangs with no clue which call did it". On expiry the child
-    /// is asked to terminate, then killed, so the pipes reach EOF and the
-    /// readers finish; `SubprocessTimeout` carries what stderr held by then.
+    /// is asked to terminate, then killed. A child that held its write ends
+    /// alone then closes them, so the pipes reach EOF and the readers finish;
+    /// one whose grandchild inherited them does not, and the readers stay
+    /// open past the throw. `SubprocessTimeout` carries what stderr held by
+    /// then, and its `ReapReport` says which of the two it was.
     ///
     /// A cancelled task gets the same ending and a `CancellationError`: the
     /// caller who stopped waiting — a `.timeLimit` trait, an enclosing task
@@ -184,7 +199,11 @@ enum SubprocessRunner {
         // the source were to fire again.
         //
         // Measured 2026-09-03, both shapes against a child that writes a
-        // marker and sleeps, with 96 global-queue threads parked in `read(2)`
+        // marker and sleeps, with the global queue saturated by blocking
+        // blocks in `read(2)` — as many as the kernel's constrained-thread
+        // limit plus a margin, the limit read at run time rather than
+        // written here, and the pool's free width measured alongside by
+        // submitting until a block no longer starts
         // (`readersDoNotNeedAFreeGlobalQueueThread`): the loop captured 0
         // bytes, this captures the marker.
         let drain: @Sendable (FileHandle, OutputBox, AsyncSignal) -> Void = { handle, box, latch in
@@ -200,6 +219,25 @@ enum SubprocessRunner {
         }
         drain(stdoutPipe.fileHandleForReading, stdoutBox, stdoutDrained)
         drain(stderrPipe.fileHandleForReading, stderrBox, stderrDrained)
+
+        // The pipes must outlive the wait, and nothing above guarantees that
+        // (re-review 3, N-2). The handler captures only the box and the
+        // latch — its `handle` parameter shadows the outer one, which is
+        // what keeps it free of a cycle — so the `Pipe`s are held by these
+        // locals and by `process`, and Swift promises neither past its last
+        // use. Measured 2026-09-03 on a bare `Pipe` with a handler installed:
+        // the readability source does NOT retain the handle, so releasing the
+        // pipe deallocates it, closes the fd and cancels the source at once.
+        // Were that to happen here with bytes still buffered, EOF would never
+        // be delivered, the drained latch never raised, and a child that ran
+        // for milliseconds would come back as a full-length timeout with an
+        // empty box. This `defer` is a use at scope exit, so the tuple lives
+        // through the wait, the reap and the return on every path; it is
+        // deliberately not the handler capturing its own handle, which would
+        // be a cycle broken only by the `= nil` at EOF — never on the
+        // grandchild path. (`withExtendedLifetime` has no `async` overload,
+        // hence the `defer` rather than a wrapping call.)
+        defer { withExtendedLifetime((stdoutPipe, stderrPipe, stdinPipe)) {} }
         if let stdin, let stdinPipe {
             DispatchQueue.global().async {
                 let handle = stdinPipe.fileHandleForWriting
