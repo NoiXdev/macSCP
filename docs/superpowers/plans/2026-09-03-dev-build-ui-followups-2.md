@@ -43,7 +43,7 @@ a minimum panel width, and the footer wrapping to two rows below it).
 ### Task 2: The diagnostics footer fits
 
 **Files:**
-- Modify: `Sources/MacSCPAppKit/DiagnosticsPanel.swift` (the footer: buttons `fixedSize(horizontal: true, vertical: false)`, the scope picker `labelsHidden()` with `accessibilityLabel` from the existing `diagnostics.scope` key, a `minWidth` on the panel that fits the four controls at the default font, and a `ViewThatFits` that puts the picker on its own row when the width is short)
+- Modify: `Sources/MacSCPAppKit/DiagnosticsPanel.swift` (the footer: buttons `fixedSize(horizontal: true, vertical: false)`, the scope picker `labelsHidden()` with `accessibilityLabel` from the existing `diagnostics.scope` key, a `minWidth` on the panel that fits the four controls at the default font, and a `ViewThatFits` that splits the footer into two rows when the width is short: the picker beside Run/Cancel, since the picker chooses what Run runs, and the copy menu beside Close)
 - Test: the doors guard (`DiagnosticsDoorsGuardTests`) gains anchors: Run carries `fixedSize`, the picker keeps its accessibility label while its visible label is hidden, the panel declares a minimum width (a named constant the guard reads)
 
 - [ ] Red first, implement, commit `fix(diagnostics): the panel's footer keeps its buttons whole`.
