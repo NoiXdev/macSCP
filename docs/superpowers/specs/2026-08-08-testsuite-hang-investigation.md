@@ -279,6 +279,26 @@ above forbids; the fix is an async runner (`terminationHandler` bridged
 through a continuation) shared by the three. Recorded by the review of
 `d3e25bd`, which copied the sibling's pattern faithfully.
 
+**Closed 2026-09-03:** it became a hang after all. The push `0175e90`
+(CLI completion) left the three CLI subprocess tests reporting empty
+output after 60 s on CI (run 33681669890, 22 issues, the other 3387 tests
+"passed after 80 s" — a whole-suite stall) and a diagnostic run of the
+same tree hung to the 20-minute timeout with no child ever observed. The
+waits were replaced by an `async` runner (`Tests/macSCPCoreTests/Support/
+SubprocessRunner.swift`: `Process.terminationHandler` resumes a
+continuation; readers are `FileHandle.readabilityHandler` sources, which
+park no thread), every child process in the suite goes through it, and a
+guard scans `Tests/` for the blocking patterns (allowlist: the AppKit
+target's `defer`-bound docker calls and the liveness plant). Three CI runs
+measured the fix on the three-core runner: 33693297919 at `e16b14ae`
+(suite in 40.7 s, one new runner test red — readers used
+`readDataToEndOfFile`), 33698102652 at `0ef63269` (35.2 s, the same two
+tests red — incremental `availableData` readers still parked a global-queue
+thread each, and a starved process never ran them: "waited 9.951 s for the
+2.0 s bound"), 33701218149 at `ae5501ff` (**green**, 3743 tests in 34.98 s,
+Unit-Tests step 00:50–00:55 UTC). The plan is
+`docs/superpowers/plans/2026-09-03-subprocess-runner-async.md`.
+
 ## Decided 2026-09-02 (night) — the liveness assertion gets rebuilt
 
 Sixteen red of nineteen full gated runs today, twenty-five of
@@ -371,6 +391,22 @@ fake-connector test this round, pinning `> 4 s`.
   20.3 s in its planted run, for a 5 s dial — the guard does not see
   that, and is not meant to; it exists to catch a trimmed sleep, not slow
   scheduling.
+
+### Measured on CI, 2026-09-03
+
+The printed lines from the three-core runner, two runs (the ambient window
+there is far wider than the cap, the gaps are not):
+
+```
+33698102652: liveness: test1 ambient=9.387292333 seconds gap=0.56635025 seconds ceiling=4.0 seconds
+33698102652: liveness: test2 ambient=0.1779855 seconds gap=0.170422584 seconds ceiling=2.0 seconds
+33701218149: liveness: test1 ambient=13.997288875 seconds gap=0.169570416 seconds ceiling=4.0 seconds
+33701218149: liveness: test2 ambient=0.162261292 seconds gap=0.177697167 seconds ceiling=2.0 seconds
+```
+
+Two green runs with an ambient of 9.4 s and 14.0 s against a 4 s cap: the
+cap binds on CI in every run so far, and the largest gap stayed under
+0.6 s. That is two data points, not a tally.
 
 ### What stays open
 
