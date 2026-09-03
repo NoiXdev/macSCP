@@ -1379,7 +1379,12 @@ public final class SessionListViewModel {
                 position: session.position, password: password,
                 jumpHost: jumpHost, jumpPort: jumpPort, jumpUsername: jumpUsername,
                 jumpAuthKind: jumpAuthKind, jumpKeyPath: jumpKeyPath, jumpPassword: jumpPassword,
-                s3SecretAccessKey: s3SecretAccessKey)
+                s3SecretAccessKey: s3SecretAccessKey,
+                // Provenance (M24): unconditional, like `paneVisibility` and
+                // `tags` above and unlike `groupID` — not something
+                // `includeGroups` should be able to gate.
+                importSource: session.importSource, importID: session.importID,
+                importedAt: session.importedAt)
         }
 
         var exportedGroups: [ExportedGroup] = []

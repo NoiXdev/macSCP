@@ -132,6 +132,24 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     public var tags: [String] = [] {
         didSet { tags = TagList.normalized(tags) }
     }
+    /// Where this session came from, if it was not hand-made (Cyberduck
+    /// import, M24). The importing `BookmarkSource`'s own `id` (e.g.
+    /// `"cyberduck"`); `nil` for every session created through the connection
+    /// form or duplicated from one — see `SessionDuplication.copy`, which
+    /// never carries these three over. Additive and optional like `groupID`
+    /// above: absent on any JSON written before this field existed, which
+    /// decodes as `nil` (no custom decoder needed for that alone; see
+    /// `init(from:)` below for why one exists regardless).
+    public var importSource: String?
+    /// The source's own identifier for this bookmark (Cyberduck's UUID),
+    /// paired with `importSource` so a later import run can recognise a
+    /// session it created before — matching by this pair first, and only
+    /// falling back to the connection identity when it is absent. `nil`
+    /// exactly when `importSource` is `nil`.
+    public var importID: String?
+    /// When this session was imported (or last re-imported). `nil` exactly
+    /// when `importSource` is `nil`.
+    public var importedAt: Date?
 
     public init(
         id: UUID = UUID(),
@@ -144,7 +162,10 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         webdav: StoredWebDAVConfig? = nil,
         paneVisibility: PaneVisibility = .filesOnly,
         tags: [String] = [],
-        position: Int = 0
+        position: Int = 0,
+        importSource: String? = nil,
+        importID: String? = nil,
+        importedAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -157,11 +178,14 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.paneVisibility = paneVisibility
         self.tags = TagList.normalized(tags)
         self.position = position
+        self.importSource = importSource
+        self.importID = importID
+        self.importedAt = importedAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, groupID, loginSetID, kind, ssh, s3, webdav, paneVisibility, tags
-        case position
+        case position, importSource, importID, importedAt
     }
 
     /// Explicit rather than synthesized because `kind` needs its `?? .ssh`
@@ -187,6 +211,9 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility) ?? .filesOnly
         tags = TagList.normalized(try c.decodeIfPresent([String].self, forKey: .tags) ?? [])
         position = try c.decodeIfPresent(Int.self, forKey: .position) ?? 0
+        importSource = try c.decodeIfPresent(String.self, forKey: .importSource)
+        importID = try c.decodeIfPresent(String.self, forKey: .importID)
+        importedAt = try c.decodeIfPresent(Date.self, forKey: .importedAt)
     }
 
     // DEPRECATION INTENT: these exist to keep M23 Phase 1 reviewable. Phase 3

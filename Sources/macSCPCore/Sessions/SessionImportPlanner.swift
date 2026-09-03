@@ -648,6 +648,14 @@ public enum SessionImportPlanner {
         // the field existed -- resolving to the default `StoredSession`
         // itself carries.
         session.position = fileSession.position ?? 0
+        // Provenance (M24): carried straight through, value not reference —
+        // same story as `tags`/`position` just above. `nil` on a payload
+        // written before these fields existed, or on a session that never
+        // came from an import, which is exactly `StoredSession`'s own
+        // default for a session built by hand.
+        session.importSource = fileSession.importSource
+        session.importID = fileSession.importID
+        session.importedAt = fileSession.importedAt
         if !fileSession.fields.isEmpty {
             var values = FieldValues()
             for (key, value) in fileSession.fields { values.setRaw(key, to: value) }

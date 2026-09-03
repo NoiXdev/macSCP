@@ -129,6 +129,16 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// export path. A secret, therefore never a field.
     public var s3SecretAccessKey: String?
 
+    /// Provenance (Cyberduck import, M24) — carried the same way `tags` is,
+    /// not the way `groupID` is: a fact about the session itself, needing no
+    /// id remapping on import. `nil` on any payload written before these
+    /// fields existed, or on a session that never came from an import;
+    /// `StoredSession`'s own default (`nil`) is what the import side applies.
+    /// See `StoredSession.importSource` for the field-by-field meaning.
+    public var importSource: String?
+    public var importID: String?
+    public var importedAt: Date?
+
     // MARK: - Decode-only v1 columns (M23/P3)
     //
     // The columns a version-1 file carries instead of `fields`. They are read
@@ -178,7 +188,10 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         jumpHost: String? = nil, jumpPort: Int? = nil, jumpUsername: String? = nil,
         jumpAuthKind: StoredSession.AuthKind? = nil, jumpKeyPath: String? = nil,
         jumpPassword: String? = nil,
-        s3SecretAccessKey: String? = nil
+        s3SecretAccessKey: String? = nil,
+        importSource: String? = nil,
+        importID: String? = nil,
+        importedAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -196,6 +209,9 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         self.jumpKeyPath = jumpKeyPath
         self.jumpPassword = jumpPassword
         self.s3SecretAccessKey = s3SecretAccessKey
+        self.importSource = importSource
+        self.importID = importID
+        self.importedAt = importedAt
     }
 
     /// The `legacy*` cases keep v1's original key names, so a v1 file decodes
@@ -204,6 +220,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         case id, name, groupID, kind, fields, paneVisibility, tags, position, password
         case jumpHost, jumpPort, jumpUsername, jumpAuthKind, jumpKeyPath, jumpPassword
         case s3SecretAccessKey
+        case importSource, importID, importedAt
         case legacyHost = "host"
         case legacyPort = "port"
         case legacyUsername = "username"
@@ -240,6 +257,9 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         jumpKeyPath = try c.decodeIfPresent(String.self, forKey: .jumpKeyPath)
         jumpPassword = try c.decodeIfPresent(String.self, forKey: .jumpPassword)
         s3SecretAccessKey = try c.decodeIfPresent(String.self, forKey: .s3SecretAccessKey)
+        importSource = try c.decodeIfPresent(String.self, forKey: .importSource)
+        importID = try c.decodeIfPresent(String.self, forKey: .importID)
+        importedAt = try c.decodeIfPresent(Date.self, forKey: .importedAt)
         legacyHost = try c.decodeIfPresent(String.self, forKey: .legacyHost)
         legacyPort = try c.decodeIfPresent(Int.self, forKey: .legacyPort)
         legacyUsername = try c.decodeIfPresent(String.self, forKey: .legacyUsername)
@@ -277,6 +297,9 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         try c.encodeIfPresent(jumpKeyPath, forKey: .jumpKeyPath)
         try c.encodeIfPresent(jumpPassword, forKey: .jumpPassword)
         try c.encodeIfPresent(s3SecretAccessKey, forKey: .s3SecretAccessKey)
+        try c.encodeIfPresent(importSource, forKey: .importSource)
+        try c.encodeIfPresent(importID, forKey: .importID)
+        try c.encodeIfPresent(importedAt, forKey: .importedAt)
     }
 
     /// Folds a v1 file's columns into `fields` and clears them. A no-op on a

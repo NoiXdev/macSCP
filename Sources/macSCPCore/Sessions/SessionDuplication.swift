@@ -64,6 +64,11 @@ public enum SessionDuplication {
             paneVisibility: template.paneVisibility,
             tags: template.tags,
             position: template.position)
+        // `importSource`/`importID`/`importedAt` (M24) are deliberately NOT
+        // taken over here: they stay at `StoredSession.init`'s own default
+        // (`nil`), because the copy did not come from Cyberduck — the
+        // template's import history is not something a manual "Duplicate"
+        // should hand to a second record.
         // The one field that is taken over and then thrown away. Everything
         // else about the jump — host, port, username, auth kind, key path,
         // and the `loginSetID`/`sessionID` references — is carried by the
