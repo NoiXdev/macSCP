@@ -147,21 +147,24 @@ struct ConnectionDiagnosticsTests {
 
     /// TEST-NET-1 with no route: the SYN dies at the first hop and nothing
     /// answers, so the probe must give up on ITS OWN deadline rather than on
-    /// the kernel's (75 s on Darwin).
+    /// the kernel's (75 s on Darwin). The harness limit of 60 s is what
+    /// tells the two apart: a probe that waited for the kernel would be
+    /// killed before it answered, and `.timedOut` says the probe's own
+    /// deadline fired. No wall-clock `#expect` sits on top of that — the
+    /// `elapsed < 5 s` that used to is a ceiling, and a ceiling measures the
+    /// runner (CLAUDE.md, "A wall-clock ceiling in a test measures the
+    /// runner").
     @Test(
-        .enabled(if: ProcessInfo.processInfo.environment["MACSCP_NETSPIKE"] == "1"))
+        .enabled(if: ProcessInfo.processInfo.environment["MACSCP_NETSPIKE"] == "1"),
+        .timeLimit(.minutes(1)))
     func tcpPingToAnUnroutableAddressTimesOutInsideTheStepTimeout() async throws {
         let outcome = await HostResolver.resolve(host: "192.0.2.1", port: 22, timeout: .seconds(2))
         guard case .resolved(let addresses) = outcome, let address = addresses.first else {
             Issue.record("192.0.2.1 did not parse: \(outcome)")
             return
         }
-        let clock = ContinuousClock()
-        let started = clock.now
         let result = await TCPPing.probe(address: address, timeout: .seconds(1))
-        let elapsed = started.duration(to: clock.now)
         #expect(result == .timedOut)
-        #expect(elapsed < .seconds(5))
     }
 
     // MARK: - The runner

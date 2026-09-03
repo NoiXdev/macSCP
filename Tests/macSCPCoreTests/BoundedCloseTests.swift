@@ -54,16 +54,20 @@ struct BoundedCloseTests {
     /// this, a `run` that simply always waited out `boundSeconds` would pass
     /// the test above — and would add five seconds to every ordinary
     /// disconnect.
-    @Test func anOperationThatFinishesInsideTheBoundIsNotAbandoned() async {
-        let startedAt = ContinuousClock.now
-        let finished = await BoundedClose.run(boundSeconds: 30) {}
-        let elapsed = startedAt.duration(to: .now)
+    ///
+    /// The bound is 120 s and the harness limit is 60 s, and that ordering
+    /// is the assertion: an implementation that waited out the bound would
+    /// be killed by the harness before it could answer, and one that
+    /// returns when the operation does answers in the time an empty closure
+    /// takes. There is no wall-clock `#expect` here any more. There was one
+    /// (`elapsed < 15 s`), and CI run 33814867360 measured this empty
+    /// operation at 15.34 s on the three-core runner — the same ambient
+    /// stall `ConnectMainActorLivenessTests` records at up to 14.67 s — so
+    /// the ceiling was measuring the runner, exactly as CLAUDE.md's "A
+    /// wall-clock ceiling in a test measures the runner" says.
+    @Test(.timeLimit(.minutes(1)))
+    func anOperationThatFinishesInsideTheBoundIsNotAbandoned() async {
+        let finished = await BoundedClose.run(boundSeconds: 120) {}
         #expect(finished == true)
-        // Far below the 30-second bound and far above anything contention
-        // plausibly adds to an operation that does nothing: this
-        // distinguishes "returned when the operation did" from "returned
-        // when the bound elapsed", which is the whole distinction, without
-        // pinning a scheduler.
-        #expect(elapsed < .seconds(15))
     }
 }

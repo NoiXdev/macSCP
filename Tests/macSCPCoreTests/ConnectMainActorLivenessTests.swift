@@ -434,7 +434,11 @@ struct ConnectMainActorLivenessTests {
         #expect(thrown != nil)
         #expect(!(thrown is DeadlineNotEnforced), "the connect never ended: \(elapsed)")
         #expect(elapsed > .milliseconds(300))
-        #expect(elapsed < .seconds(5))
+        // The 5 s racer above is the upper bound, and it is the right one:
+        // it measures whether the CONNECT ended, not how long the runner
+        // took to schedule this task afterwards. An `elapsed < 5 s` used to
+        // follow the floor, and that one could go red on a stalled runner
+        // while the connect had won the race in time.
         #expect(resolver.queriesStarted > 0)
         try await loops.shutdownGracefully()
     }

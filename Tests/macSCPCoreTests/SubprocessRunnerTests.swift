@@ -577,7 +577,6 @@ struct SubprocessRunnerTests {
         }
         let childPID = try #require(announced, "the child never announced its pid")
 
-        let started = ContinuousClock.now
         task.cancel()
         var thrown: (any Error)?
         do {
@@ -586,9 +585,14 @@ struct SubprocessRunnerTests {
         } catch {
             thrown = error
         }
-        let elapsed = ContinuousClock.now - started
+        // No wall-clock ceiling on the way back: a run that ignored the
+        // cancellation would return the child's result after its 30 s sleep
+        // and fail on the `Issue.record` above, and one that honoured it
+        // throws. What the type of the error is, and whether the child is
+        // gone, are the two claims; how long the runner took to deliver them
+        // measures the runner (CLAUDE.md, "A wall-clock ceiling in a test
+        // measures the runner").
         #expect(thrown is SubprocessCancelled, "cancellation surfaced as \(String(describing: thrown))")
-        #expect(elapsed < .seconds(20), "the cancelled run took \(elapsed) to come back")
 
         var stillThere = true
         for _ in 0..<50 where stillThere {
