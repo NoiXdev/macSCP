@@ -114,11 +114,11 @@ run the grep, paste the file names.
 Measured 2026-09-03 on CI (run 33705649537 at `126c5c88`): the test that
 parks the global queue to prove the readers need no thread took 23.5 s on
 the three-core runner and starved two neighbours past their bounds (a 2 s
-bound firing after its 10 s child had exited; a 10 s latch bound measured
-at 15.68 s). A test that saturates a shared pool cannot share a parallel
+bound firing after its 10 s child had exited; a 200 ms latch sleep measured
+at 15.68 s against its 10 s ceiling). A test that saturates a shared pool cannot share a parallel
 run.
 
-- [ ] Gate `readersDoNotNeedAFreeGlobalQueueThread` behind `MACSCP_SATURATION=1`
+- [x] Gate `readersDoNotNeedAFreeGlobalQueueThread` behind `MACSCP_SATURATION=1`
   (skipped by default, the skip reason names the run above); its doc
   comment keeps the measurement and the mutant evidence; the timeout test's
   child sleeps 60 s again so a late bound still finds it alive. Commit

@@ -63,8 +63,11 @@
   `.swiftLanguageMode(.v6)`**, minimum macOS 15.
 - Tests: Swift Testing (`@Test`/`#expect`), TDD red→green. New logic ships
   with tests; prove regressions red first.
-- Unit suite: `swift test`. Gated suites: `MACSCP_ITEST=1` (Docker SSH rig)
-  and `MACSCP_KEYCHAIN=1` (writes to the real keychain).
+- Unit suite: `swift test`. Gated suites: `MACSCP_ITEST=1` (Docker SSH rig),
+  `MACSCP_KEYCHAIN=1` (writes to the real keychain) and `MACSCP_SATURATION=1`
+  (one test that parks the whole GCD global queue to prove the subprocess
+  runner's readers need no thread — it cannot share a parallel run, measured
+  on CI run 33705649537; run it alone).
 - Docker rig: `docker compose -f docker/test-server/compose.yml up -d`
   (127.0.0.1:2222, testuser/testpass). **Always start it from the main
   checkout, never from a git worktree** (the seed mount is relative to the
