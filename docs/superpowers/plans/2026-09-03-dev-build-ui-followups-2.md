@@ -47,3 +47,22 @@ a minimum panel width, and the footer wrapping to two rows below it).
 - Test: the doors guard (`DiagnosticsDoorsGuardTests`) gains anchors: Run carries `fixedSize`, the picker keeps its accessibility label while its visible label is hidden, the panel declares a minimum width (a named constant the guard reads)
 
 - [ ] Red first, implement, commit `fix(diagnostics): the panel's footer keeps its buttons whole`.
+
+### Task 3: Hetzner presets per region
+
+Maintainer request 2026-09-03: the S3 presets offer one Hetzner entry
+(`fsn1`, Falkenstein, id `hetzner`); the other regions should be presets
+too. Hetzner Object Storage locations known to this plan's author:
+`fsn1` (Falkenstein), `nbg1` (Nuremberg), `hel1` (Helsinki), each at
+`https://<location>.your-objectstorage.com` with path-style addressing
+(the existing preset's choice). Any further location is unmeasured here;
+the implementer reads Hetzner's current documentation page for the
+locations list (a documentation read, no request to a storage endpoint)
+and adds exactly what it lists, naming the page and the date in the
+report.
+
+**Files:**
+- Modify: `Sources/macSCPCore/S3/S3FieldSchema.swift` (presets: keep id `hetzner` for `fsn1` so saved sessions and the import planner's preset-by-id lookup stay valid, rename its display to "Hetzner Object Storage (Falkenstein)"; add `hetzner-nbg1`, `hetzner-hel1` and any further measured location, sorted by location), four App catalogs (`connection.s3.preset.hetzner` → "… (Falkenstein)", new keys per location — German du n/a, the city names untranslated), the Cyberduck importer's endpoint → preset mapping if it recognises `your-objectstorage.com` hosts (read `ImportPreviewPlanner`'s `awsPresetID`; a Hetzner host maps to the matching location's preset when the endpoint equals it)
+- Test: `S3FieldSchemaTests` — every Hetzner preset's endpoint parses to a host under `your-objectstorage.com` with `usePathStyle` true, ids unique, `hetzner` still `fsn1`; the import planner maps a Cyberduck bookmark with `Hostname nbg1.your-objectstorage.com` to the `hetzner-nbg1` preset's endpoint spelling; the localization guards.
+
+- [ ] Red first, implement, commit `feat(s3): a preset per Hetzner Object Storage location`.
