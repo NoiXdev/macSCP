@@ -380,7 +380,221 @@ struct ConnectionFormView: View {
             if let prompt = viewModel.hostKeyPrompt {
                 hostKeyPromptView(prompt)
             } else {
-                formContent
+                // The field area scrolls on its own (dev-build follow-up,
+                // 2026-09-04): on a short window the lower fields used to be
+                // clipped outright with no way to reach them -- the sidebar
+                // already scrolls (SessionSidebar's own List), and the form
+                // gets the same treatment. The footer sits OUTSIDE the
+                // ScrollView, as a sibling, so Connect / Save / Back stay
+                // reachable at any window height; nothing pins a height on
+                // the ScrollView itself, so it takes whatever the window
+                // gives it.
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(isEditMode
+                            ? L10n.string("connection.editTitle", "Edit session")
+                            : L10n.string("connection.title", "New connection"))
+                            .font(.title2.bold())
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            // Type switcher (M12/T7b): the only row shown regardless of
+                            // `viewModel.kind` — it's what flips the rest of the form
+                            // between the SSH sections below (unchanged from before this
+                            // feature) and the schema-driven S3 section.
+                            let typeLabel = L10n.string("connection.type.label", "Connection type")
+                            FormRow(label: typeLabel) {
+                                Picker(typeLabel, selection: $viewModel.kind) {
+                                    ForEach(ConnectionKind.allCases, id: \.self) { kind in
+                                        let descriptor = BackendDescriptor.descriptor(for: kind)
+                                        Text(L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault))
+                                            .tag(kind)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                // Connection type is fixed after creation — editing a
+                                // session never changes its protocol.
+                                .disabled(isEditMode)
+                            }
+
+                            backendSection
+
+                            if !isEditMode {
+                                FormRow(label: "") {
+                                    Toggle(
+                                        L10n.string("connection.saveToggle", "Save as session"),
+                                        isOn: $viewModel.shouldSaveSession)
+                                }
+                            }
+
+                            if isEditMode || viewModel.shouldSaveSession {
+                                let saveNameLabel = L10n.string("connection.field.saveName", "Session name")
+                                FormRow(label: saveNameLabel) {
+                                    TextField(
+                                        saveNameLabel, text: $viewModel.saveName,
+                                        prompt: Text(L10n.string("connection.field.saveName.placeholder", "e.g. hetzner-web"))
+                                    )
+                                }
+                                .errorHighlight(failedField == .saveName)
+
+                                // Names the stored session of this name and says what
+                                // saving would do to it — which is not the same on the
+                                // two paths, so the sentence is the conflict's own and
+                                // not spelled here. Drawn like this form's other inline
+                                // message under a field (the jump summary row): a
+                                // label-less `FormRow` so it sits under the field it is
+                                // about, same size, in amber rather than the red this
+                                // form reserves for a refusal — saving onto a stored
+                                // name stays allowed and stays one click away, which is
+                                // why nothing here disables the buttons below.
+                                if let conflict = nameConflict {
+                                    FormRow(label: "") {
+                                        Text(String(
+                                            format: L10n.string(
+                                                conflict.messageKey, conflict.messageDefault),
+                                            conflict.session.name))
+                                            .font(.system(size: 12.5))
+                                            .foregroundStyle(DesignTokens.statusAmber)
+                                    }
+                                }
+
+                                let tagsLabel = L10n.string("form.tags.label", "Tags")
+                                FormRow(label: tagsLabel) {
+                                    SnippetTagField(
+                                        tags: $viewModel.tags,
+                                        suggestions: { query in
+                                            HostTagSuggestions.matching(
+                                                query, in: sessionList.sessions, excluding: viewModel.tags)
+                                        },
+                                        placeholder: L10n.string("form.tags.placeholder", "Add a tag…")
+                                    )
+                                    .id(editingSessionID)
+                                    .help(L10n.string("form.tags.help", "Comma-separated. Used by the sidebar filter."))
+                                }
+
+                                let groupLabel = L10n.string("connection.field.group", "Group")
+                                FormRow(label: groupLabel) {
+                                    Picker(
+                                        groupLabel,
+                                        selection: $viewModel.selectedGroupID
+                                    ) {
+                                        Text(L10n.string("sidebar.noGroup", "No group")).tag(UUID?.none)
+                                        ForEach(groups) { group in
+                                            Text(group.name).tag(UUID?.some(group.id))
+                                        }
+                                    }
+                                    .labelsHidden()
+                                }
+                            }
+                        }
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(isConnecting)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                HStack {
+                    Spacer()
+                    if isConnecting || isHandingOff {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    if isEditMode {
+                        Button(L10n.string("common.back", "Back")) {
+                            onCancelEdit()
+                        }
+                        .buttonStyle(.polished)
+                        Button(L10n.string("common.save", "Save")) {
+                            guard resolveLoginSetForSubmit() else { return }
+                            if let session = viewModel.validateForEditSave() {
+                                onSaveEdited(session, editedSecret)
+                            } else if case .failed(let message, _) = viewModel.state {
+                                alertMessage = message
+                            }
+                        }
+                        .buttonStyle(.polished)
+                        .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
+                        Button(L10n.string("connection.saveAndConnect", "Save & connect")) {
+                            guard resolveLoginSetForSubmit() else { return }
+                            if let session = viewModel.validateForEditSave() {
+                                onSaveEdited(session, editedSecret)
+                                onConnectEdited(session)
+                            } else if case .failed(let message, _) = viewModel.state {
+                                alertMessage = message
+                            }
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.polishedProminent)
+                        .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
+                    } else {
+                        // Save without dialing (tab-context-menu fix round).
+                        // Shown only while "Save as session" is on: with the
+                        // toggle off there is no session being described and no
+                        // name field on screen, so a Save button would be an
+                        // offer the form cannot keep. Same submit sequence as
+                        // edit mode's own Save — resolve the login set,
+                        // validate, then hand out — so a refusal highlights the
+                        // offending field instead of failing silently.
+                        if viewModel.shouldSaveSession {
+                            Button(L10n.string("common.save", "Save")) {
+                                guard resolveLoginSetForSubmit() else { return }
+                                if viewModel.validateForNewSave() {
+                                    onSaveNew()
+                                } else if case .failed(let message, _) = viewModel.state {
+                                    alertMessage = message
+                                }
+                            }
+                            .buttonStyle(.polished)
+                            .disabled(isConnecting || isHandingOff || loginSetModeIncomplete
+                                || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
+                        }
+                        Button(L10n.string("connection.connect", "Connect")) {
+                            guard resolveLoginSetForSubmit() else { return }
+                            // M17: if this key is a managed key with a stored
+                            // passphrase and none was typed, resolve it from the
+                            // Keychain so the user need not re-enter it.
+                            if viewModel.authChoice == .privateKey {
+                                viewModel.password = ManagedKeyPassphrase.resolve(
+                                    keyPath: viewModel.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                                    typed: viewModel.password,
+                                    store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+                                    secrets: KeychainSecretStore())
+                            }
+                            // Captured HERE, synchronously, before dialing even
+                            // starts — see `currentReconnectAttempt`'s own doc
+                            // comment for why this timing (not "right before
+                            // the hand-off", this view's shape before fix
+                            // round 3) is the one both connect paths now share.
+                            let myAttempt = currentReconnectAttempt()
+                            Task {
+                                if let fs = await viewModel.connect() {
+                                    isHandingOff = true
+                                    await onConnected(fs, myAttempt)
+                                    isHandingOff = false
+                                }
+                                // No inline `else if case .failed` here (removed,
+                                // connection-liveness plan Task 6 fix round 1):
+                                // this Task can be the ABANDONED half of a
+                                // cancelled connect attempt (see `ConnectionViewModel
+                                // .currentAttempt`'s own doc comment), and by the
+                                // time its `await` above finally returns nil,
+                                // `viewModel.state` may already belong to a
+                                // completely different, later attempt on this
+                                // same tab — reading it here could pop an alert
+                                // for the wrong attempt, or reopen one the user
+                                // already dismissed. The `.onChange(of: viewModel
+                                // .state)` handler below already shows the alert
+                                // for every GENUINE transition into `.failed`,
+                                // including this button's own — it is value-
+                                // driven, so it cannot read a state that has
+                                // since moved on the way this stale re-check did.
+                            }
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(isConnecting || isHandingOff || loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
+                        .buttonStyle(.polishedProminent)
+                    }
+                }
             }
         }
         .padding(24)
@@ -413,7 +627,7 @@ struct ConnectionFormView: View {
         }
         // Opened from the TOFU prompt's footnote below — kept at the outer
         // `body` level (like the alert above) so it presents over whichever
-        // sub-view (`hostKeyPromptView` or `formContent`) is currently shown,
+        // sub-view (`hostKeyPromptView` or the scrolling form) is currently shown,
         // and so the prompt underneath stays mounted and functional while
         // the sheet is up.
         .sheet(isPresented: $showKnownHostsSheet) {
@@ -456,211 +670,6 @@ struct ConnectionFormView: View {
             else { return }
             viewModel.keyPath = Self.managedKeyPath(for: key)
         }
-    }
-
-    @ViewBuilder
-    private var formContent: some View {
-            Text(isEditMode
-                ? L10n.string("connection.editTitle", "Edit session")
-                : L10n.string("connection.title", "New connection"))
-                .font(.title2.bold())
-
-            VStack(alignment: .leading, spacing: 10) {
-                // Type switcher (M12/T7b): the only row shown regardless of
-                // `viewModel.kind` — it's what flips the rest of the form
-                // between the SSH sections below (unchanged from before this
-                // feature) and the schema-driven S3 section.
-                let typeLabel = L10n.string("connection.type.label", "Connection type")
-                FormRow(label: typeLabel) {
-                    Picker(typeLabel, selection: $viewModel.kind) {
-                        ForEach(ConnectionKind.allCases, id: \.self) { kind in
-                            let descriptor = BackendDescriptor.descriptor(for: kind)
-                            Text(L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault))
-                                .tag(kind)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    // Connection type is fixed after creation — editing a
-                    // session never changes its protocol.
-                    .disabled(isEditMode)
-                }
-
-                backendSection
-
-                if !isEditMode {
-                    FormRow(label: "") {
-                        Toggle(
-                            L10n.string("connection.saveToggle", "Save as session"),
-                            isOn: $viewModel.shouldSaveSession)
-                    }
-                }
-
-                if isEditMode || viewModel.shouldSaveSession {
-                    let saveNameLabel = L10n.string("connection.field.saveName", "Session name")
-                    FormRow(label: saveNameLabel) {
-                        TextField(
-                            saveNameLabel, text: $viewModel.saveName,
-                            prompt: Text(L10n.string("connection.field.saveName.placeholder", "e.g. hetzner-web"))
-                        )
-                    }
-                    .errorHighlight(failedField == .saveName)
-
-                    // Names the stored session of this name and says what
-                    // saving would do to it — which is not the same on the
-                    // two paths, so the sentence is the conflict's own and
-                    // not spelled here. Drawn like this form's other inline
-                    // message under a field (the jump summary row): a
-                    // label-less `FormRow` so it sits under the field it is
-                    // about, same size, in amber rather than the red this
-                    // form reserves for a refusal — saving onto a stored
-                    // name stays allowed and stays one click away, which is
-                    // why nothing here disables the buttons below.
-                    if let conflict = nameConflict {
-                        FormRow(label: "") {
-                            Text(String(
-                                format: L10n.string(
-                                    conflict.messageKey, conflict.messageDefault),
-                                conflict.session.name))
-                                .font(.system(size: 12.5))
-                                .foregroundStyle(DesignTokens.statusAmber)
-                        }
-                    }
-
-                    let tagsLabel = L10n.string("form.tags.label", "Tags")
-                    FormRow(label: tagsLabel) {
-                        SnippetTagField(
-                            tags: $viewModel.tags,
-                            suggestions: { query in
-                                HostTagSuggestions.matching(
-                                    query, in: sessionList.sessions, excluding: viewModel.tags)
-                            },
-                            placeholder: L10n.string("form.tags.placeholder", "Add a tag…")
-                        )
-                        .id(editingSessionID)
-                        .help(L10n.string("form.tags.help", "Comma-separated. Used by the sidebar filter."))
-                    }
-
-                    let groupLabel = L10n.string("connection.field.group", "Group")
-                    FormRow(label: groupLabel) {
-                        Picker(
-                            groupLabel,
-                            selection: $viewModel.selectedGroupID
-                        ) {
-                            Text(L10n.string("sidebar.noGroup", "No group")).tag(UUID?.none)
-                            ForEach(groups) { group in
-                                Text(group.name).tag(UUID?.some(group.id))
-                            }
-                        }
-                        .labelsHidden()
-                    }
-                }
-            }
-            .textFieldStyle(.roundedBorder)
-            .disabled(isConnecting)
-
-            HStack {
-                Spacer()
-                if isConnecting || isHandingOff {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-                if isEditMode {
-                    Button(L10n.string("common.back", "Back")) {
-                        onCancelEdit()
-                    }
-                    .buttonStyle(.polished)
-                    Button(L10n.string("common.save", "Save")) {
-                        guard resolveLoginSetForSubmit() else { return }
-                        if let session = viewModel.validateForEditSave() {
-                            onSaveEdited(session, editedSecret)
-                        } else if case .failed(let message, _) = viewModel.state {
-                            alertMessage = message
-                        }
-                    }
-                    .buttonStyle(.polished)
-                    .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
-                    Button(L10n.string("connection.saveAndConnect", "Save & connect")) {
-                        guard resolveLoginSetForSubmit() else { return }
-                        if let session = viewModel.validateForEditSave() {
-                            onSaveEdited(session, editedSecret)
-                            onConnectEdited(session)
-                        } else if case .failed(let message, _) = viewModel.state {
-                            alertMessage = message
-                        }
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.polishedProminent)
-                    .disabled(loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
-                } else {
-                    // Save without dialing (tab-context-menu fix round).
-                    // Shown only while "Save as session" is on: with the
-                    // toggle off there is no session being described and no
-                    // name field on screen, so a Save button would be an
-                    // offer the form cannot keep. Same submit sequence as
-                    // edit mode's own Save — resolve the login set,
-                    // validate, then hand out — so a refusal highlights the
-                    // offending field instead of failing silently.
-                    if viewModel.shouldSaveSession {
-                        Button(L10n.string("common.save", "Save")) {
-                            guard resolveLoginSetForSubmit() else { return }
-                            if viewModel.validateForNewSave() {
-                                onSaveNew()
-                            } else if case .failed(let message, _) = viewModel.state {
-                                alertMessage = message
-                            }
-                        }
-                        .buttonStyle(.polished)
-                        .disabled(isConnecting || isHandingOff || loginSetModeIncomplete
-                            || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
-                    }
-                    Button(L10n.string("connection.connect", "Connect")) {
-                        guard resolveLoginSetForSubmit() else { return }
-                        // M17: if this key is a managed key with a stored
-                        // passphrase and none was typed, resolve it from the
-                        // Keychain so the user need not re-enter it.
-                        if viewModel.authChoice == .privateKey {
-                            viewModel.password = ManagedKeyPassphrase.resolve(
-                                keyPath: viewModel.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                                typed: viewModel.password,
-                                store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                                secrets: KeychainSecretStore())
-                        }
-                        // Captured HERE, synchronously, before dialing even
-                        // starts — see `currentReconnectAttempt`'s own doc
-                        // comment for why this timing (not "right before
-                        // the hand-off", this view's shape before fix
-                        // round 3) is the one both connect paths now share.
-                        let myAttempt = currentReconnectAttempt()
-                        Task {
-                            if let fs = await viewModel.connect() {
-                                isHandingOff = true
-                                await onConnected(fs, myAttempt)
-                                isHandingOff = false
-                            }
-                            // No inline `else if case .failed` here (removed,
-                            // connection-liveness plan Task 6 fix round 1):
-                            // this Task can be the ABANDONED half of a
-                            // cancelled connect attempt (see `ConnectionViewModel
-                            // .currentAttempt`'s own doc comment), and by the
-                            // time its `await` above finally returns nil,
-                            // `viewModel.state` may already belong to a
-                            // completely different, later attempt on this
-                            // same tab — reading it here could pop an alert
-                            // for the wrong attempt, or reopen one the user
-                            // already dismissed. The `.onChange(of: viewModel
-                            // .state)` handler below already shows the alert
-                            // for every GENUINE transition into `.failed`,
-                            // including this button's own — it is value-
-                            // driven, so it cannot read a state that has
-                            // since moved on the way this stale re-check did.
-                        }
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(isConnecting || isHandingOff || loginSetModeIncomplete || jumpLoginSetModeIncomplete || jumpSessionModeIncomplete)
-                    .buttonStyle(.polishedProminent)
-                }
-            }
     }
 
     /// The secret the edit-mode Save path should write, or `nil` for "leave
