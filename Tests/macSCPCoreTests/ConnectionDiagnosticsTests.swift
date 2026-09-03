@@ -26,6 +26,11 @@ struct ConnectionDiagnosticsTests {
     /// (CLAUDE.md, "A value a test must not leak has two exits").
     private static let dialSecret = "diagnostics-test-passphrase"
 
+    /// The two halves of a credential typed into a URL. Named for the same
+    /// reason `dialSecret` is: neither may be written inside an `#expect`.
+    private static let userinfoKey = "AKIADIAGNOSTICSTESTKEY"
+    private static let userinfoSecret = "wJalrDiagnosticsTestSecretValue"
+
     // MARK: - Resolve
 
     @Test func resolveFindsALoopbackAddressForLocalhost() async {
@@ -323,6 +328,178 @@ struct ConnectionDiagnosticsTests {
         }
     }
 
+    // MARK: - No URL userinfo reaches the report
+
+    /// A user may type `https://KEY:SECRET@host:9000` into the S3 endpoint
+    /// field — the repository already records that shape as ordinary input
+    /// that nothing in the schema strips (`ConnectFailureSecrecyTests`). A
+    /// report is pasted into public issues, so no step may carry it, whether
+    /// the URL reaches the row as a detail or inside a failure reason.
+    @Test func aURLWithUserinfoNeverReachesTheReport() async throws {
+        let port = try #require(LoopbackSocket.closedPort())
+        let key = Self.userinfoKey
+        let secret = Self.userinfoSecret
+        let dressed = "https://\(key):\(secret)@127.0.0.1:9000/bucket"
+        let report = await Self.run(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: port),
+                dial: Self.constantContribution(
+                    id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe",
+                    outcome: .failed("could not reach \(dressed)"),
+                    detail: "HTTP 200 on \(dressed)")))
+
+        let plainText = report.plainText()
+        let markdown = report.markdown()
+        let keyInPlainText = plainText.contains(key)
+        let secretInPlainText = plainText.contains(secret)
+        let keyInMarkdown = markdown.contains(key)
+        let secretInMarkdown = markdown.contains(secret)
+        #expect(keyInPlainText == false)
+        #expect(secretInPlainText == false)
+        #expect(keyInMarkdown == false)
+        #expect(secretInMarkdown == false)
+        // The positive anchor: the row is still there and still names the
+        // server, so the four checks above measure redaction and not an
+        // empty report.
+        #expect(plainText.contains("127.0.0.1:9000"))
+    }
+
+    @Test func theURLHelperRendersHostPortAndPathOnly() throws {
+        let key = Self.userinfoKey
+        let secret = Self.userinfoSecret
+        let url = try #require(URL(string: "https://\(key):\(secret)@minio.example.test:9000/seed"))
+        let rendered = URLText.hostPortPath(of: url)
+        let leaks = rendered.contains(key) || rendered.contains(secret)
+        #expect(leaks == false)
+        #expect(rendered == "minio.example.test:9000/seed")
+    }
+
+    /// The real S3 dial, on its failure path (nothing listens), with the
+    /// credential in the endpoint. Covers the half the synthetic step above
+    /// cannot: whatever `URLSession` puts in the error text.
+    @Test func theS3DialWithACredentialInItsEndpointLeaksNeither() async throws {
+        let port = try #require(LoopbackSocket.closedPort())
+        let key = Self.userinfoKey
+        let secret = Self.userinfoSecret
+        var values = FieldValues()
+        values[S3Field.endpoint] = "http://\(key):\(secret)@127.0.0.1:\(port)"
+
+        let report = await ConnectionDiagnostics(
+            descriptor: .descriptor(for: .s3), values: values, secrets: nil,
+            stepTimeout: .seconds(10)
+        ).run()
+
+        let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
+        let plainText = report.plainText()
+        let markdown = report.markdown()
+        let leaksInStep = dial.detail.contains(key) || dial.detail.contains(secret)
+        let leaksInPlainText = plainText.contains(key) || plainText.contains(secret)
+        let leaksInMarkdown = markdown.contains(key) || markdown.contains(secret)
+        #expect(leaksInStep == false)
+        #expect(leaksInPlainText == false)
+        #expect(leaksInMarkdown == false)
+        // The anchor: the dial ran and reported the refusal it met.
+        guard case .failed = dial.outcome else {
+            Issue.record("a closed port did not fail the S3 dial: \(dial.outcome)")
+            return
+        }
+    }
+
+    // MARK: - A failure the user can act on
+
+    /// The four commonest SSH dial failures are typed enums with no
+    /// `LocalizedError` conformance, so bridging them to `NSError` yields
+    /// "The operation couldn't be completed. (macSCPCore.HostKeyError error
+    /// 1.)" — nothing about host keys at all, in the row the code calls the
+    /// answer to "why does this not connect".
+    @Test(arguments: [
+        (AnyDialError(HostKeyError.mismatch(host: "h", expected: "SHA256:a", presented: "SHA256:b")), "host key"),
+        (AnyDialError(HostKeyError.rejectedByUser), "host key"),
+        (AnyDialError(SSHKeyError.fileNotFound(path: "/tmp/id_ed25519")), "/tmp/id_ed25519"),
+        (AnyDialError(SSHKeyError.passphraseRequired), "passphrase"),
+        (AnyDialError(SSHKeyError.wrongPassphrase), "passphrase"),
+        (AnyDialError(SSHKeyError.unsupportedFormat(reason: "bad header")), "bad header"),
+        (AnyDialError(SSHKeyError.typeNotLoadable(algorithm: "ssh-dss")), "ssh-dss"),
+        (AnyDialError(SSHKeyError.pemNotSupported), "PEM"),
+        (AnyDialError(AgentError.socketUnavailable), "agent"),
+        (AnyDialError(AgentError.noIdentities), "agent"),
+        (AnyDialError(AgentError.noUsableIdentities), "agent"),
+        (AnyDialError(AgentError.refused), "agent"),
+        (AnyDialError(AgentError.protocolError(reason: "short frame")), "short frame"),
+    ])
+    func theDialNamesATypedSSHFailureRatherThanBridgingIt(
+        error: AnyDialError, fragment: String
+    ) {
+        let reason = DialSupport.reason(for: error.wrapped)
+        #expect(reason.lowercased().contains(fragment.lowercased()))
+        // What it must NOT be: Foundation's sentence for an `Error` with no
+        // `LocalizedError` conformance. Compared rather than pattern-matched,
+        // so a change in Foundation's wording cannot quietly satisfy this.
+        #expect(reason != (error.wrapped as NSError).localizedDescription)
+    }
+
+    /// The anchor for the negative half above: an error the mapping does NOT
+    /// know still gets Foundation's sentence rather than nothing.
+    @Test func anUnknownErrorStillFallsBackToItsBridgedDescription() {
+        let error = CocoaError(.fileNoSuchFile)
+        #expect(DialSupport.reason(for: error) == (error as NSError).localizedDescription)
+    }
+
+    // MARK: - The deadline bounds the clock
+
+    /// A probe that never honours cancellation must not hold the step past
+    /// its deadline. `withTaskGroup` awaits its children, so the earlier
+    /// group-based race bounded only the reported ROW: a wedged dial (Citadel
+    /// carries an uncancellable 15 s `openSFTP` timer) left the user waiting
+    /// well past the budget.
+    ///
+    /// Asserted as an ORDERING, not as a stopwatch reading. The subject's
+    /// deadline fires on a Dispatch timer and is punctual, but RESUMING this
+    /// test's task afterwards needs a cooperative-pool thread, and under the
+    /// full suite (3850 tests) that queueing cost was measured at 0.7 s, 1.4 s
+    /// and once 5.9 s — so any tight time bound here measures the scheduler,
+    /// not the property. What is actually claimed is "the step returned while
+    /// the probe was still running", and `probeFinished` says exactly that.
+    @Test func aProbeThatIgnoresCancellationDoesNotHoldTheStepPastItsDeadline() async throws {
+        let port = try #require(LoopbackSocket.closedPort())
+        let probeFinished = Gate()
+        let clock = ContinuousClock()
+        let started = clock.now
+        let report = await Self.run(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: port),
+                dial: DiagnosticContribution(
+                    id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe"
+                ) { _, _ in
+                    let timer = DiagnosticStepTimer(
+                        id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
+                    await Self.uncancellableWait(seconds: 20)
+                    await probeFinished.open()
+                    return timer.finish(.ok, "never reported")
+                }),
+            stepTimeout: .seconds(1))
+        let stillRunning = await probeFinished.isClosed
+        let elapsed = started.duration(to: clock.now)
+
+        #expect(report.steps.last?.outcome == .timedOut)
+        #expect(stillRunning)
+        // The coarse backstop: strictly less than the probe's own 20 s, so a
+        // run that waited for it fails here too even if the flag were read
+        // late.
+        #expect(elapsed < .seconds(15))
+    }
+
+    /// A wait that cannot be cancelled, and that parks no cooperative-pool
+    /// thread doing it: the timer runs on a Dispatch queue and the caller is
+    /// suspended on a continuation until it fires.
+    private static func uncancellableWait(seconds: Double) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+                continuation.resume()
+            }
+        }
+    }
+
     // MARK: - The S3 and WebDAV dials, against the rig
 
     @Test(
@@ -424,6 +601,13 @@ struct ConnectionDiagnosticsTests {
 
 }
 
+/// Carries one typed error as a test argument. `@Test(arguments:)` needs a
+/// `Sendable` element, and `any Error` is not one.
+struct AnyDialError: Sendable {
+    let wrapped: any Error
+    init(_ wrapped: any Error) { self.wrapped = wrapped }
+}
+
 /// A `SecretSource` that answers the same value for any session — the test
 /// stand-in for the Keychain the App hands the runner.
 private struct FixedSecretSource: SecretSource {
@@ -450,6 +634,10 @@ private actor Gate {
         if isOpen { return }
         await withCheckedContinuation { waiters.append($0) }
     }
+
+    /// Whether nothing has opened it yet — read by the deadline case, which
+    /// asks "was the probe still running when the step returned?".
+    var isClosed: Bool { !isOpen }
 }
 
 /// A loopback TCP socket a test owns, for the two ends of the ping: one that

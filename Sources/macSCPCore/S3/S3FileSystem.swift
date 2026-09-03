@@ -667,7 +667,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// name entirely — so this deliberately does not go through
     /// `requestURL`.
     private static func bucketListURL(config: S3ConnectionConfig) throws -> URL {
-        guard var components = URLComponents(string: config.endpoint) else {
+        guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {
             throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
         }
         components.percentEncodedPath = "/"
@@ -894,7 +894,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         config: S3ConnectionConfig, bucket: String, key: String,
         queryPairs: [(name: String, value: String)]
     ) throws -> URL {
-        guard var components = URLComponents(string: config.endpoint) else {
+        guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {
             throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
         }
         if config.usePathStyle {
@@ -1005,7 +1005,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     private static func requestURL(
         config: S3ConnectionConfig, bucket: String, queryPairs: [(name: String, value: String)]
     ) throws -> URL {
-        guard var components = URLComponents(string: config.endpoint) else {
+        guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {
             throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
         }
         if config.usePathStyle {

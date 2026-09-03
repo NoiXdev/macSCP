@@ -184,19 +184,30 @@ public enum S3FieldSchema {
         return values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// The endpoint as a URL, with the scheme filled in when the user typed
-    /// none.
+    /// The ONE parse of an S3 endpoint string in this project.
     ///
-    /// The normalisation is not a convenience: `URL(string:)` reads
-    /// `minio.example.test:19000` as a SCHEME of `minio.example.test` with a
-    /// path of `19000`, so a reader that trusted it would find no host at all
-    /// for exactly the spelling someone types when they think of this field
-    /// as a host name. HTTPS is the assumption, because the alternative is to
-    /// assume plaintext.
+    /// Shared with the connect path — `S3FileSystem`'s three request-URL
+    /// builders call it — so "what is a usable endpoint" is answered in one
+    /// place. That sharing is the point: an earlier version of the reader
+    /// below prepended `https://` to a schemeless endpoint while the connect
+    /// path parsed the same string verbatim, and a diagnosis then reported
+    /// resolve ok / tcp accepted / dial ok for a session the app cannot dial
+    /// at all (`S3RequestSigning.signedRequest` throws "S3 endpoint has no
+    /// host" for it).
+    ///
+    /// Returns components, not a URL, because the connect path mutates them
+    /// (path-style writes the path; virtual-hosted rewrites the host).
+    public static func endpointComponents(_ endpoint: String) -> URLComponents? {
+        URLComponents(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// The endpoint as a URL, or nil when the connect path could not use it
+    /// either — no scheme is invented here, for the reason above.
     public static func endpointURL(_ values: FieldValues) -> URL? {
-        let text = values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return nil }
-        return URL(string: text.contains("://") ? text : "https://" + text)
+        guard let components = endpointComponents(values[S3Field.endpoint]),
+            let host = components.host, !host.isEmpty
+        else { return nil }
+        return components.url
     }
 
     /// Where a diagnosis points for this session (`BackendDescriptor

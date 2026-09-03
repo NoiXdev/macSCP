@@ -38,6 +38,59 @@ enum BlockingProbe {
     }
 }
 
+/// Runs an ASYNC probe under a deadline, and does not wait for it when the
+/// deadline wins.
+///
+/// The shape `withTaskGroup` cannot give: a task group awaits every child
+/// before its body's value is returned, so `cancelAll()` bounds the call only
+/// for a probe that HONOURS cancellation. Several here do not — Citadel arms
+/// an uncancellable 15 s timer the moment `openSFTP` is called
+/// (`CitadelFileSystem.disconnect`'s citation), and a `recv` loop on a raw
+/// socket honours nothing at all — so a task group would have bounded the
+/// reported row while the user watched a spinner for as long as the probe
+/// felt like taking.
+///
+/// **What happens to the abandoned probe.** It is `cancel()`ed — an ASK,
+/// which a probe that ignores cancellation ignores — and then left to finish
+/// on its own. Its result is delivered into a `OneShot` that has already been
+/// settled, so it is dropped; nothing here waits for it, and no continuation
+/// is resumed twice. It holds whatever it holds (a socket, a connect
+/// attempt) until its own transport gives up.
+enum DetachedProbe {
+    /// Returns `body`'s result, or `nil` when the deadline expired or the
+    /// calling task was cancelled first — the same contract as
+    /// `BlockingProbe.run`, and the caller tells the two apart the same way,
+    /// by asking `Task.isCancelled`.
+    static func run<T: Sendable>(
+        timeout: Duration, _ body: @escaping @Sendable () async -> T
+    ) async -> T? {
+        let once = OneShot<T>()
+        // Detached, not a child: a child inherits this actor's isolation, so
+        // the probe would run ON the diagnostics actor and serialize with the
+        // very deadline that is supposed to bound it.
+        let work = Task.detached { once.deliver(await body()) }
+        defer { work.cancel() }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+                once.arm(continuation)
+                // A Dispatch timer, NOT a `Task.sleep` on another task. A
+                // deadline that waits for a cooperative-pool thread before it
+                // can start counting is not a deadline: measured under the
+                // full suite (3850 tests, a saturated pool), a `Task.detached`
+                // sleep of 1 s let a 3 s probe run to completion, because the
+                // task carrying the sleep did not start until the pool had
+                // room. Dispatch's global queue grows past the core count and
+                // fires on time.
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout.seconds) {
+                    once.deliver(nil)
+                }
+            }
+        } onCancel: {
+            once.deliver(nil)
+        }
+    }
+}
+
 /// Resumes a continuation exactly once, whichever of the three racers gets
 /// there first — the work, the deadline, or a cancellation.
 ///

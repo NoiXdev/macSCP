@@ -68,13 +68,29 @@ struct BackendDescriptorEndpointTests {
     }
 
     /// A schemeless endpoint is what a user types when they think of the
-    /// field as a host name. `URL(string:)` reads `minio.example.test:19000`
-    /// as a SCHEME of `minio.example.test`, so a reader that trusted it would
-    /// resolve nothing at all.
-    @Test func s3AssumesTLSForASchemelessEndpoint() {
+    /// field as a host name — and it is an endpoint this app CANNOT CONNECT
+    /// TO: the connect path parses the same string with
+    /// `URLComponents(string:)` (`S3FieldSchema.endpointComponents`, shared
+    /// by both since this review round) and `S3RequestSigning.signedRequest`
+    /// then throws "S3 endpoint has no host".
+    ///
+    /// So the reader refuses it too. An earlier version prepended `https://`
+    /// here and nowhere else, which made the diagnosis report resolve ok /
+    /// tcp accepted / dial ok for a session the app never dials that way —
+    /// a healthy diagnosis about a connection that cannot exist.
+    @Test func s3RefusesASchemelessEndpointBecauseTheConnectPathDoes() {
         var values = FieldValues()
         values[S3Field.endpoint] = "minio.example.test:19000"
-        #expect(endpoint(.s3, values) == Endpoint(host: "minio.example.test", port: 19000))
+        #expect(endpoint(.s3, values) == nil)
+    }
+
+    /// The Foundation fact the rule above rests on, measured rather than
+    /// believed: this spelling parses as a SCHEME of `minio.example.test`
+    /// with no host at all.
+    @Test func aSchemelessEndpointParsesWithNoHost() {
+        let components = S3FieldSchema.endpointComponents("minio.example.test:19000")
+        #expect(components?.scheme == "minio.example.test")
+        #expect(components?.host == nil)
     }
 
     @Test func s3WithoutAnEndpointHasNone() {

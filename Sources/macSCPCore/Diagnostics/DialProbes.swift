@@ -91,7 +91,7 @@ extension DiagnosticContribution {
         return await DialSupport.request(
             url: url, method: "HEAD", timeout: context.timeout, timer: timer
         ) { response in
-            "HTTP \(response.statusCode) to an unsigned HEAD on \(url.absoluteString)"
+            "HTTP \(response.statusCode) to an unsigned HEAD on \(URLText.hostPortPath(of: url))"
         }
     }
 
@@ -105,7 +105,8 @@ extension DiagnosticContribution {
         return await DialSupport.request(
             url: url, method: "OPTIONS", timeout: context.timeout, timer: timer
         ) { response in
-            var detail = "HTTP \(response.statusCode) to an unauthenticated OPTIONS"
+            var detail = "HTTP \(response.statusCode) to an unauthenticated OPTIONS on "
+                + URLText.hostPortPath(of: url)
             // What the server claims to be. Absent on a server that answered
             // the request without being a DAV server at all, which is a
             // finding rather than an error.
@@ -126,17 +127,72 @@ extension DiagnosticContribution {
 enum DialSupport {
     /// A short, technical reason for a step's `failed` outcome.
     ///
-    /// `RemoteFSError` is described directly: every one of its cases carries
-    /// strings this project wrote (paths, mapped connect reasons), never a
-    /// credential — `ConnectFailureSecrecyTests` is what holds the mapping to
-    /// that. Anything else — a `URLError`, an NIO or Citadel error — is
-    /// reduced to `localizedDescription` rather than `String(describing:)`,
-    /// because describing an arbitrary error prints its stored properties,
-    /// and a transport error is exactly the kind of value that carries the
+    /// The three typed SSH errors are spelled out because none of them
+    /// conforms to `LocalizedError`: bridged to `NSError` they all read "The
+    /// operation couldn't be completed. (macSCPCore.HostKeyError error 1.)",
+    /// which says nothing about host keys — in the row this file documents
+    /// as the answer to "why does this not connect", and for the four
+    /// commonest SSH dial failures. The arms are exhaustive `switch`es, so a
+    /// case added to any of the three enums fails to compile here until
+    /// someone writes its sentence.
+    ///
+    /// `RemoteFSError` is described rather than spelled: every one of its
+    /// cases carries strings this project wrote (paths, mapped connect
+    /// reasons), so its raw description is already readable and already
+    /// credential-free.
+    ///
+    /// Everything else — a `URLError`, an NIO or Citadel error — is reduced
+    /// to `localizedDescription` and never `String(describing:)`, because
+    /// describing an arbitrary error prints its stored properties, and a
+    /// transport error is exactly the kind of value that carries the
     /// configuration it was dialling with.
+    ///
+    /// English, like every other sentence this module produces: the report is
+    /// a paste artifact. The panel is the localized surface, and Task 4 owns
+    /// the keys — the report for this task lists the ones these sentences
+    /// need.
     static func reason(for error: any Error) -> String {
-        if let remote = error as? RemoteFSError { return String(describing: remote) }
-        return (error as NSError).localizedDescription
+        switch error {
+        case let error as HostKeyError:
+            switch error {
+            case .mismatch(let host, let expected, let presented):
+                return "host key MISMATCH for \(host): expected \(expected), got \(presented)"
+            case .rejectedByUser:
+                return "the host key is not known to this app and was not accepted"
+            }
+        case let error as SSHKeyError:
+            switch error {
+            case .fileNotFound(let path):
+                return "no key file at \(path)"
+            case .passphraseRequired:
+                return "the key is encrypted and no passphrase was available"
+            case .wrongPassphrase:
+                return "the key's passphrase was rejected"
+            case .unsupportedFormat(let reason):
+                return "the key file could not be parsed: \(reason)"
+            case .typeNotLoadable(let algorithm):
+                return "this app cannot load a key of type \(algorithm)"
+            case .pemNotSupported:
+                return "the key is in PEM format, which this app does not read"
+            }
+        case let error as AgentError:
+            switch error {
+            case .socketUnavailable:
+                return "no ssh-agent answered on SSH_AUTH_SOCK"
+            case .noIdentities:
+                return "the ssh-agent holds no identities"
+            case .noUsableIdentities:
+                return "the ssh-agent holds no identity of a type this app can offer"
+            case .refused:
+                return "the ssh-agent refused every identity it offered"
+            case .protocolError(let reason):
+                return "the ssh-agent connection misbehaved: \(reason)"
+            }
+        case let error as RemoteFSError:
+            return String(describing: error)
+        default:
+            return (error as NSError).localizedDescription
+        }
     }
 
     /// The step budget as whole seconds, for the connect timeout SSH takes.
