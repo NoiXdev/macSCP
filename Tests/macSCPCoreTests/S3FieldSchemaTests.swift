@@ -404,4 +404,54 @@ struct S3FieldSchemaTests {
             endpoint: "https://minio.local:9000", bucket: "backups",
             usePathStyle: true, startsAtBucketList: true)
     }
+
+    // MARK: - A preset per Hetzner Object Storage location (maintainer request 2026-09-03)
+
+    /// Every preset naming a `your-objectstorage.com` host — Hetzner's own —
+    /// found by ENDPOINT rather than by id, so a differently-spelled id could
+    /// not slip past this check unnoticed.
+    private func hetznerPresets() -> [ConnectionPreset] {
+        S3FieldSchema.connection.presets.filter {
+            $0.values[S3Field.endpoint.rawValue]?.contains("your-objectstorage.com") == true
+        }
+    }
+
+    /// Three locations are measured against Hetzner's own documentation
+    /// (`docs.hetzner.com/storage/object-storage/overview/`, read
+    /// 2026-09-04): fsn1 (Falkenstein), hel1 (Helsinki), nbg1 (Nuremberg). A
+    /// positive count beside the loop below, per CLAUDE.md's guard rule — a
+    /// filter that matched nothing would otherwise pass this test vacuously.
+    @Test func everyHetznerPresetParsesToAYourObjectstorageComHostWithPathStyle() throws {
+        let presets = hetznerPresets()
+        #expect(presets.count == 3, "expected 3 Hetzner presets, found \(presets.count)")
+
+        for preset in presets {
+            let endpoint = try #require(
+                preset.values[S3Field.endpoint.rawValue],
+                "\(preset.id) declares no endpoint")
+            let components = try #require(
+                S3FieldSchema.endpointComponents(endpoint),
+                "\(preset.id)'s endpoint \(endpoint) does not parse")
+            let host = try #require(components.host, "\(preset.id)'s endpoint names no host")
+            #expect(host.hasSuffix(".your-objectstorage.com"),
+                    "\(preset.id)'s host \(host) is not a your-objectstorage.com host")
+            #expect(preset.values[S3Field.usePathStyle.rawValue] == "true",
+                    "\(preset.id) does not use path-style addressing")
+        }
+    }
+
+    @Test func everyS3PresetIDIsUnique() {
+        let ids = S3FieldSchema.connection.presets.map(\.id)
+        #expect(ids.count == Set(ids).count, "duplicate preset id among \(ids)")
+    }
+
+    /// `hetzner` keeps naming Falkenstein — stored sessions and the
+    /// Cyberduck importer's preset-by-id lookup reference it by this exact
+    /// id (see `ImportPreviewPlanner.awsPresetID`'s sibling use for AWS).
+    @Test func theHetznerPresetIsStillFalkenstein() throws {
+        let preset = try #require(
+            S3FieldSchema.connection.presets.first { $0.id == "hetzner" },
+            "no preset with id \"hetzner\" — the existing id was renamed out from under stored sessions")
+        #expect(preset.values[S3Field.endpoint.rawValue] == "https://fsn1.your-objectstorage.com")
+    }
 }

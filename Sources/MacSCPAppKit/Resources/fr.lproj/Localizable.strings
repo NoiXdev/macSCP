@@ -147,7 +147,9 @@
 "connection.s3.pathStyle.forcedByIP" = "Une adresse IP est toujours adressée en style chemin.";
 "connection.s3.preset.label" = "Modèle de fournisseur";
 "connection.s3.preset.aws" = "Amazon S3";
-"connection.s3.preset.hetzner" = "Hetzner Object Storage";
+"connection.s3.preset.hetzner" = "Hetzner Object Storage (Falkenstein)";
+"connection.s3.preset.hetzner-hel1" = "Hetzner Object Storage (Helsinki)";
+"connection.s3.preset.hetzner-nbg1" = "Hetzner Object Storage (Nuremberg)";
 "connection.s3.preset.custom" = "Personnalisé";
 "connection.badge.webdav" = "WebDAV";
 

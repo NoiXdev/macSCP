@@ -203,6 +203,31 @@ public enum ImportPreviewPlanner {
             .first { $0.id == awsPresetID }?
             .values[S3Field.endpoint.rawValue] ?? "https://\(awsHostname)"
 
+    /// Hetzner's own hosts, keyed by the host itself, to the preset endpoint
+    /// that names it — the same identity-not-position rule `awsEndpoint`
+    /// follows above, extended to every `hetzner`/`hetzner-<location>`
+    /// preset in `S3FieldSchema.connection.presets` (Task 3, per-region
+    /// presets). A bookmark naming `nbg1.your-objectstorage.com` becomes the
+    /// `hetzner-nbg1` preset's OWN endpoint string, so an import cannot drift
+    /// from what picking that preset in the connection form produces even if
+    /// a preset's endpoint spelling ever changed.
+    ///
+    /// Built from the presets rather than a literal host list, so a fourth
+    /// location added to the schema is recognised here without a second edit
+    /// — the hazard `S3FieldSchemaTests.everyHetznerPresetParsesToA
+    /// YourObjectstorageComHostWithPathStyle` guards from the other side.
+    private static let hetznerEndpointsByHost: [String: String] = {
+        var map: [String: String] = [:]
+        for preset in S3FieldSchema.connection.presets
+        where preset.id == "hetzner" || preset.id.hasPrefix("hetzner-") {
+            guard let endpoint = preset.values[S3Field.endpoint.rawValue],
+                let host = S3FieldSchema.endpointComponents(endpoint)?.host
+            else { continue }
+            map[host.lowercased()] = endpoint
+        }
+        return map
+    }()
+
     // MARK: - The preview
 
     public static func preview(
@@ -620,18 +645,29 @@ public enum ImportPreviewPlanner {
     }
 
     /// `Hostname` → endpoint (§3): Amazon's own host becomes S3's AWS preset
-    /// endpoint; anything else becomes an https origin carrying the
-    /// bookmark's port when it has one.
+    /// endpoint, one of Hetzner's own hosts becomes the matching location's
+    /// preset endpoint, and anything else becomes an https origin carrying
+    /// the bookmark's port when it has one.
     ///
-    /// The spelling is composed by `S3FieldSchema.endpointSpelling`, not
-    /// here: it is the same function the endpoint parse round-trips, so an
-    /// imported bookmark is dialable by construction rather than by
-    /// agreement. What this file wrote by hand before also bracketed no IPv6
-    /// literal — `https://::1:9000` parses to no host at all.
+    /// The Hetzner lookup is by HOST alone, ignoring any port the bookmark
+    /// names — Hetzner Object Storage is reached on the default HTTPS port,
+    /// so a bookmark naming another one is not this provider's endpoint,
+    /// mirroring how `awsHostname` above is matched by host with no port
+    /// check either.
+    ///
+    /// The generic fallback's spelling is composed by
+    /// `S3FieldSchema.endpointSpelling`, not here: it is the same function
+    /// the endpoint parse round-trips, so an imported bookmark is dialable
+    /// by construction rather than by agreement. What this file wrote by
+    /// hand before also bracketed no IPv6 literal — `https://::1:9000`
+    /// parses to no host at all.
     private static func endpoint(of bookmark: ExternalBookmark) -> String {
         let host = trimmed(bookmark.host)
         guard host.caseInsensitiveCompare(awsHostname) != .orderedSame else {
             return awsEndpoint
+        }
+        if let hetznerEndpoint = hetznerEndpointsByHost[host.lowercased()] {
+            return hetznerEndpoint
         }
         return S3FieldSchema.endpointSpelling(host: host, port: bookmark.port)
     }

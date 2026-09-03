@@ -91,9 +91,29 @@ public enum S3FieldSchema {
                              nameDefault: "Amazon S3",
                              values: [S3Field.endpoint.rawValue: "https://s3.amazonaws.com",
                                       S3Field.usePathStyle.rawValue: "false"]),
+            // One preset per Hetzner Object Storage location (maintainer
+            // request 2026-09-03), sorted by location code. `hetzner` keeps
+            // its id for `fsn1` — stored sessions and the Cyberduck
+            // importer's preset-by-id lookup (`ImportPreviewPlanner
+            // .awsPresetID`'s sibling for AWS) reference it by id, so
+            // renaming it would silently repoint them. Every other location
+            // gets `hetzner-<location>`. Locations confirmed against
+            // Hetzner's own documentation, 2026-09-04:
+            // https://docs.hetzner.com/storage/object-storage/overview/
+            // lists exactly these three, each at
+            // `<location>.your-objectstorage.com` — no fourth location is
+            // measured, so none is added.
             ConnectionPreset(id: "hetzner", nameKey: "connection.s3.preset.hetzner",
-                             nameDefault: "Hetzner Object Storage",
+                             nameDefault: "Hetzner Object Storage (Falkenstein)",
                              values: [S3Field.endpoint.rawValue: "https://fsn1.your-objectstorage.com",
+                                      S3Field.usePathStyle.rawValue: "true"]),
+            ConnectionPreset(id: "hetzner-hel1", nameKey: "connection.s3.preset.hetzner-hel1",
+                             nameDefault: "Hetzner Object Storage (Helsinki)",
+                             values: [S3Field.endpoint.rawValue: "https://hel1.your-objectstorage.com",
+                                      S3Field.usePathStyle.rawValue: "true"]),
+            ConnectionPreset(id: "hetzner-nbg1", nameKey: "connection.s3.preset.hetzner-nbg1",
+                             nameDefault: "Hetzner Object Storage (Nuremberg)",
+                             values: [S3Field.endpoint.rawValue: "https://nbg1.your-objectstorage.com",
                                       S3Field.usePathStyle.rawValue: "true"]),
             ConnectionPreset(id: "custom", nameKey: "connection.s3.preset.custom",
                              nameDefault: "Custom", values: [:]),

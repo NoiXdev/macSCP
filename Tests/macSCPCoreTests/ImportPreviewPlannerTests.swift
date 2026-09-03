@@ -418,6 +418,40 @@ struct ImportPreviewPlannerTests {
         #expect(field(S3Field.endpoint, of: exported) == "https://objects.example.net:9000")
     }
 
+    /// A Cyberduck bookmark naming one of Hetzner's own hosts becomes that
+    /// LOCATION's preset endpoint, exactly as the AWS host becomes the AWS
+    /// preset's — not a freehand `host:port` composition that could drift
+    /// from the presets list `S3FieldSchema.connection.presets` declares.
+    ///
+    /// The bookmark carries an explicit port, same as
+    /// `anS3BookmarkOnAmazonUsesTheAWSDefaultEndpoint` above and for the same
+    /// reason: `hetzner-nbg1`'s own endpoint names no port, so a freehand
+    /// `host:port` composition (what the generic branch below does) would
+    /// spell `https://nbg1.your-objectstorage.com:443` — a DIFFERENT string
+    /// from the preset's — while the identity mapping this asserts drops the
+    /// port along with everything else the preset does not carry. Without
+    /// the port this test could pass whether or not that mapping exists, and
+    /// would be proving nothing.
+    ///
+    /// The expected string is read off the `hetzner-nbg1` preset itself,
+    /// same reasoning as `awsPresetEndpoint` above: a test that hardcoded
+    /// the spelling here would prove nothing about the two staying in sync.
+    @Test func anS3BookmarkOnAHetznerHostUsesThatLocationsPreset() throws {
+        let hetznerNbg1Endpoint = try #require(
+            S3FieldSchema.connection.presets.first { $0.id == "hetzner-nbg1" }?
+                .values[S3Field.endpoint.rawValue],
+            "no \"hetzner-nbg1\" preset — this test asserted nothing")
+
+        let rows = ImportPreviewPlanner.preview(
+            [s3Bookmark(host: "nbg1.your-objectstorage.com", port: 443,
+                        username: "AKIAEXAMPLE", path: "backups")],
+            against: [], switches: ImportSwitches())
+        let exported = try #require(ImportPreviewPlanner.payload(
+            for: rows, sessions: [], groups: [], switches: ImportSwitches()).sessions.first)
+
+        #expect(field(S3Field.endpoint, of: exported) == hetznerNbg1Endpoint)
+    }
+
     /// The same import, asserted THROUGH the parse rather than against the
     /// spelling: what an imported bookmark has to satisfy is that the app can
     /// dial it, and the literal above is only one string that does. A planner
