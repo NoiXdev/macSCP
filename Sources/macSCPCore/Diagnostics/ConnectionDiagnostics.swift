@@ -4,13 +4,14 @@ import Foundation
 /// protocols fill (design §§2–3).
 ///
 /// Runs, in order and each under its own deadline: name resolution, one TCP
-/// connection attempt per resolved address, the backend's own dial, and then
-/// whatever the backend contributes. Nothing here asks which protocol it is
-/// looking at — the endpoint, the dial and the contributions all arrive
-/// through `BackendDescriptor`, which is what keeps a fourth backend from
-/// having to be mentioned in this file at all.
+/// connection attempt per resolved address, an ICMP echo per resolved
+/// address, the backend's own dial, and then whatever the backend
+/// contributes. Nothing here asks which protocol it is looking at — the
+/// endpoint, the dial and the contributions all arrive through
+/// `BackendDescriptor`, which is what keeps a fourth backend from having to
+/// be mentioned in this file at all.
 ///
-/// The first two steps touch no credential. The dial and the contributions
+/// The first three steps touch no credential. The dial and the contributions
 /// may, and only through the source the connect path itself uses
 /// (`DiagnosticContext.secret()`); no step ever writes one into a detail line
 /// — pinned by `theSSHDialNeverPutsTheSecretInTheReport`.
@@ -79,6 +80,11 @@ public actor ConnectionDiagnostics {
         guard !Task.isCancelled else { return report() }
         steps.append(tcpStep)
 
+        guard !Task.isCancelled else { return report() }
+        let icmpStep = await echo(addresses)
+        guard !Task.isCancelled else { return report() }
+        steps.append(icmpStep)
+
         for contribution in ([descriptor.dial].compactMap { $0 } + descriptor.diagnostics) {
             guard !Task.isCancelled else { return report() }
             let step = await bounded(contribution)
@@ -139,6 +145,58 @@ public actor ConnectionDiagnostics {
             return nil
         }.first
         return timer.finish(.failed(firstFailure ?? "no address accepted"), detail)
+    }
+
+    /// The ICMP echo step: `ICMPEcho.defaultProbeCount` requests per resolved
+    /// address, and the three round-trip numbers a reader expects of a ping.
+    ///
+    /// Silence is NOT `failed`. An ordinary firewall drops ICMP while the
+    /// service behind it accepts connections perfectly well, and a row that
+    /// called that a server fault would send the user after a problem they do
+    /// not have — the same reasoning the TCP step's "first acceptance wins"
+    /// rule rests on. What silence gets is `timedOut`, the deadline's answer.
+    private func echo(_ addresses: [ResolvedAddress]) async -> DiagnosticStep {
+        let timer = Self.timer(for: DiagnosticStepID.icmp)
+        guard !addresses.isEmpty else {
+            return timer.finish(.skipped("nothing resolved to probe"), "")
+        }
+        let results = await ICMPEcho.probeAll(addresses: addresses, timeout: stepTimeout)
+        let detail = results.map(Self.line).joined(separator: "; ")
+
+        if results.contains(where: { !$0.outcome.replies.isEmpty }) {
+            return timer.finish(.ok, detail)
+        }
+        // Every address unreachable from here — no socket, no route — is
+        // about this machine, so the step says so rather than reporting a
+        // silence it never measured.
+        let localReasons = results.compactMap { result -> String? in
+            if case .unavailable(let reason) = result.outcome { return reason }
+            return nil
+        }
+        if localReasons.count == results.count, let reason = localReasons.first {
+            return timer.finish(.unavailable(reason), detail)
+        }
+        return timer.finish(.timedOut, detail)
+    }
+
+    /// One address's contribution to the echo step's detail line.
+    private static func line(
+        _ result: (address: ResolvedAddress, outcome: ICMPEchoOutcome)
+    ) -> String {
+        switch result.outcome {
+        case .unavailable(let reason):
+            return "\(result.address.text) \(reason)"
+        case .measured(let sent, let replies):
+            let times = replies.map(\.rtt)
+            guard let low = times.min(), let high = times.max() else {
+                return "\(result.address.text) 0/\(sent) replies"
+            }
+            let average = times.reduce(Duration.zero, +) / times.count
+            return "\(result.address.text) \(replies.count)/\(sent) replies, "
+                + "min \(DurationText.milliseconds(low)), "
+                + "avg \(DurationText.milliseconds(average)), "
+                + "max \(DurationText.milliseconds(high))"
+        }
     }
 
     // MARK: - The seam

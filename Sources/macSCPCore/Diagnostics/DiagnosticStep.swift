@@ -80,12 +80,13 @@ public enum DiagnosticOutcome: Sendable, Equatable {
 }
 
 /// The stable ids of the steps the universal runner produces itself. A
-/// contribution brings its own id; these three are the ones the runner
-/// writes, and they are constants so a renderer or a test can name a row
-/// without spelling it a second time.
+/// contribution brings its own id; these are the ones the runner writes, and
+/// they are constants so a renderer or a test can name a row without spelling
+/// it a second time.
 public enum DiagnosticStepID {
     public static let resolve = "resolve"
     public static let tcp = "tcp"
+    public static let icmp = "icmp"
     public static let dial = "dial"
 
     /// The catalogue key a step id renders under, DERIVED rather than spelled

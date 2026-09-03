@@ -129,7 +129,7 @@ struct ConnectionDiagnosticsTests {
 
     // MARK: - The runner
 
-    @Test func theRunnerWalksResolveThenTheTCPPingThenTheDial() async throws {
+    @Test func theRunnerWalksResolveThenTheTCPPingThenTheEchoThenTheDial() async throws {
         let listener = try #require(LoopbackSocket.listening())
         defer { listener.close() }
 
@@ -140,8 +140,12 @@ struct ConnectionDiagnosticsTests {
                     id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe",
                     outcome: .ok, detail: "dialled")))
 
-        #expect(report.steps.map(\.id) == [DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.dial])
-        #expect(report.steps.map(\.outcome) == [.ok, .ok, .ok])
+        #expect(
+            report.steps.map(\.id) == [
+                DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+                DiagnosticStepID.dial,
+            ])
+        #expect(report.steps.map(\.outcome) == [.ok, .ok, .ok, .ok])
         #expect(report.endpoint == Endpoint(host: "127.0.0.1", port: listener.port))
     }
 
@@ -164,8 +168,8 @@ struct ConnectionDiagnosticsTests {
 
         #expect(
             report.steps.map(\.id) == [
-                DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.dial,
-                "probe.first", "probe.second",
+                DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+                DiagnosticStepID.dial, "probe.first", "probe.second",
             ])
         // The closed port is the tcp step's own outcome, and it does NOT stop
         // the walk: a refused port is a finding, not an abort.
@@ -217,7 +221,10 @@ struct ConnectionDiagnosticsTests {
         task.cancel()
         let report = await task.value
 
-        #expect(report.steps.map(\.id) == [DiagnosticStepID.resolve, DiagnosticStepID.tcp])
+        #expect(
+            report.steps.map(\.id) == [
+                DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+            ])
     }
 
     @Test func aDescriptorThatNamesNoEndpointProbesNothing() async {
@@ -233,7 +240,7 @@ struct ConnectionDiagnosticsTests {
     // MARK: - The report
 
     @Test func plainTextRendersEveryStepOnceWithItsDurationAndOutcome() async throws {
-        let report = try await Self.threeStepReport()
+        let report = try await Self.multiOutcomeReport()
         let text = report.plainText()
         let lines = text.split(separator: "\n").map(String.init)
 
@@ -254,7 +261,7 @@ struct ConnectionDiagnosticsTests {
     }
 
     @Test func markdownRendersEveryStepOnceWithItsDurationAndOutcome() async throws {
-        let report = try await Self.threeStepReport()
+        let report = try await Self.multiOutcomeReport()
         let markdown = report.markdown()
         let rows = markdown.split(separator: "\n").map(String.init).filter { $0.hasPrefix("|") }
 
@@ -540,9 +547,12 @@ struct ConnectionDiagnosticsTests {
 
     // MARK: - Fixtures
 
-    /// A report with three steps whose outcomes differ, so a renderer that
-    /// prints one label for all of them cannot pass.
-    private static func threeStepReport() async throws -> DiagnosticReport {
+    /// A report whose steps' outcomes differ, so a renderer that prints one
+    /// label for all of them cannot pass. The count is deliberately not
+    /// written into the name: the runner gains steps (the echo did), and a
+    /// fixture called `threeStepReport` producing four is a comment that
+    /// runs.
+    private static func multiOutcomeReport() async throws -> DiagnosticReport {
         let port = try #require(LoopbackSocket.closedPort())
         return await run(
             descriptor: probeDescriptor(

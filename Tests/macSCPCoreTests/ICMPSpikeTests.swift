@@ -43,9 +43,12 @@ struct ICMPSpikeTests {
 
     /// (a) IPv4 — `socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP)`, one echo
     /// request to `127.0.0.1`, one bounded read. Records the identifier and
-    /// sequence AS DELIVERED: macOS rewrites the identifier of an echo
-    /// request sent through a DGRAM ICMP socket, so the number that comes
-    /// back is generally not the number that went out.
+    /// sequence AS DELIVERED, because whether the number that comes back is
+    /// the number that went out is precisely what was open: the design
+    /// assumed macOS renumbers a DGRAM ICMP socket's echoes, and this
+    /// measurement found it UNCHANGED on 26.6.2 (three runs, design §5). A
+    /// matcher may therefore read the identifier but must not require it —
+    /// `ICMPEcho` pins the sequence instead.
     @Test func unprivilegedICMPv4EchoReachesLoopback() async {
         let result = await Self.onDedicatedQueue("macscp.spike.icmp4-echo") {
             Self.measureEcho(

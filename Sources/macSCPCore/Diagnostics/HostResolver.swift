@@ -42,6 +42,14 @@ struct ProbeSocketAddress: Sendable, Equatable {
 
     var length: socklen_t { socklen_t(bytes.count) }
 
+    /// The address family the BYTES declare.
+    ///
+    /// Read from the `sockaddr` rather than from `ResolvedAddress.family`,
+    /// which is a label for the report: what `socket` is asked to open has to
+    /// be what `sendto` will dial, and the record's label is one copy of that
+    /// fact while the bytes are the fact itself.
+    var family: Int32 { withSockaddr { pointer, _ in Int32(pointer.pointee.sa_family) } }
+
     func withSockaddr<R>(_ body: (UnsafePointer<sockaddr>, socklen_t) -> R) -> R {
         var storage = sockaddr_storage()
         let copied = withUnsafeMutableBytes(of: &storage) { destination -> Int in
