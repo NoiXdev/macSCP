@@ -185,3 +185,14 @@ seam is the requirement, so a fourth backend (FTP, SMB) adds its own
 without touching the universal half. No code path in the universal half
 branches on `ConnectionKind`.
 
+**Appended by the controller, 2026-09-03 (after the closeout commit):**
+Task 5's fix round `4fc60452` — the S3 probe signs the file system's own
+request shapes through one `S3RequestSigning.signedRequest` factory (the
+probe can no longer pair a URL with a canonical path of its own; the
+four builders are `private` again), the catalogue guard compares
+`Sources/` against `en.lproj` as a set in both directions, and the
+endpoint-with-userinfo-containing-`/` vector is pinned. Open item added
+to `docs/BACKLOG.md`: `DialSupport.reason(for:)` renders `RemoteFSError`
+by `String(describing:)` — the general route by which a
+configuration-carrying error could reach any dial's row; this plan closed
+the two paths its own rows added, not the route.
