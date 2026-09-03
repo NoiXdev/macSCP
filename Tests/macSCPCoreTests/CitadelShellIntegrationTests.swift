@@ -153,6 +153,51 @@ struct CitadelShellIntegrationTests {
         await fs.disconnect()
     }
 
+    /// The last hop of the terminal-resize chain, measured rather than
+    /// assumed (Polish milestone, Task 1): `resize` -> `changeSize` -> SSH
+    /// `WindowChangeRequest` -> the remote PTY's own geometry. `resizeDoesNotThrow`
+    /// above only proves the request left the client; `stty size` is the
+    /// remote side answering what it actually has.
+    ///
+    /// One command line, one consumer of `shell.output`: the remote sleeps
+    /// between the two `stty size` calls and the resize is sent during that
+    /// sleep, so the second reading is necessarily taken after the window
+    /// change. The two markers are written split (`"B""EFORE:"`) because the
+    /// PTY echoes the command line back — a marker spelled whole would match
+    /// its own echo instead of the output.
+    @Test func windowChangeReachesTheRemotePTY() async throws {
+        let fs = try await connectWithRetry()
+        let shell = try await fs.openShell(terminal: "xterm-256color", cols: 80, rows: 24)
+        try await shell.send(Array(
+            "echo \"B\"\"EFORE:$(stty size)\"; sleep 3; echo \"A\"\"FTER:$(stty size)\"\n".utf8))
+        try await Task.sleep(for: .milliseconds(800))
+        try await shell.resize(cols: 120, rows: 40)
+
+        let out = try await collectUntil(shell, marker: "AFTER:", timeout: .seconds(20))
+        let before = Self.value(after: "BEFORE:", in: out)
+        let after = Self.value(after: "AFTER:", in: out)
+        #expect(before == "24 80", "remote PTY started at \(String(describing: before))")
+        #expect(
+            after == "40 120",
+            """
+            The remote PTY reports \(String(describing: after)) after a \
+            resize(cols: 120, rows: 40) — it was \(String(describing: before)).
+            """)
+        await shell.close()
+        await fs.disconnect()
+    }
+
+    /// `stty size`'s answer ("<rows> <cols>") on the first line that carries
+    /// `marker`, trimmed. `nil` when the marker never showed up.
+    private static func value(after marker: String, in text: String) -> String? {
+        for line in text.components(separatedBy: .newlines) {
+            guard let range = line.range(of: marker) else { continue }
+            let value = line[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty { return value }
+        }
+        return nil
+    }
+
     @Test func reopenAfterCloseWorks() async throws {
         let fs = try await connectWithRetry()
         let first = try await fs.openShell(terminal: "xterm-256color", cols: 80, rows: 24)
