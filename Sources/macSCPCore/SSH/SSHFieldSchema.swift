@@ -183,6 +183,28 @@ public enum SSHFieldSchema {
         ],
         presets: [])
 
+    /// The port these values name, or SSH's default.
+    ///
+    /// One reader for what used to be three identical parses (`makeConfig`,
+    /// `displaySummary`, `apply`) plus a fourth in `endpoint(_:)` below. The
+    /// trimming is the load-bearing half: a port of `"2222\n"` used to fail
+    /// `Int(_:)` and fall through to 22, dialling the wrong port in silence
+    /// (M23/T5 fix round 1).
+    public static func port(_ values: FieldValues) -> Int {
+        Int(values[SSHField.port].trimmingCharacters(in: .whitespacesAndNewlines)) ?? 22
+    }
+
+    /// Where a diagnosis points for this session (`BackendDescriptor
+    /// .endpoint`): the TARGET's host and port, never the jump host's. A
+    /// bastion is how the connection gets there; the endpoint is where it is
+    /// going, and a resolve step that reported the bastion would be
+    /// diagnosing a different machine than the one that failed.
+    public static func endpoint(_ values: FieldValues) -> Endpoint? {
+        let host = values[SSHField.host].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else { return nil }
+        return Endpoint(host: host, port: port(values))
+    }
+
     public static func makeConfig(
         _ values: FieldValues, _ secret: String
     ) throws -> ConnectionConfig {
@@ -248,8 +270,7 @@ public enum SSHFieldSchema {
             // trimmed only `.whitespaces`, a port of "2222\n" passed validation
             // and then fell through to the 22 default right here — the exact
             // silent-wrong-port bug the line above exists to prevent.
-            port: Int(values[SSHField.port]
-                .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 22,
+            port: port(values),
             username: values[SSHField.username]
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             auth: auth))
@@ -269,8 +290,7 @@ public enum SSHFieldSchema {
     /// is treated as the default and never leaves a dangling trailing `:`.
     public static func displaySummary(_ values: FieldValues) -> String {
         let base = "\(values[SSHField.username])@\(values[SSHField.host])"
-        let port = Int(values[SSHField.port]
-            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 22
+        let port = Self.port(values)
         return port == 22 ? base : "\(base):\(port)"
     }
 
@@ -358,8 +378,7 @@ public enum SSHFieldSchema {
         // `.whitespacesAndNewlines` like every other field here (M23/T8): the
         // port used to trim only `.whitespaces`, which disagreed with
         // `makeConfig` and `displaySummary` on a value carrying a newline.
-        ssh.port = Int(values[SSHField.port]
-            .trimmingCharacters(in: .whitespacesAndNewlines)) ?? 22
+        ssh.port = port(values)
         ssh.username = values[SSHField.username]
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let kind = StoredSession.AuthKind(rawValue: values[SSHField.authKind]) {

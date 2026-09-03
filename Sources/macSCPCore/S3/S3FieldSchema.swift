@@ -184,6 +184,33 @@ public enum S3FieldSchema {
         return values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The endpoint as a URL, with the scheme filled in when the user typed
+    /// none.
+    ///
+    /// The normalisation is not a convenience: `URL(string:)` reads
+    /// `minio.example.test:19000` as a SCHEME of `minio.example.test` with a
+    /// path of `19000`, so a reader that trusted it would find no host at all
+    /// for exactly the spelling someone types when they think of this field
+    /// as a host name. HTTPS is the assumption, because the alternative is to
+    /// assume plaintext.
+    public static func endpointURL(_ values: FieldValues) -> URL? {
+        let text = values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return URL(string: text.contains("://") ? text : "https://" + text)
+    }
+
+    /// Where a diagnosis points for this session (`BackendDescriptor
+    /// .endpoint`): the CONFIGURED endpoint's origin.
+    ///
+    /// Not the virtual-hosted `<bucket>.<endpoint>` name a request may
+    /// actually carry with `usePathStyle` off. The two differ only in a label
+    /// the same server answers for, and the configured origin is the one the
+    /// user typed and can check — a resolve step naming a host nobody
+    /// configured explains nothing.
+    public static func endpoint(_ values: FieldValues) -> Endpoint? {
+        endpointURL(values).flatMap { Endpoint(url: $0) }
+    }
+
     public static func makeConfig(
         _ values: FieldValues, _ secret: String
     ) throws -> ConnectionConfig {

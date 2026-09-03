@@ -92,6 +92,33 @@ public struct BackendDescriptor: Sendable {
 
     public let fileActions: [FileActionContribution]
 
+    /// The host and port a diagnosis probes for these values, read from the
+    /// backend's own fields (design §2).
+    ///
+    /// This is what keeps `ConnectionDiagnostics` free of any mention of a
+    /// `ConnectionKind`: the resolve and TCP steps ask the descriptor where
+    /// to point, and a fourth backend answers the same question without a
+    /// line changing in the runner. `nil` when the values name no address at
+    /// all — an incomplete form, which the runner reports as a step it could
+    /// not run rather than as a server that is down.
+    public let endpoint: @Sendable (FieldValues) -> Endpoint?
+
+    /// The backend's OWN connection attempt, as one diagnostic row — the
+    /// step between the universal probes and the contributions. `nil` for a
+    /// backend that has nothing to dial.
+    ///
+    /// Its own member rather than the first element of `diagnostics` below,
+    /// because the order is fixed by the design and the network trace lands
+    /// BETWEEN the dial and the contributions (design §2.5, Task 3): a dial
+    /// hidden inside the contribution list could not be placed there without
+    /// the runner counting elements.
+    public let dial: DiagnosticContribution?
+
+    /// The protocol's own probes, run after the dial (design §3). Empty for
+    /// every backend today; the S3 access-level probe and the WebDAV
+    /// `PROPFIND` are the first two, and they are a separate task.
+    public let diagnostics: [DiagnosticContribution]
+
     public static func descriptor(for kind: ConnectionKind) -> BackendDescriptor {
         switch kind {
         case .ssh: return .sshDescriptor
@@ -387,7 +414,9 @@ public struct BackendDescriptor: Sendable {
         requiresSecret: { values in
             values[SSHField.authKind] != StoredSession.AuthKind.agent.rawValue
         },
-        fileActions: [])
+        fileActions: [],
+        endpoint: { values in SSHFieldSchema.endpoint(values) },
+        dial: .sshConnect, diagnostics: [])
 
     static let s3Descriptor = BackendDescriptor(
         kind: .s3,
@@ -411,7 +440,9 @@ public struct BackendDescriptor: Sendable {
         secretEnvironmentVariable: "AWS_SECRET_ACCESS_KEY", requiresSecret: { _ in true },
         fileActions: [
             FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
-        ])
+        ],
+        endpoint: { values in S3FieldSchema.endpoint(values) },
+        dial: .s3EndpointHead, diagnostics: [])
 
     /// The capability axes that deliberately differ from S3 (M21): real
     /// directories and atomic rename, the two WebDAV actually has and S3
@@ -449,7 +480,9 @@ public struct BackendDescriptor: Sendable {
         // password"), the same shape as SSH password auth, so this reuses the
         // SSH variable name rather than inventing a third one.
         secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: { _ in true },
-        fileActions: [])
+        fileActions: [],
+        endpoint: { values in WebDAVFieldSchema.endpoint(values) },
+        dial: .webdavOptions, diagnostics: [])
 }
 
 extension BackendDescriptor {

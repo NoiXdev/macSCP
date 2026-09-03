@@ -76,6 +76,25 @@ public enum WebDAVFieldSchema {
         ],
         presets: [])
 
+    /// The server URL as typed. No scheme is invented here, unlike S3's
+    /// endpoint reader: `WebDAVConnectionConfig.isPlaintextTransport` decides
+    /// whether credentials would travel in the clear by reading this string's
+    /// `http://` prefix, and a reader that quietly upgraded a schemeless URL
+    /// to HTTPS would make a plaintext session look encrypted somewhere else.
+    public static func baseURL(_ values: FieldValues) -> URL? {
+        let text = values[WebDAVField.baseURL].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        return URL(string: text)
+    }
+
+    /// Where a diagnosis points for this session (`BackendDescriptor
+    /// .endpoint`): the base URL's origin. The Nextcloud path this backend
+    /// may append changes which COLLECTION is addressed, never which server
+    /// is dialled.
+    public static func endpoint(_ values: FieldValues) -> Endpoint? {
+        baseURL(values).flatMap { Endpoint(url: $0) }
+    }
+
     public static func makeConfig(
         _ values: FieldValues, _ secret: String
     ) throws -> ConnectionConfig {
