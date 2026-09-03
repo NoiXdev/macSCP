@@ -677,8 +677,7 @@ struct DiagnosticsDoorsGuardTests {
     }
 
     /// Run keeps its title on one line rather than wrapping it letter by
-    /// letter — the exact defect the maintainer's screenshot showed (design
-    /// ruling, 2026-09-03).
+    /// letter — the exact defect the maintainer's screenshot showed.
     ///
     /// Read by POSITION, the same way `theRunButtonIsTheDefaultAction` reads
     /// the default-action shortcut: `.fixedSize(horizontal: true, vertical:
@@ -720,8 +719,7 @@ struct DiagnosticsDoorsGuardTests {
     /// The scope picker's visible label is hidden — "What to run" is what
     /// crowded Run and Close out of the footer before this task — and the
     /// same wording stays reachable to VoiceOver as an accessibility label,
-    /// so hiding the column does not silence the control (design ruling,
-    /// 2026-09-03).
+    /// so hiding the column does not silence the control.
     ///
     /// Read by POSITION for the same reason as the two checks above:
     /// `.labelsHidden()` and `.accessibilityLabel(…)` attach after a

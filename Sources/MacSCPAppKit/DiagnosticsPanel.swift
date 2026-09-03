@@ -47,14 +47,16 @@ struct DiagnosticsPanel: View {
     /// (`PolishedButtonStyle`'s font). The plan that opened this task
     /// expected German to be the widest catalog; measuring the actual
     /// strings found French wider (the four sums, narrowest to widest: en
-    /// 264pt, pl 356pt, de 346pt, fr 393pt of text alone). Adding an
+    /// 264pt, de 346pt, pl 356pt, fr 393pt of text alone). Adding an
     /// estimated 30pt of chrome for the Run button's own padding
     /// (`PolishedButtonStyle`: 14pt each side), ~22pt of system
     /// bordered-button chrome for Close, ~36pt each for the Picker and the
-    /// Copy menu (the same chrome plus a ~14pt disclosure chevron), the
-    /// `HStack`'s three 8pt gaps and the panel's own 20pt padding on both
-    /// sides puts French at roughly 581pt — the widest of the four. Rounded
-    /// up to 600 for the chrome estimate's own uncertainty.
+    /// Copy menu (the same chrome plus a ~14pt disclosure chevron),
+    /// `wideControls`' `HStack` — five children (`primaryAction`,
+    /// `scopeSelector`, `copyControl`, `Spacer`, Close), so four 8pt gaps —
+    /// and the panel's own 20pt padding on both sides puts French at
+    /// roughly 589pt — the widest of the four. Rounded up to 600 for the
+    /// chrome estimate's own uncertainty.
     static let minimumWidth: CGFloat = 600
 
     init(model: DiagnosticsViewModel, onClose: @escaping () -> Void) {
@@ -278,7 +280,7 @@ struct DiagnosticsPanel: View {
     /// `ViewThatFits` falls through to two (`narrowControls`) rather than
     /// truncating a button or wrapping its title letter by letter — which is
     /// what the maintainer's screenshot of this footer showed happening to
-    /// Run, at the width the panel used to allow (design ruling, 2026-09-03).
+    /// Run, at the width the panel used to allow.
     ///
     /// Both rows draw the SAME four control views — `primaryAction`,
     /// `scopeSelector`, `copyControl`, and the Close button are each written
@@ -328,9 +330,9 @@ struct DiagnosticsPanel: View {
     }
 
     /// The fallback row: the scope and Run on top, Copy and Close beneath —
-    /// the split the design ruling asked for (row 1 picker + Run, row 2 copy
-    /// + close), so the control someone is most likely mid-choice on (what
-    /// to run) sits directly above the button that acts on it.
+    /// the picker chooses what Run runs, so the two stay on one row together
+    /// rather than splitting across the fallback, with Copy and Close paired
+    /// on the row beneath them.
     private var narrowControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
