@@ -266,6 +266,13 @@
    destination backend cannot resume an interrupted upload/download. */
 "transfers.noResume.hint" = "W razie przerwania to wysyłanie zacznie się od nowa.";
 
+/* Full paths on demand (2026-09-03): a row shows a file name and an
+   arrow, so its hover hint carries the whole source and destination,
+   and its context menu copies the same two lines. A remote path is
+   qualified with the session it lives on by macSCPCore. */
+"transfers.paths.hint %1$@ %2$@" = "Z: %1$@\nDo: %2$@";
+"transfers.paths.copy" = "Kopiuj ścieżki";
+
 /* Integracja z edytorem (M5e/T4) */
 "edit.openFailed" = "Nie udało się otworzyć pliku do edycji: %@";
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import macSCPCore
 
@@ -5,6 +6,12 @@ import macSCPCore
 /// ↑ amber (upload), ↓ ocean blue (download), errors in system red.
 struct TransferQueueBar: View {
     let viewModel: TransferQueueViewModel
+    /// Display name of the session that owns this queue — the tab's
+    /// `titleName`, which is `nil` until a tab connects. It is what turns a
+    /// bare remote path in a row's hint into one the user can place, and it
+    /// cannot be derived here: the queue holds file systems, not names.
+    /// `nil` qualifies nothing rather than inventing a placeholder.
+    let sessionName: String?
 
     private func tint(for direction: TransferDirection) -> Color {
         direction == .upload ? DesignTokens.localAmber : DesignTokens.remoteBlue
@@ -110,6 +117,35 @@ struct TransferQueueBar: View {
         }
     }
 
+    /// Both full paths of a row, as one hover hint. The row itself shows a
+    /// file name and an arrow, which is enough to recognise a transfer and
+    /// not enough to identify one — two tabs uploading `config.yml` draw
+    /// the same row. The fold from an item to its two paths lives in Core
+    /// (`TransferRowPaths`), because deciding which side of a transfer is
+    /// on this machine is a question about the queue's model, not about
+    /// layout; this only labels and stacks the answer.
+    private func pathsHint(_ item: TransferQueueViewModel.Item) -> String {
+        let paths = TransferRowPaths(item: item, sessionName: sessionName)
+        return String(
+            format: L10n.string("transfers.paths.hint %1$@ %2$@", "From: %1$@\nTo: %2$@"),
+            paths.source, paths.destination)
+    }
+
+    /// The other half of "on demand": the same two paths, on the
+    /// pasteboard, from the row's own context menu — for the times the
+    /// answer has to go into a shell or a message rather than just be read.
+    /// The one-path-per-line rendering is the fold's own
+    /// (`clipboardText`), so what is copied cannot drift from what the hint
+    /// above displayed.
+    @ViewBuilder
+    private func copyPathsButton(_ item: TransferQueueViewModel.Item) -> some View {
+        Button(L10n.string("transfers.paths.copy", "Copy paths")) {
+            let paths = TransferRowPaths(item: item, sessionName: sessionName)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(paths.clipboardText, forType: .string)
+        }
+    }
+
     @ViewBuilder
     private func row(_ item: TransferQueueViewModel.Item) -> some View {
         HStack(spacing: 12) {
@@ -187,6 +223,10 @@ struct TransferQueueBar: View {
             cancelButton(item)
         }
         .font(.system(size: 12))
+        .help(pathsHint(item))
+        .contextMenu {
+            copyPathsButton(item)
+        }
     }
 }
 

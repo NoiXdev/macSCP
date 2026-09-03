@@ -16,10 +16,12 @@ struct TransferActivitySummaryTests {
             fileName: "f",
             direction: direction,
             status: status,
+            sourcePath: "/f",
             destinationTabID: nil,
             isEditUpload: false,
             destinationDirectory: "/",
             destinationSupportsResume: true,
+            crossRemote: false,
             crossBackendTarget: nil
         )
     }

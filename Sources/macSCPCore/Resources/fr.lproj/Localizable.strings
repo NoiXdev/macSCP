@@ -10,6 +10,8 @@
 "core.transfer.noFreeName" = "Aucun nom de fichier disponible n'a été trouvé.";
 "core.transfer.interrupted" = "Connexion perdue — transfert interrompu.";
 "core.transfer.connectionLost" = "Connexion perdue.";
+/* TransferRowPaths — a remote path, with the session it lives on. */
+"core.transfer.pathOnSession %1$@ %2$@" = "%1$@ (sur %2$@)";
 
 /* RemoteBrowserViewModel.message(for:path:) */
 "core.browse.notFound %@" = "Chemin introuvable : %@";

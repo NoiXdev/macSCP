@@ -8,6 +8,8 @@
 "core.transfer.noFreeName" = "Kein freier Name gefunden.";
 "core.transfer.interrupted" = "Verbindung verloren — Übertragung unterbrochen.";
 "core.transfer.connectionLost" = "Verbindung verloren.";
+/* TransferRowPaths — a remote path, with the session it lives on. */
+"core.transfer.pathOnSession %1$@ %2$@" = "%1$@ (auf %2$@)";
 
 /* RemoteBrowserViewModel.message(for:path:) */
 "core.browse.notFound %@" = "Pfad nicht gefunden: %@";

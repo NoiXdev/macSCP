@@ -135,6 +135,16 @@ public final class TransferQueueViewModel {
         public internal(set) var fileName: String   // `.rename` updates the displayed name
         public let direction: TransferDirection
         public internal(set) var status: Status
+        /// The full path this item READS FROM — `Job.sourcePath`, carried
+        /// onto the item so a row can answer "which file, and where is it
+        /// going?" and not only "what is it called?". Never rewritten by a
+        /// `.rename` resolution: renaming picks a free name at the
+        /// DESTINATION, and the source is still the file it was.
+        ///
+        /// Which side of the transfer this path lives on is decided by
+        /// `direction` together with `crossRemote` — see `TransferRowPaths`,
+        /// the one place that mapping is written down.
+        public let sourcePath: String
         /// Opaque reference to the tab this item writes INTO (M8b) — `nil` for
         /// same-session transfers. Used only by `hasActiveItems`, so a later
         /// task can warn before closing a tab that other tabs are still
@@ -156,6 +166,15 @@ public final class TransferQueueViewModel {
         /// for an S3 destination. Drives the passive resume warning in the
         /// transfer row. `true` for terminal skip/error items (no transfer).
         public let destinationSupportsResume: Bool
+        /// True for a remote→remote transfer routed through this app (M8b) —
+        /// mirrors `Job.crossRemote`. Such a transfer is enqueued with
+        /// `direction == .upload` (the target-write side is what the tab
+        /// indicator reflects), so direction alone would call its source a
+        /// file on this machine. This flag is the only thing on the item
+        /// that tells the two apart, which is why `TransferRowPaths` reads
+        /// it and why removing it would silently mislabel one side of every
+        /// cross-session transfer.
+        public let crossRemote: Bool
         /// Cross-backend destination label (M16): the target session's name +
         /// kind, `nil` for same-session transfers. The queue holds only the
         /// opaque `destinationTabID`, so the App supplies this at enqueue.
@@ -493,9 +512,11 @@ public final class TransferQueueViewModel {
         order.append(id)
         items.append(Item(
             id: id, fileName: fileName, direction: direction, status: .queued,
+            sourcePath: sourcePath,
             destinationTabID: destinationTabID, isEditUpload: false,
             destinationDirectory: destinationDirectory,
             destinationSupportsResume: destination.supportsAppendResume,
+            crossRemote: crossRemote,
             crossBackendTarget: crossBackendTarget))
         kickWorker()
         return id
@@ -522,9 +543,11 @@ public final class TransferQueueViewModel {
         order.append(id)
         items.append(Item(
             id: id, fileName: fileName, direction: .upload, status: .queued,
+            sourcePath: localURL.path(percentEncoded: false),
             destinationTabID: nil, isEditUpload: true,
             destinationDirectory: remoteDirectory,
             destinationSupportsResume: destination.supportsAppendResume,
+            crossRemote: false,
             crossBackendTarget: nil))
         kickWorker()
         return id
@@ -1251,10 +1274,10 @@ public final class TransferQueueViewModel {
             // this call's own parameter) — `destDir` is the (failed-to-create)
             // directory, not its destination.
             addTerminalItem(
-                group: groupID, name: directoryName + "/",
+                group: groupID, name: directoryName + "/", sourcePath: sourceDirectory,
                 direction: direction, status: .failed(Self.message(for: error)),
                 destinationTabID: destinationTabID, destinationDirectory: destinationDirectory,
-                crossBackendTarget: crossBackendTarget)
+                crossRemote: crossRemote, crossBackendTarget: crossBackendTarget)
             return
         }
 
@@ -1265,10 +1288,10 @@ public final class TransferQueueViewModel {
         } catch {
             try Task.checkCancellation()
             addTerminalItem(
-                group: groupID, name: directoryName + "/",
+                group: groupID, name: directoryName + "/", sourcePath: sourceDirectory,
                 direction: direction, status: .failed(Self.message(for: error)),
                 destinationTabID: destinationTabID, destinationDirectory: destinationDirectory,
-                crossBackendTarget: crossBackendTarget)
+                crossRemote: crossRemote, crossBackendTarget: crossBackendTarget)
             return
         }
 
@@ -1296,9 +1319,10 @@ public final class TransferQueueViewModel {
                 // Lives IN this level's directory, exactly like the file
                 // items enqueued above.
                 addTerminalItem(
-                    group: groupID, name: entry.name + " →",
+                    group: groupID, name: entry.name + " →", sourcePath: entry.path,
                     direction: direction, status: .skipped, destinationTabID: destinationTabID,
-                    destinationDirectory: destDir, crossBackendTarget: crossBackendTarget)
+                    destinationDirectory: destDir, crossRemote: crossRemote,
+                    crossBackendTarget: crossBackendTarget)
             }
         }
     }
@@ -1317,16 +1341,19 @@ public final class TransferQueueViewModel {
     /// Appends an item that's IMMEDIATELY terminal (symlink skip or expansion
     /// error) and routes it through the same choke point as every other item.
     private func addTerminalItem(
-        group groupID: UUID, name: String,
+        group groupID: UUID, name: String, sourcePath: String,
         direction: TransferDirection, status: Item.Status, destinationTabID: UUID? = nil,
-        destinationDirectory: String, crossBackendTarget: CrossBackendTarget? = nil
+        destinationDirectory: String, crossRemote: Bool = false,
+        crossBackendTarget: CrossBackendTarget? = nil
     ) {
         let id = UUID()
         items.append(Item(
             id: id, fileName: name, direction: direction, status: .queued,
+            sourcePath: sourcePath,
             destinationTabID: destinationTabID, isEditUpload: false,
             destinationDirectory: destinationDirectory,
             destinationSupportsResume: true,
+            crossRemote: crossRemote,
             crossBackendTarget: crossBackendTarget))
         registerGroupItem(id, group: groupID)
         setStatus(id, status)   // triggers groupItemBecameTerminal

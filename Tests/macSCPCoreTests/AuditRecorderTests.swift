@@ -24,9 +24,10 @@ struct AuditRecorderTests {
     ) -> TransferQueueViewModel.Item {
         TransferQueueViewModel.Item(
             id: UUID(), fileName: fileName, direction: direction, status: status,
+            sourcePath: RemotePath.join("/source", fileName),
             destinationTabID: destinationTabID, isEditUpload: isEditUpload,
             destinationDirectory: destinationDirectory,
-            destinationSupportsResume: true, crossBackendTarget: nil)
+            destinationSupportsResume: true, crossRemote: false, crossBackendTarget: nil)
     }
 
     /// Spec M9b (binding, maintainer-approved) requires "Richtung, Name,
