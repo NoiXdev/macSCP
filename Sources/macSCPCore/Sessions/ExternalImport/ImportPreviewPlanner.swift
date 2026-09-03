@@ -243,11 +243,22 @@ public enum ImportPreviewPlanner {
     /// than copied, so "known" here and "duplicate" there can never disagree
     /// about what one connection is. It carries the kind, so a bookmark can
     /// only ever match a session of its own kind. Names are never compared.
+    ///
+    /// BOTH branches require the kind, and the first one has to say so itself:
+    /// a bookmark keeps its UUID when the user changes its protocol in the
+    /// source, so provenance alone would match an sftp-imported record to a
+    /// bookmark that is now s3. That match updates the record across kinds,
+    /// and an entry carrying no password makes the planner keep the existing
+    /// secret — the SSH password stays in the id-keyed slot the S3 backend
+    /// reads as its secret access key (and the mirror case sends a secret
+    /// access key to an SSH server). A changed protocol therefore matches
+    /// nothing here, the bookmark is `.new`, and the old record stays.
     private static func match(
         _ bookmark: ExternalBookmark, kind: BookmarkKind, in sessions: [StoredSession]
     ) -> StoredSession? {
         if let byProvenance = sessions.first(where: {
-            $0.importSource == bookmark.source && $0.importID == bookmark.id
+            $0.kind == kind.connectionKind
+                && $0.importSource == bookmark.source && $0.importID == bookmark.id
         }) {
             return byProvenance
         }
@@ -268,9 +279,9 @@ public enum ImportPreviewPlanner {
         switches: ImportSwitches
     ) -> [FieldChange] {
         // The stored side through the backend's own adapter: a session whose
-        // block is missing (or whose kind no longer matches the bookmark's)
-        // yields the empty bag, so every field reads as changed rather than
-        // as silently equal.
+        // block is missing yields the empty bag, so every field reads as
+        // changed rather than as silently equal. The kind always agrees —
+        // `match` requires it on both of its branches.
         let old = BackendDescriptor.descriptor(for: kind.connectionKind).sessionValues(stored)
         // The values an UPDATE would actually write, not the bookmark's own:
         // the two differ exactly where the source says nothing (see

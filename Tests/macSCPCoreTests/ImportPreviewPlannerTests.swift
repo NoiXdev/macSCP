@@ -65,6 +65,86 @@ struct ImportPreviewPlannerTests {
         #expect(withoutProvenance.status.storedSessionID == connectionID)
     }
 
+    /// A bookmark whose protocol changed in the source keeps its UUID, so
+    /// provenance alone still names the record macSCP imported it into — a
+    /// record that speaks the OTHER protocol. Updating it across kinds writes
+    /// S3 fields over an SSH session, and because such an entry carries no
+    /// password the planner keeps the existing secret: the SSH password stays
+    /// in the id-keyed slot the S3 backend then reads as its secret access
+    /// key. So a provenance match requires the same kind, and a bookmark that
+    /// changed protocol is simply `.new` — the old record stays as it is.
+    @Test func anSFTPBookmarkThatBecameS3DoesNotMatchItsOwnProvenance() throws {
+        let sharedID = "33333333-3333-3333-3333-333333333333"
+        let storedID = UUID()
+        let stored = sshSession(
+            id: storedID, name: "Web 01", host: "web-01.example.net", port: 22,
+            username: "deploy", importID: sharedID)
+        let bookmark = s3Bookmark(
+            id: sharedID, nickname: "Web 01", host: "objects.example.net", port: 9000,
+            username: "AKIAEXAMPLE", path: "backups")
+
+        var rows = ImportPreviewPlanner.preview(
+            [bookmark], against: [stored], switches: ImportSwitches())
+        let row = try #require(rows.first)
+
+        #expect(row.status == .new)
+        #expect(row.status.storedSessionID == nil)
+
+        // The anchor: the same UUID on a bookmark of the record's OWN kind is
+        // still a provenance match, moved host and all. Only the kind differs
+        // between the two halves of this test.
+        let sameKind = try #require(ImportPreviewPlanner.preview(
+            [sftpBookmark(id: sharedID, host: "moved.example.net")], against: [stored],
+            switches: ImportSwitches()).first)
+        #expect(sameKind.status.storedSessionID == storedID)
+
+        // And the payload carries no handle onto the SSH record, so nothing
+        // replaces it and its secret slot is never reused.
+        rows[0].selected = true
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [stored], groups: [], switches: ImportSwitches())
+        let exported = try #require(payload.sessions.first)
+        #expect(payload.sessions.count == 1)
+        #expect(exported.replaces == nil)
+        #expect(exported.id != storedID)
+        #expect(exported.kind == .s3)
+    }
+
+    /// The mirror: an S3 record and a bookmark that became sftp under the same
+    /// UUID. Updating this one across kinds would hand the stored secret
+    /// access key to an SSH server as a password.
+    @Test func anS3BookmarkThatBecameSFTPDoesNotMatchItsOwnProvenance() throws {
+        let sharedID = "44444444-4444-4444-4444-444444444444"
+        let storedID = UUID()
+        let stored = s3Session(
+            id: storedID, name: "Backups", endpoint: "https://objects.example.net:9000",
+            bucket: "backups", accessKeyID: "AKIAEXAMPLE", importID: sharedID)
+        let bookmark = sftpBookmark(
+            id: sharedID, nickname: "Backups", host: "objects.example.net", port: 22,
+            username: "deploy")
+
+        var rows = ImportPreviewPlanner.preview(
+            [bookmark], against: [stored], switches: ImportSwitches())
+        let row = try #require(rows.first)
+
+        #expect(row.status == .new)
+        #expect(row.status.storedSessionID == nil)
+
+        let sameKind = try #require(ImportPreviewPlanner.preview(
+            [s3Bookmark(id: sharedID, host: "moved.example.net", port: 9000)],
+            against: [stored], switches: ImportSwitches()).first)
+        #expect(sameKind.status.storedSessionID == storedID)
+
+        rows[0].selected = true
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [stored], groups: [], switches: ImportSwitches())
+        let exported = try #require(payload.sessions.first)
+        #expect(payload.sessions.count == 1)
+        #expect(exported.replaces == nil)
+        #expect(exported.id != storedID)
+        #expect(exported.kind == .ssh)
+    }
+
     @Test func theConnectionKeyMatchesASessionWithADifferentName() throws {
         let storedID = UUID()
         // Same host (in a different case — DNS folds it), port and user; the
