@@ -113,6 +113,12 @@ struct TransferQueueBar: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(DesignTokens.inkSecondary)
+            // Two different affordances, not a duplication, and the reason
+            // they intentionally share one key: the first labels the control
+            // for VoiceOver, the second produces the hover tooltip. A symbol
+            // is this button's only label, so without the first it announces
+            // itself as the name of an SF Symbol.
+            .accessibilityLabel(L10n.string("transfers.cancel", "Cancel this transfer"))
             .help(L10n.string("transfers.cancel", "Cancel this transfer"))
         }
     }
