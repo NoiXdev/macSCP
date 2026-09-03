@@ -82,17 +82,22 @@ items 1, 7, 9 and its "Decided" section.
   the view model's last `resize(cols:rows:)` (read what it stores). Also a
   second assertion at the view-model level: `resize` forwards to the shell
   (a fake `RemoteShell` records the call).
-- [ ] **Step 1:** Run it. Three outcomes: the view never calls
+- [x] **Step 1:** Run it. Three outcomes: the view never calls
   `sizeChanged` after a frame change → cause (a); it calls but the shell
   double sees nothing → cause (b); both fire → cause (c), and the report
   asks the maintainer for `stty size` before/after a resize in the app.
   Write the outcome into the report and the plan's ledger BEFORE any fix.
-- [ ] **Step 2:** Fix the named cause — (a): make the representable size
+  Cause (b) named at `6a27ad64`; fix round 1 (the split-layout
+  characterisation) at `63bf5242`.
+- [x] **Step 2:** Fix the named cause — (a): make the representable size
   itself to its container (`translatesAutoresizingMaskIntoConstraints`,
   `autoresizingMask = [.width, .height]`, or SwiftUI's `sizeThatFits`) and
   keep the red test as the pin; (b): the guard/hop that swallows the call;
   (c): stop — it is the remote side, and the entry gets the measurement.
-- [ ] **Step 3: Commit** — `fix(terminal): the terminal follows the window` (or `docs(spec): …` if (c)).
+  Done as Task 1b below (`2d0fa18f`, `1cc7f07a`, `273c6786`).
+- [x] **Step 3: Commit** — `fix(terminal): the terminal follows the window` (or `docs(spec): …` if (c)).
+  Superseded by Task 1b's commit message (plan amendment `2383ef20`);
+  the measurement itself is `6a27ad64`/`63bf5242`.
 
 ### Task 1b: The fix for the cause Task 1 named
 
@@ -128,7 +133,8 @@ mount test becomes the red-first test); `TerminalPanelViewModelTests.swift`.
   queued item starts (FIFO), the group's `onCompleted` fires once; cancel
   one queued item: never starts; cancel all with a mix; the bar's
   enabling pinned the way the bar's other buttons are.
-- [ ] Red → green → commit `feat(transfers): cancel one transfer, or all of them`
+- [x] Red → green → commit `feat(transfers): cancel one transfer, or all of them`
+  Done at `66bea864`; fix round 1 at `278c4361`.
 
 ### Task 3: Full paths in a row
 
@@ -142,11 +148,12 @@ mount test becomes the red-first test); `TerminalPanelViewModelTests.swift`.
   showing both full paths; "Copy paths" in the row's context menu), catalogs.
 - Test: `TransferRowPathsTests` (an SSH→local download, a local→S3 upload,
   a cross-session transfer: both paths named with their sessions).
-- [ ] Red → green → commit `feat(transfers): a row can show its full source and destination`
+- [x] Red → green → commit `feat(transfers): a row can show its full source and destination`
+  Done at `4d0b04f9`; fix round 1 at `3f77a605`.
 
 ### Task 4: Closeout
 
-- [ ] `docs/superpowers/specs/2026-09-02-backlog-maintainer-notes.md`
+- [x] `docs/superpowers/specs/2026-09-02-backlog-maintainer-notes.md`
   (items 1, 7, 9 → Done, with Task 1's measured cause), `docs/BACKLOG.md`
   row; commit `docs(backlog): terminal resize measured and fixed; transfers cancel and show paths`.
 
