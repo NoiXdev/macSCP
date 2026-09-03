@@ -94,6 +94,25 @@ items 1, 7, 9 and its "Decided" section.
   (c): stop — it is the remote side, and the entry gets the measurement.
 - [ ] **Step 3: Commit** — `fix(terminal): the terminal follows the window` (or `docs(spec): …` if (c)).
 
+### Task 1b: The fix for the cause Task 1 named
+
+Added 2026-09-03 after Task 1 measured cause (b): the surface's mount-time
+`sizeChanged` is dropped by `resize`'s `guard let shell` while the shell
+opens at 80×24 before layout; the same on `.ended` → Reopen. The split
+layout's height invariance measured in fix round 1 is intended split
+behaviour (controller ruling 2026-09-03), not part of this fix.
+
+**Files:** `Sources/MacSCPAppKit/Presentation/TerminalPanelViewModel.swift`;
+`Tests/macSCPAppKitTests/SSHTerminalViewSizingTests.swift` (the disabled
+mount test becomes the red-first test); `TerminalPanelViewModelTests.swift`.
+
+- [x] While `.opening`, `resize` records the latest size; when `.running` is
+  reached — after the generation check, after `self.shell` is assigned — the
+  recorded size is sent BEFORE `flushPendingBytes()` through the same
+  `sendTask` FIFO; compare against the last size sent. A reopen test and an
+  ordering test at the view-model level. Committed as `2d0fa18f`
+  `fix(terminal): the shell learns the panel's size when it opens, and again when it reopens`.
+
 ### Task 2: Cancel one, cancel all
 
 **Files:**
