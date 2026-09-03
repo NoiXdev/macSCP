@@ -514,7 +514,8 @@ struct DiagnosticsDoorsGuardTests {
 
     /// The presentation closure starts no run either.
     ///
-    /// The fourth spelling of one hole, and the records say so plainly: round
+    /// One more spelling of the same hole (the automatic-start forms, the
+    /// entry's body, and now the presentation site), and the records say so plainly: round
     /// 1 taught `automaticStarts` the `perform:` and `.task(` forms, round 2
     /// found the ENTRY's own body scanned by nothing, and this round found
     /// the sheet that presents the panel scanned by nothing. Each was closed

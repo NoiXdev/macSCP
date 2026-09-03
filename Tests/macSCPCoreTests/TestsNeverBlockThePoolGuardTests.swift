@@ -247,8 +247,9 @@ struct TestsNeverBlockThePoolGuardTests {
         // Measured 2026-09-03: 331 `.swift` files under `Tests/`
         // (`find Tests -name '*.swift' | wc -l`). A lower bound rather than
         // the number, so adding a test file is not a failure — but an
-        // enumeration that collapses is. This count has already drifted
-        // four times in this branch (316 -> 317 -> 318 -> 331); it is
+        // enumeration that collapses is. Measured over every commit that
+        // touched this file, the count went 314 -> 316 -> 318 -> 331 (three
+        // changes; the plan that wrote 331 changed it once); it is
         // written down as a measurement of the moment, not a fact to keep in
         // sync, and re-running the command above is the only way to state it.
         #expect(files.count > 200, "the scan enumerated only \(files.count) files")

@@ -11,7 +11,7 @@
 # indistinguishable from "the guard is green". The plant was recorded as "not
 # caught" when it had never been tried.
 #
-# So this script reports five states and never conflates them (counted in the
+# So this script reports seven RESULT lines and never conflates them (counted in the
 # code below, 2026-09-03 — an earlier version of this header said three while
 # the code had five):
 #
@@ -155,7 +155,7 @@ RAN="${RAN:-0}"
 # come back out, or every red is attributed to it instead of to a guard.
 FAILED="$(grep -E '^✘ Test ' "$TEST_LOG" \
     | grep -vE '^✘ Test run with' \
-    | grep -vE ' skipped\.?$' \
+    | grep -vE ' skipped(\.|:.*)?$' \
     | sed 's/ recorded.*//;s/ failed.*//' | sort -u)"
 
 if [[ "$RAN" == "0" ]]; then
