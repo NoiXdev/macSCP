@@ -10,7 +10,23 @@ import Foundation
 /// step's `titleKey` through the App's catalogs, which is why the renderings
 /// below print the step's stable `id` and never resolve a key.
 public struct DiagnosticReport: Sendable, Equatable {
-    public let endpoint: Endpoint
+    /// What the diagnosis was pointed at, or `nil` when it never got that
+    /// far.
+    ///
+    /// Optional because there is exactly one report with nothing to name: the
+    /// walk that stops at the first row because the session's form carries no
+    /// host (`ConnectionDiagnostics.run`'s `noHost` guard). That case used to
+    /// be carried as `Endpoint(host: "", port: 0)`, which `Endpoint.text`
+    /// renders as `:0` — a value nobody measured, in the one artifact whose
+    /// whole job is to be quoted into a bug report. The panel hid it because
+    /// it reads its own endpoint and not the report's; the pasteboard did
+    /// not.
+    ///
+    /// `nil` rather than a "no endpoint" sentence, so the renderers below
+    /// omit the header LINE: an absent line cannot be misread as a
+    /// measurement, and the one row the report does carry already says why
+    /// the walk stopped.
+    public let endpoint: Endpoint?
     public let steps: [DiagnosticStep]
     /// The build that measured this. Passed in by the App
     /// (`CFBundleShortVersionString`); Core never reads the bundle itself —
@@ -53,7 +69,7 @@ public struct DiagnosticReport: Sendable, Equatable {
     /// user name and not a credential — and carries no `://` for
     /// `withoutUserinfo` to act on anyway.
     public init(
-        endpoint: Endpoint, steps: [DiagnosticStep], appVersion: String,
+        endpoint: Endpoint?, steps: [DiagnosticStep], appVersion: String,
         completion: Completion = .complete
     ) {
         self.endpoint = endpoint
@@ -85,11 +101,9 @@ public struct DiagnosticReport: Sendable, Equatable {
     }
 
     public func plainText() -> String {
-        var lines = [
-            Self.title,
-            "Endpoint: \(endpoint.text)",
-            "App version: \(appVersion)",
-        ]
+        var lines = [Self.title]
+        if let endpoint { lines.append("Endpoint: \(endpoint.text)") }
+        lines.append("App version: \(appVersion)")
         if let marker = Self.marker(for: completion) { lines.append(marker) }
         lines.append("")
         for step in steps {
@@ -101,12 +115,9 @@ public struct DiagnosticReport: Sendable, Equatable {
     }
 
     public func markdown() -> String {
-        var lines = [
-            "# \(Self.title)",
-            "",
-            "- **Endpoint:** `\(endpoint.text)`",
-            "- **App version:** \(appVersion)",
-        ]
+        var lines = ["# \(Self.title)", ""]
+        if let endpoint { lines.append("- **Endpoint:** `\(endpoint.text)`") }
+        lines.append("- **App version:** \(appVersion)")
         if let marker = Self.marker(for: completion) { lines.append("- **\(marker)**") }
         lines.append(contentsOf: [
             "",

@@ -65,10 +65,15 @@ struct AsyncSignalTests {
         let elapsed = ContinuousClock.now - started
         #expect(outcome == .timedOut)
         #expect(elapsed >= .milliseconds(150), "the bound returned early after \(elapsed)")
-        // No upper bound: on the three-core CI runner a 200 ms sleep fired
-        // after 10.38 s (run 33707411271, ambient main-actor gap 14.7 s in
-        // the same run). An overrun there measures the runner, not this
-        // latch; the outcome and the floor carry the property.
+        // No upper bound: on the three-core CI runner this 200 ms bound came
+        // back after 10.377285583 s (run 33707411271) and after
+        // 15.677233083 s (run 33705649537). The first of those runs also
+        // printed `ambient=14.668071541 seconds gap=0.17032175 seconds` from
+        // ConnectMainActorLivenessTests — 14.67 s being that suite's AMBIENT
+        // control, the largest main-actor tick gap it measures with nothing
+        // under test, and 0.17 s the gap it measured under load. An overrun
+        // here measures the runner, not this latch; the outcome and the floor
+        // carry the property.
     }
 
     /// A bounded wait inside a task the caller cancels says `.cancelled`, not

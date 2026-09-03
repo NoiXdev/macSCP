@@ -203,6 +203,16 @@ struct DiagnosticsPanel: View {
                     model.run()
                 }
                 .buttonStyle(.polished)
+                // Return presses Run, and no other control in this panel
+                // claims the default action. The connection-tools design's
+                // §4 has said since 2026-09-03 that the error dialog's door
+                // opens the panel with Run as its default button — a claim
+                // about this file that nothing in it backed until the
+                // modifier below was added. Close takes the cancel action at
+                // the end of the row, so Esc and Return land on the two ends
+                // of it. Which button carries this is pinned by the doors
+                // guard rather than left to a reader to notice.
+                .keyboardShortcut(.defaultAction)
             }
             Menu(L10n.string("diagnostics.copy", "Copy report")) {
                 Button(L10n.string("diagnostics.copy.plainText", "As plain text")) {

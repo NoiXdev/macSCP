@@ -919,6 +919,61 @@ struct ConnectionDiagnosticsTests {
                     outcome: .timedOut, detail: "gave up")))
     }
 
+    /// A session that names no host is reported with NO endpoint, and both
+    /// renderings leave the header line out rather than printing one nobody
+    /// measured.
+    ///
+    /// The path had no test at all until 2026-09-03, and what it did was
+    /// visible only from the pasteboard: the runner's `noHost` guard built
+    /// its one-row report around `Endpoint(host: "", port: 0)`, which renders
+    /// as `:0`. The panel never showed it — the panel reads its OWN endpoint,
+    /// which is nil for such a session — so the fabricated header reached
+    /// only the text a user pastes into a bug report, which is the one
+    /// audience the report exists for.
+    ///
+    /// Positive beside negative, per CLAUDE.md's rule about checks that want
+    /// to find nothing: the same two renderers are run over a report that DOES
+    /// name an endpoint, and are required to print the header there. Without
+    /// that half, "no endpoint line" would also be satisfied by renderers
+    /// that had lost the line entirely.
+    @Test func aWalkWithNoHostCarriesNoEndpointAndPrintsNoHeaderForOne() async throws {
+        let report = await Self.run(descriptor: Self.probeDescriptor(endpoint: nil, dial: nil))
+
+        #expect(report.endpoint == nil)
+        let only = try #require(report.steps.first)
+        #expect(report.steps.count == 1)
+        #expect(only.id == DiagnosticStepID.resolve)
+        #expect(only.outcome == .unavailable(DiagnosticReason.noHost))
+
+        let text = report.plainText()
+        let markdown = report.markdown()
+        #expect(text.contains("Endpoint:") == false, """
+            the endpointless report printed a header for an endpoint it does not have: \
+            \(text)
+            """)
+        #expect(markdown.contains("Endpoint:") == false, """
+            the endpointless report printed a Markdown header for an endpoint it does not \
+            have: \(markdown)
+            """)
+        // The rest of the header is still there — omitting the endpoint is
+        // not omitting the report.
+        #expect(text.contains("App version: test"))
+        #expect(markdown.contains("- **App version:** test"))
+        #expect(text.contains(DiagnosticReason.noHost))
+        #expect(markdown.contains(DiagnosticReason.noHost))
+
+        let named = DiagnosticReport(
+            endpoint: Endpoint(host: "example.test", port: 22), steps: report.steps,
+            appVersion: "test")
+        #expect(named.plainText().contains("Endpoint: example.test:22"), """
+            the plain-text renderer prints no endpoint header at all — the check above \
+            cannot mean what it says: \(named.plainText())
+            """)
+        #expect(named.markdown().contains("- **Endpoint:** `example.test:22`"), """
+            the Markdown renderer prints no endpoint header at all: \(named.markdown())
+            """)
+    }
+
     private static func run(
         descriptor: BackendDescriptor, stepTimeout: Duration = .seconds(5),
         appVersion: String = "test"

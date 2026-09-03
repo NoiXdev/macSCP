@@ -250,9 +250,16 @@ final class DiagnosticsViewModel: Identifiable {
     /// the header, so a partial paste cannot be read as a walk whose missing
     /// steps were measured and found absent.
     ///
-    /// `nil` before the first row, and for a session with no endpoint to name:
-    /// a header reading `:0` would be a fabrication in the one value whose job
-    /// is to be quoted.
+    /// `nil` before the first row, and for a session with no endpoint to
+    /// name. The second of those is about what a MID-RUN snapshot is worth,
+    /// not about a fabricated header: a walk with no endpoint stops at its
+    /// first row, so its only report is the one Core builds and publishes,
+    /// and there is nothing this branch could add to it.
+    ///
+    /// The fabrication that used to be the reason here is gone from the other
+    /// end: Core's endpointless report carries no endpoint at all, and both
+    /// renderers omit the header line rather than printing one nobody
+    /// measured (`DiagnosticReport.endpoint`).
     var copyableReport: DiagnosticReport? {
         if let report { return report }
         guard !steps.isEmpty, let endpoint else { return nil }

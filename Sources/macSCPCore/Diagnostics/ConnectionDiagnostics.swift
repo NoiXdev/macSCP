@@ -96,8 +96,14 @@ public actor ConnectionDiagnostics {
             let timer = Self.timer(for: DiagnosticStepID.resolve)
             let step = timer.finish(.unavailable(DiagnosticReason.noHost), "")
             await onStep(step)
-            return DiagnosticReport(
-                endpoint: Endpoint(host: "", port: 0), steps: [step], appVersion: appVersion)
+            // No endpoint, and the report says so by carrying none. Until
+            // 2026-09-03 this handed `DiagnosticReport` an
+            // `Endpoint(host: "", port: 0)`, and the two renderers printed
+            // the header `Endpoint: :0` — a host and a port nobody measured,
+            // in the text a user pastes into a bug report. The panel never
+            // showed it (it reads its own endpoint, which is nil here), so
+            // the only way to see it was to press Copy.
+            return DiagnosticReport(endpoint: nil, steps: [step], appVersion: appVersion)
         }
 
         var steps: [DiagnosticStep] = []

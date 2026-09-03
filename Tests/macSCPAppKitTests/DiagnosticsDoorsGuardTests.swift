@@ -41,6 +41,9 @@ import Testing
 /// * the view model's own type is the one that owns the run entry, and the
 ///   presenter's "show this" method the single function in that file taking
 ///   one;
+/// * the panel is the single `View` struct its own file declares, and the
+///   place it is PUT ON SCREEN is the single file elsewhere in the app target
+///   that constructs that type;
 /// * each door's callback name is read out of the wiring that hands it the
 ///   entry, so the control-side check names nothing of its own.
 ///
@@ -166,6 +169,50 @@ struct DiagnosticsDoorsGuardTests {
     }
 
     static func entryFunctionName() throws -> String { try entrySite().function }
+
+    /// The panel: the single `View` struct its own file declares.
+    static func panelTypeName() throws -> String {
+        let source = try strictSource(of: panelPath)
+        let names = matches(of: #"struct\s+(\w+)\s*:\s*[^\n{]*\bView\b"#, in: source)
+        guard names.count == 1, let name = names.first else {
+            throw ScanError.derivation("""
+                \(panelPath) must declare exactly ONE View struct — the panel — found \
+                \(names.count): \(names)
+                """)
+        }
+        return name
+    }
+
+    /// Where the panel is actually PUT ON SCREEN: the single file of the app
+    /// target, outside the panel's own, that constructs the panel type.
+    ///
+    /// The second place in the app where the view model exists in a View
+    /// context, and until 2026-09-03 the one this suite could not see: it
+    /// scans the view model's file, the panel's file, `ContentView+Detail`
+    /// and the four door spans, and the sheet's presentation closure is in
+    /// none of them. A `.task { model.run() }` appended inside that closure
+    /// starts an authenticating dial on EVERY opening of the panel, from all
+    /// three doors, with every other check in this suite green — measured by
+    /// planting exactly that.
+    ///
+    /// Derived, not spelled: the file is found by looking for the
+    /// construction, so moving the sheet to another file moves the check with
+    /// it, and a SECOND presentation site makes the derivation ambiguous and
+    /// fails rather than picking one.
+    static func presentationSite() throws -> String {
+        let panel = try panelTypeName()
+        var files: [String] = []
+        for file in try appTargetFiles() where file != panelPath {
+            if try strictSource(of: file).contains("\(panel)(") { files.append(file) }
+        }
+        guard files.count == 1, let file = files.first else {
+            throw ScanError.derivation("""
+                exactly ONE file outside \(panelPath) may construct \(panel) — that file is \
+                where the panel is put on screen — found \(files.count): \(files.sorted())
+                """)
+        }
+        return file
+    }
 
     /// The view model itself: the type whose body owns the run entry.
     static func viewModelTypeName() throws -> String {
@@ -462,6 +509,88 @@ struct DiagnosticsDoorsGuardTests {
             \(Self.panelPath) mentions \(run) \(total) times but only \(inButtons) of them \
             are inside a Button. Everything else — a lifecycle modifier, the view's own \
             init, a computed property — starts a diagnosis nobody asked for.
+            """)
+    }
+
+    /// The presentation closure starts no run either.
+    ///
+    /// The fourth spelling of one hole, and the records say so plainly: round
+    /// 1 taught `automaticStarts` the `perform:` and `.task(` forms, round 2
+    /// found the ENTRY's own body scanned by nothing, and this round found
+    /// the sheet that presents the panel scanned by nothing. Each was closed
+    /// with another anchor. CLAUDE.md's "when a scan keeps buying one
+    /// spelling and revealing another" says what that repetition is evidence
+    /// FOR — a structural boundary, a type the violation cannot be written
+    /// against — and a fourth anchor is not that. It is written down here so
+    /// the fifth round starts from the pattern rather than from the file.
+    ///
+    /// Positive and negative in one case, as everywhere in this suite: the
+    /// site must still construct the panel (so "it starts nothing" cannot be
+    /// satisfied by a file that presents nothing), and it must start nothing
+    /// from a lifecycle hook. The whole file is scanned rather than the one
+    /// `.sheet` span: a run started from any other modifier in the file that
+    /// hosts the panel's presentation is the same violation, and the span
+    /// would be one more thing to keep pointed at the right region.
+    @Test func thePresentationSiteStartsNoRun() throws {
+        let panel = try Self.panelTypeName()
+        let file = try Self.presentationSite()
+        let run = try Self.runEntryName()
+        let entry = try Self.entryFunctionName()
+        let source = try Self.strictSource(of: file)
+
+        #expect(Self.invocations(of: "\(panel)(", in: source).count == 1, """
+            \(file) must construct \(panel) exactly once — it is where the panel is put on \
+            screen, and without that this check is satisfied by a file that presents nothing.
+            """)
+        for offence in Self.automaticStarts(of: [run, entry], in: source) {
+            Issue.record("""
+                \(file) starts a diagnosis from the closure that PRESENTS the panel: \
+                \(offence). Every door opens the panel through that closure, so a run \
+                started here is a run started by all of them — and opening a panel is not \
+                consent to dial the user's server (decision of 2026-09-02).
+                """)
+        }
+    }
+
+    /// Run is the panel's default button, and it is Run that carries it.
+    ///
+    /// A claim the connection-tools design has made about this file since
+    /// 2026-09-03 ("with Run as the default button"), and which nothing in
+    /// the file backed when it was written. Pinned here so the document and
+    /// the code cannot drift apart again in either direction.
+    ///
+    /// Read by POSITION rather than by proximity: `.keyboardShortcut(…)`
+    /// attaches after a Button's trailing closure and is therefore outside
+    /// that Button's own invocation, so the check asks which Button is the
+    /// last one to START before the modifier — moving the modifier onto Copy
+    /// or Close makes that a different button and fails.
+    @Test func theRunButtonIsTheDefaultAction() throws {
+        let run = try Self.runEntryName()
+        let source = try Self.strictSource(of: Self.panelPath)
+        let shortcut = ".keyboardShortcut(.defaultAction)"
+
+        let shortcuts = Self.offsets(of: shortcut, in: source)
+        #expect(shortcuts.count == 1, """
+            \(Self.panelPath) must carry exactly one \(shortcut) — found \(shortcuts.count). \
+            Two default actions is no default action, and none leaves the design's claim \
+            about this panel unbacked.
+            """)
+
+        guard let position = shortcuts.first else { return }
+        let buttons = Self.invocationRanges(of: "Button", in: source)
+        guard let owner = buttons.last(where: { $0.lowerBound < position }) else {
+            Issue.record("\(Self.panelPath): \(shortcut) sits before any Button")
+            return
+        }
+        #expect(owner.upperBound <= position, """
+            \(Self.panelPath): \(shortcut) is INSIDE a Button's own invocation rather than \
+            attached to it as a modifier — the position check below cannot mean what it says.
+            """)
+        let text = String(Array(source)[owner])
+        #expect(Self.mentions(run, in: text), """
+            \(Self.panelPath): \(shortcut) attaches to a Button that does not call \(run)() \
+            — Return would press something other than Run. The design says the panel opens \
+            with Run as its default button; this is the only thing that makes that true.
             """)
     }
 
@@ -1130,8 +1259,42 @@ struct DiagnosticsDoorsGuardTests {
     /// about a control has to read both.
     static func invocations(of keyword: String, in source: String) -> [String] {
         let chars = Array(source)
+        return invocationRanges(of: keyword, in: source).map { String(chars[$0]) }
+    }
+
+    /// Character offsets of every occurrence of `needle`, in the same index
+    /// space `invocationRanges(of:in:)` returns. Non-overlapping, left to
+    /// right.
+    static func offsets(of needle: String, in source: String) -> [Int] {
+        let chars = Array(source)
+        let pattern = Array(needle)
+        guard !pattern.isEmpty else { return [] }
+        var results: [Int] = []
+        var index = 0
+        while index + pattern.count <= chars.count {
+            if Array(chars[index..<(index + pattern.count)]) == pattern {
+                results.append(index)
+                index += pattern.count
+            } else {
+                index += 1
+            }
+        }
+        return results
+    }
+
+    /// The same walk as `invocations(of:in:)`, giving back WHERE each
+    /// invocation sits rather than its text.
+    ///
+    /// Positions are what a check about a MODIFIER needs: `.buttonStyle(…)`
+    /// and `.keyboardShortcut(…)` attach after the trailing closure and are
+    /// therefore outside the invocation's own range, so "which button carries
+    /// this modifier" can only be answered by comparing offsets. CLAUDE.md's
+    /// "a negative check whose SPAN is wrong can never match" is the
+    /// measurement behind reading it this way rather than by proximity.
+    static func invocationRanges(of keyword: String, in source: String) -> [Range<Int>] {
+        let chars = Array(source)
         let needle = Array(keyword)
-        var results: [String] = []
+        var results: [Range<Int>] = []
         var index = 0
         while index + needle.count <= chars.count {
             guard Array(chars[index..<(index + needle.count)]) == needle else {
@@ -1158,7 +1321,7 @@ struct DiagnosticsDoorsGuardTests {
                 index += needle.count
                 continue
             }
-            results.append(String(chars[index..<cursor]))
+            results.append(index..<cursor)
             index = cursor
         }
         return results

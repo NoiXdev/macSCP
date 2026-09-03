@@ -96,25 +96,54 @@ a smaller machine tomorrow. The record of the measurement is
 
 ## A wall-clock ceiling in a test measures the runner
 
-Three CI reds, all on the connection-tools plan (2026-09-03), all the
-same shape: a fixed upper bound on elapsed time, red not because the
-code was slow but because the three-core CI runner was.
+Three tests were fixed for this in the same week (2026-09-02/03), all
+the same shape: a fixed upper bound on elapsed time, red not because the
+code was slow but because the three-core CI runner was. **Only ONE of
+the reds below is on the connection-tools plan** (run 33727757421, head
+`64854401`); every other red cited here sits on a head that predates the
+plan's base `112dbc97`, and one of the three fixes does too. Counted
+2026-09-03, per commit with `git merge-base --is-ancestor <commit>
+112dbc97` and per run with `gh run view <id> --json headSha`.
 
-- `AsyncSignalTests.swift` (`c8eebbd3`): a 200 ms sleep's bound fired
-  after **10.38 s** on run 33707411271 (ambient main-actor gap 14.7 s in
-  the same run).
-- `ConnectionDiagnosticsTests.swift` (`35e456da`): two cases with a
-  200 ms step deadline came back after **20.68 s** and **20.67 s** on
-  run 33727757421 — the outcome each asserted (`.timedOut`,
-  `stillRunning`) was already correct; only the `elapsed < .seconds(10)`
-  ceiling on top of it was red.
-- The subprocess timeout test (fixed in `a4c59a2b`/`b6e181f3`): a 2 s
-  bound raced Foundation's `readabilityHandler`, which only reaches
-  `stderrSoFar` once the Dispatch global queue hands it a thread — on a
-  starved runner the bound won the race and the assertion read empty
-  text. The fix was not a wider bound; it was synchronising on the
-  reader (an `onStderrChunk` seam raising a latch, awaited before the
-  bound is asserted on) instead of on the clock.
+- `AsyncSignalTests.swift` (`c8eebbd3`, **before** the plan): a 200 ms
+  latch's `elapsed < .seconds(10)` came back at **10.377285583 s** on
+  run 33707411271 (`aadbafca`), and at **15.677233083 s** on run
+  33705649537 (`126c5c88`). The same run 33707411271 printed
+  `ambient=14.668071541 seconds gap=0.17032175 seconds` from
+  `ConnectMainActorLivenessTests`: **14.67 s is the AMBIENT control** —
+  the largest main-actor tick gap that suite measures with nothing under
+  test — and 0.17 s is the gap it measured while the dial ran. The
+  runner's own idle stall was two orders of magnitude worse than the
+  thing being measured, which is the whole argument of this section.
+- `ConnectionDiagnosticsTests.swift` (`35e456da`, **on** the plan): two
+  cases came back after **20.680103625 s** and
+  **20.671590291999998 s** on run 33727757421 (`64854401`). Their
+  deadlines are not the same:
+  `aStepThatOverrunsTheTimeoutIsReportedAsTimedOut` uses
+  `stepTimeout: .milliseconds(200)` against a 30 s sleep, and
+  `aProbeThatIgnoresCancellationDoesNotHoldTheStepPastItsDeadline` uses
+  `stepTimeout: .seconds(1)` against a 12 s uncancellable probe. The
+  outcome each asserted (`.timedOut`, `stillRunning`) was already
+  correct; only the `elapsed < .seconds(10)` ceiling on top of it was
+  red.
+- The subprocess timeout test (fixed **on** the plan in
+  `a4c59a2b`/`b6e181f3`, but every red is on a **pre-plan** head): a 2 s
+  bound raced Foundation's
+  `readabilityHandler`, which only reaches `stderrSoFar` once the
+  Dispatch global queue hands it a thread — on a starved runner the
+  bound won the race and the assertion read empty text. Observed as
+  `(text → "").contains(marker → …)` at `SubprocessRunnerTests.swift:117`
+  on run 33698102652 (`0ef63269`), and again at `:114`/`:119` on run
+  33705649537. The fix was not a wider bound; it was synchronising on
+  the reader (an `onStderrChunk` seam raising a latch, awaited before
+  the bound is asserted on) instead of on the clock.
+
+One thing this section cannot cite, and the reason the counting rule
+above applies to it too: run 33741778350 (`4456836d`, on the plan) is
+red with **one issue attributed to no test at all** — its 10623-line job
+log carries no `✘ Test <name> … failed` line, only the run summary. It
+is evidence that the log loses verdict lines under interleaved output
+(`docs/BACKLOG.md`, "CI logs lose lines"), not evidence of a ceiling.
 
 Rule: assert the outcome and the ordering a bound is supposed to
 produce, not how long producing it took. A floor (`elapsed >= …`, "this

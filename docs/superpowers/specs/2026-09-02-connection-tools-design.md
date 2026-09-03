@@ -1,14 +1,30 @@
 # Connection Tools: Universal Ping and Trace, Plus a Seam per Protocol — Design Proposal
 
-**Status:** decided 2026-09-02 (night) — the maintainer answered the two
-questions at the end: the diagnosis runs **only on the button**, never
-automatically after a failed connect; "Copy report" offers **both**
-plain text and Markdown, as two entries of one menu. Ready for the
-spike (§5) and then a plan. Written from the decisions recorded in
+**Status:** **shipped 2026-09-03.** Decided 2026-09-02 (night) — the
+maintainer answered the two questions at the end: the diagnosis runs
+**only on the button**, never automatically after a failed connect;
+"Copy report" offers **both** plain text and Markdown, as two entries of
+one menu. The spike (§5) was measured the next morning (its verdicts are
+below, under §5), and the plan
+`docs/superpowers/plans/2026-09-03-connection-tools.md` built it out in
+six tasks. Written from the decisions recorded in
 `2026-08-25-backlog-connection-tools.md` (ping = TCP attempt AND ICMP
 echo; trace = own-setup log AND network trace; entry points: the tab,
 the context menu, the error dialog; the tools are an interface with a
-per-protocol seam). Nothing here is implemented.
+per-protocol seam).
+
+**What of this document is now code, and what is not.** The universal
+half (§2.1/§2.2/§2.4), the seam (§3), the panel and its three doors
+(§1/§4) and the S3/WebDAV contributions all shipped; ICMP echo (§2.3)
+shipped for IPv4 and IPv6; the network trace (§2.5) shipped for **IPv4
+only** — the spike found no IPv6 route on the measuring machine, so the
+trace refuses a non-IPv4 destination rather than guess. SSH's
+negotiation contribution did **not** ship: it needs an observer the
+swift-nio-ssh fork does not have yet, and the descriptor ships
+`diagnostics: []` for SSH and says so. The authoritative list of what
+shipped, with the commit per task and what stays open, is
+`2026-08-25-backlog-connection-tools.md` under "Done 2026-09-03" — this
+document is the design it was built from, not the record of it.
 
 ## The measured starting point
 
@@ -126,9 +142,20 @@ nothing in §2. No code path in §2 branches on `ConnectionKind`.
 A single sheet/panel: the universal steps as rows (name, outcome badge,
 duration, one line of detail), then the protocol section, a "Run again"
 and a "Copy report" button. Rows for halves that this build cannot do
-say so in one sentence (§2.3/§2.5). The context-menu entry works for a
-saved session without connecting; the tab's entry pre-fills from the
-live connection; the error dialog's button opens the panel pre-filled from the failed attempt, with Run as the default button — it does not run by itself (decided 2026-09-02: diagnostics run only on the button; the earlier wording here said "runs it immediately" and was corrected 2026-09-03 after a guard review found it would have licensed exactly the automatic start the guard forbids).
+say so in one sentence — as shipped that is the network trace against a
+non-IPv4 destination (§2.5) and SSH's absent negotiation contribution
+(§3); ICMP echo (§2.3) needed no such row in the end. The context-menu
+entry works for a saved session without connecting; the tab's entry
+pre-fills from the live connection; the error dialog's button opens the
+panel pre-filled
+from the failed attempt, with Run carrying
+`.keyboardShortcut(.defaultAction)` so Return presses it — it does not
+run by itself (decided 2026-09-02: diagnostics run only on the button;
+the earlier wording here said "runs it immediately" and was corrected
+2026-09-03 after a guard review found it would have licensed exactly the
+automatic start the guard forbids. The replacement wording, "with Run as
+the default button", was itself unbacked by the code until the shortcut
+was added on 2026-09-03; `DiagnosticsDoorsGuardTests` pins it now.)
 
 ## 5. The spike before the plan
 

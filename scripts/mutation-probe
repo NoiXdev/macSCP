@@ -11,11 +11,30 @@
 # indistinguishable from "the guard is green". The plant was recorded as "not
 # caught" when it had never been tried.
 #
-# So this script reports three states and never conflates them:
+# So this script reports five states and never conflates them (counted in the
+# code below, 2026-09-03 — an earlier version of this header said three while
+# the code had five):
 #
-#   BUILD FAILED   the plant does not compile; no test ran; the probe is void
-#   NO TESTS RAN   the build succeeded but the filter matched nothing
-#   RED / GREEN    tests actually ran, and here is what failed
+#   PLANT FAILED      the --apply command exited non-zero; nothing was measured
+#   PLANT CHANGED     the --apply command matched nothing; a silent no-op
+#     NOTHING
+#   BUILD FAILED      the plant does not compile; no test ran; the probe is void
+#   NO TESTS RAN      the build succeeded but the filter matched nothing
+#   RED / GREEN       tests actually ran, and here is what failed
+#
+# A signal is a sixth ending and is NOT one of these: on INT or TERM the script
+# reverts and exits non-zero WITHOUT a verdict (130 / 143). It used to trap with
+# a handler that RETURNED, so bash resumed at the next statement and the run
+# continued against the reverted tree — printing "GREEN, and none of them
+# noticed the plant" about a tree that no longer carried one. Observed
+# 2026-09-03 by sending SIGINT during `swift test`: the old script printed
+# exactly that and exited 0; this one exits 130 with no verdict.
+#
+# Verifying that by hand needs job control. A shell that starts this script
+# with `&` and no `set -m` sets SIGINT to SIG_IGN for it, and bash cannot trap
+# a signal that was ignored on entry — so the handler never runs and the run
+# looks unfixed. An interactive Ctrl-C, which is the case that matters, has job
+# control on.
 #
 # It also refuses to start on a dirty tree, and checks that the plant changed
 # something — a `sed` that matched nothing is the same silent no-op one level up.
@@ -31,6 +50,9 @@
 #
 # The tree is restored with `git checkout --` on every exit path, including a
 # Ctrl-C: a probe that leaves its violation behind is worse than no probe.
+#
+# (--help prints lines 2-55 of this file: the header, and not the code under
+# it. The range is a line number, so it is checked whenever this header grows.)
 
 set -uo pipefail
 
@@ -43,7 +65,7 @@ while [[ $# -gt 0 ]]; do
         --filter) FILTER="${2:-}"; shift 2 ;;
         --apply)  APPLY="${2:-}";  shift 2 ;;
         --label)  LABEL="${2:-}";  shift 2 ;;
-        -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
         *) echo "mutation-probe: unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
@@ -75,7 +97,22 @@ restore() {
         git diff --name-only | sed 's/^/    /' >&2
     fi
 }
-trap restore EXIT INT TERM
+
+# EXIT restores and lets the exit status stand; a SIGNAL restores and EXITS,
+# because a handler that returns hands control back to the statement after the
+# interrupted one. Traps are cleared inside the handler so the EXIT trap does
+# not run the revert a second time.
+on_signal() {
+    trap - EXIT INT TERM
+    restore
+    echo "" >&2
+    echo "mutation-probe: interrupted by SIG$1 — the plant is reverted and NOTHING" >&2
+    echo "  was measured. There is no verdict; run it again." >&2
+    exit "$2"
+}
+trap restore EXIT
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
 
 echo "── plant${LABEL:+: $LABEL}"
 if ! eval "$APPLY"; then
@@ -109,7 +146,17 @@ STATUS=$?
 
 RAN="$(grep -oE 'Test run with [0-9]+ test' "$TEST_LOG" | grep -oE '[0-9]+' | tail -1)"
 RAN="${RAN:-0}"
-FAILED="$(grep -E '^✘ Test [a-zA-Z]' "$TEST_LOG" | sed 's/ recorded.*//;s/ failed.*//' | sort -u)"
+# Anchored on the marker plus a space, not on `[a-zA-Z]`: swift-testing prints
+# a DISPLAY-named test as `✘ Test "some name" recorded an issue`, and the
+# character after `Test ` is then a quote. This tree carries 255 `@Test("…")`
+# declarations (counted 2026-09-03,
+# `grep -rhoE '@Test\("[^"]*"' Tests/ | wc -l`), so the old class excluded the
+# majority spelling. The run SUMMARY (`✘ Test run with N tests failed…`) has to
+# come back out, or every red is attributed to it instead of to a guard.
+FAILED="$(grep -E '^✘ Test ' "$TEST_LOG" \
+    | grep -vE '^✘ Test run with' \
+    | grep -vE ' skipped\.?$' \
+    | sed 's/ recorded.*//;s/ failed.*//' | sort -u)"
 
 if [[ "$RAN" == "0" ]]; then
     echo "RESULT: NO TESTS RAN — the filter matched nothing, or the runner died."
@@ -118,11 +165,23 @@ if [[ "$RAN" == "0" ]]; then
     exit 1
 fi
 
+# The exit status is read, not just the log. `swift test`'s own status is the
+# most reliable signal available, and deciding red/green from the grep alone
+# meant any failure that does not print a verdict line — a runner error after
+# the summary, or the interleaved-output loss that cost CI run 33741778350 its
+# only failing test's name — came out GREEN. That is the exact inference this
+# script exists to refuse.
 if [[ -n "$FAILED" ]]; then
     echo "RESULT: RED — $RAN test(s) ran, and the plant was caught by:"
     echo "$FAILED" | sed 's/^/  /'
+elif [[ "$STATUS" -ne 0 ]]; then
+    echo "RESULT: RED — $RAN test(s) ran and 'swift test' exited $STATUS, but no"
+    echo "  verdict line names which test. The status is the verdict; the"
+    echo "  attribution is missing. Read \$TEST_LOG yourself before believing either."
+    grep -E '✘|error:' "$TEST_LOG" | sed 's/^/  /' | sort -u | head -10
 else
-    echo "RESULT: GREEN — $RAN test(s) ran and NONE of them noticed the plant."
+    echo "RESULT: GREEN — $RAN test(s) ran, 'swift test' exited 0, and NONE of them"
+    echo "  noticed the plant."
     echo "  Either the guard is insensitive to this violation, or the plant is not one."
 fi
 rm -f "$TEST_LOG"

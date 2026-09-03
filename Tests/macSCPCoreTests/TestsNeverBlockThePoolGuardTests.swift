@@ -38,6 +38,20 @@ struct TestsNeverBlockThePoolGuardTests {
     /// a test in this corpus ever built one was to block on it, and the
     /// non-blocking alternative (`notify(queue:)`) appears nowhere. Matching
     /// the type name refuses the shape instead of one spelling of the wait.
+    ///
+    /// `NSCondition` is here for the same reason and was added on
+    /// 2026-09-03, after a review found the enum blind to a primitive this
+    /// corpus had just started using: a commit removed a `Thread.sleep`
+    /// allowlist entry and replaced the sleep with a condition-variable wait,
+    /// so the list below shrank while the scan's reach did. A condition
+    /// variable has no non-blocking spelling at all — its whole API is a
+    /// thread parked until a broadcast — so the type name is the shape.
+    ///
+    /// Counted the same day: this corpus carries no `pthread_cond` and no
+    /// `os_unfair_lock`, so neither is listed. A case for a primitive that
+    /// occurs nowhere would be a negative check with nothing behind it, and
+    /// `theGuardsOwnSourceCarriesEveryPatternItLooksFor` is the only thing
+    /// that would ever exercise it.
     enum BlockingWait: String, CaseIterable, Sendable {
         case waitUntilExit = "waitUntilExit()"
         case dispatchSemaphore = "DispatchSemaphore"
@@ -46,6 +60,7 @@ struct TestsNeverBlockThePoolGuardTests {
         case futureResultWait = "futureResult.wait()"
         case threadSleep = "Thread.sleep"
         case usleep = "usleep("
+        case nsCondition = "NSCondition"
     }
 
     /// Files that still carry a blocking wait `Task 1b` did not convert,
@@ -59,18 +74,34 @@ struct TestsNeverBlockThePoolGuardTests {
     /// The diagnostics trace added a third later and then took it back:
     /// `anOuterMarginOverrunKeepsTheHopsTheWalkHadMeasured` parked on a
     /// `Thread.sleep` to outlast an outer margin, and now parks on a gate the
-    /// margin itself opens, so the sleep is gone and the entry with it —
-    /// which is the shrinking this list exists to make happen. **Two**
-    /// entries remain; neither is Task 1b's to remove, and each says why in
-    /// its own comment.
+    /// margin itself opens.
+    ///
+    /// That last one was recorded as a shrink and was not one, which is worth
+    /// keeping written down: the wait did not go away, it moved to
+    /// `NSCondition` — a primitive `BlockingWait` did not list, so the entry
+    /// could be deleted while the scan stopped seeing the file at all. The
+    /// enum learned the primitive on 2026-09-03 and the file is back on this
+    /// list, with the reason it is excused rather than the reason it was
+    /// removed. **Three** entries remain, counted here in this edit; none is
+    /// Task 1b's to remove, and each says why in its own comment.
     ///
     /// `everyAllowlistEntryIsStillNeeded` below is what keeps the list
     /// honest: an entry whose file no longer carries its pattern is a
     /// failure, not a leftover.
     static let allowed: [String: Set<BlockingWait>] = [
-        // Not a subprocess wait: a deliberate main-thread block, planted on
-        // a `DispatchQueue.global()` thread to prove the connect path does
-        // not need the main actor. Blocking is the measurement there.
+        // Not a subprocess wait: a deliberate block, held so the main actor
+        // can be watched NOT stalling while a dial holds a thread. Blocking
+        // is the measurement there.
+        //
+        // Corrected 2026-09-03 by reading rather than remembering: this entry
+        // used to say the block was planted on a `DispatchQueue.global()`
+        // thread. That file contains no Dispatch queue at all — the one
+        // caller of its blocking helper sits inside an injected `@Sendable`
+        // async connector, i.e. on a cooperative-pool thread, which the case
+        // itself says. The excusal stands (600 ms, capped for exactly this
+        // reason, with the rest of the dial a suspension); the old reason
+        // did not, and `everyAllowlistEntryIsStillNeeded` checks the pattern,
+        // never the prose beside it.
         "macSCPCoreTests/ConnectMainActorLivenessTests.swift": [.usleep],
 
         // `Docker.run`: sub-second docker calls behind `defer`, unbounded by
@@ -84,6 +115,23 @@ struct TestsNeverBlockThePoolGuardTests {
         // decision.
         "macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift":
             [.dispatchGroup, .waitUntilExit],
+
+        // `BlockingGate`, and the one call that waits on it, park on
+        // `BlockingProbe`'s own queue — never the cooperative pool. Read,
+        // 2026-09-03, rather than assumed: `NetworkTrace.run` hands its walk
+        // closure to `BlockingProbe.run`, whose body runs inside
+        // `DispatchQueue(label:).async` (`BlockingProbe.swift`), a queue
+        // created for that one call. The gate's wait is therefore on a
+        // private Dispatch thread, which is exactly where the `Thread.sleep`
+        // it replaced ran.
+        //
+        // It stays on this list rather than being converted because the
+        // closure it sits in is SYNCHRONOUS by contract — `BlockingProbe`
+        // exists to run blocking probe code off the pool, and its parameter
+        // is not `async`, so there is no `await` to convert the wait into.
+        // The bound in the call is a net, not the property: the case asserts
+        // that the gate was opened.
+        "macSCPCoreTests/NetworkTraceTests.swift": [.nsCondition],
     ]
 
     // MARK: - The negative check
@@ -196,12 +244,13 @@ struct TestsNeverBlockThePoolGuardTests {
     @Test func theGuardsOwnSourceCarriesEveryPatternItLooksFor() throws {
         let files = try Self.testSources()
         #expect(files.contains(Self.ownRelativePath))
-        // Measured 2026-09-03: 318 `.swift` files under `Tests/`
+        // Measured 2026-09-03: 331 `.swift` files under `Tests/`
         // (`find Tests -name '*.swift' | wc -l`). A lower bound rather than
         // the number, so adding a test file is not a failure — but an
         // enumeration that collapses is. This count has already drifted
-        // twice in this branch (316 -> 317 -> 318); it is written down as a
-        // measurement of the moment, not a fact to keep in sync.
+        // four times in this branch (316 -> 317 -> 318 -> 331); it is
+        // written down as a measurement of the moment, not a fact to keep in
+        // sync, and re-running the command above is the only way to state it.
         #expect(files.count > 200, "the scan enumerated only \(files.count) files")
 
         let source = Self.strippingComments(

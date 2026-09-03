@@ -893,7 +893,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// QUERY-string signature reads (`presignedURL`).
     ///
     /// **Two signer entry points, one pairing, and one exception, counted on
-    /// 2026-09-04.** `S3RequestSigning.signedRequest` (the `Authorization`
+    /// 2026-09-03.** `S3RequestSigning.signedRequest` (the `Authorization`
     /// header) and `SigV4Signer.presignedQuery` (the `X-Amz-*` query, for a
     /// link handed to somebody else's browser) are two ways to sign, not two
     /// ways to address: both take their URL and their canonical path from
