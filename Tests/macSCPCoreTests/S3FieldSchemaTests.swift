@@ -85,19 +85,78 @@ struct S3FieldSchemaTests {
         #expect(stored.accessKeyID == "AKIA")
     }
 
-    @Test func displaySummaryNamesTheBucketAndEndpointHost() {
-        #expect(S3FieldSchema.displaySummary(filledValues()) == "backups @ minio.local")
+    /// The PORT is part of the summary (review 2026-09-04): two sessions on
+    /// one host that differ only in the port — a MinIO on 9000 and one on
+    /// 9001 — read as the same connection in the sidebar and in every audit
+    /// line without it. Suppressed when the endpoint names none, where there
+    /// is nothing to tell apart.
+    @Test func displaySummaryNamesTheBucketAndEndpointHostWithItsPort() {
+        #expect(S3FieldSchema.displaySummary(filledValues()) == "backups @ minio.local:9000")
+    }
+
+    @Test func displaySummaryOmitsAPortTheEndpointDoesNotName() {
+        var values = filledValues()
+        values[S3Field.endpoint] = "https://s3.example.test"
+        #expect(S3FieldSchema.displaySummary(values) == "backups @ s3.example.test")
+    }
+
+    /// A schemeless endpoint keeps its port here too — the summary reads the
+    /// same one parse the connect path does, so the sidebar cannot describe a
+    /// session the app dials differently.
+    @Test func displaySummaryKeepsThePortOfASchemelessEndpoint() {
+        var values = filledValues()
+        values[S3Field.endpoint] = "minio.local:9000"
+        #expect(S3FieldSchema.displaySummary(values) == "backups @ minio.local:9000")
+    }
+
+    // MARK: - An IP literal is addressed path-style (review 2026-09-04, I-3)
+
+    /// Virtual-hosted addressing puts the bucket in front of the host, and
+    /// `backups.192.0.2.10` is a name no resolver answers. So an IP-literal
+    /// endpoint is addressed path-style whatever the toggle says, and the
+    /// config the connect path receives carries that.
+    @Test func anIPLiteralEndpointForcesPathStyleInTheConfig() throws {
+        var values = filledValues()
+        values[S3Field.endpoint] = "192.0.2.10:9000"
+        values[bool: S3Field.usePathStyle] = false
+        let config = try S3FieldSchema.makeConfig(values, "topsecret")
+        guard case .s3(let s3) = config else {
+            Issue.record("expected .s3, got \(config)")
+            return
+        }
+        #expect(s3.usePathStyle)
+    }
+
+    @Test func anIPLiteralEndpointForcesPathStyleInTheStoredSession() {
+        var values = filledValues()
+        values[S3Field.endpoint] = "[::1]:9000"
+        values[bool: S3Field.usePathStyle] = false
+        #expect(S3FieldSchema.stored(from: values).usePathStyle)
+    }
+
+    /// A named host keeps the user's own choice — the rule is about what a
+    /// resolver can answer, not about what is convenient.
+    @Test func aNamedHostKeepsTheToggleTheUserChose() {
+        var values = filledValues()
+        values[S3Field.endpoint] = "https://minio.local:9000"
+        values[bool: S3Field.usePathStyle] = false
+        #expect(S3FieldSchema.stored(from: values).usePathStyle == false)
+        #expect(S3FieldSchema.pathStyleIsForced(values) == false)
     }
 
     // MARK: - `startsAtBucketList`: the form's toggle (2026-09-02)
 
     /// With the toggle on there is no bucket to put in front of the host,
-    /// and "` @ host`" is not a summary of anything.
+    /// and "` @ host`" is not a summary of anything. The host keeps its port
+    /// here like everywhere else (review 2026-09-04) — what the toggle
+    /// removes is the bucket, not the endpoint.
     @Test func theSummaryOfABucketListConnectionIsJustTheHost() {
         var values = filledValues()
         values[S3Field.bucket] = ""
         values[bool: S3Field.startsAtBucketList] = true
-        #expect(S3FieldSchema.displaySummary(values) == "minio.local")
+        let summary = S3FieldSchema.displaySummary(values)
+        #expect(summary == "minio.local:9000")
+        #expect(!summary.contains("@"))
     }
 
 

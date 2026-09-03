@@ -142,6 +142,7 @@
 "connection.s3.accessKey" = "Access Key ID";
 "connection.s3.secretKey" = "Secret Access Key";
 "connection.s3.pathStyle" = "Use path-style URLs";
+"connection.s3.pathStyle.forcedByIP" = "An IP address is always addressed path-style.";
 "connection.s3.preset.label" = "Provider preset";
 "connection.s3.preset.aws" = "Amazon S3";
 "connection.s3.preset.hetzner" = "Hetzner Object Storage";

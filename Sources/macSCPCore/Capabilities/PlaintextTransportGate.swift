@@ -21,7 +21,14 @@ public enum PlaintextTransportGate {
         case .ssh:
             return false
         case .s3(let s3):
-            return s3.endpoint.lowercased().hasPrefix("http://")
+            // The ONE endpoint parse, not a second reading of the string
+            // (review 2026-09-04). A `hasPrefix("http://")` test of its own
+            // answered "encrypted" for a pasted endpoint with a leading
+            // space, and would answer the same for any spelling the parse
+            // reads differently — the gate and the dial must never disagree
+            // about the scheme. A schemeless endpoint is `https` here for
+            // exactly that reason: it is what the dial will use.
+            return S3FieldSchema.endpointComponents(s3.endpoint)?.scheme?.lowercased() == "http"
         case .webdav(let webdav):
             // Reuses the config's own property rather than re-deriving the
             // rule — two copies of "is this plaintext?" would drift.

@@ -720,32 +720,72 @@ struct ConnectionFormView: View {
     }
 
     /// What a field's value was UNDERSTOOD as, drawn under the field by
-    /// `SchemaFormView.footnote`. One field answers today: S3's endpoint.
+    /// `SchemaFormView.footnote`. Two fields answer today, both S3's.
     ///
-    /// The parse behind it accepts spellings that are not URLs as typed — a
-    /// schemeless `minio.lan:9000` means `https://minio.lan:9000` since
-    /// 2026-09-03 — and a user who cannot see the assumed scheme cannot tell
-    /// why a plain-HTTP server (a local MinIO, say) refuses them. So the line
-    /// appears exactly when the canonical spelling DIFFERS from what was
-    /// typed: that is the case where the field's text and the request's
-    /// target are two different strings.
+    /// **The endpoint** prints where the request will actually go. The parse
+    /// behind it accepts spellings that are not URLs as typed — a schemeless
+    /// `minio.lan:9000` means `https://minio.lan:9000` since 2026-09-03 — and
+    /// the addressing style moves the destination again: with virtual-hosted
+    /// addressing and a bucket set, the request goes to
+    /// `<bucket>.<host>`. So the line prints `S3FieldSchema.requestOrigin`,
+    /// the origin the connect path builds, and NOT the endpoint's own origin
+    /// (review 2026-09-04, I-3: printing the latter announced a destination
+    /// the app does not dial). It appears exactly when that origin differs
+    /// from what was typed — the case where the field's text and the
+    /// request's target are two different strings.
     ///
-    /// It names a host and a port and nothing else — `canonicalEndpoint`
-    /// composes an origin, so no access key or secret can reach this text
-    /// even if one were typed into the endpoint field.
+    /// **The path-style toggle** says why it is greyed, when it is: an
+    /// IP-literal endpoint is addressed path-style whatever the box says.
+    /// Its forced value comes from `forcedFieldValues` below; this is only
+    /// the sentence.
+    ///
+    /// Every line here names a host, a port and a bucket — `requestOrigin`
+    /// composes an origin — so no access key or secret can reach the screen
+    /// through it even if one were typed into the endpoint field. Measured
+    /// in Core, over a `KEY:SECRET@host` endpoint
+    /// (`noCredentialInTheEndpointReachesTheOriginOrTheCanonicalSpelling`).
     private func fieldFootnote(_ field: ConnectionField, _ value: String) -> String? {
-        guard viewModel.kind == .s3, field.id == S3Field.endpoint.rawValue else { return nil }
-        let typed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty else { return nil }
-        guard let canonical = S3FieldSchema.canonicalEndpoint(typed) else {
+        guard viewModel.kind == .s3 else { return nil }
+        switch field.id {
+        case S3Field.endpoint.rawValue:
+            let typed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !typed.isEmpty else { return nil }
+            guard let origin = S3FieldSchema.requestOrigin(viewModel.values) else {
+                return L10n.string(
+                    "connection.s3.endpoint.unreadable",
+                    "Not a server address macSCP can read.")
+            }
+            guard origin != typed else { return nil }
+            return String(
+                format: L10n.string("connection.s3.endpoint.understood %@", "Connects to %@"),
+                origin)
+        case S3Field.usePathStyle.rawValue:
+            guard S3FieldSchema.pathStyleIsForced(viewModel.values) else { return nil }
             return L10n.string(
-                "connection.s3.endpoint.unreadable",
-                "Not a server address macSCP can read.")
+                "connection.s3.pathStyle.forcedByIP",
+                "An IP address is always addressed path-style.")
+        default:
+            return nil
         }
-        guard canonical != typed else { return nil }
-        return String(
-            format: L10n.string("connection.s3.endpoint.understood %@", "Connects to %@"),
-            canonical)
+    }
+
+    /// The values a RULE decides for this form, handed to
+    /// `SchemaFormView.forcedValues`: the field is shown with that value,
+    /// greyed, and cannot be written.
+    ///
+    /// One rule today — `S3FieldSchema.pathStyleIsForced`, asked rather than
+    /// re-derived here, so the form and the config that gets dialled cannot
+    /// disagree about the addressing. The "true"/"false" spelling belongs to
+    /// `FieldValues`, so the text is read back out of one instead of being
+    /// written here a second time.
+    private var forcedFieldValues: [String: String] {
+        guard viewModel.kind == .s3,
+              S3FieldSchema.pathStyleIsForced(viewModel.values)
+        else { return [:] }
+        var forced = FieldValues()
+        forced[bool: S3Field.usePathStyle] = true
+        let key = "\(S3Field.namespace).\(S3Field.usePathStyle.rawValue)"
+        return [S3Field.usePathStyle.rawValue: forced.raw[key] ?? ""]
     }
 
     /// Browse-for-a-key-file and "Manage keys…", the two affordances that sit
@@ -1015,7 +1055,8 @@ struct ConnectionFormView: View {
                 schemas: [schema], values: $viewModel.values, namespace: namespace,
                 isEditMode: isEditMode, resolve: resolveOptions,
                 failedFieldID: failedFieldID, skipping: Self.customRenderedFields,
-                interceptEdit: interceptEdit, footnote: fieldFootnote)
+                interceptEdit: interceptEdit, footnote: fieldFootnote,
+                forcedValues: forcedFieldValues)
         case .loginModeSwitcher:
             loginModeSwitcher
         case .loginSetPicker:

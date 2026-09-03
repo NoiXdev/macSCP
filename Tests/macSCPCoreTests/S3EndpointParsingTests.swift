@@ -18,10 +18,16 @@ import Testing
 ///     s3.amazonaws.com                 scheme=nil    host=nil  port=nil
 ///     192.0.2.10:9000                  (no components at all — nil)
 ///
-/// Five of the eight had no host, and a config whose endpoint has no host is
-/// refused by every URL builder in `S3FileSystem` with "Invalid S3 endpoint".
-/// `host:9000` was the worst of them: Foundation reads `minio.example.test`
-/// as the SCHEME and the port as the path.
+/// FOUR of the eight parsed with no host and a fifth (`192.0.2.10:9000`) did
+/// not parse at all — two outcomes with two different refusals, which an
+/// earlier version of this comment ran together (review 2026-09-04, I-1).
+/// A string that does not parse is refused by `S3FileSystem`'s URL builders
+/// ("Invalid S3 endpoint"); a string that parses with no host gets past them
+/// under path-style addressing and is refused by
+/// `S3RequestSigning.signedRequest` ("S3 endpoint has no host"), while
+/// virtual-hosted addressing refuses it one step earlier ("Invalid S3
+/// endpoint host"). `host:9000` was the worst of them: Foundation reads
+/// `minio.example.test` as the SCHEME and the port as the path.
 ///
 /// The rule since this task: **a schemeless endpoint means `https`, and its
 /// port is honoured.** One place implements it — the parse below — so the
@@ -120,7 +126,7 @@ struct S3EndpointParsingTests {
     /// Surrounding whitespace is a paste artifact, not part of a host name —
     /// and the trim has to happen BEFORE the scheme test, or a leading space
     /// would make ` https://host` look schemeless and get a second prefix.
-    @Test func awhitespacePaddedSpellingParsesLikeTheTrimmedOne() {
+    @Test func aWhitespacePaddedSpellingParsesLikeTheTrimmedOne() {
         #expect(S3FieldSchema.canonicalEndpoint("  https://minio.example.test:8443  ")
             == "https://minio.example.test:8443")
         #expect(S3FieldSchema.canonicalEndpoint("\tminio.example.test:9000\n")
@@ -198,5 +204,101 @@ struct S3EndpointParsingTests {
         #expect(url.host == "minio.example.test")
         #expect(url.port == 9000)
         #expect(probe.value(forHTTPHeaderField: "Host") == "minio.example.test:9000")
+    }
+
+    // MARK: - The origin a request actually reaches
+
+    /// The endpoint field names a SERVER; the request goes to whatever the
+    /// addressing style makes of it. With virtual-hosted addressing — the
+    /// default, `usePathStyle` off — that is `<bucket>.<host>`, which is a
+    /// different name to resolve and the reason a footnote that printed the
+    /// endpoint's own origin would have been wrong about where the
+    /// connection goes (review 2026-09-04, I-3).
+    @Test func theOriginNamesTheBucketUnderVirtualHostAddressing() {
+        var values = FieldValues()
+        values[S3Field.endpoint] = "minio.example.test:9000"
+        values[S3Field.bucket] = "backups"
+        values[bool: S3Field.usePathStyle] = false
+        #expect(S3FieldSchema.requestOrigin(values) == "https://backups.minio.example.test:9000")
+    }
+
+    @Test func pathStyleAddressingLeavesTheOriginAtTheEndpointHost() {
+        var values = FieldValues()
+        values[S3Field.endpoint] = "minio.example.test:9000"
+        values[S3Field.bucket] = "backups"
+        values[bool: S3Field.usePathStyle] = true
+        #expect(S3FieldSchema.requestOrigin(values) == "https://minio.example.test:9000")
+    }
+
+    /// A bucket-list session has no bucket to put in front of the host, in
+    /// either style — the same reason `S3FileSystem.bucketListURL` does not
+    /// go through `requestURL`.
+    @Test func aBucketListSessionHasNoBucketToPutInFrontOfTheHost() {
+        var values = FieldValues()
+        values[S3Field.endpoint] = "minio.example.test:9000"
+        values[S3Field.bucket] = "backups"
+        values[bool: S3Field.usePathStyle] = false
+        values[bool: S3Field.startsAtBucketList] = true
+        #expect(S3FieldSchema.requestOrigin(values) == "https://minio.example.test:9000")
+    }
+
+    /// The maintainer's own spelling, and the case that made the rule
+    /// necessary: `192.0.2.10:9000` with the default addressing would send
+    /// the request to `backups.192.0.2.10`, a name no resolver answers. An IP
+    /// literal is addressed path-style, so the origin is the host itself.
+    @Test func anIPLiteralEndpointIsAddressedPathStyleSoItsOriginIsTheHost() {
+        var values = FieldValues()
+        values[S3Field.endpoint] = "192.0.2.10:9000"
+        values[S3Field.bucket] = "backups"
+        values[bool: S3Field.usePathStyle] = false
+        #expect(S3FieldSchema.pathStyleIsForced(values))
+        #expect(S3FieldSchema.usesPathStyle(values))
+        #expect(S3FieldSchema.requestOrigin(values) == "https://192.0.2.10:9000")
+    }
+
+    @Test func anIPv6LiteralEndpointIsAddressedPathStyleToo() {
+        var values = FieldValues()
+        values[S3Field.endpoint] = "[::1]:9000"
+        values[S3Field.bucket] = "backups"
+        values[bool: S3Field.usePathStyle] = false
+        #expect(S3FieldSchema.pathStyleIsForced(values))
+        #expect(S3FieldSchema.requestOrigin(values) == "https://[::1]:9000")
+    }
+
+    /// A named host is left to the user's own choice of addressing.
+    @Test func aNamedHostDoesNotForceAnAddressingStyle() {
+        var values = FieldValues()
+        values[S3Field.endpoint] = "minio.example.test:9000"
+        #expect(S3FieldSchema.pathStyleIsForced(values) == false)
+    }
+
+    /// The endpoint field is ordinary input, and a credential can be typed
+    /// into it (`https://KEY:SECRET@host` — a spelling `S3AccessProbe`
+    /// already reckons with). Everything this file composes is scheme, host
+    /// and port, so no userinfo can reach a screen through it.
+    ///
+    /// The secret lives in a named constant and every answer is reduced to a
+    /// `Bool` BEFORE the expectation: `#expect` reports the SOURCE TEXT of
+    /// what it checks, so a secret written into an expectation leaks through
+    /// the failure message — the one exit a test opens by itself.
+    @Test func noCredentialInTheEndpointReachesTheOriginOrTheCanonicalSpelling() {
+        let key = "AKIAEXAMPLE"
+        let secret = "s3cr3t-do-not-print"
+        var values = FieldValues()
+        values[S3Field.endpoint] = "https://\(key):\(secret)@minio.example.test:9000"
+        values[S3Field.bucket] = "backups"
+        values[bool: S3Field.usePathStyle] = true
+
+        let origin = S3FieldSchema.requestOrigin(values) ?? ""
+        let canonical = S3FieldSchema.canonicalEndpoint(values[S3Field.endpoint]) ?? ""
+        let summary = S3FieldSchema.displaySummary(values)
+        let originIsClean = !origin.contains(secret) && !origin.contains(key)
+        let canonicalIsClean = !canonical.contains(secret) && !canonical.contains(key)
+        let summaryIsClean = !summary.contains(secret) && !summary.contains(key)
+
+        #expect(originIsClean)
+        #expect(canonicalIsClean)
+        #expect(summaryIsClean)
+        #expect(origin == "https://minio.example.test:9000")
     }
 }

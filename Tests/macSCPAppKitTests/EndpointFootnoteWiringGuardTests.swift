@@ -41,6 +41,16 @@ struct EndpointFootnoteWiringGuardTests {
     /// declaration at the same indentation. Nil when the function is gone,
     /// which every caller turns into a failure rather than into an empty
     /// string that satisfies a scan.
+    /// The catalog keys these lines name. Written once, read by the checks
+    /// that scan the view and by the one that scans the catalog, so the two
+    /// cannot disagree about which keys exist.
+    private static let footnoteKeys = [
+        "connection.s3.endpoint.understood %@",
+        "connection.s3.endpoint.unreadable",
+    ]
+
+    private static let pathStyleHintKey = "connection.s3.pathStyle.forcedByIP"
+
     private static func footnoteBody(in source: String) -> String? {
         guard let start = source.range(of: "private func fieldFootnote(") else { return nil }
         let rest = source[start.upperBound...]
@@ -62,6 +72,11 @@ struct EndpointFootnoteWiringGuardTests {
             what it understood — a form that silently assumes https for a \
             schemeless endpoint and shows nothing about it.
             """)
+        #expect(argumentList.contains("forcedValues:"), """
+            The SchemaFormView built by ConnectionFormView carries no \
+            `forcedValues:` argument, so a field whose value a rule decides \
+            is rendered as a control the user can still change.
+            """)
     }
 
     @Test func theSchemaViewDrawsWhateverTheFootnoteReturns() throws {
@@ -72,16 +87,71 @@ struct EndpointFootnoteWiringGuardTests {
             """)
     }
 
-    /// The footnote's text is composed in Core (`canonicalEndpoint` yields
-    /// `scheme://host[:port]`) and localized in the App. Both halves are
-    /// checked, because either one alone is a different feature: a hardcoded
-    /// English sentence, or a localized sentence about nothing.
-    @Test func theFootnoteAsksCoreWhatTheEndpointMeansAndSaysItLocalized() throws {
+    /// The footnote's text is composed in Core and localized in the App.
+    /// Both halves are checked, because either one alone is a different
+    /// feature: a hardcoded English sentence, or a localized sentence about
+    /// nothing.
+    ///
+    /// The Core function is `requestOrigin`, not `canonicalEndpoint` (review
+    /// 2026-09-04, I-3): under virtual-hosted addressing the request goes to
+    /// `<bucket>.<host>`, so a line built from the endpoint's own origin
+    /// announces a destination the app does not dial.
+    @Test func theFootnoteAsksCoreWhereTheRequestGoesAndSaysItLocalized() throws {
         let body = try #require(Self.footnoteBody(in: try Self.formView()),
                                 "fieldFootnote is gone from ConnectionFormView")
-        #expect(body.contains("S3FieldSchema.canonicalEndpoint("))
-        #expect(body.contains("connection.s3.endpoint.understood %@"))
-        #expect(body.contains("connection.s3.endpoint.unreadable"))
+        #expect(body.contains("S3FieldSchema.requestOrigin("))
+        #expect(!body.contains("S3FieldSchema.canonicalEndpoint("), """
+            fieldFootnote prints the ENDPOINT's origin. Under virtual-hosted \
+            addressing the request goes to <bucket>.<host>, which is a \
+            different name — print `requestOrigin` instead.
+            """)
+        for key in Self.footnoteKeys {
+            #expect(body.contains(key))
+        }
+    }
+
+    /// Every catalog key the footnote and the path-style hint name is
+    /// declared in `en.lproj` — the source catalog `LocalizationParityTests`
+    /// measures the other three against. Without this anchor the checks above
+    /// would be satisfied by a key that renders to the user as its own raw
+    /// text, in every language at once.
+    @Test func everyKeyTheseLinesNameIsInTheEnglishCatalog() throws {
+        let catalog = try String(
+            contentsOf: Self.repoRoot.appendingPathComponent(
+                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
+            encoding: .utf8)
+        for key in Self.footnoteKeys + [Self.pathStyleHintKey] {
+            #expect(catalog.contains("\"\(key)\" = "), """
+                en.lproj/Localizable.strings declares no \(key).
+                """)
+        }
+    }
+
+    /// I-3's other half: the toggle a user can no longer change is DISABLED,
+    /// and a line says why. Both ends are checked — the form deciding it
+    /// (from Core's rule, not a predicate of its own) and the renderer
+    /// applying it.
+    @Test func theForcedPathStyleToggleIsDisabledAndTheFormSaysWhy() throws {
+        let form = try Self.formView()
+        #expect(form.contains("S3FieldSchema.pathStyleIsForced("), """
+            ConnectionFormView no longer asks Core whether path style is \
+            forced, so either the toggle is left changeable for an IP-literal \
+            endpoint or the form has grown a second copy of that rule.
+            """)
+        #expect(form.contains(Self.pathStyleHintKey))
+        #expect(form.contains("S3Field.usePathStyle.rawValue"))
+
+        let schema = try Self.schemaView()
+        #expect(schema.contains("forcedValues[field.id]"), """
+            SchemaFormView takes the forced values but never reads them for a \
+            row, so a field whose value a rule decides is still editable.
+            """)
+        let greyed = schema.components(separatedBy: "\n")
+            .filter { $0.contains(".disabled(") && $0.contains("forcedValues") }
+        #expect(!greyed.isEmpty, """
+            No `.disabled(` in SchemaFormView reads `forcedValues`, so a \
+            forced field is drawn as an ordinary, editable control.
+            """)
     }
 
     /// The footnote is about the ENDPOINT field, identified by the schema
@@ -98,20 +168,32 @@ struct EndpointFootnoteWiringGuardTests {
             """)
     }
 
-    /// A message about a connection must never carry the login. The footnote
-    /// reads exactly one field's value and composes an ORIGIN from it, so no
-    /// access key or secret can reach the screen through this line — and
-    /// naming any other S3 field here would be the change that breaks that.
+    /// A message about a connection must never carry the LOGIN. The footnote
+    /// composes an origin (host, port, bucket) and a fixed sentence, so no
+    /// access key or secret can reach the screen through it — and reading a
+    /// credential field here is the change that would break that.
+    ///
+    /// The forbidden ids are S3's own CREDENTIAL SCHEMA, read off the
+    /// descriptor rather than listed: a field added to that schema is covered
+    /// the day it is added. Until review 2026-09-04 this check forbade every
+    /// field but the endpoint, which was too wide by exactly one — the
+    /// path-style toggle's own hint is drawn by this function too.
+    ///
     /// Paired with the presence checks above, which prove the body is still
-    /// there to scan.
-    @Test func theFootnoteNamesNoFieldButTheEndpoint() throws {
+    /// there to scan; the value-level proof that no credential reaches the
+    /// composed text is Core's
+    /// `noCredentialInTheEndpointReachesTheOriginOrTheCanonicalSpelling`.
+    @Test func theFootnoteReadsNoCredentialField() throws {
         let body = try #require(Self.footnoteBody(in: try Self.formView()),
                                 "fieldFootnote is gone from ConnectionFormView")
-        for field in S3Field.allCases where field != .endpoint {
-            #expect(!body.contains("S3Field.\(field.rawValue)"), """
-                fieldFootnote reads S3Field.\(field.rawValue). The line it \
-                draws is a sentence about where the connection points; only \
-                the endpoint belongs in it.
+        let credentialFields = BackendDescriptor.descriptor(for: .s3)
+            .credentialSchema.fields.map(\.id)
+        #expect(!credentialFields.isEmpty, "S3 declares no credential fields — nothing to check")
+        for id in credentialFields {
+            #expect(!body.contains("S3Field.\(id)"), """
+                fieldFootnote reads S3Field.\(id), a credential field. The \
+                line it draws is a sentence about where the connection \
+                points; a login never belongs in it.
                 """)
         }
     }

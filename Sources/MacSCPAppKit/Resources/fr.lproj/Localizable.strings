@@ -144,6 +144,7 @@
 "connection.s3.accessKey" = "ID de clé d'accès";
 "connection.s3.secretKey" = "Clé d'accès secrète";
 "connection.s3.pathStyle" = "Utiliser des URL de style chemin";
+"connection.s3.pathStyle.forcedByIP" = "Une adresse IP est toujours adressée en style chemin.";
 "connection.s3.preset.label" = "Modèle de fournisseur";
 "connection.s3.preset.aws" = "Amazon S3";
 "connection.s3.preset.hetzner" = "Hetzner Object Storage";

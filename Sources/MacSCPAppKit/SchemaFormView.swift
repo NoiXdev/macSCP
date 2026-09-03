@@ -84,6 +84,23 @@ struct SchemaFormView: View {
     /// only what is true of the field itself.
     var footnote: ((_ field: ConnectionField, _ value: String) -> String?)?
 
+    /// Fields whose value is decided by a RULE rather than by the user: the
+    /// id maps to the value the form must show, and the row is rendered
+    /// greyed and unwritable (review 2026-09-04, I-3).
+    ///
+    /// One field uses it today: S3's `usePathStyle` when the endpoint's host
+    /// is an IP literal. Virtual-hosted addressing would put the bucket in
+    /// front of the host — `backups.192.0.2.10`, a name no resolver answers —
+    /// so `S3FieldSchema` forces path style for such an endpoint in both the
+    /// config and the stored session, and a checkbox the user can still tick
+    /// would be a control over nothing.
+    ///
+    /// The VALUE is carried, not merely the id: a disabled checkbox showing
+    /// the user's old choice while the connection is addressed the other way
+    /// is a form that lies quietly. The rule's own hint reaches the row
+    /// through `footnote` above.
+    var forcedValues: [String: String] = [:]
+
     /// The provider preset currently shown. Real state, mirroring the M12 S3
     /// picker: without it the field would snap back to blank after each pick.
     /// Starts unset -- applying a preset is always the user's own act, so a
@@ -114,6 +131,10 @@ struct SchemaFormView: View {
             leafRow(label: L10n.string(field.labelKey, field.labelDefault),
                     kind: leafKind, binding: binding(field.id))
                 .errorHighlight(failedFieldID == key(field.id))
+                // Greyed for a field whose value a rule decides. The footnote
+                // below stays enabled, because the sentence explaining why is
+                // the one part of the row that must stay readable.
+                .disabled(forcedValues[field.id] != nil)
             // Drawn like this form's other inline message under a field (the
             // name-conflict line in `ConnectionFormView`): a label-less
             // `FormRow`, so it sits under the field it is about.
@@ -265,6 +286,13 @@ struct SchemaFormView: View {
     private func binding(_ fieldID: String, _ leafID: String? = nil) -> Binding<String> {
         let key = key(fieldID, leafID)
         let intercept = interceptEdit
+        // A forced field reads its rule's value and swallows writes. The
+        // control is disabled too, so this is belt and braces — but the
+        // binding is what makes the wrong value unexpressible rather than
+        // merely unreachable through the mouse.
+        if leafID == nil, let forced = forcedValues[fieldID] {
+            return Binding(get: { forced }, set: { _ in })
+        }
         return Binding(
             get: { values.raw[key] ?? "" },
             set: { newValue in

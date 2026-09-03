@@ -208,10 +208,20 @@ public enum S3FieldSchema {
     /// Foundation is the reason the rule needs code: `URLComponents(string:)`
     /// reads `minio.lan:9000` as a SCHEME of `minio.lan` with no host at all,
     /// and refuses `192.0.2.10:9000` outright because a scheme may not begin
-    /// with a digit. Five of the eight spellings in
+    /// with a digit. FOUR of the eight spellings in
     /// `S3EndpointParsingTests`' table parsed without a host before the
-    /// prefix, and a host-less endpoint is refused by every URL builder in
-    /// `S3FileSystem` with "Invalid S3 endpoint".
+    /// prefix, and a fifth (`192.0.2.10:9000`) did not parse at all — counted
+    /// from that table's own before-measurement on 2026-09-03.
+    ///
+    /// Those two outcomes are refused in two different places, and an earlier
+    /// version of this comment conflated them (review 2026-09-04, I-1;
+    /// `S3AccessProbe.answer(for:)` states it correctly): a string that does
+    /// not parse is refused by `S3FileSystem`'s URL builders with "Invalid S3
+    /// endpoint", while a string that parses with NO HOST gets past them
+    /// under path-style addressing and is refused by
+    /// `S3RequestSigning.signedRequest` with "S3 endpoint has no host"
+    /// (virtual-hosted addressing refuses it one step earlier, in
+    /// `requestURL`/`keyRequestURL`, with "Invalid S3 endpoint host").
     ///
     /// The trim happens BEFORE the scheme test, or a pasted leading space
     /// would make ` https://host` look schemeless and earn a second prefix.
@@ -264,11 +274,83 @@ public enum S3FieldSchema {
     /// in any request, and repeating it here would claim otherwise.
     public static func canonicalEndpoint(_ endpoint: String) -> String? {
         guard let components = endpointComponents(endpoint),
-            let host = components.host, !host.isEmpty
+            let host = components.host, !host.isEmpty,
+            // Never nil in practice — the parse above either found a scheme
+            // or wrote one — but read rather than defaulted: a `??` here
+            // would be a second, unreachable answer to "what scheme is this",
+            // and refusing is the right outcome if the parse ever stops
+            // guaranteeing one.
+            let scheme = components.scheme
         else { return nil }
-        return spelling(
-            scheme: components.scheme ?? assumedEndpointScheme,
-            host: host, port: components.port)
+        return spelling(scheme: scheme, host: host, port: components.port)
+    }
+
+    /// Whether these values force path-style addressing whatever the toggle
+    /// says: the endpoint's host is an IP LITERAL (review 2026-09-04, I-3).
+    ///
+    /// Virtual-hosted addressing puts the bucket in front of the host —
+    /// `S3FileSystem.requestURL` writes `"\(bucket).\(host)"` — and
+    /// `backups.192.0.2.10` is a name no resolver answers, nor is
+    /// `backups.[::1]` an address. The maintainer's own `192.0.2.10:9000` is
+    /// exactly that case: accepted by the parse, announced by the form, and
+    /// then failing in DNS for a name nobody typed.
+    ///
+    /// A rule about what a resolver can answer, so it belongs to the values
+    /// and not to the view: `makeConfig` and `stored(from:)` both write the
+    /// forced value, and the form disables the toggle it can no longer
+    /// change.
+    public static func pathStyleIsForced(_ values: FieldValues) -> Bool {
+        guard let host = endpointComponents(values[S3Field.endpoint])?.host
+        else { return false }
+        return isIPLiteral(host)
+    }
+
+    /// The addressing this connection actually uses: the toggle, OR the
+    /// forcing above. Every reader of "is this path-style?" outside the
+    /// stored config goes through here.
+    public static func usesPathStyle(_ values: FieldValues) -> Bool {
+        values[bool: S3Field.usePathStyle] || pathStyleIsForced(values)
+    }
+
+    /// Whether `host` is an IP address rather than a name. Accepts the
+    /// BRACKETED spelling too, because that is what `URLComponents.host`
+    /// hands back for an IPv6 literal.
+    ///
+    /// `inet_pton` rather than a pattern: it is the same parser the resolver
+    /// uses, so "looks like an address" and "is one" cannot drift. A literal
+    /// carrying a zone id (`fe80::1%en0`) is not recognised — `inet_pton`
+    /// rejects it — which errs toward leaving the user's toggle alone.
+    private static func isIPLiteral(_ host: String) -> Bool {
+        let bare = host.hasPrefix("[") && host.hasSuffix("]")
+            ? String(host.dropFirst().dropLast()) : host
+        var v4 = in_addr()
+        if inet_pton(AF_INET, bare, &v4) == 1 { return true }
+        var v6 = in6_addr()
+        return inet_pton(AF_INET6, bare, &v6) == 1
+    }
+
+    /// The origin the REQUEST reaches — not the origin the endpoint field
+    /// names, which are two different things under virtual-hosted addressing
+    /// (review 2026-09-04, I-3).
+    ///
+    /// With `usePathStyle` off and a bucket set, `S3FileSystem` addresses
+    /// `<bucket>.<host>`; every other case (path-style, or a bucket-list
+    /// session that has no one bucket) reaches the endpoint's own host. The
+    /// form prints this, so what it announces is where the connection goes.
+    ///
+    /// The bucket comes from `bucketToCarry`, the same reader the config and
+    /// the stored session use, so a bucket-list session contributes none.
+    /// An IP literal can never take the virtual-hosted branch here, because
+    /// `usesPathStyle` is already true for it.
+    public static func requestOrigin(_ values: FieldValues) -> String? {
+        guard let components = endpointComponents(values[S3Field.endpoint]),
+            let host = components.host, !host.isEmpty,
+            let scheme = components.scheme
+        else { return nil }
+        let bucket = bucketToCarry(values)
+        let requestHost = !usesPathStyle(values) && !bucket.isEmpty
+            ? "\(bucket).\(host)" : host
+        return spelling(scheme: scheme, host: requestHost, port: components.port)
     }
 
     /// The endpoint spelling for a host and an optional port — what the
@@ -278,6 +360,17 @@ public enum S3FieldSchema {
     /// holds it to that.
     public static func endpointSpelling(host: String, port: Int?) -> String {
         spelling(scheme: assumedEndpointScheme, host: host, port: port)
+    }
+
+    /// `host[:port]` as the endpoint names it — the summary's half of
+    /// `spelling` below, without the scheme. Nil when the endpoint names no
+    /// host, which is what makes the caller's fallback to the raw field
+    /// text reachable.
+    private static func endpointHostText(_ values: FieldValues) -> String? {
+        guard let components = endpointComponents(values[S3Field.endpoint]),
+            let host = components.host, !host.isEmpty
+        else { return nil }
+        return components.port.map { "\(host):\($0)" } ?? host
     }
 
     /// `scheme://host[:port]`, bracketing an IPv6 literal exactly once —
@@ -364,7 +457,10 @@ public enum S3FieldSchema {
             region: values[S3Field.region].trimmingCharacters(in: .whitespacesAndNewlines),
             endpoint: values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines),
             bucket: bucketToCarry(values),
-            usePathStyle: values[bool: S3Field.usePathStyle],
+            // `usesPathStyle`, not the toggle: an IP-literal endpoint is
+            // addressed path-style whatever the form says, because
+            // `<bucket>.192.0.2.10` is a name no resolver answers (I-3).
+            usePathStyle: usesPathStyle(values),
             sessionToken: nil,
             startsAtBucketList: values[bool: S3Field.startsAtBucketList]))
     }
@@ -381,8 +477,15 @@ public enum S3FieldSchema {
     /// with the first for exactly the spellings this task is about — for
     /// `minio.lan:9000` it found no host and the sidebar fell back to
     /// printing the whole endpoint string.
+    ///
+    /// The PORT is part of it (review 2026-09-04): without it a MinIO on
+    /// 9000 and one on 9001, same host, are one line in the sidebar and one
+    /// sentence in every audit entry. Omitted when the endpoint names none,
+    /// where there is nothing to tell apart. The credentials are not here in
+    /// any spelling — this is host and port, composed the same way
+    /// `canonicalEndpoint` composes its origin.
     public static func displaySummary(_ values: FieldValues) -> String {
-        let host = endpointComponents(values[S3Field.endpoint])?.host ?? values[S3Field.endpoint]
+        let host = endpointHostText(values) ?? values[S3Field.endpoint]
         guard !values[bool: S3Field.startsAtBucketList] else { return host }
         return "\(values[S3Field.bucket]) @ \(host)"
     }
@@ -435,7 +538,10 @@ public enum S3FieldSchema {
             region: values[S3Field.region].trimmingCharacters(in: .whitespacesAndNewlines),
             endpoint: values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines),
             bucket: bucketToCarry(values),
-            usePathStyle: values[bool: S3Field.usePathStyle],
+            // Stored as it will be USED (see `makeConfig`): a session saved
+            // with an IP-literal endpoint carries path-style, so reopening it
+            // shows the addressing it actually dials with.
+            usePathStyle: usesPathStyle(values),
             startsAtBucketList: values[bool: S3Field.startsAtBucketList])
     }
 
