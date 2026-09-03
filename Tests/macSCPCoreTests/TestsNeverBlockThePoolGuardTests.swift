@@ -191,9 +191,12 @@ struct TestsNeverBlockThePoolGuardTests {
     @Test func theGuardsOwnSourceCarriesEveryPatternItLooksFor() throws {
         let files = try Self.testSources()
         #expect(files.contains(Self.ownRelativePath))
-        // Measured 2026-09-03: 316 `.swift` files under `Tests/`. A lower
-        // bound rather than the number, so adding a test file is not a
-        // failure — but an enumeration that collapses is.
+        // Measured 2026-09-03: 318 `.swift` files under `Tests/`
+        // (`find Tests -name '*.swift' | wc -l`). A lower bound rather than
+        // the number, so adding a test file is not a failure — but an
+        // enumeration that collapses is. This count has already drifted
+        // twice in this branch (316 -> 317 -> 318); it is written down as a
+        // measurement of the moment, not a fact to keep in sync.
         #expect(files.count > 200, "the scan enumerated only \(files.count) files")
 
         let source = Self.strippingComments(

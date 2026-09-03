@@ -118,10 +118,11 @@ enum SubprocessRunner {
     /// Runs `executable` with `arguments`, drains both pipes, and awaits
     /// termination without parking a cooperative-pool thread.
     ///
-    /// Both pipes are drained CONCURRENTLY, on their own queues. Reading
-    /// stdout to EOF before touching stderr deadlocks as soon as the child
-    /// fills the stderr pipe's kernel buffer while this side is still
-    /// waiting on stdout — the same hazard `PasswordCommandSecretSource`
+    /// Both pipes are drained CONCURRENTLY, each by its own
+    /// `readabilityHandler` source rather than a blocking read to EOF.
+    /// Draining stdout to EOF before touching stderr deadlocks as soon as
+    /// the child fills the stderr pipe's kernel buffer while this side is
+    /// still waiting on stdout — the same hazard `PasswordCommandSecretSource`
     /// guards against (`Sources/macSCPCore/Sessions/CLISecretSources.swift`).
     ///
     /// Bounded, because an unbounded wait turns "the command stalled" into

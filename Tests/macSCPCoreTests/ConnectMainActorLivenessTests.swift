@@ -171,7 +171,13 @@ struct ConnectMainActorLivenessTests {
     /// The two margins, as ratios rather than adjectives. Block side:
     /// test 1's 5 s and test 2's ~6 s against the largest ceiling this can
     /// return, 4 s — 1.25× and 1.5×; against the 2 s floor, 2.5× and 3×.
-    /// Noise side: the largest gap the 2026-09-02 tally recorded is
+    /// That 1.25×/1.5× is the DIAL's design margin over the ceiling, not
+    /// what either test's `elapsed` anchor pins: both anchors assert
+    /// `elapsed` against the cap constant itself (`.seconds(4)`,
+    /// `.seconds(5)`), i.e. 1.0×, so they prove the dial cleared the
+    /// ceiling and no more — a dial trimmed toward the cap keeps the
+    /// anchor green while eroding the 1.25×/1.5× the paragraph above
+    /// describes. Noise side: the largest gap the 2026-09-02 tally recorded is
     /// 1.324 s, which is 1.51× under the floor (1.67× if that run's own
     /// ambient, 0.739 s, had lifted the ceiling to 2.217 s). So the block
     /// side clears two only at the floor, and the noise side does not clear

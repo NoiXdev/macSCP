@@ -276,14 +276,25 @@ struct SubprocessRunnerTests {
             "\(writeEnds.count) blocks all started on a pool the kernel limits to \(limit): not saturated")
         while writeEnds.count < min(limit + margin, cap) { park(nil) }
 
+        // `sleep 60`, not 10: CI run 33705649537 caught this exact shape —
+        // this test saturating the pool while a NEIGHBOUR held a 2 s bound
+        // over a `sleep 10` child, whose bound fired ~17 s late, after the
+        // child had already exited. Here the saturating test and the bound
+        // are the same test, so the risk lands on whoever runs it: on a
+        // smaller or busier machine than the one this file's numbers were
+        // measured on, this 2 s bound can itself fire late enough to find
+        // an exited `sleep 10` child, and the marker assertion below — the
+        // entire proof this test exists for — never executes. `aadbafca`
+        // made this same correction, `sleep 10` to `sleep 60`, for the
+        // neighbour run 33705649537 actually broke; this is its twin.
         let marker = "under-saturation-\(UUID().uuidString)"
         var thrown: SubprocessTimeout?
         do {
             _ = try await SubprocessRunner.run(
                 Self.shell,
-                arguments: ["-c", "echo '\(marker)' >&2; exec sleep 10"],
+                arguments: ["-c", "echo '\(marker)' >&2; exec sleep 60"],
                 timeout: .seconds(2))
-            Issue.record("a child sleeping for 10 s returned inside a 2 s bound")
+            Issue.record("a child sleeping for 60 s returned inside a 2 s bound")
         } catch let error as SubprocessTimeout {
             thrown = error
         }
