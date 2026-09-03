@@ -142,6 +142,16 @@ secret empty and the result alert counts "s secrets not read". macSCP
 never writes to Cyberduck's items and never caches what it read outside
 its own `SecretStore` slot for the session.
 
+*Measured 2026-09-03 on the maintainer's machine (metadata only, never
+the value — `security find-internet-password -s <host>` without `-w`):*
+Cyberduck's items carry `ptcl` (`ssh ` for sftp, `htps` for s3) and
+`port` (0x17 = 23 for the sftp bookmark on port 23; 0x1BB = 443 for the
+s3 bookmark), so the reader's query with `kSecAttrPort` set matches. The
+two sftp bookmarks on port 22 have no item at all (key logins); whether
+an item saved for a default-port password login carries `port` 22 is
+therefore unmeasured — the reader queries with the port when the
+bookmark has one, and a miss reports "not read", never a wrong value.
+
 ## 5. Errors
 
 - Folder unreadable / no `.duck` files: one sentence in the sheet, no
