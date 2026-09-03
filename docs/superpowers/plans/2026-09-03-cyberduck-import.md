@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** File → Import → "From Cyberduck…" reads Cyberduck's bookmark
+**Goal:** Sessions → "From Cyberduck…" (shipped in the Sessions menu; the plan first said File → Import) reads Cyberduck's bookmark
 folder, shows every bookmark in a preview with a checkbox and a status
 (new / known unchanged / known changed with the field diff / not
 supported), and imports or updates the selected ones through the
@@ -131,10 +131,10 @@ public struct CyberduckSecretReader: Sendable {
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/Presentation/ImportFromSourceViewModel.swift` (`@MainActor @Observable`: `load(source:folder:)`, `rows`, `switches`, `summary`, `toggle(row:)`, `selectAll/none`, `payload()`), `Sources/MacSCPAppKit/ImportFromSourceSheet.swift`
-- Modify: the File → Import menu (beside `menu.importSessions`), `ContentView+ExportImport.swift` (a `PendingSessionImport` from the sheet's payload goes into the existing `applyImport`; with `takeSecrets` the applier asks `CyberduckSecretReader` per selected row before planning and puts the values on the `ExportedSession.password`), the result alert (one more line: updated count; secrets not read count); four App catalogs (`menu.importFromCyberduck`, the sheet's title/status/switch/summary keys, the field names for the change list)
+- Modify: the Sessions menu (shipped there; the plan first said File → Import) (beside `menu.importSessions`), `ContentView+ExportImport.swift` (a `PendingSessionImport` from the sheet's payload goes into the existing `applyImport`; with `takeSecrets` the applier asks `CyberduckSecretReader` per selected row before planning and puts the values on the `ExportedSession.password`), the result alert (one more line: updated count; secrets not read count); four App catalogs (`menu.importFromCyberduck`, the sheet's title/status/switch/summary keys, the field names for the change list)
 - Test: `Tests/macSCPAppKitTests/ImportFromSourceViewModelTests.swift` (rows/summary/toggle on a fake source), `ImportFromCyberduckGuardTests.swift` (menu entry wired to the sheet; the sheet renders the four statuses; both switches bound to the view model; no `onAppear` import; positive anchors), catalogs complete (`swift test --filter Localiz`, `GermanAddressForm`)
 
-- [x] Red first, implement, full suite green, commit `feat(import): import from Cyberduck — preview, selection, update`. Done at `b612ebe1`.
+- [x] Red first, implement, full suite green, commit `feat(import): import from Cyberduck — preview, selection, update`. Done at `b612ebe1`, `70188e09`.
 
 ### Task 6: Closeout
 

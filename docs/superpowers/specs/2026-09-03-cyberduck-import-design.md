@@ -1,6 +1,6 @@
 # Cyberduck Import — Design
 
-**Status:** shipped 2026-09-03 — `167cbfbe` (Task 1, provenance on
+**Status:** shipped 2026-09-03 (Task 5's fix round `70188e09` included: a three-state keychain answer, the folder read off the main actor) — `167cbfbe` (Task 1, provenance on
 `StoredSession`/`ExportedSession`), `d146ce5d` (Task 2,
 `CyberduckBookmarkSource`), `2c354476`/`e8a61bd5`/`61eeb24e` (Task 3,
 `ImportPreviewPlanner`), `43c4b4d2` (Task 4, `CyberduckSecretReader`,
@@ -94,9 +94,12 @@ ExternalBookmark                  ImportPreviewPlanner
   bucket/endpoint, labels when the tags switch is on, nickname).
 - **Applying**: selected `.new` rows become fresh `ExportedSession`s;
   selected `.knownChanged` rows become `ExportedSession`s carrying the
-  stored session's `id` with `replacesExisting: true` (the planner's
+  stored session's `id` with `replaces: <that id>` (`ExportedSession.replaces`,
+  in-memory only, honoured by the planner without an arbiter question — the
   existing seam) and only the Cyberduck-known fields replaced — name,
-  group, tags (unless the switch is on), notes, colour, secrets (unless
+  group, position and pane visibility copied from the record (there are
+  no notes or colours on a session), the nickname taken as the name, tags
+  (unless the switch is on) and secrets (unless
   the switch is on) are copied from the stored record first. Everything
   then flows through `SessionImportPlanner`; a name collision with an
   unrelated session is made unique the way every import does it, without
@@ -117,11 +120,13 @@ ExternalBookmark                  ImportPreviewPlanner
 
 Key files are referenced by path, never copied; a path that does not
 exist at import time is kept (the user may restore it) and the preview
-says "key file missing" in the row's detail.
+is shown as it is (a "key file missing" hint in the row was planned and
+not shipped; open).
 
 ## 4. What the user sees
 
-Menu: File → Import → "From Cyberduck…" beside the existing "Import
+Menu: Sessions → "From Cyberduck…" (shipped there, beside the sessions
+import commands; the earlier wording here said File → Import) — "Import
 sessions…". If the default folder exists the sheet opens at once;
 otherwise a folder picker first.
 
@@ -180,7 +185,8 @@ bookmark has one, and a miss reports "not read", never a wrong value.
   change list; a changed nickname alone is `.knownChanged` (name is a
   Cyberduck-known field) but never a *match* criterion.
 - Applying: a `.knownChanged` row keeps the stored record's group,
-  notes, colour and secret when the switches are off; replaces tags and
+  group, position, pane visibility and secret when the switches are off;
+  replaces tags and
   secret when on; `importedAt` refreshed; the planner's invariants
   (exactly-once secrets, the connection-conflict sheet for unrelated collisions) —
   through the existing `SessionImportPlanner` tests' fixtures.
@@ -189,7 +195,7 @@ bookmark has one, and a miss reports "not read", never a wrong value.
   through the reader, deleted in a `defer`; the consent prompt cannot be
   tested — the test runs in the test process's own ACL.
 - App: `ImportFromCyberduckGuardTests` — the menu entry, the sheet's
-  four states, the two switches and the summary line are wired
+  five states, the two switches and the summary line are wired
   (`SwiftSource` views, positive anchors); four catalogs for every new
   key; German du.
 
