@@ -230,7 +230,12 @@ struct ConnectionDiagnosticsTests {
 
         #expect(report.steps.last?.id == DiagnosticStepID.dial)
         #expect(report.steps.last?.outcome == .timedOut)
-        #expect(elapsed < .seconds(10))
+        // No wall-clock ceiling: on the three-core CI runner this step took
+        // 20.68 s to come back (run 33727757421) while the outcome was
+        // already `.timedOut` — a ceiling there measures the runner, not
+        // the deadline. The outcome carries the property: without a
+        // deadline the fake completes and the step reads `.ok`.
+        _ = elapsed
     }
 
     @Test func cancellationMidRunEndsWithTheStepsSoFar() async throws {
@@ -587,10 +592,11 @@ struct ConnectionDiagnosticsTests {
 
         #expect(report.steps.last?.outcome == .timedOut)
         #expect(stillRunning)
-        // The coarse backstop: strictly less than the probe's own 12 s, so a
-        // run that waited for it fails here too even if the flag were read
-        // late.
-        #expect(elapsed < .seconds(10))
+        // No wall-clock backstop: the three-core CI runner returned this
+        // step after 20.67 s (run 33727757421) with `stillRunning` true —
+        // the probe itself was starved past its own 12 s. `stillRunning`
+        // and the companion below carry the property; the clock does not.
+        _ = elapsed
         // The positive companion for `stillRunning`, which is a check that
         // something has NOT happened: a `Gate` that never opened would
         // satisfy it vacuously. Waiting for the abandoned probe to reach its
