@@ -15,9 +15,10 @@ public enum ConflictResolution: Sendable, Equatable { case overwrite, skip, rena
 /// behavioral test that drives the real give-up path — something that gets
 /// caught when it is.
 public enum CancelReason: Sendable, Equatable {
-    /// A deliberate stop chosen by the person at the keyboard: disconnect,
-    /// tab close, reconnect-in-place, or cancelling a connection attempt.
-    /// Swept items read `.cancelled`.
+    /// A deliberate stop chosen by the person at the keyboard: the transfer
+    /// bar's "Cancel all", or a teardown they asked for — disconnect, tab
+    /// close, reconnect-in-place, cancelling a connection attempt. Swept
+    /// items read `.cancelled`.
     case userRequested
     /// The connection was found gone (liveness give-up). The running item
     /// fails with a localized "connection lost" reason and every
@@ -108,6 +109,25 @@ public final class TransferQueueViewModel {
                 switch self {
                 case .finished, .failed, .cancelled, .skipped, .interrupted: return true
                 case .queued, .running: return false
+                }
+            }
+
+            /// true exactly while the person at the keyboard can still stop
+            /// this item: it has not started, or it is transferring right
+            /// now. The transfer bar offers its per-row cancel for these two
+            /// states and for no other, and `cancel(itemID:)` acts on these
+            /// two and on no other — one predicate, so the button that is
+            /// shown and the call that is answered can never disagree.
+            ///
+            /// Written as an exhaustive switch rather than as `!isTerminal`,
+            /// even though the two coincide today: a later non-terminal
+            /// state has to be listed here before this file compiles again,
+            /// which is where the question "can a user cancel that one?"
+            /// gets asked.
+            public var isCancellable: Bool {
+                switch self {
+                case .queued, .running: return true
+                case .finished, .failed, .cancelled, .skipped, .interrupted: return false
                 }
             }
         }
@@ -736,6 +756,66 @@ public final class TransferQueueViewModel {
         //    task handles is stable even as `slotFinished` mutates the dict.
         let active = Array(processTasks.values)
         for task in active { await task.value }
+    }
+
+    /// Cancels EXACTLY ONE item, at the person's request — the transfer
+    /// bar's per-row cancel. Returns `true` when the item was still open and
+    /// this call took responsibility for it, `false` for an unknown id or an
+    /// item that has already reached a terminal state (so a click on a stale
+    /// row resurrects nothing).
+    ///
+    /// One item, and only that one. A file that belongs to a folder transfer
+    /// is cancelled on its own here: the group's other items keep going, and
+    /// the group's accounting simply counts this one as terminal like any
+    /// other, so `onCompleted` still fires exactly once. That is the
+    /// opposite of the conflict dialog's Cancel, which aborts the WHOLE
+    /// folder via `cancelGroup` (M6a) — there the person is answering a
+    /// question about the folder, here they are pointing at one row.
+    ///
+    /// The three states an open item can be in are handled where
+    /// `cancelAll(reason: .userRequested)` handles them, for the same
+    /// exactly-once reasons documented there:
+    ///
+    /// - **Queued**: dropped out of `order` and marked terminal right here,
+    ///   synchronously, before any slot can pick it up. Its job is cleared
+    ///   in the same statement run, so a later `process` cannot re-terminalize it.
+    /// - **Resolving** (dequeued, inside `resolveConflictIfNeeded` — a stat
+    ///   probe, an open decider prompt, rename probing — but not yet
+    ///   registered as a running transfer): the same synchronous sweep.
+    ///   `process` sees the missing `jobs[id]` entry when it wakes and
+    ///   returns without touching status or waiter.
+    /// - **Running**: cooperative cancellation ONLY. Nothing about the
+    ///   item's state is written here; `process`'s `catch is
+    ///   CancellationError` branch is the single choke point that marks it
+    ///   `.cancelled`, resumes the waiter and frees the slot — which is also
+    ///   what lets a transfer whose `copyFile` had already returned finish
+    ///   normally instead of being retro-cancelled. `connectionLossReasons`
+    ///   is deliberately not touched, so that branch lands on `.cancelled`
+    ///   rather than on a "connection lost" failure: the person chose this.
+    ///
+    /// The freed slot is refilled by the ordinary `slotFinished` →
+    /// `kickWorker` path, in FIFO order — cancelling the running item hands
+    /// its slot to the next queued one rather than stalling the queue.
+    @discardableResult
+    public func cancel(itemID: UUID) -> Bool {
+        if let position = order.firstIndex(of: itemID) {
+            order.remove(at: position)
+            setStatus(itemID, .cancelled)
+            jobs[itemID] = nil
+            resumeWaiter(itemID, with: .failure(CancellationError()))
+            return true
+        }
+        if resolvingJobIDs.remove(itemID) != nil {
+            setStatus(itemID, .cancelled)
+            jobs[itemID] = nil
+            resumeWaiter(itemID, with: .failure(CancellationError()))
+            return true
+        }
+        if let transfer = runningTransferTasks[itemID] {
+            transfer.cancel()
+            return true
+        }
+        return false
     }
 
     /// Conflict-dialog "Cancel" on a tree item aborts the WHOLE folder

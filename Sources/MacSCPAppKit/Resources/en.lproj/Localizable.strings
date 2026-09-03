@@ -245,6 +245,11 @@
 "transfers.empty" = "No transfers";
 "transfers.pending" = "Transfers — %lld pending";
 "transfers.clear" = "Clean up";
+
+/* Cancelling transfers (2026-09-03): the bar's "Cancel all", and the
+   hover hint of the icon-only cancel on a queued or running row. */
+"transfers.cancelAll" = "Cancel all";
+"transfers.cancel" = "Cancel this transfer";
 "transfers.status.queued" = "queued";
 "transfers.status.cancelled" = "cancelled";
 "transfers.status.skipped" = "skipped";

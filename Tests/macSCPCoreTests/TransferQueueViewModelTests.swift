@@ -3302,6 +3302,327 @@ struct TransferQueueViewModelTests {
 
         await waitUntil { vm.isActive == false }
     }
+
+    // MARK: - User-requested cancel: one item, or all of them (2026-09-03)
+
+    /// The predicate the transfer bar reads to decide whether a row gets a
+    /// cancel button at all, over EVERY status the queue can produce — a
+    /// total check, so a new status cannot slip in as silently cancellable
+    /// (or silently not).
+    @Test func onlyQueuedAndRunningItemsAreCancellable() {
+        let progress = TransferProgress(bytesTransferred: 1, totalBytes: 2)
+        let cancellable: [TransferQueueViewModel.Item.Status] = [.queued, .running(progress)]
+        let notCancellable: [TransferQueueViewModel.Item.Status] =
+            [.finished, .failed("nope"), .cancelled, .skipped, .interrupted]
+        for status in cancellable {
+            #expect(status.isCancellable, "\(status) is still open work and must offer a cancel")
+        }
+        for status in notCancellable {
+            #expect(!status.isCancellable, "\(status) is terminal — cancelling it would mean nothing")
+        }
+    }
+
+    /// Cancelling the RUNNING item: it ends `.cancelled` (not `.failed` —
+    /// the person chose it), its waiter is resumed exactly once, and the
+    /// slot it frees goes to the next QUEUED item in FIFO order rather than
+    /// stalling the queue. The write order is the FIFO proof: a cancelled
+    /// transfer never reaches `QueueTestFS.write`'s bookkeeping, so the two
+    /// survivors must appear in enqueue order and 1.txt not at all.
+    @Test func cancelOneRunningItemFreesItsSlotForTheNextQueuedItem() async throws {
+        let content = Data("c".utf8)
+        let started1 = TestSignal()
+        let gate1 = TestSignal()   // never fired: only the cancel can release it
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: content, started: started1, gate: gate1),
+            "/2.txt": .init(content: content),
+            "/3.txt": .init(content: content),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: 2 and 3 must stay .queued until the cancel
+
+        // The running item carries the waiter, so exactly-once is observable
+        // from both sides: a second resume traps the process outright, and a
+        // missing one leaves `waitTask.value` below waiting forever.
+        let waiterThrew = Counter()
+        let waitTask = Task { @MainActor in
+            do {
+                try await vm.enqueueAndWait(
+                    fileName: "1.txt", direction: .upload,
+                    source: source, sourcePath: "/1.txt",
+                    destination: destination, destinationDirectory: "/dest")
+            } catch {
+                waiterThrew.increment()
+            }
+        }
+        await waitUntil { vm.items.count == 1 }
+        let runningID = vm.items[0].id
+        vm.enqueue(
+            fileName: "2.txt", direction: .upload,
+            source: source, sourcePath: "/2.txt",
+            destination: destination, destinationDirectory: "/dest",
+            onCompleted: nil)
+        vm.enqueue(
+            fileName: "3.txt", direction: .upload,
+            source: source, sourcePath: "/3.txt",
+            destination: destination, destinationDirectory: "/dest",
+            onCompleted: nil)
+
+        try await started1.wait()
+        await waitUntil { vm.items.count == 3 && vm.items[1].status == .queued }
+        #expect(vm.items[0].status.isRunning)
+
+        #expect(vm.cancel(itemID: runningID))
+
+        // Bounded first, then unbounded: without the require, a regression
+        // that never resumes the waiter would park this test on
+        // `waitTask.value` forever instead of reporting red.
+        await waitUntil { waiterThrew.value == 1 }
+        try #require(waiterThrew.value == 1)
+        await waitTask.value
+        #expect(waiterThrew.value == 1)
+        // Nothing is kicked here: the freed slot must refill on its own.
+        await waitUntil { vm.isActive == false }
+        #expect(vm.items[0].status == .cancelled)
+        #expect(vm.items[1].status == .finished)
+        #expect(vm.items[2].status == .finished)
+        #expect(await destination.writeOrder == ["/dest/2.txt", "/dest/3.txt"])
+    }
+
+    /// Cancelling a QUEUED item: it never starts. Proven at the source
+    /// rather than at the queue — `readOffsets` records every path
+    /// `readStream` was opened for, so an absent entry says the transfer was
+    /// never begun, which a `.cancelled` status alone would not.
+    @Test func cancelOneQueuedItemNeverStartsIt() async throws {
+        let content = Data("c".utf8)
+        let started1 = TestSignal()
+        let gate1 = TestSignal()
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: content, started: started1, gate: gate1),
+            "/2.txt": .init(content: content),
+            "/3.txt": .init(content: content),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: 2 and 3 must stay .queued
+        vm.enqueue(
+            fileName: "1.txt", direction: .upload,
+            source: source, sourcePath: "/1.txt",
+            destination: destination, destinationDirectory: "/dest",
+            onCompleted: nil)
+        // The cancelled item is the one with the waiter this time.
+        let waiterThrew = Counter()
+        let waitTask = Task { @MainActor in
+            do {
+                try await vm.enqueueAndWait(
+                    fileName: "2.txt", direction: .upload,
+                    source: source, sourcePath: "/2.txt",
+                    destination: destination, destinationDirectory: "/dest")
+            } catch {
+                waiterThrew.increment()
+            }
+        }
+        await waitUntil { vm.items.count == 2 }
+        let queuedID = vm.items[1].id
+        vm.enqueue(
+            fileName: "3.txt", direction: .upload,
+            source: source, sourcePath: "/3.txt",
+            destination: destination, destinationDirectory: "/dest",
+            onCompleted: nil)
+
+        try await started1.wait()
+        await waitUntil { vm.items.count == 3 && vm.items[1].status == .queued }
+
+        #expect(vm.cancel(itemID: queuedID))
+        #expect(vm.items[1].status == .cancelled)   // immediately, no worker hop
+
+        // Bounded before unbounded, for the same reason as in the running
+        // case above.
+        await waitUntil { waiterThrew.value == 1 }
+        try #require(waiterThrew.value == 1)
+        await waitTask.value
+        #expect(waiterThrew.value == 1)
+
+        await gate1.fire()
+        await waitUntil { vm.isActive == false }
+        #expect(vm.items[0].status == .finished)
+        #expect(vm.items[2].status == .finished)
+        #expect(await destination.writeOrder == ["/dest/1.txt", "/dest/3.txt"])
+        #expect(await source.readOffsets["/2.txt"] == nil)   // never opened
+    }
+
+    /// One row of a folder transfer is cancelled: only that row. The rest of
+    /// the group keeps running (unlike the conflict dialog's Cancel, which
+    /// aborts the whole folder by design, M6a), and the group's
+    /// `onCompleted` still fires EXACTLY once — a cancelled item is terminal
+    /// like any other, so the accounting must count it once and no more.
+    @Test func cancelOneItemOfAFolderTransferSparesTheRestAndFiresOnCompletedOnce() async throws {
+        let contentA = Data("aaa".utf8)
+        let contentB = Data("bbb".utf8)
+        let startedA = TestSignal()
+        let gateA = TestSignal()
+        let source = QueueTestFS(
+            reads: [
+                "/dir/a.txt": .init(content: contentA, started: startedA, gate: gateA),
+                "/dir/sub/b.txt": .init(content: contentB),
+            ],
+            listings: treeListings())
+        let destination = QueueTestFS(reads: [:])
+        let counter = Counter()
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1   // determinism: b.txt must still be .queued
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { counter.increment(); await done.fire() })
+
+        try await startedA.wait()
+        await waitUntil { self.status(vm, "b.txt") == .queued }
+        let bID = try #require(vm.items.first(where: { $0.fileName == "b.txt" })?.id)
+
+        #expect(vm.cancel(itemID: bID))
+        await gateA.fire()
+
+        try await done.wait()
+        await waitUntil { vm.isActive == false }
+        // Give a stray second firing room to happen before ruling it out.
+        for _ in 0..<50 { await Task.yield() }
+
+        #expect(counter.value == 1)
+        #expect(status(vm, "a.txt") == .finished)
+        #expect(status(vm, "b.txt") == .cancelled)
+        #expect(await destination.writtenData(at: "/ziel/dir/a.txt") == contentA)
+        #expect(await destination.writtenData(at: "/ziel/dir/sub/b.txt") == nil)
+    }
+
+    /// "Cancel all" over a mix: the finished item keeps its result, and
+    /// every still-open item — running and queued alike — reads `.cancelled`
+    /// (the person asked for it, so it must not read like a failure).
+    @Test func cancelAllOverAMixLeavesFinishedWorkAloneAndCancelsTheRest() async throws {
+        let content = Data("c".utf8)
+        let started2 = TestSignal()
+        let gate2 = TestSignal()   // never fired
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: content),
+            "/2.txt": .init(content: content, started: started2, gate: gate2),
+            "/3.txt": .init(content: content),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1
+        let done1 = TestSignal()
+        vm.enqueue(
+            fileName: "1.txt", direction: .upload,
+            source: source, sourcePath: "/1.txt",
+            destination: destination, destinationDirectory: "/dest",
+            onCompleted: { await done1.fire() })
+        try await done1.wait()
+        #expect(vm.items[0].status == .finished)
+
+        vm.enqueue(
+            fileName: "2.txt", direction: .upload,
+            source: source, sourcePath: "/2.txt",
+            destination: destination, destinationDirectory: "/dest",
+            onCompleted: nil)
+        vm.enqueue(
+            fileName: "3.txt", direction: .upload,
+            source: source, sourcePath: "/3.txt",
+            destination: destination, destinationDirectory: "/dest",
+            onCompleted: nil)
+        try await started2.wait()
+        await waitUntil { vm.items.count == 3 && vm.items[2].status == .queued }
+
+        await vm.cancelAll(reason: .userRequested)
+
+        #expect(vm.items[0].status == .finished)    // untouched
+        #expect(vm.items[1].status == .cancelled)   // was running
+        #expect(vm.items[2].status == .cancelled)   // was queued
+        #expect(vm.isActive == false)
+        #expect(await destination.writeOrder == ["/dest/1.txt"])
+    }
+
+    /// The third state an open item can be in, and the one neither of the
+    /// two tests above reaches: dequeued, inside `resolveConflictIfNeeded`
+    /// behind an open decider prompt — in `order` no longer, in
+    /// `runningTransferTasks` not yet. Modelled on
+    /// `cancelAllDuringConflictPromptPreventsTransfer`, so the only thing
+    /// that differs is that ONE item is named instead of the whole queue.
+    /// The item must end `.cancelled` and nothing must be written even
+    /// though the decider afterwards answers `.overwrite`.
+    @Test func cancelOneItemWaitingOnAConflictPromptStopsItBeforeTheWrite() async throws {
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: Data("neu".utf8))])
+        let destination = QueueTestFS(reads: ["/ziel/a.txt": .init(content: Data("alt".utf8))])
+        let deciderEntered = TestSignal()
+        let releaseDecider = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in
+            await deciderEntered.fire()
+            try? await releaseDecider.wait()
+            return (.overwrite, false)
+        }
+
+        let waiterThrew = Counter()
+        let waitTask = Task { @MainActor in
+            do {
+                try await vm.enqueueAndWait(
+                    fileName: "a.txt", direction: .upload,
+                    source: source, sourcePath: "/a.txt",
+                    destination: destination, destinationDirectory: "/ziel")
+            } catch {
+                waiterThrew.increment()
+            }
+        }
+        await waitUntil { vm.items.count == 1 }
+        let resolvingID = vm.items[0].id
+
+        try await deciderEntered.wait()
+        #expect(vm.cancel(itemID: resolvingID))
+        #expect(vm.items[0].status == .cancelled)
+
+        // Release the prompt only AFTER the postcondition above is read: the
+        // decider answers `.overwrite`, and a `process` that resolved a
+        // second time would write the file and overwrite the status.
+        await releaseDecider.fire()
+        await waitUntil { waiterThrew.value == 1 }
+        try #require(waiterThrew.value == 1)
+        await waitTask.value
+        await waitUntil { vm.isActive == false }
+
+        #expect(vm.items[0].status == .cancelled)                          // stays cancelled
+        #expect(waiterThrew.value == 1)                                    // resumed exactly once
+        #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // never written
+    }
+
+    /// A row the bar should never show a cancel button on, and an id that
+    /// belongs to no item at all: both are refused rather than answered.
+    /// This is what keeps a stale click harmless — the button's visibility
+    /// and the call's answer are decided by the same predicate.
+    @Test func cancelRefusesATerminalItemAndAnUnknownID() async throws {
+        let source = QueueTestFS(reads: ["/1.txt": .init(content: Data("c".utf8))])
+        let destination = QueueTestFS(reads: [:])
+        let vm = TransferQueueViewModel()
+        let done = TestSignal()
+        let id = vm.enqueue(
+            fileName: "1.txt", direction: .upload,
+            source: source, sourcePath: "/1.txt",
+            destination: destination, destinationDirectory: "/dest",
+            onCompleted: { await done.fire() })
+        try await done.wait()
+        await waitUntil { vm.isActive == false }
+        #expect(vm.items[0].status == .finished)
+
+        #expect(vm.cancel(itemID: id) == false)
+        #expect(vm.items[0].status == .finished)
+        #expect(vm.cancel(itemID: UUID()) == false)
+        #expect(vm.items.count == 1)
+    }
 }
 
 /// Collects (fileName, isPartOfFolderTransfer) pairs reported by a

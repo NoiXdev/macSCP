@@ -48,11 +48,14 @@ struct TransferQueueBar: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(DesignTokens.inkSecondary)
                     Spacer()
+                    cancelAllButton
                     Button(L10n.string("transfers.clear", "Clean up")) { viewModel.clearCompleted() }
                         .controlSize(.small)
-                        .disabled(viewModel.items.allSatisfy {
-                            $0.status == .queued || $0.status.isRunning
-                        })
+                        // Nothing to tidy away while every listed item is
+                        // still open work — the same predicate the rows use
+                        // to decide whether they offer a cancel, read the
+                        // other way round.
+                        .disabled(viewModel.items.allSatisfy(\.status.isCancellable))
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -68,6 +71,42 @@ struct TransferQueueBar: View {
                 }
                 .frame(maxHeight: 110)
             }
+        }
+    }
+
+    /// "Cancel all", beside "Clean up": stops every transfer that has not
+    /// finished yet, and leaves the finished ones listed for "Clean up" to
+    /// remove. Available exactly while the queue reports work in flight —
+    /// the gate is the queue's own activity predicate rather than a second
+    /// reading of the item list, so this button and the per-row cancels can
+    /// never disagree about whether anything is still open.
+    @ViewBuilder
+    private var cancelAllButton: some View {
+        Button(L10n.string("transfers.cancelAll", "Cancel all")) {
+            // A deliberate stop by the person at the keyboard, so the swept
+            // items must read "cancelled" rather than "connection lost".
+            Task { await viewModel.cancelAll(reason: .userRequested) }
+        }
+        .controlSize(.small)
+        .disabled(!viewModel.isActive)
+    }
+
+    /// The per-row cancel: stops exactly this one transfer and leaves the
+    /// rest of the queue running, including the other files of the same
+    /// folder transfer. Offered only while the row is still stoppable — the
+    /// queue answers a cancel for exactly those rows, so the button's
+    /// visibility and the call's answer come from one predicate.
+    @ViewBuilder
+    private func cancelButton(_ item: TransferQueueViewModel.Item) -> some View {
+        if item.status.isCancellable {
+            Button {
+                viewModel.cancel(itemID: item.id)
+            } label: {
+                Image(systemName: "xmark.circle")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(DesignTokens.inkSecondary)
+            .help(L10n.string("transfers.cancel", "Cancel this transfer"))
         }
     }
 
@@ -145,6 +184,7 @@ struct TransferQueueBar: View {
                 Text(L10n.string("transfers.status.interrupted", "interrupted"))
                     .font(.caption).foregroundStyle(.orange)
             }
+            cancelButton(item)
         }
         .font(.system(size: 12))
     }

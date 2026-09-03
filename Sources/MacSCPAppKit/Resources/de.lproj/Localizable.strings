@@ -246,6 +246,11 @@
 "transfers.empty" = "Keine Übertragungen";
 "transfers.pending" = "Übertragungen — %lld ausstehend";
 "transfers.clear" = "Aufräumen";
+
+/* Cancelling transfers (2026-09-03): the bar's "Cancel all", and the
+   hover hint of the icon-only cancel on a queued or running row. */
+"transfers.cancelAll" = "Alle abbrechen";
+"transfers.cancel" = "Diese Übertragung abbrechen";
 "transfers.status.queued" = "wartet";
 "transfers.status.cancelled" = "abgebrochen";
 "transfers.status.skipped" = "übersprungen";
