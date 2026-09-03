@@ -31,6 +31,22 @@ struct ConnectionDiagnosticsTests {
     private static let userinfoKey = "AKIADIAGNOSTICSTESTKEY"
     private static let userinfoSecret = "wJalrDiagnosticsTestSecretValue"
 
+    /// Secrets carrying a character RFC 3986 permits UNENCODED inside
+    /// userinfo. Each one used to end the authority scan before the `@`, so
+    /// the span had no separator to cut at and was copied out whole — the
+    /// entire credential, through the helper written to prevent exactly that.
+    ///
+    /// Named, and reported by INDEX below, for the reason `dialSecret` is
+    /// named: a value written into an expectation — or into a failure
+    /// message — leaks at the moment someone is reading.
+    private static let subDelimiterSecrets = [
+        "se)cret", "se'cret", "se]cret", "se,cret", "se\"cret", "se(cret", "se;cret",
+    ]
+
+    /// Stands in for whatever a foreign key-parsing error captured. No sentence
+    /// this module prints may carry it.
+    private static let loaderErrorSentinel = "CITADEL-INTERNAL-BUFFER-CONTENTS"
+
     // MARK: - Resolve
 
     @Test func resolveFindsALoopbackAddressForLocalhost() async {
@@ -71,6 +87,24 @@ struct ConnectionDiagnosticsTests {
             return
         }
         #expect(!reason.isEmpty)
+    }
+
+    /// The bare literal an IPv6 endpoint reader must hand `getaddrinfo`. A
+    /// bracketed one is rejected, which would report a reachable server as a
+    /// name that does not resolve.
+    @Test func resolveAcceptsABareIPv6LiteralAndRejectsABracketedOne() async {
+        let bare = await HostResolver.resolve(host: "::1", port: 9000, timeout: .seconds(2))
+        guard case .resolved(let addresses) = bare else {
+            Issue.record("::1 did not resolve: \(bare)")
+            return
+        }
+        #expect(addresses.map(\.text) == ["::1"])
+        let bracketed = await HostResolver.resolve(
+            host: "[::1]", port: 9000, timeout: .seconds(2))
+        guard case .failed = bracketed else {
+            Issue.record("a bracketed literal resolved after all: \(bracketed)")
+            return
+        }
     }
 
     // MARK: - TCP ping
@@ -412,29 +446,64 @@ struct ConnectionDiagnosticsTests {
         }
     }
 
+    @Test func theStripperCutsAnAuthorityWhoseCredentialCarriesASubDelimiter() {
+        var leakingIndices: [Int] = []
+        var hostlessIndices: [Int] = []
+        for (index, secret) in Self.subDelimiterSecrets.enumerated() {
+            let stripped = URLText.withoutUserinfo(
+                "connect failed: https://\(Self.userinfoKey):\(secret)@minio.example.test:9000/seed")
+            if stripped.contains(secret) || stripped.contains(Self.userinfoKey) {
+                leakingIndices.append(index)
+            }
+            // The positive companion: what survives still names the server,
+            // so an empty result cannot satisfy the check above.
+            if !stripped.contains("minio.example.test:9000/seed") {
+                hostlessIndices.append(index)
+            }
+        }
+        #expect(leakingIndices.isEmpty)
+        #expect(hostlessIndices.isEmpty)
+    }
+
+    /// An IPv6 literal has to survive the same scan: its brackets are part of
+    /// the authority, not the end of it.
+    @Test func theStripperLeavesAnIPv6AuthorityAloneAndStillCutsItsCredential() {
+        #expect(
+            URLText.withoutUserinfo("no route to https://[::1]:9000/x")
+                == "no route to https://[::1]:9000/x")
+        let secret = Self.userinfoSecret
+        let stripped = URLText.withoutUserinfo(
+            "no route to https://\(Self.userinfoKey):\(secret)@[::1]:9000/x")
+        let leaks = stripped.contains(secret) || stripped.contains(Self.userinfoKey)
+        #expect(leaks == false)
+        #expect(stripped == "no route to https://[::1]:9000/x")
+    }
+
     // MARK: - A failure the user can act on
 
     /// The four commonest SSH dial failures are typed enums with no
     /// `LocalizedError` conformance, so bridging them to `NSError` yields
     /// "The operation couldn't be completed. (macSCPCore.HostKeyError error
-    /// 1.)" — nothing about host keys at all, in the row the code calls the
-    /// answer to "why does this not connect".
+    /// 0.)" — nothing about host keys at all, in the row the code calls the
+    /// answer to "why does this not connect". (`0` because `NSError.code` is
+    /// the case index and `mismatch` is declared first; that is the number
+    /// the observed red carried.)
     @Test(arguments: [
         (AnyDialError(HostKeyError.mismatch(host: "h", expected: "SHA256:a", presented: "SHA256:b")), "host key"),
         (AnyDialError(HostKeyError.rejectedByUser), "host key"),
         (AnyDialError(SSHKeyError.fileNotFound(path: "/tmp/id_ed25519")), "/tmp/id_ed25519"),
         (AnyDialError(SSHKeyError.passphraseRequired), "passphrase"),
         (AnyDialError(SSHKeyError.wrongPassphrase), "passphrase"),
-        (AnyDialError(SSHKeyError.unsupportedFormat(reason: "bad header")), "bad header"),
+        (AnyDialError(SSHKeyError.unsupportedFormat(reason: "bad header")), "key file"),
         (AnyDialError(SSHKeyError.typeNotLoadable(algorithm: "ssh-dss")), "ssh-dss"),
         (AnyDialError(SSHKeyError.pemNotSupported), "PEM"),
         (AnyDialError(AgentError.socketUnavailable), "agent"),
         (AnyDialError(AgentError.noIdentities), "agent"),
         (AnyDialError(AgentError.noUsableIdentities), "agent"),
         (AnyDialError(AgentError.refused), "agent"),
-        (AnyDialError(AgentError.protocolError(reason: "short frame")), "short frame"),
+        (AnyDialError(AgentError.protocolError(reason: "short frame")), "ssh-agent"),
     ])
-    func theDialNamesATypedSSHFailureRatherThanBridgingIt(
+    fileprivate func theDialNamesATypedSSHFailureRatherThanBridgingIt(
         error: AnyDialError, fragment: String
     ) {
         let reason = DialSupport.reason(for: error.wrapped)
@@ -452,6 +521,34 @@ struct ConnectionDiagnosticsTests {
         #expect(DialSupport.reason(for: error) == (error as NSError).localizedDescription)
     }
 
+    /// A key-parsing failure is reported by NAME, never by re-exporting the
+    /// text of the error the loader got back — that error came out of a call
+    /// the passphrase was handed to, and `String(describing:)` prints an
+    /// arbitrary error's stored properties.
+    @Test func aLoaderErrorsOwnDescriptionNeverReachesTheReport() async throws {
+        let sentinel = Self.loaderErrorSentinel
+        let port = try #require(LoopbackSocket.closedPort())
+        let report = await Self.run(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: port),
+                dial: Self.constantContribution(
+                    id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe",
+                    outcome: .failed(
+                        DialSupport.reason(for: SSHKeyError.unsupportedFormat(reason: sentinel))),
+                    detail: DialSupport.reason(
+                        for: AgentError.protocolError(reason: sentinel)))))
+
+        let inPlainText = report.plainText().contains(sentinel)
+        let inMarkdown = report.markdown().contains(sentinel)
+        #expect(inPlainText == false)
+        #expect(inMarkdown == false)
+        // The positive companion: both sentences are still there and still
+        // name what failed, so the two checks above measure redaction rather
+        // than an empty row.
+        #expect(report.plainText().contains("key file"))
+        #expect(report.plainText().contains("ssh-agent"))
+    }
+
     // MARK: - The deadline bounds the clock
 
     /// A probe that never honours cancellation must not hold the step past
@@ -463,10 +560,10 @@ struct ConnectionDiagnosticsTests {
     /// Asserted as an ORDERING, not as a stopwatch reading. The subject's
     /// deadline fires on a Dispatch timer and is punctual, but RESUMING this
     /// test's task afterwards needs a cooperative-pool thread, and under the
-    /// full suite (3850 tests) that queueing cost was measured at 0.7 s, 1.4 s
-    /// and once 5.9 s — so any tight time bound here measures the scheduler,
-    /// not the property. What is actually claimed is "the step returned while
-    /// the probe was still running", and `probeFinished` says exactly that.
+    /// full suite that queueing cost was measured at 0.7 s, 1.4 s and once
+    /// 5.9 s — so any tight time bound here measures the scheduler, not the
+    /// property. What is actually claimed is "the step returned while the
+    /// probe was still running", and `probeFinished` says exactly that.
     @Test func aProbeThatIgnoresCancellationDoesNotHoldTheStepPastItsDeadline() async throws {
         let port = try #require(LoopbackSocket.closedPort())
         let probeFinished = Gate()
@@ -480,7 +577,7 @@ struct ConnectionDiagnosticsTests {
                 ) { _, _ in
                     let timer = DiagnosticStepTimer(
                         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
-                    await Self.uncancellableWait(seconds: 20)
+                    await Self.uncancellableWait(seconds: 12)
                     await probeFinished.open()
                     return timer.finish(.ok, "never reported")
                 }),
@@ -490,10 +587,18 @@ struct ConnectionDiagnosticsTests {
 
         #expect(report.steps.last?.outcome == .timedOut)
         #expect(stillRunning)
-        // The coarse backstop: strictly less than the probe's own 20 s, so a
+        // The coarse backstop: strictly less than the probe's own 12 s, so a
         // run that waited for it fails here too even if the flag were read
         // late.
-        #expect(elapsed < .seconds(15))
+        #expect(elapsed < .seconds(10))
+        // The positive companion for `stillRunning`, which is a check that
+        // something has NOT happened: a `Gate` that never opened would
+        // satisfy it vacuously. Waiting for the abandoned probe to reach its
+        // own end proves the gate can open at all — and, incidentally, that
+        // the probe really did keep running after the step returned.
+        await probeFinished.opened()
+        let openedInTheEnd = await probeFinished.isClosed == false
+        #expect(openedInTheEnd)
     }
 
     /// A wait that cannot be cancelled, and that parks no cooperative-pool
@@ -611,9 +716,12 @@ struct ConnectionDiagnosticsTests {
 
 }
 
-/// Carries one typed error as a test argument. `@Test(arguments:)` needs a
-/// `Sendable` element, and `any Error` is not one.
-struct AnyDialError: Sendable {
+/// Carries one typed error as a test argument, so the heterogeneous literal
+/// below infers a concrete element type. NOT because `any Error` is
+/// unsendable — `Error` refines `Sendable` in the standard library, which is
+/// why this declaration compiles without `@unchecked` under Swift 6 — an
+/// earlier version of this comment claimed otherwise.
+fileprivate struct AnyDialError: Sendable {
     let wrapped: any Error
     init(_ wrapped: any Error) { self.wrapped = wrapped }
 }

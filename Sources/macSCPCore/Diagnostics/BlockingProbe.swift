@@ -24,13 +24,19 @@ enum BlockingProbe {
         label: String, timeout: Duration, _ body: @escaping @Sendable () -> T
     ) async -> T? {
         let once = OneShot<T>()
+        // A work item rather than a bare closure so the timer can be called
+        // off when the work wins: an uncancelled `asyncAfter` block survives
+        // until its deadline, holding the `OneShot` it captured. Harmless at
+        // one timer per step, and there is no reason to leave a queue of them
+        // behind when cancelling is one line.
+        let expiry = DispatchWorkItem { once.deliver(nil) }
+        defer { expiry.cancel() }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
                 once.arm(continuation)
                 DispatchQueue(label: label).async { once.deliver(body()) }
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout.seconds) {
-                    once.deliver(nil)
-                }
+                DispatchQueue.global().asyncAfter(
+                    deadline: .now() + timeout.seconds, execute: expiry)
             }
         } onCancel: {
             once.deliver(nil)
@@ -69,21 +75,30 @@ enum DetachedProbe {
         // the probe would run ON the diagnostics actor and serialize with the
         // very deadline that is supposed to bound it.
         let work = Task.detached { once.deliver(await body()) }
-        defer { work.cancel() }
+        let expiry = DispatchWorkItem { once.deliver(nil) }
+        defer {
+            work.cancel()
+            expiry.cancel()
+        }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
                 once.arm(continuation)
                 // A Dispatch timer, NOT a `Task.sleep` on another task. A
                 // deadline that waits for a cooperative-pool thread before it
                 // can start counting is not a deadline: measured under the
-                // full suite (3850 tests, a saturated pool), a `Task.detached`
-                // sleep of 1 s let a 3 s probe run to completion, because the
-                // task carrying the sleep did not start until the pool had
-                // room. Dispatch's global queue grows past the core count and
-                // fires on time.
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout.seconds) {
-                    once.deliver(nil)
-                }
+                // full suite (a saturated pool), a `Task.detached` sleep of
+                // 1 s let a 3 s probe run to completion, because the task
+                // carrying the sleep did not start until the pool had room.
+                //
+                // Dispatch's global pool is separate from the cooperative one
+                // and overcommits past the core count, which is why it fires
+                // on time HERE — at three steps and a handful of addresses.
+                // That is a statement about this scale, not a property of
+                // Dispatch: the blocking probes in this same file occupy that
+                // pool through their own serial queues, and enough
+                // simultaneously blocked ones would delay this block too.
+                DispatchQueue.global().asyncAfter(
+                    deadline: .now() + timeout.seconds, execute: expiry)
             }
         } onCancel: {
             once.deliver(nil)

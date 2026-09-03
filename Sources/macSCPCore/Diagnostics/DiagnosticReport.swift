@@ -17,6 +17,13 @@ public struct DiagnosticReport: Sendable, Equatable {
     /// see `GitHubReleaseFetcher`'s note for the same rule.
     public let appVersion: String
 
+    /// No redaction pass here, unlike `DiagnosticStep.init`, and that is a
+    /// decision rather than an omission: the only fields this prints besides
+    /// the steps are `endpoint.text` and `appVersion`. An endpoint's host
+    /// comes either from `URL.host()` (which never carries userinfo) or from
+    /// SSH's own host field, where an `alice@server.lan` a user typed is a
+    /// user name and not a credential — and carries no `://` for
+    /// `withoutUserinfo` to act on anyway.
     public init(endpoint: Endpoint, steps: [DiagnosticStep], appVersion: String) {
         self.endpoint = endpoint
         self.steps = steps

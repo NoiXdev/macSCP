@@ -205,11 +205,14 @@ public actor ConnectionDiagnostics {
     ///
     /// The contribution is told the same budget (`DiagnosticContext.timeout`)
     /// so its own transport can stop itself, AND is raced against that budget
-    /// by `DetachedProbe`, which returns the moment the deadline fires
-    /// whether or not the probe honoured its cancellation. That second half
-    /// is what bounds the wall clock rather than only the reported row: an
+    /// by `DetachedProbe`, which stops waiting once the deadline fires —
+    /// whether or not the probe honoured its cancellation — and then returns
+    /// as soon as it gets a cooperative-pool thread back. The timer itself is
+    /// punctual; the RETURN costs whatever resumption costs, measured at
+    /// 0.7 s, 1.4 s and once 5.9 s under the full suite. That is still the
+    /// half that bounds the wall clock rather than only the reported row: an
     /// SSH dial against a wedged server carries Citadel's uncancellable 15 s
-    /// `openSFTP` timer, and a task group would have waited for it.
+    /// `openSFTP` timer, and a task group would have waited all of it out.
     ///
     /// A step the deadline wins is reported `timedOut` with the elapsed time
     /// measured here, never with whatever the abandoned probe eventually

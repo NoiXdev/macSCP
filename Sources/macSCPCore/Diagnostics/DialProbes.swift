@@ -129,8 +129,9 @@ enum DialSupport {
     ///
     /// The three typed SSH errors are spelled out because none of them
     /// conforms to `LocalizedError`: bridged to `NSError` they all read "The
-    /// operation couldn't be completed. (macSCPCore.HostKeyError error 1.)",
-    /// which says nothing about host keys — in the row this file documents
+    /// operation couldn't be completed. (macSCPCore.HostKeyError error N.)"
+    /// — `N` being the case index, whatever it is — which says nothing about
+    /// host keys — in the row this file documents
     /// as the answer to "why does this not connect", and for the four
     /// commonest SSH dial failures. The arms are exhaustive `switch`es, so a
     /// case added to any of the three enums fails to compile here until
@@ -163,13 +164,25 @@ enum DialSupport {
         case let error as SSHKeyError:
             switch error {
             case .fileNotFound(let path):
+                // The path is printed on purpose, and it is typically
+                // `/Users/<login>/.ssh/id_ed25519`: a local account name in
+                // an artifact written to be pasted publicly. Kept because the
+                // whole finding is WHICH file is missing, and a login name is
+                // not a credential — but kept deliberately, not by accident.
                 return "no key file at \(path)"
             case .passphraseRequired:
                 return "the key is encrypted and no passphrase was available"
             case .wrongPassphrase:
                 return "the key's passphrase was rejected"
-            case .unsupportedFormat(let reason):
-                return "the key file could not be parsed: \(reason)"
+            case .unsupportedFormat:
+                // The payload is deliberately dropped. `SSHPrivateKeyLoader`
+                // builds it as `String(describing: error)` over Citadel's or
+                // CryptoKit's error — out of a call the PASSPHRASE was handed
+                // to — and describing an arbitrary error prints its stored
+                // properties. That is the rule this function states above,
+                // and this arm was the one place that broke it. Nothing a
+                // user can act on is lost: the file does not parse.
+                return "the key file could not be parsed"
             case .typeNotLoadable(let algorithm):
                 return "this app cannot load a key of type \(algorithm)"
             case .pemNotSupported:
@@ -185,8 +198,13 @@ enum DialSupport {
                 return "the ssh-agent holds no identity of a type this app can offer"
             case .refused:
                 return "the ssh-agent refused every identity it offered"
-            case .protocolError(let reason):
-                return "the ssh-agent connection misbehaved: \(reason)"
+            case .protocolError:
+                // Dropped for the same reason, one step weaker: the agent is
+                // never handed the passphrase, but `SSHAgentClient` builds
+                // this payload as "\(error)" over a NIO error, and "no
+                // foreign error's description is printed by this module" is
+                // one rule rather than a judgement per error type.
+                return "the ssh-agent connection misbehaved"
             }
         case let error as RemoteFSError:
             return String(describing: error)

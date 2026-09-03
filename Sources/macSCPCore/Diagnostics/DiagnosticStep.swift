@@ -118,16 +118,22 @@ enum URLText {
     /// anywhere. Scans authorities rather than replacing a pattern, because
     /// what has to go is "everything between `://` and the last `@` before
     /// the authority ends", which is not a literal.
+    ///
+    /// **What still defeats it, stated rather than implied.** A credential
+    /// containing whitespace or a `/` still ends the authority scan before
+    /// the `@` — and those two cannot be dropped from `endsAuthority` below,
+    /// because they are also what ends a URL inside a sentence. In free text
+    /// the two are indistinguishable. This is why the helper is a backstop
+    /// and not the defence: no dial prints a URL it did not build itself
+    /// (`hostPortPath(of:)`), and a contribution that interpolates a raw
+    /// endpoint string into a message is the shape to refuse in review.
     static func withoutUserinfo(_ text: String) -> String {
-        // The characters that END an authority: the path, query and fragment
-        // delimiters, plus what separates a URL from the prose around it.
-        let terminators: Set<Character> = ["/", "?", "#", " ", "\t", "\n", ",", ")", "]", "\"", "'"]
         var output = ""
         var remainder = Substring(text)
         while let marker = remainder.range(of: "://") {
             output.append(contentsOf: remainder[..<marker.upperBound])
             let rest = remainder[marker.upperBound...]
-            let end = rest.firstIndex { terminators.contains($0) } ?? rest.endIndex
+            let end = rest.firstIndex(where: endsAuthority) ?? rest.endIndex
             let authority = rest[..<end]
             if let at = authority.lastIndex(of: "@") {
                 output.append(contentsOf: authority[authority.index(after: at)...])
@@ -138,6 +144,22 @@ enum URLText {
         }
         output.append(contentsOf: remainder)
         return output
+    }
+
+    /// What ends an authority: the path, query and fragment delimiters, and
+    /// whitespace.
+    ///
+    /// Deliberately NOT the sub-delimiters. `,` `)` `(` `'` `;` `"` `]` and
+    /// their kin are permitted UNENCODED inside userinfo by RFC 3986, and
+    /// while they were in this set a password containing one ended the
+    /// authority before the `@` — leaving a span with no separator to cut at,
+    /// which was then copied out whole. Under-stripping costs the whole
+    /// credential; over-stripping costs at most some prose after a later `@`,
+    /// so the set is chosen to fail in that direction. Removing `]` also
+    /// FIXED the IPv6 case rather than breaking it: `u:p@[::1]:9000` now ends
+    /// at the `/`, and its last `@` is the real separator.
+    private static func endsAuthority(_ character: Character) -> Bool {
+        character == "/" || character == "?" || character == "#" || character.isWhitespace
     }
 }
 
@@ -177,8 +199,9 @@ public struct DiagnosticStep: Sendable, Equatable, Identifiable {
     /// rather than at each producer: `https://KEY:SECRET@host` is ordinary
     /// input in the S3 endpoint and WebDAV URL fields, a report is pasted
     /// into public issues, and a rule enforced at N call sites is a rule that
-    /// the N+1st forgets. The dials render their target through
-    /// `URLText.hostPortPath(of:)` as well, so the redaction below is a
+    /// the N+1st forgets. The two HTTP dials render their target through
+    /// `URLText.hostPortPath(of:)` as well (the SSH dial has no URL to
+    /// print), so the redaction below is a
     /// backstop for text this module did not compose — an `NSError` sentence,
     /// a server's own message — and not the first line of defence.
     public init(

@@ -93,6 +93,26 @@ struct BackendDescriptorEndpointTests {
         #expect(components?.host == nil)
     }
 
+    /// An IPv6 literal endpoint, which is where a bracket is part of the
+    /// address rather than punctuation around it. Two things have to hold at
+    /// once: `Endpoint.host` is the BARE literal, because `getaddrinfo` does
+    /// not accept a bracketed one and the resolve step would report `failed`
+    /// for a reachable server; and `Endpoint.text` brackets it exactly once,
+    /// because the report prints that string.
+    @Test func s3ReadsAnIPv6LiteralEndpointUnbracketedAndPrintsItBracketedOnce() {
+        var values = FieldValues()
+        values[S3Field.endpoint] = "http://[::1]:9000"
+        let endpoint = self.endpoint(.s3, values)
+        #expect(endpoint == Endpoint(host: "::1", port: 9000))
+        #expect(endpoint?.text == "[::1]:9000")
+    }
+
+    @Test func webdavReadsAnIPv6LiteralBaseURLTheSameWay() {
+        var values = FieldValues()
+        values[WebDAVField.baseURL] = "https://[::1]/dav"
+        #expect(endpoint(.webdav, values) == Endpoint(host: "::1", port: 443))
+    }
+
     @Test func s3WithoutAnEndpointHasNone() {
         #expect(endpoint(.s3, FieldValues()) == nil)
     }
