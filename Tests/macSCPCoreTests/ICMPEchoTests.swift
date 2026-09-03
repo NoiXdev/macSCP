@@ -182,19 +182,86 @@ struct ICMPEchoTests {
     /// subject's: deciding the expectation with the code under test would
     /// make the case tautological and would undo the mutation probe that pins
     /// the route check. `connect` on an unconnected UDP socket sends nothing.
+    ///
+    /// **The anchor is a counted `sendto`, not `outcome.sent`.**
+    /// `ICMPEchoOutcome.sent` is `0` for every `.unavailable` by
+    /// construction, so reading it back after asserting the case is
+    /// `.unavailable` says nothing at all: move the route check below the
+    /// send loop and three packets leave for `2001:db8::1` with both of those
+    /// expectations still green. `TransmitLog` counts the datagrams the
+    /// subject actually hands to `sendto`, and the loopback half below counts
+    /// the same way — a counter that cannot rise would prove nothing either.
     @Test func anIPv6AddressWithNoRouteIsUnavailableAndSendsNothing() async throws {
         let address = try #require(await Self.loopback(Self.documentationV6))
-        guard await Self.onOwnQueue({ Self.hasNoRoute(to: Self.documentationV6) }) else {
+        switch await Self.onOwnQueue({ Self.routeVerdict(for: Self.documentationV6) }) {
+        case .routed:
             print(
                 "ICMPEcho: this machine has a route to \(Self.documentationV6) — the routeless "
                     + "branch is unmeasured here, and nothing was sent")
             return
+        case .cannotMeasure(let reason):
+            print("ICMPEcho: the routeless branch is unmeasured here (\(reason)); nothing was sent")
+            return
+        case .noRoute:
+            break
         }
-        let outcome = await ICMPEcho.probe(address: address, count: 3, timeout: .seconds(2))
+
+        let routeless = TransmitLog()
+        let outcome = await ICMPEcho.probe(
+            address: address, count: 3, timeout: .seconds(2), onTransmit: routeless.observer)
         #expect(outcome == .unavailable(ICMPEcho.noIPv6RouteReason))
-        // The positive anchor for that sentence: nothing went out, which is
-        // what separates "no route" from "sent and heard nothing back".
-        #expect(outcome.sent == 0)
+        #expect(routeless.count == 0)
+
+        // The positive companion, in the same case so neither can be read
+        // without the other: the same counter, the same probe count, an
+        // address that IS routed — and three datagrams.
+        let loopback = TransmitLog()
+        let reachable = try #require(await Self.loopback("127.0.0.1"))
+        _ = await ICMPEcho.probe(
+            address: reachable, count: 3, timeout: .seconds(2), onTransmit: loopback.observer)
+        #expect(loopback.count == 3)
+    }
+
+    /// The nonce is drawn per SOCKET, and that is the half of the reply check
+    /// the marker does not cover.
+    ///
+    /// Nothing about an outcome can see it: a payload that round-trips looks
+    /// identical whether it was drawn once per probe or once per process. So
+    /// this reads the datagrams themselves — two probes' payloads must
+    /// differ, one probe's three must agree, and all of them must carry the
+    /// marker.
+    ///
+    /// Without it, hoisting `probePayload()` to a `static let` — an
+    /// obvious-looking cleanup, 26 bytes saved per probe — keeps every other
+    /// case in this file green and reinstates C-1 in full for the multi-window
+    /// build CLAUDE.md has planned: two panels diagnosing at once, each
+    /// matching the other's replies, each reporting `3/3 replies` for a host
+    /// that answered nothing.
+    @Test func twoProbesDrawDifferentNoncesAndOneProbeKeepsItsOwn() async throws {
+        let address = try #require(await Self.loopback("127.0.0.1"))
+        let first = TransmitLog()
+        let second = TransmitLog()
+        _ = await ICMPEcho.probe(
+            address: address, count: 3, timeout: .seconds(2), onTransmit: first.observer)
+        _ = await ICMPEcho.probe(
+            address: address, count: 3, timeout: .seconds(2), onTransmit: second.observer)
+
+        let firstPayloads = first.payloads
+        let secondPayloads = second.payloads
+        // The anchor: there are datagrams to compare, and they carry the
+        // marker — which is what separates macSCP from every other pinger,
+        // and which nothing else in this file reads.
+        #expect(firstPayloads.count == 3)
+        #expect(secondPayloads.count == 3)
+        #expect((firstPayloads + secondPayloads).allSatisfy { $0.starts(with: ICMPEcho.payloadMarker) })
+
+        // One socket: all three probes carry the same payload, so a reply to
+        // any of them is recognisable as this probe's.
+        #expect(Set(firstPayloads).count == 1)
+        #expect(Set(secondPayloads).count == 1)
+        // Two sockets: different payloads, so neither can match the other's
+        // replies.
+        #expect(firstPayloads.first != secondPayloads.first)
     }
 
     // MARK: - The step in the runner
@@ -344,24 +411,77 @@ struct ICMPEchoTests {
             deadline: now.advanced(by: .milliseconds(500)))
     }
 
+    /// What this machine's routing table says about an IPv6 address.
+    ///
+    /// Three answers, not two, because the subject distinguishes them: a
+    /// REFUSED IPv6 socket is not a routing fact, and reporting it as one
+    /// would make the routeless case red against
+    /// `.unavailable("Address family not supported by protocol family")` on a
+    /// runner with IPv6 switched off at the socket layer — an assertion about
+    /// the machine, which is what this case was rewritten to stop making.
+    private enum RouteVerdict {
+        case noRoute
+        case routed
+        /// No IPv6 socket here at all; the question cannot be asked.
+        case cannotMeasure(String)
+    }
+
     /// The test's OWN route probe, independent of the subject's: `connect` on
     /// an unconnected UDP socket consults the routing table and sends nothing.
-    /// Deliberately a second implementation of those six lines — using
+    /// Deliberately a second implementation of those few lines — using
     /// `ICMPEcho`'s would decide the expectation with the code under test.
-    private static func hasNoRoute(to host: String) -> Bool {
+    private static func routeVerdict(for host: String) -> RouteVerdict {
         let descriptor = socket(AF_INET6, SOCK_DGRAM, Int32(IPPROTO_UDP))
-        guard descriptor >= 0 else { return true }
+        let socketErrno = errno
+        guard descriptor >= 0 else {
+            return .cannotMeasure("no IPv6 socket: \(String(cString: strerror(socketErrno)))")
+        }
         defer { Darwin.close(descriptor) }
         var address = sockaddr_in6()
         address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
         address.sin6_family = sa_family_t(AF_INET6)
         address.sin6_port = UInt16(33434).bigEndian
-        guard inet_pton(AF_INET6, host, &address.sin6_addr) == 1 else { return true }
-        return withUnsafePointer(to: &address) { pointer in
+        guard inet_pton(AF_INET6, host, &address.sin6_addr) == 1 else {
+            return .cannotMeasure("\(host) is not an IPv6 literal")
+        }
+        let connected = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in6>.size))
             }
-        } != 0
+        }
+        return connected == 0 ? .routed : .noRoute
+    }
+
+    /// Counts the datagrams a probe hands to `sendto`, and keeps their bytes.
+    ///
+    /// `@unchecked Sendable` over a lock: the observer is called on the
+    /// probe's own queue and read from the test's task, which is exactly the
+    /// crossing `Sendable` is asking about.
+    private final class TransmitLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var packets: [[UInt8]] = []
+
+        var observer: ICMPEcho.TransmitObserver {
+            { [self] packet in
+                lock.lock()
+                packets.append(packet)
+                lock.unlock()
+            }
+        }
+
+        var count: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return packets.count
+        }
+
+        /// The echoed data of each datagram: everything past the eight-byte
+        /// ICMP header this side writes.
+        var payloads: [[UInt8]] {
+            lock.lock()
+            defer { lock.unlock() }
+            return packets.map { Array($0.dropFirst(8)) }
+        }
     }
 
     /// Runs a blocking socket sequence on a queue of its own and suspends the

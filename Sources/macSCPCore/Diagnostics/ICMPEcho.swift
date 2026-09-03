@@ -124,13 +124,35 @@ enum ICMPEcho {
         payloadMarker + (0..<nonceByteCount).map { _ in UInt8.random(in: .min ... .max) }
     }
 
+    /// Handed every datagram this step is about to put on the wire, once per
+    /// `sendto`, on the queue the socket sequence runs on.
+    ///
+    /// A seam for two properties no assertion on the OUTCOME can reach.
+    ///
+    /// 1. **That the routeless path sends nothing.** `.unavailable` carries
+    ///    `sent == 0` by construction, so reading that back proves only that
+    ///    the enum has the shape it has — move the route check below the send
+    ///    loop and three packets leave for an address the suite promises
+    ///    never to contact, with every expectation still green. A count of
+    ///    the calls is an independent observation; the loopback case counts
+    ///    the same way, so the counter is known to be able to rise.
+    /// 2. **That the nonce is drawn per socket.** Hoisting `probePayload()`
+    ///    to a `static let` is an obvious-looking cleanup that reinstates the
+    ///    whole of C-1 — with two windows open, each diagnosis matches the
+    ///    other's replies — and it cannot be seen from any outcome, because
+    ///    a payload that round-trips looks the same either way. The bytes
+    ///    themselves are the only place it shows.
+    typealias TransmitObserver = @Sendable ([UInt8]) -> Void
+
     /// Echoes one address. Never throws: everything the kernel refuses comes
     /// back as `.unavailable` carrying `strerror`'s own sentence.
     static func probe(
-        address: ResolvedAddress, count: Int = defaultProbeCount, timeout: Duration
+        address: ResolvedAddress, count: Int = defaultProbeCount, timeout: Duration,
+        onTransmit: TransmitObserver? = nil
     ) async -> ICMPEchoOutcome {
-        await probeAll(addresses: [address], count: count, timeout: timeout)
-            .first?.outcome ?? .measured(sent: 0, replies: [])
+        await probeAll(
+            addresses: [address], count: count, timeout: timeout, onTransmit: onTransmit
+        ).first?.outcome ?? .measured(sent: 0, replies: [])
     }
 
     /// Every address in turn, on ONE queue hop and against ONE shared
@@ -138,7 +160,8 @@ enum ICMPEcho {
     /// reason: a host with four addresses may not spend four times the step's
     /// budget.
     static func probeAll(
-        addresses: [ResolvedAddress], count: Int = defaultProbeCount, timeout: Duration
+        addresses: [ResolvedAddress], count: Int = defaultProbeCount, timeout: Duration,
+        onTransmit: TransmitObserver? = nil
     ) async -> [(address: ResolvedAddress, outcome: ICMPEchoOutcome)] {
         // The outer deadline is a backstop for a syscall that overruns, and it
         // is given a margin so it cannot beat the inner loop to an answer the
@@ -150,7 +173,12 @@ enum ICMPEcho {
         ) {
             let deadline = ContinuousClock().now.advanced(by: timeout)
             return addresses.map { address in
-                (address, echo(address: address, count: count, deadline: deadline))
+                (
+                    address,
+                    echo(
+                        address: address, count: count, deadline: deadline,
+                        onTransmit: onTransmit)
+                )
             }
         }
         return outcome ?? addresses.map { ($0, .measured(sent: 0, replies: [])) }
@@ -160,7 +188,8 @@ enum ICMPEcho {
 
     /// Blocking. Only ever called on `BlockingProbe`'s private queue.
     private static func echo(
-        address: ResolvedAddress, count: Int, deadline: ContinuousClock.Instant
+        address: ResolvedAddress, count: Int, deadline: ContinuousClock.Instant,
+        onTransmit: TransmitObserver?
     ) -> ICMPEchoOutcome {
         // The family the BYTES declare, not the one the record is labelled
         // with: what is opened has to match what is dialled.
@@ -202,6 +231,7 @@ enum ICMPEcho {
                 type: requestType, identifier: identifier, sequence: sequence,
                 payload: payload, computeChecksum: !isIPv6)
             let started = clock.now
+            onTransmit?(packet)
             let written = address.socketAddress.withSockaddr { pointer, length in
                 packet.withUnsafeBytes { buffer in
                     sendto(descriptor, buffer.baseAddress, buffer.count, 0, pointer, length)
@@ -338,9 +368,15 @@ enum ICMPEcho {
                     }
                 }
             }
-            let receiveErrno = errno
-            if count < 0, receiveErrno == EINTR { continue }
-            guard count > 0 else { return nil }
+            // Nothing a single read produces ends the window. A signal, a
+            // zero-length datagram, a refused read after a spurious `POLLIN`
+            // — none of them is this probe's answer and none of them is
+            // evidence that the answer will not still arrive, so the loop
+            // goes back to `poll` and the DEADLINE is what stops it. The spin
+            // that a permanently-readable-but-unreadable socket would cause is
+            // bounded by that deadline, which is the same bound every other
+            // path here has.
+            guard count > 0 else { continue }
             let elapsed = started.duration(to: clock.now)
             guard
                 let header = ICMPHeader(bytes: buffer, count: count, family: family),

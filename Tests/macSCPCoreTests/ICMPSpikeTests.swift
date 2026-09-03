@@ -36,9 +36,12 @@ import Testing
 /// print another suite's reply — or a stray `ping` — into the file whose
 /// whole purpose is to be the measurement record. Every `accept` below
 /// therefore also requires `Spike.payload` to come back in the datagram: for
-/// the echo cases as the echoed data, for the time-exceeded cases inside the
-/// quoted original datagram. The verdicts stay measurements of replies to
-/// THIS file's own requests.
+/// the echo cases as the echoed data, and for the time-exceeded cases inside
+/// the quoted original datagram — but there only when the quote is long
+/// enough to have carried it, because RFC 792 lets a router quote the IP
+/// header and eight bytes and no payload (see `quoteMatchesSpikeProbe`). The
+/// verdicts stay measurements of replies to THIS file's own requests, without
+/// turning a minimal-quoting router into a false "no".
 ///
 /// **Why every socket call sits inside `onDedicatedQueue`.** `poll` and
 /// `recvfrom` block the thread they run on, and Swift Testing runs tests on
@@ -299,7 +302,7 @@ struct ICMPSpikeTests {
             start: start,
             deadline: deadline,
             detail: &detail,
-            accept: { $0.type == expectedType && $0.carriesSpikePayload }
+            accept: { $0.type == expectedType && $0.quoteMatchesSpikeProbe }
         )
         if let received {
             detail.append("time-exceeded after \(Self.format(received.elapsedMilliseconds)) ms: \(received.message)")
@@ -492,6 +495,39 @@ struct ICMPSpikeTests {
         /// IP and UDP headers ahead of it, and their lengths are the router's
         /// business, not this file's.
         var carriesSpikePayload: Bool
+        /// How many bytes of the original datagram this message quotes.
+        var quotedByteCount: Int
+
+        /// Whether a time-exceeded message's QUOTE can be this file's probe.
+        ///
+        /// Not the same test as `carriesSpikePayload`, and deliberately
+        /// weaker: RFC 792 requires a time-exceeded message to quote only
+        /// "Internet Header + 64 bits of the original datagram" — the IP
+        /// header plus the UDP ports, length and checksum, and **no payload
+        /// at all**. A router that quotes the minimum can never return
+        /// `Spike.payload`, so demanding it would turn verdict (b) into a
+        /// false "no — no ICMP time-exceeded …" on such a network, in the
+        /// file whose whole purpose is to be the measurement record. The
+        /// router measured here (2026-09-03) quoted 45 bytes and did return
+        /// it; that is a fact about that router, not about routers.
+        ///
+        /// So: the quote must be long enough to carry the UDP ports at all,
+        /// and the marker is required only when the quote is long enough to
+        /// have carried it. Where it is not, the message is accepted on its
+        /// type — and a "no" verdict on this path has to be read together
+        /// with the `ignored after … ms:` lines above it, which is where a
+        /// datagram this reader turned away is written down.
+        var quoteMatchesSpikeProbe: Bool {
+            guard quotedByteCount >= Self.minimumQuotedBytes else { return false }
+            guard quotedByteCount >= Self.minimumQuotedBytes + Spike.payload.utf8.count else {
+                return true
+            }
+            return carriesSpikePayload
+        }
+
+        /// The smallest quote RFC 792 requires: a 20-byte IP header without
+        /// options, plus the 8 bytes that carry the UDP ports.
+        static let minimumQuotedBytes = 28
 
         init?(bytes: [UInt8], family: Int32, source: String) {
             byteCount = bytes.count
@@ -516,6 +552,7 @@ struct ICMPSpikeTests {
                 sequence = UInt16(bytes[offset + 6]) << 8 | UInt16(bytes[offset + 7])
             }
             let quotedBytes = bytes.count - (offset + 8)
+            quotedByteCount = max(0, quotedBytes)
             quoted = quotedBytes > 0 ? "\(quotedBytes) bytes of the original datagram" : nil
             carriesSpikePayload = ICMPMessage.contains(
                 Array(Spike.payload.utf8), in: bytes, from: offset + 8)
