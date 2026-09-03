@@ -12,34 +12,55 @@ and move files between them with drag and drop, buttons, or the Finder.
 - **Three server protocols** — SFTP over SSH, S3-compatible object storage,
   and WebDAV (Basic, Digest, and TLS auth; a one-click Nextcloud/ownCloud
   preset). Mix and match freely, including transfers between two different
-  protocols in the same window.
+  protocols in the same window. An S3 session can start at the account's
+  bucket list instead of one fixed bucket.
 - **Two-pane browser** — local and remote side by side, folder navigation
   by double-click, drag & drop in both directions (including dragging
   remote files straight into the Finder).
 - **Saved sessions** — one-click reconnect, groups, inline rename;
   passwords and passphrases live only in the macOS Keychain.
-- **SSH key authentication** — OpenSSH ed25519 keys, with or without
-  passphrase; entries from `~/.ssh/config` appear automatically.
+- **SSH key authentication** — ed25519, RSA, and ECDSA keys, from a file
+  or your SSH agent, with or without a passphrase; entries from
+  `~/.ssh/config` appear automatically.
 - **SSH agent support** — authenticate with the identities already loaded
   in your local agent; the private key never leaves it.
 - **Host-key pinning** — first-connect confirmation with the key
-  fingerprint; a changed host key is a hard stop, never a dialog.
-- **Integrated terminal** — a real shell on the same connection,
-  one keystroke (⌘T) away.
+  fingerprint, for ed25519, RSA, and ECDSA host keys alike; a changed
+  host key is a hard stop, never a dialog.
+- **Connection diagnostics** — check a connection from an open tab's
+  toolbar, a saved session's context menu, or straight from a failed
+  connection's error message. Runs name lookup, a reachability check, a
+  ping, the connection attempt itself, a network route trace, and
+  protocol-specific checks for S3 and WebDAV; run everything at once or
+  just one, and copy the report as plain text or Markdown.
+- **Integrated terminal** — a real shell on the same connection, one
+  keystroke (⌘T) away, sized to match its panel whenever it opens or
+  reopens.
 - **Transfer queue** — parallel transfers, conflict handling
-  (overwrite / skip / rename / apply-to-all), recursive folders,
-  resume after connection loss, per-direction bandwidth limits.
+  (overwrite / skip / rename / apply-to-all), recursive folders, resume
+  after connection loss, per-direction bandwidth limits. Cancel a single
+  transfer or all of them; see and copy each transfer's full source and
+  destination path from the row's tooltip or right-click menu, or show
+  them permanently in a setting.
+- **Checksums** — an optional column in the file list computes a
+  checksum for a file, or a whole selection, on request, always labelled
+  with where the number came from (computed here, computed on the
+  server, or read from the object store's own tag).
 - **Edit remote files in place** — double-click opens the file in your
   editor; saving uploads it back automatically.
-- **English and German** interface.
+- **Import from Cyberduck** — bring in your existing bookmarks from the
+  Sessions menu: a preview lists every one with a checkbox, sessions
+  already imported are recognised and updated instead of duplicated, and
+  passwords can be copied over from Cyberduck's own keychain entries on
+  request.
+- **English, German, French, and Polish** interface.
 
 ## Known limitations
 
-- **RSA identities from an SSH agent.** They authenticate against OpenSSH
-  servers, but servers built on Go's `x/crypto/ssh` — Gitea, Forgejo,
-  SFTPGo, `gitlab-sshd` and others — reject them. The app currently
-  reports this as an ordinary authentication failure. Ed25519 and ECDSA
-  identities are unaffected; use one of those with such servers.
+- **RSA keys against a server that accepts only SHA-256 signatures.**
+  macSCP signs and verifies RSA keys with the SHA-512 variant; a server
+  restricted to the SHA-256 one still refuses them, whether the key comes
+  from a file or an agent.
 - **Several identities in your agent.** They are offered as separate
   login attempts (at most six per connection). On a server running
   fail2ban with its default `maxretry = 5`, a single connect attempt can
@@ -47,6 +68,12 @@ and move files between them with drag and drop, buttons, or the Finder.
 - **Where the connection log lives.** Per-session audit logs are stored
   in `~/Library/Application Support/macSCP/audit/`, one file per saved
   connection. Deleting a saved connection deletes its log.
+- **No FTP or SMB/AFP support yet.** SFTP, S3-compatible storage, and
+  WebDAV are the three protocols macSCP speaks today.
+- **Cyberduck import does not yet cover WebDAV bookmarks.** SFTP and
+  S3-compatible bookmarks import; WebDAV ones are not recognised.
+- **The network route trace covers IPv4 only.** An IPv6 route is not
+  traced.
 
 ## Update checks
 
@@ -163,6 +190,7 @@ reads the session list only — no secret, no connection.
 
 | Command | Effect |
 |---|---|
+| `sessions [--group <g>] [--kind <k>] [--name <text>] [--tag <t>]` | List the saved sessions, optionally filtered. Reads no secret and opens no connection. |
 | `ls <session>:<path>` | List a remote directory. |
 | `get <session>:<path> <local dir>` | Download a remote file into a local directory (keeps its remote name). |
 | `put <local file> <session>:<path>` | Upload a local file into a remote directory (keeps its local name). |
@@ -171,7 +199,8 @@ reads the session list only — no secret, no connection.
 
 `get`/`put` take `--on-conflict fail\|skip\|overwrite` for what to do when
 the destination already exists (`fail` is the default — nothing is
-overwritten unless asked).
+overwritten unless asked). `ls` and `sessions` take `--json` to emit one
+JSON object per line instead of columns, for scripting.
 
 **Secrets.** A session's password or key passphrase is looked up in this
 order, stopping at the first one that answers: an explicit
