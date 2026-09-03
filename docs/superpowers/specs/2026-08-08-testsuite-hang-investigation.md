@@ -296,7 +296,15 @@ measured the fix on the three-core runner: 33693297919 at `e16b14ae`
 tests red — incremental `availableData` readers still parked a global-queue
 thread each, and a starved process never ran them: "waited 9.951 s for the
 2.0 s bound"), 33701218149 at `ae5501ff` (**green**, 3743 tests in 34.98 s,
-Unit-Tests step 00:50–00:55 UTC). The plan is
+Unit-Tests step 00:50–00:55 UTC). Two more rounds followed for the
+pipes' lifetime and a pool-saturation proof: 33705649537 at `126c5c88`
+(red — the saturation test held the global queue for 23.5 s on three
+cores and pushed two neighbours past their bounds; it now runs only under
+`MACSCP_SATURATION=1`), 33707411271 at `aadbafca` (red — one 200 ms latch
+sleep fired after 10.38 s against a 10 s ceiling; the ceiling was dropped,
+the floor and the outcome stay), 33707786680 at `c8eebbd3` (**green**,
+3750 tests in 31.88 s, step 02:28–02:34 UTC; liveness test1 ambient
+14.99 s, gap 0.17 s). The plan is
 `docs/superpowers/plans/2026-09-03-subprocess-runner-async.md`.
 
 ## Decided 2026-09-02 (night) — the liveness assertion gets rebuilt
