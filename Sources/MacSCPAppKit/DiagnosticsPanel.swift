@@ -1,7 +1,9 @@
 import SwiftUI
 import macSCPCore
 
-/// The one diagnostics surface, behind three doors (design §1/§4).
+/// The one diagnostics surface, behind three doors (design §1/§4) — the
+/// tab's (two surfaces: the toolbar while connected, and the failed-connect
+/// surface), the session menu's, and the error dialog's.
 ///
 /// A sheet on the window: the connection it is pointed at, then the steps as
 /// rows — title, outcome badge, duration, one line of detail — and three
@@ -21,21 +23,17 @@ import macSCPCore
 /// bug report, and a row that arrives translated is a row its reader cannot
 /// search for (`DiagnosticReport`'s own doc comment).
 struct DiagnosticsPanel: View {
-    @State private var model: DiagnosticsViewModel
+    /// Held, not created: the window owns the model
+    /// (`ContentView.diagnostics`), because stopping a run has to be possible
+    /// from paths this view is not on — the tab's teardown, and a panel
+    /// replaced rather than dismissed. Still window scope, never a singleton
+    /// (CLAUDE.md, "Architecture invariants"): two windows diagnosing two
+    /// connections hold two, and neither can see the other's report.
+    let model: DiagnosticsViewModel
     private let onClose: () -> Void
 
-    /// The view model is created HERE, from the value a door handed over, and
-    /// lives as long as the sheet does — window scope, never a singleton
-    /// (CLAUDE.md, "Architecture invariants"). Two windows diagnosing two
-    /// connections hold two of these, and neither can see the other's report.
-    init(target: DiagnosticsTarget, secrets: (any SecretSource)?, onClose: @escaping () -> Void) {
-        _model = State(initialValue: DiagnosticsViewModel(target: target, secrets: secrets))
-        self.onClose = onClose
-    }
-
-    /// The injecting initializer, for a caller that already holds a model.
     init(model: DiagnosticsViewModel, onClose: @escaping () -> Void) {
-        _model = State(initialValue: model)
+        self.model = model
         self.onClose = onClose
     }
 
@@ -49,6 +47,17 @@ struct DiagnosticsPanel: View {
         }
         .padding(20)
         .frame(minWidth: 560, minHeight: 420)
+        // The panel's half of the lifecycle: a diagnosis does not outlive the
+        // sheet that asked for it. `run()` starts a free `Task`, which tearing
+        // this view down does not touch — so without this line, closing the
+        // sheet leaves the walk going and the SSH dial authenticating against
+        // the user's server after the user has visibly withdrawn.
+        //
+        // The window cancels too (`ContentView.endDiagnostics()`), and the two
+        // are not redundant: this one catches the dismissals SwiftUI performs
+        // without routing through the sheet's binding, and `cancel()` on an
+        // already-cancelled run does nothing.
+        .onDisappear { model.cancel() }
     }
 
     private var header: some View {
@@ -126,8 +135,20 @@ struct DiagnosticsPanel: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // Rendered through `DiagnosticsPresentation.detail(of:)`: the
+            // measured half is copied through byte for byte — it is what gets
+            // pasted into a bug report — and only the trace's "stopped by the
+            // budget" marker, which is a statement about the CHECK rather than
+            // about the network, is looked up in the reader's language.
+            //
+            // The renderer is named at the DRAWING site, not bound to a local
+            // first: `thePanelRendersTheDetailThroughItsRenderer` reads every
+            // `Text` that mentions a detail and requires the renderer in the
+            // same invocation, which is what catches a `Text(step.detail)`
+            // put back here. The emptiness test above it is free to read the
+            // raw line — it is a length, not a rendering.
             if !step.detail.isEmpty {
-                Text(step.detail)
+                Text(DiagnosticsPresentation.detail(of: step))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(DesignTokens.inkTertiary)
                     .textSelection(.enabled)

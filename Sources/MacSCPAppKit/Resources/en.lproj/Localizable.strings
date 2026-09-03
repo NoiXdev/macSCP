@@ -1079,7 +1079,7 @@
 "diagnostics.step.webdavOptions" = "Server capabilities";
 "diagnostics.reason.noHost" = "This connection names no host.";
 "diagnostics.reason.nothingResolvedToProbe" = "The name resolved to no address, so there was nothing to probe.";
-"diagnostics.reason.noSecret" = "No password is stored for this connection.";
+"diagnostics.reason.noSecret" = "No credential is saved for this connection. Save one, then run the check again.";
 "diagnostics.reason.secretSourceFailed" = "The password could not be read from the keychain.";
 "diagnostics.reason.noEndpoint" = "This connection names no endpoint.";
 "diagnostics.reason.noServerURL" = "This connection names no server address.";

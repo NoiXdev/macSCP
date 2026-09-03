@@ -107,7 +107,9 @@ extension ContentView {
                     }
                     .help(L10n.string("browser.transfersToggleHelp",
                                       "Show/hide transfers (⌘⇧Y)"))
-                    // Diagnostics (design §1, first of three doors): offered
+                    // Diagnostics (design §1, the tab's door — its toolbar
+                    // surface; the failed-connect surface is the other):
+                    // offered
                     // while connected, because "it connects but it is slow /
                     // it drops" is as much a question for the probes as "it
                     // will not connect at all". Never disabled — every step
@@ -490,6 +492,25 @@ extension ContentView {
         // record of an attempt that failed is describing something the tab
         // has been taken past.
         tab.connectFailure = nil
+        // And the diagnosis of a connection this window is leaving.
+        //
+        // Explicitly, not by letting the sheet's own `.onDisappear` do it:
+        // `DiagnosticsViewModel.run()` starts a free `Task`, which no view
+        // teardown touches, and closing a tab does not dismiss the sheet at
+        // all. Without this line the walk continues — the remaining steps
+        // under their budgets, and the SSH dial holding Citadel's
+        // uncancellable `openSFTP` timer — authenticating against a server the
+        // window has just finished with. CLAUDE.md, "The UI owns lifecycles
+        // explicitly … no `deinit` cleanup"; `DiagnosticsLifecycleTests
+        // .tearingTheTabDownCancelsTheRunningDiagnosis` runs this path for
+        // real rather than reading it.
+        //
+        // The window has ONE panel, so tearing down any tab ends it, not only
+        // the tab it was opened from. Deliberate, and in the cheap direction:
+        // a withdrawn diagnosis costs one button press to ask again, while a
+        // dial that outlives the window it belongs to costs a login attempt
+        // on somebody's server that nobody is watching.
+        endDiagnostics()
     }
 
     /// The liveness probe's own route off a session (connection-liveness

@@ -179,8 +179,8 @@ struct SessionSidebar: View {
     /// Sidebar session menu "Audit Log…" entry (M9b/T3) — opens the sheet
     /// for any stored session, connected or not.
     let onShowAuditLog: (StoredSession) -> Void
-    /// Sidebar session menu "Diagnose…" entry (design §1, third of three
-    /// doors) — opens the diagnostics panel for any stored session, connected
+    /// Sidebar session menu "Diagnose…" entry (design §1, the session menu's
+    /// door) — opens the diagnostics panel for any stored session, connected
     /// or not.
     ///
     /// A plain callback rather than a `SessionRowConnectEffect`, and the rule

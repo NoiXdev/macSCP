@@ -1080,7 +1080,7 @@
 "diagnostics.step.webdavOptions" = "Serverfähigkeiten";
 "diagnostics.reason.noHost" = "Diese Verbindung nennt keinen Host.";
 "diagnostics.reason.nothingResolvedToProbe" = "Der Name löste zu keiner Adresse auf, es gab also nichts zu prüfen.";
-"diagnostics.reason.noSecret" = "Für diese Verbindung ist kein Passwort gespeichert.";
+"diagnostics.reason.noSecret" = "Für diese Verbindung sind keine Zugangsdaten gespeichert. Speichere sie und starte die Prüfung erneut.";
 "diagnostics.reason.secretSourceFailed" = "Das Passwort konnte nicht aus dem Schlüsselbund gelesen werden.";
 "diagnostics.reason.noEndpoint" = "Diese Verbindung nennt keinen Endpunkt.";
 "diagnostics.reason.noServerURL" = "Diese Verbindung nennt keine Serveradresse.";

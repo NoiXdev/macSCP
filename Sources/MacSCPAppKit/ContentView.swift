@@ -288,13 +288,19 @@ struct ContentView: View {
 
     // MARK: - Connection diagnostics
 
-    /// The connection whose diagnostics panel is open, or `nil` when none is.
-    /// Written by `showDiagnostics(for:)` alone — the window's single entry,
-    /// which every door goes through — and a VALUE rather than a reference,
-    /// so a tab that reconnects or a row that is renamed cannot change what
-    /// the open panel is diagnosing. Presenting it measures nothing; the
-    /// diagnosis starts on the panel's own button (decision of 2026-09-02).
-    @State var diagnosticsTarget: DiagnosticsTarget?
+    /// This window's diagnostics panel — open or not — and the one place its
+    /// run is stopped.
+    ///
+    /// Filled by `showDiagnostics(for:)` alone, the window's single entry that
+    /// every door goes through, from a `DiagnosticsTarget`: a VALUE taken at
+    /// the moment the user asked, so a tab that reconnects or a row that is
+    /// renamed cannot change what the open panel is diagnosing. Presenting it
+    /// measures nothing; the diagnosis starts on the panel's own button
+    /// (decision of 2026-09-02), and ends with the sheet or the tab.
+    ///
+    /// An object rather than an optional value: `endDiagnostics()` has to
+    /// cancel as well as forget — see `DiagnosticsPresenter`.
+    @State var diagnostics = DiagnosticsPresenter()
 
     // MARK: - Known hosts (M10a/T2)
 

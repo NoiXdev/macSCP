@@ -138,6 +138,68 @@ struct DiagnosticsViewModelTests {
         #expect(model.isRunning == false)
     }
 
+    /// The cancellation the two lifecycle paths depend on: `cancel()` reaches
+    /// the RUNNER, not just the model's own flags.
+    ///
+    /// Read while the runner is still parked, so nothing has healed: the fake
+    /// records its cancellation synchronously through
+    /// `withTaskCancellationHandler`, and a `true` here cannot have come from
+    /// a run that simply finished. `DiagnosticsLifecycleTests` drives the same
+    /// property through the sheet and the tab teardown.
+    @Test func cancelReachesTheRunnerBeforeAnythingHeals() async {
+        let observed = CancellationFlag()
+        let started = Gate()
+        let model = Self.model(
+            runner: { [observed, started] in
+                await withTaskCancellationHandler {
+                    await started.open()
+                    try? await Task.sleep(for: .seconds(600))
+                    return Self.report([])
+                } onCancel: {
+                    observed.set()
+                }
+            },
+            clipboard: Clipboard())
+        model.run()
+        await started.wait()
+        #expect(observed.isSet == false, "nothing has asked it to stop yet")
+
+        model.cancel()
+
+        #expect(observed.isSet, """
+            cancel() must reach the probe itself. The model's own flags say nothing about \
+            whether an SSH dial is still authenticating against the user's server.
+            """)
+    }
+
+    /// A run cancelled before its first step measured anything publishes
+    /// nothing.
+    ///
+    /// `ConnectionDiagnostics.run()` answers a task cancelled before the
+    /// resolve step with a report of ZERO steps. Publishing it swaps the
+    /// panel's idle explanation for an empty rows area, offers "Run again",
+    /// and enables the Copy menu over a report with no rows — three controls
+    /// describing a measurement that never happened.
+    @Test func aRunThatMeasuredNothingPublishesNothing() async {
+        let model = Self.model(runner: { Self.report([]) }, clipboard: Clipboard())
+        model.run()
+        await model.runTask?.value
+        #expect(model.report == nil, """
+            an empty report is not a result; the panel keeps its idle text, which is the more \
+            useful state
+            """)
+        #expect(model.isRunning == false, "the run is over either way")
+    }
+
+    /// The same rule must not throw away a report that DID measure something.
+    @Test func aRunThatMeasuredOneStepPublishesIt() async {
+        let partial = Self.report([Self.step(id: DiagnosticStepID.resolve)])
+        let model = Self.model(runner: { partial }, clipboard: Clipboard())
+        model.run()
+        await model.runTask?.value
+        #expect(model.report == partial)
+    }
+
     // MARK: - Copying
 
     @Test func bothCopyEntriesReachThePasteboard() async {
@@ -233,6 +295,34 @@ struct DiagnosticsViewModelTests {
         #expect(DiagnosticsPresentation.reason(of: .timedOut).isEmpty)
     }
 
+    /// The trace's budget marker is a fixed sentence with a number in it, and
+    /// it rides in the step's DETAIL line rather than in its outcome. The
+    /// panel renders the detail, so the marker has to be looked up there or
+    /// it prints as the English Core composed.
+    @Test func theTraceBudgetMarkerIsLocalizedInsideTheDetailLine() {
+        let raw = DiagnosticReason.traceStoppedByBudget(afterHop: 6)
+        let step = DiagnosticStep(
+            id: DiagnosticStepID.trace,
+            titleKey: DiagnosticStepID.titleKey(for: DiagnosticStepID.trace),
+            started: Date(), duration: .milliseconds(90), outcome: .ok,
+            detail: "1 10.0.0.1 1.2 ms; 2 * ; \(raw)")
+        let rendered = DiagnosticsPresentation.detail(of: step)
+        #expect(rendered != step.detail, "the marker must not print as Core composed it")
+        #expect(!rendered.contains(raw))
+        #expect(rendered.contains("6"), "the hop number survives the substitution: \(rendered)")
+        #expect(rendered.hasPrefix("1 10.0.0.1 1.2 ms; 2 * ; "), """
+            the measured hops are copied through untouched — they are the artifact people \
+            paste into a bug report: \(rendered)
+            """)
+    }
+
+    /// A detail line with no marker in it is handed through unchanged.
+    @Test func aDetailLineWithoutTheMarkerIsUntouched() {
+        let step = Self.step(
+            id: DiagnosticStepID.tcp, detail: "127.0.0.1:2222 accepted in 0.4 ms")
+        #expect(DiagnosticsPresentation.detail(of: step) == step.detail)
+    }
+
     @Test func aRowsDurationIsRenderedInTheReportsOwnFormat() {
         let step = Self.step(id: DiagnosticStepID.tcp)
         #expect(DiagnosticsPresentation.duration(of: step).contains("12"))
@@ -243,6 +333,15 @@ struct DiagnosticsViewModelTests {
     /// Opens once, for the "is running" observation. An actor rather than a
     /// semaphore: nothing in this target may block the cooperative pool
     /// (CLAUDE.md, "Tests never block the cooperative pool").
+    /// Records a cancellation the moment it happens, from whatever thread
+    /// `Task.cancel()` runs the handler on.
+    nonisolated private final class CancellationFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var flag = false
+        var isSet: Bool { lock.withLock { flag } }
+        func set() { lock.withLock { flag = true } }
+    }
+
     /// Counts the runner's invocations, so one fake can answer the first call
     /// and the second differently.
     private actor Calls {

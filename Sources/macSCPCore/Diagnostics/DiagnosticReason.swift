@@ -49,10 +49,29 @@ public enum DiagnosticReason {
     /// copy-and-paste artifact someone reads as a statement about the path.
     static let stoppedByBudget = "stopped by the budget"
 
+    /// The whole marker up to the number, spelled ONCE: the composer below
+    /// appends the hop to it, and the reader below takes the hop back off it.
+    /// Two functions over one spelling, so a reworded marker cannot leave the
+    /// panel matching a sentence Core no longer writes.
+    private static let budgetMarkerPrefix = "\(stoppedByBudget) after hop "
+
     /// That marker, naming the last hop the walk actually measured. `0` says
     /// the budget ran out before any hop was measured at all.
     static func traceStoppedByBudget(afterHop hop: Int) -> String {
-        "\(stoppedByBudget) after hop \(hop)"
+        budgetMarkerPrefix + "\(hop)"
+    }
+
+    /// The hop a budget marker names, or `nil` when `row` is not one.
+    ///
+    /// Public because the PANEL needs it: the marker rides inside a step's
+    /// detail line, which the panel prints, and a localized panel has to find
+    /// the marker among the measured hop rows before it can render
+    /// `stoppedByBudgetKey` for it. Core does the finding, because Core did
+    /// the composing — the alternative is the App spelling this sentence a
+    /// second time, which is the thing this whole type exists to prevent.
+    public static func budgetHop(in row: String) -> Int? {
+        guard row.hasPrefix(budgetMarkerPrefix) else { return nil }
+        return Int(row.dropFirst(budgetMarkerPrefix.count))
     }
 
     /// The reason a trace step reports when a router on the path answered

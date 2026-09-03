@@ -53,7 +53,12 @@ struct DiagnosticsTarget: Identifiable {
 /// `ConnectionDiagnostics`.
 @MainActor
 @Observable
-final class DiagnosticsViewModel {
+final class DiagnosticsViewModel: Identifiable {
+    /// Identity for the sheet that presents this panel. Fresh per model, and
+    /// stable for its life, so asking a second time re-presents the sheet
+    /// while an observable change inside a live one does not.
+    nonisolated let id = UUID()
+
     /// One diagnosis, start to finish. Cancellation reaches it through the
     /// task that runs it — `ConnectionDiagnostics.run()` answers a cancelled
     /// task with the steps it had already measured, which is why a cancelled
@@ -115,8 +120,13 @@ final class DiagnosticsViewModel {
     }
 
     /// Starts a diagnosis. The ONLY thing that does.
+    ///
+    /// Stops whatever was running through `cancel()` rather than reaching for
+    /// `runTask` itself — one method owns the cancellation, which is what
+    /// lets `DiagnosticsDoorsGuardTests` DERIVE that method's name instead of
+    /// spelling it.
     func run() {
-        runTask?.cancel()
+        cancel()
         let myAttempt = UUID()
         attempt = myAttempt
         isRunning = true
@@ -124,7 +134,14 @@ final class DiagnosticsViewModel {
         runTask = Task { [weak self] in
             let produced = await runner()
             guard let self, self.attempt == myAttempt else { return }
-            self.report = produced
+            // A report with no steps is not a result. `ConnectionDiagnostics
+            // .run()` answers a task cancelled before the resolve step with
+            // exactly that, and publishing it would swap the panel's idle
+            // explanation for an empty rows area, offer "Run again" and
+            // enable the Copy menu — three controls describing a measurement
+            // that never happened. The run is over either way, so
+            // `isRunning` clears regardless.
+            if !produced.steps.isEmpty { self.report = produced }
             self.isRunning = false
         }
     }
@@ -132,6 +149,14 @@ final class DiagnosticsViewModel {
     /// Stops the running diagnosis. What it measured before the stop still
     /// lands: the runner returns the finished steps, and they are the answer
     /// to "where did it get stuck".
+    ///
+    /// Called from four places, and every one of them is the user withdrawing:
+    /// the panel's own Cancel button, the panel going away
+    /// (`DiagnosticsPanel`'s `.onDisappear`), the window dropping the panel
+    /// (`DiagnosticsPresenter.end()`), and the tab's teardown. The last two
+    /// exist because `runTask` is a free `Task`: tearing a view down does not
+    /// touch it, and a diagnosis nobody can see is still an SSH dial
+    /// authenticating against somebody's server.
     func cancel() {
         runTask?.cancel()
     }
@@ -162,6 +187,44 @@ final class DiagnosticsViewModel {
     /// `SettingsView` and `UpdateCheckModel` make.
     private static var appVersion: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"
+    }
+}
+
+/// The window's open diagnostics panel, if any — and the one place a
+/// diagnosis is stopped when it goes away.
+///
+/// A window-scoped object rather than a plain `@State` optional, for two
+/// reasons that are really one. Dropping the panel has to CANCEL as well as
+/// forget, and those two writes belong together or the next restructure keeps
+/// one of them; and a reference the window holds is something the real
+/// `ContentView` can be driven through in a test, which a `@State` value
+/// written outside a render pass is not (`DiagnosticsLifecycleTests` runs both
+/// paths for real).
+///
+/// Not a singleton: one per window, created with the window's own
+/// `ContentView`. Two windows diagnosing two connections hold two, and neither
+/// can see or stop the other's run — the architecture invariant this feature
+/// inherited from the session scope.
+@MainActor
+@Observable
+final class DiagnosticsPresenter {
+    private(set) var open: DiagnosticsViewModel?
+
+    /// Shows a panel, stopping whatever the last one was doing.
+    ///
+    /// A panel replaced rather than dismissed has nothing on screen left to
+    /// stop its run, so the replacement does it.
+    func present(_ model: DiagnosticsViewModel) {
+        end()
+        open = model
+    }
+
+    /// Drops the panel and stops its diagnosis. Cancel FIRST: the reference
+    /// is the only way to reach the run, so forgetting it first would leave
+    /// the walk going with nothing able to stop it.
+    func end() {
+        open?.cancel()
+        open = nil
     }
 }
 
@@ -212,6 +275,34 @@ enum DiagnosticsPresentation {
             return L10n.string(key, reason)
         }
     }
+
+    /// The row's detail line, with the one fixed sentence Core writes into a
+    /// detail rendered in the reader's language.
+    ///
+    /// Everything else is copied through byte for byte, and that is the point:
+    /// the detail is the addresses, ports, statuses and hop rows somebody
+    /// pastes into a bug report, and translating those would make the report
+    /// unsearchable by the person reading it (`DiagnosticReport`'s own doc
+    /// comment). The trace's budget marker is the exception because it is not
+    /// a measurement — it says the walk STOPPED looking, which is the one
+    /// thing in the line a reader has to understand rather than quote.
+    ///
+    /// Core finds the marker (`DiagnosticReason.budgetHop(in:)`) and this
+    /// substitutes it; the raw row is the fallback, so a catalog missing the
+    /// key shows the English Core composed rather than nothing.
+    static func detail(of step: DiagnosticStep) -> String {
+        step.detail
+            .components(separatedBy: rowSeparator)
+            .map { row in
+                guard let hop = DiagnosticReason.budgetHop(in: row) else { return row }
+                return String(
+                    format: L10n.string(DiagnosticReason.stoppedByBudgetKey, row), "\(hop)")
+            }
+            .joined(separator: rowSeparator)
+    }
+
+    /// How `ConnectionDiagnostics` joins the rows of a detail line.
+    private static let rowSeparator = "; "
 
     /// The row's duration, in the same fixed-point milliseconds the report
     /// prints. The NUMBER is formatted against `en_US_POSIX` for the reason

@@ -31,12 +31,13 @@ extension ContentView {
     }
 
     func showDiagnostics(for source: DiagnosticsSource) {
+        let target: DiagnosticsTarget
         switch source {
         case .tab(let tab):
             let stored = sessionListViewModel.sessions.first {
                 $0.id == tab.activeStoredSessionID
             }
-            diagnosticsTarget = DiagnosticsTarget(
+            target = DiagnosticsTarget(
                 name: tab.displayTitle,
                 kind: tab.connectionViewModel.kind,
                 values: tab.connectionViewModel.values,
@@ -51,12 +52,23 @@ extension ContentView {
             // uses (design §3).
             var values = descriptor.editBaseline
             values.merge(descriptor.sessionValues(stored))
-            diagnosticsTarget = DiagnosticsTarget(
+            target = DiagnosticsTarget(
                 name: stored.name,
                 kind: stored.kind,
                 values: values,
                 sessionID: Self.secretSlot(stored))
         }
+        diagnostics.present(DiagnosticsViewModel(target: target, secrets: diagnosticsSecrets))
+    }
+
+    /// Closes the panel and stops whatever it was measuring.
+    ///
+    /// The one way out, shared by the sheet's binding, its Close button and
+    /// the tab's teardown, so no dismissal path can forget the half that
+    /// cancels. `DiagnosticsPresenter.end()` is where the order lives —
+    /// cancel, then forget.
+    func endDiagnostics() {
+        diagnostics.end()
     }
 
     /// The Keychain slot this session's secret actually lives in.

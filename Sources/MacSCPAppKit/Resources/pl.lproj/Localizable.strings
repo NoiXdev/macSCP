@@ -1082,7 +1082,7 @@
 "diagnostics.step.webdavOptions" = "Możliwości serwera";
 "diagnostics.reason.noHost" = "To połączenie nie wskazuje żadnego hosta.";
 "diagnostics.reason.nothingResolvedToProbe" = "Nazwa nie rozwiązała się na żaden adres, więc nie było czego sprawdzać.";
-"diagnostics.reason.noSecret" = "Dla tego połączenia nie zapisano hasła.";
+"diagnostics.reason.noSecret" = "Dla tego połączenia nie zapisano danych logowania. Zapisz je i uruchom sprawdzenie ponownie.";
 "diagnostics.reason.secretSourceFailed" = "Nie udało się odczytać hasła z pęku kluczy.";
 "diagnostics.reason.noEndpoint" = "To połączenie nie wskazuje żadnego punktu końcowego.";
 "diagnostics.reason.noServerURL" = "To połączenie nie wskazuje żadnego adresu serwera.";

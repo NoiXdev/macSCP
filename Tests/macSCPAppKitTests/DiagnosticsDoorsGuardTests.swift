@@ -170,6 +170,42 @@ struct DiagnosticsDoorsGuardTests {
         return name
     }
 
+    /// The method that STOPS a diagnosis: the single method of the view model
+    /// whose body cancels the running task.
+    ///
+    /// `run()` reaches the same cancellation through `cancel()` rather than
+    /// touching `runTask` itself, which is what leaves exactly one owner here
+    /// — and is the reason this derivation can be a derivation at all.
+    static func cancelEntryName() throws -> String {
+        let lines = try strictSource(of: viewModelPath).components(separatedBy: "\n")
+        var owners: Set<String> = []
+        for (index, line) in lines.enumerated() where line.contains("runTask?.cancel()") {
+            guard let owner = enclosingFunctionName(in: lines, at: index) else { continue }
+            owners.insert(owner)
+        }
+        guard owners.count == 1, let name = owners.first else {
+            throw ScanError.derivation("""
+                exactly ONE method of the view model may cancel the running task — found \
+                \(owners.count): \(owners.sorted())
+                """)
+        }
+        return name
+    }
+
+    /// The type that turns a step into what the panel draws: the single
+    /// `enum` the view model's file declares.
+    static func presentationTypeName() throws -> String {
+        let source = try strictSource(of: viewModelPath)
+        let names = matches(of: #"enum\s+(\w+)"#, in: source)
+        guard names.count == 1 else {
+            throw ScanError.derivation("""
+                \(viewModelPath) must declare exactly ONE enum — the row renderer — found \
+                \(names.count): \(names)
+                """)
+        }
+        return names[0]
+    }
+
     /// The argument label a door's wiring hands the entry through — read out
     /// of the wiring itself (`someLabel: { … entry(…) }`), so the check on the
     /// control side spells nothing.
@@ -242,15 +278,40 @@ struct DiagnosticsDoorsGuardTests {
     @Test func thePanelStartsNoRunOnAppear() throws {
         let run = try Self.runEntryName()
         let source = try Self.strictSource(of: Self.panelPath)
-        for keyword in Self.appearModifiers {
-            for body in Self.bodies(after: keyword, in: source) {
-                #expect(!body.contains("\(run)("), """
-                    \(Self.panelPath) starts a diagnosis from \(keyword) — the diagnosis runs \
-                    only when the user presses the button (decision of 2026-09-02). \
-                    Offending body: \(body)
-                    """)
-            }
+        for offence in Self.automaticStarts(of: [run], in: source) {
+            Issue.record("""
+                \(Self.panelPath) starts a diagnosis automatically: \(offence). The \
+                diagnosis runs only when the user presses the button (decision of \
+                2026-09-02).
+                """)
         }
+    }
+
+    /// The other half of the lifecycle the UI owns: a panel that goes away
+    /// takes its diagnosis with it.
+    ///
+    /// Without this, closing the sheet leaves the run walking — the remaining
+    /// steps under their budgets, and the SSH dial holding Citadel's
+    /// uncancellable `openSFTP` timer — authenticating against the user's
+    /// server after the user has visibly withdrawn. CLAUDE.md's "the UI owns
+    /// lifecycles explicitly … no `deinit` cleanup" is the invariant, and a
+    /// free `Task` (which is what the run is) is not touched by a view being
+    /// torn down.
+    ///
+    /// A POSITIVE check: `.onDisappear` must be there and must carry the
+    /// cancel entry. The tab's own teardown path is covered by
+    /// `DiagnosticsLifecycleTests`, which runs the real function rather than
+    /// reading it.
+    @Test func thePanelCancelsItsRunWhenItGoesAway() throws {
+        let cancel = try Self.cancelEntryName()
+        let source = try Self.strictSource(of: Self.panelPath)
+        let cancelling = Self.invocations(of: ".onDisappear", in: source)
+            .filter { Self.mentions(cancel, in: $0) }
+        #expect(cancelling.count == 1, """
+            \(Self.panelPath) must carry exactly one .onDisappear calling \(cancel)(…) — \
+            found \(cancelling.count). A run that outlives its panel keeps dialling the \
+            user's server after the user closed the sheet.
+            """)
     }
 
     /// A door may not open or run the diagnosis from a lifecycle hook.
@@ -266,24 +327,60 @@ struct DiagnosticsDoorsGuardTests {
         let run = try Self.runEntryName()
         let entry = try Self.entryFunctionName()
         for door in Self.doors {
-            var spans: [(Span, [String])] = [(door.wiring, ["\(run)(", "\(entry)("])]
+            var spans: [(Span, [String])] = [(door.wiring, [run, entry])]
             if let control = door.control {
                 let callback = try Self.callbackName(of: door)
-                spans.append((control, ["\(run)(", "\(entry)(", "\(callback)("]))
+                spans.append((control, [run, entry, callback]))
             }
             for (span, forbidden) in spans {
                 let text = try Self.text(of: span)
-                for keyword in Self.appearModifiers {
-                    for body in Self.bodies(after: keyword, in: text) {
-                        let hit = forbidden.first { body.contains($0) }
-                        #expect(hit == nil, """
-                            \(door.what) (\(span.file)) opens or runs the diagnosis from \
-                            \(keyword), through \(hit ?? ""). A door is a control the user \
-                            presses, never a lifecycle hook. Offending body: \(body)
-                            """)
-                    }
+                for offence in Self.automaticStarts(of: forbidden, in: text) {
+                    Issue.record("""
+                        \(door.what) (\(span.file)) opens or runs the diagnosis \
+                        automatically: \(offence). A door is a control the user presses, \
+                        never a lifecycle hook.
+                        """)
                 }
             }
+        }
+    }
+
+    /// The panel draws no detail line Core wrote without putting it through
+    /// the renderer.
+    ///
+    /// A step's `detail` is mostly measurement — addresses, ports, statuses,
+    /// hop rows — copied through byte for byte because it is what somebody
+    /// pastes into a bug report. Exactly one thing in it is a sentence about
+    /// the CHECK rather than about the network (the trace's "stopped by the
+    /// budget" marker), and that one is looked up in the reader's language.
+    /// Drawing the raw line skips the lookup, and the marker then prints as
+    /// the English Core composed — in every language, with nothing red.
+    ///
+    /// Measured in fix round 1: reverting the panel's one call to
+    /// `Text(step.detail)` left `theTraceBudgetMarkerIsLocalizedInsideThe
+    /// DetailLine` green, because that test exercises the RENDERER and the
+    /// panel is free not to call it. A negative check ("no `Text` draws a raw
+    /// detail") with a positive one beside it ("the renderer is called
+    /// exactly once") is what closes the gap.
+    ///
+    /// Blind spot, stated: a raw detail bound to a local first
+    /// (`let d = step.detail; Text(d)`) is invisible to the negative half —
+    /// but replacing the rendering that way drops the renderer's one call
+    /// site, which the positive half then catches.
+    @Test func thePanelRendersTheDetailThroughItsRenderer() throws {
+        let renderer = try Self.presentationTypeName()
+        let source = try Self.strictSource(of: Self.panelPath)
+        let calls = Self.occurrences(of: "\(renderer).detail(", in: source)
+        #expect(calls == 1, """
+            the panel must render a step's detail through \(renderer).detail(of:) exactly \
+            once — found \(calls). Without the call, the trace's budget marker prints as \
+            the English Core composed, in all four languages.
+            """)
+        for drawn in Self.invocations(of: "Text", in: source)
+        where Self.mentions("detail", in: drawn) {
+            #expect(drawn.contains("\(renderer).detail("), """
+                the panel draws a detail line without the renderer: \(drawn)
+                """)
         }
     }
 
@@ -319,9 +416,18 @@ struct DiagnosticsDoorsGuardTests {
         for path in [Self.panelPath, Self.viewModelPath] {
             keys.formUnion(Self.lookedUpKeys(in: try Self.literalSource(of: path)))
         }
+        // BOTH spans of every door, not just the control. Measured in fix
+        // round 1: the toolbar door has no control span — it presses the
+        // entry directly — so `diagnostics.menuHelp`, which is looked up
+        // nowhere else, was checked by nothing. Deleting it from all four
+        // catalogs left this suite and `LocalizableStringsTests` (which only
+        // compares the other three languages against `en`) green, and the
+        // tooltip would have fallen back to its English literal in every
+        // language without a red.
         for door in Self.doors {
-            guard let control = door.control else { continue }
-            keys.formUnion(Self.lookedUpKeys(in: try Self.text(of: control, view: .literals)))
+            for span in [door.wiring, door.control].compactMap({ $0 }) {
+                keys.formUnion(Self.lookedUpKeys(in: try Self.text(of: span, view: .literals)))
+            }
         }
         // The row titles and the fixed reasons are named in CORE, and reach
         // the panel as data rather than as a literal a scan of the panel
@@ -365,6 +471,46 @@ struct DiagnosticsDoorsGuardTests {
             the scanner must see the planted violation — without this, the two negative \
             checks above are checks that cannot fail.
             """)
+    }
+
+    /// Every spelling of an automatic start must be visible to the scanner —
+    /// one synthetic body per form, read by the same function the real checks
+    /// use. Two of these five were invisible until fix round 1, and the suite
+    /// reported compliance over both.
+    @Test func scannerSeesEveryFormOfAnAutomaticStart() {
+        let forms: [(String, String)] = [
+            (".onAppear trailing closure", ".onAppear { model.run() }"),
+            (".onAppear(perform:) as a value", ".onAppear(perform: model.run)"),
+            (".onAppear(perform:) as a closure", ".onAppear(perform: { model.run() })"),
+            (".task trailing closure", ".task { model.run() }"),
+            (".onChange trailing closure", ".onChange(of: endpoint) { _, _ in model.run() }"),
+        ]
+        for (what, source) in forms {
+            let offences = Self.automaticStarts(of: ["run"], in: source)
+            #expect(offences.count == 1, """
+                the scanner must see \(what) — without it, that spelling plants the \
+                behaviour with the suite green. Got \(offences) for: \(source)
+                """)
+        }
+    }
+
+    /// The other side of the same claim: an ordinary lifecycle hook that
+    /// starts nothing must not be reported, or the checks above would be
+    /// unfalsifiable in the other direction.
+    @Test func scannerAcceptsLifecycleHooksThatStartNothing() {
+        let innocent = [
+            ".onAppear { isFocused = true }",
+            ".onAppear(perform: focus)",
+            ".task { await store.reload() }",
+            ".onChange(of: model.isRunning) { _, _ in announce() }",
+            ".onDisappear { model.cancel() }",
+        ]
+        for source in innocent {
+            #expect(Self.automaticStarts(of: ["run"], in: source).isEmpty, """
+                `\(source)` starts no diagnosis and must not be reported — note the fourth, \
+                which contains "Running" and would trip a substring test.
+                """)
+        }
     }
 
     /// The hole a fresh planting found: a control fires its CALLBACK from an
@@ -546,7 +692,48 @@ struct DiagnosticsDoorsGuardTests {
 
     enum SourceView { case strict, literals }
 
-    private static let appearModifiers = [".onAppear", ".task"]
+    /// Every SwiftUI modifier that can fire a closure without anybody
+    /// pressing anything.
+    ///
+    /// Three, and the third was added in fix round 1 along with the two
+    /// SPELLINGS the scan had been blind to. `.onChange` is here because a
+    /// panel wired to re-run whenever the endpoint changes would be exactly
+    /// as automatic as `.onAppear`, and reads as a feature while it is
+    /// written.
+    private static let automaticModifiers = [".onAppear", ".task", ".onChange"]
+
+    /// Every automatic-start offence in `source`: an occurrence of one of the
+    /// modifiers above whose invocation mentions one of `names`.
+    ///
+    /// Reads whole INVOCATIONS, not trailing closures. Measured in fix round
+    /// 1: the previous scan took the first `{` after the anchor at paren depth
+    /// zero, so `.onAppear(perform: model.run)` and
+    /// `.onAppear(perform: { model.run() })` — ordinary SwiftUI, and exactly
+    /// the violation this suite exists for — were both invisible, and the
+    /// suite stayed green over them. `invocations(of:)` covers the argument
+    /// list too, which is where both of those live.
+    ///
+    /// The needle is the bare IDENTIFIER on a word boundary, not `name(`,
+    /// for the same measurement: `perform: model.run` passes the method as a
+    /// value and never writes a parenthesis.
+    static func automaticStarts(of names: [String], in source: String) -> [String] {
+        var offences: [String] = []
+        for modifier in automaticModifiers {
+            for invocation in invocations(of: modifier, in: source) {
+                guard let name = names.first(where: { mentions($0, in: invocation) })
+                else { continue }
+                offences.append("\(modifier) mentioning `\(name)` — \(invocation)")
+            }
+        }
+        return offences
+    }
+
+    /// Whether `name` occurs in `source` as a whole identifier. A substring
+    /// test would read `isRunning` as `run`, and `\(name)(` would miss the
+    /// method-as-a-value spelling.
+    static func mentions(_ name: String, in source: String) -> Bool {
+        !matches(of: #"\b(\#(name))\b"#, in: source).isEmpty
+    }
 
     static func url(_ relativePath: String) -> URL {
         repoRoot.appendingPathComponent(relativePath)

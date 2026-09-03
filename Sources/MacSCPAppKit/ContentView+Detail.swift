@@ -91,7 +91,7 @@ extension ContentView {
             onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
             onImport: { showImportFileImporter = true },
             onShowAuditLog: { stored in auditLogSession = stored },
-            // The third of the three doors (design §1). Works for a
+            // The session menu's door (design §1). Works for a
             // session that is not connected — the panel opens with
             // nothing measured, and the probes run on its own button.
             onDiagnose: { stored in showDiagnostics(for: .stored(stored)) },
@@ -683,7 +683,9 @@ extension ContentView {
                             onRetry: { retryConnect(tab) },
                             onEdit: { dismissConnectFailure(tab) },
                             onEditSession: { editFailedSession(tab) },
-                            // The second of the three doors (design §1). It
+                            // The tab's door, on its failed-connect surface
+                            // (design §1) — the toolbar is the same door's
+                            // other surface. It
                             // OPENS the panel and measures nothing — the
                             // maintainer decided on 2026-09-02 that a failed
                             // connect does not start a diagnosis by itself,
@@ -761,10 +763,10 @@ extension ContentView {
                                 let current = sessionListViewModel.sessions.first(where: { $0.id == stored.id }) ?? stored
                                 connect(in: tab, stored: current)
                             },
-                            // The connect-error dialog's own door. Same tab,
-                            // same entry as the failed-connect surface above
-                            // — the dialog and the surface answer the same
-                            // failure from two places in the flow.
+                            // The error dialog's door. Same tab, same entry
+                            // as the failed-connect surface above — the dialog
+                            // and the surface answer the same failure from two
+                            // places in the flow.
                             onDiagnose: { showDiagnostics(for: .tab(tab)) },
                             // Read fresh at Connect-button-click time, inside
                             // `ConnectionFormView`'s own handler, NOT here —
@@ -1580,7 +1582,7 @@ struct ConnectFailureContent: Equatable {
     /// is not carried by this type — see `ConnectFailureDetailText`.
     let detailsButton: Message
     /// Opens the diagnostics panel (design §1, this surface being the second
-    /// of its three doors). A field here rather than a literal in the view,
+    /// of the tab's door). A field here rather than a literal in the view,
     /// for the same reason `detailsTitle` is one: a type that covers the text
     /// of a surface has to cover ALL of it, or the claim that this surface can
     /// only show a fixed, enumerated set of catalog keys — and therefore no

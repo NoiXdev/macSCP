@@ -125,10 +125,17 @@ extension ContentView {
         // surface), the sidebar's session menu and the connect-error dialog,
         // all through `showDiagnostics(for:)`. Presenting it runs nothing —
         // the panel's own button does, and only it (decision of 2026-09-02).
-        .sheet(item: $diagnosticsTarget) { target in
-            DiagnosticsPanel(
-                target: target, secrets: diagnosticsSecrets,
-                onClose: { diagnosticsTarget = nil })
+        //
+        // Every way out goes through `endDiagnostics()`, which cancels before
+        // it forgets: the Close button, Esc and a click outside all set the
+        // binding to nil, and the panel's own `.onDisappear` cancels a second
+        // time for the dismissals SwiftUI performs without asking the binding.
+        .sheet(
+            item: Binding(
+                get: { diagnostics.open },
+                set: { if $0 == nil { endDiagnostics() } })
+        ) { model in
+            DiagnosticsPanel(model: model, onClose: { endDiagnostics() })
         }
         // Known-hosts sheet (M10a/T2) — same directory the connector's
         // `KnownHostsStore` uses (`makeTab`), so it reflects the same

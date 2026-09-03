@@ -1083,7 +1083,7 @@
 "diagnostics.step.webdavOptions" = "Capacités du serveur";
 "diagnostics.reason.noHost" = "Cette connexion ne nomme aucun hôte.";
 "diagnostics.reason.nothingResolvedToProbe" = "Le nom n’a donné aucune adresse ; il n’y avait donc rien à sonder.";
-"diagnostics.reason.noSecret" = "Aucun mot de passe n’est enregistré pour cette connexion.";
+"diagnostics.reason.noSecret" = "Aucun identifiant n’est enregistré pour cette connexion. Enregistrez-en un, puis relancez la vérification.";
 "diagnostics.reason.secretSourceFailed" = "Le mot de passe n’a pas pu être lu depuis le trousseau.";
 "diagnostics.reason.noEndpoint" = "Cette connexion ne nomme aucun point de terminaison.";
 "diagnostics.reason.noServerURL" = "Cette connexion ne nomme aucune adresse de serveur.";

@@ -46,8 +46,14 @@ struct ConnectionFormView: View {
     /// which reloads the secret from the keychain (covers "empty password
     /// means unchanged" automatically).
     var onConnectEdited: (StoredSession) -> Void = { _ in }
-    /// Connect-error dialog "Diagnose…" (design §1, the third door): opens
-    /// the diagnostics panel for this tab.
+    /// Connect-error dialog "Diagnose…" (design §1, the error dialog's door):
+    /// opens the diagnostics panel for this tab.
+    ///
+    /// Named by which door it is, not by its number: the design has three
+    /// doors and the app has four surfaces, because the tab's door has two
+    /// (its toolbar while connected, and its failed-connect surface). Four
+    /// comments once carried four ordinals out of three, which is what an
+    /// enumeration in a comment does the moment a surface is added.
     ///
     /// Opening it is ALL this does. The maintainer decided on 2026-09-02 that
     /// a failed connect never starts a diagnosis by itself — the probes dial
