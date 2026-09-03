@@ -185,7 +185,7 @@ bookmark has one, and a miss reports "not read", never a wrong value.
   differing fields; the tags switch moves `labels` in and out of the
   change list; a changed nickname alone is `.knownChanged` (name is a
   Cyberduck-known field) but never a *match* criterion.
-- Applying: a `.knownChanged` row keeps the stored record's group,
+- Applying: a `.knownChanged` row keeps the stored record's
   group, position, pane visibility and secret when the switches are off;
   replaces tags and
   secret when on; `importedAt` refreshed; the planner's invariants
