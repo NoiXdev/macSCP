@@ -57,25 +57,32 @@ public struct DiagnosticReport: Sendable, Equatable {
 
     public let completion: Completion
 
+    /// Which steps the walk was asked for. `.complete` in every report until
+    /// a caller says otherwise, and rendered only when it is not.
+    public let scope: DiagnosticScope
+
     /// The yes/no question, for a caller that does not care which of the two
     /// partial cases it is looking at.
     public var isComplete: Bool { completion == .complete }
 
     /// No redaction pass here, unlike `DiagnosticStep.init`, and that is a
-    /// decision rather than an omission: the only fields this prints besides
-    /// the steps are `endpoint.text` and `appVersion`. An endpoint's host
+    /// decision rather than an omission: besides the steps, this prints
+    /// `endpoint.text`, `appVersion`, and — for a scoped walk — the scope's
+    /// `rawValue`, which is one of a closed set of spellings this module
+    /// wrote and can carry nothing a user typed. An endpoint's host
     /// comes either from `URL.host()` (which never carries userinfo) or from
     /// SSH's own host field, where an `alice@server.lan` a user typed is a
     /// user name and not a credential — and carries no `://` for
     /// `withoutUserinfo` to act on anyway.
     public init(
         endpoint: Endpoint?, steps: [DiagnosticStep], appVersion: String,
-        completion: Completion = .complete
+        completion: Completion = .complete, scope: DiagnosticScope = .complete
     ) {
         self.endpoint = endpoint
         self.steps = steps
         self.appVersion = appVersion
         self.completion = completion
+        self.scope = scope
     }
 
     private static let title = "macSCP connection diagnostics"
@@ -100,9 +107,26 @@ public struct DiagnosticReport: Sendable, Equatable {
         }
     }
 
+    /// What a scoped report calls itself in the header, or `nil` for the
+    /// complete walk.
+    ///
+    /// Absent rather than "Scope: complete", for the reason `marker(for:)` is
+    /// absent on a finished walk: a line that is in every report anyone ever
+    /// pastes says nothing about the one they are reading, and the reports
+    /// that came before this parameter existed have to keep rendering
+    /// identically or every pinned rendering becomes a question.
+    ///
+    /// The scope's own `rawValue`, never a second spelling of it: the App
+    /// builds its catalogue keys from the same string, and a renamed case
+    /// would otherwise leave this line naming a scope that no longer exists.
+    private static func scopeName(for scope: DiagnosticScope) -> String? {
+        scope == .complete ? nil : scope.rawValue
+    }
+
     public func plainText() -> String {
         var lines = [Self.title]
         if let endpoint { lines.append("Endpoint: \(endpoint.text)") }
+        if let name = Self.scopeName(for: scope) { lines.append("Scope: \(name)") }
         lines.append("App version: \(appVersion)")
         if let marker = Self.marker(for: completion) { lines.append(marker) }
         lines.append("")
@@ -117,6 +141,7 @@ public struct DiagnosticReport: Sendable, Equatable {
     public func markdown() -> String {
         var lines = ["# \(Self.title)", ""]
         if let endpoint { lines.append("- **Endpoint:** `\(endpoint.text)`") }
+        if let name = Self.scopeName(for: scope) { lines.append("- **Scope:** \(name)") }
         lines.append("- **App version:** \(appVersion)")
         if let marker = Self.marker(for: completion) { lines.append("- **\(marker)**") }
         lines.append(contentsOf: [

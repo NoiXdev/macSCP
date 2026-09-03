@@ -423,6 +423,131 @@ struct ConnectionDiagnosticsTests {
         }
     }
 
+    // MARK: - Scope
+
+    /// A scope runs the steps it names and NO others — and a step outside it
+    /// leaves no row at all.
+    ///
+    /// A skipped row would have been the cheaper design and is the wrong one:
+    /// `skipped` already means "this step was asked for and could not be
+    /// measured" (the ping with nothing to probe), so a scope that produced
+    /// skipped rows would put "you did not ask for this" and "this could not
+    /// be answered" in the same column of a pasted report.
+    ///
+    /// **What the tickers are for.** The ids alone cannot tell a dial that
+    /// never ran from a dial that ran and had its row dropped — both give a
+    /// report without a dial row, and the second still spends the dial's
+    /// whole budget, which is the entire point of asking for one probe. So
+    /// the dial and the contribution count their own runs, and the counts are
+    /// read after the walk rather than inside it.
+    @Test func eachScopeRunsExactlyTheStepsItNames() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let endpoint = Endpoint(host: "127.0.0.1", port: listener.port)
+
+        let whole = await Self.scopedWalk(.complete, endpoint: endpoint)
+        let ping = await Self.scopedWalk(.ping, endpoint: endpoint)
+        let trace = await Self.scopedWalk(.trace, endpoint: endpoint)
+        let dial = await Self.scopedWalk(.dial, endpoint: endpoint)
+        let contributions = await Self.scopedWalk(.contributions, endpoint: endpoint)
+
+        #expect(whole.ids == [
+            DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+            DiagnosticStepID.dial, DiagnosticStepID.trace, Self.contributionID,
+        ], "the complete walk must be exactly what it was before the scope existed: \(whole.ids)")
+        #expect(ping.ids == [
+            DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+        ], "the ping scope resolves and probes the port: \(ping.ids)")
+        #expect(trace.ids == [DiagnosticStepID.resolve, DiagnosticStepID.trace], """
+            the trace scope resolves and walks the path: \(trace.ids)
+            """)
+        #expect(dial.ids == [DiagnosticStepID.resolve, DiagnosticStepID.dial], """
+            the dial scope resolves and dials: \(dial.ids)
+            """)
+        #expect(contributions.ids == [DiagnosticStepID.resolve, Self.contributionID], """
+            the contributions scope resolves and asks the backend: \(contributions.ids)
+            """)
+
+        // The positive half of the four counts below: both recorders DO run
+        // under the complete walk, so a zero elsewhere means "not run" rather
+        // than "never wired".
+        #expect(whole.dials == 1)
+        #expect(whole.contributions == 1)
+        #expect(dial.dials == 1)
+        #expect(contributions.contributions == 1)
+        #expect(ping.dials == 0, "the ping scope ran the dial \(ping.dials) time(s)")
+        #expect(ping.contributions == 0, """
+            the ping scope ran the backend's contribution \(ping.contributions) time(s)
+            """)
+        #expect(trace.dials == 0, "the trace scope ran the dial \(trace.dials) time(s)")
+        #expect(contributions.dials == 0, """
+            the contributions scope ran the dial \(contributions.dials) time(s)
+            """)
+        #expect(dial.contributions == 0, """
+            the dial scope ran the backend's contribution \(dial.contributions) time(s)
+            """)
+
+        // The observer is the panel's only source of rows, so a scope that
+        // filtered the returned report and not the seam would draw steps the
+        // report does not carry.
+        #expect(ping.observed == ping.ids)
+        #expect(trace.observed == trace.ids)
+        #expect(dial.observed == dial.ids)
+        #expect(contributions.observed == contributions.ids)
+        #expect(whole.observed == whole.ids)
+    }
+
+    /// A scoped report says so where it is read: in the value, and in the
+    /// header of both renderings — the text a user pastes into an issue.
+    ///
+    /// A partial measurement that does not announce itself is the same defect
+    /// `Completion` exists for: three rows and no dial row read as "the dial
+    /// was never reached" to everyone but the person who chose the scope.
+    @Test func aScopedReportNamesItsScopeAndACompleteOneAddsNoLine() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let endpoint = Endpoint(host: "127.0.0.1", port: listener.port)
+
+        let ping = await Self.scopedWalk(.ping, endpoint: endpoint).report
+        let whole = await Self.scopedWalk(.complete, endpoint: endpoint).report
+
+        #expect(ping.scope == .ping)
+        #expect(ping.plainText().contains("Scope: ping"), """
+            the plain text carries no scope header: \(ping.plainText())
+            """)
+        #expect(ping.markdown().contains("- **Scope:** ping"), """
+            the Markdown carries no scope header: \(ping.markdown())
+            """)
+        #expect(whole.scope == .complete)
+        // Byte for byte what it rendered before: a line in every report
+        // anyone ever pastes, saying the thing that is true of all of them,
+        // is the noise `Completion`'s marker is written to avoid.
+        #expect(whole.plainText().contains("Scope") == false, """
+            the complete walk's plain text gained a scope line: \(whole.plainText())
+            """)
+        #expect(whole.markdown().contains("Scope") == false, """
+            the complete walk's Markdown gained a scope line: \(whole.markdown())
+            """)
+    }
+
+    /// The spellings that name no scope mean the complete walk — the App's
+    /// Run button and the CLI both reach the runner that way — and the walk
+    /// that stops at the missing host still says which scope it was asked
+    /// for.
+    @Test func aRunThatNamesNoScopeIsTheCompleteOne() async {
+        let diagnostics = ConnectionDiagnostics(
+            descriptor: Self.probeDescriptor(endpoint: nil, dial: nil),
+            values: FieldValues(), secrets: nil)
+        let watched = await diagnostics.run(onStep: { _ in })
+        let silent = await diagnostics.run()
+        let scoped = await diagnostics.run(scope: .ping)
+
+        #expect(watched.scope == .complete)
+        #expect(silent.scope == .complete)
+        #expect(scoped.scope == .ping)
+        #expect(scoped.steps.map(\.id) == [DiagnosticStepID.resolve])
+    }
+
     // MARK: - The report
 
     @Test func plainTextRendersEveryStepOnceWithItsDurationAndOutcome() async throws {
@@ -1018,6 +1143,55 @@ struct ConnectionDiagnosticsTests {
     ) -> DiagnosticContribution {
         DiagnosticContribution(id: id, titleKey: titleKey) { _, _ in
             DiagnosticStepTimer(id: id, titleKey: titleKey).finish(outcome, detail)
+        }
+    }
+
+    /// The id of the backend contribution every scoped walk below carries.
+    /// Not one of `DiagnosticStepID`'s constants: a contribution's id comes
+    /// from the backend, and a scope that only knew the universal ids would
+    /// have nothing to decide about.
+    private static let contributionID = "probe-contribution"
+
+    /// What one scoped walk produced: the report's rows, the rows the
+    /// observer was handed, and how often each side of the seam actually ran.
+    private struct ScopedWalk {
+        let report: DiagnosticReport
+        let observed: [String]
+        let dials: Int
+        let contributions: Int
+
+        var ids: [String] { report.steps.map(\.id) }
+    }
+
+    /// Runs one scope against a listening loopback port, with a dial and a
+    /// contribution that record every call.
+    private static func scopedWalk(
+        _ scope: DiagnosticScope, endpoint: Endpoint
+    ) async -> ScopedWalk {
+        let dials = Ticker()
+        let contributions = Ticker()
+        let observed = StepLog()
+        let diagnostics = ConnectionDiagnostics(
+            descriptor: probeDescriptor(
+                endpoint: endpoint,
+                dial: recordingContribution(id: DiagnosticStepID.dial, ticker: dials),
+                diagnostics: [recordingContribution(id: contributionID, ticker: contributions)]),
+            values: FieldValues(), secrets: nil, appVersion: "test")
+        let report = await diagnostics.run(
+            scope: scope, onStep: { step in await observed.append(step.id) })
+        return ScopedWalk(
+            report: report, observed: await observed.ids,
+            dials: await dials.count, contributions: await contributions.count)
+    }
+
+    /// A contribution that succeeds and counts the fact that it was asked.
+    private static func recordingContribution(
+        id: String, ticker: Ticker
+    ) -> DiagnosticContribution {
+        DiagnosticContribution(id: id, titleKey: "diagnostics.step.probe") { _, _ in
+            let timer = DiagnosticStepTimer(id: id, titleKey: "diagnostics.step.probe")
+            await ticker.tick()
+            return timer.finish(.ok, "")
         }
     }
 
