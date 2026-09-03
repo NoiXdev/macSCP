@@ -445,13 +445,14 @@ struct S3FieldSchemaTests {
         #expect(ids.count == Set(ids).count, "duplicate preset id among \(ids)")
     }
 
-    /// `hetzner` keeps naming Falkenstein — stored sessions and the
-    /// Cyberduck importer's preset-by-id lookup reference it by this exact
-    /// id (see `ImportPreviewPlanner.awsPresetID`'s sibling use for AWS).
+    /// `hetzner` keeps naming Falkenstein — not for stored sessions, which
+    /// carry no preset id at all, but because the Cyberduck importer's own
+    /// lookup (`ImportPreviewPlanner.hetznerEndpointsByHost`, the sibling of
+    /// `awsPresetID`'s AWS lookup) reads presets by this exact id.
     @Test func theHetznerPresetIsStillFalkenstein() throws {
         let preset = try #require(
             S3FieldSchema.connection.presets.first { $0.id == "hetzner" },
-            "no preset with id \"hetzner\" — the existing id was renamed out from under stored sessions")
+            "no preset with id \"hetzner\" — the existing id was renamed out from under ImportPreviewPlanner's Hetzner import lookup")
         #expect(preset.values[S3Field.endpoint.rawValue] == "https://fsn1.your-objectstorage.com")
     }
 }

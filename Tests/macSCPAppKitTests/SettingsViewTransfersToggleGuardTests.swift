@@ -30,7 +30,14 @@ struct SettingsViewTransfersToggleGuardTests {
     private static let settingsViewFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/SettingsView.swift")
 
-    private static let tabDeclaration = "private struct TransfersSettingsTab: View {"
+    /// No trailing `{` (fix round 2, 2026-09-04): `declarationBodyRange`
+    /// opens its span at the first `{` found AFTER the declaration text.
+    /// With the brace embedded here, the scan skipped the struct's own
+    /// opening brace and balanced `var body: some View {` instead — the
+    /// same defect `95b64021` fixed in `ConnectionFormScrollGuardTests`,
+    /// where "every other caller omits the brace" was not yet true of this
+    /// one.
+    private static let tabDeclaration = "private struct TransfersSettingsTab: View"
 
     private static let toggleKey = "\"settings.transfers.showFullPaths\""
 
@@ -97,8 +104,11 @@ struct SettingsViewTransfersToggleGuardTests {
     }
 
     @Test func scannerSeesAToggleBoundToADifferentProperty() throws {
+        // The opening `{` is written out here, on `tabDeclaration`'s own
+        // line, matching the real file's shape (the struct declaration and
+        // its brace on one line) now that `tabDeclaration` itself omits it.
         let source = """
-            \(Self.tabDeclaration)
+            \(Self.tabDeclaration) {
                 var store: SettingsStore
                 var body: some View {
                     Form {
@@ -126,8 +136,10 @@ struct SettingsViewTransfersToggleGuardTests {
     }
 
     @Test func scannerSeesAHardcodedLabelInsteadOfTheCatalogueKey() throws {
+        // Same explicit brace as `scannerSeesAToggleBoundToADifferentProperty`
+        // above, for the same reason.
         let source = """
-            \(Self.tabDeclaration)
+            \(Self.tabDeclaration) {
                 var store: SettingsStore
                 var body: some View {
                     Form {

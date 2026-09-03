@@ -58,14 +58,48 @@ struct EndpointFootnoteWiringGuardTests {
         return String(rest[rest.startIndex..<end.lowerBound])
     }
 
+    /// The parenthesis-balanced text between `call`'s own opening `(` and
+    /// its matching close, paren-balanced the same way
+    /// `TransferQueueBarCancelGuardTests.declarationBodyRange` brace-balances
+    /// a declaration's body (that scanner is the model; this one counts `(`
+    /// and `)` instead of `{` and `}`). `call` is a match on text ending in
+    /// `"("` (e.g. `"SchemaFormView("`), so its `upperBound` already sits
+    /// just past that opening paren and balancing starts at depth 1.
+    ///
+    /// Without this, cutting the list at the first `)` (fix round 2,
+    /// 2026-09-04) would truncate it the moment any argument's value is
+    /// itself a call — a false red naming a missing argument that is
+    /// actually just past a `)` the scan stopped at early, not a silent
+    /// pass.
+    private static func argumentList(after call: Range<String.Index>, in source: String) -> String? {
+        let rest = source[call.upperBound...]
+        var depth = 1
+        var index = rest.startIndex
+        while index < rest.endIndex {
+            switch rest[index] {
+            case "(":
+                depth += 1
+            case ")":
+                depth -= 1
+                if depth == 0 {
+                    return String(rest[rest.startIndex..<index])
+                }
+            default:
+                break
+            }
+            index = rest.index(after: index)
+        }
+        return nil
+    }
+
     @Test func theFormHandsTheSchemaViewItsFootnoteClosure() throws {
         let source = try Self.formView()
         let call = try #require(
             source.range(of: "SchemaFormView("),
             "ConnectionFormView no longer builds a SchemaFormView — this guard's anchor is gone")
-        let rest = source[call.upperBound...]
         let argumentList = try #require(
-            rest.range(of: ")").map { String(rest[rest.startIndex..<$0.lowerBound]) })
+            Self.argumentList(after: call, in: source),
+            "SchemaFormView( never closes — no matching ) found, so the scan cannot bound the argument list")
         #expect(argumentList.contains("footnote:"), """
             The SchemaFormView built by ConnectionFormView carries no \
             `footnote:` argument, so the S3 endpoint field no longer says \
@@ -77,6 +111,18 @@ struct EndpointFootnoteWiringGuardTests {
             `forcedValues:` argument, so a field whose value a rule decides \
             is rendered as a control the user can still change.
             """)
+    }
+
+    /// The case a first-`)` cut would have truncated (fix round 2,
+    /// 2026-09-04): a nested call inside an argument's own value. Cutting at
+    /// the first `)` here would stop at `f(1, 2)`'s own close and read the
+    /// list as `"a: f(1, 2"` — missing `b:` entirely and reporting it absent
+    /// even though the real call carries it.
+    @Test func argumentListSurvivesANestedCallInAnArgument() throws {
+        let source = "SchemaFormView(a: f(1, 2), b: 3)"
+        let call = try #require(source.range(of: "SchemaFormView("))
+        let list = try #require(Self.argumentList(after: call, in: source))
+        #expect(list == "a: f(1, 2), b: 3")
     }
 
     @Test func theSchemaViewDrawsWhateverTheFootnoteReturns() throws {

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// S3's field identifiers — the single source for its two schemas, its config
@@ -93,11 +94,14 @@ public enum S3FieldSchema {
                                       S3Field.usePathStyle.rawValue: "false"]),
             // One preset per Hetzner Object Storage location (maintainer
             // request 2026-09-03), sorted by location code. `hetzner` keeps
-            // its id for `fsn1` — stored sessions and the Cyberduck
-            // importer's preset-by-id lookup (`ImportPreviewPlanner
-            // .awsPresetID`'s sibling for AWS) reference it by id, so
-            // renaming it would silently repoint them. Every other location
-            // gets `hetzner-<location>`. Locations confirmed against
+            // its id for `fsn1` — not stored sessions, which carry no
+            // preset id at all (`StoredS3Config` has none), but the
+            // Cyberduck importer's own lookup
+            // (`ImportPreviewPlanner.hetznerEndpointsByHost`'s filter,
+            // `id == "hetzner" || hasPrefix("hetzner-")`, the sibling of
+            // `awsPresetID`'s AWS lookup) reads presets by this id, so
+            // renaming it would silently repoint an import. Every other
+            // location gets `hetzner-<location>`. Locations confirmed against
             // Hetzner's own documentation, 2026-09-04:
             // https://docs.hetzner.com/storage/object-storage/overview/
             // lists exactly these three, each at

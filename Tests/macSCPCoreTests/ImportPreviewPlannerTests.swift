@@ -502,6 +502,44 @@ struct ImportPreviewPlannerTests {
         #expect(field(S3Field.endpoint, of: exported) == "https://objects.example.net")
     }
 
+    /// A Cyberduck bookmark whose host is an IP literal, imported fresh
+    /// (review round 2, 2026-09-04, item 5). Virtual-hosted addressing puts
+    /// the bucket in front of the host (`<bucket>.192.0.2.10`, a name no
+    /// resolver answers), so `S3FieldSchema.pathStyleIsForced` forces
+    /// path-style whatever the toggle says (I-3) -- but only
+    /// `S3FieldSchema.stored(from:)` applies that forcing, at the STORE
+    /// step. `newSession` writes the baseline `usePathStyle = false`
+    /// straight into the PAYLOAD and never touches it for an S3 bookmark
+    /// (`values(of:kind:)`'s `.s3` case sets `endpoint`/`accessKeyID`/
+    /// `bucket`/`startsAtBucketList` only), so the payload's own field
+    /// reads "false" for this bookmark too -- confirmed by running a version
+    /// of this test against `field(S3Field.usePathStyle, of: exported)`
+    /// before writing the assertion below: it failed with
+    /// `(field(...) → "false") == "true"`, exactly this gap. The assertion
+    /// here is on the PLANNED session -- `SessionImportPlanner.plan`, which
+    /// carries the payload through `makePlanned` -> `BackendDescriptor.apply`
+    /// -> `S3FieldSchema.stored(from:)` -- because that is the only step
+    /// that forces the toggle; a bare payload check would pass on a build
+    /// that regressed the forcing entirely.
+    @Test func anImportedIPHostS3BookmarkIsStoredAsPathStyle() async throws {
+        let rows = ImportPreviewPlanner.preview(
+            [s3Bookmark(host: "192.0.2.10", port: 9000, username: "AKIAEXAMPLE",
+                        path: "backups")],
+            against: [], switches: ImportSwitches())
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [], groups: [], switches: ImportSwitches())
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [], existingGroups: [], incoming: payload,
+            arbiter: ImportConflictArbiter { _ in
+                Issue.record("no existing session to conflict with")
+                return nil
+            })
+
+        let planned = try #require(plan.sessionsToImport.first)
+        #expect(planned.session.s3?.usePathStyle == true)
+    }
+
     @Test func anUpdateTakesTheNicknameAndReplacesItsRecordById() throws {
         let storedID = UUID()
         let group = StoredGroup(name: "Servers")
