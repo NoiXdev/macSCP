@@ -196,3 +196,7 @@ to `docs/BACKLOG.md`: `DialSupport.reason(for:)` renders `RemoteFSError`
 by `String(describing:)` — the general route by which a
 configuration-carrying error could reach any dial's row; this plan closed
 the two paths its own rows added, not the route.
+Round 2 of the same task, `64a5dc5a`: the presigned URL signs the same
+pairing (`addressed(_:query:config:)`, read by both signers), pinned by
+a test over both path styles; the doors guard's doc names the
+key-lands-with-first-use constraint.
