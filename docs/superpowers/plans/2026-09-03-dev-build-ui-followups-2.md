@@ -66,3 +66,29 @@ report.
 - Test: `S3FieldSchemaTests` — every Hetzner preset's endpoint parses to a host under `your-objectstorage.com` with `usePathStyle` true, ids unique, `hetzner` still `fsn1`; the import planner maps a Cyberduck bookmark with `Hostname nbg1.your-objectstorage.com` to the `hetzner-nbg1` preset's endpoint spelling; the localization guards.
 
 - [ ] Red first, implement, commit `feat(s3): a preset per Hetzner Object Storage location`.
+
+### Task 4: The connection form scrolls when the window is short
+
+Maintainer feedback 2026-09-03: on a short window the "New connection"
+form (`ConnectionFormView`, shown inside the tab's detail area from
+`ContentView+Detail.swift:702`) does not fit and its lower fields are
+cut off. The session sidebar already scrolls (a `List` with
+`DisclosureGroup`s, `SessionSidebar.swift:392`), so forty sessions are
+not a problem there; the form is what needs the same treatment.
+
+**Files:**
+- Modify: `Sources/MacSCPAppKit/ConnectionFormView.swift` — the field
+  area wrapped in a `ScrollView(.vertical)` with the form's footer
+  (Connect / Save / Cancel row) pinned below it outside the scroll
+  region, so the buttons stay reachable at any height; the scroll view
+  gets no fixed height (it takes what the container gives), and the
+  form's own `minHeight` if any is removed; keyboard focus moves still
+  scroll the focused field into view (`.scrollTargetLayout` or the
+  default `ScrollViewReader` behaviour — measure which is needed).
+- Test: a wiring guard (`ConnectionFormScrollGuardTests`, `SwiftSource`
+  views): the field area sits inside a `ScrollView` and the footer's
+  buttons sit OUTSIDE it (positive anchors: the scroll view exists and
+  contains the fields' builder call; negative: no button of the footer
+  inside the scroll span); the existing form guards stay green.
+
+- [ ] Red first, implement, commit `fix(connection): the connection form scrolls when the window is short, its buttons stay put`.
