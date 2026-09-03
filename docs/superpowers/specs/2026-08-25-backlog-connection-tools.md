@@ -203,11 +203,11 @@ key-lands-with-first-use constraint.
 
 ## Selective runs and the hop table, 2026-09-03
 
-Maintainer feedback on the dev build: the panel "kann so bleiben", but
+Maintainer feedback on the dev build: the panel can stay as it is, but
 running the whole diagnosis for one question is wasteful, and the
 trace's hop list is hard to read as one detail line. Plan
 `docs/superpowers/plans/2026-09-03-diagnostics-selective-runs.md`,
-commits `0176da62`, `5ea7f2ba`, `7a81a455`.
+commits `0176da62`, `5ea7f2ba`, `7a81a455`, `36edabd4`.
 
 - **`0176da62`** — `DiagnosticScope` (`complete`, `ping`, `trace`,
   `dial`, `contributions`) as a parameter of
@@ -230,5 +230,11 @@ commits `0176da62`, `5ea7f2ba`, `7a81a455`.
   moment of copying. Keys `diagnostics.scope` and
   `diagnostics.scope.*` in all four catalogs.
 
-Full suite green after each commit, 4028 tests in 343 suites after
-`7a81a455`.
+- **`36edabd4`** — the trace's four outcome words are looked up, not
+  passed through: the `en` values are capitalized so a lookup differs
+  from the word Core composed, four round-trip assertions pin each key,
+  the grid asserts a rectangular table in debug builds, and two comment
+  counts in `ConnectionDiagnostics.swift` were corrected.
+
+Full suite green after each commit, 4049 tests in 345 suites after
+`36edabd4`.
