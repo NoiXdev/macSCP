@@ -15,7 +15,7 @@ before believing the bug is where it seems: SwiftTerm's `TerminalView`
 calls `TerminalViewDelegate.sizeChanged(source:newCols:newRows:)`
 (`Sources/MacSCPAppKit/SSHTerminalView.swift:203`) →
 `TerminalPanelViewModel.resize(cols:rows:)`
-(`Presentation/TerminalPanelViewModel.swift:250`) →
+(`Sources/macSCPCore/Presentation/TerminalPanelViewModel.swift:250`) →
 `CitadelShell.resize` → `TTYStdinWriter.changeSize` → an SSH
 `WindowChangeRequest`. So a terminal that keeps its size has one of
 three causes, and Task 1 measures which: (a) the AppKit view never gets
@@ -102,7 +102,7 @@ opens at 80×24 before layout; the same on `.ended` → Reopen. The split
 layout's height invariance measured in fix round 1 is intended split
 behaviour (controller ruling 2026-09-03), not part of this fix.
 
-**Files:** `Sources/MacSCPAppKit/Presentation/TerminalPanelViewModel.swift`;
+**Files:** `Sources/macSCPCore/Presentation/TerminalPanelViewModel.swift`;
 `Tests/macSCPAppKitTests/SSHTerminalViewSizingTests.swift` (the disabled
 mount test becomes the red-first test); `TerminalPanelViewModelTests.swift`.
 
