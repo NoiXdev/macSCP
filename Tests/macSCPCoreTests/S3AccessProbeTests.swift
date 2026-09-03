@@ -28,6 +28,13 @@ struct S3AccessProbeTests {
     /// (CLAUDE.md, "A value a test must not leak has two exits").
     private static let secretUnderTest = "s3-access-probe-secret-value"
 
+    /// The userinfo halves of the endpoint the leak test below types. The
+    /// password carries a `/` on purpose: that is the character
+    /// `URLText.withoutUserinfo` cannot scan past, and therefore the shape
+    /// that must not reach a row in the first place.
+    private static let endpointUserinfoUser = "ENDPOINTKEYID"
+    private static let endpointUserinfoPassword = "endpointpa/ssword"
+
     private static func reply(
         _ status: Int, requestID: String? = nil
     ) -> (Data, HTTPURLResponse) {
@@ -78,7 +85,10 @@ struct S3AccessProbeTests {
         _ = await S3AccessProbe(config: Self.config, transport: transport).run()
 
         let requests = await transport.requests
-        try #require(requests.count == 3)
+        guard requests.count == 3 else {
+            Issue.record("the probe must send exactly three requests, sent \(requests.count)")
+            return
+        }
 
         #expect(requests[0].httpMethod == "HEAD")
         #expect(requests[0].url?.path == "/macscp-seed")
@@ -166,6 +176,49 @@ struct S3AccessProbeTests {
         let leaks = detail.contains(secret)
         #expect(leaks == false)
         #expect(detail.contains("HeadBucket 200"))
+    }
+
+    /// The vector the substituted-secret test above cannot reach: a
+    /// credential typed into the ENDPOINT field, which is ordinary input no
+    /// schema here strips.
+    ///
+    /// Such an endpoint is not a usable URL, and the errors that say so
+    /// interpolate it (`S3FileSystem`'s "Invalid S3 endpoint: …",
+    /// `S3RequestSigning`'s "S3 endpoint has no host: …"). Printing those
+    /// through `DialSupport.reason(for:)` would hand the row to
+    /// `URLText.withoutUserinfo`, whose documented limit is exactly this
+    /// shape: a password containing `/` ends the authority scan before the
+    /// `@`, so `USER:pa` survives into a report written to be pasted in
+    /// public (`DiagnosticStep.swift`, the `withoutUserinfo` doc comment).
+    @Test func aCredentialTypedIntoTheEndpointNeverReachesTheRow() async throws {
+        let user = Self.endpointUserinfoUser
+        let password = Self.endpointUserinfoPassword
+        let beforeTheSlash = String(password.prefix(while: { $0 != "/" }))
+        var values = FieldValues()
+        values[S3Field.endpoint] = "https://\(user):\(password)@127.0.0.1:9000"
+        values[S3Field.region] = "us-east-1"
+        values[S3Field.bucket] = "macscp-seed"
+        values[S3Field.accessKeyID] = user
+
+        let contribution = try #require(BackendDescriptor.descriptor(for: .s3).diagnostics.first)
+        let step = await contribution.run(
+            values,
+            DiagnosticContext(
+                secrets: FixedS3Secret(value: password), sessionID: UUID(),
+                timeout: .seconds(2)))
+
+        let printed = step.detail + " " + step.outcome.label
+        let leaksPassword = printed.contains(password)
+        let leaksAuthorityPrefix = printed.contains("\(user):\(beforeTheSlash)")
+        let leaksUser = printed.contains(user)
+        #expect(leaksPassword == false)
+        #expect(leaksAuthorityPrefix == false)
+        #expect(leaksUser == false)
+        // The positive anchor: the row was measured and still names all three
+        // calls, so the three checks above are not reading an empty step.
+        #expect(step.detail.contains("HeadBucket"))
+        #expect(step.detail.contains("ListObjectsV2"))
+        #expect(step.detail.contains("ListBuckets"))
     }
 
     // MARK: - Against the rig's MinIO

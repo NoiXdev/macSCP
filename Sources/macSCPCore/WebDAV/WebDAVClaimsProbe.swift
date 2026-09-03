@@ -34,6 +34,11 @@ struct WebDAVClaimsProbe: Sendable {
         var rootIsCollection: Bool?
     }
 
+    /// What a row says about a call that neither answered nor recorded a
+    /// failure. One spelling for the three places that need it, so a
+    /// reworded sentence cannot leave two of them disagreeing.
+    static let noAnswerReason = "no answer"
+
     let base: WebDAVURL
     let transport: any HTTPTransport
 
@@ -94,7 +99,7 @@ struct WebDAVClaimsProbe: Sendable {
             parts.append(claims.davClasses.map { "DAV: \($0)" } ?? "no DAV header")
             parts.append(claims.allow.map { "Allow: \($0)" } ?? "no Allow header")
         } else {
-            parts.append("OPTIONS failed (\(claims.optionsFailure ?? "no answer"))")
+            parts.append("OPTIONS failed (\(claims.optionsFailure ?? Self.noAnswerReason))")
         }
         if let status = claims.propfindStatus {
             parts.append("PROPFIND \(status)")
@@ -104,7 +109,7 @@ struct WebDAVClaimsProbe: Sendable {
             case nil: break
             }
         } else {
-            parts.append("PROPFIND failed (\(claims.propfindFailure ?? "no answer"))")
+            parts.append("PROPFIND failed (\(claims.propfindFailure ?? Self.noAnswerReason))")
         }
         return parts.joined(separator: " · ")
     }
@@ -113,9 +118,12 @@ struct WebDAVClaimsProbe: Sendable {
     /// rule the dials already follow (`DialProbes`): a 401 or a 403 is a
     /// working server refusing a login, and reporting it as a failed check
     /// would point the user at their network for a question they never asked.
+    /// Neither status set means `OPTIONS` did not answer, and `OPTIONS` is
+    /// always attempted, so its failure is the one that is set — there is no
+    /// path here through which a sentence about name resolution
+    /// (`DiagnosticReason.nothingToProbe`) could be true.
     static func outcome(of claims: Claims) -> DiagnosticOutcome {
         guard claims.optionsStatus == nil, claims.propfindStatus == nil else { return .ok }
-        return .failed(
-            claims.optionsFailure ?? claims.propfindFailure ?? DiagnosticReason.nothingToProbe)
+        return .failed(claims.optionsFailure ?? Self.noAnswerReason)
     }
 }

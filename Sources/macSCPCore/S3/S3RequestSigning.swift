@@ -5,10 +5,11 @@ import Foundation
 /// signed canonical path/query are guaranteed to be the same ones.
 ///
 /// It exists because a redirect has to be signed by the same machinery the
-/// first request was. `signedRequest` has three callers, counted here:
-/// `S3FileSystem.buildListRequest`, `S3FileSystem.buildSignedRequest` — both
-/// of which keep their names and their job of deciding WHICH URL, path and
-/// query a request has — and `reSigned` below, which is what
+/// first request was. `signedRequest` has two callers, counted here on
+/// 2026-09-03: `S3FileSystem.signedRequest(_:method:query:…)`, the factory
+/// that turns one of three RESOURCE shapes into the URL and the canonical
+/// path signed beside it (every ordinary request in this module goes through
+/// it), and `reSigned` below, which is what
 /// `S3RedirectSessionDelegate` reaches for. A redirect
 /// re-signed by patching Foundation's proposed request would keep the
 /// `Host` the first request was signed with, which is the stale value the

@@ -38,6 +38,16 @@ struct WebDAVOptionsProbeTests {
 
     private static let secretUnderTest = "webdav-claims-probe-secret-value"
 
+    /// The userinfo halves of the base URL the leak test below types — the
+    /// password carrying the `/` that `URLText.withoutUserinfo` cannot scan
+    /// past.
+    private static let baseURLUserinfoUser = "BASEURLUSER"
+    private static let baseURLUserinfoPassword = "baseurlpa/ssword"
+
+    /// The same shape without the `/`, which parses — so the second arm of
+    /// the leak test below really sends requests carrying the userinfo.
+    private static let baseURLParsablePassword = "baseurlpassword"
+
     // MARK: - The line the step reports
 
     @Test func theDetailNamesTheClassesTheAllowListAndTheResourceType() async {
@@ -154,6 +164,67 @@ struct WebDAVOptionsProbeTests {
         // The positive anchor: the row was really measured, so the check above
         // is not reading an empty step.
         #expect(step.detail.contains("OPTIONS"))
+    }
+
+    /// The same vector as `S3AccessProbeTests
+    /// .aCredentialTypedIntoTheEndpointNeverReachesTheRow`, in the field
+    /// WebDAV keeps it in: `WebDAVFieldSchema.makeConfig` accepts a base URL
+    /// with a `user:password@` component (it checks for "not empty" and
+    /// trims, nothing more, as `WebDAVFileSystem.surfaceable` records), so
+    /// every request this probe sends carries it.
+    ///
+    /// Both arms, because the two behave differently and only one of them is
+    /// obvious. Measured 2026-09-03: a userinfo password containing `/` makes
+    /// the whole string an invalid URL (`URL(string:)` is nil), so the
+    /// contribution refuses it BEFORE any request and the row is a skip — the
+    /// arm that must not echo the URL it refused. A slash-free password
+    /// parses, so the requests really go out carrying the userinfo, and the
+    /// row is a transport failure — the arm whose text a foreign error
+    /// reaches.
+    @Test func aCredentialTypedIntoTheServerURLNeverReachesTheRow() async throws {
+        let contribution = try #require(
+            BackendDescriptor.descriptor(for: .webdav).diagnostics.first)
+
+        // Arm 1: the URL cannot be parsed at all.
+        let refusedPassword = Self.baseURLUserinfoPassword
+        var refused = FieldValues()
+        refused[WebDAVField.baseURL] =
+            "http://\(Self.baseURLUserinfoUser):\(refusedPassword)@127.0.0.1:1/dav"
+        refused[WebDAVField.username] = Self.baseURLUserinfoUser
+        let refusedStep = await contribution.run(
+            refused,
+            DiagnosticContext(
+                secrets: FixedWebDAVSecret(value: refusedPassword), sessionID: UUID(),
+                timeout: .seconds(2)))
+        let refusedRow = refusedStep.detail + " " + refusedStep.outcome.label
+        let refusedLeaksPassword = refusedRow.contains(refusedPassword)
+        let refusedLeaksAuthority = refusedRow.contains(
+            "\(Self.baseURLUserinfoUser):\(refusedPassword.prefix(while: { $0 != "/" }))")
+        #expect(refusedLeaksPassword == false)
+        #expect(refusedLeaksAuthority == false)
+        // The positive anchor for this arm: the row exists and says why it
+        // measured nothing, rather than being an empty step the checks above
+        // would pass over.
+        #expect(refusedStep.outcome == .skipped(DiagnosticReason.noServerURL))
+
+        // Arm 2: the URL parses, the requests go out, nothing answers on
+        // port 1 — the transport-failure text is what could carry a URL.
+        let dialledPassword = Self.baseURLParsablePassword
+        var dialled = FieldValues()
+        dialled[WebDAVField.baseURL] =
+            "http://\(Self.baseURLUserinfoUser):\(dialledPassword)@127.0.0.1:1/dav"
+        dialled[WebDAVField.username] = Self.baseURLUserinfoUser
+        let dialledStep = await contribution.run(
+            dialled,
+            DiagnosticContext(
+                secrets: FixedWebDAVSecret(value: dialledPassword), sessionID: UUID(),
+                timeout: .seconds(2)))
+        let dialledRow = dialledStep.detail + " " + dialledStep.outcome.label
+        let dialledLeaksPassword = dialledRow.contains(dialledPassword)
+        #expect(dialledLeaksPassword == false)
+        // The positive anchor for this arm: both calls were really attempted.
+        #expect(dialledStep.detail.contains("OPTIONS"))
+        #expect(dialledStep.detail.contains("PROPFIND"))
     }
 
     @Test func theContributionSkipsWhenNoSecretIsAvailable() async throws {

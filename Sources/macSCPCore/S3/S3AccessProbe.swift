@@ -77,6 +77,18 @@ struct S3AccessProbe: Sendable {
     /// instead of spelling a second copy of it.
     static let bucketListSkipReason = "this connection starts at the bucket list"
 
+    /// Why a call was not sent when the calling task was cancelled between
+    /// calls. Its own sentence rather than a shared one: the row it reaches
+    /// is discarded by the runner (a cancelled diagnosis reports the steps it
+    /// finished), so what matters is that the reason describes THIS
+    /// situation and no other.
+    static let cancelledSkipReason = "cancelled"
+
+    /// Why a call could not even be built: the configured endpoint is not a
+    /// URL this app can address. See `answer(for:)` for why the underlying
+    /// error's own sentence is dropped rather than printed.
+    static let unusableEndpointReason = "the endpoint is not a usable URL"
+
     let config: S3ConnectionConfig
     let transport: any HTTPTransport
 
@@ -92,7 +104,8 @@ struct S3AccessProbe: Sendable {
             // whatever it returns; stopping here means an abandoned step does
             // not keep signing and sending requests nobody will read.
             guard !Task.isCancelled else {
-                results.append(S3AccessResult(call: call, answer: .notSent("cancelled")))
+                results.append(
+                    S3AccessResult(call: call, answer: .notSent(Self.cancelledSkipReason)))
                 continue
             }
             results.append(S3AccessResult(call: call, answer: await answer(for: call)))
@@ -101,8 +114,28 @@ struct S3AccessProbe: Sendable {
     }
 
     private func answer(for call: S3AccessCall) async -> S3AccessAnswer {
+        let request: URLRequest
         do {
-            let (_, response) = try await transport.send(try request(for: call))
+            request = try self.request(for: call)
+        } catch {
+            // Deliberately NOT the error's own text. Every error on this path
+            // is built by interpolating the configured endpoint — "Invalid S3
+            // endpoint: \(config.endpoint)" in the URL builders, "S3 endpoint
+            // has no host: \(config.endpoint)" in the signer — and that field
+            // is ordinary input a credential travels in
+            // (`https://KEY:SECRET@host`, which no schema here strips).
+            //
+            // Measured 2026-09-03: a password containing `/` makes the whole
+            // string an invalid URL, so this arm is exactly the one such an
+            // endpoint reaches, and `URLText.withoutUserinfo` cannot clean it
+            // — its authority scan ends at the `/` before the `@`, the limit
+            // its own doc comment states. Nothing a reader can act on is
+            // lost: the endpoint cannot be turned into a request, which is
+            // what the sentence says.
+            return .failed(Self.unusableEndpointReason)
+        }
+        do {
+            let (_, response) = try await transport.send(request)
             return .answered(
                 status: response.statusCode,
                 requestID: response.value(forHTTPHeaderField: "x-amz-request-id"))
@@ -110,50 +143,46 @@ struct S3AccessProbe: Sendable {
             // The same one-line mapping every dial uses, which reduces a
             // foreign error to its localized sentence rather than printing
             // its stored properties — a transport error carries the
-            // configuration it was dialling with.
+            // configuration it was dialling with. What reaches here is a
+            // `URLError` (localized sentence, no URL) or the transport's own
+            // non-HTTP-response error; neither names the endpoint.
             return .failed(DialSupport.reason(for: error))
         }
     }
 
-    /// One signed request per call, built through `S3FileSystem`'s own URL
-    /// builders and `S3RequestSigning` — never a second copy of either. A
-    /// probe that assembled its own URL would be measuring a request this app
-    /// does not send.
+    /// One signed request per call, named as a RESOURCE and signed by
+    /// `S3FileSystem.signedRequest(_:method:query:…)` — the same factory the
+    /// file system's own calls go through.
+    ///
+    /// This probe cannot pair a URL with a canonical path, because there is
+    /// no parameter here for a path: it names a shape and a method. That is
+    /// deliberate. When this file carried its own copies of those pairings, a
+    /// later correction landing in `S3FileSystem` alone would have left the
+    /// probe signing the old path — 403 `SignatureDoesNotMatch`, reported as
+    /// `ListObjectsV2 403`, which reads as a key that lacks a permission it
+    /// actually has. Measured on 2026-09-03 by planting exactly that drift
+    /// against the rig; the factory's doc comment carries the numbers.
     private func request(for call: S3AccessCall) throws -> URLRequest {
         switch call {
         case .headBucket:
-            // An empty key addresses the BUCKET itself, which is what makes
-            // this `HeadBucket` rather than a HEAD on an object with no name
-            // (`S3FileSystem.canonicalKeyPath` states the same rule for
-            // `DeleteObjects`).
-            let url = try S3FileSystem.keyRequestURL(
-                config: config, bucket: config.bucket, key: "", queryPairs: [])
-            return try S3RequestSigning.signedRequest(
-                url: url, method: "HEAD",
-                canonicalPath: S3FileSystem.canonicalKeyPath(
-                    config: config, bucket: config.bucket, key: ""),
-                query: [], extraHeaders: [:], body: nil,
-                payloadHash: SigV4Signer.emptyPayloadHash, config: config)
+            // The bucket resource, addressed as the empty key — the same
+            // shape `DeleteObjects` uses.
+            return try S3FileSystem.signedRequest(
+                .objectKey(bucket: config.bucket, key: ""), method: "HEAD", config: config)
         case .listObjectsV2:
             // `max-keys=1`: the question is whether the key may read the
             // bucket's contents, not what is in it. One key is the smallest
             // answer that is still an answer, and a diagnosis has no business
             // pulling a page of somebody's object names into a report.
-            let query = [
-                (name: "list-type", value: "2"),
-                (name: "max-keys", value: "1"),
-            ]
-            let url = try S3FileSystem.requestURL(
-                config: config, bucket: config.bucket, queryPairs: query)
-            return try S3RequestSigning.signedRequest(
-                url: url, method: "GET", canonicalPath: url.path.isEmpty ? "/" : url.path,
-                query: query, extraHeaders: [:], body: nil,
-                payloadHash: SigV4Signer.emptyPayloadHash, config: config)
+            return try S3FileSystem.signedRequest(
+                .bucketRoot(bucket: config.bucket), method: "GET",
+                query: [
+                    (name: "list-type", value: "2"),
+                    (name: "max-keys", value: "1"),
+                ],
+                config: config)
         case .listBuckets:
-            let url = try S3FileSystem.bucketListURL(config: config)
-            return try S3RequestSigning.signedRequest(
-                url: url, method: "GET", canonicalPath: "/", query: [], extraHeaders: [:],
-                body: nil, payloadHash: SigV4Signer.emptyPayloadHash, config: config)
+            return try S3FileSystem.signedRequest(.account, method: "GET", config: config)
         }
     }
 
@@ -170,15 +199,25 @@ struct S3AccessProbe: Sendable {
     /// answered — the rule the dials already follow (`DialProbes`): a 403 is a
     /// working server refusing a key, and calling it a failed check would
     /// point the user at their network for a question they never asked.
+    ///
+    /// A run where nothing was answered and nothing failed is a run where
+    /// nothing was SENT, and it is reported as skipped with the first
+    /// call's own reason — never with a sentence about name resolution,
+    /// which is what `DiagnosticReason.nothingToProbe` says and which is
+    /// true of no path through this probe.
     static func outcome(of results: [S3AccessResult]) -> DiagnosticOutcome {
         var firstFailure: String?
+        var firstSkip: String?
         for result in results {
             switch result.answer {
             case .answered: return .ok
             case .failed(let reason): firstFailure = firstFailure ?? reason
-            case .notSent: continue
+            case .notSent(let reason): firstSkip = firstSkip ?? reason
             }
         }
-        return .failed(firstFailure ?? DiagnosticReason.nothingToProbe)
+        if let firstFailure { return .failed(firstFailure) }
+        // `firstSkip` is set whenever `S3AccessCall` has a case at all, so
+        // the fallback describes the empty walk and nothing else.
+        return .skipped(firstSkip ?? "no call was sent")
     }
 }

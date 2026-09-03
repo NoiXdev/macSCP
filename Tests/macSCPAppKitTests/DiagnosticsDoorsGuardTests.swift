@@ -563,14 +563,28 @@ struct DiagnosticsDoorsGuardTests {
         }
         // The row titles and the fixed reasons are named in CORE, and reach
         // the panel as data rather than as a literal a scan of the panel
-        // could see. Read there, so a key Core starts emitting is a key the
-        // catalogs must carry — the alternative is a row that silently draws
-        // its own key text in three of the four languages.
-        keys.formUnion(try Self.coreDiagnosticsKeys())
+        // could see. Read across the whole source tree, so a key any probe
+        // starts emitting is a key the catalogs must carry — the alternative
+        // is a row that silently draws its own key text in three of the four
+        // languages.
+        keys.formUnion(try Self.diagnosticsKeysInSources())
         let ours = keys.filter { $0.hasPrefix("diagnostics.") }
-        #expect(!ours.isEmpty, """
-            the panel must look up its rows through diagnostics.* keys — found none, which \
-            means this check is reading the wrong file or the panel hardcodes its text.
+        // The anchor, and it is an EQUALITY rather than a non-empty check.
+        // `!ours.isEmpty` stayed satisfied by the other rows' keys no matter
+        // what went missing from the scan, which is the definition of a check
+        // that cannot fail. Both directions matter: a key the sources spell
+        // and `en` does not have is a row drawn as its own key text, and a
+        // key `en` carries that nothing spells is a translation somebody
+        // maintains in four languages for a row that no longer exists.
+        let english = try String(
+            contentsOf: Self.url("Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
+            encoding: .utf8)
+        let inEnglish = Set(
+            Self.matches(of: #""(diagnostics\.[A-Za-z0-9._]+)""#, in: english))
+        #expect(ours == inEnglish, """
+            the diagnostics.* keys the sources spell and the ones en.lproj carries disagree.
+            only in the sources: \(ours.subtracting(inEnglish).sorted())
+            only in en.lproj: \(inEnglish.subtracting(ours).sorted())
             """)
         for locale in ["en", "de", "fr", "pl"] {
             let catalog = try String(
@@ -1217,14 +1231,25 @@ struct DiagnosticsDoorsGuardTests {
         source.components(separatedBy: substring).count - 1
     }
 
-    /// Every `diagnostics.*` catalogue key Core's diagnostics module writes
-    /// into a step — the row titles and the fixed reasons. Found by reading
-    /// the directory, not by listing files, so a new probe's key is covered
-    /// the moment it is written.
-    static func coreDiagnosticsKeys() throws -> Set<String> {
-        let root = url("Sources/macSCPCore/Diagnostics")
+    /// Every `diagnostics.*` catalogue key any source file in the product
+    /// spells — the panel's own labels, the row titles and the fixed reasons
+    /// Core names, and a key a backend's own probe writes. Found by reading
+    /// the whole `Sources` tree, not by listing files or directories, so a
+    /// new probe's key is covered the moment it is written.
+    ///
+    /// **The root was `Sources/macSCPCore/Diagnostics` until fix round 1,
+    /// which made file PLACEMENT load-bearing with nothing enforcing it.**
+    /// A contribution declaring `titleKey: "diagnostics.contribution.…"`
+    /// from `Sources/macSCPCore/S3/` — the obvious home for an S3 probe —
+    /// compiled, drew its raw key text in all four languages, and went
+    /// unread by this scan. Measured in that round by planting exactly that
+    /// literal outside the old root: green before the widening, red after.
+    /// A directory is not a scope, and the regex is specific enough that
+    /// walking the whole tree costs nothing.
+    static func diagnosticsKeysInSources() throws -> Set<String> {
+        let root = url("Sources")
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
-        else { throw ScanError.spanNotFound("Sources/macSCPCore/Diagnostics is not readable") }
+        else { throw ScanError.spanNotFound("Sources is not readable") }
         var keys: Set<String> = []
         var files = 0
         for case let fileURL as URL in walker where fileURL.pathExtension == "swift" {
@@ -1235,7 +1260,7 @@ struct DiagnosticsDoorsGuardTests {
             keys.formUnion(interpolatedStepKeys(in: source))
         }
         guard files > 0 else {
-            throw ScanError.spanNotFound("Sources/macSCPCore/Diagnostics holds no Swift files")
+            throw ScanError.spanNotFound("Sources holds no Swift files")
         }
         return keys
     }

@@ -16,6 +16,32 @@ import Foundation
 /// is `Sendable`; `S3RedirectSessionDelegate` is `@unchecked Sendable` and
 /// argues its own case — one recorded refusal behind a lock), so there is
 /// no shared mutable state here to race on.
+/// Which S3 resource a request addresses — the input to
+/// `S3FileSystem.signedRequest(_:method:query:…)`, and the only way to name
+/// one.
+///
+/// Cases are RESOURCES, not operations. `HeadBucket`, `ListObjectsV2` and
+/// `DeleteObjects` are three operations on two resources, and what the
+/// signer needs to know is the resource: the URL and the canonical path
+/// follow from it, while the operation is the method and the query. Naming
+/// operations instead would have left the browser's own paged listing
+/// (`buildListRequest`, prefix + delimiter + continuation token) outside the
+/// factory — and that pairing is precisely the one whose drift the factory
+/// exists to prevent.
+enum S3RequestShape: Sendable, Equatable {
+    /// An object inside a bucket. An EMPTY key addresses the bucket resource
+    /// itself (`canonicalKeyPath` states the rule) — which is what makes a
+    /// `HEAD` here `HeadBucket` and a `POST ?delete` a `DeleteObjects`,
+    /// rather than an operation on an object with no name.
+    case objectKey(bucket: String, key: String)
+    /// A bucket root carrying a query: every `ListObjectsV2`, paged or
+    /// capped.
+    case bucketRoot(bucket: String)
+    /// The account itself: `GET /` on the endpoint's own host, in both
+    /// addressing styles — `ListBuckets`.
+    case account
+}
+
 public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     private let config: S3ConnectionConfig
     private let transport: any HTTPTransport
@@ -644,10 +670,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// so a provider that does not implement `ListBuckets` at all is not
     /// reported as a missing permission.
     private func listBuckets() async throws -> [RemoteFileItem] {
-        let url = try Self.bucketListURL(config: config)
-        let request = try S3RequestSigning.signedRequest(
-            url: url, method: "GET", canonicalPath: "/", query: [], extraHeaders: [:],
-            body: nil, payloadHash: SigV4Signer.emptyPayloadHash, config: config)
+        let request = try Self.signedRequest(.account, method: "GET", config: config)
         let (data, response) = try await send(request)
 
         switch response.statusCode {
@@ -667,13 +690,11 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// name entirely — so this deliberately does not go through
     /// `requestURL`.
     ///
-    /// Module-internal rather than private, and so are `requestURL`,
-    /// `keyRequestURL` and `canonicalKeyPath` below: `S3AccessProbe` signs
-    /// these same three shapes without a connected file system, and a probe
-    /// that built its own URLs would be measuring requests this app never
-    /// sends. Still out of reach from outside Core, like everything else on
-    /// this dial path.
-    static func bucketListURL(config: S3ConnectionConfig) throws -> URL {
+    /// Private, like the three builders below it, and reached only through
+    /// `signedRequest(_:method:query:…)`: a URL builder and the canonical
+    /// path signed alongside it are a PAIR, and the factory is where that
+    /// pairing lives (see `S3RequestShape`).
+    private static func bucketListURL(config: S3ConnectionConfig) throws -> URL {
         guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {
             throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
         }
@@ -850,15 +871,68 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         }
     }
 
+    /// Signs one request against the resource `shape` names.
+    ///
+    /// **The one place a URL builder is paired with the canonical path signed
+    /// beside it.** Those two are not independent choices: SigV4 signs a path
+    /// string, the wire URL carries another, and when they disagree the
+    /// server answers 403 `SignatureDoesNotMatch` — which is
+    /// indistinguishable, from the outside, from a key that lacks a
+    /// permission. Measured on 2026-09-03: giving `S3AccessProbe`'s copy of
+    /// the `bucketRoot` pairing a `canonicalPath` of `"/"` while the URL kept
+    /// `/macscp-seed` produced exactly that from the rig's MinIO —
+    /// `<Code>SignatureDoesNotMatch</Code>`, reported by the diagnosis as
+    /// `ListObjectsV2 403` in the one feature whose job is to answer what a
+    /// key may do.
+    ///
+    /// Three pairings, three cases, no fourth spelling: every request this
+    /// module signs comes through here (`buildListRequest`,
+    /// `buildSignedRequest`, `listBuckets` and `S3AccessProbe`), and a caller
+    /// cannot hand in a path of its own — there is no parameter for one. The
+    /// builders below stay `private` because of that, rather than being
+    /// widened for each new caller.
+    ///
+    /// `S3RequestSigning.reSigned` is the one signer call that does NOT come
+    /// through here, and it cannot: it starts from a redirect TARGET whose
+    /// path it must reproduce verbatim rather than derive from a shape.
+    static func signedRequest(
+        _ shape: S3RequestShape, method: String,
+        query: [(name: String, value: String)] = [],
+        extraHeaders: [String: String] = [:], body: Data? = nil,
+        payloadHash: String = SigV4Signer.emptyPayloadHash,
+        config: S3ConnectionConfig
+    ) throws -> URLRequest {
+        let url: URL
+        let canonicalPath: String
+        switch shape {
+        case .objectKey(let bucket, let key):
+            url = try keyRequestURL(config: config, bucket: bucket, key: key, queryPairs: query)
+            // Never `URL.path`: it drops a trailing slash, which is a
+            // signature mismatch for a folder-marker key (M13).
+            canonicalPath = canonicalKeyPath(config: config, bucket: bucket, key: key)
+        case .bucketRoot(let bucket):
+            url = try requestURL(config: config, bucket: bucket, queryPairs: query)
+            // `requestURL` assigns `components.path` unencoded, so `url.path`
+            // reads back the same string it was given; empty is the
+            // virtual-hosted case, where the bucket is in the host.
+            canonicalPath = url.path.isEmpty ? "/" : url.path
+        case .account:
+            url = try bucketListURL(config: config)
+            canonicalPath = "/"
+        }
+        return try S3RequestSigning.signedRequest(
+            url: url, method: method, canonicalPath: canonicalPath, query: query,
+            extraHeaders: extraHeaders, body: body, payloadHash: payloadHash, config: config)
+    }
+
     private func buildListRequest(
         bucket: String, prefix: String, continuationToken: String?, delimiter: Bool = true
     ) throws -> URLRequest {
-        let queryPairs = Self.queryPairs(prefix: prefix, continuationToken: continuationToken, delimiter: delimiter)
-        let url = try Self.requestURL(config: config, bucket: bucket, queryPairs: queryPairs)
-        return try S3RequestSigning.signedRequest(
-            url: url, method: "GET", canonicalPath: url.path.isEmpty ? "/" : url.path,
-            query: queryPairs, extraHeaders: [:], body: nil,
-            payloadHash: SigV4Signer.emptyPayloadHash, config: config)
+        try Self.signedRequest(
+            .bucketRoot(bucket: bucket), method: "GET",
+            query: Self.queryPairs(
+                prefix: prefix, continuationToken: continuationToken, delimiter: delimiter),
+            config: config)
     }
 
     /// Generalized signed-request builder — any HTTP method against an
@@ -877,11 +951,8 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         extraHeaders: [String: String] = [:], body: Data? = nil,
         payloadHash: String
     ) throws -> URLRequest {
-        let url = try Self.keyRequestURL(config: config, bucket: bucket, key: key, queryPairs: query)
-        return try S3RequestSigning.signedRequest(
-            url: url, method: method,
-            canonicalPath: Self.canonicalKeyPath(config: config, bucket: bucket, key: key),
-            query: query,
+        try Self.signedRequest(
+            .objectKey(bucket: bucket, key: key), method: method, query: query,
             extraHeaders: extraHeaders, body: body, payloadHash: payloadHash, config: config)
     }
 
@@ -897,7 +968,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// for the same reason `requestURL` does (M12 review I-1): letting
     /// `URLComponents` re-encode a key or query value with its own (looser)
     /// rules would desync the wire request from what the signer signed.
-    static func keyRequestURL(
+    private static func keyRequestURL(
         config: S3ConnectionConfig, bucket: String, key: String,
         queryPairs: [(name: String, value: String)]
     ) throws -> URL {
@@ -935,7 +1006,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `"/\(bucket)/\(key)"` concatenation would leave behind, matching
     /// `requestURL`'s bucket-root path (`"/" + bucket`, no trailing slash)
     /// used for `ListObjectsV2`.
-    static func canonicalKeyPath(
+    private static func canonicalKeyPath(
         config: S3ConnectionConfig, bucket: String, key: String
     ) -> String {
         guard config.usePathStyle else { return "/\(key)" }
@@ -1009,7 +1080,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// signed as `%2B` but sent as a literal `+`, decoded server-side as a
     /// space, and rejected as a signature mismatch (HTTP 403). See M12
     /// review finding I-1.
-    static func requestURL(
+    private static func requestURL(
         config: S3ConnectionConfig, bucket: String, queryPairs: [(name: String, value: String)]
     ) throws -> URL {
         guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {
