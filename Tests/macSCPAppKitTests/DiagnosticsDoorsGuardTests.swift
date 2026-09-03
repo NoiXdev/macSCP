@@ -413,19 +413,32 @@ struct DiagnosticsDoorsGuardTests {
         let (file, entry) = try Self.entrySite()
         let run = try Self.runEntryName()
         let show = try Self.presenterOpenMethodName()
-        let lines = try Self.strictSource(of: file).components(separatedBy: "\n")
-        let body = try Self.functionBody(named: entry, in: lines)
+        let source = try Self.strictSource(of: file)
+        let bodies = try Self.functionBodies(named: entry, in: source)
 
-        #expect(body.contains("\(show)("), """
-            \(file): \(entry)(…) must still hand the panel to the presenter through \
-            \(show)(…) — without that, "it starts no run" is satisfied by an entry that \
-            opens nothing.
+        // One body, not "the first body". `entrySite()` collects owners into a
+        // Set of NAMES, so two overloads collapse to one element and the
+        // derivation passes; the ambiguity is invisible to it. Asserting the
+        // count here is what turns a second entry into a loud red — and it is
+        // the same property the suite already claims (one entry, so that a
+        // door cannot quietly stop carrying a rule the others do).
+        #expect(bodies.count == 1, """
+            \(file) declares \(bodies.count) functions named \(entry) — the window has one \
+            entry onto the panel, and an overload beside it is a second one wearing the \
+            first one's name.
             """)
-        #expect(!Self.mentions(run, in: body), """
-            \(file): \(entry)(…) starts the diagnosis itself. Opening the panel is not \
-            consent to dial the user's server — the panel's own button is (decision of \
-            2026-09-02). Body: \(body)
-            """)
+        for body in bodies {
+            #expect(body.contains("\(show)("), """
+                \(file): \(entry)(…) must still hand the panel to the presenter through \
+                \(show)(…) — without that, "it starts no run" is satisfied by an entry that \
+                opens nothing.
+                """)
+            #expect(!Self.mentions(run, in: body), """
+                \(file): \(entry)(…) starts the diagnosis itself. Opening the panel is not \
+                consent to dial the user's server — the panel's own button is (decision of \
+                2026-09-02). Body: \(body)
+                """)
+        }
     }
 
     /// Nothing in the panel starts a run except a button.
@@ -467,13 +480,20 @@ struct DiagnosticsDoorsGuardTests {
     /// `Text(step.detail)` left `theTraceBudgetMarkerIsLocalizedInsideThe
     /// DetailLine` green, because that test exercises the RENDERER and the
     /// panel is free not to call it. A negative check ("no `Text` draws a raw
-    /// detail") with a positive one beside it ("the renderer is called
-    /// exactly once") is what closes the gap.
+    /// detail") with a positive one beside it ("the renderer is called at
+    /// all") is what closes the gap.
     ///
-    /// Blind spot, stated: a raw detail bound to a local first
-    /// (`let d = step.detail; Text(d)`) is invisible to the negative half —
-    /// but replacing the rendering that way drops the renderer's one call
-    /// site, which the positive half then catches.
+    /// **Blind spot, restated for what the positive half now is.** It was
+    /// `== 1` in round 1, and the prose leaned on that: a raw detail bound to
+    /// a local first (`let d = step.detail; Text(d)`) escapes the negative
+    /// half, and the argument was that such a rewrite drops the renderer's
+    /// ONE call site so the positive half catches it. Round 2 relaxed the
+    /// count to `>= 1` — correctly, because a second CORRECT call site (a
+    /// summary line, a `.help` tooltip) is a panel doing the right thing —
+    /// and that argument went with it. So today: with two call sites present,
+    /// rewriting one row as `let d = step.detail; Text(d)` passes both halves.
+    /// The check is a guard against dropping the rendering, not a proof that
+    /// every row goes through it.
     @Test func thePanelRendersTheDetailThroughItsRenderer() throws {
         let renderer = try Self.presentationTypeName()
         let source = try Self.strictSource(of: Self.panelPath)
@@ -756,7 +776,7 @@ struct DiagnosticsDoorsGuardTests {
     }
 
     @Test func scannerReadsAFunctionsWholeBody() throws {
-        let lines = """
+        let source = """
             extension ContentView {
                 func showDiagnostics(for source: Source) {
                     let target = Target(kind: source.kind)
@@ -767,12 +787,38 @@ struct DiagnosticsDoorsGuardTests {
                     diagnostics.end()
                 }
             }
-            """.components(separatedBy: "\n")
-        let body = try Self.functionBody(named: "showDiagnostics", in: lines)
-        #expect(body.contains("present("))
-        #expect(!body.contains("end()"), """
+            """
+        let bodies = try Self.functionBodies(named: "showDiagnostics", in: source)
+        #expect(bodies.count == 1)
+        #expect(bodies[0].contains("present("))
+        #expect(!bodies[0].contains("end()"), """
             the span must stop at the function's own closing brace, or a neighbouring \
             function's body would satisfy — or violate — a check about this one
+            """)
+    }
+
+    /// The hole that made the entry guard readable past: two overloads, one
+    /// name. The scanner must report BOTH bodies, or the check above reads the
+    /// innocent one and never sees the other.
+    @Test func scannerReadsEveryOverloadOfAName() throws {
+        let source = """
+            extension ContentView {
+                func showDiagnostics(for source: Source) {
+                    diagnostics.present(Model(), for: nil)
+                }
+
+                func showDiagnostics(for source: Source, run: Bool) {
+                    let model = Model()
+                    if run { model.run() }
+                    diagnostics.present(model, for: nil)
+                }
+            }
+            """
+        let bodies = try Self.functionBodies(named: "showDiagnostics", in: source)
+        #expect(bodies.count == 2, "got \(bodies.count)")
+        #expect(bodies.contains { Self.mentions("run", in: $0) }, """
+            the overload that starts a run must be among the bodies handed back, or the \
+            entry guard is reading only the innocent one
             """)
     }
 
@@ -1151,17 +1197,21 @@ struct DiagnosticsDoorsGuardTests {
     }
 
     /// The brace-balanced body of the named function.
-    static func functionBody(named name: String, in lines: [String]) throws -> String {
-        guard let start = lines.firstIndex(where: {
-            !matches(of: #"func\s+(\w+)"#, in: $0).filter { $0 == name }.isEmpty
-        }) else {
-            throw ScanError.spanNotFound("no `func \(name)` in this file")
+    /// EVERY brace-balanced body declared under this function name.
+    ///
+    /// A list, not the first one. Overloads share a name and differ only in
+    /// their signature, so a scan that took `firstIndex` read one of them and
+    /// derived past the rest — and `entrySite()` could not see the ambiguity
+    /// either, because the thing it dedupes on is the name and the thing that
+    /// differs is the parameter list. Measured in fix round 3: adding
+    /// `showDiagnostics(for:run:)` beside the real entry left the whole suite
+    /// green over a second entry that ran the diagnosis.
+    static func functionBodies(named name: String, in source: String) throws -> [String] {
+        let found = bodies(after: "func \(name)", in: source)
+        guard !found.isEmpty else {
+            throw ScanError.spanNotFound("no `func \(name)` with a body in this file")
         }
-        let source = lines[start...].joined(separator: "\n")
-        guard let body = bodies(after: "func \(name)", in: source).first else {
-            throw ScanError.spanNotFound("`func \(name)` opens no brace-balanced body")
-        }
-        return body
+        return found
     }
 
     static func occurrences(of substring: String, in source: String) -> Int {

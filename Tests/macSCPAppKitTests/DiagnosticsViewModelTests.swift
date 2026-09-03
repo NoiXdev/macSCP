@@ -48,10 +48,11 @@ struct DiagnosticsViewModelTests {
     }
 
     private static func model(
-        runner: @escaping DiagnosticsViewModel.Runner, clipboard: Clipboard
+        runner: @escaping DiagnosticsViewModel.Runner, clipboard: Clipboard,
+        endpoint: Endpoint? = Endpoint(host: "example.test", port: 22)
     ) -> DiagnosticsViewModel {
         DiagnosticsViewModel(
-            name: "Test session", runner: runner,
+            name: "Test session", endpoint: endpoint, appVersion: "0.0.0-test", runner: runner,
             copy: { [clipboard] text in clipboard.write(text) })
     }
 
@@ -234,7 +235,7 @@ struct DiagnosticsViewModelTests {
             },
             clipboard: Clipboard())
         model.run()
-        while model.steps.count < emitted.count { await Task.yield() }
+        await Self.yieldUntil("both rows arrive") { model.steps.count == emitted.count }
 
         #expect(model.steps.map(\.id) == emitted.map(\.id), """
             both finished steps must be on screen while the run is still going — that is what \
@@ -269,7 +270,7 @@ struct DiagnosticsViewModelTests {
             },
             clipboard: Clipboard())
         model.run()
-        while model.steps.count < emitted.count { await Task.yield() }
+        await Self.yieldUntil("both rows arrive") { model.steps.count == emitted.count }
 
         model.cancel()
         await model.runTask?.value
@@ -361,6 +362,120 @@ struct DiagnosticsViewModelTests {
         model.copyMarkdown()
         #expect(clipboard.written.count == 2)
         #expect(clipboard.written[0] != clipboard.written[1])
+    }
+
+    /// The rows are on screen, so they can be copied.
+    ///
+    /// The case ruling A was written from: a firewalled host puts four rows up
+    /// in the first second and then spends twenty more in the trace. Copy was
+    /// disabled for all twenty, so the way to copy what you could already read
+    /// was to press Cancel — pressing STOP in order to COPY.
+    ///
+    /// The reason given at the control was wrong in both halves, which is why
+    /// it survived a round: the build line is the App's own
+    /// (`CFBundleShortVersionString`), and the endpoint is
+    /// `descriptor.endpoint(values)`, a `public let` the App computes one line
+    /// from where it already builds the descriptor. Neither had to be
+    /// invented; the endpoint simply was not carried across the seam.
+    @Test func copyingMidRunWritesThePartialReportAndSaysItIsPartial() async {
+        let emitted = [
+            Self.step(id: DiagnosticStepID.resolve, detail: "A 127.0.0.1"),
+            Self.step(id: DiagnosticStepID.tcp),
+        ]
+        let clipboard = Clipboard()
+        let model = Self.model(
+            runner: { onStep in
+                for step in emitted { await onStep(step) }
+                try? await Task.sleep(for: .seconds(600))
+                return Self.report(emitted)
+            },
+            clipboard: clipboard)
+        model.run()
+        await Self.yieldUntil("the rows arrive") { model.steps.count == emitted.count }
+
+        #expect(model.copyableReport != nil, "there is something to copy while it runs")
+        model.copyPlainText()
+
+        let text = try? #require(clipboard.written.first)
+        let copied = text ?? ""
+        #expect(copied.contains("example.test:22"), """
+            the endpoint is known before the walk starts and belongs in the header: \(copied)
+            """)
+        #expect(copied.contains(DiagnosticStepID.resolve))
+        #expect(copied.contains("run in progress"), """
+            a partial report pasted into an issue must say it is partial, or its missing rows \
+            read as steps that were measured and found absent: \(copied)
+            """)
+
+        model.cancel()
+        await model.runTask?.value
+    }
+
+    /// …and a finished report says nothing of the kind.
+    @Test func copyingAFinishedRunCarriesNoPartialMarker() async {
+        let clipboard = Clipboard()
+        let expected = Self.report([Self.step(id: DiagnosticStepID.resolve)])
+        let model = Self.model(runner: Self.finishing(with: expected), clipboard: clipboard)
+        model.run()
+        await model.runTask?.value
+        model.copyPlainText()
+        model.copyMarkdown()
+        #expect(clipboard.written == [expected.plainText(), expected.markdown()], """
+            a completed run copies the report Core produced, unchanged
+            """)
+        #expect(clipboard.written.allSatisfy { !$0.contains("run in progress") })
+    }
+
+    /// A run with no endpoint to name has nothing coherent to copy mid-run —
+    /// the header would be a fabricated `:0`. The rows are still on screen.
+    @Test func copyingMidRunIsRefusedWhenNoEndpointIsKnown() async {
+        let emitted = [Self.step(id: DiagnosticStepID.resolve)]
+        let clipboard = Clipboard()
+        let model = Self.model(
+            runner: { onStep in
+                for step in emitted { await onStep(step) }
+                try? await Task.sleep(for: .seconds(600))
+                return Self.report(emitted)
+            },
+            clipboard: clipboard, endpoint: nil)
+        model.run()
+        await Self.yieldUntil("the row arrives") { model.steps.count == emitted.count }
+
+        #expect(model.copyableReport == nil)
+        model.copyPlainText()
+        #expect(clipboard.written.isEmpty)
+
+        model.cancel()
+        await model.runTask?.value
+    }
+
+    /// The production model derives its endpoint from the target it was
+    /// built for — the one path a fake runner can never exercise.
+    ///
+    /// Found by probing: replacing `descriptor.endpoint(target.values)` with
+    /// `nil` in the convenience initializer left every test here green,
+    /// because they all inject an endpoint directly. The mid-run copy would
+    /// then be silently refused for every real session, which is the whole
+    /// behaviour this round added.
+    ///
+    /// Constructing the model runs nothing — that is the decision of
+    /// 2026-09-02 — so this touches no socket.
+    @Test func theProductionModelKnowsItsEndpointBeforeAnythingRuns() {
+        var values = BackendDescriptor.descriptor(for: .ssh).defaultValues
+        values[SSHField.host] = "example.test"
+        values[SSHField.port] = "2222"
+        let model = DiagnosticsViewModel(
+            target: DiagnosticsTarget(
+                name: "Test session", kind: .ssh, values: values, sessionID: nil),
+            secrets: nil)
+
+        #expect(model.endpoint == Endpoint(host: "example.test", port: 2222), """
+            the endpoint is `descriptor.endpoint(values)`, known before the first probe — \
+            without it the panel names no host and a running walk cannot be copied
+            """)
+        #expect(model.steps.isEmpty, "and building one measures nothing")
+        #expect(model.report == nil)
+        #expect(model.isRunning == false)
     }
 
     @Test func copyingBeforeARunWritesNothing() {
@@ -479,6 +594,23 @@ struct DiagnosticsViewModelTests {
     }
 
     // MARK: - Support
+
+    /// Yields until `condition` holds, or gives up with a message.
+    ///
+    /// Bounded, and that is the point: an unbounded `while … yield()` turns
+    /// "the observer stopped being wired" into a HANG that reports as CI
+    /// trouble rather than as the failing property it is. The count is a
+    /// give-up, not a deadline — nothing here asserts on how many turns it
+    /// took.
+    private static func yieldUntil(
+        _ what: String, turns: Int = 10_000, _ condition: () -> Bool
+    ) async {
+        for _ in 0..<turns {
+            if condition() { return }
+            await Task.yield()
+        }
+        Issue.record("gave up after \(turns) turns waiting for: \(what)")
+    }
 
     /// Records a cancellation the moment it happens, from whatever thread
     /// `Task.cancel()` runs the handler on. An `NSLock` rather than an actor

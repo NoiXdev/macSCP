@@ -17,6 +17,15 @@ public struct DiagnosticReport: Sendable, Equatable {
     /// see `GitHubReleaseFetcher`'s note for the same rule.
     public let appVersion: String
 
+    /// Whether the walk that produced this finished.
+    ///
+    /// A report is pasted into an issue, and a PARTIAL one — copied while the
+    /// diagnosis is still running, or after it was cancelled — has rows that
+    /// were never measured rather than rows that were measured and found
+    /// absent. Those two read identically once the text leaves the panel, so
+    /// the renderers say which this is.
+    public let isComplete: Bool
+
     /// No redaction pass here, unlike `DiagnosticStep.init`, and that is a
     /// decision rather than an omission: the only fields this prints besides
     /// the steps are `endpoint.text` and `appVersion`. An endpoint's host
@@ -24,21 +33,31 @@ public struct DiagnosticReport: Sendable, Equatable {
     /// SSH's own host field, where an `alice@server.lan` a user typed is a
     /// user name and not a credential — and carries no `://` for
     /// `withoutUserinfo` to act on anyway.
-    public init(endpoint: Endpoint, steps: [DiagnosticStep], appVersion: String) {
+    public init(
+        endpoint: Endpoint, steps: [DiagnosticStep], appVersion: String,
+        isComplete: Bool = true
+    ) {
         self.endpoint = endpoint
         self.steps = steps
         self.appVersion = appVersion
+        self.isComplete = isComplete
     }
 
     private static let title = "macSCP connection diagnostics"
+
+    /// The one line that marks an unfinished walk. English, like the rest of
+    /// this rendering: the report's audience is whoever reads the issue, not
+    /// whoever pasted it (see this type's own doc comment).
+    private static let incompleteMarker = "(run in progress)"
 
     public func plainText() -> String {
         var lines = [
             Self.title,
             "Endpoint: \(endpoint.text)",
             "App version: \(appVersion)",
-            "",
         ]
+        if !isComplete { lines.append(Self.incompleteMarker) }
+        lines.append("")
         for step in steps {
             var line = "\(step.id) — \(step.outcome.label) — \(Self.duration(step.duration))"
             if !step.detail.isEmpty { line += " — \(step.detail)" }
@@ -53,10 +72,13 @@ public struct DiagnosticReport: Sendable, Equatable {
             "",
             "- **Endpoint:** `\(endpoint.text)`",
             "- **App version:** \(appVersion)",
+        ]
+        if !isComplete { lines.append("- **\(Self.incompleteMarker)**") }
+        lines.append(contentsOf: [
             "",
             "| Step | Outcome | Duration | Detail |",
             "| --- | --- | --- | --- |",
-        ]
+        ])
         for step in steps {
             lines.append(
                 "| `\(step.id)` | \(Self.cell(step.outcome.label)) "

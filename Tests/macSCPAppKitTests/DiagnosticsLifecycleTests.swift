@@ -22,11 +22,20 @@ import Testing
 ///
 /// The fake runner parks in a cancellable sleep it never wakes from on its
 /// own, and records its cancellation SYNCHRONOUSLY through
-/// `withTaskCancellationHandler`. Both tests read that record while the
-/// runner is still parked — before `runTask` is awaited, before the model
-/// publishes anything — so neither can pass on the strength of a run that
-/// finished by itself. CLAUDE.md, "A check that reads after the healing is
-/// not a check".
+/// `withTaskCancellationHandler`. Every test here that reads that record does
+/// so while the runner is still parked — before `runTask` is awaited, before
+/// the model publishes anything — so none of them can pass on the strength of
+/// a run that finished by itself. CLAUDE.md, "A check that reads after the
+/// healing is not a check".
+///
+/// Deliberately no count: this paragraph said "both tests" while the suite
+/// held six, which is what an enumeration in a header does the moment a test
+/// is added.
+///
+/// The other half of the same rule is the `== false` pre-read each of them
+/// carries before the act. A test that cannot have one is a test whose setup
+/// has already satisfied it — see `aLivenessGiveUpOnTheDiagnosedTabKeepsTheRows`,
+/// which was exactly that until fix round 3.
 ///
 /// ## Isolation
 ///
@@ -41,37 +50,57 @@ import Testing
 struct DiagnosticsLifecycleTests {
     // MARK: - Fixtures
 
-    /// A runner that never finishes on its own and notes the moment it is
-    /// cancelled.
+    /// A runner that emits whatever rows it was given, then never finishes on
+    /// its own, and notes the moment it is cancelled.
     ///
     /// `onCancel` runs synchronously on the thread that calls
     /// `Task.cancel()`, so `wasCancelled` is true by the time the call that
-    /// cancelled it returns — which is what lets both tests read it before
-    /// the runner has had any chance to heal.
+    /// cancelled it returns — which is what lets a test read it before the
+    /// runner has had any chance to heal.
+    ///
+    /// One `ParkedRun` belongs to one run. The flag is never reset, so sharing
+    /// an instance between two runs would let the first one's cancellation
+    /// satisfy an assertion about the second — which is exactly how
+    /// `aLivenessGiveUpOnTheDiagnosedTabKeepsTheRows` came to pass without
+    /// testing anything (fix round 3, Important 1).
     private final class ParkedRun: @unchecked Sendable {
         private let lock = NSLock()
         private var cancelled = false
         private var started = false
+        private let rows: [DiagnosticStep]
+
+        init(emitting rows: [DiagnosticStep] = []) {
+            self.rows = rows
+        }
 
         var wasCancelled: Bool { lock.withLock { cancelled } }
         var hasStarted: Bool { lock.withLock { started } }
 
         func runner() -> DiagnosticsViewModel.Runner {
-            { [self] _ in
+            { [self] onStep in
                 await withTaskCancellationHandler {
+                    for row in rows { await onStep(row) }
                     lock.withLock { started = true }
                     // Never returns of its own accord within any run of this
                     // suite; a working cancel returns it at once. The number
                     // is a park, not a deadline anything here asserts on.
                     try? await Task.sleep(for: .seconds(600))
                     return DiagnosticReport(
-                        endpoint: Endpoint(host: "example.test", port: 22), steps: [],
+                        endpoint: Endpoint(host: "example.test", port: 22), steps: rows,
                         appVersion: "0.0.0-test")
                 } onCancel: {
                     lock.withLock { cancelled = true }
                 }
             }
         }
+    }
+
+    /// One finished row, for the fixtures that need the panel to have
+    /// measured something.
+    private static func step(id: String) -> DiagnosticStep {
+        DiagnosticStep(
+            id: id, titleKey: DiagnosticStepID.titleKey(for: id), started: Date(),
+            duration: .milliseconds(7), outcome: .ok, detail: "")
     }
 
     private func makeTempDirectory(_ label: String) -> URL {
@@ -125,14 +154,36 @@ struct DiagnosticsLifecycleTests {
     /// would resolve a name and open sockets. What is under test here is the
     /// lifecycle, not the probes.
     private func presentRunningPanel(
-        on view: ContentView, for tab: SessionTab? = nil
+        on view: ContentView, for tab: SessionTab? = nil, emitting rows: [DiagnosticStep] = []
     ) async -> (parked: ParkedRun, model: DiagnosticsViewModel) {
-        let parked = ParkedRun()
+        let parked = ParkedRun(emitting: rows)
         let model = DiagnosticsViewModel(name: "Test session", runner: parked.runner())
         view.diagnostics.present(model, for: tab?.id)
         model.run()
-        while !parked.hasStarted { await Task.yield() }
+        await Self.yieldUntil("the runner reached its park") { parked.hasStarted }
+        await Self.yieldUntil("every emitted row reached the model") {
+            model.steps.count == rows.count
+        }
         return (parked, model)
+    }
+
+    /// Yields until `condition` holds, or gives up with a message.
+    ///
+    /// Bounded, and that is the whole point: an unbounded `while … yield()`
+    /// turns "the observer stopped being wired" into a HANG — the run sits at
+    /// CI's timeout and reports as infrastructure trouble rather than as the
+    /// failing property it is. The count is a give-up, not a deadline: nothing
+    /// here asserts on how many turns it took, and a machine that needs more
+    /// than this many main-actor turns to run a lock write has a different
+    /// problem.
+    private static func yieldUntil(
+        _ what: String, turns: Int = 10_000, _ condition: () -> Bool
+    ) async {
+        for _ in 0..<turns {
+            if condition() { return }
+            await Task.yield()
+        }
+        Issue.record("gave up after \(turns) turns waiting for: \(what)")
     }
 
     /// Ends a run this test started and WAITS for it, after every assertion
@@ -212,23 +263,59 @@ struct DiagnosticsLifecycleTests {
         defer { cleanup() }
         let tab = makeTab()
         let (parked, model) = await presentRunningPanel(on: view, for: tab)
-        // `run()` supersedes whatever was in flight, so the first task is
-        // held here: it is cancelled by the second `run()` and would
-        // otherwise be the one task nothing could join.
-        let superseded = model.runTask
-        model.run()
-        while !parked.hasStarted { await Task.yield() }
+        // The pre-read every sibling carries, and the one this test could not
+        // have while it started a SECOND run of its own: `run()` begins by
+        // cancelling whatever is in flight, `ParkedRun` records that
+        // synchronously, and one instance was shared by both runs — so
+        // `wasCancelled` was already true here, and the assertion below was
+        // satisfied by the setup. Deleting `stopDiagnostics(of:)` from
+        // `teardown` left this test green (fix round 3, Important 1).
+        #expect(parked.wasCancelled == false, "nothing has asked it to stop yet")
 
         await view.handleLivenessGiveUp(tab)
 
-        #expect(parked.wasCancelled)
+        #expect(parked.wasCancelled, """
+            the give-up path must stop the walk: it runs `teardown`, and the connection it \
+            was dialling is gone.
+            """)
         #expect(view.diagnostics.open === model, """
             the connection dropping is the reason the panel is open. Closing it here is the \
             one moment the measurement was worth most.
             """)
 
         await stopAndAwait(model)
-        await superseded?.value
+    }
+
+    /// The composition the name of the test above only claims: teardown stops
+    /// the run AND the rows it had measured are still there.
+    ///
+    /// `tearingDownTheDiagnosedTabStopsTheRunAndKeepsTheRows` asserts that the
+    /// PANEL survives, and its fake emits nothing, so `steps` is empty
+    /// throughout and a `stopRun` that "tidied up" by clearing the rows would
+    /// pass it on its name. The rows-survive-a-cancel property is proved at
+    /// the model (`cancellingKeepsTheRowsAlreadyMeasured`); this is the only
+    /// place the two are composed.
+    @Test func tearingDownTheDiagnosedTabLeavesTheMeasuredRowsOnScreen() async {
+        let (view, cleanup) = makeContentView()
+        defer { cleanup() }
+        let tab = makeTab()
+        let emitted = [Self.step(id: DiagnosticStepID.resolve), Self.step(id: DiagnosticStepID.tcp)]
+        let (parked, model) = await presentRunningPanel(on: view, for: tab, emitting: emitted)
+        #expect(model.steps.count == emitted.count, "the rows are on screen before the act")
+        #expect(parked.wasCancelled == false)
+
+        await view.teardown(tab, reason: .userRequested)
+
+        // Read while the runner is still parked, so nothing has healed: the
+        // walk cannot have finished and re-published these rows.
+        #expect(model.steps.map(\.id) == emitted.map(\.id), """
+            the measurement survives the teardown that stopped it — it is what the panel was \
+            opened for, and there is no way back to it except re-dialling.
+            """)
+        #expect(parked.wasCancelled)
+        #expect(view.diagnostics.open === model)
+
+        await stopAndAwait(model)
     }
 
     /// A different tab's teardown touches neither the run nor the panel.

@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+#
+# mutation-probe — plant a violation, run a test filter, report, revert.
+#
+# Mutation testing is how this project measures whether a guard is sensitive to
+# the thing it claims to watch: plant the violation, expect red, remove it. Done
+# by hand it has a failure mode that reads exactly like success, and it happened
+# here on 2026-09-03: a planted `.onReceive(timer) { … }` referenced a symbol the
+# file did not have, so the target never compiled, ZERO tests ran, and a harness
+# that grepped for failing test names printed nothing — which is
+# indistinguishable from "the guard is green". The plant was recorded as "not
+# caught" when it had never been tried.
+#
+# So this script reports three states and never conflates them:
+#
+#   BUILD FAILED   the plant does not compile; no test ran; the probe is void
+#   NO TESTS RAN   the build succeeded but the filter matched nothing
+#   RED / GREEN    tests actually ran, and here is what failed
+#
+# It also refuses to start on a dirty tree, and checks that the plant changed
+# something — a `sed` that matched nothing is the same silent no-op one level up.
+#
+# Usage:
+#   scripts/mutation-probe --filter <regex> --apply <shell command> [--label <text>]
+#
+# Example:
+#   scripts/mutation-probe --label "teardown stops nothing" \
+#     --filter 'DiagnosticsLifecycleTests' \
+#     --apply "perl -0pi -e 's/^ *stopDiagnostics\(of: tab\)\n//m' \
+#              Sources/MacSCPAppKit/ContentView+Lifecycle.swift"
+#
+# The tree is restored with `git checkout --` on every exit path, including a
+# Ctrl-C: a probe that leaves its violation behind is worse than no probe.
+
+set -uo pipefail
+
+FILTER=""
+APPLY=""
+LABEL=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --filter) FILTER="${2:-}"; shift 2 ;;
+        --apply)  APPLY="${2:-}";  shift 2 ;;
+        --label)  LABEL="${2:-}";  shift 2 ;;
+        -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+        *) echo "mutation-probe: unknown argument '$1'" >&2; exit 2 ;;
+    esac
+done
+
+if [[ -z "$FILTER" || -z "$APPLY" ]]; then
+    echo "mutation-probe: --filter and --apply are both required" >&2
+    exit 2
+fi
+
+cd "$(dirname "$0")/.." || exit 2
+
+# UNSTAGED changes only. `git checkout -- .` restores the working tree from the
+# INDEX, so staged work is what the plant is reverted back TO — which is the
+# normal case while a fix is in progress. What cannot be tolerated is an
+# unstaged edit, because the revert would take it with the plant.
+if [[ -n "$(git diff --name-only)" ]]; then
+    echo "mutation-probe: the working tree has unstaged changes." >&2
+    echo "  This script reverts with 'git checkout --', which would discard them." >&2
+    echo "  Stage (git add) or stash them first; staged work is preserved." >&2
+    git diff --name-only | sed 's/^/    /' >&2
+    exit 2
+fi
+
+BASELINE="$(git rev-parse --short HEAD)"
+restore() {
+    git checkout -- . 2>/dev/null
+    if [[ -n "$(git diff --name-only)" ]]; then
+        echo "mutation-probe: WARNING — unstaged changes remain after the revert." >&2
+        git diff --name-only | sed 's/^/    /' >&2
+    fi
+}
+trap restore EXIT INT TERM
+
+echo "── plant${LABEL:+: $LABEL}"
+if ! eval "$APPLY"; then
+    echo "RESULT: PLANT FAILED — the --apply command exited non-zero. Nothing was measured."
+    exit 1
+fi
+
+if [[ -z "$(git diff --name-only)" ]]; then
+    echo "RESULT: PLANT CHANGED NOTHING — the pattern did not match."
+    echo "  A probe that plants nothing looks exactly like a guard that caught nothing."
+    exit 1
+fi
+git --no-pager diff --stat | sed 's/^/  /'
+echo "── (baseline: staged tree at $BASELINE)"
+
+echo "── build"
+BUILD_LOG="$(mktemp)"
+if ! swift build --build-tests >"$BUILD_LOG" 2>&1; then
+    echo "RESULT: BUILD FAILED — no test ran, so this probe measured NOTHING."
+    echo "  Fix the plant so it compiles, then run again. A green report here would be a lie."
+    grep -E 'error:' "$BUILD_LOG" | sed 's/^/  /' | sort -u | head -5
+    rm -f "$BUILD_LOG"
+    exit 1
+fi
+rm -f "$BUILD_LOG"
+
+echo "── test --filter $FILTER"
+TEST_LOG="$(mktemp)"
+swift test --filter "$FILTER" >"$TEST_LOG" 2>&1
+STATUS=$?
+
+RAN="$(grep -oE 'Test run with [0-9]+ test' "$TEST_LOG" | grep -oE '[0-9]+' | tail -1)"
+RAN="${RAN:-0}"
+FAILED="$(grep -E '^✘ Test [a-zA-Z]' "$TEST_LOG" | sed 's/ recorded.*//;s/ failed.*//' | sort -u)"
+
+if [[ "$RAN" == "0" ]]; then
+    echo "RESULT: NO TESTS RAN — the filter matched nothing, or the runner died."
+    grep -E 'error:|Fatal|fatalError' "$TEST_LOG" | sed 's/^/  /' | sort -u | head -5
+    rm -f "$TEST_LOG"
+    exit 1
+fi
+
+if [[ -n "$FAILED" ]]; then
+    echo "RESULT: RED — $RAN test(s) ran, and the plant was caught by:"
+    echo "$FAILED" | sed 's/^/  /'
+else
+    echo "RESULT: GREEN — $RAN test(s) ran and NONE of them noticed the plant."
+    echo "  Either the guard is insensitive to this violation, or the plant is not one."
+fi
+rm -f "$TEST_LOG"
+
+echo "── revert"
+exit 0

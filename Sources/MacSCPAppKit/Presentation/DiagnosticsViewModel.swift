@@ -75,6 +75,16 @@ final class DiagnosticsViewModel: Identifiable {
     /// What the header calls this connection.
     let name: String
 
+    /// Where this diagnosis is pointed, known before the first probe runs.
+    ///
+    /// Carried across the seam rather than waited for: it is
+    /// `descriptor.endpoint(values)`, a `public let` the convenience
+    /// initializer below already has a descriptor to ask, and having it here
+    /// is what lets a run that is still walking be COPIED — its rows are on
+    /// screen, and a header needs an endpoint. `nil` for a session that names
+    /// no host, where there is nothing coherent to put in that line.
+    let endpoint: Endpoint?
+
     /// Every step measured by the run in flight, or by the last one — in the
     /// order they finished, appended as each one arrives.
     ///
@@ -119,12 +129,18 @@ final class DiagnosticsViewModel: Identifiable {
     /// a test cannot read the user's real clipboard without clobbering it.
     @ObservationIgnored private let copy: (String) -> Void
 
+    @ObservationIgnored private let appVersion: String
+
     init(
         name: String,
+        endpoint: Endpoint? = nil,
+        appVersion: String = DiagnosticsViewModel.bundleVersion,
         runner: @escaping Runner,
         copy: @escaping (String) -> Void = DiagnosticsViewModel.writeToPasteboard
     ) {
         self.name = name
+        self.endpoint = endpoint
+        self.appVersion = appVersion
         self.runner = runner
         self.copy = copy
     }
@@ -137,10 +153,18 @@ final class DiagnosticsViewModel: Identifiable {
     /// `SettingsView` and `UpdateCheckModel` read it.
     convenience init(target: DiagnosticsTarget, secrets: (any SecretSource)?) {
         let descriptor = BackendDescriptor.descriptor(for: target.kind)
+        let version = Self.bundleVersion
         let diagnostics = ConnectionDiagnostics(
             descriptor: descriptor, values: target.values, secrets: secrets,
-            sessionID: target.sessionID, appVersion: Self.appVersion)
-        self.init(name: target.name, runner: { onStep in await diagnostics.run(onStep: onStep) })
+            sessionID: target.sessionID, appVersion: version)
+        self.init(
+            name: target.name,
+            // The same answer Core's first line computes, from the same
+            // descriptor — asked here so the panel can name the endpoint, and
+            // copy a partial report, before the walk has returned anything.
+            endpoint: descriptor.endpoint(target.values),
+            appVersion: version,
+            runner: { onStep in await diagnostics.run(onStep: onStep) })
     }
 
     /// Starts a diagnosis. The ONLY thing that does.
@@ -158,9 +182,17 @@ final class DiagnosticsViewModel: Identifiable {
         report = nil
         let runner = self.runner
         runTask = Task { [weak self] in
-            let produced = await runner { step in
-                // Every row is checked against the attempt that produced it.
-                // A superseded run keeps walking until its cancellation
+            let produced = await runner { [weak self] step in
+                // `[weak self]` again, and not redundantly: inside
+                // `Task { [weak self] … }` the name is an optional LOCAL, and
+                // a nested closure capturing it captures it strongly — the
+                // runner would then hold the model alive for the length of the
+                // walk, and a panel dropped by `end()` would go on collecting
+                // rows nobody can see. Re-weakening here is what makes the
+                // outer capture mean what it says.
+                //
+                // Every row is also checked against the attempt that produced
+                // it. A superseded run keeps walking until its cancellation
                 // reaches it, and its late rows would otherwise append to the
                 // list the reader is looking at.
                 await MainActor.run { self?.append(step, from: myAttempt) }
@@ -202,13 +234,31 @@ final class DiagnosticsViewModel: Identifiable {
         runTask?.cancel()
     }
 
+    /// What "Copy report" would put on the pasteboard right now, or `nil`
+    /// when there is nothing worth copying.
+    ///
+    /// The finished report when there is one; otherwise the rows measured so
+    /// far, rendered as a report that says it is one — `isComplete: false`
+    /// puts "(run in progress)" under the header, so a partial paste cannot be
+    /// read as a walk whose missing steps were measured and found absent.
+    ///
+    /// `nil` before the first row, and for a session with no endpoint to name:
+    /// a header reading `:0` would be a fabrication in the one value whose job
+    /// is to be quoted.
+    var copyableReport: DiagnosticReport? {
+        if let report { return report }
+        guard !steps.isEmpty, let endpoint else { return nil }
+        return DiagnosticReport(
+            endpoint: endpoint, steps: steps, appVersion: appVersion, isComplete: false)
+    }
+
     func copyPlainText() {
-        guard let report else { return }
+        guard let report = copyableReport else { return }
         copy(report.plainText())
     }
 
     func copyMarkdown() {
-        guard let report else { return }
+        guard let report = copyableReport else { return }
         copy(report.markdown())
     }
 
@@ -226,7 +276,7 @@ final class DiagnosticsViewModel: Identifiable {
 
     /// The running build's short version string — the same read
     /// `SettingsView` and `UpdateCheckModel` make.
-    private static var appVersion: String {
+    nonisolated static var bundleVersion: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"
     }
 }

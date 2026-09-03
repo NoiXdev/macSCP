@@ -67,8 +67,12 @@ struct DiagnosticsPanel: View {
             Text(model.name)
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            if let report = model.report {
-                Text(report.endpoint.text)
+            // From the model, not from the report: the endpoint is known
+            // before the first probe runs, and it is the one fact a reader
+            // wants beside the rows they can now watch arrive. Gating it on
+            // `report` hid it for the whole walk.
+            if let endpoint = model.endpoint {
+                Text(endpoint.text)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(DesignTokens.inkTertiary)
                     .textSelection(.enabled)
@@ -208,12 +212,13 @@ struct DiagnosticsPanel: View {
                     model.copyMarkdown()
                 }
             }
-            // Enabled the moment a run ENDS — including a cancel, which
-            // publishes the rows it measured. Not during the walk: a report
-            // carries an endpoint and a build line that only the finished run
-            // supplies, and inventing them for a value whose whole job is to
-            // be pasted into a bug report would be the wrong trade.
-            .disabled(model.report == nil)
+            // Enabled as soon as there is a row to copy, running or not.
+            // The rows are on screen from the first second while the trace can
+            // spend twenty more; disabling copy for those twenty made the way
+            // to copy what you could already read "press Cancel", which is
+            // pressing stop in order to copy. A partial report says so under
+            // its header — see `DiagnosticsViewModel.copyableReport`.
+            .disabled(model.copyableReport == nil)
             .fixedSize()
             Spacer(minLength: 0)
             Button(L10n.string("common.close", "Close"), action: onClose)

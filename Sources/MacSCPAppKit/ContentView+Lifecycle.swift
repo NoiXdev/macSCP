@@ -511,7 +511,13 @@ extension ContentView {
         // accepting, or the auth started failing. Two of the others
         // (`performCloseOthers`, the reconnect-in-place branch) were closing a
         // panel belonging to a different connection entirely.
-        // `DiagnosticsLifecycleTests` drives all three cases for real.
+        //
+        // `DiagnosticsLifecycleTests` drives `handleLivenessGiveUp` by name,
+        // and the OTHER TWO by their shape — `teardown` of a tab the panel was
+        // not opened for — not by calling `performCloseOthers` or the
+        // reconnect branch. That distinction is the point of writing it down:
+        // an `endDiagnostics()` added back into either of those two functions
+        // for tidiness goes red nowhere.
         stopDiagnostics(of: tab)
     }
 
