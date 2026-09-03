@@ -40,7 +40,8 @@ import Testing
 ///   one is ordinary refactoring, not evasion, so a later reader has to know
 ///   that it silently shrinks this test's reach.
 /// - The area a hint may live in is small but LOPSIDED. **Measured
-///   2026-09-03** by replaying this file's own scanner (`code(of:)` →
+///   2026-09-03 at `8997c955`** (the file grew five lines in the commit
+///   that wrote this, so the numbers describe that tree, not HEAD) by replaying this file's own scanner (`code(of:)` →
 ///   `icons(in:)`, the union of the `hintWindow` lines every icon opens,
 ///   divided by the file's line count): the windows cover **2.01%** of the
 ///   app target's lines overall (569 of 28373, across 69 files), and they
