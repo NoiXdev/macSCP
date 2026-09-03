@@ -121,6 +121,56 @@ entitlement either binary ever carried was a keychain access group. The
 spike's sandbox question collapses to "what an unprivileged process gets
 from macOS". Plan: `docs/superpowers/plans/2026-09-03-connection-tools-spike.md`.
 
+### Verdicts — measured 2026-09-03, macOS 26.6.2, uid 501, unsigned `swift test` binary
+
+Measured by `Tests/macSCPCoreTests/ICMPSpikeTests.swift`
+(`MACSCP_NETSPIKE=1 swift test --filter ICMPSpikeTests`), three runs, all
+three agreeing on every line below; the numbers are run 1 / 2 / 3.
+
+- **(a) ICMP echo — yes, both families.** `socket(AF_INET, SOCK_DGRAM,
+  IPPROTO_ICMP)` = fd 3 and `socket(AF_INET6, SOCK_DGRAM, IPPROTO_ICMPV6)`
+  = fd 3, both without privileges, no `errno`. `sendto` = 25 of 25 bytes
+  each. IPv4 echo reply (type 0, code 0) from `127.0.0.1` after 1.360 /
+  1.375 / 0.215 ms; IPv6 echo reply (type 129, code 0) from `::1` after
+  0.184 / 1.050 / 0.213 ms. **The identifier is NOT rewritten** on this
+  version: sent 3006/3024/3072, delivered 3006/3024/3072, sequence 1 in
+  every run — the design's assumption that macOS renumbers a DGRAM ICMP
+  socket's echoes did not hold here, so a matcher may use the identifier
+  but must not depend on it being the one it wrote. Two shapes an
+  implementation has to handle: the IPv4 socket delivers **the IP header
+  too** (45 bytes = 20 + 8 + 17 payload, `ip header included=true`, so the
+  reader skips IHL×4), the IPv6 socket does not (25 bytes); and the IPv6
+  socket **also receives its own outgoing echo request** (type 128, same
+  identifier, from `::1`, 0.126–1.009 ms before the reply), so reading one
+  datagram and calling it the reply is wrong — filter on type, or set
+  `ICMP6_FILTER`.
+- **(b) IPv4 time-exceeded — yes.** A UDP datagram to TEST-NET-1
+  `192.0.2.1:33434` with `IP_TTL = 1` (`setsockopt` = 0, `connect` = 0
+  sending nothing, `send` = 17 bytes) produced ICMP **type 11 code 0** on
+  the unprivileged ICMP DGRAM socket after 3.326 / 4.000 / 3.513 ms,
+  sourced from the LAN's first-hop router (an RFC 1918 address, kept out
+  of this record deliberately — the repository is public and the exact
+  address is site topology, not evidence), 73 bytes with the IP header,
+  quoting 45 bytes of the original datagram. The UDP socket's own two
+  exits, read after the 2 s window: `getsockopt(SO_ERROR)` = **65
+  `EHOSTUNREACH`** and `recv(MSG_DONTWAIT)` = -1 `errno` 35 `EAGAIN`, in
+  all three runs. So the UDP socket learns only *that* the probe died —
+  `EHOSTUNREACH` does not distinguish time-exceeded from unreachable and
+  carries no hop address; the ICMP socket is what identifies the hop.
+  (`SO_RECVERR` does not exist on macOS, as expected.)
+- **(c) IPv6 time-exceeded — no IPv6 route, unmeasured.** The route probe
+  (`connect` of an unconnected UDP socket to `2001:db8::1`, which puts no
+  packet on the wire) = -1, `errno` 65 `EHOSTUNREACH`, in all three runs;
+  this machine has no global IPv6 address, only link-local. **Nothing was
+  sent.** The IPv6 trace path is therefore untested, not refused — it must
+  be measured again on a machine with a global IPv6 route before §2.5
+  claims it works, and it may not be inferred from (a) or (b).
+
+What is still unmeasured for all three: the **signed, notarized release
+build**. The app is not sandboxed (`scripts/release:48`) and the hardened
+runtime does not restrict sockets, so no difference is expected — but
+expected is not measured, and this record says so.
+
 ## Order, if approved
 
 1. Spike (§5).
