@@ -216,8 +216,13 @@ struct S3AccessProbe: Sendable {
             }
         }
         if let firstFailure { return .failed(firstFailure) }
-        // `firstSkip` is set whenever `S3AccessCall` has a case at all, so
-        // the fallback describes the empty walk and nothing else.
-        return .skipped(firstSkip ?? "no call was sent")
+        // `firstSkip` is set whenever `S3AccessCall` has a case at all — and
+        // `CaseIterable` over three cases means always — so what remains is
+        // the empty walk, which is a walk that never started. That is
+        // `cancelledSkipReason`'s own situation, so it is reused rather than
+        // given a second sentence: an unreachable line with a sentence of its
+        // own is a sentence nobody will ever see be wrong (re-review,
+        // Finding C).
+        return .skipped(firstSkip ?? Self.cancelledSkipReason)
     }
 }

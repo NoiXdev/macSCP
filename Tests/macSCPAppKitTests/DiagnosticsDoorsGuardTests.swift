@@ -576,6 +576,10 @@ struct DiagnosticsDoorsGuardTests {
         // and `en` does not have is a row drawn as its own key text, and a
         // key `en` carries that nothing spells is a translation somebody
         // maintains in four languages for a row that no longer exists.
+        //
+        // The ordering this imposes — a catalogue key lands in the same
+        // commit as its first use, never a commit earlier — is deliberate and
+        // is written out on `diagnosticsKeysInSources` above.
         let english = try String(
             contentsOf: Self.url("Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
             encoding: .utf8)
@@ -1246,6 +1250,17 @@ struct DiagnosticsDoorsGuardTests {
     /// literal outside the old root: green before the widening, red after.
     /// A directory is not a scope, and the regex is specific enough that
     /// walking the whole tree costs nothing.
+    ///
+    /// **What this costs, stated where a maintainer will meet it:** the
+    /// expectation that reads this set compares it to `en.lproj` for
+    /// EQUALITY, so a `diagnostics.*` key and the Swift that spells it have
+    /// to land in the same commit. Adding a catalogue entry first — the
+    /// natural order when translations arrive ahead of the code, or when a
+    /// key is written for a row still being built — is red BY DESIGN, and so
+    /// is deleting the last use of a key while its four translations stay.
+    /// That is the price of an anchor that cannot be satisfied by the other
+    /// rows' keys; the alternative was the `!isEmpty` check this replaced,
+    /// which stayed green through anything.
     static func diagnosticsKeysInSources() throws -> Set<String> {
         let root = url("Sources")
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)

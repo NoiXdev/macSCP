@@ -885,16 +885,26 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `ListObjectsV2 403` in the one feature whose job is to answer what a
     /// key may do.
     ///
-    /// Three pairings, three cases, no fourth spelling: every request this
-    /// module signs comes through here (`buildListRequest`,
-    /// `buildSignedRequest`, `listBuckets` and `S3AccessProbe`), and a caller
-    /// cannot hand in a path of its own — there is no parameter for one. The
-    /// builders below stay `private` because of that, rather than being
-    /// widened for each new caller.
+    /// Every SigV4-HEADER request this module sends comes through here —
+    /// `buildListRequest`, `buildSignedRequest`, `listBuckets` and
+    /// `S3AccessProbe` — and a caller cannot hand in a path of its own,
+    /// because there is no parameter for one. The pairing itself lives one
+    /// level down, in `addressed(_:query:config:)`, which is also what the
+    /// QUERY-string signature reads (`presignedURL`).
     ///
-    /// `S3RequestSigning.reSigned` is the one signer call that does NOT come
-    /// through here, and it cannot: it starts from a redirect TARGET whose
+    /// **Two signer entry points, one pairing, and one exception, counted on
+    /// 2026-09-04.** `S3RequestSigning.signedRequest` (the `Authorization`
+    /// header) and `SigV4Signer.presignedQuery` (the `X-Amz-*` query, for a
+    /// link handed to somebody else's browser) are two ways to sign, not two
+    /// ways to address: both take their URL and their canonical path from
+    /// `addressed`. `S3RequestSigning.reSigned` is the one signer call that
+    /// derives neither, and cannot: it starts from a redirect TARGET whose
     /// path it must reproduce verbatim rather than derive from a shape.
+    ///
+    /// An earlier version of this comment claimed "no fourth spelling" while
+    /// `presignedURL` hand-paired `keyRequestURL` with `canonicalKeyPath` six
+    /// lines apart — a count that was wrong about the file it was written in.
+    /// That is why the pairing moved rather than the sentence.
     static func signedRequest(
         _ shape: S3RequestShape, method: String,
         query: [(name: String, value: String)] = [],
@@ -902,27 +912,55 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         payloadHash: String = SigV4Signer.emptyPayloadHash,
         config: S3ConnectionConfig
     ) throws -> URLRequest {
-        let url: URL
-        let canonicalPath: String
+        let addressed = try Self.addressed(shape, query: query, config: config)
+        return try S3RequestSigning.signedRequest(
+            url: addressed.url, method: method, canonicalPath: addressed.canonicalPath,
+            query: query, extraHeaders: extraHeaders, body: body, payloadHash: payloadHash,
+            config: config)
+    }
+
+    /// The wire URL for `shape`, and the canonical path that must be signed
+    /// alongside it. **The one place those two are decided together.**
+    ///
+    /// They are one decision, not two: SigV4 signs a path string while the
+    /// request carries another, and when they disagree the server answers
+    /// 403 `SignatureDoesNotMatch` — indistinguishable, from the outside,
+    /// from a key that lacks a permission. Measured on 2026-09-03: giving
+    /// `S3AccessProbe`'s then-copy of the `bucketRoot` pairing a
+    /// `canonicalPath` of `"/"` while its URL kept `/macscp-seed` produced
+    /// exactly that from the rig's MinIO — `<Code>SignatureDoesNotMatch</Code>`,
+    /// reported by the diagnosis as `ListObjectsV2 403`, in the one feature
+    /// whose job is to answer what a key may do.
+    ///
+    /// Module-internal, and the four builders it calls stay `private`: the
+    /// pairing can be READ from elsewhere in Core — which is what
+    /// `S3FileSystemTests.thePresignedURLSignsTheSamePathTheFactoryDoes`
+    /// does, and the only way a test can state that property without
+    /// spelling a canonical path of its own and going red whenever the rule
+    /// legitimately changes — while the ingredients to reproduce it are out
+    /// of reach. A caller that wanted to hand-pair would now have to ignore
+    /// the canonical path it was handed, which is a much louder mistake than
+    /// deriving a second one.
+    static func addressed(
+        _ shape: S3RequestShape, query: [(name: String, value: String)],
+        config: S3ConnectionConfig
+    ) throws -> (url: URL, canonicalPath: String) {
         switch shape {
         case .objectKey(let bucket, let key):
-            url = try keyRequestURL(config: config, bucket: bucket, key: key, queryPairs: query)
             // Never `URL.path`: it drops a trailing slash, which is a
             // signature mismatch for a folder-marker key (M13).
-            canonicalPath = canonicalKeyPath(config: config, bucket: bucket, key: key)
+            return (
+                try keyRequestURL(config: config, bucket: bucket, key: key, queryPairs: query),
+                canonicalKeyPath(config: config, bucket: bucket, key: key))
         case .bucketRoot(let bucket):
-            url = try requestURL(config: config, bucket: bucket, queryPairs: query)
             // `requestURL` assigns `components.path` unencoded, so `url.path`
             // reads back the same string it was given; empty is the
             // virtual-hosted case, where the bucket is in the host.
-            canonicalPath = url.path.isEmpty ? "/" : url.path
+            let url = try requestURL(config: config, bucket: bucket, queryPairs: query)
+            return (url, url.path.isEmpty ? "/" : url.path)
         case .account:
-            url = try bucketListURL(config: config)
-            canonicalPath = "/"
+            return (try bucketListURL(config: config), "/")
         }
-        return try S3RequestSigning.signedRequest(
-            url: url, method: method, canonicalPath: canonicalPath, query: query,
-            extraHeaders: extraHeaders, body: body, payloadHash: payloadHash, config: config)
     }
 
     private func buildListRequest(
@@ -1106,8 +1144,19 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
 }
 
 /// M14/T2: `PresignedURLProvider` conformance — a time-limited signed URL
-/// for a key, generated PURELY from the signer + the same URL-building
-/// helpers `buildSignedRequest` uses, with no `transport` call at all.
+/// for a key, generated PURELY from the signer + `addressed(_:query:config:)`,
+/// the same pairing every other signed request takes its URL and canonical
+/// path from, with no `transport` call at all.
+///
+/// The one thing that differs from `signedRequest(_:method:query:…)` is WHERE
+/// the signature goes: in the `X-Amz-*` query rather than an `Authorization`
+/// header, because this URL is handed to somebody else's browser, which will
+/// send no headers of ours. That is a signing difference, not an addressing
+/// one — which is why this used to hand-pair `keyRequestURL` with
+/// `canonicalKeyPath` six lines apart and was the one caller a `private`
+/// builder could not force through the factory (Swift's `private` is
+/// file-scoped, and this extension shares the file). Task 5 re-review,
+/// Finding A.
 extension S3FileSystem: PresignedURLProvider {
     public func presignedURL(method: PresignedMethod, key: String, expiresIn: TimeInterval) throws -> URL {
         let seconds = Int(max(1, min(604_800, expiresIn))) // SigV4 max 7 days
@@ -1124,21 +1173,24 @@ extension S3FileSystem: PresignedURLProvider {
         // a bucket root is that bucket's whole listing.
         try refuseBucketLevelOperation(.presignedURL, path: "/" + key)
         let (bucket, objectKey) = try mode.resolve(path: "/" + key)
-        // Base object URL (no query yet).
-        let base = try Self.keyRequestURL(
-            config: config, bucket: bucket, key: objectKey, queryPairs: [])
-        guard let host = base.host else {
+        // The base object URL (no query yet) and the path the signature
+        // covers, from the one place that decides those two together. The
+        // query is empty here on purpose: a presigned URL's query is the
+        // signature itself, produced below and appended afterwards, so there
+        // is nothing to address with yet.
+        let addressed = try Self.addressed(
+            .objectKey(bucket: bucket, key: objectKey), query: [], config: config)
+        guard let host = addressed.url.host else {
             throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
         }
-        let hostHeader = base.port.map { "\(host):\($0)" } ?? host
+        let hostHeader = addressed.url.port.map { "\(host):\($0)" } ?? host
         let signer = SigV4Signer(
             accessKeyID: config.accessKeyID, secretAccessKey: config.secretAccessKey,
             region: config.region, service: "s3", sessionToken: config.sessionToken)
         let query = signer.presignedQuery(
-            method: method.rawValue, host: hostHeader,
-            path: Self.canonicalKeyPath(config: config, bucket: bucket, key: objectKey),
+            method: method.rawValue, host: hostHeader, path: addressed.canonicalPath,
             expiresInSeconds: seconds, date: Date())
-        guard var comps = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+        guard var comps = URLComponents(url: addressed.url, resolvingAgainstBaseURL: false) else {
             throw RemoteFSError.protocolError(reason: "Failed to build presigned URL")
         }
         comps.percentEncodedQuery = SigV4Signer.canonicalQueryString(query: query)

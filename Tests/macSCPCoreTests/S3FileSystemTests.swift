@@ -761,6 +761,78 @@ struct S3FileSystemTests {
         #expect(!url.absoluteString.contains(config.secretAccessKey)) // secret never in URL
     }
 
+    /// The presigned URL is signed with the SAME canonical path the request
+    /// factory pairs with that key's URL — re-review Finding A, which found
+    /// `presignedURL` hand-pairing `keyRequestURL` with `canonicalKeyPath`
+    /// six lines apart, outside the factory that exists to own exactly that.
+    ///
+    /// Proved by RE-SIGNING rather than by reading a path: a signature is the
+    /// only observable that depends on the signed path, and
+    /// `SigV4Signer.presignedQuery` derives everything else from the
+    /// formatted `X-Amz-Date`, which the URL itself carries to the second.
+    /// So parsing that date back and recomputing over
+    /// `S3FileSystem.addressed`'s canonical path reproduces the signature
+    /// exactly when the two paths agree — and the third expectation, over a
+    /// deliberately different path, is what says this comparison can fail at
+    /// all.
+    ///
+    /// Both addressing styles, because they produce DIFFERENT canonical paths
+    /// for the same key (`/{bucket}/{key}` path-style, `/{key}`
+    /// virtual-hosted), so a single style could pass while the other drifted.
+    @Test(arguments: [true, false])
+    func thePresignedURLSignsTheSamePathTheFactoryDoes(usePathStyle: Bool) async throws {
+        var styled = config
+        styled.usePathStyle = usePathStyle
+        let transport = FakeS3Transport(
+            responses: [(Data(emptyListingXML.utf8), httpResponse(status: 200))])
+        let fs = try await S3FileSystem.connect(styled, transport: transport)
+        let key = "dir/file.txt"
+
+        let url = try fs.presignedURL(method: .get, key: key, expiresIn: 600)
+        let items = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+        let query = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+        let presignedSignature = try #require(query["X-Amz-Signature"])
+        let stamp = try #require(query["X-Amz-Date"])
+        let signedAt = try #require(Self.amzDate(stamp))
+
+        // The pairing the factory would use for this very key.
+        let paired = try S3FileSystem.addressed(
+            .objectKey(bucket: styled.bucket, key: key), query: [], config: styled)
+        let host = try #require(paired.url.host)
+        let hostHeader = paired.url.port.map { "\(host):\($0)" } ?? host
+        let signer = SigV4Signer(
+            accessKeyID: styled.accessKeyID, secretAccessKey: styled.secretAccessKey,
+            region: styled.region, service: "s3", sessionToken: styled.sessionToken)
+
+        func signatureOver(_ path: String) -> String? {
+            signer.presignedQuery(
+                method: "GET", host: hostHeader, path: path, expiresInSeconds: 600,
+                date: signedAt
+            ).first { $0.name == "X-Amz-Signature" }?.value
+        }
+
+        #expect(presignedSignature == signatureOver(paired.canonicalPath))
+        // The wire URL is the factory's too, so the URL and the signature
+        // cannot come from two different addressings.
+        #expect(url.path == paired.url.path)
+        // The negative half: a different path really does produce a different
+        // signature, so the equality above is a measurement and not an
+        // identity that would hold for any path at all.
+        #expect(presignedSignature != signatureOver(paired.canonicalPath + "-elsewhere"))
+    }
+
+    /// `X-Amz-Date` back into the `Date` it was formatted from. SigV4 carries
+    /// seconds and no more, and `presignedQuery` reads the date only through
+    /// this format and the day stamp cut from it, so a round trip through the
+    /// string is exact for signing purposes.
+    private static func amzDate(_ stamp: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+        return formatter.date(from: stamp)
+    }
+
     // MARK: - M13/T8: deleteTree
 
     /// A no-delimiter `ListObjectsV2` response listing exactly the given
