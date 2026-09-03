@@ -123,8 +123,8 @@ struct TestsNeverBlockThePoolGuardTests {
     /// would go on passing while the thing it names had gone.
     @Test func theRunnerExists() throws {
         let run:
-            (URL, [String], [String: String]?, URL?, Data?, Duration) async throws
-            -> SubprocessResult = SubprocessRunner.run
+            (URL, [String], [String: String]?, URL?, Data?, Duration, (@Sendable (Data) -> Void)?)
+            async throws -> SubprocessResult = SubprocessRunner.run
         _ = run
 
         let file = "macSCPCoreTests/Support/\(String(describing: SubprocessRunner.self)).swift"

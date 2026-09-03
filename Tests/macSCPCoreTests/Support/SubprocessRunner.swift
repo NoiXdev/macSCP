@@ -15,6 +15,32 @@ struct SubprocessResult: Sendable {
     var stderrText: String { String(decoding: stderr, as: UTF8.self) }
 }
 
+/// What the escalation did to end a run, and how long each phase really took.
+///
+/// Shared by both of the runner's failure endings — the bound expiring and
+/// the caller's task being cancelled — because the escalation itself is the
+/// same on both paths, and so is the question a reader of either error asks:
+/// did the child write nothing, or did the reader never get there?
+struct SubprocessReapReport: Sendable {
+    /// Wall-clock spent on the wait that ended. On a saturated runner this
+    /// overruns the bound — a deadline is when a sleeping task becomes
+    /// RUNNABLE, not when it runs — and saying so by how much is the
+    /// difference between "the bound is wrong" and "the machine is busy".
+    /// On the cancellation path it is how long the wait had run when the
+    /// cancellation reached it, which no bound predicts.
+    let bound: Duration
+    /// `nil` when the phase was not reached (the child had already been
+    /// reaped, so nothing was signalled).
+    let sigtermGrace: Duration?
+    let sigkillGrace: Duration?
+    /// Whether each reader had seen EOF by the time the error was built.
+    /// A reader still open after `SIGKILL` means something OTHER than the
+    /// child holds the write end — a grandchild that inherited it, most
+    /// likely — and that is a fact about the child, not about the runner.
+    let stdoutDrained: Bool
+    let stderrDrained: Bool
+}
+
 /// Thrown when a child outlives the bound it was run with.
 ///
 /// Carries the stderr collected up to that point: when a CLI stalls, the
@@ -25,25 +51,6 @@ struct SubprocessResult: Sendable {
 /// distinguish a child that wrote nothing from a reader that never got
 /// there. CI run 33693297919 was exactly that ambiguity.
 struct SubprocessTimeout: Error, CustomStringConvertible, Sendable {
-    /// What the escalation did, and how long each phase really took.
-    struct ReapReport: Sendable {
-        /// Wall-clock spent on the bounded wait. On a saturated runner this
-        /// overruns `timeout` — a deadline is when a sleeping task becomes
-        /// RUNNABLE, not when it runs — and saying so by how much is the
-        /// difference between "the bound is wrong" and "the machine is busy".
-        let bound: Duration
-        /// `nil` when the phase was not reached (the child had already been
-        /// reaped, so nothing was signalled).
-        let sigtermGrace: Duration?
-        let sigkillGrace: Duration?
-        /// Whether each reader had seen EOF by the time the error was built.
-        /// A reader still open after `SIGKILL` means something OTHER than the
-        /// child holds the write end — a grandchild that inherited it, most
-        /// likely — and that is a fact about the child, not about the runner.
-        let stdoutDrained: Bool
-        let stderrDrained: Bool
-    }
-
     let executable: String
 
     /// How many arguments there were. NOT the arguments.
@@ -61,7 +68,7 @@ struct SubprocessTimeout: Error, CustomStringConvertible, Sendable {
 
     let timeout: Duration
     let stderrSoFar: Data
-    let reap: ReapReport
+    let reap: SubprocessReapReport
 
     var description: String {
         let text = String(decoding: stderrSoFar, as: UTF8.self)
@@ -80,6 +87,56 @@ struct SubprocessTimeout: Error, CustomStringConvertible, Sendable {
             stdout reader: \(reap.stdoutDrained ? "drained" : "still open"); \
             stderr reader: \(reap.stderrDrained ? "drained" : "still open")
             stderr so far: \(text.isEmpty ? "(empty)" : text)
+            """
+    }
+}
+
+/// Thrown when the caller's task is cancelled while a child is still running.
+///
+/// A bare `CancellationError` before, and that threw away everything the run
+/// had collected. The evidence problem is the SAME one `SubprocessTimeout`
+/// was given its fields for: the child is ended by the same escalation, and
+/// what it had written by then is the only account of what it was doing.
+///
+/// It is also what lets a test stop depending on a clock. A bound is when a
+/// sleeping task becomes RUNNABLE, not when it runs, so "the child wrote this
+/// before the bound" read off a timed-out run is a race between the deadline
+/// and the reader getting a Dispatch thread — the race CI run 33741778350 was
+/// investigated for. Cancellation has no deadline in it: a test can wait for
+/// the reader to deliver, cancel, and read what was captured, with nothing in
+/// the sequence that a slow machine can reorder.
+///
+/// `argumentCount`, not the arguments, for the reason `SubprocessTimeout`
+/// gives at its own field: an argument value can be a passphrase, and what
+/// this type does not hold, no later conformance can render.
+struct SubprocessCancelled: Error, CustomStringConvertible, Sendable {
+    let executable: String
+
+    /// How many arguments there were. NOT the arguments.
+    let argumentCount: Int
+
+    let stdoutSoFar: Data
+    let stderrSoFar: Data
+    let reap: SubprocessReapReport
+
+    var stdoutText: String { String(decoding: stdoutSoFar, as: UTF8.self) }
+    var stderrText: String { String(decoding: stderrSoFar, as: UTF8.self) }
+
+    var description: String {
+        let phases = [
+            "waited \(reap.bound) before the cancellation",
+            reap.sigtermGrace.map { "\($0) after SIGTERM" },
+            reap.sigkillGrace.map { "\($0) after SIGKILL" },
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
+        return """
+            \(executable) was cancelled while running, given \(argumentCount) \
+            arguments (values withheld: an argument can be a passphrase)
+            \(phases)
+            stdout reader: \(reap.stdoutDrained ? "drained" : "still open"); \
+            stderr reader: \(reap.stderrDrained ? "drained" : "still open")
+            stderr so far: \(stderrText.isEmpty ? "(empty)" : stderrText)
             """
     }
 }
@@ -131,15 +188,24 @@ enum SubprocessRunner {
     /// alone then closes them, so the pipes reach EOF and the readers finish;
     /// one whose grandchild inherited them does not, and the readers stay
     /// open past the throw. `SubprocessTimeout` carries what stderr held by
-    /// then, and its `ReapReport` says which of the two it was.
+    /// then, and its `SubprocessReapReport` says which of the two it was.
     ///
-    /// A cancelled task gets the same ending and a `CancellationError`: the
+    /// A cancelled task gets the same ending and a `SubprocessCancelled`: the
     /// caller who stopped waiting — a `.timeLimit` trait, an enclosing task
-    /// group — has no way to reach the child, so this leaves none behind.
+    /// group — has no way to reach the child, so this leaves none behind, and
+    /// the error carries what the run had collected rather than discarding it.
     ///
     /// - Parameter stdin: written to the child and the write end closed, so
     ///   the child sees EOF. `nil` gives the child the null device, which is
     ///   what a test wants for a command that must not read a terminal.
+    /// - Parameter onStderrChunk: an observation seam, `nil` at every call
+    ///   site that is not about the reader itself. It is invoked from the
+    ///   stderr readability handler AFTER the chunk has been appended, so a
+    ///   caller that raises a latch from it knows the box already holds those
+    ///   bytes — which is what turns "wait for the reader" into a
+    ///   synchronisation point rather than a sleep. Same shape and same
+    ///   purpose as `ICMPEcho.TransmitObserver`: a property that no
+    ///   assertion on the OUTCOME can reach, observed where it happens.
     @discardableResult
     static func run(
         _ executable: URL,
@@ -147,7 +213,8 @@ enum SubprocessRunner {
         environment: [String: String]? = nil,
         currentDirectory: URL? = nil,
         stdin: Data? = nil,
-        timeout: Duration = .seconds(60)
+        timeout: Duration = .seconds(60),
+        onStderrChunk: (@Sendable (Data) -> Void)? = nil
     ) async throws -> SubprocessResult {
         let process = Process()
         process.executableURL = executable
@@ -210,7 +277,8 @@ enum SubprocessRunner {
         // submitting until a block no longer starts
         // (`readersDoNotNeedAFreeGlobalQueueThread`): the loop captured 0
         // bytes, this captures the marker.
-        let drain: @Sendable (FileHandle, OutputBox, AsyncSignal) -> Void = { handle, box, latch in
+        let drain: @Sendable (FileHandle, OutputBox, AsyncSignal, (@Sendable (Data) -> Void)?) -> Void = {
+            handle, box, latch, observer in
             handle.readabilityHandler = { handle in
                 let chunk = handle.availableData
                 guard !chunk.isEmpty else {
@@ -218,11 +286,15 @@ enum SubprocessRunner {
                     latch.signal()
                     return
                 }
+                // The observer runs AFTER the append, never before: its whole
+                // purpose is to let a caller conclude that the box already
+                // holds these bytes.
                 box.append(chunk)
+                observer?(chunk)
             }
         }
-        drain(stdoutPipe.fileHandleForReading, stdoutBox, stdoutDrained)
-        drain(stderrPipe.fileHandleForReading, stderrBox, stderrDrained)
+        drain(stdoutPipe.fileHandleForReading, stdoutBox, stdoutDrained, nil)
+        drain(stderrPipe.fileHandleForReading, stderrBox, stderrDrained, onStderrChunk)
 
         // The pipes must outlive the wait, and nothing above guarantees that
         // (re-review 3, N-2). The handler captures only the box and the
@@ -309,15 +381,25 @@ enum SubprocessRunner {
                 argumentCount: arguments.count,
                 timeout: timeout,
                 stderrSoFar: stderrBox.read(),
-                reap: SubprocessTimeout.ReapReport(
+                reap: SubprocessReapReport(
                     bound: bound,
                     sigtermGrace: grace.sigterm,
                     sigkillGrace: grace.sigkill,
                     stdoutDrained: stdoutDrained.isRaised,
                     stderrDrained: stderrDrained.isRaised))
         case .cancelled:
-            _ = await reap()
-            throw CancellationError()
+            let grace = await reap()
+            throw SubprocessCancelled(
+                executable: executable.lastPathComponent,
+                argumentCount: arguments.count,
+                stdoutSoFar: stdoutBox.read(),
+                stderrSoFar: stderrBox.read(),
+                reap: SubprocessReapReport(
+                    bound: bound,
+                    sigtermGrace: grace.sigterm,
+                    sigkillGrace: grace.sigkill,
+                    stdoutDrained: stdoutDrained.isRaised,
+                    stderrDrained: stderrDrained.isRaised))
         }
     }
 

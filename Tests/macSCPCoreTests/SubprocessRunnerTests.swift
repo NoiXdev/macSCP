@@ -85,48 +85,79 @@ struct SubprocessRunnerTests {
         #expect(stillThere == false, "pid \(pid) survived the timeout")
     }
 
-    /// `stderrSoFar` means what it says: what the child wrote before the
-    /// bound, whether or not the pipe ever reaches EOF.
+    /// Raises a latch the first time a chunk containing `marker` reaches the
+    /// stderr box.
     ///
-    /// `readDataToEndOfFile()` returns ONLY at EOF, so a box filled that way
-    /// holds everything or nothing — and "nothing" is what a caller gets
-    /// exactly when the child is stuck, which is the only time this field is
-    /// read. The child here backgrounds a second `sleep` that inherits the
-    /// stderr write end, so killing the direct child does not close the pipe
-    /// and EOF never arrives inside the escalation at all.
+    /// The seam runs the observer AFTER the append, so a raised latch is a
+    /// statement about the box and not merely about the pipe: by the time
+    /// this signals, `stderrSoFar` already contains those bytes.
+    private static func markerObserver(
+        _ marker: String, _ arrived: AsyncSignal
+    ) -> @Sendable (Data) -> Void {
+        { chunk in
+            if String(decoding: chunk, as: UTF8.self).contains(marker) { arrived.signal() }
+        }
+    }
+
+    /// `stderrSoFar` means what it says: what the child wrote before the run
+    /// ended, whether or not the pipe ever reaches EOF — and proving it does
+    /// not need a clock.
     ///
-    /// CI run 33693297919 failed on the empty half of this: a timeout whose
-    /// `stderrSoFar` was `""` could not say whether the child had written
-    /// nothing or the reader had not got there, which is also why the error
-    /// now reports each reader's drained state.
+    /// This replaces a case that ran the same child under a 2 s bound and
+    /// then asserted the marker was in the timeout's `stderrSoFar`. The child
+    /// writes the marker at once, but it reaches the box only when the
+    /// runner's `readabilityHandler` gets a Dispatch global-queue thread, and
+    /// on a three-core CI runner starting 3800 tests in one burst that thread
+    /// is contended. The bound is wall-clock; the handler's scheduling is
+    /// not. So the assertion was a race, and CI ran it red twice on that
+    /// expectation before the investigation of run 33741778350 named it.
     ///
-    /// `sleep 60`, for both the child and the grandchild — and it was 10 once.
-    /// A bound is when a sleeping task becomes RUNNABLE, not when it runs: on
-    /// the three-core CI runner in run 33705649537 this 2 s bound fired after
-    /// ~17 s, the `sleep 10` child had already exited, and the test recorded
-    /// "returned inside a 2 s bound" against a runner that had done nothing
-    /// wrong. A late bound must still find the child alive and the grandchild
-    /// still holding the pipe. The cost is the reap — SIGTERM ends the child
-    /// at once — plus a grandchild that lingers on the runner for up to a
-    /// minute (it is reparented to `launchd` either way).
-    @Test func aTimeoutReportsWhatTheChildWroteBeforeTheBound() async throws {
-        let marker = "wrote-before-the-bound-\(UUID().uuidString)"
-        var thrown: SubprocessTimeout?
-        do {
-            _ = try await SubprocessRunner.run(
+    /// The reader is now the synchronisation point instead: the run gets a
+    /// bound no machine can reach (60 s, against a child that sleeps 60),
+    /// `onStderrChunk` raises `arrived` once the marker is in the box, the
+    /// test waits for that — bounded only by the suite, so a starved runner
+    /// makes this slow and never wrong — and only then cancels. Nothing in
+    /// that sequence a slow machine can reorder.
+    ///
+    /// The facts asserted are the ones the old case asserted: the bytes
+    /// written before the ending survive into the error, and the grandchild
+    /// still holding the write end leaves `stderrDrained == false`. The
+    /// ending is a cancellation rather than a bound because cancellation is
+    /// the only one of the two the test can place AFTER an observation.
+    ///
+    /// `sleep 60` for both the child and the grandchild: the child must still
+    /// be alive when the cancellation arrives, however late that is, or the
+    /// run settles normally and there is no captured-output path to read.
+    @Test func aCancelledRunReportsWhatTheChildWroteBeforeTheStop() async throws {
+        let marker = "wrote-before-the-stop-\(UUID().uuidString)"
+        let arrived = AsyncSignal()
+        let task = Task { () -> SubprocessResult in
+            try await SubprocessRunner.run(
                 Self.shell,
                 arguments: ["-c", "echo '\(marker)' >&2; sleep 60 & exec sleep 60"],
-                timeout: .seconds(2))
-            Issue.record("a child sleeping for 60 s returned inside a 2 s bound")
-        } catch let error as SubprocessTimeout {
-            thrown = error
+                timeout: .seconds(60),
+                onStderrChunk: Self.markerObserver(marker, arrived))
         }
 
-        let error = try #require(thrown)
+        // No bound of its own: a wait that gave up here would put the clock
+        // back in exactly the place this test exists to take it out of.
+        #expect(await arrived.wait() == .signalled)
+        task.cancel()
+
+        var thrown: (any Error)?
+        do {
+            _ = try await task.value
+            Issue.record("a cancelled run returned a result instead of reporting cancellation")
+        } catch {
+            thrown = error
+        }
+        let error = try #require(
+            thrown as? SubprocessCancelled,
+            "cancellation surfaced as \(String(describing: thrown))")
         let text = String(decoding: error.stderrSoFar, as: UTF8.self)
         #expect(
             text.contains(marker),
-            "stderr written before the bound was lost; the error said: \(error)")
+            "stderr the reader had delivered was lost; the error said: \(error)")
         // The grandchild still holds the write end, so this is the case the
         // description has to be able to explain rather than merely survive.
         //
@@ -134,17 +165,65 @@ struct SubprocessRunnerTests {
         // runner. For the whole of `run` the pipes are bound alive (re-review
         // 3, N-2) and the handler stays installed, so the only thing that can
         // raise the drained latch is EOF — and the grandchild withholds it.
-        // What happens AFTER the throw is a separate question: the frame
-        // releases its pipes, and — measured 2026-09-03 on a bare `Pipe` —
-        // Foundation's readability source does not retain the handle, so a
-        // released handle closes its fd and cancels its source at once. The
-        // runner's pipes are also held by its `Process`, whose release after
-        // the throw is not measured here; round 1's M-4 is at most that. If
-        // the runner ever closed its read ends itself, both latches would
-        // raise inside the escalation and this line would need revisiting on
-        // a runner that got strictly better.
         #expect(error.reap.stderrDrained == false)
         #expect("\(error)".contains("stderr reader"))
+    }
+
+    /// The other ending carries the same capture: a run that ends on its
+    /// bound reports what the reader had delivered by then.
+    ///
+    /// This one cannot be taken off the clock the way the case above is —
+    /// there is no path to `SubprocessTimeout` that does not begin with a
+    /// deadline, and that deadline starts inside `run`, where the test has no
+    /// place to put an observation before it. So the seam buys a DIAGNOSIS
+    /// here rather than a proof: `arrived` says whether the reader ever
+    /// delivered, and the `#require` on it separates "the runner starved the
+    /// reader" — an environment, and this run simply cannot see the property
+    /// — from "the error dropped what the reader delivered", which is a
+    /// defect. That is exactly the distinction the empty-string failure of
+    /// run 33741778350 could not make.
+    ///
+    /// The bound stays at the 2 s the replaced case used, and the reason is a
+    /// measurement rather than a preference. Widening it looked free and is
+    /// not: this suite runs beside `NetworkTrace`, whose
+    /// `anOuterMarginOverrunKeepsTheHopsTheWalkHadMeasured` needs a 250 ms
+    /// Dispatch timer to beat a 400 ms sleep, and a longer-lived child here
+    /// is load inside that 150 ms window. Measured 2026-09-03 on the ten-core
+    /// development machine, full `swift test`: with this bound at 10 s, that
+    /// case went red in 3 of 8 runs against 0 of 12 on the branch point; at
+    /// 6 s, 5 of 8; at 4 s it was 0 of 8 on a quiet machine and 1 of 5 when
+    /// the machine was busy, measured in interleaved pairs against the branch
+    /// point's 0 of 5. At 2 s the load is the load this suite already had.
+    /// A wider bound here is worth having, and it is affordable only after
+    /// that 150 ms race is a race no longer.
+    @Test func aTimeoutCarriesWhatTheReaderDelivered() async throws {
+        let marker = "delivered-before-the-bound-\(UUID().uuidString)"
+        let arrived = AsyncSignal()
+        var thrown: SubprocessTimeout?
+        do {
+            _ = try await SubprocessRunner.run(
+                Self.shell,
+                arguments: ["-c", "echo '\(marker)' >&2; sleep 60 & exec sleep 60"],
+                timeout: .seconds(2),
+                onStderrChunk: Self.markerObserver(marker, arrived))
+            Issue.record("a child sleeping for 60 s returned inside a 2 s bound")
+        } catch let error as SubprocessTimeout {
+            thrown = error
+        }
+
+        let error = try #require(thrown)
+        try #require(
+            arrived.isRaised,
+            """
+            the stderr reader never delivered the marker inside the 2 s bound: \
+            the Dispatch global queue was starved, and this run cannot say \
+            anything about what the error carries. \(error)
+            """)
+        let text = String(decoding: error.stderrSoFar, as: UTF8.self)
+        #expect(
+            text.contains(marker),
+            "the reader delivered the marker and the timeout did not carry it: \(error)")
+        #expect(error.reap.stderrDrained == false)
     }
 
     /// A reader must not need a free Dispatch global-queue thread.
@@ -153,7 +232,8 @@ struct SubprocessRunnerTests {
     /// that fills the global queue cannot share a parallel run: in CI run
     /// 33705649537 on the three-core runner it passed, in 23.54 s, and while
     /// it held the queue two unrelated tests went red around it — a 2 s
-    /// bound in `aTimeoutReportsWhatTheChildWroteBeforeTheBound` fired after
+    /// bound in the timeout case that has since been replaced by
+    /// `aCancelledRunReportsWhatTheChildWroteBeforeTheStop` fired after
     /// ~17 s, and `AsyncSignalTests`' 200 ms bound measured 15.68 s. The
     /// proof is worth having and not worth that; run it alone, on purpose.
     ///
@@ -403,9 +483,16 @@ struct SubprocessRunnerTests {
     /// off a child that is still running and walks away leaving it there.
     ///
     /// Both halves are checked here: the error that comes back out is a
-    /// `CancellationError`, and the child is gone. The child announces its
+    /// `SubprocessCancelled`, and the child is gone. The child announces its
     /// own pid into a file and then `exec`s `sleep`, so the pid on disk IS
     /// the process the runner owns.
+    ///
+    /// The error was a bare `CancellationError` until the cancelled ending
+    /// was given the same fields the timed-out one has. What the type IS
+    /// matters here for the reason the three outcomes exist at all: an
+    /// `AsyncStream` ends the same way when it is finished and when its
+    /// waiter is cancelled, so a runner that could not tell them apart would
+    /// read `terminationStatus` off a live child and walk away from it.
     @Test func aCancelledRunKillsItsChildAndReportsCancellation() async throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-runner-cancel-\(UUID().uuidString)", isDirectory: true)
@@ -445,7 +532,7 @@ struct SubprocessRunnerTests {
             thrown = error
         }
         let elapsed = ContinuousClock.now - started
-        #expect(thrown is CancellationError, "cancellation surfaced as \(String(describing: thrown))")
+        #expect(thrown is SubprocessCancelled, "cancellation surfaced as \(String(describing: thrown))")
         #expect(elapsed < .seconds(20), "the cancelled run took \(elapsed) to come back")
 
         var stillThere = true

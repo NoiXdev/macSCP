@@ -118,7 +118,7 @@ struct DiagnosticsLifecycleTests {
 
     /// Opens a panel on the window with a runner this suite controls, and
     /// starts it. Returns the parked run so the caller can read whether it
-    /// was cancelled.
+    /// was cancelled, and the model so the caller can stop it afterwards.
     ///
     /// Goes through the presenter rather than `showDiagnostics(for:)` on
     /// purpose: that entry builds the REAL `ConnectionDiagnostics`, which
@@ -126,13 +126,31 @@ struct DiagnosticsLifecycleTests {
     /// lifecycle, not the probes.
     private func presentRunningPanel(
         on view: ContentView, for tab: SessionTab? = nil
-    ) async -> ParkedRun {
+    ) async -> (parked: ParkedRun, model: DiagnosticsViewModel) {
         let parked = ParkedRun()
         let model = DiagnosticsViewModel(name: "Test session", runner: parked.runner())
         view.diagnostics.present(model, for: tab?.id)
         model.run()
         while !parked.hasStarted { await Task.yield() }
-        return parked
+        return (parked, model)
+    }
+
+    /// Ends a run this test started and WAITS for it, after every assertion
+    /// has been made.
+    ///
+    /// The order is the rule, not a preference: a `ParkedRun` sleeps for ten
+    /// minutes, so stopping it before the postconditions are read would let
+    /// the thing under test heal into the values the test wanted (CLAUDE.md,
+    /// "Tests that watch a defect heal"). Every call below is therefore the
+    /// last statement of its test.
+    ///
+    /// Awaited rather than merely cancelled: a `Task` that is cancelled and
+    /// never joined is still a scheduler entry, and on a three-core runner
+    /// sharing its pool with three thousand tests those entries are exactly
+    /// the kind of thing that makes a starved run slower.
+    private func stopAndAwait(_ models: DiagnosticsViewModel?...) async {
+        for model in models { model?.cancel() }
+        for model in models { await model?.runTask?.value }
     }
 
     // MARK: - The two paths
@@ -141,7 +159,7 @@ struct DiagnosticsLifecycleTests {
     @Test func dismissingThePanelCancelsTheRunningDiagnosis() async {
         let (view, cleanup) = makeContentView()
         defer { cleanup() }
-        let parked = await presentRunningPanel(on: view)
+        let (parked, _) = await presentRunningPanel(on: view)
         #expect(parked.wasCancelled == false, "nothing has asked it to stop yet")
 
         view.endDiagnostics()
@@ -172,7 +190,7 @@ struct DiagnosticsLifecycleTests {
         let (view, cleanup) = makeContentView()
         defer { cleanup() }
         let tab = makeTab()
-        let parked = await presentRunningPanel(on: view, for: tab)
+        let (parked, _) = await presentRunningPanel(on: view, for: tab)
         #expect(parked.wasCancelled == false)
 
         await view.teardown(tab, reason: .userRequested)
@@ -193,9 +211,12 @@ struct DiagnosticsLifecycleTests {
         let (view, cleanup) = makeContentView()
         defer { cleanup() }
         let tab = makeTab()
-        let parked = await presentRunningPanel(on: view, for: tab)
-        let model = view.diagnostics.open
-        model?.run()
+        let (parked, model) = await presentRunningPanel(on: view, for: tab)
+        // `run()` supersedes whatever was in flight, so the first task is
+        // held here: it is cancelled by the second `run()` and would
+        // otherwise be the one task nothing could join.
+        let superseded = model.runTask
+        model.run()
         while !parked.hasStarted { await Task.yield() }
 
         await view.handleLivenessGiveUp(tab)
@@ -205,6 +226,9 @@ struct DiagnosticsLifecycleTests {
             the connection dropping is the reason the panel is open. Closing it here is the \
             one moment the measurement was worth most.
             """)
+
+        await stopAndAwait(model)
+        await superseded?.value
     }
 
     /// A different tab's teardown touches neither the run nor the panel.
@@ -213,7 +237,7 @@ struct DiagnosticsLifecycleTests {
         defer { cleanup() }
         let diagnosed = makeTab()
         let unrelated = makeTab()
-        let parked = await presentRunningPanel(on: view, for: diagnosed)
+        let (parked, model) = await presentRunningPanel(on: view, for: diagnosed)
 
         await view.teardown(unrelated, reason: .userRequested)
 
@@ -222,6 +246,8 @@ struct DiagnosticsLifecycleTests {
             `performCloseOthers` and the reconnect-in-place branch both did.
             """)
         #expect(view.diagnostics.open != nil)
+
+        await stopAndAwait(model)
     }
 
     /// A panel opened from the sidebar belongs to no tab, so no teardown may
@@ -229,12 +255,14 @@ struct DiagnosticsLifecycleTests {
     @Test func aPanelOpenedFromNoTabSurvivesEveryTeardown() async {
         let (view, cleanup) = makeContentView()
         defer { cleanup() }
-        let parked = await presentRunningPanel(on: view)
+        let (parked, model) = await presentRunningPanel(on: view)
 
         await view.teardown(makeTab(), reason: .userRequested)
 
         #expect(parked.wasCancelled == false)
         #expect(view.diagnostics.open != nil)
+
+        await stopAndAwait(model)
     }
 
     /// The presenter never leaves an older run walking behind a newer panel:
@@ -242,7 +270,7 @@ struct DiagnosticsLifecycleTests {
     @Test func openingASecondPanelCancelsTheFirstRun() async {
         let (view, cleanup) = makeContentView()
         defer { cleanup() }
-        let first = await presentRunningPanel(on: view)
+        let (first, firstModel) = await presentRunningPanel(on: view)
 
         let second = ParkedRun()
         view.diagnostics.present(
@@ -253,6 +281,11 @@ struct DiagnosticsLifecycleTests {
             stop it — the presenter has to.
             """)
         #expect(second.wasCancelled == false, "the new panel's own run is untouched")
+
+        // Only the first has a task: the replacement panel's run is never
+        // started, which is what `second.wasCancelled == false` above rests
+        // on. `stopAndAwait` joins the one the presenter cancelled.
+        await stopAndAwait(firstModel)
     }
 }
 

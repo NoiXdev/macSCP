@@ -169,6 +169,16 @@ struct RemoteChecksumTests {
         }
     }
 
+    /// Deliberately NO wall-clock ceiling on the call.
+    ///
+    /// The property is "the caller is not held", and the OUTCOME carries it:
+    /// a `RemoteFSError` can only have come from the bound firing, since the
+    /// scripted far side answers nothing else for an hour. An elapsed-time
+    /// expectation beside it would measure the runner rather than the code —
+    /// a bound is when a sleeping task becomes RUNNABLE, not when it runs,
+    /// and this suite was one of the four that lost its verdict in CI run
+    /// 33741778350, where three cores were shared between 3800 tests started
+    /// in one burst. Slow there is not wrong; only a different answer is.
     @Test("a far side that never answers the command does not hold the caller")
     func theRunIsBounded() async {
         let path = "/srv/data.bin"
