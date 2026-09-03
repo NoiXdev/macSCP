@@ -5,13 +5,14 @@ import Foundation
 ///
 /// Runs, in order and each under its own deadline: name resolution, one TCP
 /// connection attempt per resolved address, an ICMP echo per resolved
-/// address, the backend's own dial, and then whatever the backend
-/// contributes. Nothing here asks which protocol it is looking at — the
-/// endpoint, the dial and the contributions all arrive through
+/// address, the backend's own dial, an IPv4 network trace, and then whatever
+/// the backend contributes. Nothing here asks which protocol it is looking at
+/// — the endpoint, the dial and the contributions all arrive through
 /// `BackendDescriptor`, which is what keeps a fourth backend from having to
 /// be mentioned in this file at all.
 ///
-/// The first three steps touch no credential. The dial and the contributions
+/// Every universal step — the resolve, the ping, the echo and the trace —
+/// touches no credential. The dial and the contributions
 /// may, and only through the source the connect path itself uses
 /// (`DiagnosticContext.secret()`); no step ever writes one into a detail line
 /// — pinned by `theSSHDialNeverPutsTheSecretInTheReport`.
@@ -85,7 +86,23 @@ public actor ConnectionDiagnostics {
         guard !Task.isCancelled else { return report() }
         steps.append(icmpStep)
 
-        for contribution in ([descriptor.dial].compactMap { $0 } + descriptor.diagnostics) {
+        if let dial = descriptor.dial {
+            guard !Task.isCancelled else { return report() }
+            let step = await bounded(dial)
+            guard !Task.isCancelled else { return report() }
+            steps.append(step)
+        }
+
+        // After the dial and before the contributions: the trace is the
+        // slowest universal step and the least likely to change a verdict, so
+        // the rows a reader looks at first — did it connect at all — are
+        // already there while it walks.
+        guard !Task.isCancelled else { return report() }
+        let traceStep = await trace(addresses)
+        guard !Task.isCancelled else { return report() }
+        steps.append(traceStep)
+
+        for contribution in descriptor.diagnostics {
             guard !Task.isCancelled else { return report() }
             let step = await bounded(contribution)
             guard !Task.isCancelled else { return report() }
@@ -177,6 +194,41 @@ public actor ConnectionDiagnostics {
             return timer.finish(.unavailable(reason), detail)
         }
         return timer.finish(.timedOut, detail)
+    }
+
+    /// The network trace step: an IPv4 hop-by-hop walk toward the endpoint,
+    /// one row per hop.
+    ///
+    /// Only the FIRST IPv4 address is traced. A trace measures the path, and a
+    /// host's second A record normally shares almost all of it; walking every
+    /// address would multiply the slowest step in the report by the length of
+    /// the resolve list for an answer that repeats itself.
+    ///
+    /// A host that resolves only to IPv6 gets `unavailable` with the sentence
+    /// design §5 verdict (c) earned — the IPv6 trace was never measured,
+    /// because the machine that measured everything else had no route to try
+    /// it on. Not `failed`: nobody observed a failure.
+    ///
+    /// A walk that ends anywhere but at the destination is `timedOut`, the
+    /// deadline's answer, with every hop it did measure in the detail. That
+    /// covers the ordinary case (a firewall swallowing the last hops) and one
+    /// rarer one this build has never observed: a router answering
+    /// destination-unreachable with a code of its own, which ends the walk and
+    /// prints its code in the row.
+    private func trace(_ addresses: [ResolvedAddress]) async -> DiagnosticStep {
+        let timer = Self.timer(for: DiagnosticStepID.trace)
+        guard !addresses.isEmpty else {
+            return timer.finish(.skipped("nothing resolved to probe"), "")
+        }
+        guard let target = addresses.first(where: { $0.family == .ipv4 }) else {
+            return timer.finish(.unavailable(NetworkTrace.ipv6UnmeasuredReason), "")
+        }
+        let outcome = await NetworkTrace.trace(address: target, timeout: stepTimeout)
+        let detail = outcome.hops.map(\.text).joined(separator: "; ")
+        if case .unavailable(let reason) = outcome {
+            return timer.finish(.unavailable(reason), detail)
+        }
+        return timer.finish(outcome.reachedDestination ? .ok : .timedOut, detail)
     }
 
     /// One address's contribution to the echo step's detail line.

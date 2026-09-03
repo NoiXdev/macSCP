@@ -4,8 +4,11 @@ import Testing
 
 @testable import macSCPCore
 
-/// The universal half of the connection diagnosis: name resolution, the TCP
-/// ping, the backend's own dial, and the report the three render into.
+/// The universal half of the connection diagnosis — name resolution, the TCP
+/// ping and the backend's own dial — plus the report they render into. The
+/// echo and the trace have suites of their own (`ICMPEchoTests`,
+/// `NetworkTraceTests`); what is checked here is the walk and the rendering,
+/// and the walk's own order is asserted rather than counted.
 ///
 /// **Where the packets go.** Loopback only, except for two gated cases: the
 /// Docker rig on `127.0.0.1` (`MACSCP_ITEST=1`) and TEST-NET-1 `192.0.2.1`
@@ -163,7 +166,13 @@ struct ConnectionDiagnosticsTests {
 
     // MARK: - The runner
 
-    @Test func theRunnerWalksResolveThenTheTCPPingThenTheEchoThenTheDial() async throws {
+    /// The whole walk, in the order the report prints it.
+    ///
+    /// The name deliberately does not enumerate the steps: the runner has
+    /// gained two since it was written (the echo, then the trace), and a name
+    /// that lists them is a comment that runs. The list itself is below, where
+    /// a failure prints it.
+    @Test func theRunnerWalksTheUniversalStepsInTheOrderTheReportPrints() async throws {
         let listener = try #require(LoopbackSocket.listening())
         defer { listener.close() }
 
@@ -177,9 +186,9 @@ struct ConnectionDiagnosticsTests {
         #expect(
             report.steps.map(\.id) == [
                 DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
-                DiagnosticStepID.dial,
+                DiagnosticStepID.dial, DiagnosticStepID.trace,
             ])
-        #expect(report.steps.map(\.outcome) == [.ok, .ok, .ok, .ok])
+        #expect(report.steps.map(\.outcome) == [.ok, .ok, .ok, .ok, .ok])
         #expect(report.endpoint == Endpoint(host: "127.0.0.1", port: listener.port))
     }
 
@@ -203,7 +212,7 @@ struct ConnectionDiagnosticsTests {
         #expect(
             report.steps.map(\.id) == [
                 DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
-                DiagnosticStepID.dial, "probe.first", "probe.second",
+                DiagnosticStepID.dial, DiagnosticStepID.trace, "probe.first", "probe.second",
             ])
         // The closed port is the tcp step's own outcome, and it does NOT stop
         // the walk: a refused port is a finding, not an abort.
@@ -228,8 +237,10 @@ struct ConnectionDiagnosticsTests {
             stepTimeout: .milliseconds(200))
         let elapsed = started.duration(to: clock.now)
 
-        #expect(report.steps.last?.id == DiagnosticStepID.dial)
-        #expect(report.steps.last?.outcome == .timedOut)
+        // The dial by NAME, not by position: the trace step runs after it,
+        // so `last` reads a row this case says nothing about.
+        let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
+        #expect(dial.outcome == .timedOut)
         // No wall-clock ceiling: on the three-core CI runner this step took
         // 20.68 s to come back (run 33727757421) while the outcome was
         // already `.timedOut` — a ceiling there measures the runner, not
@@ -590,7 +601,8 @@ struct ConnectionDiagnosticsTests {
         let stillRunning = await probeFinished.isClosed
         let elapsed = started.duration(to: clock.now)
 
-        #expect(report.steps.last?.outcome == .timedOut)
+        let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
+        #expect(dial.outcome == .timedOut)
         #expect(stillRunning)
         // No wall-clock backstop: the three-core CI runner returned this
         // step after 20.67 s (run 33727757421) with `stillRunning` true —

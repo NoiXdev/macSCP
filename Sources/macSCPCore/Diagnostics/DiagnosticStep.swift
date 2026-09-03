@@ -88,6 +88,7 @@ public enum DiagnosticStepID {
     public static let tcp = "tcp"
     public static let icmp = "icmp"
     public static let dial = "dial"
+    public static let trace = "trace"
 
     /// The catalogue key a step id renders under, DERIVED rather than spelled
     /// beside each id: a renamed id takes its key with it, instead of leaving

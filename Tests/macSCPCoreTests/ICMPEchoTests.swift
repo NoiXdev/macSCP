@@ -212,7 +212,7 @@ struct ICMPEchoTests {
         #expect(
             report.steps.map(\.id) == [
                 DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
-                DiagnosticStepID.dial,
+                DiagnosticStepID.dial, DiagnosticStepID.trace,
             ])
         let icmp = try #require(report.steps.first { $0.id == DiagnosticStepID.icmp })
         #expect(icmp.outcome == .ok)
