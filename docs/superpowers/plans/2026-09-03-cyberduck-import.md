@@ -53,8 +53,8 @@ extension StoredSession {
 extension ExportedSession { public var importSource: String?; public var importID: String?; public var importedAt: Date? }
 ```
 
-- [ ] Red first: a record encoded without the keys decodes with all three `nil`; a record with them round-trips; an export carries them and an import restores them; `SessionDuplication.copy` returns a record with all three `nil`; a legacy JSON fixture (copy an existing one from the tests) still loads.
-- [ ] Implement; `swift test`; commit `feat(sessions): a session remembers where it was imported from`.
+- [x] Red first: a record encoded without the keys decodes with all three `nil`; a record with them round-trips; an export carries them and an import restores them; `SessionDuplication.copy` returns a record with all three `nil`; a legacy JSON fixture (copy an existing one from the tests) still loads. Done at `167cbfbe`.
+- [x] Implement; `swift test`; commit `feat(sessions): a session remembers where it was imported from`. Done at `167cbfbe`.
 
 ### Task 2: The bookmark source and Cyberduck's files
 
@@ -89,7 +89,7 @@ public struct CyberduckBookmarkSource: BookmarkSource { public init() }
 ```
 `locate(home:)` returns `home/Library/Group Containers/G69SCX94XU.duck/Library/Application Support/duck/Bookmarks` when it exists. `read` parses every `*.duck` with `PropertyListSerialization`; `Protocol` `sftp` → `.sftp`, `s3` → `.s3`, anything else → `.unsupported(name)`; `Port` parsed as Int; missing `Nickname` → nil (the planner falls back to the host); a file that fails to parse yields an `ExternalBookmark` with `unreadable` set and the file name as `id`.
 
-- [ ] Red first against the fixtures (every field per fixture; the malformed one; sort order = nickname then host); `locate` against a temp home with and without the folder; commit `feat(import): a bookmark source reads Cyberduck's files`.
+- [x] Red first against the fixtures (every field per fixture; the malformed one; sort order = nickname then host); `locate` against a temp home with and without the folder; commit `feat(import): a bookmark source reads Cyberduck's files`. Done at `d146ce5d`.
 
 ### Task 3: The preview planner
 
@@ -110,7 +110,7 @@ public enum ImportPreviewPlanner {
 ```
 Defaults: `.new` selected; `.knownChanged` selected; `.knownUnchanged` unselected; `.unsupported`/`.unreadable` unselected and not selectable. Matching order: `importSource == "cyberduck" && importID == bookmark.id`, else `FieldVocabulary`'s connection key over the sessions of the bookmark's kind. Change list: host, port, username, keyPath, bucket/endpoint, nickname; labels only when `takeLabelsAsTags`. `payload(for:)` builds `ExportedSession`s: for `.knownChanged` the stored record's id and `replaces: <that id>` (a new optional on `ExportedSession` the downstream planner honours: replace by id, no arbiter question), the Cyberduck-known fields — including the nickname as the name — written over the record, group/position/pane visibility copied from the store, tags replaced only with the switch, secrets only with theirs; the payload's `groups` carry every group the rows reference (the function takes the group catalogue); (corrected 2026-09-03 after Task 3 measured that `replacesExisting` did not exist on the export type and that the maintainer's decision overwrites the name); for `.new` a fresh id, `groupID` from the switches, `importSource`/`importID`/`importedAt` set on both kinds. S3 mapping per the spec §3 (`s3.amazonaws.com` → AWS default; else custom endpoint host:port; empty `Path` → bucket-list mode).
 
-- [ ] Red first: the three match outcomes; a changed nickname alone is `.knownChanged` and is never a match criterion; the labels switch moves `labels` in/out of the change list; the payload keeps the store's name/group/notes/colour on an update, replaces tags only with the switch, marks `replacesExisting`, sets provenance on new and updated; unsupported and unreadable rows are never in the payload. Commit `feat(import): the preview planner tells new from known and changed`.
+- [x] Red first: the three match outcomes; a changed nickname alone is `.knownChanged` and is never a match criterion; the labels switch moves `labels` in/out of the change list; the payload keeps the store's name/group/notes/colour on an update, replaces tags only with the switch, marks `replacesExisting`, sets provenance on new and updated; unsupported and unreadable rows are never in the payload. Commit `feat(import): the preview planner tells new from known and changed`. Done at `2c354476`, fix rounds `e8a61bd5` and `61eeb24e`.
 
 ### Task 4: Secrets from Cyberduck's keychain items
 
@@ -125,7 +125,7 @@ public struct CyberduckSecretReader: Sendable {
     public func secret(for bookmark: ExternalBookmark) async -> String?
 }
 ```
-- [ ] Red first (gated): write an item under Cyberduck's shape with `SecItemAdd`, read it back through the reader, delete in a `defer`; a bookmark without a username yields nil without a query; the secret value never appears in any failure text (Bools first). Commit `feat(import): Cyberduck's keychain items, read on request`.
+- [x] Red first (gated): write an item under Cyberduck's shape with `SecItemAdd`, read it back through the reader, delete in a `defer`; a bookmark without a username yields nil without a query; the secret value never appears in any failure text (Bools first). Commit `feat(import): Cyberduck's keychain items, read on request`. Done at `43c4b4d2`.
 
 ### Task 5: The sheet, the menu entry, the switches
 
@@ -134,8 +134,8 @@ public struct CyberduckSecretReader: Sendable {
 - Modify: the File → Import menu (beside `menu.importSessions`), `ContentView+ExportImport.swift` (a `PendingSessionImport` from the sheet's payload goes into the existing `applyImport`; with `takeSecrets` the applier asks `CyberduckSecretReader` per selected row before planning and puts the values on the `ExportedSession.password`), the result alert (one more line: updated count; secrets not read count); four App catalogs (`menu.importFromCyberduck`, the sheet's title/status/switch/summary keys, the field names for the change list)
 - Test: `Tests/macSCPAppKitTests/ImportFromSourceViewModelTests.swift` (rows/summary/toggle on a fake source), `ImportFromCyberduckGuardTests.swift` (menu entry wired to the sheet; the sheet renders the four statuses; both switches bound to the view model; no `onAppear` import; positive anchors), catalogs complete (`swift test --filter Localiz`, `GermanAddressForm`)
 
-- [ ] Red first, implement, full suite green, commit `feat(import): import from Cyberduck — preview, selection, update`.
+- [x] Red first, implement, full suite green, commit `feat(import): import from Cyberduck — preview, selection, update`. Done at `b612ebe1`.
 
 ### Task 6: Closeout
 
-- [ ] `docs/BACKLOG.md` row (new: "Cyberduck import", Done with commits; open follow-ups: WebDAV bookmarks after a measurement, FileZilla/Transmit sources), the spec's status line; commit `docs(backlog): Cyberduck import shipped; FileZilla and Transmit are the next sources`.
+- [x] `docs/BACKLOG.md` row (new: "Cyberduck import", Done with commits; open follow-ups: WebDAV bookmarks after a measurement, FileZilla/Transmit sources), the spec's status line; commit `docs(backlog): Cyberduck import shipped; FileZilla and Transmit are the next sources`. Done at this commit.

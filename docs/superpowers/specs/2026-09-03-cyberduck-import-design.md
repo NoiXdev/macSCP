@@ -1,7 +1,13 @@
 # Cyberduck Import — Design
 
-**Status:** approved in conversation 2026-09-03 (the maintainer's answers
-are recorded in §0); spec written the same day. Plan follows.
+**Status:** shipped 2026-09-03 — `167cbfbe` (Task 1, provenance on
+`StoredSession`/`ExportedSession`), `d146ce5d` (Task 2,
+`CyberduckBookmarkSource`), `2c354476`/`e8a61bd5`/`61eeb24e` (Task 3,
+`ImportPreviewPlanner`), `43c4b4d2` (Task 4, `CyberduckSecretReader`,
+gated `MACSCP_KEYCHAIN=1`), `b612ebe1` (Task 5, menu entry, sheet, view
+model). Approved in conversation 2026-09-03 (the maintainer's answers
+are recorded in §0); spec written the same day. Plan:
+`docs/superpowers/plans/2026-09-03-cyberduck-import.md`.
 
 ## 0. What the maintainer decided
 
