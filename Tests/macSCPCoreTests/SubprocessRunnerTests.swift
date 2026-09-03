@@ -100,18 +100,24 @@ struct SubprocessRunnerTests {
     /// nothing or the reader had not got there, which is also why the error
     /// now reports each reader's drained state.
     ///
-    /// `sleep 10`, not 60: the grandchild outlives this test either way (it is
-    /// reparented to `launchd`), so the number is purely how long a leftover
-    /// process sits on the CI runner per parallel copy of the suite.
+    /// `sleep 60`, for both the child and the grandchild — and it was 10 once.
+    /// A bound is when a sleeping task becomes RUNNABLE, not when it runs: on
+    /// the three-core CI runner in run 33705649537 this 2 s bound fired after
+    /// ~17 s, the `sleep 10` child had already exited, and the test recorded
+    /// "returned inside a 2 s bound" against a runner that had done nothing
+    /// wrong. A late bound must still find the child alive and the grandchild
+    /// still holding the pipe. The cost is the reap — SIGTERM ends the child
+    /// at once — plus a grandchild that lingers on the runner for up to a
+    /// minute (it is reparented to `launchd` either way).
     @Test func aTimeoutReportsWhatTheChildWroteBeforeTheBound() async throws {
         let marker = "wrote-before-the-bound-\(UUID().uuidString)"
         var thrown: SubprocessTimeout?
         do {
             _ = try await SubprocessRunner.run(
                 Self.shell,
-                arguments: ["-c", "echo '\(marker)' >&2; sleep 10 & exec sleep 10"],
+                arguments: ["-c", "echo '\(marker)' >&2; sleep 60 & exec sleep 60"],
                 timeout: .seconds(2))
-            Issue.record("a child sleeping for 10 s returned inside a 2 s bound")
+            Issue.record("a child sleeping for 60 s returned inside a 2 s bound")
         } catch let error as SubprocessTimeout {
             thrown = error
         }
@@ -142,6 +148,19 @@ struct SubprocessRunnerTests {
     }
 
     /// A reader must not need a free Dispatch global-queue thread.
+    ///
+    /// GATED behind `MACSCP_SATURATION=1`, and skipped by default. A test
+    /// that fills the global queue cannot share a parallel run: in CI run
+    /// 33705649537 on the three-core runner it passed, in 23.54 s, and while
+    /// it held the queue two unrelated tests went red around it — a 2 s
+    /// bound in `aTimeoutReportsWhatTheChildWroteBeforeTheBound` fired after
+    /// ~17 s, and `AsyncSignalTests`' 200 ms bound measured 15.68 s. The
+    /// proof is worth having and not worth that; run it alone, on purpose.
+    ///
+    /// Measured 2026-09-03, gated on, alone, on the ten-core development
+    /// machine: limit 64, free width 64, 80 blocks parked and 80 released,
+    /// in 3 of 3 runs; the parked-thread mutant (readers back to an
+    /// `availableData` loop on `DispatchQueue.global()`) turns it red 5 of 5.
     ///
     /// This is the shape CI run 33698102652 failed in, reproduced without CI
     /// load. Blocks are parked in `read(2)` on pipes nobody writes to — the
@@ -196,13 +215,25 @@ struct SubprocessRunnerTests {
     /// never block the cooperative pool"), and closing the write ends releases
     /// every one of them deterministically, on every exit path, including a
     /// failed `#require`.
-    @Test func readersDoNotNeedAFreeGlobalQueueThread() async throws {
+    @Test(.enabled(
+        if: ProcessInfo.processInfo.environment["MACSCP_SATURATION"] == "1",
+        "saturates the global queue for every test running beside it (CI run 33705649537); run alone with MACSCP_SATURATION=1"))
+    func readersDoNotNeedAFreeGlobalQueueThread() async throws {
         let limit = try #require(
             Self.constrainedWorkqueueThreadLimit(),
             "kern.wq_max_constrained_threads is not readable here; the test cannot know the pool's width")
         try #require(limit > 0, "the kernel reports a constrained-thread limit of \(limit)")
         let margin = 16
         let startBound = Duration.milliseconds(250)
+        // A ceiling on what this test will park, whatever the kernel says.
+        // `Pipe()` cannot report `EMFILE` — it hands back handles over
+        // invalid descriptors, and the first read on one raises an ObjC
+        // exception that takes the whole test process down with no name on
+        // it — and every parked block is a workqueue thread with its own
+        // stack. 128 blocks is 256 descriptors, and it is above the limit
+        // measured anywhere so far (64), so the loop below can still run
+        // PAST the limit and the `<= limit` check stays a measurement.
+        let cap = 128
 
         var writeEnds: [FileHandle] = []
         var finished: [AsyncSignal] = []
@@ -230,7 +261,7 @@ struct SubprocessRunnerTests {
         // kernel's number and not a restatement of the loop's own bound.
         var freeWidth = 0
         var saturated = false
-        while freeWidth < 2 * limit {
+        while writeEnds.count < cap {
             let started = AsyncSignal()
             park(started)
             if await started.wait(timeout: startBound) == .timedOut {
@@ -243,7 +274,7 @@ struct SubprocessRunnerTests {
         try #require(
             saturated,
             "\(writeEnds.count) blocks all started on a pool the kernel limits to \(limit): not saturated")
-        while writeEnds.count < limit + margin { park(nil) }
+        while writeEnds.count < min(limit + margin, cap) { park(nil) }
 
         let marker = "under-saturation-\(UUID().uuidString)"
         var thrown: SubprocessTimeout?
@@ -267,15 +298,28 @@ struct SubprocessRunnerTests {
             reader; the error said: \(error)
             """)
 
-        // Release, then require that every block ran and returned. The bound
-        // is generous because a block that has not started yet gets its
-        // thread only when the parallel suite's other blockers let go.
+        // Release, then require that every block ran and returned. ONE
+        // deadline for the whole release, not one per latch: the latches
+        // are awaited in sequence, and a per-latch bound would let a pool
+        // held by something else cost this test the bound once per block.
+        // Closed here and forgotten, so the `defer` above has nothing left
+        // to close twice on this path.
         for handle in writeEnds { try? handle.close() }
+        writeEnds.removeAll()
+        let deadline = ContinuousClock.now + .seconds(10)
         var released = 0
         for done in finished {
-            if await done.wait(timeout: .seconds(10)) == .signalled { released += 1 }
+            if done.isRaised {
+                released += 1
+                continue
+            }
+            let remaining = deadline - ContinuousClock.now
+            guard remaining > .zero else { break }
+            if await done.wait(timeout: remaining) == .signalled { released += 1 }
         }
         #expect(released == finished.count, "\(finished.count - released) parked blocks never returned")
+        // The record of a gated run, since it only runs when someone asks.
+        print("readersDoNotNeedAFreeGlobalQueueThread: limit \(limit), free width \(freeWidth), parked \(finished.count), released \(released)")
     }
 
     /// `kern.wq_max_constrained_threads`: the kernel's per-process limit on

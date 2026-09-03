@@ -101,8 +101,11 @@ struct SubprocessTimeout: Error, CustomStringConvertible, Sendable {
 /// than by a block that sits in `read(2)` for the child's whole life;
 /// termination arrives through `Process.terminationHandler`; and the caller
 /// waits on `AsyncSignal`s, which are `AsyncStream`s, not semaphores. The
-/// one block that does park is the stdin writer, for as long as the child
-/// takes to accept its input.
+/// stdin writer is a `writeabilityHandler` on a non-blocking descriptor, for
+/// the same reason: a block on the global queue does not merely park while
+/// the child accepts its input — under a full constrained pool it never
+/// starts, and a child reading to EOF then waits for input that is never
+/// written (re-review 4, N-10).
 ///
 /// An earlier version of this comment said the pipes were read on
 /// `DispatchQueue.global()`, "which grows a thread rather than starving".
@@ -239,11 +242,7 @@ enum SubprocessRunner {
         // hence the `defer` rather than a wrapping call.)
         defer { withExtendedLifetime((stdoutPipe, stderrPipe, stdinPipe)) {} }
         if let stdin, let stdinPipe {
-            DispatchQueue.global().async {
-                let handle = stdinPipe.fileHandleForWriting
-                try? handle.write(contentsOf: stdin)
-                try? handle.close()
-            }
+            Self.write(stdin, to: stdinPipe.fileHandleForWriting)
         }
 
         // "Settled" means all three: a child can exit while a reader still
@@ -318,6 +317,61 @@ enum SubprocessRunner {
         case .cancelled:
             _ = await reap()
             throw CancellationError()
+        }
+    }
+
+    /// Writes `input` to the child and closes the write end, without a
+    /// thread parked on the pipe.
+    ///
+    /// The same shape as the readers, mirrored: the descriptor is put into
+    /// non-blocking mode and a `writeabilityHandler` writes as much as the
+    /// pipe takes per writable event, stopping at `EAGAIN` until the child
+    /// has drained some and the source fires again. Written in full — or
+    /// refused, because the child closed its end (`EPIPE`) — the handler is
+    /// cleared and the write end closed, so the child sees EOF. A
+    /// `DispatchQueue.global()` block did this before, and a block on that
+    /// queue is exactly what a full constrained pool never starts.
+    ///
+    /// `F_SETNOSIGPIPE`, because a raw `write(2)` to a pipe whose reader has
+    /// gone would otherwise deliver `SIGPIPE` to the whole test process.
+    /// The child cannot see either flag: both are on this side's open file
+    /// description, which the child does not inherit.
+    ///
+    /// The handle's lifetime is the caller's `withExtendedLifetime` above;
+    /// a child that exits without reading everything leaves the source to be
+    /// cancelled with the pipe when `run` returns, and nothing parked.
+    private static func write(_ input: Data, to handle: FileHandle) {
+        let fd = handle.fileDescriptor
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+        _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+        guard !input.isEmpty else {
+            try? handle.close()
+            return
+        }
+        let cursor = Mutex(0)
+        handle.writeabilityHandler = { handle in
+            let finished: Bool = cursor.withLock { offset in
+                while offset < input.count {
+                    let written = input.withUnsafeBytes { bytes -> Int in
+                        guard let base = bytes.baseAddress else { return 0 }
+                        return Darwin.write(handle.fileDescriptor, base + offset, input.count - offset)
+                    }
+                    if written > 0 {
+                        offset += written
+                    } else if written < 0, errno == EAGAIN {
+                        return false
+                    } else {
+                        // EPIPE, or a descriptor already gone: the child
+                        // stopped reading, and there is nobody to write for.
+                        return true
+                    }
+                }
+                return true
+            }
+            if finished {
+                handle.writeabilityHandler = nil
+                try? handle.close()
+            }
         }
     }
 
