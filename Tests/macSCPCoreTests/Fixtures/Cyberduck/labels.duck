@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Protocol</key>
+	<string>sftp</string>
+	<key>Hostname</key>
+	<string>labels.example.net</string>
+	<key>Port</key>
+	<string>22</string>
+	<key>UUID</key>
+	<string>77777777-7777-7777-7777-777777777777</string>
+	<key>Provider</key>
+	<string>sftp</string>
+	<key>Username</key>
+	<string>labeluser</string>
+	<key>Nickname</key>
+	<string>Labeled Box</string>
+	<key>Labels</key>
+	<array>
+		<string>staging</string>
+		<string>team-blue</string>
+	</array>
+</dict>
+</plist>

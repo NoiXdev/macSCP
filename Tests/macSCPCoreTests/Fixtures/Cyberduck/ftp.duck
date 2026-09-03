@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Protocol</key>
+	<string>ftp</string>
+	<key>Hostname</key>
+	<string>ftp.example.net</string>
+	<key>Port</key>
+	<string>21</string>
+	<key>UUID</key>
+	<string>55555555-5555-5555-5555-555555555555</string>
+	<key>Provider</key>
+	<string>ftp</string>
+	<key>Username</key>
+	<string>ftpuser</string>
+	<key>Nickname</key>
+	<string>Old FTP</string>
+</dict>
+</plist>

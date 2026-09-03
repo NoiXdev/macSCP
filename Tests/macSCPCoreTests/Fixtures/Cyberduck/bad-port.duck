@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Protocol</key>
+	<string>sftp</string>
+	<key>Hostname</key>
+	<string>bad-port.example.net</string>
+	<key>Port</key>
+	<string>not-a-number</string>
+	<key>UUID</key>
+	<string>99999999-9999-9999-9999-999999999999</string>
+	<key>Provider</key>
+	<string>sftp</string>
+	<key>Username</key>
+	<string>portless</string>
+	<key>Nickname</key>
+	<string>Zzz Bad Port</string>
+</dict>
+</plist>

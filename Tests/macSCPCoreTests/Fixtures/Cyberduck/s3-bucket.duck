@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Protocol</key>
+	<string>s3</string>
+	<key>Hostname</key>
+	<string>s3.amazonaws.com</string>
+	<key>Port</key>
+	<string>443</string>
+	<key>UUID</key>
+	<string>33333333-3333-3333-3333-333333333333</string>
+	<key>Provider</key>
+	<string>s3</string>
+	<key>Username</key>
+	<string>AKIAEXAMPLE</string>
+	<key>Nickname</key>
+	<string>Assets Bucket</string>
+	<key>Path</key>
+	<string>example-assets-bucket</string>
+</dict>
+</plist>

@@ -1,0 +1,2 @@
+this is not a plist at all, just some garbage text
+that Cyberduck never wrote and PropertyListSerialization must reject.
