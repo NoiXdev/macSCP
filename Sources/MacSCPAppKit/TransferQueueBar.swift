@@ -12,6 +12,12 @@ struct TransferQueueBar: View {
     /// cannot be derived here: the queue holds file systems, not names.
     /// `nil` qualifies nothing rather than inventing a placeholder.
     let sessionName: String?
+    /// Whether every row's full source/destination paths render on a
+    /// permanent second line (dev-build follow-up, 2026-09-03) instead of
+    /// only on hover or in the context menu. Read straight off the store
+    /// rather than snapshotted at construction, so flipping the setting
+    /// while the bar is on screen takes effect immediately.
+    let settingsStore: SettingsStore
 
     private func tint(for direction: TransferDirection) -> Color {
         direction == .upload ? DesignTokens.localAmber : DesignTokens.remoteBlue
@@ -162,6 +168,27 @@ struct TransferQueueBar: View {
         }
     }
 
+    /// The row's optional second line (Settings → Transfers → "Always show
+    /// full paths", dev-build follow-up 2026-09-03): the same qualified
+    /// source/destination strings `pathsHint` already shows on hover,
+    /// rendered permanently once the setting is on -- so telling apart two
+    /// tabs uploading the same-named file no longer needs a hover or the
+    /// context menu. Reads the same Core fold `pathsHint`/`copyPathsButton`
+    /// do, never `item.fileName` -- that is the row's FIRST line, not this
+    /// one, and re-deriving a path here would be a second, driftable
+    /// spelling of what the fold already computed.
+    @ViewBuilder
+    private func fullPathsLine(_ item: TransferQueueViewModel.Item) -> some View {
+        if settingsStore.transfersShowFullPaths {
+            let paths = TransferRowPaths(item: item, sessionName: sessionName)
+            Text("\(paths.source) → \(paths.destination)")
+                .font(.caption)
+                .foregroundStyle(DesignTokens.inkSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
     @ViewBuilder
     private func row(_ item: TransferQueueViewModel.Item) -> some View {
         HStack(spacing: 12) {
@@ -169,10 +196,13 @@ struct TransferQueueBar: View {
                 .foregroundStyle(tint(for: item.direction))
                 .fontWeight(.bold)
                 .frame(width: 14)
-            Text(item.fileName)
-                .foregroundStyle(DesignTokens.ink)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.fileName)
+                    .foregroundStyle(DesignTokens.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                fullPathsLine(item)
+            }
             if let target = item.crossBackendTarget {
                 Text(backendBadgeLabel(target.kind))
                     .font(.system(size: 9.5, weight: .semibold))

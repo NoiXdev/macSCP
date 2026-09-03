@@ -74,8 +74,30 @@ struct TransferQueueBarPathsGuardTests {
     private static let menuPlacement = ".contextMenu {"
     private static let menuItemPlacement = "copyPathsButton(item)"
     private static let sessionNameInput = "let sessionName: String?"
+    // Whitespace-normalized (the real call wraps across lines, and a
+    // reformat must not silently defeat this check): three arguments, the
+    // third of which is what this guard was extended for — a bar that lost
+    // its own settings store would qualify every remote path but never be
+    // able to honor "Always show full paths".
     private static let barConstruction =
-        "TransferQueueBar(viewModel: tab.transferQueue, sessionName: tab.titleName)"
+        "TransferQueueBar( viewModel: tab.transferQueue, sessionName: tab.titleName, "
+        + "settingsStore: settingsStore)"
+
+    // The full-paths second line (dev-build follow-up, 2026-09-03): its own
+    // declaration, gated on the setting, built from the same fold the hint
+    // and the copy button already use.
+    private static let fullPathsLineDeclaration = "private func fullPathsLine("
+    private static let fullPathsGate = "if settingsStore.transfersShowFullPaths {"
+    private static let fullPathsPlacement = "fullPathsLine(item)"
+    private static let decoratedFileName = "item.fileName"
+
+    /// Collapses whitespace runs to a single space, so a check made against
+    /// this needle survives the real call being wrapped across lines
+    /// (as it is) or reformatted differently later.
+    private static func normalizedWhitespace(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// The two views of the bar this suite reads, both derived from one read
     /// of the file and both the same length as it (see `SwiftSource`), so a
@@ -246,11 +268,45 @@ struct TransferQueueBarPathsGuardTests {
             it every remote path in the hint reads as an unqualified path.
             """)
 
-        let windowPassesIt = try Self.detailCode().contains(Self.barConstruction)
+        let windowPassesIt = Self.normalizedWhitespace(try Self.detailCode())
+            .contains(Self.barConstruction)
         #expect(windowPassesIt, """
             The window must pass the TAB's own display name -- titleName rather \
             than displayTitle, so a tab that has no name yet qualifies nothing \
-            instead of qualifying every path with "New Connection".
+            instead of qualifying every path with "New Connection" -- and must \
+            hand the bar its own settingsStore, or the full-paths line below can \
+            never read the "Always show full paths" setting.
+            """)
+    }
+
+    /// The second line under a row's file name, gated on the "Always show
+    /// full paths" setting (dev-build follow-up, 2026-09-03). Same shape as
+    /// the hint/copy checks above: a positive anchor that the row reads the
+    /// setting and renders the fold's own display strings, and a negative
+    /// that it never falls back to rendering `item.fileName` -- the row's
+    /// FIRST line -- a second time in a line meant to show the paths.
+    @Test func theSecondLineIsGatedOnTheSettingAndRendersTheFoldsPaths() throws {
+        let body = try Self.bodies(of: Self.fullPathsLineDeclaration)
+        #expect(body.code.contains(Self.fullPathsGate), """
+            The full-paths line must be gated on \
+            settingsStore.transfersShowFullPaths -- without this gate every row \
+            would grow a second line regardless of the setting.
+            """)
+        #expect(body.code.contains(Self.foldCall), """
+            The second line must be built from the same Core fold the hint and \
+            "Copy paths" already use -- a separate derivation here would be free \
+            to disagree with what those two show.
+            """)
+        #expect(!body.code.contains(Self.decoratedFileName), """
+            The second line must render the fold's source/destination strings, \
+            never item.fileName again -- that is the row's first line, and \
+            repeating it here would not answer "going where?".
+            """)
+
+        let rowBody = try Self.bodies(of: Self.rowDeclaration).code
+        #expect(rowBody.contains(Self.fullPathsPlacement), """
+            fullPathsLine(item) must actually be placed in the row, or a \
+            reader could add the declaration above and never wire it in.
             """)
     }
 
@@ -294,6 +350,62 @@ struct TransferQueueBarPathsGuardTests {
         #expect(views.withLiterals.contains(Self.copyKey), """
             the catalogue-key needle names a literal TransferQueueBar.swift does \
             not contain
+            """)
+        #expect(views.code.contains(Self.decoratedFileName), """
+            the item.fileName needle names an expression TransferQueueBar.swift \
+            does not contain (it is the row's own first line), so \
+            scannerSeesASecondLineThatRepeatsTheFileName would be satisfied by \
+            any body at all
+            """)
+    }
+
+    /// A second line that renders the row's own file name again instead of
+    /// the fold's source/destination -- the exact shape a copy-paste of the
+    /// row's first `Text(item.fileName)` would produce, and one that would
+    /// satisfy "there is a second line" while answering nothing new.
+    @Test func scannerSeesASecondLineThatRepeatsTheFileName() throws {
+        let source = """
+            \(Self.fullPathsLineDeclaration)_ item: Item) -> some View {
+                \(Self.fullPathsGate)
+                    Text(item.fileName)
+                }
+            }
+            """
+        let code = try SwiftSource.blankingCommentsAndStrings(source)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: Self.fullPathsLineDeclaration, in: code)
+        // Positive first: the gate really is there, so the negative below
+        // reports the wrong content rather than an empty read.
+        #expect(body.contains(Self.fullPathsGate))
+        #expect(body.contains(Self.decoratedFileName), """
+            the fixture itself is expected to repeat item.fileName -- if this \
+            fails the fixture no longer demonstrates the defect it is named for
+            """)
+        #expect(!body.contains(Self.foldCall), """
+            the scanner must report a second line that repeats item.fileName \
+            instead of consulting the Core fold, not wave it through because a \
+            gate and SOME text are present
+            """)
+    }
+
+    /// A second line that renders the fold's paths but skips the gate --
+    /// every row would grow the line regardless of the setting.
+    @Test func scannerSeesAnUngatedSecondLine() throws {
+        let source = """
+            \(Self.fullPathsLineDeclaration)_ item: Item) -> some View {
+                let paths = \(Self.foldCall)
+                Text("\\(paths.source) -> \\(paths.destination)")
+            }
+            """
+        let code = try SwiftSource.blankingCommentsAndStrings(source)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: Self.fullPathsLineDeclaration, in: code)
+        // Positive first: the fold really is consulted, so the negative
+        // below reports the missing gate rather than an empty read.
+        #expect(body.contains(Self.foldCall))
+        #expect(!body.contains(Self.fullPathsGate), """
+            the scanner must report a second line that is never gated on the \
+            setting, not accept it because the fold is consulted correctly
             """)
     }
 

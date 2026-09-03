@@ -292,6 +292,31 @@ struct SettingsStoreTests {
         #expect(reloaded.showHiddenFiles == true)
     }
 
+    // MARK: - Transfers full-paths display (dev-build follow-up)
+
+    @Test func transfersShowFullPathsDefaultsFalseAndPersists() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.transfersShowFullPaths == false)
+        store.transfersShowFullPaths = true
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.transfersShowFullPaths == true)
+    }
+
+    @Test func legacyJSONWithoutTransfersShowFullPathsLoadsFalse() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let json = """
+            {"maxConcurrentTransfers": 4, "uploadLimitKBs": 10, "downloadLimitKBs": 20}
+            """
+        try Data(json.utf8).write(to: fileURL(dir))
+
+        let store = SettingsStore(directory: dir)
+        #expect(store.transfersShowFullPaths == false)
+    }
+
     @Test func editorSettingsSurviveAlongsideUnknownKeys() throws {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -546,7 +546,9 @@ extension ContentView {
                     }
 
                     if tab.transfersPanelVisible {
-                        TransferQueueBar(viewModel: tab.transferQueue, sessionName: tab.titleName)
+                        TransferQueueBar(
+                            viewModel: tab.transferQueue, sessionName: tab.titleName,
+                            settingsStore: settingsStore)
                     }
                 }
                 .onChange(of: tab.transferQueue.items.count) { oldCount, newCount in

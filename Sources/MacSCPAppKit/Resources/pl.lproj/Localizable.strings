@@ -38,6 +38,7 @@
 "settings.tab.transfers" = "Transfery";
 "settings.maxConcurrent.label" = "Maksymalna liczba równoczesnych transferów";
 "settings.maxConcurrent.footer" = "Dotyczy nowych transferów; trwające nie są zmieniane.";
+"settings.transfers.showFullPaths" = "Zawsze pokazuj pełne ścieżki";
 "settings.bandwidth.header" = "Limit przepustowości wysyłania/pobierania";
 "settings.bandwidth.footer" = "0 = bez limitu";
 "settings.bandwidth.upload" = "Wysyłanie";

@@ -417,6 +417,20 @@ private struct TransfersSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Full paths on every row (dev-build follow-up, 2026-09-03): off
+            // by default, so the queue bar stays as compact as it always
+            // has been until this is switched on. `TransferQueueBar` reads
+            // the flag directly off `store` and renders the same
+            // `TransferRowPaths` strings the hover hint already shows.
+            Section {
+                Toggle(
+                    L10n.string("settings.transfers.showFullPaths", "Always show full paths"),
+                    isOn: Binding(
+                        get: { store.transfersShowFullPaths },
+                        set: { store.transfersShowFullPaths = $0 }
+                    ))
+            }
+
             // NOTE (bandwidth-row duplicate-value bug, fixed): `TextField(_
             // titleKey:value:format:)`'s title is NOT a placeholder inside a
             // `Form` styled `.formStyle(.grouped)` - macOS renders it as a

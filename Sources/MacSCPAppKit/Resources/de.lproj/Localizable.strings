@@ -36,6 +36,7 @@
 "settings.tab.transfers" = "Übertragungen";
 "settings.maxConcurrent.label" = "Maximale gleichzeitige Übertragungen";
 "settings.maxConcurrent.footer" = "Gilt für neue Übertragungen; laufende sind nicht betroffen.";
+"settings.transfers.showFullPaths" = "Volle Pfade immer anzeigen";
 "settings.bandwidth.header" = "Bandbreiten-Limit Upload/Download";
 "settings.bandwidth.footer" = "0 = unbegrenzt";
 "settings.bandwidth.upload" = "Upload";

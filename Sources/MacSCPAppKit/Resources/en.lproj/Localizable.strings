@@ -36,6 +36,7 @@
 "settings.tab.transfers" = "Transfers";
 "settings.maxConcurrent.label" = "Maximum concurrent transfers";
 "settings.maxConcurrent.footer" = "Applies to new transfers; running ones are unaffected.";
+"settings.transfers.showFullPaths" = "Always show full paths";
 "settings.bandwidth.header" = "Bandwidth limit upload/download";
 "settings.bandwidth.footer" = "0 = unlimited";
 "settings.bandwidth.upload" = "Upload";

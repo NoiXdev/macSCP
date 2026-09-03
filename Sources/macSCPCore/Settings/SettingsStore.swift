@@ -83,6 +83,7 @@ public final class SettingsStore {
         static let sidebarWidth = "sidebarWidth"
         static let sidebarTagFilterEnabled = "sidebarTagFilterEnabled"
         static let checksumAlgorithm = "checksumAlgorithm"
+        static let transfersShowFullPaths = "transfersShowFullPaths"
     }
 
     private enum Defaults {
@@ -108,6 +109,7 @@ public final class SettingsStore {
         /// which procedure is preferred is a property of the procedures,
         /// and a second copy of it is a second thing to keep in step.
         static let checksumAlgorithm = ChecksumAlgorithm.preferred
+        static let transfersShowFullPaths = false
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -163,6 +165,15 @@ public final class SettingsStore {
     public var downloadLimitKBs: Int {
         get { clamp(intValue(for: Keys.downloadLimitKBs, default: Defaults.downloadLimitKBs), 0, .max) }
         set { setInt(clamp(newValue, 0, .max), for: Keys.downloadLimitKBs) }
+    }
+
+    /// Show every transfer row's full source and destination paths on a
+    /// second line, without hovering or opening the row's context menu
+    /// (maintainer request 2026-09-03, after trying the dev build). Default
+    /// OFF — the row stays as compact as it always has been until asked for.
+    public var transfersShowFullPaths: Bool {
+        get { boolValue(for: Keys.transfersShowFullPaths, default: Defaults.transfersShowFullPaths) }
+        set { setBool(newValue, for: Keys.transfersShowFullPaths) }
     }
 
     /// Absolute path to the .app bundle used as the default editor for remote
