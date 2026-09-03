@@ -140,8 +140,8 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     public var importedAt: Date?
 
     /// The STORED record this entry updates, if it updates one rather than
-    /// creating a session (external import, 2026-09-03). `nil` — the default,
-    /// and what every export this app writes carries — means a fresh import.
+    /// creating a session (external import, 2026-09-03). `nil` — the default —
+    /// means a fresh import.
     ///
     /// A store id, not a file-local one: unlike `id` and `groupID`, it is NOT
     /// rekeyed on import, because it names a record in the store the import is
@@ -151,10 +151,24 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// entry IS that record. An id no longer in the store falls back to an
     /// ordinary import.
     ///
-    /// Why the export path never sets it: `exportPayload` writes a file for
-    /// another machine, where a local record id means nothing.
-    /// `ImportPreviewPlanner.payload(for:sessions:groups:switches:)` is the one
-    /// producer, and it plans against the very store it read the id from.
+    /// IN-MEMORY ONLY, and the one field of this type that is: it appears in
+    /// no `CodingKeys` case, so `encode(to:)` cannot write it and
+    /// `init(from:)` always yields `nil`. Every other optional here is a
+    /// file-local value or a reference the import rekeys; this one names a
+    /// record on THIS machine, which is exactly why a file must not be able
+    /// to name one. A crafted `.macscp` carrying `"replaces": "<a real local
+    /// id>"` would otherwise take the replace-by-id branch — overwriting that
+    /// record in place, with no conflict sheet and nothing in the result alert
+    /// but a "replaced" count — and, carrying no password, would set
+    /// `keepsExistingSecret`, leaving the victim's Keychain slot bound to the
+    /// host the file named, ready to be sent there on the next connect.
+    /// Session ids travel in the clear in `id`, so an export shared onward
+    /// hands out everything such a file would need.
+    ///
+    /// `ImportPreviewPlanner.payload(for:sessions:groups:switches:)` is the
+    /// only producer, and it plans against the very store it read the id
+    /// from — the value never crosses a file boundary, so nothing is lost by
+    /// it not being codable.
     public var replaces: UUID?
 
     // MARK: - Decode-only v1 columns (M23/P3)
@@ -240,7 +254,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         case id, name, groupID, kind, fields, paneVisibility, tags, position, password
         case jumpHost, jumpPort, jumpUsername, jumpAuthKind, jumpKeyPath, jumpPassword
         case s3SecretAccessKey
-        case importSource, importID, importedAt, replaces
+        case importSource, importID, importedAt
         case legacyHost = "host"
         case legacyPort = "port"
         case legacyUsername = "username"
@@ -280,7 +294,11 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         importSource = try c.decodeIfPresent(String.self, forKey: .importSource)
         importID = try c.decodeIfPresent(String.self, forKey: .importID)
         importedAt = try c.decodeIfPresent(Date.self, forKey: .importedAt)
-        replaces = try c.decodeIfPresent(UUID.self, forKey: .replaces)
+        // NEVER decoded — there is no `.replaces` key to decode from, and
+        // that is the whole point (see the property's own doc comment).
+        // A file's `"replaces"`, if one is there, is ignored like any
+        // other key this type does not name.
+        replaces = nil
         legacyHost = try c.decodeIfPresent(String.self, forKey: .legacyHost)
         legacyPort = try c.decodeIfPresent(Int.self, forKey: .legacyPort)
         legacyUsername = try c.decodeIfPresent(String.self, forKey: .legacyUsername)
@@ -321,7 +339,6 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         try c.encodeIfPresent(importSource, forKey: .importSource)
         try c.encodeIfPresent(importID, forKey: .importID)
         try c.encodeIfPresent(importedAt, forKey: .importedAt)
-        try c.encodeIfPresent(replaces, forKey: .replaces)
     }
 
     /// Folds a v1 file's columns into `fields` and clears them. A no-op on a

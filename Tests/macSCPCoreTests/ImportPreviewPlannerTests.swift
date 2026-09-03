@@ -479,6 +479,43 @@ struct ImportPreviewPlannerTests {
         #expect(payload.sessions.first?.groupID == chosen.id)
     }
 
+    /// The group is created ONCE for the whole run, not once per row — the
+    /// creation sits outside the loop, and nothing else pins that.
+    @Test func createGroupNamedMakesOneGroupForEveryRow() throws {
+        let switches = ImportSwitches(createGroupNamed: "Cyberduck")
+        let rows = ImportPreviewPlanner.preview(
+            [sftpBookmark(id: "a", host: "a.example.net"),
+             sftpBookmark(id: "b", host: "b.example.net"),
+             sftpBookmark(id: "c", host: "c.example.net")],
+            against: [], switches: switches)
+
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [], groups: [], switches: switches)
+
+        #expect(payload.sessions.count == 3)
+        #expect(payload.groups.count == 1)
+        let group = try #require(payload.groups.first)
+        #expect(payload.sessions.allSatisfy { $0.groupID == group.id })
+    }
+
+    /// The `.new` half of the labels switch, both ways — only the two UPDATE
+    /// cells were covered.
+    @Test func aNewRowTakesTheLabelsAsTagsOnlyWithTheSwitch() throws {
+        let bookmark = sftpBookmark(labels: ["prod", "eu"])
+
+        let off = try #require(ImportPreviewPlanner.payload(
+            for: ImportPreviewPlanner.preview(
+                [bookmark], against: [], switches: ImportSwitches()),
+            sessions: [], groups: [], switches: ImportSwitches()).sessions.first)
+        #expect(off.tags == nil)
+
+        let on = ImportSwitches(takeLabelsAsTags: true)
+        let taken = try #require(ImportPreviewPlanner.payload(
+            for: ImportPreviewPlanner.preview([bookmark], against: [], switches: on),
+            sessions: [], groups: [], switches: on).sessions.first)
+        #expect(taken.tags == ["prod", "eu"])
+    }
+
     /// `SessionImportPlanner` resolves `ExportedSession.groupID` against the
     /// payload's OWN `groups` and drops a reference it does not carry, so a
     /// chosen group that is not in the payload silently loses every session
@@ -544,6 +581,181 @@ struct ImportPreviewPlannerTests {
             .includesSecrets == true)
     }
 
+    // MARK: - The auth kind an update must not invent (review I-2)
+
+    /// A bookmark with no `Private Key File` says NOTHING about how the
+    /// connection authenticates — Cyberduck has no column for "uses an
+    /// agent". Design §3's "agent is never inferred" therefore has to hold in
+    /// both directions: an update must not read that silence as `.password`.
+    @Test func anUpdateNeverDemotesAgentAuth() throws {
+        let stored = sshSession(
+            name: "Web 01", host: "web-01.example.net", port: 22, username: "deploy",
+            authKind: .agent, importID: "known-1")
+        let bookmark = sftpBookmark(
+            id: "known-1", nickname: "Web 01", host: "web-01.example.net", port: 2222,
+            username: "deploy")
+
+        let row = try #require(ImportPreviewPlanner.preview(
+            [bookmark], against: [stored], switches: ImportSwitches()).first)
+        let exported = try #require(ImportPreviewPlanner.payload(
+            for: [row], sessions: [stored], groups: [],
+            switches: ImportSwitches()).sessions.first)
+
+        #expect(field(SSHField.authKind, of: exported)
+                == StoredSession.AuthKind.agent.rawValue)
+        // Nothing about auth changed, so the row must not claim it did.
+        let changes = try #require(changeList(row.status))
+        #expect(changes.map(\.field) == [ImportPreviewPlanner.FieldKey.port])
+    }
+
+    /// The same silence over a stored key path: the key file is not gone just
+    /// because the bookmark never mentioned one, and clearing it would leave
+    /// `.privateKey` with no key — an entry the backend schema refuses.
+    @Test func anUpdateKeepsAStoredKeyPathTheBookmarkDoesNotMention() throws {
+        let stored = sshSession(
+            name: "Web 01", host: "web-01.example.net", port: 22, username: "deploy",
+            keyPath: "/keys/id_ed25519", importID: "known-1")
+        let bookmark = sftpBookmark(
+            id: "known-1", nickname: "Web 01", host: "web-01.example.net", port: 2222,
+            username: "deploy")
+
+        let row = try #require(ImportPreviewPlanner.preview(
+            [bookmark], against: [stored], switches: ImportSwitches()).first)
+        let exported = try #require(ImportPreviewPlanner.payload(
+            for: [row], sessions: [stored], groups: [],
+            switches: ImportSwitches()).sessions.first)
+
+        #expect(field(SSHField.keyPath, of: exported) == "/keys/id_ed25519")
+        #expect(field(SSHField.authKind, of: exported)
+                == StoredSession.AuthKind.privateKey.rawValue)
+        #expect(try #require(changeList(row.status)).map(\.field)
+                == [ImportPreviewPlanner.FieldKey.port])
+    }
+
+    /// A key file IS a positive statement, and it is the one thing that moves
+    /// the auth kind — reported, so the row says what it will do.
+    @Test func aBookmarksKeyFileMakesTheUpdateUsePrivateKeyAuth() throws {
+        let stored = sshSession(
+            name: "Web 01", host: "web-01.example.net", port: 22, username: "deploy",
+            authKind: .agent, importID: "known-1")
+        let bookmark = sftpBookmark(
+            id: "known-1", nickname: "Web 01", host: "web-01.example.net", port: 22,
+            username: "deploy", keyPath: "/keys/id_ed25519")
+
+        let row = try #require(ImportPreviewPlanner.preview(
+            [bookmark], against: [stored], switches: ImportSwitches()).first)
+        let exported = try #require(ImportPreviewPlanner.payload(
+            for: [row], sessions: [stored], groups: [],
+            switches: ImportSwitches()).sessions.first)
+
+        #expect(field(SSHField.authKind, of: exported)
+                == StoredSession.AuthKind.privateKey.rawValue)
+        #expect(field(SSHField.keyPath, of: exported) == "/keys/id_ed25519")
+        let fields = try #require(changeList(row.status)).map(\.field)
+        #expect(fields.contains(ImportPreviewPlanner.FieldKey.authKind))
+        #expect(fields.contains(ImportPreviewPlanner.FieldKey.keyPath))
+    }
+
+    /// A NEW session has no auth to preserve, so the bookmark's silence is
+    /// the only evidence there is and it means password — unchanged from
+    /// §3, and the anchor that the rule above is about UPDATES.
+    @Test func aNewRowStillTakesPasswordAuthWithoutAKeyFile() throws {
+        let rows = ImportPreviewPlanner.preview(
+            [sftpBookmark()], against: [], switches: ImportSwitches())
+        let exported = try #require(ImportPreviewPlanner.payload(
+            for: rows, sessions: [], groups: [],
+            switches: ImportSwitches()).sessions.first)
+
+        #expect(field(SSHField.authKind, of: exported)
+                == StoredSession.AuthKind.password.rawValue)
+    }
+
+    // MARK: - A ticked unchanged row takes provenance (review I-3)
+
+    @Test func aSelectedUnchangedRowBecomesAProvenanceOnlyUpdate() throws {
+        let storedID = UUID()
+        let group = StoredGroup(name: "Servers")
+        var stored = sshSession(
+            id: storedID, name: "Web 01", host: "web-01.example.net", port: 2222,
+            username: "deploy", tags: ["prod"], groupID: group.id)
+        stored.position = 3
+        let bookmark = sftpBookmark(
+            id: "known-1", nickname: "Web 01", host: "web-01.example.net", port: 2222,
+            username: "deploy")
+
+        var rows = ImportPreviewPlanner.preview(
+            [bookmark], against: [stored], switches: ImportSwitches())
+        #expect(rows.first?.status == .knownUnchanged(storedID))
+        #expect(rows.first?.selected == false)  // the anchor: it starts unticked
+        rows[0].selected = true
+
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [stored], groups: [group], switches: ImportSwitches())
+
+        let exported = try #require(payload.sessions.first)
+        #expect(exported.replaces == storedID)
+        #expect(exported.importSource == CyberduckBookmarkSource.id)
+        #expect(exported.importID == "known-1")
+        // Nothing else changed.
+        #expect(exported.name == "Web 01")
+        #expect(exported.groupID == group.id)
+        #expect(exported.position == 3)
+        #expect(exported.tags == ["prod"])
+        #expect(field(SSHField.host, of: exported) == "web-01.example.net")
+        #expect(field(SSHField.port, of: exported) == "2222")
+    }
+
+    /// End to end: the ticked unchanged row reaches `SessionImportPlanner`,
+    /// updates the very record it matched — one session, its own id, its
+    /// Keychain slot untouched — and comes out carrying the provenance that
+    /// lets the NEXT run recognise it after its connection moves. Without
+    /// this path a key-matched session can never be stamped, and the run
+    /// after a port change creates a second session instead of updating it.
+    @Test func aTickedUnchangedRowStampsProvenanceThroughThePlanner() async throws {
+        let storedID = UUID()
+        let stored = sshSession(
+            id: storedID, name: "Web 01", host: "web-01.example.net", port: 2222,
+            username: "deploy")
+        let bookmark = sftpBookmark(
+            id: "known-1", nickname: "Web 01", host: "web-01.example.net", port: 2222,
+            username: "deploy")
+        var rows = ImportPreviewPlanner.preview(
+            [bookmark], against: [stored], switches: ImportSwitches())
+        rows[0].selected = true
+        let payload = ImportPreviewPlanner.payload(
+            for: rows, sessions: [stored], groups: [], switches: ImportSwitches())
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [stored], existingGroups: [], incoming: payload,
+            arbiter: ImportConflictArbiter { _ in
+                Issue.record("the row matched this very record; nothing to arbitrate")
+                return nil
+            })
+
+        #expect(plan.sessionsToImport.count == 1)
+        let planned = try #require(plan.sessionsToImport.first)
+        #expect(planned.session.id == storedID)
+        #expect(planned.replacesExisting)
+        #expect(planned.keepsExistingSecret)
+        #expect(planned.session.importSource == CyberduckBookmarkSource.id)
+        #expect(planned.session.importID == "known-1")
+        #expect(planned.session.ssh?.host == "web-01.example.net")
+        #expect(planned.session.ssh?.port == 2222)
+    }
+
+    @Test func anUntickedUnchangedRowStaysOutOfThePayload() {
+        let stored = sshSession(
+            name: "Web 01", host: "web-01.example.net", port: 2222, username: "deploy")
+        let rows = ImportPreviewPlanner.preview(
+            [sftpBookmark(nickname: "Web 01", host: "web-01.example.net", port: 2222,
+                          username: "deploy")],
+            against: [stored], switches: ImportSwitches())
+
+        #expect(ImportPreviewPlanner.payload(
+            for: rows, sessions: [stored], groups: [], switches: ImportSwitches())
+            .sessions.isEmpty)
+    }
+
     // MARK: - Fixtures
 
     /// Stated independently of the planner on purpose: the planner reads it
@@ -603,6 +815,7 @@ struct ImportPreviewPlannerTests {
 
     private func sshSession(
         id: UUID = UUID(), name: String, host: String, port: Int, username: String,
+        authKind: StoredSession.AuthKind? = nil,
         keyPath: String? = nil, tags: [String] = [], groupID: UUID? = nil,
         importID: String? = nil
     ) -> StoredSession {
@@ -610,7 +823,8 @@ struct ImportPreviewPlannerTests {
             id: id, name: name, groupID: groupID, kind: .ssh,
             ssh: StoredSSHConfig(
                 host: host, port: port, username: username,
-                authKind: keyPath == nil ? .password : .privateKey, keyPath: keyPath),
+                authKind: authKind ?? (keyPath == nil ? .password : .privateKey),
+                keyPath: keyPath),
             tags: tags,
             importSource: importID == nil ? nil : CyberduckBookmarkSource.id,
             importID: importID,

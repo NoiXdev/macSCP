@@ -319,6 +319,16 @@ public enum SessionImportPlanner {
             // only conflict reason is `.sameConnection`), and the store does
             // not enforce them unique.
             //
+            // Residual, deliberate: if this entry MOVES its record onto a
+            // connection a DIFFERENT stored session already occupies, nothing
+            // is arbitrated and the store ends with two sessions sharing one
+            // connection identity. Asking would offer three resolutions that
+            // all say the wrong thing — `.replace` takes over the OTHER
+            // record and abandons the one named here, `.skip` drops an update
+            // the user already approved in the preview, `.rename` mints the
+            // second session this branch exists to prevent. Characterised by
+            // `replacingByIdOntoAConnectionAnotherRecordHoldsAsksNothing`.
+            //
             // Two ways to fall through to the ordinary path below: the record
             // is gone (deleted between the preview and the import), or an
             // earlier entry in this same run already claimed it. Both are the

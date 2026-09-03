@@ -1762,4 +1762,56 @@ struct SessionImportPlannerTests {
         #expect(ids.count == 2)
         #expect(plan.replaced == ["First"])
     }
+
+    /// The fallback is the ORDINARY path, arbitration included: a vanished
+    /// `replaces` id does not buy the entry a free pass past a connection it
+    /// collides with. The sheet appears exactly as it would for any other
+    /// entry naming that connection.
+    @Test func anEntryWhoseReplacedRecordIsGoneIsStillArbitratedAgainstACollision() async {
+        let occupied = sshSession(
+            name: "Already here", host: "web-01.example.net", port: 22, username: "deploy")
+        let entry = ExportedSession(
+            id: UUID(), name: "From the source", kind: .ssh,
+            fields: sshExportFields(host: "web-01.example.net", port: 22, username: "deploy"),
+            replaces: UUID())
+        let log = DeciderCallLog()
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [occupied], existingGroups: [], incoming: incoming([entry]),
+            arbiter: ImportConflictArbiter(decider: fixedDecider(.skip, log: log)))
+
+        #expect(await log.names == ["From the source"])
+        #expect(plan.skipped.count == 1)
+        #expect(plan.sessionsToImport.isEmpty)
+    }
+
+    /// The residual of the provenance-first ordering, characterised rather
+    /// than fixed: an entry that MOVES its own record onto a connection a
+    /// DIFFERENT stored session already occupies is not arbitrated, and the
+    /// store ends with two sessions sharing one connection identity.
+    ///
+    /// Asking here would offer three resolutions that all say the wrong
+    /// thing: `.replace` would take over the OTHER record and abandon the one
+    /// the entry names, `.skip` would drop an update the user already
+    /// approved in the preview, and `.rename` would mint a second session —
+    /// exactly what the replace branch exists to prevent. Deliberate, and
+    /// documented at the branch.
+    @Test func replacingByIdOntoAConnectionAnotherRecordHoldsAsksNothing() async {
+        let moved = sshSession(
+            name: "Web 01", host: "old.example.net", port: 22, username: "deploy")
+        let occupied = sshSession(
+            name: "Already here", host: "web-01.example.net", port: 22, username: "deploy")
+        let entry = ExportedSession(
+            id: moved.id, name: "Web 01", kind: .ssh,
+            fields: sshExportFields(host: "web-01.example.net", port: 22, username: "deploy"),
+            replaces: moved.id)
+
+        let plan = await SessionImportPlanner.plan(
+            existing: [moved, occupied], existingGroups: [], incoming: incoming([entry]),
+            arbiter: neverAsked)
+
+        #expect(plan.sessionsToImport.count == 1)
+        #expect(plan.sessionsToImport.first?.session.id == moved.id)
+        #expect(plan.sessionsToImport.first?.session.ssh?.host == "web-01.example.net")
+    }
 }

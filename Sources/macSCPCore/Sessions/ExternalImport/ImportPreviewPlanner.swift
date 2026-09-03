@@ -144,8 +144,8 @@ public enum ImportPreviewPlanner {
     ///
     /// This is the SOURCE's vocabulary, not macSCP's: a Cyberduck `Hostname`
     /// is `host` on an sftp bookmark and `endpoint` on an s3 one, and
-    /// `Username` is the S3 access key without changing the row's label. Six
-    /// of the eight are spelled by the schema field they compare, so a
+    /// `Username` is the S3 access key without changing the row's label. Seven
+    /// of the nine are spelled by the schema field they compare, so a
     /// renamed field takes its key with it.
     public enum FieldKey {
         private static let prefix = "import.field."
@@ -153,6 +153,7 @@ public enum ImportPreviewPlanner {
         public static let port = prefix + SSHField.port.rawValue
         public static let username = prefix + SSHField.username.rawValue
         public static let keyPath = prefix + SSHField.keyPath.rawValue
+        public static let authKind = prefix + SSHField.authKind.rawValue
         public static let endpoint = prefix + S3Field.endpoint.rawValue
         public static let bucket = prefix + S3Field.bucket.rawValue
         /// The session name (`Nickname`) and the labels have no schema field
@@ -193,10 +194,13 @@ public enum ImportPreviewPlanner {
 
     /// The endpoint an AWS bookmark becomes: S3's own AWS preset, so the
     /// imported session is byte for byte what picking "Amazon S3" in the
-    /// connection form produces.
+    /// connection form produces. Chosen by the preset's IDENTITY, not by
+    /// position — a preset inserted ahead of it would otherwise point every
+    /// imported Amazon bookmark somewhere else.
+    private static let awsPresetID = "aws"
     private static let awsEndpoint: String =
         S3FieldSchema.connection.presets
-            .first { $0.values[S3Field.endpoint.rawValue] != nil }?
+            .first { $0.id == awsPresetID }?
             .values[S3Field.endpoint.rawValue] ?? "https://\(awsHostname)"
 
     // MARK: - The preview
@@ -268,7 +272,11 @@ public enum ImportPreviewPlanner {
         // yields the empty bag, so every field reads as changed rather than
         // as silently equal.
         let old = BackendDescriptor.descriptor(for: kind.connectionKind).sessionValues(stored)
-        let new = values(of: bookmark, kind: kind)
+        // The values an UPDATE would actually write, not the bookmark's own:
+        // the two differ exactly where the source says nothing (see
+        // `updateValues(of:kind:over:)`), and a row that listed a field the
+        // import then leaves alone would be reporting a change nobody makes.
+        let new = updateValues(of: bookmark, kind: kind, over: old)
         var result: [FieldChange] = []
         func compare(_ field: String, _ oldValue: String, _ newValue: String) {
             guard oldValue != newValue else { return }
@@ -281,15 +289,19 @@ public enum ImportPreviewPlanner {
             compare(FieldKey.port, old[SSHField.port], new[SSHField.port])
             compare(FieldKey.username, old[SSHField.username], new[SSHField.username])
             compare(FieldKey.keyPath, old[SSHField.keyPath], new[SSHField.keyPath])
+            // Listed, because an update CAN move it — a bookmark that gained
+            // a key file switches the session to private-key auth, and a row
+            // that showed only "key path: → /keys/id_ed25519" would leave the
+            // user to infer the rest.
+            compare(FieldKey.authKind, old[SSHField.authKind], new[SSHField.authKind])
         case .s3:
             compare(FieldKey.endpoint, old[S3Field.endpoint], new[S3Field.endpoint])
             compare(FieldKey.username, old[S3Field.accessKeyID], new[S3Field.accessKeyID])
             compare(FieldKey.bucket, old[S3Field.bucket], new[S3Field.bucket])
         }
-        // The nickname is a field the source knows, so a renamed bookmark is
-        // a CHANGED row — but the record keeps the name the user gave it
-        // (see `payload(for:)`). The row reports the difference; it does not
-        // promise to apply it.
+        // The nickname is a field the source knows, and an update applies it
+        // (design §0 item 3), so a bookmark renamed in the source renames the
+        // session — reported here first.
         compare(FieldKey.name, stored.name, displayName(of: bookmark))
         if switches.takeLabelsAsTags {
             compare(FieldKey.labels,
@@ -310,14 +322,20 @@ public enum ImportPreviewPlanner {
     /// arbiter question about the connection, because the entry IS that
     /// record.
     ///
+    /// A ticked `.knownUnchanged` row becomes a provenance-only update — the
+    /// record unchanged but stamped, so a later run recognises it after its
+    /// connection moves (see `provenanceOnlyUpdate`). Such a row starts
+    /// unticked, so this only happens on purpose.
+    ///
     /// An update overwrites everything the source knows, the session's NAME
     /// included (design §0 item 3, the maintainer's decision): a bookmark
     /// renamed in Cyberduck renames the session here. What the source does not
     /// know is copied off the record instead — its group, its rank, its pane
     /// visibility, its tags (unless the labels switch replaces them) and every
-    /// backend field outside §3's table, such as an S3 region. Those three
-    /// session properties are the whole list: `StoredSession` carries no notes
-    /// and no colour, so there is nothing else to copy.
+    /// backend field outside §3's table, such as an S3 region. Those four
+    /// session properties — group, rank, pane visibility, tags — are the whole
+    /// list: `StoredSession` carries no notes and no colour, so there is
+    /// nothing else to copy.
     ///
     /// `groups` is the store's group catalogue, and it is needed rather than
     /// convenient: `SessionImportPlanner` resolves `ExportedSession.groupID`
@@ -371,7 +389,14 @@ public enum ImportPreviewPlanner {
                 exported.append(updatedSession(
                     from: row.bookmark, kind: kind, stored: stored,
                     switches: switches, importedAt: importedAt))
-            case .knownUnchanged, .unsupported, .unreadable:
+            case .knownUnchanged(let storedID):
+                // Ticked on purpose (an unchanged row starts unticked): the
+                // user is LINKING this record to the bookmark, which is the
+                // only way a key-matched session ever gains provenance.
+                guard let stored = sessions.first(where: { $0.id == storedID }) else { continue }
+                exported.append(provenanceOnlyUpdate(
+                    from: row.bookmark, kind: kind, stored: stored, importedAt: importedAt))
+            case .unsupported, .unreadable:
                 continue
             }
         }
@@ -413,6 +438,47 @@ public enum ImportPreviewPlanner {
             importedAt: importedAt)
     }
 
+    /// A ticked `.knownUnchanged` row: the record exactly as it stands, plus
+    /// provenance and the `replaces` handle that lands it back on its own id.
+    ///
+    /// Every field is read off the RECORD, none off the bookmark — "nothing
+    /// else changed" is the whole content of this case, and the row is
+    /// `.knownUnchanged` precisely because the two already agree on
+    /// everything the change list compares. Reading the record is what makes
+    /// that true of the fields it does NOT compare as well.
+    ///
+    /// Why it is worth a case of its own: `importSource`/`importID` are
+    /// written nowhere else, so without this a session matched by CONNECTION
+    /// KEY could never be stamped. The run after the user changes that
+    /// server's port in the source would find no provenance, no key match
+    /// either, call the bookmark `.new`, and create a second session — the
+    /// exact case provenance matching exists to prevent.
+    ///
+    /// No secret and no `takeLabelsAsTags`: the planner sets
+    /// `keepsExistingSecret` for an entry carrying no password, and labels
+    /// that differed would have made the row `.knownChanged`.
+    private static func provenanceOnlyUpdate(
+        from bookmark: ExternalBookmark, kind: BookmarkKind, stored: StoredSession,
+        importedAt: Date
+    ) -> ExportedSession {
+        var fields = baseline(for: kind)
+        fields.merge(BackendDescriptor.descriptor(for: kind.connectionKind)
+            .sessionValues(stored))
+        return ExportedSession(
+            id: stored.id,
+            name: stored.name,
+            kind: kind.connectionKind,
+            fields: fields.raw,
+            groupID: stored.groupID,
+            paneVisibility: stored.paneVisibility,
+            tags: stored.tags,
+            position: stored.position,
+            importSource: bookmark.source,
+            importID: bookmark.id,
+            importedAt: importedAt,
+            replaces: stored.id)
+    }
+
     private static func updatedSession(
         from bookmark: ExternalBookmark, kind: BookmarkKind, stored: StoredSession,
         switches: ImportSwitches, importedAt: Date
@@ -422,10 +488,10 @@ public enum ImportPreviewPlanner {
         // with a blank region is one the schema refuses), then the stored
         // record, then what the source knows. Only the third layer is what
         // an update overwrites.
+        let old = BackendDescriptor.descriptor(for: kind.connectionKind).sessionValues(stored)
         var fields = baseline(for: kind)
-        fields.merge(BackendDescriptor.descriptor(for: kind.connectionKind)
-            .sessionValues(stored))
-        fields.merge(values(of: bookmark, kind: kind))
+        fields.merge(old)
+        fields.merge(updateValues(of: bookmark, kind: kind, over: old))
         return ExportedSession(
             id: stored.id,
             // The source's own name wins — see this function's caller.
@@ -499,6 +565,37 @@ public enum ImportPreviewPlanner {
             // bookmark carries either, so an update must keep whatever the
             // user configured, and a new session takes the baseline below.
         }
+        return values
+    }
+
+    /// What an UPDATE writes over the record `old` describes: the bookmark's
+    /// own values, minus the two auth fields when the bookmark makes no
+    /// statement about auth.
+    ///
+    /// A missing `Private Key File` is SILENCE, not evidence. Cyberduck has
+    /// no column saying "this connection uses an ssh-agent", so reading the
+    /// absence as `.password` inverts design §3's "agent is never inferred"
+    /// on exactly the path where there is something to lose: an `.agent`
+    /// session whose bookmark had its port changed would come back with
+    /// password auth and no stored password, and the preview would have shown
+    /// one line about the port. The same silence over a stored key path is
+    /// worse than cosmetic — clearing it leaves `.privateKey` with no key,
+    /// which the backend schema refuses, so the entry would be rejected
+    /// outright rather than updated.
+    ///
+    /// A key file IS a statement, and the only one that moves the auth kind.
+    /// `changes(from:to:kind:switches:)` compares against this, so the row
+    /// names `authKind` exactly when the import will change it.
+    ///
+    /// A NEW session has no auth to preserve, so it takes `values(of:kind:)`
+    /// unmodified — there the silence really does mean password.
+    private static func updateValues(
+        of bookmark: ExternalBookmark, kind: BookmarkKind, over old: FieldValues
+    ) -> FieldValues {
+        var values = values(of: bookmark, kind: kind)
+        guard case .ssh = kind, trimmed(bookmark.keyPath ?? "").isEmpty else { return values }
+        values[SSHField.authKind] = old[SSHField.authKind]
+        values[SSHField.keyPath] = old[SSHField.keyPath]
         return values
     }
 

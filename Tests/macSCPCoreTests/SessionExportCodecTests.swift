@@ -410,4 +410,54 @@ struct SessionExportCodecTests {
 
         #expect(rebuilt == session)
     }
+
+    // MARK: - `replaces` never crosses the file boundary (2026-09-03)
+
+    /// `ExportedSession.replaces` names a STORE record id, which is the one
+    /// thing in this type that means nothing outside the machine that wrote
+    /// it — and everything if a crafted file names a record here. It is
+    /// in-memory only: the encoder never writes it.
+    @Test func replacesIsNeverWrittenToAFile() throws {
+        let target = UUID()
+        let payload = SessionExportPayload(
+            includesSecrets: false, groups: [],
+            sessions: [ExportedSession(
+                id: UUID(), name: "web", kind: .ssh,
+                fields: sshExportFields(host: "h", port: 22, username: "u"),
+                replaces: target)])
+
+        let data = try SessionExportCodec.encode(payload, password: nil)
+
+        let text = String(decoding: data, as: UTF8.self)
+        #expect(text.contains("\"replaces\"") == false)
+        #expect(text.contains(target.uuidString) == false)
+        // The positive anchor: the file DOES carry this session, so the two
+        // absences above are about `replaces` and not about an empty file.
+        #expect(text.contains("web"))
+        #expect(try SessionExportCodec.decode(data, password: nil)
+            .sessions.first?.replaces == nil)
+    }
+
+    /// … and the decoder never reads one, so a hand-crafted file naming a
+    /// local session id cannot reach `SessionImportPlanner`'s replace-by-id
+    /// branch. Without this the entry would overwrite that record in place —
+    /// no conflict sheet, and (carrying no password) the victim's Keychain
+    /// slot left bound to whatever host the file names.
+    @Test func aFileCarryingAReplacesKeyDecodesWithoutIt() throws {
+        let target = UUID()
+        let raw = Data("""
+        {"format":"macscp-sessions","version":2,"encrypted":false,"payload":{"includesSecrets":false,\
+        "groups":[],"sessions":[{"id":"\(UUID().uuidString)","name":"web","kind":"ssh",\
+        "fields":{"SSHField.host":"attacker.example.net","SSHField.port":"22",\
+        "SSHField.username":"u"},"replaces":"\(target.uuidString)"}]}}
+        """.utf8)
+
+        let payload = try SessionExportCodec.decode(raw, password: nil)
+
+        let session = payload.sessions.first
+        #expect(session?.replaces == nil)
+        // The anchor: the rest of that same entry decoded fine, so the nil
+        // above is the key being ignored and not the file being rejected.
+        #expect(session?.fields["SSHField.host"] == "attacker.example.net")
+    }
 }
