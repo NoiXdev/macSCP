@@ -56,9 +56,13 @@ struct TestsNeverBlockThePoolGuardTests {
     /// `Process`/`waitUntilExit()` short child wait in `macSCPCoreTests`
     /// with `SubprocessRunner.run` — fifteen files, thirteen of them a test
     /// suite plus `Support/InstalledKey.swift` and `Support/SpawnedAgent.swift`.
-    /// A third was added later by the diagnostics trace, so the list holds
-    /// **three** entries; none of them is Task 1b's to remove, and each says
-    /// why in its own comment.
+    /// The diagnostics trace added a third later and then took it back:
+    /// `anOuterMarginOverrunKeepsTheHopsTheWalkHadMeasured` parked on a
+    /// `Thread.sleep` to outlast an outer margin, and now parks on a gate the
+    /// margin itself opens, so the sleep is gone and the entry with it —
+    /// which is the shrinking this list exists to make happen. **Two**
+    /// entries remain; neither is Task 1b's to remove, and each says why in
+    /// its own comment.
     ///
     /// `everyAllowlistEntryIsStillNeeded` below is what keeps the list
     /// honest: an entry whose file no longer carries its pattern is a
@@ -80,17 +84,6 @@ struct TestsNeverBlockThePoolGuardTests {
         // decision.
         "macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift":
             [.dispatchGroup, .waitUntilExit],
-
-        // Not a wait on a cooperative-pool thread and not convertible into
-        // one: `anOuterMarginOverrunKeepsTheHopsTheWalkHadMeasured` has to
-        // overrun `BlockingProbe`'s margin, which is a real Dispatch timer,
-        // and the only place it can do that from is the body `BlockingProbe`
-        // runs on its OWN private queue — the same queue the production walk
-        // parks in `poll` on. The case's other fixture used to sleep too and
-        // no longer does: it drives the walk over an injected clock instead
-        // (`NetworkTrace.walk(now:)`), which is why this entry names one
-        // pattern and not two.
-        "macSCPCoreTests/NetworkTraceTests.swift": [.threadSleep],
     ]
 
     // MARK: - The negative check

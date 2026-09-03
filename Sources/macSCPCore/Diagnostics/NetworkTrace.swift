@@ -324,8 +324,27 @@ enum NetworkTrace {
     /// the outer margin does not discard measured hops, and that an
     /// abandoned walk is reported as ended by the BUDGET — cannot be provoked
     /// through a socket on any network a test may assume.
+    ///
+    /// - Parameter onAbandon: run at the one instant the outer margin has
+    ///   beaten the walk, `nil` in production. An observation seam, not a
+    ///   hook: it changes nothing about what this function answers. It exists
+    ///   because "the margin won" is otherwise only observable by RACING it —
+    ///   a test had to make its walk outlast a 250 ms timer by sleeping
+    ///   400 ms, and a busy machine erases that 150 ms in either direction.
+    ///   With this, a test's walk can park until the abandonment has actually
+    ///   happened, which turns "which of two durations elapsed first" into an
+    ///   ordering the runner cannot reorder. Same shape and same reason as
+    ///   `ICMPEcho.TransmitObserver` and `SubprocessRunner`'s
+    ///   `onStderrChunk`.
+    ///
+    ///   It is called AFTER the abandoned outcome has been built, so the hops
+    ///   it reports are the ones the collector held while the walk was still
+    ///   parked. A walk released first could append to the collector between
+    ///   the release and the read, and then the value under test would depend
+    ///   on which of those two won — the very race this seam removes.
     static func run(
         destination: String, timeout: Duration, collector: TraceHopCollector,
+        onAbandon: (@Sendable () -> Void)? = nil,
         walk: @escaping @Sendable (ContinuousClock.Instant, TraceHopCollector)
             -> NetworkTraceOutcome
     ) async -> NetworkTraceOutcome {
@@ -338,12 +357,16 @@ enum NetworkTrace {
         ) {
             walk(ContinuousClock().now.advanced(by: timeout), collector)
         }
+        if let outcome { return outcome }
+
         // The margin lost. Whatever the abandoned walk eventually returns is
         // dropped by `BlockingProbe`, but what it had already MEASURED is in
         // the collector — and the walk was ended by the budget, which is what
         // the row must say rather than printing an empty line.
-        return outcome
-            ?? .measured(hops: collector.hops, destination: destination, ending: .budget)
+        let abandoned = NetworkTraceOutcome.measured(
+            hops: collector.hops, destination: destination, ending: .budget)
+        onAbandon?()
+        return abandoned
     }
 
     // MARK: - The socket sequence

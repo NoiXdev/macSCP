@@ -4,6 +4,55 @@ import Testing
 
 @testable import macSCPCore
 
+/// A one-shot gate a BLOCKING body can park on until something else opens it.
+///
+/// The blocking twin of `AsyncSignal`, and it exists for the one place an
+/// `await` cannot go: the walk body `NetworkTrace.run` hands to
+/// `BlockingProbe` is a synchronous closure running on that probe's own
+/// private queue. It is not a cooperative-pool thread — the same thread the
+/// `Thread.sleep` this replaces held — so parking it breaks no rule of
+/// CLAUDE.md's "Tests never block the cooperative pool"; what it does break
+/// is the habit of guessing a duration.
+///
+/// `NSCondition`, not a semaphore or a dispatch group: those two are the
+/// spellings `TestsNeverBlockThePoolGuardTests` forbids outright, and this
+/// needs neither a count nor a group — one flag, and every waiter released
+/// when it flips.
+///
+/// `wait(until:)` takes a deadline that is a NET, not the property: it is
+/// there so a seam that stops being called fails the case in half a minute
+/// instead of parking a thread for the life of the process. `wasOpened` is
+/// what a test asserts on, and it distinguishes the two.
+final class BlockingGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var opened = false
+
+    /// Safe from any thread, and idempotent.
+    func open() {
+        condition.lock()
+        opened = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    /// Whether `open()` was ever called — readable without waiting, and true
+    /// by the time the call that opened the gate has returned.
+    var wasOpened: Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        return opened
+    }
+
+    /// Blocks until the gate opens or `deadline` passes.
+    func wait(until deadline: Date) {
+        condition.lock()
+        defer { condition.unlock() }
+        while !opened {
+            if !condition.wait(until: deadline) { return }
+        }
+    }
+}
+
 /// The IPv4 network trace, built from the verdict `ICMPSpikeTests` measured
 /// (design §5, macOS 26.6.2): a UDP datagram with `IP_TTL = 1` toward
 /// TEST-NET-1 produces ICMP **type 11 code 0** on an unprivileged ICMP DGRAM
@@ -354,28 +403,62 @@ struct NetworkTraceTests {
     /// walk's own budget — must not throw away the hops the walk had already
     /// measured. Before the collector, an overrun there printed an empty
     /// detail line for a walk that had eight hops.
-    @Test func anOuterMarginOverrunKeepsTheHopsTheWalkHadMeasured() async {
+    ///
+    /// The abandonment is FORCED here, not raced. It used to be raced: the
+    /// walk slept 400 ms and the outer margin fired at 250 ms
+    /// (`NetworkTrace.run`'s `timeout + .milliseconds(250)`, with
+    /// `timeout: .zero`), so the property rested on a 150 ms window between
+    /// a Dispatch timer and a sleep — and a busy machine erases it in either
+    /// direction. It reddened on ambient load alone, on this branch and at
+    /// its branch point, most recently in Task 4's round-3 full run
+    /// (`(outcome.ending → .hopLimit) == .budget`); it is also inside one of
+    /// the four suites that lost their verdict in CI run 33741778350.
+    ///
+    /// So the walk parks on a gate that only the abandonment opens. The
+    /// margin cannot lose, because the thing it is racing does not finish
+    /// until the margin has already won. What is asserted is what was
+    /// asserted before — the hops survive, and the ending names the budget —
+    /// with no duration compared against any other duration anywhere in the
+    /// case.
+    @Test(.timeLimit(.minutes(1)))
+    func anOuterMarginOverrunKeepsTheHopsTheWalkHadMeasured() async {
         let measured = NetworkTraceHop(
             ttl: 1, outcome: .forwarded(address: "10.0.0.1", rtt: .milliseconds(2)))
         let collector = TraceHopCollector()
+        let abandoned = BlockingGate()
+        let walkReturned = AsyncSignal()
         let outcome = await NetworkTrace.run(
-            destination: Self.documentationV4, timeout: .zero, collector: collector
+            destination: Self.documentationV4, timeout: .zero, collector: collector,
+            onAbandon: { abandoned.open() }
         ) { _, collected in
             collected.append(measured)
-            // Past the outer margin, on `BlockingProbe`'s OWN private queue
-            // and never on the cooperative pool — which is why this one
-            // `Thread.sleep` is declared in
-            // `TestsNeverBlockThePoolGuardTests.allowed` rather than spelled
-            // some other way to slip past the scan. The value returned below
-            // is the one that gets dropped, which is the point.
-            Thread.sleep(forTimeInterval: 0.4)
+            // Parked on `BlockingProbe`'s OWN private queue and never on the
+            // cooperative pool — the same place the `Thread.sleep` this
+            // replaces ran, which is why neither needed a different spelling
+            // to be honest. The difference is that a sleep guesses how long
+            // the margin will take and this waits until it has happened.
+            //
+            // The value returned below is the one that gets dropped, which is
+            // the point of the case.
+            abandoned.wait(until: Date().addingTimeInterval(30))
+            walkReturned.signal()
             return .measured(
                 hops: collected.hops, destination: Self.documentationV4, ending: .hopLimit)
         }
 
+        // The positive check beside the two below: without it they would also
+        // pass on a run where the walk was released by the gate's own net
+        // rather than by the margin, and a seam that had stopped being called
+        // would read exactly like a seam that works.
+        #expect(abandoned.wasOpened, "the outer margin never reported an abandonment")
         #expect(outcome.hops == [measured])
         // And it is honest about why it is short: the budget, not the path.
         #expect(outcome.ending == .budget)
+
+        // Read first, healed second: the walk is joined only after every
+        // assertion, so nothing it does on the way out can supply a value one
+        // of them wanted. It also leaves no thread parked behind the case.
+        _ = await walkReturned.wait()
     }
 
     /// The trace spends the budget it was HANDED, and not the one every other
