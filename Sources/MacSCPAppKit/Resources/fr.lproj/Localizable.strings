@@ -269,8 +269,9 @@
 
 /* Full paths on demand (2026-09-03): a row shows a file name and an
    arrow, so its hover hint carries the whole source and destination,
-   and its context menu copies the same two lines. A remote path is
-   qualified with the session it lives on by macSCPCore. */
+   and its context menu copies the same two paths. In the HINT a remote
+   path is qualified with the session it lives on (by macSCPCore); what
+   is COPIED is the raw path, because a pasted path has to be one. */
 "transfers.paths.hint %1$@ %2$@" = "De : %1$@\nVers : %2$@";
 "transfers.paths.copy" = "Copier les chemins";
 

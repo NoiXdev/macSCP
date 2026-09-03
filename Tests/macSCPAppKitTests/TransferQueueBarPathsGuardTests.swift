@@ -2,35 +2,46 @@ import Foundation
 import Testing
 
 /// Guards how the transfer bar offers a row's FULL paths on demand: a hover
-/// hint carrying both, and a "Copy paths" item in the row's context menu.
+/// hint carrying both, a hit region that covers the whole row, and a "Copy
+/// paths" item in the row's context menu.
 ///
 /// Same shape and same reasoning as `TransferQueueBarCancelGuardTests`, and
-/// literally the same scanner — `declarationBody(of:in:)` and
+/// literally the same scanner — `declarationBodyRange(of:in:)` and
 /// `occurrenceCount(of:in:)` are reused from it rather than copied, so the
 /// brace counter has one implementation and one set of self-tests. Each
 /// affordance is a named declaration in `TransferQueueBar.swift`, so the
 /// region searched is a brace-balanced body rather than a guessed window.
 ///
-/// What is left for a scan, again, is the WIRING. The mapping from an item
-/// to two display paths is a Core value type held by
-/// `TransferRowPathsTests` over every direction/`crossRemote` combination;
-/// nothing here re-tests it. What no Core test can see is whether the view
-/// asks for it at all, whether the answer reaches a `.help` and a context
-/// menu, and whether the bar is handed the session name that qualifies a
-/// remote path — three facts that live only in this file and in the one
-/// line of `ContentView+Detail.swift` that builds the bar.
+/// What is left for a scan is the WIRING. The mapping from an item to two
+/// display paths is a Core value type held by `TransferRowPathsTests` over
+/// every direction/`crossRemote` combination; nothing here re-tests it.
+/// What no Core test can see is whether the view asks for it at all,
+/// whether the answer reaches a `.help` and a context menu, and whether the
+/// bar is handed the session name that qualifies a remote path — facts that
+/// live only in this file and in the one line of `ContentView+Detail.swift`
+/// that builds the bar.
+///
+/// Every scan here reads STRIPPED source (`SwiftSource`), never the raw
+/// file. The first version of this suite read the file verbatim, and the
+/// hole was not theoretical: deleting `.help(pathsHint(item))` from the row
+/// and leaving a sentence naming it in its place held the count anchor at
+/// two, satisfied the row-body check, and left the whole suite green over
+/// an affordance the user could no longer reach. Structural claims are made
+/// against the strict view (comments AND string literals blanked); the two
+/// catalogue-key claims are about a literal, so they read the view that
+/// blanks comments only.
 ///
 /// Known blind spots, so a green run is not read as more than it is:
 /// - SOURCE TEXT, never a rendered view. Nothing here can tell whether a
-///   tooltip appears on hover or whether the menu item is reachable.
-/// - The scanner does not know about string literals or comments; CLAUDE.md
-///   records a case where a guard read an explanatory comment that quoted
-///   the code it described. The bodies read here are short and carry no
-///   quoting comment today.
-/// - The catalogue keys are spelled as literals below. That is a second
-///   copy of each key, and it is the copy a rename has to update — the
-///   checks are positive, so a rename turns them red rather than passing
-///   over a bar that no longer offers the affordance.
+///   tooltip appears on hover, whether the menu opens, or over which pixels
+///   — only which expression the source hands to each modifier.
+/// - The stripper is hand-rolled and refuses raw strings rather than
+///   guessing (`SwiftSourceStrippingTests`); a bar that grew one would fail
+///   this suite closed rather than be scanned wrongly.
+/// - The catalogue keys and symbols are spelled as literals below. That is
+///   a second copy of each name, and it is the copy a rename has to update
+///   — the checks are positive, so a rename turns them red rather than
+///   passing over a bar that no longer offers the affordance.
 @Suite("Transfer bar full paths")
 struct TransferQueueBarPathsGuardTests {
     /// `#filePath` here is
@@ -50,48 +61,85 @@ struct TransferQueueBarPathsGuardTests {
     private static let copyDeclaration = "private func copyPathsButton("
     private static let rowDeclaration = "private func row("
 
-    private static func barSource() throws -> String {
-        try String(contentsOf: barFile, encoding: .utf8)
+    // The needles. One spelling each, shared by the checks against the real
+    // files and by the scanner self-tests below, so a self-test cannot go
+    // on demonstrating a rule the real check has stopped enforcing.
+    private static let foldCall = "TransferRowPaths(item: item, sessionName: sessionName)"
+    private static let hintKey = "\"transfers.paths.hint %1$@ %2$@\""
+    private static let copyKey = "\"transfers.paths.copy\""
+    private static let clipboardRendering = ".clipboardText"
+    private static let pasteboard = "NSPasteboard.general"
+    private static let hitRegion = ".contentShape(Rectangle())"
+    private static let hintPlacement = ".help(pathsHint(item))"
+    private static let menuPlacement = ".contextMenu {"
+    private static let menuItemPlacement = "copyPathsButton(item)"
+    private static let sessionNameInput = "let sessionName: String?"
+    private static let barConstruction =
+        "TransferQueueBar(viewModel: tab.transferQueue, sessionName: tab.titleName)"
+
+    /// The two views of the bar this suite reads, both derived from one read
+    /// of the file and both the same length as it (see `SwiftSource`), so a
+    /// body span found in one can be sliced out of the other.
+    private static func barViews() throws -> (code: String, withLiterals: String) {
+        let raw = try String(contentsOf: barFile, encoding: .utf8)
+        return (try SwiftSource.blankingCommentsAndStrings(raw),
+                try SwiftSource.blankingComments(raw))
     }
 
-    private static func body(of declaration: String) throws -> String {
-        try TransferQueueBarCancelGuardTests.declarationBody(
-            of: declaration, in: try barSource())
+    /// The window that builds the bar. Only ever read structurally, so the
+    /// strict view is the only one needed.
+    private static func detailCode() throws -> String {
+        try SwiftSource.blankingCommentsAndStrings(
+            try String(contentsOf: detailFile, encoding: .utf8))
+    }
+
+    private static func bodies(
+        of declaration: String
+    ) throws -> (code: String, withLiterals: String) {
+        let views = try barViews()
+        // The balance is counted on the strict view, where no brace can hide
+        // inside a literal or a sentence; the literal view is sliced at the
+        // same character positions.
+        let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: declaration, in: views.code)
+        return (TransferQueueBarCancelGuardTests.slice(range, of: views.code),
+                TransferQueueBarCancelGuardTests.slice(range, of: views.withLiterals))
     }
 
     // MARK: - The guard
 
     @Test func theHintIsBuiltFromTheQueuesOwnPathFold() throws {
-        let body = try Self.body(of: Self.hintDeclaration)
-        #expect(body.contains("TransferRowPaths(item: item, sessionName: sessionName)"), """
+        let body = try Self.bodies(of: Self.hintDeclaration)
+        #expect(body.code.contains(Self.foldCall), """
             The row's hint must come from the Core fold, asked with the bar's own \
             session name -- a second derivation here would decide which side of a \
             transfer is local all over again, and would drift from what the \
             clipboard text says.
             """)
-        #expect(body.contains("\"transfers.paths.hint %1$@ %2$@\""), """
+        #expect(body.withLiterals.contains(Self.hintKey), """
             The two-line hint must be assembled from the transfers.paths.hint \
             catalogue key, so a translation can label and order the two paths \
             itself.
             """)
     }
 
-    @Test func copyPathsIsOfferedAndPutsTheSameTwoLinesOnThePasteboard() throws {
-        let body = try Self.body(of: Self.copyDeclaration)
-        #expect(body.contains("\"transfers.paths.copy\""), """
+    @Test func copyPathsIsOfferedAndPutsTheFoldsOwnRenderingOnThePasteboard() throws {
+        let body = try Self.bodies(of: Self.copyDeclaration)
+        #expect(body.withLiterals.contains(Self.copyKey), """
             The context-menu item must take its label from the \
             transfers.paths.copy catalogue key, not from a hardcoded string.
             """)
-        #expect(body.contains("TransferRowPaths(item: item, sessionName: sessionName)"), """
+        #expect(body.code.contains(Self.foldCall), """
             Copy paths must copy the same fold the hint shows -- a copy assembled \
             separately would be free to disagree with what the row displayed.
             """)
-        #expect(body.contains(".clipboardText"), """
-            The pasteboard text is the fold's own one-path-per-line rendering, \
-            held by TransferRowPathsTests; the bar must not re-join the two \
-            paths with a separator of its own.
+        #expect(body.code.contains(Self.clipboardRendering), """
+            The pasteboard text is the fold's own one-RAW-path-per-line rendering, \
+            held by TransferRowPathsTests; a bar that re-joined the fold's two \
+            DISPLAY strings would paste "/var/www/index.html (on prod-web)", \
+            which is not a path.
             """)
-        #expect(body.contains("NSPasteboard.general"), """
+        #expect(body.code.contains(Self.pasteboard), """
             Copy paths must actually reach the pasteboard.
             """)
     }
@@ -100,52 +148,76 @@ struct TransferQueueBarPathsGuardTests {
     /// a declaration that nothing places in the row would leave them green
     /// over an affordance the user can never reach. Each name must
     /// therefore occur twice: once declared, once placed.
+    ///
+    /// Counted on the strict view, so prose about an affordance cannot
+    /// stand in for the affordance.
     @Test func bothAffordancesAreActuallyPlacedOnTheRow() throws {
-        let source = try Self.barSource()
+        let code = try Self.barViews().code
         let hintUses = TransferQueueBarCancelGuardTests.occurrenceCount(
-            of: "pathsHint(", in: source)
+            of: "pathsHint(", in: code)
         #expect(hintUses == 2, """
             pathsHint( must be declared once and called once from the row \
-            builder -- found \(hintUses) mentions.
+            builder -- found \(hintUses) mentions in code.
             """)
         let copyUses = TransferQueueBarCancelGuardTests.occurrenceCount(
-            of: "copyPathsButton(", in: source)
+            of: "copyPathsButton(", in: code)
         #expect(copyUses == 2, """
             copyPathsButton( must be declared once and called once from the row \
-            builder -- found \(copyUses) mentions.
+            builder -- found \(copyUses) mentions in code.
             """)
 
-        let rowBody = try Self.body(of: Self.rowDeclaration)
-        #expect(rowBody.contains(".help(pathsHint(item))"), """
+        let rowBody = try Self.bodies(of: Self.rowDeclaration).code
+        #expect(rowBody.contains(Self.hintPlacement), """
             The hint must hang on the row itself, so hovering anywhere on the \
             row answers "which file, going where?".
             """)
-        #expect(rowBody.contains(".contextMenu {"), """
+        #expect(rowBody.contains(Self.menuPlacement), """
             Copy paths must live in the row's own context menu -- that is the \
             "on demand" the row has room for.
             """)
-        #expect(rowBody.contains("copyPathsButton(item)"), """
+        #expect(rowBody.contains(Self.menuItemPlacement), """
             The context menu must be built from the named declaration this \
             suite reads, not from an inline button that no check can find.
             """)
     }
 
+    /// The row is an `HStack` with no background and a `Spacer` that is most
+    /// of its width for a short file name. SwiftUI hit-tests the drawn
+    /// subviews, not the container's frame, so without a shape the hint and
+    /// the menu answer only over the file name itself — and the check above
+    /// cannot tell the difference, because it reads which modifiers are
+    /// there and never where they respond.
+    ///
+    /// The idiom is the tree's own, three times over: `SessionSidebar`,
+    /// `TabStripView` and `ContentView+Detail` each put
+    /// `.contentShape(Rectangle())` immediately before the interaction
+    /// modifier it is there to serve.
+    @Test func theRowCarriesAHitRegionCoveringItsEmptySpace() throws {
+        // Computed before the expectation, so a failure reports the claim
+        // rather than dumping the whole row builder into the output.
+        let carriesHitRegion = try Self.bodies(of: Self.rowDeclaration).code
+            .contains(Self.hitRegion)
+        #expect(carriesHitRegion, """
+            The row no longer sets .contentShape(Rectangle()) -- its hint and its \
+            context menu would answer only over the drawn file name, not over the \
+            Spacer that is most of a short row's width.
+            """)
+    }
+
     /// The session name is what turns a bare remote path into one the user
     /// can place. It is not something the bar can derive, so it has to be
-    /// handed in -- and a stored property nobody passes would silently be
+    /// handed in — and a stored property nobody passes would silently be
     /// `nil` for every row.
     @Test func theBarIsHandedTheSessionNameThatQualifiesARemotePath() throws {
-        // Computed before the expectation, so a failure reports the claim
-        // rather than dumping a whole source file into the run's output.
-        let barTakesIt = try Self.barSource().contains("let sessionName: String?")
+        // Both computed before the expectation, so a failure reports the
+        // claim rather than dumping a whole source file into the output.
+        let barTakesIt = try Self.barViews().code.contains(Self.sessionNameInput)
         #expect(barTakesIt, """
             The bar must take the queue's own session name as an input; without \
             it every remote path in the hint reads as an unqualified path.
             """)
 
-        let detail = try String(contentsOf: Self.detailFile, encoding: .utf8)
-        let windowPassesIt = detail.contains(
-            "TransferQueueBar(viewModel: tab.transferQueue, sessionName: tab.titleName)")
+        let windowPassesIt = try Self.detailCode().contains(Self.barConstruction)
         #expect(windowPassesIt, """
             The window must pass the TAB's own display name -- titleName rather \
             than displayTitle, so a tab that has no name yet qualifies nothing \
@@ -153,7 +225,78 @@ struct TransferQueueBarPathsGuardTests {
             """)
     }
 
+    /// What the two whole-file checks above would be worth nothing without:
+    /// the strict views must actually be reaching the files they name. An
+    /// empty or unreadable read makes every `contains` false — which those
+    /// notice — but it would also satisfy any `!contains` in this suite.
+    @Test func theStrictViewsStillContainTheCodeTheyName() throws {
+        let readsTheBar = try Self.barViews().code.contains("struct TransferQueueBar: View")
+        #expect(readsTheBar, """
+            the strict view of TransferQueueBar.swift no longer contains the bar's \
+            own declaration -- the stripper or the path is wrong, and every scan in \
+            this suite is reading something other than the file it names
+            """)
+        let readsTheWindow = try Self.detailCode().contains("TransferQueueBar(")
+        #expect(readsTheWindow, """
+            the strict view of ContentView+Detail.swift no longer mentions the bar \
+            at all -- the path is wrong, or the bar is placed somewhere this suite \
+            does not look
+            """)
+    }
+
     // MARK: - The scanner reacts (self-tests over synthetic sources)
+
+    /// The needles the negative self-tests use are the same constants the
+    /// real-file checks read, so a needle can never name a string that
+    /// appears nowhere in the tree — the way an unanchored copy would, going
+    /// on passing while demonstrating nothing.
+    @Test func theSelfTestsUseNeedlesTheBarActuallyContains() throws {
+        let views = try Self.barViews()
+        #expect(views.code.contains(Self.foldCall), """
+            the fold needle names an expression TransferQueueBar.swift does not \
+            contain, so scannerSeesAHintAssembledWithoutTheFold would be satisfied \
+            by any body at all
+            """)
+        #expect(views.code.contains(Self.clipboardRendering), """
+            the clipboard needle names an expression TransferQueueBar.swift does \
+            not contain, so scannerSeesACopyThatRejoinsThePathsItself would be \
+            satisfied by any body at all
+            """)
+        #expect(views.withLiterals.contains(Self.copyKey), """
+            the catalogue-key needle names a literal TransferQueueBar.swift does \
+            not contain
+            """)
+    }
+
+    /// The probe that defeated the first version of this suite: the real
+    /// placement deleted, a sentence naming it left behind. Against the raw
+    /// file the count stays at two and the row body still "contains" the
+    /// modifier; against the strict view both collapse.
+    @Test func scannerSeesThroughACommentThatNamesTheAffordance() throws {
+        let source = """
+            \(Self.rowDeclaration)_ item: Item) -> some View {
+                HStack { Text(item.fileName) }
+                    .font(.system(size: 12))
+                    // The row's hint comes from \(Self.hintPlacement).
+                    \(Self.menuPlacement)
+                        \(Self.menuItemPlacement)
+                    }
+            }
+            """
+        // Positive first: the scanner did read this body, and the placement
+        // that is really there is found -- so the two negatives below report
+        // the DELETED hint rather than an empty read.
+        let code = try SwiftSource.blankingCommentsAndStrings(source)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: Self.rowDeclaration, in: code)
+        #expect(body.contains(Self.menuItemPlacement))
+        #expect(!body.contains(Self.hintPlacement), """
+            the strict view must not let a sentence naming .help(pathsHint(item)) \
+            stand in for the modifier itself
+            """)
+        #expect(TransferQueueBarCancelGuardTests.occurrenceCount(of: "pathsHint(", in: code) == 0,
+                "a commented mention must not be counted as a placement")
+    }
 
     @Test func scannerSeesAHintAssembledWithoutTheFold() throws {
         let source = """
@@ -162,8 +305,8 @@ struct TransferQueueBarPathsGuardTests {
             }
             """
         let body = try TransferQueueBarCancelGuardTests.declarationBody(
-            of: Self.hintDeclaration, in: source)
-        #expect(!body.contains("TransferRowPaths(item: item, sessionName: sessionName)"), """
+            of: Self.hintDeclaration, in: try SwiftSource.blankingCommentsAndStrings(source))
+        #expect(!body.contains(Self.foldCall), """
             the scanner must report a hint the view derived itself, not wave it \
             through because it mentions the item's paths at all
             """)
@@ -173,17 +316,22 @@ struct TransferQueueBarPathsGuardTests {
         let source = """
             \(Self.copyDeclaration)_ item: Item) -> some View {
                 Button(L10n.string("transfers.paths.copy", "Copy paths")) {
-                    let paths = TransferRowPaths(item: item, sessionName: sessionName)
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(
-                        paths.source + " | " + paths.destination, forType: .string)
+                    let paths = \(Self.foldCall)
+                    \(Self.pasteboard).clearContents()
+                    \(Self.pasteboard).setString(
+                        paths.source + "\\n" + paths.destination, forType: .string)
                 }
             }
             """
+        let code = try SwiftSource.blankingCommentsAndStrings(source)
         let body = try TransferQueueBarCancelGuardTests.declarationBody(
-            of: Self.copyDeclaration, in: source)
-        #expect(!body.contains(".clipboardText"), """
-            the scanner must report a separator invented in the view, not accept \
+            of: Self.copyDeclaration, in: code)
+        // Positive first: the body was read and the fold IS consulted here,
+        // so the negative below reports the invented rendering rather than
+        // an empty read.
+        #expect(body.contains(Self.foldCall))
+        #expect(!body.contains(Self.clipboardRendering), """
+            the scanner must report a rendering invented in the view, not accept \
             it because the fold was consulted for the two halves
             """)
     }

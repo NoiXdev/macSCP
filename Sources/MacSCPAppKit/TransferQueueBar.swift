@@ -140,9 +140,14 @@ struct TransferQueueBar: View {
     /// The other half of "on demand": the same two paths, on the
     /// pasteboard, from the row's own context menu — for the times the
     /// answer has to go into a shell or a message rather than just be read.
-    /// The one-path-per-line rendering is the fold's own
-    /// (`clipboardText`), so what is copied cannot drift from what the hint
-    /// above displayed.
+    ///
+    /// What is copied is the fold's own one-RAW-path-per-line rendering, not
+    /// a re-join of the two strings the hint displays: the hint qualifies a
+    /// remote path with the session it lives on, and a pasted
+    /// "/var/www/index.html (on prod-web)" is not a path. Every other copy
+    /// affordance in the app hands over something a shell accepts — the
+    /// browser row's Copy Path and the path bar's click-to-copy both do —
+    /// and one of them sits in the very next context menu over.
     @ViewBuilder
     private func copyPathsButton(_ item: TransferQueueViewModel.Item) -> some View {
         Button(L10n.string("transfers.paths.copy", "Copy paths")) {
@@ -229,6 +234,13 @@ struct TransferQueueBar: View {
             cancelButton(item)
         }
         .font(.system(size: 12))
+        // The row is an HStack with no background, and its `Spacer` is most
+        // of the width for a short file name. SwiftUI hit-tests the drawn
+        // subviews, not the container's frame, so without a shape the hint
+        // and the menu below would answer only over the file name itself.
+        // Same idiom, same placement — immediately before the interaction
+        // modifier it serves — as the sidebar row and the tab strip.
+        .contentShape(Rectangle())
         .help(pathsHint(item))
         .contextMenu {
             copyPathsButton(item)

@@ -864,6 +864,36 @@ struct TransferQueueViewModelTests {
         #expect(await destination.writtenData(at: "/ziel/a.txt") == nil)   // original untouched
     }
 
+    /// `destinationPath` is a second spelling of the same fact as
+    /// `fileName` + `destinationDirectory`, and a rename moves the fact.
+    /// Both are written at one choke point (`applyEffectiveName`), and this
+    /// is what says so: after a `.rename` the item's path must name the
+    /// file that was actually written, not the one that was asked for.
+    ///
+    /// Without it the transfer row would go on offering "/ziel/a.txt" to
+    /// the hint and the pasteboard for a file that lives at
+    /// "/ziel/a (2).txt" — a path that is wrong rather than merely
+    /// undecorated, which is the worse of the two failures this field can
+    /// have.
+    @Test func renamedItemsDestinationPathFollowsTheEffectiveName() async throws {
+        let content = Data("neu".utf8)
+        let source = QueueTestFS(reads: ["/a.txt": .init(content: content)])
+        let destination = QueueTestFS(reads: [
+            "/ziel/a.txt": .init(content: Data("alt".utf8)),        // conflict
+        ])
+
+        let vm = TransferQueueViewModel()
+        vm.conflictDecider = { _ in (.rename, false) }
+        try await vm.enqueueAndWait(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel")
+
+        #expect(vm.items[0].fileName == "a (2).txt")
+        #expect(vm.items[0].destinationPath == "/ziel/a (2).txt")
+        #expect(await destination.writtenData(at: "/ziel/a (2).txt") == content)
+    }
+
     // MARK: - 14
 
     /// Decider returns nil (cancel) → item `.cancelled`, enqueueAndWait throws.
@@ -1177,6 +1207,39 @@ struct TransferQueueViewModelTests {
 
         #expect(status(vm, "link →") == .skipped)
         #expect(await destination.writtenData(at: "/ziel/dir/link") == nil)
+    }
+
+    /// A terminal row's `fileName` is a LABEL, not a name: the symlink skip
+    /// appends " →" and the two expansion failures append "/". Those
+    /// decorations exist for the row's one-line display and must not reach
+    /// the paths the row's hint shows and its context menu copies — a user
+    /// copying a skipped symlink would otherwise paste an arrow glyph.
+    ///
+    /// So `addTerminalItem` carries the real, undecorated paths, and this
+    /// pins both sides of the pair for the case where they differ most:
+    /// the label ends in an arrow, the path does not.
+    @Test func aSkippedSymlinksPathsCarryNoneOfItsLabelsDecoration() async throws {
+        let source = QueueTestFS(
+            reads: [
+                "/dir/a.txt": .init(content: Data("a".utf8)),
+                "/dir/sub/b.txt": .init(content: Data("b".utf8)),
+            ],
+            listings: treeListings())
+        let destination = QueueTestFS(reads: [:])
+        let done = TestSignal()
+
+        let vm = TransferQueueViewModel()
+        vm.enqueueTree(
+            directoryName: "dir", direction: .download,
+            source: source, sourceDirectory: "/dir",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: { await done.fire() })
+
+        try await done.wait()
+
+        let symlinkItem = try #require(vm.items.first(where: { $0.fileName == "link →" }))
+        #expect(symlinkItem.sourcePath == "/dir/link")
+        #expect(symlinkItem.destinationPath == "/ziel/dir/link")
     }
 
     // MARK: - 23

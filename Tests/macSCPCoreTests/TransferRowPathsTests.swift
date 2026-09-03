@@ -23,11 +23,16 @@ import Testing
 struct TransferRowPathsTests {
     private typealias VM = TransferQueueViewModel
 
+    /// `destinationPath` defaults to the engine's own join of the two, which
+    /// is what every non-terminal item carries — a case that needs them to
+    /// DIFFER (a terminal row, whose `fileName` is a decorated label rather
+    /// than a name) passes it explicitly.
     private func makeItem(
         fileName: String,
         direction: TransferDirection,
         sourcePath: String,
         destinationDirectory: String,
+        destinationPath: String? = nil,
         crossRemote: Bool = false,
         crossBackendTarget: CrossBackendTarget? = nil
     ) -> VM.Item {
@@ -35,6 +40,8 @@ struct TransferRowPathsTests {
             id: UUID(), fileName: fileName, direction: direction, status: .queued,
             sourcePath: sourcePath, destinationTabID: nil, isEditUpload: false,
             destinationDirectory: destinationDirectory,
+            destinationPath: destinationPath
+                ?? RemotePath.join(destinationDirectory, fileName),
             destinationSupportsResume: true, crossRemote: crossRemote,
             crossBackendTarget: crossBackendTarget)
     }
@@ -153,28 +160,33 @@ struct TransferRowPathsTests {
         #expect(paths.source == "/var/www/index.html")
     }
 
-    /// A destination directory that already ends in a slash must not
-    /// produce a doubled one — the same join the engine itself uses
-    /// (`RemotePath.join`), so what the row shows is the path the transfer
-    /// actually writes.
-    @Test func theDestinationIsJoinedTheWayTheEngineJoinsIt() {
+    /// The destination the row shows is the item's own `destinationPath` —
+    /// the path the engine writes — and never a path this fold rebuilt from
+    /// a display name. A terminal row is where the two part company: a
+    /// skipped symlink's `fileName` is `link →`, so a rebuilt path would
+    /// put an arrow glyph in the hint and, worse, on the pasteboard.
+    @Test func aDecoratedDisplayNameNeverReachesTheDestinationPath() {
         let item = makeItem(
-            fileName: "index.html", direction: .download,
-            sourcePath: "/var/www/index.html",
-            destinationDirectory: "/")
+            fileName: "link →", direction: .download,
+            sourcePath: "/dir/link",
+            destinationDirectory: "/ziel/dir",
+            destinationPath: "/ziel/dir/link")
         let paths = TransferRowPaths(item: item, sessionName: nil)
 
-        #expect(paths.destination == "/index.html")
+        #expect(paths.destination == "/ziel/dir/link")
+        #expect(paths.clipboardText == "/dir/link\n/ziel/dir/link")
     }
 
     // MARK: - What "Copy paths" puts on the pasteboard
 
-    /// One path per line, source first — the same order the row's hint
-    /// reads in, so what was copied matches what was seen. The session
-    /// qualification is part of it by design: the row shows qualified
-    /// paths, and a copy that silently differed from the display would be
-    /// the more surprising of the two.
-    @Test func clipboardTextIsTheTwoPathsOnePerLineSourceFirst() {
+    /// One RAW path per line, source first. Every other copy affordance in
+    /// the tree hands over a path that can be pasted into a shell —
+    /// `copyPaths(of:)` in `ContentView+Transfers` and the path bar's own
+    /// click both copy `\.path` verbatim — and a "Copy paths" that pasted
+    /// `/var/www/index.html (on prod-web)` would be the one place a copied
+    /// path is not a path. The qualification belongs to the DISPLAY, which
+    /// the next test holds separately.
+    @Test func clipboardTextIsTheTwoRawPathsOnePerLineSourceFirst() {
         let item = makeItem(
             fileName: "db.sql", direction: .upload,
             sourcePath: "/srv/app/db.sql",
@@ -183,25 +195,59 @@ struct TransferRowPathsTests {
             crossBackendTarget: CrossBackendTarget(name: "backup-host", kind: .ssh))
         let paths = TransferRowPaths(item: item, sessionName: "prod-web")
 
-        #expect(paths.clipboardText == "\(paths.source)\n\(paths.destination)")
+        #expect(paths.clipboardText == "/srv/app/db.sql\n/incoming/db.sql")
     }
 
-    // MARK: - The item really carries the source
+    /// The two halves of the ruling in one place: the same fold's display
+    /// strings ARE qualified and its clipboard text is not. Stated as one
+    /// test because the risk is that a later change collapses them back
+    /// into one string — whichever way it collapses, this goes red.
+    ///
+    /// The session names are checked for ABSENCE from the clipboard rather
+    /// than for a particular rendering, so the assertion survives a
+    /// translator moving the qualifier's punctuation.
+    @Test func theDisplayStringsAreQualifiedWhileTheClipboardIsNot() {
+        let item = makeItem(
+            fileName: "db.sql", direction: .upload,
+            sourcePath: "/srv/app/db.sql",
+            destinationDirectory: "/incoming",
+            crossRemote: true,
+            crossBackendTarget: CrossBackendTarget(name: "backup-host", kind: .ssh))
+        let paths = TransferRowPaths(item: item, sessionName: "prod-web")
 
-    /// The fold is only worth anything if the queue puts a real source path
-    /// on the item. `enqueue` is given one; this pins that it survives onto
-    /// the item rather than being dropped at the boundary.
-    @Test func enqueueCarriesTheSourcePathOntoTheItem() throws {
+        #expect(paths.source.contains("prod-web"))
+        #expect(paths.destination.contains("backup-host"))
+        let clipboardNamesASession =
+            paths.clipboardText.contains("prod-web") || paths.clipboardText.contains("backup-host")
+        #expect(clipboardNamesASession == false, """
+            a copied path must be a path -- the session qualifier belongs to the \
+            hint the row shows, not to what is pasted into a shell
+            """)
+    }
+
+    // MARK: - The item really carries both paths
+
+    /// The fold is only worth anything if the queue puts real paths on the
+    /// item. `enqueue` is given a source path and builds the destination
+    /// one; this pins that both survive onto the item rather than being
+    /// dropped at the boundary.
+    ///
+    /// A directory that already ends in a slash is the case that says the
+    /// queue uses `RemotePath.join` — the engine's own join — rather than
+    /// concatenating, so what the row shows is the path the transfer writes
+    /// and not a doubled slash.
+    @Test func enqueueCarriesBothPathsOntoTheItem() throws {
         let queue = TransferQueueViewModel()
         let fileSystem = MockRemoteFileSystem()
         queue.enqueue(
             fileName: "db.sql", direction: .upload,
             source: fileSystem, sourcePath: "/srv/app/db.sql",
-            destination: fileSystem, destinationDirectory: "/incoming",
+            destination: fileSystem, destinationDirectory: "/",
             onCompleted: nil, crossRemote: true)
 
         let item = try #require(queue.items.first)
         #expect(item.sourcePath == "/srv/app/db.sql")
+        #expect(item.destinationPath == "/db.sql")
         #expect(item.crossRemote)
     }
 }

@@ -161,6 +161,21 @@ public final class TransferQueueViewModel {
         /// exactly, threaded through every construction site the same way
         /// `isEditUpload` is.
         public let destinationDirectory: String
+        /// The full path this item WRITES — `destinationDirectory` joined
+        /// with the name the transfer actually uses, by `RemotePath.join`,
+        /// the engine's own join.
+        ///
+        /// Stored rather than derived from `destinationDirectory` +
+        /// `fileName`, because `fileName` is a display LABEL and not always
+        /// a name: `addTerminalItem` appends " →" to a skipped symlink and
+        /// "/" to an expansion failure, so a rebuilt path would carry the
+        /// decoration into the transfer row's hint and onto the pasteboard.
+        ///
+        /// A `.rename` resolution moves both this and `fileName`, together,
+        /// at the single choke point `applyEffectiveName(_:to:in:)` — they
+        /// are two spellings of one fact, and `renamedItemsDestinationPathFollowsTheEffectiveName`
+        /// is what keeps the second one from going stale.
+        public internal(set) var destinationPath: String
         /// Whether the destination backend supports append-based resume (M16).
         /// Read from `destination.supportsAppendResume` at enqueue; `false`
         /// for an S3 destination. Drives the passive resume warning in the
@@ -515,6 +530,7 @@ public final class TransferQueueViewModel {
             sourcePath: sourcePath,
             destinationTabID: destinationTabID, isEditUpload: false,
             destinationDirectory: destinationDirectory,
+            destinationPath: RemotePath.join(destinationDirectory, fileName),
             destinationSupportsResume: destination.supportsAppendResume,
             crossRemote: crossRemote,
             crossBackendTarget: crossBackendTarget))
@@ -546,6 +562,7 @@ public final class TransferQueueViewModel {
             sourcePath: localURL.path(percentEncoded: false),
             destinationTabID: nil, isEditUpload: true,
             destinationDirectory: remoteDirectory,
+            destinationPath: RemotePath.join(remoteDirectory, fileName),
             destinationSupportsResume: destination.supportsAppendResume,
             crossRemote: false,
             crossBackendTarget: nil))
@@ -962,9 +979,10 @@ public final class TransferQueueViewModel {
         switch outcome {
         case .proceed(let name):
             effectiveFileName = name
-            // On `.rename`, update the displayed name.
-            if name != job.fileName, let index = items.firstIndex(where: { $0.id == jobID }) {
-                items[index].fileName = name
+            // On `.rename`, update the displayed name AND the path that name
+            // spells out — see `applyEffectiveName`.
+            if name != job.fileName {
+                applyEffectiveName(name, to: jobID, in: job.destinationDirectory)
             }
         case .skip:
             setStatus(jobID, .skipped)
@@ -1277,6 +1295,7 @@ public final class TransferQueueViewModel {
                 group: groupID, name: directoryName + "/", sourcePath: sourceDirectory,
                 direction: direction, status: .failed(Self.message(for: error)),
                 destinationTabID: destinationTabID, destinationDirectory: destinationDirectory,
+                destinationPath: destDir,
                 crossRemote: crossRemote, crossBackendTarget: crossBackendTarget)
             return
         }
@@ -1291,6 +1310,7 @@ public final class TransferQueueViewModel {
                 group: groupID, name: directoryName + "/", sourcePath: sourceDirectory,
                 direction: direction, status: .failed(Self.message(for: error)),
                 destinationTabID: destinationTabID, destinationDirectory: destinationDirectory,
+                destinationPath: destDir,
                 crossRemote: crossRemote, crossBackendTarget: crossBackendTarget)
             return
         }
@@ -1321,8 +1341,9 @@ public final class TransferQueueViewModel {
                 addTerminalItem(
                     group: groupID, name: entry.name + " →", sourcePath: entry.path,
                     direction: direction, status: .skipped, destinationTabID: destinationTabID,
-                    destinationDirectory: destDir, crossRemote: crossRemote,
-                    crossBackendTarget: crossBackendTarget)
+                    destinationDirectory: destDir,
+                    destinationPath: RemotePath.join(destDir, entry.name),
+                    crossRemote: crossRemote, crossBackendTarget: crossBackendTarget)
             }
         }
     }
@@ -1343,7 +1364,7 @@ public final class TransferQueueViewModel {
     private func addTerminalItem(
         group groupID: UUID, name: String, sourcePath: String,
         direction: TransferDirection, status: Item.Status, destinationTabID: UUID? = nil,
-        destinationDirectory: String, crossRemote: Bool = false,
+        destinationDirectory: String, destinationPath: String, crossRemote: Bool = false,
         crossBackendTarget: CrossBackendTarget? = nil
     ) {
         let id = UUID()
@@ -1352,6 +1373,7 @@ public final class TransferQueueViewModel {
             sourcePath: sourcePath,
             destinationTabID: destinationTabID, isEditUpload: false,
             destinationDirectory: destinationDirectory,
+            destinationPath: destinationPath,
             destinationSupportsResume: true,
             crossRemote: crossRemote,
             crossBackendTarget: crossBackendTarget))
@@ -1397,6 +1419,20 @@ public final class TransferQueueViewModel {
     }
 
     // MARK: - Helpers
+
+    /// Writes a `.rename` resolution's effective name onto the item — the
+    /// displayed name and the destination path it spells out, in one
+    /// statement, because they are two spellings of one fact and a caller
+    /// that updated only the first would leave the row pointing its hint
+    /// (and its "Copy paths") at a file that was never written.
+    ///
+    /// The join is `RemotePath.join`, the same one `resolveConflictIfNeeded`
+    /// probes with and `TransferEngine.copyFile` writes with.
+    private func applyEffectiveName(_ name: String, to id: UUID, in directory: String) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].fileName = name
+        items[index].destinationPath = RemotePath.join(directory, name)
+    }
 
     private func setStatus(_ id: UUID, _ status: Item.Status) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }

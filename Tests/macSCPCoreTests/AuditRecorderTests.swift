@@ -27,6 +27,7 @@ struct AuditRecorderTests {
             sourcePath: RemotePath.join("/source", fileName),
             destinationTabID: destinationTabID, isEditUpload: isEditUpload,
             destinationDirectory: destinationDirectory,
+            destinationPath: RemotePath.join(destinationDirectory, fileName),
             destinationSupportsResume: true, crossRemote: false, crossBackendTarget: nil)
     }
 
