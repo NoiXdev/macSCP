@@ -24,7 +24,7 @@ struct SubprocessResult: Sendable {
 /// error is the entire report, and an error that says only "empty" cannot
 /// distinguish a child that wrote nothing from a reader that never got
 /// there. CI run 33693297919 was exactly that ambiguity.
-struct SubprocessTimeout: Error, CustomStringConvertible {
+struct SubprocessTimeout: Error, CustomStringConvertible, Sendable {
     /// What the escalation did, and how long each phase really took.
     struct ReapReport: Sendable {
         /// Wall-clock spent on the bounded wait. On a saturated runner this
@@ -46,15 +46,18 @@ struct SubprocessTimeout: Error, CustomStringConvertible {
 
     let executable: String
 
-    /// The argument list, for a test or a debugger that needs it — never for
-    /// a message. `description` names only how MANY there were.
+    /// How many arguments there were. NOT the arguments.
     ///
-    /// Since the short waits were converted, `ConnectFailureSecrecyTests` and
-    /// `Support/InstalledKey.swift` run `ssh-keygen -N <passphrase>` through
-    /// this runner, so an argument value is a secret's value and a rendered
-    /// argument list is that secret in a CI log. Nothing here renders one, and
-    /// `aTimeoutNamesNoArgumentValue` holds this type to it.
-    let arguments: [String]
+    /// Several suites in this target run `ssh-keygen -N <passphrase>` through
+    /// this runner, so an argument value can be a secret's value and a
+    /// rendered argument list is that secret sitting in a public CI log.
+    /// Storing the count rather than the list is what makes the leak
+    /// unwritable: no later `CustomDebugStringConvertible`, `LocalizedError`
+    /// or `dump()` can print what this type does not hold. A comment plus one
+    /// textual expectation over `description` could only forbid it (CLAUDE.md,
+    /// "Guards that name what they watch", rule 3 — a property that keeps
+    /// buying one spelling wants a structural boundary).
+    let argumentCount: Int
 
     let timeout: Duration
     let stderrSoFar: Data
@@ -71,7 +74,7 @@ struct SubprocessTimeout: Error, CustomStringConvertible {
         .joined(separator: ", ")
         return """
             \(executable) did not exit within \(timeout), given \
-            \(arguments.count) arguments (values withheld: an argument can be \
+            \(argumentCount) arguments (values withheld: an argument can be \
             a passphrase)
             \(phases)
             stdout reader: \(reap.stdoutDrained ? "drained" : "still open"); \
@@ -158,27 +161,45 @@ enum SubprocessRunner {
         process.terminationHandler = { _ in exited.signal() }
         try process.run()
 
-        // Incrementally, not `readDataToEndOfFile()`. That call returns only
-        // at EOF, so a box filled by it holds everything or nothing — and
-        // nothing is what it holds exactly when the child is stuck, which is
-        // the only time the timeout path reads it. `availableData` blocks
-        // until there are bytes and answers an empty `Data` at EOF, so the
-        // box tracks what the child has written all along and the latch still
-        // means EOF.
-        DispatchQueue.global().async {
-            let handle = stdoutPipe.fileHandleForReading
-            while case let chunk = handle.availableData, !chunk.isEmpty {
-                stdoutBox.append(chunk)
+        // Event-driven, and this is the third shape these readers have had.
+        //
+        // `readDataToEndOfFile()` returned only at EOF, so the box held
+        // everything or nothing — and nothing is what it held exactly when
+        // the child was stuck, which is the only time the timeout path reads
+        // it. An `availableData` loop fixed that but kept the real problem:
+        // it PARKS a thread in `read(2)` for the child's whole life. Since
+        // every child in this suite is awaited, every child parks two, and
+        // Dispatch's global pool has a finite width that blocked threads
+        // count against — so a reader block that cannot get a thread never
+        // reads, and the box stays empty however incrementally it would have
+        // filled. CI run 33698102652 is that, in the runner's own words:
+        // "waited 9.951088917 seconds for the 2.0 seconds bound … stdout
+        // reader: still open; stderr reader: still open … stderr so far:
+        // (empty)".
+        //
+        // `readabilityHandler` installs a Dispatch source instead: a short
+        // block runs per readable event and returns the thread. An empty
+        // chunk is EOF, which clears the handler and raises the latch —
+        // `AsyncSignal.signal()` is idempotent, so exactly-once holds even if
+        // the source were to fire again.
+        //
+        // Measured 2026-09-03, both shapes against a child that writes a
+        // marker and sleeps, with 96 global-queue threads parked in `read(2)`
+        // (`readersDoNotNeedAFreeGlobalQueueThread`): the loop captured 0
+        // bytes, this captures the marker.
+        let drain: @Sendable (FileHandle, OutputBox, AsyncSignal) -> Void = { handle, box, latch in
+            handle.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                guard !chunk.isEmpty else {
+                    handle.readabilityHandler = nil
+                    latch.signal()
+                    return
+                }
+                box.append(chunk)
             }
-            stdoutDrained.signal()
         }
-        DispatchQueue.global().async {
-            let handle = stderrPipe.fileHandleForReading
-            while case let chunk = handle.availableData, !chunk.isEmpty {
-                stderrBox.append(chunk)
-            }
-            stderrDrained.signal()
-        }
+        drain(stdoutPipe.fileHandleForReading, stdoutBox, stdoutDrained)
+        drain(stderrPipe.fileHandleForReading, stderrBox, stderrDrained)
         if let stdin, let stdinPipe {
             DispatchQueue.global().async {
                 let handle = stdinPipe.fileHandleForWriting
@@ -247,7 +268,7 @@ enum SubprocessRunner {
             let grace = await reap()
             throw SubprocessTimeout(
                 executable: executable.lastPathComponent,
-                arguments: arguments,
+                argumentCount: arguments.count,
                 timeout: timeout,
                 stderrSoFar: stderrBox.read(),
                 reap: SubprocessTimeout.ReapReport(

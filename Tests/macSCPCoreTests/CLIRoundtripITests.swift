@@ -335,10 +335,16 @@ struct CLIRoundtripITests {
     /// `SubprocessRunner`, which awaits the child instead of parking a
     /// cooperative-pool thread on it — see that type's doc comment, and
     /// CLAUDE.md's "Tests never block the cooperative pool". Its
-    /// `SubprocessTimeout` names the executable, the argument COUNT, what
-    /// each escalation phase cost and what the child had written — but never
-    /// an argument value, because elsewhere in this suite an argument is a
-    /// passphrase.
+    /// `SubprocessTimeout` names the executable, the argument COUNT, each
+    /// reader's state, what the escalation cost and what the child had
+    /// written — but never an argument value.
+    ///
+    /// Not because of anything in THIS suite: the credential here travels in
+    /// the environment (`MACSCP_PASSWORD` below), and no `runCLI` call in this
+    /// file passes a secret in argv. The withholding is for the suites in this
+    /// target that run `ssh-keygen -N <passphrase>`, where an argument IS the
+    /// secret — so it is not defensive noise on this path, and restoring the
+    /// argument list here would restore it for them.
     private static func runCLI(
         _ binary: String, _ arguments: [String], storageDirectory: URL
     ) async throws -> (status: Int32, stdout: String, stderr: String) {

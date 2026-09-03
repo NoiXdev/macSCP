@@ -99,15 +99,19 @@ struct SubprocessRunnerTests {
     /// `stderrSoFar` was `""` could not say whether the child had written
     /// nothing or the reader had not got there, which is also why the error
     /// now reports each reader's drained state.
+    ///
+    /// `sleep 10`, not 60: the grandchild outlives this test either way (it is
+    /// reparented to `launchd`), so the number is purely how long a leftover
+    /// process sits on the CI runner per parallel copy of the suite.
     @Test func aTimeoutReportsWhatTheChildWroteBeforeTheBound() async throws {
         let marker = "wrote-before-the-bound-\(UUID().uuidString)"
         var thrown: SubprocessTimeout?
         do {
             _ = try await SubprocessRunner.run(
                 Self.shell,
-                arguments: ["-c", "echo '\(marker)' >&2; sleep 60 & exec sleep 60"],
+                arguments: ["-c", "echo '\(marker)' >&2; sleep 10 & exec sleep 10"],
                 timeout: .seconds(2))
-            Issue.record("a child sleeping for 60 s returned inside a 2 s bound")
+            Issue.record("a child sleeping for 10 s returned inside a 2 s bound")
         } catch let error as SubprocessTimeout {
             thrown = error
         }
@@ -119,16 +123,77 @@ struct SubprocessRunnerTests {
             "stderr written before the bound was lost; the error said: \(error)")
         // The grandchild still holds the write end, so this is the case the
         // description has to be able to explain rather than merely survive.
+        //
+        // The `false` is a fact about THIS child, not a decision of the
+        // runner: the runner never closes its own read ends, so the handler
+        // stays installed until the grandchild exits. If that debt is ever
+        // paid — round 1's M-4 — both latches would raise here and this line
+        // would need revisiting on a runner that got strictly better.
         #expect(error.reap.stderrDrained == false)
         #expect("\(error)".contains("stderr reader"))
     }
 
+    /// A reader must not need a free Dispatch global-queue thread.
+    ///
+    /// This is the shape CI run 33698102652 failed in, reproduced without CI
+    /// load. Ninety-six blocks are parked in `read(2)` on pipes nobody writes
+    /// to — the very thing the old readers did, one pair per child, for every
+    /// child in a suite that now awaits all of them. Dispatch's global pool
+    /// has a finite width and blocked threads count against it, so a reader
+    /// submitted behind them never runs at all and the box stays empty however
+    /// incrementally it would have filled.
+    ///
+    /// Measured 2026-09-03 under exactly this saturation: an `availableData`
+    /// loop on a `DispatchQueue.global()` block captured 0 bytes; the
+    /// `readabilityHandler` the runner uses captured the marker.
+    ///
+    /// The blockers are parked on pipe reads rather than a sleep because a
+    /// blocking sleep is precisely what this suite forbids (CLAUDE.md, "Tests
+    /// never block the cooperative pool"), and closing the write ends releases
+    /// every one of them deterministically.
+    @Test func readersDoNotNeedAFreeGlobalQueueThread() async throws {
+        var writeEnds: [FileHandle] = []
+        for _ in 0..<96 {
+            let pipe = Pipe()
+            writeEnds.append(pipe.fileHandleForWriting)
+            let readEnd = pipe.fileHandleForReading
+            DispatchQueue.global().async { _ = readEnd.availableData }
+        }
+        defer { for handle in writeEnds { try? handle.close() } }
+
+        let marker = "under-saturation-\(UUID().uuidString)"
+        var thrown: SubprocessTimeout?
+        do {
+            _ = try await SubprocessRunner.run(
+                Self.shell,
+                arguments: ["-c", "echo '\(marker)' >&2; exec sleep 10"],
+                timeout: .seconds(2))
+            Issue.record("a child sleeping for 10 s returned inside a 2 s bound")
+        } catch let error as SubprocessTimeout {
+            thrown = error
+        }
+
+        let error = try #require(thrown)
+        let text = String(decoding: error.stderrSoFar, as: UTF8.self)
+        #expect(
+            text.contains(marker),
+            "a saturated global queue silenced the reader; the error said: \(error)")
+    }
+
     /// No argument VALUE reaches the failure message.
     ///
-    /// Since the short waits were converted, `ssh-keygen -N <passphrase>` runs
-    /// through this runner (`ConnectFailureSecrecyTests`,
-    /// `Support/InstalledKey.swift`), so an argument is a secret's value and a
-    /// rendered argument list is that secret sitting in a public CI log.
+    /// Since the short waits were converted, several suites in this target run
+    /// `ssh-keygen -N <passphrase>` through this runner, so an argument can be
+    /// a secret's value and a rendered argument list is that secret sitting in
+    /// a public CI log. (No count here on purpose: a number written into a
+    /// comment is a claim about the rest of the tree that has to be recounted
+    /// on every change — CLAUDE.md, "Comments that describe other code" — and
+    /// the property does not depend on how many there are.)
+    ///
+    /// `SubprocessTimeout` stores `argumentCount`, not the arguments, so this
+    /// test guards a boundary rather than being the only thing between a
+    /// passphrase and a CI log: what the type does not hold, no later
+    /// conformance can render.
     ///
     /// The test itself is the second exit, and it is shut here too: `#expect`
     /// reports the SOURCE TEXT of the expression it checks, so a secret named
@@ -158,10 +223,10 @@ struct SubprocessRunnerTests {
         // invocation. Without it, a `description` that rendered nothing at all
         // would satisfy the check above.
         let namesTheExecutable = rendered.contains("sh")
-        let namesTheCount = rendered.contains("\(error.arguments.count) arguments")
+        let namesTheCount = rendered.contains("\(error.argumentCount) arguments")
         #expect(namesTheExecutable)
         #expect(namesTheCount)
-        #expect(error.arguments.count == 3)
+        #expect(error.argumentCount == 3)
     }
 
     /// Cancellation is an outcome of its own, not a quiet "it settled".
