@@ -39,6 +39,11 @@ struct NetworkTraceTests {
     /// RFC 5737 TEST-NET-1, reached only with a TTL of 1 or 2.
     private static let testNetV4 = "192.0.2.1"
 
+    /// RFC 5737 TEST-NET-3, which the value cases NAME and never open a socket
+    /// to. It stands in for "the destination this walk was aimed at" wherever
+    /// an outcome is built by hand.
+    private static let documentationV4 = "203.0.113.9"
+
     // MARK: - The destination
 
     /// Loopback answers port-unreachable at the first hop, so the trace ends
@@ -137,18 +142,169 @@ struct NetworkTraceTests {
         // the trace was aimed at. Without it the two negatives below would be
         // satisfied by a rule that never says "arrived" at all.
         #expect(
-            NetworkTraceOutcome.measured(hops: [hop], destination: "10.0.0.1")
-                .reachedDestination)
+            NetworkTraceOutcome.measured(
+                hops: [hop], destination: "10.0.0.1", ending: .answered
+            ).reachedDestination)
         #expect(
-            NetworkTraceOutcome.measured(hops: [hop], destination: "203.0.113.9")
-                .reachedDestination == false)
+            NetworkTraceOutcome.measured(
+                hops: [hop], destination: Self.documentationV4, ending: .answered
+            ).reachedDestination == false)
         // And a hop that merely forwarded is never an arrival, whatever
         // address it came from.
         let forwarded = NetworkTraceHop(
             ttl: 4, outcome: .forwarded(address: "10.0.0.1", rtt: .milliseconds(1)))
         #expect(
-            NetworkTraceOutcome.measured(hops: [forwarded], destination: "10.0.0.1")
-                .reachedDestination == false)
+            NetworkTraceOutcome.measured(
+                hops: [forwarded], destination: "10.0.0.1", ending: .hopLimit
+            ).reachedDestination == false)
+    }
+
+    // MARK: - The budget, and what ended the walk
+
+    /// A walk the STEP'S BUDGET ends is not a walk that found the end of the
+    /// path, and the detail line has to say which it was.
+    ///
+    /// Measured through a fake hop source AND a fake clock rather than a
+    /// network: the property is about the walk's endings, a real path that
+    /// ends on a budget needs a slow route nobody can guarantee, and a
+    /// fixture that provoked it by sleeping would be measuring the runner
+    /// (CLAUDE.md, "Tests never block the cooperative pool", and the ceilings
+    /// this project has already had to remove). The fake hop source says how
+    /// much time each hop took; nothing here waits for any.
+    ///
+    /// The anchor comes first, and it is the same fake with room to run: five
+    /// hops, ended by the hop limit, and NO marker. Without it the marker
+    /// below would be satisfied by a walk that always claims the budget ended
+    /// it.
+    @Test func aWalkTheBudgetEndsSaysSoAndDropsTheHopItCouldNotMeasure() {
+        let roomy = Self.fakeWalk(
+            budget: .seconds(5), hopCost: .milliseconds(2), answering: 5, maxHops: 5)
+        #expect(roomy.ending == .hopLimit)
+        #expect(roomy.hops.map(\.ttl) == [1, 2, 3, 4, 5])
+        #expect(
+            ConnectionDiagnostics.traceDetail(roomy)
+                .contains(DiagnosticReason.stoppedByBudget) == false)
+
+        // Three hops of 1.5 s answer inside a 5 s budget; the fourth starts
+        // with half a second left, which is less than a hop's own second.
+        let cut = Self.fakeWalk(
+            budget: .seconds(5), hopCost: .milliseconds(1500), answering: 3, maxHops: 5)
+        #expect(cut.ending == .budget)
+        // Hop 4 answered nothing, but it was never given its second — a `*`
+        // row there would claim a measurement nobody made, which is the whole
+        // finding. Only the three that were fully waited for are reported.
+        #expect(cut.hops.map(\.ttl) == [1, 2, 3])
+        #expect(
+            ConnectionDiagnostics.traceDetail(cut)
+                .hasSuffix(DiagnosticReason.traceStoppedByBudget(afterHop: 3)))
+        // A hop DID answer, so the step is not the deadline's answer.
+        #expect(ConnectionDiagnostics.traceOutcome(cut) == .ok)
+    }
+
+    /// The outcome→step mapping, over outcomes built by hand.
+    ///
+    /// The same shape as `anUnreachableFromSomeOtherAddressIsNotAnArrival`,
+    /// and for the same reason: none of these four situations can be provoked
+    /// on loopback, where the only address that answers is the destination and
+    /// the only code it sends is 3.
+    @Test func theStepMappingSeparatesAnArrivalFromABudgetAndFromARefusal() {
+        let answered = NetworkTraceHop(
+            ttl: 1, outcome: .forwarded(address: "10.0.0.1", rtt: .milliseconds(2)))
+        let silent = NetworkTraceHop(ttl: 1, outcome: .timedOut)
+        let arrival = NetworkTraceHop(
+            ttl: 2,
+            outcome: .unreachable(
+                address: Self.documentationV4, rtt: .milliseconds(3),
+                code: NetworkTrace.portUnreachableCode))
+        let refusal = NetworkTraceHop(
+            ttl: 4,
+            outcome: .unreachable(address: "10.0.0.1", rtt: .milliseconds(3), code: 13))
+
+        // The anchor: an ordinary arrival is `.ok` and carries no marker.
+        let reached = NetworkTraceOutcome.measured(
+            hops: [answered, arrival], destination: Self.documentationV4, ending: .answered)
+        #expect(ConnectionDiagnostics.traceOutcome(reached) == .ok)
+        #expect(
+            ConnectionDiagnostics.traceDetail(reached)
+                .contains(DiagnosticReason.stoppedByBudget) == false)
+
+        // The budget with nothing answered is the deadline's answer, and says
+        // so twice — in the badge and in the marker.
+        let nothing = NetworkTraceOutcome.measured(
+            hops: [silent], destination: Self.documentationV4, ending: .budget)
+        #expect(ConnectionDiagnostics.traceOutcome(nothing) == .timedOut)
+        #expect(
+            ConnectionDiagnostics.traceDetail(nothing)
+                .hasSuffix(DiagnosticReason.traceStoppedByBudget(afterHop: 1)))
+
+        // The budget with a hop that answered is a partial measurement, not a
+        // failure to measure.
+        let partial = NetworkTraceOutcome.measured(
+            hops: [answered], destination: Self.documentationV4, ending: .budget)
+        #expect(ConnectionDiagnostics.traceOutcome(partial) == .ok)
+
+        // A router answering with a code of its own is a finding ABOUT THE
+        // PATH — a policy block reads as one, not as a slow network.
+        let refused = NetworkTraceOutcome.measured(
+            hops: [answered, refusal], destination: Self.documentationV4, ending: .answered)
+        let outcome = ConnectionDiagnostics.traceOutcome(refused)
+        #expect(outcome == .failed(DiagnosticReason.traceHopUnreachable(code: 13, hop: 4)))
+        // Derived above, so the two numbers are read here: a sentence that
+        // dropped either would still equal the builder's own output.
+        guard case .failed(let reason) = outcome else {
+            Issue.record("a mid-path refusal did not fail the step: \(outcome)")
+            return
+        }
+        #expect(reason.contains("13"))
+        #expect(reason.contains("hop 4"))
+    }
+
+    /// The OUTER deadline — the margin `BlockingProbe` is given on top of the
+    /// walk's own budget — must not throw away the hops the walk had already
+    /// measured. Before the collector, an overrun there printed an empty
+    /// detail line for a walk that had eight hops.
+    @Test func anOuterMarginOverrunKeepsTheHopsTheWalkHadMeasured() async {
+        let measured = NetworkTraceHop(
+            ttl: 1, outcome: .forwarded(address: "10.0.0.1", rtt: .milliseconds(2)))
+        let collector = TraceHopCollector()
+        let outcome = await NetworkTrace.run(
+            destination: Self.documentationV4, timeout: .zero, collector: collector
+        ) { _, collected in
+            collected.append(measured)
+            // Past the outer margin, on `BlockingProbe`'s OWN private queue
+            // and never on the cooperative pool — which is why this one
+            // `Thread.sleep` is declared in
+            // `TestsNeverBlockThePoolGuardTests.allowed` rather than spelled
+            // some other way to slip past the scan. The value returned below
+            // is the one that gets dropped, which is the point.
+            Thread.sleep(forTimeInterval: 0.4)
+            return .measured(
+                hops: collected.hops, destination: Self.documentationV4, ending: .hopLimit)
+        }
+
+        #expect(outcome.hops == [measured])
+        // And it is honest about why it is short: the budget, not the path.
+        #expect(outcome.ending == .budget)
+    }
+
+    /// The trace spends the budget it was HANDED, and not the one every other
+    /// step gets.
+    ///
+    /// The anchor is the same endpoint with room to walk: loopback answers at
+    /// hop 1 and the row is `.ok`. The starved run then hands the trace no
+    /// budget at all while leaving `stepTimeout` generous — and no budget is
+    /// what it takes, because loopback answers in a tenth of a millisecond and
+    /// any positive budget is enough for it. That is exactly what makes this a
+    /// plumbing check rather than a race: the row can only come out cut if the
+    /// value the trace used is the value the trace was given.
+    @Test func theTraceSpendsItsOwnBudgetRatherThanTheStepTimeout() async throws {
+        let reached = try #require(await Self.traceStep(budget: .seconds(3)))
+        #expect(reached.outcome == .ok)
+        #expect(reached.detail.hasPrefix("1 127.0.0.1 "))
+
+        let cut = try #require(await Self.traceStep(budget: .zero))
+        #expect(cut.outcome == .timedOut)
+        #expect(cut.detail == DiagnosticReason.traceStoppedByBudget(afterHop: 0))
     }
 
     // MARK: - What this step cannot do
@@ -358,6 +514,54 @@ struct NetworkTraceTests {
             DispatchQueue(label: "macscp.tests.network-trace").async {
                 continuation.resume(returning: body())
             }
+        }
+    }
+
+    /// One whole diagnosis against loopback, with a generous `stepTimeout` and
+    /// the trace budget under test, returning the trace's row.
+    ///
+    /// A listener of its OWN per run, and that is not tidiness: a listening
+    /// socket nobody accepts from holds a backlog of one, so a second run
+    /// against the same listener has its SYN dropped and the TCP step spends
+    /// the whole `stepTimeout` — measured at exactly 5.004 s before this was
+    /// split, in a case that has nothing to do with TCP.
+    private static func traceStep(budget: Duration) async -> DiagnosticStep? {
+        guard let listener = TraceLoopbackListener.listening() else { return nil }
+        defer { listener.close() }
+        let report = await ConnectionDiagnostics(
+            descriptor: probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: listener.port)),
+            values: FieldValues(), secrets: nil, stepTimeout: .seconds(5),
+            traceTimeout: budget
+        ).run()
+        return report.steps.first { $0.id == DiagnosticStepID.trace }
+    }
+
+    /// Drives `NetworkTrace.walk` over a fake hop source and a fake clock:
+    /// the first `answering` hops report time-exceeded and the rest report
+    /// nothing, and every one of them costs `hopCost` on the clock.
+    ///
+    /// No thread waits for any of it. The clock reads a base instant plus
+    /// whatever the fake source says has elapsed, so a hop that "takes" a
+    /// second and a half costs this case nothing and reads the same on every
+    /// machine — which is the point, since what is pinned is the walk's
+    /// arithmetic against its deadline and not the runner's scheduling. It is
+    /// also what makes the injected clock load-bearing: with the real one,
+    /// every hop below costs microseconds and the same walk runs to
+    /// `maxHops`.
+    private static func fakeWalk(
+        budget: Duration, hopCost: Duration, answering: Int, maxHops: Int
+    ) -> NetworkTraceOutcome {
+        let base = ContinuousClock().now
+        var elapsed = Duration.zero
+        return NetworkTrace.walk(
+            destination: documentationV4, maxHops: maxHops,
+            deadline: base.advanced(by: budget), collector: TraceHopCollector(),
+            now: { base.advanced(by: elapsed) }
+        ) { ttl, _ in
+            elapsed += hopCost
+            guard ttl <= answering else { return .measured(.timedOut) }
+            return .measured(.forwarded(address: "10.0.0.1", rtt: .milliseconds(2)))
         }
     }
 

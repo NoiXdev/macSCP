@@ -1089,3 +1089,4 @@
 "diagnostics.reason.noIPv6Route" = "Ten Mac nie ma trasy IPv6.";
 "diagnostics.reason.ipv6TraceUnmeasured" = "Sprawdzanie trasy nie obejmuje jeszcze IPv6 — nigdy nie zmierzono go na Macu z trasą IPv6.";
 "diagnostics.reason.traceNeedsIPv4" = "Sprawdzanie trasy wymaga adresu IPv4.";
+"diagnostics.reason.traceStoppedByBudget" = "Sprawdzanie trasy wyczerpało swój limit czasu po przeskoku %@ — trasa może biec dalej.";

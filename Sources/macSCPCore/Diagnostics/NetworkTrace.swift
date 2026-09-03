@@ -44,12 +44,30 @@ struct NetworkTraceHop: Sendable, Equatable {
     }
 }
 
+/// Why a walk stopped.
+///
+/// The distinction the detail line rests on: a `*` row and a walk that ran out
+/// of budget look identical once the hops are printed, and only one of them is
+/// a statement about the path. `.budget` says the trace stopped looking, not
+/// that the path stopped.
+enum NetworkTraceEnding: Sendable, Equatable {
+    /// A hop answered ICMP destination-unreachable. The path ended here —
+    /// at the destination when the address matches, at a refusal otherwise.
+    case answered
+    /// `maxHops` probes went out and none of them ended the path.
+    case hopLimit
+    /// The walk's own budget ran out. Whatever the hops below say, the path
+    /// may continue past them and this trace does not know.
+    case budget
+}
+
 /// What a trace run found.
 enum NetworkTraceOutcome: Sendable, Equatable {
-    /// The hops that were probed, in order, together with the address the
-    /// trace was aimed at — carried so `reachedDestination` can be derived
-    /// rather than stored beside the hops as a second copy of the same fact.
-    case measured(hops: [NetworkTraceHop], destination: String)
+    /// The hops that were probed, in order, the address the trace was aimed
+    /// at — carried so `reachedDestination` can be derived rather than stored
+    /// beside the hops as a second copy of the same fact — and why the walk
+    /// stopped.
+    case measured(hops: [NetworkTraceHop], destination: String, ending: NetworkTraceEnding)
     /// This machine could not trace at all: the socket was refused, there is
     /// no route, or the address is not one this step can probe. About the
     /// local end, never the server.
@@ -57,9 +75,27 @@ enum NetworkTraceOutcome: Sendable, Equatable {
 
     var hops: [NetworkTraceHop] {
         switch self {
-        case .measured(let hops, _): return hops
+        case .measured(let hops, _, _): return hops
         case .unavailable: return []
         }
+    }
+
+    /// Why the walk stopped, or `nil` when there was no walk at all.
+    var ending: NetworkTraceEnding? {
+        switch self {
+        case .measured(_, _, let ending): return ending
+        case .unavailable: return nil
+        }
+    }
+
+    /// Whether any hop answered at all — a router or the destination, as
+    /// opposed to a row of `*`.
+    ///
+    /// What separates "the budget ended a walk that was measuring something"
+    /// from "the budget ended a walk that had measured nothing", which are
+    /// the two halves of the step's outcome.
+    var answeredAnyHop: Bool {
+        hops.contains { $0.outcome != .timedOut }
     }
 
     /// Whether the trace ended because the DESTINATION answered.
@@ -69,11 +105,49 @@ enum NetworkTraceOutcome: Sendable, Equatable {
     /// and a refusal from some router in between carries a type-3 code too. A
     /// source that does not match is reported as what it is — an unreachable
     /// row — and never as an arrival.
+    ///
+    /// What that costs, stated rather than implied: a MULTI-HOMED destination
+    /// answers from whichever of its addresses the return route selected,
+    /// which need not be the one the trace was aimed at. Such a walk reads as
+    /// not-an-arrival, with a last row naming an address the user may not
+    /// recognise. Accepted, because the alternative — trusting the ICMP code
+    /// alone — mistakes every mid-path refusal for an arrival, which is
+    /// strictly worse and far commoner.
     var reachedDestination: Bool {
-        guard case .measured(let hops, let destination) = self,
+        guard case .measured(let hops, let destination, _) = self,
             case .unreachable(let address, _, _) = hops.last?.outcome
         else { return false }
         return address == destination
+    }
+}
+
+/// Collects hops as the walk measures them, so a walk the OUTER deadline
+/// abandons still has something to report.
+///
+/// `BlockingProbe` drops the value of a body that overruns its margin (that
+/// is the whole contract of the type), and before this the trace's fallback
+/// was an EMPTY hop list — eight measured hops printed as nothing at all.
+/// The walk writes each hop here as it closes it, so the fallback reads what
+/// was measured rather than what was returned.
+///
+/// `@unchecked Sendable` over a lock, because the abandoned walk keeps
+/// appending on its own queue while the caller reads on another.
+final class TraceHopCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [NetworkTraceHop] = []
+
+    init() {}
+
+    func append(_ hop: NetworkTraceHop) {
+        lock.lock()
+        storage.append(hop)
+        lock.unlock()
+    }
+
+    var hops: [NetworkTraceHop] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
     }
 }
 
@@ -122,8 +196,14 @@ struct TraceAnswer: Sendable, Equatable {
 /// not measure the IPv6 path, because the machine that measured everything
 /// else had no global IPv6 route and nothing was sent.
 enum NetworkTrace {
-    /// How far the trace walks before giving up. Traceroute's own default, and
-    /// the step's shared deadline usually stops it long before this does.
+    /// How far the trace walks before giving up. Traceroute's own default.
+    ///
+    /// It became a limit that can actually bind when the trace stopped
+    /// sharing `stepTimeout`: at 5 s and a second per silent hop the walk
+    /// ended after four or five hops and this constant was unreachable —
+    /// documentation for a rule nothing enforced. Against the trace's own
+    /// 20 s budget a path of ordinary length finishes, and whichever of the
+    /// two stops the walk, `NetworkTraceEnding` says which.
     static let defaultMaxHops = 30
 
     /// The longest ONE hop waits for its answer. The step's own budget caps
@@ -142,9 +222,9 @@ enum NetworkTrace {
 
     /// The sentence this step reports for an address it cannot probe.
     ///
-    /// A symbol rather than a spelling: the test compares against it and Task
-    /// 4 maps it to `diagnostics.reason.traceNeedsIPv4`, so a reworded
-    /// sentence has one place to change rather than three.
+    /// A symbol rather than a spelling: the test compares against it and
+    /// `DiagnosticReason` keys it to `diagnostics.reason.traceNeedsIPv4`, so
+    /// a reworded sentence has one place to change rather than three.
     static let notIPv4Reason = "the network trace needs an IPv4 address"
 
     /// The sentence the runner reports for a host that resolves only to IPv6.
@@ -152,7 +232,8 @@ enum NetworkTrace {
     /// Not "failed" and not "no route": the IPv6 trace was never measured at
     /// all (design §5 verdict (c) — the measuring machine had no global IPv6
     /// route, and nothing was sent), and a row that claimed a failure would be
-    /// reporting an observation nobody made.
+    /// reporting an observation nobody made. Keyed by `DiagnosticReason` to
+    /// `diagnostics.reason.ipv6TraceUnmeasured`.
     static let ipv6UnmeasuredReason =
         "IPv6 trace unmeasured: no route on the machine that measured it"
 
@@ -176,27 +257,51 @@ enum NetworkTrace {
     static func trace(
         address: ResolvedAddress, maxHops: Int = defaultMaxHops, timeout: Duration
     ) async -> NetworkTraceOutcome {
+        await run(
+            destination: address.text, timeout: timeout, collector: TraceHopCollector()
+        ) { deadline, collector in
+            walkSockets(
+                address: address, maxHops: maxHops, deadline: deadline, collector: collector)
+        }
+    }
+
+    /// The async half: a walk on a private queue, under a deadline, whose
+    /// hops survive an overrun.
+    ///
+    /// A seam, and it exists because the two things worth pinning here — that
+    /// the outer margin does not discard measured hops, and that an
+    /// abandoned walk is reported as ended by the BUDGET — cannot be provoked
+    /// through a socket on any network a test may assume.
+    static func run(
+        destination: String, timeout: Duration, collector: TraceHopCollector,
+        walk: @escaping @Sendable (ContinuousClock.Instant, TraceHopCollector)
+            -> NetworkTraceOutcome
+    ) async -> NetworkTraceOutcome {
         // The outer deadline carries the same 250 ms margin `ICMPEcho` gives
         // its own, and for the same reason: at exactly `timeout` it could beat
-        // the inner loop to hops the inner loop already measured, and
-        // `BlockingProbe` returning `nil` would throw them away microseconds
-        // before they arrived.
+        // the inner loop to hops the inner loop already measured.
         let outcome = await BlockingProbe.run(
             label: "dev.noidee.macscp.diagnostics.trace",
             timeout: timeout + .milliseconds(250)
         ) {
-            walk(
-                address: address, maxHops: maxHops,
-                deadline: ContinuousClock().now.advanced(by: timeout))
+            walk(ContinuousClock().now.advanced(by: timeout), collector)
         }
-        return outcome ?? .measured(hops: [], destination: address.text)
+        // The margin lost. Whatever the abandoned walk eventually returns is
+        // dropped by `BlockingProbe`, but what it had already MEASURED is in
+        // the collector — and the walk was ended by the budget, which is what
+        // the row must say rather than printing an empty line.
+        return outcome
+            ?? .measured(hops: collector.hops, destination: destination, ending: .budget)
     }
 
     // MARK: - The socket sequence
 
+    /// Opens the one receiving socket and walks the hops over it.
+    ///
     /// Blocking. Only ever called on `BlockingProbe`'s private queue.
-    private static func walk(
-        address: ResolvedAddress, maxHops: Int, deadline: ContinuousClock.Instant
+    private static func walkSockets(
+        address: ResolvedAddress, maxHops: Int, deadline: ContinuousClock.Instant,
+        collector: TraceHopCollector
     ) -> NetworkTraceOutcome {
         // The family the BYTES declare, not the record's label: what is opened
         // has to be what is dialled, and the label is a second copy of that
@@ -212,32 +317,72 @@ enum NetworkTrace {
         defer { close(icmp) }
 
         let clock = ContinuousClock()
-        var hops: [NetworkTraceHop] = []
+        return walk(
+            destination: address.text, maxHops: maxHops, deadline: deadline,
+            collector: collector, now: { clock.now }
+        ) { ttl, hopDeadline in
+            probe(
+                ttl: ttl, destination: address.socketAddress, icmp: icmp,
+                deadline: hopDeadline)
+        }
+    }
+
+    /// The hop loop, over whatever source of hops it is handed.
+    ///
+    /// Blocking, and only ever called on a private queue — the real hop
+    /// source polls a socket, and a test's stalls for real time.
+    ///
+    /// A parameter rather than a hardcoded call for the reason the review's
+    /// finding named: a walk ended by the BUDGET is indistinguishable, once
+    /// its rows are printed, from a walk that found a silent router, and no
+    /// network a test may assume produces the first on demand.
+    /// - Parameter now: where the walk reads the time. A parameter for the
+    ///   same reason `hop` is: the budget's effect on a hop is what this
+    ///   round had to pin, and a test that provoked it by sleeping would be
+    ///   measuring the runner and parking a thread to do it. A fake clock
+    ///   moves only when the fake hop source says it did.
+    static func walk(
+        destination: String, maxHops: Int, deadline: ContinuousClock.Instant,
+        collector: TraceHopCollector,
+        now: () -> ContinuousClock.Instant,
+        hop: (_ ttl: Int, _ deadline: ContinuousClock.Instant) -> HopProbeResult
+    ) -> NetworkTraceOutcome {
+        func measured(_ ending: NetworkTraceEnding) -> NetworkTraceOutcome {
+            .measured(hops: collector.hops, destination: destination, ending: ending)
+        }
+
         for ttl in 1...max(1, maxHops) {
-            guard clock.now < deadline else { break }
-            let result = probe(
-                ttl: ttl, destination: address.socketAddress, icmp: icmp, deadline: deadline)
+            let started = now()
+            guard started < deadline else { return measured(.budget) }
+            // Whether the BUDGET, rather than this hop's own second, is what
+            // bounds the wait. It decides how a silence below is read: a hop
+            // that was never given its full second did not measure a silent
+            // router, it was cut off.
+            let budgetBinds = deadline < started.advanced(by: hopTimeout)
+            let result = hop(ttl, min(started.advanced(by: hopTimeout), deadline))
             switch result {
             case .refused(let reason):
                 // A refusal on the FIRST hop is a statement about this machine
                 // (no socket, no route) and gets the local-end outcome. After
                 // a hop has been measured it is not: the walk has findings,
                 // and they are reported.
-                guard hops.isEmpty else {
-                    return .measured(hops: hops, destination: address.text)
-                }
+                guard collector.hops.isEmpty else { return measured(.hopLimit) }
                 return .unavailable(reason)
             case .measured(let outcome):
-                hops.append(NetworkTraceHop(ttl: ttl, outcome: outcome))
+                if outcome == .timedOut, budgetBinds {
+                    // No row. `N *` here would be byte-identical to a router
+                    // that declined to answer, and a reader pasting the report
+                    // would take a truncated wait for the end of the path.
+                    return measured(.budget)
+                }
+                collector.append(NetworkTraceHop(ttl: ttl, outcome: outcome))
                 // Only an ICMP unreachable ends the walk early. A `*` does
                 // not: a router that declines to answer is ordinary, and the
                 // hops past it still matter.
-                if case .unreachable = outcome {
-                    return .measured(hops: hops, destination: address.text)
-                }
+                if case .unreachable = outcome { return measured(.answered) }
             }
         }
-        return .measured(hops: hops, destination: address.text)
+        return measured(.hopLimit)
     }
 
     /// One hop: a UDP socket of its own, carrying this hop's TTL and aimed at
@@ -296,7 +441,10 @@ enum NetworkTrace {
     /// How one hop's probe ended: with a hop row, or with the kernel refusing
     /// to send it at all. A type rather than `Result`, because the failure
     /// side is `strerror`'s sentence and `String` is not an `Error`.
-    private enum HopProbeResult {
+    ///
+    /// Internal rather than private because `walk` takes a source of these,
+    /// and a test supplies one.
+    enum HopProbeResult {
         case measured(TraceHopOutcome)
         case refused(String)
     }
@@ -414,8 +562,9 @@ enum NetworkTrace {
             guard bytes[quote + 9] == Self.udpProtocol else { return nil }
 
             // RFC 792 obliges the sender to quote the original header plus 64
-            // bits of its data — exactly the UDP header — so these four bytes
-            // are the most a trace may ever rely on, and they are all it needs.
+            // bits of its data — exactly the UDP header. These four bytes are
+            // the first half of what is guaranteed, and they are all a trace
+            // needs.
             let udp = quote + quotedHeaderLength
             guard count >= udp + 4 else { return nil }
             quotedSourcePort = UInt16(bytes[udp]) << 8 | UInt16(bytes[udp + 1])

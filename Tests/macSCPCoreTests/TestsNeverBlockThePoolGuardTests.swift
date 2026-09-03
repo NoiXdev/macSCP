@@ -79,6 +79,17 @@ struct TestsNeverBlockThePoolGuardTests {
         // decision.
         "macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift":
             [.dispatchGroup, .waitUntilExit],
+
+        // Not a wait on a cooperative-pool thread and not convertible into
+        // one: `anOuterMarginOverrunKeepsTheHopsTheWalkHadMeasured` has to
+        // overrun `BlockingProbe`'s margin, which is a real Dispatch timer,
+        // and the only place it can do that from is the body `BlockingProbe`
+        // runs on its OWN private queue — the same queue the production walk
+        // parks in `poll` on. The case's other fixture used to sleep too and
+        // no longer does: it drives the walk over an injected clock instead
+        // (`NetworkTrace.walk(now:)`), which is why this entry names one
+        // pattern and not two.
+        "macSCPCoreTests/NetworkTraceTests.swift": [.threadSleep],
     ]
 
     // MARK: - The negative check

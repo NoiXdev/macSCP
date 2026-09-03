@@ -41,6 +41,48 @@ public enum DiagnosticReason {
     /// The WebDAV dial has no base URL to probe.
     static let noServerURL = "this session names no server URL"
 
+    /// The fixed half of the marker a trace's DETAIL line carries when the
+    /// step's budget, and not the path, ended the walk.
+    ///
+    /// Without it a `*` row is byte-identical whether a router declined to
+    /// answer or the trace simply stopped looking, and the report is a
+    /// copy-and-paste artifact someone reads as a statement about the path.
+    static let stoppedByBudget = "stopped by the budget"
+
+    /// That marker, naming the last hop the walk actually measured. `0` says
+    /// the budget ran out before any hop was measured at all.
+    static func traceStoppedByBudget(afterHop hop: Int) -> String {
+        "\(stoppedByBudget) after hop \(hop)"
+    }
+
+    /// The reason a trace step reports when a router on the path answered
+    /// destination-unreachable with a code of its own — a policy block, most
+    /// often — rather than the destination answering port-unreachable.
+    ///
+    /// Composed, so it carries no catalogue key: the numbers are the whole
+    /// content, and `key(for:)` matches a WHOLE reason. That is the same
+    /// treatment the TCP step's `refused` already gets, and the panel shows
+    /// such a sentence exactly as it was measured.
+    static func traceHopUnreachable(code: UInt8, hop: Int) -> String {
+        "unreachable (code \(code)) at hop \(hop)"
+    }
+
+    /// The catalogue key the budget marker renders under.
+    ///
+    /// Declared beside `table` rather than in it, because the sentence
+    /// carries a hop number and `key(for:)` matches a whole reason. The
+    /// catalogue entry is a format with one `%@`, the way
+    /// `diagnostics.duration` already is.
+    ///
+    /// **Not looked up yet, and deliberately so.** The marker lives in a
+    /// step's DETAIL line, and the panel prints details verbatim — that is
+    /// what makes the detail the copy-and-paste artifact a bug report needs.
+    /// The key is here so the sentence has one spelling and the catalogue
+    /// check (`DiagnosticsDoorsGuardTests
+    /// .everyKeyTheDoorsAndThePanelUseExistsInAllFourCatalogs`) holds all four
+    /// languages to it the moment the panel does render it.
+    public static let stoppedByBudgetKey = "diagnostics.reason.traceStoppedByBudget"
+
     /// The catalogue key `reason` renders under, or `nil` for a reason this
     /// module did not compose — a `strerror`, a server's message — which the
     /// panel shows as it is.

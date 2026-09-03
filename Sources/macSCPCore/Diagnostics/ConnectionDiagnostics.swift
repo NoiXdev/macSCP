@@ -26,6 +26,7 @@ public actor ConnectionDiagnostics {
     private let secrets: (any SecretSource)?
     private let sessionID: UUID?
     private let stepTimeout: Duration
+    private let traceTimeout: Duration
     private let appVersion: String
 
     /// - Parameters:
@@ -35,6 +36,13 @@ public actor ConnectionDiagnostics {
     ///   - sessionID: which session that source answers for. `SecretSource`
     ///     is keyed by session, so a source without this cannot answer and
     ///     the dial is skipped rather than dialled without a password.
+    ///   - traceTimeout: the network trace's own budget, separate from
+    ///     `stepTimeout` and much larger. A trace is not one probe but up to
+    ///     `NetworkTrace.defaultMaxHops` of them at a second each, so under
+    ///     the shared 5 s every path more than four silent hops long was cut
+    ///     off — and `defaultMaxHops` was unreachable, a limit that could
+    ///     never bind. 20 s is what a path of ordinary length needs; the row
+    ///     says so when even that runs out.
     ///   - appVersion: what the report's build line says. Passed in because
     ///     Core does not read `Bundle.main` — the App owns that
     ///     (`SettingsView`), and Core carries no bundle assumption.
@@ -44,6 +52,7 @@ public actor ConnectionDiagnostics {
         secrets: (any SecretSource)?,
         sessionID: UUID? = nil,
         stepTimeout: Duration = .seconds(5),
+        traceTimeout: Duration = .seconds(20),
         appVersion: String = "unknown"
     ) {
         self.descriptor = descriptor
@@ -51,6 +60,7 @@ public actor ConnectionDiagnostics {
         self.secrets = secrets
         self.sessionID = sessionID
         self.stepTimeout = stepTimeout
+        self.traceTimeout = traceTimeout
         self.appVersion = appVersion
     }
 
@@ -209,12 +219,8 @@ public actor ConnectionDiagnostics {
     /// because the machine that measured everything else had no route to try
     /// it on. Not `failed`: nobody observed a failure.
     ///
-    /// A walk that ends anywhere but at the destination is `timedOut`, the
-    /// deadline's answer, with every hop it did measure in the detail. That
-    /// covers the ordinary case (a firewall swallowing the last hops) and one
-    /// rarer one this build has never observed: a router answering
-    /// destination-unreachable with a code of its own, which ends the walk and
-    /// prints its code in the row.
+    /// The walk runs against `traceTimeout`, not `stepTimeout`: see the
+    /// initializer's note.
     private func trace(_ addresses: [ResolvedAddress]) async -> DiagnosticStep {
         let timer = Self.timer(for: DiagnosticStepID.trace)
         guard !addresses.isEmpty else {
@@ -223,12 +229,56 @@ public actor ConnectionDiagnostics {
         guard let target = addresses.first(where: { $0.family == .ipv4 }) else {
             return timer.finish(.unavailable(NetworkTrace.ipv6UnmeasuredReason), "")
         }
-        let outcome = await NetworkTrace.trace(address: target, timeout: stepTimeout)
-        let detail = outcome.hops.map(\.text).joined(separator: "; ")
-        if case .unavailable(let reason) = outcome {
-            return timer.finish(.unavailable(reason), detail)
+        let outcome = await NetworkTrace.trace(address: target, timeout: traceTimeout)
+        return timer.finish(Self.traceOutcome(outcome), Self.traceDetail(outcome))
+    }
+
+    /// The trace step's detail line: one row per measured hop, and — when the
+    /// BUDGET ended the walk — a marker saying so.
+    ///
+    /// A `static func` over a value rather than four lines inside `trace(_:)`,
+    /// because none of the situations worth pinning here can be provoked on
+    /// loopback: the only address that answers there is the destination, and
+    /// the only code it sends is 3.
+    static func traceDetail(_ outcome: NetworkTraceOutcome) -> String {
+        var rows = outcome.hops.map(\.text)
+        if outcome.ending == .budget {
+            rows.append(DiagnosticReason.traceStoppedByBudget(afterHop: outcome.hops.count))
         }
-        return timer.finish(outcome.reachedDestination ? .ok : .timedOut, detail)
+        return rows.joined(separator: "; ")
+    }
+
+    /// The trace step's outcome.
+    ///
+    /// Four answers, and the reasoning that separates them:
+    ///
+    /// - **The destination answered** → `ok`, whatever else happened on the
+    ///   way.
+    /// - **The budget ended the walk** → `ok` when a hop answered, `timedOut`
+    ///   when none did. A walk cut short after measuring six hops MEASURED
+    ///   six hops; calling that a timeout would report the trace's own budget
+    ///   as a fact about the network. What it is not allowed to do is stay
+    ///   silent about the cut, and `traceDetail` is where it says so.
+    /// - **A router refused** — destination-unreachable with a code that is
+    ///   not port-unreachable — → `failed`, naming the code and the hop. A
+    ///   corporate firewall answering admin-prohibited at hop 4 is a finding
+    ///   about the path, and badging it `timed out` sends the user after a
+    ///   slow network they do not have.
+    /// - **Anything else** — the hop limit, or a last hop nobody answered →
+    ///   `timedOut`.
+    static func traceOutcome(_ outcome: NetworkTraceOutcome) -> DiagnosticOutcome {
+        if case .unavailable(let reason) = outcome { return .unavailable(reason) }
+        if outcome.reachedDestination { return .ok }
+        if outcome.ending == .budget {
+            return outcome.answeredAnyHop ? .ok : .timedOut
+        }
+        if case .unreachable(_, _, let code) = outcome.hops.last?.outcome,
+            code != NetworkTrace.portUnreachableCode
+        {
+            let hop = outcome.hops.last?.ttl ?? outcome.hops.count
+            return .failed(DiagnosticReason.traceHopUnreachable(code: code, hop: hop))
+        }
+        return .timedOut
     }
 
     /// One address's contribution to the echo step's detail line.
