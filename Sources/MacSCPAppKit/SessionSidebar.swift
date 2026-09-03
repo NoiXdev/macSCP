@@ -179,6 +179,18 @@ struct SessionSidebar: View {
     /// Sidebar session menu "Audit Log…" entry (M9b/T3) — opens the sheet
     /// for any stored session, connected or not.
     let onShowAuditLog: (StoredSession) -> Void
+    /// Sidebar session menu "Diagnose…" entry (design §1, third of three
+    /// doors) — opens the diagnostics panel for any stored session, connected
+    /// or not.
+    ///
+    /// A plain callback rather than a `SessionRowConnectEffect`, and the rule
+    /// for that split is what the entry DOES: opening the panel reaches no
+    /// host. The probes inside it — including an SSH dial that authenticates
+    /// — run when the user presses the panel's own button, never when a menu
+    /// entry is clicked (decision of 2026-09-02). Same category as `onEdit`
+    /// and `onShowAuditLog`; if this ever opened a panel that ran on appear,
+    /// it would belong with `onConnect` instead.
+    let onDiagnose: (StoredSession) -> Void
     /// The saved snippets, in store order (Terminal-Snippets, Task 7) — same
     /// list `MacSCPApp`'s Terminal menu reads from `tabCommands.snippetsLoad`,
     /// handed down here so the session row's "Snippet" submenu renders the
@@ -662,6 +674,7 @@ struct SessionSidebar: View {
             onRequestDelete: { sessionPendingDelete = session },
             onExport: { onExport(.single(session)) },
             onShowAuditLog: { onShowAuditLog(session) },
+            onDiagnose: { onDiagnose(session) },
             dragOrigin: dragOrigin,
             onDrop: { payload in drop(payload, before: .session(session.id)) },
             snippets: snippets,
@@ -1056,6 +1069,7 @@ private struct SessionRow: View {
     let onRequestDelete: () -> Void
     let onExport: () -> Void
     let onShowAuditLog: () -> Void
+    let onDiagnose: () -> Void
     /// The sidebar's shared note of which row a drag is carrying — written
     /// by this row's own payload, read when a drop is targeted here.
     let dragOrigin: SidebarDragOrigin
@@ -1270,6 +1284,12 @@ private struct SessionRow: View {
             }
             Divider()
             Button(L10n.string("sidebar.auditLog", "Audit Log…")) { onShowAuditLog() }
+            // Under the audit log, in the group of entries that ask
+            // this connection a question rather than change it. No
+            // gate: the panel opens for a connection that has never
+            // been dialled — that is exactly the case it is for — and
+            // opening it puts nothing on anyone's host.
+            Button(L10n.string("diagnostics.menu", "Diagnose…")) { onDiagnose() }
             // "Snippet" submenu (Terminal-Snippets, Task 7): same shared
             // `SnippetMenuItems` rendering the Terminal menu bar (Task 6)
             // uses, gated by `snippetPlan` — see that property's and

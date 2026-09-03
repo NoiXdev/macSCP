@@ -286,6 +286,16 @@ struct ContentView: View {
     /// whether or not that session is currently connected.
     @State var auditLogSession: StoredSession?
 
+    // MARK: - Connection diagnostics
+
+    /// The connection whose diagnostics panel is open, or `nil` when none is.
+    /// Written by `showDiagnostics(for:)` alone — the window's single entry,
+    /// which every door goes through — and a VALUE rather than a reference,
+    /// so a tab that reconnects or a row that is renamed cannot change what
+    /// the open panel is diagnosing. Presenting it measures nothing; the
+    /// diagnosis starts on the panel's own button (decision of 2026-09-02).
+    @State var diagnosticsTarget: DiagnosticsTarget?
+
     // MARK: - Known hosts (M10a/T2)
 
     /// Drives the known-hosts management sheet — opened from the Sessions

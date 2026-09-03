@@ -121,6 +121,15 @@ extension ContentView {
         .sheet(item: $auditLogSession) { stored in
             AuditLogSheet(session: stored, store: auditStore)
         }
+        // Diagnostics panel: opened from the tab (toolbar or failed-connect
+        // surface), the sidebar's session menu and the connect-error dialog,
+        // all through `showDiagnostics(for:)`. Presenting it runs nothing —
+        // the panel's own button does, and only it (decision of 2026-09-02).
+        .sheet(item: $diagnosticsTarget) { target in
+            DiagnosticsPanel(
+                target: target, secrets: diagnosticsSecrets,
+                onClose: { diagnosticsTarget = nil })
+        }
         // Known-hosts sheet (M10a/T2) — same directory the connector's
         // `KnownHostsStore` uses (`makeTab`), so it reflects the same
         // TOFU state the connect flow reads from.

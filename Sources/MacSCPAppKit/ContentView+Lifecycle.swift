@@ -107,6 +107,27 @@ extension ContentView {
                     }
                     .help(L10n.string("browser.transfersToggleHelp",
                                       "Show/hide transfers (⌘⇧Y)"))
+                    // Diagnostics (design §1, first of three doors): offered
+                    // while connected, because "it connects but it is slow /
+                    // it drops" is as much a question for the probes as "it
+                    // will not connect at all". Never disabled — every step
+                    // is measured fresh, and the answer to a connection that
+                    // is behaving badly is the same walk as for one that
+                    // never came up.
+                    //
+                    // The click OPENS the panel; it measures nothing. That
+                    // split is the decision of 2026-09-02 and belongs to
+                    // `showDiagnostics(for:)`, which every other door calls
+                    // too.
+                    Button {
+                        showDiagnostics(for: .tab(activeTab))
+                    } label: {
+                        Label(
+                            L10n.string("diagnostics.menu", "Diagnose…"),
+                            systemImage: "stethoscope")
+                    }
+                    .help(L10n.string(
+                        "diagnostics.menuHelp", "Check this connection and copy a report"))
                     Button(L10n.string("browser.disconnect", "Disconnect")) {
                         disconnectToForm(activeTab)
                     }

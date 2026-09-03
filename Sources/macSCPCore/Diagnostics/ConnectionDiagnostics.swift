@@ -62,7 +62,7 @@ public actor ConnectionDiagnostics {
             let timer = Self.timer(for: DiagnosticStepID.resolve)
             return DiagnosticReport(
                 endpoint: Endpoint(host: "", port: 0),
-                steps: [timer.finish(.unavailable("this session names no host"), "")],
+                steps: [timer.finish(.unavailable(DiagnosticReason.noHost), "")],
                 appVersion: appVersion)
         }
 
@@ -133,7 +133,7 @@ public actor ConnectionDiagnostics {
     private func ping(_ addresses: [ResolvedAddress], port: Int) async -> DiagnosticStep {
         let timer = Self.timer(for: DiagnosticStepID.tcp)
         guard !addresses.isEmpty else {
-            return timer.finish(.skipped("nothing resolved to probe"), "")
+            return timer.finish(.skipped(DiagnosticReason.nothingToProbe), "")
         }
         let results = await TCPPing.probeAll(addresses: addresses, timeout: stepTimeout)
         let detail = results.map { result -> String in
@@ -175,7 +175,7 @@ public actor ConnectionDiagnostics {
     private func echo(_ addresses: [ResolvedAddress]) async -> DiagnosticStep {
         let timer = Self.timer(for: DiagnosticStepID.icmp)
         guard !addresses.isEmpty else {
-            return timer.finish(.skipped("nothing resolved to probe"), "")
+            return timer.finish(.skipped(DiagnosticReason.nothingToProbe), "")
         }
         let results = await ICMPEcho.probeAll(addresses: addresses, timeout: stepTimeout)
         let detail = results.map(Self.line).joined(separator: "; ")
@@ -218,7 +218,7 @@ public actor ConnectionDiagnostics {
     private func trace(_ addresses: [ResolvedAddress]) async -> DiagnosticStep {
         let timer = Self.timer(for: DiagnosticStepID.trace)
         guard !addresses.isEmpty else {
-            return timer.finish(.skipped("nothing resolved to probe"), "")
+            return timer.finish(.skipped(DiagnosticReason.nothingToProbe), "")
         }
         guard let target = addresses.first(where: { $0.family == .ipv4 }) else {
             return timer.finish(.unavailable(NetworkTrace.ipv6UnmeasuredReason), "")

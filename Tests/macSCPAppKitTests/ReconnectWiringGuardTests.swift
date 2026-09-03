@@ -488,7 +488,7 @@ struct ReconnectWiringGuardTests {
             file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
             code: "ConnectFailureView(",
             occurrences: 1,
-            reason: "`ContentView.detail`'s failed-connect branch — the only site that renders that surface, and the one place its four actions are wired to the functions they delegate to."),
+            reason: "`ContentView.detail`'s failed-connect branch — the only site that renders that surface, and the one place its five actions are wired to the functions they delegate to."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
             code: "ConnectFailureDetailsSheet(",

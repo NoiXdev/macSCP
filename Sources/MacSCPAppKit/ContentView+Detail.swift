@@ -91,6 +91,10 @@ extension ContentView {
             onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
             onImport: { showImportFileImporter = true },
             onShowAuditLog: { stored in auditLogSession = stored },
+            // The third of the three doors (design §1). Works for a
+            // session that is not connected — the panel opens with
+            // nothing measured, and the probes run on its own button.
+            onDiagnose: { stored in showDiagnostics(for: .stored(stored)) },
             // Session-row "Snippet" submenu (Terminal-Snippets, Task 7):
             // same store list the Terminal menu bar reads via
             // `tabCommands.snippetsLoad`, and the identical
@@ -679,6 +683,12 @@ extension ContentView {
                             onRetry: { retryConnect(tab) },
                             onEdit: { dismissConnectFailure(tab) },
                             onEditSession: { editFailedSession(tab) },
+                            // The second of the three doors (design §1). It
+                            // OPENS the panel and measures nothing — the
+                            // maintainer decided on 2026-09-02 that a failed
+                            // connect does not start a diagnosis by itself,
+                            // so this stays a control the user presses.
+                            onDiagnose: { showDiagnostics(for: .tab(tab)) },
                             onClose: { requestClose(tab) })
                     } else {
                         // Align the form to the top instead of centering it
@@ -751,6 +761,11 @@ extension ContentView {
                                 let current = sessionListViewModel.sessions.first(where: { $0.id == stored.id }) ?? stored
                                 connect(in: tab, stored: current)
                             },
+                            // The connect-error dialog's own door. Same tab,
+                            // same entry as the failed-connect surface above
+                            // — the dialog and the surface answer the same
+                            // failure from two places in the flow.
+                            onDiagnose: { showDiagnostics(for: .tab(tab)) },
                             // Read fresh at Connect-button-click time, inside
                             // `ConnectionFormView`'s own handler, NOT here —
                             // see `ConnectionFormView.currentReconnectAttempt`'s
@@ -1564,6 +1579,19 @@ struct ConnectFailureContent: Equatable {
     /// dialog's own body is the one raw text in this whole feature, and it
     /// is not carried by this type — see `ConnectFailureDetailText`.
     let detailsButton: Message
+    /// Opens the diagnostics panel (design §1, this surface being the second
+    /// of its three doors). A field here rather than a literal in the view,
+    /// for the same reason `detailsTitle` is one: a type that covers the text
+    /// of a surface has to cover ALL of it, or the claim that this surface can
+    /// only show a fixed, enumerated set of catalog keys — and therefore no
+    /// host name, server message or typed value — is true only of the part
+    /// that happens to live here. `theFailedSurfaceRendersNoStringOfItsOwn`
+    /// caught exactly that when this label was first written as a literal in
+    /// the view.
+    ///
+    /// The SAME key the other two doors use: one action, one label, in three
+    /// places.
+    let diagnoseButton: Message
     /// The details dialog's own headline. A field here rather than a
     /// literal in the dialog for the reason `LostConnectionContent`'s own
     /// doc comment gives for its two button labels: a type that covers the
@@ -1602,6 +1630,7 @@ enum ConnectFailurePlan {
                 ? .init(key: "connection.failed.editSession", fallback: "Edit session") : nil,
             closeButton: .init(key: "connection.failed.close", fallback: "Close"),
             detailsButton: .init(key: "connection.failed.details", fallback: "Details…"),
+            diagnoseButton: .init(key: "diagnostics.menu", fallback: "Diagnose…"),
             detailsTitle: .init(
                 key: "connection.failed.details.title", fallback: "Connection details"))
     }
@@ -2094,6 +2123,10 @@ private struct ConnectFailureView: View {
     let onRetry: () -> Void
     let onEdit: () -> Void
     let onEditSession: () -> Void
+    /// Opens the diagnostics panel for this tab. It opens it and nothing
+    /// more: the probes run when the user presses the panel's own button
+    /// (decision of 2026-09-02), so this surface starts no dial of its own.
+    let onDiagnose: () -> Void
     let onClose: () -> Void
 
     @State private var showsDetails = false
@@ -2126,6 +2159,15 @@ private struct ConnectFailureView: View {
                     L10n.string(content.closeButton.key, content.closeButton.fallback),
                     action: onClose)
             }
+            // Beside the row of actions rather than in it: Retry/Edit/Close
+            // are the ways ON from a failed connect, and this is the way to
+            // find out why it failed — the same secondary weight the details
+            // link below carries. No gate, and deliberately: every probe is
+            // measured fresh, so there is no state in which asking is
+            // meaningless.
+            Button(
+                L10n.string(content.diagnoseButton.key, content.diagnoseButton.fallback),
+                action: onDiagnose)
             if details != nil {
                 Button(
                     L10n.string(content.detailsButton.key, content.detailsButton.fallback)

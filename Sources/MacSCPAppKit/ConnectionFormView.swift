@@ -46,6 +46,17 @@ struct ConnectionFormView: View {
     /// which reloads the secret from the keychain (covers "empty password
     /// means unchanged" automatically).
     var onConnectEdited: (StoredSession) -> Void = { _ in }
+    /// Connect-error dialog "Diagnose…" (design §1, the third door): opens
+    /// the diagnostics panel for this tab.
+    ///
+    /// Opening it is ALL this does. The maintainer decided on 2026-09-02 that
+    /// a failed connect never starts a diagnosis by itself — the probes dial
+    /// the user's server, and the SSH one authenticates while doing it — so
+    /// the dialog offers the check and the panel's own button runs it.
+    ///
+    /// Defaulted, like the other callbacks above, so the previews and the
+    /// form's non-`ContentView` call sites need not name it.
+    var onDiagnose: () -> Void = {}
     /// Reads `tab.reconnectAttempt`'s CURRENT value on demand — a closure,
     /// not a plain `UUID`, because this view has no reference to `tab`
     /// itself (only to `tab.connectionViewModel`, passed as `viewModel`)
@@ -385,6 +396,11 @@ struct ConnectionFormView: View {
                 set: { if !$0 { alertMessage = nil } }
             )
         ) {
+            // Ahead of OK, because it is the one thing this dialog can
+            // offer that answers the question it just raised. It dismisses
+            // the alert (any button does) and opens the panel; nothing is
+            // measured until the user presses the panel's own button.
+            Button(L10n.string("diagnostics.menu", "Diagnose…")) { onDiagnose() }
             Button(L10n.string("common.ok", "OK"), role: .cancel) {}
         } message: {
             Text(alertMessage ?? "")

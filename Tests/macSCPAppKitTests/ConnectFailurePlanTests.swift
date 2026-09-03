@@ -138,6 +138,7 @@ struct ConnectFailurePlanTests {
             return [
                 content.title, content.body, content.editButton,
                 content.closeButton, content.detailsButton, content.detailsTitle,
+                content.diagnoseButton,
             ] + [content.retryButton, content.editSessionButton].compactMap { $0 }
         }
     }
@@ -151,9 +152,9 @@ struct ConnectFailurePlanTests {
     /// would have to invent a key outside this set, or change one of these
     /// strings, and either fails here.
     ///
-    /// Nine keys, counted while writing this sentence: the title, the TWO
-    /// bodies (stored and ad-hoc), the four action labels, and the details
-    /// control's label and headline.
+    /// Ten keys, recounted while adding the diagnostics door: the title, the
+    /// TWO bodies (stored and ad-hoc), the four action labels, the details
+    /// control's label and headline, and "Diagnose…".
     ///
     /// The second body is exactly the kind of addition that makes this
     /// sweep worth keeping. `hasStoredSession` now selects a KEY rather
@@ -176,6 +177,13 @@ struct ConnectFailurePlanTests {
             "connection.failed.close",
             "connection.failed.details",
             "connection.failed.details.title",
+            // Shared with the sidebar's session menu and the connect-error
+            // dialog: one action offered from three places, under one label.
+            // It is inside this set — rather than an exception to it —
+            // because the rule the set encodes is about what a string on this
+            // surface may BE (a fixed catalog key, never an interpolation),
+            // not about which feature named it.
+            "diagnostics.menu",
         ]
         var seen: Set<String> = []
         for message in Self.everyReachableMessage() {
@@ -275,24 +283,27 @@ struct ConnectFailurePlanTests {
     @Test func theGermanCatalogActuallyTranslatesThisSurface() throws {
         let english = try Self.catalog("en")
         let german = try Self.catalog("de")
-        // One key is excluded, and only one: `connection.failed.details`
-        // reads "Details…" in German too, so an identical value there is a
-        // translation rather than an omission. `connection.failed.details
-        // .title` was excluded alongside it in round 1 without earning it —
-        // "Verbindungsdetails" is not "Connection details", and a check
-        // that skips a key it could make is a check that would not notice
-        // that key going untranslated. Eight keys are checked, counted in
-        // the pass that writes this sentence: the title, both bodies, the
-        // four action labels (retry, edit, edit-session, close) and the
-        // details headline — nine reachable keys less the one exclusion,
-        // which is also what the assertion below says.
+        // Two keys are excluded, and each has to earn it by being a German
+        // word that happens to be spelled like the English one:
+        // `connection.failed.details` reads "Details…" in German too, and
+        // `diagnostics.menu` reads "Diagnose…" — identical values there are
+        // translations rather than omissions. `connection.failed.details
+        // .title` was excluded alongside the first of them in round 1
+        // without earning it — "Verbindungsdetails" is not "Connection
+        // details", and a check that skips a key it could make is a check
+        // that would not notice that key going untranslated.
         //
-        // It said "seven" until review round 1, with the same enumeration
-        // and the same subtraction beside it, both of which come to eight.
-        // A number written into a comment is a claim to be checked, not a
+        // Eight keys are checked, recounted in the pass that adds the
+        // diagnostics door: the title, both bodies, the FIVE action labels
+        // (retry, edit, edit-session, close, diagnose) and the details
+        // headline, less the two exclusions — ten reachable less two, which
+        // is what the assertion below says. It said "seven" until review
+        // round 1 and "eight" over nine reachable keys until this pass; a
+        // number written into a comment is a claim to be checked, not a
         // decoration on the list next to it.
         let translated = Set(Self.everyReachableMessage().map(\.key)).subtracting([
             "connection.failed.details",
+            "diagnostics.menu",
         ])
         #expect(translated.count == 8)
         for key in translated.sorted() {

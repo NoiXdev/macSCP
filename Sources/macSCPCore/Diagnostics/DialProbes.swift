@@ -54,14 +54,14 @@ extension DiagnosticContribution {
         if !usesAgent {
             do {
                 guard let resolved = try context.secret(), !resolved.isEmpty else {
-                    return timer.finish(.skipped("no secret available for this session"), "")
+                    return timer.finish(.skipped(DiagnosticReason.noSecret), "")
                 }
                 secret = resolved
             } catch {
                 // Deliberately not the source's own error text: a failing
                 // vault's message is the one place a wrapper could hand back
                 // something it read.
-                return timer.finish(.unavailable("the secret source failed"), "")
+                return timer.finish(.unavailable(DiagnosticReason.secretSourceFailed), "")
             }
         }
         let config: ConnectionConfig
@@ -86,7 +86,7 @@ extension DiagnosticContribution {
         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.s3Endpoint"
     ) { values, context, timer in
         guard let url = S3FieldSchema.endpointURL(values) else {
-            return timer.finish(.skipped("this session names no endpoint"), "")
+            return timer.finish(.skipped(DiagnosticReason.noEndpoint), "")
         }
         return await DialSupport.request(
             url: url, method: "HEAD", timeout: context.timeout, timer: timer
@@ -100,7 +100,7 @@ extension DiagnosticContribution {
         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.webdavOptions"
     ) { values, context, timer in
         guard let url = WebDAVFieldSchema.baseURL(values) else {
-            return timer.finish(.skipped("this session names no server URL"), "")
+            return timer.finish(.skipped(DiagnosticReason.noServerURL), "")
         }
         return await DialSupport.request(
             url: url, method: "OPTIONS", timeout: context.timeout, timer: timer
