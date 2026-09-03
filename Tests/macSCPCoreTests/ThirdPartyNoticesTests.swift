@@ -53,23 +53,58 @@ struct ThirdPartyNoticesTests {
         return pins.compactMap { $0["identity"] as? String }
     }
 
-    /// Section headings in the notices file, taken from lines that are
-    /// EXACTLY `## <name>` — not merely lines containing `## ` as a
-    /// substring. Several of the embedded licence texts (the Apache 2.0
-    /// runtime-library exception, copied verbatim into more than one
-    /// dependency's section) contain a line reading `## Runtime Library
-    /// Exception to the Apache 2.0 License: ##`, which starts with `## ` the
-    /// same as a real section heading. Matching the whole line rather than
-    /// a prefix keeps those decoys from being counted as dependency
-    /// sections.
+    /// Section headings in the notices file, taken from lines that start
+    /// with `## ` OUTSIDE a fenced licence block. Two distinct decoy risks
+    /// live in the file's embedded licence texts:
+    ///
+    /// - Several copies of the Apache 2.0 runtime-library exception
+    ///   contain a line reading `## Runtime Library Exception to the
+    ///   Apache 2.0 License: ##`, which starts with `## ` the same as a
+    ///   real heading but never equals a bare identity — `dropFirst(3)`
+    ///   on it does not collide with any of the 12 real identities today.
+    /// - A licence or NOTICE file, copied verbatim, could itself quote a
+    ///   line that reads exactly `## <some real identity>` — that one WOULD
+    ///   collide, and nothing about its text distinguishes it from a real
+    ///   heading. Only its position — inside a fence — does. So this
+    ///   function tracks fence state and only collects `## ` lines while
+    ///   outside one (task-2 review, "Important" finding).
+    ///
+    /// Fence delimiters are matched by PREFIX — three or more backticks —
+    /// not by the exact three-backtick string ` ``` `. The generator
+    /// (`scripts/third-party-notices`, `fence_for`) widens a licence
+    /// file's own fence past the longest backtick run already present in
+    /// that licence's text, so a fence-length check pinned to exactly
+    /// ``` would itself go stale the moment a quoted licence needed a
+    /// longer one; matching any run of three or more keeps every open/close
+    /// pair recognized regardless of length, since each pair only needs to
+    /// toggle the same boolean, not agree on a specific count.
     private static func sectionHeadings(in notices: String) -> Set<String> {
         var headings: Set<String> = []
+        var insideFence = false
         notices.enumerateLines { line, _ in
-            if line.hasPrefix("## ") {
+            if Self.isFenceDelimiter(line) {
+                insideFence.toggle()
+                return
+            }
+            if !insideFence, line.hasPrefix("## ") {
                 headings.insert(String(line.dropFirst(3)))
             }
         }
         return headings
+    }
+
+    /// True when `line`'s leading run of backticks (after trimming
+    /// surrounding whitespace) is three or more — a markdown fence
+    /// delimiter, open or close, of any length the generator might have
+    /// chosen for this particular licence text.
+    private static func isFenceDelimiter(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        var run = 0
+        for character in trimmed {
+            guard character == "`" else { break }
+            run += 1
+        }
+        return run >= 3
     }
 
     // MARK: - Positive anchors
@@ -83,6 +118,55 @@ struct ThirdPartyNoticesTests {
             Without this anchor, an empty or misread pins array would make \
             everyNoticeSectionExists() below pass vacuously (CLAUDE.md, \
             "Guards that name what they watch").
+            """)
+    }
+
+    /// A scanner self-test, independent of anything the real notices file
+    /// happens to contain today: a `## swift-log`-shaped line sitting
+    /// INSIDE a fenced licence block (a licence or NOTICE file, copied
+    /// verbatim, can itself quote something that looks exactly like a
+    /// section heading) must not count as a real section. Proves the
+    /// scanner tracks fence state rather than matching `## <name>` lines
+    /// wherever they occur in the file — the gap flagged in the task-2
+    /// review: without fence tracking, a fenced decoy matching a real
+    /// identity would stand in for that identity's real (missing) section
+    /// and let `everyNoticeSectionExists` pass regardless.
+    ///
+    /// The fixture's fence uses four backticks, not three — the generator
+    /// (`scripts/third-party-notices`, `fence_for`) widens a licence
+    /// file's fence past the longest backtick run already inside that
+    /// licence text, so a fence-length check pinned to exactly ``` would
+    /// itself go stale the first time a quoted licence needed a longer
+    /// one. Detection here is by PREFIX (three or more backticks), so a
+    /// four-backtick fence toggles state exactly like a three-backtick one.
+    @Test func aHeadingLineInsideALicenceFenceIsNotASection() {
+        let fixture = """
+            ## swift-crypto
+
+            Source: <https://example.invalid/swift-crypto>
+
+            ### LICENSE
+
+            ````
+            Some licence text that happens to quote another project's
+            NOTICE file, including a line that reads exactly:
+            ## swift-log
+            ````
+
+            ## swift-nio
+            """
+        let headings = Self.sectionHeadings(in: fixture)
+        #expect(!headings.contains("swift-log"), """
+            sectionHeadings(in:) counted a `## swift-log` line that sits \
+            inside a fenced licence block as a real section heading — a \
+            fence must suppress every `## ` line between its open and \
+            close delimiter, not just the specific decoy strings the real \
+            file happens to contain today.
+            """)
+        #expect(headings == ["swift-crypto", "swift-nio"], """
+            expected only the two real, unfenced headings in the fixture \
+            (swift-crypto, swift-nio), got \(headings) instead — either \
+            the fence swallowed a real heading, or let the decoy through.
             """)
     }
 
