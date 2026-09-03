@@ -92,8 +92,9 @@ public final class TerminalPanelViewModel {
     /// geometry is worth sending.
     private var pendingSize: Geometry?
 
-    /// The geometry last handed to the CURRENT shell, or `nil` while none has
-    /// been sent to it.
+    /// The geometry the CURRENT shell last ACKNOWLEDGED -- written when
+    /// `shell.resize` returns, not when it is queued -- or `nil` while none
+    /// has got through to it.
     ///
     /// It is what a new report is compared against, and it is deliberately
     /// not "the geometry the shell was opened at": comparing against the
@@ -272,7 +273,7 @@ public final class TerminalPanelViewModel {
     /// Sends the geometry `resize(cols:rows:)` held while the shell was
     /// opening, if there is one and it is not what the shell was last told.
     ///
-    /// Called from the same synchronous step that sets `.running`, one line
+    /// Called from the same synchronous step that sets `.running`, directly
     /// after `self.shell` is assigned and after the generation check -- so it
     /// can neither run before the shell exists nor write to a shell that
     /// `shutdown()` has already disowned.
@@ -288,13 +289,34 @@ public final class TerminalPanelViewModel {
     /// Not a free `Task`: one would race the buffered bytes flushed beside
     /// it, and the loser of that race is a full-screen program started at
     /// the wrong size. Chaining also keeps two window-changes in order, so
-    /// the last one issued is the last one the remote sees.
+    /// the last one issued is the last one the remote sees. The cost of the
+    /// chain is that a window-change waits behind every queued `send` --
+    /// against a stalled connection it does not go out at all, where a free
+    /// `Task` would have tried. That is the deliberate trade: the shell's
+    /// size is worth nothing if the program that reads it started at the
+    /// wrong one, and `cancelPendingSends()` drops the whole chain when the
+    /// shell ends, so nothing is left behind.
+    ///
+    /// `lastSentSize` is written only after the send RETURNS, never at queue
+    /// time. Recording it up front would remember a window-change that threw
+    /// as delivered, and the dedup in `resize(cols:rows:)` would then swallow
+    /// the next report of that same geometry -- leaving the remote at a size
+    /// nobody can correct, since `sizeChanged` fires only on a CHANGE and
+    /// will not report it again. The error itself stays swallowed, as on the
+    /// `send(_:)` path beside it: a resize failure is not worth ending a
+    /// session over, and a channel broken enough to matter ends the read loop
+    /// on its own.
     private func sendWindowChange(_ size: Geometry, to shell: any RemoteShell) {
-        lastSentSize = size
         let previous = sendTask
         sendTask = Task {
             await previous?.value
-            try? await shell.resize(cols: size.cols, rows: size.rows)
+            do {
+                try await shell.resize(cols: size.cols, rows: size.rows)
+                lastSentSize = size
+            } catch {
+                // Swallowed, and deliberately NOT recorded as sent -- see
+                // above. The next report of this geometry is sent again.
+            }
         }
     }
 

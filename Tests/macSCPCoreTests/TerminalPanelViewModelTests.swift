@@ -409,7 +409,17 @@ struct TerminalPanelViewModelTests {
         try await waitUntil(vm.state == .running)
 
         vm.resize(cols: 80, rows: 24)  // The shell's own open-time geometry.
-        try await waitUntil(shell.resizes.count == 1)
+        // Barrier, not a settle: `send` chains behind the window-change and
+        // awaits its task's VALUE, so bytes at the shell prove the resize
+        // task ran to the end -- including the `lastSentSize` write that
+        // happens after `shell.resize` returns. Waiting only for the resize
+        // to be RECORDED would race that write, and the duplicates below
+        // would sometimes be issued before the shell was known to have
+        // acknowledged the first one.
+        vm.send([0x61])
+        try await waitUntil(!shell.sent.isEmpty)
+        #expect(shell.resizes.count == 1)
+
         vm.resize(cols: 80, rows: 24)
         vm.resize(cols: 80, rows: 24)
         // Give a duplicate time to show up before asserting it didn't.
@@ -419,6 +429,35 @@ struct TerminalPanelViewModelTests {
         vm.resize(cols: 132, rows: 43)
         try await waitUntil(shell.resizes.count == 2)
         #expect(shell.resizes.map { [$0.cols, $0.rows] } == [[80, 24], [132, 43]])
+    }
+
+    /// A window-change that FAILED on the wire must not be remembered as
+    /// delivered — otherwise the dedup above swallows the next report of that
+    /// same geometry, and the remote is left at a size nobody can correct:
+    /// `sizeChanged` fires only on a CHANGE, so it will not report it again.
+    ///
+    /// The barrier is the same one the dedup test uses (a `send` chained
+    /// behind the window-change), which is what makes the first half a fact
+    /// rather than a wait: the bytes arrive only after the failing resize
+    /// task has finished.
+    @Test func aFailedWindowChangeIsNotRememberedAsSent() async throws {
+        let shell = FailFirstResizeShell(failures: 1)
+        let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
+        vm.openIfNeeded()
+        try await waitUntil(vm.state == .running)
+
+        vm.resize(cols: 132, rows: 43)  // Throws on the wire.
+        vm.send([0x61])
+        try await waitUntil(!shell.sent.isEmpty)
+        #expect(shell.attempts == 1)
+        #expect(shell.accepted.isEmpty, "the failing resize must not be recorded as accepted")
+
+        // The SAME geometry again: it has to go out a second time.
+        vm.resize(cols: 132, rows: 43)
+        try await waitUntil(shell.attempts == 2)
+        #expect(
+            shell.accepted.map { [$0.cols, $0.rows] } == [[132, 43]],
+            "attempts \(shell.attempts), accepted \(shell.accepted)")
     }
 
     /// A size reported while nothing is opening belongs to no shell: it must
@@ -511,6 +550,51 @@ final class LateFinishShell: RemoteShell, Sendable {
     func finish() {
         state.withLock { $0.finished = true }
     }
+}
+
+/// Shell whose first `failures` window-changes throw before recording
+/// anything, and whose later ones are accepted. `attempts` counts every call
+/// including the failed ones, `accepted` only the ones that got through — the
+/// two together are what separates "sent again" from "deduped away".
+///
+/// `output` stays open, so the read loop keeps running and a resize failure
+/// does not end the panel: what is under test is the view model's memory of
+/// what the shell acknowledged, not its error handling.
+final class FailFirstResizeShell: RemoteShell, Sendable {
+    struct ResizeFailure: Error {}
+
+    private struct State {
+        var attempts = 0
+        var accepted: [(cols: Int, rows: Int)] = []
+        var sent: [[UInt8]] = []
+    }
+
+    let output: AsyncThrowingStream<[UInt8], Error>
+    private let continuation: AsyncThrowingStream<[UInt8], Error>.Continuation
+    private let state = Mutex(State())
+    private let failures: Int
+
+    var attempts: Int { state.withLock { $0.attempts } }
+    var accepted: [(cols: Int, rows: Int)] { state.withLock { $0.accepted } }
+    var sent: [[UInt8]] { state.withLock { $0.sent } }
+
+    init(failures: Int) {
+        self.failures = failures
+        (output, continuation) = AsyncThrowingStream<[UInt8], Error>.makeStream()
+    }
+
+    func send(_ bytes: [UInt8]) async throws { state.withLock { $0.sent.append(bytes) } }
+
+    func resize(cols: Int, rows: Int) async throws {
+        let failing = state.withLock { state -> Bool in
+            state.attempts += 1
+            return state.attempts <= failures
+        }
+        if failing { throw ResizeFailure() }
+        state.withLock { $0.accepted.append((cols, rows)) }
+    }
+
+    func close() async { continuation.finish() }
 }
 
 /// Shell that records sends and window-changes in ONE list, so a test can ask

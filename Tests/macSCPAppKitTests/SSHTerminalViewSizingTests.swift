@@ -78,6 +78,30 @@ struct SSHTerminalViewSizingTests {
 
     // MARK: - Helpers
 
+    /// A gate holding an `openShell` call that the cleanup must let through
+    /// before it can await `shutdown()`.
+    ///
+    /// Measured 2026-09-03 (review of `2d0fa18f`): `shutdown()` cancels the
+    /// open task and then `await`s it
+    /// (`TerminalPanelViewModel.swift:386-387`). A gate that parks on a bare
+    /// `withCheckedContinuation` never observes that cancellation, so a test
+    /// that throws while an open is held -- a `try #require` on the mounted
+    /// surface, which runs BEFORE the gate is opened in two of these tests --
+    /// went into `withHostedPanel`'s cleanup and stayed there. The suite hung
+    /// on a run that should have been red, which is the failure mode
+    /// `CLAUDE.md` has a section about.
+    ///
+    /// Both remedies are applied, not one: the gates resume on cancellation
+    /// (`withTaskCancellationHandler`), and `withHostedPanel` releases the
+    /// gate it owns before tearing down. Either alone would do; together the
+    /// cleanup does not depend on cancellation reaching the right task, and a
+    /// gate that some future test forgets to hand to `withHostedPanel` still
+    /// cannot hang it.
+    private protocol HeldOpen: Sendable {
+        /// Lets every held call through, and every later one.
+        func releaseAll() async
+    }
+
     /// A settings store on a throwaway directory — never the app's own
     /// support directory. The directory comes back so `tearDown` can remove
     /// it instead of littering the temp directory per run.
@@ -93,20 +117,42 @@ struct SSHTerminalViewSizingTests {
     /// panel while the view model is still `.opening` — the app's real
     /// order, in which the surface is on screen and laid out before any
     /// shell exists.
-    private actor OpenGate {
+    private actor OpenGate: HeldOpen {
         private var continuation: CheckedContinuation<Void, Never>?
         private var isOpen = false
 
         func wait() async {
             if isOpen { return }
-            await withCheckedContinuation { self.continuation = $0 }
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                    // Re-checked INSIDE the actor: `open()` or a cancellation
+                    // may have landed between the `isOpen` test above and
+                    // this body, and a continuation installed after that
+                    // would never be resumed by anyone.
+                    if isOpen {
+                        c.resume()
+                    } else {
+                        continuation = c
+                    }
+                }
+            } onCancel: {
+                // `onCancel` runs outside the actor, so the resume has to hop
+                // onto it. `open()` is the same operation cancellation needs
+                // -- let the held call through -- and it takes the
+                // continuation before resuming, which is the exactly-once
+                // guard: whichever of the two arrives second finds `nil`.
+                Task { await self.open() }
+            }
         }
 
         func open() {
             isOpen = true
-            continuation?.resume()
+            let pending = continuation
             continuation = nil
+            pending?.resume()
         }
+
+        func releaseAll() { open() }
     }
 
     /// `OpenGate` with one permit per call instead of a latch: `release()`
@@ -115,21 +161,40 @@ struct SSHTerminalViewSizingTests {
     /// be torn down, mounted again and laid out before the new shell exists.
     /// A latch would let the second open straight through and the test would
     /// measure the ordinary running-resize path instead of the reopen.
-    private actor OpenGates {
+    private actor OpenGates: HeldOpen {
         private var permits = 0
         private var waiters: [CheckedContinuation<Void, Never>] = []
         private var requested: [RecordingShell.Size] = []
+        /// Set by `releaseAll()`: from then on nothing is held, current
+        /// waiters included. A permit count cannot express that — a call
+        /// arriving after the cleanup would consume the last permit and the
+        /// one after it would park again.
+        private var isOpenForever = false
 
         /// The geometries `openShell` was called with, in order.
         var openRequests: [RecordingShell.Size] { requested }
 
         func wait(cols: Int, rows: Int) async {
             requested.append(RecordingShell.Size(cols: cols, rows: rows))
+            if isOpenForever { return }
             if permits > 0 {
                 permits -= 1
                 return
             }
-            await withCheckedContinuation { waiters.append($0) }
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                    // See `OpenGate.wait()`: re-checked inside the actor,
+                    // because a release may have landed while this call was
+                    // on its way in.
+                    if isOpenForever {
+                        c.resume()
+                    } else {
+                        waiters.append(c)
+                    }
+                }
+            } onCancel: {
+                Task { await self.releaseAll() }
+            }
         }
 
         func release() {
@@ -138,6 +203,16 @@ struct SSHTerminalViewSizingTests {
             } else {
                 waiters.removeFirst().resume()
             }
+        }
+
+        /// Every held call, and every later one, goes through. Resuming from
+        /// a drained local array is the exactly-once guard: a second call
+        /// finds the list empty.
+        func releaseAll() {
+            isOpenForever = true
+            let pending = waiters
+            waiters = []
+            for waiter in pending { waiter.resume() }
         }
     }
 
@@ -179,9 +254,16 @@ struct SSHTerminalViewSizingTests {
     /// settings directory survives the run. It is not a `defer` because the
     /// cleanup awaits (`shutdown()`) and a `defer` body may not — hence the
     /// `Result` and the rethrow at the end.
+    ///
+    /// `gate` is the gate holding this test's `openShell`, if it has one. It
+    /// is released BEFORE the teardown, because `tearDown` awaits
+    /// `shutdown()`, which awaits the open task: an open still parked on a
+    /// gate would make the cleanup — and with it a red test — never finish.
+    /// See `HeldOpen`.
     private func withHostedPanel<Root: View>(
         viewModel: TerminalPanelViewModel,
         size: NSSize,
+        gate: (any HeldOpen)? = nil,
         root: (SettingsStore) -> Root,
         body: (NSWindow, NSHostingView<Root>) async throws -> Void
     ) async throws {
@@ -197,6 +279,7 @@ struct SSHTerminalViewSizingTests {
         } catch {
             outcome = .failure(error)
         }
+        await gate?.releaseAll()
         await tearDown(
             window: window, viewModel: viewModel, settingsDirectory: settings.directory)
         try outcome.get()
@@ -527,6 +610,7 @@ struct SSHTerminalViewSizingTests {
         #expect(viewModel.state == .opening)
         try await withHostedPanel(
             viewModel: viewModel, size: NSSize(width: 800, height: 600),
+            gate: gate,
             root: { HostedPanel(viewModel: viewModel, settingsStore: $0) }
         ) { _, hosting in
             let terminal = try #require(
@@ -576,6 +660,7 @@ struct SSHTerminalViewSizingTests {
         viewModel.openIfNeeded()
         try await withHostedPanel(
             viewModel: viewModel, size: NSSize(width: 800, height: 600),
+            gate: gate,
             root: { HostedPanel(viewModel: viewModel, settingsStore: $0) }
         ) { window, hosting in
             await gate.open()
@@ -624,6 +709,7 @@ struct SSHTerminalViewSizingTests {
         viewModel.openIfNeeded()
         try await withHostedPanel(
             viewModel: viewModel, size: NSSize(width: 800, height: 600),
+            gate: gate,
             root: { HostedSplitLayout(viewModel: viewModel, settingsStore: $0) }
         ) { window, hosting in
             await gate.open()
@@ -691,6 +777,7 @@ struct SSHTerminalViewSizingTests {
         viewModel.openIfNeeded()
         try await withHostedPanel(
             viewModel: viewModel, size: NSSize(width: 800, height: 600),
+            gate: gates,
             root: { HostedStatefulPanel(viewModel: viewModel, settingsStore: $0) }
         ) { _, hosting in
             await gates.release()
