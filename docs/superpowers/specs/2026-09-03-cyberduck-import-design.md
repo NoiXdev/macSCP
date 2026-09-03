@@ -92,8 +92,10 @@ ExternalBookmark                  ImportPreviewPlanner
   existing seam) and only the Cyberduck-known fields replaced — name,
   group, tags (unless the switch is on), notes, colour, secrets (unless
   the switch is on) are copied from the stored record first. Everything
-  then flows through `SessionImportPlanner` and the existing conflict
-  sheet, which still handles a name collision with an unrelated session.
+  then flows through `SessionImportPlanner`; a name collision with an
+  unrelated session is made unique the way every import does it, without
+  a sheet — the conflict sheet arbitrates CONNECTION collisions only
+  (corrected 2026-09-03 after Task 3 read the planner).
 
 ## 3. Translation
 
@@ -126,9 +128,10 @@ keychain (macOS asks per entry)", switch "Put into group Cyberduck,
 labels as tags" (the group is a picker defaulting to a group named
 after the source, created on demand), a summary line "n import, m of
 them update · k skipped · u not supported", Cancel / Import. After
-Import the existing conflict sheet appears only if a name collides with
-an unrelated session; then the existing result alert, extended by one
-line "u updated".
+Import the existing conflict sheet appears only for a `.new` row whose
+connection matches an unrelated stored session; a name collision is
+made unique without a sheet; then the existing result alert, extended by
+one line "u updated".
 
 Keychain: with the switch on, the applier asks the keychain for
 Cyberduck's Internet-password item per selected row
@@ -163,7 +166,7 @@ its own `SecretStore` slot for the session.
 - Applying: a `.knownChanged` row keeps the stored record's group,
   notes, colour and secret when the switches are off; replaces tags and
   secret when on; `importedAt` refreshed; the planner's invariants
-  (exactly-once secrets, conflict sheet for unrelated collisions) —
+  (exactly-once secrets, the connection-conflict sheet for unrelated collisions) —
   through the existing `SessionImportPlanner` tests' fixtures.
 - Keychain reading behind `MACSCP_KEYCHAIN=1`: an item written by the
   test under Cyberduck's shape (server/account/protocol), read back
