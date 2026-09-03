@@ -96,7 +96,7 @@ ExternalBookmark                  ImportPreviewPlanner
   selected `.knownChanged` rows become `ExportedSession`s carrying the
   stored session's `id` with `replaces: <that id>` (`ExportedSession.replaces`,
   in-memory only, honoured by the planner without an arbiter question — the
-  existing seam) and only the Cyberduck-known fields replaced — name,
+  existing seam) and only the Cyberduck-known fields replaced —
   group, position and pane visibility copied from the record (there are
   no notes or colours on a session), the nickname taken as the name, tags
   (unless the switch is on) and secrets (unless
@@ -170,7 +170,8 @@ bookmark has one, and a miss reports "not read", never a wrong value.
 - A malformed plist: the row appears as "unreadable" with the file
   name, unchecked, disabled; the rest import.
 - The planner's existing refusals (unusable bag, drops-on-load) are
-  reported as today under "rejected", by name.
+  reported as today under "rejected" (the alert carries a count; the
+  names are in the planner's result, not on screen).
 
 ## 6. Testing
 
