@@ -283,20 +283,20 @@ enum DiagnosticsPresentation {
     /// the detail is the addresses, ports, statuses and hop rows somebody
     /// pastes into a bug report, and translating those would make the report
     /// unsearchable by the person reading it (`DiagnosticReport`'s own doc
-    /// comment). The trace's budget marker is the exception because it is not
-    /// a measurement — it says the walk STOPPED looking, which is the one
-    /// thing in the line a reader has to understand rather than quote.
+    /// comment). The trace's markers are the exception because they are not
+    /// measurements — they say the walk STOPPED looking, whether at its
+    /// budget or at its hop limit, which is the one thing in the line a
+    /// reader has to understand rather than quote.
     ///
-    /// Core finds the marker (`DiagnosticReason.budgetHop(in:)`) and this
+    /// Core finds the marker (`DiagnosticReason.marker(in:)`) and this
     /// substitutes it; the raw row is the fallback, so a catalog missing the
     /// key shows the English Core composed rather than nothing.
     static func detail(of step: DiagnosticStep) -> String {
         step.detail
             .components(separatedBy: rowSeparator)
             .map { row in
-                guard let hop = DiagnosticReason.budgetHop(in: row) else { return row }
-                return String(
-                    format: L10n.string(DiagnosticReason.stoppedByBudgetKey, row), "\(hop)")
+                guard let marker = DiagnosticReason.marker(in: row) else { return row }
+                return String(format: L10n.string(marker.key, row), "\(marker.hop)")
             }
             .joined(separator: rowSeparator)
     }

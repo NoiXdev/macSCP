@@ -1091,3 +1091,4 @@
 "diagnostics.reason.ipv6TraceUnmeasured" = "La vérification d’itinéraire ne couvre pas encore IPv6 — elle n’a jamais été mesurée sur un Mac disposant d’une route IPv6.";
 "diagnostics.reason.traceNeedsIPv4" = "La vérification d’itinéraire nécessite une adresse IPv4.";
 "diagnostics.reason.traceStoppedByBudget" = "La vérification d’itinéraire a atteint son propre budget de temps après le saut %@ — le chemin continue peut-être.";
+"diagnostics.reason.traceHopLimitReached" = "La vérification d’itinéraire a atteint sa propre limite de sauts après le saut %@ — le chemin continue peut-être.";

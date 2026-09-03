@@ -668,6 +668,60 @@ struct ConnectionDiagnosticsTests {
         #expect(dial.detail.contains("HTTP"))
     }
 
+    // MARK: - The reason catalogue
+
+    /// `DiagnosticReason.allKeys` promises "every key this type hands out",
+    /// and until now nothing called it — so it could omit one and stay green.
+    /// It did: `stoppedByBudgetKey` sits outside `table` because its sentence
+    /// carries a number, and `allKeys` read only `table`.
+    ///
+    /// The English catalogue is the positive anchor, and it has to be
+    /// something OUTSIDE this type: a check that derived both sides from
+    /// `DiagnosticReason` would be an identity. The catalogue is where the
+    /// keys are actually consumed, and `DiagnosticsDoorsGuardTests` already
+    /// holds the other three languages to the same list, so equality here is
+    /// equality with all four.
+    @Test func everyReasonKeyTheTypeHandsOutIsExactlyWhatTheCatalogCarries() throws {
+        let catalog = try String(
+            contentsOf: Self.repositoryURL(
+                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
+            encoding: .utf8)
+        let inCatalog = Set(
+            Self.matches(of: #""(diagnostics\.reason\.[A-Za-z0-9._]+)""#, in: catalog))
+
+        // The anchor: the scan read a catalogue that has these keys at all. A
+        // set comparison between two empty sets would pass while measuring
+        // nothing.
+        #expect(inCatalog.count > 1, "en.lproj carries no diagnostics.reason keys")
+        #expect(Set(DiagnosticReason.allKeys) == inCatalog, """
+            DiagnosticReason.allKeys and en.lproj disagree.
+            only in allKeys: \(Set(DiagnosticReason.allKeys).subtracting(inCatalog).sorted())
+            only in the catalog: \(inCatalog.subtracting(Set(DiagnosticReason.allKeys)).sorted())
+            """)
+    }
+
+    /// `#filePath` is `<repoRoot>/Tests/macSCPCoreTests/<this file>`, so two
+    /// `deletingLastPathComponent()` calls reach `Tests/` and a third the
+    /// root — the same walk `TestsNeverBlockThePoolGuardTests` makes.
+    private static func repositoryURL(_ relativePath: String) -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(relativePath)
+    }
+
+    /// First capture group of every match, in source order.
+    private static func matches(of pattern: String, in source: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        return regex.matches(in: source, range: range).compactMap { match in
+            guard match.numberOfRanges > 1, let found = Range(match.range(at: 1), in: source)
+            else { return nil }
+            return String(source[found])
+        }
+    }
+
     // MARK: - Fixtures
 
     /// A report whose steps' outcomes differ, so a renderer that prints one

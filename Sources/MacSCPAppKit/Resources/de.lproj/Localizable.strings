@@ -1088,3 +1088,4 @@
 "diagnostics.reason.ipv6TraceUnmeasured" = "Die Routenprüfung deckt IPv6 noch nicht ab — sie wurde nie auf einem Mac mit IPv6-Route gemessen.";
 "diagnostics.reason.traceNeedsIPv4" = "Die Routenprüfung braucht eine IPv4-Adresse.";
 "diagnostics.reason.traceStoppedByBudget" = "Die Routenprüfung hat nach Hop %@ ihr eigenes Zeitbudget erreicht — der Weg geht möglicherweise weiter.";
+"diagnostics.reason.traceHopLimitReached" = "Die Routenprüfung hat nach Hop %@ ihre eigene Hop-Grenze erreicht — der Weg geht möglicherweise weiter.";

@@ -316,6 +316,24 @@ struct DiagnosticsViewModelTests {
             """)
     }
 
+    /// The hop-limit marker is the budget marker's twin — same shape, same
+    /// place in the detail line, same reason for being localized: it says the
+    /// trace stopped looking, which is the one thing in the line a reader has
+    /// to understand rather than quote.
+    @Test func theTraceHopLimitMarkerIsLocalizedInsideTheDetailLine() {
+        let raw = DiagnosticReason.traceHopLimitReached(afterHop: 30)
+        let step = DiagnosticStep(
+            id: DiagnosticStepID.trace,
+            titleKey: DiagnosticStepID.titleKey(for: DiagnosticStepID.trace),
+            started: Date(), duration: .milliseconds(90), outcome: .ok,
+            detail: "1 10.0.0.1 1.2 ms; \(raw)")
+        let rendered = DiagnosticsPresentation.detail(of: step)
+        #expect(rendered != step.detail, "the marker must not print as Core composed it")
+        #expect(!rendered.contains(raw))
+        #expect(rendered.contains("30"), "the hop number survives: \(rendered)")
+        #expect(rendered.hasPrefix("1 10.0.0.1 1.2 ms; "))
+    }
+
     /// A detail line with no marker in it is handed through unchanged.
     @Test func aDetailLineWithoutTheMarkerIsUntouched() {
         let step = Self.step(

@@ -52,12 +52,13 @@ struct TestsNeverBlockThePoolGuardTests {
     /// keyed by their path under `Tests/`.
     ///
     /// The seventeen files the 2026-09-03 grep found (after the long waits
-    /// were converted) are down to these two: Task 1b replaced every
+    /// were converted) came down to two: Task 1b replaced every
     /// `Process`/`waitUntilExit()` short child wait in `macSCPCoreTests`
     /// with `SubprocessRunner.run` — fifteen files, thirteen of them a test
     /// suite plus `Support/InstalledKey.swift` and `Support/SpawnedAgent.swift`.
-    /// Only the two entries below are left, and neither is Task 1b's to
-    /// remove; see each entry's own comment.
+    /// A third was added later by the diagnostics trace, so the list holds
+    /// **three** entries; none of them is Task 1b's to remove, and each says
+    /// why in its own comment.
     ///
     /// `everyAllowlistEntryIsStillNeeded` below is what keeps the list
     /// honest: an entry whose file no longer carries its pattern is a

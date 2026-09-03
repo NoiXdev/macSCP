@@ -201,6 +201,59 @@ struct NetworkTraceTests {
         #expect(ConnectionDiagnostics.traceOutcome(cut) == .ok)
     }
 
+    /// The kernel refusing a hop mid-walk is not the hop limit and not a
+    /// silence: it is a local failure, it ends the walk, and `strerror`'s own
+    /// sentence has to reach the report.
+    ///
+    /// Before this it returned `.hopLimit` — an ending whose doc comment says
+    /// thirty probes went out — and the reason string was dropped on the
+    /// floor. A laptop that changes network mid-diagnosis is the ordinary way
+    /// to provoke it.
+    @Test func aKernelRefusalEndsTheWalkAsARefusalAndKeepsWhatItMeasured() {
+        let refusal = "No route to host"
+        let outcome = Self.fakeWalk(
+            budget: .seconds(20), hopCost: .milliseconds(2), answering: 10,
+            refusingFrom: 4, refusal: refusal, maxHops: 10)
+
+        #expect(outcome.ending == .refused(refusal))
+        // The hops it did measure survive, which is the half a plain
+        // `.unavailable` would have thrown away.
+        #expect(outcome.hops.map(\.ttl) == [1, 2, 3])
+        #expect(ConnectionDiagnostics.traceOutcome(outcome) == .failed(refusal))
+        let detail = ConnectionDiagnostics.traceDetail(outcome)
+        #expect(detail.hasPrefix("1 10.0.0.1 "))
+        // Neither marker: the trace did not stop looking and did not run out
+        // of hops.
+        #expect(detail.contains(DiagnosticReason.stoppedByBudget) == false)
+        #expect(detail.contains(DiagnosticReason.hopLimitReached) == false)
+    }
+
+    /// A receiving socket that fails is a fact about THIS machine, and every
+    /// hop after it would otherwise print `*` in microseconds — thirty rows
+    /// claiming a silent path, drawn entirely from a local error.
+    ///
+    /// The anchor comes first and is the same call on a WORKING socket with
+    /// nothing arriving: that is a silence, and it must still read as one.
+    ///
+    /// **Which of the two failure exits this reaches, measured 2026-09-03.**
+    /// `poll` on a closed descriptor does not return `-1`: it returns 1 with
+    /// `POLLNVAL` in `revents`, so the wait proceeds to `recvfrom`, which
+    /// answers `EBADF` — and that is the exit pinned here (planting `.silent`
+    /// in the `recvfrom` branch turns this case red; planting it in the
+    /// `poll` branch does not). The `poll` branch stays unpinned: its
+    /// remaining errnos are `EINVAL`, `EFAULT` and `ENOMEM`, none of which is
+    /// reachable through this signature. Both exits return `.failed` with
+    /// `strerror`'s own sentence, so the shape they produce is the same one.
+    @Test func aBrokenReceivingSocketIsAFailureAndNeverASilentHop() async {
+        let result = await Self.onOwnQueue { Self.waitOnASocketAndOnABrokenOne() }
+
+        #expect(result.openSocketIsSilent)
+        #expect(result.brokenSocketFails)
+        // `strerror`'s own sentence, not a synthetic one — the same contract
+        // every other local-end refusal in this module keeps.
+        #expect(result.failureReason == String(cString: strerror(EBADF)))
+    }
+
     /// The outcome→step mapping, over outcomes built by hand.
     ///
     /// The same shape as `anUnreachableFromSomeOtherAddressIsNotAnArrival`,
@@ -243,6 +296,32 @@ struct NetworkTraceTests {
             hops: [answered], destination: Self.documentationV4, ending: .budget)
         #expect(ConnectionDiagnostics.traceOutcome(partial) == .ok)
 
+        // The hop limit is the trace's own limit, not the path's end. Same
+        // rule as the budget: hops that answered were measured, so the row is
+        // `.ok`, and the detail says what stopped the walk.
+        let limited = NetworkTraceOutcome.measured(
+            hops: [answered], destination: Self.documentationV4, ending: .hopLimit)
+        #expect(ConnectionDiagnostics.traceOutcome(limited) == .ok)
+        #expect(
+            ConnectionDiagnostics.traceDetail(limited)
+                .hasSuffix(DiagnosticReason.traceHopLimitReached(afterHop: 1)))
+
+        // The marker names the last row's own TTL, not the number of rows.
+        // They differ only if a hop is ever dropped from the middle — which
+        // nothing does today, and which is why the review could name this and
+        // no fixture could see it. A gap in the hop numbers is the cheapest
+        // way to make the two answers disagree.
+        let gapped = NetworkTraceOutcome.measured(
+            hops: [answered, NetworkTraceHop(ttl: 5, outcome: answered.outcome)],
+            destination: Self.documentationV4, ending: .budget)
+        #expect(
+            ConnectionDiagnostics.traceDetail(gapped)
+                .hasSuffix(DiagnosticReason.traceStoppedByBudget(afterHop: 5)))
+
+        let limitedInSilence = NetworkTraceOutcome.measured(
+            hops: [silent], destination: Self.documentationV4, ending: .hopLimit)
+        #expect(ConnectionDiagnostics.traceOutcome(limitedInSilence) == .timedOut)
+
         // A router answering with a code of its own is a finding ABOUT THE
         // PATH — a policy block reads as one, not as a slow network.
         let refused = NetworkTraceOutcome.measured(
@@ -257,6 +336,18 @@ struct NetworkTraceTests {
         }
         #expect(reason.contains("13"))
         #expect(reason.contains("hop 4"))
+
+        // And the refusal is read BEFORE the budget. The one path that
+        // reaches here with both is the outer margin abandoning a walk that
+        // had already ended at a refusal: `run`'s fallback labels the ending
+        // `.budget` from the collector, and a mapping that tested the budget
+        // first would badge a policy block `ok` and claim the trace merely
+        // stopped looking.
+        let abandonedAfterRefusal = NetworkTraceOutcome.measured(
+            hops: [answered, refusal], destination: Self.documentationV4, ending: .budget)
+        #expect(
+            ConnectionDiagnostics.traceOutcome(abandonedAfterRefusal)
+                == .failed(DiagnosticReason.traceHopUnreachable(code: 13, hop: 4)))
     }
 
     /// The OUTER deadline — the margin `BlockingProbe` is given on top of the
@@ -499,9 +590,11 @@ struct NetworkTraceTests {
         on descriptor: Int32, sourcePort: UInt16, destinationPort: UInt16
     ) -> TraceAnswer? {
         let now = ContinuousClock().now
-        return NetworkTrace.waitForAnswer(
+        let result = NetworkTrace.waitForAnswer(
             descriptor: descriptor, sourcePort: sourcePort, destinationPort: destinationPort,
             started: now, deadline: now.advanced(by: .milliseconds(500)))
+        guard case .answered(let answer) = result else { return nil }
+        return answer
     }
 
     /// Runs a blocking socket sequence on a queue of its own and suspends the
@@ -550,7 +643,8 @@ struct NetworkTraceTests {
     /// every hop below costs microseconds and the same walk runs to
     /// `maxHops`.
     private static func fakeWalk(
-        budget: Duration, hopCost: Duration, answering: Int, maxHops: Int
+        budget: Duration, hopCost: Duration, answering: Int,
+        refusingFrom: Int? = nil, refusal: String = "refused", maxHops: Int
     ) -> NetworkTraceOutcome {
         let base = ContinuousClock().now
         var elapsed = Duration.zero
@@ -560,9 +654,50 @@ struct NetworkTraceTests {
             now: { base.advanced(by: elapsed) }
         ) { ttl, _ in
             elapsed += hopCost
+            if let refusingFrom, ttl >= refusingFrom { return .refused(refusal) }
             guard ttl <= answering else { return .measured(.timedOut) }
             return .measured(.forwarded(address: "10.0.0.1", rtt: .milliseconds(2)))
         }
+    }
+
+    /// What one broken-socket run found.
+    private struct SocketFailure: Sendable {
+        /// A working socket with nothing arriving is a silence — the anchor,
+        /// without which the failure below could be satisfied by a wait that
+        /// never succeeds at anything.
+        var openSocketIsSilent = false
+        var brokenSocketFails = false
+        /// The sentence the failure carried, so the case can require the
+        /// kernel's own rather than a synthetic one.
+        var failureReason = ""
+    }
+
+    /// Waits on a live ICMP socket nothing answers, then on a descriptor that
+    /// has been closed. Blocking; only ever called from `onOwnQueue`.
+    private static func waitOnASocketAndOnABrokenOne() -> SocketFailure {
+        var result = SocketFailure()
+        let live = socket(AF_INET, SOCK_DGRAM, Int32(IPPROTO_ICMP))
+        guard live >= 0 else { return result }
+        // Nothing is sent, so nothing this wait wants can arrive. A foreign
+        // ICMP message would be skipped by the port match and the wait would
+        // keep waiting, which is the same answer.
+        if case .silent = wait(on: live, forMilliseconds: 100) { result.openSocketIsSilent = true }
+        Darwin.close(live)
+
+        // The same descriptor, now closed: `poll` answers `EBADF` at once.
+        guard case .failed(let reason) = wait(on: live, forMilliseconds: 100) else {
+            return result
+        }
+        result.brokenSocketFails = true
+        result.failureReason = reason
+        return result
+    }
+
+    private static func wait(on descriptor: Int32, forMilliseconds ms: Int) -> TraceWaitResult {
+        let now = ContinuousClock().now
+        return NetworkTrace.waitForAnswer(
+            descriptor: descriptor, sourcePort: 1, destinationPort: NetworkTrace.basePort,
+            started: now, deadline: now.advanced(by: .milliseconds(ms)))
     }
 
     private static func resolve(_ host: String) async -> ResolvedAddress? {

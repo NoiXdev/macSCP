@@ -39,8 +39,9 @@ public actor ConnectionDiagnostics {
     ///   - traceTimeout: the network trace's own budget, separate from
     ///     `stepTimeout` and much larger. A trace is not one probe but up to
     ///     `NetworkTrace.defaultMaxHops` of them at a second each, so under
-    ///     the shared 5 s every path more than four silent hops long was cut
-    ///     off — and `defaultMaxHops` was unreachable, a limit that could
+    ///     the shared 5 s a path was cut off after its fifth silent hop —
+    ///     hop 5 starts at t+4 s and still gets its full second, hop 6 never
+    ///     starts — and `defaultMaxHops` was unreachable, a limit that could
     ///     never bind. 20 s is what a path of ordinary length needs; the row
     ///     says so when even that runs out.
     ///   - appVersion: what the report's build line says. Passed in because
@@ -240,43 +241,72 @@ public actor ConnectionDiagnostics {
     /// because none of the situations worth pinning here can be provoked on
     /// loopback: the only address that answers there is the destination, and
     /// the only code it sends is 3.
+    ///
+    /// A marker for each of the two ways the trace stops LOOKING — its budget
+    /// and its hop limit — and none for the two ways the walk actually ends:
+    /// a hop answered, or the kernel refused (which the outcome carries as
+    /// `failed`, with the sentence).
+    ///
+    /// The hop is named by the last row's own `ttl`, never by `hops.count`.
+    /// They are the same number today, because hops are appended for
+    /// consecutive `ttl`s and the only dropped row is the walk's last act —
+    /// but this file now has a row-dropping rule, and a second one would make
+    /// a count name the wrong hop in the artifact people paste, with no
+    /// fixture able to see it.
     static func traceDetail(_ outcome: NetworkTraceOutcome) -> String {
         var rows = outcome.hops.map(\.text)
-        if outcome.ending == .budget {
-            rows.append(DiagnosticReason.traceStoppedByBudget(afterHop: outcome.hops.count))
+        let lastHop = outcome.hops.last?.ttl ?? 0
+        switch outcome.ending {
+        case .budget:
+            rows.append(DiagnosticReason.traceStoppedByBudget(afterHop: lastHop))
+        case .hopLimit:
+            rows.append(DiagnosticReason.traceHopLimitReached(afterHop: lastHop))
+        case .answered, .refused, nil:
+            break
         }
         return rows.joined(separator: "; ")
     }
 
-    /// The trace step's outcome.
+    /// The trace step's outcome, and the order the questions are asked in.
     ///
-    /// Four answers, and the reasoning that separates them:
-    ///
-    /// - **The destination answered** → `ok`, whatever else happened on the
-    ///   way.
-    /// - **The budget ended the walk** → `ok` when a hop answered, `timedOut`
-    ///   when none did. A walk cut short after measuring six hops MEASURED
-    ///   six hops; calling that a timeout would report the trace's own budget
-    ///   as a fact about the network. What it is not allowed to do is stay
-    ///   silent about the cut, and `traceDetail` is where it says so.
+    /// - **This machine could not trace at all** → `unavailable`.
+    /// - **The kernel refused a hop mid-walk** → `failed` with `strerror`'s
+    ///   sentence. A route that changed under the walk, a descriptor the
+    ///   kernel would not give, a receiving socket that failed: none of it is
+    ///   about the server, and all of it has to reach the reader instead of
+    ///   being laundered into a timeout.
+    /// - **The destination answered** → `ok`, whatever happened on the way.
     /// - **A router refused** — destination-unreachable with a code that is
     ///   not port-unreachable — → `failed`, naming the code and the hop. A
     ///   corporate firewall answering admin-prohibited at hop 4 is a finding
     ///   about the path, and badging it `timed out` sends the user after a
     ///   slow network they do not have.
-    /// - **Anything else** — the hop limit, or a last hop nobody answered →
-    ///   `timedOut`.
+    ///
+    ///   **This is asked BEFORE the budget**, and the ordering is load-bearing
+    ///   for exactly one path: `NetworkTrace.run`'s fallback labels an
+    ///   abandoned walk `.budget` from the collector, so a walk that had
+    ///   already ended at a refusal and then lost the outer margin arrives
+    ///   here with both. Asking the budget first badged that policy block
+    ///   `ok`.
+    /// - **The trace stopped looking** — its budget or its hop limit ran out
+    ///   → `ok` when a hop answered, `timedOut` when none did. A walk cut
+    ///   short after measuring six hops MEASURED six hops; calling that a
+    ///   timeout would report the trace's own limits as a fact about the
+    ///   network. What it is not allowed to do is stay silent about the cut,
+    ///   and `traceDetail`'s markers are where it says so.
+    /// - **Anything else** — a last hop nobody answered → `timedOut`.
     static func traceOutcome(_ outcome: NetworkTraceOutcome) -> DiagnosticOutcome {
         if case .unavailable(let reason) = outcome { return .unavailable(reason) }
+        if case .refused(let reason) = outcome.ending { return .failed(reason) }
         if outcome.reachedDestination { return .ok }
-        if outcome.ending == .budget {
-            return outcome.answeredAnyHop ? .ok : .timedOut
-        }
         if case .unreachable(_, _, let code) = outcome.hops.last?.outcome,
             code != NetworkTrace.portUnreachableCode
         {
             let hop = outcome.hops.last?.ttl ?? outcome.hops.count
             return .failed(DiagnosticReason.traceHopUnreachable(code: code, hop: hop))
+        }
+        if outcome.ending == .budget || outcome.ending == .hopLimit {
+            return outcome.answeredAnyHop ? .ok : .timedOut
         }
         return .timedOut
     }

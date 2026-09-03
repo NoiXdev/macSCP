@@ -61,17 +61,44 @@ public enum DiagnosticReason {
         budgetMarkerPrefix + "\(hop)"
     }
 
-    /// The hop a budget marker names, or `nil` when `row` is not one.
+    /// The fixed half of the marker a trace's detail line carries when the
+    /// walk ran out of HOPS rather than out of budget.
     ///
-    /// Public because the PANEL needs it: the marker rides inside a step's
+    /// The same reasoning as `stoppedByBudget`, for the other of the two ways
+    /// a trace stops looking: thirty answering hops and no arrival is a walk
+    /// that reached its own limit, and a row that stayed silent about it read
+    /// as a path that simply ended.
+    static let hopLimitReached = "hop limit reached"
+
+    private static let hopLimitMarkerPrefix = "\(hopLimitReached) after hop "
+
+    /// That marker, naming the last hop the walk measured.
+    static func traceHopLimitReached(afterHop hop: Int) -> String {
+        hopLimitMarkerPrefix + "\(hop)"
+    }
+
+    /// The catalogue key and hop number of whichever marker `row` is, or
+    /// `nil` when it is an ordinary measured hop.
+    ///
+    /// Public because the PANEL needs it: a marker rides inside a step's
     /// detail line, which the panel prints, and a localized panel has to find
-    /// the marker among the measured hop rows before it can render
-    /// `stoppedByBudgetKey` for it. Core does the finding, because Core did
-    /// the composing — the alternative is the App spelling this sentence a
-    /// second time, which is the thing this whole type exists to prevent.
-    public static func budgetHop(in row: String) -> Int? {
-        guard row.hasPrefix(budgetMarkerPrefix) else { return nil }
-        return Int(row.dropFirst(budgetMarkerPrefix.count))
+    /// it among the measured hop rows before it can render a key for it. Core
+    /// does the finding, because Core did the composing — the alternative is
+    /// the App spelling these sentences a second time, which is the thing
+    /// this whole type exists to prevent.
+    ///
+    /// One reader for both markers rather than one per marker: the panel then
+    /// gains nothing to change when a third arrives, and cannot render one of
+    /// them and print the other in English.
+    public static func marker(in row: String) -> (key: String, hop: Int)? {
+        for (prefix, key) in [
+            (budgetMarkerPrefix, stoppedByBudgetKey),
+            (hopLimitMarkerPrefix, hopLimitReachedKey),
+        ] where row.hasPrefix(prefix) {
+            guard let hop = Int(row.dropFirst(prefix.count)) else { return nil }
+            return (key, hop)
+        }
+        return nil
     }
 
     /// The reason a trace step reports when a router on the path answered
@@ -93,23 +120,37 @@ public enum DiagnosticReason {
     /// catalogue entry is a format with one `%@`, the way
     /// `diagnostics.duration` already is.
     ///
-    /// **Not looked up yet, and deliberately so.** The marker lives in a
-    /// step's DETAIL line, and the panel prints details verbatim — that is
-    /// what makes the detail the copy-and-paste artifact a bug report needs.
-    /// The key is here so the sentence has one spelling and the catalogue
-    /// check (`DiagnosticsDoorsGuardTests
-    /// .everyKeyTheDoorsAndThePanelUseExistsInAllFourCatalogs`) holds all four
-    /// languages to it the moment the panel does render it.
+    /// Looked up by `DiagnosticsPresentation.detail(of:)`, which walks the
+    /// detail line's rows through `marker(in:)` and substitutes the hop
+    /// number into the localized format. Everything else in that line is
+    /// copied through byte for byte — the addresses and timings are the
+    /// artifact somebody pastes into a bug report — and a marker is the
+    /// exception because it is not a measurement.
     public static let stoppedByBudgetKey = "diagnostics.reason.traceStoppedByBudget"
+
+    /// The catalogue key the hop-limit marker renders under — `stoppedByBudgetKey`'s
+    /// twin, for the same reason and with the same one `%@`.
+    public static let hopLimitReachedKey = "diagnostics.reason.traceHopLimitReached"
 
     /// The catalogue key `reason` renders under, or `nil` for a reason this
     /// module did not compose — a `strerror`, a server's message — which the
     /// panel shows as it is.
     public static func key(for reason: String) -> String? { table[reason] }
 
-    /// Every key this type hands out, so a catalogue check can require all of
-    /// them without enumerating them a second time.
-    public static var allKeys: [String] { table.values.sorted() }
+    /// Every key this type hands out — the table's, and the two marker keys
+    /// that sit outside it because their sentences carry a hop number — so a
+    /// catalogue check can require all of them without enumerating them a
+    /// second time.
+    ///
+    /// The marker keys were missing here while nothing called this property,
+    /// which is exactly how a promise like "every key" goes wrong;
+    /// `ConnectionDiagnosticsTests
+    /// .everyReasonKeyTheTypeHandsOutIsExactlyWhatTheCatalogCarries` is now
+    /// the caller, and it compares against the catalogue rather than against
+    /// this type.
+    public static var allKeys: [String] {
+        (table.values + [stoppedByBudgetKey, hopLimitReachedKey]).sorted()
+    }
 
     /// The three sentences that are NOT declared above are declared where
     /// they were measured, and are referenced here rather than copied: the

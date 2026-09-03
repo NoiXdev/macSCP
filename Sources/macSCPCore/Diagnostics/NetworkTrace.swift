@@ -16,6 +16,17 @@ enum TraceHopOutcome: Sendable, Equatable {
     /// Nothing answered inside this hop's deadline — the `*` row. It does NOT
     /// end the trace: routers that decline to send ICMP errors are ordinary,
     /// and the hops past them are still worth measuring.
+    ///
+    /// **The invariant this case carries, and the reason it exists.** A
+    /// `.timedOut` hop was given its FULL `NetworkTrace.hopTimeout` and
+    /// answered nothing. It is a measurement of the network, and the whole
+    /// point of the two exits that do not produce one: a hop the walk's
+    /// budget cut shorter than a second leaves NO row (`walk`), and a hop
+    /// whose receiving socket failed ends the walk (`probe`). Both used to
+    /// print `*`, which made a local failure and a truncated wait
+    /// indistinguishable from a silent router in the line people paste into
+    /// bug reports. A future early exit that yields `.timedOut` without
+    /// having waited the second breaks this, and nothing will say so.
     case timedOut
 }
 
@@ -29,6 +40,13 @@ struct NetworkTraceHop: Sendable, Equatable {
     ///
     /// Composed here rather than at the runner, so the report and the panel
     /// cannot drift into two spellings of the same hop.
+    ///
+    /// `N *` means one thing only: hop N was waited on for a full
+    /// `NetworkTrace.hopTimeout` and answered nothing. Every other way a hop
+    /// can fail to produce an answer — the walk's budget running out, the
+    /// receiving socket failing — leaves no row at all and ends the walk with
+    /// an ending that says which (`TraceHopOutcome.timedOut` carries the
+    /// argument).
     var text: String {
         switch outcome {
         case .forwarded(let address, let rtt):
@@ -54,8 +72,19 @@ enum NetworkTraceEnding: Sendable, Equatable {
     /// A hop answered ICMP destination-unreachable. The path ended here —
     /// at the destination when the address matches, at a refusal otherwise.
     case answered
-    /// `maxHops` probes went out and none of them ended the path.
+    /// `maxHops` probes went out and none of them ended the path. The trace
+    /// stopped looking; the path may well continue.
     case hopLimit
+    /// This machine could not send or receive a hop's probe — `strerror`'s
+    /// own sentence. A route that changed mid-walk, a descriptor the kernel
+    /// refused, a receiving socket that failed.
+    ///
+    /// Its own case because it is the one ending that is not about the path
+    /// at all, and because the sentence has to reach the report: it used to
+    /// be reported as `.hopLimit` with the reason dropped, which claimed
+    /// thirty probes went out and said nothing about the kernel stopping the
+    /// walk at hop 6.
+    case refused(String)
     /// The walk's own budget ran out. Whatever the hops below say, the path
     /// may continue past them and this trace does not know.
     case budget
@@ -151,6 +180,20 @@ final class TraceHopCollector: @unchecked Sendable {
     }
 }
 
+/// How one hop's wait on the receiving socket ended.
+///
+/// Three answers where there used to be two, and the third is the point: a
+/// socket that FAILED is not a hop that was silent. `nil` for both made a
+/// broken descriptor print `1 *; 2 *; … 30 *` in microseconds — thirty
+/// statements about the network drawn from one local error.
+enum TraceWaitResult: Sendable, Equatable {
+    case answered(TraceAnswer)
+    /// The full wait elapsed and nothing matching this probe arrived.
+    case silent
+    /// The receiving socket failed, carrying `strerror`'s own sentence.
+    case failed(String)
+}
+
 /// One ICMP error message that answered a trace probe.
 struct TraceAnswer: Sendable, Equatable {
     /// `11` (time exceeded) or `3` (destination unreachable).
@@ -206,9 +249,15 @@ enum NetworkTrace {
     /// two stops the walk, `NetworkTraceEnding` says which.
     static let defaultMaxHops = 30
 
-    /// The longest ONE hop waits for its answer. The step's own budget caps
-    /// the walk as a whole; this caps a single hop inside it, so a run of
-    /// silent routers cannot each spend the whole step.
+    /// The longest ONE hop waits for its answer.
+    ///
+    /// The TRACE's own budget (`ConnectionDiagnostics.traceTimeout`, not
+    /// `stepTimeout`) caps the walk as a whole; this caps a single hop inside
+    /// it, so a run of silent routers cannot each spend the whole budget.
+    ///
+    /// And it is what a `*` row means: a hop that was waited on for this long
+    /// and answered nothing. A hop the budget allows less than this is not
+    /// reported at all — see `walk`.
     static let hopTimeout = Duration.seconds(1)
 
     /// The first hop's destination port. Traceroute's base, chosen for the
@@ -251,9 +300,12 @@ enum NetworkTrace {
     /// Traces one address. Never throws: everything the kernel refuses comes
     /// back as `.unavailable` carrying `strerror`'s own sentence.
     ///
-    /// - Parameter timeout: the whole walk's budget, which is the step's. With
-    ///   30 hops at a second each the hop deadlines alone would allow far
-    ///   more, so this is what actually bounds a trace across a slow path.
+    /// - Parameter timeout: the whole walk's budget. The trace's own
+    ///   (`ConnectionDiagnostics.traceTimeout`), and explicitly NOT the
+    ///   `stepTimeout` every other step shares — that is the distinction the
+    ///   20 s default exists for. With 30 hops at a second each the hop
+    ///   deadlines alone would allow far more, so this is what actually
+    ///   bounds a trace across a slow path.
     static func trace(
         address: ResolvedAddress, maxHops: Int = defaultMaxHops, timeout: Duration
     ) async -> NetworkTraceOutcome {
@@ -363,10 +415,11 @@ enum NetworkTrace {
             switch result {
             case .refused(let reason):
                 // A refusal on the FIRST hop is a statement about this machine
-                // (no socket, no route) and gets the local-end outcome. After
-                // a hop has been measured it is not: the walk has findings,
-                // and they are reported.
-                guard collector.hops.isEmpty else { return measured(.hopLimit) }
+                // and nothing else, so the whole step is `unavailable`. After
+                // a hop has been measured the walk has findings, and they are
+                // reported WITH the kernel's sentence: `.refused` rather than
+                // `.hopLimit`, which would claim the walk ran out of hops.
+                guard collector.hops.isEmpty else { return measured(.refused(reason)) }
                 return .unavailable(reason)
             case .measured(let outcome):
                 if outcome == .timedOut, budgetBinds {
@@ -424,12 +477,14 @@ enum NetworkTrace {
         let sendErrno = errno
         guard written >= 0 else { return .refused(String(cString: strerror(sendErrno))) }
 
-        guard
-            let answer = waitForAnswer(
-                descriptor: icmp, sourcePort: sourcePort, destinationPort: port,
-                started: started,
-                deadline: min(started.advanced(by: hopTimeout), deadline))
-        else { return .measured(.timedOut) }
+        let waited = waitForAnswer(
+            descriptor: icmp, sourcePort: sourcePort, destinationPort: port,
+            started: started,
+            deadline: min(started.advanced(by: hopTimeout), deadline))
+        // A failed socket is a refusal, never a `*`: see `TraceHopOutcome
+        // .timedOut`'s invariant.
+        if case .failed(let reason) = waited { return .refused(reason) }
+        guard case .answered(let answer) = waited else { return .measured(.timedOut) }
 
         guard answer.type == timeExceededType else {
             return .measured(
@@ -472,20 +527,24 @@ enum NetworkTrace {
     static func waitForAnswer(
         descriptor: Int32, sourcePort: UInt16, destinationPort: UInt16,
         started: ContinuousClock.Instant, deadline: ContinuousClock.Instant
-    ) -> TraceAnswer? {
+    ) -> TraceWaitResult {
         let clock = ContinuousClock()
         while true {
             let remaining = clock.now.duration(to: deadline)
-            guard remaining > .zero else { return nil }
+            guard remaining > .zero else { return .silent }
             var watched = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
             let ready = poll(
                 &watched, 1, Int32(max(1, min(remaining.milliseconds.rounded(), 60_000))))
             let pollErrno = errno
             if ready < 0 {
                 if pollErrno == EINTR { continue }
-                return nil
+                // NOT a silence. A socket that answers `EBADF` or `ENOBUFS`
+                // instantly would otherwise turn every remaining hop into a
+                // `*` in microseconds, and the report would state thirty
+                // silent hops on the strength of one local error.
+                return .failed(String(cString: strerror(pollErrno)))
             }
-            if ready == 0 { return nil }
+            if ready == 0 { return .silent }
 
             var buffer = [UInt8](repeating: 0, count: 2048)
             var source = sockaddr_storage()
@@ -498,8 +557,13 @@ enum NetworkTrace {
                 }
             }
             let receiveErrno = errno
-            if count < 0, receiveErrno == EINTR { continue }
-            guard count > 0 else { return nil }
+            if count < 0 {
+                if receiveErrno == EINTR { continue }
+                return .failed(String(cString: strerror(receiveErrno)))
+            }
+            // A datagram too short to parse is skipped and the wait goes on,
+            // the same as one that parses and does not match: it says nothing
+            // about this hop, and the budget for it has not run out.
             let elapsed = started.duration(to: clock.now)
             guard
                 let message = ICMPErrorMessage(bytes: buffer, count: count),
@@ -507,9 +571,10 @@ enum NetworkTrace {
                 message.quotedSourcePort == sourcePort,
                 message.quotedDestinationPort == destinationPort
             else { continue }
-            return TraceAnswer(
-                type: message.type, code: message.code,
-                source: text(of: source, length: sourceLength), rtt: elapsed)
+            return .answered(
+                TraceAnswer(
+                    type: message.type, code: message.code,
+                    source: text(of: source, length: sourceLength), rtt: elapsed))
         }
     }
 
