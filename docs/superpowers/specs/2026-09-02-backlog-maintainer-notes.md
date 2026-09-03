@@ -111,7 +111,17 @@ CLI completion → connection tools → FTP/FTPS → SMB) stands first.
 18. **S3: show the key's access level** — a probe of which S3 API rights
     the key has, in the context menu / connection info. Fits the
     connection-tools seam decided the same evening (per-protocol
-    diagnostics): this is S3's first contribution.
+    diagnostics): this is S3's first contribution. **Done 2026-09-03**
+    (commit `5828610f`, `docs/superpowers/plans/2026-09-03-connection-tools.md`
+    Task 5): `S3AccessProbe` runs `HeadBucket`, `ListObjectsV2`
+    (`max-keys=1`) and `ListBuckets`, narrowest to widest, each reported
+    with its HTTP status and the server's `x-amz-request-id` in full.
+    In `startsAtBucketList` mode the two bucket-level calls are skipped
+    (no one bucket to ask about). Nothing in the probe interprets a
+    status into a verdict — the rig's MinIO already disagrees with AWS
+    about `ListBuckets` for a scoped key, so a translated verdict would
+    be guessing about every provider at once; the row shows what each
+    call answered and lets the reader judge.
 19. **"What's new" dialog after an update**, with the release's changes,
     plus an action in Settings / the menu to open it again; skippable and
     hideable until the next update.

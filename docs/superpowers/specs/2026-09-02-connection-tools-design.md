@@ -52,10 +52,20 @@ step with a wall-clock duration and an outcome:
    everywhere.
 3. **ICMP echo** — on macOS an unprivileged `SOCK_DGRAM`/`IPPROTO_ICMP`
    socket sends an echo request without root; three probes, the RTTs.
-   **Unmeasured:** whether the App Sandbox / hardened-runtime build allows
-   that socket, and IPv6 (`IPPROTO_ICMPV6`). This half ships only after
-   the spike in §5 says how it behaves in the signed app; until then the
-   row says "not available in this build" rather than pretending.
+   **Measured and shipped** (`ICMPEcho.swift`, commit `1f525642`, fix
+   rounds `42a730e7`/`ae0be51f`): both IPv4 and IPv6 work unprivileged,
+   confirming the spike's verdict (a). One finding the spike could not
+   show: the socket is not demultiplexed by the kernel — a plain `ping`
+   run by another process on the same machine lands its replies on this
+   probe's socket too (measured: `ping -c 3 127.0.0.1` from a separate
+   process delivered three foreign datagrams to a socket that had sent
+   nothing). A reply is therefore counted only when it echoes this
+   probe's own 18-byte marker and an 8-byte per-socket nonce, never on
+   sequence alone. The identifier is reported but never required,
+   matching the spike's finding that macOS did not rewrite it here.
+   Open: the IPv4 no-route branch has no automated test (this machine
+   always has an IPv4 route); nothing has been measured in the signed,
+   notarized build.
 4. **Own-setup trace** — the timings the app CAN see: resolve, TCP,
    then the backend's dial as one step ("SSH handshake + auth + channel"
    for SSH, "first signed request" for S3, "OPTIONS" for WebDAV), each
@@ -65,9 +75,24 @@ step with a wall-clock duration and an outcome:
    it and does not promise it.
 5. **Network trace** — hop-by-hop needs TTL-limited probes AND receiving
    ICMP time-exceeded, which on macOS needs a raw socket or a privileged
-   helper. **Unmeasured** whether the unprivileged ICMP socket delivers
-   time-exceeded; the spike decides. Same rule as 3: absent until proved,
-   never faked.
+   helper. **Measured and shipped for IPv4** (`NetworkTrace.swift`,
+   commit `d4e2e8e9`, fix rounds `1a4573a1`/`4456836d`): the
+   unprivileged ICMP socket does deliver time-exceeded, confirming the
+   spike's verdict (b), matched to its own probe by the quoted UDP
+   source and destination ports (the same demultiplexing gap §2.3
+   measures applies here too). The walk carries its own 20 s budget,
+   separate from the runner's per-step deadline, and ends honestly: a
+   hop the budget cut short is marked as such rather than printed as a
+   silent `*`, and a mid-path refusal or an exhausted hop limit ends the
+   walk as its own outcome rather than a blanket timeout. **IPv6 stays
+   unmeasured**: the spike's verdict (c) found no IPv6 route on the
+   measuring machine, and the trace refuses a non-IPv4 destination
+   rather than guess. Open: the 20 s budget is a judgement, not a
+   measurement — no real internet path has been traced with this build;
+   `traceHopUnreachable` (a mid-path destination-unreachable with a
+   code other than port-unreachable) has never gone red from a real
+   message, only from a hand-built value case; nothing has been
+   measured in the signed, notarized build.
 
 Every step is an `async` function with a deadline; the report is a list
 of `DiagnosticStep { name, started, duration, outcome, detail }` plus the

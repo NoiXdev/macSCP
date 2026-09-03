@@ -94,6 +94,33 @@ continuation). A blocking wait that "returns at once" today is a hang on
 a smaller machine tomorrow. The record of the measurement is
 `docs/superpowers/specs/2026-08-08-testsuite-hang-investigation.md`.
 
+## A wall-clock ceiling in a test measures the runner
+
+Three CI reds, all on the connection-tools plan (2026-09-03), all the
+same shape: a fixed upper bound on elapsed time, red not because the
+code was slow but because the three-core CI runner was.
+
+- `AsyncSignalTests.swift` (`c8eebbd3`): a 200 ms sleep's bound fired
+  after **10.38 s** on run 33707411271 (ambient main-actor gap 14.7 s in
+  the same run).
+- `ConnectionDiagnosticsTests.swift` (`35e456da`): two cases with a
+  200 ms step deadline came back after **20.68 s** and **20.67 s** on
+  run 33727757421 — the outcome each asserted (`.timedOut`,
+  `stillRunning`) was already correct; only the `elapsed < .seconds(10)`
+  ceiling on top of it was red.
+- The subprocess timeout test (fixed in `a4c59a2b`/`b6e181f3`): a 2 s
+  bound raced Foundation's `readabilityHandler`, which only reaches
+  `stderrSoFar` once the Dispatch global queue hands it a thread — on a
+  starved runner the bound won the race and the assertion read empty
+  text. The fix was not a wider bound; it was synchronising on the
+  reader (an `onStderrChunk` seam raising a latch, awaited before the
+  bound is asserted on) instead of on the clock.
+
+Rule: assert the outcome and the ordering a bound is supposed to
+produce, not how long producing it took. A floor (`elapsed >= …`, "this
+did not return early") is fine — a slow machine cannot defeat it, only a
+broken one. A ceiling always can.
+
 ## Architecture invariants
 
 - TOFU host-key handling is security-critical: a key **mismatch is a hard
@@ -129,6 +156,24 @@ been restructured. In a file untouched since a milestone: none.
 
 Applies to reviews too: a number in a comment is something to verify, not
 evidence.
+
+## A report says what the diff shows
+
+Measured 2026-09-03, Task 3 of the connection-tools plan, round 2: round
+1's own report claimed two doc corrections — `hopTimeout`'s comment,
+`NetworkTrace.walk`'s `- Parameter timeout:` — that were not in the
+tree. A scripted edit ran two `.replace(...)` calls whose old text did
+not match (the wrapping had drifted from what had been transcribed by
+hand), the script printed `ok` because nothing asserted the match, and
+the report was written from what the edit intended rather than from
+what it did. It is the "Comments that describe other code" failure mode
+above, one layer up, with the report standing in for the comment.
+
+So: every scripted replacement asserts its anchor before writing
+(`assert old in s`, or the language's equivalent) — a silent miss
+becomes a loud one instead. And a report is written from the diff, never
+from the intent: read back what actually changed before describing it
+as done.
 
 ## Guards that name what they watch
 
@@ -171,7 +216,11 @@ own:
    contain — and none by the author's own battery. When a scan keeps buying
    one spelling and revealing another, that is the evidence that the
    property wants a structural boundary (a type that will not compile the
-   violation) rather than another anchor.
+   violation) rather than another anchor. A probe that never ran proves
+   nothing either way: `scripts/mutation-probe` reports `BUILD FAILED`
+   as its own outcome, distinct from red or green, because a harness that
+   greps only for failing test names read a build failure — zero tests
+   ran — as an all-clear (measured 2026-09-03).
 
 ## A value a test must not leak has two exits, not one
 

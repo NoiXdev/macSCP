@@ -88,6 +88,84 @@ answers the maintainer's "what is it hanging on?"), then the ICMP/route
 halves behind the spike's verdict. Needs brainstorming → design →
 plan; not yet planned.
 
+## Done 2026-09-03
+
+Shipped, plan `docs/superpowers/plans/2026-09-03-connection-tools.md`,
+commits `8997c955`, `ea9ea544`, `64854401`, `35e456da` (Task 1: resolve,
+TCP ping, the dial, the report/runner seam); `1f525642`, `42a730e7`,
+`ae0be51f` (Task 2: ICMP echo); `d4e2e8e9`, `1a4573a1`, `4456836d`
+(Task 3: IPv4 network trace); `9d232320`, `01ee5218`, `bf3b3bd4`,
+`287d4d2d`, `d6cec28b` (Task 4: the panel behind three doors); `5828610f`
+(Task 5: S3 and WebDAV contributions); `a4c59a2b`, `b6e181f3` (the
+orphan-issue and flake fix rounds). CI green at `35e456da` (run
+33728368993), `ae0be51f` (33731482467), `d6cec28b` (33772501551, 3976
+tests in 40.8 s, warning gate 1/1); red at `4456836d` (33741778350 — one
+issue with no test verdict line: the job log loses lines under
+interleaved output) and `b6e181f3` (33770684841 — tests green, warning
+gate red: a redundant `#require` on Swift 6.1.2, fixed in Task 4's fix
+round 4).
+
+**What shipped:**
+
+- **Resolve, TCP ping and the dial**, one report behind the descriptor
+  seam (`ConnectionDiagnostics`, `HostResolver`, `TCPPing`,
+  `DialProbes`) — SSH's dial is the full connect (Citadel exposes no
+  transport-only handshake), S3's an unsigned `HEAD`, WebDAV's an
+  unauthenticated `OPTIONS`.
+- **ICMP echo**, matched on a payload marker plus an 8-byte per-socket
+  nonce rather than sequence alone: measured that an unprivileged
+  `SOCK_DGRAM`/`IPPROTO_ICMP` socket is not demultiplexed by the
+  kernel — a plain `ping` run by another process on the same machine
+  delivers its replies to this probe's socket too (`ping -c 3
+  127.0.0.1` from a separate process landed three foreign datagrams on
+  a socket that had sent nothing). Both IPv4 and IPv6 confirmed working
+  unprivileged, per the spike's verdict (a).
+- **The IPv4 network trace**, with its own 20 s budget separate from
+  the runner's per-step deadline, and honest endings: a hop the budget
+  cut short is marked as such rather than printed as a silent `*`, a
+  kernel refusal after measured hops ends the walk `.failed` with the
+  hops kept, and a hop limit reached with at least one answer is `.ok`
+  with a marker rather than `.timedOut`.
+- **The panel**, behind three doors (tab toolbar, session context menu,
+  connect-error dialog) landing on one entry
+  (`ContentView.showDiagnostics(for:)`), with rows appearing
+  incrementally as each step finishes and a diagnosis bound to the tab
+  that opened it — teardown of that tab stops the run and keeps the
+  rows measured so far; a cancelled or in-progress report says so in
+  its copied text.
+- **S3 access level and WebDAV server claims**, as the seam's first two
+  contributions: three signed S3 calls (`HeadBucket`, `ListObjectsV2`,
+  `ListBuckets`) narrowest to widest, each reported with its status and
+  request id; an authenticated `OPTIONS` plus a depth-0 `PROPFIND` for
+  WebDAV, reporting the `DAV:`/`Allow:` claims and the root's resource
+  type.
+
+**What stays open:**
+
+- **SSH's negotiation contribution** needs the swift-nio-ssh fork's own
+  observer (KEX/host-key/cipher/auth-method timestamps); the descriptor
+  ships `diagnostics: []` for SSH and says so.
+- **IPv6 network trace is unmeasured** — the spike found no IPv6 route
+  on the measuring machine (verdict (c)), and the trace refuses a
+  non-IPv4 destination rather than guess.
+- **The trace's 20 s budget is a judgement, not a measurement** — no
+  real internet path has been traced with this build.
+- **`traceHopUnreachable`** (a mid-path destination-unreachable with a
+  code other than port-unreachable) has never gone red from a real
+  network message, only from a hand-built value case — loopback only
+  ever sends code 3.
+- **The twelve cancellation sites** in `ConnectionDiagnostics.run()`
+  are a convention (a required `Completion` argument stops one from
+  inheriting `.complete` silently) rather than a structural guarantee;
+  nothing stops a future site from spelling `report(.complete)`
+  deliberately.
+- **The panel's detail-renderer blind spot**: the guard that requires
+  every printed detail to go through
+  `DiagnosticsPresentation.detail(of:)` has a rewrite it cannot see
+  (`let d = step.detail; Text(d)`); closing it wants a structural row
+  type the panel cannot draw un-rendered, which is a design decision
+  rather than a fix.
+
 ## Decided 2026-09-02 (night) — order, and the shape: universal tools plus a per-protocol seam
 
 The maintainer set the order for what follows the fork work: the

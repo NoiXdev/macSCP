@@ -82,8 +82,8 @@ public actor ConnectionDiagnostics {
 ```
 Steps in order: resolve (A and AAAA, every address listed, the time), TCP ping (one attempt per address, `accepted` / `refused` / `timedOut` with RTT; the first `accepted` decides the step's outcome), dial (the backend's own connect as one step through the existing connect funnel WITHOUT authentication where the backend allows — SSH: transport + KEX only is not exposed by Citadel, so the SSH dial step is the full connect with the session's credentials through the same resolver, named honestly "SSH connect"; S3: an unsigned `HEAD` on the bucket endpoint; WebDAV: `OPTIONS`), then the contributions.
 
-- [ ] Red first: `ConnectionDiagnosticsTests` — resolve `localhost` (both families present or the one the machine has); TCP ping to the rig's sshd `127.0.0.1:2222` accepted under `MACSCP_ITEST=1`, to a closed loopback port refused (bind a socket, close it, probe the port), to `192.0.2.1:22` timed out inside the step timeout (gated `MACSCP_NETSPIKE=1` — the SYN dies at the first hop); cancellation mid-run ends with the steps so far; `plainText()`/`markdown()` render every step once with duration and outcome; `BackendDescriptorEndpointTests` — every kind's `endpoint(of:)` from its field values (SSH host/port, S3 endpoint host + 443/80 per scheme, WebDAV URL host + port).
-- [ ] Implement; `swift test` green; commit `feat(diagnostics): resolve, TCP ping and the dial as one report, behind the descriptor seam`.
+- [x] Red first: `ConnectionDiagnosticsTests` — resolve `localhost` (both families present or the one the machine has); TCP ping to the rig's sshd `127.0.0.1:2222` accepted under `MACSCP_ITEST=1`, to a closed loopback port refused (bind a socket, close it, probe the port), to `192.0.2.1:22` timed out inside the step timeout (gated `MACSCP_NETSPIKE=1` — the SYN dies at the first hop); cancellation mid-run ends with the steps so far; `plainText()`/`markdown()` render every step once with duration and outcome; `BackendDescriptorEndpointTests` — every kind's `endpoint(of:)` from its field values (SSH host/port, S3 endpoint host + 443/80 per scheme, WebDAV URL host + port).
+- [x] Implement; `swift test` green; commit `feat(diagnostics): resolve, TCP ping and the dial as one report, behind the descriptor seam` (`8997c955`; fix round 1 `ea9ea544`; fix round 2 `64854401`; the wall-clock ceiling drop `35e456da`).
 
 ### Task 2: ICMP echo, from the spike's verdict
 
@@ -92,8 +92,8 @@ Steps in order: resolve (A and AAAA, every address listed, the time), TCP ping (
 - Modify: `ConnectionDiagnostics.swift` (the `icmp` step: three probes, min/avg/max RTT; IPv6 when the resolve step found an AAAA and a route exists — else `.unavailable("no IPv6 route")`)
 - Test: `Tests/macSCPCoreTests/ICMPEchoTests.swift`
 
-- [ ] Red first: echo to `127.0.0.1` and `::1` — a reply inside 2 s with the sent sequence; the identifier is accepted whether rewritten or not (the test asserts on sequence only and records the identifier); a socket error (simulate with an invalid family) yields `.unavailable` with the `strerror`, never a throw out of the step; three probes produce three RTTs.
-- [ ] Implement per `Tests/macSCPCoreTests/ICMPSpikeTests.swift`'s measured code shape (DGRAM socket, IPv4 delivers the IP header — skip `ihl*4` bytes; IPv6 does not; the ICMPv6 socket also delivers the process's own type-128 request — filter to type 129); commit `feat(diagnostics): ICMP echo without privileges`.
+- [x] Red first: echo to `127.0.0.1` and `::1` — a reply inside 2 s with the sent sequence; the identifier is accepted whether rewritten or not (the test asserts on sequence only and records the identifier); a socket error (simulate with an invalid family) yields `.unavailable` with the `strerror`, never a throw out of the step; three probes produce three RTTs.
+- [x] Implement per `Tests/macSCPCoreTests/ICMPSpikeTests.swift`'s measured code shape (DGRAM socket, IPv4 delivers the IP header — skip `ihl*4` bytes; IPv6 does not; the ICMPv6 socket also delivers the process's own type-128 request — filter to type 129); commit `feat(diagnostics): ICMP echo without privileges` (`1f525642`; fix round 1 `42a730e7` — the payload marker + per-socket nonce, from the measured finding that an unprivileged ICMP socket receives every process's replies; fix round 2 `ae0be51f`).
 
 ### Task 3: Network trace, IPv4
 
@@ -102,8 +102,8 @@ Steps in order: resolve (A and AAAA, every address listed, the time), TCP ping (
 - Modify: `ConnectionDiagnostics.swift` (the `trace` step; IPv6 → `.unavailable("IPv6 trace unmeasured: no route on the machine that measured it")` until measured)
 - Test: `Tests/macSCPCoreTests/NetworkTraceTests.swift`
 
-- [ ] Red first (gated `MACSCP_NETSPIKE=1`): a TTL-1 UDP probe to `192.0.2.1:33434` yields hop 1 with an address and an RTT from the ICMP type-11 message on the DGRAM socket; the trace stops at the first `.timedOut` hop after `maxHops` (default 30, test uses 1) or at the destination's port-unreachable (type 3) — the destination case is exercised against `127.0.0.1:33434` (loopback answers port unreachable at hop 1). Per-hop deadline 1 s; the step's total deadline is the runner's.
-- [ ] Implement (one UDP socket per probe with `IP_TTL`, one ICMP DGRAM socket receiving; match by the quoted UDP header's destination port); commit `feat(diagnostics): an IPv4 network trace on unprivileged sockets`.
+- [x] Red first (gated `MACSCP_NETSPIKE=1`): a TTL-1 UDP probe to `192.0.2.1:33434` yields hop 1 with an address and an RTT from the ICMP type-11 message on the DGRAM socket; the trace stops at the first `.timedOut` hop after `maxHops` (default 30, test uses 1) or at the destination's port-unreachable (type 3) — the destination case is exercised against `127.0.0.1:33434` (loopback answers port unreachable at hop 1). Per-hop deadline 1 s; the step's total deadline is the runner's.
+- [x] Implement (one UDP socket per probe with `IP_TTL`, one ICMP DGRAM socket receiving; match by the quoted UDP header's destination port); commit `feat(diagnostics): an IPv4 network trace on unprivileged sockets` (`d4e2e8e9`; fix round 1 `1a4573a1` — the trace's own 20 s budget, separate from the step timeout; fix round 2 `4456836d` — honest endings for a refusal and a hop-limit reached).
 
 ### Task 4: Three doors and the panel
 
@@ -112,7 +112,7 @@ Steps in order: resolve (A and AAAA, every address listed, the time), TCP ping (
 - Modify: the tab's detail view (toolbar item "Diagnose…" when connected; a "Diagnose…" button beside the failed-connect surface), the session context menu, the connect error dialog; four App catalogs
 - Test: `Tests/macSCPAppKitTests/DiagnosticsViewModelTests.swift` (run/cancel/report on a fake runner; both copy shapes reach the pasteboard abstraction the app uses), `DiagnosticsDoorsGuardTests.swift` (the three doors wire the same view model entry; the panel never runs on appear — a `.onAppear { …run }` in the panel or its doors is the planted violation; "Copy report" is a `Menu` with two entries; all reads on `SwiftSource` views with positive anchors)
 
-- [ ] Red first, implement, `swift test --filter Localiz` and `GermanAddressForm`, full suite green; commit `feat(diagnostics): one panel behind the tab, the session menu and the error dialog`.
+- [x] Red first, implement, `swift test --filter Localiz` and `GermanAddressForm`, full suite green; commit `feat(diagnostics): one panel behind the tab, the session menu and the error dialog` (`9d232320`; fix round 1 `01ee5218` — cancel on sheet close and tab teardown; fix round 2 `bf3b3bd4` — incremental publishing, a diagnosis bound to the tab that opened it; fix round 3 `287d4d2d`; fix round 4 `d6cec28b` — `DiagnosticReport.Completion` so a cancelled report says so in its copied text).
 
 ### Task 5: First seam contributions — S3 access level, WebDAV OPTIONS
 
@@ -120,8 +120,8 @@ Steps in order: resolve (A and AAAA, every address listed, the time), TCP ping (
 - Modify: `Sources/macSCPCore/Capabilities/BackendDescriptor.swift` (`s3Descriptor.diagnostics`, `webdavDescriptor.diagnostics`), `Sources/macSCPCore/S3/` (a signed `HeadBucket`, `ListObjectsV2` `MaxKeys=1`, `ListBuckets` probe returning status + `x-amz-request-id` per call), `Sources/macSCPCore/WebDAV/` (`OPTIONS` → `DAV:` class and `Allow`; `PROPFIND` depth 0 on the root)
 - Test: `S3AccessProbeTests` against MinIO (`MACSCP_ITEST=1`: root key sees all three; the scoped user `macscp-scoped` sees the filtered list — the rig's measured behaviour, recorded in `2026-09-02-s3-bucket-browser-design.md`), `WebDAVOptionsProbeTests` against the rig's Apache.
 
-- [ ] Red first, implement, commit `feat(diagnostics): the S3 key's access level and the WebDAV server's claims, as contributions`. The SSH negotiation contribution is NOT in this plan (needs the fork's observer — backlog).
+- [x] Red first, implement, commit `feat(diagnostics): the S3 key's access level and the WebDAV server's claims, as contributions` (`5828610f`; a fix round follows under review). The SSH negotiation contribution is NOT in this plan (needs the fork's observer — backlog).
 
 ### Task 6: Closeout
 
-- [ ] `docs/superpowers/specs/2026-08-25-backlog-connection-tools.md` and the `docs/BACKLOG.md` row → Done with the commits; the design's §2.3/§2.5 "Unmeasured" wording replaced by the measured state; `docs/superpowers/specs/2026-09-02-backlog-maintainer-notes.md` item 18 (S3 access level) → Done. Commit `docs(backlog): connection tools shipped; SSH negotiation and the IPv6 trace stay open`.
+- [x] `docs/superpowers/specs/2026-08-25-backlog-connection-tools.md` and the `docs/BACKLOG.md` row → Done with the commits; the design's §2.3/§2.5 "Unmeasured" wording replaced by the measured state; `docs/superpowers/specs/2026-09-02-backlog-maintainer-notes.md` item 18 (S3 access level) → Done. Commit `docs(backlog): connection tools shipped; SSH negotiation and the IPv6 trace stay open`.
