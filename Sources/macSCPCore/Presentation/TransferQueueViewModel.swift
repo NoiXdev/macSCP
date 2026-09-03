@@ -198,15 +198,27 @@ public final class TransferQueueViewModel {
 
     public private(set) var items: [Item] = []
 
-    /// true while any item is queued/running (sidebar gate).
+    /// true while any item is queued/running (sidebar gate), and the gate
+    /// the transfer bar's "Cancel all" reads.
+    ///
+    /// Written on `Status.isCancellable` rather than on a hand-listed pair
+    /// of states, so this and the per-row cancel are ONE predicate. Two
+    /// spellings that denote the same set today are two spellings that a
+    /// later non-terminal status splits apart: `isCancellable`'s exhaustive
+    /// switch refuses to compile until somebody decides, an inline
+    /// `status == .queued || status.isRunning` compiles unchanged and
+    /// silently answers "not active" — and the row would then offer a
+    /// cancel on an item "Cancel all" says is not there.
     public var isActive: Bool {
-        items.contains { $0.status == .queued || $0.status.isRunning }
+        items.contains { $0.status.isCancellable }
     }
 
     /// Number of open (queued+running) items — for the "n pending" label.
+    /// The same predicate as `isActive`, for the same reason: the header's
+    /// count and the button beside it must not be able to disagree.
     public var pendingCount: Int {
         items.reduce(into: 0) { count, item in
-            if item.status == .queued || item.status.isRunning { count += 1 }
+            if item.status.isCancellable { count += 1 }
         }
     }
 

@@ -62,7 +62,12 @@ CLI completion → connection tools → FTP/FTPS → SMB) stands first.
    honouring the same exactly-once-waiter, FIFO-refill and
    once-per-group `onCompleted` invariants `cancelAll` already held. The
    bar gained "Cancel all" and a per-row cancel button, both gated on a
-   new `Item.Status.isCancellable`, checked by a wiring guard that reads
+   new `Item.Status.isCancellable` — the row directly, "Cancel all"
+   through the queue's `isActive`, which is itself
+   `items.contains { $0.status.isCancellable }` (made so on 2026-09-03;
+   it had been a hand-written `== .queued || .isRunning`, a second
+   spelling of the same set that only a future non-terminal status would
+   have split apart). Both hops are checked by a wiring guard that reads
    stripped source (comments and string literals blanked) rather than
    raw text.
 8. **The path bar's double-click area** spans the whole width, not only
@@ -157,11 +162,26 @@ Plan amendments `2383ef20`, `ef0c9565`. Details are written into items 1,
 Deferred, parked while closing this plan — neither is a regression, both
 are one-line fixes the moment their precondition changes:
 
-- The terminal test's open gate `secondOpen`
-  (`Tests/macSCPCoreTests/TerminalPanelViewModelTests.swift:652-686`)
-  ignores cancellation; `defer { secondOpen.release() }` is the one-line
-  fix, load-bearing only once a throwing path is added there.
-- `Item.destinationPath` is a second spelling of `destinationDirectory +
-  fileName`, written at one choke point
-  (`applyEffectiveName(_:to:in:)`).
+- The terminal test's open gate `secondOpen` — declared and released
+  inside
+  `TerminalPanelViewModelTests.aWindowChangeReturningAfterItsShellEndedIsNotRememberedForTheNext`,
+  cited by symbol because the line range this note first carried
+  (`:652-686`) is the `ParkGate` class, which contains no `secondOpen`
+  and whose own doc says being cancellation-blind is deliberate there —
+  has no `defer { secondOpen.release() }`. Weaker than it sounds: that
+  suite's `waitUntil` does not throw on a timeout (it loops and
+  `#expect`s), so a failing wait still reaches the release. Only real
+  task cancellation leaks the suspended open. The `defer` is a
+  hardening, not a fix for a hang; it becomes load-bearing the moment a
+  throwing `#require` is added above the release.
+- `Item.destinationPath` is NOT a second spelling of
+  `destinationDirectory + fileName`. It is the undecorated path that the
+  decorated `fileName` cannot yield: `addTerminalItem` appends `"/"` to
+  an expansion failure and `" →"` to a skipped symlink, so the label and
+  the path deliberately differ on exactly those rows, and the field's
+  own doc says so. What is true is the choke point: a `.rename` moves
+  `fileName` and `destinationPath` together at
+  `applyEffectiveName(_:to:in:)`, the only place in `Sources/` besides
+  the two initialisers that writes either. Rebuilding the path from the
+  label is the tidy-up this note must not invite.
 

@@ -192,15 +192,44 @@ struct TransferQueueBarPathsGuardTests {
     /// `TabStripView` and `ContentView+Detail` each put
     /// `.contentShape(Rectangle())` immediately before the interaction
     /// modifier it is there to serve.
+    /// PRESENCE is not placement, which is the same lesson one level down:
+    /// a `.contentShape` that sits BELOW the two interaction modifiers
+    /// shapes nothing they can use, because a modifier applies to what
+    /// precedes it. The row would draw identically, this suite's other
+    /// checks would all stay green, and the dead `Spacer` would be back.
+    /// So the offsets are compared, in the strict view where a sentence
+    /// naming a modifier cannot supply one.
     @Test func theRowCarriesAHitRegionCoveringItsEmptySpace() throws {
+        let rowBody = try Self.bodies(of: Self.rowDeclaration).code
         // Computed before the expectation, so a failure reports the claim
         // rather than dumping the whole row builder into the output.
-        let carriesHitRegion = try Self.bodies(of: Self.rowDeclaration).code
-            .contains(Self.hitRegion)
+        let carriesHitRegion = rowBody.contains(Self.hitRegion)
         #expect(carriesHitRegion, """
             The row no longer sets .contentShape(Rectangle()) -- its hint and its \
             context menu would answer only over the drawn file name, not over the \
             Spacer that is most of a short row's width.
+            """)
+
+        let shapeAt = try #require(
+            rowBody.range(of: Self.hitRegion)?.lowerBound,
+            "no .contentShape(Rectangle()) in the row body -- see the check above")
+        let hintAt = try #require(
+            rowBody.range(of: Self.hintPlacement)?.lowerBound,
+            "no .help(pathsHint(item)) in the row body -- re-anchor this check")
+        let menuAt = try #require(
+            rowBody.range(of: Self.menuPlacement)?.lowerBound,
+            "no .contextMenu on the row -- re-anchor this check")
+        let shapedBeforeTheHint = shapeAt < hintAt
+        let shapedBeforeTheMenu = shapeAt < menuAt
+        #expect(shapedBeforeTheHint, """
+            .contentShape(Rectangle()) sits AFTER .help(pathsHint(item)), so the \
+            hint attaches to the unshaped HStack and answers only over the drawn \
+            file name.
+            """)
+        #expect(shapedBeforeTheMenu, """
+            .contentShape(Rectangle()) sits AFTER .contextMenu, so the menu \
+            attaches to the unshaped HStack and opens only over the drawn file \
+            name -- not over the Spacer that is most of a short row's width.
             """)
     }
 
@@ -298,14 +327,32 @@ struct TransferQueueBarPathsGuardTests {
                 "a commented mention must not be counted as a placement")
     }
 
+    /// The fixture is a hint the view assembled itself, out of the item's
+    /// own fields, without asking the Core fold.
+    ///
+    /// The body carries a `return` that is NOT inside the literal, and that
+    /// is the anchor rather than decoration: this fixture's payload is one
+    /// interpolated string literal, which the strict view blanks whole —
+    /// interpolations included. Without a token of its own outside the
+    /// literal the negative below would be true of an empty read, of an
+    /// off-by-one in `slice(_:of:)`, and of a `declarationBodyRange` that
+    /// returned an empty span for every declaration — CLAUDE.md's "without
+    /// one it is not a guard, it is a comment that runs". Both sibling
+    /// self-tests carry such an anchor; this one used to be the exception.
     @Test func scannerSeesAHintAssembledWithoutTheFold() throws {
         let source = """
             \(Self.hintDeclaration)_ item: Item) -> String {
-                "\\(item.fileName) -> \\(item.destinationDirectory)"
+                return "\\(item.fileName) -> \\(item.destinationDirectory)"
             }
             """
         let body = try TransferQueueBarCancelGuardTests.declarationBody(
             of: Self.hintDeclaration, in: try SwiftSource.blankingCommentsAndStrings(source))
+        // Positive first: the body was really read, so the negative below
+        // reports the missing fold rather than an empty span.
+        #expect(body.contains("return"), """
+            the strict view of this fixture's body is empty -- the scanner read \
+            nothing, and the negative below would hold over any declaration at all
+            """)
         #expect(!body.contains(Self.foldCall), """
             the scanner must report a hint the view derived itself, not wave it \
             through because it mentions the item's paths at all

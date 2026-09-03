@@ -13,7 +13,11 @@ import Testing
 /// `onlyQueuedAndRunningItemsAreCancellable`). What is left for a scan is
 /// the wiring: that the view asks those predicates rather than re-deriving
 /// the answer next to them, where the two spellings would drift apart
-/// without either suite noticing. To make that a question a scan can answer
+/// without either suite noticing. One check reads the QUEUE's source rather
+/// than the bar's, because "Cancel all"'s gate is two hops and the second
+/// one — what `isActive` is made of — is invisible from the bar
+/// (`theQueuesActivityPredicateIsTheRowsCancellablePredicate`). To make that
+/// a question a scan can answer
 /// exactly, each control is a named declaration of its own in
 /// `TransferQueueBar.swift`, so the region searched is a brace-balanced
 /// body rather than a guessed window — the failure mode CLAUDE.md records
@@ -66,6 +70,12 @@ struct TransferQueueBarCancelGuardTests {
     private static let sourceFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/TransferQueueBar.swift")
 
+    /// The queue itself, because "Cancel all"'s gate is only half a hop:
+    /// the button reads `isActive`, and `isActive` decides which items
+    /// count. See `theQueuesActivityPredicateIsTheRowsCancellablePredicate`.
+    private static let queueFile = repoRoot
+        .appendingPathComponent("Sources/macSCPCore/Presentation/TransferQueueViewModel.swift")
+
     private static let cancelAllDeclaration = "private var cancelAllButton: some View"
     private static let rowCancelDeclaration = "private func cancelButton("
 
@@ -80,6 +90,9 @@ struct TransferQueueBarCancelGuardTests {
     private static let rowCancelKey = "\"transfers.cancel\""
     private static let helpModifier = ".help("
     private static let accessibilityLabelModifier = ".accessibilityLabel("
+    private static let isActiveDeclaration = "public var isActive: Bool"
+    private static let pendingCountDeclaration = "public var pendingCount: Int"
+    private static let cancellablePredicate = "status.isCancellable"
 
     /// The two views of the bar this suite reads, both derived from one read
     /// of the file and both the same length as it (see `SwiftSource`).
@@ -201,6 +214,51 @@ struct TransferQueueBarCancelGuardTests {
         #expect(code.contains(Self.rowCancelAction), """
             A row's cancel must stop exactly that row's transfer, by id -- not \
             the whole queue.
+            """)
+    }
+
+    /// The second hop of "Cancel all"'s gate, and the one a scan of the bar
+    /// alone cannot see.
+    ///
+    /// `.disabled(!viewModel.isActive)` above says WHERE the answer comes
+    /// from; it says nothing about what the answer is made of. `isActive`
+    /// used to be a hand-written `status == .queued || status.isRunning` —
+    /// a fourth spelling of the cancellable set, which is exactly what the
+    /// per-row gate was made a single predicate to avoid. The two denoted
+    /// the same set, so no behavioural test could tell them apart; the
+    /// difference only appears when a later non-terminal status is added,
+    /// and then only one of the two refuses to compile.
+    ///
+    /// `pendingCount` is read here too: it feeds the header's "n pending"
+    /// beside this very button, and a count that disagrees with the gate is
+    /// the same defect wearing a number.
+    @Test func theQueuesActivityPredicateIsTheRowsCancellablePredicate() throws {
+        let queue = try SwiftSource.blankingCommentsAndStrings(
+            try String(contentsOf: Self.queueFile, encoding: .utf8))
+        // Positive anchor for the two body reads below: the file the scan
+        // names must actually be the queue's own source. Computed first, so
+        // a failure reports the claim rather than dumping the file.
+        let readsTheQueue = queue.contains("public private(set) var items: [Item]")
+        #expect(readsTheQueue, """
+            the strict view of TransferQueueViewModel.swift no longer contains the \
+            queue's item list -- the path or the stripper is wrong, and both checks \
+            below are reading something other than the file they name
+            """)
+
+        let isActiveBody = try Self.declarationBody(of: Self.isActiveDeclaration, in: queue)
+        let pendingCountBody = try Self.declarationBody(
+            of: Self.pendingCountDeclaration, in: queue)
+        let activityAsksTheStatus = isActiveBody.contains(Self.cancellablePredicate)
+        let countAsksTheStatus = pendingCountBody.contains(Self.cancellablePredicate)
+        #expect(activityAsksTheStatus, """
+            isActive re-derives "still open work" instead of asking \
+            Item.Status.isCancellable -- Cancel all and the per-row cancels are \
+            then two predicates, and the next non-terminal status splits them.
+            """)
+        #expect(countAsksTheStatus, """
+            pendingCount re-derives "still open work" instead of asking \
+            Item.Status.isCancellable -- the header's "n pending" and the Cancel-all \
+            button beside it are then free to disagree.
             """)
     }
 

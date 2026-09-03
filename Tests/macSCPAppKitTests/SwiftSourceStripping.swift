@@ -62,9 +62,15 @@ enum SwiftSource {
         }
     }
 
-    /// Blanks `//` and `/* */` comments AND string literals. The strict
-    /// view: what survives is code, so a symbol found in it was called, not
-    /// described or quoted.
+    /// Blanks `//` and `/* */` comments AND string literals, interpolations
+    /// included. The strict view: what survives is code, so a symbol found in
+    /// it was called, not described or quoted.
+    ///
+    /// The converse does NOT hold: a symbol MISSING from the strict view may
+    /// still be called, because an interpolated expression is blanked along
+    /// with the literal that carries it (see `endOfLiteral`). Every check
+    /// here is positive for that reason — "the call is present" — and a
+    /// negative one must be read as "not present outside a literal".
     static func blankingCommentsAndStrings(_ source: String) throws -> String {
         try blank(source, keepStringLiterals: false)
     }
@@ -78,11 +84,17 @@ enum SwiftSource {
     }
 
     /// Fails closed: a raw-string delimiter (`#"…"#`) is a form this
-    /// stripper does not parse, and an unterminated string or comment means
-    /// it ran off the end of the file without finding what it was looking
-    /// for. Both throw rather than return whatever was collected so far —
-    /// the alternative is a scan that silently reads less than the file it
-    /// claims to have checked.
+    /// stripper does not parse, and an unterminated string, interpolation or
+    /// comment means it ran off the end of the file without finding what it
+    /// was looking for. All three throw rather than return whatever was
+    /// collected so far — the alternative is a scan that silently reads less
+    /// than the file it claims to have checked.
+    ///
+    /// The one form still parsed by approximation is a multiline literal:
+    /// its span ends at the next `"""`, so a `"""` written INSIDE one of its
+    /// interpolations would end it early. No such literal exists in the
+    /// scanned tree, and the failure would be over-blanking (a check going
+    /// red), not a literal posing as code.
     private static func blank(_ source: String, keepStringLiterals: Bool) throws -> String {
         let chars = Array(source)
         var result: [Character] = []
@@ -141,29 +153,9 @@ enum SwiftSource {
                     throw StripError.unrecognizedDelimiter
                 }
             }
-            if character == "\"", index + 2 < chars.count,
-                chars[index + 1] == "\"", chars[index + 2] == "\""
-            {
-                let start = index
-                index += 3
-                while index + 2 < chars.count,
-                    !(chars[index] == "\"" && chars[index + 1] == "\"" && chars[index + 2] == "\"")
-                {
-                    index += 1
-                }
-                guard index + 2 < chars.count else { throw StripError.unterminatedLiteral }
-                index += 3
-                appendLiteral(start..<index)
-                continue
-            }
             if character == "\"" {
                 let start = index
-                index += 1
-                while index < chars.count, chars[index] != "\"" {
-                    if chars[index] == "\\", index + 1 < chars.count { index += 2 } else { index += 1 }
-                }
-                guard index < chars.count else { throw StripError.unterminatedLiteral }
-                index += 1
+                index = try endOfLiteral(in: chars, from: index)
                 appendLiteral(start..<index)
                 continue
             }
@@ -172,6 +164,78 @@ enum SwiftSource {
         }
         guard blockCommentDepth == 0 else { throw StripError.unterminatedLiteral }
         return String(result)
+    }
+
+    /// The index just past the closing delimiter of the string literal that
+    /// starts at `start` (which must be a `"`).
+    ///
+    /// Interpolations are WALKED rather than skipped as an escape pair. `\(`
+    /// opens a parenthesised region of code, and a string literal written in
+    /// there is a literal of its own with its own closing quote. Reading `\(`
+    /// as a plain escape — which this stripper did until 2026-09-03 — makes
+    /// the walker take the OPENING quote of such a nested literal for the
+    /// outer literal's closing one: `let t = "a \(x ?? "}") b"` then emitted
+    /// `}` as code, which is a brace the body counter cannot see is quoted.
+    /// The whole literal is one span either way, so nothing inside an
+    /// interpolation is ever treated as code — that is deliberate: this
+    /// stripper's job is to make sure a quoted needle cannot pose as a call,
+    /// and over-blanking an interpolated expression costs a guard nothing,
+    /// where under-blanking one costs it the property it watches.
+    private static func endOfLiteral(in chars: [Character], from start: Int) throws -> Int {
+        if start + 2 < chars.count, chars[start + 1] == "\"", chars[start + 2] == "\"" {
+            var cursor = start + 3
+            while cursor + 2 < chars.count,
+                !(chars[cursor] == "\"" && chars[cursor + 1] == "\"" && chars[cursor + 2] == "\"")
+            {
+                cursor += 1
+            }
+            guard cursor + 2 < chars.count else { throw StripError.unterminatedLiteral }
+            return cursor + 3
+        }
+        var cursor = start + 1
+        while cursor < chars.count, chars[cursor] != "\"" {
+            guard chars[cursor] == "\\", cursor + 1 < chars.count else {
+                cursor += 1
+                continue
+            }
+            guard chars[cursor + 1] == "(" else {
+                cursor += 2
+                continue
+            }
+            cursor = try endOfInterpolation(in: chars, from: cursor + 2)
+        }
+        guard cursor < chars.count else { throw StripError.unterminatedLiteral }
+        return cursor + 1
+    }
+
+    /// The index just past the `)` that closes the interpolation whose `\(`
+    /// ended at `start`.
+    ///
+    /// Parentheses are counted, so a call inside the interpolation
+    /// (`"x \(f("y")) z"`) does not end it early, and a nested literal is
+    /// handed back to `endOfLiteral` — mutually recursive, because an
+    /// interpolation may contain a literal that contains an interpolation.
+    /// Running off the end means the file cannot be parsed, so it fails
+    /// closed like every other unterminated form here.
+    private static func endOfInterpolation(in chars: [Character], from start: Int) throws -> Int {
+        var cursor = start
+        var depth = 1
+        while cursor < chars.count {
+            switch chars[cursor] {
+            case "\"":
+                cursor = try endOfLiteral(in: chars, from: cursor)
+            case "(":
+                depth += 1
+                cursor += 1
+            case ")":
+                depth -= 1
+                cursor += 1
+                if depth == 0 { return cursor }
+            default:
+                cursor += 1
+            }
+        }
+        throw StripError.unterminatedLiteral
     }
 }
 
@@ -237,6 +301,63 @@ struct SwiftSourceStrippingTests {
         let source = "let url = \"https://example.test\"\nlet after = marker"
         #expect(try SwiftSource.blankingCommentsAndStrings(source).contains("marker"))
         #expect(try SwiftSource.blankingComments(source).contains("marker"))
+    }
+
+    /// An interpolation may carry string literals of its own, and their
+    /// quotes are not the outer literal's closing quote. Read as a plain
+    /// escape pair — which this stripper did until 2026-09-03 — `\(` leaves
+    /// the walker hunting for the next `"`, which is the OPENING quote of the
+    /// nested literal; everything after it is emitted as code, so a needle
+    /// planted in a quoted string satisfies a structural check.
+    @Test func anInterpolationsOwnLiteralsDoNotLeakOutAsCode() throws {
+        let source = "let t = \"a \\(\"b\" + \"c\") d\"\nlet after = marker"
+        let strict = try SwiftSource.blankingCommentsAndStrings(source)
+        #expect(strict.count == source.count)
+        let firstLine = String(
+            strict.split(separator: "\n", omittingEmptySubsequences: false)[0])
+        #expect(firstLine.trimmingCharacters(in: .whitespaces) == "let t =", """
+            everything from the opening quote to the literal's real closing quote \
+            must be blanked, interpolation included: \(firstLine)
+            """)
+        #expect(strict.contains("marker"), "the code after the literal must survive")
+    }
+
+    /// The same hole with a call inside the interpolation rather than an
+    /// operator — the shape a real hint or format string takes.
+    @Test func anInterpolatedCallCarryingALiteralDoesNotLeakOutAsCode() throws {
+        let source = "let u = \"x \\(f(\"y\")) z\"\nlet after = marker"
+        let strict = try SwiftSource.blankingCommentsAndStrings(source)
+        #expect(strict.count == source.count)
+        let firstLine = String(
+            strict.split(separator: "\n", omittingEmptySubsequences: false)[0])
+        #expect(firstLine.trimmingCharacters(in: .whitespaces) == "let u =", """
+            the interpolation's parentheses and its own literal must be blanked \
+            with the literal that contains them: \(firstLine)
+            """)
+        #expect(strict.contains("marker"))
+    }
+
+    /// The consequence that reaches the OTHER guards: a brace leaked out of
+    /// an interpolated literal desynchronises `declarationBodyRange`, so a
+    /// body span ends early or late and every check over it reads the wrong
+    /// region.
+    @Test func aBraceInsideAnInterpolatedLiteralNeverReachesTheBraceCounter() throws {
+        let source = "let v = \"a \\(x ?? \"}\") b\"\nfunc f() { }"
+        let strict = try SwiftSource.blankingCommentsAndStrings(source)
+        let braces = strict.filter { $0 == "}" }.count
+        #expect(braces == 1, """
+            only the one brace in CODE may reach the counter — found \(braces) in \
+            \(strict)
+            """)
+    }
+
+    /// The literal-keeping view is unchanged by the same walk: an
+    /// interpolation is part of the literal, so it survives verbatim.
+    @Test func theLiteralViewKeepsAnInterpolationWhole() throws {
+        let source = "let t = \"a \\(\"b\" + \"c\") d\"\nlet after = marker"
+        let kept = try SwiftSource.blankingComments(source)
+        #expect(kept.count == source.count)
+        #expect(kept.contains("\"a \\(\"b\" + \"c\") d\""))
     }
 
     /// Fail-closed: a raw-string delimiter (`#"…"#`) is a form this stripper

@@ -122,6 +122,28 @@ struct SSHTerminalViewSizingTests {
         private var continuation: CheckedContinuation<Void, Never>?
         private var isOpen = false
 
+        /// True while a call is parked here RIGHT NOW — entered `wait()`,
+        /// suspended, and not yet let through.
+        ///
+        /// This is the positive fact a mount test needs, and it is the one
+        /// thing that separates a mount test from an ordinary
+        /// running-resize test. "The shell has not opened yet" is a
+        /// negative, and CLAUDE.md's rule about negatives applies to a whole
+        /// test as much as to a check: if this gate ever stopped holding —
+        /// an `isOpen` initialiser, a leaked permit — the open would
+        /// complete before the surface is laid out, the mount's
+        /// `sizeChanged` would take `resize()`'s ordinary path, and every
+        /// surviving assertion would still pass.
+        ///
+        /// Measured 2026-09-03, and the reason this is a property rather
+        /// than an `#expect(state == .opening)`: with the gate defeated,
+        /// `state` was STILL `.opening` when the body ran, because the open
+        /// task had not been scheduled yet. Both tests stayed green. So the
+        /// tests now wait for this to become true BEFORE the surface is
+        /// mounted, and read it again before releasing — held across the
+        /// layout, not merely held at some point.
+        var isHolding: Bool { continuation != nil }
+
         func wait() async {
             if isOpen { return }
             await withTaskCancellationHandler {
@@ -174,6 +196,14 @@ struct SSHTerminalViewSizingTests {
 
         /// The geometries `openShell` was called with, in order.
         var openRequests: [RecordingShell.Size] { requested }
+
+        /// True while a call is parked here RIGHT NOW. See
+        /// `OpenGate.isHolding`: the reopen test waits for this to become
+        /// true again after it presses Reopen and reads it once more before
+        /// releasing, so a gate that stopped holding the SECOND open turns
+        /// the test red instead of quietly measuring the ordinary
+        /// running-resize path a sibling test already covers.
+        var isHolding: Bool { !waiters.isEmpty }
 
         func wait(cols: Int, rows: Int) async {
             requested.append(RecordingShell.Size(cols: cols, rows: rows))
@@ -337,6 +367,21 @@ struct SSHTerminalViewSizingTests {
         for _ in 0..<200 where !condition() {
             try await Task.sleep(for: .milliseconds(10))
         }
+    }
+
+    /// Whether `condition` — a fact that lives on an ACTOR, so reading it
+    /// needs a hop — became true within the same budget `waitUntil` uses.
+    ///
+    /// Returns the answer instead of asserting it, so the caller can say in
+    /// its own words what a `false` means; a bounded poll rather than an
+    /// unbounded await, so a gate that never parks reports red rather than
+    /// hanging the run.
+    private func becomesTrue(_ condition: @Sendable () async -> Bool) async throws -> Bool {
+        for _ in 0..<200 {
+            if await condition() { return true }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return await condition()
     }
 
     /// Ends a hosted test: the shell closes, the read loop ends, the window
@@ -619,6 +664,18 @@ struct SSHTerminalViewSizingTests {
         // The app's order: open first, render second.
         viewModel.openIfNeeded()
         #expect(viewModel.state == .opening)
+        // ...and the open must be PARKED before the panel is mounted below,
+        // or the surface would be laid out for a shell that already exists
+        // and this would measure the ordinary running-resize path.
+        // `state == .opening` does not say that: measured 2026-09-03, with
+        // the gate defeated the state was still `.opening` here because the
+        // open task had not been scheduled yet.
+        let openParkedBeforeMount = try await becomesTrue { await gate.isHolding }
+        #expect(openParkedBeforeMount, """
+            the shell's open never parked on the gate, so the surface below is \
+            mounted for a shell that is already running -- that is the path \
+            aWindowResizeAfterTheShellIsRunningReachesTheShell measures
+            """)
         try await withHostedPanel(
             viewModel: viewModel, size: NSSize(width: 800, height: 600),
             gate: gate,
@@ -629,6 +686,17 @@ struct SSHTerminalViewSizingTests {
                 "no TerminalView in the hosted hierarchy — re-anchor this measurement")
             let laidOut = RecordingShell.Size(
                 cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
+
+            // What makes this a MOUNT test: the open was held across the
+            // whole layout, not merely before it. Read here, after the
+            // geometry above and before the gate is opened.
+            let openStillHeldAfterLayout = await gate.isHolding
+            #expect(openStillHeldAfterLayout, """
+                the open was let through while the surface was being laid out, so \
+                the size read above reached a shell that was already running -- \
+                this is no longer the mount path
+                """)
+            #expect(viewModel.state == .opening)
 
             await gate.open()
             try await waitUntil { viewModel.state == .running }
@@ -810,6 +878,16 @@ struct SSHTerminalViewSizingTests {
             // "Reopen": openIfNeeded() first, layout second — the app's order.
             viewModel.openIfNeeded()
             #expect(viewModel.state == .opening)
+            // The SECOND open must be parked before the remount is laid out
+            // below; see the mount test — `state == .opening` is true here
+            // whether the gate holds or the open task has simply not been
+            // scheduled yet, so it cannot stand in for this.
+            let secondOpenParkedBeforeLayout = try await becomesTrue { await gates.isHolding }
+            #expect(secondOpenParkedBeforeLayout, """
+                the second open never parked on the gate, so shell B is already \
+                running while the remounted surface is laid out -- this measures \
+                an ordinary resize after .running, not the reopen path
+                """)
             try await layOutUntil(hosting) {
                 (firstTerminalView(in: hosting)?.frame.width ?? 0) > 0
             }
@@ -818,6 +896,15 @@ struct SSHTerminalViewSizingTests {
                 "no TerminalView after Reopen — re-anchor this measurement")
             let laidOut = RecordingShell.Size(
                 cols: remounted.getTerminal().cols, rows: remounted.getTerminal().rows)
+
+            // Held across the layout, not merely before it — the same read
+            // the mount test makes, and for the same reason.
+            let secondOpenStillHeldAfterLayout = await gates.isHolding
+            #expect(secondOpenStillHeldAfterLayout, """
+                the second open was let through while the remount was being laid \
+                out, so the geometry read above reached a shell that was already \
+                running -- this is no longer the reopen path
+                """)
 
             await gates.release()
             try await waitUntil { viewModel.state == .running }

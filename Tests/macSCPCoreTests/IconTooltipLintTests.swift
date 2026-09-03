@@ -39,12 +39,27 @@ import Testing
 ///   entry blankets all of them. No such helper exists today — but extracting
 ///   one is ordinary refactoring, not evasion, so a later reader has to know
 ///   that it silently shrinks this test's reach.
-/// - The area a hint may live in is small but LOPSIDED. The windows this scan
-///   accepts cover 2.6% of the app target's lines overall, and they bunch up
-///   in exactly the icon-dense files where the next icon-only button will be
-///   added: `SheetSearchField` 25%, `TransferQueueBar` 21%, `FileSearchBar`
-///   17%, `TabStripView` 15%. In those files a stray `.help` on an unrelated
-///   control is fairly likely to sit inside somebody else's window.
+/// - The area a hint may live in is small but LOPSIDED. **Measured
+///   2026-09-03** by replaying this file's own scanner (`code(of:)` →
+///   `icons(in:)`, the union of the `hintWindow` lines every icon opens,
+///   divided by the file's line count): the windows cover **2.01%** of the
+///   app target's lines overall (569 of 28373, across 69 files), and they
+///   bunch up in exactly the icon-dense files where the next icon-only
+///   button will be added — `SheetSearchField` **21.7%**,
+///   `TransferQueueBar` **18.5%**, `FileSearchBar` **17.0%**,
+///   `MenuBarController` **11.8%**. In those files a stray `.help` on an
+///   unrelated control is fairly likely to sit inside somebody else's
+///   window.
+///
+///   Every one of those figures is a claim about the rest of the tree, so
+///   it carries the date it was counted on. The five it replaces were
+///   written on 2026-08-03 (`27456c70`) and never recounted: four had gone
+///   stale by 2026-09-03, the worst by 10.5 points (`TabStripView`, then
+///   15%, now **4.5%** — the file more than tripled in length while its
+///   icons did not), and it is no longer in the top four at all. Recount
+///   them here rather than adjust them: the method above reproduces the
+///   2026-08-03 figures exactly at `27456c70`, which is how it was
+///   validated.
 @Suite("IconTooltipLint")
 struct IconTooltipLintTests {
     private struct DecorativeIcon {

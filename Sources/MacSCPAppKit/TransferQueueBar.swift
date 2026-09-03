@@ -83,10 +83,15 @@ struct TransferQueueBar: View {
 
     /// "Cancel all", beside "Clean up": stops every transfer that has not
     /// finished yet, and leaves the finished ones listed for "Clean up" to
-    /// remove. Available exactly while the queue reports work in flight —
-    /// the gate is the queue's own activity predicate rather than a second
-    /// reading of the item list, so this button and the per-row cancels can
-    /// never disagree about whether anything is still open.
+    /// remove. Available exactly while the queue reports work in flight.
+    ///
+    /// The gate is the queue's own `isActive`, and `isActive` is itself
+    /// `items.contains { $0.status.isCancellable }` — the same predicate
+    /// the per-row cancel is gated on, one hop further out. That is the
+    /// whole reason the two controls cannot disagree about whether anything
+    /// is still open: not that this one asks a different question politely,
+    /// but that both questions bottom out in `Item.Status.isCancellable`.
+    /// (`TransferQueueBarCancelGuardTests` pins both hops.)
     @ViewBuilder
     private var cancelAllButton: some View {
         Button(L10n.string("transfers.cancelAll", "Cancel all")) {
