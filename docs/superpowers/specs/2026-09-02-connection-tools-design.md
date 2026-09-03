@@ -156,6 +156,12 @@ the earlier wording here said "runs it immediately" and was corrected
 automatic start the guard forbids. The replacement wording, "with Run as
 the default button", was itself unbacked by the code until the shortcut
 was added on 2026-09-03; `DiagnosticsDoorsGuardTests` pins it now.)
+**Added 2026-09-03** (plan
+`docs/superpowers/plans/2026-09-03-diagnostics-selective-runs.md`): the
+panel also carries a scope menu beside Run — complete, ping, trace,
+dial, or the protocol probes — that changes only what the next press
+runs, and the trace row renders its hops as a table (hop, address, RTT,
+outcome) instead of one detail line.
 
 ## 5. The spike before the plan
 

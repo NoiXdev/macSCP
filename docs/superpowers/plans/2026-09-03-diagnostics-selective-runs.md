@@ -42,7 +42,7 @@ text as aligned columns.
 - Modify: `Sources/macSCPCore/Diagnostics/ConnectionDiagnostics.swift` (`DiagnosticScope`, `run(scope:onStep:)`, the step list filtered by scope, `DiagnosticReport.scope`), `DiagnosticReport.swift` (scope in the header of both renderers: "Scope: ping" — omitted for complete)
 - Test: `ConnectionDiagnosticsTests` — each scope runs exactly its steps in order (fake probes recording calls), the report names the scope, `.complete` unchanged (the existing tests stay green byte for byte).
 
-- [ ] Red first, implement, commit `feat(diagnostics): a diagnosis can run one probe instead of all of them`.
+- [x] Red first, implement, commit `feat(diagnostics): a diagnosis can run one probe instead of all of them`. Done at `0176da62`.
 
 ### Task 2: The hop table
 
@@ -50,7 +50,7 @@ text as aligned columns.
 - Modify: `Sources/macSCPCore/Diagnostics/DiagnosticStep.swift` (`table: DiagnosticTable?` — `struct DiagnosticTable: Sendable, Equatable { let columns: [String]; let rows: [[String]] }`, column names are catalog KEYS the panel maps), `NetworkTrace.swift`/`ConnectionDiagnostics.swift` (the trace step carries its hops as rows: hop, address or `*`, RTT in ms or `—`, outcome), `DiagnosticReport.swift` (Markdown table; plain text aligned)
 - Test: the trace step's table from the fake hop source (three hops incl. a silent one); the renderers' output pinned on a hand-built report.
 
-- [ ] Red first, implement, commit `feat(diagnostics): the trace carries its hops as a table`.
+- [x] Red first, implement, commit `feat(diagnostics): the trace carries its hops as a table`. Done at `5ea7f2ba`.
 
 ### Task 3: The panel — scope menu and the table
 
@@ -58,8 +58,8 @@ text as aligned columns.
 - Modify: `Sources/MacSCPAppKit/DiagnosticsPanel.swift` (a `Picker`/`Menu` beside Run with the five scopes, remembered per panel while open; the trace row renders `DiagnosticTable` as a SwiftUI `Table` or `Grid` under the row, the detail line stays for rows without a table), `Presentation/DiagnosticsViewModel.swift` (`scope` state passed to the runner), four catalogs
 - Test: view-model (`run()` passes the chosen scope; default complete); `DiagnosticsDoorsGuardTests` — the scope control is wired to the view model and starts nothing by itself (positive anchor: it sets `scope`; negative: no `run(` in its action, on the strict view); the table rendering is wired to `DiagnosticTable` (positive anchor) and never re-splits the detail line (negative); catalogs complete.
 
-- [ ] Red first, implement, `swift test --filter Localiz`, `GermanAddressForm`, full suite; commit `feat(diagnostics): choose what to run, and read the trace as a table`.
+- [x] Red first, implement, `swift test --filter Localiz`, `GermanAddressForm`, full suite; commit `feat(diagnostics): choose what to run, and read the trace as a table`. Done at `7a81a455`.
 
 ### Task 4: Closeout
 
-- [ ] `docs/superpowers/specs/2026-08-25-backlog-connection-tools.md` gains a dated paragraph; `docs/BACKLOG.md` row updated; commit `docs(backlog): diagnostics run one probe and show the trace as a table`.
+- [x] `docs/superpowers/specs/2026-08-25-backlog-connection-tools.md` gains a dated paragraph; `docs/BACKLOG.md` row updated; commit `docs(backlog): diagnostics run one probe and show the trace as a table`. Done at this commit.

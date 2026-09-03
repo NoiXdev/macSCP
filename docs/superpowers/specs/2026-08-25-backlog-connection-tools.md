@@ -200,3 +200,35 @@ Round 2 of the same task, `64a5dc5a`: the presigned URL signs the same
 pairing (`addressed(_:query:config:)`, read by both signers), pinned by
 a test over both path styles; the doors guard's doc names the
 key-lands-with-first-use constraint.
+
+## Selective runs and the hop table, 2026-09-03
+
+Maintainer feedback on the dev build: the panel "kann so bleiben", but
+running the whole diagnosis for one question is wasteful, and the
+trace's hop list is hard to read as one detail line. Plan
+`docs/superpowers/plans/2026-09-03-diagnostics-selective-runs.md`,
+commits `0176da62`, `5ea7f2ba`, `7a81a455`.
+
+- **`0176da62`** — `DiagnosticScope` (`complete`, `ping`, `trace`,
+  `dial`, `contributions`) as a parameter of
+  `ConnectionDiagnostics.run(scope:onStep:)`, default `.complete`; a
+  step outside the chosen scope produces no row at all. A scoped report
+  names its scope in a `Scope:` line in both the plain-text and the
+  Markdown renderer; a complete report renders unchanged.
+- **`5ea7f2ba`** — `DiagnosticTable` on `DiagnosticStep`: the trace step
+  carries one row per hop, measured and silent alike, with columns hop,
+  address, RTT in ms, outcome. `plainText()` renders it as aligned
+  columns, `markdown()` as a Markdown table. The column keys
+  (`diagnostics.trace.column.hop/address/rtt/outcome`) landed in all
+  four App catalogs in this commit.
+- **`7a81a455`** — the panel gains a menu-style scope picker beside Run
+  that only changes what the next press does; the trace row renders as
+  a grid with localized headers and outcome words
+  (`diagnostics.trace.outcome.*`), the detail line staying for rows
+  without a table. The mid-run "Copy" snapshot carries the scope the
+  in-flight walk started with, not whatever the menu shows at the
+  moment of copying. Keys `diagnostics.scope` and
+  `diagnostics.scope.*` in all four catalogs.
+
+Full suite green after each commit, 4028 tests in 343 suites after
+`7a81a455`.
