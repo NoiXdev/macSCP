@@ -589,115 +589,94 @@ struct SessionSidebar: View {
     /// of pinning a repeated literal.
     private static let errorAutoDismissDelay: Duration = .seconds(6)
 
+    /// The body every one of this sidebar's three dismissible red captions
+    /// shares (`groupMoveErrorBanner`, `jumpRestoreErrorBanner`,
+    /// `hiddenImportsErrorBanner` below) — pulled out after two review
+    /// rounds (`ece5aaf9`, `c4558e9b`) flagged the three near-identical
+    /// `HStack`/close-button/`.task(id:)` bodies as a follow-up. Each of the
+    /// three calls this once, passing its own message and its own way of
+    /// clearing it: `viewModel.dismissError()`, a direct `@State` write, or
+    /// `onDismissHiddenImportsError()` — only the first is backed by a class
+    /// the others can reach directly.
+    ///
+    /// The close button calls `onDismiss()` directly, and `.task(id:
+    /// message)` restarts the six-second countdown every time the caller's
+    /// message itself changes — a new refusal after an old one was
+    /// dismissed gets its own full six seconds, since SwiftUI cancels and
+    /// re-runs a `.task(id:)` whose id changed. The countdown is cancelled,
+    /// and so never fires, whenever the calling banner stops calling this at
+    /// all — including the moment its own message becomes `nil`, since that
+    /// is exactly when its `if let` stops drawing it.
+    @ViewBuilder
+    private func sidebarErrorBanner(
+        message: String, onDismiss: @escaping () -> Void
+    ) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(message)
+                .foregroundStyle(.red)
+                .font(.caption)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.plain)
+            .help(L10n.string("sidebar.error.dismiss", "Dismiss"))
+            .accessibilityLabel(L10n.string("sidebar.error.dismiss", "Dismiss"))
+        }
+        .padding(8)
+        .task(id: message) {
+            do {
+                try await Task.sleep(for: Self.errorAutoDismissDelay)
+                onDismiss()
+            } catch {
+                // Cancelled by a message change or the view going away —
+                // either way, not this task's job to clear anything.
+            }
+        }
+    }
+
     /// `viewModel.errorMessage` (`core.session.groupMoveCycle` and the other
-    /// `SessionListViewModel` failures) as a closable caption: the button
-    /// calls `dismissError()` directly, and `.task(id:)` restarts the
-    /// six-second countdown every time the message itself changes — a new
-    /// refusal after an old one was dismissed gets its own full six seconds,
-    /// since SwiftUI cancels and re-runs a `.task(id:)` whose id changed.
-    /// The countdown is cancelled, and so never fires, whenever this whole
-    /// view goes away — including the moment the message becomes `nil`,
-    /// since that is exactly when the enclosing `if let` stops drawing it.
+    /// `SessionListViewModel` failures) through the shared
+    /// `sidebarErrorBanner(message:onDismiss:)` above — dismissal goes
+    /// straight to `viewModel.dismissError()`, the one call that actually
+    /// clears this particular message.
     @ViewBuilder
     private var groupMoveErrorBanner: some View {
         if let errorMessage = viewModel.errorMessage {
-            HStack(alignment: .top, spacing: 6) {
-                Text(errorMessage)
-                    .foregroundStyle(.red)
-                    .font(.caption)
-                Spacer(minLength: 0)
-                Button {
-                    viewModel.dismissError()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                }
-                .buttonStyle(.plain)
-                .help(L10n.string("sidebar.error.dismiss", "Dismiss"))
-                .accessibilityLabel(L10n.string("sidebar.error.dismiss", "Dismiss"))
-            }
-            .padding(8)
-            .task(id: viewModel.errorMessage) {
-                do {
-                    try await Task.sleep(for: Self.errorAutoDismissDelay)
-                    viewModel.dismissError()
-                } catch {
-                    // Cancelled by a message change or the view going away —
-                    // either way, not this task's job to clear anything.
-                }
+            sidebarErrorBanner(message: errorMessage) {
+                viewModel.dismissError()
             }
         }
     }
 
-    /// Same closable-and-self-clearing treatment as `groupMoveErrorBanner`,
-    /// for the partial keychain-restore notice set at `sessionPendingDelete`
-    /// above (M11a/T3) — local `@State`, so its own close button and
-    /// auto-dismiss task write `jumpRestoreErrorMessage` directly rather than
-    /// going through the view model.
+    /// Same shared treatment as `groupMoveErrorBanner`, for the partial
+    /// keychain-restore notice set at `sessionPendingDelete` above
+    /// (M11a/T3) — local `@State`, so dismissal writes
+    /// `jumpRestoreErrorMessage` directly rather than going through the view
+    /// model.
     @ViewBuilder
     private var jumpRestoreErrorBanner: some View {
         if let jumpRestoreErrorMessage {
-            HStack(alignment: .top, spacing: 6) {
-                Text(jumpRestoreErrorMessage)
-                    .foregroundStyle(.red)
-                    .font(.caption)
-                    .lineLimit(2)
-                Spacer(minLength: 0)
-                Button {
-                    self.jumpRestoreErrorMessage = nil
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                }
-                .buttonStyle(.plain)
-                .help(L10n.string("sidebar.error.dismiss", "Dismiss"))
-                .accessibilityLabel(L10n.string("sidebar.error.dismiss", "Dismiss"))
-            }
-            .padding(8)
-            .task(id: jumpRestoreErrorMessage) {
-                do {
-                    try await Task.sleep(for: Self.errorAutoDismissDelay)
-                    self.jumpRestoreErrorMessage = nil
-                } catch {
-                    // Cancelled by a message change or the view going away —
-                    // either way, not this task's job to clear anything.
-                }
+            sidebarErrorBanner(message: jumpRestoreErrorMessage) {
+                self.jumpRestoreErrorMessage = nil
             }
         }
     }
 
-    /// Same closable-and-self-clearing treatment as the two banners above,
-    /// for `hiddenImportsErrorMessage` (dev-build follow-up, 2026-09-03) —
-    /// the one caption `ece5aaf9` left open. Unlike `jumpRestoreErrorBanner`,
+    /// Same shared treatment as the two banners above, for
+    /// `hiddenImportsErrorMessage` (dev-build follow-up, 2026-09-03) — the
+    /// one caption `ece5aaf9` left open. Unlike `jumpRestoreErrorBanner`,
     /// there is no local `@State` to write: `hiddenImportsErrorMessage`
-    /// reaches this view as a plain `let` from `ContentView`, so both the
-    /// close button and the auto-dismiss task go through
-    /// `onDismissHiddenImportsError()` instead.
+    /// reaches this view as a plain `let` from `ContentView`, so dismissal
+    /// goes through `onDismissHiddenImportsError()` instead.
     @ViewBuilder
     private var hiddenImportsErrorBanner: some View {
         if let hiddenImportsErrorMessage {
-            HStack(alignment: .top, spacing: 6) {
-                Text(hiddenImportsErrorMessage)
-                    .foregroundStyle(.red)
-                    .font(.caption)
-                    .lineLimit(2)
-                Spacer(minLength: 0)
-                Button {
-                    onDismissHiddenImportsError()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                }
-                .buttonStyle(.plain)
-                .help(L10n.string("sidebar.error.dismiss", "Dismiss"))
-                .accessibilityLabel(L10n.string("sidebar.error.dismiss", "Dismiss"))
-            }
-            .padding(8)
-            .task(id: hiddenImportsErrorMessage) {
-                do {
-                    try await Task.sleep(for: Self.errorAutoDismissDelay)
-                    onDismissHiddenImportsError()
-                } catch {
-                    // Cancelled by a message change or the view going away —
-                    // either way, not this task's job to clear anything.
-                }
+            sidebarErrorBanner(message: hiddenImportsErrorMessage) {
+                onDismissHiddenImportsError()
             }
         }
     }
