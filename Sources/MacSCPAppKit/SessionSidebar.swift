@@ -1117,7 +1117,7 @@ private func moveToMenuItems(
         if let groupID = target, let group = groups.first(where: { $0.id == groupID }) {
             Button(group.name) { onMove(groupID) }
         } else {
-            Button(L10n.string("sidebar.noGroup", "No group")) { onMove(nil) }
+            Button(L10n.string("sidebar.moveTo.root", "Top level")) { onMove(nil) }
         }
     }
 }
@@ -1211,10 +1211,21 @@ private struct SidebarGroupRow: View {
             if sortPlan.isShown {
                 Button(L10n.string("sidebar.group.sortByName", "Sort by Name")) { onSortByName() }
             }
-            Menu(L10n.string("sidebar.moveTo", "Move to")) {
-                moveToMenuItems(
-                    for: .group(group.id), currentParentID: group.parentID, groups: groups,
-                    onMove: onMove)
+            // A lone top-level folder with nothing else to move it into has
+            // an empty target list (`SidebarOrdering.moveTargets` answers
+            // `[]` — pinned in `SidebarOrderingTests.
+            // aLoneTopLevelGroupHasNoMoveTargets`); drawing the Menu anyway
+            // would open onto nothing, so it is gated on the same rule the
+            // entries themselves come from, read here a second time before
+            // the Menu is built.
+            if !SidebarOrdering.moveTargets(
+                for: .group(group.id), currentParentID: group.parentID, in: groups
+            ).isEmpty {
+                Menu(L10n.string("sidebar.moveTo", "Move to")) {
+                    moveToMenuItems(
+                        for: .group(group.id), currentParentID: group.parentID, groups: groups,
+                        onMove: onMove)
+                }
             }
             Button(L10n.string("sidebar.group.dissolve", "Dissolve group")) { onDissolve() }
         }

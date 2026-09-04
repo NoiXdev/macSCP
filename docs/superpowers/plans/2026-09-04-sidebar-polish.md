@@ -45,9 +45,9 @@ items 3–6.
 - Test: `Tests/macSCPCoreTests/SessionListViewModelTests.swift` (or the sidebar ordering tests — find `move(_:before:)`'s tests): cases that pin what the tree does at HEAD — a session moved between two groups keeps its position rule; a session reordered before another in the same group; a group moved to the root (`intoGroup: nil`); a group dropped into its own descendant refused with the `MoveRefusal` the tree names; a session dropped onto itself is a no-op. Where a case already exists, name it in the report instead of duplicating.
 - Modify: `docs/BACKLOG.md` (the row: what exists, with the test names; what Task 2/3 add)
 
-- [ ] **Step 1:** read `SidebarOrdering` (find the file: `grep -rn "enum MoveRefusal" Sources`) and `SessionListViewModel.move(_:before:)` / `move(_:intoGroup:)`; list every refusal and the drop targets in the view (`SessionSidebar.swift` `dropDestination` sites — count them).
-- [ ] **Step 2:** add the missing cases red-first where the behaviour is unpinned (say which were already pinned).
-- [ ] **Step 3: Commit** `test(sidebar): the drag-and-drop rules are pinned — reorder, between groups, to the root, refusals`.
+- [x] **Step 1:** read `SidebarOrdering` (find the file: `grep -rn "enum MoveRefusal" Sources`) and `SessionListViewModel.move(_:before:)` / `move(_:intoGroup:)`; list every refusal and the drop targets in the view (`SessionSidebar.swift` `dropDestination` sites — count them).
+- [x] **Step 2:** add the missing cases red-first where the behaviour is unpinned (say which were already pinned).
+- [x] **Step 3: Commit** `test(sidebar): the drag-and-drop rules are pinned — reorder, between groups, to the root, refusals` (`6be9d8bc`).
 
 ---
 
@@ -60,9 +60,9 @@ items 3–6.
 - Modify: the four catalogs
 - Test: `Tests/macSCPCoreTests/SettingsStoreTests.swift` (round trip, default), `Tests/MacSCPAppKitTests/SettingsViewTransfersToggleGuardTests.swift`-shaped guard for the new toggle (the toggle is bound to the store's property and labelled through the catalogue key — copy that guard's shape into `SettingsViewAppearanceToggleGuardTests` or extend it), and a sidebar guard: the row builder reads `sidebarCompact` and the host subtitle is inside the non-compact branch (positive anchor + negative).
 
-- [ ] **Step 1: Red first** — the store test (`sidebarCompact` missing), the guard.
-- [ ] **Step 2: Implement**; `swift test` green; zero warnings.
-- [ ] **Step 3: Commit** `feat(sidebar): a compact mode, as a setting`.
+- [x] **Step 1: Red first** — the store test (`sidebarCompact` missing), the guard.
+- [x] **Step 2: Implement**; `swift test` green; zero warnings.
+- [x] **Step 3: Commit** `feat(sidebar): a compact mode, as a setting` (`dc9ce11c`, fix rounds `0ce0ca69`/`fbd31774`/`30b61e70`).
 
 ---
 

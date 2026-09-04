@@ -462,6 +462,19 @@ struct SidebarOrderingTests {
         #expect(targets == [b.id])
     }
 
+    /// The exact input the "Move to…" submenu's own visibility gate reads
+    /// (`SessionSidebar.swift`, `SidebarGroupRow`): a lone top-level folder
+    /// with no siblings and no descendants has nowhere to go, so
+    /// `moveTargets` answers the empty list rather than a submenu excluding
+    /// only itself and offering nothing.
+    @Test func aLoneTopLevelGroupHasNoMoveTargets() throws {
+        let onlyGroup = StoredGroup(name: "Solo", position: 0)
+        let targets = SidebarOrdering.moveTargets(
+            for: .group(onlyGroup.id), currentParentID: nil, in: [onlyGroup])
+
+        #expect(targets == [])
+    }
+
     /// The groups come back in sidebar order — depth-first, each level by
     /// position — not the arbitrary order the store happens to hold them in.
     /// `groups` here is deliberately NOT in that order, the same way

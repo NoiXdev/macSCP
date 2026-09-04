@@ -9,11 +9,21 @@ import Testing
 /// The properties, each a `@Test` below:
 ///
 /// * **Both submenus route through one shared entry builder**, and that
-///   builder — not either row — is what calls `SidebarOrdering.moveTargets`.
-///   Two call sites of the shared `moveToMenuItems(` free function, one call
-///   site of `SidebarOrdering.moveTargets(` inside it: "both submenus read
-///   `SidebarOrdering.moveTargets`" is then a fact about the ONE place that
-///   reads it, not a claim that has to be re-verified at each row.
+///   builder — not either row — is what calls `SidebarOrdering.moveTargets`
+///   for its own entries. The file-wide count of `moveToMenuItems(` call
+///   sites (two) is not enough on its own — two calls sitting inside ONE
+///   row would still pass it while the other row's menu read nothing —
+///   so each row's OWN body is anchored separately: `SidebarGroupRow`'s
+///   body and `SessionRow`'s body must each contain a call.
+/// * **The group's "Move to…" submenu is gated on a non-empty target
+///   list.** A lone top-level folder has nowhere to go
+///   (`SidebarOrdering.moveTargets` answers `[]`), so `SidebarGroupRow`
+///   reads that same function a SECOND time — before the `Menu` is built —
+///   purely to decide whether to draw it at all. Two call sites of
+///   `SidebarOrdering.moveTargets(` in total: one inside `moveToMenuItems`
+///   (both rows' entries), one inside the gate (`SidebarGroupRow` only) —
+///   the same function asked twice, not a second independent answer to
+///   "what is eligible".
 /// * **Each row's "Move to…" entry calls `move(` with `intoGroup:`, and
 ///   nothing else that moves anything** — no rename, no dissolve, no sort,
 ///   no duplicate. Scoped to each row's own `onMove:` closure, so a stray
@@ -70,10 +80,13 @@ struct SidebarMoveToWiringGuardTests {
 
     // MARK: - The shared builder is what reads SidebarOrdering.moveTargets
 
-    /// The positive partner `theSharedBuilderIsWhatCallsMoveTargets` needs
-    /// first: the shared entry builder really is called from two places, so
-    /// "one call site inside it" describes something both submenus reach
-    /// rather than dead code neither does.
+    /// The positive partner `theSharedBuilderAndTheGroupRowsGateAreWhatCallMoveTargets`
+    /// needs first: the shared entry builder really is called from two
+    /// places, so "one call site inside it" describes something both
+    /// submenus reach rather than dead code neither does. This count is
+    /// file-wide and NOT sufficient by itself — two calls sitting inside
+    /// one row and none in the other would still sum to two — so the two
+    /// tests below it anchor each row separately.
     @Test func theSharedEntryBuilderHasExactlyTwoCallSites() throws {
         let code = try Self.code()
         let total = Self.occurrences(of: "moveToMenuItems(", in: code)
@@ -89,26 +102,81 @@ struct SidebarMoveToWiringGuardTests {
             """)
     }
 
-    /// `SidebarOrdering.moveTargets` is called from exactly one place in the
-    /// App target — inside the shared builder — which combined with the two
-    /// call sites above is what "both submenus read `SidebarOrdering.
-    /// moveTargets`" means: not two separate reads that happen to agree
-    /// today, but one read two menus share.
-    @Test func theSharedBuilderIsWhatCallsMoveTargets() throws {
+    /// Anchors `theSharedEntryBuilderHasExactlyTwoCallSites`'s file-wide
+    /// count to the group row specifically: without this, a violation where
+    /// SessionRow calls moveToMenuItems( twice and SidebarGroupRow calls it
+    /// zero times would still leave the total at two, and nothing would
+    /// read the group row's own menu to notice it never got one.
+    @Test func theGroupRowsBodyCallsTheSharedEntryBuilder() throws {
+        let code = try Self.code()
+        let rowBody = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "private struct SidebarGroupRow: View", in: code)
+        #expect(rowBody.contains("moveToMenuItems("), """
+            SidebarGroupRow's body in \(Self.sidebarPath) no longer calls moveToMenuItems( — its \
+            "Move to…" submenu, if it still exists at all, builds its entries some other way (or \
+            not at all), which the file-wide count above cannot tell apart from a stray second \
+            call sitting inside SessionRow instead.
+            """)
+    }
+
+    /// The same anchor as above, scoped to the session row.
+    @Test func theSessionRowsBodyCallsTheSharedEntryBuilder() throws {
+        let code = try Self.code()
+        let rowBody = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "private struct SessionRow: View", in: code)
+        #expect(rowBody.contains("moveToMenuItems("), """
+            SessionRow's body in \(Self.sidebarPath) no longer calls moveToMenuItems( — see the \
+            same reasoning on the group row's own check.
+            """)
+    }
+
+    /// `SidebarOrdering.moveTargets` is called from exactly TWO places in
+    /// the App target: inside the shared builder (both submenus' entries),
+    /// and inside `SidebarGroupRow`'s own body, where it gates whether the
+    /// "Move to…" `Menu` is drawn at all (see
+    /// `theGroupRowsMoveMenuIsGatedOnANonEmptyTargetList` below). Both reads
+    /// are the SAME function asked twice, which is what "both submenus (and
+    /// the group row's own gate) read `SidebarOrdering.moveTargets`" means —
+    /// not independent reads that happen to agree today.
+    @Test func theSharedBuilderAndTheGroupRowsGateAreWhatCallMoveTargets() throws {
         let code = try Self.code()
         let count = Self.occurrences(of: "SidebarOrdering.moveTargets(", in: code)
-        #expect(count == 1, """
+        #expect(count == 2, """
             \(Self.sidebarPath) calls SidebarOrdering.moveTargets( \(count) time(s), expected \
-            exactly one. Zero means the shared builder stopped deriving targets from Core \
-            entirely; more than one means a second, independent read that the "one target rule \
-            for both submenus" claim no longer holds for.
+            exactly two: one inside the shared moveToMenuItems( builder, one inside \
+            SidebarGroupRow's own body gating its "Move to…" Menu. Fewer than two means the \
+            builder or the gate stopped reading Core's target rule; more than two means a third, \
+            independent read this suite does not otherwise account for.
             """)
         let declaration = try TransferQueueBarCancelGuardTests.declarationBody(
             of: "private func moveToMenuItems(", in: code)
         #expect(declaration.contains("SidebarOrdering.moveTargets("), """
-            moveToMenuItems's own body no longer calls SidebarOrdering.moveTargets( — the one \
-            occurrence found above is then somewhere else in the file, not inside the function \
-            both submenus call.
+            moveToMenuItems's own body no longer calls SidebarOrdering.moveTargets( — one of the \
+            two occurrences found above is then somewhere else in the file, not inside the \
+            function both submenus call for their entries.
+            """)
+    }
+
+    // MARK: - The group row's Menu is gated on a non-empty target list
+
+    /// A lone top-level folder with no siblings and no descendants to
+    /// receive it has nowhere to go — `SidebarOrdering.moveTargets` answers
+    /// `[]` for it, pinned directly in Core
+    /// (`SidebarOrderingTests.aLoneTopLevelGroupHasNoMoveTargets`) — so its
+    /// "Move to…" submenu must not render at all rather than open onto an
+    /// empty list. `SidebarGroupRow` reads moveTargets a second time (see
+    /// the count above) purely to decide this, before the `Menu` is built.
+    @Test func theGroupRowsMoveMenuIsGatedOnANonEmptyTargetList() throws {
+        let code = try Self.code()
+        let rowBody = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "private struct SidebarGroupRow: View", in: code)
+        let gateBody = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "if !SidebarOrdering.moveTargets(", in: rowBody)
+        #expect(gateBody.contains("Menu("), """
+            SidebarGroupRow's "if !SidebarOrdering.moveTargets(...).isEmpty" gate in \
+            \(Self.sidebarPath) no longer wraps a Menu( — a lone top-level folder \
+            (moveTargets == []) would then show an empty "Move to…" submenu again, exactly the \
+            gap this check exists to close.
             """)
     }
 
@@ -129,12 +197,14 @@ struct SidebarMoveToWiringGuardTests {
 
     /// Mutating calls this suite knows about, none of which belongs inside
     /// an `onMove:` closure whose whole job is "put this item there and
-    /// nothing more". Counted while writing this file: eight names, drawn
-    /// from `SessionListViewModel`'s own other write methods reachable from
-    /// a sidebar row's context menu.
+    /// nothing more". Counted in the same pass as this edit: seven names,
+    /// each a `SessionListViewModel` write method reachable from a sidebar
+    /// row's context menu (`applyOrdering(` used to sit in this list too,
+    /// but it names a `SessionStore` method the App target never calls —
+    /// not `SessionListViewModel`'s, and not reachable from any row).
     private static let otherMutatingEntries = [
         "dissolveGroup(", "sortChildrenByName(", "renameGroup(", "renameSession(",
-        "duplicateSession(", "createGroup(", "delete(", "applyOrdering(",
+        "duplicateSession(", "createGroup(", "delete(",
     ]
 
     private static func onMoveClosure(inFactory declaration: String) throws -> String {

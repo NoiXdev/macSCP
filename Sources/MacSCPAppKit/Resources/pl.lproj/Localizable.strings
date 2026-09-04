@@ -301,6 +301,7 @@
 "sidebar.snippets" = "Fragment";
 "sidebar.snippets.onlyActiveTab" = "Dostępne tylko dla aktywnej karty";
 "sidebar.moveTo" = "Przenieś do";
+"sidebar.moveTo.root" = "Najwyższy poziom";
 "sidebar.noGroup" = "Bez grupy";
 "sidebar.newGroup" = "Nowa grupa…";
 "sidebar.newGroup.title" = "Nowa grupa";

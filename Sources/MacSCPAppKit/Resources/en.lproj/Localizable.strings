@@ -298,6 +298,7 @@
 "sidebar.snippets" = "Snippet";
 "sidebar.snippets.onlyActiveTab" = "Only Available for the Active Tab";
 "sidebar.moveTo" = "Move to";
+"sidebar.moveTo.root" = "Top level";
 "sidebar.noGroup" = "No group";
 "sidebar.newGroup" = "New group…";
 "sidebar.newGroup.title" = "New group";

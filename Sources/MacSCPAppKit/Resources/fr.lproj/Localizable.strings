@@ -302,6 +302,7 @@
 "sidebar.snippets" = "Snippet";
 "sidebar.snippets.onlyActiveTab" = "Disponible uniquement pour l'onglet actif";
 "sidebar.moveTo" = "Déplacer vers";
+"sidebar.moveTo.root" = "Niveau supérieur";
 "sidebar.noGroup" = "Aucun groupe";
 "sidebar.newGroup" = "Nouveau groupe…";
 "sidebar.newGroup.title" = "Nouveau groupe";
