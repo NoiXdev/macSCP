@@ -21,22 +21,33 @@ struct ChangelogParserTests {
     private static let realChangelog = try! String(
         contentsOf: repoRoot.appendingPathComponent("CHANGELOG.md"), encoding: .utf8)
 
+    /// Selects one release by version instead of `releases.first`: the
+    /// release workflow regenerates `CHANGELOG.md` with a new top section
+    /// at every release, so pinning "first" would go red on the release
+    /// commit for reasons unrelated to the parser. `"1.3.0"` is the
+    /// version every real-file test below keys on.
+    private static func release(_ version: String, in releases: [ChangelogRelease]) -> ChangelogRelease? {
+        releases.first { $0.version == version }
+    }
+
     // MARK: - The real CHANGELOG.md
 
     @Test("the real CHANGELOG.md's first release parses its heading")
     func realChangelogFirstReleaseHeading() {
         let releases = ChangelogParser.parse(Self.realChangelog)
 
-        let first = releases.first
-        #expect(first?.version == "1.3.0")
-        #expect(first?.date == "2026-08-31")
+        let release = Self.release("1.3.0", in: releases)
+        #expect(release != nil, "CHANGELOG.md carries no 1.3.0 release section")
+        #expect(release?.date == "2026-08-31")
     }
 
     @Test("the real CHANGELOG.md's first release parses its section titles")
     func realChangelogFirstReleaseSectionTitles() {
         let releases = ChangelogParser.parse(Self.realChangelog)
 
-        #expect(releases.first?.sections.map(\.title) == ["Features", "Bug Fixes"])
+        let release = Self.release("1.3.0", in: releases)
+        #expect(release != nil, "CHANGELOG.md carries no 1.3.0 release section")
+        #expect(release?.sections.map(\.title) == ["Features", "Bug Fixes"])
     }
 
     /// Counted directly in the tree at Task 1 time (`## [1.3.0]` through
@@ -49,7 +60,9 @@ struct ChangelogParserTests {
     func realChangelogFirstReleaseEntryCounts() {
         let releases = ChangelogParser.parse(Self.realChangelog)
 
-        let sections = releases.first?.sections ?? []
+        let release = Self.release("1.3.0", in: releases)
+        #expect(release != nil, "CHANGELOG.md carries no 1.3.0 release section")
+        let sections = release?.sections ?? []
         #expect(sections.count == 2)
         #expect(sections[0].entries.count == 55)
         #expect(sections[1].entries.count == 86)
@@ -64,7 +77,9 @@ struct ChangelogParserTests {
     func realChangelogFirstEntryScopeAndText() {
         let releases = ChangelogParser.parse(Self.realChangelog)
 
-        let firstEntry = releases.first?.sections.first?.entries.first
+        let release = Self.release("1.3.0", in: releases)
+        #expect(release != nil, "CHANGELOG.md carries no 1.3.0 release section")
+        let firstEntry = release?.sections.first?.entries.first
         #expect(firstEntry?.scope == "app")
         #expect(firstEntry?.text == "ask for declared variables before a snippet runs")
     }
@@ -159,7 +174,10 @@ struct ChangelogParserTests {
     @Test("the real CHANGELOG.md's guards and webdav bullets have their closes-suffix link reduced")
     func realChangelogClosesSuffixBulletsAreReduced() {
         let releases = ChangelogParser.parse(Self.realChangelog)
-        let bugFixes = releases.first?.sections.last?.entries ?? []
+
+        let release = Self.release("1.3.0", in: releases)
+        #expect(release != nil, "CHANGELOG.md carries no 1.3.0 release section")
+        let bugFixes = release?.sections.last?.entries ?? []
 
         let guardsEntry = bugFixes.first { $0.scope == "guards" }
         #expect(guardsEntry?.text == "make the guarantees say what the guards do, closes PKCS#12")

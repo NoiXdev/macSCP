@@ -36,6 +36,8 @@ struct WhatsNewWiringGuardTests {
     private static let appFile = repoRoot.appendingPathComponent("Sources/MacSCPAppKit/MacSCPApp.swift")
     private static let sheetFile = repoRoot.appendingPathComponent(
         "Sources/MacSCPAppKit/WhatsNewSheet.swift")
+    private static let settingsViewFile = repoRoot.appendingPathComponent(
+        "Sources/MacSCPAppKit/SettingsView.swift")
 
     private static let catalogLocales = ["en", "de", "fr", "pl"]
 
@@ -107,10 +109,15 @@ struct WhatsNewWiringGuardTests {
             """)
     }
 
-    /// `Text(` immediately followed (ignoring whitespace) by a `"` — a
-    /// literal passed straight in. `Text(L10n.string(...))`, `Text(String(
-    /// format: L10n.string(...), …))` and `Text(someHelper(value))` all
-    /// have a non-`"` character right after the `(`, so none of them count.
+    /// `Text(` immediately followed (ignoring whitespace, and an optional
+    /// `verbatim:` label) by a `"` — a literal passed straight in, either
+    /// as `Text("…")` or as `Text(verbatim: "…")` (round 1 review: the
+    /// original pattern named only the first form, so a hardcoded
+    /// `Text(verbatim:` literal went unseen — `verbatim:` is not a
+    /// localization call, it deliberately skips one). `Text(L10n.string
+    /// (...))`, `Text(String(format: L10n.string(...), …))` and
+    /// `Text(someHelper(value))` all have a non-`"` character right after
+    /// the `(` (or after `verbatim:`), so none of them count.
     private static func hardcodedTextCallCount(in source: String) -> Int {
         Self.textLiteralRegex.matches(in: source, range: NSRange(source.startIndex..., in: source)).count
     }
@@ -119,7 +126,48 @@ struct WhatsNewWiringGuardTests {
         TransferQueueBarCancelGuardTests.occurrenceCount(of: "Text(", in: source)
     }
 
-    private static let textLiteralRegex = try! NSRegularExpression(pattern: #"Text\(\s*""#)
+    private static let textLiteralRegex = try! NSRegularExpression(
+        pattern: #"Text\(\s*(?:verbatim:\s*)?""#)
+
+    // MARK: - The Settings pane's copy (round 1 review: same check, wider scope)
+
+    /// The Settings sidebar's own "What's new" pane (`WhatsNewSettingsSection`
+    /// in `SettingsView.swift`, What's New plan Task 3) renders the same
+    /// changelog text as the launch sheet and carries the same risk — a
+    /// `Text(` call bypassing `L10n.string(` — so this scan extends here
+    /// rather than staying sheet-only. Same span-extraction shape
+    /// `SettingsSectionCatalogGuardTests` uses for the same type: the
+    /// declaration's brace-balanced body, via
+    /// `TransferQueueBarCancelGuardTests.declarationBodyRange(of:in:)`.
+    private static func settingsPaneSection() throws -> (code: String, withLiterals: String) {
+        let all = try views(of: Self.settingsViewFile)
+        let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: "private struct WhatsNewSettingsSection: View", in: all.code)
+        return (TransferQueueBarCancelGuardTests.slice(range, of: all.code),
+                TransferQueueBarCancelGuardTests.slice(range, of: all.withLiterals))
+    }
+
+    /// Positive anchor for the negative below (CLAUDE.md, "a negative check
+    /// needs a positive beside it"): the pane really does call
+    /// L10n.string( at least once (its "No changelog shipped with this
+    /// build." message), so a rewrite that renders no localized text at
+    /// all could not make the negative pass by having nothing left to scan.
+    @Test func theSettingsPaneCallsL10nStringAtLeastOnce() throws {
+        let code = try Self.settingsPaneSection().code
+        #expect(code.contains("L10n.string("), """
+            WhatsNewSettingsSection no longer calls L10n.string( anywhere \
+            in its declaration — the no-hardcoded-Text check below would \
+            then hold vacuously.
+            """)
+    }
+
+    @Test func noTextCallInTheSettingsPaneTakesAHardcodedLiteral() throws {
+        let withLiterals = try Self.settingsPaneSection().withLiterals
+        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 0, """
+            WhatsNewSettingsSection has a Text( call whose first argument \
+            is a string literal instead of going through L10n.
+            """)
+    }
 
     // MARK: - The scanner reacts (self-tests over synthetic sources)
 
@@ -154,6 +202,25 @@ struct WhatsNewWiringGuardTests {
         #expect(Self.hardcodedTextCallCount(in: withLiterals) == 1, """
             the scanner failed to catch a Text( call given a literal string \
             directly
+            """)
+    }
+
+    /// Round 1 review: the original pattern named only `Text("…")`, so a
+    /// hardcoded `Text(verbatim: "…")` — a form that deliberately skips
+    /// localization — went unseen. This is the regression test for the
+    /// widened pattern.
+    @Test func scannerCatchesAHardcodedVerbatimText() throws {
+        let source = """
+            struct WhatsNewSheet: View {
+                var body: some View {
+                    Text(verbatim: "No changelog shipped with this build.")
+                }
+            }
+            """
+        let withLiterals = try SwiftSource.blankingComments(source)
+        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 1, """
+            the scanner failed to catch a Text(verbatim:) call given a \
+            literal string directly
             """)
     }
 

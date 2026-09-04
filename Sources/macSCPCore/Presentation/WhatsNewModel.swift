@@ -93,16 +93,18 @@ public enum WhatsNewModel {
     }
 
     /// A version is "numeric" iff every dot-separated component parses as
-    /// `Int` — at least one component, so an empty string is never numeric.
-    /// This is deliberately NOT `AppVersion`: `AppVersion` requires exactly
-    /// three components plus an optional pre-release suffix, which would
-    /// reject a legitimate two-component tag before this predicate ever got
-    /// a chance to say "compare these two". This only needs to keep a
-    /// dev build's free-form string out of the dotted comparator, not
-    /// validate a release tag's shape.
+    /// `Int`. An empty string is rejected by that same rule, with nothing
+    /// extra needed for it: `split(separator:omittingEmptySubsequences:
+    /// false)` on `""` returns `[""]`, never `[]`, so `allSatisfy` runs
+    /// once over the empty component and `Int("")` is `nil`. This is
+    /// deliberately NOT `AppVersion`: `AppVersion` requires exactly three
+    /// components plus an optional pre-release suffix, which would reject
+    /// a legitimate two-component tag before this predicate ever got a
+    /// chance to say "compare these two". This only needs to keep a dev
+    /// build's free-form string out of the dotted comparator, not validate
+    /// a release tag's shape.
     private static func isNumericVersion(_ version: String) -> Bool {
         let components = version.split(separator: ".", omittingEmptySubsequences: false)
-        guard !components.isEmpty else { return false }
         return components.allSatisfy { Int($0) != nil }
     }
 }

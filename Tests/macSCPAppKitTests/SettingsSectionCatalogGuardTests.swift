@@ -234,6 +234,12 @@ struct SettingsSectionCatalogGuardTests {
             and ChangelogParser.parse( anywhere in the type — the load \
             itself is gone.
             """)
+        #expect(sectionBody.contains("loadReleases("), """
+            WhatsNewSettingsSection no longer declares a loadReleases( \
+            function anywhere in the type — the extracted read-and-parse \
+            step is gone, and the negative check below would then pass \
+            vacuously against a body that never had it to call.
+            """)
 
         let bodyRange = try TransferQueueBarCancelGuardTests.declarationBodyRange(
             of: "var body: some View", in: sectionBody)
@@ -258,6 +264,29 @@ struct SettingsSectionCatalogGuardTests {
             WhatsNewSettingsSection.body calls ChangelogResource.load( \
             directly — every body evaluation re-reads the bundled file \
             instead of loading it once into @State.
+            """)
+
+        // `loadReleases(` itself is checked against a narrower span than
+        // the other two: the .task callback checked above legitimately
+        // calls it (that IS the lifecycle callback deferring the load),
+        // and that callback is chained onto body's own Group as a trailing
+        // modifier, so it sits inside `bodyText` too — a whole-`bodyText`
+        // check would flag the correct implementation. The switch's own
+        // brace-balanced span excludes that trailing `.task`, so it is
+        // exactly where `WhatsNewList(releases: Self.loadReleases())` — a
+        // render arm reinstating the fix-round-1 defect by calling the
+        // extracted function directly instead of reading `@State` — would
+        // show up.
+        let switchRange = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: "switch releases", in: bodyText)
+        let renderText = TransferQueueBarCancelGuardTests.slice(switchRange, of: bodyText)
+
+        #expect(!renderText.contains("loadReleases("), """
+            WhatsNewSettingsSection.body's switch over releases calls \
+            loadReleases( directly in one of its render arms — that would \
+            re-run the read-and-parse on every body evaluation instead of \
+            only from the .task callback checked above, reinstating the \
+            exact defect this fix round exists to close.
             """)
     }
 }

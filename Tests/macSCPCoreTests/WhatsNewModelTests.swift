@@ -102,20 +102,27 @@ struct WhatsNewModelTests {
     }
 
     /// The mirror combination — a NUMERIC `current` against a non-numeric
-    /// `lastSeen` — already read `[]` under the OLD fallback for this exact
-    /// string (`"1.4.0"` compares as NOT newer than `"dev-abc1234"`, the
-    /// same `'d' > '1'` comparison as above, just asked in the other
-    /// direction — NOT verified red; passed before this change too). That
-    /// is exactly the accident this ruling removes: nothing here GUARANTEED
-    /// that outcome — a differently-shaped non-numeric string could have
-    /// compared the other way and shown every release instead. `lastSeen`
-    /// being non-numeric is now an explicit rule ("treat as a fresh
-    /// install"): `[]`, decided on purpose rather than on the ASCII value
-    /// of whatever prefix a dev build happens to use.
+    /// `lastSeen`. `"dev-abc1234"` used to sit here, but it passed with or
+    /// without the `isNumericVersion(lastSeen)` guard: the old fallback
+    /// happened to already read `"1.4.0"` as not newer than
+    /// `"dev-abc1234"` (the same `'d' > '1'` accident as above, just asked
+    /// the other way), so the assertion was a comment that runs, not a
+    /// guard — round 1 review, deferred to the final review.
+    /// `"0.9.x"` replaces it because the comparator's OWN component-wise
+    /// rule (`ChangelogParser.compareDottedVersions`) calls it OLDER than every
+    /// release in `allReleases` (`"0" < "1"` at the first component, both
+    /// sides parsing as `Int`): without the guard, `isNewer("1.4.0", than:
+    /// "0.9.x")` is true, so the old code would fall through to
+    /// `releases(newerThan:)` and show every release up to `current` —
+    /// VERIFIED RED with the `isNumericVersion(lastSeen)` guard removed
+    /// (see the fix-round report for the observed failure), green again
+    /// once it is restored. `lastSeen` being non-numeric is an explicit
+    /// rule ("treat as a fresh install"): `[]`, decided on purpose, and now
+    /// pinned by a value the guard is actually load-bearing for.
     @Test("a numeric current version after a non-numeric lastSeen shows nothing")
     func numericCurrentAfterANonNumericLastSeenShowsNothing() {
         let shown = WhatsNewModel.releasesToShow(
-            current: "1.4.0", lastSeen: "dev-abc1234", in: Self.allReleases)
+            current: "1.4.0", lastSeen: "0.9.x", in: Self.allReleases)
         #expect(shown.isEmpty)
     }
 
