@@ -6,7 +6,7 @@ import Testing
 /// a piece of work can race without either resuming a continuation twice.
 /// `T: Sendable` because the value is handed to a `CheckedContinuation`,
 /// which resumes it into whatever task is waiting — a crossing the compiler
-/// checks. The one caller, `withDeadline`, already required it.
+/// checks. The one caller, `abandonable`, already required it.
 private final class FirstResult<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, Never>?
@@ -40,8 +40,9 @@ private final class FirstResult<T: Sendable>: @unchecked Sendable {
     }
 }
 
-/// Runs `work` under a hard deadline and returns `nil` if it is still running
-/// when the deadline passes.
+/// Runs `work` in a task the test can ABANDON, and returns `nil` only when
+/// the test's own task is cancelled while `work` is still running — which is
+/// what the suite's `.timeLimit` does to a genuinely wedged `write`.
 ///
 /// `work` runs in a **detached** task on purpose. A structured child — a task
 /// group, `async let` — would keep the caller suspended until the child
@@ -50,20 +51,26 @@ private final class FirstResult<T: Sendable>: @unchecked Sendable {
 /// cannot help, because a task parked on an uninterruptible wait does not
 /// observe cancellation. Detaching means a wedge costs one abandoned task for
 /// the rest of the test process and nothing else — the suite still finishes.
-private func withDeadline<T: Sendable>(
-    seconds: Double, _ work: @escaping @Sendable () async -> T
+///
+/// There used to be a five-second timer racing `work` here. CI run
+/// 33856445475 (`800c9b63`) came back with `outcome → nil` after 23.984 s
+/// on the three-core runner: the write had not wedged, the runner had, and
+/// the timer measured the runner (CLAUDE.md, "A wall-clock ceiling in a test
+/// measures the runner"). The only clock now is the harness limit, and the
+/// cancellation it performs is what resumes the waiter with `nil`.
+private func abandonable<T: Sendable>(
+    _ work: @escaping @Sendable () async -> T
 ) async -> T? {
     let outcome = FirstResult<T?>()
     let worker = Task.detached { outcome.offer(await work()) }
-    let timer = Task.detached {
-        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    let result = await withTaskCancellationHandler {
+        await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+            outcome.attach(continuation)
+        }
+    } onCancel: {
         outcome.offer(nil)
     }
-    let result = await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
-        outcome.attach(continuation)
-    }
     worker.cancel()
-    timer.cancel()
     return result
 }
 
@@ -75,7 +82,10 @@ private struct WriteOutcome: Sendable {
     var wasCancelled = false
 }
 
-@Suite("WebDAVFileSystem writes")
+/// `.timeLimit` is the one clock these tests carry: the three `abandonable`
+/// waits below end through the cancellation it performs, never through a
+/// timer of their own.
+@Suite("WebDAVFileSystem writes", .timeLimit(.minutes(1)))
 struct WebDAVFileSystemWriteTests {
     private let config = WebDAVConnectionConfig(
         baseURL: "https://dav.example.com/dav", username: "u", useNextcloudPath: false,
@@ -181,7 +191,7 @@ struct WebDAVFileSystemWriteTests {
         let fs = WebDAVFileSystem(config: config, transport: transport)
         let contents = chunked(payload, chunk: 40_000)
 
-        let outcome = await withDeadline(seconds: 5) { () -> WriteOutcome in
+        let outcome = await abandonable { () -> WriteOutcome in
             do {
                 try await fs.write(path: "/big.bin", mode: .overwrite, contents: contents)
                 return WriteOutcome()
@@ -203,7 +213,7 @@ struct WebDAVFileSystemWriteTests {
     /// it there wedges the transfer-queue slot for the life of the process.
     ///
     /// The deadline is what keeps this test honest without risking the suite:
-    /// see `withDeadline` for why the work is detached rather than a
+    /// see `abandonable` for why the work is detached rather than a
     /// structured child.
     @Test func earlyRejectionDoesNotWedgeTheWrite() async throws {
         let payload = Self.pattern(count: 768 * 1024)
@@ -213,7 +223,7 @@ struct WebDAVFileSystemWriteTests {
         let fs = WebDAVFileSystem(config: config, transport: transport)
         let contents = chunked(payload, chunk: 40_000)
 
-        let outcome = await withDeadline(seconds: 5) { () -> WriteOutcome in
+        let outcome = await abandonable { () -> WriteOutcome in
             do {
                 try await fs.write(path: "/big.bin", mode: .overwrite, contents: contents)
                 return WriteOutcome()
@@ -249,7 +259,7 @@ struct WebDAVFileSystemWriteTests {
         try await Task.sleep(nanoseconds: 200_000_000)
         work.cancel()
 
-        let outcome = await withDeadline(seconds: 5) { () -> WriteOutcome in
+        let outcome = await abandonable { () -> WriteOutcome in
             do {
                 try await work.value
                 return WriteOutcome()
