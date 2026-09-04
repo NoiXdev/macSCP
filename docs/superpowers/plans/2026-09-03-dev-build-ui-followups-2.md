@@ -38,7 +38,7 @@ a minimum panel width, and the footer wrapping to two rows below it).
 - Modify: the one S3 endpoint parse in `Sources/macSCPCore/S3/` (grep `Invalid S3 endpoint`), `S3FieldSchema.swift` (the endpoint field's validation and its help text), the Cyberduck importer's S3 mapping in `Sources/macSCPCore/Sessions/ExternalImport/ImportPreviewPlanner.swift` (writes `host:port` for a custom endpoint, or the scheme form — whichever the parse's canonical spelling is), four App catalogs if a validation key is added
 - Test: `S3EndpointParsingTests` (the table: `host`, `host:9000`, `http://host:9000`, `https://host`, `https://host:8443/`, `[::1]:9000`, `s3.amazonaws.com`; each → scheme, host, port, path-style expectation), `ImportPreviewPlannerTests` (a Cyberduck S3 bookmark with `Port 9000` produces an endpoint the parse accepts — assert through the parse, not a literal)
 
-- [ ] Measure first (the table red where it fails today; record each outcome in the report), fix, commit `fix(s3): an endpoint with a port connects, and the form says what it understood`.
+- [x] Measure first (the table red where it fails today; record each outcome in the report), fix, commit `fix(s3): an endpoint with a port connects, and the form says what it understood`.
 
 ### Task 2: The diagnostics footer fits
 
@@ -46,7 +46,7 @@ a minimum panel width, and the footer wrapping to two rows below it).
 - Modify: `Sources/MacSCPAppKit/DiagnosticsPanel.swift` (the footer: buttons `fixedSize(horizontal: true, vertical: false)`, the scope picker `labelsHidden()` with `accessibilityLabel` from the existing `diagnostics.scope` key, a `minWidth` on the panel that fits the four controls at the default font, and a `ViewThatFits` that splits the footer into two rows when the width is short: the picker beside Run/Cancel, since the picker chooses what Run runs, and the copy menu beside Close)
 - Test: the doors guard (`DiagnosticsDoorsGuardTests`) gains anchors: Run carries `fixedSize`, the picker keeps its accessibility label while its visible label is hidden, the panel declares a minimum width (a named constant the guard reads)
 
-- [ ] Red first, implement, commit `fix(diagnostics): the panel's footer keeps its buttons whole`.
+- [x] Red first, implement, commit `fix(diagnostics): the panel's footer keeps its buttons whole`.
 
 ### Task 3: Hetzner presets per region
 
@@ -65,7 +65,7 @@ report.
 - Modify: `Sources/macSCPCore/S3/S3FieldSchema.swift` (presets: keep id `hetzner` for `fsn1` so saved sessions and the import planner's preset-by-id lookup stay valid, rename its display to "Hetzner Object Storage (Falkenstein)"; add `hetzner-nbg1`, `hetzner-hel1` and any further measured location, sorted by location), four App catalogs (`connection.s3.preset.hetzner` → "… (Falkenstein)", new keys per location — German du n/a, the city names untranslated), the Cyberduck importer's endpoint → preset mapping if it recognises `your-objectstorage.com` hosts (read `ImportPreviewPlanner`'s `awsPresetID`; a Hetzner host maps to the matching location's preset when the endpoint equals it)
 - Test: `S3FieldSchemaTests` — every Hetzner preset's endpoint parses to a host under `your-objectstorage.com` with `usePathStyle` true, ids unique, `hetzner` still `fsn1`; the import planner maps a Cyberduck bookmark with `Hostname nbg1.your-objectstorage.com` to the `hetzner-nbg1` preset's endpoint spelling; the localization guards.
 
-- [ ] Red first, implement, commit `feat(s3): a preset per Hetzner Object Storage location`.
+- [x] Red first, implement, commit `feat(s3): a preset per Hetzner Object Storage location`.
 
 ### Task 4: The connection form scrolls when the window is short
 
@@ -91,4 +91,4 @@ not a problem there; the form is what needs the same treatment.
   contains the fields' builder call; negative: no button of the footer
   inside the scroll span); the existing form guards stay green.
 
-- [ ] Red first, implement, commit `fix(connection): the connection form scrolls when the window is short, its buttons stay put`.
+- [x] Red first, implement, commit `fix(connection): the connection form scrolls when the window is short, its buttons stay put`.
