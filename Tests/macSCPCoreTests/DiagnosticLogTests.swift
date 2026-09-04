@@ -217,23 +217,52 @@ struct DiagnosticLogTests {
         let directory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
+        // A gate that never opens on its own, installed BEFORE any line is
+        // logged. The writer is parked idle (the previous test's own
+        // `flush()` guarantees it had already drained everything and
+        // looped back to waiting) and only checks this gate on its NEXT
+        // wake — so once this is installed, the writer provably cannot
+        // drain anything until `gate.signal()` runs, below. This replaces
+        // a race: the original version of this test relied on two `log`
+        // calls and `configure(.off)` outrunning an already-running writer
+        // task through having no `await` in between, which held on this
+        // machine but was never guaranteed — see the report's Round 2
+        // section.
+        let gate = AsyncSignal()
+        DiagnosticLog.shared.setWriterGateForTesting { _ = await gate.wait() }
+        defer { DiagnosticLog.shared.setWriterGateForTesting(nil) }
+
         DiagnosticLog.shared.configure(level: .info, directory: directory)
         DiagnosticLog.shared.log(.info, "test", "one")
         DiagnosticLog.shared.log(.info, "test", "two")
-        // Immediately, with no `await` between the two `log` calls and this
-        // one — nothing here suspends, so the writer task (which can only
-        // run once this test's own task yields or this call returns) has no
-        // opportunity to drain the buffer first. `configure(.off)` is what
-        // is under test: it must resolve `pendingSequence` up front rather
-        // than leave the flush below registered against lines it is about
-        // to drop.
-        DiagnosticLog.shared.configure(level: .off, directory: directory)
 
-        // Before the fix this call hung to the suite's own `.timeLimit`
-        // (.minutes(1)) — there was no writer left to ever resume it, since
-        // the lines it was waiting on had already been dropped. Returning
-        // at all is the assertion; there is nothing further to check.
+        // Provably not drained: the writer cannot have passed the gate, so
+        // nothing it would write can exist yet — no longer merely assumed
+        // from a lack of `await`, but guaranteed by construction.
+        #expect(DiagnosticLog.shared.currentFileURL == nil)
+        let beforeOff =
+            (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        #expect(beforeOff.isEmpty)
+
+        // `configure(.off)` is what is under test: with the writer
+        // permanently gated, NOTHING will ever drain these two lines, so
+        // it must resolve `pendingSequence` itself rather than leave the
+        // `flush()` below registered against a drain that can never
+        // happen. Before the round-1 fix this call hangs — see the
+        // report's Round 2 section for what was actually observed
+        // reverting it.
+        DiagnosticLog.shared.configure(level: .off, directory: directory)
         await DiagnosticLog.shared.flush()
+
+        // Opening the gate lets the writer run at last, but the buffer it
+        // would drain was already dropped by `configure(.off)` above — so
+        // no file can appear from here on, regardless of when the writer
+        // actually wakes up and finds nothing to do. No synchronization
+        // with the writer is needed for this assertion to be sound.
+        gate.signal()
+        let afterOpen =
+            (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        #expect(afterOpen.isEmpty)
     }
 
     @Test("a batch spanning midnight is written to two files, one line each")

@@ -109,6 +109,13 @@ public final class DiagnosticLog: Sendable {
 
         var writerStarted = false
         var doorbell: AsyncStream<Void>.Continuation?
+
+        /// Test-only: when set, the writer awaits this once before every
+        /// drain attempt. `nil` in production, always — nothing in this
+        /// file ever sets it outside of `setWriterGateForTesting`, so the
+        /// writer's steady-state cost when unset is one lock read and an
+        /// `if let` that fails, nothing more.
+        var writerGate: (@Sendable () async -> Void)?
     }
 
     private let state = Mutex(State())
@@ -253,6 +260,21 @@ public final class DiagnosticLog: Sendable {
         }
     }
 
+    /// Test-only seam: installs (or, passing `nil`, removes) a gate the
+    /// writer awaits once before every drain attempt it makes from this
+    /// point on. Exists so a test can prove the writer has NOT drained yet
+    /// — rather than racing it and hoping — by installing a gate that never
+    /// opens, logging lines, and asserting on the buffered-but-undrained
+    /// state before opening the gate itself.
+    ///
+    /// `internal`, not `public`: reachable only through `@testable import`,
+    /// which is exactly the tests that need it. Not part of the design's
+    /// public surface (`shared`, `configure`, `log`, `flush`,
+    /// `currentFileURL`).
+    func setWriterGateForTesting(_ gate: (@Sendable () async -> Void)?) {
+        state.withLock { $0.writerGate = gate }
+    }
+
     // MARK: - The writer
 
     /// Starts the single long-lived writer task, if it has not started yet.
@@ -275,6 +297,13 @@ public final class DiagnosticLog: Sendable {
     /// "something is buffered", never how much).
     private func runWriter(events: AsyncStream<Void>) async {
         for await _ in events {
+            // Re-read under the lock on every wake, not captured once: a
+            // gate installed while a ring is already in flight must still
+            // hold this drain, and a gate cleared after being opened must
+            // stop costing more than the `if let` below.
+            if let gate = state.withLock({ $0.writerGate }) {
+                await gate()
+            }
             drainAndWriteUntilEmpty()
         }
     }
