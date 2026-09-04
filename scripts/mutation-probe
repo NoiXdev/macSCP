@@ -22,6 +22,17 @@
 #   NO TESTS RAN      the build succeeded but the filter matched nothing
 #   RED / GREEN       tests actually ran, and here is what failed
 #
+# `NO TESTS RAN` has a second cause, found 2026-09-04 (the
+# ceilings-under-other-spellings plan, Task 2): a narrow --filter can
+# produce a red whose run SUMMARY line never reaches stdout at all — the
+# same interleaved-output loss docs/BACKLOG.md calls "CI logs lose
+# lines" — so the old RAN regex read 0 about a run that had, in fact, run
+# and failed. `swift test --event-stream-output-path` writes one JSON
+# event per line to a file that stdout race cannot touch; RAN and the
+# caught-test list are read from THAT file first (`testEnded` events
+# counted, `issueRecorded` events' `testID`s named), and the stdout parse
+# only runs as a fallback when the event file comes back empty.
+#
 # A signal is a sixth ending and is NOT one of these: on INT or TERM the script
 # reverts and exits non-zero WITHOUT a verdict (130 / 143). It used to trap with
 # a handler that RETURNED, so bash resumed at the next statement and the run
@@ -51,7 +62,7 @@
 # The tree is restored with `git checkout --` on every exit path, including a
 # Ctrl-C: a probe that leaves its violation behind is worse than no probe.
 #
-# (--help prints lines 2-55 of this file: the header, and not the code under
+# (--help prints lines 2-66 of this file: the header, and not the code under
 # it. The range is a line number, so it is checked whenever this header grows.)
 
 set -uo pipefail
@@ -65,7 +76,7 @@ while [[ $# -gt 0 ]]; do
         --filter) FILTER="${2:-}"; shift 2 ;;
         --apply)  APPLY="${2:-}";  shift 2 ;;
         --label)  LABEL="${2:-}";  shift 2 ;;
-        -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,66p' "$0"; exit 0 ;;
         *) echo "mutation-probe: unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
@@ -141,22 +152,57 @@ rm -f "$BUILD_LOG"
 
 echo "── test --filter $FILTER"
 TEST_LOG="$(mktemp)"
-swift test --filter "$FILTER" >"$TEST_LOG" 2>&1
+EVENTS="$(mktemp)"
+swift test --filter "$FILTER" --event-stream-output-path "$EVENTS" >"$TEST_LOG" 2>&1
 STATUS=$?
 
-RAN="$(grep -oE 'Test run with [0-9]+ test' "$TEST_LOG" | grep -oE '[0-9]+' | tail -1)"
-RAN="${RAN:-0}"
-# Anchored on the marker plus a space, not on `[a-zA-Z]`: swift-testing prints
-# a DISPLAY-named test as `✘ Test "some name" recorded an issue`, and the
-# character after `Test ` is then a quote. This tree carries 255 `@Test("…")`
-# declarations (counted 2026-09-03,
-# `grep -rhoE '@Test\("[^"]*"' Tests/ | wc -l`), so the old class excluded the
-# majority spelling. The run SUMMARY (`✘ Test run with N tests failed…`) has to
-# come back out, or every red is attributed to it instead of to a guard.
-FAILED="$(grep -E '^✘ Test ' "$TEST_LOG" \
-    | grep -vE '^✘ Test run with' \
-    | grep -vE ' skipped(\.|:.*)?$' \
-    | sed 's/ recorded.*//;s/ failed.*//' | sort -u)"
+# RAN and FAILED are read from the event stream first, not from stdout.
+# Measured 2026-09-04 (Task 2 of the ceilings-under-other-spellings plan,
+# `--filter theConnectDeadlineAlsoCoversNameResolution` against a planted
+# 90 s connect timeout): the filtered run's red was real — one issue
+# recorded, the test failed after 90.005 seconds — but the job's own
+# stdout log stopped mid-way through the test's doc-comment echo, with no
+# `✘ Test run with N tests` summary line for the old RAN regex to find.
+# RAN came back 0 and this script reported NO TESTS RAN about a run that
+# had, in fact, run and caught the plant — the exact "CI logs lose lines"
+# shape (docs/BACKLOG.md) reproduced locally and deterministically.
+# `--event-stream-output-path` writes one JSON object per event to a file
+# the stdout race cannot touch, the same flag and the same jq shape
+# `.github/workflows/ci.yml`'s "Test verdicts from the event stream" step
+# already reads for the identical reason: `testEnded` events are counted
+# for RAN, and `issueRecorded` events name what failed by `testID`.
+RAN=0
+FAILED=""
+if [[ -s "$EVENTS" ]]; then
+    RAN="$(jq -c 'select(.kind == "event" and .payload.kind == "testEnded")' "$EVENTS" 2>/dev/null | wc -l | tr -d ' ')"
+    RAN="${RAN:-0}"
+    FAILED="$(jq -r 'select(.kind == "event" and .payload.kind == "issueRecorded") | .payload.testID // empty' \
+        "$EVENTS" 2>/dev/null | sort -u)"
+fi
+
+# Falls back to the stdout parse ONLY when the event file is empty — an
+# older toolchain that does not accept the flag, or a run that died before
+# writing anything to it. A nonempty event file is trusted over stdout
+# even when stdout also carries its own summary line, so the two derivations
+# never have a chance to disagree silently.
+if [[ ! -s "$EVENTS" ]]; then
+    RAN="$(grep -oE 'Test run with [0-9]+ test' "$TEST_LOG" | grep -oE '[0-9]+' | tail -1)"
+    RAN="${RAN:-0}"
+    # Anchored on the marker plus a space, not on `[a-zA-Z]`: swift-testing
+    # prints a DISPLAY-named test as `✘ Test "some name" recorded an
+    # issue`, and the character after `Test ` is then a quote. This tree
+    # carries 255 `@Test("…")` declarations (counted 2026-09-03,
+    # `grep -rhoE '@Test\("[^"]*"' Tests/ | wc -l`), so the old class
+    # excluded the majority spelling. The run SUMMARY (`✘ Test run with N
+    # tests failed…`) has to come back out, or every red is attributed to
+    # it instead of to a guard — which is the fallback path's own version
+    # of the bug the event stream exists to route around.
+    FAILED="$(grep -E '^✘ Test ' "$TEST_LOG" \
+        | grep -vE '^✘ Test run with' \
+        | grep -vE ' skipped(\.|:.*)?$' \
+        | sed 's/ recorded.*//;s/ failed.*//' | sort -u)"
+fi
+rm -f "$EVENTS"
 
 if [[ "$RAN" == "0" ]]; then
     echo "RESULT: NO TESTS RAN — the filter matched nothing, or the runner died."

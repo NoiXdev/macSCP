@@ -2,9 +2,14 @@ import Foundation
 import Testing
 
 /// Keeps the wall-clock deadline shape out of the test tree, now that
-/// every poll goes through `pollUntil`. Two negative checks, each pinned
-/// by a positive one beside it, per CLAUDE.md "Guards that name what
-/// they watch".
+/// every poll goes through `pollUntil`. Every negative check here is
+/// pinned by a positive one beside it, per CLAUDE.md "Guards that name
+/// what they watch". Two shapes were the `ContinuousClock` literal this
+/// suite was built to catch; two more, added for the "ceilings under
+/// other spellings" plan, are the same property under a `Duration` bound
+/// instead — `wait(timeout:)` and a `Task.sleep` child racing real work
+/// inside a task group (CLAUDE.md, "A wall-clock ceiling in a test
+/// measures the runner").
 @Suite("Polling guard")
 struct PollingGuardTests {
     private static var testsRoot: URL {
@@ -13,14 +18,20 @@ struct PollingGuardTests {
             .deletingLastPathComponent()   // Tests
     }
 
-    /// Every Swift file under Tests/, minus this guard and the helper that
-    /// defines `pollUntil` itself.
+    /// Every Swift file under Tests/, minus this guard, the helper that
+    /// defines `pollUntil` itself, and `SleepingChildRegexFixture.swift` —
+    /// a fixture that intentionally carries the shape
+    /// `noSleepingChildRacesWorkInAGroup` looks for, kept out of the scan
+    /// it exists to feed a positive check about instead.
     private static func sources() throws -> [(path: String, text: String)] {
         let enumerator = FileManager.default.enumerator(at: testsRoot, includingPropertiesForKeys: nil)!
         var result: [(String, String)] = []
         for case let url as URL in enumerator where url.pathExtension == "swift" {
             let path = url.path
-            if path.hasSuffix("PollingGuardTests.swift") || path.hasSuffix("PollUntil.swift") { continue }
+            if path.hasSuffix("PollingGuardTests.swift")
+                || path.hasSuffix("PollUntil.swift")
+                || path.hasSuffix("SleepingChildRegexFixture.swift")
+            { continue }
             result.append((path, try String(contentsOf: url, encoding: .utf8)))
         }
         return result
@@ -65,6 +76,76 @@ struct PollingGuardTests {
     @Test func aFloorExistsSoTheCeilingCheckHasSomethingToRead() throws {
         let floors = try Self.sources().filter { $0.text.contains("elapsed >= ") || $0.text.contains("elapsed > ") }
         #expect(!floors.isEmpty)
+    }
+
+    /// Negative: no latch is waited on with a wall-clock ceiling.
+    /// `AsyncSignal.wait(timeout:)` is `noTestAssertsAnElapsedCeiling`'s
+    /// shape under another spelling — a `Duration` bound raced against
+    /// scheduled work instead of a `ContinuousClock` literal — and the
+    /// "ceilings under other spellings" plan retired every caller that
+    /// was not one of three exemptions.
+    ///
+    /// Two exemptions are found by path: `AsyncSignalTests.swift` tests
+    /// the bounded API itself (the positive below), and
+    /// `Support/AsyncSignal.swift` declares `wait(timeout:)`, so its own
+    /// signature spells the phrase. The third is found by neither path
+    /// nor file name, per the brief for this check: `SubprocessRunnerTests.swift`
+    /// keeps one bound — `started.wait(timeout: startBound)` — because
+    /// there the bound IS the saturation being measured, and the comment
+    /// above the call says exactly that ("the bound IS the measurement").
+    /// Matching that phrase instead of the file name means a file rename
+    /// cannot silently widen the exemption, and rewording the comment
+    /// without also removing the wait would turn this check red rather
+    /// than quietly staying green.
+    @Test func noLatchIsWaitedOnWithATimeout() throws {
+        let measurementSentence = "the bound IS the measurement"
+        let sources = try Self.sources()
+
+        let callers = sources.filter { $0.text.contains("wait(timeout:") }
+        let offenders = callers.filter {
+            !$0.path.hasSuffix("AsyncSignalTests.swift")
+                && !$0.path.hasSuffix("Support/AsyncSignal.swift")
+                && !$0.text.contains(measurementSentence)
+        }.map(\.path)
+
+        // Positive: the bounded API is still exercised directly — without
+        // this, the negative above could pass over a tree with no callers
+        // at all, exempt or otherwise.
+        #expect(callers.contains { $0.path.hasSuffix("AsyncSignalTests.swift") })
+        #expect(offenders.isEmpty, "\(offenders)")
+    }
+
+    /// Negative: no test races a sleeping sibling against real work inside
+    /// a task group — `ConnectMainActorLivenessTests` and
+    /// `CitadelShellIntegrationTests` both carried this shape before the
+    /// "ceilings under other spellings" plan: a `group.addTask` whose
+    /// first statement is `Task.sleep(for:`, standing in for the harness
+    /// `.timeLimit` that already ends a hung test. Scanned over
+    /// comment-and-string-blanked source, per CLAUDE.md "Source-scanning
+    /// guards read comments too" — a doc comment that writes out the
+    /// banned shape to explain it (as this file's own history did, for
+    /// the `elapsed <` ceiling) is otherwise indistinguishable from the
+    /// shape itself.
+    @Test func noSleepingChildRacesWorkInAGroup() throws {
+        let pattern = try NSRegularExpression(
+            pattern: #"addTask(?:\([^)]*\))?\s*\{\s*(?:try\??\s+)?(?:await\s+)?Task\.sleep\(for:"#)
+
+        let offenders = try Self.sources().compactMap { source -> String? in
+            let blanked = try Self.blankCommentsAndStrings(source.text)
+            let range = NSRange(blanked.startIndex..., in: blanked)
+            return pattern.firstMatch(in: blanked, range: range) != nil ? source.path : nil
+        }
+        #expect(offenders.isEmpty, "\(offenders)")
+
+        // Positive: the regex matches real, compiling code in this exact
+        // shape — `SleepingChildRegexFixture.swift`, excluded from
+        // `sources()` above the same way this guard's own file is, so
+        // the match it demonstrates can never itself become an offender.
+        let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/SleepingChildRegexFixture.swift")
+        let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
+        let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
+        let fixtureRange = NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked)
+        #expect(pattern.firstMatch(in: fixtureBlanked, range: fixtureRange) != nil)
     }
 
     /// Every file that reaches `pollUntil` — directly, or through a helper
@@ -188,5 +269,151 @@ struct PollingGuardTests {
     private enum ScanError: Error {
         case bodyNotFound
         case unbalancedBraces
+        case unterminatedLiteral
+    }
+
+    // MARK: - Comment-and-string blanking, for `noSleepingChildRacesWorkInAGroup`
+    //
+    // One private copy per guard file, as this project's other wiring
+    // guards keep it (`TabContextMenuWiringGuardTests`, `ReconnectWiringGuardTests`):
+    // a shared stripper was rejected there because the copies had already
+    // drifted, and the same reasoning applies here.
+
+    /// Whether a raw-string/regex-literal opened with `hashes` hashes and
+    /// `quotes` quotes ends exactly at `index`. With `quotes: 0` it answers
+    /// the same question for an extended regex literal (`#/…/#`), whose
+    /// closing slash the caller has already stepped over.
+    private static func closesRawString(
+        _ chars: [Character], at index: Int, quotes: Int, hashes: Int
+    ) -> Bool {
+        guard index + quotes + hashes <= chars.count else { return false }
+        for offset in 0..<quotes where chars[index + offset] != "\"" { return false }
+        for offset in 0..<hashes where chars[index + quotes + offset] != "#" { return false }
+        return true
+    }
+
+    /// Strips `//` and `/* */` comments (nesting-aware) and `"..."`,
+    /// `"""..."""`, and raw (`#"…"#`, `##"…"##`, `#"""…"""#`) string
+    /// literals, replacing their content with spaces so a regex sees only
+    /// real code. Line breaks are preserved, so a scan can still work line
+    /// by line. Raw strings are parsed rather than refused: this scan
+    /// covers the whole test tree, and 35 files under `Tests/` carry one
+    /// (counted 2026-09-04, `grep -rl '#"' Tests | wc -l`) — refusing them
+    /// would make this check unusable rather than merely cautious. The
+    /// delimiter states its own hash count, and the terminator is that
+    /// count spelled backwards, so parsing it is not a guess.
+    ///
+    /// Still fails closed on an unterminated literal — string, comment, or
+    /// raw — because that means the scan ran off the end of the file still
+    /// inside one, and everything after that point would be judged as
+    /// something it is not.
+    private static func blankCommentsAndStrings(_ source: String) throws -> String {
+        var result = ""
+        result.reserveCapacity(source.count)
+        let chars = Array(source)
+        var i = 0
+        var blockCommentDepth = 0
+        while i < chars.count {
+            let c = chars[i]
+            if blockCommentDepth > 0 {
+                if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
+                    blockCommentDepth += 1
+                    i += 2
+                    continue
+                }
+                if c == "*", i + 1 < chars.count, chars[i + 1] == "/" {
+                    blockCommentDepth -= 1
+                    i += 2
+                    continue
+                }
+                result.append(c == "\n" ? "\n" : " ")
+                i += 1
+                continue
+            }
+            if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
+                while i < chars.count, chars[i] != "\n" {
+                    result.append(" ")
+                    i += 1
+                }
+                continue
+            }
+            if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
+                blockCommentDepth = 1
+                i += 2
+                continue
+            }
+            if c == "#" {
+                var j = i
+                while j < chars.count, chars[j] == "#" { j += 1 }
+                let hashes = j - i
+                if j < chars.count, chars[j] == "/" {
+                    var k = j + 1
+                    var closed = false
+                    while k < chars.count {
+                        if chars[k] == "/", Self.closesRawString(
+                            chars, at: k + 1, quotes: 0, hashes: hashes)
+                        {
+                            k += 1 + hashes
+                            closed = true
+                            break
+                        }
+                        result.append(chars[k] == "\n" ? "\n" : " ")
+                        k += 1
+                    }
+                    guard closed else { throw ScanError.unterminatedLiteral }
+                    result.append(" ")
+                    i = k
+                    continue
+                }
+                if j < chars.count, chars[j] == "\"" {
+                    let isMultiline =
+                        j + 2 < chars.count && chars[j + 1] == "\"" && chars[j + 2] == "\""
+                    let quotes = isMultiline ? 3 : 1
+                    var k = j + quotes
+                    var closed = false
+                    while k < chars.count {
+                        if Self.closesRawString(chars, at: k, quotes: quotes, hashes: hashes) {
+                            k += quotes + hashes
+                            closed = true
+                            break
+                        }
+                        result.append(chars[k] == "\n" ? "\n" : " ")
+                        k += 1
+                    }
+                    guard closed else { throw ScanError.unterminatedLiteral }
+                    result.append(" ")
+                    i = k
+                    continue
+                }
+                // Not a string delimiter: `#expect`, `#filePath`, `#if`.
+            }
+            if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
+                i += 3
+                while i + 2 < chars.count,
+                    !(chars[i] == "\"" && chars[i + 1] == "\"" && chars[i + 2] == "\"")
+                {
+                    result.append(chars[i] == "\n" ? "\n" : " ")
+                    i += 1
+                }
+                guard i + 2 < chars.count else { throw ScanError.unterminatedLiteral }
+                i += 3
+                result.append(" ")
+                continue
+            }
+            if c == "\"" {
+                i += 1
+                while i < chars.count, chars[i] != "\"" {
+                    if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
+                }
+                guard i < chars.count else { throw ScanError.unterminatedLiteral }
+                i += 1
+                result.append(" ")
+                continue
+            }
+            result.append(c)
+            i += 1
+        }
+        guard blockCommentDepth == 0 else { throw ScanError.unterminatedLiteral }
+        return result
     }
 }

@@ -61,9 +61,9 @@ runner".
 - Consumes: `AsyncSignal.wait()` (`Tests/macSCPCoreTests/Support/AsyncSignal.swift:79`, returns `.cancelled` when the task is cancelled).
 - Produces: `Box.waitForFirstDelivery()` with no parameter.
 
-- [ ] **Step 1: Red first** — plant "the latch is never raised" in `EmbeddedKeyPorterTests` (comment out `finished.signal()`) under the new shape: `scripts/mutation-probe --filter EmbeddedKeyPorterTests --apply "perl -0pi -e 's/^(\s*)finished\.signal\(\)/\1\/\/ finished.signal()/m' Tests/macSCPCoreTests/EmbeddedKeyPorterTests.swift"` — RESULT RED after the harness limit (about 60 s), naming the test.
-- [ ] **Step 2: Implement** the four sites; `swift test --filter "EmbeddedKeyPorter|TerminalPanelViewModel|LoopbackTLS"` green; full `swift test` green; zero warnings.
-- [ ] **Step 3: Commit** `test: latches and the delivery waiter end through the harness limit, not a timeout`.
+- [x] **Step 1: Red first** — plant "the latch is never raised" in `EmbeddedKeyPorterTests` (comment out `finished.signal()`) under the new shape: `scripts/mutation-probe --filter EmbeddedKeyPorterTests --apply "perl -0pi -e 's/^(\s*)finished\.signal\(\)/\1\/\/ finished.signal()/m' Tests/macSCPCoreTests/EmbeddedKeyPorterTests.swift"` — RESULT RED after the harness limit (about 60 s), naming the test.
+- [x] **Step 2: Implement** the four sites; `swift test --filter "EmbeddedKeyPorter|TerminalPanelViewModel|LoopbackTLS"` green; full `swift test` green; zero warnings.
+- [x] **Step 3: Commit** `test: latches and the delivery waiter end through the harness limit, not a timeout`.
 
 ---
 
@@ -76,9 +76,9 @@ runner".
 **Interfaces:**
 - Consumes: nothing new.
 
-- [ ] **Step 1: Red first** — for the liveness test, plant a resolver that answers (so the connect cannot time out in the resolving state) only if such a fixture exists; otherwise plant `connectTimeout(.seconds(90))` and observe the harness red at 60 s: `scripts/mutation-probe --filter theConnectDeadlineAlsoCoversNameResolution --apply "perl -0pi -e 's/connectTimeout\(\.milliseconds\(400\)\)/connectTimeout(.seconds(90))/' Tests/macSCPCoreTests/ConnectMainActorLivenessTests.swift"` — RESULT RED. For the shell: `MACSCP_ITEST=1 scripts/mutation-probe --filter CitadelShellIntegrationTests --apply "…"` planting a marker that never appears (`marker: "never-\(UUID())"` at one call site) — RESULT RED.
-- [ ] **Step 2: Implement**; `swift test --filter ConnectMainActorLiveness` green; `MACSCP_ITEST=1 swift test --filter CitadelShellIntegrationTests` green (rig up, from the main checkout); full `swift test` green; zero warnings.
-- [ ] **Step 3: Commit** `test: the three sleep races await the work under the harness limit`.
+- [x] **Step 1: Red first** — for the liveness test, plant a resolver that answers (so the connect cannot time out in the resolving state) only if such a fixture exists; otherwise plant `connectTimeout(.seconds(90))` and observe the harness red at 60 s: `scripts/mutation-probe --filter theConnectDeadlineAlsoCoversNameResolution --apply "perl -0pi -e 's/connectTimeout\(\.milliseconds\(400\)\)/connectTimeout(.seconds(90))/' Tests/macSCPCoreTests/ConnectMainActorLivenessTests.swift"` — RESULT RED. For the shell: `MACSCP_ITEST=1 scripts/mutation-probe --filter CitadelShellIntegrationTests --apply "…"` planting a marker that never appears (`marker: "never-\(UUID())"` at one call site) — RESULT RED.
+- [x] **Step 2: Implement**; `swift test --filter ConnectMainActorLiveness` green; `MACSCP_ITEST=1 swift test --filter CitadelShellIntegrationTests` green (rig up, from the main checkout); full `swift test` green; zero warnings.
+- [x] **Step 3: Commit** `test: the three sleep races await the work under the harness limit`.
 
 ---
 
@@ -88,6 +88,6 @@ runner".
 - Modify: `Tests/macSCPCoreTests/PollingGuardTests.swift` (two new checks: `noLatchIsWaitedOnWithATimeout` — `wait(timeout:` occurs nowhere in `Tests/` except `AsyncSignalTests.swift`, `Support/AsyncSignal.swift` and the one saturation site (`SubprocessRunnerTests.swift`, matched by the sentence in its comment that names the measurement — derive the exemption from that sentence, not from the file name), with the positive that `AsyncSignalTests.swift` contains it; `noSleepingChildRacesWorkInAGroup` — no `addTask` whose first statement is a `Task.sleep(for:` in `Tests/`, with the positive that a fixture in `Support/` (never scanned) shows the pattern matching)
 - Modify: `docs/BACKLOG.md` (the row: the Open list shrinks to the saturation site and the three production-bound `now.advanced(by:)` arguments; the commits; the three RESULT lines)
 
-- [ ] **Step 1:** write the checks; `swift test --filter PollingGuardTests` green; plant one `wait(timeout:` in a test file → RED; plant one sleeping child → RED (RESULT lines into the commit body).
-- [ ] **Step 2:** the row; count the sites changed in Tasks 1–2 from the diffs.
-- [ ] **Step 3: Commit** `test: the guard reads the other spellings of a ceiling, and the row says what stays`.
+- [x] **Step 1:** write the checks; `swift test --filter PollingGuardTests` green; plant one `wait(timeout:` in a test file → RED; plant one sleeping child → RED (RESULT lines into the commit body).
+- [x] **Step 2:** the row; count the sites changed in Tasks 1–2 from the diffs.
+- [x] **Step 3: Commit** `test: the guard reads the other spellings of a ceiling, and the row says what stays`.
