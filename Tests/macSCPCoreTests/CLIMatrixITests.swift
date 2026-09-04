@@ -277,6 +277,12 @@ enum CLIMatrixCases {
                     at: localTree, withIntermediateDirectories: true)
                 try Data("leaf\n".utf8).write(to: localTree.appendingPathComponent("leaf.txt"))
 
+                // Registered before the command runs, not after: `put` is
+                // expected to refuse a directory source outright, but if a
+                // regression ever let something through, the cleanup below
+                // must still find it rather than leaving it on the rig.
+                await litter.tree(rig.remotePath(treeName))
+
                 let putFlags = try await CLIMatrix.hostKeyFlags(for: "put", binary: binary)
                 let putResult = try await rig.run(
                     ["put"] + putFlags
@@ -1336,6 +1342,8 @@ struct CLIMatrixCommandsITests {
     /// recursive transfer needs a real per-backend tree case, not a row that
     /// keeps passing because the command it describes never ran.
     @Test func neitherTransferCommandOffersARecursiveFlag() async throws {
+        let rig = try CLIMatrix.make(for: .ssh, label: "recursive-gap")
+        defer { rig.tearDown() }
         let binary = try CLIMatrix.binaryURL()
         let rmOptions = try await CLIMatrix.advertisedOptions(for: "rm", binary: binary)
         #expect(rmOptions.contains("--recursive"), "the option scan reads no options at all")
@@ -1348,8 +1356,11 @@ struct CLIMatrixCommandsITests {
                 !options.contains("--recursive"),
                 "\(command) now offers --recursive; the matrix needs a real tree case for it")
 
-            let refused = try await SubprocessRunner.run(
-                binary, arguments: [command, "--recursive", "a", "b"])
+            // Through the rig, not a bare `SubprocessRunner.run`: this refusal
+            // never reaches a connect, but routing it through `rig.run` still
+            // gets every backend's secret variable scrubbed from the child's
+            // environment by construction, same as every other command here.
+            let refused = try await rig.run([command, "--recursive", "a", "b"])
             #expect(refused.status != 0, "\(command) accepted a --recursive it does not declare")
             #expect(refused.stderrText.contains("--recursive"))
         }
@@ -1371,6 +1382,8 @@ struct CLIMatrixCommandsITests {
     /// (`TransferPlan.jobs` has three arms), so it is not an S3 limitation
     /// to gate on — it is a value no backend is ever offered.
     @Test func theConflictActionsAreTheOnesCoreDefines() async throws {
+        let rig = try CLIMatrix.make(for: .ssh, label: "conflict-gap")
+        defer { rig.tearDown() }
         let binary = try CLIMatrix.binaryURL()
         let fromCore = ConflictAction.allCases.map(\.rawValue)
         for command in ["put", "get"] {
@@ -1384,8 +1397,12 @@ struct CLIMatrixCommandsITests {
         }
 
         #expect(!fromCore.contains("rename"), "ConflictAction gained rename; the matrix needs it")
-        let refused = try await SubprocessRunner.run(
-            binary, arguments: ["put", "--on-conflict", "rename", "a", "b"])
+        // Through the rig (see `neitherTransferCommandOffersARecursiveFlag`
+        // above): the refusal happens before any connect, but `rig.run`
+        // still scrubs every backend's secret variable from the child's
+        // environment, so this bare parse refusal is not the one call in the
+        // file that skips it.
+        let refused = try await rig.run(["put", "--on-conflict", "rename", "a", "b"])
         #expect(refused.status != 0, "put accepted --on-conflict rename")
         #expect(refused.stderrText.contains("rename"))
     }

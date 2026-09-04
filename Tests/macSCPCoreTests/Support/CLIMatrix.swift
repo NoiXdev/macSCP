@@ -375,14 +375,17 @@ struct CLIMatrix: Sendable {
     private func verifyGone(
         _ fileSystem: any RemoteFileSystem, path: String, sourceLocation: SourceLocation
     ) async {
-        // The removal ATTEMPTS above are best-effort on purpose — a case that failed
-        // before it seeded anything has nothing to remove, and neither call
-        // should turn that into a second failure. The OUTCOME is not
-        // best-effort: a `try?` around both and nothing after it is exactly
-        // the shape that let the S3 and WebDAV divergence above go unnoticed
-        // through a full green run, and Task 2 multiplies the cases that
-        // could hide it again. So the entry is looked for afterwards, and
-        // its survival is recorded against the caller's own line.
+        // The removal ATTEMPT(S) above are best-effort on purpose — a case
+        // that failed before it seeded anything has nothing to remove, and
+        // neither caller should turn that into a second failure.
+        // `removeRemote` makes two attempts (`delete`, then `deleteTree` as
+        // a fallback); `removeRemoteTree` makes one (`deleteTree` alone).
+        // The OUTCOME is not best-effort either way: a `try?` with nothing
+        // after it is exactly the shape that let the S3 and WebDAV
+        // divergence above go unnoticed through a full green run, and Task 2
+        // multiplies the cases that could hide it again. So the entry is
+        // looked for afterwards, and its survival is recorded against the
+        // caller's own line.
         //
         // Neither message interpolates an error or a secret: `RemoteFSError`
         // renders configuration text through `String(describing:)` (the
@@ -526,12 +529,41 @@ struct CLIMatrix: Sendable {
     /// `Bundle(for:)`.
     private final class TestBundleAnchor {}
 
-    /// Locates the already-built `macscp-cli`. The full argument for why the
-    /// lookup is bundle-relative and why it must never run `swift build`
-    /// itself is at `CLIRoundtripITests.locateCLIBinary()`; the short version
-    /// is that a nested `swift build` waits on the `.build` lock this very
-    /// process holds, and that `.build/debug`, `.build/release` and
-    /// `--scratch-path` all put the product beside the test bundle.
+    /// Locates the already-built `macscp-cli` binary. The one definition
+    /// every gated case in this target calls through — `CLIRoundtripITests`
+    /// included, since 2026-09-04; it used to carry a second copy of exactly
+    /// this lookup (`locateCLIBinary()`), folded into this one when Task 4
+    /// of the CLI test matrix plan closed out.
+    ///
+    /// It deliberately does NOT run `swift build`. A test running under
+    /// `swift test` is inside a process that holds SwiftPM's lock on
+    /// `.build`; a nested `swift build` waits for that lock, which waits for
+    /// the test — a deadlock with no timeout, which is exactly how
+    /// `CLIRoundtripITests` first hung. SwiftPM says so plainly if you try:
+    /// "Another instance of SwiftPM is already running using '.build',
+    /// waiting until that process has finished execution..."
+    ///
+    /// So the binary is located, not produced: `swift test` has already
+    /// built every product into the same directory the test bundle lives
+    /// in, so the sibling next to the bundle IS the current source tree's
+    /// output. `MACSCP_CLI_BINARY` overrides for anyone running the bundle
+    /// from somewhere unusual.
+    ///
+    /// The lookup is BUNDLE-relative, not repo-root-relative — an earlier
+    /// version read `<repoRoot>/.build/debug/macscp-cli` directly, which
+    /// only matches the default `swift test` invocation. It hard-failed
+    /// under `swift test --scratch-path <tmp>` (products land in
+    /// `<tmp>/debug`, not `<repoRoot>/.build/debug`) and under `swift test
+    /// -c release` (products land in `.build/release`) — both real
+    /// invocations (`scripts/hang-hunt` uses `--scratch-path`), and both
+    /// silently pointed the test at a binary that was never built
+    /// (final-branch-review finding, 2026-09-02). `Bundle(for:)` on
+    /// `TestBundleAnchor`, a class defined right here, always resolves to
+    /// the `.xctest` bundle `swift test` just built and loaded this code
+    /// from; `.build/main` and `.build/release` both put the `macscp-cli`
+    /// product as that bundle's own sibling, so walking up one level from
+    /// the bundle finds it regardless of which products directory this
+    /// particular run used.
     static func binaryURL() throws -> URL {
         if let override = ProcessInfo.processInfo.environment["MACSCP_CLI_BINARY"],
            !override.isEmpty {

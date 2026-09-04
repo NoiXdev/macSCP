@@ -31,7 +31,7 @@ struct CLIRoundtripITests {
     /// EXACTLY the bytes that were uploaded — not merely that both commands
     /// exited zero.
     @Test func sshRoundtripMovesTheBytesBackAndForth() async throws {
-        let binary = try Self.locateCLIBinary()
+        let binary = try CLIMatrix.binaryURL()
         let storageDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-roundtrip-storage")
         defer { try? FileManager.default.removeItem(at: storageDirectory) }
         let localDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-roundtrip-local")
@@ -133,7 +133,7 @@ struct CLIRoundtripITests {
     /// entire point is an UNKNOWN host key, which the developer's own
     /// known-hosts file for this same rig is not.
     @Test func nonInteractiveRefusesAnUnknownHostKey() async throws {
-        let binary = try Self.locateCLIBinary()
+        let binary = try CLIMatrix.binaryURL()
         let storageDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-refusal-storage")
         defer { try? FileManager.default.removeItem(at: storageDirectory) }
 
@@ -176,7 +176,7 @@ struct CLIRoundtripITests {
     /// the remote content is still the FIRST upload's bytes, not merely that
     /// the command failed.
     @Test func putWithNoConflictFlagRefusesAnExistingDestinationByDefault() async throws {
-        let binary = try Self.locateCLIBinary()
+        let binary = try CLIMatrix.binaryURL()
         let storageDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-conflict-storage")
         defer { try? FileManager.default.removeItem(at: storageDirectory) }
         let localDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-conflict-local")
@@ -250,12 +250,6 @@ struct CLIRoundtripITests {
 
     // MARK: - Test harness
 
-    /// Exists only so `locateCLIBinary()` has a class defined in THIS file to
-    /// hand `Bundle(for:)` — any class in the test target would resolve to
-    /// the same `.xctest` bundle, but naming one here (rather than reaching
-    /// for some unrelated type) makes the intent legible at the call site.
-    private final class TestBundleAnchor {}
-
     /// Creates the directory, rather than only naming it. The earlier version
     /// returned a path and left the directory uncreated — which went unnoticed
     /// for the storage directory (`SessionStore` creates its own on write) but
@@ -268,62 +262,6 @@ struct CLIRoundtripITests {
         try FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true)
         return directory
-    }
-
-    /// Locates the already-built `macscp-cli` binary.
-    ///
-    /// It deliberately does NOT run `swift build`. A test running under
-    /// `swift test` is inside a process that holds SwiftPM's lock on
-    /// `.build`; a nested `swift build` waits for that lock, which waits for
-    /// the test — a deadlock with no timeout, which is exactly how this suite
-    /// first hung. SwiftPM says so plainly if you try:
-    /// "Another instance of SwiftPM is already running using '.build',
-    /// waiting until that process has finished execution..."
-    ///
-    /// So the binary is located, not produced: `swift test` has already built
-    /// every product into the same directory the test bundle lives in, so the
-    /// sibling next to the bundle IS the current source tree's output.
-    /// `MACSCP_CLI_BINARY` overrides for anyone running the bundle from
-    /// somewhere unusual.
-    ///
-    /// The lookup is BUNDLE-relative, not repo-root-relative — an earlier
-    /// version read `<repoRoot>/.build/debug/macscp-cli` directly, which only
-    /// matches the default `swift test` invocation. It hard-failed under
-    /// `swift test --scratch-path <tmp>` (products land in `<tmp>/debug`, not
-    /// `<repoRoot>/.build/debug`) and under `swift test -c release` (products
-    /// land in `.build/release`) — both real invocations (`scripts/hang-hunt`
-    /// uses `--scratch-path`), and both silently pointed this test at a
-    /// binary that was never built (final-branch-review finding, 2026-09-02).
-    /// `Bundle(for:)` on `TestBundleAnchor`, a class defined right here, always
-    /// resolves to the `.xctest` bundle `swift test` just built and loaded
-    /// this code from; `.build/main` and `.build/release` both put the
-    /// `macscp-cli` product as that bundle's own sibling, so walking up one
-    /// level from the bundle finds it regardless of which products directory
-    /// this particular run used.
-    private static func locateCLIBinary() throws -> String {
-        if let override = ProcessInfo.processInfo.environment["MACSCP_CLI_BINARY"],
-           !override.isEmpty {
-            guard FileManager.default.isExecutableFile(atPath: override) else {
-                throw HarnessError("MACSCP_CLI_BINARY is set to \(override), which is not executable")
-            }
-            return override
-        }
-        // `Bundle.main` is NOT usable here: under `swift test` it resolves to
-        // swiftpm-testing-helper inside the toolchain, not to the test bundle.
-        let productsDirectory = Bundle(for: TestBundleAnchor.self).bundleURL
-            .deletingLastPathComponent()
-        let binaryPath = productsDirectory
-            .appendingPathComponent("macscp-cli")
-            .path(percentEncoded: false)
-        guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
-            throw HarnessError("""
-                macscp-cli not found at \(binaryPath).
-                Build it before running the gated suite:
-                  swift build --product macscp-cli
-                or point MACSCP_CLI_BINARY at an existing binary.
-                """)
-        }
-        return binaryPath
     }
 
     /// Runs the built CLI binary as a subprocess with an isolated storage
@@ -346,18 +284,13 @@ struct CLIRoundtripITests {
     /// secret — so it is not defensive noise on this path, and restoring the
     /// argument list here would restore it for them.
     private static func runCLI(
-        _ binary: String, _ arguments: [String], storageDirectory: URL
+        _ binary: URL, _ arguments: [String], storageDirectory: URL
     ) async throws -> (status: Int32, stdout: String, stderr: String) {
         var environment = ProcessInfo.processInfo.environment
         environment["MACSCP_STORAGE_DIRECTORY"] = storageDirectory.path(percentEncoded: false)
         environment["MACSCP_PASSWORD"] = rigPassword
         let result = try await SubprocessRunner.run(
-            URL(fileURLWithPath: binary), arguments: arguments, environment: environment)
+            binary, arguments: arguments, environment: environment)
         return (result.status, result.stdoutText, result.stderrText)
-    }
-
-    private struct HarnessError: Error, CustomStringConvertible {
-        let description: String
-        init(_ description: String) { self.description = description }
     }
 }

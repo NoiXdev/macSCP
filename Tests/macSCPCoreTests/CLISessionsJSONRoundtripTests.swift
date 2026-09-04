@@ -68,11 +68,13 @@ struct CLISessionsJSONRoundtripTests {
     }
 
     /// Locates the already-built `macscp-cli` binary, bundle-relative —
-    /// see `CLIRoundtripITests.locateCLIBinary` for why: it deliberately
-    /// does not run `swift build` (that would deadlock on SwiftPM's
-    /// `.build` lock), and reading a repo-root-relative `.build/debug` path
-    /// instead of the test bundle's own sibling breaks under
-    /// `--scratch-path` and `-c release`.
+    /// see `CLIMatrix.binaryURL()` for why: it deliberately does not run
+    /// `swift build` (that would deadlock on SwiftPM's `.build` lock), and
+    /// reading a repo-root-relative `.build/debug` path instead of the test
+    /// bundle's own sibling breaks under `--scratch-path` and `-c release`.
+    /// (`CLIRoundtripITests` used to carry this same lookup under this same
+    /// name; it now calls through `CLIMatrix.binaryURL()` instead, folded
+    /// there when Task 4 of the CLI test matrix plan closed out.)
     private static func locateCLIBinary() throws -> String {
         if let override = ProcessInfo.processInfo.environment["MACSCP_CLI_BINARY"],
            !override.isEmpty {
