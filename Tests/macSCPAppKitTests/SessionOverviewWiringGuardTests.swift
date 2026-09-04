@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import macSCPCore
 
 @testable import MacSCPAppKit
 
@@ -26,6 +27,15 @@ import Testing
 ///   connections and the snippets sit inside it. Same split
 ///   `ConnectionFormView` got on 2026-09-04, and this suite is written in
 ///   the shape of `ConnectionFormScrollGuardTests`, which guards that one.
+/// * **Nothing a secret could arrive in is spelled in the view.** The
+///   design's "Never in the overview" paragraph: no secret value, no
+///   passphrase, no private key contents, no endpoint userinfo. The
+///   enforceable half of that at this layer is that the view names none of
+///   the backends' SECRET field ids and renders nothing through
+///   `String(describing:)`, which prints an arbitrary value's stored
+///   properties. The ids are derived from `BackendDescriptor`, and the
+///   patterns are proved to match at all against a fixture that carries
+///   every one of them.
 /// * **Every label the model can emit exists in the App's catalogues.**
 ///   `SessionOverviewModel` in Core emits `overview.fact.<id>` label keys
 ///   and resolves none of them; the App owns all four catalogues. The ids
@@ -66,6 +76,10 @@ struct SessionOverviewWiringGuardTests {
     /// Core's model — read for the label ids it emits, never edited by this
     /// task's App-side work.
     private static let modelPath = "Sources/macSCPCore/Presentation/SessionOverviewModel.swift"
+    /// The compiling counter-example the two secret checks are measured
+    /// against — see its own doc comment for why it is a file rather than a
+    /// synthetic string, and why it sits outside the scanned tree.
+    private static let leakFixturePath = "Tests/MacSCPTestSupport/SessionOverviewLeakFixture.swift"
 
     private static let catalogLocales = ["en", "de", "fr", "pl"]
 
@@ -185,12 +199,21 @@ struct SessionOverviewWiringGuardTests {
 
     // MARK: - The branch and the three actions
 
-    @Test func theDetailPaneShowsTheOverview() throws {
+    /// One construction, and exactly one — which is what makes
+    /// `wiring()`'s `occurrence: 1` name the branch this suite is about
+    /// rather than whichever of several came first in the file. Fix round 1
+    /// added the equality; before it, a second `SessionOverviewView(` in
+    /// another branch would have been read by nothing and every action check
+    /// below would have gone on describing the first one.
+    @Test func theDetailPaneShowsTheOverviewExactlyOnce() throws {
         let detail = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.detailPath))
-        #expect(detail.contains("\(Self.viewTypeName)("), """
-            \(Self.detailPath) no longer constructs \(Self.viewTypeName)( — a single click on \
-            a stored session shows the empty connection form again, which is the state this \
-            whole design replaced.
+        let count = Self.occurrences(of: "\(Self.viewTypeName)(", in: detail)
+        #expect(count == 1, """
+            \(Self.detailPath) constructs \(Self.viewTypeName)( \(count) times, expected \
+            exactly one. Zero means a single click on a stored session shows the empty \
+            connection form again, which is the state this whole design replaced; more than \
+            one means the checks that read the FIRST construction's arguments are silent about \
+            the others.
             """)
     }
 
@@ -389,6 +412,86 @@ struct SessionOverviewWiringGuardTests {
             """)
     }
 
+    /// The two lines that keep one selection's facts from being shown under
+    /// another's head, pinned as SOURCE because neither is reachable any
+    /// other way from here.
+    ///
+    /// Why a scan and not a behavioural test: the reset is a write to a
+    /// SwiftUI `@State` from inside a `.task(id:)` body, and the
+    /// cancellation check reads `Task.isCancelled` inside that same body.
+    /// Nothing in this project renders a view (`ViewTestabilitySpike` can
+    /// instantiate one offscreen; it cannot drive a `.task`), so there is no
+    /// way to change the id, cancel the first body and observe which result
+    /// won. `load(session:groupName:loginSetName:)` itself has nothing to
+    /// test here — it is a pure read with no cancellation semantics of its
+    /// own, which is exactly why the check has to sit at the call.
+    ///
+    /// So this asserts the ORDER of three anchors inside that one body,
+    /// which is the whole of the property: reset, then await, then the
+    /// cancellation check, then the assignment. Positive throughout — every
+    /// anchor must be found, and a body missing any of them fails on that
+    /// anchor rather than on the ordering.
+    @Test func theLoadResetsFirstAndRefusesToLandAfterCancellation() throws {
+        let body = try Self.bodySpan()
+        let task = TransferQueueBarCancelGuardTests.slice(
+            try TransferQueueBarCancelGuardTests.declarationBodyRange(
+                of: ".task(id: session)", in: body.code),
+            of: body.code)
+        let anchors = ["model = nil", "await Self.load(", "guard !Task.isCancelled", "model = loaded"]
+        var positions: [Int] = []
+        for anchor in anchors {
+            guard let range = task.range(of: anchor) else {
+                Issue.record("""
+                    the .task(id: session) body does not contain `\(anchor)`. \
+                    Read: \(task)
+                    """)
+                return
+            }
+            positions.append(task.distance(from: task.startIndex, to: range.lowerBound))
+        }
+        #expect(positions == positions.sorted(), """
+            the .task(id: session) body has these four in the wrong order \(anchors) at \
+            \(positions). The reset must precede the await, or session B's head renders over \
+            session A's facts; the cancellation check must sit between the await and the \
+            assignment, or a slow keychain query started for the PREVIOUS selection can land \
+            on top of the current one's model.
+            """)
+    }
+
+    /// The scanner reacts: the shape this suite buys must not also be bought
+    /// by the shape it forbids. Both violations the ruling names — no reset,
+    /// and a result assigned without the check — are rejected by the same
+    /// scan the real file passes.
+    @Test func theOrderingScanRejectsAnUnguardedLoad() throws {
+        let source = """
+            var body: some View {
+                VStack {
+                    head
+                }
+                .task(id: session) {
+                    let loaded = await Self.load(session: session)
+                    model = loaded
+                }
+            }
+            """
+        let file = try Self.views(of: source)
+        let body = TransferQueueBarCancelGuardTests.slice(
+            try TransferQueueBarCancelGuardTests.declarationBodyRange(
+                of: Self.bodyDeclaration, in: file.code),
+            of: file.code)
+        let task = TransferQueueBarCancelGuardTests.slice(
+            try TransferQueueBarCancelGuardTests.declarationBodyRange(
+                of: ".task(id: session)", in: body),
+            of: body)
+        #expect(!task.contains("model = nil"), """
+            this synthetic body omits the reset on purpose — if the scan finds one, it is not \
+            reading the task body the real check reads.
+            """)
+        #expect(!task.contains("guard !Task.isCancelled"), """
+            this synthetic body omits the cancellation check on purpose — same reasoning.
+            """)
+    }
+
     @Test func theScrollingRegionCarriesTheThreeSections() throws {
         let scroll = try Self.scrollSpan(of: try Self.bodySpan())
         for section in ["factsSection", "historySection", "snippetsSection"] {
@@ -409,13 +512,33 @@ struct SessionOverviewWiringGuardTests {
     @Test func theNarrowFallbacksAreThere() throws {
         let file = try Self.viewFileViews()
         let count = Self.occurrences(of: "ViewThatFits(", in: file.code)
-        #expect(count >= 2, """
-            \(Self.viewPath) contains \(count) ViewThatFits( — the plan requires at least \
-            two: the actions row falls back from one row to two, and the facts grid from two \
-            columns to one. Without them a narrow detail pane truncates a button title letter \
-            by letter, which is what the maintainer's screenshot of the diagnostics footer \
-            showed before that panel got the same treatment.
+        // THREE, counted in the pass that writes this line: the actions row
+        // (one row, else two), the facts grid (two columns, else one) and
+        // the recent-connections table (with the transfers column, else
+        // without). An equality rather than a minimum, and fix round 1 is
+        // why: `>= 2` let the history table's narrow form be deleted with
+        // this suite green, which is the shape CLAUDE.md warns about — a
+        // bound that a violation can satisfy is not a guard on the thing it
+        // names. A fourth fallback is welcome and has to say so here.
+        #expect(count == 3, """
+            \(Self.viewPath) contains \(count) ViewThatFits(, not the three this design has: \
+            the actions row falls back from one row to two, the facts grid from two columns to \
+            one, and the recent-connections table drops its transfers column. Without them a \
+            narrow detail pane truncates a button title letter by letter, which is what the \
+            maintainer's screenshot of the diagnostics footer showed before that panel got the \
+            same treatment. A fourth fallback is a change to this number, made on purpose.
             """)
+        // The count alone cannot say WHICH three, and the history table's is
+        // the one that reads as an argument rather than as a second view:
+        // both of its forms are the same function called twice, so deleting
+        // the narrow call leaves the `ViewThatFits` standing with one child.
+        for form in ["showsTransfers: true", "showsTransfers: false"] {
+            #expect(file.code.contains(form), """
+                \(Self.viewPath) no longer builds the recent-connections table with \(form) — \
+                the table has lost one of its two forms, and a ViewThatFits with a single \
+                child is a fallback that cannot fall back.
+                """)
+        }
         #expect(file.code.contains("Grid("), """
             \(Self.viewPath) no longer contains a Grid( — the facts are meant to be a \
             two-column grid whose labels and values line up, not a stack of ad-hoc rows.
@@ -458,6 +581,129 @@ struct SessionOverviewWiringGuardTests {
             the overview's recent-connections list can never show a failure; more than one \
             means two paths compose that row, and only one of them gets read when the sentence \
             it stores has to change.
+            """)
+    }
+
+    // MARK: - Never in the overview (design's own paragraph)
+
+    /// Every SECRET field id the three backends declare, derived from the
+    /// descriptors rather than listed here.
+    ///
+    /// Both schemas of every kind, because a secret can be declared in
+    /// either: `credentialSchema` holds the ordinary password/passphrase and
+    /// `connectionSchema` is where a backend could put one beside its
+    /// address fields. `ConnectionField.isSecret` is the same predicate
+    /// `BackendDescriptorTests.everySecretFieldDeclaresItsRole` iterates, so
+    /// a fourth backend, or a fourth secret on an existing one, enters this
+    /// set without an edit here.
+    static func secretFieldIDs() -> Set<String> {
+        var ids: Set<String> = []
+        for kind in ConnectionKind.allCases {
+            let descriptor = BackendDescriptor.descriptor(for: kind)
+            for schema in [descriptor.connectionSchema, descriptor.credentialSchema] {
+                for field in schema.fields where field.isSecret {
+                    ids.insert(field.id)
+                }
+            }
+        }
+        return ids
+    }
+
+    /// The render that prints an arbitrary value's stored properties. Named
+    /// once, used by the negative check and by the fixture check that proves
+    /// it matches.
+    private static let describingRender = "String(describing:"
+
+    /// The positive companion both negatives below need FIRST: the scan is
+    /// reading a file that renders the model at all.
+    ///
+    /// A view emptied, renamed or replaced by a placeholder carries no
+    /// secret id and no describing call either, and both negatives would
+    /// report an all-clear over it. What is asserted is the model's own
+    /// public stored properties — read out of Core's source, not spelled —
+    /// of which the view must name at least three. Three rather than all of
+    /// them because the view legitimately reaches some through a local
+    /// (`model.facts` is mapped into `lines`) and the point is that it
+    /// reaches the model, not which members it happens to touch this month.
+    @Test func theSecretScanReadsAFileThatRendersTheModel() throws {
+        let modelSource = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.modelPath))
+        let members = Set(
+            DiagnosticsDoorsGuardTests.matches(
+                of: #"public let (\w+):"#, in: modelSource))
+        #expect(members.count >= 5, """
+            \(Self.modelPath) declares \(members.count) public stored properties \
+            \(members.sorted()) — the derivation this check rests on is not reading the model.
+            """)
+        let file = try Self.viewFileViews()
+        let named = members.filter { file.code.contains("model.\($0)") || file.code.contains("model?.\($0)") }
+        #expect(named.count >= 3, """
+            \(Self.viewPath) reads only \(named.count) of SessionOverviewModel's properties \
+            \(named.sorted()) — the file the two secret checks below scan is no longer a view \
+            that renders a session, so "it contains no secret field id" would be an absence \
+            measured over nothing.
+            """)
+    }
+
+    /// The design's "Never in the overview", as far as a scan can carry it:
+    /// the view does not name a single one of the backends' secret fields.
+    ///
+    /// It cannot name one innocently — the model hands over `Fact` values
+    /// whose text is already stripped, and the credential question arrives
+    /// as a `Bool?` — so an occurrence means the view went looking for a
+    /// secret by name, which is the one move that could put a value on this
+    /// surface.
+    @Test func theViewNamesNoSecretField() throws {
+        let ids = Self.secretFieldIDs()
+        let file = try Self.viewFileViews()
+        let found = ids.sorted().filter { file.code.contains($0) }
+        #expect(found.isEmpty, """
+            \(Self.viewPath) names \(found) — a secret field id, in a read-only surface that \
+            must never hold a credential. The model answers the only credential question this \
+            view asks (`hasStoredSecret`) as a Bool?, which cannot carry a value; reaching for \
+            a field by name is how one gets here.
+            """)
+    }
+
+    /// `String(describing:)` prints an arbitrary value's stored properties,
+    /// which for a configuration value is the configuration it was built
+    /// from. Same rule the diagnostics module keeps
+    /// (`DialSupport.reason(for:)`'s own doc comment says why), applied to
+    /// the surface that renders a stored session.
+    @Test func theViewRendersNothingThroughDescribing() throws {
+        let file = try Self.viewFileViews()
+        #expect(!file.code.contains(Self.describingRender), """
+            \(Self.viewPath) renders a value through \(Self.describingRender)) — that prints \
+            whatever the value's stored properties are, and on this surface the values in \
+            reach are stored sessions and their configuration.
+            """)
+    }
+
+    /// The second positive companion, and the one the two negatives are
+    /// actually measured by: run the identical scans over a file that DOES
+    /// violate both, and require every pattern to match.
+    ///
+    /// Without it, a typo in a derived id, a schema that stopped marking a
+    /// field secret, or a renamed describing call would leave the negatives
+    /// passing over patterns that match nothing anywhere.
+    @Test func everySecretPatternMatchesTheFixture() throws {
+        let fixture = try SwiftSource.blankingCommentsAndStrings(
+            try Self.raw(Self.leakFixturePath))
+        let ids = Self.secretFieldIDs()
+        #expect(!ids.isEmpty, """
+            no backend declares a secret field at all — the derivation feeding \
+            theViewNamesNoSecretField found nothing to look for.
+            """)
+        let missing = ids.sorted().filter { !fixture.contains($0) }
+        #expect(missing.isEmpty, """
+            \(Self.leakFixturePath) does not carry \(missing). The fixture is what proves the \
+            scan can see a secret field id at all, so every id the descriptors declare has to \
+            appear in it — add the new one there (as a property, not in a comment or a string, \
+            which the scan blanks).
+            """)
+        #expect(fixture.contains(Self.describingRender), """
+            \(Self.leakFixturePath) no longer contains \(Self.describingRender)) — \
+            theViewRendersNothingThroughDescribing is then a check nothing has ever been \
+            observed to fail.
             """)
     }
 

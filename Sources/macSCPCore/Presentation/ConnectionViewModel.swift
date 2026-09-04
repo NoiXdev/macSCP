@@ -790,6 +790,20 @@ public final class ConnectionViewModel {
         // without a reason, so neither a previous failure's sentence nor one
         // belonging to an attempt that then SUCCEEDED can be read as this
         // attempt's.
+        //
+        // BELOW the refusal above, and that is safe rather than merely
+        // tidy. The invariant: a caller refused there is refused BECAUSE
+        // another attempt is running, so `state == .connecting` — and the
+        // running attempt cleared both of these at this very line before it
+        // reached `.connecting`, and writes either one only in its own
+        // `catch`, in the same synchronous main-actor step that publishes
+        // `.failed`. A refused caller can therefore only ever read `nil`
+        // here; there is no window in which a stale reason is both present
+        // and readable. Moving the two lines above the guard would be
+        // correct as well, and was not done: `lastFailureKind` belongs to
+        // the connection-liveness plan, and relocating its clear to make a
+        // point about `lastFailureReason` changes a property this task does
+        // not own.
         lastFailureKind = nil
         lastFailureReason = nil
         let myAttempt = UUID()

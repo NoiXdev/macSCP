@@ -148,8 +148,30 @@ struct SessionOverviewView: View {
         // is `nonisolated` and not a main-actor call — see
         // `load(session:groupName:loginSetName:)`.
         .task(id: session) {
-            model = await Self.load(
+            // Two lines that are not ceremony, both about the same window:
+            // the one between a selection changing and its stores having
+            // been read.
+            //
+            // The reset first, because `model` is `@State` and SwiftUI keeps
+            // this view's identity across a selection change — without it,
+            // session B's head (drawn straight from `session`) renders over
+            // session A's facts, history and snippets, which is a page that
+            // is wrong rather than a page that is incomplete. A blank body
+            // under the right head is the honest in-between.
+            //
+            // The cancellation check second, because `load` is the slow half
+            // and nothing else stops its result from arriving. `task(id:)`
+            // cancels the previous body when the id changes, but a
+            // cancelled task still RUNS to its next suspension and returns:
+            // a keychain query started for selection N−1 can land after N's
+            // has already been assigned, and the later write would lose to
+            // the earlier one. Checking after the `await` is what makes the
+            // last selection the one on screen.
+            model = nil
+            let loaded = await Self.load(
                 session: session, groupName: groupName, loginSetName: loginSetName)
+            guard !Task.isCancelled else { return }
+            model = loaded
         }
     }
 
