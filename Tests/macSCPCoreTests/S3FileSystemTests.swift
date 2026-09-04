@@ -489,16 +489,28 @@ struct S3FileSystemTests {
 
     // MARK: - M13/T4: delete + createDirectory
 
+    /// The lookup listing in front of the DELETE (see `delete(path:)`)
+    /// answers for `dir/file.txt`, so the object key is what leaves.
     @Test func deleteSendsDeleteForTheObjectKey() async throws {
-        let (fs, transport) = try await connect(responses: [(Data(), httpResponse(status: 204))])
+        let (fs, transport) = try await connect(responses: [
+            (Data(listingWithKeys(["dir/file.txt"]).utf8), httpResponse(status: 200)),
+            (Data(), httpResponse(status: 204)),
+        ])
         try await fs.delete(path: "/dir/file.txt")
         let req = await transport.requests.last!
         #expect(req.httpMethod == "DELETE")
         #expect(req.url!.path.hasSuffix("/dir/file.txt"))
     }
 
+    /// A 404 on the DELETE ITSELF still maps to `notFound` — the lookup
+    /// found the object, so the 404 can only have come from the delete.
+    /// (`deleteOnAMissingKeyThrowsNotFoundAndSendsNoDelete` below covers
+    /// the other, now far more common, way to reach that case.)
     @Test func deleteNotFoundResponseThrowsNotFound() async throws {
-        let (fs, _) = try await connect(responses: [(Data(), httpResponse(status: 404))])
+        let (fs, _) = try await connect(responses: [
+            (Data(listingWithKeys(["dir/file.txt"]).utf8), httpResponse(status: 200)),
+            (Data(), httpResponse(status: 404)),
+        ])
         do {
             try await fs.delete(path: "/dir/file.txt")
             Issue.record("expected throw")
@@ -510,6 +522,49 @@ struct S3FileSystemTests {
         } catch {
             Issue.record("unexpected error type: \(error)")
         }
+    }
+
+    /// `RemoteFileSystem.delete`'s contract: "Throws
+    /// `RemoteFSError.protocolError` if `path` is a directory."
+    /// `DeleteObject` cannot carry that on its own — it answers 204 for any
+    /// key, and `mode.resolve` addresses the BARE key `sub`, never the
+    /// `sub/` marker the directory actually is, so the request went out and
+    /// came back a silent success having deleted nothing.
+    ///
+    /// The spare 204 left in the queue is deliberate: `FakeS3Transport`
+    /// throws `.protocolError` when it runs out of canned responses, so
+    /// without a response to spare the expectation below could be satisfied
+    /// by exhaustion rather than by the guard.
+    @Test func deleteOnADirectoryThrowsProtocolErrorAndSendsNoDelete() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(rootListingXML.utf8), httpResponse(status: 200)),
+            (Data(), httpResponse(status: 204)),
+        ])
+
+        await expectProtocolError { try await fs.delete(path: "/sub") }
+
+        // The connect probe and the lookup listing, and nothing after them.
+        let requests = await transport.requests
+        #expect(requests.count == 2)
+        #expect(!requests.contains { $0.httpMethod == "DELETE" })
+    }
+
+    /// ...and: "Throws `RemoteFSError.notFound` if nothing exists there."
+    /// `DeleteObject` is idempotent — 204 for a key that never existed — so
+    /// deleting nothing reported success too.
+    @Test func deleteOnAMissingKeyThrowsNotFoundAndSendsNoDelete() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(rootListingXML.utf8), httpResponse(status: 200)),
+            (Data(), httpResponse(status: 204)),
+        ])
+
+        await #expect(throws: RemoteFSError.notFound(path: "/nope")) {
+            try await fs.delete(path: "/nope")
+        }
+
+        let requests = await transport.requests
+        #expect(requests.count == 2)
+        #expect(!requests.contains { $0.httpMethod == "DELETE" })
     }
 
     @Test func createDirectoryPutsAZeroByteMarkerKey() async throws {
@@ -850,6 +905,19 @@ struct S3FileSystemTests {
         """
     }
 
+    /// A delimited listing of the bucket root whose only entry is the
+    /// `CommonPrefixes` "directory" `d/` — what `stat("/d")` sees, and so
+    /// the reply that precedes every walk below.
+    private let directoryDListingXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+        <IsTruncated>false</IsTruncated>
+        <CommonPrefixes>
+            <Prefix>d/</Prefix>
+        </CommonPrefixes>
+    </ListBucketResult>
+    """
+
     /// `deleteTree` lists every key under the prefix (including the
     /// directory's own trailing-slash marker) via `allObjectKeys`, then
     /// issues ONE signed `POST {bucket}?delete` per <=1000-key batch with a
@@ -857,6 +925,7 @@ struct S3FileSystemTests {
     /// naming every key in the batch.
     @Test func deleteTreeBatchesDeleteObjectsWithContentMD5() async throws {
         let (fs, transport) = try await connect(responses: [
+            (Data(directoryDListingXML.utf8), httpResponse(status: 200)),
             (Data(listingWithKeys(["d/", "d/a", "d/b"]).utf8), httpResponse(status: 200)),
             (Data("<DeleteResult></DeleteResult>".utf8), httpResponse(status: 200)),
         ])
@@ -883,6 +952,7 @@ struct S3FileSystemTests {
     /// hypothetical: the parser unescapes what S3 sent, and this rebuilds it.
     @Test func deleteTreeEscapesXMLMetacharactersInKeys() async throws {
         let (fs, transport) = try await connect(responses: [
+            (Data(directoryDListingXML.utf8), httpResponse(status: 200)),
             (Data(listingWithKeys(["d/", "d/a&amp;b.txt", "d/c&lt;d&gt;e", "d/f&quot;g&apos;h"]).utf8),
              httpResponse(status: 200)),
             (Data("<DeleteResult></DeleteResult>".utf8), httpResponse(status: 200)),
@@ -916,6 +986,7 @@ struct S3FileSystemTests {
         </DeleteResult>
         """
         let (fs, _) = try await connect(responses: [
+            (Data(directoryDListingXML.utf8), httpResponse(status: 200)),
             (Data(listingWithKeys(["d/", "d/a"]).utf8), httpResponse(status: 200)),
             (Data(deleteResultWithError.utf8), httpResponse(status: 200)),
         ])
@@ -923,6 +994,29 @@ struct S3FileSystemTests {
         await expectProtocolError {
             try await fs.deleteTree(at: "/d")
         }
+    }
+
+    /// `RemoteFileSystem.deleteTree`'s contract: "A plain file behaves
+    /// exactly like `delete`." The prefix walk cannot honour that — it
+    /// enumerates `<key>/`, which a plain object's key never matches, so it
+    /// batched zero keys and reported success having deleted nothing.
+    ///
+    /// The assertion is the request SHAPE, not just the count: a plain file
+    /// leaves through the same single `DELETE` on its own key that `delete`
+    /// sends, and no `POST ?delete` batch is issued at all.
+    @Test func deleteTreeOnAPlainFileSendsOneDeleteOnItsKey() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(rootListingXML.utf8), httpResponse(status: 200)),
+            (Data(), httpResponse(status: 204)),
+        ])
+
+        try await fs.deleteTree(at: "/a.txt")
+
+        let requests = await transport.requests
+        let deletes = requests.filter { $0.httpMethod == "DELETE" }
+        #expect(deletes.count == 1)
+        #expect(deletes.first?.url?.path(percentEncoded: true).hasSuffix("/a.txt") == true)
+        #expect(!requests.contains { ($0.url?.query ?? "").contains("delete") })
     }
 
     // MARK: - Checksums (the ETag from the listing, read for what it is)
@@ -1347,8 +1441,10 @@ struct S3FileSystemTests {
     }
 
     @Test func aDeleteRoutesIntoTheBucketNamedByThePath() async throws {
-        let (fs, transport) = try await connectAtBucketList(
-            responses: [(Data(), httpResponse(status: 204))])
+        let (fs, transport) = try await connectAtBucketList(responses: [
+            (Data(listingWithKeys(["dir/file.txt"]).utf8), httpResponse(status: 200)),
+            (Data(), httpResponse(status: 204)),
+        ])
 
         try await fs.delete(path: "/macscp-second/dir/file.txt")
 
@@ -1508,6 +1604,7 @@ struct S3FileSystemTests {
     /// property of the bucket LEVEL, not of a mode that refuses everything.
     @Test func oneLevelInsideABucketTheSameOperationsGoThrough() async throws {
         let (fs, transport) = try await connectAtBucketList(responses: [
+            (Data(listingWithKeys(["a.txt"]).utf8), httpResponse(status: 200)),
             (Data(), httpResponse(status: 204)),
         ])
 
@@ -1521,13 +1618,25 @@ struct S3FileSystemTests {
     /// …and with the toggle OFF nothing is refused at all: `"/"` is the
     /// bucket ROOT there, where these calls have always been the caller's
     /// business, and this guard must not change that.
+    ///
+    /// `deleteTree` rather than `delete`, since 2026-09-04: `delete("/")`
+    /// now throws `protocolError` because the root is a DIRECTORY — the
+    /// `RemoteFileSystem` contract, not this guard — and "some error, but
+    /// not `bucketLevelRefused`" is a negative check with nothing positive
+    /// beside it. `deleteTree` at the root is precisely what the guard
+    /// refuses in list mode (it empties the bucket), so a batch really
+    /// going out is the positive form of the same claim.
     @Test func withTheToggleOffTheRootIsStillTheCallersBusiness() async throws {
-        let (fs, transport) = try await connect(responses: [(Data(), httpResponse(status: 204))])
+        let (fs, transport) = try await connect(responses: [
+            (Data(listingWithKeys(["a.txt"]).utf8), httpResponse(status: 200)),
+            (Data("<DeleteResult></DeleteResult>".utf8), httpResponse(status: 200)),
+        ])
 
-        try await fs.delete(path: "/")
+        try await fs.deleteTree(at: "/")
 
         let request = try #require(await transport.requests.last)
-        #expect(request.httpMethod == "DELETE")
+        #expect(request.httpMethod == "POST")
+        #expect((request.url?.query ?? "").contains("delete"))
         #expect(request.url?.path(percentEncoded: true) == "/macscp-seed")
     }
 
@@ -1648,6 +1757,7 @@ struct S3FileSystemTests {
     /// `"/<key>"` that names a real object in some OTHER bucket.
     @Test func anErrorInListModeNamesThePathWithItsBucket() async throws {
         let (fs, _) = try await connectAtBucketList(responses: [
+            (Data(listingWithKeys(["dir/file.txt"]).utf8), httpResponse(status: 200)),
             (Data(), httpResponse(status: 404)),
         ])
 
@@ -1667,7 +1777,10 @@ struct S3FileSystemTests {
     /// is unchanged, because there the browser path and the key really are
     /// the same string.
     @Test func withTheToggleOffAnErrorNamesTheSamePathAsBefore() async throws {
-        let (fs, _) = try await connect(responses: [(Data(), httpResponse(status: 404))])
+        let (fs, _) = try await connect(responses: [
+            (Data(listingWithKeys(["dir/file.txt"]).utf8), httpResponse(status: 200)),
+            (Data(), httpResponse(status: 404)),
+        ])
 
         do {
             try await fs.delete(path: "/dir/file.txt")

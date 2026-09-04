@@ -371,23 +371,38 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         try await S3Uploader().upload(key: Self.objectKey(forPath: path), contents: contents, using: self)
     }
 
-    /// A signed `DELETE` on the object key. S3's `DeleteObject` is
-    /// idempotent and returns 204 whether or not the key existed, but a
-    /// non-2xx (403/404/other) is still mapped through `sendExpectingSuccess`
-    /// like any other request. Delegates to the raw-key overload below.
+    /// A signed `DELETE` on the object key — after the lookup the
+    /// `RemoteFileSystem` contract needs. S3's `DeleteObject` is idempotent
+    /// and answers 204 whether or not the key existed, and `mode.resolve`
+    /// addresses the bare key `<name>`, never the `<name>/` marker a
+    /// directory is; so without the lookup both "nothing is there" and
+    /// "that is a directory" came back as a silent success having deleted
+    /// nothing (measured 2026-09-04 against MinIO). `stat` raises the
+    /// `notFound` half itself, which is why only the directory half is
+    /// thrown here. A non-2xx on the DELETE itself is still mapped through
+    /// `sendExpectingSuccess` like any other request.
+    ///
+    /// One extra round trip per call, not a second lookup path: `stat` is
+    /// the same parent listing every other caller uses.
     public func delete(path: String) async throws {
         try refuseBucketLevelOperation(.delete, path: path)
+        let entry = try await stat(path: path)
+        guard entry.kind != .directory else {
+            throw RemoteFSError.protocolError(reason: "S3 delete: \(path) is a directory")
+        }
         let (bucket, key) = try mode.resolve(path: path)
         try await delete(bucket: bucket, key: key)
     }
 
     /// Raw-key counterpart to `delete(path:)`, for callers that already hold
-    /// a full S3 object key rather than a browser path — `rename` (M13/T7,
-    /// re-keying a directory) and `deleteTree` (M13/T8) both enumerate keys
-    /// via `allObjectKeys(underPrefix:)` and need to delete exactly those
-    /// keys, including a directory's own trailing-slash marker key, which
-    /// `objectKey(forPath:)` cannot address (it always strips trailing
-    /// slashes).
+    /// a full S3 object key rather than a browser path. Four call sites in
+    /// three methods, counted 2026-09-04: `delete(path:)` above and
+    /// `deleteTree`'s plain-file branch, once each after their lookup, and
+    /// `rename` twice — its file branch and its directory re-key loop,
+    /// which enumerates keys via `allObjectKeys(bucket:underPrefix:)` and
+    /// needs to delete exactly those keys, including a directory's own
+    /// trailing-slash marker key, which `objectKey(forPath:)` cannot
+    /// address (it always strips trailing slashes).
     private func delete(bucket: String, key: String) async throws {
         let request = try buildSignedRequest(
             bucket: bucket, method: "DELETE", key: key, query: [],
@@ -475,8 +490,8 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         throw RemoteFSError.protocolError(reason: "S3 has no POSIX permissions to set (M13)")
     }
 
-    /// Recursively lists every key under the path's prefix (via
-    /// `allObjectKeys`, which also picks up the directory's own
+    /// A DIRECTORY: recursively lists every key under the path's prefix
+    /// (via `allObjectKeys`, which also picks up the directory's own
     /// trailing-slash marker key) and removes them in `<=1000`-key
     /// `DeleteObjects` batches — S3's maximum per call. Each batch is one
     /// signed `POST {bucket}?delete` carrying an XML `<Delete>` body and a
@@ -494,8 +509,24 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// CopyObject. A clean response never contains an `<Error` element, so a
     /// substring check on the body is enough to catch a partial failure
     /// without a full XML parse.
+    ///
+    /// A PLAIN FILE takes the single-`DELETE` branch instead — see the
+    /// comment on it. Which of the two runs is what the lookup in front
+    /// decides; that is one extra round trip per call, not a second delete
+    /// path.
     public func deleteTree(at path: String) async throws {
         try refuseBucketLevelOperation(.deleteTree, path: path)
+        let entry = try await stat(path: path)
+        if entry.kind != .directory {
+            // "A plain file behaves exactly like `delete`", says the
+            // protocol. The prefix walk below cannot: it would enumerate
+            // `<key>/`, which a plain object's key never matches, batch
+            // zero keys and report success having deleted nothing
+            // (measured 2026-09-04 against MinIO).
+            let (bucket, key) = try mode.resolve(path: path)
+            try await delete(bucket: bucket, key: key)
+            return
+        }
         let (bucket, treePrefix) = try resolvePrefix(path: path)
         let keys = try await allObjectKeys(bucket: bucket, underPrefix: treePrefix)
         for batch in keys.chunked(into: 1000) {

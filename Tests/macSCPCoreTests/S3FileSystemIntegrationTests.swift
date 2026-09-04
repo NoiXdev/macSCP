@@ -112,9 +112,11 @@ struct S3FileSystemIntegrationTests {
         }
         // Best-effort cleanup so re-runs stay reproducible. `S3FileSystem
         // .delete` normalizes away a trailing slash (it targets FILE keys),
-        // so it cannot address a folder-marker key ("name/") — issue a raw
-        // signed DELETE instead. `deleteTree` isn't implemented yet
-        // (M13/T8), and cleanup failing must never fail this test.
+        // so it cannot address a folder-marker key ("name/") — and since
+        // 2026-09-04 it refuses a directory outright. `deleteTree` could do
+        // it, but cleanup that leans on the code under test cannot be
+        // trusted when that code is what failed, so this issues a raw
+        // signed DELETE. Cleanup failing must never fail this test.
         await Self.deleteMarkerObjectIgnoringErrors(key: "\(name)/")
         if let caught { throw caught }
     }
@@ -359,6 +361,113 @@ struct S3FileSystemIntegrationTests {
         }
         await Self.deleteMarkerObjectIgnoringErrors(key: "\(folder)/")
         if let caught { throw caught }
+    }
+
+    // MARK: - The delete contracts against a real store
+
+    /// `RemoteFileSystem.deleteTree`'s contract says a plain file behaves
+    /// exactly like `delete`. The prefix walk enumerated `<key>/`, which a
+    /// plain object never matches, so `deleteTree` batched zero keys and
+    /// answered success while the object was still there — a shape only a
+    /// real store shows, because the stub answers whatever listing the test
+    /// queued regardless of the prefix that was asked for.
+    @Test func deleteTreeRemovesAPlainObject() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let key = "m21-s3-deletetree-file-\(UUID().uuidString).bin"
+
+        var caught: Error?
+        do {
+            let uploadStream = AsyncThrowingStream<Data, Error> { continuation in
+                continuation.yield(Data("delete me".utf8))
+                continuation.finish()
+            }
+            try await fs.write(path: "/\(key)", mode: .overwrite, contents: uploadStream)
+            #expect(try await fs.stat(path: "/\(key)").kind == .file)
+
+            try await fs.deleteTree(at: "/\(key)")
+
+            await Self.expectNotFound(fs, path: "/\(key)")
+        } catch {
+            caught = error
+        }
+        // Best-effort, so a failed assertion above still leaves the bucket
+        // as it was found.
+        try? await fs.delete(path: "/\(key)")
+        if let caught { throw caught }
+    }
+
+    /// `RemoteFileSystem.delete`'s contract says a directory is a
+    /// `protocolError`, and S3 cannot say so on its own: a directory is a
+    /// `<name>/` marker key, `DeleteObject` answers 204 for the bare
+    /// `<name>` that never existed, and the marker survives. So the refusal
+    /// is asserted together with the marker still being listed — a refusal
+    /// that deleted something anyway would pass the first half alone.
+    /// `deleteTree` then removes it, which is the operation that was always
+    /// meant to.
+    @Test func deleteRefusesADirectoryAndLeavesItsMarkerForDeleteTree() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let folder = "m21-s3-delete-dir-\(UUID().uuidString)"
+
+        var caught: Error?
+        do {
+            try await fs.createDirectory(at: "/\(folder)")
+
+            do {
+                try await fs.delete(path: "/\(folder)")
+                Issue.record("expected delete on a directory to throw")
+            } catch let error as RemoteFSError {
+                guard case .protocolError = error else {
+                    Issue.record("expected .protocolError, got \(error)")
+                    return
+                }
+            }
+            // Read the marker BEFORE anything heals it: the refusal is only
+            // worth something if the directory is still there afterwards.
+            let afterRefusal = try await fs.list(path: "/")
+            #expect(afterRefusal.contains { $0.name == folder && $0.kind == .directory })
+
+            try await fs.deleteTree(at: "/\(folder)")
+
+            await Self.expectNotFound(fs, path: "/\(folder)")
+        } catch {
+            caught = error
+        }
+        await Self.deleteMarkerObjectIgnoringErrors(key: "\(folder)/")
+        if let caught { throw caught }
+    }
+
+    /// The other half of `delete`'s contract, and the reason it needs a
+    /// lookup at all: MinIO really does answer `DeleteObject` with 204 for a
+    /// key that never existed, so before the lookup this returned normally.
+    /// Creates nothing.
+    @Test func deleteOnAKeyThatIsNotThereIsNotFound() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+
+        let path = "/m21-s3-absent-\(UUID().uuidString).bin"
+        await #expect(throws: RemoteFSError.notFound(path: path)) {
+            try await fs.delete(path: path)
+        }
+    }
+
+    /// `stat` at `path` must answer `RemoteFSError.notFound` — spelled once
+    /// here because the three cases above all end on it.
+    private static func expectNotFound(
+        _ fs: S3FileSystem, path: String, sourceLocation: SourceLocation = #_sourceLocation
+    ) async {
+        do {
+            _ = try await fs.stat(path: path)
+            Issue.record("expected .notFound at \(path)", sourceLocation: sourceLocation)
+        } catch let error as RemoteFSError {
+            guard case .notFound = error else {
+                Issue.record("expected .notFound, got \(error)", sourceLocation: sourceLocation)
+                return
+            }
+        } catch {
+            Issue.record("unexpected error type: \(error)", sourceLocation: sourceLocation)
+        }
     }
 
     /// M18a final review (Important-1): `createFile`'s existence probe now
