@@ -770,12 +770,16 @@ struct SessionSidebar: View {
             // while holding three has something to sort. What the count means
             // is `SidebarSortMenuPlan`'s answer, not this line's.
             sortPlan: SidebarSortMenuPlan.build(childCount: viewModel.children(of: group.id).count),
+            groups: viewModel.groups,
             onStartRename: { startRename(id: group.id, currentName: group.name) },
             onCommitRename: { commitGroupRename(group) },
             onCancelRename: endRename,
             onExport: { onExport(.group(group)) },
             onSortByName: { viewModel.sortChildrenByName(of: group.id) },
             onDissolve: { viewModel.dissolveGroup(group) },
+            // The same call a drop onto another folder makes, so the menu
+            // and the gesture put a folder in the same place.
+            onMove: { parentID in viewModel.move(.group(group.id), intoGroup: parentID) },
             onDrop: { payload in drop(payload, intoGroup: group.id) })
     }
 
@@ -1086,6 +1090,38 @@ struct SessionSidebar: View {
     }
 }
 
+/// The entries inside a "Move to…" submenu: the top level, then every
+/// eligible group — `SidebarOrdering.moveTargets` decides which those are,
+/// so a session row and a group row cannot each carry their own answer to
+/// "eligible" and drift apart (Sidebar Polish, Task 3). Neither row's
+/// submenu builds a checkmark for the current location any more, since
+/// `moveTargets` excludes it outright rather than listing it disabled — the
+/// same functional refusal the old hand-rolled session menu gave, stated
+/// once instead of at each call site.
+///
+/// A free function rather than a method on either row: `SessionRow` and
+/// `SidebarGroupRow` are two distinct `View` types with nothing else in
+/// common, and a shared `@ViewBuilder` here is what lets both submenus read
+/// the identical entries instead of two hand-written `ForEach`s that could
+/// disagree about what a target looks like.
+@MainActor
+@ViewBuilder
+private func moveToMenuItems(
+    for item: SidebarItem, currentParentID: UUID?, groups: [StoredGroup],
+    onMove: @escaping (UUID?) -> Void
+) -> some View {
+    ForEach(
+        SidebarOrdering.moveTargets(for: item, currentParentID: currentParentID, in: groups),
+        id: \.self
+    ) { target in
+        if let groupID = target, let group = groups.first(where: { $0.id == groupID }) {
+            Button(group.name) { onMove(groupID) }
+        } else {
+            Button(L10n.string("sidebar.noGroup", "No group")) { onMove(nil) }
+        }
+    }
+}
+
 /// One folder row: its name (or the inline rename field), its drag payload,
 /// its drop target, and its context menu.
 ///
@@ -1106,12 +1142,21 @@ private struct SidebarGroupRow: View {
     /// by this row's own payload, read when a drop is targeted here.
     let dragOrigin: SidebarDragOrigin
     let sortPlan: SidebarSortMenuPlan
+    /// Every group in the store, handed down for the same reason `SessionRow`
+    /// carries it: `moveToMenuItems` needs the whole set to derive this
+    /// folder's eligible targets and to look each target's name up by id.
+    let groups: [StoredGroup]
     let onStartRename: () -> Void
     let onCommitRename: () -> Void
     let onCancelRename: () -> Void
     let onExport: () -> Void
     let onSortByName: () -> Void
     let onDissolve: () -> Void
+    /// "Move to…" (Sidebar Polish, Task 3) — the same call a drop onto
+    /// another folder makes (`viewModel.move(.group(group.id),
+    /// intoGroup:)`), so the menu and the gesture put a folder in the same
+    /// place.
+    let onMove: (UUID?) -> Void
     let onDrop: ([String]) -> Bool
 
     /// Whether a drag is over this row right now — the raw answer of the
@@ -1165,6 +1210,11 @@ private struct SidebarGroupRow: View {
             // rather than greying it out.
             if sortPlan.isShown {
                 Button(L10n.string("sidebar.group.sortByName", "Sort by Name")) { onSortByName() }
+            }
+            Menu(L10n.string("sidebar.moveTo", "Move to")) {
+                moveToMenuItems(
+                    for: .group(group.id), currentParentID: group.parentID, groups: groups,
+                    onMove: onMove)
             }
             Button(L10n.string("sidebar.group.dissolve", "Dissolve group")) { onDissolve() }
         }
@@ -1449,21 +1499,9 @@ private struct SessionRow: View {
             // here to hide either.
             Button(L10n.string("sidebar.duplicate", "Duplicate")) { onDuplicate() }
             Menu(L10n.string("sidebar.moveTo", "Move to")) {
-                if session.groupID != nil {
-                    Button(L10n.string("sidebar.noGroup", "No group")) { onMove(nil) }
-                }
-                ForEach(groups) { group in
-                    Button {
-                        onMove(group.id)
-                    } label: {
-                        if group.id == session.groupID {
-                            Label(group.name, systemImage: "checkmark")
-                        } else {
-                            Text(group.name)
-                        }
-                    }
-                    .disabled(group.id == session.groupID)
-                }
+                moveToMenuItems(
+                    for: .session(session.id), currentParentID: session.groupID, groups: groups,
+                    onMove: onMove)
                 Divider()
                 Button(L10n.string("sidebar.newGroup", "New group…")) { onRequestNewGroupMove() }
             }

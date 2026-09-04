@@ -217,6 +217,67 @@ public enum SidebarOrdering {
         return result
     }
 
+    /// Where `item` may move to, from a context menu's "Move to…" entry
+    /// rather than a drag: the top level (`nil`) first, then every eligible
+    /// group, in the order the sidebar tree shows them.
+    ///
+    /// "Eligible" excludes:
+    /// - the place `item` sits right now (`currentParentID`) — offering it
+    ///   again would be a menu entry that does nothing, and the drop gesture
+    ///   never offers it either (`SessionRow`'s old hand-rolled menu grew
+    ///   this same exclusion the hard way, disabling rather than omitting
+    ///   the entry; this is the one rule, read once);
+    /// - for a folder, the folder itself and every one of its own
+    ///   descendants — the exact set `GroupTree.wouldCycle` already answers
+    ///   for the drag, asked here once per candidate instead of once per
+    ///   drop. A session has no descendants to protect, so this half is a
+    ///   no-op for `.session`.
+    ///
+    /// `currentParentID` is a caller-supplied fact rather than something
+    /// derived from `groups`, because a session's current group is not IN
+    /// `groups` at all — `StoredSession.groupID` lives in the other half of
+    /// the tree. Both submenus pass what they already have on hand
+    /// (`session.groupID`, `group.parentID`), which is what lets one
+    /// function answer for both kinds instead of two menus each rolling
+    /// their own rule.
+    ///
+    /// The groups are flattened depth-first, each level in the order
+    /// `GroupTree.children` already defines for it — the same order the
+    /// sidebar tree draws them in — not the order `groups` happens to be
+    /// held in, which `SessionListViewModel.groups`'s own doc comment
+    /// already says is "the order the store keeps them".
+    public static func moveTargets(
+        for item: SidebarItem, currentParentID: UUID?, in groups: [StoredGroup]
+    ) -> [UUID?] {
+        var targets: [UUID?] = currentParentID == nil ? [] : [nil]
+        for candidate in flattenedDepthFirst(groups) {
+            if candidate.id == currentParentID { continue }
+            if case .group(let id) = item,
+                GroupTree.wouldCycle(moving: id, under: candidate.id, in: groups)
+            {
+                continue
+            }
+            targets.append(candidate.id)
+        }
+        return targets
+    }
+
+    /// Every group in `groups`, depth-first, each level ordered exactly as
+    /// `GroupTree.children(of:in:)` orders it — the flattening `moveTargets`
+    /// needs to list nested folders in sidebar reading order rather than in
+    /// whatever order the store happens to hold them.
+    private static func flattenedDepthFirst(_ groups: [StoredGroup]) -> [StoredGroup] {
+        var result: [StoredGroup] = []
+        func walk(_ parentID: UUID?) {
+            for group in GroupTree.children(of: parentID, in: groups) {
+                result.append(group)
+                walk(group.id)
+            }
+        }
+        walk(nil)
+        return result
+    }
+
     // MARK: - Deriving
 
     /// `item`'s parent, or `nil` when `item` names no row in this tree. The

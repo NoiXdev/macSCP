@@ -95,9 +95,6 @@ struct IconTooltipLintTests {
             file: "SnippetsSheet.swift", symbol: "plus",
             reason: "Inside a `Label` whose visible title is \"Add variable\" — the button is not icon-only."),
         DecorativeIcon(
-            file: "SessionSidebar.swift", symbol: "checkmark",
-            reason: "Marks the session's current group in the \"Move to\" menu; a menu item's own text is its explanation."),
-        DecorativeIcon(
             file: "SettingsView.swift", symbol: "section.systemImage",
             reason: "Settings sidebar rows; each `Label` shows the section title next to the glyph and macOS gives list rows no tooltip."),
         // The five "Manage Data" rows. Each glyph sits inside the `Label` of

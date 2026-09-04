@@ -402,4 +402,83 @@ struct SidebarOrderingTests {
         #expect(result.groups.isEmpty)
         #expect(result.sessions.first?.groupID == nil)
     }
+
+    // MARK: - Move targets (Sidebar Polish, Task 3)
+
+    /// A session offers the top level and every group except the one it
+    /// already sits in — the same set the drop gesture already allows, since
+    /// `moved(_:intoGroup:)` refuses nothing about a session but a stale id.
+    @Test func aSessionsMoveTargetsExcludeOnlyItsCurrentGroup() {
+        let a = StoredGroup(name: "A", position: 0)
+        let b = StoredGroup(name: "B", position: 1)
+        let targets = SidebarOrdering.moveTargets(
+            for: .session(UUID()), currentParentID: a.id, in: [a, b])
+
+        #expect(targets == [nil, b.id])
+    }
+
+    /// A session already at the top level is not offered the top level again
+    /// — `nil` names where it already is, exactly as `sidebar.noGroup` was
+    /// only ever shown in the pre-Core menu when the session had a group to
+    /// leave.
+    @Test func aSessionAlreadyAtTheTopLevelIsNotOfferedTheTopLevelAgain() {
+        let a = StoredGroup(name: "A", position: 0)
+        let targets = SidebarOrdering.moveTargets(
+            for: .session(UUID()), currentParentID: nil, in: [a])
+
+        #expect(targets == [a.id])
+    }
+
+    /// A group excludes itself, every one of its descendants, and its
+    /// current parent — the three things `wouldCycle` and the explicit
+    /// current-parent check together rule out. `sibling` is `folder`'s own
+    /// sibling under the shared `root`, offered because moving under it
+    /// closes no cycle and it is not where `folder` sits today; `root`
+    /// itself IS where `folder` sits today, so it is the current parent
+    /// excluded, and the top level is offered instead since `folder` is not
+    /// there.
+    @Test func aGroupsMoveTargetsExcludeItselfItsDescendantsAndItsCurrentParent() {
+        let root = StoredGroup(name: "Root", position: 0)
+        let folder = StoredGroup(name: "Folder", parentID: root.id, position: 0)
+        let child = StoredGroup(name: "Child", parentID: folder.id, position: 0)
+        let grandchild = StoredGroup(name: "Grandchild", parentID: child.id, position: 0)
+        let sibling = StoredGroup(name: "Sibling", parentID: root.id, position: 1)
+        let groups = [root, folder, child, grandchild, sibling]
+
+        let targets = SidebarOrdering.moveTargets(
+            for: .group(folder.id), currentParentID: root.id, in: groups)
+
+        #expect(targets == [nil, sibling.id])
+    }
+
+    /// A top-level group is not offered the top level again, for the same
+    /// reason a top-level session is not.
+    @Test func aTopLevelGroupIsNotOfferedTheTopLevelAgain() {
+        let a = StoredGroup(name: "A", position: 0)
+        let b = StoredGroup(name: "B", position: 1)
+        let targets = SidebarOrdering.moveTargets(
+            for: .group(a.id), currentParentID: nil, in: [a, b])
+
+        #expect(targets == [b.id])
+    }
+
+    /// The groups come back in sidebar order — depth-first, each level by
+    /// position — not the arbitrary order the store happens to hold them in.
+    /// `groups` here is deliberately NOT in that order, the same way
+    /// `SessionListViewModel.groups`'s own doc comment says the store keeps
+    /// them.
+    @Test func moveTargetsListsGroupsInSidebarOrderNotStoreOrder() {
+        let root = StoredGroup(name: "Root", position: 0)
+        let child = StoredGroup(name: "Child", parentID: root.id, position: 0)
+        let second = StoredGroup(name: "Second", position: 1)
+        let groups = [second, child, root]
+
+        // A random id names no group in `groups`, so nothing is excluded as
+        // "the current parent" and the top level is offered — this fixture
+        // is about ORDER, not exclusion.
+        let targets = SidebarOrdering.moveTargets(
+            for: .session(UUID()), currentParentID: UUID(), in: groups)
+
+        #expect(targets == [nil, root.id, child.id, second.id])
+    }
 }

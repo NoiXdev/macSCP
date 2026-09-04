@@ -73,7 +73,7 @@ items 3–6.
 - Modify: the four catalogs (`sidebar.moveTo` = "Move to…", `sidebar.moveTo.root` = "Top level")
 - Test: a sidebar wiring guard (the submenu's entries call `move(`, the root entry passes `nil`, the item's own group is excluded — derive the exclusion rule in a small Core function `SidebarOrdering.moveTargets(for:in:)` tested directly: a group excludes itself and its descendants; a session excludes its current group)
 
-- [ ] **Step 1: Red first** — `moveTargets` missing; the guard red.
-- [ ] **Step 2: Implement**; green; zero warnings.
-- [ ] **Step 3: Commit** `feat(sidebar): "Move to…" moves a session or a folder without dragging`.
-- [ ] **Step 4:** `docs/BACKLOG.md` row → Done with the three commits and what the dev build should show.
+- [x] **Step 1: Red first** — `moveTargets` missing; the guard red.
+- [x] **Step 2: Implement**; green; zero warnings.
+- [x] **Step 3: Commit** `feat(sidebar): "Move to…" moves a folder without dragging, and both submenus share one target rule` (the coordinator's wording for what actually shipped: sessions already had this submenu per Task 1's measurement — the group submenu, and the shared `SidebarOrdering.moveTargets`, are what Task 3 added).
+- [x] **Step 4:** `docs/BACKLOG.md` row → Done with the three commits and what the dev build should show.
