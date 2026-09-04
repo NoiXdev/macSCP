@@ -123,6 +123,12 @@ final class AsyncSignal: Sendable {
             group.addTask { await work() }
             group.addTask {
                 do {
+                    // PollingGuardTests.noSleepingChildRacesWorkInAGroup
+                    // exemption: the timeout IS the API under test here,
+                    // not a ceiling hidden beside real work. `race` exists
+                    // to bound `work` against exactly this sleep, so the
+                    // shape the guard otherwise forbids is this function's
+                    // own contract, not an oversight.
                     try await Task.sleep(for: timeout)
                     return .timedOut
                 } catch {

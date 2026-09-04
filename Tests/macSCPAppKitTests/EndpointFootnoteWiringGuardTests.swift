@@ -71,23 +71,48 @@ struct EndpointFootnoteWiringGuardTests {
     /// itself a call — a false red naming a missing argument that is
     /// actually just past a `)` the scan stopped at early, not a silent
     /// pass.
-    private static func argumentList(after call: Range<String.Index>, in source: String) -> String? {
-        let rest = source[call.upperBound...]
+    ///
+    /// Balanced over `source` blanked by `SwiftSource.blankingCommentsAndStrings`
+    /// (fix round 3, 2026-09-04), not over `source` itself: `source` here is
+    /// only `strippingLineComments`, so a `)` written inside a string
+    /// literal argument's own value — `footnote: describe(")")`, say —
+    /// would be counted as a real close and truncate the list early, the
+    /// same failure mode round 2 already fixed for a nested call. Positions
+    /// are found in the blanked text and sliced out of the ORIGINAL
+    /// `source`, so the returned text still carries the literal content the
+    /// checks above read (e.g. `.contains("footnote:")`); this is safe only
+    /// because `SwiftSourceStrippingTests.bothModesPreserveLengthAndLineStructure`
+    /// holds the blanked text to the same character count as `source`,
+    /// which is verified below rather than assumed — a stripper that ever
+    /// changed length would silently address the wrong text through a
+    /// borrowed offset, so the fallback slices the blanked text itself
+    /// instead, which is line-for-line the same as `source` even if their
+    /// counts ever drifted apart.
+    private static func argumentList(after call: Range<String.Index>, in source: String) throws -> String? {
+        let blanked = try SwiftSource.blankingCommentsAndStrings(source)
+        let blankedChars = Array(blanked)
+        let originalChars = Array(source)
+        let lengthsMatch = blankedChars.count == originalChars.count
+        let sliceChars = lengthsMatch ? originalChars : blankedChars
+
+        let start = source.distance(from: source.startIndex, to: call.upperBound)
+        guard start >= 0, start <= blankedChars.count, start <= sliceChars.count else { return nil }
         var depth = 1
-        var index = rest.startIndex
-        while index < rest.endIndex {
-            switch rest[index] {
+        var index = start
+        while index < blankedChars.count {
+            switch blankedChars[index] {
             case "(":
                 depth += 1
             case ")":
                 depth -= 1
                 if depth == 0 {
-                    return String(rest[rest.startIndex..<index])
+                    guard index <= sliceChars.count else { return nil }
+                    return String(sliceChars[start..<index])
                 }
             default:
                 break
             }
-            index = rest.index(after: index)
+            index += 1
         }
         return nil
     }
@@ -98,7 +123,7 @@ struct EndpointFootnoteWiringGuardTests {
             source.range(of: "SchemaFormView("),
             "ConnectionFormView no longer builds a SchemaFormView — this guard's anchor is gone")
         let argumentList = try #require(
-            Self.argumentList(after: call, in: source),
+            try Self.argumentList(after: call, in: source),
             "SchemaFormView( never closes — no matching ) found, so the scan cannot bound the argument list")
         #expect(argumentList.contains("footnote:"), """
             The SchemaFormView built by ConnectionFormView carries no \
@@ -121,8 +146,24 @@ struct EndpointFootnoteWiringGuardTests {
     @Test func argumentListSurvivesANestedCallInAnArgument() throws {
         let source = "SchemaFormView(a: f(1, 2), b: 3)"
         let call = try #require(source.range(of: "SchemaFormView("))
-        let list = try #require(Self.argumentList(after: call, in: source))
+        let list = try #require(try Self.argumentList(after: call, in: source))
         #expect(list == "a: f(1, 2), b: 3")
+    }
+
+    /// The case round 2's fix left open (leak-route review, 2026-09-04): a
+    /// `)` written inside a STRING LITERAL argument value. Balancing over
+    /// `source` itself — as `argumentList` did before this fix — would read
+    /// that `)` as the call's own close and truncate the list at
+    /// `a: "value`, silently dropping `, b: 3` (and, on the real call this
+    /// guards, `footnote:`/`forcedValues:` whenever either argument's value
+    /// happened to carry a literal `)`). Balancing over the blanked text
+    /// instead makes the literal's content — quotes included — invisible to
+    /// the paren counter, so only the real, code-level `)` ends the scan.
+    @Test func argumentListSurvivesAParenInsideAStringLiteralArgument() throws {
+        let source = "SchemaFormView(a: \"value)\", b: 3)"
+        let call = try #require(source.range(of: "SchemaFormView("))
+        let list = try #require(try Self.argumentList(after: call, in: source))
+        #expect(list == "a: \"value)\", b: 3")
     }
 
     @Test func theSchemaViewDrawsWhateverTheFootnoteReturns() throws {

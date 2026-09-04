@@ -155,26 +155,66 @@ struct PollingGuardTests {
     /// banned shape to explain it (as this file's own history did, for
     /// the `elapsed <` ceiling) is otherwise indistinguishable from the
     /// shape itself.
+    ///
+    /// The regex also matches the sleep wrapped one level inside a
+    /// `do {}` — fix round 2026-09-04, docs/BACKLOG.md's "third limit" on
+    /// this guard: `AsyncSignal.race(timeout:_:)`
+    /// (`Support/AsyncSignal.swift`) is exactly the sleeping-child shape
+    /// this check exists to catch, but the sleep sat behind a `do {}`
+    /// error handler, so the token right after `addTask`'s own brace was
+    /// that wrapper rather than `Task.sleep`, and the plain regex passed
+    /// over it without matching. Widening the pattern turned that miss
+    /// into a real match, which is now a NAMED exemption rather than an
+    /// unexamined blind spot: `Support/AsyncSignal.swift` is excluded only
+    /// when it still carries `raceExemptionSentence` beside the sleep, the
+    /// same shape `noLatchIsWaitedOnWithATimeout` uses for the
+    /// saturation-site exemption above — matched by sentence, not by file
+    /// name, so a rewording without also removing the shape turns this
+    /// check red instead of quietly staying green.
     @Test func noSleepingChildRacesWorkInAGroup() throws {
         let pattern = try NSRegularExpression(
-            pattern: #"addTask(?:\([^)]*\))?\s*\{\s*(?:try\??\s+)?(?:await\s+)?Task\.sleep\(for:"#)
+            pattern: #"addTask(?:\([^)]*\))?\s*\{\s*(?:do\s*\{\s*)?(?:try\??\s+)?(?:await\s+)?Task\.sleep\(for:"#)
+        let raceExemptionSentence = "the timeout IS the API under test here"
+        let sources = try Self.sources()
 
-        let offenders = try Self.sources().compactMap { source -> String? in
+        let scanned = try sources.map { source -> (path: String, text: String, matched: Bool) in
             let blanked = try Self.blankCommentsAndStrings(source.text)
             let range = NSRange(blanked.startIndex..., in: blanked)
-            return pattern.firstMatch(in: blanked, range: range) != nil ? source.path : nil
+            return (source.path, source.text, pattern.firstMatch(in: blanked, range: range) != nil)
         }
+
+        let offenders = scanned.filter { $0.matched }
+            .filter { !($0.path.hasSuffix("Support/AsyncSignal.swift") && $0.text.contains(raceExemptionSentence)) }
+            .map(\.path)
         #expect(offenders.isEmpty, "\(offenders)")
 
-        // Positive: the regex matches real, compiling code in this exact
-        // shape — `SleepingChildRegexFixture.swift`, excluded from
-        // `sources()` above the same way this guard's own file is, so
-        // the match it demonstrates can never itself become an offender.
+        // Positive for the exemption specifically: `AsyncSignal.race` does
+        // match the widened regex (it is the shape the exemption exists
+        // for, not a file that happens never to trigger it) AND the
+        // exemption sentence is actually live beside it. Without this, the
+        // exemption is proven only by the negative above failing to land
+        // the file in `offenders` — which a rewritten or deleted sentence
+        // would also produce.
+        #expect(scanned.contains {
+            $0.path.hasSuffix("Support/AsyncSignal.swift")
+                && $0.matched
+                && $0.text.contains(raceExemptionSentence)
+        })
+
+        // Positive: the regex matches real, compiling code in both shapes
+        // it exists to catch — `SleepingChildRegexFixture.swift`, excluded
+        // from `sources()` above the same way this guard's own file is, so
+        // the matches it demonstrates can never themselves become an
+        // offender. Counted, not just non-empty, per
+        // `noEventLoopFutureIsAwaitedWithGet`'s own reasoning: a count of 1
+        // here would mean the `do {}`-wrapped demonstration stopped
+        // matching while the plain shape stayed green.
         let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/SleepingChildRegexFixture.swift")
         let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
         let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
-        let fixtureRange = NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked)
-        #expect(pattern.firstMatch(in: fixtureBlanked, range: fixtureRange) != nil)
+        let fixtureMatches = pattern.matches(
+            in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
+        #expect(fixtureMatches.count == 2, "\(fixtureMatches.count)")
     }
 
     /// Negative: no test asserts an elapsed-since ceiling spelled with
