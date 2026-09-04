@@ -59,6 +59,10 @@ struct SessionOverviewWiringGuardTests {
 
     private static let viewPath = "Sources/MacSCPAppKit/SessionOverviewView.swift"
     private static let detailPath = "Sources/MacSCPAppKit/ContentView+Detail.swift"
+    /// The window itself — read for the sequence a snippet card's Run starts
+    /// (Task 3), never for anything the view draws.
+    private static let contentViewPath = "Sources/MacSCPAppKit/ContentView.swift"
+    private static let lifecyclePath = "Sources/MacSCPAppKit/ContentView+Lifecycle.swift"
     /// Core's model — read for the label ids it emits, never edited by this
     /// task's App-side work.
     private static let modelPath = "Sources/macSCPCore/Presentation/SessionOverviewModel.swift"
@@ -91,8 +95,16 @@ struct SessionOverviewWiringGuardTests {
     /// STORED session's surface. The failed history row's "Open diagnosis"
     /// reaches the same entry, which is why this is a substring check over
     /// the whole wiring rather than a count.
+    /// `runSnippetAfterConnecting(` joined the three on 2026-09-04 (Task 3),
+    /// and it is the one entry here that did not already exist: a snippet
+    /// card's Run. It is listed as an EXPECTED entry rather than added to
+    /// `otherHostReachingEntries` below because it is not a fourth way to
+    /// connect — its own dial is `connectFromSidebar`, which
+    /// `theOverviewsSnippetRunDialsThroughTheSidebarConnectAndNothingElse`
+    /// reads out of its body rather than taking on trust.
     private static let expectedEntries = [
         "connectFromSidebar(", "editStored(", "showDiagnostics(for: .stored",
+        "runSnippetAfterConnecting(",
     ]
 
     /// Every other way this window reaches the user's host, or reaches it by
@@ -225,15 +237,132 @@ struct SessionOverviewWiringGuardTests {
             """)
     }
 
+    /// `runSnippetAfterConnecting` is in this list for the same reason
+    /// `connectFromSidebar` is: it dials, and the view must hold it as a
+    /// value it was handed (`onRunSnippet`) rather than as a name it can
+    /// call. Its positive partner is `theSnippetCardsRunIsWiredToTheWindow`
+    /// below, which requires the callback to be there and fired.
     @Test func theViewFileNamesNoConnectFunctionOfItsOwn() throws {
         let file = try Self.viewFileViews()
-        for entry in Self.otherHostReachingEntries + ["connectFromSidebar"] {
+        for entry in Self.otherHostReachingEntries
+            + ["connectFromSidebar", "runSnippetAfterConnecting"] {
             #expect(!file.code.contains(entry), """
                 \(Self.viewPath) names \(entry). The view holds effect VALUES and knows the \
                 name of nothing that dials: a view that can call a connect entry by name can \
                 connect without naming an input.
                 """)
         }
+    }
+
+    // MARK: - The snippet card's Run (Task 3)
+
+    /// The Run button really is wired, and really is no longer dead.
+    ///
+    /// The negative half — no `.disabled(` left in the card — is scoped to
+    /// `snippetCard`'s own span and paired with two positives read out of
+    /// that same span, so a card that lost its button altogether fails here
+    /// rather than reporting that nothing is disabled.
+    @Test func theSnippetCardsRunIsWiredToTheWindow() throws {
+        let file = try Self.viewFileViews()
+        #expect(file.code.contains("let onRunSnippet: (Snippet) -> Void"), """
+            \(Self.viewPath) no longer takes an onRunSnippet callback — the snippet card's Run \
+            has nothing to hand a snippet to, so pressing it can only be a no-op or a second \
+            route onto the host written inside this view.
+            """)
+        let card = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "private func snippetCard(_ snippet: Snippet) -> some View", in: file.code)
+        #expect(card.contains("onRunSnippet(snippet)"), """
+            snippetCard no longer fires onRunSnippet(snippet) — the card draws a Run control \
+            that reaches nothing.
+            """)
+        #expect(!card.contains(".disabled("), """
+            snippetCard still disables a control. Task 2 shipped Run dead on purpose to settle \
+            the layout; Task 3 is what gives it its action, and a Run that stays greyed out is \
+            that task not landing.
+            """)
+    }
+
+    /// Run is not a fourth way onto the host: read out of
+    /// `runSnippetAfterConnecting`'s own body, not taken from the sentence
+    /// that says so.
+    ///
+    /// The positive check comes first for the reason this file's header
+    /// states — the loop below is a filter expected to come back empty, and
+    /// on a body that no longer dials at all it would report satisfaction
+    /// over nothing.
+    @Test func theOverviewsSnippetRunDialsThroughTheSidebarConnectAndNothingElse() throws {
+        let source = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.contentViewPath))
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "func runSnippetAfterConnecting(_ snippet: Snippet, on stored: StoredSession)",
+            in: source)
+        #expect(body.contains("connectFromSidebar("), """
+            runSnippetAfterConnecting no longer calls connectFromSidebar( — its dial is then \
+            something else, and every rule that path applies (the already-open query, the tab \
+            rule, TOFU, the keychain reads, the plaintext confirmation, the attempt token) is \
+            a rule this one now has to repeat.
+            """)
+        for entry in Self.otherHostReachingEntries {
+            #expect(!body.contains(entry), """
+                runSnippetAfterConnecting names \(entry) — a second route onto the user's host \
+                inside the one function that was allowed exactly one.
+                """)
+        }
+    }
+
+    /// The hand-off has a watcher, and the watcher calls the decision.
+    /// Neither half is observable at runtime here: nothing in this project
+    /// renders a SwiftUI view, so that `PendingSnippetRunner` is mounted at
+    /// all is a source claim, while what it decides is
+    /// `SnippetAfterConnectSequenceTests`' job on the real method.
+    @Test func thePendingRunIsDeliveredByAViewThatWatchesTheTab() throws {
+        let detail = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.detailPath))
+        #expect(detail.contains("PendingSnippetRunner("), """
+            \(Self.detailPath) no longer mounts PendingSnippetRunner( — a snippet armed by Run \
+            is then never delivered, and the button connects and goes quiet.
+            """)
+        #expect(detail.contains("deliverPendingSnippetRun("), """
+            nothing in \(Self.detailPath) calls deliverPendingSnippetRun( — the runner is \
+            mounted but watches on behalf of nobody.
+            """)
+    }
+
+    /// Task 3 MOVED the key-window guard off `triggerSnippet(_:execute:)`
+    /// and onto the Terminal menu's own bridge, which is the one caller it
+    /// was ever about. Both halves are pinned, because either one alone is
+    /// the bug: left on `triggerSnippet`, the overview's Run cannot send at
+    /// all from anywhere the window is not key (and no test can reach the
+    /// send path, since `window` is `@State`); missing from the bridge, the
+    /// Terminal menu's snippet entries fire against a window that is not in
+    /// front.
+    @Test func theSnippetMenuBridgeIsWhatChecksForTheKeyWindow() throws {
+        let lifecycle = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.lifecyclePath))
+        let bridge = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "tabCommands.runSnippet =", in: lifecycle)
+        #expect(bridge.contains("triggerSnippet("), """
+            the tabCommands.runSnippet bridge no longer calls triggerSnippet( — the Terminal \
+            menu's snippet entries reach nothing, and the check below would then be about a \
+            closure that does not act.
+            """)
+        #expect(bridge.contains("isKeyWindow"), """
+            the tabCommands.runSnippet bridge no longer checks isKeyWindow. SwiftUI attaches \
+            one .commands menu app-wide and every window assigns this same closure, so without \
+            it a snippet picked from the Terminal menu runs in whichever window last wired \
+            itself rather than the one in front.
+            """)
+        let contentView = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.contentViewPath))
+        let trigger = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "func triggerSnippet(_ snippet: Snippet, execute: Bool)", in: contentView)
+        #expect(trigger.contains("SnippetVariableSubstitution"), """
+            triggerSnippet's body no longer names SnippetVariableSubstitution — the span this \
+            check reads is not the function it means (SnippetVariablePromptWiringGuardTests \
+            owns what that call has to do).
+            """)
+        #expect(!trigger.contains("isKeyWindow"), """
+            triggerSnippet checks isKeyWindow again. Every caller but the menu bridge is a \
+            control inside one window, and `window` is @State — a ContentView built outside a \
+            SwiftUI hierarchy reads it as nil, which makes the whole send path unreachable \
+            from SnippetAfterConnectSequenceTests.
+            """)
     }
 
     // MARK: - The responsive split

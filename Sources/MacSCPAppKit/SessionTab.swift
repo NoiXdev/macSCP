@@ -334,6 +334,40 @@ final class SessionTab: Identifiable {
     /// fourth and fifth writer.
     var connectFailure: ConnectFailure?
 
+    /// One snippet this tab is to run as soon as it has a session and a
+    /// shell (session overview plan, Task 3).
+    ///
+    /// The overview's Run has to do three things in order — connect, wait
+    /// for the terminal, send — and only the first is synchronous. This is
+    /// the hand-off between them: `ContentView.runSnippetAfterConnecting`
+    /// writes it, `ContentView.deliverPendingSnippetRun(on:)` reads and
+    /// clears it. It lives on the TAB rather than on the window, for the
+    /// same reason `reconnectAttempt` does: the connect it belongs to is one
+    /// tab's, and a window-wide value would fire against whichever tab
+    /// happened to reach a shell first.
+    ///
+    /// It carries the stored session it was armed for, so a tab that ends up
+    /// connected to something else drops it instead of running a command
+    /// against a host the user did not pick.
+    struct PendingSnippetRun: Equatable {
+        let snippet: Snippet
+        let storedSessionID: UUID
+    }
+
+    /// Four writers, counted while writing this sentence:
+    /// - `ContentView.runSnippetAfterConnecting(_:on:)` SETS it, and only
+    ///   for a dial that actually started.
+    /// - `ContentView.deliverPendingSnippetRun(on:)` clears it — before the
+    ///   send, so a repeated observation cannot repeat the command, and on
+    ///   every outcome that is not a send.
+    /// - `ContentView.jumpToOpenSession(_:)` clears it: that answer opens no
+    ///   connection here, so the snippet this tab was holding has nothing
+    ///   left to run against.
+    /// - `ContentView.teardown(_:reason:)` clears it, for the same reason it
+    ///   clears `liveness`, `lostConnection` and `connectFailure`: every
+    ///   caller of that function is leaving this connection on purpose.
+    var pendingSnippetRun: PendingSnippetRun?
+
     var displayTitle: String {
         titleName ?? L10n.string("tabs.newConnection", "New Connection")
     }

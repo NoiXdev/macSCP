@@ -203,12 +203,24 @@ extension ContentView {
                 onAttempt: { reconnect($0) })
         }
     }
+    // The session overview's "Run" on a snippet (session overview plan,
+    // Task 3): one per tab, for the same reason the three `.background`
+    // layers above are — the tab that armed a snippet is not necessarily
+    // the tab still on screen when its shell comes up. Same zero-size,
+    // non-hit-testing shape; a fourth layer composes with the three above.
+    .background {
+        ForEach(tabsModel.tabs) { tab in
+            PendingSnippetRunner(
+                tab: tab, activeTabID: tabsModel.activeTab.id,
+                onDeliver: { deliverPendingSnippetRun(on: $0) })
+        }
+    }
     // Writes the dragged sidebar width back to `SettingsStore` — see
     // `SidebarWidthRecorder` for what it takes to tell a drag apart from
     // the split view rearranging itself. The sidebar's measured width
     // arrives as a preference, the container's width from the reader here,
     // so both describe the same layout. Zero-size and non-hit-testing, the
-    // same shape as the three `.background` layers above; a fourth layer
+    // same shape as the four `.background` layers above; a fifth layer
     // composes with them rather than replacing any.
     .backgroundPreferenceValue(SidebarMeasuredWidthKey.self) { measuredSidebarWidth in
         GeometryReader { proxy in
@@ -746,7 +758,13 @@ extension ContentView {
                             // fire without naming an input.
                             onConnectSession: SessionRowConnectEffect { connectFromSidebar($0) },
                             onEdit: { editStored($0) },
-                            onDiagnose: { showDiagnostics(for: .stored($0)) })
+                            onDiagnose: { showDiagnostics(for: .stored($0)) },
+                            // A snippet card's Run (Task 3). Still no fourth
+                            // way onto the host: `runSnippetAfterConnecting`
+                            // dials through `connectFromSidebar` — the entry
+                            // the line above resolves to — and adds only
+                            // what happens once that connection has a shell.
+                            onRunSnippet: { runSnippetAfterConnecting($0, on: stored) })
                     } else {
                         // Align the form to the top instead of centering it
                         // vertically (user feedback 2026-07-10, M5c/T0) —
@@ -2715,5 +2733,74 @@ enum SnippetPreviewLine {
         hovered: SnippetListPlan.Row?, pinned: SnippetListPlan.Row?
     ) -> SnippetListPlan.Row? {
         hovered ?? pinned
+    }
+}
+
+/// Delivers a snippet the session overview's "Run" armed, once the tab it
+/// was armed on has a session and a running shell (session overview plan,
+/// Task 3) — mounted per tab in `ContentView.splitLayout`'s `.background`,
+/// for every tab and not only the active one, for the same reason
+/// `ConnectAttemptLivenessMirror` is: the connect a Run started can finish
+/// while the user is looking at another tab, and the hand-off belongs to the
+/// tab that armed it.
+///
+/// **It decides nothing.** The whole rule — wait, drop, open the shell, send
+/// — is `ContentView.deliverPendingSnippetRun(on:)`, a method
+/// `SnippetAfterConnectSequenceTests` drives directly. This view's only job
+/// is to call it whenever one of the facts that method reads has changed,
+/// which is the same split every other runner on this branch uses: nothing
+/// in a SwiftUI body is reachable from a test in this project, so nothing
+/// that decides may live in one.
+///
+/// The facts are collected into `Signal` rather than watched by four
+/// separate `.onChange` modifiers, so there is one place to read what wakes
+/// this view and one call site to keep honest. `initial: true`, for the
+/// reason `ConnectAttemptLivenessMirror` states: a Run pressed before
+/// SwiftUI has mounted this row would otherwise have its first transition
+/// missed entirely, and there is no later change to fall back on when the
+/// shell is already up.
+struct PendingSnippetRunner: View {
+    let tab: SessionTab
+    /// Which tab is on screen. Part of the signal because
+    /// `deliverPendingSnippetRun` refuses to deliver into a background tab
+    /// (`triggerSnippet` acts on `activeTab`): without it, coming back to a
+    /// tab whose shell came up while it was in the background would wake
+    /// nothing, and the snippet would sit armed forever.
+    let activeTabID: UUID
+    /// Routes to `ContentView.deliverPendingSnippetRun(on:)` — passed in
+    /// rather than called directly, the same way `LivenessProbeRunner` takes
+    /// its `onGiveUp`, because this type has no access to `ContentView`'s
+    /// own state.
+    let onDeliver: (SessionTab) -> Void
+
+    /// Everything `ContentView.deliverPendingSnippetRun(on:)` reads, as one
+    /// `Equatable` value. A fact that method starts reading and this struct
+    /// does not carry is a wake-up that will not happen.
+    private struct Signal: Equatable {
+        let armed: Bool
+        let sessionID: UUID?
+        let terminalState: TerminalPanelViewModel.PanelState?
+        let isReconnecting: Bool
+        let storedSessionID: UUID?
+        let activeTabID: UUID
+    }
+
+    private var signal: Signal {
+        Signal(
+            armed: tab.pendingSnippetRun != nil,
+            sessionID: tab.session?.id,
+            terminalState: tab.session?.terminal.state,
+            isReconnecting: tab.isReconnecting,
+            storedSessionID: tab.activeStoredSessionID,
+            activeTabID: activeTabID)
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .onChange(of: signal, initial: true) { _, _ in
+                onDeliver(tab)
+            }
     }
 }

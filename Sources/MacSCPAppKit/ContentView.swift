@@ -970,6 +970,21 @@ struct ContentView: View {
     /// already disabled for a non-shell backend, and this re-checks anyway so
     /// no path can reach a silent no-op.
     ///
+    /// **No key-window guard here** (session overview plan, Task 3), and the
+    /// reason it moved rather than being dropped: that guard exists for the
+    /// APP-WIDE command set — `MacSCPApp`'s Terminal menu holds one
+    /// `tabCommands.runSnippet` closure for every window, so without it the
+    /// menu would fire against a window that is not the one in front. Every
+    /// other caller of this method is a control inside one window (the
+    /// terminal panel's header and its right-click menu, the sidebar row's
+    /// snippet submenu, the multi-line refusal alert's "Execute", and the
+    /// session overview's Run), where the check can only ever be true. It
+    /// now sits on the menu bridge itself, in `ContentView+Lifecycle.swift`,
+    /// which is the one call site it was ever about — and, because
+    /// `window` is `@State`, having it here also made the whole send path
+    /// unreachable from a test (a `ContentView` built outside a SwiftUI
+    /// hierarchy reads `window` as `nil`).
+    ///
     /// The panel is revealed and the shell opened first, because the panel is
     /// closed until the user opens it and a snippet must work on a tab that
     /// has just connected. Revealing it goes through `TerminalPanelViewModel.
@@ -1015,7 +1030,6 @@ struct ContentView: View {
     /// .resolve` returns `command` verbatim when `variables` is empty, the
     /// exact same resolved text) this method sent before variables existed.
     func triggerSnippet(_ snippet: Snippet, execute: Bool) {
-        guard window?.isKeyWindow == true else { return }
         guard activeTabSupportsShell else {
             presentTerminalUnavailable()
             return
@@ -1152,6 +1166,118 @@ struct ContentView: View {
             guard let value = values[variable.name] else { continue }
             try? store.remember(value, snippetID: snippet.id, name: variable.name)
         }
+    }
+
+    // MARK: - Run a snippet from the session overview (session overview plan, Task 3)
+
+    /// The overview's "Run" on one snippet: open the connection, then run it
+    /// once this tab has a shell.
+    ///
+    /// **It adds no way to connect.** The dial is `connectFromSidebar` — the
+    /// same entry the overview's own Connect action resolves to, and the
+    /// same one the sidebar row's Connect entry reaches — so the already-open
+    /// query, the tab rule, TOFU, the keychain rules, the plaintext
+    /// confirmation and the attempt token are the ones that path already
+    /// applies, not a second set. This method's whole substance is the
+    /// hand-off: it parks the snippet on the tab that is about to dial, and
+    /// `deliverPendingSnippetRun(on:)` picks it up from there.
+    ///
+    /// **The tab is `activeTab`, and that is not a guess.** The overview is
+    /// only ever on screen for the ACTIVE tab and only while that tab has no
+    /// session (`ContentView+Detail`'s branch sits inside the "no session
+    /// yet" surface), and `TabsViewModel.sidebarConnectTarget` hands an
+    /// unconnected active tab back as the target rather than making a fresh
+    /// one. A Run pressed under any other circumstance arms nothing, because
+    /// of the second guard below.
+    ///
+    /// **Armed only for a dial that actually started.** `connectFromSidebar`
+    /// answers a session another tab already holds with a QUESTION and dials
+    /// nothing (see `sidebarStart`); `connect(in:stored:)` sets
+    /// `tab.isReconnecting` synchronously, before its first `await`, so
+    /// reading it on the next line distinguishes the two without this method
+    /// re-deciding anything `sidebarStart` decides. Without that check a Run
+    /// answered by the query would leave a snippet parked on this tab,
+    /// waiting to fire at whatever it connected to next. The `guard` above
+    /// the call covers the other half: a tab that is already dialling has
+    /// `connect(in:stored:)` return at its own top-of-function guard, and
+    /// arming then would attach this snippet to somebody else's attempt.
+    func runSnippetAfterConnecting(_ snippet: Snippet, on stored: StoredSession) {
+        let tab = activeTab
+        guard !tab.isReconnecting else { return }
+        connectFromSidebar(stored)
+        guard tab.isReconnecting else { return }
+        tab.pendingSnippetRun = SessionTab.PendingSnippetRun(
+            snippet: snippet, storedSessionID: stored.id)
+    }
+
+    /// Steps (2) through (4) of that sequence, evaluated fresh every time
+    /// one of the facts it reads changes — `PendingSnippetRunner` is the view
+    /// that watches them and calls this.
+    ///
+    /// **Nothing here is timed.** "The terminal is open" is
+    /// `TerminalPanelViewModel.state == .running`, the tab's own published
+    /// state; there is no sleep, no deadline and no retry count. A dial that
+    /// never settles simply never reaches the send, which is the same thing
+    /// the connecting surface is already saying on screen.
+    ///
+    /// The order of the guards is the design:
+    ///
+    /// 1. **No session yet.** Wait while the tab is still dialling; drop the
+    ///    snippet once it has stopped without one. That is step (3) — a
+    ///    failed connect sends nothing, and the failed-connect surface is
+    ///    what the user sees. `isReconnecting` is the token that separates
+    ///    the two, and `connect(in:stored:)` clears it in a `defer` that runs
+    ///    after `startSession` on the success path, so this branch cannot
+    ///    catch a successful attempt mid-hand-off.
+    /// 2. **A different session.** The tab connected to something else, so
+    ///    the snippet is dropped rather than run against a host the user did
+    ///    not pick.
+    /// 3. **Not the tab on screen.** `triggerSnippet` acts on `activeTab`,
+    ///    so delivering into a background tab would send the command to the
+    ///    wrong shell. It stays pending instead; the runner's own signal
+    ///    includes which tab is active, so coming back to it delivers.
+    /// 4. **No shell yet.** `openIfNeeded()` is what makes one — a session
+    ///    whose saved pane visibility hides the terminal opens no shell by
+    ///    itself, and this sequence would otherwise wait for a `.running`
+    ///    that nobody was going to produce. It is a no-op while one is
+    ///    opening or already up, and it does NOT reveal the panel: revealing
+    ///    (and persisting that) is `sendSnippet`'s job, at the moment there
+    ///    is something to show.
+    ///
+    /// **Cleared on the way out, whatever the outcome.** This method is
+    /// called again for every later change of the facts above, and
+    /// `triggerSnippet` can return without sending anything at all (it opens
+    /// the variable prompt for a snippet that declares any — the sheet's own
+    /// "Run" continues the sequence from there, exactly as it does for the
+    /// terminal's snippet menu, and it does NOT come back through here). The
+    /// clear is what makes the hand-off exactly-once in both cases: a second
+    /// `.running`, or a prompt the user is still filling in, cannot start a
+    /// second run of the same snippet.
+    ///
+    /// It sits before the send rather than after it, and the honest version
+    /// of why: measured on 2026-09-04, moving it after leaves
+    /// `SnippetAfterConnectSequenceTests` green — nothing `triggerSnippet`
+    /// does re-enters this method within the same turn, so today the two
+    /// orders are equivalent. Deleting it altogether is what that suite
+    /// catches. Written this way because the exactly-once property should
+    /// not rest on that equivalence holding for whatever the send path
+    /// grows next.
+    func deliverPendingSnippetRun(on tab: SessionTab) {
+        guard let pending = tab.pendingSnippetRun else { return }
+        guard let session = tab.session else {
+            if !tab.isReconnecting { tab.pendingSnippetRun = nil }
+            return
+        }
+        guard tab.activeStoredSessionID == pending.storedSessionID else {
+            tab.pendingSnippetRun = nil
+            return
+        }
+        guard tabsModel.activeTab.id == tab.id else { return }
+        let terminal = session.terminal
+        terminal.openIfNeeded()
+        guard terminal.state == .running else { return }
+        tab.pendingSnippetRun = nil
+        triggerSnippet(pending.snippet, execute: true)
     }
 
     /// Title for the update-check result alert (M11b/T2, spec §4) — one per
@@ -1745,6 +1871,11 @@ struct ContentView: View {
     /// is already the active one, activating it changes nothing, which is
     /// what that answer means in that situation.
     func jumpToOpenSession(_ request: AlreadyOpenSessionRequest) {
+        // A snippet the overview's Run armed on the tab that asked (session
+        // overview plan, Task 3) has nothing left to run against: this answer
+        // opens no connection, it only looks at one that already exists. See
+        // `SessionTab.pendingSnippetRun`.
+        activeTab.pendingSnippetRun = nil
         tabsModel.activate(request.existingTabID)
     }
 

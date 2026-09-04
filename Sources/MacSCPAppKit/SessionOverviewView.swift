@@ -96,6 +96,23 @@ struct SessionOverviewView: View {
     /// callback, because they are one door — the window's
     /// `showDiagnostics(for: .stored(…))`, reached with the same session.
     let onDiagnose: (StoredSession) -> Void
+    /// A snippet card's "Run" (Task 3): connect, wait for this session's
+    /// shell, then send. The window's `runSnippetAfterConnecting(_:on:)`,
+    /// whose own dial is `connectFromSidebar` — the same entry
+    /// `onConnectSession` above resolves to, so Run is not a second way onto
+    /// the host but the existing one with something to do afterwards.
+    ///
+    /// A plain closure rather than a `SessionRowConnectEffect`, and the
+    /// reason is what that discipline is for: it keeps a GESTURE whose
+    /// meaning has to be inferred from turning into a dial. This is a button
+    /// the user read the label of, its value is a `Snippet` and not a
+    /// `StoredSession`, so it is not interchangeable with any of the effects
+    /// or callbacks beside it by a one-token edit. What pins the far end is
+    /// `SessionOverviewWiringGuardTests`, which reads both that this
+    /// resolves to `runSnippetAfterConnecting` and that
+    /// `runSnippetAfterConnecting`'s own body dials through nothing but
+    /// `connectFromSidebar`.
+    let onRunSnippet: (Snippet) -> Void
 
     /// `nil` until the stores have been read. The head draws immediately
     /// regardless; the sections below simply are not there yet, which is
@@ -492,12 +509,13 @@ struct SessionOverviewView: View {
         }
     }
 
-    /// The Run button is drawn and DISABLED in this task, deliberately: what
-    /// it has to do — connect, wait for the terminal, then send, with the
-    /// variable prompt in between for a snippet that declares any — is Task
-    /// 3 of this plan, and shipping the control dead is how the layout it
-    /// has to fit into is settled before the behaviour arrives. Nothing is
-    /// wired to it; pressing it is impossible rather than silent.
+    /// Run hands the snippet to the window and does nothing else (Task 3).
+    /// Connecting, waiting for this session's shell, the variable prompt for
+    /// a snippet that declares any, and the send itself all happen out
+    /// there — see `onRunSnippet`. The card was shipped in Task 2 with this
+    /// control drawn and disabled, so the layout it had to fit into was
+    /// settled before the behaviour arrived; all that changed here is the
+    /// action and the dropped `.disabled(true)`.
     private func snippetCard(_ snippet: Snippet) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -505,8 +523,7 @@ struct SessionOverviewView: View {
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                Button(L10n.string("overview.snippets.run", "Run")) {}
-                    .disabled(true)
+                Button(L10n.string("overview.snippets.run", "Run")) { onRunSnippet(snippet) }
                     .font(.caption)
             }
             Text(snippet.command)

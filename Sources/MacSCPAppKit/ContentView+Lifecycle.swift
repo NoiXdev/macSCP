@@ -492,6 +492,14 @@ extension ContentView {
         // record of an attempt that failed is describing something the tab
         // has been taken past.
         tab.connectFailure = nil
+        // And the fourth (session overview plan, Task 3): a snippet armed to
+        // run once this tab has a shell. Same sentence again — every caller
+        // of this function is leaving this connection on purpose, and the
+        // connection the snippet was armed for is the one being left. The
+        // Cancel on the connecting surface reaches here too, which is what
+        // makes "Cancel sends nothing" a property of one line rather than of
+        // a second rule at that button.
+        tab.pendingSnippetRun = nil
         // And the run of a diagnosis of THIS tab — the run, not the panel.
         //
         // Stopping it explicitly, not by letting the sheet's own
@@ -763,11 +771,20 @@ extension ContentView {
         }
         // Snippets in the Terminal menu (Terminal-Snippets milestone) —
         // seeds the mirrored list once, then wires the two entry points.
-        // Both handlers are method references rather than inline closures,
-        // for the same type-checker reason as `handleCloseActiveTabCommand`
-        // above; each carries the key-window guard itself.
+        //
+        // `presentSnippets` is a method reference rather than an inline
+        // closure, for the same type-checker reason as
+        // `handleCloseActiveTabCommand` above, and carries the key-window
+        // guard itself. `runSnippet` cannot: the guard belongs to THIS
+        // bridge and not to `triggerSnippet(_:execute:)`, which every other
+        // caller reaches from inside one window (session overview plan, Task
+        // 3 — see that method's own doc comment). A two-line closure is well
+        // inside what the checker handles here.
         reloadSnippets()
-        tabCommands.runSnippet = triggerSnippet
+        tabCommands.runSnippet = { snippet, execute in
+            guard window?.isKeyWindow == true else { return }
+            triggerSnippet(snippet, execute: execute)
+        }
         tabCommands.showSnippets = presentSnippets
     }
 
