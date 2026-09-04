@@ -22,7 +22,7 @@ import Testing
 ///
 /// What this cannot see: what a REAL S3 provider does on a redirect. It
 /// measures this project's policy against a controlled stub.
-@Suite("S3 redirect control")
+@Suite("S3 redirect control", .timeLimit(.minutes(1)))
 struct S3RedirectControlTests {
 
     private static func freshBucket() -> String { "bucket-\(UUID().uuidString)" }
@@ -75,7 +75,7 @@ struct S3RedirectControlTests {
         do { _ = try await S3FileSystem.connect(Self.config(port: stub.port)) } catch {
             failure = "\(error)"
         }
-        _ = await stub.waitForRequests(atLeast: 2)
+        try await stub.waitForRequests(atLeast: 2)
         let heads = stub.requests
 
         // Positive, and first: both hops happened at all. Every reading
@@ -123,8 +123,18 @@ struct S3RedirectControlTests {
         do { _ = try await S3FileSystem.connect(Self.config(port: first.port)) } catch {
             caught = error
         }
-        _ = await first.waitForRequests(atLeast: 1)
-        let reached = await second.waitForRequests(atLeast: 1, within: 2)
+        try await first.waitForRequests(atLeast: 1)
+        // The one wait in this file that must be able to end UNSATISFIED, so
+        // it cannot be a `waitForRequests`: the question is whether the
+        // foreign origin was reached at all, and a poll for a request that
+        // must never arrive would only end when the suite's time limit
+        // cancelled the test. A fixed grace instead, so a hop that WAS made
+        // has been recorded by the time it is read -- `second` appends after
+        // writing its response. A slower machine can only make this check
+        // more forgiving, never red, which is the direction a settle before a
+        // negative assertion is allowed to fail in.
+        try await Task.sleep(for: .seconds(2))
+        let reached = !second.requests.isEmpty
 
         // Positive first: the endpoint WAS asked, and it was asked with a
         // signature. Without this the refusal below could be a dial that

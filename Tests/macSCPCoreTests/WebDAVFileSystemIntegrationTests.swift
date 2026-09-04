@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import NIOCore
 import Testing
 @testable import macSCPCore
@@ -21,7 +22,8 @@ import Testing
 @Suite(
     "WebDAVFileSystem against Docker Apache",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
-    .serialized
+    .serialized,
+    .timeLimit(.minutes(1))
 )
 struct WebDAVFileSystemIntegrationTests {
 
@@ -426,26 +428,25 @@ struct WebDAVFileSystemIntegrationTests {
 
     // MARK: - Cross-backend transfer: WebDAV <-> SSH through the real queue
 
-    /// Polls `vm.items` for `id` to reach a terminal state, bounded so a
-    /// stuck transfer fails the test instead of hanging it -- this package's
-    /// unit suite has a known, unrelated flake where a run stalls at 0% CPU,
-    /// and a gated test should never compound that with its own indefinite
-    /// wait.
+    /// Polls `vm.items` for `id` to reach a terminal state.
+    ///
+    /// No bound of its own: a transfer that never settles ends this wait
+    /// through the suite's `.timeLimit`, which names the test. The bound
+    /// that used to sit here was a wall clock over work a loaded machine
+    /// schedules, which is the ceiling CLAUDE.md's "A wall-clock ceiling in
+    /// a test measures the runner" forbids.
     @MainActor
     private func waitForTerminalStatus(
-        _ vm: TransferQueueViewModel, id: UUID, timeout: Duration = .seconds(30)
+        _ vm: TransferQueueViewModel, id: UUID
     ) async throws -> TransferQueueViewModel.Item.Status {
-        let deadline = ContinuousClock.now + timeout
-        while true {
-            if let item = vm.items.first(where: { $0.id == id }), item.status.isTerminal {
-                return item.status
-            }
-            if ContinuousClock.now > deadline {
-                throw RemoteFSError.protocolError(
-                    reason: "timed out waiting for the cross-backend transfer to finish")
-            }
-            try await Task.sleep(for: .milliseconds(50))
+        try await pollUntil("the cross-backend transfer to reach a terminal state") {
+            vm.items.first(where: { $0.id == id })?.status.isTerminal == true
         }
+        guard let status = vm.items.first(where: { $0.id == id })?.status else {
+            throw RemoteFSError.protocolError(
+                reason: "the transfer item vanished after reaching a terminal state")
+        }
+        return status
     }
 
     /// A WebDAV -> SSH transfer driven through `TransferQueueViewModel

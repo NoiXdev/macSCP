@@ -1,9 +1,10 @@
 import Foundation
+import MacSCPTestSupport
 import Synchronization
 import Testing
 @testable import macSCPCore
 
-@Suite("TransferQueueViewModel")
+@Suite("TransferQueueViewModel", .timeLimit(.minutes(1)))
 @MainActor
 struct TransferQueueViewModelTests {
 
@@ -315,20 +316,15 @@ struct TransferQueueViewModelTests {
         }
     }
 
-    /// Runs `op` and reports whether it returned within `timeout`. Does NOT
-    /// wait on `op` itself (no hang on a regression), but polls
-    /// a done flag. For the cancellation-timeout race in test M5c/T2.
-    @MainActor func completesWithin(
-        _ timeout: Duration, _ op: @escaping @MainActor () async -> Void
-    ) async -> Bool {
+    /// Runs `op` and returns once it has returned. Does NOT wait on `op`
+    /// itself (no hang on a regression), but polls a done flag -- so an `op`
+    /// that never returns leaves this poll unsatisfied and the suite's
+    /// `.timeLimit` ends the test with its name, instead of parking the run.
+    /// For the cancellation race in test M5c/T2.
+    @MainActor func completes(_ op: @escaping @MainActor () async -> Void) async throws {
         let done = Counter()
         Task { @MainActor in await op(); done.increment() }
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if done.value > 0 { return true }
-            try? await Task.sleep(for: .milliseconds(2))
-        }
-        return done.value > 0
+        try await pollUntil("the operation to return") { done.value > 0 }
     }
 
     // MARK: - 1
@@ -1529,22 +1525,15 @@ struct TransferQueueViewModelTests {
         // `spinUntilCancelledAt` loop only ever exits via `Task.isCancelled`
         // (see its doc comment), so a REGRESSED `cancelAll` that forgets to
         // cancel the running transfer task would hang this test forever
-        // instead of failing loudly — `completesWithin` turns that into a
-        // fast, readable failure. The bound is intentionally generous: a
-        // correct `cancelAll` returns in low tens of milliseconds even under
-        // load, but CI's full-suite run schedules ~50 Swift Testing suites
-        // concurrently against a small (3-core) cooperative thread-pool, and
-        // `cancelAll` here unwinds through several MainActor hops (task
-        // cancel → engine `checkCancellation` → consumer drain → status
-        // update) that all compete for turns on that pool. Reproduced locally
-        // under heavy artificial contention (many busy-loop processes
-        // alongside the full 652-test suite): these hops measured up to ~3.7s
-        // wall-clock, still far short of the actual (unbounded) hang this
-        // guards against. 30s keeps an order-of-magnitude margin above that
-        // measured contention while still failing well within a CI run
-        // instead of requiring the job-level timeout to trip.
-        let returnedInTime = await completesWithin(.seconds(30)) { await vm.cancelAll(reason: .userRequested) }
-        #expect(returnedInTime)
+        // instead of failing loudly — `completes` turns that into a readable
+        // failure. It carries no bound of its own: the wall-clock one that
+        // used to sit here (30 s, widened from 2 s after MainActor hops were
+        // measured at ~3.7 s under heavy local contention) was a ceiling over
+        // work a loaded machine schedules, and a ceiling measures the runner
+        // (CLAUDE.md, "A wall-clock ceiling in a test measures the runner").
+        // The suite's `.timeLimit` is the emergency exit now, and it names
+        // this test.
+        try await completes { await vm.cancelAll(reason: .userRequested) }
         #expect(vm.items[0].status == .cancelled)   // NOT .finished
         #expect(vm.isActive == false)
     }
@@ -1696,13 +1685,9 @@ struct TransferQueueViewModelTests {
         // Hang guard, not a performance race — see the identical reasoning on
         // `cancelAllStopsRunningTransferCooperatively` above: `gate0`/`gate1`
         // are never fired, so a REGRESSED `cancelAll` that fails to cancel
-        // these waiters would hang this test forever. 30s (instead of the
-        // original 2s) gives an order-of-magnitude margin over the low
-        // seconds of MainActor-hop delay measured under heavy full-suite
-        // contention locally, while still failing fast for a genuine
-        // (unbounded) deadlock.
-        let returnedInTime = await completesWithin(.seconds(30)) { await vm.cancelAll(reason: .userRequested) }
-        #expect(returnedInTime)
+        // these waiters would hang this test forever, and the suite's
+        // `.timeLimit` is what ends that as a red naming the test.
+        try await completes { await vm.cancelAll(reason: .userRequested) }
         #expect(vm.items[0].status == .cancelled)
         #expect(vm.items[1].status == .cancelled)
         #expect(vm.items[2].status == .cancelled)

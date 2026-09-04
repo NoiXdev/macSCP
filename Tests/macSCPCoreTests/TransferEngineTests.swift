@@ -1,8 +1,9 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
-@Suite("TransferEngine")
+@Suite("TransferEngine", .timeLimit(.minutes(1)))
 struct TransferEngineTests {
     private func makeSource(content: Data) -> MockRemoteFileSystem {
         MockRemoteFileSystem(
@@ -95,8 +96,8 @@ struct TransferEngineTests {
 
         // Timeout race so that a (regressed) missing cancellation doesn't
         // leave the test hanging forever.
-        let outcome = await awaitOutcome(task)
-        guard case .failure(let error)? = outcome else {
+        let outcome = try await awaitOutcome(task)
+        guard case .failure(let error) = outcome else {
             Issue.record("expected CancellationError, was: \(String(describing: outcome))")
             return
         }
@@ -338,8 +339,8 @@ struct TransferEngineTests {
         await reached.wait()
         task.cancel()
 
-        let outcome = await awaitOutcome(task)
-        guard case .failure(let error)? = outcome else {
+        let outcome = try await awaitOutcome(task)
+        guard case .failure(let error) = outcome else {
             Issue.record("expected CancellationError, was: \(String(describing: outcome))")
             return
         }
@@ -378,22 +379,22 @@ struct TransferEngineTests {
         #expect(await destination.writtenData == content)
     }
 
-    /// Waits for the task's result, but returns `nil` after `timeout`
-    /// (timeout) instead of blocking forever.
-    private func awaitOutcome(
-        _ task: Task<Void, Error>, timeout: Duration = .seconds(2)
-    ) async -> Result<Void, Error>? {
+    /// Waits for the task's result without ever awaiting the task itself:
+    /// a regression that never cancels leaves this poll unsatisfied, and the
+    /// suite's `.timeLimit` ends it as a red naming the test rather than as
+    /// a run that never returns. No bound of its own -- one would be a wall
+    /// clock over work a loaded machine schedules.
+    private func awaitOutcome(_ task: Task<Void, Error>) async throws -> Result<Void, Error> {
         let box = ResultBox()
         Task {
             do { try await task.value; box.set(.success(())) }
             catch { box.set(.failure(error)) }
         }
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if let result = box.value { return result }
-            try? await Task.sleep(for: .milliseconds(2))
+        try await pollUntil("the transfer task to settle") { box.value != nil }
+        guard let result = box.value else {
+            return .failure(CancellationError())
         }
-        return box.value   // nil ⇒ timeout
+        return result
     }
 }
 
@@ -660,7 +661,7 @@ private actor RecordingFS: RemoteFileSystem {
     func disconnect() async {}
 }
 
-/// Thread-safe result holder for the timeout race in `awaitOutcome`.
+/// Thread-safe result holder for the settle poll in `awaitOutcome`.
 private final class ResultBox: @unchecked Sendable {
     private let lock = NSLock()
     private var _value: Result<Void, Error>?

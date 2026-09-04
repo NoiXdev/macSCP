@@ -1,9 +1,10 @@
 import Citadel
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
-@Suite("ConnectionViewModel")
+@Suite("ConnectionViewModel", .timeLimit(.minutes(1)))
 @MainActor
 struct ConnectionViewModelTests {
     private func makeVM(
@@ -514,7 +515,7 @@ struct ConnectionViewModelTests {
         #expect(isEmptiedPassword)
     }
 
-    @Test func secondConnectWhileConnectingIsRejected() async {
+    @Test func secondConnectWhileConnectingIsRejected() async throws {
         let counter = CallCounter()
         let (stream, continuation) = AsyncStream<Void>.makeStream()
         let vm = makeVM(connector: { _, _ in
@@ -529,16 +530,8 @@ struct ConnectionViewModelTests {
         // .connecting`, so it would not be rejected — it would enter the
         // connector itself and park on the stream, and the
         // `continuation.finish()` that releases it sits AFTER this line.
-        guard await waitUntil("first connect() must reach the connector", {
+        try await pollUntil("first connect() must reach the connector") {
             await counter.value == 1
-        }) else {
-            // The failure is recorded; leaving here is what keeps it readable.
-            // Falling through would run the second connect() into the stream
-            // and park on it. Release the connector first so the implicit
-            // await of `first` at scope exit cannot park either.
-            continuation.finish()
-            _ = await first
-            return
         }
 
         let second = await vm.connect()
@@ -567,7 +560,7 @@ struct ConnectionViewModelTests {
     /// The origin is read WHILE the first attempt is still parked in the
     /// connector. Reading it afterwards would be reading it past the thing
     /// that ends the attempt, which is not a check.
-    @Test func aRefusedConnectContributesNoOriginToTheAttemptInFlight() async {
+    @Test func aRefusedConnectContributesNoOriginToTheAttemptInFlight() async throws {
         let counter = CallCounter()
         let (stream, continuation) = AsyncStream<Void>.makeStream()
         let vm = makeVM(connector: { _, _ in
@@ -578,12 +571,8 @@ struct ConnectionViewModelTests {
 
         // The ad-hoc attempt: no origin, and the only one that is real.
         async let first = vm.connect()
-        guard await waitUntil("first connect() must reach the connector", {
+        try await pollUntil("first connect() must reach the connector") {
             await counter.value == 1
-        }) else {
-            continuation.finish()
-            _ = await first
-            return
         }
 
         let refusedOrigin = UUID()
@@ -647,7 +636,7 @@ struct ConnectionViewModelTests {
             """)
     }
 
-    @Test func unknownHostPublishesPromptAndTrustConnects() async {
+    @Test func unknownHostPublishesPromptAndTrustConnects() async throws {
         let candidate = HostKeyCandidate(
             host: "example.com", port: 22, keyType: "ssh-ed25519",
             publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtest")
@@ -658,14 +647,14 @@ struct ConnectionViewModelTests {
         })
 
         async let result = vm.connect()
-        // Leaving on a timeout is what keeps the recorded failure readable:
-        // `await result` below would never return, because the prompt this
-        // test is about to answer was never published. `result` is implicitly
-        // cancelled and awaited at scope exit, which connect() survives — the
-        // two cancellation tests below pin exactly that.
-        guard await waitUntil("the host-key prompt must be published", {
+        // A prompt that is never published makes `await result` below
+        // unreachable, so this wait carries no ceiling of its own: the
+        // suite's time limit cancels the test and names it. `result` is
+        // implicitly cancelled and awaited at scope exit, which connect()
+        // survives — the two cancellation tests below pin exactly that.
+        try await pollUntil("the host-key prompt must be published") {
             vm.hostKeyPrompt != nil
-        }) else { return }
+        }
         #expect(vm.hostKeyPrompt?.candidate == candidate)
 
         vm.resolveHostKeyPrompt(trust: true)
@@ -675,7 +664,7 @@ struct ConnectionViewModelTests {
         #expect(vm.hostKeyPrompt == nil)
     }
 
-    @Test func rejectMapsToLocalizedMessage() async {
+    @Test func rejectMapsToLocalizedMessage() async throws {
         let candidate = HostKeyCandidate(
             host: "example.com", port: 22, keyType: "ssh-ed25519",
             publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtest")
@@ -686,11 +675,10 @@ struct ConnectionViewModelTests {
         })
 
         async let result = vm.connect()
-        // Same as above: without this guard the timeout path falls into
-        // `await result`, which cannot return, and parks the run.
-        guard await waitUntil("the host-key prompt must be published", {
+        // Same as above: `await result` cannot return until the prompt is up.
+        try await pollUntil("the host-key prompt must be published") {
             vm.hostKeyPrompt != nil
-        }) else { return }
+        }
         vm.resolveHostKeyPrompt(trust: false)
         let fs = await result
 
@@ -712,20 +700,16 @@ struct ConnectionViewModelTests {
         })
 
         let connectTask = Task { await vm.connect() }
-        // Wait until the prompt is up. The one site that deliberately does NOT
-        // guard on the result: what follows is `completesWithoutHanging`, which
-        // never awaits `connectTask` directly — it races the task against its
-        // own watchdog and returns `false` when the task does not finish. A
-        // timeout here therefore lands in the same red-and-return outcome the
-        // guards produce elsewhere, and cannot park the run. Both failures are
-        // reported, which is more than an early return would say.
-        await waitUntil("the host-key prompt must be published") { vm.hostKeyPrompt != nil }
+        try await pollUntil("the host-key prompt must be published") {
+            vm.hostKeyPrompt != nil
+        }
 
         connectTask.cancel()
 
-        // Without a cancellation handler, connect() would hang forever.
-        let finished = await completesWithoutHanging(connectTask)
-        #expect(finished, "connect() must return after cancel (continuation resolved)")
+        // Without a cancellation handler, connect() would hang forever — and
+        // the suite's time limit is what turns that hang into a red naming
+        // this test rather than a run that never ends.
+        await completesWithoutHanging(connectTask)
     }
 
     /// Regression (Final-Review M4, Minor 2): the connector may call the
@@ -760,9 +744,8 @@ struct ConnectionViewModelTests {
         releaseContinuation.finish()
 
         // Without cancellation handling (fast path AND onCancel), connect()
-        // would hang forever.
-        let finished = await completesWithoutHanging(connectTask)
-        #expect(finished, "connect() must return when cancel is already set before the prompt")
+        // would hang forever; the suite's time limit is the only exit.
+        await completesWithoutHanging(connectTask)
         #expect(vm.hostKeyPrompt == nil)
         #expect(vm.state == .failed(
             message: CoreL10n.string("core.hostkey.rejected"), field: nil))
@@ -775,7 +758,7 @@ struct ConnectionViewModelTests {
     /// `connect()`. `cancelConnecting()` must release `state` anyway,
     /// without waiting for the dial.
     @Test @MainActor
-    func cancelConnectingReleasesStateWhileTheDialNeverReturns() async {
+    func cancelConnectingReleasesStateWhileTheDialNeverReturns() async throws {
         let counter = CallCounter()
         let (stream, continuation) = AsyncStream<Void>.makeStream()
         let vm = makeVM(connector: { _, _ in
@@ -785,12 +768,8 @@ struct ConnectionViewModelTests {
         })
 
         async let result = vm.connect()
-        guard await waitUntil("connect() must reach the connector", {
+        try await pollUntil("connect() must reach the connector") {
             await counter.value == 1
-        }) else {
-            continuation.finish()
-            _ = await result
-            return
         }
         #expect(vm.state == .connecting)
 
@@ -858,7 +837,7 @@ struct ConnectionViewModelTests {
     /// late success is refused WHILE #2 is still genuinely in flight,
     /// rather than racing to catch a fast, easily-missed transition.
     @Test @MainActor
-    func aLateSuccessFromAnAbandonedAttemptDoesNotOverwriteTheCurrentOnesState() async {
+    func aLateSuccessFromAnAbandonedAttemptDoesNotOverwriteTheCurrentOnesState() async throws {
         let counter = CallCounter()
         let (stream1, continuation1) = AsyncStream<Void>.makeStream()
         let (stream2, continuation2) = AsyncStream<Void>.makeStream()
@@ -873,13 +852,8 @@ struct ConnectionViewModelTests {
         })
 
         async let firstResult = vm.connect()
-        guard await waitUntil("attempt #1 must reach the connector", {
+        try await pollUntil("attempt #1 must reach the connector") {
             await counter.value == 1
-        }) else {
-            continuation1.finish()
-            continuation2.finish()
-            _ = await firstResult
-            return
         }
         #expect(vm.state == .connecting)
 
@@ -887,14 +861,8 @@ struct ConnectionViewModelTests {
         #expect(vm.state == .idle)
 
         async let secondResult = vm.connect()
-        guard await waitUntil("attempt #2 must reach the connector", {
+        try await pollUntil("attempt #2 must reach the connector") {
             await counter.value == 2
-        }) else {
-            continuation1.finish()
-            continuation2.finish()
-            _ = await firstResult
-            _ = await secondResult
-            return
         }
         #expect(vm.state == .connecting)
 
@@ -925,7 +893,7 @@ struct ConnectionViewModelTests {
     /// continuation — which would leave #2's card on screen with nothing
     /// left able to resolve it.
     @Test @MainActor
-    func anAbandonedAttemptsHostKeyPromptDoesNotOverwriteTheCurrentOnesCard() async {
+    func anAbandonedAttemptsHostKeyPromptDoesNotOverwriteTheCurrentOnesCard() async throws {
         let candidateA = HostKeyCandidate(
             host: "abandoned.example.com", port: 22, keyType: "ssh-ed25519",
             publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIAtestA")
@@ -949,23 +917,14 @@ struct ConnectionViewModelTests {
         })
 
         async let firstResult = vm.connect()
-        guard await waitUntil("attempt #1 must reach the connector", {
+        try await pollUntil("attempt #1 must reach the connector") {
             await counter.value == 1
-        }) else {
-            releaseContinuation.finish()
-            _ = await firstResult
-            return
         }
         vm.cancelConnecting()
 
         async let secondResult = vm.connect()
-        guard await waitUntil("attempt #2's host-key prompt must be published", {
+        try await pollUntil("attempt #2's host-key prompt must be published") {
             vm.hostKeyPrompt != nil
-        }) else {
-            releaseContinuation.finish()
-            _ = await firstResult
-            _ = await secondResult
-            return
         }
         #expect(vm.hostKeyPrompt?.candidate == candidateB)
 
@@ -2234,102 +2193,19 @@ private actor CallCounter {
     }
 }
 
-/// Polls `condition` until it holds, and fails the test with `description`
-/// once `timeout` is up instead of letting the run hang.
-///
-/// This suite and `ConnectionViewModel` are both `@MainActor`, so every
-/// `async let`/`Task` started here queues behind all other main-actor work in
-/// the process. A fixed `Task.sleep` is therefore NOT a wait for the child to
-/// have run — under a full parallel suite it often has not, and the test then
-/// answers a prompt that does not exist yet: `resolveHostKeyPrompt` takes its
-/// `guard let continuation … else { return }` no-op, the child afterwards
-/// registers a continuation nobody will ever resume, and the awaiting test
-/// parks forever (0% CPU, `swift test` has no per-test timeout, so the whole
-/// run never reports). Polling ties the wait to the state the test actually
-/// depends on rather than to a wall clock.
-///
-/// The timeout is deliberately generous: it is an emergency exit that turns a
-/// future regression into a red test, not a performance assertion. The
-/// success path never waits for it — the loop leaves as soon as `condition`
-/// holds.
-///
-/// Recording the failure is only half the job: at eight of the nine call
-/// sites (recounted for the connection-liveness plan Task 6 fix round,
-/// which added four more of the guarded kind) the very next statement is an
-/// `await` that cannot complete when the wait timed out (the connect child
-/// never published what the test is about to answer, or never reached the
-/// state that would make the following call return). Falling through would
-/// print the message and THEN park at 0% CPU — the exact failure this
-/// helper exists to prevent, just with a diagnosis nobody gets to read,
-/// because `swift test` prints no summary for a run that never ends. Hence
-/// the `Bool`: callers whose next step can park must `guard` on it and
-/// leave the test instead. `@discardableResult` for the one site that
-/// provably cannot park.
-@MainActor @discardableResult
-private func waitUntil(
-    _ description: Comment,
-    timeout: Duration = .seconds(30),
-    sourceLocation: SourceLocation = #_sourceLocation,
-    _ condition: () async -> Bool
-) async -> Bool {
-    let deadline = ContinuousClock.now + timeout
-    var satisfied = await condition()
-    while !satisfied, ContinuousClock.now < deadline {
-        try? await Task.sleep(for: .milliseconds(5))
-        satisfied = await condition()
-    }
-    #expect(satisfied, description, sourceLocation: sourceLocation)
-    return satisfied
+/// Returns once `task` has returned at all — the assertion the two
+/// cancellation tests above actually make ("connect() does not hang
+/// forever"). They deliberately do NOT assert how *fast* it returns, and
+/// there is no wall clock here at all: a task that never returns is ended
+/// by this suite's `.timeLimit`, which names the test that hung. The
+/// previous version raced an in-test watchdog against the task and reported
+/// a `Bool`; a watchdog sleeping on the cooperative pool while the work it
+/// judges hops through the MainActor is exactly the ceiling that measures
+/// the runner rather than the property (CLAUDE.md, "A wall-clock ceiling in
+/// a test measures the runner").
+private func completesWithoutHanging<T: Sendable>(_ task: Task<T, Never>) async {
+    _ = await task.value
 }
-
-/// Reports whether `task` returned at all — the assertion the cancellation
-/// tests above actually make ("connect() does not hang forever"). They
-/// deliberately do NOT assert how *fast* it returns.
-///
-/// The success path is therefore signal-driven: the awaiting task resolves
-/// the continuation the moment `task` returns, with no wall clock involved.
-/// `deadline` is only an emergency exit so a genuine hang fails the test
-/// instead of blocking the whole suite forever (`swift test` has no per-test
-/// timeout). It is deliberately generous — the watchdog sleeps on the
-/// cooperative pool while the work it judges hops through the MainActor, so a
-/// tight deadline lets the timer beat correct behaviour on a loaded machine
-/// (parallel builds, gated integration suites) and the test would measure
-/// system load instead of cancellation handling.
-///
-/// A `withTaskGroup` race would implicitly wait for the hanging child task
-/// when leaving the closure despite `cancelAll()` (Swift always waits for all
-/// child tasks) and would itself block forever — hence two unstructured tasks
-/// racing for the continuation via an actor claim; a hanging losing task
-/// therefore doesn't block the return value.
-private func completesWithoutHanging<T: Sendable>(
-    _ task: Task<T, Never>,
-    within deadline: Duration = .seconds(30)
-) async -> Bool {
-    let claim = RaceClaim()
-    return await withCheckedContinuation { continuation in
-        let watchdog = Task {
-            try? await Task.sleep(for: deadline)
-            if await claim.tryClaim() { continuation.resume(returning: false) }
-        }
-        Task {
-            _ = await task.value
-            if await claim.tryClaim() { continuation.resume(returning: true) }
-            watchdog.cancel()
-        }
-    }
-}
-
-/// Lets exactly one of several competing tasks "win" — prevents a double
-/// `continuation.resume` in the watchdog race.
-private actor RaceClaim {
-    private var claimed = false
-    func tryClaim() -> Bool {
-        guard !claimed else { return false }
-        claimed = true
-        return true
-    }
-}
-
 
 /// Hands out a fixed sequence of errors, one per call — an actor because
 /// the connector closure that reads it is `@Sendable`.

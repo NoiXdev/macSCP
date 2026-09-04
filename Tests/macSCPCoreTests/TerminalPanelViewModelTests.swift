@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Synchronization
 import Testing
 @testable import macSCPCore
@@ -27,16 +28,7 @@ final class MockShell: RemoteShell, Sendable {
     func close() async { state.withLock { $0.closed = true }; continuation.finish() }
 }
 
-/// Polls until `condition` is true (max ~2 s) — same pattern as in the other VM tests.
-@MainActor
-private func waitUntil(_ condition: @autoclosure () -> Bool) async throws {
-    for _ in 0..<200 where !condition() {
-        try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(condition())
-}
-
-@Suite("TerminalPanelViewModel")
+@Suite("TerminalPanelViewModel", .timeLimit(.minutes(1)))
 @MainActor
 struct TerminalPanelViewModelTests {
     @Test func toggleOpensShellAndForwardsOutput() async throws {
@@ -47,10 +39,12 @@ struct TerminalPanelViewModelTests {
 
         vm.toggle()
         #expect(vm.isVisible)
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
 
         shell.continuation.yield(Array("hallo".utf8))
-        try await waitUntil(!received.isEmpty)
+        try await pollUntil("a chunk reached the consumer") { !received.isEmpty }
+        #expect(!received.isEmpty)
         #expect(received.first.map { String(decoding: $0, as: UTF8.self) } == "hallo")
     }
 
@@ -63,7 +57,8 @@ struct TerminalPanelViewModelTests {
         vm.toggle()   // visible + opens
         vm.toggle()   // hidden
         vm.toggle()   // visible — shell is already running, do NOT reopen
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         #expect(await counter.value == 1)
     }
 
@@ -71,20 +66,26 @@ struct TerminalPanelViewModelTests {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.toggle()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         shell.continuation.finish()
-        try await waitUntil(vm.state == .ended(nil))
+        try await pollUntil("the panel ended") { vm.state == .ended(nil) }
+        #expect(vm.state == .ended(nil))
     }
 
     @Test func streamErrorSetsEndedWithMessage() async throws {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.toggle()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         shell.continuation.finish(throwing: RemoteFSError.protocolError(reason: "kaputt"))
-        try await waitUntil({
+        try await pollUntil("the panel ended with a message") {
             if case .ended(let msg) = vm.state { return msg != nil } else { return false }
-        }())
+        }
+        var endedWithMessage = false
+        if case .ended(let msg) = vm.state { endedWithMessage = msg != nil }
+        #expect(endedWithMessage)
     }
 
     @Test func openFailureSetsEnded() async throws {
@@ -92,20 +93,26 @@ struct TerminalPanelViewModelTests {
             throw RemoteFSError.connectionFailed(reason: "nein")
         })
         vm.toggle()
-        try await waitUntil({
+        try await pollUntil("the panel ended with a message") {
             if case .ended(let msg) = vm.state { return msg != nil } else { return false }
-        }())
+        }
+        var endedWithMessage = false
+        if case .ended(let msg) = vm.state { endedWithMessage = msg != nil }
+        #expect(endedWithMessage)
     }
 
     @Test func reopenAfterEndedWorks() async throws {
         let shells = ShellFactory()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in await shells.next() })
         vm.toggle()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         await shells.current.close()
-        try await waitUntil(vm.state == .ended(nil))
+        try await pollUntil("the panel ended") { vm.state == .ended(nil) }
+        #expect(vm.state == .ended(nil))
         vm.openIfNeeded()  // "Reopen" button
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         #expect(await shells.count == 2)
     }
 
@@ -113,9 +120,11 @@ struct TerminalPanelViewModelTests {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.toggle()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         vm.send(Array("ls\n".utf8))
-        try await waitUntil(!shell.sent.isEmpty)
+        try await pollUntil("bytes reached the shell") { !shell.sent.isEmpty }
+        #expect(!shell.sent.isEmpty)
         #expect(shell.sent.first == Array("ls\n".utf8))
     }
 
@@ -130,12 +139,14 @@ struct TerminalPanelViewModelTests {
         let shell = InvertedDelayShell(totalChunks: totalChunks)
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.toggle()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
 
         for i in 0..<totalChunks {
             vm.send([UInt8(i)])
         }
-        try await waitUntil(shell.recorded.count == totalChunks)
+        try await pollUntil("every chunk was recorded") { shell.recorded.count == totalChunks }
+        #expect(shell.recorded.count == totalChunks)
         #expect(shell.recorded == Array(0..<totalChunks))
     }
 
@@ -147,16 +158,19 @@ struct TerminalPanelViewModelTests {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.toggle()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         // No onOutput set (panel hidden) — chunks must not be lost
         shell.continuation.yield(Array("verborgen".utf8))
-        try await waitUntil(!vm.replayBuffer.isEmpty)
+        try await pollUntil("the replay buffer holds a chunk") { !vm.replayBuffer.isEmpty }
+        #expect(!vm.replayBuffer.isEmpty)
         #expect(vm.replayBuffer.flatMap { $0 } == Array("verborgen".utf8))
         // New consumer (re-mount) sees buffer + live data
         var received: [[UInt8]] = []
         vm.onOutput = { received.append($0) }
         shell.continuation.yield(Array("live".utf8))
-        try await waitUntil(!received.isEmpty)
+        try await pollUntil("a chunk reached the consumer") { !received.isEmpty }
+        #expect(!received.isEmpty)
     }
 
     /// Regression: the replay buffer must not grow unbounded — it is
@@ -165,14 +179,16 @@ struct TerminalPanelViewModelTests {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.toggle()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         shell.continuation.yield([UInt8](repeating: 1, count: 200_000))
         shell.continuation.yield([UInt8](repeating: 2, count: 200_000))
         // Waits for the SECOND chunk to arrive (not just "buffer satisfies
         // the bound", since a still-empty buffer trivially satisfies the
         // bound and would end the poll immediately — before the actual
         // processing happens).
-        try await waitUntil(vm.replayBuffer.last?.last == 2)
+        try await pollUntil("the second chunk reached the replay buffer") { vm.replayBuffer.last?.last == 2 }
+        #expect(vm.replayBuffer.last?.last == 2)
         #expect(vm.replayBuffer.reduce(0) { $0 + $1.count } <= 256 * 1024)
         #expect(vm.replayBuffer.last?.last == 2)  // Newest is kept
     }
@@ -181,7 +197,8 @@ struct TerminalPanelViewModelTests {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.toggle()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         await vm.shutdown()
         #expect(shell.closed)
         #expect(vm.state == .closed)
@@ -222,7 +239,8 @@ struct TerminalPanelViewModelTests {
         let shell = LateFinishShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.toggle()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
 
         Task {
             try await Task.sleep(for: .milliseconds(50))
@@ -253,8 +271,11 @@ struct TerminalPanelViewModelTests {
         vm.send(Array("uptime\r".utf8))
         #expect(shell.sent.isEmpty)  // Nothing to send to yet.
 
-        try await waitUntil(vm.state == .running)
-        try await waitUntil(!shell.sent.isEmpty)
+        try await pollUntil("the shell is running") { vm.state == .running }
+
+        #expect(vm.state == .running)
+        try await pollUntil("bytes reached the shell") { !shell.sent.isEmpty }
+        #expect(!shell.sent.isEmpty)
         #expect(shell.sent.flatMap { $0 } == Array("uptime\r".utf8))
     }
 
@@ -271,9 +292,11 @@ struct TerminalPanelViewModelTests {
         vm.openIfNeeded()
         vm.send([1, 2])
         vm.send([3])
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         vm.send([4])
-        try await waitUntil(shell.sent.flatMap { $0 }.count == 4)
+        try await pollUntil("four bytes reached the shell") { shell.sent.flatMap { $0 }.count == 4 }
+        #expect(shell.sent.flatMap { $0 }.count == 4)
         #expect(shell.sent.flatMap { $0 } == [1, 2, 3, 4])
     }
 
@@ -295,12 +318,16 @@ struct TerminalPanelViewModelTests {
 
         vm.openIfNeeded()
         vm.send(Array("rm -rf /\r".utf8))
-        try await waitUntil({
+        try await pollUntil("the panel ended with a message") {
             if case .ended(let msg) = vm.state { return msg != nil } else { return false }
-        }())
+        }
+        var endedWithMessage = false
+        if case .ended(let msg) = vm.state { endedWithMessage = msg != nil }
+        #expect(endedWithMessage)
 
         vm.openIfNeeded()  // "Reopen"
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         // Give a mistaken replay time to show up before asserting it didn't.
         try await Task.sleep(for: .milliseconds(100))
         #expect(await shells.current.sent.isEmpty)
@@ -324,18 +351,24 @@ struct TerminalPanelViewModelTests {
         })
 
         vm.toggle()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         vm.send([1])                  // Enters the chain and never finishes.
-        try await waitUntil(first.sendCalls == 1)
+        try await pollUntil("the first shell's send was entered") { first.sendCalls == 1 }
+        #expect(first.sendCalls == 1)
 
         first.finish()                // Shell ends -> `.ended`.
-        try await waitUntil(vm.state == .ended(nil))
+        try await pollUntil("the panel ended") { vm.state == .ended(nil) }
+        #expect(vm.state == .ended(nil))
 
         vm.openIfNeeded()             // "Reopen" -> second shell.
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         vm.send([7])
 
-        try await waitUntil(!second.sent.isEmpty)
+        try await pollUntil("bytes reached the second shell") { !second.sent.isEmpty }
+
+        #expect(!second.sent.isEmpty)
         #expect(second.sent.flatMap { $0 } == [7])
     }
 
@@ -356,8 +389,11 @@ struct TerminalPanelViewModelTests {
         vm.resize(cols: 132, rows: 43)
         #expect(shell.resizes.isEmpty)  // Nothing to resize yet.
 
-        try await waitUntil(vm.state == .running)
-        try await waitUntil(!shell.resizes.isEmpty)
+        try await pollUntil("the shell is running") { vm.state == .running }
+
+        #expect(vm.state == .running)
+        try await pollUntil("a window-change reached the shell") { !shell.resizes.isEmpty }
+        #expect(!shell.resizes.isEmpty)
         #expect(shell.resizes.map { [$0.cols, $0.rows] } == [[132, 43]])
     }
 
@@ -390,8 +426,11 @@ struct TerminalPanelViewModelTests {
         vm.resize(cols: 132, rows: 43)
         #expect(shell.events.isEmpty)
 
-        try await waitUntil(vm.state == .running)
-        try await waitUntil(shell.events.count == 2)
+        try await pollUntil("the shell is running") { vm.state == .running }
+
+        #expect(vm.state == .running)
+        try await pollUntil("the shell recorded both events") { shell.events.count == 2 }
+        #expect(shell.events.count == 2)
         #expect(
             shell.events == [.resized(cols: 132, rows: 43), .sent(snippet)],
             "the shell saw \(shell.events)")
@@ -406,7 +445,8 @@ struct TerminalPanelViewModelTests {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.openIfNeeded()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
 
         vm.resize(cols: 80, rows: 24)  // The shell's own open-time geometry.
         // Barrier, not a settle: `send` chains behind the window-change and
@@ -417,7 +457,8 @@ struct TerminalPanelViewModelTests {
         // would sometimes be issued before the shell was known to have
         // acknowledged the first one.
         vm.send([0x61])
-        try await waitUntil(!shell.sent.isEmpty)
+        try await pollUntil("bytes reached the shell") { !shell.sent.isEmpty }
+        #expect(!shell.sent.isEmpty)
         #expect(shell.resizes.count == 1)
 
         vm.resize(cols: 80, rows: 24)
@@ -427,7 +468,8 @@ struct TerminalPanelViewModelTests {
         #expect(shell.resizes.count == 1)
 
         vm.resize(cols: 132, rows: 43)
-        try await waitUntil(shell.resizes.count == 2)
+        try await pollUntil("the shell recorded a second window-change") { shell.resizes.count == 2 }
+        #expect(shell.resizes.count == 2)
         #expect(shell.resizes.map { [$0.cols, $0.rows] } == [[80, 24], [132, 43]])
     }
 
@@ -444,17 +486,20 @@ struct TerminalPanelViewModelTests {
         let shell = FailFirstResizeShell(failures: 1)
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.openIfNeeded()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
 
         vm.resize(cols: 132, rows: 43)  // Throws on the wire.
         vm.send([0x61])
-        try await waitUntil(!shell.sent.isEmpty)
+        try await pollUntil("bytes reached the shell") { !shell.sent.isEmpty }
+        #expect(!shell.sent.isEmpty)
         #expect(shell.attempts == 1)
         #expect(shell.accepted.isEmpty, "the failing resize must not be recorded as accepted")
 
         // The SAME geometry again: it has to go out a second time.
         vm.resize(cols: 132, rows: 43)
-        try await waitUntil(shell.attempts == 2)
+        try await pollUntil("the shell saw a second resize attempt") { shell.attempts == 2 }
+        #expect(shell.attempts == 2)
         #expect(
             shell.accepted.map { [$0.cols, $0.rows] } == [[132, 43]],
             "attempts \(shell.attempts), accepted \(shell.accepted)")
@@ -501,23 +546,28 @@ struct TerminalPanelViewModelTests {
 
         // 1. Shell A, and a window-change that stalls inside it.
         vm.openIfNeeded()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         vm.resize(cols: 100, rows: 30)
-        try await waitUntil(first.resizeGate.entered == 1)
+        try await pollUntil("the window-change reached the gate") { first.resizeGate.entered == 1 }
+        #expect(first.resizeGate.entered == 1)
         #expect(first.acceptedResizes.isEmpty)
 
         // 2. Shell A ends with the window-change still in flight.
         first.endOutput()
-        try await waitUntil(vm.state == .ended(nil))
+        try await pollUntil("the panel ended") { vm.state == .ended(nil) }
+        #expect(vm.state == .ended(nil))
 
         // 3. Reopen, parked on the channel open.
         vm.openIfNeeded()
         #expect(vm.state == .opening)
-        try await waitUntil(secondOpen.entered == 1)
+        try await pollUntil("shell B's open reached the gate") { secondOpen.entered == 1 }
+        #expect(secondOpen.entered == 1)
 
         // 4. The stalled window-change returns, inside that window.
         first.resizeGate.release()
-        try await waitUntil(first.acceptedResizes.count == 1)
+        try await pollUntil("the stalled window-change was accepted") { first.acceptedResizes.count == 1 }
+        #expect(first.acceptedResizes.count == 1)
         // The view model's own write happens when `shell.resize` RETURNS,
         // i.e. in a MainActor continuation that is runnable the moment the
         // line above observes the record. Yielding lets it run, so the rest
@@ -532,8 +582,10 @@ struct TerminalPanelViewModelTests {
 
         // 6. Shell B opens.
         secondOpen.release()
-        try await waitUntil(vm.state == .running)
-        try await waitUntil(!second.resizes.isEmpty)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
+        try await pollUntil("a window-change reached shell B") { !second.resizes.isEmpty }
+        #expect(!second.resizes.isEmpty)
         #expect(
             second.resizes.map { [$0.cols, $0.rows] } == [[100, 30]],
             """
@@ -556,7 +608,8 @@ struct TerminalPanelViewModelTests {
         vm.resize(cols: 200, rows: 60)
 
         vm.openIfNeeded()
-        try await waitUntil(vm.state == .running)
+        try await pollUntil("the shell is running") { vm.state == .running }
+        #expect(vm.state == .running)
         // Give a mistaken replay time to show up before asserting it didn't.
         try await Task.sleep(for: .milliseconds(100))
         #expect(shell.resizes.isEmpty)
@@ -575,8 +628,11 @@ struct TerminalPanelViewModelTests {
         vm.send([UInt8](repeating: 1, count: 50_000))
         vm.send([UInt8](repeating: 2, count: 50_000))
 
-        try await waitUntil(vm.state == .running)
-        try await waitUntil(!shell.sent.isEmpty)
+        try await pollUntil("the shell is running") { vm.state == .running }
+
+        #expect(vm.state == .running)
+        try await pollUntil("bytes reached the shell") { !shell.sent.isEmpty }
+        #expect(!shell.sent.isEmpty)
         let delivered = shell.sent.flatMap { $0 }
         #expect(delivered.count == 64 * 1024)
         // The cap truncates the tail, it does not evict the head: what
@@ -638,7 +694,7 @@ final class LateFinishShell: RemoteShell, Sendable {
 
 /// A gate that parks its caller until the test releases it, readable
 /// synchronously so a test can wait for "the call has arrived" without an
-/// `await` inside `waitUntil`'s autoclosure.
+/// `await` inside a poll's condition closure.
 ///
 /// `NSLock` rather than an actor for exactly that reason: `entered` has to be
 /// readable from a non-async expression. Every WAIT is still an `await`.
@@ -879,7 +935,7 @@ actor ShellFactory {
 /// out. The audit log's snippet entry hangs on it: before P5 the entry was
 /// written right after the send CALL, so a shell that failed to open left an
 /// entry claiming a snippet ran when its bytes were buffered and discarded.
-@Suite("TerminalPanelViewModel delivery callback")
+@Suite("TerminalPanelViewModel delivery callback", .timeLimit(.minutes(1)))
 @MainActor
 struct TerminalPanelViewModelDeliveryTests {
     /// Lets the test decide WHEN the shell finishes opening, instead of
@@ -1003,26 +1059,13 @@ struct TerminalPanelViewModelDeliveryTests {
         }
     }
 
-    /// Polls instead of sleeping a fixed span: the same fixed wait that is
-    /// ample when this suite runs alone is not when the whole suite runs in
-    /// parallel, and a timing-dependent test that only fails under load is
-    /// worse than no test.
-    private func waitUntil(
-        _ condition: @MainActor () -> Bool, timeout: Duration = .seconds(5)
-    ) async -> Bool {
-        let deadline = ContinuousClock.now + timeout
-        while ContinuousClock.now < deadline {
-            if condition() { return true }
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-        return condition()
-    }
-
     @Test func firesOnceWhenTheShellIsRunning() async throws {
         let shell = MockShell()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         vm.openIfNeeded()
-        _ = await waitUntil { if case .running = vm.state { return true } else { return false } }
+        try await pollUntil("the shell is running") {
+            if case .running = vm.state { return true } else { return false }
+        }
 
         let delivered = Box()
         vm.send([0x61]) { delivered.bump() }
@@ -1068,7 +1111,9 @@ struct TerminalPanelViewModelDeliveryTests {
 
         let delivered = Box()
         vm.send([0x61]) { delivered.bump() }
-        _ = await waitUntil { if case .ended = vm.state { return true } else { return false } }
+        try await pollUntil("the panel ended") {
+            if case .ended = vm.state { return true } else { return false }
+        }
 
         #expect(delivered.count == 0)
         if case .ended = vm.state {} else {

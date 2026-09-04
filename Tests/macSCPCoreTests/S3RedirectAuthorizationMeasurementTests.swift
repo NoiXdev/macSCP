@@ -50,7 +50,7 @@ import Testing
 /// What this cannot see: what a REAL S3 provider does on a redirect. This
 /// measures Foundation against a controlled loopback stub, which is what the
 /// question is about, and nothing beyond it.
-@Suite("S3 redirect Authorization measurement")
+@Suite("S3 redirect Authorization measurement", .timeLimit(.minutes(1)))
 struct S3RedirectAuthorizationMeasurementTests {
 
     // MARK: - Canned responses
@@ -87,7 +87,6 @@ struct S3RedirectAuthorizationMeasurementTests {
     private struct Outcome {
         let firstRequests: [String]
         let secondRequests: [String]
-        let secondSawARequest: Bool
         let connectSucceeded: Bool
         let connectError: String?
     }
@@ -169,13 +168,16 @@ struct S3RedirectAuthorizationMeasurementTests {
             failure = "\(error)"
         }
 
-        // Wait for the appends rather than racing them.
-        _ = await first.waitForRequests(atLeast: 1)
-        let reached = await second.waitForRequests(atLeast: 1)
+        // Wait for the appends rather than racing them. Both hops are
+        // required by `check` below, so both waits are safe to make
+        // unbounded: a redirect that never arrives ends this measurement
+        // through the suite's time limit, naming the test.
+        try await first.waitForRequests(atLeast: 1)
+        try await second.waitForRequests(atLeast: 1)
 
         return Outcome(
             firstRequests: first.requests, secondRequests: second.requests,
-            secondSawARequest: reached, connectSucceeded: succeeded, connectError: failure)
+            connectSucceeded: succeeded, connectError: failure)
     }
 
     /// Dumps every request head both stubs recorded. OFF by default —
@@ -238,7 +240,7 @@ struct S3RedirectAuthorizationMeasurementTests {
         //    leaves the stub with nothing recorded, and these two checks
         //    fail.
         #expect(outcome.firstRequests.count >= 1, "\(label): the first origin was never reached")
-        #expect(outcome.secondSawARequest, "\(label): the redirect never arrived")
+        #expect(!outcome.secondRequests.isEmpty, "\(label): the redirect never arrived")
         #expect(
             outcome.secondRequests.contains { $0.contains(Self.secondOriginPathMarker) },
             "\(label): the second origin saw no request bearing the redirect's own path")
@@ -290,7 +292,7 @@ struct S3RedirectAuthorizationMeasurementTests {
         do { _ = try await S3FileSystem.connect(config, transport: transport) } catch {
             failure = "\(error)"
         }
-        _ = await stub.waitForRequests(atLeast: 2)
+        try await stub.waitForRequests(atLeast: 2)
 
         let heads = stub.requests
         if Self.dumpRequests {

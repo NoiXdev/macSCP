@@ -24,7 +24,7 @@ import Testing
 /// Neither test clears `URLCache.shared`: it belongs to whoever is running
 /// the suite. They only read it, and each dial uses a bucket name nothing
 /// has used before so the key they look up is unrepeatable.
-@Suite("S3 session isolation")
+@Suite("S3 session isolation", .timeLimit(.minutes(1)))
 struct S3SessionIsolationTests {
 
     /// A well-formed, EXPLICITLY cacheable empty `ListObjectsV2` answer.
@@ -77,7 +77,8 @@ struct S3SessionIsolationTests {
 
         // POSITIVE, and first: the dial reached the stub. Everything below
         // is vacuous for a request that never went out.
-        #expect(await stub.waitForRequests(atLeast: 1), "the dial never reached the stub")
+        try await stub.waitForRequests(atLeast: 1)
+        #expect(!stub.requests.isEmpty, "the dial never reached the stub")
         let head = try #require(stub.requests.first)
         #expect(head.contains(config.bucket), "the recorded head is not this dial's request")
         let request = try #require(Self.recordedRequest(head, port: stub.port))
@@ -126,8 +127,9 @@ struct S3SessionIsolationTests {
             await fs.disconnect()
         }
 
+        try await stub.waitForRequests(atLeast: 2)
         #expect(
-            await stub.waitForRequests(atLeast: 2),
+            stub.requests.count >= 2,
             "the second dial was answered from a cache; the stub saw \(stub.requests.count)")
         #expect(
             stub.requests.allSatisfy { $0.contains(config.bucket) },

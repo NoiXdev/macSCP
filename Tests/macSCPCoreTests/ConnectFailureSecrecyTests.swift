@@ -21,7 +21,7 @@ import Testing
 /// `jumpAwareFailedState` and adds nothing to the text. Driving `connect()`
 /// itself would additionally require a resolved form, and resolving a form
 /// means a secret store; these tests deliberately touch none.
-@Suite("Connect failure secrecy")
+@Suite("Connect failure secrecy", .timeLimit(.minutes(1)))
 struct ConnectFailureSecrecyTests {
     /// Values that must never appear in a failure text. Each one is handed
     /// to the code that throws, in the field that really carries it.
@@ -633,8 +633,8 @@ struct ConnectFailureSecrecyTests {
         // `waitForRequests`. Without this the emptiness check below failed
         // roughly one run in five on a loaded machine, and the credential
         // checks could have answered "no header" for the wrong reason.
-        _ = await elsewhere.waitForRequests(atLeast: 1)
-        _ = await configured.waitForRequests(atLeast: 1)
+        try await elsewhere.waitForRequests(atLeast: 1)
+        try await configured.waitForRequests(atLeast: 1)
 
         // The credential question first, and reached unconditionally: the
         // error analysis below has early returns in it, and this is the

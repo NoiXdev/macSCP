@@ -5,7 +5,17 @@ import Testing
 /// their blocking child waits with it: the exit status and both streams of a
 /// normal child, an output volume no pipe buffer holds, a child that outlives
 /// its bound, and the three inputs a caller can hand it.
-@Suite("SubprocessRunner")
+///
+/// Five minutes rather than the one minute the rest of the tree carries, and
+/// the reason is in the cases themselves: several of them hand the runner a
+/// child bounded at sixty seconds and then wait, unbounded, for a latch the
+/// stderr seam raises, and two already declare a five-minute limit of their
+/// own with that argument written out. A suite-level minute would sit under
+/// those and end them before the property they measure is reachable. The
+/// limit here is a net under an unbounded `AsyncSignal.wait()`, so a
+/// regression in the seam is a red naming the test rather than a run that
+/// never returns; it is not a budget any case is expected to approach.
+@Suite("SubprocessRunner", .timeLimit(.minutes(5)))
 struct SubprocessRunnerTests {
     private static let shell = URL(fileURLWithPath: "/bin/sh")
 
@@ -444,24 +454,21 @@ struct SubprocessRunnerTests {
             reader; the error said: \(error)
             """)
 
-        // Release, then require that every block ran and returned. ONE
-        // deadline for the whole release, not one per latch: the latches
-        // are awaited in sequence, and a per-latch bound would let a pool
-        // held by something else cost this test the bound once per block.
+        // Release, then require that every block ran and returned. No
+        // deadline over the release at all: the ten-second one that used to
+        // stand here was a wall clock over work a saturated pool schedules,
+        // which is the ceiling that measures the runner rather than the
+        // property (CLAUDE.md, "A wall-clock ceiling in a test measures the
+        // runner") -- and this is the one test in the tree that deliberately
+        // starves that pool. Each latch is awaited unbounded; a block that
+        // never returns ends this test through the suite's time limit.
         // Closed here and forgotten, so the `defer` above has nothing left
         // to close twice on this path.
         for handle in writeEnds { try? handle.close() }
         writeEnds.removeAll()
-        let deadline = ContinuousClock.now + .seconds(10)
         var released = 0
-        for done in finished {
-            if done.isRaised {
-                released += 1
-                continue
-            }
-            let remaining = deadline - ContinuousClock.now
-            guard remaining > .zero else { break }
-            if await done.wait(timeout: remaining) == .signalled { released += 1 }
+        for done in finished where await done.wait() == .signalled {
+            released += 1
         }
         #expect(released == finished.count, "\(finished.count - released) parked blocks never returned")
         // The record of a gated run, since it only runs when someone asks.

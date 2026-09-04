@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 
 /// A minimal HTTP/1.1 server on a loopback port that answers every request
 /// with one fixed, caller-supplied response.
@@ -92,18 +93,19 @@ final class LoopbackHTTPStub: @unchecked Sendable {
     /// append happens. Reading `requests` straight after the operation
     /// under test races that append.
     ///
-    /// Waiting cannot weaken an assertion: a request that was never made
-    /// never arrives, the deadline runs out, and the assertion fails as it
-    /// did before. What it removes is the opposite outcome -- a question
+    /// Waiting cannot weaken an assertion: what it removes is a question
     /// like `sawAuthorizationHeader` answering "no header" for the wrong
     /// reason, because the request carrying one had not been recorded yet.
-    func waitForRequests(atLeast count: Int, within seconds: Int = 5) async -> Bool {
-        let deadline = ContinuousClock.now + .seconds(seconds)
-        while ContinuousClock.now < deadline {
-            if requests.count >= count { return true }
-            try? await Task.sleep(for: .milliseconds(10))
+    ///
+    /// The wait carries no deadline of its own -- a request that is never
+    /// made ends this call only through cancellation, which the calling
+    /// suite's `.timeLimit` performs. So this can only be asked of a
+    /// request the test requires to arrive; a test asking whether a
+    /// request was NOT made reads `requests` directly.
+    func waitForRequests(atLeast count: Int) async throws {
+        try await pollUntil("\(count) request(s) recorded by the loopback stub") {
+            requests.count >= count
         }
-        return requests.count >= count
     }
 
     /// Whether any request carried an `Authorization` header. The question
