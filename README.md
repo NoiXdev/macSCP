@@ -16,7 +16,8 @@ and move files between them with drag and drop, buttons, or the Finder.
   bucket list instead of one fixed bucket.
 - **Two-pane browser** — local and remote side by side, folder navigation
   by double-click, drag & drop in both directions (including dragging
-  remote files straight into the Finder).
+  remote files straight into the Finder). A sortable Type column shows
+  what each row is at a glance, and a bucket gets an icon of its own.
 - **Saved sessions** — one-click reconnect, groups, inline rename;
   passwords and passphrases live only in the macOS Keychain. Click a
   session to see its details before connecting: connection facts,

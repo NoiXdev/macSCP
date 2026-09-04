@@ -34,8 +34,23 @@ struct FileTypeLabelTests {
         #expect(FileTypeLabel.label(for: item(name: "README")) == "File")
     }
 
+    /// A trailing dot with nothing after it is an empty extension, not a
+    /// one-character one — `NSString.pathExtension` returns `""` for
+    /// "name.", the same as for "README" above (Task 1 review).
+    @Test func aTrailingDotWithNothingAfterItIsAFile() {
+        #expect(FileTypeLabel.label(for: item(name: "name.")) == "File")
+    }
+
     @Test func aDirectoryIsAFolder() {
         #expect(FileTypeLabel.label(for: item(name: "docs", kind: .directory)) == "Folder")
+    }
+
+    /// A directory's `.directory` check runs before any extension is ever
+    /// looked at, so a name that LOOKS like it carries one ("photos.d")
+    /// still reads "Folder" — the same precedence `isBucketOutranksDirectory`
+    /// pins for buckets, one level down (Task 1 review).
+    @Test func aDirectoryNamedLikeItHasAnExtensionIsStillAFolder() {
+        #expect(FileTypeLabel.label(for: item(name: "photos.d", kind: .directory)) == "Folder")
     }
 
     @Test func aSymlinkIsALink() {

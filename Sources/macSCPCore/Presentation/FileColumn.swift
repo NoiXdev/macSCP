@@ -38,12 +38,14 @@ public enum FileColumn: String, Sendable, CaseIterable {
 
 /// Pure, testable per-column text formatters for the columns M11m adds.
 /// `name`/`size`/`modified` already have their own established formatting
-/// (`FileListFormatter`) and are untouched here. `type` is deliberately
-/// NOT formatted to text in Core: a localized type label ("Folder"/"File"/
-/// "Alias"/…) is a display word, and Core stays free of hardcoded
-/// user-facing strings (see this project's language policy) — the App
-/// layer switches on `RemoteFileItem.kind` directly and looks up its own
-/// localized catalog entry.
+/// (`FileListFormatter`) and are untouched here. `type` is NOT formatted
+/// here: a localized type label ("Folder"/"Bucket"/"PDF"/…) is a display
+/// word, but that does not mean Core stays free of it — `FileTypeLabel`
+/// (Browser Type Column, 2026-09-04), in `RemoteFS/FileTypeLabel.swift`,
+/// derives it from `RemoteFileItem.isBucket`/`.kind`/`.name` through
+/// `CoreL10n`'s own catalog, and the App layer reads that function's
+/// result directly rather than switching on `kind` itself, which is what
+/// this enum's own formatters below still do.
 public enum FileColumnFormatter {
     /// The rwx string via `PosixPermissions`, e.g. "rw-r--r--"; `nil` if
     /// the item carries no permission bits at all.

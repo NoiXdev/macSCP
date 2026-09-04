@@ -239,11 +239,10 @@
    Symbols. */
 "filetable.symlinkTooltip" = "Symbolischer Link";
 
-/* Datei-Typ-Wörter für die Spalte "Typ" (M11m/T2) */
-"filetable.type.folder" = "Ordner";
-"filetable.type.file" = "Datei";
-"filetable.type.symlink" = "Verknüpfung";
-"filetable.type.other" = "Sonstiges";
+/* Bucket-Markierung (Browser Type Column, 2026-09-04): Tooltip auf der
+   Namens-Zelle einer Bucket-Zeile, dient zugleich als
+   Accessibility-Beschreibung des Symbols. */
+"filetable.bucketTooltip" = "Bucket";
 
 /* Platzhalter für eine leere Zelle in den Spalten "Rechte"/"Besitzer"/
    "Gruppe" (M11m/T2) — ein nil-Wert, nie eine geratene Anzeige. */

@@ -174,13 +174,16 @@ struct ChecksumColumnTests {
             RemoteFileTableView.cellToolTip(for: .checksum, item: item, text: "") == nil)
     }
 
-    /// The other tooltip the table has, unchanged: a symlink's name cell
-    /// says so, and a plain file's does not.
-    @Test func onlyASymlinkNameCellCarriesATooltip() {
+    /// The other tooltip the table has: a symlink's name cell says so, and
+    /// so does a bucket's (Browser Type Column, 2026-09-04) — a plain file
+    /// carries none.
+    @Test func aSymlinkOrABucketNameCellCarriesATooltipAPlainFileDoesNot() {
         let symlink = Self.file(kind: .symlink)
+        let bucket = RemoteFileItem(name: "my-bucket", path: "/my-bucket", kind: .directory, isBucket: true)
         let plain = Self.file()
 
         #expect(RemoteFileTableView.cellToolTip(for: .name, item: symlink, text: "x") != nil)
+        #expect(RemoteFileTableView.cellToolTip(for: .name, item: bucket, text: "x") != nil)
         #expect(RemoteFileTableView.cellToolTip(for: .name, item: plain, text: "x") == nil)
     }
 

@@ -238,11 +238,10 @@
    used as the marker symbol's accessibility description. */
 "filetable.symlinkTooltip" = "Symbolic link";
 
-/* File type words for the "Type" column (M11m/T2) */
-"filetable.type.folder" = "Folder";
-"filetable.type.file" = "File";
-"filetable.type.symlink" = "Symbolic Link";
-"filetable.type.other" = "Other";
+/* Bucket marker (Browser Type Column, 2026-09-04): tooltip on a bucket
+   row's name cell, also used as the marker symbol's accessibility
+   description. */
+"filetable.bucketTooltip" = "Bucket";
 
 /* Placeholder for an empty cell in the "Permissions"/"Owner"/"Group"
    columns (M11m/T2) — a nil value, never a guessed one. */

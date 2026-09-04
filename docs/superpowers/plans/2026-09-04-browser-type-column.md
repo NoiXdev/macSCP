@@ -23,10 +23,16 @@ label and falls back to the name.
 `RemoteBrowserViewModel.SortKey`, four catalogs.
 
 **Spec:** `docs/BACKLOG.md`, row "File browser: a bucket icon, and a
-Type column" (maintainer feedback 2026-09-04). Measured at HEAD:
-`RemoteBrowserViewModel.SortKey` is `name | size | modified`
-(`:8-10`); `RemoteFileTableView.swift:387-396` builds `NSTableColumn`s
-from a column enum's `rawValue`; the kind icon is chosen from `kind`.
+Type column" (maintainer feedback 2026-09-04). **Correction, Task 1**:
+the line below was measured wrong — the actual tree at `e6dbc83e`
+already carried `FileSortKey` as `name | size | modified | permissions
+| owner | group | type` (M11m/T2), and `RemoteFileTableView` already
+built a "Type" column (`FileColumn.type`, `typeText(for:)`) — see
+`.superpowers/sdd/2026-09-04-browser-type-column/task-1-report.md`.
+~~Measured at HEAD: `RemoteBrowserViewModel.SortKey` is `name | size |
+modified` (`:8-10`); `RemoteFileTableView.swift:387-396` builds
+`NSTableColumn`s from a column enum's `rawValue`; the kind icon is
+chosen from `kind`.~~
 
 ## Global Constraints
 
@@ -49,7 +55,7 @@ from a column enum's `rawValue`; the kind icon is chosen from `kind`.
 - Modify: Core's four catalogs
 - Test: `FileTypeLabelTests` (`report.PDF` → "PDF"; `archive.tar.gz` → "GZ"; `.bashrc` → "File"; a directory → "Folder"; `isBucket` → "Bucket"; symlink → "Link"), `S3FileSystemTests` (bucket-list rows carry `isBucket`), the view model's sort test for `.type`
 
-- [ ] **Step 1: Red first**; **Step 2: Implement**; **Step 3: Commit** `feat(core): a file's type label, and buckets know they are buckets`.
+- [x] **Step 1: Red first**; **Step 2: Implement**; **Step 3: Commit** `feat(core): a file's type label, and buckets know they are buckets`.
 
 ---
 
@@ -60,4 +66,4 @@ from a column enum's `rawValue`; the kind icon is chosen from `kind`.
 - Modify: the App's four catalogs
 - Test: the browser table guard (if one scans the column enum — find it; else a small one: every column case has a header key, the type cell reads `FileTypeLabel`, the bucket icon branch reads `isBucket`), `docs/BACKLOG.md` row → Done, README one sentence.
 
-- [ ] **Step 1: Red first**; **Step 2: Implement**; **Step 3: Commit** `feat(browser): a Type column, and a bucket looks like one`.
+- [x] **Step 1: Red first**; **Step 2: Implement**; **Step 3: Commit** `feat(browser): a Type column, and a bucket looks like one`.

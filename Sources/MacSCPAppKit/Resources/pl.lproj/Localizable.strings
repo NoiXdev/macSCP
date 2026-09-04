@@ -241,11 +241,10 @@
    dla symbolu. */
 "filetable.symlinkTooltip" = "Dowiązanie symboliczne";
 
-/* Słowa typu pliku dla kolumny „Typ” (M11m/T2) */
-"filetable.type.folder" = "Folder";
-"filetable.type.file" = "Plik";
-"filetable.type.symlink" = "Dowiązanie symboliczne";
-"filetable.type.other" = "Inne";
+/* Znacznik zasobnika (Browser Type Column, 2026-09-04): podpowiedź na
+   komórce nazwy wiersza zasobnika, służy też jako opis ułatwień dostępu
+   dla symbolu. */
+"filetable.bucketTooltip" = "Bucket";
 
 /* Symbol zastępczy dla pustej komórki w kolumnach „Uprawnienia”/
    „Właściciel”/„Grupa” (M11m/T2) — wartość nil, nigdy zgadywana. */

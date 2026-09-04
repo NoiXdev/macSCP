@@ -241,11 +241,10 @@
    du symbole. */
 "filetable.symlinkTooltip" = "Lien symbolique";
 
-/* Termes de type de fichier pour la colonne "Type" (M11m/T2) */
-"filetable.type.folder" = "Dossier";
-"filetable.type.file" = "Fichier";
-"filetable.type.symlink" = "Lien symbolique";
-"filetable.type.other" = "Autre";
+/* Marqueur de compartiment (Browser Type Column, 2026-09-04) : infobulle
+   sur la cellule de nom d'une ligne de compartiment, sert aussi de
+   description d'accessibilité du symbole. */
+"filetable.bucketTooltip" = "Bucket";
 
 /* Espace réservé pour une cellule vide dans les colonnes "Autorisations"/
    "Propriétaire"/"Groupe" (M11m/T2) — une valeur nil, jamais une valeur

@@ -230,17 +230,23 @@ struct RemoteFileTableView: NSViewRepresentable {
         case .size: return FileListFormatter.sizeString(for: item)
         case .modified: return FileListFormatter.dateString(for: item)
         // M11m/T2: `permissions`/`owner`/`group` reuse the Core formatters
-        // (T1) and substitute the localized "—" placeholder for `nil`;
-        // `type` has no Core formatter at all by design (Core stays free of
-        // hardcoded user-facing strings) so it is mapped straight from
-        // `item.kind` by the App-layer lookup below.
+        // (T1) and substitute the localized "—" placeholder for `nil`.
+        // `type` ALSO reuses a Core formatter now (Browser Type Column,
+        // 2026-09-04): `FileTypeLabel.label(for:)` already returns
+        // localized, catalogue-keyed text (an `isBucket`/kind word or the
+        // name's extension, through `CoreL10n`) — unlike the other Core
+        // formatters here, which return raw values the App localizes
+        // itself. An App-layer `typeText(for:)` used to translate
+        // `item.kind` alone into this cell's text; it is deleted with this
+        // change, since it could not see `isBucket` and rendered coarser
+        // text than the column now sorts by (Task 1's finding).
         case .permissions:
             return FileColumnFormatter.permissionsText(for: item) ?? emptyCellPlaceholder
         case .owner:
             return FileColumnFormatter.ownerText(for: item) ?? emptyCellPlaceholder
         case .group:
             return FileColumnFormatter.groupText(for: item) ?? emptyCellPlaceholder
-        case .type: return typeText(for: item.kind)
+        case .type: return FileTypeLabel.label(for: item)
         // The one column that shows nothing rather than a placeholder when
         // it has nothing (2026-09-02): "—" would say the listing did not
         // carry the value, and there is no listing that carries this one.
@@ -258,12 +264,16 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// pulled out of the styling switch so the recycling rule — a reused
     /// cell must be told its tooltip on EVERY pass, `nil` included — is
     /// stated once instead of once per branch. Two columns have one: the
-    /// name of a symlink says it is one, and a digest carries its whole
-    /// value because the column truncates it in the middle.
+    /// name cell says when a row is a symlink or a bucket (Browser Type
+    /// Column, 2026-09-04 — `isBucket` checked first, same precedence
+    /// `FileTypeLabel` uses), and a digest carries its whole value because
+    /// the column truncates it in the middle.
     static func cellToolTip(for column: FileColumn, item: RemoteFileItem, text: String)
         -> String? {
         switch column {
-        case .name: return item.kind == .symlink ? symlinkDescription : nil
+        case .name:
+            if item.isBucket { return bucketDescription }
+            return item.kind == .symlink ? symlinkDescription : nil
         case .checksum: return text.isEmpty ? nil : text
         case .size, .modified, .permissions, .owner, .group, .type: return nil
         }
@@ -274,6 +284,14 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// cannot come apart.
     static var symlinkDescription: String {
         L10n.string("filetable.symlinkTooltip", "Symbolic link")
+    }
+
+    /// The word for an S3 bucket row (Browser Type Column, 2026-09-04),
+    /// shown both as the marker's accessibility description and as the
+    /// name cell's tooltip — same pairing as `symlinkDescription`, one
+    /// lookup so the two cannot come apart.
+    static var bucketDescription: String {
+        L10n.string("filetable.bucketTooltip", "Bucket")
     }
 
     /// Whether a change in the inputs `buildColumns` reads means the table's
@@ -291,18 +309,6 @@ struct RemoteFileTableView: NSViewRepresentable {
     ) -> Bool {
         if lastVisible != visible { return true }
         return visible.contains(.checksum) && lastAlgorithm != algorithm
-    }
-
-    /// Localized word for the "Type" column (M11m/T2) — `Core` never
-    /// formats `kind` to text itself (see `FileColumnFormatter`'s doc
-    /// comment): this is the App-layer lookup its comment points to.
-    private static func typeText(for kind: RemoteFileKind) -> String {
-        switch kind {
-        case .directory: return L10n.string("filetable.type.folder", "Folder")
-        case .file: return L10n.string("filetable.type.file", "File")
-        case .symlink: return L10n.string("filetable.type.symlink", "Symbolic Link")
-        case .other: return L10n.string("filetable.type.other", "Other")
-        }
     }
 
     /// Localized placeholder for a `nil` permissions/owner/group value
@@ -757,14 +763,18 @@ struct RemoteFileTableView: NSViewRepresentable {
                     field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -12),
                     field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 ])
-                // Symlink marker (M11h/T1): only the "name" column ever needs
-                // it, built once per fresh cell and toggled with `isHidden`
-                // on every reuse below — never re-added, never repositioned.
-                // It lives IN the existing 12pt left inset rather than
-                // pushing `field` further right, so the resting layout (row
-                // height, text baseline, 12pt text indent) is byte-for-byte
-                // what M5g froze: `field`'s own leading constraint above is
-                // untouched.
+                // Kind marker (M11h/T1; extended for buckets, Browser Type
+                // Column 2026-09-04): only the "name" column ever needs it,
+                // built once per fresh cell — the `NSImageView` itself,
+                // never re-added, never repositioned. It lives IN the
+                // existing 12pt left inset rather than pushing `field`
+                // further right, so the resting layout (row height, text
+                // baseline, 12pt text indent) is byte-for-byte what M5g
+                // froze: `field`'s own leading constraint above is
+                // untouched. Its IMAGE is no longer fixed at build time —
+                // see the block right after this `if`/`else`, which sets it
+                // (and the marker's visibility) on every reuse, because
+                // which glyph a row gets now varies row to row.
                 if column == .name {
                     let marker = NSImageView()
                     marker.translatesAutoresizingMaskIntoConstraints = false
@@ -778,9 +788,34 @@ struct RemoteFileTableView: NSViewRepresentable {
                         marker.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 1),
                         marker.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                     ])
-                    marker.image = NSImage(
+                }
+            }
+            // Recycling hygiene (M11h/T1, critical; extended for buckets,
+            // Browser Type Column 2026-09-04): both the marker's IMAGE and
+            // its visibility are set UNCONDITIONALLY on every reuse — a row
+            // that scrolls from a bucket to a symlink to a plain file must
+            // not keep showing the wrong glyph (or any glyph at all), since
+            // `makeView(withIdentifier:)` hands back the exact same
+            // `NSTableCellView` instance. `isBucket` is checked first,
+            // matching `FileTypeLabel`'s own precedence — a bucket's `kind`
+            // is `.directory`, never `.symlink`, so the two branches cannot
+            // collide in practice, but the order still documents which one
+            // would win. Kept right beside `cell.toolTip` below (rather than
+            // in the styling switch further down) so the icon assignment
+            // and the hover hint that explains it stay close in the source.
+            if column == .name {
+                if item.isBucket {
+                    cell.imageView?.image = NSImage(
+                        systemSymbolName: "archivebox",
+                        accessibilityDescription: RemoteFileTableView.bucketDescription)
+                    cell.imageView?.isHidden = false
+                } else if item.kind == .symlink {
+                    cell.imageView?.image = NSImage(
                         systemSymbolName: "arrow.up.forward",
                         accessibilityDescription: RemoteFileTableView.symlinkDescription)
+                    cell.imageView?.isHidden = false
+                } else {
+                    cell.imageView?.isHidden = true
                 }
             }
             cell.toolTip = RemoteFileTableView.cellToolTip(
@@ -798,16 +833,9 @@ struct RemoteFileTableView: NSViewRepresentable {
                 cell.textField?.font = .systemFont(ofSize: 12.5)
                 cell.textField?.textColor = DesignTokens.inkNS
                 cell.textField?.alignment = .natural
-                // Recycling hygiene (M11h/T1, critical): `isHidden` is set
-                // UNCONDITIONALLY on every reuse, the same way
-                // `stringValue`/font/color already are — a row that scrolls
-                // from a symlink to a plain file must not keep showing the
-                // marker, since `makeView(withIdentifier:)` hands back the
-                // exact same `NSTableCellView` instance. Only the VISIBILITY
-                // varies per row now: the marker's image never does, so it
-                // is set once where the marker is built, beside the hover
-                // hint that explains it.
-                cell.imageView?.isHidden = item.kind != .symlink
+                // The marker's image and visibility are set above, beside
+                // `cell.toolTip` — not here, since they now vary with
+                // `isBucket` too and not with the column's TEXT styling.
             case .size:
                 cell.textField?.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
                 cell.textField?.textColor = DesignTokens.inkSecondaryNS
