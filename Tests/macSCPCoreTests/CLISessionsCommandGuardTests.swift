@@ -303,27 +303,34 @@ struct CLISessionsCommandGuardTests {
 
     /// "Every command that parses a `name:/path` target wires
     /// `SessionNameCompletion.kind` onto that argument" restated as
-    /// something a scanner can check, WITHOUT spelling out the five command
-    /// file names as a second copy of a list this suite does not otherwise
-    /// keep (CLAUDE.md, "Guards that name what they watch" — a guard that
-    /// spells a symbol it could read instead is waiting for a rename): a
-    /// command file "takes a session target" exactly when it calls
-    /// `SessionReference.parse(` (every one of `LsCommand`, `GetCommand`,
-    /// `PutCommand`, `RmCommand`, `MkdirCommand` does, and no other file
-    /// under `Sources/MacSCPCLI` does), and each such file is expected to
-    /// carry exactly ONE `completion: SessionNameCompletion.kind` — one
-    /// target argument gets the completer, even in `get`/`put`, which each
-    /// have TWO `@Argument`s but only one of them names a session (`put`'s
+    /// something a scanner can check, WITHOUT spelling out the command file
+    /// names as a second copy of a list this suite does not otherwise keep
+    /// (CLAUDE.md, "Guards that name what they watch" — a guard that spells
+    /// a symbol it could read instead is waiting for a rename): a command
+    /// file "takes a session target" exactly when it calls
+    /// `SessionReference.parse(`, and each such file is expected to carry
+    /// exactly ONE `completion: SessionNameCompletion.kind` — one target
+    /// argument gets the completer, even in `get`/`put`, which each have
+    /// TWO `@Argument`s but only one of them names a session (`put`'s
     /// SOURCE is always a local path).
     ///
-    /// A POSITIVE check throughout: the file set must be non-empty (proof
-    /// the scanner found real files, not zero), the per-file count must be
-    /// exactly one (not merely "at least one" — a stray second wiring would
-    /// be as wrong as a missing one), and the sum is asserted against the
-    /// file count rather than a hardcoded number, so this stays correct
-    /// when a sixth command joins `SessionReference.parse(`'s callers: it
-    /// turns red the moment that new command's file exists without also
-    /// carrying the completer.
+    /// **The two scans are compared as SETS, in both directions, and there
+    /// is no number here any more.** There was one — `== 5`, counted
+    /// 2026-09-02 — and it went red on 2026-09-04 the moment `diagnose`
+    /// became the sixth caller, which is a recount rather than a finding. Set
+    /// equality says the thing the number was standing in for and says it
+    /// both ways: a command that parses a target without the completer is
+    /// red, AND a command that wires the completer onto something that is
+    /// not a parsed target is red. The second direction is not hypothetical
+    /// — `diagnose` shipped that way on 2026-09-04 (it completed session
+    /// names while reading its argument as a bare name), and folding it onto
+    /// `SessionReference.parse` is what makes `diagnose prod:/tmp` report the
+    /// missing session as `prod` the way `ls` does.
+    ///
+    /// A POSITIVE check throughout: both file sets must be non-empty (proof
+    /// the scanner found real files, not zero), and the per-file count must
+    /// be exactly one — not merely "at least one", since a stray second
+    /// wiring would be as wrong as a missing one.
     @Test func everySessionTargetCommandCarriesTheCompletion() throws {
         let cliDirectory = Self.repoRoot.appendingPathComponent("Sources/MacSCPCLI")
         // Recursive (`enumerator`, not `contentsOfDirectory`): `Sources/MacSCPCLI`
@@ -345,13 +352,21 @@ struct CLISessionsCommandGuardTests {
         let targetCommandFiles = try swiftFiles.filter {
             try String(contentsOf: $0, encoding: .utf8).contains("SessionReference.parse(")
         }
-        // Counted 2026-09-02, alongside this task: `ls`, `get`, `put`, `rm`,
-        // `mkdir` — `sessions` is deliberately not among them (it lists
-        // sessions by filter, not by a `name:/path` target).
-        #expect(targetCommandFiles.count == 5, """
-            expected exactly 5 command files calling SessionReference.parse(, \
-            found \(targetCommandFiles.count): \
-            \(targetCommandFiles.map(\.lastPathComponent).sorted())
+        let completingFiles = try swiftFiles.filter {
+            try String(contentsOf: $0, encoding: .utf8)
+                .contains("completion: SessionNameCompletion.kind")
+        }
+        // `sessions` is in neither set, deliberately: it lists sessions by
+        // filter, not by a `name:/path` target, and completes nothing.
+        #expect(!targetCommandFiles.isEmpty, "no command file parses a session target at all")
+        #expect(!completingFiles.isEmpty, "no command file wires the completer at all")
+        #expect(
+            Set(targetCommandFiles.map(\.lastPathComponent))
+                == Set(completingFiles.map(\.lastPathComponent)),
+            """
+            these parse a session target: \
+            \(targetCommandFiles.map(\.lastPathComponent).sorted()); \
+            these wire the completer: \(completingFiles.map(\.lastPathComponent).sorted())
             """)
 
         for file in targetCommandFiles {

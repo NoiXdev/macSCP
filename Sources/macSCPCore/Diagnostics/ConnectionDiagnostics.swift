@@ -45,6 +45,18 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
         case contributions
     }
 
+    /// Whether this scope runs a step that resolves a secret — the dial and
+    /// the contributions, the two that authenticate. Derived from
+    /// `runs(_:)`, so a scope added to this enum answers by construction
+    /// rather than by being remembered here.
+    ///
+    /// Public because the CLI asks it and `runs(_:)`/`OptionalStep` are
+    /// internal: `macscp-cli diagnose --verbose` reports which secret source
+    /// answered, and a scope that asked for none would otherwise print
+    /// `secret source: none` — a line that reads as a finding about the
+    /// session when it only means nothing looked.
+    public var resolvesASecret: Bool { runs(.dial) || runs(.contributions) }
+
     /// Whether this scope measures that step.
     func runs(_ step: OptionalStep) -> Bool {
         switch self {

@@ -684,7 +684,8 @@ enum CLIMatrixCases {
         // The label comes from the source type itself, not from a string
         // written here: renaming it moves both sides at once.
         let label = PasswordCommandSecretSource(command: "true").label
-        let namedTheHelper = delivered.stderrText.contains("secret source: \(label)")
+        let namedTheHelper = delivered.stderrText.contains(
+            "\(CLIMatrix.secretSourceNote)\(label)")
         #expect(
             delivered.status == 0,
             "--password-command did not deliver on \(kind.rawValue) (exit \(delivered.status))")
@@ -701,6 +702,229 @@ enum CLIMatrixCases {
             broken.status == CLIExitCode.auth.rawValue,
             "a failing --password-command exited \(broken.status) on \(kind.rawValue)")
         #expect(brokenNamedTheHelper, "the error does not name the helper on \(kind.rawValue)")
+    }
+
+    // MARK: - diagnose
+
+    /// `diagnose <session> --scope ping --json` measures the universal half
+    /// of the path to the session's own machine: the resolve, one TCP
+    /// connection attempt and the ICMP echo.
+    ///
+    /// The ids are compared against `DiagnosticStepID`'s own constants, in
+    /// order — `--scope ping` names exactly those three, and the resolve is
+    /// in every scope (`DiagnosticScope.runs(_:)`).
+    ///
+    /// **The exit code is derived, not pinned, and the ICMP row is why.**
+    /// That cell is a property of the RUNNER: on the implementer's machine
+    /// (macOS 15, Darwin 25.6.0, measured 2026-09-04) the echo on loopback
+    /// comes back with replies and the command exits 0; a runner whose
+    /// sandbox refuses the unprivileged datagram socket reports
+    /// `unavailable` — still 0, because `unavailable` is not a problem — and
+    /// one that opens the socket and hears nothing reports `failed` and
+    /// exits 16. So the case asks Core's own rule what the rows it got
+    /// should exit with (`CLIMatrix.expectedExitCode(for:)`, which rebuilds
+    /// a report from them and calls `DiagnoseRendering.exitCode(for:)`) and
+    /// PRINTS the icmp row, so the log of this run says which of the three
+    /// this machine did.
+    ///
+    /// The two rows that are NOT runner-dependent are asserted outright:
+    /// 127.0.0.1 resolves, and the rig's port is listening. Without them a
+    /// walk whose every row came back `unavailable` would satisfy
+    /// everything else here — the derived exit code included, since that
+    /// walk exits 0 too.
+    ///
+    /// The endpoint is compared against the one the BACKEND derives from the
+    /// stored session (`BackendDescriptor.endpoint`), which is what makes
+    /// this three cases rather than the same run three times: SSH is
+    /// diagnosed at the rig's sshd port, S3 at the MinIO endpoint's and
+    /// WebDAV at the vhost's, and a `diagnose` reading the wrong field would
+    /// measure a port that merely happens to be open.
+    static func diagnosePingMeasuresTheUniversalSteps(_ kind: ConnectionKind) async throws {
+        let rig = try CLIMatrix.make(for: kind, label: "diagnose-ping")
+        defer { rig.tearDown() }
+
+        let result = try await rig.run(
+            ["diagnose", rig.session.name, "--scope", "ping", "--json", "--verbose"])
+        // The leak question first, computed before any message below could
+        // quote this run's output: its environment carries the backend's
+        // secret (CLAUDE.md, "A value a test must not leak has two exits").
+        let leaks = rig.leaksSecret(result)
+        #expect(leaks == false, "the run printed the secret on \(kind.rawValue)")
+
+        let (streamed, summary) = try CLIMatrix.diagnosis(result.stdoutText)
+        #expect(
+            streamed.map(\.id) == [
+                DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+            ], "the ping scope printed \(streamed.map(\.id)) on \(kind.rawValue)")
+        // The rows the observer streamed and the rows the summary carries are
+        // one measurement printed twice; a summary built from anything else
+        // would be a second answer nobody reading the output could tell from
+        // the first.
+        #expect(summary.steps == streamed, "the summary disagrees with the rows it followed")
+        #expect(summary.completion == CLIMatrix.completionKey(for: .complete))
+
+        let ok = try #require(CLIMatrix.outcomeKey(for: .ok))
+        let resolve = try #require(streamed.first { $0.id == DiagnosticStepID.resolve })
+        let tcp = try #require(streamed.first { $0.id == DiagnosticStepID.tcp })
+        let icmp = try #require(streamed.first { $0.id == DiagnosticStepID.icmp })
+        #expect(resolve.outcome == ok, "the rig's host did not resolve on \(kind.rawValue)")
+        #expect(tcp.outcome == ok, "the rig's port refused the connection on \(kind.rawValue)")
+        // The runner-dependent row: recorded, not asserted — see the doc
+        // comment. It carries no secret to print; `detail` is the echo's own
+        // reply counts.
+        print("""
+            CLIMatrix: diagnose --scope ping on \(kind.rawValue) — exit \(result.status), \
+            icmp \(icmp.outcome), \(icmp.reason ?? icmp.detail)
+            """)
+
+        let expected = try CLIMatrix.expectedExitCode(for: streamed)
+        #expect(
+            result.status == expected,
+            "diagnose exited \(result.status) on \(kind.rawValue) for rows Core exits \(expected) for")
+
+        // `--verbose` says which secret source answered, and this scope
+        // asked none — so the line is absent rather than reporting "none",
+        // which reads as a finding about the session's credential when it
+        // means nothing looked (`DiagnosticScope.resolvesASecret`). The
+        // POSITIVE that keeps this negative from going quietly stale sits in
+        // `diagnoseDial` below, on the same backend and the same flag: there
+        // the line must be present.
+        let noted = result.stderrText.contains(CLIMatrix.secretSourceNote)
+        #expect(noted == false, "the ping scope reported a secret source on \(kind.rawValue)")
+
+        var values = rig.descriptor.editBaseline
+        values.merge(rig.descriptor.sessionValues(rig.session))
+        let backendEndpoint = try #require(
+            rig.descriptor.endpoint(values), "\(kind.rawValue) derives no endpoint at all")
+        let named = try #require(summary.endpoint, "the summary named no endpoint")
+        #expect(
+            named.host == backendEndpoint.host && named.port == backendEndpoint.port,
+            "the diagnosis measured \(named.host):\(named.port) on \(kind.rawValue)")
+    }
+
+    /// `diagnose <session> --scope dial --json` runs the backend's OWN
+    /// connection attempt — and the host key is the one thing it will not
+    /// decide.
+    ///
+    /// Three measurements on a store that starts empty:
+    ///
+    /// 1. A backend that authenticates a host key (`CLIMatrix.hasHostKeys`)
+    ///    comes back `failed` against a fresh store, with the sentence Core
+    ///    writes for a refused key, and exits 16. The dial answers the
+    ///    host-key question with `HostKeyDecider.refusing`
+    ///    (`DialProbes.sshConnect`), unconditionally, and `diagnose`
+    ///    advertises no `--accept-new` that could change it
+    ///    (`theConnectionFlagsAreAskedForPerCommand`). The store is read
+    ///    afterwards and must STILL be empty: a probe that TOFU'd on the
+    ///    user's behalf would be writing a consent nobody gave, and it would
+    ///    satisfy every other assertion here.
+    /// 2. The key is then remembered the way the rest of the matrix
+    ///    remembers it — one `ls --accept-new` run, the command
+    ///    `anUnknownHostKeyIsRefusedUntilAccepted` measures that acceptance
+    ///    on — and exactly one key lands on file.
+    /// 3. The same diagnosis, unchanged, now comes back `ok` and exits 0.
+    ///
+    /// A backend with no host keys has nothing to refuse: its dial is `ok`
+    /// on the fresh store already and records nothing. That branch is not a
+    /// bare `return` for the reason the host-key case states — a gate stuck
+    /// at `true` must fail on S3 and WebDAV, not merely skip them.
+    static func diagnoseDialMeasuresTheBackendsOwnConnect(_ kind: ConnectionKind) async throws {
+        let rig = try CLIMatrix.make(for: kind, label: "diagnose-dial")
+        defer { rig.tearDown() }
+        let ok = try #require(CLIMatrix.outcomeKey(for: .ok))
+        #expect(try rig.recordedHostKeys().isEmpty, "a fresh store already knows a host key")
+
+        let fresh = try await diagnoseDial(rig)
+        if try rig.hasHostKeys(operation: "the diagnose host-key refusal") {
+            // The reason is Core's own sentence for a refused key, asked for
+            // rather than transcribed: a reworded refusal moves this with it.
+            let failed = try #require(CLIMatrix.outcomeKey(for: .failed("")))
+            let refusal = DialSupport.reason(for: HostKeyError.rejectedByUser)
+            #expect(
+                fresh.dial.outcome == failed,
+                "an unknown host key came back \(fresh.dial.outcome) on \(kind.rawValue)")
+            #expect(fresh.dial.reason == refusal, "the dial refused for another reason")
+            #expect(
+                fresh.status == CLIExitCode.diagnosis.rawValue,
+                "a failed dial exited \(fresh.status) on \(kind.rawValue)")
+            let recordedByTheDiagnosis = try rig.recordedHostKeys()
+            #expect(
+                recordedByTheDiagnosis.isEmpty,
+                "the diagnosis remembered \(recordedByTheDiagnosis.count) host key(s)")
+
+            let binary = try CLIMatrix.binaryURL()
+            let flags = try await CLIMatrix.hostKeyFlags(for: "ls", binary: binary)
+            let accepted = try await rig.run(
+                ["ls"] + flags + ["--json", rig.target(rig.remoteRoot)])
+            let acceptedLeaks = rig.leaksSecret(accepted)
+            #expect(acceptedLeaks == false, "the accepting run printed the secret")
+            #expect(
+                accepted.status == 0,
+                "ls --accept-new exited \(accepted.status) on \(kind.rawValue)")
+            let remembered = try rig.recordedHostKeys()
+            #expect(remembered.count == 1, "--accept-new recorded \(remembered.count) host keys")
+        } else {
+            #expect(
+                fresh.dial.outcome == ok,
+                "the dial came back \(fresh.dial.outcome) on \(kind.rawValue)")
+            #expect(fresh.status == 0, "the dial exited \(fresh.status) on \(kind.rawValue)")
+            #expect(
+                try rig.recordedHostKeys().isEmpty,
+                "\(kind.rawValue) recorded a host key it has no host keys for")
+        }
+
+        let known = try await diagnoseDial(rig)
+        #expect(
+            known.dial.outcome == ok,
+            "the dial came back \(known.dial.outcome) on \(kind.rawValue) with the key known")
+        #expect(known.status == 0, "the dial exited \(known.status) on \(kind.rawValue)")
+    }
+
+    /// One `--scope dial` run, decoded: the two rows it must print, the exit
+    /// code Core's rule gives for them, and the dial row itself for the
+    /// caller to read.
+    ///
+    /// Shared by the two runs above so the shape is asserted on both — the
+    /// second one is the interesting one and would otherwise be checked less
+    /// than the first.
+    private static func diagnoseDial(_ rig: CLIMatrix) async throws
+        -> (dial: CLIDiagnosedStep, status: Int32)
+    {
+        let result = try await rig.run(
+            ["diagnose", rig.session.name, "--scope", "dial", "--json", "--verbose"])
+        let leaks = rig.leaksSecret(result)
+        #expect(leaks == false, "the dial run printed the secret on \(rig.kind.rawValue)")
+        // The positive half of the ping case's absence: this scope DOES ask
+        // a secret source, so `--verbose` names one. Which one is not
+        // asserted — the two HTTP dials answer without a credential at all
+        // and leave the chain on its "none" label, which is the honest
+        // answer to "who answered" and still a line that was printed.
+        let noted = result.stderrText.contains(CLIMatrix.secretSourceNote)
+        #expect(noted, "the dial scope reported no secret source on \(rig.kind.rawValue)")
+
+        let (streamed, summary) = try CLIMatrix.diagnosis(result.stdoutText)
+        #expect(
+            streamed.map(\.id) == [DiagnosticStepID.resolve, DiagnosticStepID.dial],
+            "the dial scope printed \(streamed.map(\.id)) on \(rig.kind.rawValue)")
+        #expect(summary.steps == streamed, "the summary disagrees with the rows it followed")
+        let expected = try CLIMatrix.expectedExitCode(for: streamed)
+        #expect(
+            result.status == expected,
+            """
+            diagnose exited \(result.status) on \(rig.kind.rawValue) for rows Core exits \
+            \(expected) for
+            """)
+        let dial = try #require(
+            streamed.first { $0.id == DiagnosticStepID.dial },
+            "the dial scope printed no dial row on \(rig.kind.rawValue)")
+        // Recorded for the same reason the ping case records its icmp row:
+        // the caller runs this twice, and which of the two runs produced
+        // which exit code is the whole measurement.
+        print("""
+            CLIMatrix: diagnose --scope dial on \(rig.kind.rawValue) — exit \(result.status), \
+            dial \(dial.outcome), \(dial.reason ?? dial.detail)
+            """)
+        return (dial, result.status)
     }
 
     // MARK: - Shared reading
@@ -775,6 +999,14 @@ struct CLIMatrixSSHITests {
     @Test func theSecretComesFromThePasswordCommand() async throws {
         try await CLIMatrixCases.theSecretComesFromThePasswordCommand(Self.kind)
     }
+
+    @Test func diagnosePingMeasuresTheUniversalSteps() async throws {
+        try await CLIMatrixCases.diagnosePingMeasuresTheUniversalSteps(Self.kind)
+    }
+
+    @Test func diagnoseDialMeasuresTheBackendsOwnConnect() async throws {
+        try await CLIMatrixCases.diagnoseDialMeasuresTheBackendsOwnConnect(Self.kind)
+    }
 }
 
 @Suite("CLIMatrixS3", .enabled(if: rigIsEnabled), .serialized)
@@ -829,6 +1061,14 @@ struct CLIMatrixS3ITests {
     @Test func theSecretComesFromThePasswordCommand() async throws {
         try await CLIMatrixCases.theSecretComesFromThePasswordCommand(Self.kind)
     }
+
+    @Test func diagnosePingMeasuresTheUniversalSteps() async throws {
+        try await CLIMatrixCases.diagnosePingMeasuresTheUniversalSteps(Self.kind)
+    }
+
+    @Test func diagnoseDialMeasuresTheBackendsOwnConnect() async throws {
+        try await CLIMatrixCases.diagnoseDialMeasuresTheBackendsOwnConnect(Self.kind)
+    }
 }
 
 @Suite("CLIMatrixWebDAV", .enabled(if: rigIsEnabled), .serialized)
@@ -882,6 +1122,14 @@ struct CLIMatrixWebDAVITests {
 
     @Test func theSecretComesFromThePasswordCommand() async throws {
         try await CLIMatrixCases.theSecretComesFromThePasswordCommand(Self.kind)
+    }
+
+    @Test func diagnosePingMeasuresTheUniversalSteps() async throws {
+        try await CLIMatrixCases.diagnosePingMeasuresTheUniversalSteps(Self.kind)
+    }
+
+    @Test func diagnoseDialMeasuresTheBackendsOwnConnect() async throws {
+        try await CLIMatrixCases.diagnoseDialMeasuresTheBackendsOwnConnect(Self.kind)
     }
 }
 
@@ -1085,6 +1333,180 @@ struct CLIMatrixSessionsITests {
                 arguments: "--name \(needle.uppercased())")
             #expect(listed.map(\.name) == [entry.name])
         }
+    }
+}
+
+// MARK: - diagnose, the runs that are not per backend
+
+/// The `diagnose` cases that no backend axis applies to: the trace, which
+/// walks a PATH and not a protocol, and the two refusals, which never reach a
+/// connect at all.
+///
+/// An SSH rig supplies both the coordinates and the environment. The
+/// coordinates are read off the rig's own session (`BackendDescriptor
+/// .endpoint`), so this file writes no host and no port; the environment is
+/// `rig.run`'s, which removes every backend's secret variable and sets only
+/// this one's — which is what keeps the refusals, the two children here that
+/// connect to nothing, from being the ones that inherit a developer's
+/// exported `AWS_SECRET_ACCESS_KEY`.
+@Suite("CLIMatrixDiagnose", .enabled(if: rigIsEnabled), .serialized)
+struct CLIMatrixDiagnoseITests {
+    /// `diagnose --host … --scope trace --json` reports the path as hops,
+    /// each carrying the four cells the trace table writes and an ending
+    /// that table has a word for.
+    ///
+    /// **The hop COUNT is not asserted, and could not honestly be.** A trace
+    /// to the loopback address ends at its first hop here (measured
+    /// 2026-09-04: one hop, `destination`); a runner that refuses the socket
+    /// the walk needs reports `unavailable` and carries no table at all; and
+    /// either is a correct answer about the machine it ran on. The count is
+    /// printed instead, so the log says which this run got.
+    ///
+    /// What IS asserted is the shape, and it is derived on both sides: a
+    /// hop's keys are the trace table's own columns through the same
+    /// `DiagnosticReport.header` derivation the renderer applies, and every
+    /// hop's outcome cell is one of the words
+    /// `ConnectionDiagnostics.traceTable(_:)` writes
+    /// (`CLIMatrix.namedHopOutcomes` — the three constants plus every
+    /// `unreachable (code N)`, expanded rather than prefix-matched). A cell
+    /// that went empty, or that started carrying a raw error, is red.
+    ///
+    /// `hops` is REQUIRED of a trace that came back `ok`: a successful trace
+    /// with no table is a row that says the path was walked and nothing
+    /// about where it went.
+    @Test func theTraceReportsItsHopsWithANamedEnding() async throws {
+        let rig = try CLIMatrix.make(for: .ssh, label: "diagnose-trace")
+        defer { rig.tearDown() }
+        let endpoint = try Self.rigEndpoint(rig)
+
+        let result = try await rig.run([
+            "diagnose", "--host", endpoint.host, "--port", "\(endpoint.port)",
+            "--scope", "trace", "--json",
+        ])
+        let leaks = rig.leaksSecret(result)
+        #expect(leaks == false, "the trace run printed the secret")
+
+        let (streamed, summary) = try CLIMatrix.diagnosis(result.stdoutText)
+        #expect(
+            streamed.map(\.id) == [DiagnosticStepID.resolve, DiagnosticStepID.trace],
+            "the trace scope printed \(streamed.map(\.id))")
+        #expect(summary.steps == streamed, "the summary disagrees with the rows it followed")
+        let named = try #require(summary.endpoint, "the summary named no endpoint")
+        #expect(
+            named.host == endpoint.host && named.port == endpoint.port,
+            "the --host form measured \(named.host):\(named.port)")
+        let expected = try CLIMatrix.expectedExitCode(for: streamed)
+        #expect(
+            result.status == expected,
+            "diagnose exited \(result.status) for rows Core exits \(expected) for")
+
+        let trace = try #require(streamed.first { $0.id == DiagnosticStepID.trace })
+        print("""
+            CLIMatrix: diagnose --scope trace — \(trace.outcome), \
+            \(trace.hops?.count ?? 0) hop(s)
+            """)
+        guard trace.outcome == CLIMatrix.outcomeKey(for: .ok) else { return }
+        let hops = try #require(trace.hops, "an ok trace carried no hops at all")
+        for hop in hops {
+            #expect(
+                Set(hop.keys) == CLIMatrix.hopKeys,
+                "a hop carries \(Set(hop.keys).sorted()), not the trace table's columns")
+            let ending = hop[DiagnosticReport.header(DiagnosticTraceColumn.outcome)] ?? ""
+            #expect(
+                CLIMatrix.namedHopOutcomes.contains(ending),
+                "a hop ended in '\(ending)', which the trace table has no word for")
+        }
+    }
+
+    /// The two refusals a diagnosis makes before measuring anything, and the
+    /// exit code that says "you asked for the wrong thing" rather than "the
+    /// path is broken".
+    ///
+    /// * A session name the store does not hold → `SessionReferenceError`
+    ///   through `CLIErrorMapping`, exit 2.
+    /// * `--host` with a scope whose only step beyond the resolve
+    ///   authenticates → `DiagnoseUsageError.scopeNeedsASession`, exit 2: a
+    ///   bare endpoint names no Keychain slot for a secret source to answer
+    ///   for, so the row would say nothing was measured and nothing else.
+    ///
+    /// **The positive beside the two negatives**, and it is not decoration:
+    /// the same `--host` with a scope Core permits is NOT refused, and it
+    /// prints rows. Without that, a build that refused every `--host` form
+    /// would satisfy both refusals above — and the refusal is about the
+    /// scope, not about the flag.
+    ///
+    /// Which scopes fall on which side is read from
+    /// `DiagnoseUsageError.refusal(forEndpointScope:)` — Core's own
+    /// exhaustive switch — rather than chosen here, and both messages come
+    /// from `CLIErrorMapping.message(for:)` asked about the very error each
+    /// refusal throws, so a reworded sentence moves both sides at once.
+    ///
+    /// Neither refusal reaches a connect, and both still go through
+    /// `rig.run` (see `neitherTransferCommandOffersARecursiveFlag` for the
+    /// same reasoning): the child's environment is scrubbed by construction.
+    @Test func theUsageRefusalsExitTwoWithoutMeasuringAnything() async throws {
+        let rig = try CLIMatrix.make(for: .ssh, label: "diagnose-usage")
+        defer { rig.tearDown() }
+        let usage = CLIExitCode.usage.rawValue
+        let endpoint = try Self.rigEndpoint(rig)
+
+        let missing = "no-such-session-\(UUID().uuidString)"
+        let unknown = try await rig.run(["diagnose", missing, "--scope", "ping", "--json"])
+        let unknownLeaks = rig.leaksSecret(unknown)
+        #expect(unknownLeaks == false, "the refused run printed the secret")
+        #expect(unknown.status == usage, "an unknown session exited \(unknown.status)")
+        #expect(unknown.stdoutText.isEmpty, "a refused diagnosis printed rows anyway")
+        #expect(
+            unknown.stderrText.contains(
+                CLIErrorMapping.message(for: SessionReferenceError.unknown(missing))),
+            "the refusal does not name the session that was not found")
+
+        // The refused scope and the permitted one both come from Core's own
+        // split, so a scope that changed sides moves this case with it.
+        let refusedScope = try #require(
+            DiagnosticScope.allCases.first {
+                DiagnoseUsageError.refusal(forEndpointScope: $0) != nil
+            }, "no scope needs a session at all")
+        let permittedScope = try #require(
+            DiagnosticScope.allCases.first {
+                DiagnoseUsageError.refusal(forEndpointScope: $0) == nil
+            }, "every scope needs a session")
+
+        let refused = try await rig.run([
+            "diagnose", "--host", endpoint.host, "--scope", refusedScope.rawValue,
+        ])
+        let refusedLeaks = rig.leaksSecret(refused)
+        #expect(refusedLeaks == false, "the refused run printed the secret")
+        #expect(
+            refused.status == usage,
+            "--host --scope \(refusedScope.rawValue) exited \(refused.status)")
+        #expect(refused.stdoutText.isEmpty, "a refused diagnosis printed rows anyway")
+        let refusal = try #require(DiagnoseUsageError.refusal(forEndpointScope: refusedScope))
+        #expect(
+            refused.stderrText.contains(CLIErrorMapping.message(for: refusal)),
+            "the refusal does not name the scope it refused")
+
+        let measured = try await rig.run([
+            "diagnose", "--host", endpoint.host, "--scope", permittedScope.rawValue, "--json",
+        ])
+        let measuredLeaks = rig.leaksSecret(measured)
+        #expect(measuredLeaks == false, "the permitted run printed the secret")
+        #expect(
+            measured.status != usage,
+            "--host --scope \(permittedScope.rawValue) was refused too")
+        let (streamed, _) = try CLIMatrix.diagnosis(measured.stdoutText)
+        #expect(!streamed.isEmpty, "the permitted --host scope measured nothing")
+    }
+
+    /// The rig's own coordinates as an endpoint, through the backend that
+    /// owns them — the same merge `DiagnoseCommand` does for a stored
+    /// session (`editBaseline`, then the record). Nothing here spells a host
+    /// or a port.
+    private static func rigEndpoint(_ rig: CLIMatrix) throws -> Endpoint {
+        var values = rig.descriptor.editBaseline
+        values.merge(rig.descriptor.sessionValues(rig.session))
+        return try #require(
+            rig.descriptor.endpoint(values), "\(rig.kind.rawValue) derives no endpoint")
     }
 }
 
@@ -1373,10 +1795,12 @@ struct CLIMatrixCommandsITests {
     /// The two sides are both READ rather than written down: the offered set
     /// comes from the binary's own `--help`, and the driven set from the
     /// source of the cases (`CLIMatrix.drivenSubcommands`, which counts a run
-    /// through a fixture's own `run` and ignores comment lines). So a SEVENTH
+    /// through a fixture's own `run` and ignores comment lines). So an EIGHTH
     /// subcommand turns this red the day it is added — which is the guard
     /// this matrix existed without until now, and the reason `sessions` could
-    /// have gone uncovered through two green tasks.
+    /// have gone uncovered through two green tasks. It did exactly that on
+    /// 2026-09-04: the seventh, `diagnose`, arrived in one commit and left
+    /// this red until the cases above drove it.
     ///
     /// Set equality, not containment, in both directions on purpose: a case
     /// driving a name the binary does not offer is a case that cannot be
@@ -1404,31 +1828,64 @@ struct CLIMatrixCommandsITests {
     /// that assumes they are does not merely carry a useless flag — it is
     /// refused.
     ///
-    /// `sessions` declares `JSONOptions`, not `GlobalOptions`
-    /// (`Sources/MacSCPCLI/SessionsCommand.swift`), because it opens no
-    /// connection and resolves no secret. So this asserts BOTH halves —
-    /// `hostKeyFlags` gives `ls` the flag and `sessions` nothing — and then
-    /// the reason: the binary really does refuse `sessions --accept-new`.
-    /// Without that last run the two halves would only be agreeing with each
-    /// other about a help screen.
+    /// TWO subcommands declare their own option group rather than
+    /// `GlobalOptions`, and for the same reason. `sessions` takes
+    /// `JSONOptions` (`Sources/MacSCPCLI/SessionsCommand.swift`) because it
+    /// opens no connection and resolves no secret; `diagnose` takes
+    /// `DiagnoseOptions` (`Sources/MacSCPCLI/DiagnoseCommand.swift`) because
+    /// it resolves a secret but decides no host key — its dial answers that
+    /// question with `HostKeyDecider.refusing` inside Core, so
+    /// `--accept-new` would be advertised and never read.
+    ///
+    /// So this asserts BOTH halves — `hostKeyFlags` gives `ls` the flag and
+    /// gives those two nothing — and then the reason: the binary really does
+    /// refuse the flag it does not declare. Without those runs the two
+    /// halves would only be agreeing with each other about a help screen.
+    ///
+    /// The list at the end is SORTED, not in the binary's help order: which
+    /// commands answer no is the claim, and reordering the subcommands is
+    /// not a change to it.
     @Test func theConnectionFlagsAreAskedForPerCommand() async throws {
         let binary = try CLIMatrix.binaryURL()
         #expect(try await CLIMatrix.hostKeyFlags(for: "ls", binary: binary) == ["--accept-new"])
         #expect(try await CLIMatrix.hostKeyFlags(for: "sessions", binary: binary) == [])
+        #expect(try await CLIMatrix.hostKeyFlags(for: "diagnose", binary: binary) == [])
 
-        let refused = try await SubprocessRunner.run(
-            binary, arguments: ["sessions", "--accept-new"])
-        #expect(refused.status != 0, "sessions accepted a flag it does not declare")
-        #expect(refused.stderrText.contains("--accept-new"))
+        // The `diagnose` probe needs a TARGET, and the reason is worth
+        // writing down: ArgumentParser reports a `validate()` complaint
+        // before an unknown option, so `macscp-cli diagnose --accept-new`
+        // alone answers "Name a stored session, or pass --host" and exits 64
+        // without ever mentioning the flag (measured 2026-09-04). A probe
+        // that read THAT as the refusal would pass for a build that accepted
+        // `--accept-new` happily. `sessions` takes no argument, so its
+        // vector is the bare one.
+        //
+        // Through `rig.run`, like the other guards in this suite, so the
+        // child's environment is scrubbed; and the subcommand name comes out
+        // of `probes` rather than sitting as a literal after `run([`, so
+        // this guard does not enter `CLIMatrix.drivenSubcommands`'s driven
+        // set (see that function's doc comment).
+        let rig = try CLIMatrix.make(for: .ssh, label: "connection-flags")
+        defer { rig.tearDown() }
+        let probes = [["sessions", "--accept-new"], ["diagnose", rig.session.name, "--accept-new"]]
+        for probe in probes {
+            let refused = try await rig.run(probe)
+            #expect(refused.status != 0, "\(probe[0]) accepted a flag it does not declare")
+            #expect(
+                refused.stderrText.contains("--accept-new"),
+                "\(probe[0]) refused --accept-new without naming it")
+        }
 
         // Counted rather than asserted as a number: every subcommand the
-        // binary offers is asked, and the one that answers no is named.
+        // binary offers is asked, and the ones that answer no are named.
         let names = try await CLIMatrix.subcommands(binary: binary)
         var without: [String] = []
         for name in names where try await !CLIMatrix.takesConnectionFlags(name, binary: binary) {
             without.append(name)
         }
-        #expect(without == ["sessions"], "the commands without the connection flags moved")
+        #expect(
+            without.sorted() == ["diagnose", "sessions"],
+            "the commands without the connection flags moved")
     }
 
     /// Neither transfer command offers `--recursive`, and the binary refuses

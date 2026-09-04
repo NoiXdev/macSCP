@@ -106,7 +106,14 @@ struct DiagnoseCommand: AsyncParsableCommand {
         // AFTER the run, not before it: the chain records which of its
         // sources answered at the moment one does, and before the dial has
         // asked, `label` is honestly "none".
-        if options.verbose, let secrets = target.secrets {
+        //
+        // And only for a scope that ASKED. `--scope ping` and `--scope
+        // trace` resolve no secret at all, so the chain is still on "none"
+        // when they finish — a line that reads as "this session has no
+        // credential" when it means "nothing looked". `resolvesASecret` is
+        // Core's own answer (`DiagnosticScope`), not a list of scopes
+        // written here.
+        if options.verbose, scope.resolvesASecret, let secrets = target.secrets {
             OutputFormatter.note("secret source: \(secrets.label)")
         }
         // `Foundation.exit`, the way `MacSCPCLI.main()` leaves on a mapped
@@ -155,15 +162,29 @@ struct DiagnoseCommand: AsyncParsableCommand {
 
     /// The session argument as a reference.
     ///
-    /// A NAME, not the `name:/path` the transferring subcommands parse: a
-    /// diagnosis addresses a machine and never a path, so there is nothing
-    /// after the colon to carry. The trailing colon is accepted and dropped
-    /// anyway, because `SessionNameCompletion` completes names WITH it —
-    /// `diagnose <tab>` types `prod:`, and refusing that would make the
-    /// completion this command wires up produce an argument it rejects.
+    /// Through `SessionReference.parse`, the same splitter every other
+    /// subcommand reads its `name:/path` with, and then the path is
+    /// discarded: a diagnosis addresses a machine and never a path. Parsing
+    /// is what makes `diagnose prod:/tmp` report the way `ls prod:/tmp`
+    /// would — `no stored session named 'prod'` — where taking the argument
+    /// whole named a PATH as the session that could not be found.
+    ///
+    /// The `.local` arm is the bare name, which is the form this command
+    /// documents: `parse` reads a text with no colon (or with a
+    /// one-character prefix, which it treats as a drive letter) as a local
+    /// path, and here that text IS the session name. Its trailing colon is
+    /// dropped for the same reason `.remote`'s empty path is ignored —
+    /// `SessionNameCompletion` completes names WITH it, so `diagnose <tab>`
+    /// types `prod:` and refusing that would make the completion this
+    /// command wires up produce an argument it rejects.
     private var sessionReference: SessionReference {
-        let name = session ?? ""
-        return .remote(name: name.hasSuffix(":") ? String(name.dropLast()) : name, path: "/")
+        switch SessionReference.parse(session ?? "") {
+        case .remote(let name, _):
+            return .remote(name: name, path: "/")
+        case .local(let text):
+            return .remote(
+                name: text.hasSuffix(":") ? String(text.dropLast()) : text, path: "/")
+        }
     }
 
     private struct Target {

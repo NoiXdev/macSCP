@@ -252,10 +252,12 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// source was handed that id reports "no secret available" for a session
     /// that has one.
     ///
-    /// Lives here rather than beside either reader because there are now two
-    /// of them, in two targets that share no other code: the App's
-    /// diagnostics entry (`ContentView.showDiagnostics`) and `macscp-cli
-    /// diagnose` (`DiagnoseCommand`). Two counted call sites, both passing it
-    /// to `ConnectionDiagnostics(sessionID:)`.
+    /// Lives here rather than beside its readers because they sit in two
+    /// targets that share no other code: the App's diagnostics entry
+    /// (`ContentView.showDiagnostics`) and `macscp-cli diagnose`
+    /// (`DiagnoseCommand`). THREE call sites, counted by grep on 2026-09-04:
+    /// two in `ContentView+Diagnostics.swift` — the tab form and the stored
+    /// form — which hand it to `DiagnosticsTarget(sessionID:)`, and one in
+    /// `DiagnoseCommand`, which hands it to `ConnectionDiagnostics(sessionID:)`.
     public var secretSlot: UUID { loginSetID ?? id }
 }

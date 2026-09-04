@@ -69,10 +69,10 @@ Scheduled after the diagnostics leak-route fix (backlog row
   ```
 - Consumes: `DiagnosticStep`, `DiagnosticOutcome`, `DiagnosticReport`, `DiagnosticTable` (the trace's table shape — read `DiagnosticStep.table`).
 
-- [ ] **Step 1: Red first.** Tests: a step with `.failed("x")` renders the outcome word `failed` and the reason; a trace step with two hops renders three rows; `jsonObject` carries `durationMs` as an integer and omits `reason` for `.ok`; `exitCode` is `.success` for a report of ok+skipped+unavailable and `.diagnosis` for one `.timedOut`; the chain answers the first non-empty source and skips an empty one (secret in a named constant, Bools first). Run: `swift test --filter "DiagnoseRendering|CLISecretSources"` — red: `cannot find 'DiagnoseRendering'`.
-- [ ] **Step 2: Implement** the three files.
-- [ ] **Step 3: Green**, full `swift test`, zero warnings.
-- [ ] **Step 4: Commit** `feat(cli): the diagnosis renders to rows, JSON lines and an exit code`.
+- [x] **Step 1: Red first.** Tests: a step with `.failed("x")` renders the outcome word `failed` and the reason; a trace step with two hops renders three rows; `jsonObject` carries `durationMs` as an integer and omits `reason` for `.ok`; `exitCode` is `.success` for a report of ok+skipped+unavailable and `.diagnosis` for one `.timedOut`; the chain answers the first non-empty source and skips an empty one (secret in a named constant, Bools first). Run: `swift test --filter "DiagnoseRendering|CLISecretSources"` — red: `cannot find 'DiagnoseRendering'`.
+- [x] **Step 2: Implement** the three files.
+- [x] **Step 3: Green**, full `swift test`, zero warnings.
+- [x] **Step 4: Commit** `feat(cli): the diagnosis renders to rows, JSON lines and an exit code`.
 
 ---
 
@@ -95,9 +95,9 @@ Behaviour:
 - `--verbose` says which secret source answered, as `connect` does.
 - `appVersion`: read the executable's version the way `MacSCPCLI` reports `--version` (find it); Core touches no bundle.
 
-- [ ] **Step 1: Red first.** `swift build --product macscp-cli` then `.build/debug/macscp-cli diagnose --help` — red: `Unknown subcommand`. After wiring, `.build/debug/macscp-cli diagnose --host 127.0.0.1 --port 2222 --scope ping` against the rig prints three rows (`resolve`, `tcp`, `icmp`) and exits 0 or 16 — record which and why (ICMP on loopback is the unmeasured cell).
-- [ ] **Step 2: Implement**; `swift build --build-tests` zero warnings; full `swift test` green EXCEPT the matrix's coverage guard, which is now red on `diagnose` — that is Task 3's red; say so in the report and commit anyway? No: the ungated guard must not be committed red. Order: implement Task 3's minimal coverage case in THIS commit only if the guard is ungated — read `CLIMatrixCoverage.everySubcommandTheBinaryOffersIsDrivenByACase` (it is gated on the binary; check) and decide: if it runs ungated, add the smallest `diagnose` case here and let Task 3 add the rest; state the decision in the report.
-- [ ] **Step 3: Commit** `feat(cli): macscp-cli diagnose runs the connection diagnostics from the terminal`.
+- [x] **Step 1: Red first.** `swift build --product macscp-cli` then `.build/debug/macscp-cli diagnose --help` — red: `Unknown subcommand`. After wiring, `.build/debug/macscp-cli diagnose --host 127.0.0.1 --port 2222 --scope ping` against the rig prints three rows (`resolve`, `tcp`, `icmp`) and exits 0 or 16 — record which and why (ICMP on loopback is the unmeasured cell).
+- [x] **Step 2: Implement**; `swift build --build-tests` zero warnings; full `swift test` green EXCEPT the matrix's coverage guard, which is now red on `diagnose` — that is Task 3's red; say so in the report and commit anyway? No: the ungated guard must not be committed red. Order: implement Task 3's minimal coverage case in THIS commit only if the guard is ungated — read `CLIMatrixCoverage.everySubcommandTheBinaryOffersIsDrivenByACase` (it is gated on the binary; check) and decide: if it runs ungated, add the smallest `diagnose` case here and let Task 3 add the rest; state the decision in the report.
+- [x] **Step 3: Commit** `feat(cli): macscp-cli diagnose runs the connection diagnostics from the terminal`.
 
 ---
 
@@ -108,6 +108,6 @@ Behaviour:
 - Modify: `Tests/macSCPCoreTests/Support/CLIMatrix.swift` only if the helper needs a JSON-lines-to-objects reader it lacks (it has `listing` for `ls`; a generic `jsonLines(_:)` may already exist — read first)
 - Modify: `README.md` (the CLI section: one line and the two forms), `docs/BACKLOG.md` (a Done row naming this plan, the cases per backend counted, the ICMP-on-loopback measurement, the commits)
 
-- [ ] **Step 1: Red first.** `MACSCP_ITEST=1 swift test --filter CLIMatrix` — the coverage guard red on `diagnose` (if Task 2 did not already satisfy it), the new cases red because they do not exist.
-- [ ] **Step 2: Implement**; gated matrix green (count: 55 + the new cases); full `swift test` green; rig as found (diagnose creates nothing remote).
-- [ ] **Step 3: Commit** `test(cli): diagnose runs against every rig backend, and the docs say so`.
+- [x] **Step 1: Red first.** `MACSCP_ITEST=1 swift test --filter CLIMatrix` — the coverage guard red on `diagnose` (if Task 2 did not already satisfy it), the new cases red because they do not exist.
+- [x] **Step 2: Implement**; gated matrix green (count: 55 + the new cases); full `swift test` green; rig as found (diagnose creates nothing remote).
+- [x] **Step 3: Commit** `test(cli): diagnose runs against every rig backend, and the docs say so`.

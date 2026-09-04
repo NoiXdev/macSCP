@@ -201,6 +201,13 @@ struct CLIMatrix: Sendable {
     /// positive run into a test of `EnvironmentSecretSource`.
     static let secretRelayVariable = "MACSCP_CLI_MATRIX_RELAY"
 
+    /// What `--verbose` prints the answering source's label after
+    /// (`SessionConnecting.resolveSession`, `DiagnoseCommand`). One spelling
+    /// in this target, because three cases now look for it — the
+    /// `--password-command` route, and the two `diagnose` scopes that pin
+    /// which of them prints the line at all.
+    static let secretSourceNote = "secret source: "
+
     /// Runs the built binary with `arguments` and this rig's store and
     /// secret. Through `SubprocessRunner`, which awaits the child instead of
     /// parking a cooperative-pool thread on it (CLAUDE.md, "Tests never block
@@ -649,14 +656,19 @@ struct CLIMatrix: Sendable {
     /// Whether `command` takes `GlobalOptions` — the connection flags — read
     /// from that command's OWN help rather than written down here.
     ///
-    /// Not every subcommand takes them. `SessionsCommand` declares
-    /// `JSONOptions` instead (`Sources/MacSCPCLI/SessionsCommand.swift`),
-    /// deliberately: it opens no connection and resolves no secret, so
-    /// advertising `--verbose`, `--non-interactive`, `--accept-new` and
-    /// `--password-command` in its help would describe choices it never
-    /// makes. Handing it one anyway is a usage error, not a harmless extra —
-    /// measured 2026-09-04, `macscp-cli sessions --accept-new` exits 64 with
-    /// `Error: Unknown option '--accept-new'`.
+    /// Not every subcommand takes them — TWO do not, counted 2026-09-04 and
+    /// named by `theConnectionFlagsAreAskedForPerCommand`, which reads the
+    /// list off the binary rather than off this comment. `SessionsCommand`
+    /// declares `JSONOptions` (`Sources/MacSCPCLI/SessionsCommand.swift`)
+    /// because it opens no connection and resolves no secret;
+    /// `DiagnoseCommand` declares `DiagnoseOptions`
+    /// (`Sources/MacSCPCLI/DiagnoseCommand.swift`) because it resolves a
+    /// secret but decides no host key — its dial answers that question with
+    /// `HostKeyDecider.refusing` inside Core. Either way, advertising
+    /// `--accept-new` and `--non-interactive` would describe choices the
+    /// command never makes. Handing one over anyway is a usage error, not a
+    /// harmless extra — measured 2026-09-04, `macscp-cli sessions
+    /// --accept-new` exits 64 with `Error: Unknown option '--accept-new'`.
     ///
     /// So a matrix that builds ONE uniform argument vector cannot simply put
     /// `--accept-new` in it. `hostKeyFlags(for:binary:)` below is what Task 2
@@ -866,6 +878,175 @@ extension CLIMatrix {
                 return Set(dictionary.keys)
             }
     }
+}
+
+/// One step object of `diagnose --json`, decoded — the same strictness
+/// `CLIListedItem` and `CLISessionRow` are decoded with, and for the same
+/// reason: a renamed key must fail the case, not empty the comparison.
+///
+/// `reason` and `hops` are optional BY CONTRACT rather than by leniency.
+/// `DiagnoseRendering.jsonObject(for:)` omits `reason` for the two outcomes
+/// that carry none (`ok`, `timedOut`) and `hops` for every step but the
+/// trace; everything else is required.
+struct CLIDiagnosedStep: Decodable, Equatable, Sendable {
+    let id: String
+    /// The programmatic spelling, not the row's display word: `timedOut`,
+    /// never `timed out`. `CLIMatrix.outcomeKeys()` is where a case turns one
+    /// back into a `DiagnosticOutcome` without writing either spelling down.
+    let outcome: String
+    let reason: String?
+    let durationMs: Int
+    let detail: String
+    /// One dictionary per hop, keyed by the trace table's own column headers;
+    /// every value a string, `rtt` included (`"0.1 ms"`, or `"—"` for a hop
+    /// that answered nothing).
+    let hops: [[String: String]]?
+}
+
+/// The endpoint a diagnosis names, or `null` where the walk never got that
+/// far (`DiagnoseRendering.jsonSummary`).
+struct CLIDiagnosedEndpoint: Decodable, Equatable, Sendable {
+    let host: String
+    let port: Int
+}
+
+/// The one summary object `diagnose --json` prints after the last step.
+struct CLIDiagnosis: Decodable, Equatable, Sendable {
+    let completion: String
+    let endpoint: CLIDiagnosedEndpoint?
+    let steps: [CLIDiagnosedStep]
+}
+
+extension CLIMatrix {
+    /// Decodes `diagnose --json`: one JSON object per line — the steps as
+    /// they finished, and then the summary — so the LAST line is read as the
+    /// summary and every earlier one as a step.
+    ///
+    /// The split is positional, and the decoder is what makes that safe
+    /// rather than a guess: a step object has no `completion` and a summary
+    /// has no `id`, both required above, so a line read as the wrong kind
+    /// throws instead of decoding into a shape a case would then assert on.
+    /// Nothing is skipped, for the reason `listing` states.
+    static func diagnosis(_ stdout: String) throws
+        -> (streamed: [CLIDiagnosedStep], summary: CLIDiagnosis)
+    {
+        let decoder = JSONDecoder()
+        let lines = stdout
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard let last = lines.last else { throw CLIMatrixError.emptyDiagnosis }
+        let summary = try decoder.decode(CLIDiagnosis.self, from: Data(last.utf8))
+        let streamed = try lines.dropLast().map {
+            try decoder.decode(CLIDiagnosedStep.self, from: Data($0.utf8))
+        }
+        return (streamed, summary)
+    }
+
+    /// One sample per `DiagnosticOutcome` case — what the JSON spellings and
+    /// the exit rule below are derived FROM, rather than written down.
+    ///
+    /// EXHAUSTIVE, and structurally so: the `switch` below has no `default`,
+    /// so a sixth case on the enum stops compiling here until it is sampled
+    /// above. The reason text is one fixed word and nothing reads it back;
+    /// it exists because three of the five cases carry a payload.
+    static var outcomeSamples: [DiagnosticOutcome] {
+        let samples: [DiagnosticOutcome] = [
+            .ok, .failed("sample"), .timedOut, .unavailable("sample"), .skipped("sample"),
+        ]
+        for sample in samples {
+            switch sample {
+            case .ok, .failed, .timedOut, .unavailable, .skipped: break
+            }
+        }
+        return samples
+    }
+
+    /// Each `outcome` spelling `diagnose --json` writes, mapped back to the
+    /// outcome it stands for — read off the RENDERER rather than spelled a
+    /// second time here.
+    ///
+    /// `DiagnoseRendering.outcomeKey` is private, and deliberately: the
+    /// programmatic spelling is the renderer's to choose. Asking
+    /// `jsonObject(for:)` about a sample step is how a script would learn it
+    /// too, and it means a renamed spelling moves this table with it instead
+    /// of leaving a case comparing against a word nothing prints.
+    static func outcomeKeys() -> [String: DiagnosticOutcome] {
+        var keys: [String: DiagnosticOutcome] = [:]
+        for outcome in outcomeSamples {
+            if let key = outcomeKey(for: outcome) { keys[key] = outcome }
+        }
+        return keys
+    }
+
+    /// The spelling `diagnose --json` writes for one outcome — the same
+    /// derivation in the other direction, for a case that wants to say "this
+    /// row is `ok`" without spelling the word.
+    static func outcomeKey(for outcome: DiagnosticOutcome) -> String? {
+        let id = DiagnosticStepID.resolve
+        let step = DiagnosticStep(
+            id: id, titleKey: DiagnosticStepID.titleKey(for: id), started: Date(),
+            duration: .zero, outcome: outcome, detail: "")
+        return DiagnoseRendering.jsonObject(for: step)["outcome"] as? String
+    }
+
+    /// The exit code Core's own rule gives for the rows a run printed:
+    /// `DiagnoseRendering.exitCode(for:)`, asked about a report rebuilt from
+    /// the decoded outcomes.
+    ///
+    /// DERIVED rather than pinned as a number, because the number is exactly
+    /// what a runner can change. The ICMP echo is answered on loopback on
+    /// the implementer's machine and may be refused in a CI sandbox
+    /// (measured 2026-09-04), so a case that pinned 0 would be red on a
+    /// runner whose sandbox says no — while the rule it is actually about
+    /// ("16 as soon as one step failed or timed out") holds on both. An
+    /// outcome spelling this cannot map throws rather than being counted as
+    /// harmless.
+    static func expectedExitCode(for steps: [CLIDiagnosedStep]) throws -> Int32 {
+        let keys = outcomeKeys()
+        let rebuilt = try steps.map { step -> DiagnosticStep in
+            guard let outcome = keys[step.outcome] else {
+                throw CLIMatrixError.unknownOutcome(step.outcome)
+            }
+            return DiagnosticStep(
+                id: step.id, titleKey: DiagnosticStepID.titleKey(for: step.id),
+                started: Date(), duration: .zero, outcome: outcome, detail: "")
+        }
+        return DiagnoseRendering.exitCode(
+            for: DiagnosticReport(endpoint: nil, steps: rebuilt, appVersion: "test")).rawValue
+    }
+
+    /// The `completion` word the summary writes for `completion`, read off
+    /// the renderer the same way `outcomeKeys()` reads the outcomes.
+    static func completionKey(for completion: DiagnosticReport.Completion) -> String? {
+        let report = DiagnosticReport(
+            endpoint: nil, steps: [], appVersion: "test", completion: completion)
+        return DiagnoseRendering.jsonSummary(for: report)["completion"] as? String
+    }
+
+    /// Every word a hop's `outcome` cell can carry — the three constants
+    /// `ConnectionDiagnostics.traceTable(_:)` writes, plus every spelling
+    /// `DiagnosticTraceColumn.unreachable(code:)` produces.
+    ///
+    /// The unreachable arm is expanded over the whole of `UInt8` rather than
+    /// matched by prefix: a prefix check would accept `unreachable (code ` +
+    /// anything, including the empty tail a formatting change could leave
+    /// behind. 256 strings cost nothing and the set is exact.
+    static let namedHopOutcomes: Set<String> = {
+        var named: Set<String> = [
+            DiagnosticTraceColumn.answered,
+            DiagnosticTraceColumn.silent,
+            DiagnosticTraceColumn.destination,
+        ]
+        for code in UInt8.min...UInt8.max {
+            named.insert(DiagnosticTraceColumn.unreachable(code: code))
+        }
+        return named
+    }()
+
+    /// The keys a hop dictionary carries: the trace table's own columns,
+    /// through the same `DiagnosticReport.header` derivation the renderer
+    /// applies — not the four words spelled again here.
+    static let hopKeys = Set(DiagnosticTraceColumn.all.map(DiagnosticReport.header))
 }
 
 /// A temporary session store with a session for EVERY backend, spread over
@@ -1177,6 +1358,8 @@ enum CLIMatrixError: Error, CustomStringConvertible {
     case unreadableHostKey(kind: String)
     case unreadableSessionRow
     case unreadableTestSource(String)
+    case emptyDiagnosis
+    case unknownOutcome(String)
 
     var description: String {
         switch self {
@@ -1186,6 +1369,13 @@ enum CLIMatrixError: Error, CustomStringConvertible {
             return "the host key recorded for the \(kind) rig is not readable Base64"
         case .unreadableSessionRow:
             return "sessions --json printed a line that is not a JSON object"
+        case .emptyDiagnosis:
+            return "diagnose --json printed nothing at all"
+        case .unknownOutcome(let outcome):
+            return """
+                diagnose --json reported the outcome '\(outcome)', which is none of the \
+                spellings DiagnoseRendering writes
+                """
         case .unreadableTestSource(let path):
             return "the matrix case source could not be read at \(path)"
         case .binaryNotFound(let path):

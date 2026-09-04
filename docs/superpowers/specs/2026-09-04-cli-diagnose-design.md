@@ -20,8 +20,10 @@ exactly the target the app's session context menu builds: the
 descriptor's `editBaseline` merged with `sessionValues(stored)`, the
 secret resolved through the session's id by the same source chain the
 other subcommands use (`secretSources(for:passwordCommand:)`), the host
-key decided by the same `--accept-new` / `--non-interactive` policy as a
-connect. The second form is the app's "unsaved tab" target: a bare
+key never accepted by this command: the dial answers the host-key
+question with `HostKeyDecider.refusing` (`DialProbes.sshConnect`), as the
+app's panel does, so an unknown key is a `failed` row and `diagnose`
+takes no `--accept-new`/`--non-interactive`. The second form is the app's "unsaved tab" target: a bare
 endpoint with no session id, so the dial and the contributions report
 `skipped` and only resolve, TCP, ICMP and the trace run. `--kind`
 defaults to `ssh` (port 22); it exists because the endpoint's default

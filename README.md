@@ -196,11 +196,20 @@ reads the session list only — no secret, no connection.
 | `put <local file> <session>:<path>` | Upload a local file into a remote directory (keeps its local name). |
 | `rm <session>:<path> [--recursive]` | Delete a remote file, or a whole directory with `--recursive`. |
 | `mkdir <session>:<path>` | Create a remote directory. |
+| `diagnose <session>` | Measure the path to a saved session's server, step by step. |
+| `diagnose --host <host> [--port <n>] [--kind <k>]` | The same measurement for a machine no session was saved for. |
 
 `get`/`put` take `--on-conflict fail\|skip\|overwrite` for what to do when
 the destination already exists (`fail` is the default — nothing is
-overwritten unless asked). `ls` and `sessions` take `--json` to emit one
-JSON object per line instead of columns, for scripting.
+overwritten unless asked). `ls`, `sessions` and `diagnose` take `--json`
+to emit one JSON object per line instead of columns, for scripting.
+
+`diagnose` prints one row per step as it finishes — the name lookup, the
+connection attempt, the echo, the app's own login and the route to the
+server — and `--scope ping\|trace\|dial\|contributions` narrows it to one
+of them. It never remembers a server's identity on your behalf: a server
+this app has not been introduced to is reported as such, and no flag
+here changes that.
 
 **Secrets.** A session's password or key passphrase is looked up in this
 order, stopping at the first one that answers: an explicit
@@ -245,6 +254,7 @@ its own.
 | 13 | Connection failed. |
 | 14 | The remote path was not found, or access to it was denied. |
 | 15 | The destination already exists and `--on-conflict fail` (the default) was in effect. |
+| 16 | `diagnose` finished, and at least one step failed or ran out of time. |
 
 ## License
 

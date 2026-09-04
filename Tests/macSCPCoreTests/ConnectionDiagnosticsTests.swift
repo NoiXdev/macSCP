@@ -511,6 +511,46 @@ struct ConnectionDiagnosticsTests {
         #expect(whole.observed == whole.ids)
     }
 
+    /// `DiagnosticScope.resolvesASecret` says whether a scope's walk asks a
+    /// secret source anything — measured against a walk, not restated.
+    ///
+    /// The instrument is the source itself: a probe dial and a probe
+    /// contribution that both call `context.secret()`, and a source that
+    /// counts being asked and answers nothing. So "this scope resolves a
+    /// secret" means a source was really consulted, rather than a step
+    /// that could have consulted one having run.
+    ///
+    /// Over `allCases`, so a sixth scope is measured the day it exists
+    /// rather than landing on whichever side its author had in mind. Both
+    /// sides are covered by construction — `ping` and `trace` ask nothing,
+    /// `complete`, `dial` and `contributions` ask — so a property stuck at
+    /// either constant is red on three cases or on two.
+    ///
+    /// `macscp-cli diagnose --verbose` prints `secret source: <label>` only
+    /// where this is true (`DiagnoseCommand`), so a `--scope ping` cannot
+    /// report `none` for a session whose credential nothing asked for.
+    @Test(arguments: DiagnosticScope.allCases)
+    func theScopesThatResolveASecretAreTheOnesThatAskForOne(
+        scope: DiagnosticScope
+    ) async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let source = CountingSecretSource()
+        let diagnostics = ConnectionDiagnostics(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: listener.port),
+                dial: Self.askingContribution(id: DiagnosticStepID.dial),
+                diagnostics: [Self.askingContribution(id: Self.contributionID)]),
+            values: FieldValues(), secrets: source, sessionID: UUID(), appVersion: "test")
+        _ = await diagnostics.run(scope: scope)
+
+        let asked = source.count > 0
+        #expect(asked == scope.resolvesASecret, """
+            the \(scope.rawValue) scope asked a secret source \(source.count) time(s), \
+            and resolvesASecret says \(scope.resolvesASecret)
+            """)
+    }
+
     /// A scoped report says so where it is read: in the value, and in the
     /// header of both renderings — the text a user pastes into an issue.
     ///
@@ -1507,6 +1547,18 @@ struct ConnectionDiagnosticsTests {
             dials: await dials.count, contributions: await contributions.count)
     }
 
+    /// A contribution that asks its context for the session's secret and
+    /// succeeds whatever comes back — the probe
+    /// `theScopesThatResolveASecretAreTheOnesThatAskForOne` counts the asks
+    /// of.
+    private static func askingContribution(id: String) -> DiagnosticContribution {
+        DiagnosticContribution(id: id, titleKey: "diagnostics.step.probe") { _, context in
+            let timer = DiagnosticStepTimer(id: id, titleKey: "diagnostics.step.probe")
+            _ = try? context.secret()
+            return timer.finish(.ok, "")
+        }
+    }
+
     /// A contribution that succeeds and counts the fact that it was asked.
     private static func recordingContribution(
         id: String, ticker: Ticker
@@ -1571,6 +1623,26 @@ private actor StepLog {
 private actor Ticker {
     private(set) var count = 0
     func tick() { count += 1 }
+}
+
+/// A secret source that answers nothing and counts being asked.
+///
+/// A class behind a lock rather than an actor, because `SecretSource.secret`
+/// is synchronous and non-mutating — the same constraint that made
+/// `ChainedSecretSource` hold its label in a locked box (see that type). It
+/// carries no secret at all: the count is the whole measurement, and there
+/// is no value here to reach a failure message.
+private final class CountingSecretSource: SecretSource, @unchecked Sendable {
+    let label = "counting"
+    private let lock = NSLock()
+    private var asks = 0
+
+    var count: Int { lock.withLock { asks } }
+
+    func secret(for sessionID: UUID) throws -> String? {
+        lock.withLock { asks += 1 }
+        return nil
+    }
 }
 
 private actor Gate {

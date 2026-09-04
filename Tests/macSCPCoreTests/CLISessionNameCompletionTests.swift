@@ -22,15 +22,31 @@ struct CLISessionNameCompletionTests {
     /// `swift-argument-parser`'s generator writes the static half of
     /// completion (subcommands and flags) straight from the command tree —
     /// nothing in this task touches it — so this is a smoke test that the
-    /// build actually wires all seven subcommands into `MacSCPCLI`, run
-    /// against the real built binary the same way
-    /// `CLISessionsJSONRoundtripTests` does (bundle-relative lookup, no
-    /// dependency on a `swift build` this test would trigger itself).
+    /// build actually wires EVERY subcommand into `MacSCPCLI`, run against
+    /// the real built binary the same way `CLISessionsJSONRoundtripTests`
+    /// does (bundle-relative lookup, no dependency on a `swift build` this
+    /// test would trigger itself).
+    ///
+    /// The names are READ from the binary's own `--help`
+    /// (`CLIMatrix.subcommands(binary:)`) rather than listed here. A list
+    /// written out goes one behind the day a subcommand is added and keeps
+    /// passing — which is exactly what it did: this loop still named six on
+    /// 2026-09-04, when `diagnose` had made it seven, while the sentence
+    /// above it claimed all of them. There is no number in this comment for
+    /// the same reason.
+    ///
+    /// The two positives beside the loop are what stop it from asserting
+    /// nothing: the set is non-empty, and it carries a name that has been
+    /// there since the first subcommand.
     @Test func theGeneratedZshScriptNamesEverySubcommand() async throws {
         let binary = try Self.locateCLIBinary()
+        let names = try await CLIMatrix.subcommands(binary: URL(fileURLWithPath: binary))
+        #expect(!names.isEmpty, "the binary offers no subcommands at all")
+        #expect(names.contains("ls"), "the binary offers no ls: \(names)")
+
         let result = try await Self.runProcess(binary, ["--generate-completion-script", "zsh"])
         #expect(result.status == 0, "--generate-completion-script zsh failed: \(result.stderr)")
-        for name in ["sessions", "ls", "get", "put", "rm", "mkdir"] {
+        for name in names {
             #expect(result.stdout.contains(name), "zsh completion script does not name '\(name)'")
         }
     }
