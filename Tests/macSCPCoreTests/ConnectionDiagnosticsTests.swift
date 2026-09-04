@@ -50,6 +50,17 @@ struct ConnectionDiagnosticsTests {
     /// this module prints may carry it.
     private static let loaderErrorSentinel = "CITADEL-INTERNAL-BUFFER-CONTENTS"
 
+    /// A secret carrying a `/` — the shape of a real S3 secret access key,
+    /// and the hole `URLText.withoutUserinfo` documents about itself: the
+    /// authority scan ends at the slash, the span it looked at holds no `@`
+    /// to cut at, and the line is copied through whole. The backstop cannot
+    /// close this one, so a sentence that must not carry a credential has to
+    /// not compose it in the first place.
+    ///
+    /// Named, like every other secret in this file, because `#expect` prints
+    /// the source text of what it checks.
+    private static let slashBearingSecret = "wJalrDiagnostics/TestSecret/Value"
+
     // MARK: - Resolve
 
     @Test func resolveFindsALoopbackAddressForLocalhost() async {
@@ -832,6 +843,105 @@ struct ConnectionDiagnosticsTests {
             Issue.record("a dial without a secret was not skipped: \(dial.outcome)")
             return
         }
+    }
+
+    // MARK: - A backend error reaches a row as a sentence
+
+    /// `RemoteFSError.connectionFailed` carries free text, and the two
+    /// URL-shaped backends compose that text out of the endpoint the user
+    /// typed — a field that takes `scheme://KEY:SECRET@host` as ordinary
+    /// input (`ConnectFailureSecrecyTests`). Rendering the error means
+    /// putting that endpoint into a row written to be pasted into a public
+    /// issue.
+    ///
+    /// The planted secret carries a `/`, which is the hole
+    /// `URLText.withoutUserinfo` documents about itself: the authority scan
+    /// ends at the slash, so the span it examined holds no `@` to cut at and
+    /// the whole line is copied through. That is why the fix is a fixed
+    /// sentence per case rather than a wider backstop — the backstop is
+    /// structurally unable to catch this shape.
+    @Test func aBackendErrorsOwnDescriptionNeverReachesTheRow() async throws {
+        let port = try #require(LoopbackSocket.closedPort())
+        let key = Self.userinfoKey
+        let secret = Self.slashBearingSecret
+        let planted = RemoteFSError.connectionFailed(
+            reason: "s3://\(key):\(secret)@minio.example.test:9000 refused the connection")
+        let report = await Self.run(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: port),
+                dial: Self.constantContribution(
+                    id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe",
+                    outcome: .failed(DialSupport.reason(for: planted)), detail: "")))
+
+        let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
+        let inOutcome = dial.outcome.label.contains(secret) || dial.outcome.label.contains(key)
+        let plainText = report.plainText()
+        let markdown = report.markdown()
+        let inPlainText = plainText.contains(secret) || plainText.contains(key)
+        let inMarkdown = markdown.contains(secret) || markdown.contains(key)
+        #expect(inOutcome == false)
+        #expect(inPlainText == false)
+        #expect(inMarkdown == false)
+
+        // The positive companion, derived rather than spelled: the same case
+        // carrying entirely different free text renders the identical
+        // sentence — which is what "one fixed sentence per case" means — and
+        // the row still reports a failed dial rather than nothing at all.
+        //
+        // The comparison is reduced to a `Bool` before the expectation for
+        // the same reason the leaks above are: `#expect` prints the values it
+        // compared, and the outcome under test is the one carrying the
+        // planted credential while the check is red.
+        let neutral = DialSupport.reason(for: RemoteFSError.connectionFailed(reason: "unrelated"))
+        let sentenceIsFixed = dial.outcome == .failed(neutral)
+        #expect(sentenceIsFixed)
+        #expect(neutral.isEmpty == false)
+    }
+
+    /// The other half of the rule: dropping the free text does not mean
+    /// dropping what the user can act on. A path is this project's own
+    /// string, it is what the finding IS, and it stays.
+    @Test func aPathBearingBackendErrorStillNamesItsPath() {
+        let path = "/bucket/seed.txt"
+        let notFound = RemoteFSError.notFound(path: path)
+        let denied = RemoteFSError.permissionDenied(path: path)
+        #expect(DialSupport.reason(for: notFound).contains(path))
+        #expect(DialSupport.reason(for: denied).contains(path))
+        // Not the enum's own description, which is the shape this task
+        // removed: two cases that differ only in name would otherwise be
+        // indistinguishable from their rendering.
+        #expect(DialSupport.reason(for: notFound) != String(describing: notFound))
+        #expect(DialSupport.reason(for: denied) != String(describing: denied))
+        #expect(DialSupport.reason(for: notFound) != DialSupport.reason(for: denied))
+    }
+
+    /// A bucket-level refusal names its operation through the operation's own
+    /// name — the same `rawValue` its catalogue key is derived from
+    /// (`BucketLevelOperation.refusalMessageKey`) — rather than through the
+    /// enum's description. Iterated over `allCases`, so an operation added
+    /// without reaching the row by name turns this red instead of shipping
+    /// silently.
+    @Test func aBucketLevelRefusalNamesItsOperationByItsOwnName() {
+        let path = "/photos"
+        var unnamed: [String] = []
+        var pathless: [String] = []
+        var described: [String] = []
+        for operation in RemoteFSError.BucketLevelOperation.allCases {
+            let error = RemoteFSError.bucketLevelRefused(operation: operation, path: path)
+            let reason = DialSupport.reason(for: error)
+            // Derived from the same place the catalogue key is, so a renamed
+            // case takes this check with it instead of leaving it spelling a
+            // name that no longer exists.
+            let name = operation.refusalMessageKey
+                .split(separator: ".").last.map(String.init) ?? ""
+            if !reason.contains(name) { unnamed.append(operation.rawValue) }
+            if !reason.contains(path) { pathless.append(operation.rawValue) }
+            if reason == String(describing: error) { described.append(operation.rawValue) }
+        }
+        #expect(unnamed.isEmpty)
+        #expect(pathless.isEmpty)
+        #expect(described.isEmpty)
+        #expect(RemoteFSError.BucketLevelOperation.allCases.isEmpty == false)
     }
 
     // MARK: - No URL userinfo reaches the report

@@ -133,14 +133,25 @@ enum DialSupport {
     /// — `N` being the case index, whatever it is — which says nothing about
     /// host keys — in the row this file documents
     /// as the answer to "why does this not connect", and for the four
-    /// commonest SSH dial failures. The arms are exhaustive `switch`es, so a
-    /// case added to any of the three enums fails to compile here until
-    /// someone writes its sentence.
+    /// commonest SSH dial failures. Every arm below is an exhaustive
+    /// `switch` with no `default` — counted 2026-09-04: FOUR of them, over
+    /// `HostKeyError`, `SSHKeyError`, `AgentError` and `RemoteFSError` — so
+    /// a case added to any of the four fails to compile here until someone
+    /// writes its sentence.
     ///
-    /// `RemoteFSError` is described rather than spelled: every one of its
-    /// cases carries strings this project wrote (paths, mapped connect
-    /// reasons), so its raw description is already readable and already
-    /// credential-free.
+    /// `RemoteFSError` is spelled out too, and this comment used to argue
+    /// the opposite — that every one of its cases carries strings this
+    /// project wrote, so its raw description was "already credential-free".
+    /// Measured false on 2026-09-04. `connectionFailed(reason:)` and
+    /// `protocolError(reason:)` carry FREE TEXT, and the two URL-shaped
+    /// backends compose that text out of the endpoint the user typed —
+    /// a field that takes `scheme://KEY:SECRET@host` as ordinary input
+    /// (`ConnectFailureSecrecyTests`). `DiagnosticStep.init`'s backstop
+    /// strips the plain shape but cannot strip a secret containing a `/`:
+    /// `URLText.withoutUserinfo` documents that hole about itself, the
+    /// authority scan ends at the slash and the line is copied through
+    /// whole. So each case gets one fixed sentence instead, and the two
+    /// free-text payloads are dropped rather than rendered.
     ///
     /// Everything else — a `URLError`, an NIO or Citadel error — is reduced
     /// to `localizedDescription` and never `String(describing:)`, because
@@ -207,7 +218,48 @@ enum DialSupport {
                 return "the ssh-agent connection misbehaved"
             }
         case let error as RemoteFSError:
-            return String(describing: error)
+            switch error {
+            case .connectionFailed:
+                // The `reason` is dropped, and it is the whole point of this
+                // arm: it is where an ENDPOINT travels. `S3FileSystem` and
+                // `WebDAVFileSystem` build it out of the URL they were
+                // dialling, and that URL is user input which may carry
+                // `KEY:SECRET@`. Nothing a reader can act on is lost — the
+                // row already carries the endpoint, the duration and the
+                // step that failed.
+                return "the connection failed"
+            case .authenticationFailed:
+                return "authentication failed"
+            case .jumpAuthenticationFailed:
+                return "authentication at the jump host failed"
+            case .notFound(let path):
+                // Paths are kept: a path is this project's own string, it is
+                // what the finding IS, and the browser shows it already.
+                return "nothing at \(path)"
+            case .permissionDenied(let path):
+                return "permission denied at \(path)"
+            case .protocolError:
+                // Dropped for the same reason as `connectionFailed`: the
+                // backends compose this text too, and a server's own message
+                // can quote the request line it refused.
+                return "the server answered something this app could not use"
+            case .bucketListForbidden:
+                return "the key may not list the account's buckets"
+            case .bucketListEmpty:
+                return "the account has no buckets"
+            case .bucketLevelRefused(let operation, let path):
+                // The operation names itself through its `rawValue` — the
+                // same derivation `BucketLevelOperation.refusalMessageKey`
+                // uses for its catalogue key — rather than through the
+                // enum's description, so a renamed case carries this
+                // sentence with it.
+                return "\(operation.rawValue) is not available at the bucket list (\(path))"
+            case .crossBucketRenameRefused:
+                // Both paths dropped. They are bucket-qualified paths and
+                // the finding is the refusal, not where it pointed; the
+                // browser knows what the user asked for.
+                return "a rename across buckets is refused"
+            }
         default:
             return (error as NSError).localizedDescription
         }
