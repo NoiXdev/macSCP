@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import MacSCPAppKit
 @testable import macSCPCore
@@ -33,7 +34,7 @@ import Testing
 /// file system this suite hands its sessions never answers and never touches
 /// disk, and the deadline is the shortest `probeTimeout(forInterval:)` can
 /// produce.
-@Suite("Liveness probe cancellation")
+@Suite("Liveness probe cancellation", .timeLimit(.minutes(1)))
 @MainActor
 struct LivenessProbeCancellationTests {
     /// The shortest deadline the shipped policy can produce
@@ -41,14 +42,14 @@ struct LivenessProbeCancellationTests {
     /// real race rather than a stubbed one without costing more than that.
     private let timeoutSeconds = 1
 
-    @Test func aCancelledProbeWritesNothing() async {
+    @Test func aCancelledProbeWritesNothing() async throws {
         let tab = makeTab()
         let remoteFS = attachSession(to: tab)
         tab.liveness = .connected
 
         let start = ContinuousClock.now
         let probe = Task { await LivenessProbeStep.perform(on: tab, timeoutSeconds: timeoutSeconds) }
-        await waitUntilTheProbeIsInFlight(remoteFS)
+        try await waitUntilTheProbeIsInFlight(remoteFS)
         // What `teardown(_:)` does, in the order it does it: the tab stops
         // describing a live connection, and the runner's task is dropped.
         // The session is deliberately LEFT in place here, so the only thing
@@ -88,13 +89,13 @@ struct LivenessProbeCancellationTests {
             """)
     }
 
-    @Test func aProbeWhoseSessionWentAwayWritesNothing() async {
+    @Test func aProbeWhoseSessionWentAwayWritesNothing() async throws {
         let tab = makeTab()
         let remoteFS = attachSession(to: tab)
         tab.liveness = .connected
 
         let probe = Task { await LivenessProbeStep.perform(on: tab, timeoutSeconds: timeoutSeconds) }
-        await waitUntilTheProbeIsInFlight(remoteFS)
+        try await waitUntilTheProbeIsInFlight(remoteFS)
         // Disconnected and reconnected during the flight: the task is alive
         // and uncancelled, and the answer in hand is nevertheless about a
         // connection that no longer exists.
@@ -155,18 +156,16 @@ struct LivenessProbeCancellationTests {
     /// package's parallel execution a 150ms sleep was measured taking most
     /// of a second, which would let the race resolve on its own BEFORE the
     /// cancel arrived — a passing test turning into a failing one on
-    /// scheduler contention alone, proving nothing either way. Yielding
+    /// scheduler contention alone, proving nothing either way. Polling
     /// until the file system says the call arrived costs whatever it costs
     /// and cannot overshoot.
-    private func waitUntilTheProbeIsInFlight(_ remoteFS: NeverRespondingFileSystem) async {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-        while !remoteFS.statHasBeenCalled {
-            guard ContinuousClock.now < deadline else {
-                Issue.record("the probe never reached `stat` — nothing was in flight to cancel.")
-                return
-            }
-            await Task.yield()
-        }
+    ///
+    /// No bound of its own, either: a `stat` that never arrives ends this
+    /// run through the suite's `.timeLimit`, which prints the name of the
+    /// wait, rather than through a ceiling that measures the runner
+    /// (CLAUDE.md, "A wall-clock ceiling in a test measures the runner").
+    private func waitUntilTheProbeIsInFlight(_ remoteFS: NeverRespondingFileSystem) async throws {
+        try await pollUntil("the probe reaching stat") { remoteFS.statHasBeenCalled }
     }
 
     /// Same shape as `LivenessGiveUpOrderingTests.attachSession(to:)`, with

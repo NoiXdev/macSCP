@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import MacSCPAppKit
 @testable import macSCPCore
@@ -21,7 +22,7 @@ import Testing
 /// see that file's own "Isolation, round 3" — and
 /// `theRealSessionsFileIsNeverTouched` proves the isolation empirically
 /// rather than by reading the code.
-@Suite("Reconnect path")
+@Suite("Reconnect path", .timeLimit(.minutes(1)))
 @MainActor
 struct ReconnectPathTests {
     private static var realSessionsFileURL: URL {
@@ -95,22 +96,6 @@ struct ReconnectPathTests {
         tab.liveness = .connected
     }
 
-    @discardableResult
-    private func waitUntil(
-        _ description: Comment, timeout: Duration = .seconds(30),
-        sourceLocation: SourceLocation = #_sourceLocation,
-        _ condition: () async -> Bool
-    ) async -> Bool {
-        let deadline = ContinuousClock.now + timeout
-        var satisfied = await condition()
-        while !satisfied, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(5))
-            satisfied = await condition()
-        }
-        #expect(satisfied, description, sourceLocation: sourceLocation)
-        return satisfied
-    }
-
     // MARK: - Giving up records what the way back needs
 
     /// The fact `handleLivenessGiveUp(_:)` has to capture BEFORE the
@@ -167,7 +152,7 @@ struct ReconnectPathTests {
     /// `ConnectionViewModel.connect()`'s validation, and with the host-key
     /// decider Core hands every backend — and lands a session on the tab
     /// that lost one.
-    @Test func reconnectDialsTheStoredSessionAndBringsTheTabBack() async {
+    @Test func reconnectDialsTheStoredSessionAndBringsTheTabBack() async throws {
         let workDir = makeTempDirectory("reconnect-dial")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let secrets = ReconnectSecretStore()
@@ -194,12 +179,12 @@ struct ReconnectPathTests {
 
         view.reconnect(tab)
 
-        guard await waitUntil("the reconnect must reach the connector", {
+        try await pollUntil("the reconnect must reach the connector") {
             await recorder.dialCount == 1
-        }) else { return }
-        guard await waitUntil("the reconnect must hand a session to the tab", {
+        }
+        try await pollUntil("the reconnect must hand a session to the tab") {
             tab.session != nil
-        }) else { return }
+        }
 
         #expect(await recorder.dialedHost == "example.com", """
             the reconnect dialed something other than the stored session it recorded — the \
@@ -289,7 +274,7 @@ struct ReconnectPathTests {
     /// what keeps its own failures on the surface that explains them —
     /// `reconnectDialsTheStoredSessionAndBringsTheTabBack` above is the
     /// other half of this pair.
-    @Test func connectingToADifferentSessionEndsTheLostEpisode() async {
+    @Test func connectingToADifferentSessionEndsTheLostEpisode() async throws {
         let workDir = makeTempDirectory("reconnect-different")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let (view, cleanup) = makeContentView(secrets: ReconnectSecretStore(), storeDirectory: workDir)
@@ -309,9 +294,9 @@ struct ReconnectPathTests {
         view.connect(in: tab, stored: other)
 
         #expect(tab.lostConnection == nil, "a connect to a different stored session left the previous drop's record in place — a failure would then return to a surface offering to redial the OLD session.")
-        guard await waitUntil("the connect must reach the connector", {
+        try await pollUntil("the connect must reach the connector") {
             await recorder.dialCount == 1
-        }) else { return }
+        }
         #expect(await recorder.dialedHost == "elsewhere.example")
     }
 
@@ -460,7 +445,7 @@ struct ReconnectPathTests {
     /// `ReconnectWiringGuardTests` can only prove `retryConnect(_:)` names
     /// the shared function; this proves the dial that comes out the other
     /// end is the stored session's.
-    @Test func retryDialsTheStoredSessionThroughTheSharedConnect() async {
+    @Test func retryDialsTheStoredSessionThroughTheSharedConnect() async throws {
         let workDir = makeTempDirectory("retry-dial")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let (view, cleanup) = makeContentView(
@@ -486,12 +471,12 @@ struct ReconnectPathTests {
 
         view.retryConnect(tab)
 
-        guard await waitUntil("the retry must reach the connector", {
+        try await pollUntil("the retry must reach the connector") {
             await recorder.dialCount == 1
-        }) else { return }
-        guard await waitUntil("the retry must hand a session to the tab", {
+        }
+        try await pollUntil("the retry must hand a session to the tab") {
             tab.session != nil
-        }) else { return }
+        }
 
         #expect(await recorder.dialedHost == "retry.example.com", """
             the retry dialed something other than the stored session the failed attempt \
@@ -520,7 +505,7 @@ struct ReconnectPathTests {
     /// the assertion that still has teeth is the one above it: the refusal
     /// happens BEFORE the dial, which is what makes "no origin" mean
     /// anything at all.
-    @Test func afillRefusalRecordsNoDialOrigin() async {
+    @Test func afillRefusalRecordsNoDialOrigin() async throws {
         let workDir = makeTempDirectory("retry-refusal")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let (view, cleanup) = makeContentView(
@@ -544,9 +529,9 @@ struct ReconnectPathTests {
 
         view.retryConnect(tab)
 
-        guard await waitUntil("the refusal must reach the form", {
+        try await pollUntil("the refusal must reach the form") {
             tab.connectionViewModel.lastFailureKind != nil
-        }) else { return }
+        }
         #expect(await recorder.dialCount == 0, "a dangling login set must refuse before the dial")
         #expect(tab.connectionViewModel.attemptOrigin == nil)
     }
@@ -570,7 +555,7 @@ struct ReconnectPathTests {
     /// The origin is read BEFORE the connector is released: after that the
     /// attempt ends, and a check that reads a transient condition after the
     /// thing that resolves it is not a check.
-    @Test func aRefusedStoredDialLeavesNoOriginOnTheAttemptInFlight() async {
+    @Test func aRefusedStoredDialLeavesNoOriginOnTheAttemptInFlight() async throws {
         let workDir = makeTempDirectory("refused-dial-origin")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let (view, cleanup) = makeContentView(
@@ -602,23 +587,15 @@ struct ReconnectPathTests {
         form.username = "tim"
         form.password = "geheim"
         let adHoc = Task { await form.connect() }
-        guard await waitUntil("the ad-hoc dial must reach the connector", {
+        try await pollUntil("the ad-hoc dial must reach the connector") {
             await recorder.dialCount == 1
-        }) else {
-            continuation.finish()
-            _ = await adHoc.value
-            return
         }
 
         // A sidebar click on a stored session, mid-dial. `connect(in:stored:)`
         // fills the form and reaches `form.connect()`, which refuses.
         view.connect(in: tab, stored: stored)
-        guard await waitUntil("the refused stored dial must run to completion", {
+        try await pollUntil("the refused stored dial must run to completion") {
             !tab.isReconnecting
-        }) else {
-            continuation.finish()
-            _ = await adHoc.value
-            return
         }
 
         let originAfterRefusal = tab.connectionViewModel.attemptOrigin
@@ -664,7 +641,7 @@ struct ReconnectPathTests {
     /// offered "Edit session" for a session the user had moved on from —
     /// the same mislabelling M3 removes from the refusal path, one door
     /// down. `fail(_:kind:origin:)` is where both are now stated.
-    @Test func aFailureThatNeverDialedDoesNotInheritTheLastAttemptsOrigin() async {
+    @Test func aFailureThatNeverDialedDoesNotInheritTheLastAttemptsOrigin() async throws {
         let workDir = makeTempDirectory("origin-not-inherited")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let (view, cleanup) = makeContentView(
@@ -691,9 +668,9 @@ struct ReconnectPathTests {
         })
 
         view.connect(in: tab, stored: dialed)
-        guard await waitUntil("the first stored dial must fail and finish", {
+        try await pollUntil("the first stored dial must fail and finish") {
             await recorder.dialCount == 1 && !tab.isReconnecting
-        }) else { return }
+        }
         // The precondition IS the setup: without an origin on record there
         // is nothing for the second failure to inherit, and the assertion
         // at the end would hold for a form that never dialed anything.
@@ -703,9 +680,9 @@ struct ReconnectPathTests {
             """)
 
         view.connect(in: tab, stored: dangling)
-        guard await waitUntil("the refused fill must run to completion", {
+        try await pollUntil("the refused fill must run to completion") {
             !tab.isReconnecting
-        }) else { return }
+        }
 
         #expect(await recorder.dialCount == 1, """
             the dangling login set must refuse BEFORE the dial — otherwise this is a second \
@@ -894,16 +871,16 @@ struct ReconnectPathTests {
 
     // MARK: - Isolation proof
 
-    @Test func theRealSessionsFileIsNeverTouched() async {
+    @Test func theRealSessionsFileIsNeverTouched() async throws {
         let before = snapshotRealSessionsFile()
-        await reconnectDialsTheStoredSessionAndBringsTheTabBack()
+        try await reconnectDialsTheStoredSessionAndBringsTheTabBack()
         await givingUpRemembersWhichStoredSessionToRedial()
         // The failed-connect surface's own two store-writing scenarios
         // (Task 3), added here rather than trusted to look isolated: both
         // upsert a session and both drive the real `connect`/`editStored`
         // paths, which is exactly the shape that wrote into the
         // maintainer's real store on an earlier round of this branch.
-        await retryDialsTheStoredSessionThroughTheSharedConnect()
+        try await retryDialsTheStoredSessionThroughTheSharedConnect()
         await editSessionOpensTheEditorAndLeavesTheSurface()
         let after = snapshotRealSessionsFile()
         #expect(before == after, """

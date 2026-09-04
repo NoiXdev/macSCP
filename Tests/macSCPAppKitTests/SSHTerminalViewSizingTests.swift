@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import MacSCPTestSupport
 import Synchronization
 import SwiftTerm
 import SwiftUI
@@ -22,7 +23,7 @@ import macSCPCore
 ///
 /// The three tests below take the three hops apart, so a red run names the
 /// hop rather than the symptom.
-@Suite("Terminal resize measurement", .serialized)
+@Suite("Terminal resize measurement", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct SSHTerminalViewSizingTests {
 
@@ -261,7 +262,7 @@ struct SSHTerminalViewSizingTests {
     private func runningViewModel(shell: RecordingShell) async throws -> TerminalPanelViewModel {
         let viewModel = TerminalPanelViewModel(openShell: { _, _, _ in shell })
         viewModel.openIfNeeded()
-        try await waitUntil { viewModel.state == .running }
+        try await pollUntil("the view model reaching .running") { viewModel.state == .running }
         #expect(viewModel.state == .running)
         return viewModel
     }
@@ -358,30 +359,6 @@ struct SSHTerminalViewSizingTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         hosting.layoutSubtreeIfNeeded()
-    }
-
-    /// Polls `condition` with short awaits, up to ~2 s. Every wait in this
-    /// file is an `await` (CLAUDE.md: tests never block the cooperative
-    /// pool).
-    private func waitUntil(_ condition: () -> Bool) async throws {
-        for _ in 0..<200 where !condition() {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
-    /// Whether `condition` — a fact that lives on an ACTOR, so reading it
-    /// needs a hop — became true within the same budget `waitUntil` uses.
-    ///
-    /// Returns the answer instead of asserting it, so the caller can say in
-    /// its own words what a `false` means; a bounded poll rather than an
-    /// unbounded await, so a gate that never parks reports red rather than
-    /// hanging the run.
-    private func becomesTrue(_ condition: @Sendable () async -> Bool) async throws -> Bool {
-        for _ in 0..<200 {
-            if await condition() { return true }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        return await condition()
     }
 
     /// Ends a hosted test: the shell closes, the read loop ends, the window
@@ -600,7 +577,7 @@ struct SSHTerminalViewSizingTests {
             sizeAfter.cols > sizeBefore.cols && sizeAfter.rows > sizeBefore.rows,
             "SwiftTerm did not recompute its geometry: \(sizeBefore) -> \(sizeAfter)")
 
-        try await waitUntil { !shell.resizes.isEmpty }
+        try await pollUntil("the shell hearing a resize") { !shell.resizes.isEmpty }
         #expect(
             shell.resizes.last == RecordingShell.Size(cols: sizeAfter.cols, rows: sizeAfter.rows),
             """
@@ -623,7 +600,7 @@ struct SSHTerminalViewSizingTests {
 
         let viewModel = try await runningViewModel(shell: shell)
         viewModel.resize(cols: 132, rows: 43)
-        try await waitUntil { !shell.resizes.isEmpty }
+        try await pollUntil("the shell hearing a resize") { !shell.resizes.isEmpty }
         #expect(shell.resizes == [RecordingShell.Size(cols: 132, rows: 43)])
         await viewModel.shutdown()
     }
@@ -670,7 +647,8 @@ struct SSHTerminalViewSizingTests {
         // `state == .opening` does not say that: measured 2026-09-03, with
         // the gate defeated the state was still `.opening` here because the
         // open task had not been scheduled yet.
-        let openParkedBeforeMount = try await becomesTrue { await gate.isHolding }
+        try await pollUntil("the shell's open parking on the gate") { await gate.isHolding }
+        let openParkedBeforeMount = await gate.isHolding
         #expect(openParkedBeforeMount, """
             the shell's open never parked on the gate, so the surface below is \
             mounted for a shell that is already running -- that is the path \
@@ -699,12 +677,14 @@ struct SSHTerminalViewSizingTests {
             #expect(viewModel.state == .opening)
 
             await gate.open()
-            try await waitUntil { viewModel.state == .running }
+            try await pollUntil("the view model reaching .running") { viewModel.state == .running }
             #expect(viewModel.state == .running)
             // Give a forwarded resize the same room to arrive that the other
             // tests give it, then snapshot — nothing below may resize the
             // window first, or it would read the healed value.
-            try await waitUntil { !shell.resizes.isEmpty }
+            try await pollUntil("the shell hearing the mounted surface's resize") {
+                !shell.resizes.isEmpty
+            }
             try await Task.sleep(for: .milliseconds(200))
             let seenByShell = shell.resizes
 
@@ -743,7 +723,7 @@ struct SSHTerminalViewSizingTests {
             root: { HostedPanel(viewModel: viewModel, settingsStore: $0) }
         ) { window, hosting in
             await gate.open()
-            try await waitUntil { viewModel.state == .running }
+            try await pollUntil("the view model reaching .running") { viewModel.state == .running }
 
             let terminal = try #require(firstTerminalView(in: hosting))
             let widthBefore = terminal.frame.width
@@ -752,7 +732,7 @@ struct SSHTerminalViewSizingTests {
             ) { terminal.frame.width > widthBefore }
             let grown = RecordingShell.Size(
                 cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
-            try await waitUntil { shell.resizes.last == grown }
+            try await pollUntil("the shell hearing the grown size") { shell.resizes.last == grown }
             #expect(
                 shell.resizes.last == grown,
                 "the emulator grew to \(grown); the shell saw \(shell.resizes)")
@@ -792,7 +772,7 @@ struct SSHTerminalViewSizingTests {
             root: { HostedSplitLayout(viewModel: viewModel, settingsStore: $0) }
         ) { window, hosting in
             await gate.open()
-            try await waitUntil { viewModel.state == .running }
+            try await pollUntil("the view model reaching .running") { viewModel.state == .running }
 
             let terminal = try #require(
                 firstTerminalView(in: hosting),
@@ -807,7 +787,9 @@ struct SSHTerminalViewSizingTests {
             let frameAfter = terminal.frame
             let after = RecordingShell.Size(
                 cols: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)
-            try await waitUntil { shell.resizes.last == after }
+            try await pollUntil("the shell hearing the split layout's new size") {
+                shell.resizes.last == after
+            }
             let seenByShell = shell.resizes.last
 
             let detail = Comment(rawValue: """
@@ -860,12 +842,12 @@ struct SSHTerminalViewSizingTests {
             root: { HostedStatefulPanel(viewModel: viewModel, settingsStore: $0) }
         ) { _, hosting in
             await gates.release()
-            try await waitUntil { viewModel.state == .running }
+            try await pollUntil("the view model reaching .running") { viewModel.state == .running }
             let first = try #require(shells.withLock { $0.first })
 
             // End the shell the way a remote `exit` does.
             await first.close()
-            try await waitUntil { viewModel.state == .ended(nil) }
+            try await pollUntil("the view model reaching .ended") { viewModel.state == .ended(nil) }
             try await layOutUntil(hosting) { firstTerminalView(in: hosting) == nil }
             #expect(
                 firstTerminalView(in: hosting) == nil,
@@ -882,7 +864,8 @@ struct SSHTerminalViewSizingTests {
             // below; see the mount test — `state == .opening` is true here
             // whether the gate holds or the open task has simply not been
             // scheduled yet, so it cannot stand in for this.
-            let secondOpenParkedBeforeLayout = try await becomesTrue { await gates.isHolding }
+            try await pollUntil("the second open parking on the gate") { await gates.isHolding }
+            let secondOpenParkedBeforeLayout = await gates.isHolding
             #expect(secondOpenParkedBeforeLayout, """
                 the second open never parked on the gate, so shell B is already \
                 running while the remounted surface is laid out -- this measures \
@@ -907,9 +890,9 @@ struct SSHTerminalViewSizingTests {
                 """)
 
             await gates.release()
-            try await waitUntil { viewModel.state == .running }
+            try await pollUntil("the view model reaching .running") { viewModel.state == .running }
             let second = try #require(shells.withLock { $0.count == 2 ? $0[1] : nil })
-            try await waitUntil { !second.resizes.isEmpty }
+            try await pollUntil("the second shell hearing a resize") { !second.resizes.isEmpty }
             let openedAt = await gates.openRequests
             #expect(
                 second.resizes.last == laidOut,

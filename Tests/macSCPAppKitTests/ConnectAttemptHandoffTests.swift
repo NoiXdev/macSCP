@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import MacSCPAppKit
 @testable import macSCPCore
@@ -62,7 +63,7 @@ import Testing
 /// from the byte comparison — parsed via `SessionStore`'s own real reader,
 /// which is a READ, not a write, and therefore safe regardless of what a
 /// broken seam did.
-@Suite("Connect attempt hand-off")
+@Suite("Connect attempt hand-off", .timeLimit(.minutes(1)))
 @MainActor
 struct ConnectAttemptHandoffTests {
     /// The ONE real, on-disk file this whole suite must never write —
@@ -153,27 +154,6 @@ struct ConnectAttemptHandoffTests {
             maxConcurrent: 2)
     }
 
-    /// Polls `condition` until it holds, failing with `description` after
-    /// `timeout` rather than letting the run hang — same reasoning as
-    /// `Tests/macSCPCoreTests/ConnectionViewModelTests.swift`'s own
-    /// `waitUntil` (not shared: separate test targets, `macSCPAppKitTests`
-    /// does not depend on `macSCPCoreTests` — see `Package.swift`).
-    @discardableResult
-    private func waitUntil(
-        _ description: Comment, timeout: Duration = .seconds(30),
-        sourceLocation: SourceLocation = #_sourceLocation,
-        _ condition: () async -> Bool
-    ) async -> Bool {
-        let deadline = ContinuousClock.now + timeout
-        var satisfied = await condition()
-        while !satisfied, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(5))
-            satisfied = await condition()
-        }
-        #expect(satisfied, description, sourceLocation: sourceLocation)
-        return satisfied
-    }
-
     // MARK: - Isolation proof, demonstrated rather than asserted
 
     /// Runs BOTH end-to-end scenarios below (they are otherwise
@@ -190,10 +170,10 @@ struct ConnectAttemptHandoffTests {
     /// A general-purpose signal, not the whole proof by itself — see
     /// `theSaveNamesUsedByThisRunNeverAppearInTheRealFile` below for the
     /// targeted one this file's own incident required.
-    @Test func theRealSessionsFileIsNeverTouched() async {
+    @Test func theRealSessionsFileIsNeverTouched() async throws {
         let before = snapshotRealSessionsFile()
-        _ = await runStoredSessionHandoffScenario()
-        _ = await runAdHocHandoffScenario()
+        _ = try await runStoredSessionHandoffScenario()
+        _ = try await runAdHocHandoffScenario()
         let after = snapshotRealSessionsFile()
         #expect(before == after, """
             the real on-disk session store changed while this suite ran — \
@@ -211,9 +191,9 @@ struct ConnectAttemptHandoffTests {
     /// to reproduce identical bytes — see this file's own top-level doc
     /// comment, "Isolation, round 3", for the exact incident that made
     /// this check necessary rather than merely thorough.
-    @Test func theSaveNamesUsedByThisRunNeverAppearInTheRealFile() async {
-        let storedName = await runStoredSessionHandoffScenario()
-        let adHocName = await runAdHocHandoffScenario()
+    @Test func theSaveNamesUsedByThisRunNeverAppearInTheRealFile() async throws {
+        let storedName = try await runStoredSessionHandoffScenario()
+        let adHocName = try await runAdHocHandoffScenario()
         let realNames = Set((try? SessionStore(directory: SessionStore.defaultDirectory).all().map(\.name)) ?? [])
         #expect(!realNames.contains(storedName), """
             the stored-session scenario's run-unique save name \
@@ -228,12 +208,12 @@ struct ConnectAttemptHandoffTests {
 
     // MARK: - The three end-to-end proofs
 
-    @Test func cancelDuringHomeDirectoryLookupPreventsTheStoredSessionHandoff() async {
-        _ = await runStoredSessionHandoffScenario()
+    @Test func cancelDuringHomeDirectoryLookupPreventsTheStoredSessionHandoff() async throws {
+        _ = try await runStoredSessionHandoffScenario()
     }
 
-    @Test func cancelDuringHomeDirectoryLookupPreventsTheAdHocHandoffAndAnyKeychainWrite() async {
-        _ = await runAdHocHandoffScenario()
+    @Test func cancelDuringHomeDirectoryLookupPreventsTheAdHocHandoffAndAnyKeychainWrite() async throws {
+        _ = try await runAdHocHandoffScenario()
     }
 
     /// Positive proof for the fix-round-4 seam (review item "the seam still
@@ -293,7 +273,7 @@ struct ConnectAttemptHandoffTests {
     /// Returns the run-unique save name this scenario used, so a caller
     /// can check for its absence from the real store.
     @discardableResult
-    private func runStoredSessionHandoffScenario() async -> String {
+    private func runStoredSessionHandoffScenario() async throws -> String {
         let workDir = makeTempDirectory("stored-handoff")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let secrets = RecordingSecretStore()
@@ -321,11 +301,8 @@ struct ConnectAttemptHandoffTests {
 
         view.connect(in: tab, stored: stored)
 
-        guard await waitUntil("homeDirectoryPath() must be reached", {
+        try await pollUntil("homeDirectoryPath() must be reached") {
             await gate.callCount == 1
-        }) else {
-            continuation.finish()
-            return name
         }
 
         // Cancel — the exact statements `ConnectingAttemptView`'s
@@ -344,11 +321,11 @@ struct ConnectAttemptHandoffTests {
         // hop too early — a review measured that hop losing 2 runs in 10
         // under full-suite load while passing 5 of 5 in isolation. The
         // sibling scenario needs no such wait: it awaits the task itself.
-        guard await waitUntil("the abandoned attempt must finish resuming and close what it abandoned", {
+        try await pollUntil("the abandoned attempt must finish resuming and close what it abandoned") {
             let returned = await gate.returnCount
             let closed = await gate.disconnectCount
             return returned == 1 && closed == 1
-        }) else { return name }
+        }
 
         #expect(tab.session == nil, "a cancelled attempt must not set a session")
         #expect(tab.activeStoredSessionID == nil, "a cancelled attempt must not adopt the stored session's id")
@@ -366,7 +343,7 @@ struct ConnectAttemptHandoffTests {
     /// Returns the run-unique save name this scenario used, so a caller
     /// can check for its absence from the real store.
     @discardableResult
-    private func runAdHocHandoffScenario() async -> String {
+    private func runAdHocHandoffScenario() async throws -> String {
         let workDir = makeTempDirectory("adhoc-handoff")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let secrets = RecordingSecretStore()
@@ -407,12 +384,8 @@ struct ConnectAttemptHandoffTests {
             await view.handleAdHocConnected(connectedFS, in: tab, attempt: myAttempt)
         }
 
-        guard await waitUntil("homeDirectoryPath() must be reached", {
+        try await pollUntil("homeDirectoryPath() must be reached") {
             await gate.callCount == 1
-        }) else {
-            continuation.finish()
-            _ = await task.value
-            return name
         }
 
         tab.connectionViewModel.cancelConnecting()

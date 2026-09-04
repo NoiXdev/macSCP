@@ -15,6 +15,7 @@
 // across exactly once.
 @preconcurrency import Citadel
 import Foundation
+import MacSCPTestSupport
 import NIOCore
 import Testing
 @testable import MacSCPAppKit
@@ -183,9 +184,17 @@ private func connectToSSHServer(port: Int) async throws -> CitadelFileSystem {
 private func connectBoundedSFTP(
     port: Int
 ) async throws -> (client: SSHClient, sftp: BoundedSFTPSession) {
-    let deadline = ContinuousClock.now.advanced(by: .seconds(90))
+    // A budget in ATTEMPTS, not on the clock. This loop exists to produce
+    // `serverNeverAccepted` carrying the last error rather than to measure how
+    // long a cold container takes to answer, and a bound read off the clock
+    // measures the runner instead of the container (CLAUDE.md, "A wall-clock
+    // ceiling in a test measures the runner"). 180 tries 500 ms apart is an
+    // upper bound on what the 90 s deadline could fit — each try also costs
+    // its own connect — so on a slow machine the retries now take as long as
+    // they take rather than expiring early. `DisposableSSHServer.connect()`
+    // carries the same budget for the same reason.
     var lastError: Error?
-    while ContinuousClock.now < deadline {
+    for _ in 0..<180 {
         do {
             let client = try await SSHClient.connect(
                 host: "127.0.0.1", port: port,
@@ -382,10 +391,12 @@ private struct DisposableSSHServer {
     /// Retries past the container's own startup (host-key generation and
     /// sshd launch take a moment on a cold container), so a slow start reads
     /// as a slow start rather than as a failed connect.
+    ///
+    /// The budget is 180 tries 500 ms apart rather than a clock deadline —
+    /// see `connectBoundedSFTP(port:)`, which carries the argument.
     func connect() async throws -> CitadelFileSystem {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(90))
         var lastError: Error?
-        while ContinuousClock.now < deadline {
+        for _ in 0..<180 {
             do {
                 return try await connectToSSHServer(port: port)
             } catch {
@@ -464,15 +475,21 @@ private struct DisposableSSHServer {
         }
     }
 
-    /// Retries for up to fifteen seconds, and the pause between attempts is
-    /// an `await`.
+    /// Retries 75 times, 200 ms apart, and the pause between attempts is an
+    /// `await`.
+    ///
+    /// A count rather than a clock deadline, and unbounded polling is not an
+    /// option here at all: one of the two callers is the DETACHED watchdog
+    /// above, which no `.timeLimit` can end, so this has to be able to give
+    /// up on its own and report `pruneFailed` with the containers it could
+    /// not remove.
     ///
     /// It used to be `Thread.sleep`, which parks whatever thread this runs
-    /// on — and one of the two callers is the detached watchdog above, whose
-    /// thread is a cooperative-pool thread. That pool is exactly as wide as
-    /// the machine has cores, so a prune that spun to its deadline held one
-    /// of a three-core runner's three for fifteen seconds (CLAUDE.md, "Tests
-    /// never block the cooperative pool").
+    /// on — and that watchdog's thread is a cooperative-pool thread. That
+    /// pool is exactly as wide as the machine has cores, so a prune that
+    /// spun out its whole budget held one of a three-core runner's three for
+    /// fifteen seconds (CLAUDE.md, "Tests never block the cooperative
+    /// pool").
     ///
     /// Reduced, not removed: `leftoverIDs()` twice and `Docker.run` once per
     /// iteration are still synchronous, and `Docker.run`'s own wait is
@@ -480,18 +497,17 @@ private struct DisposableSSHServer {
     /// nothing in the code makes that a contract — see the allowlist entry
     /// for this file in `TestsNeverBlockThePoolGuardTests`.
     static func pruneLeftovers() async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
-        while true {
+        var lastRemaining: [String] = []
+        for _ in 0..<75 {
             let ids = try leftoverIDs()
             guard !ids.isEmpty else { return }
             _ = try? Docker.run(["rm", "-f"] + ids)
             let remaining = try leftoverIDs()
             guard !remaining.isEmpty else { return }
-            guard ContinuousClock.now < deadline else {
-                throw DockerError.pruneFailed(remaining)
-            }
+            lastRemaining = remaining
             try? await Task.sleep(for: .milliseconds(200))
         }
+        throw DockerError.pruneFailed(lastRemaining)
     }
 
     /// The ids of this suite's own leftover containers, and only those.
@@ -873,10 +889,26 @@ private enum BoundedRun {
 /// this suite called a function that reads them — and
 /// `theRealSessionsFileIsNeverTouched` demonstrates that rather than
 /// assuming it.
+///
+/// **Why the time limit is ten minutes and not the one this tree gives
+/// every other suite.** The suite polls through `pollUntil`, which carries
+/// no deadline of its own, so it needs a harness exit — and one minute sits
+/// well below the work a single case here legitimately does. Summed for the
+/// most expensive of them: a `docker run` (a first pull included), up to
+/// 180 connect attempts 500 ms apart against a cold container
+/// (`DisposableSSHServer.connect()`), two probe deadlines before the
+/// give-up lap is reachable at all (measured at 14.1–14.9 s, recorded on
+/// `BoundedSFTPSession.closeBoundSeconds`), `teardownBoundSeconds` of
+/// give-up, and — only when the give-up does NOT return, i.e. when the test
+/// is already failing — a further 300 × 200 ms of diagnostic waiting after
+/// the thaw. Ten minutes is above that sum with room for the `docker` calls
+/// nothing bounds, and still ends a genuine hang instead of parking the
+/// run.
 @Suite(
     "Liveness probe against a real connection",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
-    .serialized
+    .serialized,
+    .timeLimit(.minutes(10))
 )
 @MainActor
 struct LivenessProbeDropIntegrationTests {
@@ -961,7 +993,7 @@ struct LivenessProbeDropIntegrationTests {
         #expect(counter.probeStatsOnTheWire == 0)
         #expect(tab.liveness == .connected)
 
-        await waitForIdleQueue(tab.transferQueue)
+        try await waitForIdleQueue(tab.transferQueue)
         let downloaded = try Data(
             contentsOf: downloadDirectory.appendingPathComponent(seedFileName))
         #expect(!downloaded.isEmpty, """
@@ -1199,8 +1231,14 @@ struct LivenessProbeDropIntegrationTests {
             // container has to be thawed anyway.
             try? server.thaw()
             let thawedAt = ContinuousClock.now
-            let releaseDeadline = thawedAt.advanced(by: .seconds(60))
-            while stamp.finishedAt == nil, ContinuousClock.now < releaseDeadline {
+            // 300 × 200 ms, counted rather than read off the clock. This wait
+            // must be able to end UNSATISFIED — "was still in flight 60s
+            // later" is one of the two answers it exists to print — so it
+            // cannot go through `pollUntil`, which ends only when its
+            // condition holds. The duration printed below comes from the
+            // stamp's own instant, not from when this loop noticed it.
+            for _ in 0..<300 {
+                if stamp.finishedAt != nil { break }
                 try? await Task.sleep(for: .milliseconds(200))
             }
             let releasedAfterThaw = stamp.finishedAt.map { thawedAt.duration(to: $0) }
@@ -1284,10 +1322,7 @@ struct LivenessProbeDropIntegrationTests {
 
         let terminal = try #require(tab.session?.terminal)
         terminal.openIfNeeded()
-        let openDeadline = ContinuousClock.now.advanced(by: .seconds(30))
-        while terminal.state != .running, ContinuousClock.now < openDeadline {
-            try? await Task.sleep(for: .milliseconds(50))
-        }
+        try await pollUntil("the shell reaching .running") { terminal.state == .running }
         #expect(terminal.state == .running, """
             no shell was running before the freeze (state \
             \(String(describing: terminal.state))) — the measurement this \
@@ -1343,8 +1378,14 @@ struct LivenessProbeDropIntegrationTests {
         if !returned {
             try? server.thaw()
             let thawedAt = ContinuousClock.now
-            let releaseDeadline = thawedAt.advanced(by: .seconds(60))
-            while stamp.finishedAt == nil, ContinuousClock.now < releaseDeadline {
+            // 300 × 200 ms, counted rather than read off the clock. This wait
+            // must be able to end UNSATISFIED — "was still in flight 60s
+            // later" is one of the two answers it exists to print — so it
+            // cannot go through `pollUntil`, which ends only when its
+            // condition holds. The duration printed below comes from the
+            // stamp's own instant, not from when this loop noticed it.
+            for _ in 0..<300 {
+                if stamp.finishedAt != nil { break }
                 try? await Task.sleep(for: .milliseconds(200))
             }
             let releasedAfterThaw = stamp.finishedAt.map { thawedAt.duration(to: $0) }
@@ -1615,15 +1656,8 @@ struct LivenessProbeDropIntegrationTests {
     /// Polls rather than awaiting a completion callback: the callback would
     /// fire on the queue's own worker, and this wants the main actor free in
     /// between so the queue can actually make progress.
-    private func waitForIdleQueue(_ queue: TransferQueueViewModel) async {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(60))
-        while queue.isActive {
-            guard ContinuousClock.now < deadline else {
-                Issue.record("the seed download never finished within 60s")
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(50))
-        }
+    private func waitForIdleQueue(_ queue: TransferQueueViewModel) async throws {
+        try await pollUntil("the seed download finishing") { !queue.isActive }
     }
 
     // MARK: - Fixtures

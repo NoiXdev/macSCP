@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import MacSCPAppKit
@@ -30,7 +31,7 @@ import Testing
 /// these tests leave in the strip is one of their own, built around
 /// `StartRecorder`, so a start that DOES go ahead is observed instead of
 /// dialed for real.
-@Suite("Session already open")
+@Suite("Session already open", .timeLimit(.minutes(1)))
 @MainActor
 struct AlreadyOpenSessionTests {
     private func makeTempDirectory(_ label: String) -> URL {
@@ -108,22 +109,6 @@ struct AlreadyOpenSessionTests {
         return stored
     }
 
-    @discardableResult
-    private func waitUntil(
-        _ description: Comment, timeout: Duration = .seconds(30),
-        sourceLocation: SourceLocation = #_sourceLocation,
-        _ condition: () async -> Bool
-    ) async -> Bool {
-        let deadline = ContinuousClock.now + timeout
-        var satisfied = await condition()
-        while !satisfied, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(5))
-            satisfied = await condition()
-        }
-        #expect(satisfied, description, sourceLocation: sourceLocation)
-        return satisfied
-    }
-
     // MARK: - The question is asked instead of a second tab appearing
 
     /// The behaviour C2 exists for. Before it, this dialed and opened a
@@ -163,7 +148,7 @@ struct AlreadyOpenSessionTests {
     /// check that nothing ever dials: with no tab holding the session, the
     /// start goes through untouched — including the rule that an
     /// unconnected active tab is reused rather than a second one opened.
-    @Test func aStartOfASessionNobodyHoldsStillDials() async {
+    @Test func aStartOfASessionNobodyHoldsStillDials() async throws {
         let workDir = makeTempDirectory("already-open-free")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let (view, cleanup) = makeContentView(storeDirectory: workDir)
@@ -174,9 +159,9 @@ struct AlreadyOpenSessionTests {
 
         view.connectFromSidebar(stored)
 
-        guard await waitUntil("a session no tab holds must still be dialed", {
+        try await pollUntil("a session no tab holds must still be dialed") {
             await recorder.dialCount == 1
-        }) else { return }
+        }
         #expect(await recorder.dialedHost == "example.com")
         #expect(view.tabsModel.tabs.map(\.id) == [starting.id], """
             the unconnected active tab must still be reused in place — C2 changes what \
@@ -264,7 +249,7 @@ struct AlreadyOpenSessionTests {
     /// "Open Anyway" is today's behaviour, unchanged — the same function a
     /// start reaches when no tab holds the session, including the rule that
     /// an unconnected active tab is reused in place.
-    @Test func openingAnywayStartsTheSessionAfterAll() async {
+    @Test func openingAnywayStartsTheSessionAfterAll() async throws {
         let workDir = makeTempDirectory("already-open-anyway")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let (view, cleanup) = makeContentView(storeDirectory: workDir)
@@ -284,9 +269,9 @@ struct AlreadyOpenSessionTests {
         }
         view.startWithoutAsking(request.stored, paneVisibility: request.paneVisibility)
 
-        guard await waitUntil("\"Open Anyway\" must actually start the session", {
+        try await pollUntil("\"Open Anyway\" must actually start the session") {
             await recorder.dialCount == 1
-        }) else { return }
+        }
         #expect(view.tabsModel.tabs.map(\.id) == [starting.id, holder.id], """
             the unconnected active tab must still be reused in place — "open anyway" is \
             today's behaviour and nothing else.
@@ -321,7 +306,7 @@ struct AlreadyOpenSessionTests {
     /// An ad-hoc connection to the same host is not the same session: it
     /// can carry other credentials, another key, another jump host. A tab
     /// holding none must therefore not stop a start.
-    @Test func anAdHocTabDoesNotCountAsHoldingTheSession() async {
+    @Test func anAdHocTabDoesNotCountAsHoldingTheSession() async throws {
         let workDir = makeTempDirectory("already-open-adhoc")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let (view, cleanup) = makeContentView(storeDirectory: workDir)
@@ -337,9 +322,9 @@ struct AlreadyOpenSessionTests {
 
         view.connectFromSidebar(stored)
 
-        guard await waitUntil("an ad-hoc tab must not suppress a stored session's start", {
+        try await pollUntil("an ad-hoc tab must not suppress a stored session's start") {
             await recorder.dialCount == 1
-        }) else { return }
+        }
     }
 }
 
