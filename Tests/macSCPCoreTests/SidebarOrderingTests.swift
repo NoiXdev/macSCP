@@ -97,6 +97,46 @@ struct SidebarOrderingTests {
         #expect(names(of: nil, in: result) == ["Folder"])
     }
 
+    /// The same reordering `draggingBetweenTwoSiblingsReorders` pins at the
+    /// top level, pinned again with both siblings already INSIDE one named
+    /// group — the origin and the destination are the same folder, not the
+    /// top level, and that folder must renumber around the reorder same as
+    /// any other parent does.
+    @Test func draggingBetweenTwoSiblingsInTheSameGroupReorders() throws {
+        let folder = StoredGroup(name: "Folder", position: 0)
+        let a = session("a", in: folder.id, at: 0)
+        let b = session("b", in: folder.id, at: 1)
+        let c = session("c", in: folder.id, at: 2)
+        let start = tree(groups: [folder], sessions: [a, b, c])
+
+        let result = try moved(
+            SidebarOrdering.moved(.session(c.id), before: .session(b.id), in: start))
+
+        #expect(names(of: folder.id, in: result) == ["a", "c", "b"])
+        #expect(positions(of: folder.id, in: result) == [0, 1, 2])
+    }
+
+    /// A session moving between two ALREADY-NAMED groups (neither one the
+    /// top level) — every other reordering fixture here has the top level on
+    /// one side or both. The origin group loses a member and must close the
+    /// gap; the destination adopts the mover ahead of the row it landed on.
+    @Test func draggingASessionBetweenTwoNamedGroupsAdoptsTheDestination() throws {
+        let groupA = StoredGroup(name: "A", position: 0)
+        let groupB = StoredGroup(name: "B", position: 1)
+        let stayed = session("stayed", in: groupA.id, at: 0)
+        let moving = session("moving", in: groupA.id, at: 1)
+        let inB = session("inB", in: groupB.id, at: 0)
+        let start = tree(groups: [groupA, groupB], sessions: [stayed, moving, inB])
+
+        let result = try moved(
+            SidebarOrdering.moved(.session(moving.id), before: .session(inB.id), in: start))
+
+        #expect(names(of: groupB.id, in: result) == ["moving", "inB"])
+        #expect(names(of: groupA.id, in: result) == ["stayed"])
+        #expect(positions(of: groupA.id, in: result) == [0])
+        #expect(positions(of: groupB.id, in: result) == [0, 1])
+    }
+
     // MARK: - Dropping onto a folder
 
     @Test func draggingOntoAFolderAppendsToItsChildren() throws {
@@ -138,6 +178,25 @@ struct SidebarOrderingTests {
 
         #expect(names(of: nil, in: result) == ["Folder", "loose", "inside"])
         #expect(names(of: folder.id, in: result).isEmpty)
+    }
+
+    /// A GROUP, not a session, dropped onto the top level — "folder to
+    /// root". `aMoveDropsNothing` already drags a group `intoGroup: nil` but
+    /// only checks that no id was lost; this pins the placement itself: the
+    /// nested group's `parentID` clears to `nil`, and it appends after
+    /// whatever the top level already held, not in front of it or nested
+    /// under the sibling group beside it.
+    @Test func draggingAGroupToTheTopLevelClearsItsParentAndAppends() throws {
+        let outer = StoredGroup(name: "Outer", position: 0)
+        let nested = StoredGroup(name: "Nested", parentID: outer.id, position: 0)
+        let sibling = StoredGroup(name: "Sibling", position: 1)
+        let start = tree(groups: [outer, nested, sibling])
+
+        let result = try moved(SidebarOrdering.moved(.group(nested.id), intoGroup: nil, in: start))
+
+        #expect(result.groups.first { $0.id == nested.id }?.parentID == nil)
+        #expect(names(of: nil, in: result) == ["Outer", "Sibling", "Nested"])
+        #expect(names(of: outer.id, in: result).isEmpty)
     }
 
     // MARK: - Refusals
