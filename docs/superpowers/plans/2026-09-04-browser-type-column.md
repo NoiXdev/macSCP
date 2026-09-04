@@ -7,8 +7,10 @@ reads as a bucket, not a folder; and the remote file table gains a
 "Type" column (PDF, PNG, Folder, Bucket, Link, …) that sorts, in every
 backend.
 
-**Architecture:** `RemoteFileItem.Kind` is `file | directory | symlink`
-(`RemoteFileItem.swift:4-6`); the S3 bucket list renders buckets as
+**Architecture:** `RemoteFileItem.Kind` is `file | directory | symlink |
+other` (`RemoteFileItem.swift:3-8`, four cases — this line originally
+named three and dropped `.other`, corrected in the final fix round of
+2026-09-04); the S3 bucket list renders buckets as
 directories. A new `RemoteFileItem.isBucket: Bool` (default false, set
 by `S3FileSystem` in bucket-list mode) keeps every capability gate that
 switches on `kind` untouched; the table's kind icon reads it. Core gains
@@ -29,6 +31,15 @@ already carried `FileSortKey` as `name | size | modified | permissions
 | owner | group | type` (M11m/T2), and `RemoteFileTableView` already
 built a "Type" column (`FileColumn.type`, `typeText(for:)`) — see
 `.superpowers/sdd/2026-09-04-browser-type-column/task-1-report.md`.
+**Correction, Task 2**: the same struck-through line's third claim —
+"the kind icon is chosen from `kind`" — was also wrong. No per-row kind
+icon existed at `e6dbc83e` at all: the table's only marker was the
+symlink arrow, built once at cell-construction time with a FIXED image,
+never varying by `kind` or anything else — visibility was the only
+thing that changed per row. See
+`.superpowers/sdd/2026-09-04-browser-type-column/task-2-report.md`,
+"The 'kind icon' did not exist yet — a finding, not the brief's
+premise".
 ~~Measured at HEAD: `RemoteBrowserViewModel.SortKey` is `name | size |
 modified` (`:8-10`); `RemoteFileTableView.swift:387-396` builds
 `NSTableColumn`s from a column enum's `rawValue`; the kind icon is

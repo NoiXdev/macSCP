@@ -360,14 +360,28 @@ public final class RemoteBrowserViewModel {
     static func sortedForDisplay(
         _ items: [RemoteFileItem], key: FileSortKey = .name, ascending: Bool = true
     ) -> [RemoteFileItem] {
-        items.sorted { a, b in
+        // `.type`'s label goes through `CoreL10n` (`FileTypeLabel.sortKey`),
+        // and `sorted(by:)` calls its comparator O(n log n) times, each
+        // touching two items — computing the label INSIDE the comparator
+        // (as before) re-derives the same item's label on every comparison
+        // it takes part in. Computed once per item here instead, keyed by
+        // `path` (== `RemoteFileItem.id`, unique within one directory
+        // listing), and looked up rather than re-resolved below. Empty, at
+        // no cost, for every other key. The order this produces is
+        // unchanged: label, then the same name tiebreak.
+        let typeLabels: [String: String] =
+            key == .type
+            ? Dictionary(
+                uniqueKeysWithValues: items.map { ($0.path, FileTypeLabel.sortKey(for: $0)) })
+            : [:]
+        return items.sorted { a, b in
             if a.isDirectory != b.isDirectory { return a.isDirectory }
             // The PRIMARY key follows `ascending`; the name tiebreaker does
             // NOT (M11l/T1 review): equal-size or equal-date rows always read
             // A→Z, even in a descending sort, matching the Finder. Applying
             // the direction flip to the whole comparison (tiebreaker included)
             // would sort those Z→A, which reads as inconsistent.
-            let primary = primaryOrder(a, b, key: key)
+            let primary = primaryOrder(a, b, key: key, typeLabels: typeLabels)
             if primary != .orderedSame {
                 return ascending ? primary == .orderedAscending : primary == .orderedDescending
             }
@@ -379,8 +393,12 @@ public final class RemoteBrowserViewModel {
     /// tiebreaker (which `sortedForDisplay` applies separately, always
     /// ascending). For `.name` the key IS the name, so there is nothing left
     /// to break ties with. See `sortedForDisplay`'s doc comment for the
-    /// missing-value rule.
-    private static func primaryOrder(_ a: RemoteFileItem, _ b: RemoteFileItem, key: FileSortKey) -> ComparisonResult {
+    /// missing-value rule. `typeLabels` is `sortedForDisplay`'s once-per-item
+    /// cache for `.type`; every other key ignores it.
+    private static func primaryOrder(
+        _ a: RemoteFileItem, _ b: RemoteFileItem, key: FileSortKey,
+        typeLabels: [String: String] = [:]
+    ) -> ComparisonResult {
         switch key {
         case .name:
             return nameOrder(a, b)
@@ -395,7 +413,7 @@ public final class RemoteBrowserViewModel {
         case .group:
             return compareOptionalLocalizedString(a.group, b.group)
         case .type:
-            return compareTypeLabel(a, b)
+            return compareTypeLabel(a, b, labels: typeLabels)
         }
     }
 
@@ -441,8 +459,16 @@ public final class RemoteBrowserViewModel {
     /// `.type`'s ordering: `FileTypeLabel.sortKey`, `localizedCaseInsensitiveCompare`d
     /// — every row has a label (there's no "missing" case the way
     /// size/date/owner have), so there's no nil-identity rule to state here.
-    private static func compareTypeLabel(_ a: RemoteFileItem, _ b: RemoteFileItem) -> ComparisonResult {
-        FileTypeLabel.sortKey(for: a).localizedCaseInsensitiveCompare(FileTypeLabel.sortKey(for: b))
+    /// `labels` is `sortedForDisplay`'s once-per-item cache, keyed by
+    /// `path`; a miss (should not happen — every item sorted was in the
+    /// array the cache was built from) falls back to resolving it here
+    /// rather than crashing.
+    private static func compareTypeLabel(
+        _ a: RemoteFileItem, _ b: RemoteFileItem, labels: [String: String]
+    ) -> ComparisonResult {
+        let labelA = labels[a.path] ?? FileTypeLabel.sortKey(for: a)
+        let labelB = labels[b.path] ?? FileTypeLabel.sortKey(for: b)
+        return labelA.localizedCaseInsensitiveCompare(labelB)
     }
 
     // MARK: - Browser actions (M7b)

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import macSCPCore
@@ -5,10 +6,17 @@ import macSCPCore
 @testable import MacSCPAppKit
 
 /// The "Type" column and the bucket icon (Browser Type Column, Task 2,
-/// 2026-09-04) as source-scanning guards — no rendering harness exists for
-/// this AppKit table (`IconTooltipLintTests` names the same limitation), so
-/// these read source text the same way `ChecksumColumnWiringGuardTests`
-/// does for the ledger's one writer.
+/// 2026-09-04). Most of this suite reads source text the same way
+/// `ChecksumColumnWiringGuardTests` does for the ledger's one writer — this
+/// table is not driven inside a hosted window in this project's tests, the
+/// same limitation `IconTooltipLintTests` names for icon/tooltip pairing
+/// (that suite's own header calls it "no test target of its own" for the
+/// App layer, which is stale: `Package.swift` declares `macSCPAppKitTests`
+/// — this very file lives in it — it just cannot render an `NSView` and
+/// read pixels back). One test below is the exception: it drives
+/// `Coordinator.tableView(_:viewFor:row:)` directly, which needs no window,
+/// and checks the marker `NSImageView` it returns rather than scanning for
+/// the code that builds one.
 ///
 /// Two properties, each a positive check beside a negative one over the
 /// same text (per this project's rule that a negative check needs a
@@ -115,5 +123,63 @@ struct RemoteFileTableTypeColumnGuardTests {
                 "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
             encoding: .utf8)
         #expect(catalog.contains("\"filetable.bucketTooltip\" ="))
+    }
+
+    // MARK: - The bucket icon, behaviourally (final-review fix)
+
+    /// `theIconBranchReadsIsBucket` above is a source scan for the string
+    /// `item.isBucket`, and `cellToolTip`'s `.name` case reads that same
+    /// property (for the hover hint) a few lines below the icon branch — so
+    /// deleting the icon branch ENTIRELY still leaves `item.isBucket`
+    /// somewhere in the file, and that scan stays green over a real
+    /// regression (final review of this plan, 2026-09-04). This drives the
+    /// actual cell mapping instead of scanning for it: a bucket row, a
+    /// symlink row, and a plain file row, each through
+    /// `Coordinator.tableView(_:viewFor:row:)`, and reads the marker
+    /// `NSImageView` each one comes back with.
+    ///
+    /// Three FRESH cells, not one reused one: `NSTableView
+    /// .makeView(withIdentifier:owner:)` only ever returns a previously
+    /// built view once the table has actually recycled it during a real
+    /// scroll or reload pass inside a HOSTED window — nothing a headless
+    /// unit test can drive without one (the same limitation this file's
+    /// header names for rendering generally). The recycling-hygiene rule
+    /// the production code documents at the icon branch — that a reused
+    /// cell must be told its `isHidden` state on every pass, not just the
+    /// two truthy branches — is exercised here across three independent
+    /// cells instead, one per row, rather than across one cell scrolled
+    /// through three rows.
+    @Test @MainActor
+    func theMarkerVariesPerRowBucketThenSymlinkThenPlainFile() throws {
+        let bucket = RemoteFileItem(
+            name: "my-bucket", path: "/my-bucket", kind: .directory, isBucket: true)
+        let symlink = RemoteFileItem(name: "current", path: "/current", kind: .symlink)
+        let plain = RemoteFileItem(name: "report.pdf", path: "/report.pdf", kind: .file)
+
+        let coordinator = RemoteFileTableView.Coordinator(
+            onOpen: { _ in }, onSelect: { _ in }, side: .remote)
+        coordinator.items = [bucket, symlink, plain]
+
+        let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 400, height: 100))
+        let nameColumn = NSTableColumn(identifier: .init(FileColumn.name.rawValue))
+        tableView.addTableColumn(nameColumn)
+
+        func markerImageView(row: Int) throws -> NSImageView {
+            let view = try #require(
+                coordinator.tableView(tableView, viewFor: nameColumn, row: row)
+                    as? NSTableCellView,
+                "row \(row) did not produce an NSTableCellView")
+            return try #require(view.imageView, "row \(row)'s cell has no marker imageView")
+        }
+
+        let bucketMarker = try markerImageView(row: 0)
+        let symlinkMarker = try markerImageView(row: 1)
+        let plainMarker = try markerImageView(row: 2)
+
+        #expect(bucketMarker.isHidden == false)
+        #expect(bucketMarker.image != nil)
+        #expect(symlinkMarker.isHidden == false)
+        #expect(symlinkMarker.image != nil)
+        #expect(plainMarker.isHidden == true)
     }
 }

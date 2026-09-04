@@ -416,8 +416,14 @@ public final class SettingsStore {
     /// included in what this returns, regardless of what's stored — it can
     /// never be toggled off (`FileColumn.isToggleable`). Forward-compatible:
     /// a `settings.json` predating this feature (missing key entirely) falls
-    /// back to `FileColumn.defaultVisible`'s set, i.e. exactly the three
-    /// fixed columns the list always showed before this feature existed.
+    /// back to `FileColumn.defaultVisible`'s set — the three fixed columns
+    /// the list always showed before this feature existed, plus `.type`
+    /// (Browser Type Column plan, 2026-09-04 — a deliberate exception to
+    /// the "new column starts OFF" rule the other four M11m columns
+    /// follow; see `FileColumn.defaultVisible`'s own doc comment). Any
+    /// install that has already persisted an explicit `visibleColumns`
+    /// array — even once, for an unrelated column — is unaffected by that:
+    /// this fallback only fires when the key is missing entirely.
     /// Unrecognized raw column names on disk (a future app version's
     /// column, or hand-edited garbage) are dropped silently rather than
     /// crashing or surfacing them as garbage. Written back out in

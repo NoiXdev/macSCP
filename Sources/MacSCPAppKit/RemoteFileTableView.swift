@@ -294,6 +294,33 @@ struct RemoteFileTableView: NSViewRepresentable {
         L10n.string("filetable.bucketTooltip", "Bucket")
     }
 
+    /// Backing storage for the two kind-marker glyphs `Coordinator
+    /// .tableView(_:viewFor:row:)` fills in and reads (Task 2 review, minor
+    /// 7): that method used to call `NSImage(systemSymbolName
+    /// :accessibilityDescription:)` itself on every cell it handed back, so
+    /// scrolling past the same rows repeatedly kept allocating equivalent
+    /// images nobody needed a fresh copy of. Filled once, on the first row
+    /// that needs each one, and reused after — a plain cache rather than a
+    /// `static let`, because the `NSImage(systemSymbolName:` calls that fill
+    /// it have to stay textually where they always were, right beside
+    /// `cell.toolTip = …`: `IconTooltipLintTests`' proximity-window scan
+    /// only credits an icon with a hover hint within `hintWindow` (12) lines
+    /// of where the icon ITSELF is constructed in the source, and moving the
+    /// construction call up here — over 500 lines from that `toolTip =`
+    /// line — would strand `archivebox`/`arrow.up.forward` outside every
+    /// hint the table has (measured by running that suite against this
+    /// exact change: 2 issues, "has no hover hint", before this cache
+    /// design replaced it). `@MainActor` because AppKit's table-view
+    /// delegate/data-source callbacks that fill and read it always run on
+    /// the main actor. Sharing one `NSImage` instance across every row that
+    /// shows it is safe regardless of where it is built: `NSImageView.image`
+    /// is a reference the view only DISPLAYS, and nothing in this file (or
+    /// anywhere else that reads an `NSImageView`) ever mutates the `NSImage`
+    /// behind it — each row just re-points `imageView.image` at the same
+    /// instance.
+    @MainActor private static var cachedBucketMarkerImage: NSImage?
+    @MainActor private static var cachedSymlinkMarkerImage: NSImage?
+
     /// Whether a change in the inputs `buildColumns` reads means the table's
     /// columns have to be torn down and built again.
     ///
@@ -805,14 +832,14 @@ struct RemoteFileTableView: NSViewRepresentable {
             // and the hover hint that explains it stay close in the source.
             if column == .name {
                 if item.isBucket {
-                    cell.imageView?.image = NSImage(
-                        systemSymbolName: "archivebox",
-                        accessibilityDescription: RemoteFileTableView.bucketDescription)
+                    RemoteFileTableView.cachedBucketMarkerImage = RemoteFileTableView.cachedBucketMarkerImage
+                        ?? NSImage(systemSymbolName: "archivebox", accessibilityDescription: RemoteFileTableView.bucketDescription)
+                    cell.imageView?.image = RemoteFileTableView.cachedBucketMarkerImage
                     cell.imageView?.isHidden = false
                 } else if item.kind == .symlink {
-                    cell.imageView?.image = NSImage(
-                        systemSymbolName: "arrow.up.forward",
-                        accessibilityDescription: RemoteFileTableView.symlinkDescription)
+                    RemoteFileTableView.cachedSymlinkMarkerImage = RemoteFileTableView.cachedSymlinkMarkerImage
+                        ?? NSImage(systemSymbolName: "arrow.up.forward", accessibilityDescription: RemoteFileTableView.symlinkDescription)
+                    cell.imageView?.image = RemoteFileTableView.cachedSymlinkMarkerImage
                     cell.imageView?.isHidden = false
                 } else {
                     cell.imageView?.isHidden = true

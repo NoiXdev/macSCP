@@ -88,6 +88,22 @@ struct ChecksumColumnTests {
                     for: item, in: ledger, algorithm: .sha256))
     }
 
+    /// The same shape as the check above, for the `.type` column (Browser
+    /// Type Column, 2026-09-04, final review minor 5): structure over a
+    /// source scan — this drives the actual cell mapping and compares it
+    /// against `FileTypeLabel.label(for:)` directly, rather than grepping
+    /// `RemoteFileTableView.swift` for the call (which
+    /// `RemoteFileTableTypeColumnGuardTests.theTypeCellReadsFileTypeLabel`
+    /// already does).
+    @Test func theTypeCellRendersThroughFileTypeLabel() {
+        let item = RemoteFileItem(name: "report.pdf", path: "/report.pdf", kind: .file)
+
+        #expect(
+            RemoteFileTableView.cellText(
+                for: .type, item: item, ledger: ChecksumLedger(), algorithm: .sha256)
+                == FileTypeLabel.label(for: item))
+    }
+
     /// Every column says something different about the same file — the
     /// cheapest thing a branch of that mapping can be is a copy of the one
     /// above it, and a copy is invisible in a screenshot.

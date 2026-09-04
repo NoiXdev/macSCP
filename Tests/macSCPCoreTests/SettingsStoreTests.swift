@@ -719,11 +719,15 @@ struct SettingsStoreTests {
 
     // MARK: - Visible file-list columns (M11m Task 1)
 
-    @Test func visibleColumnsDefaultsToTodaysThreeFixedColumns() {
+    /// `.type` joins the three legacy fixed columns in the default set —
+    /// a deliberate exception to M11m's opt-in rule for a new column
+    /// (Browser Type Column plan, 2026-09-04, Global Constraint: "defaults
+    /// to visible"); see `FileColumn.defaultVisible`'s own doc comment.
+    @Test func visibleColumnsDefaultsToTheThreeFixedColumnsPlusType() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = SettingsStore(directory: dir)
-        #expect(store.visibleColumns == [.name, .size, .modified])
+        #expect(store.visibleColumns == [.name, .size, .modified, .type])
     }
 
     @Test func visibleColumnsRoundtrips() {
@@ -747,8 +751,9 @@ struct SettingsStoreTests {
     }
 
     /// Forward compatibility: a settings.json predating M11m (no
-    /// `visibleColumns` key at all) must show exactly what the list always
-    /// showed before this feature existed.
+    /// `visibleColumns` key at all) must show `FileColumn.defaultVisible`'s
+    /// set — the three columns the list always showed before this feature
+    /// existed, plus `.type` (Browser Type Column plan, 2026-09-04).
     @Test func loadingOldSettingsFileWithoutVisibleColumnsKeyUsesDefaults() throws {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -759,7 +764,7 @@ struct SettingsStoreTests {
         try Data(json.utf8).write(to: fileURL(dir))
 
         let store = SettingsStore(directory: dir)
-        #expect(store.visibleColumns == [.name, .size, .modified])
+        #expect(store.visibleColumns == [.name, .size, .modified, .type])
     }
 
     /// A future app version's column name (or hand-edited garbage) on disk

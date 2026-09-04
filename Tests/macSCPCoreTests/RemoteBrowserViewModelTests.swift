@@ -1675,25 +1675,46 @@ struct RemoteBrowserViewModelTests {
 
     /// The full precedence in one sort: a bucket ("Bucket") and a plain
     /// directory ("Folder") both group first (directories-first, and a
-    /// bucket's `kind` is `.directory` too) ordered "Bucket" < "Folder";
-    /// then the non-directory rows ordered by label — "File" (no
-    /// extension) < "PDF" < "PNG" — with a name tiebreak where labels tie.
+    /// bucket's `kind` is `.directory` too); then the non-directory rows,
+    /// ordered by label with a name tiebreak where labels tie.
+    ///
+    /// The EXPECTED order is derived below from `FileTypeLabel.label(for:)`
+    /// itself, not hardcoded as English text: `CoreL10n` resolves against
+    /// the host's preferred language (same reasoning
+    /// `SessionListViewModelTests` documents for `core.login.mergeFailed`),
+    /// and the relative order these five rows land in is NOT locale-stable.
+    /// In English, "File" (README's label, no extension) sorts before
+    /// "PDF" ("F" < "P") — but in `CoreL10n`'s Polish catalog "File" is
+    /// "Plik", and "PDF" sorts before "Plik" ("P" = "P", then "D" < "l"),
+    /// the opposite relation. A fixed
+    /// `["assets", "docs", "README", "report.pdf", "photo.png"]` would
+    /// therefore pass in English CI and fail on a Polish Mac.
     @Test func sortByTypeOrdersByLabelThenName() async {
-        let fs = MockRemoteFileSystem(tree: [
-            "/": [
-                RemoteFileItem(name: "docs", path: "/docs", kind: .directory),
-                RemoteFileItem(name: "report.pdf", path: "/report.pdf", kind: .file),
-                RemoteFileItem(name: "photo.png", path: "/photo.png", kind: .file),
-                RemoteFileItem(
-                    name: "assets", path: "/assets", kind: .directory, isBucket: true),
-                RemoteFileItem(name: "README", path: "/README", kind: .file),
-            ],
-        ])
+        let items = [
+            RemoteFileItem(name: "docs", path: "/docs", kind: .directory),
+            RemoteFileItem(name: "report.pdf", path: "/report.pdf", kind: .file),
+            RemoteFileItem(name: "photo.png", path: "/photo.png", kind: .file),
+            RemoteFileItem(name: "assets", path: "/assets", kind: .directory, isBucket: true),
+            RemoteFileItem(name: "README", path: "/README", kind: .file),
+        ]
+        let fs = MockRemoteFileSystem(tree: ["/": items])
         let vm = RemoteBrowserViewModel(fs: fs)
         await vm.load()
         vm.sortKey = .type
 
-        #expect(vm.items.map(\.name) == ["assets", "docs", "README", "report.pdf", "photo.png"])
+        // The contract stated independently of the production comparator:
+        // directories first, then label, then name — computed from the
+        // labels the CURRENT locale actually resolves, so this stays
+        // correct under any of the four catalogs.
+        let expected = items.sorted { a, b in
+            if a.isDirectory != b.isDirectory { return a.isDirectory }
+            let byLabel = FileTypeLabel.label(for: a)
+                .localizedCaseInsensitiveCompare(FileTypeLabel.label(for: b))
+            if byLabel != .orderedSame { return byLabel == .orderedAscending }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }.map(\.name)
+
+        #expect(vm.items.map(\.name) == expected)
     }
 
     /// Directories still group first under every new key too (M11l rule

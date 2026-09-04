@@ -26,12 +26,24 @@ public enum FileColumn: String, Sendable, CaseIterable {
 
     /// Visibility for a fresh install, and the forward-compat fallback when
     /// `settings.json` predates this feature: `name`/`size`/`modified`
-    /// preserve today's three fixed columns exactly; every other one starts
-    /// OFF until the user opts in.
+    /// preserve today's three fixed columns exactly; `permissions`/`owner`/
+    /// `group`/`checksum` start OFF until the user opts in (M11m's rule for
+    /// a new column). `type` is a deliberate exception to that rule (Browser
+    /// Type Column plan, 2026-09-04, Global Constraint: "defaults to
+    /// visible") — ships pre-decided ON rather than opt-in, per the plan's
+    /// own maintainer feedback that a bucket/kind glimpse belongs in the
+    /// listing by default.
+    ///
+    /// Only a FRESH install (`SettingsStore.visibleColumns` with no stored
+    /// `visibleColumns` key at all) sees this. An install that has ever
+    /// written that key — even once, for an unrelated column — keeps its own
+    /// stored set exactly as persisted; this flip does not retroactively add
+    /// `.type` to it. See `SettingsStore.visibleColumns`'s doc comment for
+    /// the fallback rule this feeds.
     public var defaultVisible: Bool {
         switch self {
-        case .name, .size, .modified: return true
-        case .permissions, .owner, .group, .type, .checksum: return false
+        case .name, .size, .modified, .type: return true
+        case .permissions, .owner, .group, .checksum: return false
         }
     }
 }

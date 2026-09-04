@@ -34,8 +34,24 @@ struct FileColumnTests {
         #expect(FileColumn.permissions.defaultVisible == false)
         #expect(FileColumn.owner.defaultVisible == false)
         #expect(FileColumn.group.defaultVisible == false)
-        #expect(FileColumn.type.defaultVisible == false)
         #expect(FileColumn.checksum.defaultVisible == false)
+    }
+
+    /// `.type` is the one deliberate exception to the opt-in rule above
+    /// (Browser Type Column plan, 2026-09-04, Global Constraint) — it ships
+    /// visible by default, not off-until-chosen like every other M11m
+    /// column.
+    @Test func typeDefaultsToVisible() {
+        #expect(FileColumn.type.defaultVisible == true)
+    }
+
+    /// The default SET a fresh install (or a `settings.json` predating this
+    /// feature) sees — `.type` is in it, alongside the three legacy fixed
+    /// columns.
+    @Test func typeIsInTheDefaultVisibleColumnSet() {
+        let defaults = Set(FileColumn.allCases.filter(\.defaultVisible))
+        #expect(defaults.contains(.type))
+        #expect(defaults == [.name, .size, .modified, .type])
     }
 
     // MARK: - Formatters
