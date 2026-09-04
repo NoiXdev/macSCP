@@ -1190,3 +1190,7 @@
 "overview.snippets.empty" = "No snippets saved yet.";
 "overview.snippets.run" = "Run";
 "overview.snippets.shellDidNotOpen" = "The snippet was not sent: this session's shell did not open.";
+
+"whatsNew.title" = "What's new in %@";
+"whatsNew.close" = "Close";
+"whatsNew.none" = "No changelog shipped with this build.";

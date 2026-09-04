@@ -1195,3 +1195,7 @@
 "overview.snippets.empty" = "Aucun snippet enregistré.";
 "overview.snippets.run" = "Exécuter";
 "overview.snippets.shellDidNotOpen" = "L’extrait n’a pas été envoyé : l’interpréteur de cette session n’a pas démarré.";
+
+"whatsNew.title" = "Nouveautés de %@";
+"whatsNew.close" = "Fermer";
+"whatsNew.none" = "Aucun journal des modifications n’est fourni avec cette version.";

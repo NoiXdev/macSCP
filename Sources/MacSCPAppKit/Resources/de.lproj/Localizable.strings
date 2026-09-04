@@ -1192,3 +1192,7 @@
 "overview.snippets.empty" = "Noch keine Snippets gespeichert.";
 "overview.snippets.run" = "Ausführen";
 "overview.snippets.shellDidNotOpen" = "Das Snippet wurde nicht gesendet: Die Shell dieser Sitzung ist nicht gestartet.";
+
+"whatsNew.title" = "Neu in %@";
+"whatsNew.close" = "Schließen";
+"whatsNew.none" = "Diesem Build liegt kein Änderungsprotokoll bei.";

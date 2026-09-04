@@ -85,6 +85,7 @@ public final class SettingsStore {
         static let sidebarCompact = "sidebarCompact"
         static let checksumAlgorithm = "checksumAlgorithm"
         static let transfersShowFullPaths = "transfersShowFullPaths"
+        static let lastSeenVersion = "lastSeenVersion"
     }
 
     private enum Defaults {
@@ -370,6 +371,20 @@ public final class SettingsStore {
     public var customTerminalAppPath: String? {
         get { stringValue(for: Keys.customTerminalAppPath) }
         set { setString(newValue, for: Keys.customTerminalAppPath) }
+    }
+
+    /// The `CFBundleShortVersionString` running the last time the app
+    /// decided whether to show the "What's New" sheet (What's New plan,
+    /// Task 2); `nil` before that decision has ever been made — a fresh
+    /// install, or a settings.json predating this key. `WhatsNewModel
+    /// .releasesToShow` reads it as `lastSeen`, and the App layer writes it
+    /// right after making that decision (see `MacSCPApp.init`'s doc
+    /// comment for why immediately rather than after the sheet closes).
+    /// Same nil/empty-collapsing accessor pattern as `customTerminalAppPath`
+    /// /`terminalFontName`.
+    public var lastSeenVersion: String? {
+        get { stringValue(for: Keys.lastSeenVersion) }
+        set { setString(newValue, for: Keys.lastSeenVersion) }
     }
 
     /// The UI language chosen in Settings (M11p). `.system` (default) means

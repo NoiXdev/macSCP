@@ -1194,3 +1194,7 @@
 "overview.snippets.empty" = "Nie zapisano jeszcze żadnych fragmentów.";
 "overview.snippets.run" = "Uruchom";
 "overview.snippets.shellDidNotOpen" = "Fragment nie został wysłany: powłoka tej sesji nie uruchomiła się.";
+
+"whatsNew.title" = "Nowości w %@";
+"whatsNew.close" = "Zamknij";
+"whatsNew.none" = "Do tej wersji nie dołączono dziennika zmian.";

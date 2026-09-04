@@ -323,6 +323,18 @@ struct SettingsStoreTests {
         #expect(reloaded.transfersShowFullPaths == true)
     }
 
+    // MARK: - What's New (What's New plan, Task 2)
+
+    @Test func lastSeenVersionDefaultsNilAndPersists() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.lastSeenVersion == nil)
+        store.lastSeenVersion = "1.3.0"
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.lastSeenVersion == "1.3.0")
+    }
+
     @Test func legacyJSONWithoutTransfersShowFullPathsLoadsFalse() throws {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

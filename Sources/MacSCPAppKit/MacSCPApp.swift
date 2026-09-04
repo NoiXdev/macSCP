@@ -189,6 +189,14 @@ struct MacSCPApp: App {
     /// doc comment for why this lives here rather than in `ContentView`'s
     /// per-tab machinery.
     @State private var updateModel = UpdateCheckModel()
+    /// The releases `decideWhatsNew(store:)` decided to show this launch —
+    /// see that function's doc comment. `showWhatsNew` drives the sheet's
+    /// presentation; this carries what it should show once presented.
+    @State private var whatsNewReleases: [ChangelogRelease] = []
+    /// Whether the "What's New" sheet should be showing. Set once in
+    /// `init` from `decideWhatsNew(store:)`'s result and flipped back to
+    /// `false` by the sheet's own Close button (`WhatsNewSheet.onClose`).
+    @State private var showWhatsNew = false
     /// Menu-bar status bridge (M11n) — one instance for the whole app,
     /// passed to `ContentView` (which mirrors its tabs into it) and to the
     /// `MenuBarController` below, same no-singleton pattern as the other
@@ -206,6 +214,11 @@ struct MacSCPApp: App {
     /// `store.selectedLanguage` to decide whether to show the relaunch
     /// button — a change only takes effect on a fresh launch.
     let launchLanguage: AppLanguage
+    /// The running bundle's `CFBundleShortVersionString`, captured once in
+    /// `init` for `WhatsNewSheet`'s title — empty when it could not be
+    /// read (`decideWhatsNew(store:)` already declined to show anything in
+    /// that case, so an empty title is never actually presented).
+    let whatsNewCurrentVersion: String
 
     init() {
         // Sweep any orphaned edit temp directories left behind by a
@@ -239,10 +252,59 @@ struct MacSCPApp: App {
         }
         launchLanguage = language
 
+        // "What's New" decision (What's New plan, Task 2) — see
+        // `decideWhatsNew(store:)`'s own doc comment for exactly when
+        // `lastSeenVersion` gets written and why that happens inside it,
+        // synchronously, rather than after the sheet is dismissed.
+        let whatsNew = Self.decideWhatsNew(store: store)
+        whatsNewCurrentVersion = whatsNew.current
+        _whatsNewReleases = State(initialValue: whatsNew.releases)
+        _showWhatsNew = State(initialValue: !whatsNew.releases.isEmpty)
+
         let model = MenuBarStatusModel()
         _settingsStore = State(initialValue: store)
         _menuBarModel = State(initialValue: model)
         menuBarController = MenuBarController(model: model, settingsStore: store)
+    }
+
+    /// Decides which releases (if any) "What's New" should show this
+    /// launch, and records the running version as `store.lastSeenVersion`
+    /// IMMEDIATELY as part of making that decision — before `body` ever
+    /// builds the sheet, let alone before the user sees or dismisses it.
+    ///
+    /// Recording at decision time rather than at dismissal is deliberate:
+    /// `init` runs once per process launch, and a crash mid-sheet (or the
+    /// app quitting before the user closes it) must not leave the same
+    /// release list queued to reappear next launch as though nothing had
+    /// been acknowledged — the decision itself, not the user's reaction to
+    /// it, is what "seen" means here. It mirrors how
+    /// `UpdateCheckModel.check(manual:settingsStore:)` already writes
+    /// `settingsStore.lastUpdateCheck` right after the attempt rather than
+    /// after any alert it raises is dismissed.
+    ///
+    /// Returns an empty `current` and `[]` releases when the running
+    /// bundle carries no `CFBundleShortVersionString` at all (`swift run`
+    /// outside a `.app`, or a malformed bundle) — there is no "current"
+    /// version to decide against, so nothing is shown and nothing is
+    /// recorded either; a `nil` read is left exactly as unresolved as it
+    /// was, rather than guessed at. A resolvable `current` with no
+    /// `CHANGELOG.md` bundled (`ChangelogResource.load()` returns `nil`
+    /// under `swift test`/`swift run`, or a build assembled without
+    /// `scripts/package-app`/the dev-build recipe) still records
+    /// `current`, just against an empty release list, exactly as
+    /// `WhatsNewModel.releasesToShow` would for a `lastSeen` already
+    /// caught up.
+    private static func decideWhatsNew(
+        store: SettingsStore
+    ) -> (current: String, releases: [ChangelogRelease]) {
+        guard let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        else { return ("", []) }
+
+        let releases = ChangelogResource.load().map(ChangelogParser.parse) ?? []
+        let toShow = WhatsNewModel.releasesToShow(
+            current: current, lastSeen: store.lastSeenVersion, in: releases)
+        store.lastSeenVersion = current
+        return (current, toShow)
     }
 
     var body: some Scene {
@@ -254,6 +316,14 @@ struct MacSCPApp: App {
                 settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
                 auditStore: auditStore, tabCommands: tabCommands, updateModel: updateModel,
                 menuBarModel: menuBarModel)
+                // "What's New" (What's New plan, Task 2): `showWhatsNew` was
+                // decided once, in `init`, by `decideWhatsNew(store:)` —
+                // this only presents what that decision already made.
+                .sheet(isPresented: $showWhatsNew) {
+                    WhatsNewSheet(
+                        currentVersion: whatsNewCurrentVersion, releases: whatsNewReleases,
+                        onClose: { showWhatsNew = false })
+                }
         }
         .commands {
             // "Check for Updates…" (M11b/T2), directly under "About macSCP"
