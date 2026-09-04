@@ -19,10 +19,18 @@ import Testing
 /// needs neither a count nor a group — one flag, and every waiter released
 /// when it flips.
 ///
-/// `wait(until:)` takes a deadline that is a NET, not the property: it is
-/// there so a seam that stops being called fails the case in half a minute
-/// instead of parking a thread for the life of the process. `wasOpened` is
-/// what a test asserts on, and it distinguishes the two.
+/// `wait()` carries no deadline of its own — the same discipline
+/// `pollUntil` keeps on the async side (CLAUDE.md, "A wall-clock ceiling
+/// in a test measures the runner"), applied to the one place an `await`
+/// cannot go: a `Date`-based NET used to sit here, and it was exactly that
+/// ceiling under another spelling — a fixed duration standing in for what
+/// should end the wait, found and retired 2026-09-04. If the gate is never
+/// opened, this call parks its thread — `BlockingProbe`'s own, never the
+/// cooperative pool — for good; nothing downstream reads what that thread
+/// would have produced, and the TEST still ends on time, because the
+/// caller that joins it (an `AsyncSignal.wait()`, not this one) is what
+/// answers to the suite's `.timeLimit`. `wasOpened` is what a test asserts
+/// on, and it distinguishes "opened" from "still parked" without waiting.
 final class BlockingGate: @unchecked Sendable {
     private let condition = NSCondition()
     private var opened = false
@@ -43,12 +51,14 @@ final class BlockingGate: @unchecked Sendable {
         return opened
     }
 
-    /// Blocks until the gate opens or `deadline` passes.
-    func wait(until deadline: Date) {
+    /// Blocks until the gate opens. No deadline: see the type's own doc
+    /// comment for why parking this thread indefinitely is the right shape
+    /// here rather than a hazard.
+    func wait() {
         condition.lock()
         defer { condition.unlock() }
         while !opened {
-            if !condition.wait(until: deadline) { return }
+            condition.wait()
         }
     }
 }
@@ -539,16 +549,19 @@ struct NetworkTraceTests {
             //
             // The value returned below is the one that gets dropped, which is
             // the point of the case.
-            abandoned.wait(until: Date().addingTimeInterval(30))
+            abandoned.wait()
             walkReturned.signal()
             return .measured(
                 hops: collected.hops, destination: Self.documentationV4, ending: .hopLimit)
         }
 
         // The positive check beside the two below: without it they would also
-        // pass on a run where the walk was released by the gate's own net
-        // rather than by the margin, and a seam that had stopped being called
-        // would read exactly like a seam that works.
+        // pass on a run whose ordering somehow held by accident — the gate
+        // no longer has a net of its own that could open it any other way
+        // (that was retired with the literal deadline this test used to
+        // carry), but a seam that had stopped being called would still
+        // otherwise read exactly like a seam that works, since nothing else
+        // here names it directly.
         #expect(abandoned.wasOpened, "the outer margin never reported an abandonment")
         #expect(outcome.hops == [measured])
         // And it is honest about why it is short: the budget, not the path.

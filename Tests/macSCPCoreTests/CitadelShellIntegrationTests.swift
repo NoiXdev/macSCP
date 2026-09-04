@@ -5,10 +5,20 @@ import Testing
 
 /// Only runs with MACSCP_ITEST=1 and a running Docker test server
 /// (docker compose -f docker/test-server/compose.yml up -d — from the MAIN checkout).
+///
+/// `.timeLimit(.minutes(2))`, not the project default of one: six `@Test`s,
+/// each opening through `connectWithRetry()`, whose own budget is
+/// `connectTimeout: .seconds(30)` twice (first attempt plus one retry)
+/// separated by a 500 ms sleep — 60.5 s worst case, already past a
+/// one-minute limit before a single command reaches the remote.
+/// `windowChangeReachesTheRemotePTY` adds an 800 ms local sleep and a
+/// remote `sleep 3` on top of that. Two minutes is that connect budget
+/// plus headroom for the remote round trip, not a duration this file
+/// measures anything against.
 @Suite("CitadelShell against Docker SSH server",
        .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
        .serialized,
-       .timeLimit(.minutes(1)))
+       .timeLimit(.minutes(2)))
 struct CitadelShellIntegrationTests {
     /// Standard password connect against the Docker test server (127.0.0.1:2222,
     /// testuser/testpass) with a retry against the container's reconnect

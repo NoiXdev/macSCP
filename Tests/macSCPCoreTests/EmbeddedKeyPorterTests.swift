@@ -160,15 +160,13 @@ struct EmbeddedKeyPorterTests {
             Issue.record("embed opened an external key path (blocked reading the FIFO)")
             // Unblock the stuck reader so it does not linger for the rest of
             // the suite: opening the FIFO for writing releases its open().
-            // Straight-line and before the wait below, because it is the only
-            // thing on this path that still has an effect.
+            // The detached thread finishes on its own once this unblocks it;
+            // nothing here reads what it wrote, so there is nothing left to
+            // join — a second `finished.wait()` would only ever have
+            // returned `.cancelled` again, the same outcome the one above
+            // already read, since `wait()` checks `Task.isCancelled` first.
             let fd = open(fifoPath, O_WRONLY | O_NONBLOCK)
             if fd >= 0 { close(fd) }
-            // Reached only after a cancellation — the sole non-`.signalled`
-            // outcome left — so it answers `.cancelled` at once rather than
-            // joining the released thread. The thread finishes on its own;
-            // nothing below reads what it wrote.
-            _ = await finished.wait()
         } else {
             #expect(try #require(outcome.value).get() == nil)
         }

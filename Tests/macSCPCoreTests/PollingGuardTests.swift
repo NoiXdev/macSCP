@@ -8,9 +8,16 @@ import Testing
 /// suite was built to catch; two more, added for the "ceilings under
 /// other spellings" plan, are the same property under a `Duration` bound
 /// instead — `wait(timeout:)` and a `Task.sleep` child racing real work
-/// inside a task group (CLAUDE.md, "A wall-clock ceiling in a test
+/// inside a task group; two more still, added in this plan's final fix
+/// round, are the same property spelled with `Date` instead of
+/// `ContinuousClock` — `Date().timeIntervalSince(...) <` and
+/// `.wait(until: Date(...)` (CLAUDE.md, "A wall-clock ceiling in a test
 /// measures the runner").
-@Suite("Polling guard")
+///
+/// `.timeLimit(.minutes(1))` because `sources()` reads every Swift file
+/// under `Tests/` from disk on every call, and several `@Test`s here call
+/// it more than once.
+@Suite("Polling guard", .timeLimit(.minutes(1)))
 struct PollingGuardTests {
     private static var testsRoot: URL {
         URL(fileURLWithPath: #filePath)
@@ -19,10 +26,13 @@ struct PollingGuardTests {
     }
 
     /// Every Swift file under Tests/, minus this guard, the helper that
-    /// defines `pollUntil` itself, and `SleepingChildRegexFixture.swift` —
-    /// a fixture that intentionally carries the shape
-    /// `noSleepingChildRacesWorkInAGroup` looks for, kept out of the scan
-    /// it exists to feed a positive check about instead.
+    /// defines `pollUntil` itself, and two fixtures that intentionally
+    /// carry shapes this guard's own checks look for —
+    /// `SleepingChildRegexFixture.swift`
+    /// (`noSleepingChildRacesWorkInAGroup`) and `CeilingRegexFixture.swift`
+    /// (`noTestAssertsAnElapsedSinceCeiling`,
+    /// `noWaitTakesAWallClockDeadline`) — kept out of the scan each exists
+    /// to feed a positive check about instead.
     private static func sources() throws -> [(path: String, text: String)] {
         let enumerator = FileManager.default.enumerator(at: testsRoot, includingPropertiesForKeys: nil)!
         var result: [(String, String)] = []
@@ -31,6 +41,7 @@ struct PollingGuardTests {
             if path.hasSuffix("PollingGuardTests.swift")
                 || path.hasSuffix("PollUntil.swift")
                 || path.hasSuffix("SleepingChildRegexFixture.swift")
+                || path.hasSuffix("CeilingRegexFixture.swift")
             { continue }
             result.append((path, try String(contentsOf: url, encoding: .utf8)))
         }
@@ -162,6 +173,57 @@ struct PollingGuardTests {
         let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
         let fixtureRange = NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked)
         #expect(pattern.firstMatch(in: fixtureBlanked, range: fixtureRange) != nil)
+    }
+
+    /// Negative: no test asserts an elapsed-since ceiling spelled with
+    /// `Date` instead of `ContinuousClock` — `noTestAssertsAnElapsedCeiling`'s
+    /// shape under the `Foundation` clock. `CLISecretSourcesTests.swift`
+    /// carried exactly this (`Date().timeIntervalSince(started) < 5`,
+    /// beside an outcome that was already asserted) until this plan's
+    /// final fix round replaced it with a floor — `>=` compiles the same
+    /// call and is deliberately let through, so the regex only rejects
+    /// `<`/`<=`.
+    @Test func noTestAssertsAnElapsedSinceCeiling() throws {
+        let pattern = try NSRegularExpression(pattern: #"Date\(\)\.timeIntervalSince\([^)]*\)\s*<=?"#)
+        let offenders = try Self.sources().filter {
+            pattern.firstMatch(in: $0.text, range: NSRange($0.text.startIndex..., in: $0.text)) != nil
+        }.map(\.path)
+        #expect(offenders.isEmpty, "\(offenders)")
+
+        // Positive: the regex matches real, compiling code in this exact
+        // shape — `CeilingRegexFixture.swift`, excluded from `sources()`
+        // above the same way `SleepingChildRegexFixture.swift` is, so
+        // the match it demonstrates can never itself become an offender.
+        let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/CeilingRegexFixture.swift")
+        let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
+        #expect(
+            pattern.firstMatch(in: fixtureText, range: NSRange(fixtureText.startIndex..., in: fixtureText))
+                != nil)
+    }
+
+    /// Negative: no wait takes a wall-clock deadline built from `Date` —
+    /// `noTestCarriesItsOwnDeadline`'s shape under the `Foundation` clock
+    /// instead of `ContinuousClock`. `NetworkTraceTests.swift`'s
+    /// `BlockingGate` carried exactly this
+    /// (`abandoned.wait(until: Date().addingTimeInterval(30))`, on
+    /// `BlockingProbe`'s own private queue rather than the cooperative
+    /// pool) until this plan's final fix round dropped the parameter: the
+    /// wait now ends only when the gate opens, or — through the
+    /// `AsyncSignal` that joins it — when the suite's `.timeLimit` cancels
+    /// the test.
+    @Test func noWaitTakesAWallClockDeadline() throws {
+        let pattern = try NSRegularExpression(pattern: #"\.wait\(until:\s*Date\("#)
+        let offenders = try Self.sources().filter {
+            pattern.firstMatch(in: $0.text, range: NSRange($0.text.startIndex..., in: $0.text)) != nil
+        }.map(\.path)
+        #expect(offenders.isEmpty, "\(offenders)")
+
+        // Positive, same fixture as the check above.
+        let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/CeilingRegexFixture.swift")
+        let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
+        #expect(
+            pattern.firstMatch(in: fixtureText, range: NSRange(fixtureText.startIndex..., in: fixtureText))
+                != nil)
     }
 
     /// Every file that reaches `pollUntil` — directly, or through a helper

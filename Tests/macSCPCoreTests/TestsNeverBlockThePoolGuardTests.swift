@@ -129,8 +129,11 @@ struct TestsNeverBlockThePoolGuardTests {
         // closure it sits in is SYNCHRONOUS by contract — `BlockingProbe`
         // exists to run blocking probe code off the pool, and its parameter
         // is not `async`, so there is no `await` to convert the wait into.
-        // The bound in the call is a net, not the property: the case asserts
-        // that the gate was opened.
+        // The call carries no deadline of its own (a `Date`-based one used
+        // to; retired 2026-09-04 as a wall-clock ceiling under another
+        // spelling) — it blocks until the gate opens, and the case that
+        // joins it asserts that the gate was opened, ending on time through
+        // the suite's own `.timeLimit` rather than through this wait.
         "macSCPCoreTests/NetworkTraceTests.swift": [.nsCondition],
     ]
 

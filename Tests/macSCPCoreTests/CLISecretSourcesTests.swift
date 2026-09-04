@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-@Suite("PasswordCommandSecretSource")
+@Suite("PasswordCommandSecretSource", .timeLimit(.minutes(1)))
 struct PasswordCommandSecretSourceTests {
     @Test func returnsTheCommandsOutputWithTrailingNewlineStripped() throws {
         let source = PasswordCommandSecretSource(command: "echo hunter2")
@@ -63,8 +63,17 @@ struct PasswordCommandSecretSourceTests {
         #expect(throws: PasswordCommandError.timedOut(after: 0.05)) {
             try source.secret(for: UUID())
         }
-        // The whole point: this test must finish quickly, not after 30s.
-        #expect(Date().timeIntervalSince(started) < 5)
+        // The whole point: this test must finish quickly, not after 30s — but
+        // "quickly" is an upper bound on the RUNNER, not on `secret(for:)`
+        // (CLAUDE.md, "A wall-clock ceiling in a test measures the runner"):
+        // a starved machine can make the escalation itself (`terminate`,
+        // `SIGKILL`, `waitUntilExit`) take longer than any fixed ceiling
+        // here would allow, without the production timeout having been
+        // ignored. What ends this test when it is not honoured is the
+        // suite's own `.timeLimit`. The floor stays: it proves the call did
+        // not return instantly, i.e. that the injected `timeout` was
+        // actually read rather than skipped.
+        #expect(Date().timeIntervalSince(started) >= 0.05)
     }
 
     /// The timed-out child must actually be gone, not left running in the
