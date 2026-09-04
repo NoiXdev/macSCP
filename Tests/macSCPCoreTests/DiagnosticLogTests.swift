@@ -312,6 +312,60 @@ struct DiagnosticLogTests {
         gate.signal()
     }
 
+    /// Diagnostic Log plan, Task 2 round 2: `flushSynchronously()` must not
+    /// merely write what it drains correctly (the test above already pins
+    /// that) — the writer, once its gate finally opens, must find NOTHING
+    /// left to write. Before round 2's fix, `drainAndWriteUntilEmpty` took
+    /// its batch under `state`'s lock, released it, and only acquired
+    /// `writeLock` afterward — so a batch taken here (lines "one"/"two")
+    /// and a batch the writer takes later could in principle be written in
+    /// either order, or (if this test's own batch were somehow taken
+    /// twice) duplicated. This test cannot force that specific
+    /// interleaving deterministically — see the round 2 report section for
+    /// why the red for that finding is a reviewer's trace of the locking,
+    /// not a run of this test — but it does pin the property the fix
+    /// restores end to end: `flushSynchronously()` drains everything, the
+    /// writer's own later drain (once unblocked) sees an empty buffer, and
+    /// a final `await flush()` returns with the file still holding exactly
+    /// "one" then "two", never either line twice.
+    @Test("flushSynchronously() then the writer waking up leaves the file with each line exactly once, in order")
+    func flushSynchronouslyThenTheWriterWakingUpWritesNothingMore() async throws {
+        let directory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let gate = AsyncSignal()
+        DiagnosticLog.shared.setWriterGateForTesting { _ = await gate.wait() }
+        defer { DiagnosticLog.shared.setWriterGateForTesting(nil) }
+
+        DiagnosticLog.shared.configure(level: .info, directory: directory)
+        DiagnosticLog.shared.log(.info, "test", "one")
+        DiagnosticLog.shared.log(.info, "test", "two")
+
+        // `flushSynchronously()` is NOT gated (the gate belongs to
+        // `runWriter`'s loop alone) — it drains and writes both lines here,
+        // synchronously, while the writer task is still parked behind the
+        // gate.
+        DiagnosticLog.shared.flushSynchronously()
+
+        // Now let the writer proceed and, separately, wait for whatever IT
+        // drains (nothing, since flushSynchronously already took the whole
+        // buffer) to be reported flushed — proving the writer's own wake
+        // does not hang and does not find a second copy of the buffer to
+        // write.
+        gate.signal()
+        await DiagnosticLog.shared.flush()
+
+        let url = try #require(DiagnosticLog.shared.currentFileURL)
+        let lines = fileContents(url).split(separator: "\n").map(String.init)
+        #expect(lines.count == 2, """
+            expected exactly 2 lines (\"one\" then \"two\") after \
+            flushSynchronously() plus the writer's own later wake -- \
+            \(lines.count) means a line was either dropped or duplicated.
+            """)
+        #expect(lines[0].hasSuffix("one"))
+        #expect(lines[1].hasSuffix("two"))
+    }
+
     @Test("a batch spanning midnight is written to two files, one line each")
     func batchSpanningMidnightSplitsAcrossFiles() async throws {
         let directory = makeTempDirectory()

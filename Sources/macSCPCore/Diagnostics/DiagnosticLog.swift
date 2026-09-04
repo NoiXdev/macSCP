@@ -53,9 +53,13 @@ extension DiagnosticLogLevel: Comparable {
 /// `Sendable` — the conformance the design's own signature
 /// (`public final class DiagnosticLog: Sendable`) states — with nothing
 /// unchecked anywhere in this file. A second `Mutex<Void>`, `writeLock`,
-/// serializes only the physical disk write (see `writeRun`) — kept separate
-/// from `state`'s own lock so a write in flight never blocks `log()`/
-/// `flush()`/`configure()` callers on the disk.
+/// serializes the writer task's own drain (`runWriter` →
+/// `drainAndWriteUntilEmpty`) against `flushSynchronously()`'s — kept
+/// separate from `state`'s own lock so a write in flight never blocks
+/// `log()`/`flush()`/`configure()` callers on the disk. `writeLock` covers
+/// TAKING the batch as well as writing it (see `drainAndWriteUntilEmpty`'s
+/// doc comment) — not just the write itself — which is what keeps the two
+/// paths from ever writing a later-logged line before an earlier one.
 ///
 /// **The writer.** `log` appends a formatted line and rings a doorbell
 /// (an `AsyncStream<Void>.Continuation`, buffered to at most one pending
@@ -125,18 +129,22 @@ public final class DiagnosticLog: Sendable {
 
     private let state = Mutex(State())
 
-    /// Serializes actual disk writes between the writer task's own
-    /// `writeRun` and `flushSynchronously()`'s calling thread, so the two
-    /// can never interleave bytes into the same open file handle.
+    /// Serializes `drainAndWriteUntilEmpty()`'s ENTIRE iteration — taking a
+    /// batch out of `state.buffer` AND writing it — between the writer
+    /// task's own loop and `flushSynchronously()`'s calling thread. See
+    /// that function's doc comment for why "take, then write" both need to
+    /// sit inside this one lock rather than just the write.
+    ///
     /// Deliberately a SEPARATE lock from `state`: holding `state`'s lock for
     /// the duration of a physical write would block `log()`/`flush()`/
     /// `configure()` callers on the disk, which is exactly the cost this
     /// design keeps off the caller's path everywhere else — see the class
-    /// doc comment's "The writer" paragraph. `writeRun` still nests a short
-    /// `state.withLock` INSIDE `writeLock.withLock` (to read/open the file
-    /// handle); every caller of `writeRun` reaches it the same way, through
-    /// `drainAndWriteUntilEmpty`, so the two locks are always acquired in
-    /// this one order and never the reverse.
+    /// doc comment's "The writer" paragraph. `drainAndWriteUntilEmpty`
+    /// nests a short `state.withLock` INSIDE `writeLock.withLock` (both to
+    /// take the batch and, later, inside `writeRun`, to read/open the file
+    /// handle); every path that reaches `state`'s lock from inside this
+    /// one does so in this same order, `writeLock` outer, so the two locks
+    /// can never deadlock against each other.
     private let writeLock = Mutex<Void>(())
 
     private init() {}
@@ -277,13 +285,18 @@ public final class DiagnosticLog: Sendable {
     ///
     /// Reuses `drainAndWriteUntilEmpty()` unchanged — the exact
     /// take-the-buffer-under-`state`'s-lock / `writeToDisk` / `markFlushed`
-    /// loop the writer task itself runs — rather than a second copy of that
-    /// loop, so the two paths cannot drift apart on what "drained" means.
-    /// Safe to call even while the writer is concurrently mid-write: the two
-    /// share `writeLock`, so this call simply blocks on it until that write
-    /// reaches disk — bounded by however long ONE drained batch's write
-    /// takes, never by waiting for the writer's `Task` to be scheduled at
-    /// all (which, at termination, it might never be again).
+    /// loop the writer task itself runs, ALL of it inside `writeLock` — so
+    /// the two paths cannot drift apart on what "drained" means, and cannot
+    /// race each other into writing a later-logged line first (see that
+    /// function's doc comment). Safe to call even while the writer is
+    /// concurrently mid-batch: this call simply blocks on `writeLock` until
+    /// that whole batch (take-and-write) finishes — bounded by however long
+    /// ONE drained batch takes, never by waiting for the writer's `Task` to
+    /// be scheduled at all (which, at termination, it might never be
+    /// again). This function itself never `await`s, so it never contends
+    /// with the writer's own gate (`runWriter`'s seam) — only with
+    /// `writeLock`, which the gate is always released before either path
+    /// reaches.
     public func flushSynchronously() {
         drainAndWriteUntilEmpty()
     }
@@ -346,18 +359,58 @@ public final class DiagnosticLog: Sendable {
         }
     }
 
+    /// Drains and writes one batch per iteration until the buffer is empty.
+    /// Called by both the writer task's own loop (`runWriter`, after its
+    /// gate) and `flushSynchronously()`'s calling thread — the ONE place
+    /// either path touches `state.buffer` or the file system.
+    ///
+    /// **Why `writeLock` wraps the WHOLE iteration — taking the batch AND
+    /// writing it — not just the write.** An earlier version of this
+    /// function took the batch under `state`'s lock, released it, and only
+    /// acquired `writeLock` later, inside `writeRun`. That left a gap: if
+    /// the writer took lines A and B and was preempted before reaching
+    /// `writeLock`, and the terminating thread then logged line C and
+    /// reached `writeLock` first, C would land on disk before A and B —
+    /// breaking the design's "lines reach the file in order" invariant
+    /// between the two paths (the round-2 review finding this fixes).
+    /// Acquiring `writeLock` BEFORE taking the batch closes that gap:
+    /// whoever holds `writeLock` takes the entire buffer accumulated up to
+    /// that instant, so the other path can only ever take lines logged
+    /// AFTER — never a line that was already spoken for by the batch now
+    /// being written.
+    ///
+    /// **Lock order is `writeLock` outer, `state` inner** — both here (to
+    /// take the batch) and again inside `writeRun` (to open/read the file
+    /// handle), which no longer acquires `writeLock` itself: this function
+    /// already holds it for the whole iteration, and `Mutex` is not
+    /// reentrant, so a nested `writeLock.withLock` inside `writeRun` would
+    /// deadlock. Every path into `state`'s lock from inside this function
+    /// follows this same outer-then-inner order, so the two locks can never
+    /// deadlock against each other.
+    ///
+    /// **The writer's gate sits OUTSIDE both locks.** `runWriter` awaits
+    /// its test-only gate BEFORE calling this function, never from inside
+    /// it — an `await` while holding a `Synchronization.Mutex` is
+    /// undefined behavior, and gating a synchronous critical section would
+    /// in any case make `flushSynchronously()` block on the very gate the
+    /// writer is held behind, defeating the reason `flushSynchronously()`
+    /// exists (nothing can be `await`ed at termination).
     private func drainAndWriteUntilEmpty() {
         while true {
-            let batch = state.withLock {
-                s -> (lines: [BufferedLine], sequence: UInt64, directory: URL)? in
-                guard !s.buffer.isEmpty else { return nil }
-                let lines = s.buffer
-                s.buffer = []
-                return (lines, s.pendingSequence, s.directory)
+            let tookABatch = writeLock.withLock { _ -> Bool in
+                let batch = state.withLock {
+                    s -> (lines: [BufferedLine], sequence: UInt64, directory: URL)? in
+                    guard !s.buffer.isEmpty else { return nil }
+                    let lines = s.buffer
+                    s.buffer = []
+                    return (lines, s.pendingSequence, s.directory)
+                }
+                guard let batch else { return false }
+                writeToDisk(lines: batch.lines, directory: batch.directory)
+                markFlushed(through: batch.sequence)
+                return true
             }
-            guard let batch else { return }
-            writeToDisk(lines: batch.lines, directory: batch.directory)
-            markFlushed(through: batch.sequence)
+            guard tookABatch else { return }
         }
     }
 
@@ -365,7 +418,10 @@ public final class DiagnosticLog: Sendable {
     /// key differs from the line before it — each line already carries the
     /// key it was stamped with at `log` time, so a batch that happens to
     /// span midnight is split into one write per day rather than filed
-    /// whole under a single `now()` read taken after the fact.
+    /// whole under a single `now()` read taken after the fact. Called only
+    /// from inside `drainAndWriteUntilEmpty`'s `writeLock.withLock`, so
+    /// neither this function nor `writeRun` below acquires `writeLock`
+    /// itself.
     private func writeToDisk(lines: [BufferedLine], directory: URL) {
         var index = lines.startIndex
         while index < lines.endIndex {
@@ -380,31 +436,33 @@ public final class DiagnosticLog: Sendable {
     }
 
     /// Opens (or reuses) the file for `dayKey` and appends `textLines` to
-    /// it. Reached from `drainAndWriteUntilEmpty` — which both the writer
-    /// task's own loop AND `flushSynchronously()` call — so this is the one
-    /// place in the type that touches the file system for writing, and the
-    /// caller may be either of those two threads; `writeLock` is what keeps
-    /// their writes from interleaving into the same open handle.
+    /// it — the one place in the type that touches the file system for
+    /// writing. Reached only through `writeToDisk`, itself reached only
+    /// from inside `drainAndWriteUntilEmpty`'s `writeLock.withLock`: by the
+    /// time execution gets here, `writeLock` is ALREADY held by that outer
+    /// call (from either the writer task's loop or `flushSynchronously()`),
+    /// so this function does not acquire it again — `Mutex` is not
+    /// reentrant, and a nested `writeLock.withLock` here would deadlock.
+    /// The short `state.withLock` below is still needed, to read/open the
+    /// shared file handle.
     private func writeRun(_ textLines: [String], directory: URL, dayKey: String) {
-        writeLock.withLock { _ in
-            let handle = state.withLock { s -> FileHandle? in
-                if s.fileHandle == nil || s.fileDayKey != dayKey {
-                    s.fileHandle?.closeFile()
-                    s.fileHandle = nil
-                    s.fileDayKey = nil
-                    guard let opened = Self.openHandle(directory: directory, dayKey: dayKey) else {
-                        return nil
-                    }
-                    s.fileHandle = opened
-                    s.fileDayKey = dayKey
+        let handle = state.withLock { s -> FileHandle? in
+            if s.fileHandle == nil || s.fileDayKey != dayKey {
+                s.fileHandle?.closeFile()
+                s.fileHandle = nil
+                s.fileDayKey = nil
+                guard let opened = Self.openHandle(directory: directory, dayKey: dayKey) else {
+                    return nil
                 }
-                return s.fileHandle
+                s.fileHandle = opened
+                s.fileDayKey = dayKey
             }
-            guard let handle else { return }
-
-            let payload = Data((textLines.map { $0 + "\n" }.joined()).utf8)
-            handle.write(payload)
+            return s.fileHandle
         }
+        guard let handle else { return }
+
+        let payload = Data((textLines.map { $0 + "\n" }.joined()).utf8)
+        handle.write(payload)
     }
 
     /// Resumes every `flush()` waiter whose target sequence is now on disk.
