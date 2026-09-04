@@ -13,6 +13,7 @@ enum SettingsSection: Hashable {
     case openWith
     case terminal
     case shortcuts
+    case whatsNew
     case cli
     case manageData
     case ssh
@@ -26,6 +27,7 @@ enum SettingsSection: Hashable {
         case .openWith: return L10n.string("settings.tab.openWith", "Open with")
         case .terminal: return L10n.string("settings.tab.terminal", "Terminal")
         case .shortcuts: return L10n.string("settings.tab.shortcuts", "Shortcuts")
+        case .whatsNew: return L10n.string("settings.tab.whatsNew", "What's new")
         case .cli: return L10n.string("settings.section.cli", "Command Line")
         case .manageData: return L10n.string("settings.section.manageData", "Manage Data")
         case .ssh: return L10n.string("settings.section.ssh", "SSH")
@@ -41,6 +43,7 @@ enum SettingsSection: Hashable {
         case .openWith: return "doc.badge.gearshape"
         case .terminal: return "terminal"
         case .shortcuts: return "keyboard"
+        case .whatsNew: return "sparkles"
         case .cli: return "chevron.left.forwardslash.chevron.right"
         case .manageData: return "archivebox"
         case .ssh: return "key"
@@ -57,9 +60,11 @@ enum SettingsSection: Hashable {
 /// `struct`: "General" (M7a/T4, split from the former "General" tab in
 /// M18/T7), "View" (the other half of that split), "Transfers", "Open with"
 /// (M5e/T2), "Terminal" (M9d), a read-only "Shortcuts" overview (M11q),
-/// "Command Line" (the `macscp-cli` shortcut installer), "Manage Data" (the
-/// five management overlays in one list), and two protocol-specific sections
-/// grouped under "Protocols" — "SSH" and "S3" (M18/T7). The former tab-bar
+/// "What's new" (the bundled changelog, browsable any time — What's New
+/// plan, Task 3), "Command Line" (the `macscp-cli` shortcut installer),
+/// "Manage Data" (the five management overlays in one list), and two
+/// protocol-specific sections grouped under "Protocols" — "SSH" and "S3"
+/// (M18/T7). The former tab-bar
 /// layout and its "SSH Keys" tab (M17/T4) are gone; key management now lives
 /// entirely in the standalone `SSHKeysSheet` (M18/T5), reachable from the
 /// Sessions menu, the connection form's "Manage keys…" link, and this
@@ -92,7 +97,7 @@ struct SettingsView: View {
                 ForEach(
                     [
                         SettingsSection.general, .appearance, .transfers,
-                        .openWith, .terminal, .shortcuts, .cli, .manageData,
+                        .openWith, .terminal, .shortcuts, .whatsNew, .cli, .manageData,
                     ], id: \.self
                 ) { section in
                     Label(section.title, systemImage: section.systemImage)
@@ -127,6 +132,8 @@ struct SettingsView: View {
                     TerminalSettingsTab(store: store)
                 case .shortcuts:
                     ShortcutsSettingsTab()
+                case .whatsNew:
+                    WhatsNewSettingsSection()
                 case .cli:
                     CLISettingsSection()
                 case .manageData:
@@ -853,6 +860,58 @@ private struct ShortcutsSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// The "What's new" pane (What's New plan, Task 3): the same changelog
+/// Task 2's launch-time sheet shows, browsable at any time rather than only
+/// once per version bump. Reads the bundled `CHANGELOG.md` the same way
+/// `MacSCPApp.decideWhatsNew(store:)` does (`ChangelogResource.load()` off
+/// `Bundle.main`, never `Bundle.module` — see that file's own doc comment),
+/// parses it with `ChangelogParser.parse`, and renders every release newest
+/// first through `WhatsNewList` — the reusable list `WhatsNewSheet` already
+/// factored out for exactly this reuse, so this pane repeats none of that
+/// rendering.
+///
+/// "Newest first" is not the parser's own document order (Task 1's
+/// `ChangelogParser.parse` returns releases in the order their headings
+/// appear in the file, which happens to be newest-first for the real
+/// `CHANGELOG.md` but is not a promise `parse` makes) — it is
+/// `ChangelogParser.releases(newerThan:in:)`, called with `"0"` so every
+/// parsed release compares newer and none is filtered out, only sorted.
+/// That function is Task 1's own public, tested newest-first sort (its doc
+/// comment: "sorted newest first ... independent of `releases`'s own
+/// order"), reused here rather than a second comparison written against
+/// `ChangelogRelease.version` in this file.
+///
+/// No changelog bundled (`ChangelogResource.load()` returns `nil`, e.g. a
+/// `swift run` outside a packaged `.app`) shows the same `whatsNew.none`
+/// message `WhatsNewSheet`'s empty branch shows, rather than a blank pane.
+private struct WhatsNewSettingsSection: View {
+    private var releases: [ChangelogRelease] {
+        guard let markdown = ChangelogResource.load() else { return [] }
+        return ChangelogParser.releases(newerThan: "0", in: ChangelogParser.parse(markdown))
+    }
+
+    var body: some View {
+        Group {
+            if releases.isEmpty {
+                VStack {
+                    Spacer()
+                    Text(L10n.string("whatsNew.none", "No changelog shipped with this build."))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    WhatsNewList(releases: releases)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+            }
+        }
     }
 }
 

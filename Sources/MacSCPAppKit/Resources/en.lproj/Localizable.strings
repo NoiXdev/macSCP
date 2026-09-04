@@ -783,6 +783,9 @@
 
 /* Keyboard shortcuts overview (M11q) */
 "settings.tab.shortcuts" = "Shortcuts";
+
+/* "What's new" pane: the bundled changelog, browsable any time (What's New plan, Task 3) */
+"settings.tab.whatsNew" = "What's new";
 "settings.shortcuts.group.tabs" = "Tabs & Windows";
 "settings.shortcuts.group.view" = "View";
 "settings.shortcuts.group.sessions" = "Sessions";

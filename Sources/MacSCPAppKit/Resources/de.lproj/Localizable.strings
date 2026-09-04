@@ -784,6 +784,9 @@
 
 /* Tastenkürzel-Übersicht (M11q) */
 "settings.tab.shortcuts" = "Tastenkürzel";
+
+/* "Neuigkeiten"-Bereich: das mitgelieferte Änderungsprotokoll, jederzeit durchsuchbar (What's New plan, Task 3) */
+"settings.tab.whatsNew" = "Neuigkeiten";
 "settings.shortcuts.group.tabs" = "Tabs & Fenster";
 "settings.shortcuts.group.view" = "Ansicht";
 "settings.shortcuts.group.sessions" = "Sitzungen";

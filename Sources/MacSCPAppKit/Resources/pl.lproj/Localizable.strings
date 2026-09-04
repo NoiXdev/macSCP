@@ -786,6 +786,9 @@
 
 /* Przegląd skrótów klawiszowych (M11q) */
 "settings.tab.shortcuts" = "Skróty klawiszowe";
+
+/* Sekcja "Nowości": dołączony dziennik zmian, dostępny w każdej chwili (What's New plan, Task 3) */
+"settings.tab.whatsNew" = "Nowości";
 "settings.shortcuts.group.tabs" = "Karty i okna";
 "settings.shortcuts.group.view" = "Widok";
 "settings.shortcuts.group.sessions" = "Sesje";

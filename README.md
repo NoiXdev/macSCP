@@ -87,7 +87,9 @@ that to answer — but nothing else about you or your connections is sent,
 and the response is read for nothing but the release tag and its link.
 Nothing is downloaded or installed automatically — a newer version only
 produces a note with a link. Turn the automatic check off under
-**Settings → General**.
+**Settings → General**. The first launch after an update shows what changed
+since the version you last saw; revisit it any time under **Settings →
+What's new**.
 
 ## Install
 

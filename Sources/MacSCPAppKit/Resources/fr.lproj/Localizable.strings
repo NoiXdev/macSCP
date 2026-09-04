@@ -787,6 +787,9 @@
 
 /* Aperçu des raccourcis clavier (M11q) */
 "settings.tab.shortcuts" = "Raccourcis";
+
+/* Panneau "Nouveautés" : le journal des modifications intégré, consultable à tout moment (What's New plan, Task 3) */
+"settings.tab.whatsNew" = "Nouveautés";
 "settings.shortcuts.group.tabs" = "Onglets et fenêtres";
 "settings.shortcuts.group.view" = "Affichage";
 "settings.shortcuts.group.sessions" = "Sessions";
