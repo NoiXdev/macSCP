@@ -121,6 +121,42 @@ public enum DiagnosticTraceColumn {
     public static let noRTT = "—"
 }
 
+/// Told when a step STARTS as well as when it finishes.
+///
+/// Two halves rather than one callback with a state, because the two say
+/// different things: a start names a step nothing has measured yet, and a
+/// finish hands over a row. The panel draws the second and captions the
+/// first, and a single event carrying both would make "which step is this
+/// twenty seconds going into" a question about the last row rather than
+/// about the walk.
+///
+/// A start carries the step's id and the catalogue key it will carry as a
+/// row — the step's OWN key, never a second spelling of its name: whatever
+/// the running line ends up saying, it says it under the key the finished row
+/// will be titled with.
+///
+/// `onStepStarted` defaults to a no-op, so a caller that only wants the rows
+/// writes what it always wrote (`run(scope:onStep:)`, the CLI's spelling).
+public struct DiagnosticRunObserver: Sendable {
+    /// A step is about to be measured, under this id and this catalogue key.
+    /// `async` for the reason `DiagnosticStepObserver` is: the one real
+    /// implementation is a `@MainActor` view model, and awaiting it means the
+    /// walk cannot outrun the renderer.
+    public var onStepStarted: @Sendable (_ id: String, _ titleKey: String) async -> Void
+    /// A step has finished, and this is its row.
+    public var onStep: DiagnosticStepObserver
+
+    public init(
+        onStepStarted: @escaping @Sendable (_ id: String, _ titleKey: String) async -> Void = {
+            _, _ in
+        },
+        onStep: @escaping DiagnosticStepObserver = { _ in }
+    ) {
+        self.onStepStarted = onStepStarted
+        self.onStep = onStep
+    }
+}
+
 /// The universal half of the connection diagnosis, plus the seam the
 /// protocols fill (design §§2–3).
 ///
@@ -129,8 +165,8 @@ public enum DiagnosticTraceColumn {
 /// address, the backend's own dial, an IPv4 network trace, and then whatever
 /// the backend contributes — or the subset of those a `DiagnosticScope`
 /// names, which is what a caller who wants one probe and not the whole walk
-/// passes to `run(scope:onStep:)`. Nothing here asks which protocol it is looking at
-/// — the endpoint, the dial and the contributions all arrive through
+/// passes to `run(scope:observer:)`. Nothing here asks which protocol it is
+/// looking at — the endpoint, the dial and the contributions all arrive through
 /// `BackendDescriptor`, which is what keeps a fourth backend from having to
 /// be mentioned in this file at all.
 ///
@@ -198,19 +234,37 @@ public actor ConnectionDiagnostics {
 
     /// The diagnosis, with nothing to watch it happen.
     ///
-    /// `run(scope:onStep:)` is the real one; this is the spelling for a
-    /// caller that only wants the finished report — the CLI, and every test
-    /// that is about what was measured rather than when.
+    /// `run(scope:observer:)` is the real one; this is the spelling for a
+    /// caller that only wants the finished report — the cases in
+    /// `ConnectionDiagnosticsTests` that are about what was measured rather
+    /// than when. Both callers that ship watch the walk: the panel through
+    /// `run(scope:observer:)`, `macscp-cli diagnose` through
+    /// `run(scope:onStep:)`.
     public func run(scope: DiagnosticScope = .complete) async -> DiagnosticReport {
-        await run(scope: scope, onStep: { _ in })
+        await run(scope: scope, observer: DiagnosticRunObserver())
     }
 
-    /// The diagnosis, handing over each step as it finishes, and running the
-    /// steps `scope` names.
+    /// The diagnosis, handing over each step as it finishes — the spelling
+    /// for a caller that wants the rows and not the step in flight.
     ///
-    /// `onStep` is called with a step the moment it is appended, before the
-    /// next one starts, and it is `async` so a `@MainActor` renderer can be
-    /// awaited rather than hopped to and forgotten.
+    /// One line over `run(scope:observer:)`, and kept because it is what the
+    /// CLI's `DiagnoseCommand` calls (it prints a row as each one lands and
+    /// has no line to caption) and what the cases in
+    /// `ConnectionDiagnosticsTests` that are about the ROWS call.
+    public func run(
+        scope: DiagnosticScope = .complete, onStep: @escaping DiagnosticStepObserver
+    ) async -> DiagnosticReport {
+        await run(scope: scope, observer: DiagnosticRunObserver(onStep: onStep))
+    }
+
+    /// The diagnosis, handing over each step as it starts and again as it
+    /// finishes, and running the steps `scope` names.
+    ///
+    /// `observer.onStep` is called with a step the moment it is appended,
+    /// before the next one starts, and it is `async` so a `@MainActor`
+    /// renderer can be awaited rather than hopped to and forgotten.
+    /// `observer.onStepStarted` is called before the step's clocks are read,
+    /// so nothing measured is spent on the announcement.
     ///
     /// **Why the seam exists.** The report used to be one value returned at
     /// the end, and the trace's budget is 20 s: an internet-facing host whose
@@ -218,16 +272,29 @@ public actor ConnectionDiagnostics {
     /// a second, then spends twenty more walking silence. The reader saw a
     /// spinner for 21+ seconds with four finished rows sitting in the local
     /// below, and cancelling cost them those rows as well.
+    ///
+    /// **Why the START half exists.** The rows fixed the first half of that
+    /// and left the second: the line under them still read "Measuring…" for
+    /// the whole walk, so the twenty seconds the trace spends looked exactly
+    /// like a resolve that had hung (maintainer's finding on the dev build,
+    /// 2026-09-04). Every step announces itself here — the resolve, the TCP
+    /// ping, the echo, the trace and, through `bounded(_:_:)`, the dial and
+    /// each contribution.
     public func run(
-        scope: DiagnosticScope = .complete, onStep: @escaping DiagnosticStepObserver
+        scope: DiagnosticScope = .complete, observer: DiagnosticRunObserver
     ) async -> DiagnosticReport {
         guard let endpoint = descriptor.endpoint(values) else {
             // Not `failed`: nothing was measured and nothing is wrong with
             // the server. The form is incomplete, and the row has to say that
             // rather than report a lookup that never happened.
+            //
+            // And no `onStepStarted`, which is what separates this row from
+            // every other one: a start says a step is BEING measured, and a
+            // running line that named a resolve here would be captioning a
+            // lookup nothing performed.
             let timer = Self.timer(for: DiagnosticStepID.resolve)
             let step = timer.finish(.unavailable(DiagnosticReason.noHost), "")
-            await onStep(step)
+            await observer.onStep(step)
             // No endpoint, and the report says so by carrying none. Until
             // 2026-09-03 this handed `DiagnosticReport` an
             // `Endpoint(host: "", port: 0)`, and the two renderers printed
@@ -276,12 +343,12 @@ public actor ConnectionDiagnostics {
         /// refuses — correctly, since the observer it awaits is `@Sendable`
         /// and could be anything.
         func published(_ step: DiagnosticStep) async -> DiagnosticStep {
-            await onStep(step)
+            await observer.onStep(step)
             return step
         }
 
         guard !Task.isCancelled else { return cancelled() }
-        let (resolveStep, addresses) = await resolve(endpoint)
+        let (resolveStep, addresses) = await resolve(endpoint, observer)
         guard !Task.isCancelled else { return cancelled() }
         steps.append(await published(resolveStep))
 
@@ -294,21 +361,21 @@ public actor ConnectionDiagnostics {
         // is which scope it was: one line, once, in the header.
         if scope.runs(.tcp) {
             guard !Task.isCancelled else { return cancelled() }
-            let tcpStep = await ping(addresses, port: endpoint.port)
+            let tcpStep = await ping(addresses, port: endpoint.port, observer)
             guard !Task.isCancelled else { return cancelled() }
             steps.append(await published(tcpStep))
         }
 
         if scope.runs(.icmp) {
             guard !Task.isCancelled else { return cancelled() }
-            let icmpStep = await echo(addresses)
+            let icmpStep = await echo(addresses, observer)
             guard !Task.isCancelled else { return cancelled() }
             steps.append(await published(icmpStep))
         }
 
         if scope.runs(.dial), let dial = descriptor.dial {
             guard !Task.isCancelled else { return cancelled() }
-            let step = await bounded(dial)
+            let step = await bounded(dial, observer)
             guard !Task.isCancelled else { return cancelled() }
             steps.append(await published(step))
         }
@@ -326,7 +393,7 @@ public actor ConnectionDiagnostics {
         // rather than deleting it.
         if scope.runs(.trace) {
             guard !Task.isCancelled else { return cancelled() }
-            let traceStep = await trace(addresses)
+            let traceStep = await trace(addresses, observer)
             guard !Task.isCancelled else { return cancelled() }
             steps.append(await published(traceStep))
         }
@@ -334,7 +401,7 @@ public actor ConnectionDiagnostics {
         if scope.runs(.contributions) {
             for contribution in descriptor.diagnostics {
                 guard !Task.isCancelled else { return cancelled() }
-                let step = await bounded(contribution)
+                let step = await bounded(contribution, observer)
                 guard !Task.isCancelled else { return cancelled() }
                 steps.append(await published(step))
             }
@@ -344,8 +411,10 @@ public actor ConnectionDiagnostics {
 
     // MARK: - The universal steps
 
-    private func resolve(_ endpoint: Endpoint) async -> (DiagnosticStep, [ResolvedAddress]) {
-        let timer = Self.timer(for: DiagnosticStepID.resolve)
+    private func resolve(
+        _ endpoint: Endpoint, _ observer: DiagnosticRunObserver
+    ) async -> (DiagnosticStep, [ResolvedAddress]) {
+        let timer = await Self.starting(DiagnosticStepID.resolve, announcedTo: observer)
         let outcome = await HostResolver.resolve(
             host: endpoint.host, port: endpoint.port, timeout: stepTimeout)
         switch outcome {
@@ -361,8 +430,10 @@ public actor ConnectionDiagnostics {
         }
     }
 
-    private func ping(_ addresses: [ResolvedAddress], port: Int) async -> DiagnosticStep {
-        let timer = Self.timer(for: DiagnosticStepID.tcp)
+    private func ping(
+        _ addresses: [ResolvedAddress], port: Int, _ observer: DiagnosticRunObserver
+    ) async -> DiagnosticStep {
+        let timer = await Self.starting(DiagnosticStepID.tcp, announcedTo: observer)
         guard !addresses.isEmpty else {
             return timer.finish(.skipped(DiagnosticReason.nothingToProbe), "")
         }
@@ -403,8 +474,10 @@ public actor ConnectionDiagnostics {
     /// called that a server fault would send the user after a problem they do
     /// not have — the same reasoning the TCP step's "first acceptance wins"
     /// rule rests on. What silence gets is `timedOut`, the deadline's answer.
-    private func echo(_ addresses: [ResolvedAddress]) async -> DiagnosticStep {
-        let timer = Self.timer(for: DiagnosticStepID.icmp)
+    private func echo(
+        _ addresses: [ResolvedAddress], _ observer: DiagnosticRunObserver
+    ) async -> DiagnosticStep {
+        let timer = await Self.starting(DiagnosticStepID.icmp, announcedTo: observer)
         guard !addresses.isEmpty else {
             return timer.finish(.skipped(DiagnosticReason.nothingToProbe), "")
         }
@@ -442,8 +515,10 @@ public actor ConnectionDiagnostics {
     ///
     /// The walk runs against `traceTimeout`, not `stepTimeout`: see the
     /// initializer's note.
-    private func trace(_ addresses: [ResolvedAddress]) async -> DiagnosticStep {
-        let timer = Self.timer(for: DiagnosticStepID.trace)
+    private func trace(
+        _ addresses: [ResolvedAddress], _ observer: DiagnosticRunObserver
+    ) async -> DiagnosticStep {
+        let timer = await Self.starting(DiagnosticStepID.trace, announcedTo: observer)
         guard !addresses.isEmpty else {
             return timer.finish(.skipped(DiagnosticReason.nothingToProbe), "")
         }
@@ -634,7 +709,13 @@ public actor ConnectionDiagnostics {
     /// A step the deadline wins is reported `timedOut` with the elapsed time
     /// measured here, never with whatever the abandoned probe eventually
     /// says — that answer is dropped (see `DetachedProbe`).
-    private func bounded(_ contribution: DiagnosticContribution) async -> DiagnosticStep {
+    private func bounded(
+        _ contribution: DiagnosticContribution, _ observer: DiagnosticRunObserver
+    ) async -> DiagnosticStep {
+        // The dial's start AND every contribution's, because both arrive here:
+        // they are the two kinds of step that come through the seam, and the
+        // two a reader waits longest for.
+        await observer.onStepStarted(contribution.id, contribution.titleKey)
         let timer = DiagnosticStepTimer(id: contribution.id, titleKey: contribution.titleKey)
         let context = DiagnosticContext(
             secrets: secrets, sessionID: sessionID, timeout: stepTimeout)
@@ -646,6 +727,24 @@ public actor ConnectionDiagnostics {
         // `Task.isCancelled` and never appends the step, so a cancelled run
         // cannot report a timeout it did not measure.
         return finished ?? timer.finish(.timedOut, "")
+    }
+
+    /// A universal step's timer, with its start announced first.
+    ///
+    /// The announcement is made HERE rather than at the four call sites in
+    /// `run(scope:observer:)`, so the id is spelled once per step: a start
+    /// announced beside the call and a timer built inside the step would be
+    /// two copies of one name, drifting the moment either moved.
+    ///
+    /// Announced BEFORE the timer is constructed, because the timer reads both
+    /// clocks at construction — an observer that took a millisecond would
+    /// otherwise be charged to the step it was told about.
+    private static func starting(
+        _ id: String, announcedTo observer: DiagnosticRunObserver
+    ) async -> DiagnosticStepTimer {
+        let titleKey = DiagnosticStepID.titleKey(for: id)
+        await observer.onStepStarted(id, titleKey)
+        return DiagnosticStepTimer(id: id, titleKey: titleKey)
     }
 
     private static func timer(for id: String) -> DiagnosticStepTimer {

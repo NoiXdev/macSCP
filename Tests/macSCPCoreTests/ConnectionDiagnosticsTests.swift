@@ -427,6 +427,144 @@ struct ConnectionDiagnosticsTests {
         #expect(await observed.ids == [DiagnosticStepID.resolve])
     }
 
+    // MARK: - The step in flight
+
+    /// Every step ANNOUNCES itself before it is measured, and its own row
+    /// lands after that announcement.
+    ///
+    /// What the panel could say before this was "Measuring…", for the whole
+    /// walk: a step reached the seam only once it had finished, so the one
+    /// thing a reader wants while the trace spends its 20 s budget — which
+    /// step is spending it — was the one thing the seam could not carry
+    /// (maintainer's finding on the dev build, 2026-09-04).
+    ///
+    /// The key each announcement carries is compared against the ROW's
+    /// `titleKey` rather than against a spelling of its own: a start that
+    /// named a step by a second copy of its name would drift from the row the
+    /// moment either was renamed.
+    @Test func everyStepAnnouncesItsStartBeforeItsRow() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let log = RunLog()
+        let diagnostics = ConnectionDiagnostics(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: listener.port), dial: nil),
+            values: FieldValues(), secrets: nil)
+
+        let report = await diagnostics.run(
+            scope: .ping,
+            observer: DiagnosticRunObserver(
+                onStepStarted: { id, titleKey in await log.started(id, titleKey: titleKey) },
+                onStep: { step in await log.finished(step.id) }))
+
+        let events = await log.events
+        #expect(events.compactMap(\.startedID) == [
+            DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+        ], """
+            a ping scope announces the three steps it walks, in the order it walks them — got \
+            \(events)
+            """)
+        for step in report.steps {
+            guard let start = events.firstIndex(of: .started(step.id, step.titleKey)),
+                let row = events.firstIndex(of: .finished(step.id))
+            else {
+                Issue.record("no start carrying \(step.titleKey), or no row, for \(step.id): \(events)")
+                continue
+            }
+            #expect(start < row, """
+                \(step.id) must be announced before its finished row arrives, or the panel \
+                names a step the report has already drawn: \(events)
+                """)
+        }
+    }
+
+    /// The dial and each contribution announce themselves too — the two that
+    /// run through the seam rather than through a universal probe, and the two
+    /// a reader waits longest for.
+    @Test func theDialAndEachContributionAnnounceTheirStartsToo() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let log = RunLog()
+        let diagnostics = ConnectionDiagnostics(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: listener.port),
+                dial: Self.constantContribution(
+                    id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe",
+                    outcome: .ok, detail: ""),
+                diagnostics: [
+                    Self.constantContribution(
+                        id: Self.contributionID, titleKey: "diagnostics.step.probe",
+                        outcome: .ok, detail: "")
+                ]),
+            values: FieldValues(), secrets: nil)
+
+        let report = await diagnostics.run(
+            observer: DiagnosticRunObserver(
+                onStepStarted: { id, titleKey in await log.started(id, titleKey: titleKey) },
+                onStep: { step in await log.finished(step.id) }))
+
+        let events = await log.events
+        #expect(events.compactMap(\.startedID) == report.steps.map(\.id), """
+            every row the report carries was announced first, in the same order — the dial and \
+            the contribution included: got \(events)
+            """)
+        #expect(events.compactMap(\.startedTitleKey) == report.steps.map(\.titleKey), """
+            and each announcement carries the step's OWN key, which is what keeps the running \
+            line and the row it turns into from naming the step twice: \(events)
+            """)
+    }
+
+    /// A cancelled walk announces no start for a step it will not run.
+    ///
+    /// The panel clears its running line when the run ends, so a start
+    /// announced after the cancellation would be a step name left on screen
+    /// for a step nothing measured.
+    @Test func aCancelledRunAnnouncesNoStartAfterTheCancellation() async throws {
+        let port = try #require(LoopbackSocket.closedPort())
+        let gate = Gate()
+        let log = RunLog()
+        let diagnostics = ConnectionDiagnostics(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: port),
+                dial: DiagnosticContribution(
+                    id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe"
+                ) { _, _ in
+                    let timer = DiagnosticStepTimer(
+                        id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
+                    await gate.open()
+                    try? await Task.sleep(for: .seconds(30))
+                    return timer.finish(.ok, "never reached")
+                }),
+            values: FieldValues(), secrets: nil, stepTimeout: .seconds(30))
+
+        let task = Task {
+            await diagnostics.run(
+                observer: DiagnosticRunObserver(
+                    onStepStarted: { id, titleKey in await log.started(id, titleKey: titleKey) },
+                    onStep: { step in await log.finished(step.id) }))
+        }
+        await gate.opened()
+        task.cancel()
+        let report = await task.value
+
+        let events = await log.events
+        #expect(events.compactMap(\.startedID) == [
+            DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+            DiagnosticStepID.dial,
+        ], """
+            the dial is the last step announced: the trace comes after it and the cancellation \
+            landed while it was in flight, so nothing may announce a start behind it — got \
+            \(events)
+            """)
+        // The positive half: the starts above are not a list of announcements
+        // for steps that never ran. Three of the four produced a row, and the
+        // dial's absence from this list is the cancellation itself.
+        #expect(events.compactMap(\.finishedID) == report.steps.map(\.id))
+        #expect(events.compactMap(\.finishedID) == [
+            DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
+        ])
+    }
+
     @Test func aDescriptorThatNamesNoEndpointProbesNothing() async {
         let report = await Self.run(
             descriptor: Self.probeDescriptor(endpoint: nil, dial: nil))
@@ -1616,6 +1754,42 @@ private actor StepLog {
     func append(_ id: String, marked marker: Int = 0) {
         entries.append(Entry(id: id, marker: marker))
     }
+}
+
+/// One thing the observer was told, in the order it was told.
+///
+/// A single list rather than two, because what these cases are about is the
+/// INTERLEAVING — a start that arrives after its own row reads exactly like a
+/// start that arrives before it when the two are recorded apart.
+private enum RunEvent: Equatable {
+    /// A step is about to be measured, under the id and the catalogue key it
+    /// will carry as a row.
+    case started(String, String)
+    /// A step's finished row.
+    case finished(String)
+
+    var startedID: String? {
+        if case .started(let id, _) = self { return id }
+        return nil
+    }
+
+    var startedTitleKey: String? {
+        if case .started(_, let titleKey) = self { return titleKey }
+        return nil
+    }
+
+    var finishedID: String? {
+        if case .finished(let id) = self { return id }
+        return nil
+    }
+}
+
+/// Records what a `DiagnosticRunObserver` is handed, starts and rows together.
+private actor RunLog {
+    private(set) var events: [RunEvent] = []
+
+    func started(_ id: String, titleKey: String) { events.append(.started(id, titleKey)) }
+    func finished(_ id: String) { events.append(.finished(id)) }
 }
 
 /// Counts how many times something has happened, so an observation can record

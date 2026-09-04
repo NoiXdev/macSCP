@@ -1070,6 +1070,7 @@
 "diagnostics.title" = "Diagnostic de connexion";
 "diagnostics.idle" = "Rien n’a encore été mesuré. La vérification résout l’hôte, tente une connexion, envoie un ping, se connecte comme le ferait cette connexion et retrace l’itinéraire.";
 "diagnostics.running" = "Mesure en cours…";
+"diagnostics.running.step" = "%@ · mesure en cours…";
 "diagnostics.run" = "Lancer la vérification";
 "diagnostics.runAgain" = "Relancer";
 "diagnostics.copy" = "Copier le rapport";

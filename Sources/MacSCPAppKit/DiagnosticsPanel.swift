@@ -149,12 +149,38 @@ struct DiagnosticsPanel: View {
         }
     }
 
+    /// The line under the rows: the spinner, and the name of the step it is
+    /// spinning for.
+    ///
+    /// The maintainer's finding on the dev build (2026-09-04): this said
+    /// "Measuring…" from the first probe to the last, so the twenty seconds a
+    /// firewalled trace spends looked exactly like a resolve that had hung.
+    /// The step names itself under the key Core announced it with — the same
+    /// key its finished row is titled with a moment later, so the panel is
+    /// never a second place a step is named — and the unnamed spelling stays
+    /// for the gap between two steps, where nothing is being measured yet.
+    ///
+    /// The key is its own fallback. A step whose key no catalog carries would
+    /// print that key here, which is loud rather than empty; nothing can
+    /// reach that state without `everyKeyTheDoorsAndThePanelUseExistsInAll
+    /// FourCatalogs` going red first, since it reads the keys Core emits out
+    /// of the whole source tree.
     private var measuring: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
-            L10n.text("diagnostics.running", "Measuring…")
+            if let runningStepTitleKey = model.runningStepTitleKey {
+                Text(
+                    String(
+                        format: L10n.string("diagnostics.running.step", "%@ — measuring…"),
+                        L10n.string(runningStepTitleKey, runningStepTitleKey))
+                )
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            } else {
+                L10n.text("diagnostics.running", "Measuring…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

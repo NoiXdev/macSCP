@@ -1069,6 +1069,7 @@
 "diagnostics.title" = "Diagnostyka połączenia";
 "diagnostics.idle" = "Nic jeszcze nie zostało zmierzone. Sprawdzenie rozwiązuje nazwę hosta, próbuje nawiązać połączenie, wysyła ping, łączy się tak jak zrobiłoby to to połączenie i śledzi trasę.";
 "diagnostics.running" = "Trwa pomiar…";
+"diagnostics.running.step" = "%@ · trwa pomiar…";
 "diagnostics.run" = "Uruchom sprawdzenie";
 "diagnostics.runAgain" = "Sprawdź ponownie";
 "diagnostics.copy" = "Kopiuj raport";

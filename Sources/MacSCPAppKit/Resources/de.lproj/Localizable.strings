@@ -1067,6 +1067,7 @@
 "diagnostics.title" = "Verbindungsdiagnose";
 "diagnostics.idle" = "Es wurde noch nichts gemessen. Die Prüfung löst den Host auf, versucht eine Verbindung, schickt einen Ping, wählt so, wie diese Verbindung es täte, und verfolgt die Route.";
 "diagnostics.running" = "Messung läuft…";
+"diagnostics.running.step" = "%@ · Prüfung läuft…";
 "diagnostics.run" = "Prüfung starten";
 "diagnostics.runAgain" = "Erneut prüfen";
 "diagnostics.copy" = "Bericht kopieren";

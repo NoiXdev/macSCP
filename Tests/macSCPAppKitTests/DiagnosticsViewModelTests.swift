@@ -289,8 +289,8 @@ struct DiagnosticsViewModelTests {
         let emitted = [Self.step(id: DiagnosticStepID.resolve)]
         let clipboard = Clipboard()
         let model = Self.model(
-            runner: { _, onStep in
-                for step in emitted { await onStep(step) }
+            runner: { _, observer in
+                for step in emitted { await observer.onStep(step) }
                 try? await Task.sleep(for: .seconds(600))
                 return Self.report(emitted)
             },
@@ -342,8 +342,8 @@ struct DiagnosticsViewModelTests {
         ]
         let parked = Gate()
         let model = Self.model(
-            runner: { _, onStep in
-                for step in emitted { await onStep(step) }
+            runner: { _, observer in
+                for step in emitted { await observer.onStep(step) }
                 await parked.wait()
                 return Self.report(emitted)
             },
@@ -384,8 +384,8 @@ struct DiagnosticsViewModelTests {
             Self.step(id: DiagnosticStepID.resolve), Self.step(id: DiagnosticStepID.tcp),
         ]
         let model = Self.model(
-            runner: { _, onStep in
-                for step in emitted { await onStep(step) }
+            runner: { _, observer in
+                for step in emitted { await observer.onStep(step) }
                 try? await Task.sleep(for: .seconds(600))
                 return Self.report(emitted, completion: .cancelled(afterSteps: emitted.count))
             },
@@ -430,8 +430,8 @@ struct DiagnosticsViewModelTests {
         ]
         let clipboard = Clipboard()
         let model = Self.model(
-            runner: { _, onStep in
-                for step in emitted { await onStep(step) }
+            runner: { _, observer in
+                for step in emitted { await observer.onStep(step) }
                 try? await Task.sleep(for: .seconds(600))
                 return Self.report(emitted, completion: .cancelled(afterSteps: emitted.count))
             },
@@ -462,9 +462,9 @@ struct DiagnosticsViewModelTests {
         let second = Self.step(id: DiagnosticStepID.tcp)
         let calls = Calls()
         let model = Self.model(
-            runner: { _, onStep in
+            runner: { _, observer in
                 let step = await calls.next() == 1 ? first : second
-                await onStep(step)
+                await observer.onStep(step)
                 return Self.report([step])
             },
             clipboard: Clipboard())
@@ -483,13 +483,13 @@ struct DiagnosticsViewModelTests {
         let calls = Calls()
         let released = Gate()
         let model = Self.model(
-            runner: { _, onStep in
+            runner: { _, observer in
                 if await calls.next() == 1 {
                     await released.wait()
-                    await onStep(stale)
+                    await observer.onStep(stale)
                     return Self.report([stale])
                 }
-                await onStep(current)
+                await observer.onStep(current)
                 return Self.report([current])
             },
             clipboard: Clipboard())
@@ -504,6 +504,93 @@ struct DiagnosticsViewModelTests {
             the abandoned run emits its row after the replacement has published; without the \
             attempt token it would append to the list the reader is looking at
             """)
+    }
+
+    // MARK: - The step in flight
+
+    /// While a step is being measured, the model names it — the key Core
+    /// announced, and nothing else.
+    ///
+    /// The maintainer's finding on the dev build (2026-09-04): the panel said
+    /// "Measuring…" from the first probe to the last, so the twenty seconds a
+    /// firewalled trace spends looked exactly like a resolve that had hung.
+    /// Read while the runner is parked, so nothing has healed.
+    @Test func theRunningStepIsNamedWhileItIsMeasured() async {
+        let walking = Self.step(id: DiagnosticStepID.trace)
+        let parked = Gate()
+        let model = Self.model(
+            runner: { _, observer in
+                await observer.onStepStarted(walking.id, walking.titleKey)
+                await parked.wait()
+                return Self.report([walking])
+            },
+            clipboard: Clipboard())
+        model.run()
+        await Self.yieldUntil("the start arrives") { model.runningStepTitleKey != nil }
+
+        #expect(model.runningStepTitleKey == walking.titleKey, """
+            the model must carry the catalogue key the step announced, which is what lets the \
+            panel name the step in flight — got \(String(describing: model.runningStepTitleKey))
+            """)
+        #expect(model.isRunning, "and the run is genuinely still in flight")
+
+        await parked.open()
+        await model.runTask?.value
+        #expect(model.runningStepTitleKey == nil, """
+            a run that has ended is measuring nothing, and a name left behind would be a step \
+            the panel claims is still walking
+            """)
+    }
+
+    /// The row IS the end of the step: the moment it lands, the line stops
+    /// naming it. Read before the parked runner is released, so the run's own
+    /// ending cannot be what cleared it.
+    @Test func theFinishedRowClearsTheRunningStep() async {
+        let measured = Self.step(id: DiagnosticStepID.resolve)
+        let parked = Gate()
+        let model = Self.model(
+            runner: { _, observer in
+                await observer.onStepStarted(measured.id, measured.titleKey)
+                await observer.onStep(measured)
+                await parked.wait()
+                return Self.report([measured])
+            },
+            clipboard: Clipboard())
+        model.run()
+        await Self.yieldUntil("the row arrives") { model.steps.count == 1 }
+
+        #expect(model.runningStepTitleKey == nil, """
+            the step that produced a row is finished — naming it beside its own row is the \
+            panel telling the reader two different things about one step
+            """)
+        #expect(model.isRunning, "while the walk itself is still going")
+
+        await parked.open()
+        await model.runTask?.value
+    }
+
+    /// A cancel clears the name too: nothing is measuring the step any more.
+    @Test func cancellingClearsTheRunningStep() async {
+        let walking = Self.step(id: DiagnosticStepID.dial)
+        let model = Self.model(
+            runner: { _, observer in
+                await observer.onStepStarted(walking.id, walking.titleKey)
+                // Returns the moment the task is cancelled; the duration is a
+                // park, not a deadline anything here asserts on.
+                try? await Task.sleep(for: .seconds(60))
+                return Self.report([], completion: .cancelled(afterSteps: 0))
+            },
+            clipboard: Clipboard())
+        model.run()
+        await Self.yieldUntil("the start arrives") { model.runningStepTitleKey != nil }
+
+        model.cancel()
+        await model.runTask?.value
+        #expect(model.runningStepTitleKey == nil, """
+            a cancelled walk measures nothing, and the panel must not go on naming the step it \
+            was stopped in the middle of
+            """)
+        #expect(model.isRunning == false)
     }
 
     // MARK: - Copying
@@ -557,8 +644,8 @@ struct DiagnosticsViewModelTests {
         ]
         let clipboard = Clipboard()
         let model = Self.model(
-            runner: { _, onStep in
-                for step in emitted { await onStep(step) }
+            runner: { _, observer in
+                for step in emitted { await observer.onStep(step) }
                 try? await Task.sleep(for: .seconds(600))
                 return Self.report(emitted)
             },
@@ -605,8 +692,8 @@ struct DiagnosticsViewModelTests {
         let emitted = [Self.step(id: DiagnosticStepID.resolve)]
         let clipboard = Clipboard()
         let model = Self.model(
-            runner: { _, onStep in
-                for step in emitted { await onStep(step) }
+            runner: { _, observer in
+                for step in emitted { await observer.onStep(step) }
                 try? await Task.sleep(for: .seconds(600))
                 return Self.report(emitted)
             },

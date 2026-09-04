@@ -62,11 +62,13 @@ final class DiagnosticsViewModel: Identifiable {
     /// while an observable change inside a live one does not.
     nonisolated let id = UUID()
 
-    /// One diagnosis, start to finish, told about each step as it finishes.
+    /// One diagnosis, start to finish, told about each step as it starts and
+    /// again as it finishes.
     ///
     /// The observer is the argument rather than a property because a fake in a
-    /// test has to be able to emit rows and then park — which is what pins
-    /// "the rows are on screen while the walk is still walking".
+    /// test has to be able to announce a step, emit rows and then park — which
+    /// is what pins "the rows are on screen while the walk is still walking"
+    /// and "the line names the step that is taking the time".
     /// Cancellation reaches the runner through the task that runs it, and
     /// `ConnectionDiagnostics` answers a cancelled task with the steps it had
     /// already measured.
@@ -75,7 +77,7 @@ final class DiagnosticsViewModel: Identifiable {
     /// because the user picks it between runs: a closure built once at
     /// construction would carry whatever was chosen when the panel opened, and
     /// the menu would change nothing.
-    typealias Runner = @Sendable (DiagnosticScope, @escaping DiagnosticStepObserver) async
+    typealias Runner = @Sendable (DiagnosticScope, DiagnosticRunObserver) async
         -> DiagnosticReport
 
     /// What the header calls this connection.
@@ -132,6 +134,22 @@ final class DiagnosticsViewModel: Identifiable {
     /// swaps its Run button for Cancel; it is not a second copy of "is the
     /// task alive", it is what the user is told.
     private(set) var isRunning = false
+
+    /// The catalogue key of the step being measured right now, or `nil` when
+    /// no step is in flight — between two steps, before the first, and after
+    /// the run has ended.
+    ///
+    /// A KEY and not a name: Core announces a step under the same
+    /// `titleKey` its finished row will carry (`DiagnosticRunObserver`), the
+    /// panel resolves it through the catalogs like any other row title, and
+    /// nothing here decides what a step is called. Nothing about the endpoint
+    /// reaches it either — the running line is a step name and never a host,
+    /// a port or anything the user typed.
+    ///
+    /// Cleared the moment the step's own row lands, because a step that has
+    /// produced a row is finished: naming it beside its own row would tell the
+    /// reader two different things about one step.
+    private(set) var runningStepTitleKey: String?
 
     /// The running diagnosis, exposed so a caller can await it. The panel
     /// never does — SwiftUI reads `report`/`isRunning` — but a test must, and
@@ -200,7 +218,9 @@ final class DiagnosticsViewModel: Identifiable {
             // copy a partial report, before the walk has returned anything.
             endpoint: descriptor.endpoint(target.values),
             appVersion: version,
-            runner: { scope, onStep in await diagnostics.run(scope: scope, onStep: onStep) })
+            runner: { scope, observer in
+                await diagnostics.run(scope: scope, observer: observer)
+            })
     }
 
     /// Starts a diagnosis of whatever `scope` says. The ONLY thing that does.
@@ -221,25 +241,32 @@ final class DiagnosticsViewModel: Identifiable {
         isRunning = true
         steps = []
         report = nil
+        runningStepTitleKey = nil
         let runner = self.runner
         let scope = self.scope
         walkingScope = scope
         runTask = Task { [weak self] in
-            let produced = await runner(scope) { [weak self] step in
-                // `[weak self]` again, and not redundantly: inside
-                // `Task { [weak self] … }` the name is an optional LOCAL, and
-                // a nested closure capturing it captures it strongly — the
-                // runner would then hold the model alive for the length of the
-                // walk, and a panel dropped by `end()` would go on collecting
-                // rows nobody can see. Re-weakening here is what makes the
-                // outer capture mean what it says.
-                //
-                // Every row is also checked against the attempt that produced
-                // it. A superseded run keeps walking until its cancellation
-                // reaches it, and its late rows would otherwise append to the
-                // list the reader is looking at.
-                await MainActor.run { self?.append(step, from: myAttempt) }
-            }
+            // `[weak self]` again in both halves, and not redundantly: inside
+            // `Task { [weak self] … }` the name is an optional LOCAL, and a
+            // nested closure capturing it captures it strongly — the runner
+            // would then hold the model alive for the length of the walk, and
+            // a panel dropped by `end()` would go on collecting rows nobody
+            // can see. Re-weakening here is what makes the outer capture mean
+            // what it says.
+            //
+            // Every event is also checked against the attempt that produced
+            // it. A superseded run keeps walking until its cancellation
+            // reaches it, and its late rows would otherwise append to the list
+            // the reader is looking at — and its late STARTS would put a step
+            // name over a walk that is not measuring them.
+            let observer = DiagnosticRunObserver(
+                onStepStarted: { [weak self] _, titleKey in
+                    await MainActor.run { self?.stepStarted(titleKey, from: myAttempt) }
+                },
+                onStep: { [weak self] step in
+                    await MainActor.run { self?.append(step, from: myAttempt) }
+                })
+            let produced = await runner(scope, observer)
             guard let self, self.attempt == myAttempt else { return }
             // A report with no steps is not a result. `ConnectionDiagnostics`
             // answers a task cancelled before the resolve step with exactly
@@ -249,19 +276,38 @@ final class DiagnosticsViewModel: Identifiable {
             // happened. The run is over either way, so `isRunning` clears
             // regardless.
             if !produced.steps.isEmpty { self.report = produced }
+            // The run is over — finished or cancelled, the runner answers
+            // either way — so nothing is being measured and nothing may go on
+            // being named. This is also where a CANCEL clears the line: the
+            // cancellation reaches the walk, the walk returns what it had, and
+            // the return lands here.
+            self.runningStepTitleKey = nil
             self.isRunning = false
         }
+    }
+
+    /// One step about to be measured, from the run that is allowed to write.
+    private func stepStarted(_ titleKey: String, from producer: UUID) {
+        guard attempt == producer else { return }
+        runningStepTitleKey = titleKey
     }
 
     /// One finished row, from the run that is allowed to write.
     private func append(_ step: DiagnosticStep, from producer: UUID) {
         guard attempt == producer else { return }
         steps.append(step)
+        // The row IS the end of the step. The next step announces itself
+        // before it starts measuring, so the line goes back to its unnamed
+        // spelling for exactly the gap between the two.
+        runningStepTitleKey = nil
     }
 
     /// Stops the running diagnosis. What it measured before the stop stays:
     /// `steps` is not cleared, and the runner hands back the rows it finished,
-    /// which are the answer to "where did it get stuck".
+    /// which are the answer to "where did it get stuck". The name of the step
+    /// it was stopped in the middle of does NOT stay — `run()`'s task clears
+    /// it where it clears `isRunning`, on the answer the cancelled walk
+    /// returns.
     ///
     /// Reached from `run()` (superseding whatever was in flight), the panel's
     /// Cancel button, `DiagnosticsPanel`'s `.onDisappear`,

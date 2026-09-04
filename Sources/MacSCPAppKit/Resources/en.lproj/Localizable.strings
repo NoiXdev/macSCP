@@ -1066,6 +1066,7 @@
 "diagnostics.title" = "Connection diagnostics";
 "diagnostics.idle" = "Nothing has been measured yet. The check resolves the host, tries a connection, sends a ping, dials the way this connection would, and traces the route.";
 "diagnostics.running" = "Measuring…";
+"diagnostics.running.step" = "%@ — measuring…";
 "diagnostics.run" = "Run check";
 "diagnostics.runAgain" = "Run again";
 "diagnostics.copy" = "Copy report";

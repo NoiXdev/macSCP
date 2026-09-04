@@ -77,9 +77,9 @@ struct DiagnosticsLifecycleTests {
         var hasStarted: Bool { lock.withLock { started } }
 
         func runner() -> DiagnosticsViewModel.Runner {
-            { [self] _, onStep in
+            { [self] _, observer in
                 await withTaskCancellationHandler {
-                    for row in rows { await onStep(row) }
+                    for row in rows { await observer.onStep(row) }
                     lock.withLock { started = true }
                     // Never returns of its own accord within any run of this
                     // suite; a working cancel returns it at once. The number

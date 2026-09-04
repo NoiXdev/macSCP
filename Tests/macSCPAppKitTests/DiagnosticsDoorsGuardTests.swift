@@ -975,6 +975,58 @@ struct DiagnosticsDoorsGuardTests {
         }
     }
 
+    /// The line under the rows NAMES the step being measured.
+    ///
+    /// The maintainer's finding on the dev build (2026-09-04): "Measuring…"
+    /// stood there from the first probe to the last, so the twenty seconds a
+    /// firewalled trace spends read exactly like a resolve that had hung. What
+    /// the panel draws instead is the step in flight, under the catalogue key
+    /// Core announced it with — and under that key alone, so the panel never
+    /// becomes a second place a step is named.
+    ///
+    /// Nothing here is spelled: the property is the one `String?` the view
+    /// model declares, and the line is the one view body that draws a spinner.
+    /// The two key literals are read out of the region rather than named, and
+    /// held to their SHAPE — the named line's key extends the plain one — so a
+    /// rewording moves the check with it while a line that stopped looking
+    /// anything up goes red.
+    @Test func theMeasuringLineNamesTheStepInFlight() throws {
+        let property = try Self.runningStepPropertyName()
+        let line = try Self.measuringLine(view: .strict)
+
+        #expect(line.contains("model.\(property)"), """
+            the measuring line must read the view model's \(property) — without it the panel \
+            cannot name the step in flight, and every step reads as the same spinner: \(line)
+            """)
+        #expect(line.contains("L10n.string(\(property)"), """
+            …and must resolve that key through the catalogs. Core hands over a KEY, so a line \
+            that drew it as text would print `diagnostics.step.trace` at the user: \(line)
+            """)
+
+        // The negative half, with the two positives above beside it: no `Text`
+        // in this region draws the key without looking it up.
+        for drawn in Self.invocations(of: "Text", in: line)
+        where Self.mentions(property, in: drawn) {
+            #expect(drawn.contains("L10n.string(\(property)"), """
+                the measuring line draws the running step's key without resolving it: \(drawn)
+                """)
+        }
+
+        let keys = Self.lookedUpKeys(in: try Self.measuringLine(view: .literals)).sorted()
+        guard keys.count == 2 else {
+            Issue.record("""
+                the measuring line looks up two catalogue keys — one for the step in flight, \
+                one for the moment before any step has announced itself — found \(keys)
+                """)
+            return
+        }
+        #expect(keys[1].hasPrefix(keys[0] + "."), """
+            the named line's key must extend the plain one (`\(keys[0])` → \
+            `\(keys[0]).<something>`), so the two lines stay one thing in the catalogs — \
+            found \(keys)
+            """)
+    }
+
     /// "Copy report" is one `Menu` with exactly two entries — plain text and
     /// Markdown (decision of 2026-09-02, second half).
     @Test func copyReportIsAMenuWithTwoEntries() throws {
@@ -1449,6 +1501,51 @@ struct DiagnosticsDoorsGuardTests {
 
     static func url(_ relativePath: String) -> URL {
         repoRoot.appendingPathComponent(relativePath)
+    }
+
+    /// The property that carries the step being measured: the ONE `String?`
+    /// the view model declares.
+    ///
+    /// Derived rather than spelled (CLAUDE.md, "a guard that spells a symbol
+    /// it could read instead is waiting for a rename"), and it fails closed —
+    /// a second `String?` property makes the derivation ambiguous and the scan
+    /// throws rather than picking one.
+    static func runningStepPropertyName() throws -> String {
+        let source = try strictSource(of: viewModelPath)
+        let names = matches(of: #"var\s+(\w+):\s*String\?"#, in: source)
+        guard names.count == 1 else {
+            throw ScanError.derivation("""
+                expected exactly one `String?` property in \(viewModelPath) — the key of the \
+                step in flight — found \(names)
+                """)
+        }
+        return names[0]
+    }
+
+    /// The panel's progress line: the one view body that draws a spinner.
+    ///
+    /// Derived the same way, and for the same reason: the property holding it
+    /// can be renamed, its layout can change from a row to a stack, and this
+    /// still finds the line — while a panel that stopped drawing a spinner, or
+    /// grew a second one, throws instead of reading some other region.
+    static func measuringLine(view: SourceView = .strict) throws -> String {
+        let strict = try bodies(after: "HStack", in: strictSource(of: panelPath))
+        let asked = view == .strict
+            ? strict : bodies(after: "HStack", in: try literalSource(of: panelPath))
+        guard strict.count == asked.count else {
+            throw ScanError.spanNotFound("""
+                the two views of \(panelPath) disagree on how many HStacks it has — \
+                \(strict.count) against \(asked.count)
+                """)
+        }
+        let drawing = strict.indices.filter { strict[$0].contains("ProgressView") }
+        guard drawing.count == 1, let only = drawing.first else {
+            throw ScanError.spanNotFound("""
+                expected exactly one HStack drawing a ProgressView in \(panelPath) — the \
+                measuring line — found \(drawing.count)
+                """)
+        }
+        return asked[only]
     }
 
     static func strictSource(of relativePath: String) throws -> String {

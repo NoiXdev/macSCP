@@ -54,7 +54,7 @@ finished step.
 - Produces: `DiagnosticRunObserver`, `ConnectionDiagnostics.run(scope:observer:)`, `DiagnosticsViewModel.runningStepTitleKey`.
 - Consumes: `DiagnosticStepTimer`/`timer(for:)` (where each step starts), `DiagnosticStepID`, the step `titleKey`s.
 
-- [ ] **Step 1: Red first** — the Core observer test: `cannot find 'DiagnosticRunObserver'`; the VM test: no `runningStepTitleKey`; the guard: red on the missing key.
-- [ ] **Step 2: Implement**; `swift test --filter "ConnectionDiagnostics|DiagnosticsViewModel|DiagnosticsDoors|Localiz"` green; full `swift test`; zero warnings.
-- [ ] **Step 3: Commit** `feat(diagnostics): the running line names the step in flight`.
-- [ ] **Step 4:** `docs/BACKLOG.md` row → Done (the commit, the start-site count, the key) in the same commit.
+- [x] **Step 1: Red first** — the Core observer test: `cannot find 'DiagnosticRunObserver'`; the VM test: no `runningStepTitleKey`; the guard: red on the missing key.
+- [x] **Step 2: Implement**; `swift test --filter "ConnectionDiagnostics|DiagnosticsViewModel|DiagnosticsDoors|Localiz"` green; full `swift test`; zero warnings.
+- [x] **Step 3: Commit** `feat(diagnostics): the running line names the step in flight`.
+- [x] **Step 4:** `docs/BACKLOG.md` row → Done (the commit, the start-site count, the key) in the same commit.
