@@ -7,20 +7,14 @@ import Testing
 /// its bound, and the three inputs a caller can hand it.
 ///
 /// Five minutes rather than the one minute the rest of the tree carries, and
-/// the reason is in the cases themselves. Both of the cases that hand the
-/// runner a child bounded at sixty seconds and then wait, unbounded, for a
-/// latch the stderr seam raises already declare a five-minute limit of their
-/// own, with that argument written out. And one case that declares no limit
-/// of its own rules out a suite-level minute anyway:
-/// `aCancelledRunKillsItsChildAndReportsCancellation` hands the runner
-/// `timeout: .seconds(120)`. A correct run is cancelled long before that
-/// bound, but the regression the case exists for -- a runner that ignores
-/// the cancel -- settles only when the bound fires, and a one-minute limit
-/// would cut the case off before it could report which of the two it saw.
-/// The limit here is a net under an unbounded
-/// `AsyncSignal.wait()`, so a regression in the seam is a red naming the
-/// test rather than a run that never returns; it is not a budget any case is
-/// expected to approach.
+/// the reason is in two of the cases: each hands the runner a child bounded
+/// at sixty seconds and then waits, unbounded, for a latch the stderr seam
+/// raises, and each already declares a five-minute limit of its own, with
+/// that argument written out. A suite-level minute would sit under those and
+/// end them before the property they measure is reachable. The limit here is
+/// a net under an unbounded `AsyncSignal.wait()`, so a regression in the seam
+/// is a red naming the test rather than a run that never returns; it is not
+/// a budget any case is expected to approach.
 @Suite("SubprocessRunner", .timeLimit(.minutes(5)))
 struct SubprocessRunnerTests {
     private static let shell = URL(fileURLWithPath: "/bin/sh")
