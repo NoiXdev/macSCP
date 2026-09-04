@@ -182,22 +182,34 @@ struct PollingGuardTests {
     /// beside an outcome that was already asserted) until this plan's
     /// final fix round replaced it with a floor — `>=` compiles the same
     /// call and is deliberately let through, so the regex only rejects
-    /// `<`/`<=`.
+    /// `<`/`<=`. Scanned over comment-and-string-blanked source, same as
+    /// `noSleepingChildRacesWorkInAGroup` and per CLAUDE.md "Source-scanning
+    /// guards read comments too" — a doc comment that writes out the
+    /// banned shape to explain it (as this one does, above) is otherwise
+    /// indistinguishable from the shape itself, on both the negative side
+    /// and the positive fixture check below it.
     @Test func noTestAssertsAnElapsedSinceCeiling() throws {
         let pattern = try NSRegularExpression(pattern: #"Date\(\)\.timeIntervalSince\([^)]*\)\s*<=?"#)
-        let offenders = try Self.sources().filter {
-            pattern.firstMatch(in: $0.text, range: NSRange($0.text.startIndex..., in: $0.text)) != nil
-        }.map(\.path)
+        let offenders = try Self.sources().compactMap { source -> String? in
+            let blanked = try Self.blankCommentsAndStrings(source.text)
+            let range = NSRange(blanked.startIndex..., in: blanked)
+            return pattern.firstMatch(in: blanked, range: range) != nil ? source.path : nil
+        }
         #expect(offenders.isEmpty, "\(offenders)")
 
         // Positive: the regex matches real, compiling code in this exact
         // shape — `CeilingRegexFixture.swift`, excluded from `sources()`
         // above the same way `SleepingChildRegexFixture.swift` is, so
         // the match it demonstrates can never itself become an offender.
+        // Blanked the same way the negative above is, so this positive
+        // proves the negative's own scanning path finds the shape, not a
+        // raw-text path the negative no longer uses.
         let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/CeilingRegexFixture.swift")
         let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
+        let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
         #expect(
-            pattern.firstMatch(in: fixtureText, range: NSRange(fixtureText.startIndex..., in: fixtureText))
+            pattern.firstMatch(
+                in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
                 != nil)
     }
 
@@ -210,19 +222,26 @@ struct PollingGuardTests {
     /// pool) until this plan's final fix round dropped the parameter: the
     /// wait now ends only when the gate opens, or — through the
     /// `AsyncSignal` that joins it — when the suite's `.timeLimit` cancels
-    /// the test.
+    /// the test. Scanned over comment-and-string-blanked source, same as
+    /// `noSleepingChildRacesWorkInAGroup` and per CLAUDE.md "Source-scanning
+    /// guards read comments too", on both the negative side and the
+    /// positive fixture check below it.
     @Test func noWaitTakesAWallClockDeadline() throws {
         let pattern = try NSRegularExpression(pattern: #"\.wait\(until:\s*Date\("#)
-        let offenders = try Self.sources().filter {
-            pattern.firstMatch(in: $0.text, range: NSRange($0.text.startIndex..., in: $0.text)) != nil
-        }.map(\.path)
+        let offenders = try Self.sources().compactMap { source -> String? in
+            let blanked = try Self.blankCommentsAndStrings(source.text)
+            let range = NSRange(blanked.startIndex..., in: blanked)
+            return pattern.firstMatch(in: blanked, range: range) != nil ? source.path : nil
+        }
         #expect(offenders.isEmpty, "\(offenders)")
 
-        // Positive, same fixture as the check above.
+        // Positive, same fixture as the check above, blanked the same way.
         let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/CeilingRegexFixture.swift")
         let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
+        let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
         #expect(
-            pattern.firstMatch(in: fixtureText, range: NSRange(fixtureText.startIndex..., in: fixtureText))
+            pattern.firstMatch(
+                in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
                 != nil)
     }
 
