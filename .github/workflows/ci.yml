@@ -44,9 +44,51 @@ jobs:
           set -o pipefail
           swift build 2>&1 | tee "$RUNNER_TEMP/build.log"
       - name: Unit-Tests
+        # `--event-stream-output-path` writes one JSON line per Swift Testing
+        # event into a file the job log cannot lose. Measured 2026-09-03 on
+        # run 33741778350: the Actions log dropped 113 test verdicts under
+        # interleaved output, and the run's one failing test never appeared
+        # by name (run 33698102652 lost 60 suite verdicts the same way). The
+        # step below reads the file back; the artifact keeps it.
         run: |
           set -o pipefail
-          swift test 2>&1 | tee "$RUNNER_TEMP/test.log"
+          swift test --event-stream-output-path "$RUNNER_TEMP/test-events.jsonl" \
+            2>&1 | tee "$RUNNER_TEMP/test.log"
+      - name: Test verdicts from the event stream
+        # Runs on red and green alike: it names every test that recorded an
+        # issue, from the event file rather than from stdout, so a red run
+        # always says which test. `issueRecorded` carries the test's id and
+        # the expectation text; `testEnded` carries the verdict sentence.
+        if: always()
+        run: |
+          set -euo pipefail
+          events="$RUNNER_TEMP/test-events.jsonl"
+          if [ ! -s "$events" ]; then
+            echo "::warning::no event stream was written at $events"
+            exit 0
+          fi
+          echo "events: $(wc -l < "$events" | tr -d ' ') lines"
+          jq -r 'select(.kind == "event" and .payload.kind == "issueRecorded")
+                 | "::error::issue in \(.payload.testID // "<no test>"): \((.payload.messages // []) | map(.text) | join(" | "))"' \
+            "$events" || true
+          failed=$(jq -r 'select(.kind == "event" and .payload.kind == "testEnded")
+                          | (.payload.messages // []) | map(.text) | join(" ")
+                          | select(test(" failed after "))' "$events" || true)
+          if [ -n "$failed" ]; then
+            echo "----- failed verdicts -----"
+            printf '%s\n' "$failed"
+            echo "---------------------------"
+          else
+            echo "no failed verdict in the event stream"
+          fi
+      - name: Upload the event stream
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-events
+          path: ${{ runner.temp }}/test-events.jsonl
+          if-no-files-found: warn
+          retention-days: 14
       - name: Warning gate
         # Why this step exists: the warning stack regrew unnoticed once
         # already. Dozens of sites had accumulated by 2026-08-26, six of them
