@@ -26,13 +26,14 @@ struct PollingGuardTests {
     }
 
     /// Every Swift file under Tests/, minus this guard, the helper that
-    /// defines `pollUntil` itself, and two fixtures that intentionally
+    /// defines `pollUntil` itself, and three fixtures that intentionally
     /// carry shapes this guard's own checks look for —
     /// `SleepingChildRegexFixture.swift`
-    /// (`noSleepingChildRacesWorkInAGroup`) and `CeilingRegexFixture.swift`
+    /// (`noSleepingChildRacesWorkInAGroup`), `CeilingRegexFixture.swift`
     /// (`noTestAssertsAnElapsedSinceCeiling`,
-    /// `noWaitTakesAWallClockDeadline`) — kept out of the scan each exists
-    /// to feed a positive check about instead.
+    /// `noWaitTakesAWallClockDeadline`) and `FutureGetRegexFixture.swift`
+    /// (`noEventLoopFutureIsAwaitedWithGet`) — kept out of the scan each
+    /// exists to feed a positive check about instead.
     private static func sources() throws -> [(path: String, text: String)] {
         let enumerator = FileManager.default.enumerator(at: testsRoot, includingPropertiesForKeys: nil)!
         var result: [(String, String)] = []
@@ -42,6 +43,7 @@ struct PollingGuardTests {
                 || path.hasSuffix("PollUntil.swift")
                 || path.hasSuffix("SleepingChildRegexFixture.swift")
                 || path.hasSuffix("CeilingRegexFixture.swift")
+                || path.hasSuffix("FutureGetRegexFixture.swift")
             { continue }
             result.append((path, try String(contentsOf: url, encoding: .utf8)))
         }
@@ -289,6 +291,64 @@ struct PollingGuardTests {
         #expect(!directCallers.isEmpty)
 
         #expect(withoutLimit.isEmpty, "\(withoutLimit)")
+    }
+
+    /// Negative: no `EventLoopFuture` is awaited with `.get()` — the shape
+    /// `awaitCancellably` (`Tests/MacSCPTestSupport/AwaitCancellably.swift`)
+    /// exists to replace, per its own doc comment and
+    /// `docs/BACKLOG.md` ("Wall-clock ceilings still in the tree"):
+    /// `EventLoopFuture.get()` ignores task cancellation, so a future that
+    /// never completes ends nothing — the calling suite's `.timeLimit`
+    /// records a red and the run then parks, the same 0 % CPU shape
+    /// `docs/superpowers/specs/2026-08-08-testsuite-hang-investigation.md`
+    /// describes, reached from the other side.
+    ///
+    /// The regex matches a `.get()` immediately preceded by an identifier
+    /// ending `future`, `Future` or `futureResult` — `promise.futureResult`
+    /// and a bare `future` local are both real shapes this tree carried; a
+    /// `.` breaks `\w*`, so the match is always the LAST identifier segment
+    /// before the call, never a longer qualified path. `Result<Value,
+    /// Error>.get()` — a same-named, unrelated stdlib API this tree also
+    /// calls (`BandwidthBucketTests`, `SSHAgentClientTests`,
+    /// `UpdateCheckerTests`, `HostKeyValidationTests`,
+    /// `EmbeddedKeyPorterTests`) — is not this shape and does not match: its
+    /// receiver identifiers (`result`, `$0`, a `#require(...)` call result)
+    /// never end in `future`/`Future`/`futureResult`.
+    ///
+    /// Scanned over comment-and-string-blanked source, same as
+    /// `noSleepingChildRacesWorkInAGroup` and
+    /// `noTestAssertsAnElapsedSinceCeiling`, per CLAUDE.md "Source-scanning
+    /// guards read comments too": `EventLoopFuture` itself ends in
+    /// `Future`, so a doc comment that writes out
+    /// `` `EventLoopFuture.get()` `` to explain the shape — as this
+    /// check's own comment above does, and as `AwaitCancellably.swift`'s
+    /// does at length — is otherwise indistinguishable from the shape
+    /// itself. No exemption list is needed beyond that: every remaining
+    /// `.get()` in `Tests/` that would otherwise match this regex, at the
+    /// point this check was written, sits in such a comment.
+    @Test func noEventLoopFutureIsAwaitedWithGet() throws {
+        let pattern = try NSRegularExpression(pattern: #"\w*(?:futureResult|future|Future)\.get\(\)"#)
+        let offenders = try Self.sources().compactMap { source -> String? in
+            let blanked = try Self.blankCommentsAndStrings(source.text)
+            let range = NSRange(blanked.startIndex..., in: blanked)
+            return pattern.firstMatch(in: blanked, range: range) != nil ? source.path : nil
+        }
+        #expect(offenders.isEmpty, "\(offenders)")
+
+        // Positive: the regex matches real, compiling code in this exact
+        // shape — `FutureGetRegexFixture.swift`, excluded from `sources()`
+        // above the same way the other regex fixtures are, so the match it
+        // demonstrates can never itself become an offender. Blanked the
+        // same way the negative above is, so this positive proves the
+        // negative's own scanning path finds the shape, not a raw-text
+        // path the negative no longer uses.
+        let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/FutureGetRegexFixture.swift")
+        let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
+        let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
+        #expect(
+            pattern.firstMatch(
+                in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
+                != nil)
     }
 
     /// The name of every `func` a helper file declares whose body contains

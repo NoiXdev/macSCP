@@ -1,6 +1,7 @@
 import Citadel
 import Crypto
 import Foundation
+import MacSCPTestSupport
 import NIOCore
 import NIOPosix
 import Testing
@@ -31,7 +32,12 @@ import Testing
 @testable import macSCPCore
 
 /// Test keys are generated at RUNTIME (ssh-keygen) — never checked in.
-@Suite("SSHPrivateKeyLoader")
+///
+/// `.timeLimit(.minutes(1))`: `makeKey` shells out to `ssh-keygen` once per
+/// call, well under a second even on a loaded runner — a single invocation
+/// taking a full minute would itself be the defect. The project default is
+/// enough; nothing here needed the wider limit.
+@Suite("SSHPrivateKeyLoader", .timeLimit(.minutes(1)))
 struct SSHPrivateKeyLoaderTests {
     /// Generates a key of `type` in the temp directory; passphrase "" = unencrypted.
     /// `extra` is appended to the ssh-keygen argument list (e.g. `["-b", "384"]`,
@@ -396,7 +402,12 @@ struct SSHPrivateKeyLoaderTests {
                 availableMethods: .publicKey, nextChallengePromise: offerPromise)
 
             do {
-                offers.append(try await keyPromise.futureResult.get())
+                // `awaitCancellably`, not `EventLoopFuture.get()` — `get()`
+                // ignores task cancellation (see its doc comment,
+                // `Tests/MacSCPTestSupport/AwaitCancellably.swift`), so a
+                // delegate that stalled here would park the run past this
+                // suite's `.timeLimit` instead of ending it.
+                offers.append(try await awaitCancellably(keyPromise.futureResult))
             } catch let shape as OfferShape {
                 Issue.record("offer \(offers.count) is unreadable: \(shape)",
                              sourceLocation: sourceLocation)

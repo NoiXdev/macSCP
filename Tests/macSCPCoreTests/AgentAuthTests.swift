@@ -4,6 +4,7 @@ import Citadel
 // from `Insecure.RSA.PublicKey` rather than spelling `ssh-rsa`.
 import Crypto
 import Foundation
+import MacSCPTestSupport
 import NIOCore
 import NIOPosix
 // The SSH transport reaches this suite through a fork of swift-nio-ssh that
@@ -29,7 +30,12 @@ import Testing
 /// temporarily mutate the process-wide `SSH_AUTH_SOCK` environment variable
 /// (restored in each test) — serializing avoids any cross-test interleaving
 /// on that shared, process-global state.
-@Suite("AgentAuth", .serialized)
+///
+/// `.timeLimit(.minutes(1))`: nothing here generates a key or touches a
+/// real network — the mock transport is the slowest thing any test drives,
+/// and `signTimesOutWithProtocolError` bounds its own wait with a 0.05 s
+/// `signTimeout` regardless. The project default is enough.
+@Suite("AgentAuth", .serialized, .timeLimit(.minutes(1)))
 struct AgentAuthTests {
     // MARK: - Fixtures
 
@@ -80,12 +86,18 @@ struct AgentAuthTests {
 
     /// Drives `AgentAuthDelegate.nextAuthenticationType` through a real
     /// `EventLoopPromise` (the actual protocol method, not a test-only seam).
+    ///
+    /// Awaited through `awaitCancellably` rather than `EventLoopFuture.get()`
+    /// — `get()` ignores task cancellation (see that helper's doc comment,
+    /// `Tests/MacSCPTestSupport/AwaitCancellably.swift`), so a delegate that
+    /// never fulfilled this promise would park the run past this suite's
+    /// `.timeLimit` instead of ending it.
     private func nextOffer(
         _ delegate: AgentAuthDelegate, group: MultiThreadedEventLoopGroup
     ) async throws -> NIOSSHUserAuthenticationOffer {
         let promise = group.next().makePromise(of: NIOSSHUserAuthenticationOffer?.self)
         delegate.nextAuthenticationType(availableMethods: .all, nextChallengePromise: promise)
-        guard let offer = try await promise.futureResult.get() else {
+        guard let offer = try await awaitCancellably(promise.futureResult) else {
             struct NoOffer: Error {}
             throw NoOffer()
         }

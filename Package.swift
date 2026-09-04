@@ -110,6 +110,17 @@ let package = Package(
         // depend on it.
         .target(
             name: "MacSCPTestSupport",
+            dependencies: [
+                // `AwaitCancellably.swift` awaits an `EventLoopFuture`
+                // through `whenComplete` under a `NIOLockedValueBox`
+                // instead of the cancellation-blind `EventLoopFuture.get()`
+                // (docs/BACKLOG.md, "Wall-clock ceilings still in the
+                // tree"). Both test targets already carried NIOCore
+                // transitively through `macSCPCore`; this is the first
+                // direct use from a plain (non-test) target.
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+            ],
             path: "Tests/MacSCPTestSupport",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
