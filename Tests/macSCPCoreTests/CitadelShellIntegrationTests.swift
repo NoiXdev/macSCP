@@ -3,37 +3,12 @@ import NIOCore
 import Testing
 @testable import macSCPCore
 
-/// State two task-group children share for the length of one test.
-///
-/// A reference rather than a captured `var`: a task-group child closure is
-/// escaping and concurrent, so a `var` of the enclosing function would be
-/// mutated from one task while another reads it. `NSLock` rather than
-/// `Mutex` because the boxed value may be an `Error?`, which is not
-/// `Sendable` — the same reason `FirstResult` in `WebDAVFileSystemWriteTests`
-/// is built this way.
-///
-/// `@unchecked` because that non-`Sendable` payload is what the box exists to
-/// carry. There is no unsynchronized state to race on: `value` is private and
-/// every read and write goes through `withLock`. That argument breaks the
-/// moment anything reaches the storage without taking the lock.
-private final class Shared<Value>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Value
-
-    init(_ value: Value) { self.value = value }
-
-    func withLock<Result>(_ body: (inout Value) throws -> Result) rethrows -> Result {
-        lock.lock()
-        defer { lock.unlock() }
-        return try body(&value)
-    }
-}
-
 /// Only runs with MACSCP_ITEST=1 and a running Docker test server
 /// (docker compose -f docker/test-server/compose.yml up -d — from the MAIN checkout).
 @Suite("CitadelShell against Docker SSH server",
        .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
-       .serialized)
+       .serialized,
+       .timeLimit(.minutes(1)))
 struct CitadelShellIntegrationTests {
     /// Standard password connect against the Docker test server (127.0.0.1:2222,
     /// testuser/testpass) with a retry against the container's reconnect
@@ -60,36 +35,30 @@ struct CitadelShellIntegrationTests {
         }
     }
 
-    /// Collects output chunks until the marker shows up or the timeout hits.
-    private func collectUntil(
-        _ shell: any RemoteShell, marker: String, timeout: Duration = .seconds(10)
-    ) async throws -> String {
-        // The reader child appends here while the timeout child may finish
-        // and the failure message may read it — a plain captured `var` is a
-        // genuine race between the two, not just a diagnostic. The box keeps
-        // the partial text available to the message, which is the whole
-        // point of reporting it.
-        let collected = Shared("")
-        return try await withThrowingTaskGroup(of: String?.self) { group in
-            group.addTask {
-                for try await chunk in shell.output {
-                    let text = collected.withLock { value -> String in
-                        value += String(decoding: chunk, as: UTF8.self)
-                        return value
-                    }
-                    if text.contains(marker) { return text }
-                }
-                return nil
-            }
-            group.addTask { try await Task.sleep(for: timeout); return nil }
-            let first = try await group.next()!
-            group.cancelAll()
-            guard let result = first, result.contains(marker) else {
-                throw RemoteFSError.protocolError(
-                    reason: "marker not found in: \(collected.withLock { $0 })")
-            }
-            return result
+    /// Collects output chunks until the marker shows up.
+    ///
+    /// No timeout of its own. This used to race the read against a
+    /// `Task.sleep` child, which is a wall-clock ceiling under another
+    /// spelling — on a loaded runner the sleeper could win while the marker
+    /// was on its way (CLAUDE.md, "A wall-clock ceiling in a test measures
+    /// the runner"). The read now ends when the marker arrives, when the
+    /// stream ends without it, or when the suite's `.timeLimit` cancels the
+    /// test.
+    ///
+    /// That third ending still reaches the diagnostic below rather than
+    /// parking the run: measured 2026-09-04, cancelling a task iterating an
+    /// `AsyncThrowingStream` FINISHES the stream — `next()` returns nil and
+    /// the loop returns normally, it does not throw `CancellationError`. So
+    /// a marker that never comes falls out of the loop and throws with the
+    /// partial text, which is the whole point of reporting it.
+    private func collectUntil(_ shell: any RemoteShell, marker: String) async throws -> String {
+        // A plain `var`: there is one reader and no second task to race it.
+        var collected = ""
+        for try await chunk in shell.output {
+            collected += String(decoding: chunk, as: UTF8.self)
+            if collected.contains(marker) { return collected }
         }
+        throw RemoteFSError.protocolError(reason: "marker not found in: \(collected)")
     }
 
     @Test func echoRoundtrip() async throws {
@@ -118,29 +87,26 @@ struct CitadelShellIntegrationTests {
         let fs = try await connectWithRetry()
         let shell = try await fs.openShell(terminal: "xterm-256color", cols: 80, rows: 24)
         try await shell.send(Array("exit\n".utf8))
-        // Stream must end cleanly (no timeout, no error) — an `exit` is not
-        // an error case, even though Citadel's withPTY internally throws a
+        // Stream must end cleanly (no error) — an `exit` is not an error
+        // case, even though Citadel's withPTY internally throws a
         // ChannelError.alreadyClosed when closing the already-dead channel.
-        // Written by the reader child, read by the expectation after the
-        // group returns — the same cross-task hand-off as `collectUntil`.
-        let thrown = Shared<Error?>(nil)
-        let ended = await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                do { for try await _ in shell.output {} } catch {
-                    thrown.withLock { $0 = error }
-                }
-                return true
-            }
-            group.addTask { try? await Task.sleep(for: .seconds(10)); return false }
-            let first = await group.next()!
-            group.cancelAll()
-            return first
-        }
-        let thrownError = thrown.withLock { $0 }
+        //
+        // Awaited directly, where this used to race a ten-second sleeper for
+        // the same reason `collectUntil` above no longer does. `ended` still
+        // means "the stream ended, rather than the wait running out"; only
+        // what runs the wait out has changed, from that sleeper to the
+        // suite's `.timeLimit`. It is read off `Task.isCancelled` because
+        // the loop cannot report the difference: cancelling a task iterating
+        // an `AsyncThrowingStream` finishes the stream normally (measured
+        // 2026-09-04), so a cancelled read and a real end return by the same
+        // path and only the flag tells them apart.
+        var thrown: Error?
+        do { for try await _ in shell.output {} } catch { thrown = error }
+        let ended = !Task.isCancelled
         #expect(ended, "output stream must end after exit")
         #expect(
-            thrownError == nil,
-            "a clean exit must not produce an error: \(String(describing: thrownError))")
+            thrown == nil,
+            "a clean exit must not produce an error: \(String(describing: thrown))")
         await shell.close() // idempotent after self-exit
         await fs.disconnect()
     }
@@ -173,7 +139,7 @@ struct CitadelShellIntegrationTests {
         try await Task.sleep(for: .milliseconds(800))
         try await shell.resize(cols: 120, rows: 40)
 
-        let out = try await collectUntil(shell, marker: "AFTER:", timeout: .seconds(20))
+        let out = try await collectUntil(shell, marker: "AFTER:")
         let before = Self.value(after: "BEFORE:", in: out)
         let after = Self.value(after: "AFTER:", in: out)
         #expect(before == "24 80", "remote PTY started at \(String(describing: before))")

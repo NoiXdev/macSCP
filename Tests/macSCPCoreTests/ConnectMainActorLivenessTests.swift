@@ -79,7 +79,8 @@ import Testing
 /// them — which is how the suite first ran, and is itself the sharpest
 /// demonstration of what a blocking wait on the main actor costs everything
 /// else scheduled on it.
-@Suite("Connect against an unresponsive host: main-actor liveness", .serialized)
+@Suite("Connect against an unresponsive host: main-actor liveness", .serialized,
+       .timeLimit(.minutes(1)))
 struct ConnectMainActorLivenessTests {
 
     // MARK: - The instrument
@@ -389,9 +390,10 @@ struct ConnectMainActorLivenessTests {
     /// armed before resolution or only after it.
     ///
     /// Measured on that exact path with a resolver that never answers, so
-    /// the connector cannot leave the resolving state. No query is issued
-    /// and no address is contacted; the resolver returns a future nobody
-    /// ever fulfills.
+    /// the connector cannot leave the resolving state. The query is started
+    /// and then left unanswered — no DNS packet leaves the machine and no
+    /// address is contacted; the resolver hands back a future nobody ever
+    /// fulfills.
     @Test func theConnectDeadlineAlsoCoversNameResolution() async throws {
         let loops = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let resolver = NeverAnsweringResolver(group: loops)
@@ -399,29 +401,26 @@ struct ConnectMainActorLivenessTests {
         let started = ContinuousClock.now
         var thrown: Error?
         do {
-            // Raced against a ceiling on purpose. The whole point of the
-            // test is that NIO's deadline covers the resolving state; if it
-            // did not, the resolver below would never answer and a bare
-            // `await` here would hang the suite instead of failing it.
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    // Built here rather than outside: `ClientBootstrap` is
-                    // not `Sendable`, and only the loop group and the
-                    // resolver need to cross into this task.
-                    let bootstrap = ClientBootstrap(group: loops)
-                        .connectTimeout(.milliseconds(400))
-                        .resolver(resolver)
-                    let channel = try await bootstrap.connect(
-                        host: "unresolvable.example", port: 22).get()
-                    try await channel.close()
-                }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(5))
-                    throw DeadlineNotEnforced()
-                }
-                try await group.next()
-                group.cancelAll()
-            }
+            // Awaited directly. This used to be raced against a five-second
+            // `Task.sleep` child that threw `DeadlineNotEnforced`, and that
+            // racer was a wall-clock ceiling under another spelling: on a
+            // loaded runner it could win while the connect had ended in time
+            // (CLAUDE.md, "A wall-clock ceiling in a test measures the
+            // runner"). What ends this test when the deadline is NOT
+            // enforced is the suite's `.timeLimit`, which records a failure
+            // naming this test. Only that far and no further, and the
+            // difference is worth stating: `EventLoopFuture.get()` documents
+            // that it does not respect cancellation, so a connect that never
+            // completes leaves the run parked after the failure is recorded
+            // — a red that is reported but not a run that ends. The 400 ms
+            // deadline below is what makes that hypothetical, and it is the
+            // very thing under test.
+            let bootstrap = ClientBootstrap(group: loops)
+                .connectTimeout(.milliseconds(400))
+                .resolver(resolver)
+            let channel = try await bootstrap.connect(
+                host: "unresolvable.example", port: 22).get()
+            try await channel.close()
         } catch {
             thrown = error
         }
@@ -431,14 +430,11 @@ struct ConnectMainActorLivenessTests {
         // `resolveAndConnect()` before the first query goes out, and
         // `(.resolving, .connectTimeoutElapsed)` is a handled transition of
         // the Happy Eyeballs state machine.
-        #expect(thrown != nil)
-        #expect(!(thrown is DeadlineNotEnforced), "the connect never ended: \(elapsed)")
+        #expect(thrown != nil, "the connect ended without an error after \(elapsed)")
+        // A floor, and only a floor: the connect must not have returned
+        // before its own deadline could have fired. A slow runner cannot
+        // defeat it.
         #expect(elapsed > .milliseconds(300))
-        // The 5 s racer above is the upper bound, and it is the right one:
-        // it measures whether the CONNECT ended, not how long the runner
-        // took to schedule this task afterwards. An `elapsed < 5 s` used to
-        // follow the floor, and that one could go red on a stalled runner
-        // while the connect had won the race in time.
         #expect(resolver.queriesStarted > 0)
         try await loops.shutdownGracefully()
     }
@@ -475,10 +471,6 @@ private final class OneShotFlag: @unchecked Sendable {
         return stored
     }
 }
-
-/// Raised when `bootstrap.connect` outlives its own `connectTimeout` — the
-/// outcome that would mean NIO's deadline does NOT cover name resolution.
-private struct DeadlineNotEnforced: Error {}
 
 /// A NIO resolver that starts queries and never answers them — a host whose
 /// name resolution hangs, without any DNS traffic.
