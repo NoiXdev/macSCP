@@ -41,8 +41,14 @@ is stored — answered by a metadata-only keychain query (no
 `kSecReturnData`, the shape `CyberduckSecretReader` already uses), so
 the overview never holds the value; jump host; host-key status from
 `KnownHostsStore.find(host:port:)` — known with type and fingerprint, or
-not yet known; group; tags; start path; pane visibility; import
-provenance (`importSource`, `importedAt`).
+not yet known; group; tags; pane visibility; import provenance
+(`importSource`, `importedAt`).
+
+**Correction, Task 4:** "start path" was listed above as a fact. It is
+not a stored field — `StoredSession` and its three per-kind config
+structs carry no such property (verified by reading all four at HEAD,
+Task 1 fix round 1). The nearest thing, S3's `startsAtBucketList`, is
+already what the `bucket` fact reports. No start-path fact is emitted.
 
 Recent connections, derived from the session's audit log
 (`AuditLogStore.events(for:)`): `connected` … `disconnected` pairs
@@ -59,6 +65,13 @@ Snippets: every stored snippet with its command line; **Run** connects
 `runSnippet` — snippets with declared variables ask first, through the
 existing dry-run sheet. A failed connect stops there and shows the
 failed-connect surface; nothing is sent.
+
+**Correction, Task 4:** the snippets section is shown only for a backend
+that has a shell (`BackendDescriptor.descriptor(for:).capabilities
+.supportsShell`) — an S3 or WebDAV session, which no snippet can run
+against, gets no snippets section at all rather than a list of cards
+whose only action is impossible (Task 3 fix round 1). Run is the
+section's only action; it is not offered beside any other control.
 
 ## Responsive
 

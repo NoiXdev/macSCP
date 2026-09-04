@@ -18,7 +18,9 @@ and move files between them with drag and drop, buttons, or the Finder.
   by double-click, drag & drop in both directions (including dragging
   remote files straight into the Finder).
 - **Saved sessions** — one-click reconnect, groups, inline rename;
-  passwords and passphrases live only in the macOS Keychain.
+  passwords and passphrases live only in the macOS Keychain. Click a
+  session to see its details before connecting: connection facts,
+  recent connections, and its snippets with a one-click Run.
 - **SSH key authentication** — ed25519, RSA, and ECDSA keys, from a file
   or your SSH agent, with or without a passphrase; entries from
   `~/.ssh/config` appear automatically.
