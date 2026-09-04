@@ -263,10 +263,11 @@ struct SessionSidebar: View {
     /// over as a plain fact, same pattern as `showsTagFilterBar` right
     /// below: nothing in this file has to know a settings layer exists.
     /// Forwarded to each `SessionRow` as `isCompact`; changes row padding
-    /// and the protocol badge's visibility only — no ordering, no
-    /// selection behaviour, no keyboard handling. The default (non-compact)
-    /// row is unchanged from what it was before this setting existed —
-    /// see `SessionRow.isCompact`'s own doc comment.
+    /// only (5pt to 2pt) — no ordering, no selection behaviour, no
+    /// keyboard handling, and no other element of the row either: the
+    /// protocol badge stays visible in both densities (fix round 2,
+    /// coordinator ruling 2026-09-04 — see `SessionRow.isCompact`'s own
+    /// doc comment).
     let sidebarCompact: Bool
     /// Whether the tag FILTER is offered at all (E1) —
     /// `SettingsStore.sidebarTagFilterEnabled`, read by `ContentView` and
@@ -1201,17 +1202,20 @@ private struct SessionRow: View {
     /// plain fact the same way `SessionSidebar.showsTagFilterBar` is, so
     /// this row does not need to know a settings layer exists.
     ///
-    /// Ruling on the fix round that reopened this task (coordinator,
-    /// 2026-09-04): the DEFAULT (non-compact) row must not change at all —
-    /// an earlier attempt drew `connectionSummary` as a second line
-    /// whenever this was `false`, which changed what every user sees by
-    /// default; that line is gone. `false` (the default) is the row
-    /// exactly as it was before this setting existed: one line, the
-    /// protocol badge shown, `.padding(.vertical, 5)`. `true` tightens
-    /// that same one line to `.padding(.vertical, 2)` and hides the
-    /// protocol badge — the row's only other secondary element once the
-    /// subtitle attempt was reverted. No ordering, no selection behaviour,
-    /// no keyboard handling changes either way —
+    /// Two rulings narrowed this to exactly one change (coordinator,
+    /// 2026-09-04). Fix round 1: the DEFAULT (non-compact) row must not
+    /// change at all — an earlier attempt drew `connectionSummary` as a
+    /// second line whenever this was `false`; that line is gone,
+    /// `connectionSummary` reaches the user only through
+    /// `.help(connectionSummary)`, as it always did. Fix round 2: the
+    /// protocol badge (`Text(kindBadgeLabel)`) — "how a row reads its
+    /// backend at a glance" — stays visible in BOTH densities; an earlier
+    /// attempt hid it behind `if !isCompact`, which the ruling reversed as
+    /// making compact rows ambiguous. So: `false` (the default) is the row
+    /// exactly as it was before this setting existed — one line, badge
+    /// shown, `.padding(.vertical, 5)`. `true` changes exactly the
+    /// padding, to `.padding(.vertical, 2)` — nothing else. No ordering,
+    /// no selection behaviour, no keyboard handling changes either way —
     /// `onInput`/`SessionRowActivation` are untouched by this flag.
     let isCompact: Bool
     /// Every input this row can receive — its clicks, its Return, and the
@@ -1357,21 +1361,14 @@ private struct SessionRow: View {
 
             // Protocol badge (M12/T7b): "SSH"/"S3" from the backend
             // descriptor — unobtrusive, same small-label typography as the
-            // sidebar's own section headers above. Compact mode's one
-            // secondary element to shed (sidebar-polish plan, Task 2 fix
-            // round): the default row carries no other decoration to
-            // gate, and the ruling that reopened this task is explicit
-            // that the default row's appearance must not change at all —
-            // so this is the ONE thing `isCompact` hides, never the
-            // subtitle line the earlier attempt drew (that line is gone;
-            // `connectionSummary` reaches the user only through
-            // `.help(connectionSummary)` below, exactly as before this
-            // task).
-            if !isCompact {
-                Text(kindBadgeLabel)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(DesignTokens.inkTertiary)
-            }
+            // sidebar's own section headers above. KEPT in both densities
+            // (sidebar-polish plan, Task 2, fix round 2, coordinator
+            // ruling 2026-09-04): it is how a row reads its backend at a
+            // glance, and hiding it would make a compact row ambiguous.
+            // Compact mode is the padding change alone — see `isCompact`.
+            Text(kindBadgeLabel)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(DesignTokens.inkTertiary)
 
             Spacer(minLength: 0)
         }
