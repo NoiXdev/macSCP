@@ -479,8 +479,13 @@ struct CLIMatrix: Sendable {
     /// closure is the one that forwards `HostKeyDecider` to a real
     /// host-key-consuming API, WebDAV authenticates the server through a
     /// SEPARATE certificate decider instead — now lives on the descriptor's
-    /// own capability, pinned independently by
-    /// `BackendDescriptorTests.authenticatesHostKeyMatchesWhichBackendsConnectClosureUsesTheDecider`.
+    /// own capability. `BackendDescriptorTests
+    /// .authenticatesHostKeyMatchesWhichBackendsConnectClosureUsesTheDecider`
+    /// PINS the three values as a hand-written second copy, so a change to
+    /// one must be made to the other on purpose;
+    /// `BackendDescriptorHostKeyWiringGuardTests` is what actually reads
+    /// `BackendDescriptor.swift`'s three `connect` closures and checks each
+    /// against its own descriptor's declared value.
     ///
     /// The value is a claim about the backends, so it is not left as one:
     /// `anUnknownHostKeyIsRefusedUntilAccepted` drives BOTH sides of it

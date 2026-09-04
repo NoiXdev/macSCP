@@ -34,34 +34,42 @@ struct BackendDescriptorTests {
         #expect(c.transport == .optionalTLS)
     }
 
-    /// Pins `ProtocolCapabilities.authenticatesHostKey` against an
-    /// INDEPENDENT derivation of the same fact, so the axis cannot silently
-    /// drift from the code it describes: which backend's `connect` closure
-    /// (`BackendDescriptor.swift:428-526`) actually forwards the
-    /// `HostKeyDecider` argument to a host-key-consuming API, rather than
-    /// dropping it on the floor as `_`. SSH's closure passes it on as
-    /// `onUnknownHostKey:` to `CitadelFileSystem.connect`; S3's ignores it
-    /// entirely; WebDAV's ignores it too and authenticates the server
-    /// through its own, separate certificate decider instead — a TLS
-    /// certificate is not a host key.
+    /// PINS `ProtocolCapabilities.authenticatesHostKey` for every backend —
+    /// a second, independently-typed COPY of the same three booleans the
+    /// descriptors declare, not a derivation of them: the switch below does
+    /// not read `BackendDescriptor.swift`, it just states, by hand, what
+    /// each `connect` closure is supposed to do — SSH's forwards the
+    /// `HostKeyDecider` argument on as `onUnknownHostKey:` to
+    /// `CitadelFileSystem.connect`; S3's ignores it entirely; WebDAV's
+    /// ignores it too and authenticates the server through its own,
+    /// separate certificate decider instead, since a TLS certificate is not
+    /// a host key. Two copies mean a change to one is a change a person has
+    /// to also make to the other, on purpose — this catches the axis
+    /// drifting from what this comment SAYS the closures do, nothing more.
     ///
-    /// The switch below is exhaustive over `ConnectionKind` (this replaces
-    /// `CLIMatrix.hasHostKeys`'s former exhaustive switch, moved here so the
-    /// capability axis is checked against the same reasoning that used to
-    /// gate the CLI matrix directly), so a fourth backend does not compile
-    /// here until someone says which side of this it is on.
+    /// The actual reading of `BackendDescriptor.swift`'s three `connect`
+    /// closures — whether each really does forward or discard the decider,
+    /// checked against what its OWN descriptor declares — is
+    /// `BackendDescriptorHostKeyWiringGuardTests`, a source-scanning guard
+    /// over the file itself. That one is the derivation; this one is the
+    /// pin.
+    ///
+    /// The switch below is exhaustive over `ConnectionKind`, so a fourth
+    /// backend does not compile here until someone says which side of this
+    /// it is on.
     @Test func authenticatesHostKeyMatchesWhichBackendsConnectClosureUsesTheDecider() {
         for kind in ConnectionKind.allCases {
-            let derivedFromConnectClosure: Bool
+            let handWrittenExpectation: Bool
             switch kind {
-            case .ssh: derivedFromConnectClosure = true
-            case .s3, .webdav: derivedFromConnectClosure = false
+            case .ssh: handWrittenExpectation = true
+            case .s3, .webdav: handWrittenExpectation = false
             }
             #expect(
                 BackendDescriptor.descriptor(for: kind).capabilities.authenticatesHostKey
-                    == derivedFromConnectClosure,
+                    == handWrittenExpectation,
                 Comment(rawValue: "\(kind).capabilities.authenticatesHostKey disagrees with "
-                    + "which backend's connect closure forwards the HostKeyDecider"))
+                    + "this test's own hand-written expectation of which backend's connect "
+                    + "closure forwards the HostKeyDecider"))
         }
     }
 

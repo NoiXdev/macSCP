@@ -1025,6 +1025,34 @@ struct DiagnosticsDoorsGuardTests {
             `\(keys[0]).<something>`), so the two lines stay one thing in the catalogs — \
             found \(keys)
             """)
+
+        // The positive half of the two checks above: neither one reads what
+        // a catalog actually CARRIES for the named key. A catalog entry that
+        // lost its `%@` conversion would still resolve, still extend the
+        // plain key, and still pass both — `String(format:)` prints a format
+        // string with no conversion in it verbatim, so the step name in
+        // flight would silently disappear from that language's line rather
+        // than trip anything above. Read the way `LocalizableStringsTests`
+        // reads a catalog — as a property list, via `NSDictionary
+        // (contentsOfFile:)` — not by grepping its text, since a value can
+        // carry an escaped quote a regex would misparse.
+        for locale in ["en", "de", "fr", "pl"] {
+            let path = Self.url(
+                "Sources/MacSCPAppKit/Resources/\(locale).lproj/Localizable.strings"
+            ).path(percentEncoded: false)
+            guard let catalog = NSDictionary(contentsOfFile: path) as? [String: String] else {
+                Issue.record("\(locale).lproj/Localizable.strings failed to parse as a property list")
+                continue
+            }
+            guard let value = catalog[keys[1]] else {
+                Issue.record("\(locale).lproj/Localizable.strings is missing \"\(keys[1])\"")
+                continue
+            }
+            #expect(value.contains("%@"), """
+                \(locale).lproj/Localizable.strings's "\(keys[1])" lost its %@ placeholder — \
+                the step name in flight would print nowhere in that language.
+                """)
+        }
     }
 
     /// "Copy report" is one `Menu` with exactly two entries — plain text and

@@ -162,12 +162,13 @@ enum SwiftSource {
 /// suite that first needed them, so that what it does at the end of a file
 /// it cannot parse is stated in one place.
 ///
-/// Four suites in this target read what `stripCommentsAndStrings` returns,
-/// counted in the pass that writes this sentence (it said three before that
-/// pass, and `DiagnosticsNoDescribingGuardTests` had already joined them):
-/// `ConnectionViewModelSourceGuardTests`,
+/// Five suites in this target read what `stripCommentsAndStrings` returns,
+/// counted in the pass that writes this sentence (it said four before that
+/// pass, and `BackendDescriptorHostKeyWiringGuardTests` is the one that
+/// joined them): `ConnectionViewModelSourceGuardTests`,
 /// `PKCS12ImportIsolationGuardTests`, `DiagnosticsNoDescribingGuardTests`,
-/// and the self-tests below. That last suite is also the only caller of
+/// `BackendDescriptorHostKeyWiringGuardTests`, and the self-tests below.
+/// That last suite is also the only caller of
 /// `stripComments`, counted in the same pass. Two others
 /// scan Swift source with blankers of their own and are NOT covered by
 /// anything here — `IconTooltipLintTests` (its own `code(of:)`) and
