@@ -246,10 +246,11 @@ struct S3FileSystemIntegrationTests {
                 _ = try await fs.stat(path: "/\(sourceKey)")
                 Issue.record("expected the source key to be gone after rename")
             } catch let error as RemoteFSError {
-                guard case .notFound = error else {
-                    Issue.record("expected .notFound for the renamed-away source, got \(error)")
-                    return
-                }
+                // Rethrown, not `return`ed: the outer `catch` puts it in
+                // `caught`, so the two cleanups below still run. Same shape
+                // as the refusal case further down — a fourth site of the
+                // same defect, found while fixing that one.
+                guard case .notFound = error else { throw error }
             }
         } catch {
             caught = error
@@ -418,10 +419,11 @@ struct S3FileSystemIntegrationTests {
                 try await fs.delete(path: "/\(folder)")
                 Issue.record("expected delete on a directory to throw")
             } catch let error as RemoteFSError {
-                guard case .protocolError = error else {
-                    Issue.record("expected .protocolError, got \(error)")
-                    return
-                }
+                // Rethrown, not `return`ed: the outer `catch` puts it in
+                // `caught`, so the marker cleanup below still runs and the
+                // test still fails with the wrong error. An early return
+                // here left the marker object in the bucket.
+                guard case .protocolError = error else { throw error }
             }
             // Read the marker BEFORE anything heals it: the refusal is only
             // worth something if the directory is still there afterwards.

@@ -479,7 +479,24 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
+    /// `RemoteFileSystem.delete`'s contract: this deletes a FILE, throws
+    /// `.notFound` for nothing, and `.protocolError` for a directory. WebDAV
+    /// cannot leave any of that to the server — `DELETE /dav/<name>` on a
+    /// collection is a perfectly ordinary mod_dav request and removes it,
+    /// recursively for a populated one (measured 2026-09-04 on the rig,
+    /// where this call used to delete a whole collection and report
+    /// success). That is `deleteTree`'s operation, not this one.
+    ///
+    /// So the kind decides, from the same single lookup `deleteTree` does —
+    /// which also supplies the `.notFound`, since a DELETE against a missing
+    /// path would answer 404 anyway but only after the request went out.
+    /// One extra round trip per call.
     public func delete(path: String) async throws {
+        let entry = try await stat(path: path)
+        guard entry.kind != .directory else {
+            throw RemoteFSError.protocolError(
+                reason: "WebDAV delete: \(path) is a directory")
+        }
         try await simple(method: "DELETE", path: path, isDirectory: false)
     }
 

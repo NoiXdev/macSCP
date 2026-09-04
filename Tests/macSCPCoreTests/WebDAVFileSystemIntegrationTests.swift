@@ -182,9 +182,29 @@ struct WebDAVFileSystemIntegrationTests {
             let subStat = try await fs.stat(path: "\(dir)/\(renamedSubDirName)")
             #expect(subStat.kind == .directory)
 
-            // `delete` (not `deleteTree`) on an empty collection: what
-            // `macscp rm` sends without `--recursive`.
-            try await fs.delete(path: "\(dir)/\(renamedSubDirName)")
+            // `delete` (not `deleteTree`) on a collection. The contract
+            // says a directory is a `protocolError`, and mod_dav is exactly
+            // why the refusal cannot be left to the server: a plain
+            // `DELETE /dav/<name>` removes the collection, recursively for a
+            // populated one. The collection is read back BEFORE `deleteTree`
+            // heals it — a refusal that deleted first and threw afterwards
+            // would satisfy the thrown error on its own.
+            let subPath = "\(dir)/\(renamedSubDirName)"
+            await #expect(throws: RemoteFSError.protocolError(
+                reason: "WebDAV delete: \(subPath) is a directory")) {
+                try await fs.delete(path: subPath)
+            }
+            #expect(try await fs.stat(path: subPath).kind == .directory)
+
+            // `deleteTree` is the operation that was always meant to remove
+            // it, and it still does.
+            try await fs.deleteTree(at: subPath)
+            do {
+                _ = try await fs.stat(path: subPath)
+                Issue.record("expected the collection to be gone after deleteTree")
+            } catch let error as RemoteFSError {
+                guard case .notFound = error else { throw error }
+            }
             let afterSubDelete = try await fs.list(path: dir)
             #expect(!afterSubDelete.contains { $0.name == renamedSubDirName })
 
@@ -298,10 +318,11 @@ struct WebDAVFileSystemIntegrationTests {
                 _ = try await fs.stat(path: path)
                 Issue.record("expected the file to be gone after deleteTree")
             } catch let error as RemoteFSError {
-                guard case .notFound = error else {
-                    Issue.record("expected .notFound, got \(error)")
-                    return
-                }
+                // Rethrown, not `return`ed: the outer `catch` puts it in
+                // `caught`, so the cleanup below still runs and the test
+                // still fails with the wrong error. An early return here
+                // left the seeded file on the server.
+                guard case .notFound = error else { throw error }
             }
         } catch {
             caught = error
@@ -333,10 +354,9 @@ struct WebDAVFileSystemIntegrationTests {
                 _ = try await fs.stat(path: dir)
                 Issue.record("expected the whole tree to be gone after deleteTree")
             } catch let error as RemoteFSError {
-                guard case .notFound = error else {
-                    Issue.record("expected .notFound, got \(error)")
-                    return
-                }
+                // Rethrown rather than `return`ed, for the same reason as
+                // the file case above: the cleanup below has to run.
+                guard case .notFound = error else { throw error }
             }
         } catch {
             caught = error

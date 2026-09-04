@@ -395,14 +395,47 @@ struct WebDAVFileSystemWriteTests {
         #expect(url?.hasSuffix("/") == false)
     }
 
-    @Test func deleteIssuesDeleteOnTheFileURL() async throws {
-        let transport = FakeHTTPTransport(replies: [.init(status: 204, body: Data(), headers: [:])])
+    /// `RemoteFileSystem.delete`'s contract: it deletes a FILE, and a
+    /// directory is a `protocolError`. WebDAV cannot say that on its own —
+    /// mod_dav answers `DELETE /dav/sub/` by removing the collection, and
+    /// recursively so for a populated one (measured 2026-09-04 on the rig),
+    /// which is `deleteTree`'s job and not this one. So the refusal has to
+    /// come from the lookup, and the assertion that carries it is that NO
+    /// DELETE was sent: a refusal that removed the collection first and
+    /// threw afterwards would satisfy the thrown error on its own.
+    @Test func deleteOnACollectionIsRefusedWithoutSendingADelete() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 207, body: collectionStat, headers: [:]),
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+
+        await #expect(throws: RemoteFSError.protocolError(
+            reason: "WebDAV delete: /sub is a directory")) {
+            try await fs.delete(path: "/sub")
+        }
+
+        #expect(transport.requests.map(\.httpMethod) == ["PROPFIND"])
+    }
+
+    /// The other half of that contract: a plain file is still deleted, with
+    /// the lookup in front of the DELETE and the slash-less URL shape that
+    /// tells Apache a file from a collection. The `hasSuffix("/")` check is
+    /// spelled out beside the equality for the same reason it is on
+    /// `deleteTree`'s file case above.
+    @Test func deleteOnAPlainFileLooksUpThenDeletesTheFileURL() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 207, body: fileStat, headers: [:]),
+            .init(status: 204, body: Data(), headers: [:]),
+        ])
         let fs = WebDAVFileSystem(config: config, transport: transport)
 
         try await fs.delete(path: "/a.txt")
 
-        #expect(transport.requests.first?.url?.absoluteString
-            == "https://dav.example.com/dav/a.txt")
+        #expect(transport.requests.map(\.httpMethod) == ["PROPFIND", "DELETE"])
+        let delete = try #require(transport.requests.last)
+        let url = delete.url?.absoluteString
+        #expect(url == "https://dav.example.com/dav/a.txt")
+        #expect(url?.hasSuffix("/") == false)
     }
 
     /// permissionModel is .none — the capability says so, and the call must
