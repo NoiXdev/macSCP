@@ -1022,18 +1022,33 @@ struct ConnectionDiagnosticsTests {
     /// carries an uncancellable 15 s `openSFTP` timer) left the user waiting
     /// well past the budget.
     ///
-    /// Asserted as an ORDERING, not as a stopwatch reading. The subject's
-    /// deadline fires on a Dispatch timer and is punctual, but RESUMING this
-    /// test's task afterwards needs a cooperative-pool thread, and under the
-    /// full suite that queueing cost was measured at 0.7 s, 1.4 s and once
-    /// 5.9 s — so any tight time bound here measures the scheduler, not the
-    /// property. What is actually claimed is "the step returned while the
-    /// probe was still running", and `probeFinished` says exactly that.
-    @Test func aProbeThatIgnoresCancellationDoesNotHoldTheStepPastItsDeadline() async throws {
+    /// Asserted as an ORDERING with no clock in it at all. The probe waits
+    /// on a `Gate` that only THIS test opens, and it opens it only after the
+    /// step has come back — so "the step returned while the probe was still
+    /// running" is a fact about the test's own sequence, not about who won
+    /// a race on a loaded machine. `Gate.opened()` suspends on a checked
+    /// continuation that nothing cancels, which is what makes the probe
+    /// uncancellable.
+    ///
+    /// The previous shape held the probe on a 12 s Dispatch timer instead,
+    /// and measured the ordering against that timer. CI run 33819886384
+    /// (`9af168d2`) came back after 32.987 s with `stillRunning` false: the
+    /// step's deadline fired at 1 s, but resuming the subject, delivering
+    /// the row and resuming this test each needed a cooperative-pool thread
+    /// the starved three-core runner did not hand out for over 12 s, and
+    /// the timer opened the gate first. A duration on the probe's side is a
+    /// ceiling on the runner's side (CLAUDE.md, "A wall-clock ceiling in a
+    /// test measures the runner"); a gate the test holds is not.
+    ///
+    /// The harness limit is what turns the failure this test exists for
+    /// into a red rather than a hang: a step that waited for its probe
+    /// would never return, because the gate it waits on is opened only
+    /// after the step has returned.
+    @Test(.timeLimit(.minutes(1)))
+    func aProbeThatIgnoresCancellationDoesNotHoldTheStepPastItsDeadline() async throws {
         let port = try #require(LoopbackSocket.closedPort())
+        let release = Gate()
         let probeFinished = Gate()
-        let clock = ContinuousClock()
-        let started = clock.now
         let report = await Self.run(
             descriptor: Self.probeDescriptor(
                 endpoint: Endpoint(host: "127.0.0.1", port: port),
@@ -1042,41 +1057,25 @@ struct ConnectionDiagnosticsTests {
                 ) { _, _ in
                     let timer = DiagnosticStepTimer(
                         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
-                    await Self.uncancellableWait(seconds: 12)
+                    await release.opened()
                     await probeFinished.open()
                     return timer.finish(.ok, "never reported")
                 }),
             stepTimeout: .seconds(1))
         let stillRunning = await probeFinished.isClosed
-        let elapsed = started.duration(to: clock.now)
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
         #expect(dial.outcome == .timedOut)
         #expect(stillRunning)
-        // No wall-clock backstop: the three-core CI runner returned this
-        // step after 20.67 s (run 33727757421) with `stillRunning` true —
-        // the probe itself was starved past its own 12 s. `stillRunning`
-        // and the companion below carry the property; the clock does not.
-        _ = elapsed
         // The positive companion for `stillRunning`, which is a check that
         // something has NOT happened: a `Gate` that never opened would
-        // satisfy it vacuously. Waiting for the abandoned probe to reach its
-        // own end proves the gate can open at all — and, incidentally, that
-        // the probe really did keep running after the step returned.
+        // satisfy it vacuously. Releasing the abandoned probe now and waiting
+        // for it to reach its own end proves the gate can open at all — and
+        // that the probe really was still alive after the step returned.
+        await release.open()
         await probeFinished.opened()
         let openedInTheEnd = await probeFinished.isClosed == false
         #expect(openedInTheEnd)
-    }
-
-    /// A wait that cannot be cancelled, and that parks no cooperative-pool
-    /// thread doing it: the timer runs on a Dispatch queue and the caller is
-    /// suspended on a continuation until it fires.
-    private static func uncancellableWait(seconds: Double) async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
-                continuation.resume()
-            }
-        }
     }
 
     // MARK: - The S3 and WebDAV dials, against the rig
