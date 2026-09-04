@@ -74,8 +74,8 @@ struct LivenessProbeRaceTests {
     }
 
     // The deadline this test is about is enforced by the harness, not by a
-    // wall-clock `#expect` below. An earlier version asserted
-    // `elapsed < .seconds(20)` and CI failed it at 24.999s: both of
+    // wall-clock `#expect` below. An earlier version asserted a twenty-second
+    // wall-clock ceiling on `elapsed` and CI failed it at 24.999s: both of
     // `LivenessProbeRace`'s tasks are `@MainActor`, and the main actor is
     // ONE serial executor shared by every other main-actor test running in
     // parallel. Elapsed time here therefore measures the queue depth of the

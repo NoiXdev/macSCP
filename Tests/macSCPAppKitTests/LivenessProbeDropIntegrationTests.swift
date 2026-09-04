@@ -1657,7 +1657,7 @@ struct LivenessProbeDropIntegrationTests {
     /// fire on the queue's own worker, and this wants the main actor free in
     /// between so the queue can actually make progress.
     private func waitForIdleQueue(_ queue: TransferQueueViewModel) async throws {
-        try await pollUntil("the seed download finishing") { !queue.isActive }
+        try await pollUntil("the seed download finishing", every: .milliseconds(50)) { !queue.isActive }
     }
 
     // MARK: - Fixtures

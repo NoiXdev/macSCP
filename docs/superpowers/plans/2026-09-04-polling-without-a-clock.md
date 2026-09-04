@@ -75,7 +75,7 @@ under a 5 s poll (backlog row).
   that reads main-actor state without a hop: the function runs on the
   caller's actor.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```swift
 import Testing
@@ -135,12 +135,12 @@ private actor EvaluationCounter {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `swift build --build-tests 2>&1 | grep -E "error:" | head`
 Expected: `no such module 'MacSCPTestSupport'` (the target does not exist).
 
-- [ ] **Step 3: Add the target and the helper**
+- [x] **Step 3: Add the target and the helper**
 
 `Package.swift`, before the two `.testTarget`s:
 
@@ -196,12 +196,12 @@ public func pollUntil(
 }
 ```
 
-- [ ] **Step 4: Run the new suite**
+- [x] **Step 4: Run the new suite**
 
 Run: `swift test --filter PollUntilTests 2>&1 | tail -3`
 Expected: `Test run with 3 tests in 1 suite passed`.
 
-- [ ] **Step 5: Full suite, zero warnings, commit**
+- [x] **Step 5: Full suite, zero warnings, commit**
 
 Run: `swift build --build-tests 2>&1 | grep -c "warning:"` → `0`; `swift test 2>&1 | tail -1` → green.
 
@@ -266,10 +266,10 @@ the condition true and then false again would catch.
 Every suite touched gains `.timeLimit(.minutes(1))` on its `@Suite` line
 (a `struct` with only `@Test`s and no `@Suite` gets one added: `@Suite(.timeLimit(.minutes(1)))`).
 
-- [ ] **Step 1: Red first** — change one caller in `TerminalPanelViewModelTests` to `pollUntil` before the import exists in that file: `swift build --build-tests` fails with `cannot find 'pollUntil' in scope`. Add `import MacSCPTestSupport`; green. (The red here is the compile error; the behavioural claim — no deadline — is Task 1's.)
-- [ ] **Step 2: Migrate every caller** in the five files; delete the five helper definitions; count: `grep -c "pollUntil(" <file>` per file goes into the commit body, and `grep -rn "let deadline = ContinuousClock.now" Tests/macSCPCoreTests` must come back empty.
-- [ ] **Step 3: Run** `swift test 2>&1 | tail -1` (green) and `MACSCP_ITEST=1 swift test --filter "WebDAVFileSystem|LoopbackHTTP" 2>&1 | tail -1` (green; the rig is up), zero warnings.
-- [ ] **Step 4: Commit** `test(core): the Core suites poll through pollUntil, no deadline of their own`.
+- [x] **Step 1: Red first** — change one caller in `TerminalPanelViewModelTests` to `pollUntil` before the import exists in that file: `swift build --build-tests` fails with `cannot find 'pollUntil' in scope`. Add `import MacSCPTestSupport`; green. (The red here is the compile error; the behavioural claim — no deadline — is Task 1's.)
+- [x] **Step 2: Migrate every caller** in the five files; delete the five helper definitions; count: `grep -c "pollUntil(" <file>` per file goes into the commit body, and `grep -rn "let deadline = ContinuousClock.now" Tests/macSCPCoreTests` must come back empty.
+- [x] **Step 3: Run** `swift test 2>&1 | tail -1` (green) and `MACSCP_ITEST=1 swift test --filter "WebDAVFileSystem|LoopbackHTTP" 2>&1 | tail -1` (green; the rig is up), zero warnings.
+- [x] **Step 4: Commit** `test(core): the Core suites poll through pollUntil, no deadline of their own`.
 
 ---
 
@@ -285,10 +285,10 @@ Every suite touched gains `.timeLimit(.minutes(1))` on its `@Suite` line
 **Interfaces:**
 - Consumes: `pollUntil(_:every:isolation:_:)` from Task 1; the recipe from Task 2 applies unchanged.
 
-- [ ] **Step 1: Red first** — same compile-error red as Task 2, then `import MacSCPTestSupport`.
-- [ ] **Step 2: Migrate every caller**, delete the five helper definitions, `.timeLimit(.minutes(1))` on every suite touched; `grep -rn "let deadline = ContinuousClock.now\|advanced(by: .seconds" Tests/macSCPAppKitTests` comes back empty.
-- [ ] **Step 3: Run** `swift test 2>&1 | tail -1` green, zero warnings.
-- [ ] **Step 4: Commit** `test(app): the App suites poll through pollUntil, no deadline of their own`.
+- [x] **Step 1: Red first** — same compile-error red as Task 2, then `import MacSCPTestSupport`.
+- [x] **Step 2: Migrate every caller**, delete the five helper definitions, `.timeLimit(.minutes(1))` on every suite touched; `grep -rn "let deadline = ContinuousClock.now\|advanced(by: .seconds" Tests/macSCPAppKitTests` comes back empty.
+- [x] **Step 3: Run** `swift test 2>&1 | tail -1` green, zero warnings.
+- [x] **Step 4: Commit** `test(app): the App suites poll through pollUntil, no deadline of their own`.
 
 ---
 
@@ -301,7 +301,7 @@ Every suite touched gains `.timeLimit(.minutes(1))` on its `@Suite` line
 **Interfaces:**
 - Consumes: nothing new; it scans `Tests/` from `#filePath`.
 
-- [ ] **Step 1: Write the guard**
+- [x] **Step 1: Write the guard**
 
 ```swift
 import Foundation
@@ -376,6 +376,6 @@ struct PollingGuardTests {
 }
 ```
 
-- [ ] **Step 2: Run it** — `swift test --filter PollingGuardTests 2>&1 | tail -2`: green after Tasks 2–3; then plant a violation (`scripts/mutation-probe --filter PollingGuardTests --apply "perl -0pi -e 's/try await pollUntil\(\"the panel ended\"\)/let deadline = ContinuousClock.now + .seconds(5); _ = deadline; try await pollUntil(\"the panel ended\")/' Tests/macSCPCoreTests/TerminalPanelViewModelTests.swift"`) and record the RESULT line (must be RED) in the commit body.
-- [ ] **Step 3: The backlog row** → `**Done 2026-09-04**` with: the target name, the number of helper definitions removed (count them in the diff of Tasks 2–3), the number of `pollUntil` callers (`grep -rc "pollUntil(" Tests | awk -F: '{s+=$2} END {print s}'`), the guard's five checks, the probe's RESULT line, and what stays open (the `Task.yield` iteration-bounded helpers, which read no clock, and any `Task.sleep(for:)` whose expiry a test compares against scheduled work — re-find with `grep -rn "asyncAfter\|Task.sleep(for: .seconds" Tests/`).
-- [ ] **Step 4: Commit** `test: a guard keeps the deadline shape out of the tree, and the backlog says so`.
+- [x] **Step 2: Run it** — `swift test --filter PollingGuardTests 2>&1 | tail -2`: green after Tasks 2–3; then plant a violation (`scripts/mutation-probe --filter PollingGuardTests --apply "perl -0pi -e 's/try await pollUntil\(\"the panel ended\"\)/let deadline = ContinuousClock.now + .seconds(5); _ = deadline; try await pollUntil(\"the panel ended\")/' Tests/macSCPCoreTests/TerminalPanelViewModelTests.swift"`) and record the RESULT line (must be RED) in the commit body.
+- [x] **Step 3: The backlog row** → `**Done 2026-09-04**` with: the target name, the number of helper definitions removed (count them in the diff of Tasks 2–3), the number of `pollUntil` callers (`grep -rc "pollUntil(" Tests | awk -F: '{s+=$2} END {print s}'`), the guard's five checks, the probe's RESULT line, and what stays open (the `Task.yield` iteration-bounded helpers, which read no clock, and any `Task.sleep(for:)` whose expiry a test compares against scheduled work — re-find with `grep -rn "asyncAfter\|Task.sleep(for: .seconds" Tests/`).
+- [x] **Step 4: Commit** `test: a guard keeps the deadline shape out of the tree, and the backlog says so`.
