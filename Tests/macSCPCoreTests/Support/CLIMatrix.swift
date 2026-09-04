@@ -252,6 +252,13 @@ struct CLIMatrix: Sendable {
         text.contains(secret)
     }
 
+    /// The same question about a whole run, both streams at once — the shape
+    /// every case actually asks, and one `Bool` to compute before any
+    /// expectation touches either stream.
+    func leaksSecret(_ result: SubprocessResult) -> Bool {
+        leaksSecret(result.stdoutText) || leaksSecret(result.stderrText)
+    }
+
     // MARK: - The backend's own file system
 
     /// Opens the backend's file system directly, for seeding a fixture and
@@ -907,6 +914,14 @@ struct CLISessionCatalogFixture: Sendable {
     static let firstTag = "cli-matrix-red"
     static let secondTag = "cli-matrix-blue"
 
+    /// The groups `make()` writes, as data rather than as a number a guard
+    /// would have to keep in step: `make()` builds exactly these three and
+    /// `everyBackendHasASessionInTheFilterFixture` compares the store's own
+    /// group names against this list. A fourth group added to the fixture
+    /// therefore needs no edit in the guard, and a group added WITHOUT being
+    /// named here fails it.
+    static let groupNames = [parentGroup, childGroup, otherGroup]
+
     let directory: URL
     let entries: [Entry]
 
@@ -920,7 +935,11 @@ struct CLISessionCatalogFixture: Sendable {
             let parent = StoredGroup(name: parentGroup, position: 0)
             let child = StoredGroup(name: childGroup, parentID: parent.id, position: 0)
             let other = StoredGroup(name: otherGroup, position: 1)
-            for group in [parent, child, other] {
+            let groups = [parent, child, other]
+            precondition(
+                groups.map(\.name) == groupNames,
+                "CLISessionCatalogFixture.groupNames no longer names what make() writes")
+            for group in groups {
                 try store.upsertGroup(group)
             }
 
@@ -1090,7 +1109,8 @@ extension CLIMatrix {
     /// must not count as coverage.
     ///
     /// Pure, so the two hazards above are measured against a fixture rather
-    /// than argued about — see `theDrivenScanReadsCallsAndNotComments`.
+    /// than argued about — see `theDrivenScanReadsCallsAndNotComments`, whose
+    /// fixture is `drivenScanFixture` below.
     static func drivenSubcommands(inSource source: String) throws -> Set<String> {
         let code = source
             .split(separator: "\n", omittingEmptySubsequences: false)
@@ -1104,6 +1124,37 @@ extension CLIMatrix {
         }
         return names
     }
+
+    /// The source `theDrivenScanReadsCallsAndNotComments` measures the scan
+    /// against, in the shapes the case file really contains: a drive whose
+    /// call spans two lines, a drive on one line, a commented-out drive, a
+    /// prose sentence quoting one, and one of the guards' own
+    /// `SubprocessRunner` launches (which passes the binary first, so the
+    /// pattern cannot reach it).
+    ///
+    /// It lives in THIS file rather than beside the test, and the placement
+    /// is the whole point: `drivenSubcommands(inFileAt:)` scans the CASE
+    /// file, where a fixture's live line is indistinguishable from a real
+    /// drive — the names in it would enter the driven set from a string
+    /// literal, and the coverage guard's positive companion would be
+    /// satisfied by that literal too. Measured 2026-09-04 with
+    /// `scripts/mutation-probe`, deleting the real `mkdir` case and its
+    /// three wrappers: with the fixture beside the test the guard came back
+    /// GREEN over 5 tests; with the fixture here it is RED. The scan never
+    /// reads this file.
+    static let drivenScanFixture = """
+        let result = try await rig.run(
+            ["mkdir"] + flags + [rig.target(remotePath)])
+        let listed = try await fixture.run(["sessions"] + flags + ["--json"])
+        // let skipped = try await rig.run(["nevermind"])
+        /// A drive of rig.run(["alsonot"]) described in prose.
+        let asked = try await SubprocessRunner.run(binary, arguments: ["help", name])
+        """
+
+    /// The names `drivenScanFixture` really declares — the answer the scan
+    /// must give for it. Beside the fixture rather than in the case, so the
+    /// two move together.
+    static let drivenScanFixtureNames: Set<String> = ["mkdir", "sessions"]
 
     /// The same scan, over a source FILE — the caller passes its own
     /// `#filePath`, so the guard reads the very file the cases live in and

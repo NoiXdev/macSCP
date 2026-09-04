@@ -455,11 +455,17 @@ enum CLIMatrixCases {
 
         guard try rig.hasHostKeys(operation: "the unknown-host-key refusal") else {
             let result = try await rig.run(["ls", "--non-interactive", "--json", target])
+            // The leak question comes FIRST, and no message below carries a
+            // byte of either stream: every one of these runs has the
+            // backend's secret in its environment, and a failure message is
+            // the one place a test's own output is read by a person.
+            let leaks = rig.leaksSecret(result)
+            #expect(leaks == false, "the run printed the secret on \(kind.rawValue)")
             #expect(
                 result.status == 0,
                 """
-                ls --non-interactive failed on \(kind.rawValue), which authenticates no \
-                host key: \(result.stderrText)
+                ls --non-interactive exited \(result.status) on \(kind.rawValue), which \
+                authenticates no host key
                 """)
             #expect(
                 try rig.recordedHostKeys().isEmpty,
@@ -468,21 +474,32 @@ enum CLIMatrixCases {
         }
 
         let refused = try await rig.run(["ls", "--non-interactive", "--json", target])
+        let refusedLeaks = rig.leaksSecret(refused)
+        #expect(refusedLeaks == false, "the refused run printed the secret on \(kind.rawValue)")
         #expect(
             refused.status == CLIExitCode.hostKeyUnknown.rawValue,
             "an unknown host key exited \(refused.status) on \(kind.rawValue)")
         // "Refused" and "connected, then complained" are not the same thing,
         // and the exit code alone cannot tell them apart: nothing may have
         // been listed, and nothing may have been remembered.
-        #expect(refused.stdoutText.isEmpty, "a refused connect listed something")
+        let refusedListedNothing = refused.stdoutText.isEmpty
+        #expect(refusedListedNothing, "a refused connect listed something on \(kind.rawValue)")
         #expect(
             try rig.recordedHostKeys().isEmpty,
             "a refused connect recorded the host key anyway on \(kind.rawValue)")
 
         let accepted = try await rig.run(["ls", "--accept-new", "--json", target])
+        let acceptedLeaks = rig.leaksSecret(accepted)
+        #expect(acceptedLeaks == false, "the accepted run printed the secret on \(kind.rawValue)")
         #expect(
             accepted.status == 0,
-            "ls --accept-new failed on \(kind.rawValue): \(accepted.stderrText)")
+            "ls --accept-new exited \(accepted.status) on \(kind.rawValue)")
+        // The positive beside the emptiness above: an `ls` that printed
+        // nothing at all would satisfy "the refusal listed nothing" for a
+        // reason that has nothing to do with the refusal. Counted, not
+        // printed.
+        let acceptedListed = try CLIMatrix.listing(accepted.stdoutText).count
+        #expect(acceptedListed > 0, "the accepted connect listed nothing on \(kind.rawValue)")
         let recorded = try rig.recordedHostKeys()
         #expect(
             recorded.count == 1,
@@ -510,16 +527,26 @@ enum CLIMatrixCases {
         let target = rig.target(rig.remoteRoot)
 
         let accepted = try await rig.run(["ls", "--accept-new", "--json", target])
+        let acceptedLeaks = rig.leaksSecret(accepted)
+        #expect(acceptedLeaks == false, "the accepted run printed the secret on \(kind.rawValue)")
         #expect(
             accepted.status == 0,
-            "ls --accept-new failed on \(kind.rawValue): \(accepted.stderrText)")
+            "ls --accept-new exited \(accepted.status) on \(kind.rawValue)")
+        // The positive companion to the emptiness asserted after the plant:
+        // this same command, against this same rig, DOES list something
+        // while the remembered key is the right one.
+        let acceptedListed = try CLIMatrix.listing(accepted.stdoutText).count
+        #expect(acceptedListed > 0, "the accepted connect listed nothing on \(kind.rawValue)")
 
         let planted = try rig.plantADifferentHostKey()
         let refused = try await rig.run(["ls", "--accept-new", "--json", target])
+        let refusedLeaks = rig.leaksSecret(refused)
+        #expect(refusedLeaks == false, "the refused run printed the secret on \(kind.rawValue)")
         #expect(
             refused.status == CLIExitCode.hostKeyMismatch.rawValue,
             "a changed host key exited \(refused.status) on \(kind.rawValue)")
-        #expect(refused.stdoutText.isEmpty, "a refused connect listed something")
+        let refusedListedNothing = refused.stdoutText.isEmpty
+        #expect(refusedListedNothing, "a refused connect listed something on \(kind.rawValue)")
 
         let after = try rig.recordedHostKeys()
         #expect(after.count == 1, "the mismatch left \(after.count) keys on file")
@@ -563,6 +590,8 @@ enum CLIMatrixCases {
         let target = rig.target(rig.remoteRoot)
 
         let control = try await rig.runWithoutASecret(["ls"] + flags + ["--json", target])
+        let controlLeaks = rig.leaksSecret(control)
+        #expect(controlLeaks == false, "the control run printed the secret on \(kind.rawValue)")
         #expect(
             control.status == CLIExitCode.auth.rawValue,
             "\(kind.rawValue) connected with no secret at all (exit \(control.status))")
@@ -578,30 +607,36 @@ enum CLIMatrixCases {
         let delivered = try await rig.run(
             ["ls"] + flags + ["--json", "--verbose", "--password-command", command, target],
             secretRelayedThrough: CLIMatrix.secretRelayVariable)
-        #expect(
-            delivered.status == 0,
-            "--password-command did not deliver on \(kind.rawValue): \(delivered.stderrText)")
+        // This is the run that HAS the secret to leak, so its two streams are
+        // reduced to `Bool`s and to counts before anything else looks at
+        // them, and no expectation below interpolates a byte of either. A
+        // failure message quoting the stderr of this run would be the
+        // disclosure the case exists to forbid — and it would be printed
+        // exactly when someone is reading.
+        let deliveredStdoutLeaks = rig.leaksSecret(delivered.stdoutText)
+        let deliveredStderrLeaks = rig.leaksSecret(delivered.stderrText)
+        #expect(deliveredStdoutLeaks == false, "the delivered run's stdout carries the secret")
+        #expect(deliveredStderrLeaks == false, "the delivered run's stderr carries the secret")
         // The label comes from the source type itself, not from a string
         // written here: renaming it moves both sides at once.
         let label = PasswordCommandSecretSource(command: "true").label
+        let namedTheHelper = delivered.stderrText.contains("secret source: \(label)")
         #expect(
-            delivered.stderrText.contains("secret source: \(label)"),
-            "another source answered on \(kind.rawValue)")
-        #expect(!(try CLIMatrix.listing(delivered.stdoutText)).isEmpty, "nothing was listed")
-
-        let deliveredStdoutLeaks = rig.leaksSecret(delivered.stdoutText)
-        let deliveredStderrLeaks = rig.leaksSecret(delivered.stderrText)
-        #expect(deliveredStdoutLeaks == false)
-        #expect(deliveredStderrLeaks == false)
+            delivered.status == 0,
+            "--password-command did not deliver on \(kind.rawValue) (exit \(delivered.status))")
+        #expect(namedTheHelper, "another source answered on \(kind.rawValue)")
+        let deliveredListed = try CLIMatrix.listing(delivered.stdoutText).count
+        #expect(deliveredListed > 0, "nothing was listed on \(kind.rawValue)")
 
         let broken = try await rig.runWithoutASecret(
             ["ls"] + flags + ["--json", "--password-command", "exit 3", target])
+        let brokenLeaks = rig.leaksSecret(broken)
+        let brokenNamedTheHelper = broken.stderrText.contains("\(label) failed")
+        #expect(brokenLeaks == false, "the failing run's output carries the secret")
         #expect(
             broken.status == CLIExitCode.auth.rawValue,
             "a failing --password-command exited \(broken.status) on \(kind.rawValue)")
-        #expect(broken.stderrText.contains("\(label) failed"))
-        let brokenStderrLeaks = rig.leaksSecret(broken.stderrText)
-        #expect(brokenStderrLeaks == false)
+        #expect(brokenNamedTheHelper, "the error does not name the helper on \(kind.rawValue)")
     }
 
     // MARK: - Shared reading
@@ -1104,7 +1139,14 @@ struct CLIMatrixCoverageTests {
         // back — not the value the fixture returned.
         let store = SessionStore(directory: fixture.directory)
         #expect(try store.all().count == fixture.entries.count)
-        #expect(try store.allGroups().count == 3)
+        // The NAMES, not a count written here: three static constants sit
+        // beside this, and a number would be a fourth copy of them that
+        // nothing keeps in step.
+        #expect(
+            Set(try store.allGroups().map(\.name)) == Set(CLISessionCatalogFixture.groupNames))
+        #expect(
+            try store.allGroups().count == CLISessionCatalogFixture.groupNames.count,
+            "the fixture wrote a duplicate group name")
     }
 
     /// The driven-subcommand scan reads CALLS, and neither comments nor the
@@ -1121,23 +1163,24 @@ struct CLIMatrixCoverageTests {
     /// 3. A drive whose call spans two lines, which most of them do here,
     ///    must still be read.
     ///
-    /// The positive: the two real drives ARE found. A scan that returned
-    /// nothing satisfies both absences.
+    /// The positive: the real drives ARE found. A scan that returned nothing
+    /// satisfies every absence above.
     ///
-    /// The live lines of the fixture below name only commands the matrix
-    /// really drives, deliberately: the file-level scan reads THIS file too,
-    /// so an invented name written outside a comment here would count itself
-    /// as coverage.
+    /// The fixture itself is `CLIMatrix.drivenScanFixture`, in the helper
+    /// file, and it is there for a reason this test cannot state about
+    /// itself: the file-level scan reads THIS file, so a fixture written
+    /// here would put its command names into the driven set from a string
+    /// literal — and `everySubcommandTheBinaryOffersIsDrivenByACase` would
+    /// then count a command no case drives. Measured 2026-09-04 with
+    /// `scripts/mutation-probe` (the real `mkdir` case and its three
+    /// wrappers deleted): GREEN with the fixture here, RED with it in the
+    /// helper. Nothing in this test spells a subcommand name either — the
+    /// expected set lives beside the fixture, so the two cannot drift apart.
     @Test func theDrivenScanReadsCallsAndNotComments() throws {
-        let source = """
-            let result = try await rig.run(
-                ["mkdir"] + flags + [rig.target(remotePath)])
-            let listed = try await fixture.run(["sessions"] + flags + ["--json"])
-            // let skipped = try await rig.run(["nevermind"])
-            /// A drive of rig.run(["alsonot"]) described in prose.
-            let asked = try await SubprocessRunner.run(binary, arguments: ["help", name])
-            """
-        #expect(try CLIMatrix.drivenSubcommands(inSource: source) == ["mkdir", "sessions"])
+        #expect(
+            try CLIMatrix.drivenSubcommands(inSource: CLIMatrix.drivenScanFixture)
+                == CLIMatrix.drivenScanFixtureNames)
+        #expect(!CLIMatrix.drivenScanFixtureNames.isEmpty, "the fixture expects nothing at all")
         #expect(try CLIMatrix.drivenSubcommands(inSource: "").isEmpty)
     }
 
