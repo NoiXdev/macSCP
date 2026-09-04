@@ -53,8 +53,8 @@ zero keys; `RootMode.resolve` strips the trailing slash so a directory's
 - Consumes: `stat(path:)` (`WebDAVFileSystem.swift:214`, PROPFIND depth 0 with the slash fallback already built in), `simple(method:path:isDirectory:)`.
 - Produces: nothing new; behaviour only.
 
-- [ ] **Step 1: Red first.** Gated: `MACSCP_ITEST=1 swift test --filter WebDAVFileSystemIntegrationTests` with the new file case — expected red: `deleteTree` throws (the 400 mapped through `mapStatus`) or the file survives. Unit: the stub records the request; expected red: the URL ends with `/`.
-- [ ] **Step 2: Implement.**
+- [x] **Step 1: Red first.** Gated: `MACSCP_ITEST=1 swift test --filter WebDAVFileSystemIntegrationTests` with the new file case — expected red: `deleteTree` throws (the 400 mapped through `mapStatus`) or the file survives. Unit: the stub records the request; expected red: the URL ends with `/`.
+- [x] **Step 2: Implement.**
 
 ```swift
     /// One call for a collection (WebDAV deletes it recursively server-side;
@@ -69,8 +69,8 @@ zero keys; `RootMode.resolve` strips the trailing slash so a directory's
     }
 ```
 
-- [ ] **Step 3: Green** — the two suites above, plus `swift test` (zero warnings).
-- [ ] **Step 4: Commit** `fix(webdav): deleteTree on a plain file deletes the file`.
+- [x] **Step 3: Green** — the two suites above, plus `swift test` (zero warnings).
+- [x] **Step 4: Commit** `fix(webdav): deleteTree on a plain file deletes the file`.
 
 ---
 
@@ -83,8 +83,8 @@ zero keys; `RootMode.resolve` strips the trailing slash so a directory's
 **Interfaces:**
 - Consumes: `stat(path:)` (`S3FileSystem.swift:265`, the parent listing), `delete(bucket:key:)` (`:391`), `resolvePrefix(path:)`, `allObjectKeys(bucket:underPrefix:)`, `mode.resolve(path:)`.
 
-- [ ] **Step 1: Red first.** Unit: the stub records requests; expected reds: `deleteTree` on the object sends `POST ?delete` with zero keys (or nothing), `delete` on the prefix sends a `DELETE` and returns normally, `delete` on nothing sends a `DELETE` and returns normally. Gated: the object survives `deleteTree`; `delete` on the directory returns normally.
-- [ ] **Step 2: Implement.**
+- [x] **Step 1: Red first.** Unit: the stub records requests; expected reds: `deleteTree` on the object sends `POST ?delete` with zero keys (or nothing), `delete` on the prefix sends a `DELETE` and returns normally, `delete` on nothing sends a `DELETE` and returns normally. Gated: the object survives `deleteTree`; `delete` on the directory returns normally.
+- [x] **Step 2: Implement.**
 
 ```swift
     /// A signed `DELETE` on the object key — after the lookup that the
@@ -119,8 +119,8 @@ zero keys; `RootMode.resolve` strips the trailing slash so a directory's
     }
 ```
 
-- [ ] **Step 3: Green** — `swift test --filter S3FileSystem`, `MACSCP_ITEST=1 swift test --filter S3FileSystemIntegrationTests`, full `swift test`, zero warnings.
-- [ ] **Step 4: Commit** `fix(s3): deleteTree deletes a plain file, delete refuses a directory and reports a missing key`.
+- [x] **Step 3: Green** — `swift test --filter S3FileSystem`, `MACSCP_ITEST=1 swift test --filter S3FileSystemIntegrationTests`, full `swift test`, zero warnings.
+- [x] **Step 4: Commit** `fix(s3): deleteTree deletes a plain file, delete refuses a directory and reports a missing key`.
 
 ---
 
@@ -130,6 +130,6 @@ zero keys; `RootMode.resolve` strips the trailing slash so a directory's
 - Modify: `Tests/macSCPCoreTests/Support/CLIMatrix.swift` (`removeRemote`: the delete-first-then-deleteTree workaround and its comment go; one `deleteTree` per entry, the `verifyGone` outcome check stays)
 - Modify: `docs/BACKLOG.md` (both rows → **Done 2026-09-04** with the commits and the measured before/after; the `deleteTree` row's "consequence read from the call sites" sentence stays as history)
 
-- [ ] **Step 1:** `MACSCP_ITEST=1 swift test --filter CLIMatrix` green with the single-call cleanup (55 tests); if any backend goes red here, the contract is not yet honoured for that shape — that is a finding for Task 1/2, not a reason to keep the workaround.
-- [ ] **Step 2:** the rows; count the gated cases added (Tasks 1–2) and name them.
-- [ ] **Step 3: Commit** `test(cli): the matrix cleans up through deleteTree alone, and the backlog says the contract holds`.
+- [x] **Step 1:** `MACSCP_ITEST=1 swift test --filter CLIMatrix` green with the single-call cleanup (55 tests); if any backend goes red here, the contract is not yet honoured for that shape — that is a finding for Task 1/2, not a reason to keep the workaround.
+- [x] **Step 2:** the rows; count the gated cases added (Tasks 1–2) and name them.
+- [x] **Step 3: Commit** `test(cli): the matrix cleans up through deleteTree alone, and the backlog says the contract holds`.
