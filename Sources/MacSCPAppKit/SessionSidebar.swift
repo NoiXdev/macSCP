@@ -262,9 +262,11 @@ struct SessionSidebar: View {
     /// `SettingsStore.sidebarCompact`, read by `ContentView` and handed
     /// over as a plain fact, same pattern as `showsTagFilterBar` right
     /// below: nothing in this file has to know a settings layer exists.
-    /// Forwarded to each `SessionRow` as `isCompact`; changes row height,
-    /// padding and the host subtitle's visibility only — no ordering, no
-    /// selection behaviour, no keyboard handling.
+    /// Forwarded to each `SessionRow` as `isCompact`; changes row padding
+    /// and the protocol badge's visibility only — no ordering, no
+    /// selection behaviour, no keyboard handling. The default (non-compact)
+    /// row is unchanged from what it was before this setting existed —
+    /// see `SessionRow.isCompact`'s own doc comment.
     let sidebarCompact: Bool
     /// Whether the tag FILTER is offered at all (E1) —
     /// `SettingsStore.sidebarTagFilterEnabled`, read by `ContentView` and
@@ -1197,11 +1199,20 @@ private struct SessionRow: View {
     let groups: [StoredGroup]
     /// Compact sidebar mode (sidebar-polish plan, Task 2) — handed down as a
     /// plain fact the same way `SessionSidebar.showsTagFilterBar` is, so
-    /// this row does not need to know a settings layer exists. `true` hides
-    /// the host-subtitle line below the name and tightens the row's
-    /// vertical padding; it changes no ordering, no selection behaviour and
-    /// no keyboard handling — `onInput`/`SessionRowActivation` are
-    /// untouched by this flag.
+    /// this row does not need to know a settings layer exists.
+    ///
+    /// Ruling on the fix round that reopened this task (coordinator,
+    /// 2026-09-04): the DEFAULT (non-compact) row must not change at all —
+    /// an earlier attempt drew `connectionSummary` as a second line
+    /// whenever this was `false`, which changed what every user sees by
+    /// default; that line is gone. `false` (the default) is the row
+    /// exactly as it was before this setting existed: one line, the
+    /// protocol badge shown, `.padding(.vertical, 5)`. `true` tightens
+    /// that same one line to `.padding(.vertical, 2)` and hides the
+    /// protocol badge — the row's only other secondary element once the
+    /// subtitle attempt was reverted. No ordering, no selection behaviour,
+    /// no keyboard handling changes either way —
+    /// `onInput`/`SessionRowActivation` are untouched by this flag.
     let isCompact: Bool
     /// Every input this row can receive — its clicks, its Return, and the
     /// three menu entries that reach a host — forwarded raw with the
@@ -1320,57 +1331,49 @@ private struct SessionRow: View {
     /// SSH-fallback accessors (so it would read "@:22") — accessors M26
     /// deleted. Neither was a connection summary, and `StoredSession` has had
     /// no host/username accessor to read at all since.
-    ///
-    /// Also the row's host-subtitle line (sidebar-polish plan, Task 2) —
-    /// the same string `.help(connectionSummary)` below already put in the
-    /// tooltip, now drawn as a second line whenever `isCompact` is off.
     private var connectionSummary: String {
         let descriptor = BackendDescriptor.descriptor(for: session.kind)
         return descriptor.displaySummary(descriptor.sessionValues(session))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: isCompact ? 0 : 1) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(isActive ? DesignTokens.statusPhosphor : Color.secondary.opacity(0.35))
-                    .frame(width: 7, height: 7)
+        HStack(spacing: 8) {
+            Circle()
+                .fill(isActive ? DesignTokens.statusPhosphor : Color.secondary.opacity(0.35))
+                .frame(width: 7, height: 7)
 
-                if isRenaming {
-                    TextField("", text: $renameDraft)
-                        .textFieldStyle(.plain)
-                        .focused(focusedRenameID, equals: session.id)
-                        .onSubmit(onCommitRename)
-                        .onExitCommand(perform: onCancelRename)
-                } else {
-                    Text(session.name)
-                        .lineLimit(1)
-                        .fontWeight(isActive ? .semibold : .regular)
-                        .foregroundStyle(isActive ? DesignTokens.remoteBlue : Color.primary)
-                }
+            if isRenaming {
+                TextField("", text: $renameDraft)
+                    .textFieldStyle(.plain)
+                    .focused(focusedRenameID, equals: session.id)
+                    .onSubmit(onCommitRename)
+                    .onExitCommand(perform: onCancelRename)
+            } else {
+                Text(session.name)
+                    .lineLimit(1)
+                    .fontWeight(isActive ? .semibold : .regular)
+                    .foregroundStyle(isActive ? DesignTokens.remoteBlue : Color.primary)
+            }
 
-                // Protocol badge (M12/T7b): "SSH"/"S3" from the backend
-                // descriptor — unobtrusive, same small-label typography as
-                // the sidebar's own section headers above. Kept in both
-                // densities (sidebar-polish plan, Task 2) — compact mode
-                // only drops the host subtitle below, never this badge.
+            // Protocol badge (M12/T7b): "SSH"/"S3" from the backend
+            // descriptor — unobtrusive, same small-label typography as the
+            // sidebar's own section headers above. Compact mode's one
+            // secondary element to shed (sidebar-polish plan, Task 2 fix
+            // round): the default row carries no other decoration to
+            // gate, and the ruling that reopened this task is explicit
+            // that the default row's appearance must not change at all —
+            // so this is the ONE thing `isCompact` hides, never the
+            // subtitle line the earlier attempt drew (that line is gone;
+            // `connectionSummary` reaches the user only through
+            // `.help(connectionSummary)` below, exactly as before this
+            // task).
+            if !isCompact {
                 Text(kindBadgeLabel)
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(DesignTokens.inkTertiary)
-
-                Spacer(minLength: 0)
             }
 
-            // The host subtitle (sidebar-polish plan, Task 2): only in the
-            // non-compact branch, never drawn at all when `isCompact` is on
-            // — compact rows stay the single line the `HStack` above draws
-            // by itself.
-            if !isCompact {
-                Text(connectionSummary)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            Spacer(minLength: 0)
         }
         .padding(.vertical, isCompact ? 2 : 5)
         .padding(.horizontal, 10)
