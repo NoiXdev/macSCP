@@ -145,6 +145,46 @@ struct ConnectionHistoryTests {
         #expect(rows[2].startedAt == at(0))
     }
 
+    /// The shape a crash leaves behind, followed by the next launch: an
+    /// unclosed `connected`, then a `connectFailed`. The failure is NEWER,
+    /// so it is row 0 — and it is the case the derivation gets wrong when it
+    /// orders rows by when a segment CLOSED rather than by when it OPENED,
+    /// because the abandoned segment is only closed after the whole log has
+    /// been walked.
+    @Test func aFailedConnectInsideAnOpenSegmentIsStillOrderedNewestFirst() {
+        let crashed = event(.connected, 0, "connected to web-01 as deploy")
+        let failure = event(.connectFailed, 100, "connection refused", isError: true)
+
+        let rows = ConnectionHistory.rows(from: [crashed, failure])
+
+        #expect(rows.count == 2)
+        #expect(rows[0].id == failure.id)
+        #expect(rows[0].startedAt == at(100))
+        #expect(rows[1].id == crashed.id)
+        #expect(rows[1].outcome == .connected(duration: nil))
+    }
+
+    /// The same defect seen through the cut rather than through the order: an
+    /// abandoned `connected` is the OLDEST attempt in this log, so it is the
+    /// one the last-ten rule drops. Ordering by close instead keeps it and
+    /// drops the oldest failure.
+    @Test func theCutDropsTheOldestAttemptEvenWhenItIsTheOneStillOpen() {
+        var events: [AuditEvent] = [event(.connected, 0, "connected to web-01 as deploy")]
+        for index in 1...10 {
+            events.append(
+                event(.connectFailed, TimeInterval(index * 100), "connection refused \(index)",
+                    isError: true))
+        }
+
+        let rows = ConnectionHistory.rows(from: events)
+
+        #expect(rows.count == 10)
+        #expect(rows[0].startedAt == at(1000))
+        #expect(rows[9].startedAt == at(100))
+        let keptTheAbandonedOne = rows.contains { $0.startedAt == at(0) }
+        #expect(keptTheAbandonedOne == false)
+    }
+
     // MARK: - The cut
 
     @Test func elevenPairsKeepTheNewestTen() {
@@ -215,9 +255,15 @@ struct ConnectionHistoryTests {
     }
 
     /// No audit event carries a byte count — neither as a field nor in its
-    /// detail text (counted 2026-09-04 over every `AuditEvent(` construction
-    /// site in `Sources/`: eighteen, none of them naming bytes). So the
-    /// answer is `nil`, and it is `nil` honestly rather than zero.
+    /// detail text. Recounted 2026-09-04 at HEAD over every `AuditEvent(`
+    /// construction site under `Sources/` (comments excluded, and
+    /// `ConnectionHistory`'s own prose mention of the spelling with it):
+    /// TWENTY-FIVE — `RemoteBrowserViewModel` fifteen, `AuditRecorder`
+    /// eight, `ContentView` one, `ContentView+Lifecycle` one. None names
+    /// bytes. The first version of this sentence said "eighteen", which was
+    /// never counted; `ConnectionHistory.Row.bytes` carries the same number
+    /// and the two are now the same count. So the answer is `nil`, and it is
+    /// `nil` honestly rather than zero.
     @Test func bytesAreNilBecauseNoEventCarriesAByteCount() {
         let events: [AuditEvent] = [
             event(.connected, 0, "connected to web-01 as deploy"),

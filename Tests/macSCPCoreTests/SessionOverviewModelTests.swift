@@ -44,7 +44,9 @@ struct SessionOverviewModelTests {
         knownKey: KnownHostKey? = nil,
         secrets: (any SecretPresence)? = nil,
         events: [AuditEvent] = [],
-        snippets: [Snippet] = []
+        snippets: [Snippet] = [],
+        groupName: String? = nil,
+        loginSetName: String? = nil
     ) -> SessionOverviewModel {
         SessionOverviewModel(
             session: session,
@@ -52,7 +54,9 @@ struct SessionOverviewModelTests {
             knownKey: knownKey,
             secrets: secrets ?? Self.noSecrets,
             events: events,
-            snippets: snippets)
+            snippets: snippets,
+            groupName: groupName,
+            loginSetName: loginSetName)
     }
 
     private func sshSession(
@@ -183,8 +187,18 @@ struct SessionOverviewModelTests {
         #expect(text(overview, "authentication") == nil)
     }
 
+    /// Built with every optional fact present, so the uniqueness check
+    /// covers the whole vocabulary rather than the subset a bare session
+    /// happens to produce.
     @Test func everyFactCarriesAnIdAndALabelKeyAndTheIdsAreUnique() {
-        let overview = model(sshSession(tags: ["prod"]))
+        var session = sshSession(
+            jump: StoredSession.JumpSpec(
+                host: "bastion.example.com", port: 2200, username: "hopper",
+                authKind: .password),
+            tags: ["prod"])
+        session.importSource = "cyberduck"
+        session.importedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let overview = model(session, groupName: "Production", loginSetName: "Deploy key")
 
         #expect(overview.facts.isEmpty == false)
         for fact in overview.facts {
@@ -243,7 +257,7 @@ struct SessionOverviewModelTests {
 
     // MARK: - Host key
 
-    @Test func aKnownHostKeyIsReportedWithItsTypeAndFingerprint() throws {
+    @Test func aKnownHostKeyIsReportedWithItsTypeAndFingerprint() {
         let key = KnownHostKey(
             host: "web-01.example.com", port: 2222, keyType: "ssh-ed25519",
             publicKeyBase64: Data("a-host-key-blob".utf8).base64EncodedString())
@@ -330,6 +344,16 @@ struct SessionOverviewModelTests {
         let overview = model(session)
 
         let rendered = overview.facts.map(\.text) + [overview.endpointText, overview.name]
+        // The positive companion, without which an empty fact list would
+        // satisfy both negatives below: the URL IS rendered, stripped. The
+        // host is spelled here; the secret never is.
+        let strippedURLIsRendered = rendered.contains {
+            $0 == "https://cloud.example.com/remote.php/dav"
+        }
+        #expect(strippedURLIsRendered)
+        let hostIsRendered = rendered.contains { $0.contains("cloud.example.com") }
+        #expect(hostIsRendered)
+
         let anyCarriesIt = rendered.contains { $0.contains(planted) }
         #expect(anyCarriesIt == false)
 
@@ -351,7 +375,117 @@ struct SessionOverviewModelTests {
         let overview = model(session)
 
         let rendered = overview.facts.map(\.text) + [overview.endpointText, overview.name]
+        // The positive companion — see the WebDAV plant above.
+        let strippedEndpointIsRendered = rendered.contains { $0 == "https://minio.lan:9000" }
+        #expect(strippedEndpointIsRendered)
+        let hostIsRendered = rendered.contains { $0.contains("minio.lan") }
+        #expect(hostIsRendered)
+
         let anyCarriesIt = rendered.contains { $0.contains(planted) }
         #expect(anyCarriesIt == false)
+    }
+
+    // MARK: - Group and login set
+
+    /// Both are NAMES the caller resolves, because `StoredSession` carries
+    /// only ids. Absent by default, so a session in no group and no set
+    /// grows no rows.
+    @Test func aGroupedSessionNamesItsGroup() {
+        #expect(text(model(sshSession()), "group") == nil)
+        #expect(text(model(sshSession(), groupName: "Production"), "group") == "Production")
+    }
+
+    @Test func aSessionInALoginSetNamesTheSet() {
+        #expect(text(model(sshSession()), "loginSet") == nil)
+        #expect(
+            text(model(sshSession(), loginSetName: "Deploy key"), "loginSet") == "Deploy key")
+    }
+
+    /// A name the caller could not resolve arrives as an empty string just
+    /// as often as it arrives as `nil`; neither may become a labelled blank.
+    @Test func anEmptyNameIsNoFactAtAll() {
+        let overview = model(sshSession(), groupName: "", loginSetName: "")
+        #expect(text(overview, "group") == nil)
+        #expect(text(overview, "loginSet") == nil)
+    }
+
+    /// The design's order: the login set sits directly after the credential
+    /// facts and BEFORE the jump host — a jump is a second login, not part
+    /// of this one — and the group sits after both, before the tags.
+    @Test func theLoginSetPrecedesTheJumpAndTheGroupPrecedesTheTags() throws {
+        let jump = StoredSession.JumpSpec(
+            host: "bastion.example.com", port: 2200, username: "hopper", authKind: .password)
+        let overview = model(
+            sshSession(jump: jump, tags: ["prod"]), groupName: "Production",
+            loginSetName: "Deploy key")
+
+        let ids = overview.facts.map(\.id)
+        let keyPath = try #require(ids.firstIndex(of: "keyPath"))
+        let loginSet = try #require(ids.firstIndex(of: "loginSet"))
+        let jumpIndex = try #require(ids.firstIndex(of: "jump"))
+        let group = try #require(ids.firstIndex(of: "group"))
+        let tags = try #require(ids.firstIndex(of: "tags"))
+
+        #expect(keyPath < loginSet)
+        #expect(loginSet < jumpIndex)
+        #expect(jumpIndex < group)
+        #expect(group < tags)
+    }
+
+    /// The two backends with no jump still place the set after their own
+    /// credential facts and before the group.
+    @Test func theOtherTwoBackendsAlsoNameTheirLoginSet() throws {
+        let session = StoredSession(
+            name: "backups", kind: .s3,
+            s3: StoredS3Config(
+                accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+                endpoint: "https://minio.lan:9000", bucket: "backups",
+                usePathStyle: true, startsAtBucketList: false))
+
+        let overview = model(session, groupName: "Production", loginSetName: "Backup key")
+        let ids = overview.facts.map(\.id)
+
+        #expect(text(overview, "loginSet") == "Backup key")
+        let loginSet = try #require(ids.firstIndex(of: "loginSet"))
+        let pathStyle = try #require(ids.firstIndex(of: "pathStyle"))
+        let group = try #require(ids.firstIndex(of: "group"))
+        #expect(pathStyle < loginSet)
+        #expect(loginSet < group)
+    }
+
+    // MARK: - Empty data never becomes a labelled blank
+
+    /// An S3 session that names neither a bucket nor the bucket list is an
+    /// incomplete record. It gets no bucket row, rather than one whose value
+    /// is the empty string.
+    @Test func anS3SessionWithNoBucketAndNoBucketListHasNoBucketFact() {
+        let session = StoredSession(
+            name: "half-configured", kind: .s3,
+            s3: StoredS3Config(
+                accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+                endpoint: "https://minio.lan:9000", bucket: "",
+                usePathStyle: true, startsAtBucketList: false))
+
+        let overview = model(session)
+
+        #expect(text(overview, "bucket") == nil)
+        // The positive companion: the rest of the S3 facts are still there,
+        // so this is an omitted row and not an empty model.
+        #expect(text(overview, "region") == "eu-central-1")
+    }
+
+    @Test func anS3SessionRootedAtTheBucketListSaysSoWithNoBucketName() {
+        let session = StoredSession(
+            name: "everything", kind: .s3,
+            s3: StoredS3Config(
+                accessKeyID: "AKIAEXAMPLE", region: "eu-central-1",
+                endpoint: "https://minio.lan:9000", bucket: "",
+                usePathStyle: true, startsAtBucketList: true))
+
+        let bucket = text(model(session), "bucket")
+
+        #expect(bucket?.isEmpty == false)
+        let resolvedToItsOwnKey = bucket == "core.overview.s3.bucketList"
+        #expect(resolvedToItsOwnKey == false)
     }
 }

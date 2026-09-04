@@ -90,13 +90,22 @@ public struct SessionOverviewModel: Sendable, Equatable {
     ///     this project reads the real keychain.
     ///   - events: the session's audit log
     ///     (`AuditLogStore.events(for:)`), append order.
-    ///   - now: reserved, and read by nothing here — see
-    ///     `ConnectionHistory.rows(from:limit:now:)`, whose own `now`
-    ///     it forwards.
+    ///   - groupName: the name of the group `session.groupID` points at, or
+    ///     `nil` when the session is ungrouped or the caller could not
+    ///     resolve it. A name, because `StoredSession` carries only the id
+    ///     and a rendered UUID is worse than no row at all.
+    ///   - loginSetName: the name of the login set that owns this session's
+    ///     credential (`session.loginSetID`), or `nil` in manual mode. Same
+    ///     reasoning as `groupName`.
+    ///
+    /// There is no `now`: nothing here renders a relative time. An open
+    /// session's duration is `nil` rather than "elapsed so far" (see
+    /// `ConnectionHistory.Row.Outcome`), and the import date is formatted
+    /// absolutely, so a clock had no reader on either side of the call.
     public init(
         session: StoredSession, descriptor: BackendDescriptor, knownKey: KnownHostKey?,
         secrets: any SecretPresence, events: [AuditEvent], snippets: [Snippet],
-        now: Date = Date()
+        groupName: String? = nil, loginSetName: String? = nil
     ) {
         let values = descriptor.sessionValues(session)
 
@@ -106,9 +115,11 @@ public struct SessionOverviewModel: Sendable, Equatable {
         hostKey = Self.hostKeyStatus(kind: descriptor.kind, knownKey: knownKey)
         hasStoredSecret =
             descriptor.requiresSecret(values) ? secrets.hasSecret(for: session.secretSlot) : nil
-        history = ConnectionHistory.rows(from: events, now: now)
+        history = ConnectionHistory.rows(from: events)
         self.snippets = snippets
-        facts = Self.facts(for: session, descriptor: descriptor)
+        facts = Self.facts(
+            for: session, descriptor: descriptor, groupName: groupName,
+            loginSetName: loginSetName)
     }
 
     // MARK: - Host key
@@ -168,10 +179,15 @@ public struct SessionOverviewModel: Sendable, Equatable {
     }
 
     private static func facts(
-        for session: StoredSession, descriptor: BackendDescriptor
+        for session: StoredSession, descriptor: BackendDescriptor,
+        groupName: String?, loginSetName: String?
     ) -> [Fact] {
-        var facts = backendFacts(for: session, descriptor: descriptor)
+        var facts = backendFacts(
+            for: session, descriptor: descriptor, loginSetName: loginSetName)
 
+        if let groupName, !groupName.isEmpty {
+            facts.append(Fact(id: "group", labelKey: label("group"), text: groupName))
+        }
         if !session.tags.isEmpty {
             facts.append(
                 Fact(id: "tags", labelKey: label("tags"), text: session.tags.joined(separator: ", ")))
@@ -197,20 +213,32 @@ public struct SessionOverviewModel: Sendable, Equatable {
     /// The per-backend half, in the order the design lists it. Exhaustive
     /// over `ConnectionKind`, so a fourth backend has to say what it shows.
     private static func backendFacts(
-        for session: StoredSession, descriptor: BackendDescriptor
+        for session: StoredSession, descriptor: BackendDescriptor, loginSetName: String?
     ) -> [Fact] {
         switch descriptor.kind {
-        case .ssh: return sshFacts(session)
-        case .s3: return s3Facts(session)
-        case .webdav: return webdavFacts(session)
+        case .ssh: return sshFacts(session, loginSetName)
+        case .s3: return s3Facts(session, loginSetName)
+        case .webdav: return webdavFacts(session, loginSetName)
         }
+    }
+
+    /// The set that owns this session's credential, where one does.
+    ///
+    /// Built here rather than at each of the three call sites so the three
+    /// cannot drift on the id or the key. It is placed by each backend
+    /// rather than appended centrally, because the design puts it directly
+    /// after the credential facts — which for SSH means BEFORE the jump
+    /// host, a second login that is not part of this one.
+    private static func loginSetFact(_ name: String?) -> Fact? {
+        guard let name, !name.isEmpty else { return nil }
+        return Fact(id: "loginSet", labelKey: label("loginSet"), text: name)
     }
 
     /// Nothing at all for a `.ssh` record with no stored block. That shape
     /// cannot reach the app — `SessionStore.load()` drops it — but the model
     /// must answer rather than fabricate a host of `""` and a port of 22,
     /// which is the `"unused"` placeholder M23 removed, in a new spelling.
-    private static func sshFacts(_ session: StoredSession) -> [Fact] {
+    private static func sshFacts(_ session: StoredSession, _ loginSetName: String?) -> [Fact] {
         guard let ssh = session.ssh else { return [] }
         var facts: [Fact] = []
         if !ssh.username.isEmpty {
@@ -225,6 +253,7 @@ public struct SessionOverviewModel: Sendable, Equatable {
             facts.append(
                 Fact(id: "keyPath", labelKey: label("keyPath"), text: keyPath, isMonospaced: true))
         }
+        if let fact = loginSetFact(loginSetName) { facts.append(fact) }
         if let jump = ssh.jump {
             // The HOST and the port, and nothing else — the same rule
             // `AuditRecorder.recordConnected(host:username:viaJumpHost:)`
@@ -238,19 +267,24 @@ public struct SessionOverviewModel: Sendable, Equatable {
         return facts
     }
 
-    private static func s3Facts(_ session: StoredSession) -> [Fact] {
+    private static func s3Facts(_ session: StoredSession, _ loginSetName: String?) -> [Fact] {
         guard let s3 = session.s3 else { return [] }
         var facts: [Fact] = []
         // A connection rooted at the account's bucket list names no single
         // bucket, so the bucket fact says which of the two this is rather
-        // than showing a bucket the session does not open at.
-        facts.append(
-            s3.startsAtBucketList
-                ? Fact(
+        // than showing a bucket the session does not open at. A session that
+        // is rooted at neither — no bucket, no bucket list — is an
+        // incomplete record, and it gets NO row rather than a labelled blank
+        // one, like every other empty datum here.
+        if s3.startsAtBucketList {
+            facts.append(
+                Fact(
                     id: "bucket", labelKey: label("bucket"),
-                    text: CoreL10n.string("core.overview.s3.bucketList"))
-                : Fact(
-                    id: "bucket", labelKey: label("bucket"), text: s3.bucket, isMonospaced: true))
+                    text: CoreL10n.string("core.overview.s3.bucketList")))
+        } else if !s3.bucket.isEmpty {
+            facts.append(
+                Fact(id: "bucket", labelKey: label("bucket"), text: s3.bucket, isMonospaced: true))
+        }
         if !s3.region.isEmpty {
             facts.append(
                 Fact(id: "region", labelKey: label("region"), text: s3.region, isMonospaced: true))
@@ -263,10 +297,11 @@ public struct SessionOverviewModel: Sendable, Equatable {
         }
         facts.append(
             Fact(id: "pathStyle", labelKey: label("pathStyle"), text: yesNo(s3.usePathStyle)))
+        if let fact = loginSetFact(loginSetName) { facts.append(fact) }
         return facts
     }
 
-    private static func webdavFacts(_ session: StoredSession) -> [Fact] {
+    private static func webdavFacts(_ session: StoredSession, _ loginSetName: String?) -> [Fact] {
         guard let webdav = session.webdav else { return [] }
         var facts: [Fact] = []
         if !webdav.baseURL.isEmpty {
@@ -290,6 +325,7 @@ public struct SessionOverviewModel: Sendable, Equatable {
             Fact(
                 id: "nextcloudPath", labelKey: label("nextcloudPath"),
                 text: yesNo(webdav.useNextcloudPath)))
+        if let fact = loginSetFact(loginSetName) { facts.append(fact) }
         return facts
     }
 }

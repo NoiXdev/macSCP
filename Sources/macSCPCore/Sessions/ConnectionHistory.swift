@@ -99,27 +99,39 @@ public struct ConnectionHistory: Sendable, Equatable {
     /// belong to no session and are counted nowhere. A `disconnected` with
     /// no open session before it closes nothing.
     ///
-    /// - Parameter now: reserved for the view model that calls this and read
-    ///   by nothing here. An open session's duration is `nil` rather than
-    ///   "elapsed so far" (see `Outcome`), which is the one use a clock
-    ///   would have had. Kept because the signature is what Task 2 builds
-    ///   against; it should be removed if Task 2 finds no use for it either.
-    public static func rows(from events: [AuditEvent], limit: Int = 10, now: Date = Date()) -> [Row]
-    {
-        var rows: [Row] = []
+    /// **A row's age is when it OPENED, never when it closed.** A row is
+    /// finished at different moments than it began — a `connectFailed` is
+    /// complete the instant it is read, while a segment is only finished at
+    /// its `disconnected` or, for an abandoned one, after the whole log has
+    /// been walked. Ordering by completion therefore put an abandoned
+    /// `connected` AFTER every failure that followed it, and the last-`limit`
+    /// cut then dropped a newer attempt and kept the oldest one. The exact
+    /// shape is the ordinary one: a crash leaves an unclosed `connected`, and
+    /// the next launch's connect fails
+    /// (`aFailedConnectInsideAnOpenSegmentIsStillOrderedNewestFirst`, and
+    /// `theCutDropsTheOldestAttemptEvenWhenItIsTheOneStillOpen` for the cut).
+    /// So each row is stamped with the INDEX of its opening event and sorted
+    /// on that before anything is cut. The index rather than `startedAt`,
+    /// for the reason the arrival-order paragraph above gives: two events in
+    /// the same millisecond must not be free to swap, and an index is unique
+    /// per row by construction.
+    public static func rows(from events: [AuditEvent], limit: Int = 10) -> [Row] {
+        /// A finished row together with the position of the event that
+        /// opened it.
+        var found: [(openedAt: Int, row: Row)] = []
         var open: OpenSession?
 
         func close(_ session: OpenSession, at end: Date?) {
-            rows.append(session.row(endedAt: end))
+            found.append((openedAt: session.openedAt, row: session.row(endedAt: end)))
         }
 
-        for event in events {
+        for (index, event) in events.enumerated() {
             switch event.kind {
             case .connected:
                 // An unclosed session followed by a new connect is what a
                 // crash leaves behind: it ended, nothing recorded when.
                 if let previous = open { close(previous, at: nil) }
-                open = OpenSession(id: event.id, startedAt: event.timestamp)
+                open = OpenSession(id: event.id, startedAt: event.timestamp, openedAt: index)
             case .disconnected:
                 guard let previous = open else { continue }
                 close(previous, at: event.timestamp)
@@ -128,11 +140,14 @@ public struct ConnectionHistory: Sendable, Equatable {
                 // Its own row, and it does not disturb an open session: a
                 // failed connect while another one is up is a second attempt,
                 // not the end of the first.
-                rows.append(
-                    Row(
-                        id: event.id, startedAt: event.timestamp,
-                        outcome: .failed(reason: event.detail),
-                        uploads: 0, downloads: 0, failedTransfers: 0, bytes: nil))
+                found.append(
+                    (
+                        openedAt: index,
+                        row: Row(
+                            id: event.id, startedAt: event.timestamp,
+                            outcome: .failed(reason: event.detail),
+                            uploads: 0, downloads: 0, failedTransfers: 0, bytes: nil)
+                    ))
             case .transferFinished:
                 switch event.transferVerb {
                 case .upload: open?.uploads += 1
@@ -153,13 +168,20 @@ public struct ConnectionHistory: Sendable, Equatable {
 
         if let previous = open { close(previous, at: nil) }
 
-        return Array(rows.suffix(max(0, limit)).reversed())
+        // Newest first, THEN cut — the other way round drops rows the user
+        // was meant to keep.
+        found.sort { $0.openedAt > $1.openedAt }
+        return found.prefix(max(0, limit)).map(\.row)
     }
 
     /// A `connected` that has not been closed yet, with its running counts.
     private struct OpenSession {
         let id: UUID
         let startedAt: Date
+        /// The position of the `connected` in the event array — the row's
+        /// age. See `rows(from:limit:)` for why it is carried rather than
+        /// derived from `startedAt`.
+        let openedAt: Int
         var uploads = 0
         var downloads = 0
         var failedTransfers = 0
