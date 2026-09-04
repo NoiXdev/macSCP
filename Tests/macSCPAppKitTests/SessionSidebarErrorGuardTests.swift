@@ -1,22 +1,31 @@
 import Foundation
 import Testing
 
-/// Guards the sidebar's two dismissible red captions (dev-build follow-up,
-/// 2026-09-03: the maintainer saw `core.session.groupMoveCycle` stay on
-/// screen with nothing to close it) — `groupMoveErrorBanner`
-/// (`viewModel.errorMessage`) and `jumpRestoreErrorBanner`
-/// (`jumpRestoreErrorMessage`), both in `SessionSidebar.swift`.
+/// Guards the sidebar's three dismissible red captions (dev-build
+/// follow-up, 2026-09-03: the maintainer saw `core.session.groupMoveCycle`
+/// stay on screen with nothing to close it) — `groupMoveErrorBanner`
+/// (`viewModel.errorMessage`), `jumpRestoreErrorBanner`
+/// (`jumpRestoreErrorMessage`) and `hiddenImportsErrorBanner`
+/// (`hiddenImportsErrorMessage`), all three in `SessionSidebar.swift`. The
+/// first two got the close button and the auto-dismiss in `ece5aaf9`; the
+/// third — `hiddenImportsErrorMessage`, owned by `ContentView` rather than
+/// by this view or a view model, since both the "Hide" context-menu action
+/// and the startup/refresh read can set it — was left open by that same
+/// commit and is what this follow-up closes.
 ///
 /// What each banner must show, structurally: a close button bound to the
 /// message it sits on top of (`viewModel.dismissError()` for the first,
 /// `jumpRestoreErrorMessage = nil` for the second — a local `@State`, not a
-/// view-model call), and a `.task(id:)` keyed on that same message that
-/// sleeps for the shared `errorAutoDismissDelay` constant before clearing
-/// it. Both claims are made against the BODY of the banner's own
-/// declaration — a brace-balanced span, not a guessed window — for the
-/// reason CLAUDE.md records from the snippets guard: a check that looks in
-/// the wrong region cannot ever match a real violation, and a check with no
-/// span at all is reading prose about the code rather than the code.
+/// view-model call — and `onDismissHiddenImportsError()` for the third, a
+/// callback into `ContentView` since `hiddenImportsErrorMessage` reaches
+/// this view as a plain, unwritable `let`), and a `.task(id:)` keyed on
+/// that same message that sleeps for the shared `errorAutoDismissDelay`
+/// constant before clearing it. Every claim is made against the BODY of
+/// the banner's own declaration — a brace-balanced span, not a guessed
+/// window — for the reason CLAUDE.md records from the snippets guard: a
+/// check that looks in the wrong region cannot ever match a real
+/// violation, and a check with no span at all is reading prose about the
+/// code rather than the code.
 ///
 /// The delay itself is read from the source, not typed into this suite as
 /// a literal `.seconds(6)` — CLAUDE.md's rule on comments/tests that quote a
@@ -27,7 +36,7 @@ import Testing
 ///
 /// Every scan here reads STRIPPED source (`SwiftSource`). Structural claims
 /// (bindings, the `.task` wiring) are made against the strict view —
-/// comments AND string literals blanked; the two catalogue-key claims are
+/// comments AND string literals blanked; the three catalogue-key claims are
 /// about a literal, so they read the view that blanks comments only.
 ///
 /// Known blind spots, so a green run is not read as more than it is:
@@ -36,10 +45,25 @@ import Testing
 ///   whether six seconds really elapse on screen.
 /// - The negative check below (no `Task.sleep(` outside a banner's own
 ///   `.task`) is a COUNT, held to the real file by a positive anchor
-///   (`bothBannersAreActuallyPlacedInTheSidebar`) for exactly the reason
+///   (`allBannersAreActuallyPlacedInTheSidebar`) for exactly the reason
 ///   CLAUDE.md gives for negative checks: `!contains` and an empty-count
 ///   both read as "satisfied" whether the thing they scan is present or has
 ///   quietly vanished, and only a paired positive check tells the two apart.
+/// - `hiddenImportsErrorBanner`'s own dismiss cannot be proven by running
+///   code the way `SessionListViewModelTests.dismissErrorClearsTheMessage`
+///   proves `viewModel.dismissError()`: `hiddenImportsErrorMessage` is a
+///   `@State var` on `ContentView`, and a bare, unmounted `ContentView`
+///   drops writes to its own `@State` — measured directly (a two-line
+///   script: build a `View` with one `@State` property, call a method on
+///   it that sets that property, read it back through the same instance —
+///   the read shows the ORIGINAL value) and consistent with what
+///   `AlreadyOpenSessionTests`/`ReconnectPathTests` already record about
+///   this exact codebase. `jumpRestoreErrorMessage` — the other local
+///   `@State` banner — got the identical guard-only treatment for the
+///   identical reason; only `viewModel.errorMessage`, backed by a real
+///   class, is behaviorally testable. `HiddenImportsErrorDismissGuardTests`
+///   covers the `ContentView`-side half (the method body and the wiring
+///   that reaches it) the same way, by source scan.
 @Suite("Session sidebar dismissible error banners")
 struct SessionSidebarErrorGuardTests {
     private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
@@ -51,6 +75,7 @@ struct SessionSidebarErrorGuardTests {
 
     private static let groupMoveBannerDeclaration = "private var groupMoveErrorBanner: some View"
     private static let jumpRestoreBannerDeclaration = "private var jumpRestoreErrorBanner: some View"
+    private static let hiddenImportsBannerDeclaration = "private var hiddenImportsErrorBanner: some View"
     private static let delayDeclaration = "private static let errorAutoDismissDelay: Duration"
 
     private static let dismissKey = "\"sidebar.error.dismiss\""
@@ -58,6 +83,7 @@ struct SessionSidebarErrorGuardTests {
     private static let accessibilityLabelModifier = ".accessibilityLabel("
     private static let taskSleep = "Task.sleep("
     private static let delaySymbol = "Self.errorAutoDismissDelay"
+    private static let hiddenImportsDismissCall = "onDismissHiddenImportsError()"
 
     /// The two views of the sidebar this suite reads, both derived from one
     /// read of the file and both the same length as it (see `SwiftSource`).
@@ -128,13 +154,44 @@ struct SessionSidebarErrorGuardTests {
             """)
     }
 
-    /// Both close buttons are icon-only, so they need BOTH `.help` (the
-    /// pointer hover hint) and `.accessibilityLabel` (what VoiceOver reads)
-    /// -- same pairing `TransferQueueBarCancelGuardTests` holds the row
-    /// cancel to, and for the same reason: without the second one, the
+    /// `hiddenImportsErrorMessage` reaches `SessionSidebar` as a plain
+    /// `let` (owned by `ContentView`, not this view), so unlike the other
+    /// two banners there is no property this view can write directly --
+    /// closing and auto-clearing both have to go through the
+    /// `onDismissHiddenImportsError` callback instead.
+    @Test func hiddenImportsBannerClosesThroughTheCallbackAndAutoClearsOnItsOwnMessage() throws {
+        let bodies = try Self.bannerBodies(of: Self.hiddenImportsBannerDeclaration)
+        #expect(bodies.code.contains(Self.hiddenImportsDismissCall), """
+            hiddenImportsErrorBanner's close button must call \
+            onDismissHiddenImportsError() -- hiddenImportsErrorMessage is a \
+            plain let here, so nothing in this view can clear it directly.
+            """)
+        #expect(bodies.code.contains(".task(id: hiddenImportsErrorMessage)"), """
+            hiddenImportsErrorBanner must key its auto-dismiss task on \
+            hiddenImportsErrorMessage itself, for the same restart-on-change \
+            reason as the other two banners above.
+            """)
+        #expect(bodies.code.contains(Self.taskSleep) && bodies.code.contains(Self.delaySymbol), """
+            the auto-dismiss task must await Task.sleep(for: \
+            Self.errorAutoDismissDelay) -- the same shared constant the \
+            other two banners use, not a second duration.
+            """)
+        #expect(bodies.withLiterals.contains(Self.dismissKey), """
+            The close button carries no visible text here either -- its \
+            catalogue key must also come from sidebar.error.dismiss.
+            """)
+    }
+
+    /// All three close buttons are icon-only, so they need BOTH `.help`
+    /// (the pointer hover hint) and `.accessibilityLabel` (what VoiceOver
+    /// reads) -- same pairing `TransferQueueBarCancelGuardTests` holds the
+    /// row cancel to, and for the same reason: without the second one, the
     /// button announces itself as the name of an SF Symbol.
-    @Test func bothCloseButtonsCarryBothHelpAndAccessibilityLabel() throws {
-        for declaration in [Self.groupMoveBannerDeclaration, Self.jumpRestoreBannerDeclaration] {
+    @Test func everyCloseButtonCarriesBothHelpAndAccessibilityLabel() throws {
+        for declaration in [
+            Self.groupMoveBannerDeclaration, Self.jumpRestoreBannerDeclaration,
+            Self.hiddenImportsBannerDeclaration,
+        ] {
             let body = try Self.bannerBodies(of: declaration).code
             let carriesHelp = body.contains(Self.helpModifier)
             let carriesAccessibilityLabel = body.contains(Self.accessibilityLabelModifier)
@@ -151,7 +208,7 @@ struct SessionSidebarErrorGuardTests {
         let code = try Self.sidebarViews().code
         #expect(code.contains(Self.delayDeclaration), """
             SessionSidebar.swift no longer declares \
-            \(Self.delayDeclaration) -- both banners above are checked \
+            \(Self.delayDeclaration) -- all three banners above are checked \
             against Self.errorAutoDismissDelay, which must name a real \
             declaration, not a symbol nothing defines.
             """)
@@ -164,7 +221,7 @@ struct SessionSidebarErrorGuardTests {
     /// failure mode CLAUDE.md records from the transfer bar's cancel guard,
     /// where a doc comment naming a control held a count green after the
     /// real placement was deleted.
-    @Test func bothBannersAreActuallyPlacedInTheSidebar() throws {
+    @Test func allBannersAreActuallyPlacedInTheSidebar() throws {
         let code = try Self.sidebarViews().code
         let groupMoveUses = TransferQueueBarCancelGuardTests.occurrenceCount(
             of: "groupMoveErrorBanner", in: code)
@@ -178,20 +235,27 @@ struct SessionSidebarErrorGuardTests {
             jumpRestoreErrorBanner must be declared once and placed once in \
             the sidebar's body -- found \(jumpRestoreUses) mentions in code.
             """)
+        let hiddenImportsUses = TransferQueueBarCancelGuardTests.occurrenceCount(
+            of: "hiddenImportsErrorBanner", in: code)
+        #expect(hiddenImportsUses == 2, """
+            hiddenImportsErrorBanner must be declared once and placed once \
+            in the sidebar's body -- found \(hiddenImportsUses) mentions in \
+            code.
+            """)
     }
 
     /// The negative half: nothing in `SessionSidebar.swift` may block on
-    /// `Task.sleep(` except the two banners' own auto-dismiss tasks. A
+    /// `Task.sleep(` except the three banners' own auto-dismiss tasks. A
     /// blocking wait anywhere else in this file would be exactly the shape
     /// CLAUDE.md's "tests never block the cooperative pool" section warns
     /// against, planted in application code rather than a test this time --
     /// and a stray sleep sitting outside a `.task` would run on whatever
     /// context calls it, not cancel when the view disappears the way these
-    /// two do. Held to the file by the positive placement check above: if
-    /// either banner's declaration went missing, its body would read as
-    /// empty and this count would silently balance by finding nothing on
-    /// both sides.
-    @Test func noTaskSleepAppearsOutsideEitherBannersOwnTask() throws {
+    /// three do. Held to the file by the positive placement check above: if
+    /// any banner's declaration went missing, its body would read as empty
+    /// and this count would silently balance by finding nothing on both
+    /// sides.
+    @Test func noTaskSleepAppearsOutsideAnyBannersOwnTask() throws {
         let code = try Self.sidebarViews().code
         let totalSleeps = TransferQueueBarCancelGuardTests.occurrenceCount(
             of: Self.taskSleep, in: code)
@@ -199,12 +263,16 @@ struct SessionSidebarErrorGuardTests {
             of: Self.taskSleep, in: try Self.bannerBodies(of: Self.groupMoveBannerDeclaration).code)
         let jumpRestoreSleeps = TransferQueueBarCancelGuardTests.occurrenceCount(
             of: Self.taskSleep, in: try Self.bannerBodies(of: Self.jumpRestoreBannerDeclaration).code)
-        #expect(totalSleeps == groupMoveSleeps + jumpRestoreSleeps, """
+        let hiddenImportsSleeps = TransferQueueBarCancelGuardTests.occurrenceCount(
+            of: Self.taskSleep, in: try Self.bannerBodies(of: Self.hiddenImportsBannerDeclaration).code)
+        let bannerSleeps = groupMoveSleeps + jumpRestoreSleeps + hiddenImportsSleeps
+        #expect(totalSleeps == bannerSleeps, """
             SessionSidebar.swift contains \(totalSleeps) Task.sleep( calls, \
-            but only \(groupMoveSleeps + jumpRestoreSleeps) sit inside \
-            groupMoveErrorBanner/jumpRestoreErrorBanner's own bodies -- a \
-            blocking wait elsewhere in this file would not cancel when its \
-            view disappears the way these two do.
+            but only \(bannerSleeps) sit inside \
+            groupMoveErrorBanner/jumpRestoreErrorBanner/ \
+            hiddenImportsErrorBanner's own bodies -- a blocking wait \
+            elsewhere in this file would not cancel when its view \
+            disappears the way these three do.
             """)
     }
 
@@ -231,6 +299,8 @@ struct SessionSidebarErrorGuardTests {
         #expect(bodies.code.contains(Self.taskSleep))
         #expect(bodies.code.contains(Self.delaySymbol))
         #expect(bodies.withLiterals.contains(Self.dismissKey))
+        let hiddenImportsBodies = try Self.bannerBodies(of: Self.hiddenImportsBannerDeclaration)
+        #expect(hiddenImportsBodies.code.contains(Self.hiddenImportsDismissCall))
         let code = try Self.sidebarViews().code
         #expect(code.contains(Self.delayDeclaration))
     }
@@ -420,6 +490,10 @@ struct SessionSidebarErrorGuardTests {
         #expect(throws: (any Error).self) {
             try TransferQueueBarCancelGuardTests.declarationBody(
                 of: Self.jumpRestoreBannerDeclaration, in: source)
+        }
+        #expect(throws: (any Error).self) {
+            try TransferQueueBarCancelGuardTests.declarationBody(
+                of: Self.hiddenImportsBannerDeclaration, in: source)
         }
     }
 }

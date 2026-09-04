@@ -2418,6 +2418,21 @@ struct ContentView: View {
         }
     }
 
+    /// Sidebar `hiddenImportsErrorBanner`'s close button and its own
+    /// six-second auto-dismiss (dev-build follow-up, 2026-09-03) — the
+    /// third red caption, left open by `ece5aaf9`, which gave the other two
+    /// (`viewModel.errorMessage` via `SessionListViewModel.dismissError()`,
+    /// and the sidebar's own local `jumpRestoreErrorMessage`) this same
+    /// treatment. `hiddenImportsErrorMessage` reaches `SessionSidebar` as a
+    /// plain `let`, so the clear has to happen here, on the property that
+    /// actually owns it — the same one `refreshImportedHosts()`'s success
+    /// path already sets to `nil`. Does not touch anything else a later
+    /// `hideImported`/`refreshImportedHosts` call sets; a later failure
+    /// still shows again, because nothing here latches the channel shut.
+    func dismissHiddenImportsError() {
+        hiddenImportsErrorMessage = nil
+    }
+
     /// Sidebar "New connection": blank the active tab's form when it is
     /// unconnected (M6a — without this, host/username/name from a previous
     /// edit stay prefilled), otherwise open a fresh empty tab. The toolbar

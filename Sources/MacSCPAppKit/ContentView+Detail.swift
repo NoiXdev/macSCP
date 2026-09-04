@@ -110,6 +110,7 @@ extension ContentView {
             onShowHiddenImports: { showHiddenImportsSheet = true },
             hiddenImportsCount: hiddenImportAliases.count,
             hiddenImportsErrorMessage: hiddenImportsErrorMessage,
+            onDismissHiddenImportsError: { dismissHiddenImportsError() },
             // E1, read here rather than in the sidebar: the setting is a
             // fact about what the window offers, and the sidebar reacts to
             // the value without knowing where it comes from.

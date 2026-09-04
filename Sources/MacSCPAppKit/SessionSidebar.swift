@@ -228,6 +228,15 @@ struct SessionSidebar: View {
     /// the "Hide" context-menu action and the startup/refresh read can set
     /// it, not just this view's own state.
     let hiddenImportsErrorMessage: String?
+    /// Closes `hiddenImportsErrorBanner` (dev-build follow-up, 2026-09-03:
+    /// the other two red captions got a close button and a six-second
+    /// auto-dismiss in `ece5aaf9`, this one did not) — a callback rather
+    /// than a direct write because `hiddenImportsErrorMessage` above is a
+    /// plain `let`, not `@State`: this view has no property of its own to
+    /// clear. `ContentView.dismissHiddenImportsError()` is the same
+    /// `hiddenImportsErrorMessage = nil` `refreshImportedHosts()`'s success
+    /// path already performs on the next successful read.
+    let onDismissHiddenImportsError: () -> Void
     /// Whether the tag FILTER is offered at all (E1) —
     /// `SettingsStore.sidebarTagFilterEnabled`, read by `ContentView` and
     /// handed over as a plain fact so nothing in this file has to know a
@@ -460,13 +469,7 @@ struct SessionSidebar: View {
 
             jumpRestoreErrorBanner
 
-            if let hiddenImportsErrorMessage {
-                Text(hiddenImportsErrorMessage)
-                    .foregroundStyle(.red)
-                    .font(.caption)
-                    .lineLimit(2)
-                    .padding(8)
-            }
+            hiddenImportsErrorBanner
         }
         .disabled(interactionsDisabled)
         .padding(.top, 12)
@@ -623,6 +626,44 @@ struct SessionSidebar: View {
                 do {
                     try await Task.sleep(for: Self.errorAutoDismissDelay)
                     self.jumpRestoreErrorMessage = nil
+                } catch {
+                    // Cancelled by a message change or the view going away —
+                    // either way, not this task's job to clear anything.
+                }
+            }
+        }
+    }
+
+    /// Same closable-and-self-clearing treatment as the two banners above,
+    /// for `hiddenImportsErrorMessage` (dev-build follow-up, 2026-09-03) —
+    /// the one caption `ece5aaf9` left open. Unlike `jumpRestoreErrorBanner`,
+    /// there is no local `@State` to write: `hiddenImportsErrorMessage`
+    /// reaches this view as a plain `let` from `ContentView`, so both the
+    /// close button and the auto-dismiss task go through
+    /// `onDismissHiddenImportsError()` instead.
+    @ViewBuilder
+    private var hiddenImportsErrorBanner: some View {
+        if let hiddenImportsErrorMessage {
+            HStack(alignment: .top, spacing: 6) {
+                Text(hiddenImportsErrorMessage)
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+                Button {
+                    onDismissHiddenImportsError()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .help(L10n.string("sidebar.error.dismiss", "Dismiss"))
+                .accessibilityLabel(L10n.string("sidebar.error.dismiss", "Dismiss"))
+            }
+            .padding(8)
+            .task(id: hiddenImportsErrorMessage) {
+                do {
+                    try await Task.sleep(for: Self.errorAutoDismissDelay)
+                    onDismissHiddenImportsError()
                 } catch {
                     // Cancelled by a message change or the view going away —
                     // either way, not this task's job to clear anything.
