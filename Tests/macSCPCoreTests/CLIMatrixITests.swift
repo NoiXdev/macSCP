@@ -71,7 +71,18 @@ enum CLIMatrixCases {
             let flags = try await CLIMatrix.hostKeyFlags(for: "ls", binary: binary)
             let result = try await rig.run(
                 ["ls"] + flags + ["--json", rig.target(rig.remoteRoot)])
-            #expect(result.status == 0, "ls failed on \(kind.rawValue): \(result.stderrText)")
+            // The leak question first, computed before any message below
+            // could quote this run's output — its environment carries the
+            // backend's secret (CLAUDE.md, "A value a test must not leak
+            // has two exits, not one").
+            let leaks = rig.leaksSecret(result)
+            #expect(leaks == false, "the run printed the secret on \(kind.rawValue)")
+            #expect(
+                result.status == 0,
+                """
+                ls failed on \(kind.rawValue) (exit \(result.status), stderr \
+                \(result.stderrText.count) bytes)
+                """)
 
             let listed = try CLIMatrix.listing(result.stdoutText)
             #expect(!listed.isEmpty, "ls --json printed nothing on \(kind.rawValue)")
@@ -117,7 +128,17 @@ enum CLIMatrixCases {
             let binary = try CLIMatrix.binaryURL()
             let flags = try await CLIMatrix.hostKeyFlags(for: "mkdir", binary: binary)
             let result = try await rig.run(["mkdir"] + flags + [rig.target(remotePath)])
-            #expect(result.status == 0, "mkdir failed on \(kind.rawValue): \(result.stderrText)")
+            // Leak question first — this run's environment carries the
+            // backend's secret (CLAUDE.md, "A value a test must not leak
+            // has two exits, not one").
+            let leaks = rig.leaksSecret(result)
+            #expect(leaks == false, "the run printed the secret on \(kind.rawValue)")
+            #expect(
+                result.status == 0,
+                """
+                mkdir failed on \(kind.rawValue) (exit \(result.status), stderr \
+                \(result.stderrText.count) bytes)
+                """)
 
             let item = try await fileSystem.stat(path: remotePath)
             #expect(item.isDirectory, "mkdir made something that is not a directory")
@@ -149,7 +170,17 @@ enum CLIMatrixCases {
                 let result = try await rig.run(
                     ["put"] + flags
                         + [localFile.path(percentEncoded: false), rig.target(rig.remoteRoot)])
-                #expect(result.status == 0, "put failed on \(kind.rawValue): \(result.stderrText)")
+                // Leak question first — this run's environment carries the
+                // backend's secret (CLAUDE.md, "A value a test must not leak
+                // has two exits, not one").
+                let leaks = rig.leaksSecret(result)
+                #expect(leaks == false, "the run printed the secret on \(kind.rawValue)")
+                #expect(
+                    result.status == 0,
+                    """
+                    put failed on \(kind.rawValue) (exit \(result.status), stderr \
+                    \(result.stderrText.count) bytes)
+                    """)
 
                 let item = try await fileSystem.stat(path: remotePath)
                 #expect(item.isDirectory == false)
@@ -176,7 +207,17 @@ enum CLIMatrixCases {
                 let result = try await rig.run(
                     ["get"] + flags
                         + [rig.target(remotePath), localDirectory.path(percentEncoded: false)])
-                #expect(result.status == 0, "get failed on \(kind.rawValue): \(result.stderrText)")
+                // Leak question first — this run's environment carries the
+                // backend's secret (CLAUDE.md, "A value a test must not leak
+                // has two exits, not one").
+                let leaks = rig.leaksSecret(result)
+                #expect(leaks == false, "the run printed the secret on \(kind.rawValue)")
+                #expect(
+                    result.status == 0,
+                    """
+                    get failed on \(kind.rawValue) (exit \(result.status), stderr \
+                    \(result.stderrText.count) bytes)
+                    """)
 
                 let downloaded = localDirectory.appendingPathComponent(name)
                 #expect(
@@ -221,6 +262,11 @@ enum CLIMatrixCases {
                     ["put"] + flags
                         + [localFile.path(percentEncoded: false), rig.target(rig.remoteRoot),
                            "--on-conflict", action.rawValue])
+                // Leak question first — this run's environment carries the
+                // backend's secret (CLAUDE.md, "A value a test must not leak
+                // has two exits, not one").
+                let leaks = rig.leaksSecret(result)
+                #expect(leaks == false, "the run printed the secret on \(kind.rawValue)")
 
                 let expectedStatus: Int32
                 let expectedContent: Data
@@ -240,7 +286,7 @@ enum CLIMatrixCases {
                     result.status == expectedStatus,
                     """
                     put --on-conflict \(action.rawValue) exited \(result.status) on \
-                    \(kind.rawValue): \(result.stderrText)
+                    \(kind.rawValue) (stderr \(result.stderrText.count) bytes)
                     """)
                 let readBack = try await rig.read(fileSystem, path: remotePath)
                 #expect(
@@ -333,7 +379,17 @@ enum CLIMatrixCases {
             let binary = try CLIMatrix.binaryURL()
             let flags = try await CLIMatrix.hostKeyFlags(for: "rm", binary: binary)
             let result = try await rig.run(["rm"] + flags + [rig.target(remotePath)])
-            #expect(result.status == 0, "rm failed on \(kind.rawValue): \(result.stderrText)")
+            // Leak question first — this run's environment carries the
+            // backend's secret (CLAUDE.md, "A value a test must not leak
+            // has two exits, not one").
+            let leaks = rig.leaksSecret(result)
+            #expect(leaks == false, "the run printed the secret on \(kind.rawValue)")
+            #expect(
+                result.status == 0,
+                """
+                rm failed on \(kind.rawValue) (exit \(result.status), stderr \
+                \(result.stderrText.count) bytes)
+                """)
             #expect(
                 try await isAbsent(fileSystem, path: remotePath),
                 "rm exited 0 and left \(name) on the \(kind.rawValue) rig")
@@ -367,9 +423,17 @@ enum CLIMatrixCases {
 
             let removed = try await rig.run(
                 ["rm"] + flags + ["--recursive", rig.target(directory)])
+            // Leak question first — this run's environment carries the
+            // backend's secret (CLAUDE.md, "A value a test must not leak
+            // has two exits, not one").
+            let removedLeaks = rig.leaksSecret(removed)
+            #expect(removedLeaks == false, "the run printed the secret on \(kind.rawValue)")
             #expect(
                 removed.status == 0,
-                "rm --recursive failed on \(kind.rawValue): \(removed.stderrText)")
+                """
+                rm --recursive failed on \(kind.rawValue) (exit \(removed.status), stderr \
+                \(removed.stderrText.count) bytes)
+                """)
             #expect(
                 try await isAbsent(fileSystem, path: directory),
                 "rm --recursive exited 0 and left the tree on the \(kind.rawValue) rig")
