@@ -388,6 +388,16 @@ struct SubprocessRunnerTests {
         // instruction, so a wait on it that times out means the pool had no
         // thread to give; `done` is raised when the block returns, which it
         // does once its write end is closed.
+        //
+        // `startBound` is the one wall-clock bound this suite keeps, and it
+        // keeps it because here the bound IS the measurement, not a ceiling
+        // over one: "a block that cannot start within `startBound`" is the
+        // definition of the saturation this test exists to observe, and
+        // `.timedOut` is the reading it takes. Nothing about it is an
+        // assertion that the machine was fast enough — the free width it
+        // produces is asserted to be at most the kernel's limit and is
+        // allowed to be zero, which is what a slow runner produces. The test
+        // is gated on `MACSCP_SATURATION` and runs alone.
         let park: (AsyncSignal?) -> Void = { started in
             let pipe = Pipe()
             writeEnds.append(pipe.fileHandleForWriting)

@@ -10,7 +10,7 @@ import Testing
 /// under cancellation the `Task.sleep` branch of `race` throws at once and
 /// wins the race before the collapsed `wait()` can answer. A property that
 /// another path happens to cover today is not a property that is guarded.
-@Suite("AsyncSignal")
+@Suite("AsyncSignal", .timeLimit(.minutes(1)))
 struct AsyncSignalTests {
     /// The positive half. Without it the cancellation test below would go on
     /// passing against a `wait()` that answers `.cancelled` for everything.

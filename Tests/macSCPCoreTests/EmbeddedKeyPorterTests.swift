@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-@Suite("EmbeddedKeyPorter")
+@Suite("EmbeddedKeyPorter", .timeLimit(.minutes(1)))
 struct EmbeddedKeyPorterTests {
     private func tempDir() -> URL {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -104,9 +104,9 @@ struct EmbeddedKeyPorterTests {
     /// reading either blocks until a writer shows up (a `FileHandle`/`open`
     /// based read) or fails outright (`Data(contentsOf:)` rejects non-regular
     /// files) — so any implementation that touches the path either hangs,
-    /// which the watchdog below turns into a failure, or throws instead of
-    /// returning nil. Only an implementation that never goes near the path
-    /// passes. (What no in-process test can catch is a read whose error is
+    /// which the suite's `.timeLimit` below turns into a failure, or throws
+    /// instead of returning nil. Only an implementation that never goes near
+    /// the path passes. (What no in-process test can catch is a read whose error is
     /// swallowed by `try?`; `embedReadsNothingBeforeDecidingOwnership` covers
     /// that leg at the source level.)
     @Test func embedNeverOpensAnExternalKeyPath() async throws {
@@ -123,18 +123,24 @@ struct EmbeddedKeyPorterTests {
         // A dedicated thread, not `DispatchQueue.global()`: `embed` may block
         // forever here (that is the defect this test exists to catch), and a
         // block submitted to a shared queue would sit unscheduled on a
-        // CPU-poor CI runner for longer than the watchdog below allows. That
-        // failed the test for a reason that has nothing to do with the
-        // invariant — observed on CI, where BOTH waits below timed out, which
-        // is only possible if the work never ran at all (had `embed` really
-        // blocked on the FIFO, the O_WRONLY open would have released it and
-        // the second wait would have returned at once). `Thread` is scheduled
-        // on its own and cannot be starved by pool work.
+        // CPU-poor CI runner for longer than the bound this test carried at
+        // the time allowed. That failed the test for a reason that has
+        // nothing to do with the invariant — observed on CI, where BOTH waits
+        // below timed out, which is only possible if the work never ran at
+        // all (had `embed` really blocked on the FIFO, the O_WRONLY open
+        // would have released it and the second wait would have returned at
+        // once). `Thread` is scheduled on its own and cannot be starved by
+        // pool work. The bound that observation was made against is gone —
+        // the waits below run to the harness limit — but the reason for the
+        // dedicated thread is not: a block that never starts is a hang either
+        // way.
         //
         // The waiting side, by contrast, is an `await`: a semaphore here held
-        // a cooperative-pool thread for the whole watchdog (CLAUDE.md, "Tests
+        // a cooperative-pool thread for the whole wait (CLAUDE.md, "Tests
         // never block the cooperative pool"), which is exactly the starvation
         // the comment above describes, caused from this side of the handoff.
+        // That matters more now than it did: the wait below runs to the
+        // harness limit rather than to ten seconds.
         Thread.detachNewThread {
             outcome.value = Result {
                 try EmbeddedKeyPorter.embed(
@@ -143,13 +149,26 @@ struct EmbeddedKeyPorterTests {
             finished.signal()
         }
 
-        if await finished.wait(timeout: .seconds(10)) != .signalled {
+        // No bound of its own. The wait ends when the latch is raised, or
+        // when the suite's `.timeLimit` cancels this test — `wait()` answers
+        // `.cancelled` for the second, so the "never arrived" branch below is
+        // reached without a clock of this test's own (CLAUDE.md, "A
+        // wall-clock ceiling in a test measures the runner"). A slow runner
+        // therefore makes this test slower; only a blocked `embed` makes it
+        // red.
+        if await finished.wait() != .signalled {
             Issue.record("embed opened an external key path (blocked reading the FIFO)")
             // Unblock the stuck reader so it does not linger for the rest of
             // the suite: opening the FIFO for writing releases its open().
+            // Straight-line and before the wait below, because it is the only
+            // thing on this path that still has an effect.
             let fd = open(fifoPath, O_WRONLY | O_NONBLOCK)
             if fd >= 0 { close(fd) }
-            _ = await finished.wait(timeout: .seconds(10))
+            // Reached only after a cancellation — the sole non-`.signalled`
+            // outcome left — so it answers `.cancelled` at once rather than
+            // joining the released thread. The thread finishes on its own;
+            // nothing below reads what it wrote.
+            _ = await finished.wait()
         } else {
             #expect(try #require(outcome.value).get() == nil)
         }

@@ -991,21 +991,26 @@ struct TerminalPanelViewModelDeliveryTests {
     /// already happened, the wait returns at once instead of parking on a
     /// continuation nobody will resume.
     ///
-    /// It is event-driven WITH A CEILING, and the ceiling is not the timing
-    /// budget the old poll's deadline was. The first version of this had no
-    /// bound at all, and a review measured what that costs: mutate
-    /// `onDelivered?()` in `TerminalPanelViewModel.send` to never fire, and
-    /// this suite ran past ninety seconds instead of failing in five with a
-    /// diagnosis. That trades a flaky test for a hung suite, in a repository
-    /// whose backlog already carries a suite-hang incident. The bound is
-    /// deliberately far outside any scheduling delay -- it is not there to
-    /// decide the race, it is there so a callback that will NEVER fire ends
-    /// as a red test with a message instead of as a runner that never
-    /// returns.
+    /// It is event-driven AND it ends, and the two are no longer the same
+    /// mechanism. The first version of this had no ending at all, and a
+    /// review measured what that costs: mutate `onDelivered?()` in
+    /// `TerminalPanelViewModel.send` to never fire, and this suite ran past
+    /// ninety seconds instead of failing in five with a diagnosis. That
+    /// trades a flaky test for a hung suite, in a repository whose backlog
+    /// already carries a suite-hang incident. The ending that measurement
+    /// bought was a private ceiling task of thirty seconds; it is now the
+    /// suite's `.timeLimit(.minutes(1))`, which cancels the test — and
+    /// `waitForFirstDelivery` resumes its parked waiter from the
+    /// cancellation handler, so the caller's assertion and its message still
+    /// run. A callback that will NEVER fire is still a red test with a
+    /// diagnosis rather than a runner that never returns; what is gone is
+    /// the second clock, which could only measure how loaded the machine was
+    /// (CLAUDE.md, "A wall-clock ceiling in a test measures the runner").
     private final class Box: @unchecked Sendable {
         private let lock = NSLock()
         private var _count = 0
         private var continuation: CheckedContinuation<Void, Never>?
+        private var wasReleased = false
 
         var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
 
@@ -1018,29 +1023,33 @@ struct TerminalPanelViewModelDeliveryTests {
             pending?.resume()
         }
 
-        /// Waits for the first delivery, or gives up after `timeout` and
-        /// reports which happened. The caller asserts on the count either
-        /// way, so a give-up lands on the diagnostic rather than on a
-        /// bare timeout message.
+        /// Waits for the first delivery, or for this test to be cancelled —
+        /// which is what the suite's `.timeLimit` does — and reports which
+        /// happened. The caller asserts on the count either way, so a
+        /// give-up lands on the diagnostic rather than on a bare timeout
+        /// message.
         @discardableResult
-        func waitForFirstDelivery(timeout: Duration = .seconds(30)) async -> Bool {
-            let waiter = Task { await self.parkUntilDelivered() }
-            let ceiling = Task {
-                try? await Task.sleep(for: timeout)
-                // Resuming the continuation from here is what makes the
-                // ceiling real: the waiter is parked on it and nothing else
-                // will touch it if the callback never comes.
+        func waitForFirstDelivery() async -> Bool {
+            await withTaskCancellationHandler {
+                await self.parkUntilDelivered()
+            } onCancel: {
+                // The waiter is parked on the continuation and nothing else
+                // will touch it if the callback never comes; releasing it
+                // here is what lets the caller reach its assertion.
                 self.resumePendingWaiter()
             }
-            await waiter.value
-            ceiling.cancel()
             return count > 0
         }
 
         private func parkUntilDelivered() async {
             await withCheckedContinuation { c in
                 lock.lock()
-                if _count > 0 {
+                // `wasReleased` and not just the count: the handler above can
+                // run BEFORE this parks (a task already cancelled runs it
+                // immediately), and a resume that arrives then has nothing to
+                // resume. Recording it under the same lock is what keeps that
+                // race from parking forever.
+                if _count > 0 || wasReleased {
                     lock.unlock()
                     c.resume()
                     return
@@ -1052,6 +1061,7 @@ struct TerminalPanelViewModelDeliveryTests {
 
         private func resumePendingWaiter() {
             lock.lock()
+            wasReleased = true
             let pending = continuation
             continuation = nil
             lock.unlock()
@@ -1093,12 +1103,12 @@ struct TerminalPanelViewModelDeliveryTests {
 
         gate.open()
         await delivered.waitForFirstDelivery()
-        // Reachable again, and that is the point of the ceiling: without one
-        // a callback that never fires parked this wait forever and the line
-        // below was dead code. It reports which half is missing -- bytes at
-        // the shell but no callback is a callback bug; neither is a flush
-        // bug. That message is what diagnosed the flake this suite was
-        // rebuilt around.
+        // Reachable even when the callback never fires, and that is the
+        // point: the suite's `.timeLimit` cancels the wait above rather than
+        // leaving it parked forever with the line below as dead code. It
+        // reports which half is missing -- bytes at the shell but no callback
+        // is a callback bug; neither is a flush bug. That message is what
+        // diagnosed the flake this suite was rebuilt around.
         #expect(
             delivered.count == 1,
             "callback \(delivered.count), shell received \(shell.sent.count) chunk(s), state \(vm.state)")

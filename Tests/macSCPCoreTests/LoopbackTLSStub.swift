@@ -100,11 +100,14 @@ final class LoopbackTLSStub: @unchecked Sendable {
         }
         listener.start(queue: .global())
 
-        // Generous rather than tight: this wait is a suspension, not a
-        // parked thread (see `make`), so waiting longer costs nothing the
-        // rest of the suite needs. It stays bounded so a listener that never
-        // arrives fails the test instead of wedging the whole run.
-        guard await ready.wait(timeout: .seconds(60)) == .signalled else {
+        // No bound of its own: this wait is a suspension, not a parked
+        // thread (see `make`), and the bound it used to carry could only
+        // measure how loaded the machine was (CLAUDE.md, "A wall-clock
+        // ceiling in a test measures the runner"). What stops a listener
+        // that never arrives from wedging the run is the calling suite's
+        // `.timeLimit`, which cancels this task — and `wait()` answers
+        // `.cancelled` for that, so the throw below still happens.
+        guard await ready.wait() == .signalled else {
             listener.cancel()
             throw StubError.listenerNeverBecameReady
         }
