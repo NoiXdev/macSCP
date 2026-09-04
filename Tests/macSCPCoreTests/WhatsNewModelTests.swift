@@ -19,7 +19,7 @@ struct WhatsNewModelTests {
     }
 
     private static let allReleases = [
-        release("1.0.0"), release("1.1.0"), release("1.2.0"), release("1.3.0"),
+        release("1.0.0"), release("1.1.0"), release("1.2.0"), release("1.3.0"), release("1.4.0"),
     ]
 
     @Test("fresh install shows nothing")
@@ -79,5 +79,54 @@ struct WhatsNewModelTests {
         let shown = WhatsNewModel.releasesToShow(
             current: "dev-abc1234", lastSeen: nil, in: Self.allReleases)
         #expect(shown.isEmpty)
+    }
+
+    // MARK: - Round 1: the dev<->real transition is a rule, not an ASCII accident
+
+    /// This is the genuine regression `releasesToShow`'s old fallback had:
+    /// `ChangelogParser`'s dotted comparator falls back to a plain
+    /// lexicographic compare on a non-numeric component, and `'d'` (0x64)
+    /// sorts above every digit — so `"dev-abc1234"` compared as NEWER than
+    /// `"1.3.0"`, and the old code showed every release "newer than 1.3.0"
+    /// (here, 1.4.0) to a dev-build user, once, the first time they ran a
+    /// dev build after a real release. VERIFIED RED against the
+    /// pre-Round-1 code: `(shown → [1.4.0]).isEmpty → false`. `current` is
+    /// now checked for being fully numeric FIRST — a non-numeric `current`
+    /// always shows nothing, on purpose (a dev build never shows the
+    /// sheet), which closes exactly this path.
+    @Test("a non-numeric current version after a numeric lastSeen shows nothing, not every release")
+    func nonNumericCurrentAfterANumericLastSeenShowsNothing() {
+        let shown = WhatsNewModel.releasesToShow(
+            current: "dev-abc1234", lastSeen: "1.3.0", in: Self.allReleases)
+        #expect(shown.isEmpty)
+    }
+
+    /// The mirror combination — a NUMERIC `current` against a non-numeric
+    /// `lastSeen` — already read `[]` under the OLD fallback for this exact
+    /// string (`"1.4.0"` compares as NOT newer than `"dev-abc1234"`, the
+    /// same `'d' > '1'` comparison as above, just asked in the other
+    /// direction — NOT verified red; passed before this change too). That
+    /// is exactly the accident this ruling removes: nothing here GUARANTEED
+    /// that outcome — a differently-shaped non-numeric string could have
+    /// compared the other way and shown every release instead. `lastSeen`
+    /// being non-numeric is now an explicit rule ("treat as a fresh
+    /// install"): `[]`, decided on purpose rather than on the ASCII value
+    /// of whatever prefix a dev build happens to use.
+    @Test("a numeric current version after a non-numeric lastSeen shows nothing")
+    func numericCurrentAfterANonNumericLastSeenShowsNothing() {
+        let shown = WhatsNewModel.releasesToShow(
+            current: "1.4.0", lastSeen: "dev-abc1234", in: Self.allReleases)
+        #expect(shown.isEmpty)
+    }
+
+    /// The numeric path itself — both versions ordinary release tags — is
+    /// unchanged by the numeric check: it only ever turns an ASCII-accident
+    /// "newer"/"not newer" into an explicit, string-shape-independent rule.
+    /// Not verified red — this combination was never accident-dependent.
+    @Test("two numeric versions still show the release between them")
+    func twoNumericVersionsStillShowTheReleaseBetween() {
+        let shown = WhatsNewModel.releasesToShow(
+            current: "1.4.0", lastSeen: "1.3.0", in: Self.allReleases)
+        #expect(shown.map(\.version) == ["1.4.0"])
     }
 }

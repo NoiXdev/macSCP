@@ -294,6 +294,17 @@ struct MacSCPApp: App {
     /// `current`, just against an empty release list, exactly as
     /// `WhatsNewModel.releasesToShow` would for a `lastSeen` already
     /// caught up.
+    ///
+    /// The same is true of a resolvable but NON-NUMERIC `current` — a dev
+    /// build's `"dev-<hash>"` (Round 1 ruling, `WhatsNewModel
+    /// .releasesToShow`'s doc comment): `store.lastSeenVersion = current`
+    /// below runs unconditionally, after `WhatsNewModel` has already
+    /// decided `toShow` — a dev build never shows the sheet, but it still
+    /// records the exact string it ran under, so a LATER numeric release
+    /// compares against that recorded dev string rather than against
+    /// whatever real version predates it (which `releasesToShow` treats as
+    /// a fresh install per that same ruling, showing nothing either way,
+    /// but with the true `lastSeen` on record either way).
     private static func decideWhatsNew(
         store: SettingsStore
     ) -> (current: String, releases: [ChangelogRelease]) {
