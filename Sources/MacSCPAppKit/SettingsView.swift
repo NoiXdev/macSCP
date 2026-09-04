@@ -361,7 +361,7 @@ private struct AppearanceSettingsSection: View {
             }
 
             // Compact sidebar mode (sidebar-polish plan, Task 2): tighter
-            // row padding and no host-subtitle line — `SessionSidebar`
+            // row padding, nothing else — `SessionSidebar`
             // reads this the same way it reads `sidebarTagFilterEnabled`
             // above, as a plain fact handed down from `ContentView`.
             Section {

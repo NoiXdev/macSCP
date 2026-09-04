@@ -318,7 +318,7 @@ public final class SettingsStore {
     }
 
     /// Compact sidebar mode (sidebar-polish plan, Task 2): tighter row
-    /// padding and no host-subtitle line on session rows. Default OFF — a
+    /// padding on session rows — the one thing the mode changes. Default OFF — a
     /// settings.json predating this key opens the sidebar exactly as it
     /// always has.
     public var sidebarCompact: Bool {
