@@ -53,7 +53,11 @@ struct CLIMatrix: Sendable {
 
     /// Never interpolated into a string in this file, and `private` so it
     /// cannot be from outside it either. It has exactly one exit: the
-    /// child's environment, in `environment()` below.
+    /// child's environment, in `environment(secretVariable:)` below — under
+    /// this backend's own variable for an ordinary run, and under
+    /// `secretRelayVariable` for a `--password-command` one, which is still
+    /// the environment and still nothing else. `leaksSecret(_:)` reads it to
+    /// answer a question ABOUT it and returns a `Bool`, never the value.
     private let secret: String
 
     var descriptor: BackendDescriptor { .descriptor(for: kind) }
@@ -162,19 +166,40 @@ struct CLIMatrix: Sendable {
     /// an `AWS_SECRET_ACCESS_KEY` already exported in the developer's shell
     /// would reach an S3 child and decide the test, and a `MACSCP_PASSWORD`
     /// would reach every other one.
-    private func environment() -> [String: String] {
+    ///
+    /// `secretVariable` is the ONE variable the secret is written to, or
+    /// `nil` for a child that gets no secret at all. It is a parameter
+    /// rather than always `descriptor.secretEnvironmentVariable` because
+    /// the `--password-command` case needs both of the other two shapes: a
+    /// child with no secret anywhere (the control that makes the positive
+    /// run mean something) and a child whose secret sits in a variable the
+    /// CLI itself never reads, so that only the helper command can deliver
+    /// it. Neither shape puts the value anywhere but the environment.
+    private func environment(secretVariable: String?) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         for other in ConnectionKind.allCases {
             if let variable = BackendDescriptor.descriptor(for: other).secretEnvironmentVariable {
                 environment.removeValue(forKey: variable)
             }
         }
-        if let variable = descriptor.secretEnvironmentVariable {
-            environment[variable] = secret
+        environment.removeValue(forKey: CLIMatrix.secretRelayVariable)
+        if let secretVariable {
+            environment[secretVariable] = secret
         }
         environment["MACSCP_STORAGE_DIRECTORY"] = storageDirectory.path(percentEncoded: false)
         return environment
     }
+
+    /// The variable the `--password-command` cases relay the secret through:
+    /// the child's environment under a name the CLI reads for no backend, so
+    /// the ONLY way it can reach a connect is the helper command the case
+    /// hands to `--password-command`.
+    ///
+    /// `noBackendReadsTheSecretRelayVariable` holds it to that — the name is
+    /// compared against every backend's own `secretEnvironmentVariable`
+    /// rather than eyeballed, because a collision would silently turn the
+    /// positive run into a test of `EnvironmentSecretSource`.
+    static let secretRelayVariable = "MACSCP_CLI_MATRIX_RELAY"
 
     /// Runs the built binary with `arguments` and this rig's store and
     /// secret. Through `SubprocessRunner`, which awaits the child instead of
@@ -188,7 +213,43 @@ struct CLIMatrix: Sendable {
     @discardableResult
     func run(_ arguments: [String]) async throws -> SubprocessResult {
         try await SubprocessRunner.run(
-            try CLIMatrix.binaryURL(), arguments: arguments, environment: environment())
+            try CLIMatrix.binaryURL(), arguments: arguments,
+            environment: environment(secretVariable: descriptor.secretEnvironmentVariable))
+    }
+
+    /// Runs the binary with the secret in `variable` INSTEAD of the backend's
+    /// own secret variable — the environment a `--password-command` case
+    /// needs, where the helper command is the only route the secret has.
+    @discardableResult
+    func run(_ arguments: [String], secretRelayedThrough variable: String) async throws
+        -> SubprocessResult
+    {
+        try await SubprocessRunner.run(
+            try CLIMatrix.binaryURL(), arguments: arguments,
+            environment: environment(secretVariable: variable))
+    }
+
+    /// Runs the binary with NO secret in the environment at all: every
+    /// backend's variable is removed and none is set. The control a
+    /// `--password-command` case is measured against — without it, a run that
+    /// succeeds proves only that SOMETHING answered.
+    @discardableResult
+    func runWithoutASecret(_ arguments: [String]) async throws -> SubprocessResult {
+        try await SubprocessRunner.run(
+            try CLIMatrix.binaryURL(), arguments: arguments,
+            environment: environment(secretVariable: nil))
+    }
+
+    /// Whether `text` carries this rig's secret.
+    ///
+    /// The comparison happens HERE, inside the only type that holds the
+    /// value, so a case can assert "this output does not leak" without the
+    /// secret — or its spelling — ever reaching an expectation's source text.
+    /// `#expect` reports the expression it checked, so a literal in the test
+    /// would be printed by the very failure that says the secret leaked
+    /// (CLAUDE.md, "A value a test must not leak has two exits, not one").
+    func leaksSecret(_ text: String) -> Bool {
+        text.contains(secret)
     }
 
     // MARK: - The backend's own file system
@@ -378,6 +439,85 @@ struct CLIMatrix: Sendable {
                 """)
         }
         return supported
+    }
+
+    // MARK: - Host keys
+
+    /// Whether this backend authenticates the SERVER with a key the client
+    /// remembers — what `--accept-new`, `--non-interactive` and TOFU are
+    /// about — PRINTING the reason when it does not, the same way
+    /// `supports(_:named:operation:)` does.
+    ///
+    /// It is NOT a `ProtocolCapabilities` axis, because there is none:
+    /// counted 2026-09-04, that type carries `supportsShell`,
+    /// `permissionModel`, `supportsSymlinks`, `atomicRename`,
+    /// `directoriesAreReal`, `resumeMode`, `supportsPresignedURL`,
+    /// `supportsRemoteChecksum` and `transport`, and not one of them says
+    /// anything about host keys. `transport` is the near miss and would be
+    /// the wrong answer: SSH is `.alwaysEncrypted` and the other two are
+    /// `.optionalTLS`, which is a statement about the channel, not about
+    /// whether the client remembers the server's identity — a WebDAV vhost
+    /// on TLS is still `.optionalTLS` and still has no host key.
+    ///
+    /// So the answer is read off the connection config the CLI itself
+    /// builds, in an EXHAUSTIVE switch: the `.ssh` arm is the one whose
+    /// backend closure is handed the `HostKeyDecider` and a `KnownHostsStore`
+    /// (`BackendDescriptor.sshDescriptor`), and the other two arms take
+    /// neither. A fourth protocol does not compile here until someone says
+    /// which it is.
+    ///
+    /// The switch is a claim about the backends, so it is not left as one:
+    /// `anUnknownHostKeyIsRefusedUntilAccepted` drives BOTH sides of it
+    /// against the rig — a backend this answers `true` for must refuse
+    /// `--non-interactive` and record exactly one key under `--accept-new`,
+    /// and a backend it answers `false` for must connect with neither flag
+    /// mattering and record nothing.
+    func hasHostKeys(operation: String) throws -> Bool {
+        let has: Bool
+        switch try StoredSessionConnectionConfig.build(for: session, secret: secret) {
+        case .ssh: has = true
+        case .s3, .webdav: has = false
+        }
+        if !has {
+            print("""
+                CLIMatrix: skipping \(operation) on \(kind.rawValue) — this \
+                backend authenticates no host key
+                """)
+        }
+        return has
+    }
+
+    /// The host keys the CHILD remembered, read out of the temporary store
+    /// the child was pointed at — the same `known_hosts.json` the CLI writes
+    /// through `KnownHostsStore`, and nowhere near the developer's own.
+    func recordedHostKeys() throws -> [KnownHostKey] {
+        try KnownHostsStore(directory: storageDirectory).allKeys()
+    }
+
+    /// Replaces the remembered key for the host it was recorded against with
+    /// a DIFFERENT one, and returns what was planted.
+    ///
+    /// Derived from the key the rig actually presented rather than written
+    /// down: the recorded blob is decoded, its last byte inverted, and the
+    /// result put back under the same host and port. So this file carries no
+    /// key material of its own (CLAUDE.md: test keys are generated at
+    /// runtime), the planted key is guaranteed to differ from the real one,
+    /// and the host and port come from the entry the connect itself wrote —
+    /// not from a literal that would have to track the rig's coordinates.
+    func plantADifferentHostKey() throws -> KnownHostKey {
+        let store = KnownHostsStore(directory: storageDirectory)
+        guard let real = try store.allKeys().first else {
+            throw CLIMatrixError.noHostKeyRecorded(kind: kind.rawValue)
+        }
+        guard var blob = Data(base64Encoded: real.publicKeyBase64), !blob.isEmpty else {
+            throw CLIMatrixError.unreadableHostKey(kind: kind.rawValue)
+        }
+        blob[blob.index(before: blob.endIndex)] ^= 0xFF
+        let planted = KnownHostKey(
+            host: real.host, port: real.port, keyType: real.keyType,
+            publicKeyBase64: blob.base64EncodedString())
+        try store.upsert(planted)
+        return planted
     }
 
     // MARK: - The binary, and what it says it can do
@@ -650,6 +790,162 @@ extension CLIMatrix {
     }
 }
 
+/// One entry of `sessions --json`, decoded — the same strictness
+/// `CLIListedItem` is decoded with, and for the same reason: a renamed key
+/// must fail the case, not empty the comparison.
+///
+/// `group` and `tags` have no `null` state to carry (`SessionCatalog.Row`'s
+/// `groupPath` is already `""` at top level and `tags` already `[]` when
+/// untagged), so neither is optional here.
+struct CLISessionRow: Decodable, Equatable, Sendable {
+    let name: String
+    let kind: String
+    let target: String
+    let group: String
+    let tags: [String]
+}
+
+extension CLIMatrix {
+    /// Decodes `sessions --json`: one JSON object per line, every non-empty
+    /// line decoded, nothing skipped.
+    static func sessionRows(_ stdout: String) throws -> [CLISessionRow] {
+        let decoder = JSONDecoder()
+        return try stdout
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .map { try decoder.decode(CLISessionRow.self, from: Data($0.utf8)) }
+    }
+
+    /// The KEYS of every object `sessions --json` printed, per line.
+    ///
+    /// Decoding answers what the matrix reads; this answers what the binary
+    /// WROTE, which is the question a leak has to be caught by: a field added
+    /// to `SessionCatalog.Row` — a key path, a login-set id, a secret handle
+    /// of any shape — reaches stdout without any decode here failing.
+    static func sessionRowKeys(_ stdout: String) throws -> [Set<String>] {
+        try stdout
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .map { line in
+                let object = try JSONSerialization.jsonObject(with: Data(line.utf8))
+                guard let dictionary = object as? [String: Any] else {
+                    throw CLIMatrixError.unreadableSessionRow
+                }
+                return Set(dictionary.keys)
+            }
+    }
+}
+
+/// A temporary session store with a session for EVERY backend, spread over
+/// two top-level groups, one subgroup and two tags — the fixture the
+/// `sessions` filter cases read.
+///
+/// It opens no connection and needs no rig: `SessionsCommand` reads
+/// `SessionStore` and nothing else (no keychain, no network), which is the
+/// whole reason that subcommand exists. What it does need is the built
+/// binary, so the cases that drive it are gated with the rest of the matrix.
+///
+/// The sessions come from `CLIMatrix.make(for:label:)` — the same exhaustive
+/// per-kind fixture the rig cases use — so a fourth protocol appears in this
+/// store without an edit here, and its `target` column is a real one. The
+/// PLACEMENT is derived from the position in `ConnectionKind.allCases`
+/// rather than from which backend it is: the first lands in a top-level
+/// group, the second in a subgroup of that group (so `--group <parent>` has
+/// something to reach through), the third in the other top-level group, and
+/// any further one stays at the top level, untagged. Every expectation is
+/// computed from `entries` below, never from a count written down, so that
+/// rotation cannot make a case wrong — only a case that asserts on an empty
+/// expected set could, which is why each one checks its expectation is
+/// non-empty first.
+struct CLISessionCatalogFixture: Sendable {
+    struct Entry: Sendable, Equatable {
+        let name: String
+        let kind: ConnectionKind
+        /// Group names from the top down; empty for a top-level session.
+        let ancestry: [String]
+        let tags: [String]
+
+        /// The `group` column `sessions --json` prints for this entry.
+        var groupPath: String { ancestry.joined(separator: " / ") }
+    }
+
+    static let parentGroup = "cli-matrix-alpha"
+    static let childGroup = "cli-matrix-nested"
+    static let otherGroup = "cli-matrix-beta"
+    static let firstTag = "cli-matrix-red"
+    static let secondTag = "cli-matrix-blue"
+
+    let directory: URL
+    let entries: [Entry]
+
+    static func make() throws -> CLISessionCatalogFixture {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(
+                "macscp-cli-matrix-sessions-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            let store = SessionStore(directory: directory)
+            let parent = StoredGroup(name: parentGroup, position: 0)
+            let child = StoredGroup(name: childGroup, parentID: parent.id, position: 0)
+            let other = StoredGroup(name: otherGroup, position: 1)
+            for group in [parent, child, other] {
+                try store.upsertGroup(group)
+            }
+
+            // Position in the store's own group tree, and the tags, per
+            // position in `ConnectionKind.allCases`. The tuple is the
+            // placement rule; `entries` below is the same rule as data, so
+            // the expectations and the store cannot disagree.
+            let placement: [(groupID: UUID?, ancestry: [String], tags: [String])] = [
+                (parent.id, [parentGroup], [firstTag]),
+                (child.id, [parentGroup, childGroup], [secondTag]),
+                (other.id, [otherGroup], [firstTag, secondTag]),
+            ]
+
+            var entries: [Entry] = []
+            for (index, kind) in ConnectionKind.allCases.enumerated() {
+                let rig = try CLIMatrix.make(for: kind, label: "sessions")
+                defer { rig.tearDown() }
+                var session = rig.session
+                let spot = index < placement.count
+                    ? placement[index]
+                    : (groupID: nil, ancestry: [String](), tags: [String]())
+                session.groupID = spot.groupID
+                session.tags = spot.tags
+                try store.upsert(session)
+                entries.append(
+                    Entry(
+                        name: session.name, kind: kind, ancestry: spot.ancestry,
+                        tags: spot.tags))
+            }
+            return CLISessionCatalogFixture(directory: directory, entries: entries)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
+
+    func tearDown() {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    /// Runs the binary against THIS store. No secret is set for any backend:
+    /// `sessions` resolves none, and a child that carries one would be
+    /// proving something else.
+    @discardableResult
+    func run(_ arguments: [String]) async throws -> SubprocessResult {
+        var environment = ProcessInfo.processInfo.environment
+        for kind in ConnectionKind.allCases {
+            if let variable = BackendDescriptor.descriptor(for: kind).secretEnvironmentVariable {
+                environment.removeValue(forKey: variable)
+            }
+        }
+        environment["MACSCP_STORAGE_DIRECTORY"] = directory.path(percentEncoded: false)
+        return try await SubprocessRunner.run(
+            try CLIMatrix.binaryURL(), arguments: arguments, environment: environment)
+    }
+}
+
 /// What a case left on the rig, so the scaffolding can remove it on BOTH
 /// exits.
 ///
@@ -740,13 +1036,74 @@ extension CLIMatrix {
     }
 }
 
+extension CLIMatrix {
+    /// The subcommands the matrix's own cases DRIVE, read out of the case
+    /// source rather than from a list a reader would have to maintain.
+    ///
+    /// The token is a run through a fixture's own `run([…])` — `rig.run([`
+    /// in a backend case, the sessions fixture's in a `sessions` one. That
+    /// is what "a case drives this subcommand" means here, and it is
+    /// deliberately narrower than "the file mentions the name somewhere":
+    /// the guards in the matrix also launch the binary through
+    /// `SubprocessRunner` directly, to ask it about a flag it does not
+    /// declare or to read a help screen, and none of those is a case
+    /// covering that command. Those calls pass the binary first and an
+    /// `arguments:` label second, so this pattern cannot match them.
+    ///
+    /// COMMENT LINES ARE REMOVED FIRST, and structurally rather than by
+    /// asking the author to be careful: this project writes long
+    /// explanatory comments AND scans its own source, and a comment quoting
+    /// a call is indistinguishable from the call to a scanner (CLAUDE.md,
+    /// "Source-scanning guards read comments too"). A commented-out drive
+    /// must not count as coverage.
+    ///
+    /// Pure, so the two hazards above are measured against a fixture rather
+    /// than argued about — see `theDrivenScanReadsCallsAndNotComments`.
+    static func drivenSubcommands(inSource source: String) throws -> Set<String> {
+        let code = source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        let pattern = try Regex(#"\.run\(\s*\[\s*"([A-Za-z0-9-]+)""#)
+        var names: Set<String> = []
+        for match in code.matches(of: pattern) {
+            guard let range = match.output[1].range else { continue }
+            names.insert(String(code[range]))
+        }
+        return names
+    }
+
+    /// The same scan, over a source FILE — the caller passes its own
+    /// `#filePath`, so the guard reads the very file the cases live in and
+    /// cannot be pointed at a stale copy.
+    static func drivenSubcommands(inFileAt path: String) throws -> Set<String> {
+        guard let source = try? String(contentsOfFile: path, encoding: .utf8),
+              !source.isEmpty else {
+            throw CLIMatrixError.unreadableTestSource(path)
+        }
+        return try drivenSubcommands(inSource: source)
+    }
+}
+
 enum CLIMatrixError: Error, CustomStringConvertible {
     case binaryNotFound(String)
     case helpFailed(status: Int32)
     case noSubcommandsInHelp
+    case noHostKeyRecorded(kind: String)
+    case unreadableHostKey(kind: String)
+    case unreadableSessionRow
+    case unreadableTestSource(String)
 
     var description: String {
         switch self {
+        case .noHostKeyRecorded(let kind):
+            return "no host key was recorded for the \(kind) rig"
+        case .unreadableHostKey(let kind):
+            return "the host key recorded for the \(kind) rig is not readable Base64"
+        case .unreadableSessionRow:
+            return "sessions --json printed a line that is not a JSON object"
+        case .unreadableTestSource(let path):
+            return "the matrix case source could not be read at \(path)"
         case .binaryNotFound(let path):
             return """
                 macscp-cli not found at \(path). Build it before running the \

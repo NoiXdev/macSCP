@@ -410,6 +410,194 @@ enum CLIMatrixCases {
         }
     }
 
+    // MARK: - Host keys
+
+    /// An unknown host key is refused under `--non-interactive`, records
+    /// nothing, and is then accepted — exactly once — under `--accept-new`.
+    ///
+    /// The store is FRESH, so the rig's key is unknown to it: `CLIMatrix
+    /// .make` creates the temporary directory the child gets as
+    /// `MACSCP_STORAGE_DIRECTORY`, and the `known_hosts.json` beside the
+    /// session file does not exist yet. That is also why this case does NOT
+    /// go through `withRig`: the verification connection that scaffold opens
+    /// accepts unknown keys itself (`.asking { _ in true }`), and it would
+    /// write the rig's key into the very store this case needs empty.
+    ///
+    /// What `--non-interactive` adds here is stated rather than overclaimed:
+    /// the child's stdin is the null device (`SubprocessRunner`), so
+    /// `CLIEnvironment.hasTTY` is false and `HostKeyPolicy.decision` turns
+    /// plain `.ask` into `.reject` as well. In THIS harness the flag and its
+    /// absence therefore reach the same refusal, and only a pty could tell
+    /// them apart; the flag is passed because it is what an unattended
+    /// caller passes, and the decision table itself is pinned by
+    /// `HostKeyPolicy`'s own unit tests. The discriminator that IS measured
+    /// here is `--accept-new`, which turns the same refusal into a connect.
+    ///
+    /// Which backends are asked is derived, not listed — `hasHostKeys` reads
+    /// the connection config the CLI builds, and S3 and WebDAV authenticate
+    /// no host key at all. Their branch is not a bare `return`: a backend
+    /// that has no host keys must still CONNECT with `--non-interactive` and
+    /// leave the store empty, so the gate is measured on both sides rather
+    /// than merely believed on one. A gate stuck at `false` fails the
+    /// refusal below; a gate stuck at `true` fails on S3 and WebDAV, which
+    /// exit 0 where it would demand 11.
+    static func anUnknownHostKeyIsRefusedUntilAccepted(_ kind: ConnectionKind) async throws {
+        let rig = try CLIMatrix.make(for: kind, label: "hostkey")
+        defer { rig.tearDown() }
+        let target = rig.target(rig.remoteRoot)
+        #expect(try rig.recordedHostKeys().isEmpty, "a fresh store already knows a host key")
+
+        guard try rig.hasHostKeys(operation: "the unknown-host-key refusal") else {
+            let result = try await rig.run(["ls", "--non-interactive", "--json", target])
+            #expect(
+                result.status == 0,
+                """
+                ls --non-interactive failed on \(kind.rawValue), which authenticates no \
+                host key: \(result.stderrText)
+                """)
+            #expect(
+                try rig.recordedHostKeys().isEmpty,
+                "\(kind.rawValue) recorded a host key it has no host keys for")
+            return
+        }
+
+        let refused = try await rig.run(["ls", "--non-interactive", "--json", target])
+        #expect(
+            refused.status == CLIExitCode.hostKeyUnknown.rawValue,
+            "an unknown host key exited \(refused.status) on \(kind.rawValue)")
+        // "Refused" and "connected, then complained" are not the same thing,
+        // and the exit code alone cannot tell them apart: nothing may have
+        // been listed, and nothing may have been remembered.
+        #expect(refused.stdoutText.isEmpty, "a refused connect listed something")
+        #expect(
+            try rig.recordedHostKeys().isEmpty,
+            "a refused connect recorded the host key anyway on \(kind.rawValue)")
+
+        let accepted = try await rig.run(["ls", "--accept-new", "--json", target])
+        #expect(
+            accepted.status == 0,
+            "ls --accept-new failed on \(kind.rawValue): \(accepted.stderrText)")
+        let recorded = try rig.recordedHostKeys()
+        #expect(
+            recorded.count == 1,
+            "--accept-new recorded \(recorded.count) host keys on \(kind.rawValue)")
+    }
+
+    /// A REMEMBERED host key that changes is a hard stop, and `--accept-new`
+    /// does not soften it.
+    ///
+    /// The invariant this pins is the security-critical one: `--accept-new`
+    /// says something about UNKNOWN keys and nothing about a mismatch, and
+    /// `HostKeyValidation.evaluate` never consults a decider for one. The
+    /// planted key is derived from the key the rig really presented (last
+    /// byte inverted, same host and port), so nothing here carries key
+    /// material and the two fingerprints cannot accidentally agree.
+    ///
+    /// The last assertion is the one that would go unnoticed: a mismatch
+    /// that re-TOFU'd would exit non-zero all the same while quietly
+    /// replacing the remembered key, so the STORE is read afterwards and the
+    /// planted key must still be the one on file.
+    static func aChangedHostKeyIsAHardStop(_ kind: ConnectionKind) async throws {
+        let rig = try CLIMatrix.make(for: kind, label: "hostkeymismatch")
+        defer { rig.tearDown() }
+        guard try rig.hasHostKeys(operation: "the host-key mismatch stop") else { return }
+        let target = rig.target(rig.remoteRoot)
+
+        let accepted = try await rig.run(["ls", "--accept-new", "--json", target])
+        #expect(
+            accepted.status == 0,
+            "ls --accept-new failed on \(kind.rawValue): \(accepted.stderrText)")
+
+        let planted = try rig.plantADifferentHostKey()
+        let refused = try await rig.run(["ls", "--accept-new", "--json", target])
+        #expect(
+            refused.status == CLIExitCode.hostKeyMismatch.rawValue,
+            "a changed host key exited \(refused.status) on \(kind.rawValue)")
+        #expect(refused.stdoutText.isEmpty, "a refused connect listed something")
+
+        let after = try rig.recordedHostKeys()
+        #expect(after.count == 1, "the mismatch left \(after.count) keys on file")
+        #expect(
+            after.first?.publicKeyBase64 == planted.publicKeyBase64,
+            "the mismatch overwrote the remembered key instead of stopping")
+    }
+
+    // MARK: - The secret's route
+
+    /// `--password-command` really delivers the secret, and the value
+    /// reaches no argument vector, no file and no output.
+    ///
+    /// How the secret travels: the child's ENVIRONMENT, under
+    /// `CLIMatrix.secretRelayVariable` — a name no backend reads (pinned by
+    /// `noBackendReadsTheSecretRelayVariable`), with every backend's own
+    /// secret variable removed. The argv carries the command TEXT, and that
+    /// text names the variable rather than containing the value, so the
+    /// secret is in no `ps` listing on either side. Nothing is written to
+    /// disk: a helper SCRIPT would be a second copy of the same relay plus a
+    /// file to create, chmod and remove, and the value would still have to
+    /// come from the environment for the script to be safe to write at all.
+    ///
+    /// Three runs, because the positive one alone proves nothing — the
+    /// backends' secrets are also in this test process's own environment,
+    /// and a child that inherited one would succeed for the wrong reason:
+    ///   - the CONTROL, with no secret anywhere and no helper: must fail
+    ///     authentication, which is what makes the run below meaningful;
+    ///   - the helper, which must succeed AND name itself as the source that
+    ///     answered (`--verbose`), so "the environment answered" cannot pass
+    ///     for "the command answered";
+    ///   - a FAILING helper, whose error must name the command's failure and
+    ///     nothing else.
+    static func theSecretComesFromThePasswordCommand(_ kind: ConnectionKind) async throws {
+        let rig = try CLIMatrix.make(for: kind, label: "pwcmd")
+        defer { rig.tearDown() }
+        let binary = try CLIMatrix.binaryURL()
+        let flags = try await CLIMatrix.hostKeyFlags(for: "ls", binary: binary)
+        let options = try await CLIMatrix.advertisedOptions(for: "ls", binary: binary)
+        #expect(options.contains("--password-command"), "ls advertises no --password-command")
+        let target = rig.target(rig.remoteRoot)
+
+        let control = try await rig.runWithoutASecret(["ls"] + flags + ["--json", target])
+        #expect(
+            control.status == CLIExitCode.auth.rawValue,
+            "\(kind.rawValue) connected with no secret at all (exit \(control.status))")
+
+        // The command text: a shell reading the relay variable. It is built
+        // here and checked for the value before it is ever passed, so a
+        // future edit that interpolated the secret into it fails rather than
+        // ships.
+        let command = "printf %s \"$\(CLIMatrix.secretRelayVariable)\""
+        let commandCarriesTheSecret = rig.leaksSecret(command)
+        #expect(commandCarriesTheSecret == false, "the --password-command argument carries a secret")
+
+        let delivered = try await rig.run(
+            ["ls"] + flags + ["--json", "--verbose", "--password-command", command, target],
+            secretRelayedThrough: CLIMatrix.secretRelayVariable)
+        #expect(
+            delivered.status == 0,
+            "--password-command did not deliver on \(kind.rawValue): \(delivered.stderrText)")
+        // The label comes from the source type itself, not from a string
+        // written here: renaming it moves both sides at once.
+        let label = PasswordCommandSecretSource(command: "true").label
+        #expect(
+            delivered.stderrText.contains("secret source: \(label)"),
+            "another source answered on \(kind.rawValue)")
+        #expect(!(try CLIMatrix.listing(delivered.stdoutText)).isEmpty, "nothing was listed")
+
+        let deliveredStdoutLeaks = rig.leaksSecret(delivered.stdoutText)
+        let deliveredStderrLeaks = rig.leaksSecret(delivered.stderrText)
+        #expect(deliveredStdoutLeaks == false)
+        #expect(deliveredStderrLeaks == false)
+
+        let broken = try await rig.runWithoutASecret(
+            ["ls"] + flags + ["--json", "--password-command", "exit 3", target])
+        #expect(
+            broken.status == CLIExitCode.auth.rawValue,
+            "a failing --password-command exited \(broken.status) on \(kind.rawValue)")
+        #expect(broken.stderrText.contains("\(label) failed"))
+        let brokenStderrLeaks = rig.leaksSecret(broken.stderrText)
+        #expect(brokenStderrLeaks == false)
+    }
+
     // MARK: - Shared reading
 
     /// Whether the entry is gone, distinguishing "not there" from "the
@@ -470,6 +658,18 @@ struct CLIMatrixSSHITests {
     @Test func rmRefusesTheSessionRootWithoutTheEscapeHatch() async throws {
         try await CLIMatrixCases.rmRefusesTheSessionRootWithoutTheEscapeHatch(Self.kind)
     }
+
+    @Test func anUnknownHostKeyIsRefusedUntilAccepted() async throws {
+        try await CLIMatrixCases.anUnknownHostKeyIsRefusedUntilAccepted(Self.kind)
+    }
+
+    @Test func aChangedHostKeyIsAHardStop() async throws {
+        try await CLIMatrixCases.aChangedHostKeyIsAHardStop(Self.kind)
+    }
+
+    @Test func theSecretComesFromThePasswordCommand() async throws {
+        try await CLIMatrixCases.theSecretComesFromThePasswordCommand(Self.kind)
+    }
 }
 
 @Suite("CLIMatrixS3", .enabled(if: rigIsEnabled), .serialized)
@@ -512,6 +712,18 @@ struct CLIMatrixS3ITests {
     @Test func rmRefusesTheSessionRootWithoutTheEscapeHatch() async throws {
         try await CLIMatrixCases.rmRefusesTheSessionRootWithoutTheEscapeHatch(Self.kind)
     }
+
+    @Test func anUnknownHostKeyIsRefusedUntilAccepted() async throws {
+        try await CLIMatrixCases.anUnknownHostKeyIsRefusedUntilAccepted(Self.kind)
+    }
+
+    @Test func aChangedHostKeyIsAHardStop() async throws {
+        try await CLIMatrixCases.aChangedHostKeyIsAHardStop(Self.kind)
+    }
+
+    @Test func theSecretComesFromThePasswordCommand() async throws {
+        try await CLIMatrixCases.theSecretComesFromThePasswordCommand(Self.kind)
+    }
 }
 
 @Suite("CLIMatrixWebDAV", .enabled(if: rigIsEnabled), .serialized)
@@ -553,6 +765,221 @@ struct CLIMatrixWebDAVITests {
 
     @Test func rmRefusesTheSessionRootWithoutTheEscapeHatch() async throws {
         try await CLIMatrixCases.rmRefusesTheSessionRootWithoutTheEscapeHatch(Self.kind)
+    }
+
+    @Test func anUnknownHostKeyIsRefusedUntilAccepted() async throws {
+        try await CLIMatrixCases.anUnknownHostKeyIsRefusedUntilAccepted(Self.kind)
+    }
+
+    @Test func aChangedHostKeyIsAHardStop() async throws {
+        try await CLIMatrixCases.aChangedHostKeyIsAHardStop(Self.kind)
+    }
+
+    @Test func theSecretComesFromThePasswordCommand() async throws {
+        try await CLIMatrixCases.theSecretComesFromThePasswordCommand(Self.kind)
+    }
+}
+
+// MARK: - sessions
+
+/// The one subcommand that opens no connection, so the one suite in the
+/// matrix that is not per backend: `sessions` reads the store and nothing
+/// else. It still needs the built binary, so it is gated with the rest.
+///
+/// The store it reads carries a session for EVERY backend — built through
+/// the same per-kind fixture the rig suites use — spread over two top-level
+/// groups, one subgroup and two tags (`CLISessionCatalogFixture`). Every
+/// expectation below is computed from that fixture's own `entries`, and each
+/// one is checked for being non-empty first: a filter that matched nothing
+/// and an expectation that expected nothing agree perfectly.
+@Suite("CLIMatrixSessions", .enabled(if: rigIsEnabled), .serialized)
+struct CLIMatrixSessionsITests {
+    private static func withFixture(
+        _ body: (CLISessionCatalogFixture, [String]) async throws -> Void
+    ) async throws {
+        let fixture = try CLISessionCatalogFixture.make()
+        defer { fixture.tearDown() }
+        // Asked for, never written in: `sessions` declares `JSONOptions`,
+        // so it takes none of the connection flags and REFUSES one it is
+        // handed (`theConnectionFlagsAreAskedForPerCommand`).
+        let flags = try await CLIMatrix.hostKeyFlags(
+            for: "sessions", binary: try CLIMatrix.binaryURL())
+        try await body(fixture, flags)
+    }
+
+    private static func rows(
+        _ result: SubprocessResult, arguments: String
+    ) throws -> [CLISessionRow] {
+        #expect(result.status == 0, "sessions \(arguments) exited \(result.status): \(result.stderrText)")
+        return try CLIMatrix.sessionRows(result.stdoutText)
+    }
+
+    /// Unfiltered, every stored session is reported — with its group path,
+    /// its tags, its kind and a target — and the printed object carries no
+    /// field beyond the ones `SessionCatalog.Row` declares.
+    ///
+    /// That last check is the security-relevant one, and it is why the keys
+    /// are read from the JSON rather than only decoded: `CLISessionRow`
+    /// decodes the five fields it knows and would ignore a sixth. A field
+    /// added to `Row` — a key path, a login-set id, a secret handle of any
+    /// shape — reaches stdout, and a shell history, without any decode
+    /// failing. The count comes from `Row` itself through `Mirror`, so it is
+    /// not a number written here that would have to be maintained.
+    @Test func everySessionInTheStoreIsListed() async throws {
+        try await Self.withFixture { fixture, flags in
+            let result = try await fixture.run(["sessions"] + flags + ["--json"])
+            let rows = try Self.rows(result, arguments: "--json")
+            #expect(rows.count == fixture.entries.count)
+            #expect(Set(rows.map(\.name)) == Set(fixture.entries.map(\.name)))
+
+            for entry in fixture.entries {
+                let row = try #require(
+                    rows.first { $0.name == entry.name },
+                    "sessions --json did not report \(entry.kind.rawValue)")
+                #expect(row.kind == entry.kind.rawValue)
+                #expect(row.group == entry.groupPath)
+                #expect(row.tags == entry.tags)
+                #expect(!row.target.isEmpty, "the \(entry.kind.rawValue) row has no target")
+            }
+
+            let declaredFields = Mirror(
+                reflecting: SessionCatalog.Row(
+                    name: "n", kind: .ssh, groupPath: "", tags: [], target: "t")
+            ).children.count
+            for keys in try CLIMatrix.sessionRowKeys(result.stdoutText) {
+                #expect(
+                    keys.count == declaredFields,
+                    "sessions --json printed \(keys.sorted()); Row declares \(declaredFields) fields")
+                #expect(keys.contains("name"), "sessions --json printed no name")
+            }
+        }
+    }
+
+    /// `--group` matches a group AND its subgroups, which is what its own
+    /// help says ("Only sessions in this group or one of its subgroups").
+    ///
+    /// The parent query is asserted to reach something NESTED, not merely to
+    /// return the right count: a filter that only ever matched the immediate
+    /// group would return a plausible answer for the child query and a short
+    /// one here. The child query beside it is what stops the opposite
+    /// mistake — a filter matching any ancestor OR descendant would pull the
+    /// parent's own session into the child's answer.
+    @Test func theGroupFilterReachesIntoSubgroups() async throws {
+        try await Self.withFixture { fixture, flags in
+            let parent = CLISessionCatalogFixture.parentGroup
+            let child = CLISessionCatalogFixture.childGroup
+            let expectedParent = fixture.entries.filter { $0.ancestry.contains(parent) }
+            let expectedChild = fixture.entries.filter { $0.ancestry.contains(child) }
+            #expect(expectedParent.count > expectedChild.count, "the fixture lost its subgroup")
+            #expect(!expectedChild.isEmpty, "the fixture has nothing in the subgroup")
+
+            let inParent = try Self.rows(
+                await fixture.run(["sessions"] + flags + ["--json", "--group", parent]),
+                arguments: "--group \(parent)")
+            #expect(Set(inParent.map(\.name)) == Set(expectedParent.map(\.name)))
+            #expect(
+                inParent.contains { $0.group.contains(" / ") },
+                "--group \(parent) reached nothing in a subgroup")
+
+            let inChild = try Self.rows(
+                await fixture.run(["sessions"] + flags + ["--json", "--group", child]),
+                arguments: "--group \(child)")
+            #expect(Set(inChild.map(\.name)) == Set(expectedChild.map(\.name)))
+
+            // The empty answer, with the two non-empty ones above as its
+            // positives: a filter that matched nothing at all would satisfy
+            // this line alone.
+            let nowhere = try Self.rows(
+                await fixture.run(["sessions"] + flags + ["--json", "--group", "cli-matrix-nogroup"]),
+                arguments: "--group cli-matrix-nogroup")
+            #expect(nowhere.isEmpty, "an unknown group matched \(nowhere.map(\.name))")
+        }
+    }
+
+    /// `--tag` selects the sessions carrying it, and does so regardless of
+    /// case (`SessionCatalog`'s own rule — `caseInsensitiveCompare`).
+    ///
+    /// The tag is asserted to DISCRIMINATE first: a fixture where every
+    /// session carried it would make both spellings pass while proving
+    /// nothing about the filter.
+    @Test func theTagFilterIgnoresCase() async throws {
+        try await Self.withFixture { fixture, flags in
+            let tag = CLISessionCatalogFixture.firstTag
+            let expected = fixture.entries.filter { $0.tags.contains(tag) }
+            #expect(!expected.isEmpty, "the fixture carries no \(tag)")
+            #expect(expected.count < fixture.entries.count, "every session carries \(tag)")
+
+            for spelling in [tag, tag.uppercased()] {
+                let listed = try Self.rows(
+                    await fixture.run(["sessions"] + flags + ["--json", "--tag", spelling]),
+                    arguments: "--tag \(spelling)")
+                #expect(
+                    Set(listed.map(\.name)) == Set(expected.map(\.name)),
+                    "--tag \(spelling) selected \(listed.map(\.name))")
+            }
+        }
+    }
+
+    /// Filters combine with AND, which is what the command's discussion
+    /// claims ("Filters combine").
+    ///
+    /// The pair is chosen so the answer is SMALLER than either half alone —
+    /// asserted, not assumed — because an implementation that ORed them, or
+    /// that ignored one of the two, returns one of those halves.
+    @Test func theFiltersCombine() async throws {
+        try await Self.withFixture { fixture, flags in
+            let group = CLISessionCatalogFixture.parentGroup
+            let tag = CLISessionCatalogFixture.secondTag
+            let byGroup = fixture.entries.filter { $0.ancestry.contains(group) }
+            let byTag = fixture.entries.filter { $0.tags.contains(tag) }
+            let byBoth = fixture.entries.filter {
+                $0.ancestry.contains(group) && $0.tags.contains(tag)
+            }
+            #expect(!byBoth.isEmpty, "the fixture has nothing in \(group) tagged \(tag)")
+            #expect(byBoth.count < byGroup.count && byBoth.count < byTag.count)
+
+            let listed = try Self.rows(
+                await fixture.run(
+                    ["sessions"] + flags + ["--json", "--group", group, "--tag", tag]),
+                arguments: "--group \(group) --tag \(tag)")
+            #expect(Set(listed.map(\.name)) == Set(byBoth.map(\.name)))
+        }
+    }
+
+    /// `--kind`, asked once per backend — the matrix's own axis, applied to
+    /// the one subcommand that never connects to any of them.
+    @Test(arguments: ConnectionKind.allCases)
+    func theKindFilterAsksForEveryBackend(kind: ConnectionKind) async throws {
+        try await Self.withFixture { fixture, flags in
+            let expected = fixture.entries.filter { $0.kind == kind }
+            #expect(!expected.isEmpty, "the fixture has no \(kind.rawValue) session")
+            let listed = try Self.rows(
+                await fixture.run(["sessions"] + flags + ["--json", "--kind", kind.rawValue]),
+                arguments: "--kind \(kind.rawValue)")
+            #expect(Set(listed.map(\.name)) == Set(expected.map(\.name)))
+            #expect(listed.allSatisfy { $0.kind == kind.rawValue })
+        }
+    }
+
+    /// `--name` is a case-insensitive SUBSTRING, not a pattern and not an
+    /// exact match — its own help says so.
+    ///
+    /// The needle is taken from a session's own name (its trailing UUID
+    /// segment) rather than written here, so it is unique to that session by
+    /// construction and cannot start matching a second one.
+    @Test func theNameFilterIsACaseInsensitiveSubstring() async throws {
+        try await Self.withFixture { fixture, flags in
+            let entry = try #require(fixture.entries.first)
+            let needle = String(entry.name.suffix(12))
+            #expect(
+                fixture.entries.filter { $0.name.contains(needle) }.count == 1,
+                "the needle is not unique to one session")
+
+            let listed = try Self.rows(
+                await fixture.run(["sessions"] + flags + ["--json", "--name", needle.uppercased()]),
+                arguments: "--name \(needle.uppercased())")
+            #expect(listed.map(\.name) == [entry.name])
+        }
     }
 }
 
@@ -624,6 +1051,88 @@ struct CLIMatrixCoverageTests {
                 \.supportsPresignedURL, named: "supportsPresignedURL", operation: "a share case")
             #expect(presigned == (kind == .s3), "supportsPresignedURL is wrong for \(kind.rawValue)")
         }
+    }
+
+    /// The relay variable the `--password-command` cases carry the secret in
+    /// is read by no backend.
+    ///
+    /// If it collided with one — `MACSCP_PASSWORD`, `AWS_SECRET_ACCESS_KEY`,
+    /// or whatever a fourth backend names — the positive run in
+    /// `theSecretComesFromThePasswordCommand` would still pass, while
+    /// testing `EnvironmentSecretSource` instead of the helper command. So
+    /// the name is compared against every backend's own
+    /// `secretEnvironmentVariable`, derived from `ConnectionKind.allCases`.
+    @Test func noBackendReadsTheSecretRelayVariable() {
+        let readByABackend = ConnectionKind.allCases.compactMap {
+            BackendDescriptor.descriptor(for: $0).secretEnvironmentVariable
+        }
+        #expect(!readByABackend.isEmpty, "no backend names a secret variable at all")
+        #expect(!readByABackend.contains(CLIMatrix.secretRelayVariable))
+    }
+
+    /// Every backend has a session in the `sessions` fixture, and the
+    /// fixture really spreads them over groups and tags.
+    ///
+    /// Needs neither the rig nor the binary — the fixture only writes a
+    /// store — so a fourth protocol is caught here in the ordinary `swift
+    /// test`, the run where it will actually be added. The placement checks
+    /// beside it are what stop the filter cases above from quietly asserting
+    /// on empty sets if the placement rule ever changes.
+    @Test func everyBackendHasASessionInTheFilterFixture() throws {
+        let fixture = try CLISessionCatalogFixture.make()
+        defer { fixture.tearDown() }
+        #expect(Set(fixture.entries.map(\.kind)) == Set(ConnectionKind.allCases))
+        #expect(fixture.entries.count == ConnectionKind.allCases.count)
+
+        let grouped = fixture.entries.filter { !$0.ancestry.isEmpty }
+        #expect(!grouped.isEmpty, "the fixture puts nothing in a group")
+        #expect(
+            fixture.entries.contains { $0.ancestry.count > 1 },
+            "the fixture has no session in a subgroup")
+        let tags = Set(fixture.entries.flatMap(\.tags))
+        #expect(
+            tags == [CLISessionCatalogFixture.firstTag, CLISessionCatalogFixture.secondTag],
+            "the fixture no longer carries both tags")
+
+        // The store on disk is what the CLI reads, so that is what is read
+        // back — not the value the fixture returned.
+        let store = SessionStore(directory: fixture.directory)
+        #expect(try store.all().count == fixture.entries.count)
+        #expect(try store.allGroups().count == 3)
+    }
+
+    /// The driven-subcommand scan reads CALLS, and neither comments nor the
+    /// matrix's own introspection runs.
+    ///
+    /// Three hazards, each with its positive on the same fixture:
+    /// 1. A commented-out drive must not count as coverage — the exact way a
+    ///    guard goes green while the case it counts is disabled.
+    /// 2. `SubprocessRunner.run(binary, arguments: […])` is how the guards
+    ///    ask the binary about a flag it does not declare; those are not
+    ///    cases, and `help` is not a subcommand the matrix drives at all
+    ///    (it is ArgumentParser's own, and it is absent from the
+    ///    `SUBCOMMANDS:` block — measured 2026-09-04).
+    /// 3. A drive whose call spans two lines, which most of them do here,
+    ///    must still be read.
+    ///
+    /// The positive: the two real drives ARE found. A scan that returned
+    /// nothing satisfies both absences.
+    ///
+    /// The live lines of the fixture below name only commands the matrix
+    /// really drives, deliberately: the file-level scan reads THIS file too,
+    /// so an invented name written outside a comment here would count itself
+    /// as coverage.
+    @Test func theDrivenScanReadsCallsAndNotComments() throws {
+        let source = """
+            let result = try await rig.run(
+                ["mkdir"] + flags + [rig.target(remotePath)])
+            let listed = try await fixture.run(["sessions"] + flags + ["--json"])
+            // let skipped = try await rig.run(["nevermind"])
+            /// A drive of rig.run(["alsonot"]) described in prose.
+            let asked = try await SubprocessRunner.run(binary, arguments: ["help", name])
+            """
+        #expect(try CLIMatrix.drivenSubcommands(inSource: source) == ["mkdir", "sessions"])
+        #expect(try CLIMatrix.drivenSubcommands(inSource: "").isEmpty)
     }
 
     /// The `--help` parse, against the shape ArgumentParser really prints —
@@ -742,6 +1251,38 @@ struct CLIMatrixCommandsITests {
         let notACommand = try await SubprocessRunner.run(
             binary, arguments: ["help", "definitely-not-a-subcommand"])
         #expect(notACommand.stdoutText.contains("USAGE: macscp-cli <subcommand>"))
+    }
+
+    /// Every subcommand the binary offers is driven by a case in this file.
+    ///
+    /// The two sides are both READ rather than written down: the offered set
+    /// comes from the binary's own `--help`, and the driven set from the
+    /// source of the cases (`CLIMatrix.drivenSubcommands`, which counts a run
+    /// through a fixture's own `run` and ignores comment lines). So a SEVENTH
+    /// subcommand turns this red the day it is added — which is the guard
+    /// this matrix existed without until now, and the reason `sessions` could
+    /// have gone uncovered through two green tasks.
+    ///
+    /// Set equality, not containment, in both directions on purpose: a case
+    /// driving a name the binary does not offer is a case that cannot be
+    /// doing what it says. And the negatives have their positives — the
+    /// offered set is non-empty and contains a name that has been there since
+    /// the first subcommand, and the driven set contains the one this task
+    /// added.
+    @Test func everySubcommandTheBinaryOffersIsDrivenByACase() async throws {
+        let binary = try CLIMatrix.binaryURL()
+        let offered = Set(try await CLIMatrix.subcommands(binary: binary))
+        #expect(!offered.isEmpty, "the binary offers no subcommands at all")
+        #expect(offered.contains("ls"), "the binary offers no ls: \(offered.sorted())")
+
+        let driven = try CLIMatrix.drivenSubcommands(inFileAt: #filePath)
+        #expect(driven.contains("sessions"), "the scan reads no drives at all")
+        #expect(
+            driven == offered,
+            """
+            the matrix drives \(driven.sorted()); the binary offers \
+            \(offered.sorted()) — every subcommand needs at least one case
+            """)
     }
 
     /// The connection flags are not universal, and a uniform argument vector
