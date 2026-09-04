@@ -50,10 +50,13 @@ struct CLISessionsJSONRoundtripTests {
         #expect(object["tags"] as? [String] == ["prod"])
     }
 
-    // MARK: - Test harness (self-contained rather than shared with
-    // `CLIRoundtripITests`: each gated/ungated suite in this codebase
-    // carries its own small harness — `CLISessionsKindHelpTextTests` did
-    // the same before it was deleted, for the same reason stated there).
+    // MARK: - Test harness (still self-contained, not yet folded into
+    // `CLIMatrix.binaryURL()`: `CLIRoundtripITests` and every suite in
+    // `CLIMatrixITests.swift` call through that shared lookup, but this
+    // suite, `CLIRootHelpTests` and `CLISessionNameCompletionTests` still
+    // each carry their own small copy of it — `CLISessionsKindHelpTextTests`
+    // did the same before it was deleted, for the same reason stated
+    // there).
 
     /// Exists only so `locateCLIBinary()` has a class defined in THIS file
     /// to hand `Bundle(for:)`.

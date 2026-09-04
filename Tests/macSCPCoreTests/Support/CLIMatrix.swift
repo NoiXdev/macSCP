@@ -567,7 +567,7 @@ struct CLIMatrix: Sendable {
     /// (final-branch-review finding, 2026-09-02). `Bundle(for:)` on
     /// `TestBundleAnchor`, a class defined right here, always resolves to
     /// the `.xctest` bundle `swift test` just built and loaded this code
-    /// from; `.build/main` and `.build/release` both put the `macscp-cli`
+    /// from; `.build/debug` and `.build/release` both put the `macscp-cli`
     /// product as that bundle's own sibling, so walking up one level from
     /// the bundle finds it regardless of which products directory this
     /// particular run used.
@@ -1091,15 +1091,23 @@ extension CLIMatrix {
     /// The subcommands the matrix's own cases DRIVE, read out of the case
     /// source rather than from a list a reader would have to maintain.
     ///
-    /// The token is a run through a fixture's own `run([…])` — `rig.run([`
-    /// in a backend case, the sessions fixture's in a `sessions` one. That
-    /// is what "a case drives this subcommand" means here, and it is
-    /// deliberately narrower than "the file mentions the name somewhere":
-    /// the guards in the matrix also launch the binary through
-    /// `SubprocessRunner` directly, to ask it about a flag it does not
-    /// declare or to read a help screen, and none of those is a case
-    /// covering that command. Those calls pass the binary first and an
-    /// `arguments:` label second, so this pattern cannot match them.
+    /// The token is a LITERAL subcommand string as the first array element
+    /// of a fixture's own `run([…])` — `rig.run(["ls", …])` in a backend
+    /// case, `fixture.run(["sessions", …])` in a sessions one. That is what
+    /// "a case drives this subcommand" means here, and it is deliberately
+    /// narrower than "the file mentions the name somewhere": a guard that
+    /// asks the binary about a flag it does not declare, or reads a help
+    /// screen, does so through `SubprocessRunner.run(binary, arguments:
+    /// […])` — the binary first, an `arguments:` label second — so that
+    /// shape cannot match the pattern at all. A guard that instead drives a
+    /// subcommand through `rig.run([…])` keeps the name in a VARIABLE
+    /// rather than a literal for exactly this reason
+    /// (`theConflictActionsAreTheOnesCoreDefines` does, the same way
+    /// `neitherTransferCommandOffersARecursiveFlag` does): a literal there
+    /// would enter the driven set from a guard, not a case, which is what
+    /// "the guards cannot match" actually depends on — the call shape a
+    /// guard happens to use, not something guards are structurally unable
+    /// to do.
     ///
     /// COMMENT LINES ARE REMOVED FIRST, and structurally rather than by
     /// asking the author to be careful: this project writes long

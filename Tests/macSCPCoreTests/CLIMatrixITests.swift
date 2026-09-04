@@ -1369,10 +1369,11 @@ struct CLIMatrixCommandsITests {
     /// it rather than ignoring it.
     ///
     /// This is where the brief's `put --recursive` and `get --recursive`
-    /// rows land: the flags do not exist. `TransferSourceGuard`'s own doc
-    /// comment says why — "The CLI's `get`/`put` are single-file transfers
-    /// only; recursive directory transfers are the GUI queue's job" — so
-    /// the gap is a decision, not an oversight, and this pins it as one.
+    /// rows land: the flags do not exist. `TransferSourceError.isDirectory`'s
+    /// own doc comment says why — "The CLI's `get`/`put` are single-file
+    /// transfers only; recursive directory transfers are the GUI queue's
+    /// job" — so the gap is a decision, not an oversight, and this pins it
+    /// as one.
     ///
     /// A negative check with a positive beside it, per CLAUDE.md: `rm` IS
     /// asked for the same two flags first, so a scan that had gone blind
@@ -1444,9 +1445,13 @@ struct CLIMatrixCommandsITests {
         // above): the refusal happens before any connect, but `rig.run`
         // still scrubs every backend's secret variable from the child's
         // environment, so this bare parse refusal is not the one call in the
-        // file that skips it.
-        let refused = try await rig.run(["put", "--on-conflict", "rename", "a", "b"])
-        #expect(refused.status != 0, "put accepted --on-conflict rename")
+        // file that skips it. `command` is a variable, not a literal string
+        // right after `run([`, so this guard does not enter
+        // `CLIMatrix.drivenSubcommands`'s driven set the way a real case's
+        // drive does — see that function's doc comment for the rule.
+        let command = "put"
+        let refused = try await rig.run([command, "--on-conflict", "rename", "a", "b"])
+        #expect(refused.status != 0, "\(command) accepted --on-conflict rename")
         #expect(refused.stderrText.contains("rename"))
     }
 }
