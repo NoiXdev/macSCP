@@ -9,6 +9,17 @@ public struct LocalFileSystem: RemoteFileSystem {
         .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey,
     ]
 
+    /// How long a single entry's `item(for:)` call may take before `list`
+    /// logs it by name at `.debug` — the line the diagnostic-log design
+    /// exists for (`docs/superpowers/specs/2026-09-04-diagnostic-log-design.md`,
+    /// hypothesis 1: a metadata call that never returns, and hypothesis 2: a
+    /// dead mount or cloud placeholder answering after a network timeout).
+    /// Half a second is far above any local syscall's normal cost — the
+    /// M11g review measured 12-14 µs/entry for the plain `resourceValues`
+    /// lookup — so a crossing means something is actually stuck, not that
+    /// the disk is merely busy.
+    static let slowEntryThreshold: Duration = .milliseconds(500)
+
     /// `fetchesOwnerGroup`: whether `list`/`stat` resolve owner/group NAMES
     /// (default `false`). See `ownerGroup(for:)` for why this is opt-in.
     public let fetchesOwnerGroup: Bool
@@ -71,13 +82,39 @@ public struct LocalFileSystem: RemoteFileSystem {
         // M18a made the whole lookup opt-in via `fetchesOwnerGroup` (see
         // `ownerGroup(for:)`), since on TCC-protected folders it can also
         // trigger a blocking macOS permission prompt, not just a slow syscall.
+        DiagnosticLog.shared.log(.info, "browser.local", "list start path=\(path)")
+        let clock = ContinuousClock()
+        let listStart = clock.now
         let names: [String]
         do {
             names = try FileManager.default.contentsOfDirectory(atPath: path)
         } catch {
-            throw Self.map(error, path: path)
+            let mapped = Self.map(error, path: path)
+            DiagnosticLog.shared.log(
+                .info, "browser.local", "list failed path=\(path) reason=\(mapped)")
+            throw mapped
         }
-        return names.map { url.appendingPathComponent($0) }.map(item(for:))
+        // Per-entry timing (the design's hypothesis-1/2 line): `item(for:)`
+        // is timed on its own clock reading around EACH call, not derived
+        // from a running total, so one slow entry cannot be masked by
+        // several fast ones averaging it out. This wrap changes nothing
+        // about what `list` returns — only whether one `.debug` line gets
+        // written alongside a given entry.
+        let items = names.map { url.appendingPathComponent($0) }.map { childURL -> RemoteFileItem in
+            let entryStart = clock.now
+            let entryItem = item(for: childURL)
+            let entryDuration = entryStart.duration(to: clock.now)
+            if entryDuration >= Self.slowEntryThreshold {
+                DiagnosticLog.shared.log(
+                    .debug, "browser.local",
+                    "entry slow name=\(childURL.lastPathComponent) ms=\(Int(entryDuration.milliseconds.rounded()))")
+            }
+            return entryItem
+        }
+        let listMs = Int(listStart.duration(to: clock.now).milliseconds.rounded())
+        DiagnosticLog.shared.log(
+            .info, "browser.local", "list done path=\(path) count=\(items.count) ms=\(listMs)")
+        return items
     }
 
     public func stat(path: String) async throws -> RemoteFileItem {

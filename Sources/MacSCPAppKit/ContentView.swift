@@ -1558,8 +1558,9 @@ struct ContentView: View {
             localFS: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup),
             remoteFS: fs,
             local: RemoteBrowserViewModel(
-                fs: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup), startPath: NSHomeDirectory()),
-            remote: RemoteBrowserViewModel(fs: fs, startPath: startPath),
+                fs: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup), startPath: NSHomeDirectory(),
+                logCategory: "browser.local"),
+            remote: RemoteBrowserViewModel(fs: fs, startPath: startPath, logCategory: "browser.remote"),
             terminal: TerminalPanelViewModel(openShell: { term, cols, rows in
                 guard let shellProvider else {
                     throw RemoteFSError.protocolError(

@@ -39,9 +39,9 @@ what is never logged).
 - Create: `Sources/macSCPCore/Diagnostics/DiagnosticLog.swift` (`DiagnosticLogLevel` — `off, error, info, debug`, `Comparable` by declaration order, `RawRepresentable` by name, `CaseIterable`; `DiagnosticLog` — `shared`, `configure(level:directory:)` (directory defaults to `~/Library/Logs/macSCP`), `log(_:_:_:)`, `flush() async`, `currentFileURL: URL?`; a `Mutex`/`NSLock`-protected state: level, buffer `[String]`, file handle, the date the handle is for; the writer task drains the buffer, opens `macSCP-<yyyy-MM-dd>.log` when the day changes, appends; `configure` prunes files older than 7 days matching `macSCP-*.log`)
 - Test: `Tests/macSCPCoreTests/DiagnosticLogTests.swift` — against a temporary directory (`FileManager.default.temporaryDirectory` + UUID, removed in a `defer`): a `debug` line is absent at `.info` and present at `.debug`; at `.off` nothing is written and no file is created; the autoclosure of a dropped line is never evaluated (a counter in the closure); three lines in call order are three lines in file order; the line format matches the regex `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} \[info\] browser\.local list start path=/x$`; a message with `\n` is written with `⏎`; rotation: create `macSCP-2026-08-20.log` and `macSCP-2026-09-01.log` in the directory, `configure` at a fixed `now` of 2026-09-04 (inject `now` through a parameter defaulting to `Date()`), the first is gone and the second stays; `configure(level: .off)` after lines were written closes the handle (a subsequent line creates no new file).
 
-- [ ] **Step 1: Red first** — `cannot find 'DiagnosticLog'`.
-- [ ] **Step 2: Implement**; `swift test --filter DiagnosticLog` green; full `swift test`; zero warnings.
-- [ ] **Step 3: Commit** `feat(diagnostics): a diagnostic log with a level, written off the caller's path`.
+- [x] **Step 1: Red first** — `cannot find 'DiagnosticLog'`.
+- [x] **Step 2: Implement**; `swift test --filter DiagnosticLog` green; full `swift test`; zero warnings.
+- [x] **Step 3: Commit** `feat(diagnostics): a diagnostic log with a level, written off the caller's path`.
 
 ---
 
@@ -54,9 +54,9 @@ what is never logged).
 - Modify: the four catalogs (de: "Diagnoseprotokoll", "Aus", "Fehler", "Info", "Debug", "Im Finder zeigen"; fr, pl)
 - Test: `SettingsStoreTests` (default `.off`, round trip, an unknown raw value reads `.off`); `SettingsViewDiagnosticLogGuardTests` shaped like `SettingsViewAppearanceToggleGuardTests` (the picker is bound to `diagnosticLogLevel` and labelled through the key; the reveal button exists; negative: no `Text("` literal in the row, beside the positive); catalogue equality for the `settings.general.diagnosticLog` keys; a launch-wiring guard: `MacSCPApp.swift` calls `DiagnosticLog.shared.configure(` and logs `launch`.
 
-- [ ] **Step 1: Red first** — the store test (`diagnosticLogLevel` missing), the guards.
-- [ ] **Step 2: Implement**; green; zero warnings.
-- [ ] **Step 3: Commit** `feat(settings): the diagnostic log has a level, a folder, and a way to find it`.
+- [x] **Step 1: Red first** — the store test (`diagnosticLogLevel` missing), the guards.
+- [x] **Step 2: Implement**; green; zero warnings.
+- [x] **Step 3: Commit** `feat(settings): the diagnostic log has a level, a folder, and a way to find it`.
 
 ---
 
@@ -72,6 +72,6 @@ what is never logged).
 - Test: `Tests/macSCPCoreTests/DiagnosticLogSecrecyGuardTests.swift` — over every `.swift` in `Sources/`: collect every `DiagnosticLog.shared.log(` call's brace-balanced argument text (comment-and-string-blanked for the SCAN of interpolations, un-blanked for the category literal); negative: no interpolation `\(…)` in any call names an identifier matching `password|passphrase|secret|token|privateKey|presigned|fingerprint` (case-insensitive); positives beside it: the call-site count is ≥ 20 (count them when writing; write the count into the guard's doc comment and into the backlog row) and every category literal is one of a fixed list (`app`, `browser.local`, `browser.remote`, `connect`, `sftp`, `shell`, `transfer`, `error`); `LocalFileSystemTests`: listing a temporary directory writes `list start` and `list done count=<n>` to a sink configured into a temporary folder at `.info`, and no `entry slow` line at `.debug` for three plain files (the threshold is not crossed — assert the ABSENCE beside the presence of `list done`); `ConnectionDiagnosticsTests`-adjacent: none (the connect phases are covered by the guard's category list and by reading).
 - Modify: `docs/BACKLOG.md` (a new row "Diagnostic log, and the home-folder listing that never finishes": the tester's report, the two hypotheses, what the log records, the call-site count, what the dev build should show — Settings › General › Diagnostic log = Debug, open the local home folder, then Show in Finder and read the `browser.local` lines), `README.md` (one sentence: the app can write a diagnostic log; no tech-stack terms).
 
-- [ ] **Step 1: Red first** — the secrecy guard red on zero call sites (its positive), the `LocalFileSystemTests` case red on the missing lines.
-- [ ] **Step 2: Implement**; `swift test` green; zero warnings; `MACSCP_ITEST=1 swift test --filter Citadel` green against the rig (the SFTP lines must not change any behaviour).
-- [ ] **Step 3: Commit** `feat(diagnostics): listings, connects, SFTP requests and transfers write to the diagnostic log`.
+- [x] **Step 1: Red first** — the secrecy guard red on zero call sites (its positive), the `LocalFileSystemTests` case red on the missing lines.
+- [x] **Step 2: Implement**; `swift test` green; zero warnings; `MACSCP_ITEST=1 swift test --filter Citadel` green against the rig (the SFTP lines must not change any behaviour).
+- [x] **Step 3: Commit** `feat(diagnostics): listings, connects, SFTP requests and transfers write to the diagnostic log`.

@@ -1075,11 +1075,17 @@ public final class TransferQueueViewModel {
         // Resume flag (M5d/T3): only a retry job sets it — the engine then
         // continues from the destination offset instead of overwriting.
         let resume = job.resume
+        // `TransferDirection` is a plain `Equatable, Sendable` enum (unlike
+        // `job` itself, kept out of the task below per the comment above) —
+        // pulled out here so the diagnostic log's "transfer start" line
+        // knows which way this job runs.
+        let direction = job.direction
         let transfer = Task<Void, Error> {
             try await TransferEngine.copyFile(
                 from: source, sourcePath: sourcePath,
                 to: destination, destinationDirectory: destinationDirectory, fileName: fileName,
                 resume: resume,
+                direction: direction,
                 throttle: throttle,
                 secondaryThrottle: secondaryThrottle,
                 onProgress: { progressContinuation.yield($0) }

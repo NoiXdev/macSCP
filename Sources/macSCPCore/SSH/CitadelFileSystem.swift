@@ -667,47 +667,97 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
-    public func list(path: String) async throws -> [RemoteFileItem] {
+    /// Times `body` with a `ContinuousClock` and writes exactly one
+    /// `.debug` line to the diagnostic log — `sftp <op> path=<path> ms=<ms>
+    /// ok` on success, `sftp <op> path=<path> ms=<ms> failed reason=<error>`
+    /// if it throws (the error is rethrown unchanged either way).
+    ///
+    /// The ONE place every `RemoteFileSystem` operation this type
+    /// implements funnels its timing/outcome line through — eleven public
+    /// methods (`list`, `stat`, `readStream`, `write`, `delete`,
+    /// `createDirectory`, `rename`, `setPermissions`, `deleteTree`,
+    /// `homeDirectoryPath`, `disconnect`; counted 2026-09-05 by
+    /// `grep -c "public func " Sources/macSCPCore/SSH/CitadelFileSystem.swift`
+    /// filtered to the `RemoteFileSystem` protocol's own eleven methods —
+    /// the design/brief's own count of "12" was written before this count
+    /// and is corrected here), each wrapping its EXISTING body (unchanged
+    /// behavior, unchanged error mapping) in a call to this helper rather
+    /// than hand-writing its own pair of log lines. `disconnect()` does not
+    /// throw, so its call never reaches the failure branch — passed through
+    /// `measured` anyway so it is the same one shape as the other ten, not
+    /// a twelfth, differently-written line.
+    ///
+    /// The reason text is `String(describing: error)` of whatever the
+    /// wrapped body throws — for every method here that is already the
+    /// MAPPED `RemoteFSError` (the body's own `catch` runs `mapSFTPError`
+    /// before this ever sees it), never the raw Citadel/NIOSSH error and
+    /// never anything from `SSHConnectionConfig.AuthMethod`'s secret cases —
+    /// there is no SSH auth error shape on this SFTP-operation path in the
+    /// first place, only per-request status codes.
+    private func measured<T>(
+        _ op: String, path: String, _ body: () async throws -> T
+    ) async rethrows -> T {
+        let clock = ContinuousClock()
+        let start = clock.now
         do {
-            let names = try await sftp.listDirectory(atPath: path)
-            return names
-                .flatMap { $0.components }
-                .filter { $0.filename != "." && $0.filename != ".." }
-                .map { component in
-                    SFTPAttributeMapper.item(
-                        name: component.filename,
-                        directory: path,
-                        size: component.attributes.size,
-                        permissions: component.attributes.permissions,
-                        modifiedAt: component.attributes.accessModificationTime?.modificationTime,
-                        longname: component.longname,
-                        uidgid: component.attributes.uidgid.map {
-                            (userId: $0.userId, groupId: $0.groupId)
-                        }
-                    )
-                }
+            let result = try await body()
+            let ms = Int(start.duration(to: clock.now).milliseconds.rounded())
+            DiagnosticLog.shared.log(.debug, "sftp", "sftp \(op) path=\(path) ms=\(ms) ok")
+            return result
         } catch {
-            throw Self.mapSFTPError(error, path: path)
+            let ms = Int(start.duration(to: clock.now).milliseconds.rounded())
+            DiagnosticLog.shared.log(
+                .debug, "sftp", "sftp \(op) path=\(path) ms=\(ms) failed reason=\(error)")
+            throw error
+        }
+    }
+
+    public func list(path: String) async throws -> [RemoteFileItem] {
+        try await measured("list", path: path) {
+            do {
+                let names = try await sftp.listDirectory(atPath: path)
+                return names
+                    .flatMap { $0.components }
+                    .filter { $0.filename != "." && $0.filename != ".." }
+                    .map { component in
+                        SFTPAttributeMapper.item(
+                            name: component.filename,
+                            directory: path,
+                            size: component.attributes.size,
+                            permissions: component.attributes.permissions,
+                            modifiedAt: component.attributes.accessModificationTime?.modificationTime,
+                            longname: component.longname,
+                            uidgid: component.attributes.uidgid.map {
+                                (userId: $0.userId, groupId: $0.groupId)
+                            }
+                        )
+                    }
+            } catch {
+                throw Self.mapSFTPError(error, path: path)
+            }
         }
     }
 
     public func stat(path: String) async throws -> RemoteFileItem {
-        do {
-            let attributes = try await sftp.getAttributes(at: path)
-            let name = path == "/" ? "/" : String(path.split(separator: "/").last ?? "")
-            return SFTPAttributeMapper.item(
-                name: name,
-                directory: RemotePath.parent(of: path),
-                size: attributes.size,
-                permissions: attributes.permissions,
-                modifiedAt: attributes.accessModificationTime?.modificationTime,
-                // getAttributes (single stat) carries no longname — only the
-                // numeric uidgid fallback applies here (M11m design: the
-                // LIST view shows names, a single stat shows the number).
-                uidgid: attributes.uidgid.map { (userId: $0.userId, groupId: $0.groupId) }
-            )
-        } catch {
-            throw Self.mapSFTPError(error, path: path)
+        try await measured("stat", path: path) {
+            do {
+                let attributes = try await sftp.getAttributes(at: path)
+                let name = path == "/" ? "/" : String(path.split(separator: "/").last ?? "")
+                return SFTPAttributeMapper.item(
+                    name: name,
+                    directory: RemotePath.parent(of: path),
+                    size: attributes.size,
+                    permissions: attributes.permissions,
+                    modifiedAt: attributes.accessModificationTime?.modificationTime,
+                    // getAttributes (single stat) carries no longname — only
+                    // the numeric uidgid fallback applies here (M11m design:
+                    // the LIST view shows names, a single stat shows the
+                    // number).
+                    uidgid: attributes.uidgid.map { (userId: $0.userId, groupId: $0.groupId) }
+                )
+            } catch {
+                throw Self.mapSFTPError(error, path: path)
+            }
         }
     }
 
@@ -756,11 +806,17 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     public func readStream(
         path: String, fromOffset offset: UInt64
     ) async throws -> AsyncThrowingStream<Data, Error> {
-        let handle: SFTPReadHandle
-        do {
-            handle = SFTPReadHandle(try await sftp.openFile(filePath: path, flags: .read))
-        } catch {
-            throw Self.mapSFTPError(error, path: path)
+        // `measured` times the OPEN only — the function returns a stream
+        // immediately, before a single byte is actually read, so wrapping
+        // it here logs "how long did opening this file for read take",
+        // consistent with `write` below timing the whole call (which really
+        // does await every chunk before returning).
+        let handle: SFTPReadHandle = try await measured("readStream", path: path) {
+            do {
+                return SFTPReadHandle(try await sftp.openFile(filePath: path, flags: .read))
+            } catch {
+                throw Self.mapSFTPError(error, path: path)
+            }
         }
         // Pull-based (unfolding): the consumer sets the pace. Starting at
         // `offset` beyond EOF: the first read returns 0 readable bytes, so
@@ -826,6 +882,12 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     public func write(
         path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
     ) async throws {
+        // `measured` wraps the WHOLE call here, not just the open (unlike
+        // `readStream` above): every chunk is awaited inside this function's
+        // own body (the `for try await chunk in contents` loop below), so
+        // "how long did the sftp write take" really is this function's
+        // total duration, not just a setup cost.
+        try await measured("write", path: path) {
         // SSH_FXF_APPEND (SFTPOpenFileFlags.append) forces the server to
         // append every write to the file's current end regardless of the
         // offset the client sends — but not every server implementation
@@ -907,6 +969,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             _ = await file.closeBounded()
             throw Self.mapSFTPError(error, path: path)
         }
+        }
     }
 
     /// Deletes a FILE at `path` via SFTP `remove` (SSH_FXP_REMOVE). Throws
@@ -914,10 +977,12 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// as `protocolError` by the server-side status mapping (SFTP has no
     /// generic "is a directory" status code).
     public func delete(path: String) async throws {
-        do {
-            try await sftp.remove(at: path)
-        } catch {
-            throw Self.mapSFTPError(error, path: path)
+        try await measured("delete", path: path) {
+            do {
+                try await sftp.remove(at: path)
+            } catch {
+                throw Self.mapSFTPError(error, path: path)
+            }
         }
     }
 
@@ -926,20 +991,24 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// as a directory (even in a race between two clients), the call returns
     /// silently. If a file exists there, throws `protocolError`.
     public func createDirectory(at path: String) async throws {
-        do {
-            try await sftp.createDirectory(atPath: path)
-        } catch {
-            // mkdir can fail even though the directory (already or by now)
-            // exists — verify via stat instead of blindly passing the error on.
-            if let existing = try? await sftp.getAttributes(at: path) {
-                switch SFTPAttributeMapper.kind(fromPermissions: existing.permissions) {
-                case .directory:
-                    return
-                default:
-                    throw RemoteFSError.protocolError(reason: "path exists and is not a directory: \(path)")
+        try await measured("createDirectory", path: path) {
+            do {
+                try await sftp.createDirectory(atPath: path)
+            } catch {
+                // mkdir can fail even though the directory (already or by
+                // now) exists — verify via stat instead of blindly passing
+                // the error on.
+                if let existing = try? await sftp.getAttributes(at: path) {
+                    switch SFTPAttributeMapper.kind(fromPermissions: existing.permissions) {
+                    case .directory:
+                        return
+                    default:
+                        throw RemoteFSError.protocolError(
+                            reason: "path exists and is not a directory: \(path)")
+                    }
                 }
+                throw Self.mapSFTPError(error, path: path)
             }
-            throw Self.mapSFTPError(error, path: path)
         }
     }
 
@@ -965,34 +1034,41 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// overwrite) — the point is a truthful message and one probe contract
     /// across all backends.
     public func rename(from: String, to: String) async throws {
-        var destinationExists = true
-        do {
-            _ = try await sftp.getAttributes(at: to)
-        } catch {
-            let mapped = Self.mapSFTPError(error, path: to)
-            guard let fsError = mapped as? RemoteFSError, case .notFound = fsError else {
-                throw mapped
+        // `path` names both endpoints (`from -> to`) — the one method here
+        // that acts on two paths, so the single `path:` field this helper
+        // formats is given both rather than dropping one of them.
+        try await measured("rename", path: "\(from) -> \(to)") {
+            var destinationExists = true
+            do {
+                _ = try await sftp.getAttributes(at: to)
+            } catch {
+                let mapped = Self.mapSFTPError(error, path: to)
+                guard let fsError = mapped as? RemoteFSError, case .notFound = fsError else {
+                    throw mapped
+                }
+                destinationExists = false
             }
-            destinationExists = false
-        }
-        if destinationExists {
-            throw RemoteFSError.protocolError(reason: "destination already exists: \(to)")
-        }
-        do {
-            try await sftp.rename(at: from, to: to)
-        } catch {
-            throw Self.mapSFTPError(error, path: from)
+            if destinationExists {
+                throw RemoteFSError.protocolError(reason: "destination already exists: \(to)")
+            }
+            do {
+                try await sftp.rename(at: from, to: to)
+            } catch {
+                throw Self.mapSFTPError(error, path: from)
+            }
         }
     }
 
     /// Sets only the low 12 permission bits via SFTP setstat.
     public func setPermissions(path: String, permissions: UInt32) async throws {
-        var attributes = SFTPFileAttributes()
-        attributes.permissions = permissions & 0o7777
-        do {
-            try await sftp.setAttributes(at: path, to: attributes)
-        } catch {
-            throw Self.mapSFTPError(error, path: path)
+        try await measured("setPermissions", path: path) {
+            var attributes = SFTPFileAttributes()
+            attributes.permissions = permissions & 0o7777
+            do {
+                try await sftp.setAttributes(at: path, to: attributes)
+            } catch {
+                throw Self.mapSFTPError(error, path: path)
+            }
         }
     }
 
@@ -1021,7 +1097,13 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     public func deleteTree(at path: String) async throws {
         try Task.checkCancellation()
         let path = path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
-        try await deleteTree(at: path, kind: try await topLevelKind(of: path))
+        // Wraps the WHOLE recursive walk — every `list`/`delete` it issues
+        // along the way logs its own line too (both are public methods,
+        // instrumented above), so a directory removal shows as one
+        // `deleteTree` line bracketing the many per-entry lines underneath.
+        try await measured("deleteTree", path: path) {
+            try await deleteTree(at: path, kind: try await topLevelKind(of: path))
+        }
     }
 
     /// Derives `path`'s kind WITHOUT ever following a symlink at `path`
@@ -1104,10 +1186,12 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// (SSH_FXP_REALPATH) — the canonical way an SFTP client discovers the
     /// server's landing directory, same idea as `pwd` right after login.
     public func homeDirectoryPath() async throws -> String {
-        do {
-            return try await sftp.getRealPath(atPath: ".")
-        } catch {
-            throw Self.mapSFTPError(error, path: ".")
+        try await measured("homeDirectoryPath", path: ".") {
+            do {
+                return try await sftp.getRealPath(atPath: ".")
+            } catch {
+                throw Self.mapSFTPError(error, path: ".")
+            }
         }
     }
 
@@ -1154,9 +1238,16 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         // `shutdown` ahead of it), so no other caller is inside `sftp` while
         // this runs, and the abandoned task's only remaining act is the one
         // close it was handed.
-        await sftp.closeBounded()
-        try? await client.close()
-        try? await jumpClient?.close()
+        // `measured` here uses "-" for `path` — `disconnect()` acts on the
+        // whole connection, not on one entry — and never reaches its own
+        // failure branch (every close below is `try?`), so this line is
+        // always `ok`; wrapped anyway so it is the same one shape as the
+        // other ten methods rather than a lone hand-written line.
+        await measured("disconnect", path: "-") {
+            await sftp.closeBounded()
+            try? await client.close()
+            try? await jumpClient?.close()
+        }
         // I-2/R-1: release the dedicated event-loop group this connection
         // took ownership of at construction time (see `connect()`) — but not
         // immediately. Citadel's `SFTPClient.openSFTP` schedules an internal

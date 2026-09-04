@@ -54,6 +54,17 @@ public enum TransferDirection: Equatable, Sendable {
     case download
 }
 
+extension TransferDirection {
+    /// `direction=up|down` — the two words the diagnostic-log design's
+    /// "transfer start" line names.
+    fileprivate var logText: String {
+        switch self {
+        case .upload: return "up"
+        case .download: return "down"
+        }
+    }
+}
+
 /// Copies individual files between two file systems (M2c: one at a time,
 /// destination gets overwritten; conflict rules and the queue arrive in M5).
 public enum TransferEngine {
@@ -90,40 +101,60 @@ public enum TransferEngine {
     ///     a remote→remote stream is real download AND upload on this
     ///     machine's link, so every chunk pays both buckets; the pace follows
     ///     the tighter one.
+    ///   - direction: For the diagnostic log's `transfer start
+    ///     direction=up|down` line only — `nil` (default) logs `unknown`
+    ///     rather than guessing. `TransferQueueViewModel`'s one production
+    ///     call site always knows its job's own `direction` and passes it;
+    ///     the CLI and this file's own tests do not, and stay source-
+    ///     compatible without it since `DiagnosticLog` is `.off` (a no-op)
+    ///     everywhere neither of them configures it.
     public static func copyFile(
         from source: any RemoteFileSystem, sourcePath: String,
         to destination: any RemoteFileSystem, destinationDirectory: String, fileName: String,
         resume: Bool = false,
+        direction: TransferDirection? = nil,
         throttle: BandwidthBucket? = nil,
         secondaryThrottle: BandwidthBucket? = nil,
         onProgress: @escaping @Sendable (TransferProgress) -> Void
     ) async throws {
-        let total = try await source.stat(path: sourcePath).size
         let destinationPath = RemotePath.join(destinationDirectory, fileName)
+        let clock = ContinuousClock()
+        let transferStart = clock.now
+        do {
+            let total = try await source.stat(path: sourcePath).size
+            DiagnosticLog.shared.log(
+                .info, "transfer",
+                "transfer start direction=\(direction?.logText ?? "unknown") "
+                    + "path=\(destinationPath) bytes=\(total.map(String.init) ?? "unknown")")
 
-        // Resume (M5d/T2): decide the starting offset BEFORE touching the
-        // source stream. `resume == false` takes none of this — offset stays
-        // 0 and the write mode stays `.overwrite`, identical to pre-M5d.
-        // S3-like destinations cannot append (no partial object survives a
-        // failed multipart, and a re-PUT replaces the whole object) — force a
-        // full overwrite regardless of the caller's `resume` (M13).
-        let effectiveResume = resume && destination.supportsAppendResume
-        var resumeOffset: UInt64 = 0
-        if effectiveResume {
-            do {
-                let destinationSize = try await destination.stat(path: destinationPath).size ?? 0
-                if let total, destinationSize >= total {
-                    // Already complete by the size heuristic: one final
-                    // progress event at full size, no read/write at all.
-                    onProgress(TransferProgress(bytesTransferred: total, totalBytes: total))
-                    return
+            // Resume (M5d/T2): decide the starting offset BEFORE touching the
+            // source stream. `resume == false` takes none of this — offset
+            // stays 0 and the write mode stays `.overwrite`, identical to
+            // pre-M5d. S3-like destinations cannot append (no partial object
+            // survives a failed multipart, and a re-PUT replaces the whole
+            // object) — force a full overwrite regardless of the caller's
+            // `resume` (M13).
+            let effectiveResume = resume && destination.supportsAppendResume
+            var resumeOffset: UInt64 = 0
+            if effectiveResume {
+                do {
+                    let destinationSize =
+                        try await destination.stat(path: destinationPath).size ?? 0
+                    if let total, destinationSize >= total {
+                        // Already complete by the size heuristic: one final
+                        // progress event at full size, no read/write at all.
+                        onProgress(TransferProgress(bytesTransferred: total, totalBytes: total))
+                        let ms = Int(transferStart.duration(to: clock.now).milliseconds.rounded())
+                        DiagnosticLog.shared.log(
+                            .info, "transfer", "transfer done path=\(destinationPath) ms=\(ms)")
+                        return
+                    }
+                    resumeOffset = destinationSize
+                } catch RemoteFSError.notFound {
+                    // No destination yet — behaves like a fresh transfer (offset 0).
+                    resumeOffset = 0
                 }
-                resumeOffset = destinationSize
-            } catch RemoteFSError.notFound {
-                // No destination yet — behaves like a fresh transfer (offset 0).
-                resumeOffset = 0
             }
-        }
 
         let input = try await source.readStream(path: sourcePath, fromOffset: resumeOffset)
 
@@ -212,5 +243,16 @@ public enum TransferEngine {
         // `.cancelled` rather than `.finished` is the conservative, expected
         // read of "the task was cancelled" (M5c-final-review note).
         try Task.checkCancellation()
+            let ms = Int(transferStart.duration(to: clock.now).milliseconds.rounded())
+            DiagnosticLog.shared.log(
+                .info, "transfer", "transfer done path=\(destinationPath) ms=\(ms)")
+        } catch {
+            let ms = Int(transferStart.duration(to: clock.now).milliseconds.rounded())
+            let reasonText = error is CancellationError ? "cancelled" : String(describing: error)
+            DiagnosticLog.shared.log(
+                .info, "transfer",
+                "transfer failed path=\(destinationPath) ms=\(ms) reason=\(reasonText)")
+            throw error
+        }
     }
 }

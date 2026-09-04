@@ -359,6 +359,24 @@ struct BrowserPane: View {
             }
         }
         .task { await viewModel.load() }
+        // The App-layer half of the design's "At error" bullet: the
+        // `browser.local`/`browser.remote` `info` line `viewModel.load()`
+        // already writes (Core) says a listing failed and why; this one,
+        // at `error`, says the SAME failure just became the text on
+        // screen — the banner above. `onChange` fires exactly once per
+        // transition into `.failed` (not once per render, the way a log
+        // call written directly in `body` would), so a pane sitting on a
+        // failure and simply being redrawn writes nothing more.
+        .onChange(of: viewModel.state) { _, newValue in
+            if case .failed(let message) = newValue {
+                // `viewModel.logCategory` captured into a local first —
+                // same reason as the Core-side captures this task adds:
+                // the message argument is `@Sendable @autoclosure` and
+                // `viewModel` is `@MainActor`-isolated.
+                let category = viewModel.logCategory
+                DiagnosticLog.shared.log(.error, "error", "\(category) reason=\(message)")
+            }
+        }
         .sheet(item: $renameTarget) { target in
             NameEntrySheet(
                 title: L10n.string("sheet.rename.title", "Rename"),

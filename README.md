@@ -57,6 +57,8 @@ and move files between them with drag and drop, buttons, or the Finder.
   passwords can be copied over from Cyberduck's own keychain entries on
   request.
 - **English, German, French, and Polish** interface.
+- **Diagnostic log** — macSCP can write a diagnostic log you can send with
+  a bug report; choose the level in Settings → General.
 
 ## Known limitations
 

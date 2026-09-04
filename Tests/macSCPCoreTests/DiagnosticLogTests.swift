@@ -379,6 +379,116 @@ struct DiagnosticLogTests {
 
         #expect(!FileManager.default.fileExists(atPath: unusableDirectory.path))
     }
+
+    // MARK: - Task 3: the instrumentation writes what it says
+
+    /// `LocalFileSystem.list`'s own instrumentation (Task 3 of the
+    /// diagnostic-log plan) — added here, in the already-`.serialized` suite
+    /// that owns `DiagnosticLog.shared`, rather than in `LocalFileSystemTests`:
+    /// that suite runs its tests in parallel and carries no serialization of
+    /// its own, and the singleton this test configures is exactly the shared
+    /// state `.serialized`'s own doc comment above warns two tests racing on
+    /// would each see the other's `configure` call — a risk this file's
+    /// tests already avoid by living here, and a new test elsewhere would
+    /// reintroduce for every OTHER suite in this target, not just its own.
+    ///
+    /// `.debug`, not `.info`: admitting `.debug` is what makes the absence
+    /// assertion below actually test the threshold logic — at `.info` an
+    /// `entry slow` line could never appear regardless of whether the
+    /// threshold check is right, and the absence would be trivially true.
+    /// Three PLAIN files read well under `LocalFileSystem.slowEntryThreshold`
+    /// (500 ms), so the negative (no `entry slow`) sits beside the positive
+    /// (`list start`/`list done` ARE present) rather than standing alone.
+    @Test("LocalFileSystem.list writes list start/done, with no entry-slow line for fast entries")
+    func localFileSystemListWritesStartAndDoneWithoutAnEntrySlowLine() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let listedDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: listedDirectory) }
+        for name in ["eins.txt", "zwei.txt", "drei.txt"] {
+            try Data("x".utf8).write(to: listedDirectory.appendingPathComponent(name))
+        }
+        let listedPath = listedDirectory.path(percentEncoded: false)
+
+        DiagnosticLog.shared.configure(level: .debug, directory: logDirectory)
+        _ = try await LocalFileSystem().list(path: listedPath)
+        await DiagnosticLog.shared.flush()
+
+        let url = try #require(DiagnosticLog.shared.currentFileURL)
+        let contents = fileContents(url)
+        #expect(contents.contains("list start path=\(listedPath)"))
+        #expect(contents.contains("list done path=\(listedPath) count=3"))
+        #expect(!contents.contains("entry slow"))
+    }
+
+    /// `TransferEngine.copyFile`'s own instrumentation, driven against
+    /// `MockRemoteFileSystem` (no rig needed — the `transfer` lines are
+    /// written by the engine itself, above the SFTP layer). Lives here for
+    /// the same singleton reason as the `LocalFileSystem` test above, rather
+    /// than added to `TransferEngineTests` (not `.serialized`, and shared
+    /// with every other test in that file).
+    @Test("TransferEngine.copyFile writes transfer start/done")
+    func transferEngineWritesStartAndDoneLines() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let content = Data("hallo".utf8)
+        let source = MockRemoteFileSystem(
+            tree: [
+                "/": [
+                    RemoteFileItem(
+                        name: "quelle.bin", path: "/quelle.bin", kind: .file,
+                        size: UInt64(content.count))
+                ]
+            ],
+            files: ["/quelle.bin": content])
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+
+        DiagnosticLog.shared.configure(level: .info, directory: logDirectory)
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            direction: .upload,
+            onProgress: { _ in })
+        await DiagnosticLog.shared.flush()
+
+        let url = try #require(DiagnosticLog.shared.currentFileURL)
+        let contents = fileContents(url)
+        #expect(contents.contains("transfer start direction=up path=/ziel/quelle.bin"))
+        #expect(contents.contains("transfer done path=/ziel/quelle.bin"))
+    }
+
+    /// `ConnectionViewModel.connect()`'s own instrumentation, driven against
+    /// a fake connector (same shape `ConnectionViewModelTests.makeVM` uses)
+    /// — no rig needed, since the connector itself never dials anything
+    /// real. Lives here for the same singleton reason as the two tests
+    /// above; `@MainActor` on the test itself, since `ConnectionViewModel`
+    /// is `@MainActor`-isolated and this suite otherwise is not.
+    @MainActor
+    @Test("ConnectionViewModel.connect() writes connect start/done")
+    func connectionViewModelWritesConnectStartAndDoneLines() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem(tree: ["/": []]) })
+        vm.host = "example.com"
+        vm.port = "22"
+        vm.username = "tim"
+        vm.password = "geheim"
+
+        DiagnosticLog.shared.configure(level: .info, directory: logDirectory)
+        _ = await vm.connect()
+        await DiagnosticLog.shared.flush()
+
+        let url = try #require(DiagnosticLog.shared.currentFileURL)
+        let contents = fileContents(url)
+        #expect(contents.contains("connect start host=example.com port=22 kind=ssh"))
+        #expect(contents.contains("connect done"))
+    }
 }
 
 /// Counts how many times its `touch()` autoclosure body actually ran.

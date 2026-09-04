@@ -111,9 +111,11 @@ public final class CitadelShell: RemoteShell, @unchecked Sendable {
 
         do {
             let writer = try await handshake.writer()
+            DiagnosticLog.shared.log(.debug, "shell", "shell open")
             return CitadelShell(output: output, writer: writer, pump: pump)
         } catch {
             pump.cancel()
+            DiagnosticLog.shared.log(.debug, "shell", "shell open failed reason=\(error)")
             throw RemoteFSError.protocolError(
                 reason: "failed to open shell: \(error)")
         }
@@ -129,6 +131,7 @@ public final class CitadelShell: RemoteShell, @unchecked Sendable {
     }
 
     public func close() async {
+        DiagnosticLog.shared.log(.debug, "shell", "shell close")
         pump.cancel()
         await pump.value
     }

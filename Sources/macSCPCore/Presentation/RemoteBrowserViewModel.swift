@@ -59,6 +59,18 @@ public final class RemoteBrowserViewModel {
 
     private let fs: any RemoteFileSystem
 
+    /// Diagnostic-log category this pane's `load()` events are filed under.
+    /// Set once at construction by the App, which is the only layer that
+    /// knows which pane this is — the view model itself only ever sees `fs`
+    /// as `any RemoteFileSystem` and cannot tell `LocalFileSystem` from a
+    /// remote backend by inspecting it. `ContentView.swift` passes
+    /// `"browser.local"` for the pane it builds on `LocalFileSystem` and
+    /// `"browser.remote"` for the other; the default here covers every other
+    /// construction site (tests, previews) with the remote spelling, since a
+    /// remote backend is what every non-App caller of this initializer
+    /// actually passes.
+    public let logCategory: String
+
     /// Optional audit-log sink (M9b/T2), default nil (no logging — matches
     /// ad-hoc/unstored sessions). Each of the four actions below fires it
     /// exactly once, AFTER the action completes: success and failure both
@@ -67,9 +79,12 @@ public final class RemoteBrowserViewModel {
     /// `AuditRecorder.recordAction` closure for stored sessions.
     public var auditSink: ((AuditEvent) -> Void)?
 
-    public init(fs: any RemoteFileSystem, startPath: String = "/") {
+    public init(
+        fs: any RemoteFileSystem, startPath: String = "/", logCategory: String = "browser.remote"
+    ) {
         self.fs = fs
         self.currentPath = startPath
+        self.logCategory = logCategory
     }
 
     public var canGoUp: Bool { currentPath != "/" }
@@ -243,17 +258,34 @@ public final class RemoteBrowserViewModel {
         state = .loading
         selectedItems = []
         let path = currentPath
+        let clock = ContinuousClock()
+        let start = clock.now
         do {
             let listed = try await fs.list(path: path)
             guard currentPath == path else { return }
             displayedAll = displayItems(from: listed)
             applySearch()
             state = .loaded
+            // Its own line, one layer above `LocalFileSystem.list`'s own
+            // `browser.local list done` (which the local pane ALSO writes,
+            // at the FS level): that line carries the raw read and the
+            // per-entry timing, this one the hidden-file filter and sort
+            // that turn a raw listing into what the pane actually shows —
+            // `displayedAll.count`, not `listed.count`.
+            let ms = Int(start.duration(to: clock.now).milliseconds.rounded())
+            // `displayedAll.count` captured into a local first: the message
+            // argument is `@Sendable @autoclosure`, and `displayedAll` is
+            // `@MainActor`-isolated.
+            let count = displayedAll.count
+            DiagnosticLog.shared.log(
+                .info, logCategory, "load done path=\(path) count=\(count) ms=\(ms)")
         } catch {
             guard currentPath == path else { return }
             displayedAll = []
             applySearch()
-            state = .failed(message: Self.message(for: error, path: path))
+            let message = Self.message(for: error, path: path)
+            state = .failed(message: message)
+            DiagnosticLog.shared.log(.info, logCategory, "load failed path=\(path) reason=\(message)")
         }
     }
 

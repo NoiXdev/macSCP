@@ -837,6 +837,21 @@ public final class ConnectionViewModel {
             dialed = config
         }
 
+        let logFields = Self.connectLogFields(for: dialed)
+        DiagnosticLog.shared.log(
+            .info, "connect",
+            "connect start host=\(logFields.host) port=\(logFields.port) kind=\(logFields.kind)")
+        if case .ssh(let ssh) = dialed {
+            // Captured into a plain local first: the message argument below
+            // is a `@Sendable @autoclosure`, and a `@MainActor`-isolated
+            // static method call cannot be made from inside one — the local
+            // `let` is just a `String` by the time the closure captures it.
+            let authText = Self.authMethodLogText(ssh.auth)
+            DiagnosticLog.shared.log(.info, "connect", "auth method=\(authText)")
+        }
+        let clock = ContinuousClock()
+        let dialStart = clock.now
+
         state = .connecting
         do {
             // The decider is handed to EVERY backend by the `Connector`
@@ -845,7 +860,17 @@ public final class ConnectionViewModel {
             // belongs to whoever builds the `connector` (the App passes
             // `certificateBridge.ask`, the CLI refuses every unknown one).
             let fs = try await connector(dialed, .asking { [weak self] candidate in
-                await self?.presentHostKeyPrompt(for: candidate, attempt: myAttempt) ?? false
+                // Only the UNKNOWN branch is observable here — a KNOWN,
+                // identical host key never reaches this closure at all (the
+                // TOFU validator inside CitadelFileSystem accepts it
+                // silently), and a MISMATCH is a hard stop the decider is
+                // never asked about either (see `HostKeyError.mismatch`
+                // below). The outcome, never the key itself.
+                DiagnosticLog.shared.log(.info, "connect", "hostkey unknown")
+                let accepted = await self?.presentHostKeyPrompt(for: candidate, attempt: myAttempt) ?? false
+                DiagnosticLog.shared.log(
+                    .info, "connect", "hostkey \(accepted ? "accepted" : "rejected")")
+                return accepted
             })
             // Attempt-scoped write (see `currentAttempt`'s own doc
             // comment): a superseded attempt's own successful dial must not
@@ -860,6 +885,8 @@ public final class ConnectionViewModel {
             // and reproducing the connection means `ssh` prompting for the
             // password itself, not macSCP replaying a saved one.
             if case .ssh(let ssh) = dialed { lastConnectedConfig = ssh.redactingSecrets() }
+            let ms = Int(dialStart.duration(to: clock.now).milliseconds.rounded())
+            DiagnosticLog.shared.log(.info, "connect", "connect done ms=\(ms)")
             return fs
         } catch {
             // Same attempt-scoped write as the success path above.
@@ -867,6 +894,17 @@ public final class ConnectionViewModel {
             // The fixed sentence for this error, computed where the error
             // is — the only place it exists. See `lastFailureReason`.
             lastFailureReason = DialSupport.reason(for: error)
+            // `.mismatch` never reaches the decider closure above (it is a
+            // hard stop, evaluated before the decider is ever asked), so it
+            // is the one host-key outcome this catch has to log itself.
+            if let hostKeyError = error as? HostKeyError, case .mismatch = hostKeyError {
+                DiagnosticLog.shared.log(.info, "connect", "hostkey mismatch")
+            }
+            // Same reason as the auth-method capture above: `lastFailureReason`
+            // is `@MainActor`-isolated, and the message argument is
+            // `@Sendable`.
+            let reasonText = lastFailureReason ?? ""
+            DiagnosticLog.shared.log(.info, "connect", "connect failed reason=\(reasonText)")
             // The one call that passes a `kind`, and so the only one that
             // can reach `.other`: this is the only failure in this type
             // that got as far as the wire.
@@ -874,6 +912,35 @@ public final class ConnectionViewModel {
                 jumpAwareFailedState(for: error), kind: Self.failureKind(for: error),
                 origin: origin)
             return nil
+        }
+    }
+
+    /// `connect start host=… port=… kind=…`'s three fields, one per backend:
+    /// SSH names its own host/port; S3 and WebDAV have neither, so their
+    /// endpoint URL/base URL stands in for `host` (both are server names the
+    /// user typed, the same category of thing a hostname is) and `port` is
+    /// `"-"` since neither protocol config carries one of its own.
+    private static func connectLogFields(
+        for config: ConnectionConfig
+    ) -> (host: String, port: String, kind: String) {
+        switch config {
+        case .ssh(let ssh):
+            return (ssh.host, String(ssh.port), "ssh")
+        case .s3(let s3):
+            return (s3.endpoint, "-", "s3")
+        case .webdav(let webdav):
+            return (webdav.baseURL, "-", "webdav")
+        }
+    }
+
+    /// The METHOD name only, never the credential — `SSHConnectionConfig
+    /// .AuthMethod`'s own cases carry the warning ("never log/interpolate
+    /// it") right on the associated values this switch never reads.
+    private static func authMethodLogText(_ auth: SSHConnectionConfig.AuthMethod) -> String {
+        switch auth {
+        case .password: return "password"
+        case .privateKey: return "key"
+        case .agent: return "agent"
         }
     }
 
@@ -1212,6 +1279,7 @@ public final class ConnectionViewModel {
     public func clearRetainedSecrets() {
         clearPassword()
         lastConnectedConfig = nil
+        DiagnosticLog.shared.log(.info, "connect", "disconnect")
     }
 
     /// User-initiated mode switch (picker): clears the secret so the
