@@ -360,6 +360,16 @@ private struct AppearanceSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Compact sidebar mode (sidebar-polish plan, Task 2): tighter
+            // row padding and no host-subtitle line — `SessionSidebar`
+            // reads this the same way it reads `sidebarTagFilterEnabled`
+            // above, as a plain fact handed down from `ContentView`.
+            Section {
+                Toggle(
+                    L10n.string("settings.appearance.sidebarCompact", "Compact sidebar"),
+                    isOn: $store.sidebarCompact)
+            }
+
             Section {
                 Toggle(
                     L10n.string("settings.general.autoRefresh", "Auto-refresh remote view"),

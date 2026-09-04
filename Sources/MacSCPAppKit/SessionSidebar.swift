@@ -258,6 +258,14 @@ struct SessionSidebar: View {
     /// `hiddenImportsErrorMessage = nil` `refreshImportedHosts()`'s success
     /// path already performs on the next successful read.
     let onDismissHiddenImportsError: () -> Void
+    /// Compact sidebar mode (sidebar-polish plan, Task 2) —
+    /// `SettingsStore.sidebarCompact`, read by `ContentView` and handed
+    /// over as a plain fact, same pattern as `showsTagFilterBar` right
+    /// below: nothing in this file has to know a settings layer exists.
+    /// Forwarded to each `SessionRow` as `isCompact`; changes row height,
+    /// padding and the host subtitle's visibility only — no ordering, no
+    /// selection behaviour, no keyboard handling.
+    let sidebarCompact: Bool
     /// Whether the tag FILTER is offered at all (E1) —
     /// `SettingsStore.sidebarTagFilterEnabled`, read by `ContentView` and
     /// handed over as a plain fact so nothing in this file has to know a
@@ -779,6 +787,7 @@ struct SessionSidebar: View {
             focusedRenameID: $focusedRenameID,
             focusedRowID: $focusedRowID,
             groups: viewModel.groups,
+            isCompact: sidebarCompact,
             // Handed over as the activation method itself, not wrapped
             // in a closure: a closure here would be a second place
             // where an input could be swapped for another on its way
@@ -1186,6 +1195,14 @@ private struct SessionRow: View {
     /// to the inline rename field inside this row.
     var focusedRowID: FocusState<UUID?>.Binding
     let groups: [StoredGroup]
+    /// Compact sidebar mode (sidebar-polish plan, Task 2) — handed down as a
+    /// plain fact the same way `SessionSidebar.showsTagFilterBar` is, so
+    /// this row does not need to know a settings layer exists. `true` hides
+    /// the host-subtitle line below the name and tightens the row's
+    /// vertical padding; it changes no ordering, no selection behaviour and
+    /// no keyboard handling — `onInput`/`SessionRowActivation` are
+    /// untouched by this flag.
+    let isCompact: Bool
     /// Every input this row can receive — its clicks, its Return, and the
     /// three menu entries that reach a host — forwarded raw with the
     /// session it happened on. What each of them MEANS is
@@ -1303,40 +1320,59 @@ private struct SessionRow: View {
     /// SSH-fallback accessors (so it would read "@:22") — accessors M26
     /// deleted. Neither was a connection summary, and `StoredSession` has had
     /// no host/username accessor to read at all since.
+    ///
+    /// Also the row's host-subtitle line (sidebar-polish plan, Task 2) —
+    /// the same string `.help(connectionSummary)` below already put in the
+    /// tooltip, now drawn as a second line whenever `isCompact` is off.
     private var connectionSummary: String {
         let descriptor = BackendDescriptor.descriptor(for: session.kind)
         return descriptor.displaySummary(descriptor.sessionValues(session))
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(isActive ? DesignTokens.statusPhosphor : Color.secondary.opacity(0.35))
-                .frame(width: 7, height: 7)
+        VStack(alignment: .leading, spacing: isCompact ? 0 : 1) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(isActive ? DesignTokens.statusPhosphor : Color.secondary.opacity(0.35))
+                    .frame(width: 7, height: 7)
 
-            if isRenaming {
-                TextField("", text: $renameDraft)
-                    .textFieldStyle(.plain)
-                    .focused(focusedRenameID, equals: session.id)
-                    .onSubmit(onCommitRename)
-                    .onExitCommand(perform: onCancelRename)
-            } else {
-                Text(session.name)
-                    .lineLimit(1)
-                    .fontWeight(isActive ? .semibold : .regular)
-                    .foregroundStyle(isActive ? DesignTokens.remoteBlue : Color.primary)
+                if isRenaming {
+                    TextField("", text: $renameDraft)
+                        .textFieldStyle(.plain)
+                        .focused(focusedRenameID, equals: session.id)
+                        .onSubmit(onCommitRename)
+                        .onExitCommand(perform: onCancelRename)
+                } else {
+                    Text(session.name)
+                        .lineLimit(1)
+                        .fontWeight(isActive ? .semibold : .regular)
+                        .foregroundStyle(isActive ? DesignTokens.remoteBlue : Color.primary)
+                }
+
+                // Protocol badge (M12/T7b): "SSH"/"S3" from the backend
+                // descriptor — unobtrusive, same small-label typography as
+                // the sidebar's own section headers above. Kept in both
+                // densities (sidebar-polish plan, Task 2) — compact mode
+                // only drops the host subtitle below, never this badge.
+                Text(kindBadgeLabel)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(DesignTokens.inkTertiary)
+
+                Spacer(minLength: 0)
             }
 
-            // Protocol badge (M12/T7b): "SSH"/"S3" from the backend
-            // descriptor — unobtrusive, same small-label typography as the
-            // sidebar's own section headers above.
-            Text(kindBadgeLabel)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(DesignTokens.inkTertiary)
-
-            Spacer(minLength: 0)
+            // The host subtitle (sidebar-polish plan, Task 2): only in the
+            // non-compact branch, never drawn at all when `isCompact` is on
+            // — compact rows stay the single line the `HStack` above draws
+            // by itself.
+            if !isCompact {
+                Text(connectionSummary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, isCompact ? 2 : 5)
         .padding(.horizontal, 10)
         // Two surfaces, stacked rather than chosen between: the drop
         // target's is drawn in front and is `Color.clear` whenever nothing

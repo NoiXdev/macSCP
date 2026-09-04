@@ -82,6 +82,25 @@ struct SettingsStoreTests {
         #expect(reloaded.sidebarTagFilterEnabled == false)
     }
 
+    /// Compact sidebar mode (sidebar-polish plan, Task 2): off by default, so
+    /// a settings.json predating this key opens the sidebar exactly as it
+    /// always has.
+    @Test func sidebarCompactDefaultsFalse() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.sidebarCompact == false)
+    }
+
+    @Test func sidebarCompactRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.sidebarCompact = true
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.sidebarCompact == true)
+    }
+
     @Test func maxConcurrentTransfersClampsBelowRange() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

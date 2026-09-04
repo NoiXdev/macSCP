@@ -82,6 +82,7 @@ public final class SettingsStore {
         static let connectTimeoutSeconds = "connectTimeoutSeconds"
         static let sidebarWidth = "sidebarWidth"
         static let sidebarTagFilterEnabled = "sidebarTagFilterEnabled"
+        static let sidebarCompact = "sidebarCompact"
         static let checksumAlgorithm = "checksumAlgorithm"
         static let transfersShowFullPaths = "transfersShowFullPaths"
     }
@@ -105,6 +106,7 @@ public final class SettingsStore {
         static let connectTimeoutSeconds = 10
         static let sidebarWidth = 190
         static let sidebarTagFilterEnabled = true
+        static let sidebarCompact = false
         /// Read off the algorithm itself rather than spelled again here:
         /// which procedure is preferred is a property of the procedures,
         /// and a second copy of it is a second thing to keep in step.
@@ -313,6 +315,15 @@ public final class SettingsStore {
     public var sidebarTagFilterEnabled: Bool {
         get { boolValue(for: Keys.sidebarTagFilterEnabled, default: Defaults.sidebarTagFilterEnabled) }
         set { setBool(newValue, for: Keys.sidebarTagFilterEnabled) }
+    }
+
+    /// Compact sidebar mode (sidebar-polish plan, Task 2): tighter row
+    /// padding and no host-subtitle line on session rows. Default OFF — a
+    /// settings.json predating this key opens the sidebar exactly as it
+    /// always has.
+    public var sidebarCompact: Bool {
+        get { boolValue(for: Keys.sidebarCompact, default: Defaults.sidebarCompact) }
+        set { setBool(newValue, for: Keys.sidebarCompact) }
     }
 
     /// Timestamp of the last update-check ATTEMPT — successful or not — or

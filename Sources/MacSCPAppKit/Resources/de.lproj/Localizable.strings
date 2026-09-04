@@ -3,6 +3,7 @@
 "settings.general.showHidden" = "Versteckte Dateien anzeigen";
 "settings.general.tagFilter" = "Tag-Filter in der Seitenleiste anzeigen";
 "settings.general.tagFilter.footer" = "Tags bleiben beim Bearbeiten einer Verbindung zuweisbar.";
+"settings.appearance.sidebarCompact" = "Kompakte Seitenleiste";
 "settings.general.showHiddenHint" = "Gilt für beide Seiten. Kürzel: ⌘⇧.";
 "settings.general.autoRefresh" = "Remote-Ansicht automatisch aktualisieren";
 "settings.general.autoRefreshInterval %lld" = "Alle %lld Sekunden";

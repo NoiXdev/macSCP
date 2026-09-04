@@ -118,6 +118,11 @@ extension ContentView {
             hiddenImportsCount: hiddenImportAliases.count,
             hiddenImportsErrorMessage: hiddenImportsErrorMessage,
             onDismissHiddenImportsError: { dismissHiddenImportsError() },
+            // Compact sidebar mode (sidebar-polish plan, Task 2), read here
+            // for the same reason `showsTagFilterBar` below is: a fact
+            // about what the window offers, not a decision the sidebar
+            // makes itself.
+            sidebarCompact: settingsStore.sidebarCompact,
             // E1, read here rather than in the sidebar: the setting is a
             // fact about what the window offers, and the sidebar reacts to
             // the value without knowing where it comes from.

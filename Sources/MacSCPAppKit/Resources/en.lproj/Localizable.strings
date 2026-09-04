@@ -3,6 +3,7 @@
 "settings.general.showHidden" = "Show hidden files";
 "settings.general.tagFilter" = "Show tag filter in the sidebar";
 "settings.general.tagFilter.footer" = "Tags stay assignable while editing a connection.";
+"settings.appearance.sidebarCompact" = "Compact sidebar";
 "settings.general.showHiddenHint" = "Applies to both panes. Shortcut: ⌘⇧.";
 "settings.general.autoRefresh" = "Auto-refresh remote view";
 "settings.general.autoRefreshInterval %lld" = "Every %lld seconds";
