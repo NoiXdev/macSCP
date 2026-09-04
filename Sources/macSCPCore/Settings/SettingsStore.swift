@@ -86,6 +86,7 @@ public final class SettingsStore {
         static let checksumAlgorithm = "checksumAlgorithm"
         static let transfersShowFullPaths = "transfersShowFullPaths"
         static let lastSeenVersion = "lastSeenVersion"
+        static let diagnosticLogLevel = "diagnosticLogLevel"
     }
 
     private enum Defaults {
@@ -113,6 +114,7 @@ public final class SettingsStore {
         /// and a second copy of it is a second thing to keep in step.
         static let checksumAlgorithm = ChecksumAlgorithm.preferred
         static let transfersShowFullPaths = false
+        static let diagnosticLogLevel = DiagnosticLogLevel.off
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -385,6 +387,27 @@ public final class SettingsStore {
     public var lastSeenVersion: String? {
         get { stringValue(for: Keys.lastSeenVersion) }
         set { setString(newValue, for: Keys.lastSeenVersion) }
+    }
+
+    /// Diagnostic log verbosity (Diagnostic Log plan, Task 2). Default
+    /// `.off` — the sink (`DiagnosticLog`) writes nothing until this is
+    /// turned up in Settings → General. `MacSCPApp` reads this at launch and
+    /// again on every change to (re)configure `DiagnosticLog.shared`. Same
+    /// raw-value-backed, unrecognized-value-falls-back-to-default shape as
+    /// `checksumAlgorithm` above: a future app version's level, or a
+    /// hand-edited `settings.json`, reads back as `.off` rather than as a
+    /// guessed level.
+    public var diagnosticLogLevel: DiagnosticLogLevel {
+        get {
+            guard case .string(let value)? = raw[Keys.diagnosticLogLevel] else {
+                return Defaults.diagnosticLogLevel
+            }
+            return DiagnosticLogLevel(rawValue: value) ?? Defaults.diagnosticLogLevel
+        }
+        set {
+            raw[Keys.diagnosticLogLevel] = .string(newValue.rawValue)
+            persist()
+        }
     }
 
     /// The UI language chosen in Settings (M11p). `.system` (default) means

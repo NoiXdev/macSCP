@@ -205,6 +205,21 @@ private struct GeneralSettingsSection: View {
             lastCheck.formatted(date: .abbreviated, time: .shortened))
     }
 
+    /// Where `DiagnosticLog` writes its files — read off the sink's own
+    /// `defaultDirectory` rather than recomputed here, so this row and the
+    /// sink can never disagree about the path it shows/reveals.
+    private var diagnosticLogDirectory: URL { DiagnosticLog.defaultDirectory }
+
+    /// Creates the log folder if it does not exist yet (a level of `.off`
+    /// never created it) and reveals it in Finder — the same
+    /// create-then-reveal shape a first-run "Show in Finder" needs anywhere
+    /// there is no guarantee the target already exists.
+    private func revealDiagnosticLogFolder() {
+        try? FileManager.default.createDirectory(
+            at: diagnosticLogDirectory, withIntermediateDirectories: true)
+        NSWorkspace.shared.activateFileViewerSelecting([diagnosticLogDirectory])
+    }
+
     var body: some View {
         Form {
             // Language switcher (M11p): overrides `AppleLanguages` on the
@@ -291,9 +306,61 @@ private struct GeneralSettingsSection: View {
                     "Asks GitHub for the latest version at most once a day. No data about you is transmitted."))
                     .foregroundStyle(.secondary)
             }
+
+            diagnosticLogSection
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// The "Diagnostic log" row (Diagnostic Log plan, Task 2): a level
+    /// picker, the folder path as a caption, and a "Show in Finder" button.
+    /// `MacSCPApp` reconfigures `DiagnosticLog.shared` from `store
+    /// .diagnosticLogLevel` at launch and on every change to this picker
+    /// (see `MacSCPApp.body`'s `.onChange`) — this row only owns the
+    /// setting and the folder-reveal affordance, never the sink itself.
+    ///
+    /// Its own computed property, not inlined into `body`'s `Form` like the
+    /// rows above it: unlike every other row here, TWO of its `Text(`s
+    /// legitimately take a hardcoded literal that must never route through
+    /// `L10n.string(` — `Text("English")`/`"Deutsch"`/`"Français"`/
+    /// `"Polski"` above are the same kind of case (proper nouns), but they
+    /// sit in the language picker's own `Section`, not this one — so the
+    /// source-scanning guard that forbids a hardcoded `Text(` literal
+    /// anywhere in the row needs a span that is exactly this row and
+    /// nothing else, which only a named declaration gives a
+    /// `declarationBodyRange(of:in:)` scan (`SettingsViewDiagnosticLogGuardTests`).
+    @ViewBuilder
+    private var diagnosticLogSection: some View {
+        Section {
+            Picker(
+                L10n.string("settings.general.diagnosticLog", "Diagnostic log"),
+                selection: $store.diagnosticLogLevel
+            ) {
+                Text(L10n.string("settings.general.diagnosticLog.off", "Off"))
+                    .tag(DiagnosticLogLevel.off)
+                Text(L10n.string("settings.general.diagnosticLog.errors", "Errors"))
+                    .tag(DiagnosticLogLevel.error)
+                Text(L10n.string("settings.general.diagnosticLog.info", "Info"))
+                    .tag(DiagnosticLogLevel.info)
+                Text(L10n.string("settings.general.diagnosticLog.debug", "Debug"))
+                    .tag(DiagnosticLogLevel.debug)
+            }
+            HStack {
+                Text(diagnosticLogDirectory.path(percentEncoded: false))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(L10n.string("settings.general.diagnosticLog.reveal", "Show in Finder")) {
+                    revealDiagnosticLogFolder()
+                }
+                .buttonStyle(.polished)
+            }
+        } footer: {
+            Text(L10n.string(
+                "settings.general.diagnosticLogHint",
+                "Off by default. Writes no passwords, keys or file contents."))
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

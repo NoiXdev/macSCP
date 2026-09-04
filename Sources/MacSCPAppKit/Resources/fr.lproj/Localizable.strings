@@ -739,6 +739,15 @@
 "settings.general.checkNow" = "Vérifier maintenant";
 "settings.general.checkingNow" = "Vérification en cours…";
 
+/* Settings — General tab, diagnostic log (Diagnostic Log plan, Task 2) */
+"settings.general.diagnosticLog" = "Journal de diagnostic";
+"settings.general.diagnosticLog.off" = "Désactivé";
+"settings.general.diagnosticLog.errors" = "Erreurs";
+"settings.general.diagnosticLog.info" = "Info";
+"settings.general.diagnosticLog.debug" = "Débogage";
+"settings.general.diagnosticLog.reveal" = "Afficher dans le Finder";
+"settings.general.diagnosticLogHint" = "Désactivé par défaut. N'écrit aucun mot de passe, clé ou contenu de fichier.";
+
 /* Terminal externe — indication de mot de passe + erreurs de lancement (M11d/T2) */
 "externalTerminal.passwordHint.title" = "Connexion par mot de passe";
 "externalTerminal.passwordHint.message" = "macSCP ne peut pas transmettre un mot de passe enregistré à un terminal externe — ssh vous le demandera là-bas.";

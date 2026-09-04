@@ -252,6 +252,42 @@ struct MacSCPApp: App {
         }
         launchLanguage = language
 
+        // Diagnostic log (Diagnostic Log plan, Task 2): configure the sink
+        // from the persisted setting BEFORE anything else in this process
+        // could log, then write the first line so a log file always
+        // identifies the build that wrote it. Placed right beside the
+        // What's New decision below — both are "the first thing this launch
+        // decides" — rather than inside `decideWhatsNew(store:)` itself,
+        // which is unrelated to logging and already documents its own,
+        // narrower contract.
+        DiagnosticLog.shared.configure(level: store.diagnosticLogLevel)
+        let launchVersion = Self.bundleVersion
+        let launchBuild = Self.bundleBuild
+        DiagnosticLog.shared.log(.info, "app", "launch version=\(launchVersion) build=\(launchBuild)")
+
+        // "app quit" (Diagnostic Log plan, Task 2): no other code in
+        // `Sources/MacSCPAppKit` observes `NSApplication.willTerminate`
+        // (checked with `grep -rn "willTerminate" Sources/MacSCPAppKit`
+        // before adding this), so this is the app's only termination
+        // observer. Block-based `NotificationCenter` observers are held by
+        // the notification center itself for as long as it lives, which for
+        // `.default` is the process — nothing here needs to retain the
+        // returned token to keep observing through to `willTerminate`, and
+        // there is no `deinit` to unregister it from (Architecture
+        // invariants: "no `deinit` cleanup" — this app never tears itself
+        // down before the process exits). `flush()` is awaited from a
+        // detached `Task` because the notification callback itself is
+        // synchronous; the app may still exit before that task is
+        // scheduled, in which case the line is lost — same best-effort
+        // shape as every other point this design flushes opportunistically
+        // rather than guarantees.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { _ in
+            DiagnosticLog.shared.log(.info, "app", "quit")
+            Task { await DiagnosticLog.shared.flush() }
+        }
+
         // "What's New" decision (What's New plan, Task 2) — see
         // `decideWhatsNew(store:)`'s own doc comment for exactly when
         // `lastSeenVersion` gets written and why that happens inside it,
@@ -265,6 +301,19 @@ struct MacSCPApp: App {
         _settingsStore = State(initialValue: store)
         _menuBarModel = State(initialValue: model)
         menuBarController = MenuBarController(model: model, settingsStore: store)
+    }
+
+    /// `CFBundleShortVersionString`/`CFBundleVersion` off `Bundle.main`, read
+    /// the same way `UpdateCheckModel.check(manual:settingsStore:)` reads
+    /// the short version (`UpdateCheckModel.swift:136`) — `"unknown"` when
+    /// unresolvable (`swift run` outside a `.app`, or a malformed bundle),
+    /// same fallback text that call site uses for its own user agent.
+    private static var bundleVersion: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"
+    }
+
+    private static var bundleBuild: String {
+        (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "unknown"
     }
 
     /// Decides which releases (if any) "What's New" should show this
@@ -334,6 +383,16 @@ struct MacSCPApp: App {
                     WhatsNewSheet(
                         currentVersion: whatsNewCurrentVersion, releases: whatsNewReleases,
                         onClose: { showWhatsNew = false })
+                }
+                // Diagnostic log (Diagnostic Log plan, Task 2): the General
+                // settings pane's picker writes `settingsStore
+                // .diagnosticLogLevel` directly (`SettingsView.swift`), so
+                // this is the one place a level change reconfigures the
+                // sink — reusing `configure(level:)`'s own "takes effect at
+                // once" contract rather than re-deriving it here.
+                .onChange(of: settingsStore.diagnosticLogLevel) { _, newLevel in
+                    DiagnosticLog.shared.configure(level: newLevel)
+                    DiagnosticLog.shared.log(.info, "app", "level=\(newLevel.rawValue)")
                 }
         }
         .commands {

@@ -1240,4 +1240,47 @@ struct SettingsStoreTests {
 
         #expect(SettingsStore(directory: dir).checksumAlgorithm == ChecksumAlgorithm.preferred)
     }
+
+    // MARK: - Diagnostic log level (Diagnostic Log plan, Task 2)
+
+    @Test func diagnosticLogLevelDefaultsToOff() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+
+        #expect(store.diagnosticLogLevel == .off)
+    }
+
+    @Test func diagnosticLogLevelRoundtripsThroughTheFile() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        for level in DiagnosticLogLevel.allCases {
+            let store = SettingsStore(directory: dir)
+            store.diagnosticLogLevel = level
+            let reloaded = SettingsStore(directory: dir)
+            #expect(reloaded.diagnosticLogLevel == level)
+        }
+    }
+
+    /// An unrecognized raw value reads as `.off` rather than as a guessed
+    /// level — same fallback shape as
+    /// `checksumAlgorithmUnknownRawValueReadsAsThePreferredOne`.
+    @Test func diagnosticLogLevelUnknownRawValueReadsAsOff() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"diagnosticLogLevel": "verbose"}"#.utf8).write(to: fileURL(dir))
+
+        #expect(SettingsStore(directory: dir).diagnosticLogLevel == .off)
+    }
+
+    @Test func aSettingsFileWithoutTheKeyUsesOffAsTheDiagnosticLogLevel() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"maxConcurrentTransfers": 4}"#.utf8).write(to: fileURL(dir))
+
+        #expect(SettingsStore(directory: dir).diagnosticLogLevel == .off)
+    }
 }

@@ -735,6 +735,15 @@
 "settings.general.checkNow" = "Check Now";
 "settings.general.checkingNow" = "Checking…";
 
+/* Settings — General tab, diagnostic log (Diagnostic Log plan, Task 2) */
+"settings.general.diagnosticLog" = "Diagnostic log";
+"settings.general.diagnosticLog.off" = "Off";
+"settings.general.diagnosticLog.errors" = "Errors";
+"settings.general.diagnosticLog.info" = "Info";
+"settings.general.diagnosticLog.debug" = "Debug";
+"settings.general.diagnosticLog.reveal" = "Show in Finder";
+"settings.general.diagnosticLogHint" = "Off by default. Writes no passwords, keys or file contents.";
+
 /* External terminal — password hint + launch errors (M11d/T2) */
 "externalTerminal.passwordHint.title" = "Password Login";
 "externalTerminal.passwordHint.message" = "macSCP can't hand a saved password to an external terminal — ssh will ask you for it there.";

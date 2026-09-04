@@ -738,6 +738,15 @@
 "settings.general.checkNow" = "Sprawdź teraz";
 "settings.general.checkingNow" = "Sprawdzanie…";
 
+/* Settings — General tab, diagnostic log (Diagnostic Log plan, Task 2) */
+"settings.general.diagnosticLog" = "Dziennik diagnostyczny";
+"settings.general.diagnosticLog.off" = "Wyłączony";
+"settings.general.diagnosticLog.errors" = "Błędy";
+"settings.general.diagnosticLog.info" = "Informacje";
+"settings.general.diagnosticLog.debug" = "Debugowanie";
+"settings.general.diagnosticLog.reveal" = "Pokaż w Finderze";
+"settings.general.diagnosticLogHint" = "Domyślnie wyłączony. Nie zapisuje haseł, kluczy ani zawartości plików.";
+
 /* Terminal zewnętrzny — wskazówka dot. hasła + błędy uruchamiania (M11d/T2) */
 "externalTerminal.passwordHint.title" = "Logowanie hasłem";
 "externalTerminal.passwordHint.message" = "macSCP nie może przekazać zapisanego hasła zewnętrznemu terminalowi — ssh zapyta o nie tam.";
