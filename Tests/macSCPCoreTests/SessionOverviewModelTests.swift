@@ -327,7 +327,20 @@ struct SessionOverviewModelTests {
     /// The whole point of the `SecretPresence` seam. The value below is
     /// never handed to the model at all — it is planted in the two places a
     /// secret has historically reached a screen through a stored record:
-    /// a URL's userinfo, and a session's own name.
+    /// a URL's userinfo, and a session's own name (recounted 2026-09-04,
+    /// final fix round, item 5 — until then only the URL half was actually
+    /// planted; this doc comment claimed the name half without a check
+    /// behind it).
+    ///
+    /// The name plant does not join the "never appears" checks below.
+    /// `overview.name` is `session.name` verbatim — `SessionOverviewModel
+    /// .init` copies it with no scrubbing, because a session's name is text
+    /// the user chose to type, not a structured field this model could
+    /// strip a credential out of — so it is SUPPOSED to carry whatever was
+    /// planted there. What its own check proves instead is containment:
+    /// the name plant reaches `overview.name` and does not also turn up in
+    /// a fact or the endpoint text, which is what `rendered` below still
+    /// checks against, having excluded `overview.name` from it.
     ///
     /// Every check computes its `Bool` BEFORE the expectation, and the value
     /// itself lives in a named constant: `#expect` reports the SOURCE TEXT
@@ -336,17 +349,24 @@ struct SessionOverviewModelTests {
     @Test func noRenderedTextEverCarriesASecretPlantedInAStoredURL() {
         let planted = "s3cr3t-passphrase-value"
         let session = StoredSession(
-            name: "nextcloud", kind: .webdav,
+            name: "nextcloud-\(planted)", kind: .webdav,
             webdav: StoredWebDAVConfig(
                 baseURL: "https://carol:\(planted)@cloud.example.com/remote.php/dav",
                 username: "carol", useNextcloudPath: false))
 
         let overview = model(session)
 
-        let rendered = overview.facts.map(\.text) + [overview.endpointText, overview.name]
-        // The positive companion, without which an empty fact list would
-        // satisfy both negatives below: the URL IS rendered, stripped. The
-        // host is spelled here; the secret never is.
+        // The positive companion for the NAME plant: it really did reach
+        // `overview.name`, which is what makes excluding that field from
+        // `rendered` below a deliberate scope rather than a check that
+        // quietly stopped covering anything.
+        let nameCarriesItsOwnPlant = overview.name.contains(planted)
+        #expect(nameCarriesItsOwnPlant)
+
+        let rendered = overview.facts.map(\.text) + [overview.endpointText]
+        // The positive companion for the URL plant, without which an empty
+        // fact list would satisfy both negatives below: the URL IS rendered,
+        // stripped. The host is spelled here; the secret never is.
         let strippedURLIsRendered = rendered.contains {
             $0 == "https://cloud.example.com/remote.php/dav"
         }

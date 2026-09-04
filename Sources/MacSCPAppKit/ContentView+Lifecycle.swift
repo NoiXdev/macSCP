@@ -419,6 +419,26 @@ extension ContentView {
             await TeardownStage.stopEditWatchers.runBounded { [editManager = session.editManager] in
                 await editManager.stopAll()
             }
+            // The first thing this function does to the tab's own snippet
+            // state (fix round: session overview plan, final review) —
+            // BEFORE `terminal.shutdown()`, not after it. That call sets the
+            // panel `.closed` and then this function still suspends once
+            // more, on `session.remote.disconnect()` right below: two points
+            // where `PendingSnippetRunner` — which fires on every state
+            // change the tab produces, not only on the ones this function
+            // causes — can observe "closed, and a snippet still armed" and
+            // read it the same way it would after a real drop: call
+            // `deliverPendingSnippetRun(on:)`, see `.closed`, and call
+            // `terminal.openIfNeeded()` — reopening a shell on a connection
+            // this function is in the middle of taking down, and, once that
+            // reopen itself ends in `.ended`, following it with a "the shell
+            // did not open" alert over a disconnect the user asked for.
+            // Clearing here removes the fact the runner would have acted on
+            // before either suspension point is reached, so a snippet armed
+            // when the user disconnects is dropped in silence, the same as
+            // every other fact this function clears for the same reason
+            // (`liveness`, `lostConnection`, `connectFailure`, below).
+            tab.pendingSnippetRun = nil
             await TeardownStage.shutDownTerminal.runBounded { [terminal = session.terminal] in
                 await terminal.shutdown()
             }
@@ -492,14 +512,16 @@ extension ContentView {
         // record of an attempt that failed is describing something the tab
         // has been taken past.
         tab.connectFailure = nil
-        // And the fourth (session overview plan, Task 3): a snippet armed to
-        // run once this tab has a shell. Same sentence again — every caller
-        // of this function is leaving this connection on purpose, and the
-        // connection the snippet was armed for is the one being left. The
-        // Cancel on the connecting surface reaches here too, which is what
-        // makes "Cancel sends nothing" a property of one line rather than of
-        // a second rule at that button.
-        tab.pendingSnippetRun = nil
+        // `tab.pendingSnippetRun` is NOT reset here. It was, until the final
+        // review of the session overview plan moved the clear up to right
+        // before `terminal.shutdown()` above — the fact it protects
+        // (`PendingSnippetRunner` reopening a shell mid-teardown) can only
+        // arise once that call has run, so clearing after it would already
+        // be too late. See the comment at the new call site for why the
+        // clear itself is unchanged: every caller of this function is
+        // leaving this connection on purpose, and the connection the
+        // snippet was armed for is the one being left.
+        //
         // And the run of a diagnosis of THIS tab — the run, not the panel.
         //
         // Stopping it explicitly, not by letting the sheet's own

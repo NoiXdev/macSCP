@@ -439,6 +439,53 @@ struct SessionOverviewWiringGuardTests {
             """)
     }
 
+    /// Final fix round, item 2. Deleting `presentTerminalUnavailable(` out
+    /// of `deliverPendingSnippetRun(on:)`'s `.ended` arm left every other
+    /// test in this project green — the send it guards never happens
+    /// either way, so nothing about bytes-sent or shells-opened notices;
+    /// only the user is left staring at a panel that says nothing about why
+    /// their snippet did not run.
+    ///
+    /// Scoped to the `.ended` arm's OWN span, not the whole function body:
+    /// `.closed`'s arm calls `terminal.openIfNeeded()` instead, and
+    /// `presentTerminalUnavailable(` itself is called from at least one
+    /// other, unrelated place in `ContentView.swift` — `triggerSnippet(
+    /// _:execute:)`'s own capability guard — so a check that searched the
+    /// whole file, or even the whole function, could read green with the
+    /// call sitting in the wrong arm or gone from this one entirely.
+    ///
+    /// `case .ended:` is checked to be there BEFORE the arm's span is cut
+    /// out of the body — the positive partner CLAUDE.md's "Guards that name
+    /// what they watch" asks for beside a scan whose result is otherwise
+    /// silent about WHY it found nothing: `case .ended:` renamed, moved
+    /// after `case .running:`, or removed all read as "no arm to search",
+    /// and only the explicit check below says which one is true this run.
+    @Test func deliveringToAnEndedShellPresentsTerminalUnavailable() throws {
+        let file = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.contentViewPath))
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "func deliverPendingSnippetRun(on tab: SessionTab)", in: file)
+        #expect(body.contains("case .ended:"), """
+            deliverPendingSnippetRun(on:) in \(Self.contentViewPath) no longer spells \
+            `case .ended:` — the arm this test isolates below no longer exists under that name.
+            """)
+        let endedStart = try #require(body.range(of: "case .ended:"), """
+            case .ended: not found in deliverPendingSnippetRun(on:) — cannot isolate the arm's \
+            own span.
+            """)
+        let runningStart = try #require(
+            body.range(of: "case .running:", range: endedStart.upperBound..<body.endIndex), """
+                case .running: not found after case .ended: in deliverPendingSnippetRun(on:) — \
+                cannot bound the arm's own span from below.
+                """)
+        let endedArm = String(body[endedStart.upperBound..<runningStart.lowerBound])
+        #expect(endedArm.contains("presentTerminalUnavailable("), """
+            the `.ended` arm of deliverPendingSnippetRun(on:) in \(Self.contentViewPath) no \
+            longer calls presentTerminalUnavailable( — a snippet whose shell failed to open is \
+            then dropped in silence, with nothing on screen saying why nothing ran. Arm read: \
+            \(endedArm)
+            """)
+    }
+
     /// Task 3 MOVED the key-window guard off `triggerSnippet(_:execute:)`
     /// and onto the Terminal menu's own bridge, which is the one caller it
     /// was ever about. Both halves are pinned, because either one alone is

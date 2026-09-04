@@ -48,11 +48,14 @@ public struct ConnectionHistory: Sendable, Equatable {
         /// byte count into its `detail` either: a finished transfer reads
         /// `"upload report.pdf → /var/www"` (`AuditRecorder.recordTransfer`),
         /// which names direction, file and destination and nothing else.
-        /// Counted 2026-09-04 over every `AuditEvent(` construction site
-        /// under `Sources/` (excluding the one in this comment): TWENTY-FIVE
-        /// — `RemoteBrowserViewModel` fifteen, `AuditRecorder` eight, and one
+        /// Recounted 2026-09-04 (final fix round, item 3 — the previous pass
+        /// missed `AuditRecorder.recordConnectFailed`'s own construction),
+        /// `grep -rn "AuditEvent(" Sources/ | grep -v ConnectionHistory.swift
+        /// | wc -l`, over every `AuditEvent(` construction site under
+        /// `Sources/` (excluding the one in this comment): TWENTY-SIX —
+        /// `RemoteBrowserViewModel` fifteen, `AuditRecorder` NINE, and one
         /// each in `ContentView` and `ContentView+Lifecycle`. None of the
-        /// twenty-five names a byte count, and `AuditEvent` declares no field
+        /// twenty-six names a byte count, and `AuditEvent` declares no field
         /// that could carry one.
         ///
         /// So the field is the shape the view renders against, and `nil` is

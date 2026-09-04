@@ -77,11 +77,18 @@ struct SnippetAfterConnectSequenceTests {
     /// shells, or throws. `shells` is `nil` for the failing connector, which
     /// is what makes "the fake terminal received nothing" a claim about a
     /// recorder that exists rather than about one nobody wired.
-    private func makeTab(shells: ShellRecorder?, shellOpens: Bool = true) -> SessionTab {
+    ///
+    /// `disconnectGate`, when given, holds `disconnect()` open until the test
+    /// releases it (`DisconnectGate.open()`) — see that type's own doc
+    /// comment for why a held continuation and not a sleep.
+    private func makeTab(
+        shells: ShellRecorder?, shellOpens: Bool = true, disconnectGate: DisconnectGate? = nil
+    ) -> SessionTab {
         SessionTab(
             connectionViewModel: ConnectionViewModel(connector: { _, _ in
                 guard let shells else { throw RemoteFSError.protocolError(reason: "dial refused") }
-                return ShellingFileSystem(shells: shells, opensShell: shellOpens)
+                return ShellingFileSystem(
+                    shells: shells, opensShell: shellOpens, disconnectGate: disconnectGate)
             }),
             certificateBridge: CertificatePromptBridge(),
             limiter: BandwidthLimiter(),
@@ -91,9 +98,11 @@ struct SnippetAfterConnectSequenceTests {
     /// Replaces the window's own tab (which carries the real SSH connector)
     /// with one this suite controls.
     private func installControlledTab(
-        in view: ContentView, shells: ShellRecorder?, shellOpens: Bool = true
+        in view: ContentView, shells: ShellRecorder?, shellOpens: Bool = true,
+        disconnectGate: DisconnectGate? = nil
     ) -> SessionTab {
-        let controlled = makeTab(shells: shells, shellOpens: shellOpens)
+        let controlled = makeTab(
+            shells: shells, shellOpens: shellOpens, disconnectGate: disconnectGate)
         let original = view.tabsModel.activeTab
         view.tabsModel.addTab(controlled)
         view.tabsModel.closeTab(original.id)
@@ -426,6 +435,79 @@ struct SnippetAfterConnectSequenceTests {
             the snippet was sent to a session it was not armed for.
             """)
     }
+
+    // MARK: - Teardown drops an armed snippet before it can reopen a dying shell
+
+    /// Final fix round, item 1. A snippet can still be armed when the user
+    /// disconnects — the shell was running, but `deliverPendingSnippetRun`
+    /// had not yet fired for the `.running` transition that would have sent
+    /// it and cleared it. `teardown(_:reason:)` must drop the armed snippet
+    /// before `terminal.shutdown()` sets the panel `.closed`, or the same
+    /// observer that would have delivered the snippet reads "closed, and
+    /// still armed" as "reopen the shell" — on a connection this function is
+    /// in the middle of taking down, not one that dropped.
+    ///
+    /// **No clock.** `disconnect()` on this test's own file system is held
+    /// open by `DisconnectGate`, a stored continuation the test resumes by
+    /// hand, not a sleep — so the moment `deliverPendingSnippetRun` is
+    /// replayed here is the exact moment `teardown(_:reason:)` has itself
+    /// reached: between `terminal.shutdown()` returning (the panel is
+    /// `.closed`) and `session.remote.disconnect()` returning (the tab still
+    /// has a `session` and its `activeStoredSessionID`, since `teardown`
+    /// clears both only after that call).
+    @Test func teardownDropsAnArmedSnippetBeforeTheTerminalCloses() async throws {
+        let workDir = makeTempDirectory("snippet-after-connect-teardown")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let shells = ShellRecorder()
+        let gate = DisconnectGate()
+        let tab = installControlledTab(in: view, shells: shells, disconnectGate: gate)
+        let stored = storeSession("teardown", in: workDir, view: view)
+
+        view.runSnippetAfterConnecting(snippet("echo never-sent"), on: stored)
+        try await pollUntil("the tab to hold a session") { tab.session != nil }
+
+        // Opens the shell without sending anything: the `.closed` case of
+        // `deliverPendingSnippetRun` only calls `openIfNeeded()`; it does not
+        // clear `pendingSnippetRun` (only `.ended` and `.running` do, and
+        // this stops short of both), which is what keeps the snippet armed
+        // into the disconnect below.
+        view.deliverPendingSnippetRun(on: tab)
+        try await pollUntil("the shell to reach .running") {
+            tab.session?.terminal.state == .running
+        }
+        #expect(tab.pendingSnippetRun != nil, """
+            the snippet must still be armed when the disconnect starts below — that is the \
+            whole scenario this test reproduces, and the two checks after it would be \
+            satisfied by an empty one otherwise.
+            """)
+        let opensBeforeDisconnect = await shells.openCount
+
+        let teardownTask = Task { await view.teardown(tab, reason: .userRequested) }
+        try await pollUntil("the terminal to close") {
+            tab.session?.terminal.state == .closed
+        }
+
+        // The observer's own moment, replayed by hand (this project renders
+        // no SwiftUI view under test — see this file's own doc comment):
+        // `PendingSnippetRunner` wakes on every state change the tab
+        // produces, and the terminal has just changed. `teardown` itself is
+        // still suspended on the gated `disconnect()` below, exactly as it
+        // would be mid-way through a real one.
+        view.deliverPendingSnippetRun(on: tab)
+
+        await gate.open()
+        await teardownTask.value
+
+        let opensAfter = await shells.openCount
+        #expect(opensAfter == opensBeforeDisconnect, """
+            \(opensAfter - opensBeforeDisconnect) extra shell open(s) started during teardown — \
+            a snippet still armed when the terminal closes must not reopen a connection that is \
+            being torn down.
+            """)
+        #expect(tab.pendingSnippetRun == nil, "teardown must still drop the snippet on its way out")
+    }
 }
 
 // MARK: - Doubles
@@ -473,10 +555,15 @@ private final class ShellingFileSystem: RemoteFileSystem, RemoteShellProvider, S
     /// has. Counting first is the point: the attempts are what
     /// `aShellThatWillNotOpenIsAttemptedOnceAndDropsTheSnippet` measures.
     private let opensShell: Bool
+    /// Held open by `disconnect()` when set — see `DisconnectGate`'s own doc
+    /// comment. `nil` for every test that has no need to observe teardown
+    /// mid-flight.
+    private let disconnectGate: DisconnectGate?
 
-    init(shells: ShellRecorder, opensShell: Bool = true) {
+    init(shells: ShellRecorder, opensShell: Bool = true, disconnectGate: DisconnectGate? = nil) {
         self.shells = shells
         self.opensShell = opensShell
+        self.disconnectGate = disconnectGate
     }
 
     func openShell(terminal: String, cols: Int, rows: Int) async throws -> any RemoteShell {
@@ -517,7 +604,32 @@ private final class ShellingFileSystem: RemoteFileSystem, RemoteShellProvider, S
 
     func homeDirectoryPath() async throws -> String { "/home/snippet-after-connect" }
 
-    func disconnect() async {}
+    func disconnect() async { await disconnectGate?.wait() }
+}
+
+/// Holds `ShellingFileSystem.disconnect()` open until the test resumes it —
+/// a stored continuation, not a sleep, for the reason this project always
+/// gives for synchronising on a seam instead of the clock (CLAUDE.md, "the
+/// subprocess timeout test synchronises on the reader, not the clock"). It
+/// is what makes `teardownDropsAnArmedSnippetBeforeTheTerminalCloses`
+/// deterministic: `session.remote.disconnect()` does not return until
+/// `open()` is called, so replaying the observer between the terminal
+/// closing and that return lands at the exact point the fix is about,
+/// every run, rather than at whatever point a race happened to reach.
+private actor DisconnectGate {
+    private var isOpen = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func open() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 /// In-memory `SecretStore` — `macSCPAppKitTests` cannot import

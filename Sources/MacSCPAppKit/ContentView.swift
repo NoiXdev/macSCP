@@ -2738,10 +2738,18 @@ struct ContentView: View {
         dismissConnectFailure(tab)
         tab.connectionViewModel.endEditing()
         // The user asked for an empty form (session overview plan, Task 2).
-        // The sidebar's own "New connection" entries clear their selection
-        // and report it, but this function is also the Sessions menu's and
-        // ⌘N's — neither goes through the sidebar, and both would otherwise
-        // blank the fields behind an overview that is still on screen.
+        // Verified 2026-09-04 (final fix round, item 4): this function has
+        // exactly one caller, `ContentView+Detail.swift:77`'s `onNew:`,
+        // reached only from `SessionSidebar.startNewConnection()` — which
+        // already clears the sidebar's own selection via
+        // `onSelectSession(nil)` immediately before calling this. ⌘N is
+        // bound to "New Tab" (`MacSCPApp.swift`, `tabCommands.newTab`), a
+        // different function entirely, and no Sessions-menu entry reaches
+        // this one either. The clear stays here anyway: this function does
+        // not lean on its one caller having already arranged it, so "asking
+        // for a new connection blanks the overview" stays true on its own
+        // rather than on trust that every future caller repeats the
+        // sidebar's own clearing step.
         overviewSessionID = nil
     }
 
