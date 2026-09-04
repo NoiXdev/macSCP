@@ -64,7 +64,7 @@
 - Tests: Swift Testing (`@Test`/`#expect`), TDD red→green. New logic ships
   with tests; prove regressions red first.
 - Unit suite: `swift test`. Gated suites: `MACSCP_ITEST=1` (Docker SSH rig),
-  `MACSCP_KEYCHAIN=1` (writes to the real keychain) and `MACSCP_SATURATION=1`
+  `MACSCP_KEYCHAIN=1` (writes to the real keychain), `MACSCP_PIPE_TIMING=1` (one gated case that counts pipe chunks from the CLI's line-buffered stdout — it measures the reader's scheduling as much as the binary, so it runs on request), and `MACSCP_SATURATION=1`
   (one test that parks the whole GCD global queue to prove the subprocess
   runner's readers need no thread — it cannot share a parallel run, measured
   on CI run 33705649537; run it alone).

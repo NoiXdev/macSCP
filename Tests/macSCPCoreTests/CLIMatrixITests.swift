@@ -1464,7 +1464,21 @@ struct CLIMatrixDiagnoseITests {
     /// `chunkCount == 1` (measured against the rig 2026-09-04, matching the
     /// raw-pipe measurement above). Green with the fix: `chunkCount == 6`
     /// on the same run, same rig.
-    @Test func rowsArriveInMoreThanOneChunk() async throws {
+    ///
+    /// Behind its own gate, `MACSCP_PIPE_TIMING=1`, and not under
+    /// `MACSCP_ITEST` alone: the count depends on the READER waking between
+    /// flushes that land within about a millisecond of each other. This
+    /// harness drains a pipe through `readabilityHandler` and
+    /// `availableData`, which returns everything buffered at the wakeup —
+    /// so a reader thread starved past that millisecond (the three-core
+    /// runner's ambient stalls run to seconds, CLAUDE.md) sees the six
+    /// flushes as one chunk and the case goes red with the fix present.
+    /// That is scheduler measurement, not a property of the binary; the
+    /// case stays as the record of what a run on an idle machine shows
+    /// (1 chunk without the fix, 6 with it, 2026-09-04) and is run on
+    /// request, not beside the suite.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSCP_PIPE_TIMING"] == "1"))
+    func rowsArriveInMoreThanOneChunk() async throws {
         let rig = try CLIMatrix.make(for: .ssh, label: "diagnose-streaming")
         defer { rig.tearDown() }
         let endpoint = try Self.rigEndpoint(rig)
