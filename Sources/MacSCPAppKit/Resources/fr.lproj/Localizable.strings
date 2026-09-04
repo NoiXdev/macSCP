@@ -1191,3 +1191,4 @@
 "overview.history.transfers %1$lld %2$lld %3$lld" = "↑%1$lld ↓%2$lld ✗%3$lld";
 "overview.snippets.empty" = "Aucun snippet enregistré.";
 "overview.snippets.run" = "Exécuter";
+"overview.snippets.shellDidNotOpen" = "L’extrait n’a pas été envoyé : l’interpréteur de cette session n’a pas démarré.";

@@ -88,8 +88,13 @@ extension ContentView {
                     alreadyOpenRequest = nil
                     // The pane override travels with the request, so
                     // answering an "Open Terminal" this way still opens the
-                    // terminal.
-                    startWithoutAsking(request.stored, paneVisibility: request.paneVisibility)
+                    // terminal — and so does the session overview's pending
+                    // snippet, so answering a "Run" this way still runs it
+                    // (session overview plan, Task 3, fix round 1). Both are
+                    // the same rule: this answer starts what was asked for.
+                    startWithoutAsking(
+                        request.stored, paneVisibility: request.paneVisibility,
+                        pendingSnippet: request.pendingSnippet)
                 }
             }
             Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {

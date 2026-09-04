@@ -508,9 +508,35 @@ struct SessionOverviewView: View {
 
     // MARK: - Snippets
 
+    /// Whether this session's backend has a shell at all.
+    ///
+    /// Asked of the descriptor, the same source the sibling surfaces ask
+    /// (`TerminalPanelHeader` and `SnippetMenuModel.build` both take a
+    /// `supportsShell` the window derives this way) — never decided here by
+    /// listing which kinds have one.
+    private var supportsShell: Bool {
+        BackendDescriptor.descriptor(for: session.kind).capabilities.supportsShell
+    }
+
+    /// Nothing for a backend with no shell (fix round 1): an S3 or WebDAV
+    /// session cannot run a snippet, and the section's only control is a
+    /// Run. Drawn as an ABSENCE rather than as a list of greyed-out cards,
+    /// which is this project's standing rule — offer what is possible — and
+    /// the reason the gate sits on the whole section rather than on the
+    /// button: a card whose only action is impossible is a row saying
+    /// nothing.
+    ///
+    /// The gate is here and only here, which is what makes it complete: the
+    /// card builder below is called from this one place, and
+    /// `SessionOverviewWiringGuardTests
+    /// .theSnippetsAreOfferedOnlyForABackendWithAShell` reads both halves of
+    /// that. The builder is deliberately not named in this sentence — a
+    /// comment quoting the code beside it is indistinguishable from that
+    /// code to the scanner that counts its call sites (CLAUDE.md,
+    /// "Source-scanning guards read comments too").
     @ViewBuilder
     private var snippetsSection: some View {
-        if let model {
+        if let model, supportsShell {
             VStack(alignment: .leading, spacing: 8) {
                 sectionTitle(L10n.string("overview.section.snippets", "Snippets"))
                 if model.snippets.isEmpty {

@@ -77,11 +77,11 @@ struct SnippetAfterConnectSequenceTests {
     /// shells, or throws. `shells` is `nil` for the failing connector, which
     /// is what makes "the fake terminal received nothing" a claim about a
     /// recorder that exists rather than about one nobody wired.
-    private func makeTab(shells: ShellRecorder?) -> SessionTab {
+    private func makeTab(shells: ShellRecorder?, shellOpens: Bool = true) -> SessionTab {
         SessionTab(
             connectionViewModel: ConnectionViewModel(connector: { _, _ in
                 guard let shells else { throw RemoteFSError.protocolError(reason: "dial refused") }
-                return ShellingFileSystem(shells: shells)
+                return ShellingFileSystem(shells: shells, opensShell: shellOpens)
             }),
             certificateBridge: CertificatePromptBridge(),
             limiter: BandwidthLimiter(),
@@ -90,8 +90,10 @@ struct SnippetAfterConnectSequenceTests {
 
     /// Replaces the window's own tab (which carries the real SSH connector)
     /// with one this suite controls.
-    private func installControlledTab(in view: ContentView, shells: ShellRecorder?) -> SessionTab {
-        let controlled = makeTab(shells: shells)
+    private func installControlledTab(
+        in view: ContentView, shells: ShellRecorder?, shellOpens: Bool = true
+    ) -> SessionTab {
+        let controlled = makeTab(shells: shells, shellOpens: shellOpens)
         let original = view.tabsModel.activeTab
         view.tabsModel.addTab(controlled)
         view.tabsModel.closeTab(original.id)
@@ -257,18 +259,20 @@ struct SnippetAfterConnectSequenceTests {
         #expect(tab.pendingSnippetRun == nil)
     }
 
-    /// A start that is answered by the already-open QUESTION dials nothing
-    /// (see `ContentView.sidebarStart`), so a Run pressed there must leave
-    /// nothing parked on the tab — a snippet waiting there would fire at
-    /// whatever this tab connected to next.
-    @Test func aRunAnsweredByTheAlreadyOpenQuestionArmsNothing() async throws {
-        let workDir = makeTempDirectory("snippet-after-connect-asks")
+    /// Fix round 1, Important 2. A start answered by the already-open
+    /// QUESTION dials nothing (see `ContentView.sidebarStart`), so nothing is
+    /// armed yet — the snippet rides on the REQUEST. "Open Anyway" starts
+    /// what was asked for, and before the fix that answer connected with the
+    /// snippet silently dropped.
+    @Test func aRunAnsweredByOpenAnywayStillRunsTheSnippet() async throws {
+        let workDir = makeTempDirectory("snippet-after-connect-anyway")
         defer { try? FileManager.default.removeItem(at: workDir) }
         let (view, cleanup) = makeContentView(storeDirectory: workDir)
         defer { cleanup() }
         let shells = ShellRecorder()
         let tab = installControlledTab(in: view, shells: shells)
-        let stored = storeSession("asks", in: workDir, view: view)
+        let stored = storeSession("anyway", in: workDir, view: view)
+        let command = "echo answered-anyway"
 
         // Another tab already holds this stored session.
         let holder = makeTab(shells: nil)
@@ -276,18 +280,126 @@ struct SnippetAfterConnectSequenceTests {
         view.tabsModel.addTab(holder)
         view.tabsModel.activate(tab.id)
 
-        view.runSnippetAfterConnecting(snippet("echo asked"), on: stored)
-
-        #expect(tab.pendingSnippetRun == nil, """
-            the Run armed a snippet although the start only asked a question — nothing is \
-            dialling, and this snippet would sit here until some later connect fired it.
+        let query = try #require(
+            view.runSnippetAfterConnecting(snippet(command), on: stored),
+            """
+            the start did not raise the already-open query although another tab holds this \
+            session — the rest of this test is about the answer to a question nobody asked.
             """)
-        // Nothing to await: a start that asks never creates the `Task` inside
-        // `connect(in:stored:)`. The settle keeps this from passing merely
-        // because the check ran first.
+        #expect(tab.pendingSnippetRun == nil, """
+            the Run armed a snippet before the question was answered. Nothing is dialling yet, \
+            and a snippet parked here would fire at whatever this tab connected to next.
+            """)
+        #expect(query.pendingSnippet?.command == command, """
+            the query does not carry the snippet, so the answer below has nothing to start \
+            with — which is exactly the silent drop this fix is about.
+            """)
+
+        // "Open Anyway", as `ContentView+Sheets` presses it.
+        view.startWithoutAsking(
+            query.stored, paneVisibility: query.paneVisibility,
+            pendingSnippet: query.pendingSnippet)
+
+        try await pollUntil("the tab to hold a session") { tab.session != nil }
+        #expect(tab.pendingSnippetRun != nil, "the answer must arm what the question carried")
+        view.deliverPendingSnippetRun(on: tab)
+        try await pollUntil("the shell to reach .running") {
+            tab.session?.terminal.state == .running
+        }
+        view.deliverPendingSnippetRun(on: tab)
+        try await pollUntil("the snippet to reach the shell") { await shells.sendCount >= 1 }
+        let received = await shells.text
+        #expect(received.contains(command), "received: \(received.debugDescription)")
+    }
+
+    /// The other answer: "Go to Existing Tab" opens no connection here, so
+    /// the snippet goes with the request. Nothing is armed on any tab and
+    /// nothing is sent — and nothing had to be un-armed to get there, which
+    /// is the whole reason the snippet rides on the question.
+    @Test func aRunAnsweredByGoToExistingTabRunsNothing() async throws {
+        let workDir = makeTempDirectory("snippet-after-connect-jump")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let shells = ShellRecorder()
+        let tab = installControlledTab(in: view, shells: shells)
+        let stored = storeSession("jump", in: workDir, view: view)
+
+        let holder = makeTab(shells: nil)
+        holder.activeStoredSessionID = stored.id
+        view.tabsModel.addTab(holder)
+        view.tabsModel.activate(tab.id)
+
+        let query = try #require(view.runSnippetAfterConnecting(snippet("echo jumped"), on: stored))
+        view.jumpToOpenSession(query)
+
+        // Nothing to await: neither answer creates the `Task` inside
+        // `connect(in:stored:)` here. The settle keeps this from passing
+        // merely because the checks ran first.
         try? await Task.sleep(for: .milliseconds(50))
-        #expect(tab.session == nil, "the start was supposed to ask, not dial")
+        let armed = view.tabsModel.tabs.filter { $0.pendingSnippetRun != nil }
+        #expect(armed.isEmpty, """
+            \(armed.count) tab(s) hold a pending snippet after "Go to Existing Tab" — that \
+            answer opens no connection, so the snippet has nothing to run against and would \
+            wait for some later connect.
+            """)
+        #expect(tab.session == nil, "the answer was supposed to jump, not dial")
         #expect(await shells.sendCount == 0)
+    }
+
+    /// Fix round 1, Critical. `TerminalPanelViewModel.openIfNeeded()` returns
+    /// early for `.opening`/`.running` but REOPENS from `.ended`, and the
+    /// runner wakes on every state change — so an unconditional
+    /// `openIfNeeded()` in the delivery turns a shell that will not open into
+    /// an `.opening → .ended → .opening` loop: a tight main-actor spin for a
+    /// backend whose opener throws at once, and repeated shell-channel opens
+    /// against the server for an SSH one.
+    ///
+    /// What is measured is the DECISION and a COUNT, never a duration:
+    /// `openIfNeeded()` writes `.opening` synchronously, before its own Task
+    /// runs, so reading the state straight after a delivery reads the answer
+    /// this method just gave rather than a race with the open.
+    @Test func aShellThatWillNotOpenIsAttemptedOnceAndDropsTheSnippet() async throws {
+        let workDir = makeTempDirectory("snippet-after-connect-noshell")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let shells = ShellRecorder()
+        let tab = installControlledTab(in: view, shells: shells, shellOpens: false)
+        let stored = storeSession("noshell", in: workDir, view: view)
+
+        view.runSnippetAfterConnecting(snippet("echo never"), on: stored)
+        try await pollUntil("the tab to hold a session") { tab.session != nil }
+
+        view.deliverPendingSnippetRun(on: tab)
+        try await pollUntil("the shell open to fail") {
+            if case .ended = tab.session?.terminal.state { return true }
+            return false
+        }
+
+        // The runner's next firing, replayed by hand: it wakes on the state
+        // change the failed open produced, and would wake again on each open
+        // it started.
+        view.deliverPendingSnippetRun(on: tab)
+
+        let stateAfter = tab.session?.terminal.state
+        #expect(stateAfter != .opening, """
+            a delivery on an .ended shell started another open. openIfNeeded() reopens from \
+            .ended, so this is a loop: every attempt fails, the failure is a state change, and \
+            the state change drives the next attempt.
+            """)
+        view.deliverPendingSnippetRun(on: tab)
+        view.deliverPendingSnippetRun(on: tab)
+
+        let opens = await shells.openCount
+        #expect(opens == 1, """
+            the shell was opened \(opens) times, expected exactly one.
+            """)
+        #expect(tab.pendingSnippetRun == nil, """
+            the snippet is still pending after the shell failed to open — it is what keeps the \
+            runner interested in this tab, and there is no shell coming.
+            """)
+        #expect(await shells.sendCount == 0, "nothing may be sent to a shell that never opened")
     }
 
     /// The hand-off is per TAB and names the session it was armed for: a tab
@@ -354,11 +466,24 @@ private final class RecordingShell: RemoteShell, Sendable {
 /// its own file and therefore not reachable from here.
 private final class ShellingFileSystem: RemoteFileSystem, RemoteShellProvider, Sendable {
     private let shells: ShellRecorder
+    /// `false` makes every `openShell` throw AFTER counting the attempt —
+    /// the shape a shell-less backend's opener has in the real app
+    /// (`ContentView.startSession` throws "This connection does not support a
+    /// terminal."), and the shape an SSH shell channel that will not open
+    /// has. Counting first is the point: the attempts are what
+    /// `aShellThatWillNotOpenIsAttemptedOnceAndDropsTheSnippet` measures.
+    private let opensShell: Bool
 
-    init(shells: ShellRecorder) { self.shells = shells }
+    init(shells: ShellRecorder, opensShell: Bool = true) {
+        self.shells = shells
+        self.opensShell = opensShell
+    }
 
     func openShell(terminal: String, cols: Int, rows: Int) async throws -> any RemoteShell {
         await shells.noteOpen()
+        guard opensShell else {
+            throw RemoteFSError.protocolError(reason: "This connection does not support a terminal.")
+        }
         return RecordingShell(recorder: shells)
     }
 

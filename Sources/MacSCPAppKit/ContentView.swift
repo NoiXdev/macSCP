@@ -263,6 +263,19 @@ struct ContentView: View {
         /// an ordinary connect. Without it, answering the query would
         /// quietly turn an "Open Terminal" into a plain connect.
         let paneVisibility: PaneVisibility?
+        /// The snippet the overview's Run asked to have run once the
+        /// connection is up, carried through the query for exactly the
+        /// reason `paneVisibility` above is: "Open Anyway" has to start the
+        /// SAME thing that was asked for. `nil` for every other start.
+        ///
+        /// It rides on the QUESTION rather than being parked on a tab
+        /// (session overview plan, Task 3, fix round 1). A snippet armed
+        /// before the answer would have to be un-armed by "Go to Existing
+        /// Tab" and by Cancel and by a dismissal, and the tab it sat on is
+        /// not necessarily the tab an answer opens; here the three answers
+        /// need no clearing rule at all — two of them simply drop the
+        /// request, and the third hands this to `startWithoutAsking`.
+        let pendingSnippet: Snippet?
     }
 
     /// A sidebar start that stopped because some tab already holds the
@@ -1182,32 +1195,33 @@ struct ContentView: View {
     /// hand-off: it parks the snippet on the tab that is about to dial, and
     /// `deliverPendingSnippetRun(on:)` picks it up from there.
     ///
-    /// **The tab is `activeTab`, and that is not a guess.** The overview is
-    /// only ever on screen for the ACTIVE tab and only while that tab has no
-    /// session (`ContentView+Detail`'s branch sits inside the "no session
-    /// yet" surface), and `TabsViewModel.sidebarConnectTarget` hands an
-    /// unconnected active tab back as the target rather than making a fresh
-    /// one. A Run pressed under any other circumstance arms nothing, because
-    /// of the second guard below.
+    /// **It does not pick the tab, and fix round 1 is why.** The first
+    /// version armed `activeTab` itself, right after the dial, on the
+    /// argument that the overview is only ever on screen for an unconnected
+    /// active tab and that `TabsViewModel.sidebarConnectTarget` hands such a
+    /// tab back as the target. Both halves are true and the conclusion was
+    /// still the wrong shape: it made this function repeat the tab rule
+    /// instead of asking it. The snippet now travels down the same call as
+    /// the pane override does, and `startWithoutAsking` — where the tab rule
+    /// actually runs — is the one place it is armed.
     ///
-    /// **Armed only for a dial that actually started.** `connectFromSidebar`
-    /// answers a session another tab already holds with a QUESTION and dials
-    /// nothing (see `sidebarStart`); `connect(in:stored:)` sets
-    /// `tab.isReconnecting` synchronously, before its first `await`, so
-    /// reading it on the next line distinguishes the two without this method
-    /// re-deciding anything `sidebarStart` decides. Without that check a Run
-    /// answered by the query would leave a snippet parked on this tab,
-    /// waiting to fire at whatever it connected to next. The `guard` above
-    /// the call covers the other half: a tab that is already dialling has
-    /// `connect(in:stored:)` return at its own top-of-function guard, and
-    /// arming then would attach this snippet to somebody else's attempt.
-    func runSnippetAfterConnecting(_ snippet: Snippet, on stored: StoredSession) {
-        let tab = activeTab
-        guard !tab.isReconnecting else { return }
-        connectFromSidebar(stored)
-        guard tab.isReconnecting else { return }
-        tab.pendingSnippetRun = SessionTab.PendingSnippetRun(
-            snippet: snippet, storedSessionID: stored.id)
+    /// **A start that asks instead of dialling carries it too.** A session
+    /// another tab already holds raises the query rather than connecting
+    /// (`sidebarStart`), and the snippet goes onto the REQUEST: "Open
+    /// Anyway" starts what was asked for, snippet included, while "Go to
+    /// Existing Tab" and Cancel drop the request and the snippet with it.
+    /// Before the fix that answer connected with the snippet silently
+    /// dropped.
+    ///
+    /// **The return value is the query's**, discardable, handed back for the
+    /// reason `sidebarStart`'s own doc comment gives: setting the `@State`
+    /// is the one line no test here can observe, so what it would be set to
+    /// is returned instead.
+    @discardableResult
+    func runSnippetAfterConnecting(
+        _ snippet: Snippet, on stored: StoredSession
+    ) -> AlreadyOpenSessionRequest? {
+        connectFromSidebar(stored, pendingSnippet: snippet)
     }
 
     /// Steps (2) through (4) of that sequence, evaluated fresh every time
@@ -1236,13 +1250,28 @@ struct ContentView: View {
     ///    so delivering into a background tab would send the command to the
     ///    wrong shell. It stays pending instead; the runner's own signal
     ///    includes which tab is active, so coming back to it delivers.
-    /// 4. **No shell yet.** `openIfNeeded()` is what makes one — a session
-    ///    whose saved pane visibility hides the terminal opens no shell by
-    ///    itself, and this sequence would otherwise wait for a `.running`
-    ///    that nobody was going to produce. It is a no-op while one is
-    ///    opening or already up, and it does NOT reveal the panel: revealing
-    ///    (and persisting that) is `sendSnippet`'s job, at the moment there
-    ///    is something to show.
+    /// 4. **The shell's own state, one case at a time** (fix round 1,
+    ///    Critical). `.closed` is the only case that opens one:
+    ///    `openIfNeeded()` is what makes a shell at all — a session whose
+    ///    saved pane visibility hides the terminal opens none by itself, and
+    ///    this sequence would otherwise wait for a `.running` nobody was
+    ///    going to produce — and it does NOT reveal the panel; revealing (and
+    ///    persisting that) stays `sendSnippet`'s job, at the moment there is
+    ///    something to show. `.opening` waits. `.running` sends.
+    ///
+    ///    `.ended` gives up, and that case is the whole reason this is a
+    ///    `switch` rather than the unconditional `openIfNeeded()` this
+    ///    method shipped with. `TerminalPanelViewModel.openIfNeeded()`
+    ///    returns early for `.opening` and `.running` but REOPENS from
+    ///    `.ended` — and every one of those attempts is a state change, which
+    ///    is exactly what wakes `PendingSnippetRunner` again. A shell that
+    ///    will not open therefore became a loop: a tight main-actor spin for
+    ///    a backend whose opener throws at once (a session with no shell —
+    ///    see `startSession`'s own opener), and repeated shell-channel opens
+    ///    against the server for an SSH one. One attempt, then the snippet is
+    ///    dropped and the failure is said out loud, because nothing else on
+    ///    screen would say it: the panel was never revealed, so its own
+    ///    `.ended` text and Reopen button are not visible.
     ///
     /// **Cleared on the way out, whatever the outcome.** This method is
     /// called again for every later change of the facts above, and
@@ -1274,8 +1303,21 @@ struct ContentView: View {
         }
         guard tabsModel.activeTab.id == tab.id else { return }
         let terminal = session.terminal
-        terminal.openIfNeeded()
-        guard terminal.state == .running else { return }
+        switch terminal.state {
+        case .closed:
+            terminal.openIfNeeded()
+            return
+        case .opening:
+            return
+        case .ended:
+            tab.pendingSnippetRun = nil
+            presentTerminalUnavailable(L10n.string(
+                "overview.snippets.shellDidNotOpen",
+                "The snippet was not sent: this session's shell did not open."))
+            return
+        case .running:
+            break
+        }
         tab.pendingSnippetRun = nil
         triggerSnippet(pending.snippet, execute: true)
     }
@@ -1789,8 +1831,17 @@ struct ContentView: View {
     /// row, or the row's own "Connect" entry, never a single click (see
     /// `SessionRowActivation`). One line onto `sidebarStart`, which is
     /// where the already-open query and the tab rule both live.
-    func connectFromSidebar(_ stored: StoredSession) {
-        sidebarStart(stored, paneVisibility: nil)
+    /// `pendingSnippet` is the session overview's Run and nothing else — a
+    /// snippet to hand the connection once it has a shell (Task 3). It
+    /// travels as an argument of the ordinary connect rather than as a
+    /// second entry point, which is what keeps "Run" from being a fourth
+    /// way onto the host: this is still the one call, and everything it
+    /// applies still applies.
+    @discardableResult
+    func connectFromSidebar(
+        _ stored: StoredSession, pendingSnippet: Snippet? = nil
+    ) -> AlreadyOpenSessionRequest? {
+        sidebarStart(stored, paneVisibility: nil, pendingSnippet: pendingSnippet)
     }
 
     /// Sidebar row "Open Terminal" (P3c/T2): the SAME start a sidebar row
@@ -1835,16 +1886,18 @@ struct ContentView: View {
     /// of only being parked, and `AlreadyOpenSessionTests` reads it there.
     @discardableResult
     func sidebarStart(
-        _ stored: StoredSession, paneVisibility: PaneVisibility?
+        _ stored: StoredSession, paneVisibility: PaneVisibility?, pendingSnippet: Snippet? = nil
     ) -> AlreadyOpenSessionRequest? {
         guard let existing = tabsModel.tabHolding(
             stored.id, storedSessionIDOf: \.activeStoredSessionID)
         else {
-            startWithoutAsking(stored, paneVisibility: paneVisibility)
+            startWithoutAsking(
+                stored, paneVisibility: paneVisibility, pendingSnippet: pendingSnippet)
             return nil
         }
         let request = AlreadyOpenSessionRequest(
-            stored: stored, existingTabID: existing.id, paneVisibility: paneVisibility)
+            stored: stored, existingTabID: existing.id, paneVisibility: paneVisibility,
+            pendingSnippet: pendingSnippet)
         alreadyOpenRequest = request
         return request
     }
@@ -1858,9 +1911,31 @@ struct ContentView: View {
     /// start reaches when no tab holds the session at all — not a second
     /// copy of that path. A second copy is how the answer to the query
     /// would start drifting from the behaviour it is offering.
-    func startWithoutAsking(_ stored: StoredSession, paneVisibility: PaneVisibility?) {
+    ///
+    /// `pendingSnippet` is the session overview's Run (Task 3, fix round 1),
+    /// and this is the ONE place it is armed: the tab rule picks the target
+    /// here, so this is the first moment anybody knows which tab the snippet
+    /// belongs to. Arming for the query's own answer therefore costs
+    /// nothing extra — "Open Anyway" comes back through this same function
+    /// with the snippet the request carried.
+    ///
+    /// Armed only when the target is not already dialling, mirroring
+    /// `connect(in:stored:)`'s own top-of-function guard: that call is about
+    /// to return without doing anything, and a snippet left behind would
+    /// wait for somebody else's attempt to produce a shell. The target is
+    /// never a CONNECTED tab (`sidebarConnectTarget` answers a connected
+    /// active tab with a fresh one), so `connect`'s reconnect-in-place
+    /// teardown — which clears `pendingSnippetRun` — cannot run here and
+    /// take this write back.
+    func startWithoutAsking(
+        _ stored: StoredSession, paneVisibility: PaneVisibility?, pendingSnippet: Snippet? = nil
+    ) {
         let target = tabsModel.sidebarConnectTarget(
             activeTabIsConnected: activeTab.isConnected, makeTab: makeTab)
+        if let pendingSnippet, !target.isReconnecting {
+            target.pendingSnippetRun = SessionTab.PendingSnippetRun(
+                snippet: pendingSnippet, storedSessionID: stored.id)
+        }
         connect(in: target, stored: stored, paneVisibility: paneVisibility)
     }
 
@@ -1871,11 +1946,12 @@ struct ContentView: View {
     /// is already the active one, activating it changes nothing, which is
     /// what that answer means in that situation.
     func jumpToOpenSession(_ request: AlreadyOpenSessionRequest) {
-        // A snippet the overview's Run armed on the tab that asked (session
-        // overview plan, Task 3) has nothing left to run against: this answer
-        // opens no connection, it only looks at one that already exists. See
-        // `SessionTab.pendingSnippetRun`.
-        activeTab.pendingSnippetRun = nil
+        // Nothing to clear for the overview's Run (session overview plan,
+        // Task 3, fix round 1). A snippet asked for while this query was
+        // raised rode on the REQUEST, never on a tab, so this answer drops
+        // it by discarding the request — and the clear that used to stand
+        // here could take a snippet away from a dial the active tab was
+        // already running for something else.
         tabsModel.activate(request.existingTabID)
     }
 
@@ -2710,8 +2786,15 @@ struct ContentView: View {
     /// (M12/T7b) — the shared fallback for every shell-only command path
     /// (toolbar button, ⌘T, both "Terminal" menu entries) that reaches its
     /// action despite already being disabled for the active tab's backend.
-    func presentTerminalUnavailable() {
-        terminalUnavailableAlertMessage = L10n.string(
+    ///
+    /// The argument is `nil` at every caller but one: the four shortcut
+    /// refusals all mean the same thing and say the standard sentence. The
+    /// exception is `deliverPendingSnippetRun(on:)`, whose shell did not
+    /// come up — "isn't available for this connection type" would be the
+    /// wrong sentence there, and a second alert for one more sentence would
+    /// be a second surface saying the same kind of thing.
+    func presentTerminalUnavailable(_ message: String? = nil) {
+        terminalUnavailableAlertMessage = message ?? L10n.string(
             "shortcut.unavailableForProtocol",
             "This shortcut isn't available for this connection type.")
     }

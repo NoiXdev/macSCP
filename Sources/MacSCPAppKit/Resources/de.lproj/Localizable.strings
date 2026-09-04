@@ -1188,3 +1188,4 @@
 "overview.history.transfers %1$lld %2$lld %3$lld" = "↑%1$lld ↓%2$lld ✗%3$lld";
 "overview.snippets.empty" = "Noch keine Snippets gespeichert.";
 "overview.snippets.run" = "Ausführen";
+"overview.snippets.shellDidNotOpen" = "Das Snippet wurde nicht gesendet: Die Shell dieser Sitzung ist nicht gestartet.";

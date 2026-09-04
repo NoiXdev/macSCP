@@ -1190,3 +1190,4 @@
 "overview.history.transfers %1$lld %2$lld %3$lld" = "↑%1$lld ↓%2$lld ✗%3$lld";
 "overview.snippets.empty" = "Nie zapisano jeszcze żadnych fragmentów.";
 "overview.snippets.run" = "Uruchom";
+"overview.snippets.shellDidNotOpen" = "Fragment nie został wysłany: powłoka tej sesji nie uruchomiła się.";

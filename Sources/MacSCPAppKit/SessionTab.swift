@@ -354,15 +354,17 @@ final class SessionTab: Identifiable {
         let storedSessionID: UUID
     }
 
-    /// Four writers, counted while writing this sentence:
-    /// - `ContentView.runSnippetAfterConnecting(_:on:)` SETS it, and only
-    ///   for a dial that actually started.
+    /// Three writers, RECOUNTED in fix round 1 (there were four, and
+    /// `jumpToOpenSession`'s clear went away with the reason for it — a
+    /// snippet asked for while the already-open query is up rides on the
+    /// REQUEST until an answer, so no tab holds one to clear):
+    /// - `ContentView.startWithoutAsking(_:paneVisibility:pendingSnippet:)`
+    ///   SETS it, on the tab the tab rule just picked, and only when that
+    ///   tab is not already dialling.
     /// - `ContentView.deliverPendingSnippetRun(on:)` clears it — before the
     ///   send, so a repeated observation cannot repeat the command, and on
-    ///   every outcome that is not a send.
-    /// - `ContentView.jumpToOpenSession(_:)` clears it: that answer opens no
-    ///   connection here, so the snippet this tab was holding has nothing
-    ///   left to run against.
+    ///   every outcome that is not a send (no session, another session, a
+    ///   shell that will not open).
     /// - `ContentView.teardown(_:reason:)` clears it, for the same reason it
     ///   clears `liveness`, `lostConnection` and `connectFailure`: every
     ///   caller of that function is leaving this connection on purpose.

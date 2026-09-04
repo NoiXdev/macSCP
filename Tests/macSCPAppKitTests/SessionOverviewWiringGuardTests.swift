@@ -73,6 +73,9 @@ struct SessionOverviewWiringGuardTests {
     /// (Task 3), never for anything the view draws.
     private static let contentViewPath = "Sources/MacSCPAppKit/ContentView.swift"
     private static let lifecyclePath = "Sources/MacSCPAppKit/ContentView+Lifecycle.swift"
+    /// Where the already-open query's three answers are pressed — read for
+    /// the one that has to carry the overview's pending snippet.
+    private static let sheetsPath = "Sources/MacSCPAppKit/ContentView+Sheets.swift"
     /// Core's model — read for the label ids it emits, never edited by this
     /// task's App-side work.
     private static let modelPath = "Sources/macSCPCore/Presentation/SessionOverviewModel.swift"
@@ -305,6 +308,50 @@ struct SessionOverviewWiringGuardTests {
             """)
     }
 
+    /// Fix round 1, Important 1: the Run control is offered only where a
+    /// shell exists to run it in. An S3 or WebDAV session has no terminal at
+    /// all, and a card whose only action is impossible is a row saying
+    /// nothing.
+    ///
+    /// Three positives before the one negative, because the negative is a
+    /// COUNT and a count over a file that lost its snippets section entirely
+    /// would read as satisfied.
+    @Test func theSnippetsAreOfferedOnlyForABackendWithAShell() throws {
+        let file = try Self.viewFileViews()
+        #expect(Self.occurrences(of: "\"overview.snippets.run\"", in: file.withLiterals) == 1, """
+            \(Self.viewPath) does not draw exactly one Run control — the checks below are then \
+            about a control that is missing, or about one of several the gate cannot all cover.
+            """)
+        let flag = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "private var supportsShell: Bool", in: file.code)
+        #expect(flag.contains("capabilities.supportsShell"), """
+            \(Self.viewPath)'s supportsShell no longer reads the descriptor's capabilities — \
+            the gate is then this view's own opinion about which backends have a shell, which \
+            is the second copy a fourth backend gets wrong.
+            """)
+        let section = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "private var snippetsSection: some View", in: file.code)
+        #expect(section.contains("supportsShell"), """
+            the snippets section no longer asks supportsShell — Run is then offered for a \
+            session that cannot open a terminal, and pressing it connects and then reports a \
+            shell that was never going to come up.
+            """)
+        #expect(section.contains("snippetCard("), """
+            the snippets section no longer builds the cards — the count below would then be \
+            measuring a builder nobody calls.
+            """)
+        // The negative: the card builder is reached from that gated section
+        // and from nowhere else, so the one gate above is the only door.
+        // Two occurrences — its own declaration, and the single call inside
+        // the section — counted in the pass that writes this line.
+        let calls = Self.occurrences(of: "snippetCard(", in: file.code)
+        #expect(calls == 2, """
+            \(Self.viewPath) names snippetCard( \(calls) times, expected two: the declaration \
+            and the one call inside the gated section. A third is a second door onto the Run \
+            control, and the gate above covers only the first.
+            """)
+    }
+
     /// Run is not a fourth way onto the host: read out of
     /// `runSnippetAfterConnecting`'s own body, not taken from the sentence
     /// that says so.
@@ -315,9 +362,15 @@ struct SessionOverviewWiringGuardTests {
     /// over nothing.
     @Test func theOverviewsSnippetRunDialsThroughTheSidebarConnectAndNothingElse() throws {
         let source = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.contentViewPath))
+        // The signature spans lines since fix round 1 (it returns the
+        // query), so the anchor is the name and its open paren; the first
+        // `{` after it is still the body's.
         let body = try TransferQueueBarCancelGuardTests.declarationBody(
-            of: "func runSnippetAfterConnecting(_ snippet: Snippet, on stored: StoredSession)",
-            in: source)
+            of: "func runSnippetAfterConnecting(", in: source)
+        #expect(body.contains("pendingSnippet:"), """
+            runSnippetAfterConnecting no longer hands the snippet down as `pendingSnippet:` — \
+            it then opens a connection and forgets what the user pressed Run for.
+            """)
         #expect(body.contains("connectFromSidebar("), """
             runSnippetAfterConnecting no longer calls connectFromSidebar( — its dial is then \
             something else, and every rule that path applies (the already-open query, the tab \
@@ -328,6 +381,43 @@ struct SessionOverviewWiringGuardTests {
             #expect(!body.contains(entry), """
                 runSnippetAfterConnecting names \(entry) — a second route onto the user's host \
                 inside the one function that was allowed exactly one.
+                """)
+        }
+    }
+
+    /// Fix round 1, Important 2 — and the one half of that fix no
+    /// behavioural test can reach: `SnippetAfterConnectSequenceTests` presses
+    /// "Open Anyway" by calling `startWithoutAsking` itself, so it is blind
+    /// to what the BUTTON passes. Measured: removing `request.pendingSnippet`
+    /// from that call left the whole sequence suite green.
+    ///
+    /// Two positives before the two negatives, since a dialog that lost its
+    /// answer entirely carries no wrong argument either.
+    @Test func theOpenAnywayAnswerCarriesWhatTheQueryWasAskedWith() throws {
+        let raw = try Self.raw(Self.sheetsPath)
+        let sheets = try SwiftSource.blankingCommentsAndStrings(raw)
+        let withLiterals = try SwiftSource.blankingComments(raw)
+        #expect(withLiterals.contains("tabs.alreadyOpen.openAnyway"), """
+            \(Self.sheetsPath) no longer draws the "Open Anyway" answer — the query then has \
+            no way to go ahead at all, and the argument checks below are about a button that \
+            is not there.
+            """)
+        // One call, counted in the pass that writes this line: this file
+        // presses that answer and nothing else in it starts a session.
+        let calls = Self.occurrences(of: "startWithoutAsking(", in: sheets)
+        #expect(calls == 1, """
+            \(Self.sheetsPath) calls startWithoutAsking( \(calls) times, expected exactly one \
+            — the span read below names whichever came first, and would be silent about the \
+            others.
+            """)
+        let span = try DiagnosticsDoorsGuardTests.argumentSpan(
+            after: "startWithoutAsking(", in: sheets, occurrence: 1)
+        for carried in ["request.paneVisibility", "request.pendingSnippet"] {
+            #expect(span.contains(carried), """
+                the "Open Anyway" answer does not pass \(carried). That answer means "start \
+                what was asked for": dropping the pane override quietly turns an "Open \
+                Terminal" into a plain connect, and dropping the snippet quietly turns the \
+                overview's Run into a plain connect. Read: \(span)
                 """)
         }
     }
@@ -359,8 +449,25 @@ struct SessionOverviewWiringGuardTests {
     /// front.
     @Test func theSnippetMenuBridgeIsWhatChecksForTheKeyWindow() throws {
         let lifecycle = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.lifecyclePath))
+        // Anchored on the ASSIGNMENT PLUS ITS BRACE, not on the assignment
+        // alone (fix round 1). `declarationBodyRange` opens its span at the
+        // first `{` after the text it is given, so a revert to the
+        // one-liner `tabCommands.runSnippet = triggerSnippet` would make it
+        // balance whatever block came next in the file and report on a span
+        // that has nothing to do with this bridge. Requiring the brace here
+        // makes that revert fail on THIS line, loudly, before any span is
+        // taken.
+        let assignment = "tabCommands.runSnippet = {"
+        guard lifecycle.contains(assignment) else {
+            Issue.record("""
+                \(Self.lifecyclePath) no longer assigns a closure to tabCommands.runSnippet. A \
+                method reference carries no key-window check, and the Terminal menu's snippet \
+                entries then fire against a window that is not in front.
+                """)
+            return
+        }
         let bridge = try TransferQueueBarCancelGuardTests.declarationBody(
-            of: "tabCommands.runSnippet =", in: lifecycle)
+            of: String(assignment.dropLast()), in: lifecycle)
         #expect(bridge.contains("triggerSnippet("), """
             the tabCommands.runSnippet bridge no longer calls triggerSnippet( — the Terminal \
             menu's snippet entries reach nothing, and the check below would then be about a \
