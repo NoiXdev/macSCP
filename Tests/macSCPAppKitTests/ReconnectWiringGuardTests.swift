@@ -196,6 +196,20 @@ struct ReconnectWiringGuardTests {
             reason: "A separate program with no tabs, no lost surface and no reconnect policy. Its own connect path is a different property; sanctioning its dial sites here would mean vouching for code this suite is not about."),
     ]
 
+    /// Package targets that are declared with an explicit `path:` outside
+    /// `Sources/` and therefore have no directory for
+    /// `everySourceDirectoryIsScannedOrExplicitlyExcluded` to find — naming
+    /// one in `excludedRoots` would make that check fail with "named but no
+    /// longer exists", which is the wrong red for a target that was never
+    /// there to begin with. Named here instead, so
+    /// `everyPackageTargetIsScannedOrExplicitlyExcluded` still accounts for
+    /// it without the two checks disagreeing about what `Sources/` holds.
+    private static let targetsRootedOutsideSources: [ExcludedRoot] = [
+        ExcludedRoot(
+            name: "MacSCPTestSupport",
+            reason: "A plain target under Tests/, not Sources/: shared test-only helpers (currently `pollUntil`) with no path into the shipped app and no reconnect policy of its own. It is a leaf both test targets depend on, not a caller either scanned root can reach."),
+    ]
+
     private static var scannedRoots: [URL] {
         scannedRootNames.map { sourcesDirectory.appendingPathComponent($0) }
     }
@@ -765,7 +779,9 @@ struct ReconnectWiringGuardTests {
             not reading what it thinks it is.
             """)
 
-        let known = Set(Self.scannedRootNames).union(Self.excludedRoots.map(\.name))
+        let known = Set(Self.scannedRootNames)
+            .union(Self.excludedRoots.map(\.name))
+            .union(Self.targetsRootedOutsideSources.map(\.name))
         let unknown = targets.subtracting(known)
         #expect(unknown.isEmpty, """
             Package.swift declares target(s) this suite neither scans nor excludes: \

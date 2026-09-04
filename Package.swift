@@ -104,15 +104,25 @@ let package = Package(
             dependencies: ["MacSCPAppKit"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        // Shared by both test targets, which cannot share a source file
+        // (SwiftPM compiles each target from its own directory). It imports
+        // no test library, so it is a plain target; the two test targets
+        // depend on it.
+        .target(
+            name: "MacSCPTestSupport",
+            path: "Tests/MacSCPTestSupport",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .testTarget(
             name: "macSCPAppKitTests",
-            dependencies: ["MacSCPAppKit"],
+            dependencies: ["MacSCPAppKit", "MacSCPTestSupport"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "macSCPCoreTests",
             dependencies: [
                 "macSCPCore",
+                "MacSCPTestSupport",
                 .product(name: "Crypto", package: "swift-crypto"),
                 // `RSASHA2HostKeyTests` parses a host-key blob into
                 // `ByteBuffer` and hands the result to NIOSSH's key/signature
