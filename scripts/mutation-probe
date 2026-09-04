@@ -33,6 +33,19 @@
 # counted, `issueRecorded` events' `testID`s named), and the stdout parse
 # only runs as a fallback when the event file comes back empty.
 #
+# RAN counts test FUNCTIONS, not `@Test(arguments:)` CASES and not
+# suites — both measured 2026-09-04 (fix round 1) against
+# `CLIMatrixITests.swift`'s `everyConnectionKindHasARigFixture(kind:)`, a
+# 3-case parameterised test: the event file carried 3
+# `testCaseStarted`/`testCaseEnded` pairs (a different event kind, not
+# counted here) but only ONE `testEnded` for the function, aggregating
+# all 3 cases into one verdict. The same run's event file also carried a
+# SECOND `testEnded`, for the suite itself — undetected through fix round
+# 1, which counted it into RAN: a 7-test suite read RAN 8 in every RESULT
+# line that round reported. A suite's `testID` carries no parentheses; a
+# test's always does (even a zero-argument test's signature ends `()`),
+# so RAN now counts only `testEnded` events whose `testID` contains one.
+#
 # A signal is a sixth ending and is NOT one of these: on INT or TERM the script
 # reverts and exits non-zero WITHOUT a verdict (130 / 143). It used to trap with
 # a handler that RETURNED, so bash resumed at the next statement and the run
@@ -62,7 +75,7 @@
 # The tree is restored with `git checkout --` on every exit path, including a
 # Ctrl-C: a probe that leaves its violation behind is worse than no probe.
 #
-# (--help prints lines 2-66 of this file: the header, and not the code under
+# (--help prints lines 2-79 of this file: the header, and not the code under
 # it. The range is a line number, so it is checked whenever this header grows.)
 
 set -uo pipefail
@@ -76,7 +89,7 @@ while [[ $# -gt 0 ]]; do
         --filter) FILTER="${2:-}"; shift 2 ;;
         --apply)  APPLY="${2:-}";  shift 2 ;;
         --label)  LABEL="${2:-}";  shift 2 ;;
-        -h|--help) sed -n '2,66p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,79p' "$0"; exit 0 ;;
         *) echo "mutation-probe: unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
@@ -169,12 +182,30 @@ STATUS=$?
 # `--event-stream-output-path` writes one JSON object per event to a file
 # the stdout race cannot touch, the same flag and the same jq shape
 # `.github/workflows/ci.yml`'s "Test verdicts from the event stream" step
-# already reads for the identical reason: `testEnded` events are counted
-# for RAN, and `issueRecorded` events name what failed by `testID`.
+# already reads for the identical reason: `issueRecorded` events name what
+# failed by `testID`.
+#
+# RAN counts test FUNCTIONS, not `@Test(arguments:)` CASES and not
+# suites — both measured 2026-09-04 (fix round 1), same probe run
+# (`--filter everyConnectionKindHasARigFixture`, `CLIMatrixITests.swift`,
+# `@Test(arguments: ConnectionKind.allCases)`, 3 cases): the event stream
+# carried 3 `testCaseStarted`/`testCaseEnded` pairs (no `messages`, so no
+# verdict text) but only ONE `testEnded` for the function itself, whose
+# message read "... with 3 test cases passed ..." — the per-case events
+# are a different `payload.kind` this script does not read, and a
+# parameterised function's N cases collapse into one `testEnded`. The
+# SAME run's event file also carried a SECOND `testEnded`, for the suite
+# itself, testID `macSCPCoreTests.CLIMatrixCoverageTests` with no
+# parentheses and a message starting "Suite "; counting it went
+# unnoticed through fix round 1 (every RESULT line that round reported
+# was one too high — a 7-test suite read RAN 8). A test's testID always
+# carries its function signature's parentheses; a suite's never does, so
+# the filter below excludes any testID without a `(`.
 RAN=0
 FAILED=""
 if [[ -s "$EVENTS" ]]; then
-    RAN="$(jq -c 'select(.kind == "event" and .payload.kind == "testEnded")' "$EVENTS" 2>/dev/null | wc -l | tr -d ' ')"
+    RAN="$(jq -c 'select(.kind == "event" and .payload.kind == "testEnded"
+                         and (.payload.testID | test("\\(")))' "$EVENTS" 2>/dev/null | wc -l | tr -d ' ')"
     RAN="${RAN:-0}"
     FAILED="$(jq -r 'select(.kind == "event" and .payload.kind == "issueRecorded") | .payload.testID // empty' \
         "$EVENTS" 2>/dev/null | sort -u)"

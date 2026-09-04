@@ -112,6 +112,22 @@ struct PollingGuardTests {
         // this, the negative above could pass over a tree with no callers
         // at all, exempt or otherwise.
         #expect(callers.contains { $0.path.hasSuffix("AsyncSignalTests.swift") })
+
+        // Positive for the third exemption specifically: the measurement
+        // sentence is actually live in `SubprocessRunnerTests.swift`,
+        // beside a real `wait(timeout:)` call. Without this, that
+        // exemption is proven only by the negative below failing to land
+        // the file in `offenders` — which is exactly what a rewritten or
+        // deleted sentence would also produce, so nothing here would
+        // distinguish "the pairing holds" from "the pairing quietly broke
+        // and nobody noticed because the file happened not to be scanned
+        // as an offender for some other reason."
+        #expect(sources.contains {
+            $0.path.hasSuffix("SubprocessRunnerTests.swift")
+                && $0.text.contains("wait(timeout:")
+                && $0.text.contains(measurementSentence)
+        })
+
         #expect(offenders.isEmpty, "\(offenders)")
     }
 
@@ -274,10 +290,22 @@ struct PollingGuardTests {
 
     // MARK: - Comment-and-string blanking, for `noSleepingChildRacesWorkInAGroup`
     //
-    // One private copy per guard file, as this project's other wiring
-    // guards keep it (`TabContextMenuWiringGuardTests`, `ReconnectWiringGuardTests`):
-    // a shared stripper was rejected there because the copies had already
-    // drifted, and the same reasoning applies here.
+    // Adapted from `TabContextMenuWiringGuardTests`'s own copy — the only
+    // other place in `Tests/` that PARSES a raw string rather than
+    // refusing one (counted 2026-09-04, `grep -rl 'hashes: Int' Tests`:
+    // two hits, that file and this one — the second). Two more private
+    // copies of `stripCommentsAndStrings` exist (`ReconnectWiringGuardTests.swift`,
+    // `ConnectingAttemptWiringGuardTests.swift`), plus a shared module per
+    // test target (`Tests/macSCPCoreTests/SwiftSourceStripping.swift`,
+    // `Tests/macSCPAppKitTests/SwiftSourceStripping.swift`) — but all four
+    // FAIL CLOSED on a raw-string delimiter instead of parsing one, which
+    // a single-file guard can afford and this scan cannot: it reads the
+    // whole test tree, and 35 files under `Tests/` carry a raw string
+    // (counted 2026-09-04, `grep -rl '#"' Tests | wc -l`), so refusing
+    // them would make the check unusable rather than merely cautious.
+    // `TabContextMenuWiringGuardTests`'s own comment states why a private
+    // copy at all, rather than a shared one, is kept — the copies had
+    // already drifted once — and that reasoning is not restated here.
 
     /// Whether a raw-string/regex-literal opened with `hashes` hashes and
     /// `quotes` quotes ends exactly at `index`. With `quotes: 0` it answers
