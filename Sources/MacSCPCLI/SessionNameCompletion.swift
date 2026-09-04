@@ -7,8 +7,12 @@ import macSCPCore
 /// `@Argument`'s `completion:` parameter, completing the `name:` half of a
 /// `name:/path` target from the saved session store. Wired onto every
 /// command that parses one through `SessionReference.parse` (`ls`, `get`'s
-/// SOURCE, `put`'s DESTINATION, `rm`, `mkdir`); `put`'s SOURCE stays on the
-/// default file completion, since it names a local path, not a session.
+/// SOURCE, `put`'s DESTINATION, `rm`, `mkdir`) and onto `diagnose`'s
+/// session argument, which is a bare NAME and accepts the trailing colon
+/// this completer appends rather than parsing a path after it — six
+/// arguments across six commands, counted 2026-09-04. `put`'s SOURCE stays
+/// on the default file completion, since it names a local path, not a
+/// session.
 ///
 /// Opens the store at `SessionStore.defaultDirectory` — the same injection
 /// point `SessionsCommand` uses — and reads nothing else: no secret, no

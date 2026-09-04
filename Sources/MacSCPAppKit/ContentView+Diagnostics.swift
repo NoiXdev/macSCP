@@ -50,7 +50,7 @@ extension ContentView {
                 name: tab.displayTitle,
                 kind: tab.connectionViewModel.kind,
                 values: tab.connectionViewModel.values,
-                sessionID: stored.map(Self.secretSlot) ?? tab.activeStoredSessionID)
+                sessionID: stored?.secretSlot ?? tab.activeStoredSessionID)
         case .stored(let stored):
             let descriptor = BackendDescriptor.descriptor(for: stored.kind)
             // `editBaseline` then `sessionValues`, the same pair
@@ -65,7 +65,7 @@ extension ContentView {
                 name: stored.name,
                 kind: stored.kind,
                 values: values,
-                sessionID: Self.secretSlot(stored))
+                sessionID: stored.secretSlot)
         }
         diagnostics.present(
             DiagnosticsViewModel(target: target, secrets: diagnosticsSecrets),
@@ -90,17 +90,6 @@ extension ContentView {
     /// runs for a liveness give-up nobody asked for.
     func stopDiagnostics(of tab: SessionTab) {
         diagnostics.stopRun(openedFor: tab.id)
-    }
-
-    /// The Keychain slot this session's secret actually lives in.
-    ///
-    /// A session in a login set does not own its credential — the set does,
-    /// under the SET's id, which is exactly what
-    /// `SessionListViewModel.resolvedCredentials(for:)` reads. Asking for the
-    /// session's own id there would come back empty and the dial row would
-    /// report "no secret available" for a session that has one.
-    private static func secretSlot(_ session: StoredSession) -> UUID {
-        session.loginSetID ?? session.id
     }
 
     /// The secret source the diagnosis authenticates through: the window's

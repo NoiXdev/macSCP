@@ -582,11 +582,12 @@ struct CLIMatrix: Sendable {
 
     /// The subcommands the binary itself offers, read from its `--help`.
     ///
-    /// The matrix's command axis, and read rather than written down: a
-    /// seventh subcommand appears here the moment it appears in
-    /// `MacSCPCLI.configuration.subcommands`, without an edit in this target.
-    /// A list typed here would instead go on passing while covering five of
-    /// six commands.
+    /// The matrix's command axis, and read rather than written down: an
+    /// eighth subcommand appears here the moment it appears in
+    /// `MacSCPCLI.configuration.subcommands`, without an edit in this target
+    /// — which is exactly what the seventh, `diagnose`, did on 2026-09-04.
+    /// A list typed here would instead go on passing while covering six of
+    /// seven commands.
     ///
     /// Read ONCE per binary and cached: every case in the matrix asks, and
     /// launching a process per ask is a cost with nothing to show for it.

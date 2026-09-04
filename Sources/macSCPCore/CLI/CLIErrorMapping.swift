@@ -1,5 +1,52 @@
 import Foundation
 
+/// What `macscp-cli diagnose` refuses before it measures anything.
+///
+/// An error type rather than ArgumentParser's own `ValidationError`, and
+/// that is the whole reason it exists: a `ValidationError` is thrown during
+/// the PARSE, lands in the CLI `main()`'s outer catch, and exits with
+/// ArgumentParser's own 64 — while the design fixes exit `2` for this
+/// refusal (`docs/superpowers/specs/2026-09-04-cli-diagnose-design.md`,
+/// "Exit codes"). Thrown from `run()` instead, it goes through
+/// `CLIErrorMapping` below like every other error a subcommand raises, and
+/// `CLIExitCode.usage` is what comes out.
+///
+/// The ARGUMENT SHAPE — no target at all, or both a session and a `--host`
+/// — is still a `ValidationError` in the command itself, exiting 64 the way
+/// a missing argument does on every other subcommand. This case is not a
+/// shape problem: the arguments parse, and what is wrong is that the scope
+/// asks for a measurement the target cannot supply.
+///
+/// In Core, not the CLI target, for this file's own reason: the CLI has no
+/// test target.
+public enum DiagnoseUsageError: Error, Equatable, Sendable {
+    /// `--host` with a scope whose steps need a stored session — the dial
+    /// and the contributions both authenticate, and a bare endpoint carries
+    /// no session id for a secret source to answer for. Refused up front
+    /// rather than reported as a `skipped` row nobody asked for.
+    case scopeNeedsASession(DiagnosticScope)
+
+    /// The refusal a `--host` form earns for `scope`, or `nil` for a scope
+    /// it may run.
+    ///
+    /// `complete` is on the permitted side even though it RUNS the dial and
+    /// the contributions: it also runs the resolve, the TCP connection, the
+    /// echo and the trace, so the walk measures plenty and the two
+    /// authenticating steps report `skipped` beside the rest. The two
+    /// refused scopes are the ones whose ONLY steps beyond the resolve
+    /// authenticate — asked without a session, they produce a row saying
+    /// nothing was measured and nothing else.
+    ///
+    /// An exhaustive switch, so a sixth `DiagnosticScope` cannot reach the
+    /// CLI until someone decides which side of this it is on.
+    public static func refusal(forEndpointScope scope: DiagnosticScope) -> DiagnoseUsageError? {
+        switch scope {
+        case .dial, .contributions: return .scopeNeedsASession(scope)
+        case .complete, .ping, .trace: return nil
+        }
+    }
+}
+
 /// Maps a thrown error to the process exit code AND a human-readable stderr
 /// message. Lives in Core, not the CLI target (M20 Task 10): the CLI has no
 /// test target, so this — the actual decision logic ArgumentParser's default
@@ -26,6 +73,8 @@ public enum CLIErrorMapping {
             case .emptyDestinationDirectory: return .usage
             }
         case is SessionReferenceError:
+            return .usage
+        case is DiagnoseUsageError:
             return .usage
         case let error as HostKeyError:
             switch error {
@@ -136,6 +185,15 @@ public enum CLIErrorMapping {
                     + "(or the path is missing its 'name:' session prefix)"
             case .ambiguous(let name, let count):
                 return "Error: '\(name)' matches \(count) stored sessions; disambiguate by UUID"
+            }
+        case let error as DiagnoseUsageError:
+            switch error {
+            case .scopeNeedsASession(let scope):
+                // The scope's own `rawValue`, never a second spelling of it
+                // — the same rule `DiagnosticReport.scopeName(for:)` states
+                // for the header line it prints.
+                return "Error: --scope \(scope.rawValue) measures a stored session's own "
+                    + "login; name a session instead of --host"
             }
         case let error as HostKeyError:
             switch error {

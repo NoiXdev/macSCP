@@ -178,6 +178,42 @@ public struct BackendDescriptor: Sendable {
         }
     }
 
+    /// The field values a BARE ENDPOINT makes for this backend — `--host`
+    /// and `--port` on `macscp-cli diagnose`, which points a diagnosis at a
+    /// machine nobody has saved a session for.
+    ///
+    /// `editBaseline` with this backend's own address field(s) written, so
+    /// the answer is `endpoint(_:)`'s input by construction: SSH carries a
+    /// host and a port as two fields, S3 and WebDAV carry one URL-shaped
+    /// string each, and the caller needs to know none of that.
+    ///
+    /// `port` is optional and means "whatever this backend's address field
+    /// says by itself": SSH keeps `editBaseline`'s 22, and the two
+    /// URL-shaped fields keep the 443 their `https` scheme implies
+    /// (`Endpoint(url:)`). `BackendDescriptorEndpointValuesTests` pins the
+    /// round trip through `endpoint(_:)` for all three, with and without a
+    /// port.
+    ///
+    /// Lives here and not in the CLI for the reason `CLIErrorMapping` and
+    /// `secretSources(for:passwordCommand:)` do: the CLI target has no test
+    /// target, and "which field carries the host" is a per-backend decision
+    /// that would otherwise be a second place a fourth backend has to be
+    /// mentioned.
+    public func endpointValues(host: String, port: Int?) -> FieldValues {
+        var values = editBaseline
+        switch kind {
+        case .ssh:
+            values[SSHField.host] = host
+            if let port { values[SSHField.port] = String(port) }
+        case .s3:
+            values[S3Field.endpoint] = S3FieldSchema.endpointSpelling(host: host, port: port)
+        case .webdav:
+            values[WebDAVField.baseURL] = WebDAVFieldSchema.baseURLSpelling(
+                host: host, port: port)
+        }
+        return values
+    }
+
     /// Field ids the generic form renderer must NOT draw because the App
     /// draws them itself (`SchemaFormView.skipping`).
     ///

@@ -18,10 +18,7 @@ enum OutputFormatter {
                     "directory": item.isDirectory,
                     "size": item.size.map { $0 as Any } ?? NSNull(),
                 ]
-                if let data = try? JSONSerialization.data(withJSONObject: object),
-                   let line = String(data: data, encoding: .utf8) {
-                    Swift.print(line)
-                }
+                print(json: object)
             }
         } else {
             let formatter = ByteCountFormatter()
@@ -51,10 +48,7 @@ enum OutputFormatter {
                     "group": row.groupPath,
                     "tags": row.tags,
                 ]
-                if let data = try? JSONSerialization.data(withJSONObject: object),
-                   let line = String(data: data, encoding: .utf8) {
-                    Swift.print(line)
-                }
+                print(json: object)
             }
         } else {
             for row in rows {
@@ -62,6 +56,39 @@ enum OutputFormatter {
                     "\(row.name)\t\(row.kind.rawValue)\t\(row.target)\t\(row.groupPath)\t"
                         + row.tags.joined(separator: ","))
             }
+        }
+    }
+
+    /// One diagnosis row, printed the moment its step lands — `diagnose`
+    /// hands this to `ConnectionDiagnostics.run(scope:onStep:)`, whose whole
+    /// reason for existing is that a trace can spend twenty seconds after
+    /// the rows above it are already known.
+    ///
+    /// Every word comes from `DiagnoseRendering`; nothing about a row's
+    /// wording is decided here. A text step can be several lines — a trace
+    /// prints one row per hop under its own — which is why this takes the
+    /// step and not a string.
+    static func print(step: DiagnosticStep, asJSON: Bool) {
+        if asJSON {
+            print(json: DiagnoseRendering.jsonObject(for: step))
+        } else {
+            for row in DiagnoseRendering.textRows(for: step) { Swift.print(row) }
+        }
+    }
+
+    /// One object, one line — the JSON-lines shape every `--json` in this
+    /// CLI writes, and the one place the serialization is spelled.
+    ///
+    /// Silent on a serialization failure, which is what the two bodies above
+    /// did with their own copies of these four lines before this was
+    /// extracted: `JSONSerialization` refuses only a non-JSON value, every
+    /// caller here builds its object out of `String`/`Int`/`Bool`/`NSNull`
+    /// and arrays and dictionaries of those, and a `try!` would turn a
+    /// hypothetical future mistake into a crash mid-listing.
+    static func print(json object: [String: Any]) {
+        if let data = try? JSONSerialization.data(withJSONObject: object),
+           let line = String(data: data, encoding: .utf8) {
+            Swift.print(line)
         }
     }
 

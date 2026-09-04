@@ -63,10 +63,10 @@ enum CLIMatrixCases {
             try await fileSystem.createDirectory(at: directoryPath)
 
             // `--accept-new` is NOT written into the vector: five of the
-            // six subcommands take the connection flags and `sessions` does
-            // not, so the flag is asked for per command
+            // seven subcommands take the connection flags, and `sessions`
+            // and `diagnose` do not — so the flag is asked for per command
             // (`CLIMatrix.hostKeyFlags(for:binary:)`, which reads that
-            // command's own help).
+            // command's own help). Counted 2026-09-04.
             let binary = try CLIMatrix.binaryURL()
             let flags = try await CLIMatrix.hostKeyFlags(for: "ls", binary: binary)
             let result = try await rig.run(
@@ -1091,8 +1091,9 @@ struct CLIMatrixSessionsITests {
 // MARK: - What makes the matrix a matrix
 
 /// The derivation guards. None of these needs the rig or the binary, so they
-/// run in the ordinary `swift test` — which is where a fourth backend, or a
-/// seventh subcommand, is actually going to be added.
+/// run in the ordinary `swift test` — which is where a fourth backend, or an
+/// eighth subcommand, is actually going to be added (the seventh, `diagnose`,
+/// arrived on 2026-09-04).
 @Suite("CLIMatrixCoverage")
 struct CLIMatrixCoverageTests {
     /// The one place the three suites above are enumerated, and it is
@@ -1257,7 +1258,8 @@ struct CLIMatrixCoverageTests {
     /// `get`'s abstract here is the real one, padded past 80 columns so it
     /// wraps: the continuation's first token is `directory.`, which the
     /// column-blind parse returned as a subcommand name. Nothing in today's
-    /// help wraps — all six rows fit, the widest at 72 columns — so this
+    /// help wraps — all seven rows fit, the widest still `get`'s at 72
+    /// columns (recounted 2026-09-04, with `diagnose` at 69) — so this
     /// fixture is the only place the hazard is reachable, and the assertion
     /// is that `directory.` is absent while every real name is present.
     @Test func theSubcommandParseReadsNamesAndStopsAtTheBlock() {

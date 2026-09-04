@@ -209,6 +209,25 @@ public enum DiagnoseRendering {
         ]
     }
 
+    /// The one line that says a walk did not finish, or `nil` for one that
+    /// did — `DiagnosticReport.marker(for:)`, carried through verbatim, not
+    /// reformatted here.
+    ///
+    /// The text form prints this after the last row. `plainText()` puts the
+    /// same line in its HEADER, which a CLI that prints rows the moment they
+    /// land cannot do: by the time the walk's completion is known, the rows
+    /// are already on the terminal. So the line moves to the end, and it is
+    /// the only thing about this rendering that the pasted report does
+    /// differently.
+    ///
+    /// `nil` for a complete walk, so a finished `--scope ping` prints its
+    /// three rows and nothing else — the same argument `marker(for:)` makes
+    /// for the report: a line that appears in every run says nothing about
+    /// the one being read.
+    public static func completionRow(for report: DiagnosticReport) -> String? {
+        DiagnosticReport.marker(for: report.completion)
+    }
+
     /// `.success` when every step is `ok`, `skipped`, or `unavailable`;
     /// `.diagnosis` when any step is `failed` or `timedOut` — the two
     /// outcomes that say something is actually wrong with the server or the

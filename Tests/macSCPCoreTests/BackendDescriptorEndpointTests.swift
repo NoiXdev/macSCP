@@ -162,3 +162,56 @@ struct BackendDescriptorEndpointTests {
         #expect(endpoint(kind, values)?.host == "filled.example.test")
     }
 }
+
+/// The other direction: `BackendDescriptor.endpointValues(host:port:)`, which
+/// writes a bare endpoint into whichever field(s) this backend reads it back
+/// out of (`macscp-cli diagnose --host`).
+///
+/// Every case asserts the ROUND TRIP through `endpoint(_:)` rather than the
+/// string that was written, and deliberately: what the CLI needs is that the
+/// diagnosis points where it was told, and a case pinning the spelling would
+/// pass just as happily on a URL the reader parses back into a different
+/// host.
+@Suite("BackendDescriptor.endpointValues")
+struct BackendDescriptorEndpointValuesTests {
+    private func roundTrip(_ kind: ConnectionKind, host: String, port: Int?) -> Endpoint? {
+        let descriptor = BackendDescriptor.descriptor(for: kind)
+        return descriptor.endpoint(descriptor.endpointValues(host: host, port: port))
+    }
+
+    @Test(arguments: [ConnectionKind.ssh, .s3, .webdav])
+    func aWrittenPortComesBackOut(kind: ConnectionKind) {
+        #expect(roundTrip(kind, host: "box.example.test", port: 2222)
+            == Endpoint(host: "box.example.test", port: 2222))
+    }
+
+    /// No port written means each backend's own default: SSH's 22 from
+    /// `editBaseline`, and 443 for the two URL-shaped fields, whose `https`
+    /// scheme is what `Endpoint(url:)` reads it from.
+    @Test(arguments: [
+        (ConnectionKind.ssh, 22), (.s3, 443), (.webdav, 443),
+    ])
+    func anOmittedPortFallsBackToTheBackendsOwn(kind: ConnectionKind, port: Int) {
+        #expect(roundTrip(kind, host: "box.example.test", port: nil)
+            == Endpoint(host: "box.example.test", port: port))
+    }
+
+    /// An IPv6 literal has to survive the two URL-shaped fields, where an
+    /// unbracketed `::1` parses back as an empty host and a port of `:1`.
+    @Test(arguments: [ConnectionKind.ssh, .s3, .webdav])
+    func anIPv6LiteralSurvivesTheRoundTrip(kind: ConnectionKind) {
+        #expect(roundTrip(kind, host: "::1", port: 9000) == Endpoint(host: "::1", port: 9000))
+    }
+
+    /// The values are `editBaseline`'s, not an empty bag — S3's baseline
+    /// carries the EMPTY region a saved session must show rather than the
+    /// assumed default a new form gets, and a `--host` diagnosis has to
+    /// start from the same place the edit form does.
+    @Test func theBagIsTheEditBaselineWithTheAddressWritten() {
+        let descriptor = BackendDescriptor.descriptor(for: .s3)
+        var expected = descriptor.editBaseline
+        expected[S3Field.endpoint] = S3FieldSchema.endpointSpelling(
+            host: "box.example.test", port: 9000)
+        #expect(descriptor.endpointValues(host: "box.example.test", port: 9000) == expected)
+    }
+}

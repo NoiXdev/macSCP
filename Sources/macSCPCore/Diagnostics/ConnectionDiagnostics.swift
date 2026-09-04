@@ -159,7 +159,13 @@ public actor ConnectionDiagnostics {
     ///     says so when even that runs out.
     ///   - appVersion: what the report's build line says. Passed in because
     ///     Core does not read `Bundle.main` — the App owns that
-    ///     (`SettingsView`), and Core carries no bundle assumption.
+    ///     (`SettingsView`), and Core carries no bundle assumption. The
+    ///     default is not a placeholder nobody reaches: `macscp-cli
+    ///     diagnose`, this initializer's second caller since 2026-09-04,
+    ///     leaves it alone because the binary has no bundle and no
+    ///     `--version` of its own. Nothing it prints carries the value —
+    ///     only `DiagnosticReport.plainText()` and `markdown()` do, and the
+    ///     CLI prints neither.
     public init(
         descriptor: BackendDescriptor,
         values: FieldValues,

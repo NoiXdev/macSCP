@@ -145,4 +145,37 @@ struct CLIErrorMappingTests {
         #expect(message.contains("/two/a.txt"))
         #expect(!message.contains("is a bucket"))
     }
+
+    // MARK: - diagnose
+
+    /// The refusal exists so the exit code is 2 and not ArgumentParser's own
+    /// 64 — see `DiagnoseUsageError`'s doc comment. This is the half of that
+    /// argument a test can hold.
+    @Test(arguments: [DiagnosticScope.dial, .contributions])
+    func aScopeThatNeedsASessionIsAUsageError(scope: DiagnosticScope) throws {
+        let error = try #require(DiagnoseUsageError.refusal(forEndpointScope: scope))
+        #expect(CLIErrorMapping.exitCode(for: error) == .usage)
+        // The scope names itself in the message, so a script's user can see
+        // WHICH scope was refused without re-reading their own command line.
+        #expect(CLIErrorMapping.message(for: error).contains(scope.rawValue))
+    }
+
+    /// The positive half of the check above: the three scopes a bare
+    /// endpoint may run are not refused. Without this, a `refusal` that
+    /// returned an error for everything would still satisfy the case above.
+    @Test(arguments: [DiagnosticScope.complete, .ping, .trace])
+    func aScopeAnEndpointCanRunIsNotRefused(scope: DiagnosticScope) {
+        #expect(DiagnoseUsageError.refusal(forEndpointScope: scope) == nil)
+    }
+
+    /// Every scope is on exactly one of the two lists above — derived from
+    /// `allCases` rather than from the two enumerations, so a sixth scope
+    /// turns this red instead of quietly joining neither.
+    @Test func everyScopeIsEitherRefusedOrPermitted() {
+        let refused = DiagnosticScope.allCases.filter {
+            DiagnoseUsageError.refusal(forEndpointScope: $0) != nil
+        }
+        #expect(refused.count == 2, "refused: \(refused.map(\.rawValue))")
+        #expect(DiagnosticScope.allCases.count == 5)
+    }
 }

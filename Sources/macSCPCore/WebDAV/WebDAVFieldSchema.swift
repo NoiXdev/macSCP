@@ -95,6 +95,28 @@ public enum WebDAVFieldSchema {
         baseURL(values).flatMap { Endpoint(url: $0) }
     }
 
+    /// The base-URL spelling for a bare host and an optional port — what a
+    /// diagnosis pointed at an endpoint rather than a stored session writes
+    /// into this backend's one address field
+    /// (`BackendDescriptor.endpointValues(host:port:)`). The S3 half of that
+    /// is `S3FieldSchema.endpointSpelling(host:port:)`; this is WebDAV's,
+    /// beside its own parse rather than shared, because the two schemas
+    /// agree on the scheme today by coincidence and not by construction.
+    ///
+    /// HTTPS, for the reason `S3FieldSchema.assumedEndpointScheme` gives: a
+    /// wrong `https` guess fails visibly, while a wrong `http` one would put
+    /// a credential on the wire in the clear.
+    ///
+    /// The port is always written out, including the 443 an omitted `--port`
+    /// means. That keeps the IPv6 bracketing rule — `::1` has to read as
+    /// `[::1]:443` — in `Endpoint.text`, which is this project's one
+    /// spelling of it, instead of copied here; and 443 is the port
+    /// `Endpoint(url:)` infers from `https` anyway, so a written and an
+    /// omitted port parse back to the same endpoint.
+    public static func baseURLSpelling(host: String, port: Int?) -> String {
+        "https://\(Endpoint(host: host, port: port ?? 443).text)"
+    }
+
     public static func makeConfig(
         _ values: FieldValues, _ secret: String
     ) throws -> ConnectionConfig {

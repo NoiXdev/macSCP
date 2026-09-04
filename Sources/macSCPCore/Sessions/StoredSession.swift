@@ -242,4 +242,20 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// silent no-op.
     public var keyPath: String? { ssh?.keyPath }
     public var jump: JumpSpec? { ssh?.jump }
+
+    /// The Keychain slot this session's secret actually lives in.
+    ///
+    /// A session in a login set does not own its credential — the SET does,
+    /// under the set's id, which is exactly what
+    /// `SessionListViewModel.resolvedCredentials(for:)` reads. Asking for the
+    /// session's own id there comes back empty, and a diagnosis whose secret
+    /// source was handed that id reports "no secret available" for a session
+    /// that has one.
+    ///
+    /// Lives here rather than beside either reader because there are now two
+    /// of them, in two targets that share no other code: the App's
+    /// diagnostics entry (`ContentView.showDiagnostics`) and `macscp-cli
+    /// diagnose` (`DiagnoseCommand`). Two counted call sites, both passing it
+    /// to `ConnectionDiagnostics(sessionID:)`.
+    public var secretSlot: UUID { loginSetID ?? id }
 }

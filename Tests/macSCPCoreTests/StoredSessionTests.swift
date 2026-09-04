@@ -92,3 +92,28 @@ struct StoredSessionTests {
         #expect(!String(data: data, encoding: .utf8)!.lowercased().contains("secretaccesskey"))
     }
 }
+
+/// Which Keychain slot a session's secret is looked up under — the rule both
+/// diagnosis entries pass to `ConnectionDiagnostics(sessionID:)`, the App's
+/// (`ContentView.showDiagnostics`) and the CLI's (`DiagnoseCommand`).
+///
+/// It used to be a private helper inside the App, where the CLI could not
+/// reach it and no test did.
+@Suite("StoredSession.secretSlot")
+struct StoredSessionSecretSlotTests {
+    @Test func aSessionThatOwnsItsCredentialAnswersWithItsOwnID() {
+        let session = StoredSession(name: "manual")
+        #expect(session.secretSlot == session.id)
+    }
+
+    /// The case the rule exists for: a session in a login set does not own
+    /// its credential, so asking the Keychain for the SESSION's id comes back
+    /// empty and the dial reports "no secret available" for a session that
+    /// has one.
+    @Test func aSessionInALoginSetAnswersWithTheSetsID() {
+        let set = UUID()
+        let session = StoredSession(name: "from a set", loginSetID: set)
+        #expect(session.secretSlot == set)
+        #expect(session.secretSlot != session.id)
+    }
+}

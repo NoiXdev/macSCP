@@ -95,7 +95,13 @@ public struct DiagnosticReport: Sendable, Equatable {
     /// `nil` for a finished walk, which needs no marker at all: the rows are
     /// the whole measurement, and a line saying so would be noise in every
     /// report anyone ever pastes.
-    private static func marker(for completion: Completion) -> String? {
+    ///
+    /// Internal rather than private since `macscp-cli diagnose` prints its
+    /// rows as they land and has no `plainText()` to put a header on:
+    /// `DiagnoseRendering.completionRow(for:)` prints THIS line after the
+    /// last row, so the terminal and the pasted report mark an unfinished
+    /// walk with the same words rather than with two spellings of it.
+    static func marker(for completion: Completion) -> String? {
         switch completion {
         case .complete:
             return nil

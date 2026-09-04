@@ -26,13 +26,36 @@ struct GlobalOptions: ParsableArguments {
     init() {}
 }
 
-/// Resolves a reference to a stored session, gathers its secret and
-/// connects. The CLI does none of the deciding itself — it hands the pieces
-/// to Core.
-func connect(
-    to reference: SessionReference,
-    options: GlobalOptions
-) async throws -> any RemoteFileSystem {
+/// The one option `resolveSession(_:options:)` reads, named as a protocol so
+/// a command whose flags are a SUBSET of `GlobalOptions` can still share the
+/// resolution head.
+///
+/// `diagnose` is that command: it opens no connection whose host key anyone
+/// could be asked about (`DialProbes.sshConnect` decides with
+/// `HostKeyDecider.refusing`, unconditionally), so `--accept-new` and
+/// `--non-interactive` describe choices it never makes — the same reason
+/// `sessions` declares `JSONOptions` instead of the whole group. Both
+/// conformers are declared beside their own option group; two conformers,
+/// counted 2026-09-04.
+protocol SecretChainOptions {
+    /// Handed straight to `secretSources(for:passwordCommand:)`, which
+    /// decides whether it is consulted at all.
+    var passwordCommand: String? { get }
+}
+
+extension GlobalOptions: SecretChainOptions {}
+
+/// The session-resolution head `connect` and `diagnose` share: open the
+/// store, resolve the reference, and build the secret chain that session's
+/// kind calls for.
+///
+/// Stops there on purpose. What the two do with the chain differs — `connect`
+/// walks it once through `SecretResolver` for a single value, while a
+/// diagnosis holds it as a `ChainedSecretSource` its dial can ask again — so
+/// resolving the secret is NOT part of the shared head.
+func resolveSession(
+    _ reference: SessionReference, options: some SecretChainOptions
+) throws -> (session: StoredSession, sources: [any SecretSource]) {
     let store = SessionStore(directory: SessionStore.defaultDirectory)
     let session = try reference.resolve(in: try store.all())
     // `secretSources(for:passwordCommand:)` (Core) already encodes the
@@ -40,6 +63,17 @@ func connect(
     // `SecretResolver` walking an empty chain harmlessly resolves to `nil` —
     // so this call site is pure argument plumbing, no branching of its own.
     let sources = secretSources(for: session, passwordCommand: options.passwordCommand)
+    return (session, sources)
+}
+
+/// Resolves a reference to a stored session, gathers its secret and
+/// connects. The CLI does none of the deciding itself — it hands the pieces
+/// to Core.
+func connect(
+    to reference: SessionReference,
+    options: GlobalOptions
+) async throws -> any RemoteFileSystem {
+    let (session, sources) = try resolveSession(reference, options: options)
     let secret = try SecretResolver(sources: sources).resolve(for: session.id)
     if options.verbose, let secret {
         OutputFormatter.note("secret source: \(secret.sourceLabel)")

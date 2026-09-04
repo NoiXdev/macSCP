@@ -177,6 +177,39 @@ struct DiagnoseRenderingJSONSummaryTests {
     }
 }
 
+/// The text form's counterpart to `jsonSummary`'s `completion` field: one
+/// line after the last row, or none.
+@Suite("DiagnoseRendering.completionRow")
+struct DiagnoseRenderingCompletionRowTests {
+    /// A finished walk prints nothing extra — a `--scope ping` that came back
+    /// clean is three rows and no fourth line.
+    @Test func aCompleteWalkHasNoRow() {
+        let report = DiagnosticReport(endpoint: nil, steps: [], appVersion: "1.0")
+        #expect(DiagnoseRendering.completionRow(for: report) == nil)
+    }
+
+    /// The words are the report's own, not a second spelling composed here —
+    /// asserted against `DiagnosticReport.marker(for:)` rather than against a
+    /// literal, so a reworded marker cannot leave the terminal and the pasted
+    /// report saying two different things.
+    @Test(arguments: [DiagnosticReport.Completion.running, .cancelled(afterSteps: 2)])
+    func anUnfinishedWalkPrintsTheReportsOwnMarker(completion: DiagnosticReport.Completion) throws {
+        let report = DiagnosticReport(
+            endpoint: nil, steps: [], appVersion: "1.0", completion: completion)
+        let row = try #require(DiagnoseRendering.completionRow(for: report))
+        #expect(row == DiagnosticReport.marker(for: completion))
+    }
+
+    /// The positive anchor for the `nil` above: the marker really is absent
+    /// for `.complete` at the source, so the `nil` means "no marker" and not
+    /// "this function returns nothing".
+    @Test func theReportItselfMarksOnlyTheUnfinishedWalks() {
+        #expect(DiagnosticReport.marker(for: .complete) == nil)
+        #expect(DiagnosticReport.marker(for: .running) != nil)
+        #expect(DiagnosticReport.marker(for: .cancelled(afterSteps: 1)) != nil)
+    }
+}
+
 @Suite("DiagnoseRendering.exitCode")
 struct DiagnoseRenderingExitCodeTests {
     @Test func isSuccessForOkSkippedAndUnavailable() {

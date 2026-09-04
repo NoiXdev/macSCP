@@ -261,8 +261,16 @@ struct ChainedSecretSourceTests {
             StubSecretSource(label: "winner", value: theSecret),
         ])
         let resolved = try chain.secret(for: UUID())
-        #expect(resolved == theSecret)
-        #expect(chain.label == "winner")
+        // Same rule as the sibling above, and it was missed here: `#expect`
+        // reports the SOURCE TEXT of what it checks alongside the values, so
+        // `resolved == theSecret` puts the fixture secret in a failure
+        // message (CLAUDE.md, "A value a test must not leak has two exits,
+        // not one"). The Bools are computed first; neither the value nor its
+        // spelling reaches the output.
+        let resolvedTheSecret = resolved == theSecret
+        let labelIsTheWinningSource = chain.label == "winner"
+        #expect(resolvedTheSecret)
+        #expect(labelIsTheWinningSource)
     }
 
     @Test func labelIsNoneBeforeAnySourceHasAnswered() {

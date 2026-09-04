@@ -22,7 +22,7 @@ struct CLISessionNameCompletionTests {
     /// `swift-argument-parser`'s generator writes the static half of
     /// completion (subcommands and flags) straight from the command tree —
     /// nothing in this task touches it — so this is a smoke test that the
-    /// build actually wires all six subcommands into `MacSCPCLI`, run
+    /// build actually wires all seven subcommands into `MacSCPCLI`, run
     /// against the real built binary the same way
     /// `CLISessionsJSONRoundtripTests` does (bundle-relative lookup, no
     /// dependency on a `swift build` this test would trigger itself).
