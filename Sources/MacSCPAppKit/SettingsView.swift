@@ -871,31 +871,35 @@ private struct ShortcutsSettingsTab: View {
 /// parses it with `ChangelogParser.parse`, and renders every release newest
 /// first through `WhatsNewList` — the reusable list `WhatsNewSheet` already
 /// factored out for exactly this reuse, so this pane repeats none of that
-/// rendering.
-///
-/// "Newest first" is not the parser's own document order (Task 1's
-/// `ChangelogParser.parse` returns releases in the order their headings
-/// appear in the file, which happens to be newest-first for the real
-/// `CHANGELOG.md` but is not a promise `parse` makes) — it is
-/// `ChangelogParser.releases(newerThan:in:)`, called with `"0"` so every
-/// parsed release compares newer and none is filtered out, only sorted.
-/// That function is Task 1's own public, tested newest-first sort (its doc
-/// comment: "sorted newest first ... independent of `releases`'s own
-/// order"), reused here rather than a second comparison written against
-/// `ChangelogRelease.version` in this file.
+/// rendering. See `loadReleases()` below for how "newest first" is reached.
 ///
 /// No changelog bundled (`ChangelogResource.load()` returns `nil`, e.g. a
 /// `swift run` outside a packaged `.app`) shows the same `whatsNew.none`
 /// message `WhatsNewSheet`'s empty branch shows, rather than a blank pane.
 private struct WhatsNewSettingsSection: View {
-    private var releases: [ChangelogRelease] {
-        guard let markdown = ChangelogResource.load() else { return [] }
-        return ChangelogParser.releases(newerThan: "0", in: ChangelogParser.parse(markdown))
-    }
+    /// `nil` until the first `.task` runs, so `body` never re-parses on
+    /// its own: reading it was a COMPUTED property until fix round 1
+    /// (2026-09-04) — `body` reads it twice (`releases.isEmpty`, then
+    /// `WhatsNewList(releases:)`), and each read re-ran
+    /// `ChangelogResource.load()` + `ChangelogParser.parse(` +
+    /// `releases(newerThan:)` over the real ~720-line `CHANGELOG.md`.
+    /// `SettingsStore` is `@Observable`, so any tracked mutation while
+    /// this pane was visible re-ran `body` and, with it, both parses —
+    /// for no reason connected to the changelog itself. Loading once into
+    /// `@State` from `.task` decouples the two: the changelog is read and
+    /// parsed exactly once per appearance of this pane, never again while
+    /// `store` changes underneath it.
+    @State private var releases: [ChangelogRelease]?
 
     var body: some View {
         Group {
-            if releases.isEmpty {
+            switch releases {
+            case nil:
+                // Not loaded yet — `.task` below fires once immediately
+                // after this first render, so real content follows within
+                // the same frame or two; nothing to show in the meantime.
+                Color.clear
+            case .some(let releases) where releases.isEmpty:
                 VStack {
                     Spacer()
                     Text(L10n.string("whatsNew.none", "No changelog shipped with this build."))
@@ -904,7 +908,7 @@ private struct WhatsNewSettingsSection: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            case .some(let releases):
                 ScrollView {
                     WhatsNewList(releases: releases)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -912,6 +916,22 @@ private struct WhatsNewSettingsSection: View {
                 }
             }
         }
+        .task {
+            guard releases == nil else { return }
+            releases = Self.loadReleases()
+        }
+    }
+
+    /// The actual read-and-parse, kept OUT of `body` on purpose — see
+    /// `releases`'s doc comment above. "Newest first" is Task 1's own
+    /// public, tested newest-first sort (`releases(newerThan:in:)`'s doc
+    /// comment: "sorted newest first ... independent of `releases`'s own
+    /// order"), called with `"0"` so every parsed release compares newer
+    /// and none is filtered out, only sorted — not a second comparison
+    /// against `ChangelogRelease.version` written in this file.
+    private static func loadReleases() -> [ChangelogRelease] {
+        guard let markdown = ChangelogResource.load() else { return [] }
+        return ChangelogParser.releases(newerThan: "0", in: ChangelogParser.parse(markdown))
     }
 }
 

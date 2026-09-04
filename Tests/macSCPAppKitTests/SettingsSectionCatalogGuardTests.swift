@@ -195,4 +195,69 @@ struct SettingsSectionCatalogGuardTests {
             switch's case .whatsNew must build it.
             """)
     }
+
+    // MARK: - The changelog is parsed once, not on every body evaluation
+
+    /// Fix round 1: `releases` used to be a COMPUTED property, so `body`
+    /// (which reads it twice — once for `releases.isEmpty`, once for
+    /// `WhatsNewList(releases:)`) ran `ChangelogResource.load()` +
+    /// `ChangelogParser.parse(` + `releases(newerThan:)` over the real
+    /// changelog file on every evaluation, and `SettingsStore` being
+    /// `@Observable` meant any tracked mutation while the pane was visible
+    /// re-triggered both. The fix stores the parsed result in `@State` and
+    /// loads it once, from a lifecycle callback (`.task`/`.onAppear`), not
+    /// from `body`'s own evaluation.
+    ///
+    /// Positive first (CLAUDE.md, "a negative check needs a positive
+    /// beside it"): the type still owns an `@State` property and still
+    /// calls the load functions SOMEWHERE (proven over the whole struct,
+    /// not `body` alone), and `body` really does carry a `.task`/
+    /// `.onAppear` that could run them — so the negative below isn't
+    /// satisfied by a body that lost the load entirely, only by one that
+    /// stopped deferring it.
+    @Test func theSectionDefersTheChangelogLoadToALifecycleCallback() throws {
+        let code = try Self.views().code
+        let sectionRange = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: "private struct WhatsNewSettingsSection: View", in: code)
+        let sectionBody = TransferQueueBarCancelGuardTests.slice(sectionRange, of: code)
+
+        #expect(sectionBody.contains("@State"), """
+            WhatsNewSettingsSection no longer declares an @State property \
+            — a computed property parses the changelog on every body \
+            evaluation instead of once.
+            """)
+        #expect(
+            sectionBody.contains("ChangelogResource.load(")
+                && sectionBody.contains("ChangelogParser.parse("),
+            """
+            WhatsNewSettingsSection no longer calls ChangelogResource.load( \
+            and ChangelogParser.parse( anywhere in the type — the load \
+            itself is gone.
+            """)
+
+        let bodyRange = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: "var body: some View", in: sectionBody)
+        let bodyText = TransferQueueBarCancelGuardTests.slice(bodyRange, of: sectionBody)
+
+        #expect(bodyText.contains(".task") || bodyText.contains(".onAppear"), """
+            WhatsNewSettingsSection.body carries neither .task nor \
+            .onAppear — nothing defers the changelog load to run once per \
+            appearance rather than on every body evaluation.
+            """)
+
+        // The negative: body's OWN span must not call the parse/load
+        // functions directly, or every body evaluation — including one
+        // triggered by an unrelated SettingsStore mutation, since it is
+        // @Observable — would re-parse the real ~720-line changelog file.
+        #expect(!bodyText.contains("ChangelogParser.parse("), """
+            WhatsNewSettingsSection.body calls ChangelogParser.parse( \
+            directly — every body evaluation re-parses the changelog \
+            instead of loading it once into @State.
+            """)
+        #expect(!bodyText.contains("ChangelogResource.load("), """
+            WhatsNewSettingsSection.body calls ChangelogResource.load( \
+            directly — every body evaluation re-reads the bundled file \
+            instead of loading it once into @State.
+            """)
+    }
 }
