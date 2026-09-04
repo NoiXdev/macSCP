@@ -503,10 +503,19 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         try Self.mapStatus(response.statusCode, path: from, method: "MOVE")
     }
 
-    /// One call. WebDAV deletes a collection recursively server-side; the S3
-    /// backend needs a recursive listing and batched DeleteObjects for this.
+    /// One DELETE for the whole subtree — WebDAV removes a collection
+    /// recursively server-side, where the S3 backend needs a recursive
+    /// listing and batched DeleteObjects.
+    ///
+    /// The lookup in front of it is what makes a plain file behave exactly
+    /// like `delete`, as `RemoteFileSystem.deleteTree`'s contract says:
+    /// Apache answers 400 to a DELETE whose path carries a trailing slash
+    /// but names a file (measured 2026-09-04 on the rig), and only the
+    /// entry's kind says which of the two URL shapes to send. That is one
+    /// extra round trip per call, not a second delete path.
     public func deleteTree(at path: String) async throws {
-        try await simple(method: "DELETE", path: path, isDirectory: true)
+        let entry = try await stat(path: path)
+        try await simple(method: "DELETE", path: path, isDirectory: entry.kind == .directory)
     }
 
     /// `permissionModel` is `.none`. Failing loudly beats reporting a success

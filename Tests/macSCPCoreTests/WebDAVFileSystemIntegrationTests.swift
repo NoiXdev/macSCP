@@ -276,9 +276,46 @@ struct WebDAVFileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
+    // MARK: - deleteTree on a plain file
+
+    /// `RemoteFileSystem.deleteTree`'s contract says a plain file behaves
+    /// exactly like `delete`. Apache answers 400 to a DELETE whose path
+    /// carries a trailing slash but names a file, so only a real server
+    /// proves the shape: a stubbed transport accepts either URL.
+    @Test func deleteTreeRemovesAPlainFile() async throws {
+        let fs = try await connect(port: 18080)
+        defer { Task { await fs.disconnect() } }
+        let path = "/m21-deletetree-file-\(UUID().uuidString).txt"
+
+        var caught: Error?
+        do {
+            try await writeOnce(fs, path: path, content: Data("delete me".utf8))
+            #expect(try await fs.stat(path: path).kind == .file)
+
+            try await fs.deleteTree(at: path)
+
+            do {
+                _ = try await fs.stat(path: path)
+                Issue.record("expected the file to be gone after deleteTree")
+            } catch let error as RemoteFSError {
+                guard case .notFound = error else {
+                    Issue.record("expected .notFound, got \(error)")
+                    return
+                }
+            }
+        } catch {
+            caught = error
+        }
+        try? await fs.delete(path: path)
+        if let caught { throw caught }
+    }
+
     // MARK: - deleteTree on a populated collection
 
-    @Test func deleteTreeRemovesAPopulatedCollectionInOneCall() async throws {
+    /// One DELETE for the whole subtree (after the lookup that picks the URL
+    /// shape) — the headline difference from the S3 backend, which needs a
+    /// recursive listing and batched DeleteObjects.
+    @Test func deleteTreeRemovesAPopulatedCollection() async throws {
         let fs = try await connect(port: 18080)
         defer { Task { await fs.disconnect() } }
         let dir = "/m21-deletetree-\(UUID().uuidString)"

@@ -330,18 +330,69 @@ struct WebDAVFileSystemWriteTests {
         }
     }
 
-    /// The headline difference from S3: one DELETE, not a recursive listing
-    /// and batched deletes.
-    @Test func deleteTreeIsASingleDeleteOnTheCollection() async throws {
-        let transport = FakeHTTPTransport(replies: [.init(status: 204, body: Data(), headers: [:])])
+    /// A depth-0 PROPFIND answering a collection at `/dav/sub/`. `stat`'s
+    /// first attempt for a non-root path addresses the plain form
+    /// (`/dav/sub`); Apache answers for the collection either way, and the
+    /// parser normalises the href's trailing slash away, so one reply is
+    /// enough.
+    private let collectionStat = Data("""
+    <?xml version="1.0"?>
+    <d:multistatus xmlns:d="DAV:">
+      <d:response><d:href>/dav/sub/</d:href>
+        <d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+    </d:multistatus>
+    """.utf8)
+
+    /// The same shape for a plain file at `/dav/a.txt`.
+    private let fileStat = Data("""
+    <?xml version="1.0"?>
+    <d:multistatus xmlns:d="DAV:">
+      <d:response><d:href>/dav/a.txt</d:href>
+        <d:propstat><d:prop><d:resourcetype/><d:getcontentlength>3</d:getcontentlength></d:prop>
+          <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+    </d:multistatus>
+    """.utf8)
+
+    /// The headline difference from S3: still one DELETE for the whole
+    /// subtree, not a recursive listing and batched deletes. The lookup in
+    /// front of it is what tells the two URL shapes apart — see the file
+    /// case below.
+    @Test func deleteTreeOnACollectionSendsTheCollectionURL() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 207, body: collectionStat, headers: [:]),
+            .init(status: 204, body: Data(), headers: [:]),
+        ])
         let fs = WebDAVFileSystem(config: config, transport: transport)
 
         try await fs.deleteTree(at: "/sub")
 
-        #expect(transport.requests.count == 1)
-        let request = try #require(transport.requests.first)
-        #expect(request.httpMethod == "DELETE")
-        #expect(request.url?.absoluteString == "https://dav.example.com/dav/sub/")
+        #expect(transport.requests.map(\.httpMethod) == ["PROPFIND", "DELETE"])
+        let delete = try #require(transport.requests.last)
+        #expect(delete.url?.absoluteString == "https://dav.example.com/dav/sub/")
+    }
+
+    /// `RemoteFileSystem.deleteTree`'s contract: "A plain file behaves
+    /// exactly like `delete`." Apache answers 400 to a DELETE whose path
+    /// carries a trailing slash but names a file (measured 2026-09-04 on the
+    /// rig), so the URL shape is not cosmetic — it decides whether the file
+    /// is deleted at all. The `hasSuffix("/")` check is spelled out rather
+    /// than folded into the equality above it because THAT is the property
+    /// the defect violated.
+    @Test func deleteTreeOnAPlainFileSendsTheFileURLWithoutATrailingSlash() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 207, body: fileStat, headers: [:]),
+            .init(status: 204, body: Data(), headers: [:]),
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+
+        try await fs.deleteTree(at: "/a.txt")
+
+        #expect(transport.requests.map(\.httpMethod) == ["PROPFIND", "DELETE"])
+        let delete = try #require(transport.requests.last)
+        let url = delete.url?.absoluteString
+        #expect(url == "https://dav.example.com/dav/a.txt")
+        #expect(url?.hasSuffix("/") == false)
     }
 
     @Test func deleteIssuesDeleteOnTheFileURL() async throws {
