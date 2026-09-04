@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import macSCPCore
 
@@ -1416,6 +1417,88 @@ struct CLIMatrixDiagnoseITests {
                 CLIMatrix.namedHopOutcomes.contains(ending),
                 "a hop ended in '\(ending)', which the trace table has no word for")
         }
+    }
+
+    /// Rows print AS EACH STEP FINISHES — the design `diagnose` exists for
+    /// (`ConnectionDiagnostics.run(scope:onStep:)`, streamed straight to
+    /// `OutputFormatter.print(step:asJSON:)`) — and not all at once when the
+    /// process is about to end. `Swift.print` writes through C `stdout`,
+    /// which is block-buffered whenever its destination is not a terminal —
+    /// exactly what this test's pipe is — so without a fix nothing reaches
+    /// the reader until either a few KB have accumulated or the child exits
+    /// and libc's own `exit()` flushes the buffer as its last act before
+    /// dying. `DiagnoseCommand.run()` line-buffers `stdout` at its own top
+    /// for exactly this reason.
+    ///
+    /// Measured as a FLOOR, never a ceiling (CLAUDE.md, "A wall-clock
+    /// ceiling in a test measures the runner"): the assertion is a COUNT,
+    /// not an elapsed time — `chunkCount > 1`, read through
+    /// `SubprocessRunner`'s `onStdoutChunk` seam (never a raw `Process` of
+    /// this suite's own; CLAUDE.md, "every child in tests through
+    /// `SubprocessRunner`"), never a clock anywhere in this case.
+    ///
+    /// **This is NOT "did the first row beat the child's own exit" — that
+    /// was tried first and measured to hold on BOTH sides of the fix.**
+    /// `Foundation.exit()`'s libc teardown flushes stdio and only THEN
+    /// tears the process down, so the pipe write that carries a
+    /// block-buffered child's one giant chunk always completes — and so
+    /// becomes visible to this reader — a hair before the kernel's
+    /// process-death notification reaches `Process.terminationHandler`.
+    /// Measured directly (`.build/debug/macscp-cli diagnose --host
+    /// 127.0.0.1 --port 2222 --scope complete --json` piped to a raw
+    /// `os.read` loop, 2026-09-04): WITHOUT the fix, exactly ONE chunk of
+    /// 1126 bytes arrives, and an ordering check built the way the
+    /// original brief asked for it read `true` regardless — a check that
+    /// cannot go red is not a check, it is decoration. WITH the fix, the
+    /// same run produces SIX chunks (73, 88, 114, 109, 139, 603 bytes),
+    /// one flush per row plus the summary, which is the actual property
+    /// "rows print as each step finishes" is a claim about. Chunk COUNT is
+    /// what tells the two apart; chunk ORDER against the exit does not, so
+    /// this asserts the former.
+    ///
+    /// `--scope complete` is the scope with the most steps (resolve, TCP,
+    /// ICMP, trace, dial, contributions, plus the summary line) — the
+    /// widest margin between "one chunk" and "several".
+    ///
+    /// Red without the `setvbuf` fix in `DiagnoseCommand.run()`: RESULT —
+    /// `chunkCount == 1` (measured against the rig 2026-09-04, matching the
+    /// raw-pipe measurement above). Green with the fix: `chunkCount == 6`
+    /// on the same run, same rig.
+    @Test func rowsArriveInMoreThanOneChunk() async throws {
+        let rig = try CLIMatrix.make(for: .ssh, label: "diagnose-streaming")
+        defer { rig.tearDown() }
+        let endpoint = try Self.rigEndpoint(rig)
+
+        // Counts non-empty stdout reads only — the empty chunk that marks
+        // EOF is not a row and would inflate a broken run's count from 1 to
+        // 2, right where this floor is drawn.
+        let chunkCount = Mutex(0)
+
+        let result = try await rig.run(
+            [
+                "diagnose", "--host", endpoint.host, "--port", "\(endpoint.port)",
+                "--scope", "complete", "--json",
+            ],
+            onStdoutChunk: { chunk in
+                guard !chunk.isEmpty else { return }
+                chunkCount.withLock { $0 += 1 }
+            })
+
+        let leaks = rig.leaksSecret(result)
+        #expect(leaks == false, "the streaming run printed the secret")
+
+        let count = chunkCount.withLock { $0 }
+        #expect(
+            count > 1,
+            """
+            --scope complete's stdout arrived in \(count) chunk(s) — a \
+            block-buffered child delivers its whole run as one, only at \
+            the end, instead of one flush per row as it lands
+            """)
+
+        let (streamed, summary) = try CLIMatrix.diagnosis(result.stdoutText)
+        #expect(!streamed.isEmpty, "the streaming run measured nothing")
+        #expect(summary.steps == streamed, "the summary disagrees with the rows it followed")
     }
 
     /// The two refusals a diagnosis makes before measuring anything, and the

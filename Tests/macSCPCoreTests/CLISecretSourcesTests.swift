@@ -229,6 +229,28 @@ struct SecretSourcesCompositionTests {
 /// hold as a single reusable source.
 @Suite("ChainedSecretSource")
 struct ChainedSecretSourceTests {
+    /// Counts its own invocations — the fake that lets a case assert on how
+    /// many times the underlying source was actually asked, rather than only
+    /// on what it answered. `@unchecked Sendable` with an `NSLock`, the same
+    /// shape `CLISecretSources.swift`'s own `AnsweredLabel` and
+    /// `CollectedOutput` use, since `SecretSource` requires `Sendable` and
+    /// `secret(for:)` is non-mutating.
+    private final class CountingSecretSource: SecretSource, @unchecked Sendable {
+        let label = "counting"
+        private let lock = NSLock()
+        private let value: String?
+        private var invocations = 0
+
+        init(value: String?) { self.value = value }
+
+        var callCount: Int { lock.withLock { invocations } }
+
+        func secret(for sessionID: UUID) throws -> String? {
+            lock.withLock { invocations += 1 }
+            return value
+        }
+    }
+
     private struct StubSecretSource: SecretSource {
         let label: String
         let value: String?
@@ -279,5 +301,48 @@ struct ChainedSecretSourceTests {
 
     @Test func anEmptyChainResolvesToNil() throws {
         #expect(try ChainedSecretSource([]).secret(for: UUID()) == nil)
+    }
+
+    /// `ConnectionDiagnostics` calls `secret(for:)` once per authenticating
+    /// step against the SAME session id — the dial, then S3/WebDAV's own
+    /// contribution probe on `--scope complete` — and without memoizing,
+    /// re-walking the chain on the second call means a `--password-command`
+    /// helper is spawned twice for one diagnosis. Counted on the fake
+    /// itself, and the secret named once as a constant with the Bools
+    /// computed before the expectations (CLAUDE.md, "A value a test must
+    /// not leak has two exits, not one").
+    @Test func aSecondCallForTheSameSessionDoesNotAskTheSourceAgain() throws {
+        let theSecret = "hunter2"
+        let source = CountingSecretSource(value: theSecret)
+        let chain = ChainedSecretSource([source])
+        let sessionID = UUID()
+
+        let first = try chain.secret(for: sessionID)
+        let second = try chain.secret(for: sessionID)
+
+        let firstIsTheSecret = first == theSecret
+        let secondIsTheSecret = second == theSecret
+        #expect(firstIsTheSecret)
+        #expect(secondIsTheSecret)
+        #expect(source.callCount == 1, "the source was asked \(source.callCount) time(s), not once")
+    }
+
+    /// A different session id is a different question, and gets its own
+    /// answer: the memo is keyed by session id, so the SAME chain instance
+    /// asked about a second id must not be served the first id's cached
+    /// answer, or skip asking its source at all.
+    @Test func aDifferentSessionIDOnTheSameChainIsNotServedFromTheOtherOnesMemo() throws {
+        let theSecret = "hunter2"
+        let source = CountingSecretSource(value: theSecret)
+        let chain = ChainedSecretSource([source])
+
+        let first = try chain.secret(for: UUID())
+        let second = try chain.secret(for: UUID())
+
+        let firstIsTheSecret = first == theSecret
+        let secondIsTheSecret = second == theSecret
+        #expect(firstIsTheSecret)
+        #expect(secondIsTheSecret)
+        #expect(source.callCount == 2, "a second session id was answered from the wrong memo")
     }
 }

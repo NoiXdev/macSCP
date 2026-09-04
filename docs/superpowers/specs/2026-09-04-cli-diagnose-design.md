@@ -18,8 +18,10 @@ macscp-cli diagnose --host <host> [--port <n>] [--kind ssh|s3|webdav] [--scope â
 The first form runs `ConnectionDiagnostics` against a stored session,
 exactly the target the app's session context menu builds: the
 descriptor's `editBaseline` merged with `sessionValues(stored)`, the
-secret resolved through the session's id by the same source chain the
-other subcommands use (`secretSources(for:passwordCommand:)`), the host
+secret resolved through the session's secret slot (`secretSlot`: the
+login set's id when one owns the credential, else the session's own) by
+the same source chain the other subcommands use
+(`secretSources(for:passwordCommand:)`), the host
 key never accepted by this command: the dial answers the host-key
 question with `HostKeyDecider.refusing` (`DialProbes.sshConnect`), as the
 app's panel does, so an unknown key is a `failed` row and `diagnose`

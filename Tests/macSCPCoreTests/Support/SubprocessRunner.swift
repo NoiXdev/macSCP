@@ -206,6 +206,11 @@ enum SubprocessRunner {
     ///   synchronisation point rather than a sleep. Same shape and same
     ///   purpose as `ICMPEcho.TransmitObserver`: a property that no
     ///   assertion on the OUTCOME can reach, observed where it happens.
+    /// - Parameter onStdoutChunk: the same seam as `onStderrChunk`, on the
+    ///   other stream — added for the `diagnose` line-buffering measurement
+    ///   (`CLIMatrixDiagnoseITests.rowsArriveInMoreThanOneChunk`), which has
+    ///   to count stdout reads as they land rather than only see the
+    ///   settled `SubprocessResult`.
     @discardableResult
     static func run(
         _ executable: URL,
@@ -214,7 +219,8 @@ enum SubprocessRunner {
         currentDirectory: URL? = nil,
         stdin: Data? = nil,
         timeout: Duration = .seconds(60),
-        onStderrChunk: (@Sendable (Data) -> Void)? = nil
+        onStderrChunk: (@Sendable (Data) -> Void)? = nil,
+        onStdoutChunk: (@Sendable (Data) -> Void)? = nil
     ) async throws -> SubprocessResult {
         let process = Process()
         process.executableURL = executable
@@ -293,7 +299,7 @@ enum SubprocessRunner {
                 observer?(chunk)
             }
         }
-        drain(stdoutPipe.fileHandleForReading, stdoutBox, stdoutDrained, nil)
+        drain(stdoutPipe.fileHandleForReading, stdoutBox, stdoutDrained, onStdoutChunk)
         drain(stderrPipe.fileHandleForReading, stderrBox, stderrDrained, onStderrChunk)
 
         // The pipes must outlive the wait, and nothing above guarantees that

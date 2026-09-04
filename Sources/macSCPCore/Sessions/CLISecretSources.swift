@@ -218,6 +218,17 @@ public func secretSources(
 /// `SecretSource` of its own, and remembers which of its sources actually
 /// answered so `--verbose` can name it, the same thing
 /// `ResolvedSecret.sourceLabel` is for on the connect path.
+///
+/// `secret(for:)` is called once per authenticating step against the SAME
+/// session id — the dial, then S3 and WebDAV's own contribution probe
+/// (`ConnectionDiagnostics`, `--scope complete`) — so without memoizing,
+/// `--password-command` on those two backends spawns its helper command
+/// TWICE for one diagnosis (final-branch review, 2026-09-04). The first
+/// non-nil answer is cached in `answered`, keyed by session id, and every
+/// later call for that id returns it without walking `sources` again.
+/// Nothing is cached for a MISS (every source answered nil or empty): that
+/// outcome is not "the answer is nothing", it is "nothing has answered
+/// yet", and a later call is free to try the chain again.
 public struct ChainedSecretSource: SecretSource {
     private let sources: [any SecretSource]
     private let answered: AnsweredLabel
@@ -233,16 +244,19 @@ public struct ChainedSecretSource: SecretSource {
     public var label: String { answered.value }
 
     public func secret(for sessionID: UUID) throws -> String? {
+        if let memoized = answered.memoizedSecret(for: sessionID) { return memoized }
         for source in sources {
             guard let value = try source.secret(for: sessionID), !value.isEmpty else { continue }
             answered.value = source.label
+            answered.memoize(value, for: sessionID)
             return value
         }
         return nil
     }
 }
 
-/// The reference-type box behind `ChainedSecretSource.label`.
+/// The reference-type box behind `ChainedSecretSource.label` and its
+/// per-session memoization.
 ///
 /// Needed because `SecretSource.secret(for:)` is non-mutating — a struct's
 /// own stored property cannot record which source answered from inside it,
@@ -256,9 +270,22 @@ public struct ChainedSecretSource: SecretSource {
 private final class AnsweredLabel: @unchecked Sendable {
     private let lock = NSLock()
     private var current = "none"
+    /// The first non-nil, non-empty secret this chain resolved, per session
+    /// id. Keyed rather than a single slot so a chain that were ever (mis)
+    /// used for more than one session id could not hand one id's answer
+    /// back for another's.
+    private var answers: [UUID: String] = [:]
 
     var value: String {
         get { lock.withLock { current } }
         set { lock.withLock { current = newValue } }
+    }
+
+    func memoizedSecret(for sessionID: UUID) -> String? {
+        lock.withLock { answers[sessionID] }
+    }
+
+    func memoize(_ secret: String, for sessionID: UUID) {
+        lock.withLock { answers[sessionID] = secret }
     }
 }

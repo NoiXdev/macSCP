@@ -1,4 +1,5 @@
 import ArgumentParser
+import Darwin
 import Foundation
 import macSCPCore
 
@@ -76,6 +77,28 @@ struct DiagnoseCommand: AsyncParsableCommand {
     }
 
     func run() async throws {
+        // `Swift.print` writes to C `stdout`, and `stdout` is
+        // block-buffered whenever its destination is not a terminal —
+        // which is exactly what `diagnose --json | jq` gives it. Nothing
+        // reaches the other end of that pipe until the buffer fills (a few
+        // KB) or the process exits, which turns "rows print as each step
+        // finishes" (this command's whole reason for streaming through
+        // `onStep` instead of returning a report) into "every row prints
+        // at once, at the end" for any caller that redirects or pipes.
+        //
+        // Set HERE, at the top of `run()`, rather than process-wide in
+        // `MacSCPCLI.main()`: buffering only matters to a command that
+        // prints as it goes, and `diagnose` is the only one of the seven
+        // that does — `ls`/`get`/`put`/`rm`/`mkdir`/`sessions` each compute
+        // their whole answer and print it in one pass, so a row arriving
+        // early or late is not something their callers can observe either
+        // way. Line-buffering every subcommand from one shared spot would
+        // change all seven together for a property only this one has, and
+        // it must run before this command's first `print` — which "the top
+        // of `run()`" already guarantees without threading a flag through
+        // `MacSCPCLI`'s shared entry point for six commands that do not
+        // need it.
+        setvbuf(stdout, nil, _IOLBF, 0)
         let target = try resolveTarget()
         // Read out of `self` before the observer closure below captures
         // anything: the closure is `@Sendable`, and a `Bool` copied into it

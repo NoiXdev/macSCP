@@ -207,9 +207,9 @@ to emit one JSON object per line instead of columns, for scripting.
 `diagnose` prints one row per step as it finishes — the name lookup, the
 connection attempt, the echo, the app's own login and the route to the
 server — and `--scope ping\|trace\|dial\|contributions` narrows it to one
-of them. It never remembers a server's identity on your behalf: a server
-this app has not been introduced to is reported as such, and no flag
-here changes that.
+of them, out of the default `complete`, which runs every step. It never
+remembers a server's identity on your behalf: a server this app has not
+been introduced to is reported as such, and no flag here changes that.
 
 **Secrets.** A session's password or key passphrase is looked up in this
 order, stopping at the first one that answers: an explicit

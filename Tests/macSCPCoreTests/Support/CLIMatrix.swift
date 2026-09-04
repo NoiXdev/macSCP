@@ -217,11 +217,21 @@ struct CLIMatrix: Sendable {
     ///
     /// stdin is the null device, so no case here depends on whether the
     /// process running `swift test` happens to have a terminal.
+    ///
+    /// `onStdoutChunk` defaults to `nil` for every case that only wants the
+    /// settled result — it exists for
+    /// `CLIMatrixDiagnoseITests.rowsArriveInMoreThanOneChunk`, which has to
+    /// count stdout reads as they land rather than only see what the child
+    /// left behind once it was gone.
     @discardableResult
-    func run(_ arguments: [String]) async throws -> SubprocessResult {
+    func run(
+        _ arguments: [String],
+        onStdoutChunk: (@Sendable (Data) -> Void)? = nil
+    ) async throws -> SubprocessResult {
         try await SubprocessRunner.run(
             try CLIMatrix.binaryURL(), arguments: arguments,
-            environment: environment(secretVariable: descriptor.secretEnvironmentVariable))
+            environment: environment(secretVariable: descriptor.secretEnvironmentVariable),
+            onStdoutChunk: onStdoutChunk)
     }
 
     /// Runs the binary with the secret in `variable` INSTEAD of the backend's
