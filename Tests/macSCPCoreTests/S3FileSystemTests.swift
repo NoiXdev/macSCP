@@ -1636,7 +1636,11 @@ struct S3FileSystemTests {
 
         let request = try #require(await transport.requests.last)
         #expect(request.httpMethod == "POST")
-        #expect((request.url?.query ?? "").contains("delete"))
+        // Bound to a `String` first: an optional chain feeding `??` inside
+        // `#expect` makes the macro pick the `String?` overload of `??`,
+        // which warns twice and leaves the `contains` result unused.
+        let query = request.url?.query ?? ""
+        #expect(query.contains("delete"))
         #expect(request.url?.path(percentEncoded: true) == "/macscp-seed")
     }
 
