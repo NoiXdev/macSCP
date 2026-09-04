@@ -31,15 +31,27 @@ public struct ProtocolCapabilities: Sendable, Equatable {
     /// the truth about the server it is pointed at.
     public var supportsRemoteChecksum: Bool
     public var transport: TransportSecurity
+    /// Whether this backend authenticates the SERVER with a key the client
+    /// remembers — what `--accept-new`, `--non-interactive` and TOFU are
+    /// about (`HostKeyDecider`, `KnownHostsStore`). SSH is the one backend
+    /// whose `connect` closure forwards a `HostKeyDecider` to a real
+    /// host-key-consuming API (`CitadelFileSystem.connect`'s
+    /// `onUnknownHostKey:`); S3 and WebDAV both ignore that argument, and
+    /// WebDAV's own trust decision runs through a SEPARATE certificate
+    /// decider — a TLS certificate is not a host key, so `.optionalTLS`
+    /// transport is not evidence either way for this axis.
+    public var authenticatesHostKey: Bool
 
     public init(supportsShell: Bool, permissionModel: PermissionModel,
                 supportsSymlinks: Bool, atomicRename: Bool, directoriesAreReal: Bool,
                 resumeMode: ResumeMode, supportsPresignedURL: Bool,
-                supportsRemoteChecksum: Bool, transport: TransportSecurity) {
+                supportsRemoteChecksum: Bool, transport: TransportSecurity,
+                authenticatesHostKey: Bool) {
         self.supportsShell = supportsShell; self.permissionModel = permissionModel
         self.supportsSymlinks = supportsSymlinks; self.atomicRename = atomicRename
         self.directoriesAreReal = directoriesAreReal; self.resumeMode = resumeMode
         self.supportsPresignedURL = supportsPresignedURL
         self.supportsRemoteChecksum = supportsRemoteChecksum; self.transport = transport
+        self.authenticatesHostKey = authenticatesHostKey
     }
 }

@@ -34,6 +34,37 @@ struct BackendDescriptorTests {
         #expect(c.transport == .optionalTLS)
     }
 
+    /// Pins `ProtocolCapabilities.authenticatesHostKey` against an
+    /// INDEPENDENT derivation of the same fact, so the axis cannot silently
+    /// drift from the code it describes: which backend's `connect` closure
+    /// (`BackendDescriptor.swift:428-526`) actually forwards the
+    /// `HostKeyDecider` argument to a host-key-consuming API, rather than
+    /// dropping it on the floor as `_`. SSH's closure passes it on as
+    /// `onUnknownHostKey:` to `CitadelFileSystem.connect`; S3's ignores it
+    /// entirely; WebDAV's ignores it too and authenticates the server
+    /// through its own, separate certificate decider instead — a TLS
+    /// certificate is not a host key.
+    ///
+    /// The switch below is exhaustive over `ConnectionKind` (this replaces
+    /// `CLIMatrix.hasHostKeys`'s former exhaustive switch, moved here so the
+    /// capability axis is checked against the same reasoning that used to
+    /// gate the CLI matrix directly), so a fourth backend does not compile
+    /// here until someone says which side of this it is on.
+    @Test func authenticatesHostKeyMatchesWhichBackendsConnectClosureUsesTheDecider() {
+        for kind in ConnectionKind.allCases {
+            let derivedFromConnectClosure: Bool
+            switch kind {
+            case .ssh: derivedFromConnectClosure = true
+            case .s3, .webdav: derivedFromConnectClosure = false
+            }
+            #expect(
+                BackendDescriptor.descriptor(for: kind).capabilities.authenticatesHostKey
+                    == derivedFromConnectClosure,
+                Comment(rawValue: "\(kind).capabilities.authenticatesHostKey disagrees with "
+                    + "which backend's connect closure forwards the HostKeyDecider"))
+        }
+    }
+
     /// The secret access key lives in `credentialSchema`, not
     /// `connectionSchema` (M22): a secret belongs to the login, not the
     /// server, and that split is what lets one generic editor serve every

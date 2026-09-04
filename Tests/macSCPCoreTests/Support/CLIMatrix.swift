@@ -467,36 +467,29 @@ struct CLIMatrix: Sendable {
     /// about — PRINTING the reason when it does not, the same way
     /// `supports(_:named:operation:)` does.
     ///
-    /// It is NOT a `ProtocolCapabilities` axis, because there is none:
-    /// counted 2026-09-04, that type carries `supportsShell`,
-    /// `permissionModel`, `supportsSymlinks`, `atomicRename`,
-    /// `directoriesAreReal`, `resumeMode`, `supportsPresignedURL`,
-    /// `supportsRemoteChecksum` and `transport`, and not one of them says
-    /// anything about host keys. `transport` is the near miss and would be
-    /// the wrong answer: SSH is `.alwaysEncrypted` and the other two are
-    /// `.optionalTLS`, which is a statement about the channel, not about
-    /// whether the client remembers the server's identity — a WebDAV vhost
-    /// on TLS is still `.optionalTLS` and still has no host key.
+    /// It IS a `ProtocolCapabilities` axis now (`authenticatesHostKey`,
+    /// `Sources/macSCPCore/Capabilities/ProtocolCapabilities.swift`): this
+    /// used to read the answer off an exhaustive switch over the connection
+    /// config the CLI itself builds, because no such axis existed —
+    /// `transport` was the near-miss wrong answer (SSH `.alwaysEncrypted`,
+    /// S3/WebDAV `.optionalTLS`, which is a statement about the channel, not
+    /// about whether the client remembers the server's identity — a WebDAV
+    /// vhost on TLS is still `.optionalTLS` and still has no host key). The
+    /// switch itself, and the reasoning behind each arm — SSH's `connect`
+    /// closure is the one that forwards `HostKeyDecider` to a real
+    /// host-key-consuming API, WebDAV authenticates the server through a
+    /// SEPARATE certificate decider instead — now lives on the descriptor's
+    /// own capability, pinned independently by
+    /// `BackendDescriptorTests.authenticatesHostKeyMatchesWhichBackendsConnectClosureUsesTheDecider`.
     ///
-    /// So the answer is read off the connection config the CLI itself
-    /// builds, in an EXHAUSTIVE switch: the `.ssh` arm is the one whose
-    /// backend closure is handed the `HostKeyDecider` and a `KnownHostsStore`
-    /// (`BackendDescriptor.sshDescriptor`), and the other two arms take
-    /// neither. A fourth protocol does not compile here until someone says
-    /// which it is.
-    ///
-    /// The switch is a claim about the backends, so it is not left as one:
+    /// The value is a claim about the backends, so it is not left as one:
     /// `anUnknownHostKeyIsRefusedUntilAccepted` drives BOTH sides of it
     /// against the rig — a backend this answers `true` for must refuse
     /// `--non-interactive` and record exactly one key under `--accept-new`,
     /// and a backend it answers `false` for must connect with neither flag
     /// mattering and record nothing.
     func hasHostKeys(operation: String) throws -> Bool {
-        let has: Bool
-        switch try StoredSessionConnectionConfig.build(for: session, secret: secret) {
-        case .ssh: has = true
-        case .s3, .webdav: has = false
-        }
+        let has = capabilities.authenticatesHostKey
         if !has {
             print("""
                 CLIMatrix: skipping \(operation) on \(kind.rawValue) — this \

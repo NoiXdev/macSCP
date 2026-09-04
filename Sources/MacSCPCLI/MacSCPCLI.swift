@@ -74,6 +74,10 @@ struct MacSCPCLI: AsyncParsableCommand {
     /// non-zero `CLIExitCode` — so `.success` here can only mean "hand this
     /// to ArgumentParser's own handling", never one of our own errors.
     static func main() async {
+        if let name = unrecognizedHelpSubcommand(in: CommandLine.arguments) {
+            OutputFormatter.note("Unknown subcommand '\(name)'")
+            Foundation.exit(CLIExitCode.usage.rawValue)
+        }
         do {
             var command = try await asyncParseAsRoot()
             do {
@@ -92,5 +96,33 @@ struct MacSCPCLI: AsyncParsableCommand {
         } catch {
             exit(withError: error)
         }
+    }
+
+    /// Detects `macscp-cli help <name>` where `<name>` names no configured
+    /// subcommand, so `main()` can refuse it as a usage error BEFORE
+    /// `asyncParseAsRoot()` ever reaches ArgumentParser's built-in
+    /// `HelpCommand`.
+    ///
+    /// Left alone, that built-in command's `buildCommandStack(with:)` walks
+    /// as far into the subcommand tree as the given names match and stops
+    /// wherever they stop matching — for a first name that matches nothing,
+    /// that is the ROOT, so `help <unknown>` printed the root help and
+    /// exited 0 exactly as `help` alone does (measured 2026-09-04: `help
+    /// definitely-not-a-subcommand` → exit 0, root `OVERVIEW`/`USAGE`
+    /// printed), indistinguishable from a real subcommand's help by exit
+    /// code alone.
+    ///
+    /// Reads `arguments[1]` and `arguments[2]` only. `arguments[0]` is the
+    /// executable path, which ArgumentParser itself never sees this way;
+    /// anything past index 2 (`help ls -v`, say) is a real subcommand's own
+    /// trailing arguments, not a second name to weigh in on this check.
+    /// `help` with nothing after it (`arguments.count == 2`) is left alone —
+    /// that is the root help request, unaffected by this fix.
+    static func unrecognizedHelpSubcommand(in arguments: [String]) -> String? {
+        guard arguments.count >= 3, arguments[1] == "help" else { return nil }
+        let name = arguments[2]
+        let known = configuration.subcommands.map { $0._commandName }
+        guard !known.contains(name) else { return nil }
+        return name
     }
 }

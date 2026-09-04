@@ -1856,16 +1856,13 @@ struct CLIMatrixCoverageTests {
 @Suite("CLIMatrixCommands", .enabled(if: rigIsEnabled), .serialized)
 struct CLIMatrixCommandsITests {
     /// Every name the parse pulled out of `--help` is a subcommand the
-    /// binary actually answers to.
+    /// binary actually answers to: each backs a real
+    /// `USAGE: macscp-cli <name> …` line and exits 0.
     ///
-    /// The discriminator is the USAGE line, not the exit code, and that is a
-    /// measurement rather than a preference: `macscp-cli help <anything>`
-    /// exits 0 whatever it is handed (measured 2026-09-04 — `help
-    /// definitely-not-a-subcommand` exits 0 and prints the ROOT help), so an
-    /// exit-code check would buy a parse that returned stray help prose. A
-    /// real subcommand's help says `USAGE: macscp-cli <name> …`; an unknown
-    /// one falls back to `USAGE: macscp-cli <subcommand>`. Both halves are
-    /// asserted, so the check is not merely satisfiable by the fallback.
+    /// The negative half this used to carry here — an unrecognized name
+    /// falling back to the root help — pinned a bug rather than a parse, and
+    /// is split out below as `helpOnAnUnknownSubcommandIsAUsageError`, which
+    /// now pins the FIX instead.
     @Test func theSubcommandsComeFromTheBinaryItself() async throws {
         let binary = try CLIMatrix.binaryURL()
         let names = try await CLIMatrix.subcommands(binary: binary)
@@ -1878,13 +1875,31 @@ struct CLIMatrixCommandsITests {
                 result.stdoutText.contains("USAGE: macscp-cli \(name)"),
                 "\(name) is not a subcommand the binary answers to")
         }
+    }
 
-        // The other half of the discriminator: an unknown name reaches the
-        // ROOT usage line, which is exactly what the per-name check above
-        // would have to be blind to in order to pass by accident.
-        let notACommand = try await SubprocessRunner.run(
+    /// `macscp-cli help <unknown-subcommand>` used to exit 0 and print the
+    /// ROOT help — measured 2026-09-04, `help definitely-not-a-subcommand`
+    /// exiting 0 with the root `OVERVIEW`/`USAGE` printed, indistinguishable
+    /// by exit code from a real subcommand's help (`docs/BACKLOG.md`, "CLI
+    /// help on an unknown subcommand"). Now it is a usage error: exit
+    /// `CLIExitCode.usage` (2), stderr naming the subcommand it did not
+    /// recognize.
+    ///
+    /// `help ls`, a real subcommand, sits beside it as the positive half —
+    /// a negative check ("an unknown name is refused") needs a positive
+    /// check beside it ("a known name still works"), per CLAUDE.md "Guards
+    /// that name what they watch" — so a change that broke help for every
+    /// subcommand, unknown or not, could not pass this by accident.
+    @Test func helpOnAnUnknownSubcommandIsAUsageError() async throws {
+        let binary = try CLIMatrix.binaryURL()
+
+        let unknown = try await SubprocessRunner.run(
             binary, arguments: ["help", "definitely-not-a-subcommand"])
-        #expect(notACommand.stdoutText.contains("USAGE: macscp-cli <subcommand>"))
+        #expect(unknown.status == CLIExitCode.usage.rawValue)
+        #expect(unknown.stderrText.contains("definitely-not-a-subcommand"))
+
+        let known = try await SubprocessRunner.run(binary, arguments: ["help", "ls"])
+        #expect(known.status == CLIExitCode.success.rawValue)
     }
 
     /// Every subcommand the binary offers is driven by a case in this file.
