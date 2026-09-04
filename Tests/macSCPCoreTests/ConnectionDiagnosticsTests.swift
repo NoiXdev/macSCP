@@ -898,6 +898,76 @@ struct ConnectionDiagnosticsTests {
         #expect(neutral.isEmpty == false)
     }
 
+    /// The arm the fixed sentences do NOT cover: an error of a type this
+    /// module never names, reduced to its localized sentence. That sentence
+    /// is a foreign string, and the question this case exists to answer is
+    /// whether it can carry the URL the transport was dialling — the same
+    /// leak the `RemoteFSError` arm was closed for, one arm further down.
+    ///
+    /// Measured 2026-09-04 rather than assumed: a `URLError` carrying a
+    /// credential-bearing failing URL in its `userInfo` is planted through
+    /// the dial seam and the whole report is read back. It came back GREEN.
+    /// `NSURLErrorDomain` has no localized sentence per code that quotes the
+    /// URL — the description a manually built one carries names the domain
+    /// and the numeric code and nothing else — and `localizedDescription`
+    /// does not consult the failing-URL keys. The value is reachable through
+    /// `description`, which prints the whole `userInfo`
+    /// (`CLIErrorMapping`'s fallback says exactly this about its own line),
+    /// and through `String(describing:)`; the diagnostics module reaches for
+    /// neither, which is what the guard suite keeps true.
+    ///
+    /// So this is a regression test, not a fix: if a future arm reaches for
+    /// a description instead of a localized sentence, or if a foreign error
+    /// arrives with its URL already in a localized message, this turns red
+    /// where nothing else here would.
+    ///
+    /// The failing URL is planted under the STRING-valued failing-URL key,
+    /// and it has to be: `URL(string:)` returns nil for this shape, measured
+    /// in the same pass — a `/` inside the password is not legal there
+    /// unencoded, so the URL-valued key cannot hold the credential this test
+    /// is about. The string key is spelled as its own literal rather than
+    /// through its `Foundation` constant, which is deprecated as of macOS
+    /// 15.4 and would be a build warning here.
+    @Test func aForeignErrorsLocalizedSentenceNeverReachesTheRow() async throws {
+        let port = try #require(LoopbackSocket.closedPort())
+        let key = Self.userinfoKey
+        let secret = Self.slashBearingSecret
+        // Named, never written into an expectation, for the reason every
+        // other secret in this file is named.
+        let failingURLText = "https://\(key):\(secret)@minio.example.test:9000/x"
+        let planted = URLError(
+            .unsupportedURL, userInfo: ["NSErrorFailingURLStringKey": failingURLText])
+        let report = await Self.run(
+            descriptor: Self.probeDescriptor(
+                endpoint: Endpoint(host: "127.0.0.1", port: port),
+                dial: Self.constantContribution(
+                    id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe",
+                    outcome: .failed(DialSupport.reason(for: planted)), detail: "")))
+
+        let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
+        let plainText = report.plainText()
+        let markdown = report.markdown()
+        // Bools first, every one of them: `#expect` prints the source text of
+        // what it checks, so neither half of the credential may be spelled
+        // inside an expectation (CLAUDE.md, "A value a test must not leak has
+        // two exits").
+        let inOutcome = dial.outcome.label.contains(secret) || dial.outcome.label.contains(key)
+        let inDetail = dial.detail.contains(secret) || dial.detail.contains(key)
+        let inPlainText = plainText.contains(secret) || plainText.contains(key)
+        let inMarkdown = markdown.contains(secret) || markdown.contains(key)
+        #expect(inOutcome == false)
+        #expect(inDetail == false)
+        #expect(inPlainText == false)
+        #expect(inMarkdown == false)
+
+        // The positive companion: the row still reports a failed dial with a
+        // non-empty sentence, so the four checks above are reading a rendered
+        // reason rather than an empty one that could not carry anything.
+        let rendered = DialSupport.reason(for: planted)
+        #expect(rendered.isEmpty == false)
+        #expect(dial.outcome == .failed(rendered))
+    }
+
     /// The other half of the rule: dropping the free text does not mean
     /// dropping what the user can act on. A path is this project's own
     /// string, it is what the finding IS, and it stays.

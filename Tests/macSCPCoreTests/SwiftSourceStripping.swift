@@ -46,6 +46,34 @@ enum SwiftSource {
     /// the alternative is a scan that silently reads less than the file it
     /// claims to have checked.
     static func stripCommentsAndStrings(_ source: String) throws -> String {
+        try walk(source, keepingStringContents: false)
+    }
+
+    /// Blanks comments and keeps string literals — the other half a scan may
+    /// need, and the reason it exists: blanking a literal blanks what it
+    /// INTERPOLATES along with it, because a literal is consumed to its
+    /// closing quote as one span. A rule about what a sentence may be built
+    /// out of therefore cannot be checked on text this type has blanked; it
+    /// has to read the literal and blank only the comments, so that a comment
+    /// describing the forbidden shape still neither trips the check nor
+    /// satisfies it.
+    ///
+    /// Fails closed on exactly the same two forms, for the same reason.
+    static func stripComments(_ source: String) throws -> String {
+        try walk(source, keepingStringContents: true)
+    }
+
+    /// The one walker both entry points above run, so there is a single
+    /// place where a delimiter is recognised and a single place that decides
+    /// what a file this stripper cannot parse does.
+    ///
+    /// `keepStringContents` changes only what is APPENDED for a literal, never
+    /// how far the walk consumes: a literal is consumed to its closing
+    /// delimiter either way, so a `//` or a `/*` inside one is never read as
+    /// a comment in either mode.
+    private static func walk(
+        _ source: String, keepingStringContents keepStringContents: Bool
+    ) throws -> String {
         var result = ""
         result.reserveCapacity(source.count)
         let chars = Array(source)
@@ -88,26 +116,38 @@ enum SwiftSource {
                 }
             }
             if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
+                let start = i
                 i += 3
+                var blanked = ""
                 while i + 2 < chars.count,
                     !(chars[i] == "\"" && chars[i + 1] == "\"" && chars[i + 2] == "\"")
                 {
-                    result.append(chars[i] == "\n" ? "\n" : " ")
+                    blanked.append(chars[i] == "\n" ? "\n" : " ")
                     i += 1
                 }
                 guard i + 2 < chars.count else { throw StripError.unterminatedLiteral }
                 i += 3
-                result.append(" ")
+                if keepStringContents {
+                    result.append(contentsOf: chars[start..<i])
+                } else {
+                    result.append(blanked)
+                    result.append(" ")
+                }
                 continue
             }
             if c == "\"" {
+                let start = i
                 i += 1
                 while i < chars.count, chars[i] != "\"" {
                     if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
                 }
                 guard i < chars.count else { throw StripError.unterminatedLiteral }
                 i += 1
-                result.append(" ")
+                if keepStringContents {
+                    result.append(contentsOf: chars[start..<i])
+                } else {
+                    result.append(" ")
+                }
                 continue
             }
             result.append(c)
@@ -122,10 +162,13 @@ enum SwiftSource {
 /// suite that first needed them, so that what it does at the end of a file
 /// it cannot parse is stated in one place.
 ///
-/// Three suites in this target read what `stripCommentsAndStrings` returns,
-/// counted in the pass that writes this sentence:
+/// Four suites in this target read what `stripCommentsAndStrings` returns,
+/// counted in the pass that writes this sentence (it said three before that
+/// pass, and `DiagnosticsNoDescribingGuardTests` had already joined them):
 /// `ConnectionViewModelSourceGuardTests`,
-/// `PKCS12ImportIsolationGuardTests`, and the self-tests below. Two others
+/// `PKCS12ImportIsolationGuardTests`, `DiagnosticsNoDescribingGuardTests`,
+/// and the self-tests below. That last suite is also the only caller of
+/// `stripComments`, counted in the same pass. Two others
 /// scan Swift source with blankers of their own and are NOT covered by
 /// anything here — `IconTooltipLintTests` (its own `code(of:)`) and
 /// `SnippetCommandSurveyTests`. Whether those fail closed is their own
@@ -146,6 +189,35 @@ struct SwiftSourceStrippingTests {
         #expect(stripped.split(separator: "\n").count == 4)
         #expect(stripped.components(separatedBy: "marker").count - 1 == 1,
                 "only the one occurrence in code should survive: \(stripped)")
+    }
+
+    /// The complementary mode: comments go, literals stay — including what
+    /// a literal interpolates, which is the whole reason the second entry
+    /// point exists. A comment naming the same shape must still vanish, or
+    /// the two modes would differ in what they hide rather than in what they
+    /// keep.
+    @Test func commentsGoAndLiteralsStay() throws {
+        let stripped = try SwiftSource.stripComments("""
+            // marker
+            let text = "a \\(marker) sentence"
+            /* marker */
+            let real = marker
+            """)
+        #expect(stripped.split(separator: "\n").count == 4)
+        #expect(stripped.components(separatedBy: "marker").count - 1 == 2,
+                "the literal's interpolation and the code line should survive: \(stripped)")
+    }
+
+    /// A `//` inside a literal is part of the literal, not the start of a
+    /// comment — the failure this mode would otherwise have: a line-comment
+    /// strip that runs before the literal is recognised blanks the rest of
+    /// the line, and a check reading that line could never match anything
+    /// after an endpoint's scheme separator.
+    @Test func aSlashPairInsideALiteralDoesNotStartAComment() throws {
+        let stripped = try SwiftSource.stripComments("""
+            let endpoint = "https://host/x" + marker
+            """)
+        #expect(stripped.contains("marker"))
     }
 
     /// Fail-closed: a raw-string delimiter (`#"…"#`) is a form this
