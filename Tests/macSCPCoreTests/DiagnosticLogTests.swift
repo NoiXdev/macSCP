@@ -119,6 +119,34 @@ struct DiagnosticLogTests {
         #expect(regex.firstMatch(in: line, range: range) != nil)
     }
 
+    @Test("the line format carries a numeric offset in UTC too, never Z")
+    func lineFormatUsesNumericOffsetInUTC() async throws {
+        let directory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let utc = try #require(TimeZone(identifier: "UTC"))
+        DiagnosticLog.shared.configure(level: .info, directory: directory, timeZone: utc)
+        DiagnosticLog.shared.log(.info, "browser.local", "list start path=/x")
+        await DiagnosticLog.shared.flush()
+
+        let url = try #require(DiagnosticLog.shared.currentFileURL)
+        let line = fileContents(url).split(separator: "\n").map(String.init).first ?? ""
+
+        // The exact same pattern `lineFormatMatchesRegex` checks against the
+        // local zone: `[+-]\d{2}:\d{2}`, never a bare `Z`. A CI runner
+        // configured for UTC exercises exactly this path, which is why it
+        // is pinned directly here rather than left to depend on whatever
+        // zone the machine running the suite happens to be in.
+        let pattern =
+            #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} \[info\] browser\.local list start path=/x$"#
+        let regex = try NSRegularExpression(pattern: pattern)
+        let range = NSRange(line.startIndex..<line.endIndex, in: line)
+        #expect(regex.firstMatch(in: line, range: range) != nil)
+        let timestamp = line.split(separator: " ").first.map(String.init) ?? ""
+        #expect(timestamp.hasSuffix("+00:00"))
+        #expect(!timestamp.hasSuffix("Z"))
+    }
+
     @Test("a message with \\n is written with the line-break glyph")
     func messageNewlineIsReplaced() async throws {
         let directory = makeTempDirectory()
@@ -183,6 +211,98 @@ struct DiagnosticLogTests {
             (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         #expect(entries.count == 1)
     }
+
+    @Test("configure(.off) resolves a flush() registered for lines it just dropped")
+    func offResolvesAPendingFlush() async {
+        let directory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        DiagnosticLog.shared.configure(level: .info, directory: directory)
+        DiagnosticLog.shared.log(.info, "test", "one")
+        DiagnosticLog.shared.log(.info, "test", "two")
+        // Immediately, with no `await` between the two `log` calls and this
+        // one — nothing here suspends, so the writer task (which can only
+        // run once this test's own task yields or this call returns) has no
+        // opportunity to drain the buffer first. `configure(.off)` is what
+        // is under test: it must resolve `pendingSequence` up front rather
+        // than leave the flush below registered against lines it is about
+        // to drop.
+        DiagnosticLog.shared.configure(level: .off, directory: directory)
+
+        // Before the fix this call hung to the suite's own `.timeLimit`
+        // (.minutes(1)) — there was no writer left to ever resume it, since
+        // the lines it was waiting on had already been dropped. Returning
+        // at all is the assertion; there is nothing further to check.
+        await DiagnosticLog.shared.flush()
+    }
+
+    @Test("a batch spanning midnight is written to two files, one line each")
+    func batchSpanningMidnightSplitsAcrossFiles() async throws {
+        let directory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        var beforeMidnight = DateComponents()
+        beforeMidnight.year = 2026
+        beforeMidnight.month = 9
+        beforeMidnight.day = 4
+        beforeMidnight.hour = 23
+        beforeMidnight.minute = 59
+        beforeMidnight.second = 59
+        var afterMidnight = DateComponents()
+        afterMidnight.year = 2026
+        afterMidnight.month = 9
+        afterMidnight.day = 5
+        afterMidnight.hour = 0
+        afterMidnight.minute = 0
+        afterMidnight.second = 0
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let firstInstant = try #require(calendar.date(from: beforeMidnight))
+            .addingTimeInterval(0.999)
+        let secondInstant = try #require(calendar.date(from: afterMidnight))
+            .addingTimeInterval(0.001)
+
+        // `configure` itself reads `now()` once, for rotation — the clock
+        // returns `firstInstant` for every call up to and including that
+        // one, then `firstInstant` again for the FIRST logged line, then
+        // `secondInstant` for the second — so the two lines under test are
+        // exactly the two `log` calls below, regardless of how many times
+        // `now` was already read before them.
+        let clock = SequencedClock(values: [firstInstant, firstInstant, secondInstant])
+        DiagnosticLog.shared.configure(level: .info, directory: directory, now: clock.next)
+        DiagnosticLog.shared.log(.info, "test", "last line of the day")
+        DiagnosticLog.shared.log(.info, "test", "first line of the next day")
+        await DiagnosticLog.shared.flush()
+
+        let firstFile = directory.appending(path: "macSCP-2026-09-04.log")
+        let secondFile = directory.appending(path: "macSCP-2026-09-05.log")
+
+        let firstLines = fileContents(firstFile).split(separator: "\n").map(String.init)
+        let secondLines = fileContents(secondFile).split(separator: "\n").map(String.init)
+        #expect(firstLines.count == 1)
+        #expect(secondLines.count == 1)
+        #expect(firstLines.first?.hasSuffix("last line of the day") == true)
+        #expect(secondLines.first?.hasSuffix("first line of the next day") == true)
+    }
+
+    @Test("log and flush return without crashing when the directory cannot be created")
+    func writesNothingWhenDirectoryCannotBeCreated() async {
+        // A regular FILE where the log directory would need to go: every
+        // `createDirectory(at:)` under it fails, on every platform, without
+        // needing a permissions trick.
+        let blockerFile = FileManager.default.temporaryDirectory
+            .appending(path: "DiagnosticLogTests-blocker-\(UUID().uuidString)")
+        FileManager.default.createFile(atPath: blockerFile.path, contents: Data("blocker".utf8))
+        defer { try? FileManager.default.removeItem(at: blockerFile) }
+        let unusableDirectory = blockerFile.appending(path: "macSCP")
+
+        DiagnosticLog.shared.configure(level: .info, directory: unusableDirectory)
+        DiagnosticLog.shared.log(.info, "test", "should not crash")
+        await DiagnosticLog.shared.flush()
+
+        #expect(!FileManager.default.fileExists(atPath: unusableDirectory.path))
+    }
 }
 
 /// Counts how many times its `touch()` autoclosure body actually ran.
@@ -205,5 +325,30 @@ private final class EvaluationCounter: @unchecked Sendable {
         storage += 1
         lock.unlock()
         return "touched"
+    }
+}
+
+/// A `now` stub that returns `values` in order, one per call, and repeats
+/// the last one for any call past the end — so a test does not have to
+/// predict exactly how many times `DiagnosticLog` reads the clock before
+/// the calls it actually cares about (`configure` itself reads it once,
+/// for rotation, ahead of whatever `log` calls follow).
+private final class SequencedClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private let values: [Date]
+    private var index = 0
+
+    init(values: [Date]) {
+        self.values = values
+    }
+
+    var next: @Sendable () -> Date {
+        { [self] in
+            lock.lock()
+            defer { lock.unlock() }
+            let value = values[min(index, values.count - 1)]
+            index += 1
+            return value
+        }
     }
 }

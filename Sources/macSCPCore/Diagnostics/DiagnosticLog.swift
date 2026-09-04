@@ -72,12 +72,29 @@ public final class DiagnosticLog: Sendable {
     /// `configure` deletes it.
     private static let retention = 7
 
+    /// One buffered line, stamped with the day key it belongs to at the
+    /// moment `log` formatted it — not guessed later from whatever instant
+    /// the writer happens to wake up at.
+    ///
+    /// That distinction is the fix for a batch spanning midnight: without a
+    /// key of its own per line, a drain that catches a 23:59:59.999 line and
+    /// a 00:00:00.001 line in the SAME batch would file the first line under
+    /// the second line's day, because the old code asked `now()` once per
+    /// batch rather than once per line. `dayKey` is computed from the same
+    /// `now()` call `log` used for the line's own timestamp text, so the two
+    /// can never disagree about which day a line was logged on.
+    private struct BufferedLine {
+        let text: String
+        let dayKey: String
+    }
+
     private struct State {
         var level: DiagnosticLogLevel = .off
         var directory: URL = DiagnosticLog.defaultDirectory
+        var timeZone: TimeZone = .current
         var now: @Sendable () -> Date = Date.init
 
-        var buffer: [String] = []
+        var buffer: [BufferedLine] = []
         /// Incremented once per appended line, never reset. `flush()` reads
         /// this as its target; the writer reports back through
         /// `flushedSequence` once every line up to some point is on disk.
@@ -98,40 +115,63 @@ public final class DiagnosticLog: Sendable {
 
     private init() {}
 
-    /// Sets the level, the directory lines are written to, and the clock the
-    /// sink reads timestamps and rotation from — `now` defaults to the real
-    /// clock and exists so a test can pin rotation to a fixed day.
+    /// Sets the level, the directory lines are written to, the zone
+    /// timestamps and file names are read in, and the clock the sink reads
+    /// both from — `timeZone` defaults to the device's own and `now`
+    /// defaults to the real clock; both are parameters so a test can pin a
+    /// UTC offset or a fixed instant without touching the device's actual
+    /// settings.
     ///
     /// Creates `directory` (with intermediate directories) if it does not
     /// exist yet, then deletes every `macSCP-*.log` file in it whose date —
-    /// parsed from its own name — is more than 7 days before `now()`. A file
-    /// name that does not parse as `macSCP-<yyyy-MM-dd>.log` is left alone.
+    /// parsed from its own name, in `timeZone` — is more than 7 days before
+    /// `now()`. A file name that does not parse as
+    /// `macSCP-<yyyy-MM-dd>.log` is left alone.
     ///
     /// Takes effect at once: a level change applies to the next `log` call,
     /// and switching TO `.off` closes the open file handle and drops
     /// whatever is still buffered and not yet on disk — those lines are
-    /// never written. Safe to call while the app is running and lines are
-    /// in flight.
+    /// never written. Any `flush()` still parked waiting for one of those
+    /// dropped lines is resumed right here, as `.off` takes effect: a
+    /// sequence number that will never reach disk now must not leave a
+    /// caller waiting for it forever. Safe to call while the app is running
+    /// and lines are in flight.
     public func configure(
         level: DiagnosticLogLevel,
         directory: URL = DiagnosticLog.defaultDirectory,
+        timeZone: TimeZone = .current,
         now: @Sendable @escaping () -> Date = Date.init
     ) {
         try? FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true)
-        Self.pruneOldFiles(in: directory, now: now())
+        Self.pruneOldFiles(in: directory, now: now(), timeZone: timeZone)
 
-        state.withLock { s in
+        // Continuations are collected under the lock and resumed after it is
+        // released — the same shape `markFlushed` and `AgentEnvLock.release`
+        // use, so resuming one can never re-enter `state`'s lock from inside
+        // the critical section that just released it.
+        let waitersToResume: [CheckedContinuation<Void, Never>] = state.withLock { s in
             s.fileHandle?.closeFile()
             s.fileHandle = nil
             s.fileDayKey = nil
             s.directory = directory
+            s.timeZone = timeZone
             s.now = now
             s.level = level
-            if level == .off {
-                s.buffer = []
-            }
+
+            guard level == .off else { return [] }
+            // Everything still buffered is about to be dropped below, so
+            // every sequence number up to the current one is as "flushed"
+            // as it will ever be — resolving pending waiters rather than
+            // leaving them registered against a write that will never
+            // happen.
+            s.flushedSequence = s.pendingSequence
+            let waiters = s.flushWaiters.map { $0.continuation }
+            s.flushWaiters = []
+            s.buffer = []
+            return waiters
         }
+        for continuation in waitersToResume { continuation.resume() }
     }
 
     /// Appends one line, iff `level` is admitted by the configured level.
@@ -149,24 +189,32 @@ public final class DiagnosticLog: Sendable {
         _ level: DiagnosticLogLevel, _ category: String,
         _ message: @autoclosure @Sendable () -> String
     ) {
-        let admittedNow: (@Sendable () -> Date)? = state.withLock { s in
+        let admitted: (now: @Sendable () -> Date, timeZone: TimeZone)? = state.withLock { s in
             guard s.level != .off, level <= s.level else { return nil }
-            return s.now
+            return (s.now, s.timeZone)
         }
-        guard let now = admittedNow else { return }
+        guard let admitted else { return }
 
+        // One `now()` call for both the timestamp text AND the day key this
+        // line is filed under — see `BufferedLine`'s doc comment for why
+        // that has to be the same instant rather than two separate reads of
+        // the clock.
+        let timestamp = admitted.now()
         let line = Self.formatLine(
-            level: level, category: category, message: message(), timestamp: now())
+            level: level, category: category, message: message(),
+            timestamp: timestamp, timeZone: admitted.timeZone)
+        let dayKey = Self.dayKey(for: timestamp, timeZone: admitted.timeZone)
 
         state.withLock { s in
-            s.buffer.append(line)
+            s.buffer.append(BufferedLine(text: line, dayKey: dayKey))
             s.pendingSequence += 1
             ensureWriterStarted(&s)
             s.doorbell?.yield(())
         }
     }
 
-    /// Returns once every line appended before this call is on disk.
+    /// Returns once every line appended before this call is on disk (or, if
+    /// `.off` intervenes, abandoned — see `configure`'s doc comment).
     ///
     /// Captures the current pending sequence number and awaits a
     /// continuation the writer resumes once its own flushed sequence has
@@ -233,24 +281,42 @@ public final class DiagnosticLog: Sendable {
 
     private func drainAndWriteUntilEmpty() {
         while true {
-            let batch = state.withLock { s -> (lines: [String], sequence: UInt64, directory: URL, now: Date)? in
+            let batch = state.withLock {
+                s -> (lines: [BufferedLine], sequence: UInt64, directory: URL)? in
                 guard !s.buffer.isEmpty else { return nil }
                 let lines = s.buffer
                 s.buffer = []
-                return (lines, s.pendingSequence, s.directory, s.now())
+                return (lines, s.pendingSequence, s.directory)
             }
             guard let batch else { return }
-            writeToDisk(lines: batch.lines, directory: batch.directory, now: batch.now)
+            writeToDisk(lines: batch.lines, directory: batch.directory)
             markFlushed(through: batch.sequence)
         }
     }
 
-    /// Opens (or reuses) today's file and appends `lines`. Runs only on the
-    /// writer task, so this is the one place in the type that touches the
-    /// file system for writing — never on a caller's thread.
-    private func writeToDisk(lines: [String], directory: URL, now: Date) {
-        let dayKey = Self.dayKey(for: now, timeZone: .current)
+    /// Writes one drained batch, switching files whenever a line's own day
+    /// key differs from the line before it — each line already carries the
+    /// key it was stamped with at `log` time, so a batch that happens to
+    /// span midnight is split into one write per day rather than filed
+    /// whole under a single `now()` read taken after the fact.
+    private func writeToDisk(lines: [BufferedLine], directory: URL) {
+        var index = lines.startIndex
+        while index < lines.endIndex {
+            let dayKey = lines[index].dayKey
+            var end = index
+            while end < lines.endIndex, lines[end].dayKey == dayKey {
+                end += 1
+            }
+            writeRun(lines[index..<end].map { $0.text }, directory: directory, dayKey: dayKey)
+            index = end
+        }
+    }
 
+    /// Opens (or reuses) the file for `dayKey` and appends `textLines` to
+    /// it. Runs only on the writer task, so this is the one place in the
+    /// type that touches the file system for writing — never on a caller's
+    /// thread.
+    private func writeRun(_ textLines: [String], directory: URL, dayKey: String) {
         let handle = state.withLock { s -> FileHandle? in
             if s.fileHandle == nil || s.fileDayKey != dayKey {
                 s.fileHandle?.closeFile()
@@ -266,7 +332,7 @@ public final class DiagnosticLog: Sendable {
         }
         guard let handle else { return }
 
-        let payload = Data((lines.map { $0 + "\n" }.joined()).utf8)
+        let payload = Data((textLines.map { $0 + "\n" }.joined()).utf8)
         handle.write(payload)
     }
 
@@ -311,26 +377,42 @@ public final class DiagnosticLog: Sendable {
     /// `2026-09-04T13:02:11.417+02:00 [info] browser.local list start path=/x`
     /// — timestamp, level in brackets, category, then free `key=value` text.
     private static func formatLine(
-        level: DiagnosticLogLevel, category: String, message: String, timestamp: Date
+        level: DiagnosticLogLevel, category: String, message: String, timestamp: Date,
+        timeZone: TimeZone
     ) -> String {
-        let ts = timestampText(for: timestamp)
+        let ts = timestampText(for: timestamp, timeZone: timeZone)
         let cat = sanitizeCategory(category)
         let msg = sanitizeMessage(message)
         return "\(ts) [\(level.rawValue)] \(cat) \(msg)"
     }
 
-    /// ISO 8601 with millisecond precision and the LOCAL zone's offset —
-    /// `+02:00`, never `Z` unless the zone genuinely is UTC (in which case
-    /// `ISO8601FormatStyle` prints `Z` on its own; nothing here special-cases
-    /// it).
-    private static func timestampText(for date: Date) -> String {
-        let style = Date.ISO8601FormatStyle(timeZone: .current)
+    /// ISO 8601 with millisecond precision and `timeZone`'s own offset,
+    /// ALWAYS written as a signed `±HH:mm` — `+02:00`, `-04:00`, and
+    /// `+00:00` for UTC. Built by hand (a plain wall-clock render with no
+    /// zone suffix, plus `offsetText` appended) rather than left to
+    /// `ISO8601FormatStyle`'s own zone modifier, which prints `Z` for a
+    /// zero offset: a CI runner configured for UTC would otherwise silently
+    /// switch which branch of every line-format test's regex it exercises,
+    /// on no signal at all that anything had changed.
+    private static func timestampText(for date: Date, timeZone: TimeZone) -> String {
+        let style = Date.ISO8601FormatStyle(timeZone: timeZone)
             .year().month().day()
             .dateSeparator(.dash)
             .time(includingFractionalSeconds: true)
             .timeSeparator(.colon)
-            .timeZone(separator: .colon)
-        return date.formatted(style)
+        return date.formatted(style) + offsetText(for: date, timeZone: timeZone)
+    }
+
+    /// `timeZone`'s offset from UTC at `date`, as `±HH:mm` — computed from
+    /// `TimeZone.secondsFromGMT(for:)` rather than read off any formatter,
+    /// so nothing here can fall back to `Z`.
+    private static func offsetText(for date: Date, timeZone: TimeZone) -> String {
+        let totalSeconds = timeZone.secondsFromGMT(for: date)
+        let sign = totalSeconds < 0 ? "-" : "+"
+        let magnitude = abs(totalSeconds)
+        let hours = magnitude / 3600
+        let minutes = (magnitude % 3600) / 60
+        return String(format: "%@%02d:%02d", sign, hours, minutes)
     }
 
     /// A space in a category would visually split the `key=value` tail, so
@@ -366,22 +448,22 @@ public final class DiagnosticLog: Sendable {
     // MARK: - Rotation
 
     /// Deletes every `macSCP-*.log` file in `directory` whose date is more
-    /// than `retention` (7) days before `now`. A file name that does not
-    /// parse — wrong prefix, wrong suffix, or an unparseable date — is left
-    /// alone rather than guessed at.
-    private static func pruneOldFiles(in directory: URL, now: Date) {
+    /// than `retention` (7) days before `now`, both read in `timeZone`. A
+    /// file name that does not parse — wrong prefix, wrong suffix, or an
+    /// unparseable date — is left alone rather than guessed at.
+    private static func pruneOldFiles(in directory: URL, now: Date, timeZone: TimeZone) {
         guard
             let entries = try? FileManager.default.contentsOfDirectory(
                 at: directory, includingPropertiesForKeys: nil)
         else { return }
 
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .current
+        calendar.timeZone = timeZone
         guard let cutoff = calendar.date(byAdding: .day, value: -retention, to: now) else {
             return
         }
 
-        let formatter = dayKeyFormatter(timeZone: .current)
+        let formatter = dayKeyFormatter(timeZone: timeZone)
         let prefix = "macSCP-"
         let suffix = ".log"
         for url in entries {
