@@ -23,6 +23,14 @@ public struct RemoteFileItem: Equatable, Sendable {
     public let owner: String?
     /// Group NAME/numeric gid/`nil`, same precedence as `owner` (M11m).
     public let group: String?
+    /// Whether this row is an S3 bucket (Browser Type Column, 2026-09-04):
+    /// `S3ListParser.parseBuckets` is the one place that sets it `true`. A
+    /// bucket's `kind` is still `.directory` — a bucket IS a kind of
+    /// directory — so `isBucket` is the only way to tell a bucket row apart
+    /// from an ordinary folder; see `FileTypeLabel`, which checks it first.
+    /// Defaults to `false` so every existing call site keeps compiling
+    /// unchanged.
+    public let isBucket: Bool
 
     public init(
         name: String,
@@ -32,7 +40,8 @@ public struct RemoteFileItem: Equatable, Sendable {
         modifiedAt: Date? = nil,
         permissions: UInt32? = nil,
         owner: String? = nil,
-        group: String? = nil
+        group: String? = nil,
+        isBucket: Bool = false
     ) {
         self.name = name
         self.path = path
@@ -42,6 +51,7 @@ public struct RemoteFileItem: Equatable, Sendable {
         self.permissions = permissions
         self.owner = owner
         self.group = group
+        self.isBucket = isBucket
     }
 
     public var isDirectory: Bool { kind == .directory }

@@ -17,10 +17,14 @@ public enum FileSortKey: Sendable, Equatable {
     case owner
     /// M11m: same rule as `.owner`, for the group string.
     case group
-    /// M11m: stable kind order (directory, file, symlink, other) — though
-    /// directories are already separated into their own group by the
-    /// directories-first rule below, so in practice this only orders
-    /// file/symlink/other against each other.
+    /// The row's `FileTypeLabel` (Browser Type Column, 2026-09-04):
+    /// `localizedCaseInsensitiveCompare`d, same rule as `.owner`/`.group`.
+    /// Directories are already separated into their own group by the
+    /// directories-first rule below (a bucket row's `kind` is `.directory`
+    /// too, so buckets sort inside that group, ordered by their own
+    /// "Bucket" label against "Folder") — so in practice this discriminates
+    /// within the directory group and within the non-directory group
+    /// separately.
     case type
 }
 
@@ -391,7 +395,7 @@ public final class RemoteBrowserViewModel {
         case .group:
             return compareOptionalLocalizedString(a.group, b.group)
         case .type:
-            return compareTypeRank(a.kind, b.kind)
+            return compareTypeLabel(a, b)
         }
     }
 
@@ -434,26 +438,11 @@ public final class RemoteBrowserViewModel {
         }
     }
 
-    /// Stable rank for `.type` sorting: directory, file, symlink, other, in
-    /// that order. Directories are already split into their own group by
-    /// `sortedForDisplay`'s directories-first rule, so this rank only ever
-    /// discriminates between non-directory kinds in practice — it's kept
-    /// complete (covering `.directory` too) so the function stands on its
-    /// own as a total, documented ordering.
-    private static func typeRank(_ kind: RemoteFileKind) -> Int {
-        switch kind {
-        case .directory: return 0
-        case .file: return 1
-        case .symlink: return 2
-        case .other: return 3
-        }
-    }
-
-    private static func compareTypeRank(_ a: RemoteFileKind, _ b: RemoteFileKind) -> ComparisonResult {
-        let (rankA, rankB) = (typeRank(a), typeRank(b))
-        if rankA < rankB { return .orderedAscending }
-        if rankA > rankB { return .orderedDescending }
-        return .orderedSame
+    /// `.type`'s ordering: `FileTypeLabel.sortKey`, `localizedCaseInsensitiveCompare`d
+    /// — every row has a label (there's no "missing" case the way
+    /// size/date/owner have), so there's no nil-identity rule to state here.
+    private static func compareTypeLabel(_ a: RemoteFileItem, _ b: RemoteFileItem) -> ComparisonResult {
+        FileTypeLabel.sortKey(for: a).localizedCaseInsensitiveCompare(FileTypeLabel.sortKey(for: b))
     }
 
     // MARK: - Browser actions (M7b)

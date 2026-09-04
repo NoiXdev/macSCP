@@ -136,3 +136,9 @@
 "core.overview.panes.terminal" = "Terminal";
 "core.overview.panes.both" = "Fichiers et terminal";
 "core.overview.s3.bucketList" = "Liste des buckets";
+
+/* File type label (Browser Type Column, 2026-09-04) */
+"core.fileType.bucket" = "Bucket";
+"core.fileType.folder" = "Dossier";
+"core.fileType.link" = "Lien";
+"core.fileType.file" = "Fichier";

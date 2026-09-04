@@ -1660,14 +1660,40 @@ struct RemoteBrowserViewModelTests {
         #expect(vm.items.map(\.name) == ["link", "a.txt", "b.txt", "c.txt"])
     }
 
-    @Test func sortByTypeGroupsSymlinksApartFromFiles() async {
+    /// `.type` sorts by `FileTypeLabel`, not by raw kind (Browser Type
+    /// Column, 2026-09-04): the three `.txt` files all label "TXT", the
+    /// symlink labels "Link" regardless of its own name. "Link" sorts
+    /// before "TXT" ascending, so the symlink lands FIRST here — the
+    /// opposite end from where a kind-rank ordering would have put it.
+    @Test func sortByTypeGroupsSymlinksApartFromFilesByLabel() async {
         let vm = RemoteBrowserViewModel(fs: makeExtraColumnsSortFS())
         await vm.load()
         vm.sortKey = .type
 
-        // No directories here; files (rank 1) before the symlink (rank 2),
-        // name tiebreak among the files.
-        #expect(vm.items.map(\.name) == ["a.txt", "b.txt", "c.txt", "link"])
+        #expect(vm.items.map(\.name) == ["link", "a.txt", "b.txt", "c.txt"])
+    }
+
+    /// The full precedence in one sort: a bucket ("Bucket") and a plain
+    /// directory ("Folder") both group first (directories-first, and a
+    /// bucket's `kind` is `.directory` too) ordered "Bucket" < "Folder";
+    /// then the non-directory rows ordered by label — "File" (no
+    /// extension) < "PDF" < "PNG" — with a name tiebreak where labels tie.
+    @Test func sortByTypeOrdersByLabelThenName() async {
+        let fs = MockRemoteFileSystem(tree: [
+            "/": [
+                RemoteFileItem(name: "docs", path: "/docs", kind: .directory),
+                RemoteFileItem(name: "report.pdf", path: "/report.pdf", kind: .file),
+                RemoteFileItem(name: "photo.png", path: "/photo.png", kind: .file),
+                RemoteFileItem(
+                    name: "assets", path: "/assets", kind: .directory, isBucket: true),
+                RemoteFileItem(name: "README", path: "/README", kind: .file),
+            ],
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        await vm.load()
+        vm.sortKey = .type
+
+        #expect(vm.items.map(\.name) == ["assets", "docs", "README", "report.pdf", "photo.png"])
     }
 
     /// Directories still group first under every new key too (M11l rule

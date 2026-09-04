@@ -1351,6 +1351,8 @@ struct S3FileSystemTests {
         #expect(seed.permissions == nil)
         #expect(seed.owner == nil)
         #expect(seed.group == nil)
+        #expect(seed.isBucket == true)
+        #expect(items.allSatisfy { $0.isBucket })
     }
 
     /// A bucket row's path is the path that opens it: listing `/b` lists
@@ -1369,6 +1371,10 @@ struct S3FileSystemTests {
         #expect((components.queryItems ?? []).contains(URLQueryItem(name: "prefix", value: "")))
         #expect(items.first { $0.name == "a.txt" }?.path == "/macscp-second/a.txt")
         #expect(items.first { $0.name == "sub" }?.path == "/macscp-second/sub")
+        // These are ordinary listing rows re-rooted into the bucket, not
+        // bucket rows themselves — `isBucket` stays false.
+        #expect(items.isEmpty == false)
+        #expect(items.allSatisfy { $0.isBucket == false })
     }
 
     /// A path deeper than the bucket splits into the bucket and the key
@@ -1395,6 +1401,7 @@ struct S3FileSystemTests {
 
         #expect(item.kind == .directory)
         #expect(item.path == "/macscp-seed")
+        #expect(item.isBucket == true)
     }
 
     @Test func statOfABucketThatIsNotThereIsNotFound() async throws {

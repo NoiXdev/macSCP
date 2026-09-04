@@ -154,7 +154,7 @@ public enum S3ListParser {
                 if let name = currentName, !name.isEmpty {
                     items.append(RemoteFileItem(
                         name: name, path: "/" + name, kind: .directory,
-                        size: nil, modifiedAt: currentCreationDate))
+                        size: nil, modifiedAt: currentCreationDate, isBucket: true))
                 }
             default:
                 break

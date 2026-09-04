@@ -147,3 +147,11 @@
 "core.overview.panes.terminal" = "Terminal";
 "core.overview.panes.both" = "Files and terminal";
 "core.overview.s3.bucketList" = "Bucket list";
+
+/* File type label (Browser Type Column, 2026-09-04) — the "Type" column's
+   cell text and sort key, precedence: isBucket, then .directory, then
+   .symlink, then the name's last extension uppercased. */
+"core.fileType.bucket" = "Bucket";
+"core.fileType.folder" = "Folder";
+"core.fileType.link" = "Link";
+"core.fileType.file" = "File";
