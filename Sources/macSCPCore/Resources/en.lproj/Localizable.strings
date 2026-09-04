@@ -134,3 +134,16 @@
 "core.login.mergeFailed %@" = "Failed to merge logins: %@";
 "core.login.mergePartial" = "Some sessions could not be linked to the new login set. They kept their own password.";
 "core.login.mergeConflictingSecrets" = "they store different credentials";
+
+/* Session overview (2026-09-04) — the VALUES of enumerated facts. The
+   labels beside them are the App's, out of its own catalogs; only a value
+   that is a word rather than a datum is looked up here. */
+"core.overview.auth.password" = "Password";
+"core.overview.auth.privateKey" = "SSH key";
+"core.overview.auth.agent" = "ssh-agent";
+"core.overview.value.yes" = "Yes";
+"core.overview.value.no" = "No";
+"core.overview.panes.files" = "Files";
+"core.overview.panes.terminal" = "Terminal";
+"core.overview.panes.both" = "Files and terminal";
+"core.overview.s3.bucketList" = "Bucket list";

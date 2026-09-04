@@ -125,3 +125,14 @@
 "core.login.mergeFailed %@" = "Échec de la fusion des logins : %@";
 "core.login.mergePartial" = "Certaines sessions n’ont pas pu être liées au nouveau jeu d’identifiants. Elles ont conservé leur propre mot de passe.";
 "core.login.mergeConflictingSecrets" = "ils stockent des identifiants différents";
+
+/* Session overview (2026-09-04) — the VALUES of enumerated facts. */
+"core.overview.auth.password" = "Mot de passe";
+"core.overview.auth.privateKey" = "Clé SSH";
+"core.overview.auth.agent" = "ssh-agent";
+"core.overview.value.yes" = "Oui";
+"core.overview.value.no" = "Non";
+"core.overview.panes.files" = "Fichiers";
+"core.overview.panes.terminal" = "Terminal";
+"core.overview.panes.both" = "Fichiers et terminal";
+"core.overview.s3.bucketList" = "Liste des buckets";

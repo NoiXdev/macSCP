@@ -561,6 +561,7 @@
 /* Audit log — event kind labels (M9b/T3) */
 "audit.kind.connected" = "Connected";
 "audit.kind.disconnected" = "Disconnected";
+"audit.kind.connectFailed" = "Connect failed";
 "audit.kind.transferFinished" = "Transfer finished";
 "audit.kind.transferFailed" = "Transfer failed";
 "audit.kind.transferCancelled" = "Transfer cancelled";

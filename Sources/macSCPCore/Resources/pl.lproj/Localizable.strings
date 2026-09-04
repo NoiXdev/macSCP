@@ -125,3 +125,14 @@
 "core.login.mergeFailed %@" = "Nie udało się scalić loginów: %@";
 "core.login.mergePartial" = "Niektórych sesji nie udało się powiązać z nowym zestawem logowania. Zachowały własne hasło.";
 "core.login.mergeConflictingSecrets" = "przechowują różne dane uwierzytelniające";
+
+/* Session overview (2026-09-04) — the VALUES of enumerated facts. */
+"core.overview.auth.password" = "Hasło";
+"core.overview.auth.privateKey" = "Klucz SSH";
+"core.overview.auth.agent" = "ssh-agent";
+"core.overview.value.yes" = "Tak";
+"core.overview.value.no" = "Nie";
+"core.overview.panes.files" = "Pliki";
+"core.overview.panes.terminal" = "Terminal";
+"core.overview.panes.both" = "Pliki i terminal";
+"core.overview.s3.bucketList" = "Lista bucketów";

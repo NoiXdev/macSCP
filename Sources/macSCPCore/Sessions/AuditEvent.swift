@@ -46,6 +46,22 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
     public enum Kind: String, Codable, CaseIterable, Sendable {
         case connected
         case disconnected
+        /// A connect attempt that did NOT succeed (session overview).
+        ///
+        /// The `detail` carries the FIXED sentence the diagnostics module
+        /// produces for the error — `DialSupport.reason(for:)` — and never a
+        /// raw error's own text. That is the whole reason this kind exists
+        /// rather than an `isError: true` `.connected`: a transport error is
+        /// exactly the kind of value that carries the configuration it was
+        /// dialling with, and the two URL-shaped backends compose their free
+        /// text out of an endpoint field that accepts
+        /// `scheme://KEY:SECRET@host` as ordinary input. See
+        /// `DialSupport.reason(for:)`'s own doc comment for the measurement.
+        ///
+        /// Appended by the App at the point a connect fails; the overview's
+        /// recent-connections list turns it into a failed row
+        /// (`ConnectionHistory.Row.Outcome.failed`).
+        case connectFailed
         case transferFinished
         case transferFailed
         case transferCancelled
@@ -70,5 +86,49 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         /// `.connected` is recorded, so the audit trail shows exactly when a
         /// session ran with credentials in the clear.
         case plaintextConfirmed
+    }
+}
+
+extension AuditEvent {
+    /// The verb that opens a transfer event's `detail`, and the ONLY
+    /// structural trace of a transfer's direction an `AuditEvent` carries.
+    ///
+    /// `AuditEvent` has no direction field and no byte count: the audit log's
+    /// detail is finished English plain text, and a transfer's line reads
+    /// `"<verb> <file> → <destination>"`. So the direction has to be read
+    /// back out of that text, and this type is the one place the vocabulary
+    /// is written down — `AuditRecorder.recordTransfer` composes the detail
+    /// from it, `transferVerb` below reads it back. Two spellings of one
+    /// word in two files is exactly the second copy this project's comment
+    /// rules are about.
+    ///
+    /// TWO cases, one per `TransferDirection` case, and
+    /// `everyVerbIsRecognizedAtTheHeadOfADetail` counts them against
+    /// `allCases` rather than against the number written here.
+    public enum TransferVerb: String, Sendable, CaseIterable {
+        case upload
+        case download
+
+        /// The verb a transfer in this direction is recorded under.
+        /// Exhaustive, so a third `TransferDirection` case does not compile
+        /// until it has one.
+        public init(_ direction: TransferDirection) {
+            switch direction {
+            case .upload: self = .upload
+            case .download: self = .download
+            }
+        }
+    }
+
+    /// The direction this event's `detail` names, or `nil` when it names
+    /// none.
+    ///
+    /// `nil` is the honest answer for every non-transfer kind, and also for
+    /// `.crossSessionTransfer`, whose detail opens with the target session
+    /// rather than with a verb (`AuditRecorder.recordTransfer`). Matching
+    /// requires the trailing space, so a detail that merely CONTAINS the
+    /// word "upload" somewhere in a file name is not mistaken for one.
+    public var transferVerb: TransferVerb? {
+        TransferVerb.allCases.first { detail.hasPrefix("\($0.rawValue) ") }
     }
 }

@@ -256,7 +256,7 @@ struct AuditLogSheet: View {
             }
         case .connection:
             switch event.kind {
-            case .connected, .disconnected:
+            case .connected, .disconnected, .connectFailed:
                 return true
             default:
                 return false

@@ -123,3 +123,14 @@
 "core.login.mergeFailed %@" = "Logins konnten nicht zusammengeführt werden: %@";
 "core.login.mergePartial" = "Einige Sitzungen konnten nicht mit dem neuen Login-Set verknüpft werden. Sie haben ihr eigenes Passwort behalten.";
 "core.login.mergeConflictingSecrets" = "sie speichern unterschiedliche Zugangsdaten";
+
+/* Session overview (2026-09-04) — the VALUES of enumerated facts. */
+"core.overview.auth.password" = "Passwort";
+"core.overview.auth.privateKey" = "SSH-Schlüssel";
+"core.overview.auth.agent" = "ssh-agent";
+"core.overview.value.yes" = "Ja";
+"core.overview.value.no" = "Nein";
+"core.overview.panes.files" = "Dateien";
+"core.overview.panes.terminal" = "Terminal";
+"core.overview.panes.both" = "Dateien und Terminal";
+"core.overview.s3.bucketList" = "Bucket-Liste";

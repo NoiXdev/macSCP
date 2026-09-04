@@ -124,8 +124,18 @@ extension DiagnosticContribution {
 /// The three things the dials above do the same way: turn an error into one
 /// printable line, hand a transport the step's budget, and send one
 /// credential-free HTTP request.
-enum DialSupport {
+public enum DialSupport {
     /// A short, technical reason for a step's `failed` outcome.
+    ///
+    /// `public` since the session-overview work: the App records a failed
+    /// connect as `AuditEvent.Kind.connectFailed`, and the sentence it
+    /// stores has to be THIS one. Task 2 of the session-overview plan is the
+    /// caller to come — the connect path in `MacSCPAppKit`, which today has
+    /// no way to reach a fixed sentence and would otherwise store an error's
+    /// own text, which is exactly what the paragraphs below explain must
+    /// never be stored. The rest of this enum stays module-internal: only
+    /// the sentence crosses the target boundary, not the request helper or
+    /// the timeout arithmetic.
     ///
     /// The three typed SSH errors are spelled out because none of them
     /// conforms to `LocalizedError`: bridged to `NSError` they all read "The
@@ -163,7 +173,7 @@ enum DialSupport {
     /// a paste artifact. The panel is the localized surface, and Task 4 owns
     /// the keys — the report for this task lists the ones these sentences
     /// need.
-    static func reason(for error: any Error) -> String {
+    public static func reason(for error: any Error) -> String {
         switch error {
         case let error as HostKeyError:
             switch error {

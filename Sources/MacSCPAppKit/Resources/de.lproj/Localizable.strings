@@ -562,6 +562,7 @@
 /* Audit-Log — Ereignis-Label (M9b/T3) */
 "audit.kind.connected" = "Verbunden";
 "audit.kind.disconnected" = "Getrennt";
+"audit.kind.connectFailed" = "Verbindung fehlgeschlagen";
 "audit.kind.transferFinished" = "Übertragung abgeschlossen";
 "audit.kind.transferFailed" = "Übertragung fehlgeschlagen";
 "audit.kind.transferCancelled" = "Übertragung abgebrochen";

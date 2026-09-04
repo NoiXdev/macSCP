@@ -564,6 +564,7 @@
 /* Dziennik audytu — etykiety rodzajów zdarzeń (M9b/T3) */
 "audit.kind.connected" = "Połączono";
 "audit.kind.disconnected" = "Rozłączono";
+"audit.kind.connectFailed" = "Połączenie nieudane";
 "audit.kind.transferFinished" = "Transfer zakończony";
 "audit.kind.transferFailed" = "Transfer nieudany";
 "audit.kind.transferCancelled" = "Transfer anulowany";

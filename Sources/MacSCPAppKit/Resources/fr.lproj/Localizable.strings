@@ -565,6 +565,7 @@
 /* Journal d'audit — libellés des types d'événements (M9b/T3) */
 "audit.kind.connected" = "Connecté";
 "audit.kind.disconnected" = "Déconnecté";
+"audit.kind.connectFailed" = "Échec de la connexion";
 "audit.kind.transferFinished" = "Transfert terminé";
 "audit.kind.transferFailed" = "Transfert échoué";
 "audit.kind.transferCancelled" = "Transfert annulé";

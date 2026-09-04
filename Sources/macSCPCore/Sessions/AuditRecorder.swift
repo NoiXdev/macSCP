@@ -79,7 +79,14 @@ public struct AuditRecorder: Sendable {
     /// detail below therefore names `item.destinationDirectory`, not just
     /// the file name.
     public func recordTransfer(_ item: TransferQueueViewModel.Item, targetTitle: String?) {
-        let verb = item.direction == .upload ? "upload" : "download"
+        // Through `AuditEvent.TransferVerb` rather than a literal pair: the
+        // overview's recent-connections list reads the direction back out of
+        // this text (`AuditEvent.transferVerb`), and a second spelling of the
+        // word here is exactly what would let the reader and the writer drift
+        // apart in silence. The detail shape itself is unchanged — spec M9b
+        // requires "direction, name, destination", e.g.
+        // `upload report.pdf → /var/www`.
+        let verb = AuditEvent.TransferVerb(item.direction).rawValue
         let baseDetail = "\(verb) \(item.fileName) → \(item.destinationDirectory)"
 
         switch item.status {
