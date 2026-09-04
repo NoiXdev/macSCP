@@ -184,12 +184,19 @@ struct S3AccessProbeTests {
     ///
     /// Such an endpoint is not a usable URL, and the errors that say so
     /// interpolate it (`S3FileSystem`'s "Invalid S3 endpoint: …",
-    /// `S3RequestSigning`'s "S3 endpoint has no host: …"). Printing those
-    /// through `DialSupport.reason(for:)` would hand the row to
-    /// `URLText.withoutUserinfo`, whose documented limit is exactly this
-    /// shape: a password containing `/` ends the authority scan before the
-    /// `@`, so `USER:pa` survives into a report written to be pasted in
-    /// public (`DiagnosticStep.swift`, the `withoutUserinfo` doc comment).
+    /// `S3RequestSigning`'s "S3 endpoint has no host: …"). This comment used
+    /// to say that printing those through `DialSupport.reason(for:)` would
+    /// hand the row to `URLText.withoutUserinfo`'s known hole (a password
+    /// containing `/` ends the authority scan before the `@`) — true when
+    /// written, false since `bd6ec81f`. Neither text ever reaches a row now:
+    /// `S3AccessProbe`'s own catch (`S3AccessProbe.swift:135`) returns a
+    /// fixed `unusableEndpointReason` sentence instead of the error's
+    /// message, and `DialSupport.reason(for:)`'s `RemoteFSError` arm would
+    /// not print it either even if this path did reach it — `connectionFailed`
+    /// and `protocolError` both drop their `reason` text for one fixed
+    /// sentence per case. The backstop's hole is real (`DiagnosticStep.swift`,
+    /// the `withoutUserinfo` doc comment) but is no longer what closes this
+    /// route: there is no free text left for it to fail to strip.
     @Test func aCredentialTypedIntoTheEndpointNeverReachesTheRow() async throws {
         let user = Self.endpointUserinfoUser
         let password = Self.endpointUserinfoPassword
