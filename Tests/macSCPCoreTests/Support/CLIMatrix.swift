@@ -323,54 +323,46 @@ struct CLIMatrix: Sendable {
     /// this runs on the throwing path too — a case that fails must not also
     /// leave litter behind.
     ///
-    /// `delete` FIRST, and only what that refuses goes to `deleteTree`. Not
-    /// tidiness: `RemoteFileSystem.deleteTree`'s own contract says "A plain
-    /// file behaves exactly like `delete`", and measured against this rig on
-    /// 2026-09-04 that holds for SSH and for neither of the other two —
-    ///   - WebDAV sends `DELETE` with a trailing slash (`isDirectory: true`),
-    ///     and Apache/mod_dav answers **400** to that on a plain file, **204**
-    ///     without it;
-    ///   - S3 deletes every key under `<key>/`, and a file's key has nothing
-    ///     beneath it, so the call succeeds having deleted nothing.
-    /// A `try? await deleteTree(...)` here therefore left the seeded file on
-    /// both servers, silently, which is how the divergence was found at all.
-    /// It is a fact about those backends, not about this helper, and is
-    /// recorded rather than worked around anywhere but here.
+    /// A single `deleteTree` per entry: `RemoteFileSystem.deleteTree`'s
+    /// contract — a plain file behaves exactly like `delete` — now holds on
+    /// WebDAV (4587c856) and on S3 (e7169c1a), the two backends that used to
+    /// need the delete-then-deleteTree fallback this function carried until
+    /// this commit.
+    ///
+    /// `deleteTree` on a path that was never created throws `.notFound` from
+    /// its own lookup (4587c856); `try?` tolerates that the same as any
+    /// other outcome, and it is `verifyGone` below, not this call, that
+    /// decides pass or fail — a path already absent reads back `.notFound`
+    /// there too and is not reported. That is exactly the shape a case
+    /// takes when it fails before the `seed`/`write` that would have
+    /// created what its litter registration named (litter entries are
+    /// registered ahead of the call that creates them, e.g.
+    /// `litter.file(remotePath)` before `rig.seed(...)` at
+    /// `CLIMatrixITests.swift:57-58`).
     func removeRemote(
         _ fileSystem: any RemoteFileSystem, path: String,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async {
-        do {
-            try await fileSystem.delete(path: path)
-        } catch {
-            try? await fileSystem.deleteTree(at: path)
-        }
+        try? await fileSystem.deleteTree(at: path)
         await verifyGone(fileSystem, path: path, sourceLocation: sourceLocation)
     }
 
     /// Removes a DIRECTORY and everything under it, and verifies the same
     /// way `removeRemote` does.
     ///
-    /// A separate entry point rather than a `Bool` on that one, because the
-    /// two are not interchangeable in either direction on this rig, and the
-    /// asymmetry is the whole reason both exist:
-    ///
-    ///   - `removeRemote` on a DIRECTORY would not clean it up on S3 and
-    ///     would not even fail. `S3FileSystem.delete(path:)` resolves its
-    ///     key through `RootMode.resolve(path:)`, which normalizes and
-    ///     splits on `/` — so `<name>/` and `<name>` resolve to the same
-    ///     key, and the DELETE addresses a key that was never written.
-    ///     Measured against this rig on 2026-09-04: MinIO answers that
-    ///     success, so nothing throws, the `deleteTree` fallback is never
-    ///     reached, and the directory's own marker key stays in the bucket.
-    ///     The `stat` afterwards is what turned that into a red instead of
-    ///     litter — two marker keys, removed by hand, when the probe that
-    ///     measured it ran.
-    ///   - `removeRemoteTree` on a FILE is the divergence recorded on
-    ///     `removeRemote` above: WebDAV answers 400 and S3 deletes nothing.
-    ///
-    /// So a case removes a file with the first and a tree with the second,
-    /// and neither call guesses which it is holding.
+    /// A separate entry point from `removeRemote`, not because the two
+    /// behave differently any more — both are now a single `deleteTree`
+    /// plus `verifyGone` — but because `RemoteLitter` already knows at
+    /// registration time whether a path is a file or a directory
+    /// (`.file`/`.tree`), and passing that knowledge through as a call
+    /// choice needs no runtime branch here. Before 4587c856 (WebDAV) and
+    /// e7169c1a (S3) the two calls were not interchangeable: `removeRemote`
+    /// on a directory did not clean it up on S3 (`delete` resolved the
+    /// directory's marker key and the bare key to the same string, and
+    /// `DeleteObject` answered success for a key nothing had written), and
+    /// `removeRemoteTree` on a file threw 400 on WebDAV and deleted nothing
+    /// on S3. That history, not a live asymmetry, is why both entry points
+    /// still exist.
     func removeRemoteTree(
         _ fileSystem: any RemoteFileSystem, path: String,
         sourceLocation: SourceLocation = #_sourceLocation
@@ -382,11 +374,11 @@ struct CLIMatrix: Sendable {
     private func verifyGone(
         _ fileSystem: any RemoteFileSystem, path: String, sourceLocation: SourceLocation
     ) async {
-        // The removal ATTEMPT(S) above are best-effort on purpose — a case
-        // that failed before it seeded anything has nothing to remove, and
-        // neither caller should turn that into a second failure.
-        // `removeRemote` makes two attempts (`delete`, then `deleteTree` as
-        // a fallback); `removeRemoteTree` makes one (`deleteTree` alone).
+        // The removal ATTEMPT above is best-effort on purpose — a case that
+        // failed before it seeded anything has nothing to remove, and the
+        // caller should not turn that into a second failure. Both
+        // `removeRemote` and `removeRemoteTree` make exactly one attempt
+        // (`deleteTree` alone) and swallow whatever it throws with `try?`.
         // The OUTCOME is not best-effort either way: a `try?` with nothing
         // after it is exactly the shape that let the S3 and WebDAV
         // divergence above go unnoticed through a full green run, and Task 2
@@ -1007,9 +999,9 @@ struct CLISessionCatalogFixture: Sendable {
 /// language mode, i.e. an assertion instead of a check.
 ///
 /// Two lists, not one with a flag consulted later: a path is registered as
-/// the thing it IS at the moment it is created, and `removeRemote` and
-/// `removeRemoteTree` are not interchangeable on this rig (see
-/// `CLIMatrix.removeRemoteTree`).
+/// the thing it IS at the moment it is created, and `withRig`'s `clean()`
+/// dispatches on that to call `removeRemote` or `removeRemoteTree` (see
+/// `CLIMatrix.removeRemoteTree` for why both still exist).
 actor RemoteLitter {
     private var entries: [(path: String, isTree: Bool)] = []
 
