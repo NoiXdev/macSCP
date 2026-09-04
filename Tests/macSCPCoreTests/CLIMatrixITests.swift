@@ -60,8 +60,15 @@ enum CLIMatrixCases {
         do {
             try await rig.seed(fileSystem, path: remotePath, content: payload)
 
+            // `--accept-new` is NOT written into the vector: five of the
+            // six subcommands take the connection flags and `sessions` does
+            // not, so the flag is asked for per command
+            // (`CLIMatrix.hostKeyFlags(for:binary:)`, which reads that
+            // command's own help).
+            let binary = try CLIMatrix.binaryURL()
+            let flags = try await CLIMatrix.hostKeyFlags(for: "ls", binary: binary)
             let result = try await rig.run(
-                ["ls", "--accept-new", "--json", rig.target(rig.remoteRoot)])
+                ["ls"] + flags + ["--json", rig.target(rig.remoteRoot)])
             #expect(result.status == 0, "ls failed on \(kind.rawValue): \(result.stderrText)")
 
             let listed = try CLIMatrix.listing(result.stdoutText)
@@ -158,11 +165,15 @@ struct CLIMatrixCoverageTests {
     /// Both directions on purpose: a skip mechanism that never skips reads
     /// exactly like one that has nothing to skip.
     @Test func anOperationIsGatedByTheBackendsOwnCapabilities() throws {
+        // The `defer` sits ABOVE the loop on purpose: it reads `rigs` at
+        // scope exit, so a `make` that throws on the third kind still tears
+        // down the first two. Registered after the loop, as it was, those
+        // two temporary directories outlived the run.
         var rigs: [ConnectionKind: CLIMatrix] = [:]
+        defer { rigs.values.forEach { $0.tearDown() } }
         for kind in ConnectionKind.allCases {
             rigs[kind] = try CLIMatrix.make(for: kind, label: "capabilities")
         }
-        defer { rigs.values.forEach { $0.tearDown() } }
 
         for (kind, rig) in rigs {
             let real = rig.supports(
@@ -176,9 +187,17 @@ struct CLIMatrixCoverageTests {
     }
 
     /// The `--help` parse, against the shape ArgumentParser really prints —
-    /// including the footer line, which is indented exactly like a
-    /// subcommand row and is separated from the block only by the blank line
-    /// before it.
+    /// the footer line, which is indented exactly like a subcommand row and
+    /// is separated from the block only by the blank line before it, and a
+    /// WRAPPED abstract, whose continuation is indented to column 26
+    /// (measured 2026-09-04 against `macscp-cli ls --help`).
+    ///
+    /// `get`'s abstract here is the real one, padded past 80 columns so it
+    /// wraps: the continuation's first token is `directory.`, which the
+    /// column-blind parse returned as a subcommand name. Nothing in today's
+    /// help wraps — all six rows fit, the widest at 72 columns — so this
+    /// fixture is the only place the hazard is reachable, and the assertion
+    /// is that `directory.` is absent while every real name is present.
     @Test func theSubcommandParseReadsNamesAndStopsAtTheBlock() {
         let help = """
             USAGE: macscp-cli <subcommand>
@@ -188,7 +207,8 @@ struct CLIMatrixCoverageTests {
 
             SUBCOMMANDS:
               ls                      List a remote directory.
-              get                     Download a remote file into a local directory.
+              get                     Download a remote file into a local
+                                      directory.
               sessions                List the saved sessions.
 
               See 'macscp-cli help <subcommand>' for detailed help.
@@ -232,5 +252,36 @@ struct CLIMatrixCommandsITests {
         let notACommand = try await SubprocessRunner.run(
             binary, arguments: ["help", "definitely-not-a-subcommand"])
         #expect(notACommand.stdoutText.contains("USAGE: macscp-cli <subcommand>"))
+    }
+
+    /// The connection flags are not universal, and a uniform argument vector
+    /// that assumes they are does not merely carry a useless flag — it is
+    /// refused.
+    ///
+    /// `sessions` declares `JSONOptions`, not `GlobalOptions`
+    /// (`Sources/MacSCPCLI/SessionsCommand.swift`), because it opens no
+    /// connection and resolves no secret. So this asserts BOTH halves —
+    /// `hostKeyFlags` gives `ls` the flag and `sessions` nothing — and then
+    /// the reason: the binary really does refuse `sessions --accept-new`.
+    /// Without that last run the two halves would only be agreeing with each
+    /// other about a help screen.
+    @Test func theConnectionFlagsAreAskedForPerCommand() async throws {
+        let binary = try CLIMatrix.binaryURL()
+        #expect(try await CLIMatrix.hostKeyFlags(for: "ls", binary: binary) == ["--accept-new"])
+        #expect(try await CLIMatrix.hostKeyFlags(for: "sessions", binary: binary) == [])
+
+        let refused = try await SubprocessRunner.run(
+            binary, arguments: ["sessions", "--accept-new"])
+        #expect(refused.status != 0, "sessions accepted a flag it does not declare")
+        #expect(refused.stderrText.contains("--accept-new"))
+
+        // Counted rather than asserted as a number: every subcommand the
+        // binary offers is asked, and the one that answers no is named.
+        let names = try await CLIMatrix.subcommands(binary: binary)
+        var without: [String] = []
+        for name in names where try await !CLIMatrix.takesConnectionFlags(name, binary: binary) {
+            without.append(name)
+        }
+        #expect(without == ["sessions"], "the commands without the connection flags moved")
     }
 }

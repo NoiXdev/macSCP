@@ -130,7 +130,17 @@ struct CLIMatrix: Sendable {
         try FileManager.default.createDirectory(
             at: storageDirectory, withIntermediateDirectories: true)
         let fixture = fixture(for: kind, name: "\(label)-\(kind.rawValue)-\(UUID().uuidString)")
-        try SessionStore(directory: storageDirectory).upsert(fixture.session)
+        // The directory exists before the store step, and only the caller
+        // holding a rig can call `tearDown()` — so a throw between the two
+        // used to leave a directory nobody had a handle to. There is no
+        // rig yet to `defer` on, which is exactly why the unwind is written
+        // out here.
+        do {
+            try SessionStore(directory: storageDirectory).upsert(fixture.session)
+        } catch {
+            try? FileManager.default.removeItem(at: storageDirectory)
+            throw error
+        }
         return CLIMatrix(
             kind: kind, session: fixture.session, storageDirectory: storageDirectory,
             remoteRoot: fixture.remoteRoot, secret: fixture.secret)
@@ -244,11 +254,54 @@ struct CLIMatrix: Sendable {
     /// both servers, silently, which is how the divergence was found at all.
     /// It is a fact about those backends, not about this helper, and is
     /// recorded rather than worked around anywhere but here.
-    func removeRemote(_ fileSystem: any RemoteFileSystem, path: String) async {
+    func removeRemote(
+        _ fileSystem: any RemoteFileSystem, path: String,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async {
         do {
             try await fileSystem.delete(path: path)
         } catch {
             try? await fileSystem.deleteTree(at: path)
+        }
+
+        // The two ATTEMPTS are best-effort on purpose — a case that failed
+        // before it seeded anything has nothing to remove, and neither call
+        // should turn that into a second failure. The OUTCOME is not
+        // best-effort: a `try?` around both and nothing after it is exactly
+        // the shape that let the S3 and WebDAV divergence above go unnoticed
+        // through a full green run, and Task 2 multiplies the cases that
+        // could hide it again. So the entry is looked for afterwards, and
+        // its survival is recorded against the caller's own line.
+        //
+        // Neither message interpolates an error or a secret: `RemoteFSError`
+        // renders configuration text through `String(describing:)` (the
+        // "error text as a leak route" row in `docs/BACKLOG.md`), and the
+        // path plus the backend is all a reader needs to go and look.
+        do {
+            _ = try await fileSystem.stat(path: path)
+            Issue.record(
+                """
+                CLIMatrix cleanup left \(path) behind on the \(kind.rawValue) \
+                rig — the rig is no longer as it was found
+                """,
+                sourceLocation: sourceLocation)
+        } catch let error as RemoteFSError {
+            guard case .notFound = error else {
+                Issue.record(
+                    """
+                    CLIMatrix could not verify the cleanup of \(path) on the \
+                    \(kind.rawValue) rig: the check itself failed
+                    """,
+                    sourceLocation: sourceLocation)
+                return
+            }
+        } catch {
+            Issue.record(
+                """
+                CLIMatrix could not verify the cleanup of \(path) on the \
+                \(kind.rawValue) rig: the check itself failed
+                """,
+                sourceLocation: sourceLocation)
         }
     }
 
@@ -339,20 +392,75 @@ struct CLIMatrix: Sendable {
     /// `See 'macscp-cli help <subcommand>'` footer — which is indented too,
     /// so the blank line is what separates them, not the indentation.
     ///
+    /// The INDENT is what separates an entry from an abstract's continuation,
+    /// and it is checked rather than assumed: an entry's name starts at
+    /// column 2, a wrapped abstract continues at column 26 (measured
+    /// 2026-09-04 from `macscp-cli ls --help`, where `--verbose`'s and
+    /// `--accept-new`'s abstracts both wrap). Taking the first token of every
+    /// indented line, as this did, would read `diagnostics.` as a command
+    /// name the moment an abstract wrapped. Nothing wraps today — counted
+    /// 2026-09-04, all six rows fit on one line, the widest being `get` at 72
+    /// columns against ArgumentParser's 80 — so the hazard was invisible and
+    /// entirely reachable: eight more characters in one abstract. This help
+    /// prints no `<subcommand>` alternatives in its USAGE line to
+    /// cross-check against (`USAGE: macscp-cli <subcommand>`), so the column
+    /// is the anchor.
+    ///
     /// `internal` rather than private so the parse can be measured against a
     /// fixture without launching anything.
     static func parseSubcommands(_ help: String) -> [String] {
+        let entryIndent = 2
         let lines = help.split(separator: "\n", omittingEmptySubsequences: false)
         guard let heading = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "SUBCOMMANDS:" })
         else { return [] }
         var names: [String] = []
         for line in lines[lines.index(after: heading)...] {
             if line.trimmingCharacters(in: .whitespaces).isEmpty { break }
+            guard line.prefix(while: { $0 == " " }).count == entryIndent else { continue }
             guard let name = line.split(separator: " ", omittingEmptySubsequences: true).first
             else { continue }
             names.append(String(name))
         }
         return names
+    }
+
+    /// Whether `command` takes `GlobalOptions` — the connection flags — read
+    /// from that command's OWN help rather than written down here.
+    ///
+    /// Not every subcommand takes them. `SessionsCommand` declares
+    /// `JSONOptions` instead (`Sources/MacSCPCLI/SessionsCommand.swift`),
+    /// deliberately: it opens no connection and resolves no secret, so
+    /// advertising `--verbose`, `--non-interactive`, `--accept-new` and
+    /// `--password-command` in its help would describe choices it never
+    /// makes. Handing it one anyway is a usage error, not a harmless extra —
+    /// measured 2026-09-04, `macscp-cli sessions --accept-new` exits 64 with
+    /// `Error: Unknown option '--accept-new'`.
+    ///
+    /// So a matrix that builds ONE uniform argument vector cannot simply put
+    /// `--accept-new` in it. `hostKeyFlags(for:binary:)` below is what Task 2
+    /// builds vectors through.
+    ///
+    /// The question is put to the binary, so the answer follows a subcommand
+    /// that changes its mind. Cached per binary and command; a race just asks
+    /// twice.
+    static func takesConnectionFlags(_ command: String, binary: URL) async throws -> Bool {
+        let key = "\(binary.path(percentEncoded: false))\u{0}\(command)"
+        if let cached = connectionFlagCache.withLock({ $0[key] }) { return cached }
+        let result = try await SubprocessRunner.run(binary, arguments: ["help", command])
+        guard result.status == 0 else { throw CLIMatrixError.helpFailed(status: result.status) }
+        let takes = result.stdoutText.contains("--accept-new")
+        connectionFlagCache.withLock { $0[key] = takes }
+        return takes
+    }
+
+    private static let connectionFlagCache = Mutex<[String: Bool]>([:])
+
+    /// The host-key flag `command` should be given, or nothing where it does
+    /// not take one. `--accept-new` where the command can open a connection:
+    /// SSH is the backend that has host keys, and the flag is inert (not
+    /// rejected) on the others, so one derived vector serves every backend.
+    static func hostKeyFlags(for command: String, binary: URL) async throws -> [String] {
+        try await takesConnectionFlags(command, binary: binary) ? ["--accept-new"] : []
     }
 }
 
