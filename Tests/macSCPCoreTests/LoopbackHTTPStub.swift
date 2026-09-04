@@ -76,6 +76,7 @@ final class LoopbackHTTPStub: @unchecked Sendable {
     private let running = NSLock()
     private var isStopped = false
     private var seenRequests: [String] = []
+    private var acceptCount = 0
 
     /// Every request head this stub has served, in order — the whole thing
     /// up to the blank line, headers included. It is the only way to assert
@@ -85,8 +86,21 @@ final class LoopbackHTTPStub: @unchecked Sendable {
         return seenRequests
     }
 
-    /// Waits until at least `count` requests have been recorded, or the
-    /// deadline passes; answers whether the count was reached.
+    /// How many connections the kernel has handed this stub, counted at
+    /// `accept` and before a single byte of any response is written.
+    ///
+    /// It is the earliest observable evidence that something reached this
+    /// origin at all, which is what a test asserting a NEGATIVE needs:
+    /// `requests` is appended only once a response has been served, so a hop
+    /// that was genuinely made but is still mid-flight reads there as a hop
+    /// that was never made. Nothing sits between the connect and this
+    /// counter, so there is no window to wait out.
+    var acceptedConnections: Int {
+        running.lock(); defer { running.unlock() }
+        return acceptCount
+    }
+
+    /// Waits until at least `count` requests have been recorded.
     ///
     /// The accept loop appends to `seenRequests` only after it has written
     /// the response, so a client can finish -- or fail -- before that
@@ -133,6 +147,11 @@ final class LoopbackHTTPStub: @unchecked Sendable {
     private func record(_ request: String) {
         running.lock(); defer { running.unlock() }
         seenRequests.append(request)
+    }
+
+    private func countAccept() {
+        running.lock(); defer { running.unlock() }
+        acceptCount += 1
     }
 
     /// The one-response case: every request gets the same answer.
@@ -184,7 +203,13 @@ final class LoopbackHTTPStub: @unchecked Sendable {
             while true {
                 let client = accept(listenerFD, nil, nil)
                 guard client >= 0 else { return }  // the listener was closed
-                guard let self, !self.stopped else { close(client); return }
+                guard let self else { close(client); return }
+                // Counted before the `stopped` check and before serving: a
+                // connection that arrived is a connection that arrived, and
+                // `acceptedConnections` exists precisely to be readable
+                // earlier than `requests`.
+                self.countAccept()
+                guard !self.stopped else { close(client); return }
                 self.record(Self.serve(client, canned[min(served, canned.count - 1)]))
                 served += 1
             }

@@ -391,9 +391,12 @@ struct TransferEngineTests {
             catch { box.set(.failure(error)) }
         }
         try await pollUntil("the transfer task to settle") { box.value != nil }
-        guard let result = box.value else {
-            return .failure(CancellationError())
-        }
+        // Unreachable: the poll above ends only once `box.value` is set, and
+        // `ResultBox` never clears it. Thrown rather than substituted,
+        // because both callers go on to assert that this Result is a
+        // `.failure` carrying a `CancellationError` -- fabricating exactly
+        // that here would let an unreachable path pass the test it broke.
+        guard let result = box.value else { throw OutcomeVanished() }
         return result
     }
 }
@@ -660,6 +663,10 @@ private actor RecordingFS: RemoteFileSystem {
     func homeDirectoryPath() async throws -> String { "/" }
     func disconnect() async {}
 }
+
+/// Signals that `awaitOutcome`'s poll ended with nothing recorded, which
+/// cannot happen; it exists so that path fails loudly instead of answering.
+private struct OutcomeVanished: Error {}
 
 /// Thread-safe result holder for the settle poll in `awaitOutcome`.
 private final class ResultBox: @unchecked Sendable {

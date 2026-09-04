@@ -124,22 +124,32 @@ struct S3RedirectControlTests {
             caught = error
         }
         try await first.waitForRequests(atLeast: 1)
-        // The one wait in this file that must be able to end UNSATISFIED, so
-        // it cannot be a `waitForRequests`: the question is whether the
-        // foreign origin was reached at all, and a poll for a request that
-        // must never arrive would only end when the suite's time limit
-        // cancelled the test. A fixed grace instead, so a hop that WAS made
-        // has been recorded by the time it is read -- `second` appends after
-        // writing its response. A slower machine can only make this check
-        // more forgiving, never red, which is the direction a settle before a
-        // negative assertion is allowed to fail in.
-        try await Task.sleep(for: .seconds(2))
-        let reached = !second.requests.isEmpty
+
+        // The two positive events the negative below is read after: `caught`
+        // is set above, so the dial has already ended, and the endpoint's own
+        // request is recorded, so it really happened. Nothing is left running
+        // that could still dial the foreign origin, and so no grace is taken:
+        // a fixed wait here would be a ceiling in the forgiving direction --
+        // a hop arriving one tick after it would read as a hop never made.
+        //
+        // The claim is read at ACCEPT rather than from `requests`, because a
+        // request is recorded only once its response has been written. A hop
+        // that was made but whose response is still in flight is invisible in
+        // `requests` and unmistakable in the accept count, which the kernel
+        // raises before this stub can write anything at all.
+        let reached = second.acceptedConnections > 0
 
         // Positive first: the endpoint WAS asked, and it was asked with a
         // signature. Without this the refusal below could be a dial that
         // never got off the ground.
         #expect(first.requests.count == 1, "the endpoint saw \(first.requests.count) requests")
+        // And the accept counter counts, measured on the origin that WAS
+        // reached. The zero asserted on the foreign origin at the end is a
+        // negative, and it would read exactly the same against a counter
+        // that never increments at all.
+        #expect(
+            first.acceptedConnections >= 1,
+            "the endpoint accepted \(first.acceptedConnections) connection(s)")
         #expect(first.requests.first.flatMap { LoopbackHTTPStub.headerValue("authorization", in: $0) } != nil,
                 "the endpoint was not asked with a signed request")
 
@@ -164,6 +174,8 @@ struct S3RedirectControlTests {
         // named target in the message, which could only be produced by
         // machinery that really saw this redirect.
         #expect(reached == false, "the redirect was followed to the foreign origin")
-        #expect(second.requests.isEmpty, "the foreign origin saw \(second.requests.count) requests")
+        #expect(
+            second.acceptedConnections == 0,
+            "the foreign origin accepted \(second.acceptedConnections) connection(s)")
     }
 }

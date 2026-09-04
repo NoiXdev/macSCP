@@ -709,7 +709,7 @@ struct ConnectionViewModelTests {
         // Without a cancellation handler, connect() would hang forever — and
         // the suite's time limit is what turns that hang into a red naming
         // this test rather than a run that never ends.
-        await completesWithoutHanging(connectTask)
+        try await completesWithoutHanging(connectTask)
     }
 
     /// Regression (Final-Review M4, Minor 2): the connector may call the
@@ -745,7 +745,7 @@ struct ConnectionViewModelTests {
 
         // Without cancellation handling (fast path AND onCancel), connect()
         // would hang forever; the suite's time limit is the only exit.
-        await completesWithoutHanging(connectTask)
+        try await completesWithoutHanging(connectTask)
         #expect(vm.hostKeyPrompt == nil)
         #expect(vm.state == .failed(
             message: CoreL10n.string("core.hostkey.rejected"), field: nil))
@@ -2193,18 +2193,40 @@ private actor CallCounter {
     }
 }
 
+/// A one-way flag, readable without an `await` so a poll's condition needs
+/// no actor hop of its own.
+private final class ReturnFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var raised = false
+    var isRaised: Bool { lock.lock(); defer { lock.unlock() }; return raised }
+    func raise() { lock.lock(); raised = true; lock.unlock() }
+}
+
 /// Returns once `task` has returned at all — the assertion the two
 /// cancellation tests above actually make ("connect() does not hang
 /// forever"). They deliberately do NOT assert how *fast* it returns, and
-/// there is no wall clock here at all: a task that never returns is ended
-/// by this suite's `.timeLimit`, which names the test that hung. The
-/// previous version raced an in-test watchdog against the task and reported
-/// a `Bool`; a watchdog sleeping on the cooperative pool while the work it
-/// judges hops through the MainActor is exactly the ceiling that measures
-/// the runner rather than the property (CLAUDE.md, "A wall-clock ceiling in
-/// a test measures the runner").
-private func completesWithoutHanging<T: Sendable>(_ task: Task<T, Never>) async {
-    _ = await task.value
+/// there is no wall clock here at all: a task that never returns is ended by
+/// this suite's `.timeLimit`, which names the test that hung.
+///
+/// It never awaits `task` directly, and both halves of that matter.
+/// `Task.value` on a `Failure == Never` task does not observe the awaiting
+/// task's cancellation, so awaiting it here would mean that on the very
+/// regression these callers guard against — a `connect()` that hangs after
+/// the cancel — the time limit would record its issue and the run would then
+/// park in that await, which is the outcome the limit exists to prevent. And
+/// the observer is UNSTRUCTURED rather than a child in a task group: leaving
+/// a group's closure implicitly waits for every child, `cancelAll()` or not,
+/// so a hanging child would block the return from inside the very construct
+/// meant to race it. Unstructured, a losing task that hangs forever holds
+/// nothing — this call ends on the flag, and the poll watching the flag is
+/// cancellable.
+private func completesWithoutHanging<T: Sendable>(_ task: Task<T, Never>) async throws {
+    let returned = ReturnFlag()
+    Task {
+        _ = await task.value
+        returned.raise()
+    }
+    try await pollUntil("connect() returned after cancel") { returned.isRaised }
 }
 
 /// Hands out a fixed sequence of errors, one per call — an actor because
