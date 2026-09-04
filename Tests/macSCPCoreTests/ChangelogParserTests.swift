@@ -105,6 +105,94 @@ struct ChangelogParserTests {
         #expect(entry?.text == "add the initial release")
     }
 
+    // MARK: - Link reduction (Round 1 review ruling, 2026-09-04)
+
+    @Test("a hash link followed by a closes suffix leaves the suffix's own link reduced to its label")
+    func hashLinkFollowedByClosesSuffixKeepsSuffixLabel() {
+        let fixture = """
+            ## [1.0.0](https://example.com/compare/v0.9.0...v1.0.0) (2026-01-02)
+
+            ### Bug Fixes
+
+            * **core:** make the guarantees say what the guards do ([abc1234](https://example.com/commit/abc1234)), closes [#12](https://example.com/issues/12)
+            """
+
+        let releases = ChangelogParser.parse(fixture)
+        let entry = releases.first?.sections.first?.entries.first
+
+        #expect(entry?.scope == "core")
+        #expect(entry?.text == "make the guarantees say what the guards do, closes #12")
+    }
+
+    @Test("a hash link in the middle of the line is dropped, not just a trailing one")
+    func hashLinkMidLineIsDropped() {
+        let fixture = """
+            ## [1.0.0](https://example.com/compare/v0.9.0...v1.0.0) (2026-01-02)
+
+            ### Features
+
+            * **core:** before ([abc1234](https://example.com/commit/abc1234)) after
+            """
+
+        let releases = ChangelogParser.parse(fixture)
+        let entry = releases.first?.sections.first?.entries.first
+
+        #expect(entry?.text == "before after")
+    }
+
+    @Test("a plain (non-hash) link keeps its label and drops the URL")
+    func plainLinkKeepsLabel() {
+        let fixture = """
+            ## [1.0.0](https://example.com/compare/v0.9.0...v1.0.0) (2026-01-02)
+
+            ### Features
+
+            * **core:** see [the docs](https://example.com/docs) for more
+            """
+
+        let releases = ChangelogParser.parse(fixture)
+        let entry = releases.first?.sections.first?.entries.first
+
+        #expect(entry?.text == "see the docs for more")
+    }
+
+    @Test("the real CHANGELOG.md's guards and webdav bullets have their closes-suffix link reduced")
+    func realChangelogClosesSuffixBulletsAreReduced() {
+        let releases = ChangelogParser.parse(Self.realChangelog)
+        let bugFixes = releases.first?.sections.last?.entries ?? []
+
+        let guardsEntry = bugFixes.first { $0.scope == "guards" }
+        #expect(guardsEntry?.text == "make the guarantees say what the guards do, closes PKCS#12")
+
+        let webdavEntry = bugFixes.first {
+            $0.text.hasPrefix("refuse a redirected certificate challenge")
+        }
+        #expect(webdavEntry?.text == "refuse a redirected certificate challenge and pin nothing, closes PKCS#12")
+    }
+
+    // MARK: - Totality: a bullet before any "### " heading opens an untitled section
+
+    @Test("a bullet and a stray line before any section heading share one untitled section, in order")
+    func contentBeforeAnySectionHeadingOpensUntitledSection() {
+        let fixture = """
+            ## [1.0.0](https://example.com/compare/v0.9.0...v1.0.0) (2026-01-02)
+
+            * **core:** a bullet with no section heading above it ([abc1234](https://example.com/commit/abc1234))
+            A stray line, also with no section heading above it.
+            """
+
+        let releases = ChangelogParser.parse(fixture)
+        let sections = releases.first?.sections ?? []
+
+        #expect(sections.count == 1)
+        #expect(sections.first?.title == "")
+        #expect(sections.first?.entries.count == 2)
+        #expect(sections.first?.entries.first?.scope == "core")
+        #expect(sections.first?.entries.first?.text == "a bullet with no section heading above it")
+        #expect(sections.first?.entries.last?.scope == nil)
+        #expect(sections.first?.entries.last?.text == "A stray line, also with no section heading above it.")
+    }
+
     // MARK: - Totality: an unknown line is kept, never dropped
 
     @Test("an unknown line under a section is kept as a plain-text entry with scope nil")
@@ -164,6 +252,19 @@ struct ChangelogParserTests {
         let newer = ChangelogParser.releases(newerThan: "1.2.0", in: releases)
 
         #expect(newer.map(\.version) == ["1.3.0"])
+    }
+
+    @Test("releases(newerThan:) returns matches sorted newest first, regardless of input order")
+    func newerThanSortsDescendingRegardlessOfInputOrder() {
+        let ascending = [
+            ChangelogRelease(version: "1.1.0", date: nil, sections: []),
+            ChangelogRelease(version: "1.2.0", date: nil, sections: []),
+            ChangelogRelease(version: "1.3.0", date: nil, sections: []),
+        ]
+
+        let newer = ChangelogParser.releases(newerThan: "1.0.0", in: ascending)
+
+        #expect(newer.map(\.version) == ["1.3.0", "1.2.0", "1.1.0"])
     }
 
     @Test("\"1.10.0\" sorts numerically above \"1.9.0\", not lexicographically")

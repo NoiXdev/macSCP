@@ -42,12 +42,12 @@ public struct ChangelogRelease: Equatable, Sendable {
             /// scope) and for any line kept as plain text rather than
             /// parsed as a bullet at all.
             public let scope: String?
-            /// The bullet's remaining text with its own trailing
-            /// `([hash](url))` commit link stripped, when that link sits
-            /// at the very end of the line. A link followed by more text
-            /// (conventional-changelog's `, closes [#N](url)` suffix) is
-            /// not "trailing" by that rule and is left in `text` untouched
-            /// — this parser drops nothing silently.
+            /// The bullet's remaining text with every markdown link
+            /// reduced (see `ChangelogParser.reduceLinks(in:)`): a link
+            /// whose label is a bare hex commit hash is dropped together
+            /// with its surrounding `(...)`, wherever it sits — including
+            /// before a `, closes […](url)` suffix — and any other link
+            /// keeps its label with the URL dropped.
             public let text: String
 
             public init(scope: String?, text: String) {
@@ -165,18 +165,14 @@ public enum ChangelogParser {
         return releases
     }
 
-    /// Splits a bullet's text into `scope` and `text`, then strips a
-    /// trailing commit link off `text` (see `Entry.text`'s doc comment).
-    /// Its two regexes are locals for the same `Regex` isn't-`Sendable`
-    /// reason `parse(_:)`'s are — see that function's comment.
+    /// Splits a bullet's text into `scope` and `text`, then reduces every
+    /// markdown link left in `text` (see `Entry.text`'s doc comment and
+    /// `reduceLinks(in:)`). Its regex is a local for the same `Regex`
+    /// isn't-`Sendable` reason `parse(_:)`'s are — see that function's
+    /// comment.
     private static func parseEntry(_ bulletText: String) -> ChangelogRelease.Section.Entry {
         /// `**scope:** <rest>` at the start of a bullet's text.
         let scopePrefix = /^\*\*([^*:]+):\*\*\s*(.*)$/
-
-        /// A `([hash](url))` commit link anchored at the END of the text —
-        /// only a link with nothing after it counts as "trailing" (see
-        /// `Entry.text`'s doc comment).
-        let trailingCommitLink = /^(.*?)\s*\(\[[^\]]+\]\([^)]*\)\)\s*$/
 
         let scope: String?
         let rest: String
@@ -188,18 +184,50 @@ public enum ChangelogParser {
             rest = bulletText
         }
 
-        let text: String
-        if let linkMatch = rest.wholeMatch(of: trailingCommitLink) {
-            text = String(linkMatch.1)
-        } else {
-            text = rest
+        return ChangelogRelease.Section.Entry(scope: scope, text: Self.reduceLinks(in: rest))
+    }
+
+    /// Reduces every markdown link `[label](url)` in `text` (Round 1
+    /// review ruling, 2026-09-04): a link whose label is a bare 7–40
+    /// character hex commit hash is dropped together with its surrounding
+    /// ` (...)` wrapper — conventional-changelog's `([hash](url))` commit
+    /// reference, wherever in the line it sits, including one that sits
+    /// before a `, closes […](url)` suffix rather than at the very end.
+    /// Any other link keeps its label and drops only the URL, so
+    /// `closes [#12](url)` becomes `closes #12`.
+    ///
+    /// Two passes: the first removes a hash link still wrapped in its own
+    /// `(...)` (the shape conventional-changelog always emits, so this
+    /// alone covers every real bullet); the second reduces whatever links
+    /// remain — including a hash link that was never wrapped, which this
+    /// parser has no evidence of in practice but still drops rather than
+    /// surfacing a raw hash, staying consistent with the first pass's
+    /// intent.
+    private static func reduceLinks(in text: String) -> String {
+        /// A commit-hash link wrapped in its own parentheses, with the
+        /// optional leading whitespace that separates it from the
+        /// preceding word — removed as one unit so no stray space or
+        /// empty `()` is left behind.
+        let wrappedHashLink = /\s?\(\[[0-9A-Fa-f]{7,40}\]\([^)]*\)\)/
+
+        let withoutWrappedHashLinks = text.replacing(wrappedHashLink, with: "")
+
+        /// Any remaining markdown link, hash-labelled or not.
+        let anyLink = /\[([^\]]+)\]\([^)]*\)/
+        let bareHex = /^[0-9A-Fa-f]{7,40}$/
+
+        let reduced = withoutWrappedHashLinks.replacing(anyLink) { match in
+            let label = String(match.output.1)
+            return label.wholeMatch(of: bareHex) != nil ? "" : label
         }
 
-        return ChangelogRelease.Section.Entry(scope: scope, text: text)
+        return reduced.trimmingCharacters(in: .whitespaces)
     }
 
     /// The releases in `releases` whose `version` is numerically greater
-    /// than `version`, in their original order.
+    /// than `version`, sorted newest first — independent of `releases`'s
+    /// own order, and stable (Swift's `sorted(by:)` has been a stable sort
+    /// since Swift 5) for two releases whose `version` compares equal.
     ///
     /// Comparison is a dotted, component-wise one: components at the same
     /// position compare as `Int` when BOTH sides parse as one (so
@@ -210,7 +238,9 @@ public enum ChangelogParser {
     public static func releases(
         newerThan version: String, in releases: [ChangelogRelease]
     ) -> [ChangelogRelease] {
-        releases.filter { isVersion($0.version, newerThan: version) }
+        releases
+            .filter { isVersion($0.version, newerThan: version) }
+            .sorted { compareDottedVersions($0.version, $1.version) > 0 }
     }
 
     private static func isVersion(_ lhs: String, newerThan rhs: String) -> Bool {
