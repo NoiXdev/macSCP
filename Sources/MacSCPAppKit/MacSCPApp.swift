@@ -168,7 +168,39 @@ final class TabCommands {
     var showSnippets: (() -> Void)?
 }
 
+/// Wired into `MacSCPApp` through `@NSApplicationDelegateAdaptor` below —
+/// SwiftUI's own `App` protocol has no termination callback of its own, and
+/// `NSApplication.willTerminateNotification` (a prior round's choice, now
+/// replaced) cannot be waited on synchronously: the notification fires from
+/// a plain `NotificationCenter` block, and a callback that starts a `Task`
+/// and returns has no guarantee the process outlives that `Task` ever being
+/// scheduled — on an ordinary Cmd+Q that race can lose both the "app quit"
+/// line and whatever was still buffered. `applicationWillTerminate(_:)` is a
+/// real `NSApplicationDelegate` callback: AppKit holds the process open
+/// until it returns, so a synchronous call inside it is guaranteed to run
+/// before the process can exit — which is exactly what `flushSynchronously()`
+/// needs (Diagnostic Log plan, Task 2 round 1).
+///
+/// No other code under `Sources/MacSCPAppKit` reads `NSApp.delegate` or
+/// relies on `applicationDidFinishLaunching` (checked with `grep -rn
+/// "NSApp.delegate\|applicationDidFinishLaunching" Sources/MacSCPAppKit`
+/// before adding this — no matches), so installing this adaptor changes
+/// nothing this app already depended on `NSApp.delegate` being.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        DiagnosticLog.shared.log(.info, "app", "quit")
+        DiagnosticLog.shared.flushSynchronously()
+    }
+}
+
 struct MacSCPApp: App {
+    /// Installs `AppDelegate` above as `NSApp.delegate` — this is the ONLY
+    /// thing that makes `applicationWillTerminate(_:)` run. `@State`/
+    /// `@NSApplicationDelegateAdaptor` are both property wrappers SwiftUI
+    /// resolves before `body` is ever asked for, so declaration order here
+    /// doesn't matter the way it would for a plain stored property, but it
+    /// is listed first as the thing the whole app's lifecycle depends on.
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     /// Single instance for the whole app — passed to `ContentView` and the
     /// `Settings` scene below (M5c/T3: no singleton, per the v2 multi-window
     /// rule).
@@ -265,28 +297,12 @@ struct MacSCPApp: App {
         let launchBuild = Self.bundleBuild
         DiagnosticLog.shared.log(.info, "app", "launch version=\(launchVersion) build=\(launchBuild)")
 
-        // "app quit" (Diagnostic Log plan, Task 2): no other code in
-        // `Sources/MacSCPAppKit` observes `NSApplication.willTerminate`
-        // (checked with `grep -rn "willTerminate" Sources/MacSCPAppKit`
-        // before adding this), so this is the app's only termination
-        // observer. Block-based `NotificationCenter` observers are held by
-        // the notification center itself for as long as it lives, which for
-        // `.default` is the process — nothing here needs to retain the
-        // returned token to keep observing through to `willTerminate`, and
-        // there is no `deinit` to unregister it from (Architecture
-        // invariants: "no `deinit` cleanup" — this app never tears itself
-        // down before the process exits). `flush()` is awaited from a
-        // detached `Task` because the notification callback itself is
-        // synchronous; the app may still exit before that task is
-        // scheduled, in which case the line is lost — same best-effort
-        // shape as every other point this design flushes opportunistically
-        // rather than guarantees.
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
-        ) { _ in
-            DiagnosticLog.shared.log(.info, "app", "quit")
-            Task { await DiagnosticLog.shared.flush() }
-        }
+        // "app quit" (Diagnostic Log plan, Task 2 round 1): logged from
+        // `AppDelegate.applicationWillTerminate`, not from here — see that
+        // type's own doc comment for why a `NotificationCenter` observer
+        // (this file's prior approach) could not guarantee the line, or the
+        // rest of the buffer, actually reached disk before the process
+        // exited.
 
         // "What's New" decision (What's New plan, Task 2) — see
         // `decideWhatsNew(store:)`'s own doc comment for exactly when

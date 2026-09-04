@@ -10,7 +10,12 @@ import Testing
 /// must agree on every `settings.general.diagnosticLog` key. A second guard
 /// in this file pins the launch wiring: `MacSCPApp.swift` — and only
 /// `MacSCPApp.swift` — configures `DiagnosticLog.shared` and logs a line
-/// naming `launch`.
+/// naming `launch`. A third, added in Task 2 round 1, pins the termination
+/// wiring: `AppDelegate.applicationWillTerminate` must call
+/// `flushSynchronously(`, and `MacSCPApp.swift` must no longer register the
+/// `NotificationCenter`-based `willTerminateNotification` observer that
+/// round replaces (it could not guarantee the "app quit" line, or the rest
+/// of the buffer, reached disk before the process exited).
 ///
 /// Same shared scanner as `SettingsViewAppearanceToggleGuardTests` /
 /// `SettingsSectionCatalogGuardTests`
@@ -256,6 +261,46 @@ struct SettingsViewDiagnosticLogGuardTests {
             """)
     }
 
+    /// `AppDelegate.applicationWillTerminate` -- installed as `NSApp
+    /// .delegate` through `@NSApplicationDelegateAdaptor` (Diagnostic Log
+    /// plan, Task 2 round 1) -- must call `flushSynchronously(` on the
+    /// terminating thread, not `flush()` awaited from a `Task`: the finding
+    /// this round fixes is that a `NotificationCenter` callback which starts
+    /// a `Task` and returns has no guarantee the process outlives that
+    /// `Task` ever being scheduled.
+    @Test func appDelegateApplicationWillTerminateCallsFlushSynchronously() throws {
+        let all = try Self.views(of: Self.macSCPAppFile)
+        let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: "func applicationWillTerminate(_ notification: Notification)", in: all.code)
+        let body = TransferQueueBarCancelGuardTests.slice(range, of: all.code)
+        #expect(body.contains("DiagnosticLog.shared.log("), """
+            AppDelegate.applicationWillTerminate no longer logs anything -- \
+            a log file could no longer be told the app quit.
+            """)
+        #expect(body.contains("flushSynchronously("), """
+            AppDelegate.applicationWillTerminate no longer calls \
+            flushSynchronously( -- the buffered lines (and the "app quit" \
+            line above) are no longer guaranteed to reach disk before the \
+            process exits.
+            """)
+    }
+
+    /// The negative beside the positive above: `MacSCPApp.swift` must no
+    /// longer register a `willTerminateNotification` observer -- the
+    /// mechanism this round replaces with `AppDelegate
+    /// .applicationWillTerminate` precisely because it could not guarantee
+    /// delivery. A file that kept BOTH would flush twice (harmless) but
+    /// would also mean the old, non-guaranteeing path was never actually
+    /// removed, leaving the finding this round exists to close half-fixed.
+    @Test func macSCPAppNoLongerRegistersAWillTerminateNotificationObserver() throws {
+        let code = try Self.views(of: Self.macSCPAppFile).code
+        #expect(!code.contains("willTerminateNotification"), """
+            MacSCPApp.swift still contains willTerminateNotification -- the \
+            NotificationCenter-based observer this round replaces with \
+            AppDelegate.applicationWillTerminate was not actually removed.
+            """)
+    }
+
     /// Scans every `.swift` file directly under `directory` (non-recursive
     /// is not enough here -- `Sources/MacSCPAppKit` has no subdirectories
     /// today, but a recursive walk costs nothing and does not go stale if
@@ -402,6 +447,49 @@ struct SettingsViewDiagnosticLogGuardTests {
             try TransferQueueBarCancelGuardTests.declarationBody(
                 of: Self.sectionDeclaration, in: source)
         }
+    }
+
+    /// A synthetic `applicationWillTerminate` that only logs and awaits
+    /// `flush()` -- the exact shape this round replaces -- must be caught by
+    /// the positive check above, not waved through because SOME call inside
+    /// it mentions `DiagnosticLog.shared`.
+    @Test func scannerCatchesApplicationWillTerminateThatAwaitsFlushInsteadOfFlushingSynchronously() throws {
+        let source = """
+            final class AppDelegate: NSObject, NSApplicationDelegate {
+                func applicationWillTerminate(_ notification: Notification) {
+                    DiagnosticLog.shared.log(.info, "app", "quit")
+                    Task { await DiagnosticLog.shared.flush() }
+                }
+            }
+            """
+        let code = try SwiftSource.blankingCommentsAndStrings(source)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "func applicationWillTerminate(_ notification: Notification)", in: code)
+        // Positive first: the body really does mention DiagnosticLog.shared,
+        // so the negative below reports the missing flushSynchronously(
+        // call rather than an empty read.
+        #expect(body.contains("DiagnosticLog.shared"))
+        #expect(!body.contains("flushSynchronously("), """
+            the scanner must report this pre-round-1 shape as NOT calling \
+            flushSynchronously( -- it doesn't
+            """)
+    }
+
+    /// The negative-check helper itself: a source that still contains
+    /// `willTerminateNotification` must be caught, proving the check above
+    /// is not vacuously true because nothing in the synthetic source could
+    /// ever match it.
+    @Test func scannerCatchesAWillTerminateNotificationObserverIfOneReappears() throws {
+        let source = """
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+            ) { _ in }
+            """
+        let code = try SwiftSource.blankingCommentsAndStrings(source)
+        #expect(code.contains("willTerminateNotification"), """
+            the scanner failed to catch a reintroduced \
+            willTerminateNotification observer
+            """)
     }
 
     /// The negative-file-scan helper itself, exercised against a temp

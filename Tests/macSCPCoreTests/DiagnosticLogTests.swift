@@ -265,6 +265,53 @@ struct DiagnosticLogTests {
         #expect(afterOpen.isEmpty)
     }
 
+    /// `flushSynchronously()` (Diagnostic Log plan, Task 2 round 1): the
+    /// path `AppDelegate.applicationWillTerminate` calls, where nothing can
+    /// be `await`ed. Same writer-gate shape as `offResolvesAPendingFlush`
+    /// above — the gate is installed and never opened until after every
+    /// assertion, so both lines are PROVABLY still sitting in the buffer,
+    /// undrained by the writer task, at the moment `flushSynchronously()` is
+    /// called; a call that happened to work only because the writer's own
+    /// `Task` got there first would not be exercised by this test at all.
+    @Test("flushSynchronously() writes buffered lines in order without the writer task ever running")
+    func flushSynchronouslyWritesBufferedLinesWithTheWriterGated() async throws {
+        let directory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let gate = AsyncSignal()
+        DiagnosticLog.shared.setWriterGateForTesting { _ = await gate.wait() }
+        defer { DiagnosticLog.shared.setWriterGateForTesting(nil) }
+
+        DiagnosticLog.shared.configure(level: .info, directory: directory)
+        DiagnosticLog.shared.log(.info, "test", "one")
+        DiagnosticLog.shared.log(.info, "test", "two")
+
+        // Provably not drained by the writer, exactly as
+        // offResolvesAPendingFlush establishes above.
+        #expect(DiagnosticLog.shared.currentFileURL == nil)
+        let beforeSync =
+            (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        #expect(beforeSync.isEmpty)
+
+        // The call under test: synchronous, no `await`, and the writer
+        // remains gated throughout — nothing here depends on its `Task`
+        // ever running.
+        DiagnosticLog.shared.flushSynchronously()
+
+        let url = try #require(DiagnosticLog.shared.currentFileURL)
+        let lines = fileContents(url).split(separator: "\n").map(String.init)
+        #expect(lines.count == 2)
+        #expect(lines[0].hasSuffix("one"))
+        #expect(lines[1].hasSuffix("two"))
+
+        // Cleanup only, asserted nowhere above: releases the writer so it
+        // does not stay parked for the next test in this `.serialized`
+        // suite. Its own eventual (no-op, since the buffer is already
+        // empty) wake cannot add or reorder anything the assertions above
+        // already read.
+        gate.signal()
+    }
+
     @Test("a batch spanning midnight is written to two files, one line each")
     func batchSpanningMidnightSplitsAcrossFiles() async throws {
         let directory = makeTempDirectory()

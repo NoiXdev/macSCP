@@ -52,7 +52,10 @@ extension DiagnosticLogLevel: Comparable {
 /// wrapping every mutable field in it is what lets this class declare plain
 /// `Sendable` — the conformance the design's own signature
 /// (`public final class DiagnosticLog: Sendable`) states — with nothing
-/// unchecked anywhere in this file.
+/// unchecked anywhere in this file. A second `Mutex<Void>`, `writeLock`,
+/// serializes only the physical disk write (see `writeRun`) — kept separate
+/// from `state`'s own lock so a write in flight never blocks `log()`/
+/// `flush()`/`configure()` callers on the disk.
 ///
 /// **The writer.** `log` appends a formatted line and rings a doorbell
 /// (an `AsyncStream<Void>.Continuation`, buffered to at most one pending
@@ -61,7 +64,9 @@ extension DiagnosticLogLevel: Comparable {
 /// wakes — one task for the sink's entire lifetime, never one task per
 /// line. `flush()` hands out a monotonic sequence number per appended line
 /// and awaits a continuation that the writer resumes once its own
-/// `flushedSequence` has caught up — no polling, no sleep.
+/// `flushedSequence` has caught up — no polling, no sleep. `flushSynchronously()`
+/// runs the identical drain on the CALLING thread instead, for the one place
+/// nothing can be `await`ed at all: app termination.
 public final class DiagnosticLog: Sendable {
     public static let shared = DiagnosticLog()
 
@@ -119,6 +124,20 @@ public final class DiagnosticLog: Sendable {
     }
 
     private let state = Mutex(State())
+
+    /// Serializes actual disk writes between the writer task's own
+    /// `writeRun` and `flushSynchronously()`'s calling thread, so the two
+    /// can never interleave bytes into the same open file handle.
+    /// Deliberately a SEPARATE lock from `state`: holding `state`'s lock for
+    /// the duration of a physical write would block `log()`/`flush()`/
+    /// `configure()` callers on the disk, which is exactly the cost this
+    /// design keeps off the caller's path everywhere else — see the class
+    /// doc comment's "The writer" paragraph. `writeRun` still nests a short
+    /// `state.withLock` INSIDE `writeLock.withLock` (to read/open the file
+    /// handle); every caller of `writeRun` reaches it the same way, through
+    /// `drainAndWriteUntilEmpty`, so the two locks are always acquired in
+    /// this one order and never the reverse.
+    private let writeLock = Mutex<Void>(())
 
     private init() {}
 
@@ -250,6 +269,25 @@ public final class DiagnosticLog: Sendable {
         }
     }
 
+    /// Drains every buffered line and writes it to disk on the CALLING
+    /// thread — no `Task`, no semaphore, no `DispatchGroup.wait`. Exists for
+    /// app termination (`AppDelegate.applicationWillTerminate` in the App
+    /// layer), where nothing can be `await`ed and the writer's own `Task`
+    /// might never be scheduled again once the process has started quitting.
+    ///
+    /// Reuses `drainAndWriteUntilEmpty()` unchanged — the exact
+    /// take-the-buffer-under-`state`'s-lock / `writeToDisk` / `markFlushed`
+    /// loop the writer task itself runs — rather than a second copy of that
+    /// loop, so the two paths cannot drift apart on what "drained" means.
+    /// Safe to call even while the writer is concurrently mid-write: the two
+    /// share `writeLock`, so this call simply blocks on it until that write
+    /// reaches disk — bounded by however long ONE drained batch's write
+    /// takes, never by waiting for the writer's `Task` to be scheduled at
+    /// all (which, at termination, it might never be again).
+    public func flushSynchronously() {
+        drainAndWriteUntilEmpty()
+    }
+
     /// The file the next line would be written to, or the file the last
     /// line WAS written to once the day has rolled — `nil` before the first
     /// line has ever opened one.
@@ -270,7 +308,7 @@ public final class DiagnosticLog: Sendable {
     /// `internal`, not `public`: reachable only through `@testable import`,
     /// which is exactly the tests that need it. Not part of the design's
     /// public surface (`shared`, `configure`, `log`, `flush`,
-    /// `currentFileURL`).
+    /// `flushSynchronously`, `currentFileURL`).
     func setWriterGateForTesting(_ gate: (@Sendable () async -> Void)?) {
         state.withLock { $0.writerGate = gate }
     }
@@ -342,27 +380,31 @@ public final class DiagnosticLog: Sendable {
     }
 
     /// Opens (or reuses) the file for `dayKey` and appends `textLines` to
-    /// it. Runs only on the writer task, so this is the one place in the
-    /// type that touches the file system for writing — never on a caller's
-    /// thread.
+    /// it. Reached from `drainAndWriteUntilEmpty` — which both the writer
+    /// task's own loop AND `flushSynchronously()` call — so this is the one
+    /// place in the type that touches the file system for writing, and the
+    /// caller may be either of those two threads; `writeLock` is what keeps
+    /// their writes from interleaving into the same open handle.
     private func writeRun(_ textLines: [String], directory: URL, dayKey: String) {
-        let handle = state.withLock { s -> FileHandle? in
-            if s.fileHandle == nil || s.fileDayKey != dayKey {
-                s.fileHandle?.closeFile()
-                s.fileHandle = nil
-                s.fileDayKey = nil
-                guard let opened = Self.openHandle(directory: directory, dayKey: dayKey) else {
-                    return nil
+        writeLock.withLock { _ in
+            let handle = state.withLock { s -> FileHandle? in
+                if s.fileHandle == nil || s.fileDayKey != dayKey {
+                    s.fileHandle?.closeFile()
+                    s.fileHandle = nil
+                    s.fileDayKey = nil
+                    guard let opened = Self.openHandle(directory: directory, dayKey: dayKey) else {
+                        return nil
+                    }
+                    s.fileHandle = opened
+                    s.fileDayKey = dayKey
                 }
-                s.fileHandle = opened
-                s.fileDayKey = dayKey
+                return s.fileHandle
             }
-            return s.fileHandle
-        }
-        guard let handle else { return }
+            guard let handle else { return }
 
-        let payload = Data((textLines.map { $0 + "\n" }.joined()).utf8)
-        handle.write(payload)
+            let payload = Data((textLines.map { $0 + "\n" }.joined()).utf8)
+            handle.write(payload)
+        }
     }
 
     /// Resumes every `flush()` waiter whose target sequence is now on disk.
