@@ -232,6 +232,20 @@ struct CLIMatrix: Sendable {
         try await fileSystem.write(path: path, contents: stream)
     }
 
+    /// Reads a remote file back through the backend's own file system, so a
+    /// case can compare what `put` uploaded — or what `--on-conflict
+    /// overwrite` replaced — against the bytes it meant to write. Through
+    /// the backend rather than through `get`, for the same reason `seed`
+    /// exists: a `put` case must not be able to pass because `get` shares
+    /// its mistake.
+    func read(_ fileSystem: any RemoteFileSystem, path: String) async throws -> Data {
+        var data = Data()
+        for try await chunk in try await fileSystem.readStream(path: path) {
+            data.append(chunk)
+        }
+        return data
+    }
+
     /// Best-effort removal of whatever a case left on the rig, through the
     /// backend's own file system.
     ///
@@ -263,8 +277,44 @@ struct CLIMatrix: Sendable {
         } catch {
             try? await fileSystem.deleteTree(at: path)
         }
+        await verifyGone(fileSystem, path: path, sourceLocation: sourceLocation)
+    }
 
-        // The two ATTEMPTS are best-effort on purpose — a case that failed
+    /// Removes a DIRECTORY and everything under it, and verifies the same
+    /// way `removeRemote` does.
+    ///
+    /// A separate entry point rather than a `Bool` on that one, because the
+    /// two are not interchangeable in either direction on this rig, and the
+    /// asymmetry is the whole reason both exist:
+    ///
+    ///   - `removeRemote` on a DIRECTORY would not clean it up on S3 and
+    ///     would not even fail. `S3FileSystem.delete(path:)` resolves its
+    ///     key through `RootMode.resolve(path:)`, which normalizes and
+    ///     splits on `/` — so `<name>/` and `<name>` resolve to the same
+    ///     key, and the DELETE addresses a key that was never written.
+    ///     Measured against this rig on 2026-09-04: MinIO answers that
+    ///     success, so nothing throws, the `deleteTree` fallback is never
+    ///     reached, and the directory's own marker key stays in the bucket.
+    ///     The `stat` afterwards is what turned that into a red instead of
+    ///     litter — two marker keys, removed by hand, when the probe that
+    ///     measured it ran.
+    ///   - `removeRemoteTree` on a FILE is the divergence recorded on
+    ///     `removeRemote` above: WebDAV answers 400 and S3 deletes nothing.
+    ///
+    /// So a case removes a file with the first and a tree with the second,
+    /// and neither call guesses which it is holding.
+    func removeRemoteTree(
+        _ fileSystem: any RemoteFileSystem, path: String,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async {
+        try? await fileSystem.deleteTree(at: path)
+        await verifyGone(fileSystem, path: path, sourceLocation: sourceLocation)
+    }
+
+    private func verifyGone(
+        _ fileSystem: any RemoteFileSystem, path: String, sourceLocation: SourceLocation
+    ) async {
+        // The removal ATTEMPTS above are best-effort on purpose — a case that failed
         // before it seeded anything has nothing to remove, and neither call
         // should turn that into a second failure. The OUTCOME is not
         // best-effort: a `try?` around both and nothing after it is exactly
@@ -444,16 +494,118 @@ struct CLIMatrix: Sendable {
     /// that changes its mind. Cached per binary and command; a race just asks
     /// twice.
     static func takesConnectionFlags(_ command: String, binary: URL) async throws -> Bool {
-        let key = "\(binary.path(percentEncoded: false))\u{0}\(command)"
-        if let cached = connectionFlagCache.withLock({ $0[key] }) { return cached }
-        let result = try await SubprocessRunner.run(binary, arguments: ["help", command])
-        guard result.status == 0 else { throw CLIMatrixError.helpFailed(status: result.status) }
-        let takes = result.stdoutText.contains("--accept-new")
-        connectionFlagCache.withLock { $0[key] = takes }
-        return takes
+        try await advertisedOptions(for: command, binary: binary).contains("--accept-new")
     }
 
-    private static let connectionFlagCache = Mutex<[String: Bool]>([:])
+    /// One command's `--help`, read once per binary and command. A race just
+    /// asks twice and stores the same answer.
+    static func helpText(for command: String, binary: URL) async throws -> String {
+        let key = "\(binary.path(percentEncoded: false))\u{0}\(command)"
+        if let cached = helpCache.withLock({ $0[key] }) { return cached }
+        let result = try await SubprocessRunner.run(binary, arguments: ["help", command])
+        guard result.status == 0 else { throw CLIMatrixError.helpFailed(status: result.status) }
+        helpCache.withLock { $0[key] = result.stdoutText }
+        return result.stdoutText
+    }
+
+    private static let helpCache = Mutex<[String: String]>([:])
+
+    /// The option NAMES `command` advertises — the flag axis of the matrix,
+    /// read from the binary the same way the command axis is.
+    static func advertisedOptions(for command: String, binary: URL) async throws -> Set<String> {
+        parseOptionNames(try await helpText(for: command, binary: binary))
+    }
+
+    /// The values `option` accepts on `command`, or `nil` where the option
+    /// exists but names no closed set (and where the option does not exist
+    /// at all — the caller that cares which asks `advertisedOptions` too).
+    static func allowedValues(
+        of option: String, for command: String, binary: URL
+    ) async throws -> [String]? {
+        parseAllowedValues(of: option, in: try await helpText(for: command, binary: binary))
+    }
+
+    /// The `OPTIONS:` block, one entry per option, each with its wrapped
+    /// abstract joined back onto it.
+    ///
+    /// Same anchor as `parseSubcommands`: an entry starts at column 2 and a
+    /// continuation at column 26, so an abstract that wraps is folded into
+    /// the entry it belongs to rather than read as a new one. The block ends
+    /// at the first blank line, as ArgumentParser prints it.
+    ///
+    /// `internal` so the parse can be measured against a fixture without
+    /// launching anything — which is where the wrapped shapes below are
+    /// pinned, since nothing in today's `--help` happens to wrap them all.
+    static func optionEntries(_ help: String) -> [String] {
+        let entryIndent = 2
+        let lines = help.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let heading = lines.firstIndex(where: {
+            $0.trimmingCharacters(in: .whitespaces) == "OPTIONS:"
+        }) else { return [] }
+        var entries: [String] = []
+        for line in lines[lines.index(after: heading)...] {
+            let text = line.trimmingCharacters(in: .whitespaces)
+            if text.isEmpty { break }
+            if line.prefix(while: { $0 == " " }).count == entryIndent {
+                entries.append(text)
+            } else if !entries.isEmpty {
+                entries[entries.count - 1] += " " + text
+            }
+        }
+        return entries
+    }
+
+    /// The names an entry declares, and ONLY those: the leading run of
+    /// `-x`/`--long` tokens, with `<placeholder>` skipped, stopping at the
+    /// first word of the abstract.
+    ///
+    /// The stop is the point. `rm`'s `--allow-root-delete` abstract reads
+    /// "Required together with --recursive to delete a session root.", so a
+    /// `contains("--recursive")` over that help answers yes for a command
+    /// whose help merely MENTIONS the flag. That is this project's
+    /// "source-scanning guards read comments too" hazard, one layer over —
+    /// a help screen's prose is indistinguishable from its option list to a
+    /// substring check — and it is closed structurally here rather than
+    /// noted, because the two cases that matter most in Task 2 are exactly
+    /// negative ones: `put` and `get` advertise no `--recursive`.
+    static func leadingOptionNames(of entry: String) -> [String] {
+        var names: [String] = []
+        for token in entry.split(separator: " ", omittingEmptySubsequences: true) {
+            let cleaned = String(token.hasSuffix(",") ? token.dropLast() : token)
+            if cleaned.hasPrefix("-") {
+                names.append(cleaned)
+            } else if cleaned.hasPrefix("<") {
+                continue
+            } else {
+                break
+            }
+        }
+        return names
+    }
+
+    static func parseOptionNames(_ help: String) -> Set<String> {
+        Set(optionEntries(help).flatMap(leadingOptionNames(of:)))
+    }
+
+    /// The closed value set ArgumentParser prints for an option with an
+    /// `ExpressibleByArgument`, `CaseIterable` type: `(values: fail, skip,
+    /// overwrite; default: fail)`.
+    ///
+    /// Read off the JOINED entry, because that parenthesis wraps in today's
+    /// help — `--on-conflict`'s list breaks between `default:` and `fail)`
+    /// (measured 2026-09-04 against `macscp-cli help put`), so a per-line
+    /// parse would find an unterminated `(values:` and answer nothing.
+    static func parseAllowedValues(of option: String, in help: String) -> [String]? {
+        guard let entry = optionEntries(help).first(where: {
+            leadingOptionNames(of: $0).contains(option)
+        }) else { return nil }
+        guard let opening = entry.range(of: "(values: ") else { return nil }
+        let rest = entry[opening.upperBound...]
+        guard let end = rest.firstIndex(where: { $0 == ";" || $0 == ")" }) else { return nil }
+        return rest[..<end]
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
 
     /// The host-key flag `command` should be given, or nothing where it does
     /// not take one. `--accept-new` where the command can open a connection:
@@ -495,6 +647,96 @@ extension CLIMatrix {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             .map { try decoder.decode(CLIListedItem.self, from: Data($0.utf8)) }
+    }
+}
+
+/// What a case left on the rig, so the scaffolding can remove it on BOTH
+/// exits.
+///
+/// An `actor` rather than a class with a lock: it is written from inside an
+/// `async` case body and read by the scaffolding around it, which is
+/// precisely the value that has to cross an isolation boundary here. A
+/// `final class` would need `@unchecked Sendable` to compile in this
+/// language mode, i.e. an assertion instead of a check.
+///
+/// Two lists, not one with a flag consulted later: a path is registered as
+/// the thing it IS at the moment it is created, and `removeRemote` and
+/// `removeRemoteTree` are not interchangeable on this rig (see
+/// `CLIMatrix.removeRemoteTree`).
+actor RemoteLitter {
+    private var entries: [(path: String, isTree: Bool)] = []
+
+    func file(_ path: String) { entries.append((path, false)) }
+    func tree(_ path: String) { entries.append((path, true)) }
+
+    /// Hands the list over and forgets it, so a second drain cannot record a
+    /// second issue about a path the first one already removed.
+    fileprivate func drain() -> [(path: String, isTree: Bool)] {
+        defer { entries = [] }
+        return entries
+    }
+}
+
+extension CLIMatrix {
+    /// Runs `body` with a rig, an open connection to it and a place to
+    /// register remote paths, then removes every registered path and
+    /// disconnects — on the throwing path too.
+    ///
+    /// Written out rather than `defer`red because a `defer` body cannot
+    /// `await`, which is the same constraint Task 1's single case handled
+    /// with a closure both exits call. Counted 2026-09-04, nine case bodies
+    /// in `CLIMatrixCases` go through this one, which is why it is a
+    /// scaffold rather than a repeated closure: forgetting the throwing exit
+    /// does not fail anything, it just leaves a file on a WebDAV container
+    /// that has no volume.
+    ///
+    /// `sourceLocation` is forwarded so a cleanup issue is recorded against
+    /// the CASE's own `withRig` line rather than against this function.
+    static func withRig(
+        _ kind: ConnectionKind, label: String,
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ body: (CLIMatrix, any RemoteFileSystem, RemoteLitter) async throws -> Void
+    ) async throws {
+        let rig = try CLIMatrix.make(for: kind, label: label)
+        defer { rig.tearDown() }
+        let fileSystem = try await rig.connect()
+        let litter = RemoteLitter()
+
+        func clean() async {
+            for entry in await litter.drain() {
+                if entry.isTree {
+                    await rig.removeRemoteTree(
+                        fileSystem, path: entry.path, sourceLocation: sourceLocation)
+                } else {
+                    await rig.removeRemote(
+                        fileSystem, path: entry.path, sourceLocation: sourceLocation)
+                }
+            }
+            await fileSystem.disconnect()
+        }
+
+        do {
+            try await body(rig, fileSystem, litter)
+        } catch {
+            await clean()
+            throw error
+        }
+        await clean()
+    }
+
+    /// A local directory that exists for the duration of `body` and is gone
+    /// afterwards — `get`'s destination, and `put`'s source directory.
+    static func withLocalDirectory(_ body: (URL) async throws -> Void) async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cli-matrix-local-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try await body(directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+        try? FileManager.default.removeItem(at: directory)
     }
 }
 
