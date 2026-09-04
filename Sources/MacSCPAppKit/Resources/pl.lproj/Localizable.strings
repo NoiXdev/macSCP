@@ -1156,3 +1156,37 @@
 "import.field.labels" = "Etykiety";
 "import.result.updated %lld" = "Zaktualizowane istniejące sesje: %lld";
 "import.result.secretsNotRead %lld" = "Hasła, których nie udało się odczytać z pęku kluczy: %lld";
+
+/* Session overview (session overview plan, Task 2) */
+"overview.section.facts" = "Szczegóły";
+"overview.section.history" = "Ostatnie połączenia";
+"overview.section.snippets" = "Fragmenty";
+"overview.fact.username" = "Nazwa użytkownika";
+"overview.fact.authentication" = "Sposób logowania";
+"overview.fact.keyPath" = "Plik klucza";
+"overview.fact.loginSet" = "Dane logowania";
+"overview.fact.jump" = "Host pośredni";
+"overview.fact.bucket" = "Bucket";
+"overview.fact.region" = "Region";
+"overview.fact.endpoint" = "Punkt końcowy";
+"overview.fact.pathStyle" = "Adresowanie ścieżkowe";
+"overview.fact.baseURL" = "Adres URL serwera";
+"overview.fact.nextcloudPath" = "Ścieżka Nextcloud";
+"overview.fact.group" = "Grupa";
+"overview.fact.tags" = "Etykiety";
+"overview.fact.panes" = "Otwiera się na";
+"overview.fact.importedFrom" = "Zaimportowano z";
+"overview.hostKey" = "Klucz hosta";
+"overview.hostKey.unknown" = "Jeszcze nieznany — zapyta przy następnym połączeniu";
+"overview.secret" = "Hasło";
+"overview.secret.stored" = "Zapisane w pęku kluczy";
+"overview.secret.missing" = "Niezapisane — pytanie przy połączeniu";
+"overview.history.empty" = "Dla tego połączenia nie zapisano jeszcze niczego.";
+"overview.history.column.started" = "Początek";
+"overview.history.column.outcome" = "Wynik";
+"overview.history.column.transfers" = "Transfery";
+"overview.history.noEnd" = "Brak zapisanego rozłączenia";
+"overview.history.diagnose" = "Otwórz diagnostykę";
+"overview.history.transfers %1$lld %2$lld %3$lld" = "↑%1$lld ↓%2$lld ✗%3$lld";
+"overview.snippets.empty" = "Nie zapisano jeszcze żadnych fragmentów.";
+"overview.snippets.run" = "Uruchom";

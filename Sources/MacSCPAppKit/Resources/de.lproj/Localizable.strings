@@ -1154,3 +1154,37 @@
 "import.field.labels" = "Labels";
 "import.result.updated %lld" = "Aktualisierte vorhandene Sitzungen: %lld";
 "import.result.secretsNotRead %lld" = "Passwörter, die nicht aus dem Schlüsselbund gelesen werden konnten: %lld";
+
+/* Session overview (session overview plan, Task 2) */
+"overview.section.facts" = "Details";
+"overview.section.history" = "Letzte Verbindungen";
+"overview.section.snippets" = "Snippets";
+"overview.fact.username" = "Benutzername";
+"overview.fact.authentication" = "Anmeldeart";
+"overview.fact.keyPath" = "Schlüsseldatei";
+"overview.fact.loginSet" = "Login";
+"overview.fact.jump" = "Jump-Host";
+"overview.fact.bucket" = "Bucket";
+"overview.fact.region" = "Region";
+"overview.fact.endpoint" = "Endpunkt";
+"overview.fact.pathStyle" = "Path-Style-Adressierung";
+"overview.fact.baseURL" = "Server-URL";
+"overview.fact.nextcloudPath" = "Nextcloud-Pfad";
+"overview.fact.group" = "Gruppe";
+"overview.fact.tags" = "Labels";
+"overview.fact.panes" = "Öffnet mit";
+"overview.fact.importedFrom" = "Importiert aus";
+"overview.hostKey" = "Host-Key";
+"overview.hostKey.unknown" = "Noch nicht bekannt — wird beim nächsten Verbinden gefragt";
+"overview.secret" = "Passwort";
+"overview.secret.stored" = "Im Schlüsselbund gespeichert";
+"overview.secret.missing" = "Nicht gespeichert — wird beim Verbinden gefragt";
+"overview.history.empty" = "Für diese Verbindung ist noch nichts aufgezeichnet.";
+"overview.history.column.started" = "Beginn";
+"overview.history.column.outcome" = "Ergebnis";
+"overview.history.column.transfers" = "Übertragungen";
+"overview.history.noEnd" = "Kein Trennen aufgezeichnet";
+"overview.history.diagnose" = "Diagnose öffnen";
+"overview.history.transfers %1$lld %2$lld %3$lld" = "↑%1$lld ↓%2$lld ✗%3$lld";
+"overview.snippets.empty" = "Noch keine Snippets gespeichert.";
+"overview.snippets.run" = "Ausführen";

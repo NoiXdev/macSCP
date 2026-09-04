@@ -53,6 +53,31 @@ public struct AuditRecorder: Sendable {
         store.append(AuditEvent(kind: .connected, detail: detail), for: sessionID)
     }
 
+    /// Logs a connect that did NOT succeed (session overview plan, Task 2) —
+    /// the producer for the `connectFailed` kind Task 1 added, and the row
+    /// the session overview offers "Open diagnosis" on.
+    ///
+    /// `reason` is stored verbatim, and the caller owes it a FIXED sentence:
+    /// `DialSupport.reason(for:)`, which is public for exactly this call and
+    /// documents why an error's own text must not be stored instead — the
+    /// two URL-shaped backends compose their free-text failures out of an
+    /// endpoint field that takes `scheme://KEY:SECRET@host` as ordinary
+    /// input. Nothing is composed here: unlike `recordConnected`, which
+    /// builds "connected to HOST as USER", there is no shape to add.
+    ///
+    /// `isError: true`, which is what the audit sheet's "Errors" facet
+    /// selects on (`AuditLogSheet.matches`'s `.errors` arm returns
+    /// `event.isError` and reads no kind) and what paints the row red there.
+    /// Recorded as an ordinary event, a failed connect would sit outside
+    /// that facet entirely. The session overview's own red row is decided
+    /// differently — by `ConnectionHistory.Row.Outcome.failed`, which this
+    /// kind produces regardless of the flag — so this line is about the
+    /// sheet, not about both surfaces.
+    public func recordConnectFailed(reason: String) {
+        store.append(
+            AuditEvent(kind: .connectFailed, detail: reason, isError: true), for: sessionID)
+    }
+
     /// Logs a teardown/disconnect. The App layer calls this from the tab's
     /// teardown flow, before the recorder itself is released.
     public func recordDisconnected() {

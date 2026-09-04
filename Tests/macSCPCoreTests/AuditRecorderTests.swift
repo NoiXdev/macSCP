@@ -240,6 +240,36 @@ struct AuditRecorderTests {
         #expect(events[0].detail == "connected to alice@example.com via bastion")
     }
 
+    /// The producer for `AuditEvent.Kind.connectFailed` (session overview
+    /// plan, Task 2). The kind was added in Task 1 with nothing writing it;
+    /// this is what writes it.
+    ///
+    /// `isError` is the half worth pinning beside the kind: the audit
+    /// sheet's error filter and the overview's own red row both read it, and
+    /// a failed connect recorded as an ordinary event would be invisible in
+    /// both.
+    ///
+    /// The reason is stored VERBATIM and is the caller's — the App hands
+    /// over `DialSupport.reason(for:)`'s fixed sentence, never an error's own
+    /// text (see that function's doc comment for what free error text
+    /// carries). Nothing here composes a sentence of its own, which is why
+    /// the expectation is an equality rather than a `contains`.
+    @Test func recordConnectFailedStoresTheReasonVerbatimAsAnError() {
+        let (store, dir) = makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sessionID = UUID()
+        let recorder = AuditRecorder(sessionID: sessionID, store: store)
+        let reason = DialSupport.reason(for: HostKeyError.rejectedByUser)
+
+        recorder.recordConnectFailed(reason: reason)
+
+        let events = store.events(for: sessionID)
+        #expect(events.count == 1)
+        #expect(events[0].kind == .connectFailed)
+        #expect(events[0].detail == reason)
+        #expect(events[0].isError)
+    }
+
     @Test func recordDisconnectedRecordsDisconnectedKind() {
         let (store, dir) = makeStore()
         defer { try? FileManager.default.removeItem(at: dir) }

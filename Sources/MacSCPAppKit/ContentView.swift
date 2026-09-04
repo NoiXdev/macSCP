@@ -335,6 +335,40 @@ struct ContentView: View {
     /// imported sets appear in its list.
     @State var loginSetsSheetStartsImport = false
 
+    // MARK: - Session overview (session overview plan, Task 2)
+
+    /// The stored session the sidebar is pointing at, as reported by
+    /// `SessionSidebar.onSelectSession`.
+    ///
+    /// An id and not a `StoredSession`, so the overview always describes the
+    /// record as it stands: it is resolved against the live list on every
+    /// render (`overviewSession`), which is also what makes a deleted session
+    /// disappear from the detail pane without a second rule to clear this.
+    ///
+    /// Window-scoped rather than per-tab, matching where the sidebar is: one
+    /// sidebar, one selection, and switching tabs does not move the pointer.
+    @State var overviewSessionID: UUID?
+
+    /// The session `overviewSessionID` names, or `nil` — no selection, or a
+    /// selection whose session is gone.
+    var overviewSession: StoredSession? {
+        guard let overviewSessionID else { return nil }
+        return sessionListViewModel.sessions.first { $0.id == overviewSessionID }
+    }
+
+    /// The group and login-set NAMES behind the two ids a session carries,
+    /// read off the window's own lists.
+    ///
+    /// One line, and it exists so the resolution is asked once per render
+    /// rather than once per name: the detail pane needs both halves, and
+    /// calling `SessionOverviewNames.resolve` twice would walk both lists
+    /// twice to build the same pair.
+    func overviewNames(for session: StoredSession) -> (group: String?, loginSet: String?) {
+        SessionOverviewNames.resolve(
+            for: session, groups: sessionListViewModel.groups,
+            loginSets: sessionListViewModel.loginSets)
+    }
+
     // MARK: - Hidden imports (M11f/T2)
 
     /// Drives the hidden-imports management sheet — opened from the
@@ -1849,6 +1883,39 @@ struct ContentView: View {
                     to: tab, sessionID: stored.id,
                     summary: descriptor.displaySummary(descriptor.sessionValues(stored)),
                     viaJumpHost: form.jumpEnabled ? form.jumpHost : nil)
+            } else if tab.reconnectAttempt == myAttempt, let reason = form.lastFailureReason {
+                // The `connectFailed` audit row (session overview plan, Task
+                // 2), and the ONE place this app writes one: this is the
+                // stored-session connect path, the same one `retryConnect`
+                // and the lost surface's Reconnect come back through, so a
+                // second appender for those would be a second chance to get
+                // the sentence wrong.
+                //
+                // Two conditions, and each rules out a different non-event:
+                //
+                // * `lastFailureReason != nil` means a dial actually reached
+                //   the wire and threw. `form.connect()` also answers `nil`
+                //   for a refusal decided before any of that — an empty save
+                //   name, a login set that no longer resolves — and for an
+                //   attempt Core itself superseded. Neither is a connect that
+                //   failed, and a log full of them would say this session is
+                //   unreliable when nothing was ever dialled. See
+                //   `ConnectionViewModel.lastFailureReason`.
+                // * `tab.reconnectAttempt == myAttempt` is the same
+                //   hand-off guard the success path above uses: a Cancel that
+                //   landed during the dial has already moved that token, and
+                //   an attempt the user backed out of leaves no record.
+                //
+                // The sentence is Core's fixed one, never the error's own
+                // text — `DialSupport.reason(for:)` is public for exactly
+                // this, and its doc comment explains what an arbitrary
+                // error's description can carry out of a URL-shaped
+                // endpoint field. The recorder is built here rather than
+                // taken from `tab.auditRecorder`: that one is attached on a
+                // SUCCESSFUL connect and is nil (or another session's) at
+                // this point.
+                AuditRecorder(sessionID: stored.id, store: auditStore)
+                    .recordConnectFailed(reason: reason)
             }
         }
     }
@@ -2325,6 +2392,11 @@ struct ContentView: View {
     /// "Edit…".
     func fillFromImported(_ host: SSHConfigHost) {
         guard let tab = formTarget() else { return }
+        // Same statement "New connection" makes (session overview plan, Task
+        // 2): this fills the FORM, so the detail pane stops being about a
+        // stored session. The sidebar's imported row clears its own selection
+        // as well; this covers the call arriving from anywhere else.
+        overviewSessionID = nil
         let form = tab.connectionViewModel
         form.exitEditMode()
         form.clearPassword()
@@ -2458,6 +2530,12 @@ struct ContentView: View {
         // and the command would look like it did nothing.
         dismissConnectFailure(tab)
         tab.connectionViewModel.endEditing()
+        // The user asked for an empty form (session overview plan, Task 2).
+        // The sidebar's own "New connection" entries clear their selection
+        // and report it, but this function is also the Sessions menu's and
+        // ⌘N's — neither goes through the sidebar, and both would otherwise
+        // blank the fields behind an overview that is still on screen.
+        overviewSessionID = nil
     }
 
     /// Target tab for the form-filling actions ("Edit…", ssh-config import,

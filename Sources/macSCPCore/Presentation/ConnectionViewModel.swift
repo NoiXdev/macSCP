@@ -501,6 +501,32 @@ public final class ConnectionViewModel {
     /// text, and a mismatched host key (a hard stop with no field at all)
     /// would be indistinguishable from an ordinary network failure.
     public private(set) var lastFailureKind: ConnectFailureKind?
+    /// Why the most recent DIAL failed, as the one fixed sentence this
+    /// project stores for that error (session overview plan, Task 2).
+    ///
+    /// `nil` unless an attempt actually reached the wire and threw. A
+    /// pre-dial refusal — a form validation, a schema violation, a login set
+    /// that no longer resolves — leaves it `nil`, and that is what the
+    /// property is FOR: the App writes a `connectFailed` audit row only when
+    /// there was a connect to fail, and `nil` is how it can tell. The kind
+    /// beside it cannot answer that question — `.needsPerson` is the default
+    /// for every refusal as well as for a host-key stop.
+    ///
+    /// `DialSupport.reason(for:)`'s sentence and never the error's own text:
+    /// see that function's doc comment for what an arbitrary error's
+    /// description carries, and why the two URL-shaped backends make it a
+    /// credential hazard rather than only a noisy one. The error itself
+    /// never leaves this type, which is why the sentence is computed here,
+    /// where it is caught, rather than published as an `Error` for the App
+    /// to render.
+    ///
+    /// Written in `connect()` alone — cleared at the head of every attempt
+    /// and set in its `catch`. Deliberately NOT inside `fail(_:kind:)`:
+    /// `ConnectionViewModelSourceGuardTests.theOneFailureWriterSetsTheVerdictFirst`
+    /// reads the five normalized lines that follow that function's
+    /// signature, and a sixth line in its body would push `state = newState`
+    /// out of the window that guard reads.
+    public private(set) var lastFailureReason: String?
 
     /// Identifies whichever `connect()` call is currently allowed to write
     /// to this instance (connection-liveness plan, Task 6 fix round 1).
@@ -760,8 +786,12 @@ public final class ConnectionViewModel {
     public func connect(origin: UUID? = nil) async -> (any RemoteFileSystem)? {
         guard state != .connecting else { return nil }
         // Every attempt starts without a verdict — see `lastFailureKind`'s
-        // own doc comment for the two writers that keep it honest.
+        // own doc comment for the two writers that keep it honest — and
+        // without a reason, so neither a previous failure's sentence nor one
+        // belonging to an attempt that then SUCCEEDED can be read as this
+        // attempt's.
         lastFailureKind = nil
+        lastFailureReason = nil
         let myAttempt = UUID()
         currentAttempt = myAttempt
         // Assigned WITH the attempt, and after the refusal above — see
@@ -820,6 +850,9 @@ public final class ConnectionViewModel {
         } catch {
             // Same attempt-scoped write as the success path above.
             guard currentAttempt == myAttempt else { return nil }
+            // The fixed sentence for this error, computed where the error
+            // is — the only place it exists. See `lastFailureReason`.
+            lastFailureReason = DialSupport.reason(for: error)
             // The one call that passes a `kind`, and so the only one that
             // can reach `.other`: this is the only failure in this type
             // that got as far as the wire.

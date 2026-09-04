@@ -1152,3 +1152,37 @@
 "import.field.labels" = "Labels";
 "import.result.updated %lld" = "Existing sessions updated: %lld";
 "import.result.secretsNotRead %lld" = "Passwords that could not be read from the keychain: %lld";
+
+/* Session overview (session overview plan, Task 2) */
+"overview.section.facts" = "Details";
+"overview.section.history" = "Recent connections";
+"overview.section.snippets" = "Snippets";
+"overview.fact.username" = "User name";
+"overview.fact.authentication" = "Login method";
+"overview.fact.keyPath" = "Key file";
+"overview.fact.loginSet" = "Login";
+"overview.fact.jump" = "Jump host";
+"overview.fact.bucket" = "Bucket";
+"overview.fact.region" = "Region";
+"overview.fact.endpoint" = "Endpoint";
+"overview.fact.pathStyle" = "Path-style addressing";
+"overview.fact.baseURL" = "Server URL";
+"overview.fact.nextcloudPath" = "Nextcloud path";
+"overview.fact.group" = "Group";
+"overview.fact.tags" = "Labels";
+"overview.fact.panes" = "Opens showing";
+"overview.fact.importedFrom" = "Imported from";
+"overview.hostKey" = "Host key";
+"overview.hostKey.unknown" = "Not known yet — the next connect asks";
+"overview.secret" = "Password";
+"overview.secret.stored" = "Saved in the keychain";
+"overview.secret.missing" = "Not saved — asked at connect";
+"overview.history.empty" = "Nothing recorded for this connection yet.";
+"overview.history.column.started" = "Started";
+"overview.history.column.outcome" = "Outcome";
+"overview.history.column.transfers" = "Transfers";
+"overview.history.noEnd" = "No disconnect recorded";
+"overview.history.diagnose" = "Open diagnosis";
+"overview.history.transfers %1$lld %2$lld %3$lld" = "↑%1$lld ↓%2$lld ✗%3$lld";
+"overview.snippets.empty" = "No snippets saved yet.";
+"overview.snippets.run" = "Run";

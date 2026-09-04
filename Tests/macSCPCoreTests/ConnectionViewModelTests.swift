@@ -20,6 +20,72 @@ struct ConnectionViewModelTests {
         return vm
     }
 
+    // MARK: - lastFailureReason (session overview plan, Task 2)
+    //
+    // The App records a failed connect in the session's audit log, and the
+    // sentence it stores has to be `DialSupport.reason(for:)`'s fixed one —
+    // an error's own text can carry the endpoint the user typed, and that
+    // field takes `scheme://KEY:SECRET@host` as ordinary input (see
+    // `DialSupport.reason(for:)`'s own doc comment). The error itself never
+    // leaves this type, so the sentence is computed where the error is
+    // caught and published here.
+    //
+    // Driven through the real `connect()`, like the verdict tests below, and
+    // for the same reason: what matters is that the sentence reaches the
+    // property the App reads on the path the App uses.
+
+    /// Derived, never spelled: the expected sentence is asked of the same
+    /// function the implementation asks, so a reworded sentence moves this
+    /// test with it instead of turning it red for nothing.
+    @Test func aDialThatThrewPublishesTheFixedReasonForThatError() async {
+        let error = HostKeyError.rejectedByUser
+        let vm = makeVM(connector: { _, _ in throw error })
+        _ = await vm.connect()
+        #expect(vm.lastFailureReason == DialSupport.reason(for: error))
+        // The positive companion to the two `nil` checks below: if this
+        // sentence were empty, both of those would be satisfied by a
+        // property nothing ever writes.
+        #expect(vm.lastFailureReason?.isEmpty == false)
+    }
+
+    /// A refusal decided BEFORE anything reached the wire has no dial to
+    /// explain, and the App must not write an audit row for a connect that
+    /// never happened. `nil` is what tells it so.
+    @Test func aRefusalThatNeverDialledPublishesNoReason() async {
+        let vm = makeVM()
+        vm.host = ""
+        _ = await vm.connect()
+        #expect(vm.lastFailureReason == nil)
+    }
+
+    /// A reason outliving its attempt would let the next failure — or the
+    /// next SUCCESS — be recorded with the previous one's sentence. Cleared
+    /// where every attempt starts, so both paths are covered by one line.
+    @Test func aNewAttemptClearsThePreviousReason() async {
+        let flag = DialFlag()
+        let vm = makeVM(connector: { _, _ in
+            if flag.throwsNext { throw HostKeyError.rejectedByUser }
+            return MockRemoteFileSystem(tree: ["/": []])
+        })
+        _ = await vm.connect()
+        #expect(vm.lastFailureReason != nil)
+        flag.throwsNext = false
+        _ = await vm.connect()
+        #expect(vm.lastFailureReason == nil)
+    }
+
+    /// A one-flag box, so the connector above can be told to stop throwing
+    /// between two attempts.
+    ///
+    /// `@unchecked Sendable` and safe by SEQUENCE rather than by a lock:
+    /// each `connect()` is awaited to completion before the flag is touched
+    /// again, so the write and the two reads never overlap. No wait here
+    /// blocks a thread, which is the rule this project's test targets are
+    /// held to.
+    private final class DialFlag: @unchecked Sendable {
+        var throwsNext = true
+    }
+
     // MARK: - lastFailureKind (connection-liveness plan, Task 7)
     //
     // The one fact the reconnect policy reads to decide whether repeating

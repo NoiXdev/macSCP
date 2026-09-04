@@ -157,6 +157,27 @@ struct SessionSidebar: View {
     let onDelete: (StoredSession) -> SessionListViewModel.JumpRestoreResult
     let onNew: () -> Void
     let onSelectImported: (SSHConfigHost) -> Void
+    /// Which STORED session the sidebar is pointing at, reported upward every
+    /// time the user points at one — not only when the id changes (session
+    /// overview plan, Task 2).
+    ///
+    /// The window shows a read-only overview of this session in the detail
+    /// area of an unconnected tab, so "the selection" has to be a fact the
+    /// window can read; `selectedSessionID` is `@State` here and stays that
+    /// way, because where the pointer is remains this view's own business.
+    /// `nil` says the sidebar points at no stored session: the
+    /// "New connection" row, or an entry from `~/.ssh/config`, both of which
+    /// put the FORM on screen and would be contradicted by an overview
+    /// hanging on behind it.
+    ///
+    /// Fired on every activation rather than on a change, deliberately:
+    /// clicking the row that is already selected is how a user gets the
+    /// overview back after opening the form from it, and an
+    /// `onChange(of:)`-shaped report would answer that click with silence.
+    ///
+    /// A plain callback and not an effect value, under the rule stated at
+    /// `onConnect`: a selection reaches nothing but this window.
+    let onSelectSession: (UUID?) -> Void
     let onEdit: (StoredSession) -> Void
     /// Session-row "Open Terminal" entry (P3c/T2) — connects exactly the way
     /// `onConnect` does and differs from it in the pane layout alone (the
@@ -399,7 +420,7 @@ struct SessionSidebar: View {
             }
 
             List {
-                Button(action: onNew) {
+                Button(action: startNewConnection) {
                     Label(L10n.string("sidebar.newConnection", "New connection"), systemImage: "plus")
                 }
                 .buttonStyle(.plain)
@@ -447,7 +468,16 @@ struct SessionSidebar: View {
                 // the highlight keeps naming the row the keyboard acts on.
                 // Only ever follows focus ONTO a row: focus leaving the
                 // sidebar must not clear a selection the user can still see.
-                if let newValue { selectedSessionID = newValue }
+                if let newValue {
+                    selectedSessionID = newValue
+                    // The report follows the selection here too: this is the
+                    // one path that moves it without going through
+                    // `moveSelection(to:)`, and a detail pane left on the
+                    // previous row's overview while the highlight sits on
+                    // another is precisely the drift this branch exists to
+                    // repair.
+                    onSelectSession(newValue)
+                }
             }
             .onChange(of: viewModel.sessions) { _, sessions in
                 // A selected tag's last carrier was deleted, or retagged
@@ -820,7 +850,7 @@ struct SessionSidebar: View {
                     Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
-                .onTapGesture(count: 1) { onSelectImported(host) }
+                .onTapGesture(count: 1) { selectImported(host) }
                 .help(L10n.string(
                     "sidebar.importedHelp",
                     "From ~/.ssh/config — fills the form (secrets are not imported)"))
@@ -869,7 +899,7 @@ struct SessionSidebar: View {
 
     @ViewBuilder
     private var backgroundMenu: some View {
-        Button(L10n.string("sidebar.newConnection", "New connection")) { onNew() }
+        Button(L10n.string("sidebar.newConnection", "New connection")) { startNewConnection() }
         Button(L10n.string("sidebar.newGroup", "New group…")) { beginNewGroup(forMoving: nil) }
         Divider()
         Button(L10n.string("menu.knownHosts", "Known Hosts…")) { onShowKnownHosts() }
@@ -939,12 +969,36 @@ struct SessionSidebar: View {
         moveSelection(to: copy)
     }
 
+    /// "New connection", from either of the two entries that offer it.
+    ///
+    /// Clears the selection BEFORE forwarding, so the highlight and the
+    /// detail pane agree: the window is about to show an empty form, and a
+    /// stored session left highlighted behind it would name a session that
+    /// form is not about. The keyboard focus is deliberately left where it
+    /// is — `focusedRowID` is SwiftUI's as much as this view's, and taking it
+    /// off a row is not this entry's business.
+    private func startNewConnection() {
+        selectedSessionID = nil
+        onSelectSession(nil)
+        onNew()
+    }
+
+    /// An entry from `~/.ssh/config`: fills the form, and is therefore the
+    /// same kind of statement "New connection" is — the detail pane stops
+    /// being about a stored session. Same clearing, same reason.
+    private func selectImported(_ host: SSHConfigHost) {
+        selectedSessionID = nil
+        onSelectSession(nil)
+        onSelectImported(host)
+    }
+
     /// Puts the sidebar's selection, and the keyboard with it, on one row.
     /// The two move together everywhere: a highlight the keyboard cannot
     /// reach is the "selection no key acts on" this task exists to avoid.
     private func moveSelection(to session: StoredSession) {
         selectedSessionID = session.id
         focusedRowID = session.id
+        onSelectSession(session.id)
     }
 
     // MARK: - Inline rename

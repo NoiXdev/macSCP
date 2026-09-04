@@ -76,6 +76,13 @@ extension ContentView {
             },
             onNew: { newConnection() },
             onSelectImported: { fillFromImported($0) },
+            // The sidebar's selection, reported upward (session overview
+            // plan, Task 2). The sidebar keeps owning WHERE the pointer is;
+            // the window only needs to know which stored session it names,
+            // because an unconnected tab shows that session's overview
+            // instead of an empty form. `nil` arrives from the two "New
+            // connection" entries and from an `~/.ssh/config` row.
+            onSelectSession: { overviewSessionID = $0 },
             onEdit: { stored in editStored(stored) },
             // The two terminal entries (P3c/T2). "Open Terminal" is
             // `connectFromSidebar` with one argument filled in — both are a
@@ -695,6 +702,51 @@ extension ContentView {
                             // so this stays a control the user presses.
                             onDiagnose: { showDiagnostics(for: .tab(tab)) },
                             onClose: { requestClose(tab) })
+                    }
+                    // Session overview branch (session overview plan, Task
+                    // 2). A single click on a stored session shows what is
+                    // stored about it instead of the empty "New connection"
+                    // form — read-only, with the window's own Connect, Edit
+                    // and Diagnose handed over as values.
+                    //
+                    // Ordered AFTER the three surfaces above and gated on
+                    // `mode == .new`, which is the whole of its condition:
+                    //
+                    // * a connecting, lost or failed tab is describing an
+                    //   ATTEMPT, and an overview of the session it was
+                    //   attempting would replace an explanation with a
+                    //   description;
+                    // * `.edit` means the form is holding a draft of some
+                    //   session, and a click that replaced it with an
+                    //   overview would drop that draft out of sight. Today's
+                    //   behaviour is that pointing at rows while editing
+                    //   only moves the highlight, and this keeps it. Every
+                    //   edit route ends at `ConnectionViewModel
+                    //   .beginEditing`, so reading the form's own mode covers
+                    //   them all rather than one clearing rule per entry.
+                    //
+                    // Nothing here is per-tab: `overviewSession` is the
+                    // window's, so a second unconnected tab shows the same
+                    // overview. That matches where the sidebar is — one
+                    // sidebar, one selection.
+                    else if let stored = overviewSession,
+                            tab.connectionViewModel.mode == .new {
+                        // Resolved on the main actor, where the two lists
+                        // live, and handed down as names — see
+                        // `SessionOverviewNames` for why the model takes
+                        // names rather than the ids the session carries.
+                        let names = overviewNames(for: stored)
+                        SessionOverviewView(
+                            session: stored,
+                            groupName: names.group,
+                            loginSetName: names.loginSet,
+                            // The same three entries the sidebar's own row
+                            // menu reaches, and no fourth of anything: the
+                            // connect one as an effect value the view cannot
+                            // fire without naming an input.
+                            onConnectSession: SessionRowConnectEffect { connectFromSidebar($0) },
+                            onEdit: { editStored($0) },
+                            onDiagnose: { showDiagnostics(for: .stored($0)) })
                     } else {
                         // Align the form to the top instead of centering it
                         // vertically (user feedback 2026-07-10, M5c/T0) —

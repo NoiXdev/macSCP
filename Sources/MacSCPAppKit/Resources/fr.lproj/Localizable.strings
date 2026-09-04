@@ -1157,3 +1157,37 @@
 "import.field.labels" = "Étiquettes";
 "import.result.updated %lld" = "Sessions existantes mises à jour : %lld";
 "import.result.secretsNotRead %lld" = "Mots de passe illisibles dans le trousseau : %lld";
+
+/* Session overview (session overview plan, Task 2) */
+"overview.section.facts" = "Détails";
+"overview.section.history" = "Connexions récentes";
+"overview.section.snippets" = "Snippets";
+"overview.fact.username" = "Nom d’utilisateur";
+"overview.fact.authentication" = "Méthode de connexion";
+"overview.fact.keyPath" = "Fichier de clé";
+"overview.fact.loginSet" = "Identifiants";
+"overview.fact.jump" = "Hôte de rebond";
+"overview.fact.bucket" = "Bucket";
+"overview.fact.region" = "Région";
+"overview.fact.endpoint" = "Point de terminaison";
+"overview.fact.pathStyle" = "Adressage par chemin";
+"overview.fact.baseURL" = "URL du serveur";
+"overview.fact.nextcloudPath" = "Chemin Nextcloud";
+"overview.fact.group" = "Groupe";
+"overview.fact.tags" = "Étiquettes";
+"overview.fact.panes" = "S’ouvre sur";
+"overview.fact.importedFrom" = "Importé depuis";
+"overview.hostKey" = "Clé d’hôte";
+"overview.hostKey.unknown" = "Pas encore connue — la prochaine connexion la demandera";
+"overview.secret" = "Mot de passe";
+"overview.secret.stored" = "Enregistré dans le trousseau";
+"overview.secret.missing" = "Non enregistré — demandé à la connexion";
+"overview.history.empty" = "Rien n’est encore enregistré pour cette connexion.";
+"overview.history.column.started" = "Début";
+"overview.history.column.outcome" = "Résultat";
+"overview.history.column.transfers" = "Transferts";
+"overview.history.noEnd" = "Aucune déconnexion enregistrée";
+"overview.history.diagnose" = "Ouvrir le diagnostic";
+"overview.history.transfers %1$lld %2$lld %3$lld" = "↑%1$lld ↓%2$lld ✗%3$lld";
+"overview.snippets.empty" = "Aucun snippet enregistré.";
+"overview.snippets.run" = "Exécuter";
