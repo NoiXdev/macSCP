@@ -303,17 +303,24 @@ struct PollingGuardTests {
     /// `docs/superpowers/specs/2026-08-08-testsuite-hang-investigation.md`
     /// describes, reached from the other side.
     ///
-    /// The regex matches a `.get()` immediately preceded by an identifier
-    /// ending `future`, `Future` or `futureResult` — `promise.futureResult`
-    /// and a bare `future` local are both real shapes this tree carried; a
-    /// `.` breaks `\w*`, so the match is always the LAST identifier segment
-    /// before the call, never a longer qualified path. `Result<Value,
+    /// The regex matches a `.get()` preceded, across any run of
+    /// whitespace including a line break, by an identifier ending
+    /// `future`, `Future` or `futureResult` — `promise.futureResult` and a
+    /// bare `future` local are both real shapes this tree carried; a `.`
+    /// breaks `\w*`, so the match is always the LAST identifier segment
+    /// before the call, never a longer qualified path. The whitespace run
+    /// matters on its own: a fix-round review found `promise.futureResult`
+    /// wrapped onto its own line above a lone `.get()` compiles identically
+    /// to the one-line form and escaped an earlier version of this regex
+    /// that required the two adjacent — `FutureGetRegexFixture`'s second
+    /// demonstration is exactly that wrapped shape. `Result<Value,
     /// Error>.get()` — a same-named, unrelated stdlib API this tree also
     /// calls (`BandwidthBucketTests`, `SSHAgentClientTests`,
     /// `UpdateCheckerTests`, `HostKeyValidationTests`,
-    /// `EmbeddedKeyPorterTests`) — is not this shape and does not match: its
-    /// receiver identifiers (`result`, `$0`, a `#require(...)` call result)
-    /// never end in `future`/`Future`/`futureResult`.
+    /// `EmbeddedKeyPorterTests`, `SSHTerminalViewSizingTests`) — is not this
+    /// shape and does not match: its receiver identifiers (`result`, `$0`,
+    /// a `#require(...)` call result, a bare `outcome`) never end in
+    /// `future`/`Future`/`futureResult`.
     ///
     /// Scanned over comment-and-string-blanked source, same as
     /// `noSleepingChildRacesWorkInAGroup` and
@@ -327,7 +334,7 @@ struct PollingGuardTests {
     /// `.get()` in `Tests/` that would otherwise match this regex, at the
     /// point this check was written, sits in such a comment.
     @Test func noEventLoopFutureIsAwaitedWithGet() throws {
-        let pattern = try NSRegularExpression(pattern: #"\w*(?:futureResult|future|Future)\.get\(\)"#)
+        let pattern = try NSRegularExpression(pattern: #"\w*(?:futureResult|future|Future)\s*\.get\(\)"#)
         let offenders = try Self.sources().compactMap { source -> String? in
             let blanked = try Self.blankCommentsAndStrings(source.text)
             let range = NSRange(blanked.startIndex..., in: blanked)
@@ -342,13 +349,20 @@ struct PollingGuardTests {
         // same way the negative above is, so this positive proves the
         // negative's own scanning path finds the shape, not a raw-text
         // path the negative no longer uses.
+        //
+        // Counted, not just non-empty: the fixture demonstrates TWO shapes
+        // — `future.get()`/`promise.futureResult.get()` on one line, and
+        // `promise.futureResult` wrapped onto its own line above a lone
+        // `.get()` — and a count of 1 here would mean the wrapped
+        // demonstration stopped matching (the exact way the regex escaped
+        // before `\s*` was added) while this positive stayed green on the
+        // first shape alone.
         let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/FutureGetRegexFixture.swift")
         let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
         let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
-        #expect(
-            pattern.firstMatch(
-                in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
-                != nil)
+        let fixtureMatches = pattern.matches(
+            in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
+        #expect(fixtureMatches.count == 3, "\(fixtureMatches.count)")
     }
 
     /// The name of every `func` a helper file declares whose body contains
