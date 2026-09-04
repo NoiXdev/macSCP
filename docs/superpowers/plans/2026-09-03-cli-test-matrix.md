@@ -42,16 +42,16 @@ the Docker rig (`MACSCP_ITEST=1`), `ProtocolCapabilities`.
 - Create: `Tests/macSCPCoreTests/Support/CLIMatrix.swift` (temporary store with one session per backend, environment with the secret, `run(_ arguments: [String]) async throws -> SubprocessResult`, remote cleanup through the backend's file system)
 - Test: `CLIMatrixSSHITests`, `CLIMatrixS3ITests`, `CLIMatrixWebDAVITests` — first case each: `ls --json` on the root returns a JSON array.
 
-- [ ] Red first (the S3 and WebDAV cases fail today because no session fixture exists); commit `test(cli): a matrix helper drives the binary against every rig backend`.
+- [x] Red first (the S3 and WebDAV cases fail today because no session fixture exists); commit `test(cli): a matrix helper drives the binary against every rig backend`.
 
 ### Task 2: The file commands × backends
 
-- [ ] Parameterised cases per backend: `mkdir`, `put` (file), `put --recursive` (a tree), `ls --json` (names, sizes, kinds), `get`, `get --recursive`, `rm`, `rm --recursive` (with `--allow-root-delete` refused on the root); `--on-conflict` overwrite / rename / skip on `put` over an existing file; remote state verified through the backend's file system after each; commit `test(cli): every file command runs against SSH, S3 and WebDAV`.
+- [x] Parameterised cases per backend: `mkdir`, `put` (file), `put --recursive` (a tree), `ls --json` (names, sizes, kinds), `get`, `get --recursive`, `rm`, `rm --recursive` (with `--allow-root-delete` refused on the root); `--on-conflict` overwrite / rename / skip on `put` over an existing file; remote state verified through the backend's file system after each; commit `test(cli): every file command runs against SSH, S3 and WebDAV`.
 
 ### Task 3: Sessions and secrets flags
 
-- [ ] `sessions --json --group <name>` and `--tag <name>` filter as documented (the temporary store carries two groups and two tags); `--password-command` in a real invocation (a shell printing the secret, the value never in argv or output — Bools first); `--non-interactive` + an unknown host key refused for every backend that has host keys; commit `test(cli): sessions filters and the password command, driven through the binary`.
+- [x] `sessions --json --group <name>` and `--tag <name>` filter as documented (the temporary store carries two groups and two tags); `--password-command` in a real invocation (a shell printing the secret, the value never in argv or output — Bools first); `--non-interactive` + an unknown host key refused for every backend that has host keys; commit `test(cli): sessions filters and the password command, driven through the binary`.
 
 ### Task 4: Closeout
 
-- [ ] `docs/BACKLOG.md` "CLI test coverage" → Done with the counts (cases per backend, skipped operations and why); commit `docs(backlog): the CLI matrix covers every backend the rig offers`.
+- [x] `docs/BACKLOG.md` "CLI test coverage" → Done with the counts (cases per backend, skipped operations and why); commit `docs(backlog): the CLI matrix covers every backend the rig offers`.
