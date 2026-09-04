@@ -180,7 +180,11 @@ public struct DiagnosticReport: Sendable, Equatable {
     /// the panel no longer has. The lowercase that falls out of the key is
     /// the register the rest of this rendering is already in — `step.id` and
     /// `DiagnosticOutcome.label` are both printed as they are spelled.
-    private static func header(_ key: String) -> String {
+    ///
+    /// Internal, not private: `DiagnoseRendering` derives the same column
+    /// names for the CLI's JSON `hops` field and reuses this rather than
+    /// spelling the same `.split(separator: ".").last` a second time.
+    static func header(_ key: String) -> String {
         String(key.split(separator: ".").last ?? Substring(key))
     }
 

@@ -207,3 +207,58 @@ public func secretSources(
     sources.append(KeychainSecretSource(store: keychainStore))
     return sources
 }
+
+/// The CLI's secret chain as the one source `ConnectionDiagnostics` takes:
+/// the first source that answers non-empty wins, the same rule
+/// `SecretResolver` applies.
+///
+/// `SecretResolver` itself hands back a `ResolvedSecret` and is done —
+/// `ConnectionDiagnostics` wants a single, reusable `SecretSource` it can
+/// hold for the run instead, so this re-applies "first non-empty wins" as a
+/// `SecretSource` of its own, and remembers which of its sources actually
+/// answered so `--verbose` can name it, the same thing
+/// `ResolvedSecret.sourceLabel` is for on the connect path.
+public struct ChainedSecretSource: SecretSource {
+    private let sources: [any SecretSource]
+    private let answered: AnsweredLabel
+
+    public init(_ sources: [any SecretSource]) {
+        self.sources = sources
+        self.answered = AnsweredLabel()
+    }
+
+    /// The answering source's label after a hit, `"none"` before one —
+    /// `"none"` reads as a state no source has reached yet, not as the name
+    /// of a source nobody wrote.
+    public var label: String { answered.value }
+
+    public func secret(for sessionID: UUID) throws -> String? {
+        for source in sources {
+            guard let value = try source.secret(for: sessionID), !value.isEmpty else { continue }
+            answered.value = source.label
+            return value
+        }
+        return nil
+    }
+}
+
+/// The reference-type box behind `ChainedSecretSource.label`.
+///
+/// Needed because `SecretSource.secret(for:)` is non-mutating — a struct's
+/// own stored property cannot record which source answered from inside it,
+/// so the record lives in this class instead, the same shape
+/// `PasswordCommandSecretSource`'s `CollectedOutput` uses for the same
+/// reason. Lock-protected rather than left `@unchecked Sendable` on trust
+/// alone: unlike `CollectedOutput`'s single write-then-read handoff on a
+/// semaphore, `ChainedSecretSource` is a public `Sendable` value a caller
+/// could read `label` from on one thread while `secret(for:)` runs on
+/// another.
+private final class AnsweredLabel: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = "none"
+
+    var value: String {
+        get { lock.withLock { current } }
+        set { lock.withLock { current = newValue } }
+    }
+}

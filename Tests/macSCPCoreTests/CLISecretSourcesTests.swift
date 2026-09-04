@@ -223,3 +223,53 @@ struct SecretSourcesCompositionTests {
         #expect(!sources.map(\.label).isEmpty)
     }
 }
+
+/// `ChainedSecretSource` re-applies `SecretResolver`'s "first non-empty
+/// wins" rule as a `SecretSource` of its own, for `ConnectionDiagnostics` to
+/// hold as a single reusable source.
+@Suite("ChainedSecretSource")
+struct ChainedSecretSourceTests {
+    private struct StubSecretSource: SecretSource {
+        let label: String
+        let value: String?
+        func secret(for sessionID: UUID) throws -> String? { value }
+    }
+
+    /// The value under test never reaches the expectation's own source text
+    /// (CLAUDE.md, "a test that holds a value it must not leak computes its
+    /// Bools before the expectation") — `theSecret` is compared to the
+    /// result off to the side, and only the resulting `Bool`s are handed to
+    /// `#expect`.
+    @Test func theChainAnswersTheFirstNonEmptySourceAndSkipsAnEmptyOne() throws {
+        let theSecret = "hunter2"
+        let chain = ChainedSecretSource([
+            StubSecretSource(label: "empty", value: ""),
+            StubSecretSource(label: "winner", value: theSecret),
+            StubSecretSource(label: "unreached", value: "should-not-be-read"),
+        ])
+        let resolved = try chain.secret(for: UUID())
+        let resolvedTheSecret = resolved == theSecret
+        let labelIsTheWinningSource = chain.label == "winner"
+        #expect(resolvedTheSecret)
+        #expect(labelIsTheWinningSource)
+    }
+
+    @Test func aNilAnsweringSourceIsSkippedLikeAnEmptyOne() throws {
+        let theSecret = "s3cr3t"
+        let chain = ChainedSecretSource([
+            StubSecretSource(label: "nothing-here", value: nil),
+            StubSecretSource(label: "winner", value: theSecret),
+        ])
+        let resolved = try chain.secret(for: UUID())
+        #expect(resolved == theSecret)
+        #expect(chain.label == "winner")
+    }
+
+    @Test func labelIsNoneBeforeAnySourceHasAnswered() {
+        #expect(ChainedSecretSource([]).label == "none")
+    }
+
+    @Test func anEmptyChainResolvesToNil() throws {
+        #expect(try ChainedSecretSource([]).secret(for: UUID()) == nil)
+    }
+}
