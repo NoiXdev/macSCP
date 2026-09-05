@@ -673,6 +673,11 @@ extension ContentView {
         // fresh tab.
         claimSeededTabs()
         registerHeldTabs()
+        // Third, and only after the claim: a drop arriving in ANOTHER window
+        // resolves this window's model through the registry (Detachable Tabs
+        // plan, Task 3) — `TabRegistry.registerModel(_:for:)` holds it
+        // weakly, and `releaseHeldTabsOnClose()` is where it is given up.
+        TabRegistry.shared.registerModel(tabsModel, for: windowID)
         // Snippet list for the Terminal menu, read once per window — a
         // synchronous `snippets.json` read, which is why it is here and not
         // in `wireTabCommands()` below (Task 2 fix round 1: it briefly was,
@@ -1016,6 +1021,11 @@ extension ContentView {
         let held = tabsModel.tabs
         let ids = held.map(\.id)
         let closingWindow = windowID
+        // Synchronously, before anything can suspend: from this moment a
+        // drag let go on another window's strip must not be able to name
+        // this window as a source. The teardown below is what still has to
+        // happen; the lookup is not part of it.
+        TabRegistry.shared.unregisterModel(for: closingWindow)
         Task { @MainActor in
             for tab in held {
                 await teardown(tab, reason: .userRequested)
@@ -1107,6 +1117,61 @@ extension ContentView {
                 window: ownWindowID, removing: outcome.replacementID)
             if outcome.closesWindow && !cameBack { ownWindow?.close() }
         }
+    }
+
+    /// A tab was dragged out of ANOTHER window's strip and let go on this
+    /// window's (Detachable Tabs plan, Task 3).
+    ///
+    /// The payload is the only thing that says where it came from — a drop
+    /// destination is told nothing else — so the source window's model is
+    /// resolved through the registry. A `nil` there is an ordinary outcome,
+    /// not an error: the source window closed while the drag was in flight,
+    /// or the payload is from a previous launch of nothing at all. Refusing
+    /// is the whole handling.
+    ///
+    /// `TabDetachSequence.moveBetweenWindows` does the rest in ONE
+    /// main-actor turn — the close decision while the source still holds the
+    /// tab, the handover through `TabRegistry.move(_:from:to:targetWindow:)`,
+    /// and a fresh tab in the leaver's place if the source would otherwise
+    /// be left empty (`TabsViewModel.activeTab` traps on an emptied model,
+    /// and a body runs over the source before it can close).
+    ///
+    /// **The replacement tab is made by THIS window**, which is the one
+    /// place this differs from the menu's path. `makeTab()` reads
+    /// `settingsStore` and `bandwidthLimiter`, and both are app-scope state
+    /// `MacSCPApp` hands to every `ContentView` — so the tab it builds is
+    /// the same tab the source window would have built. The alternative,
+    /// asking the source window for one, cannot be done inside this turn,
+    /// and the turn is what keeps the model from being seen empty.
+    ///
+    /// The close is not performed here: this window cannot close another
+    /// one. See `TabWindowCloseRequest` for why the answer travels back as a
+    /// notification, and why it is posted a turn later.
+    func acceptDroppedTab(_ payload: TabDragPayload) {
+        guard let source = TabRegistry.shared.model(for: payload.sourceWindowID) else { return }
+        let outcome = TabDetachSequence.moveBetweenWindows(
+            payload.tabID, from: source, sourceWindow: payload.sourceWindowID,
+            to: tabsModel, targetWindow: windowID, in: TabRegistry.shared,
+            replacement: makeTab)
+        guard outcome.closesWindow else { return }
+        let leavingWindow = payload.sourceWindowID
+        Task { @MainActor in TabWindowCloseRequest.post(leavingWindow) }
+    }
+
+    /// This window was the SOURCE of a cross-window drag and has nothing of
+    /// its own left (Detachable Tabs plan, Task 3). Posted by the window the
+    /// tab arrived in; every window receives it and only the one it names
+    /// acts, the same filter `handleWindowWillClose(_:)` applies to
+    /// `NSWindow.willCloseNotification`.
+    ///
+    /// Closing runs the ordinary path from here on: `willClose` →
+    /// `releaseHeldTabsOnClose()` → teardown of exactly what this window
+    /// still holds, which by now is the fresh tab put in the leaver's place
+    /// and nothing else. The tab that left is already registered to the
+    /// other window and is not touched.
+    func handleWindowShouldCloseAfterMove(_ notification: Notification) {
+        guard TabWindowCloseRequest.windowID(from: notification) == windowID else { return }
+        window?.close()
     }
 
     /// Tab close entry point (strip ✕, ⌘W): a tab with active transfers OF

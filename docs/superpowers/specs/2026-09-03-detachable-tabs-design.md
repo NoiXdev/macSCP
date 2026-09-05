@@ -75,6 +75,39 @@ today (teardown on close → `cancelAll` → `shutdown` → `disconnect`).
 - Drag between windows: the strip's drag payload becomes the tab id; a
   drop on another window's strip claims it; a drop outside any strip
   (on the desktop) is "detach" — the same path as the menu.
+- **Measured 2026-09-05 (Task 3): the drop-outside half is NOT built,
+  because macOS 15 offers no hook that reports it.** What was read, in
+  the macOS 26.5 SDK, against this package's `platforms:
+  [.macOS(.v15)]`:
+  - `SwiftUI.swiftinterface`: the only "this drag has ended" callback is
+    `View.onDragSessionUpdated(_:)`, whose `DragSession.Phase` carries
+    `.ended(DropOperation)`. It is `@available(macOS 26.0, *)`, together
+    with `DragSession` and `DragConfiguration` themselves — eleven major
+    versions above this app's minimum. There is no `onDragEnd` at any
+    availability (grep: zero occurrences), and neither `draggable(_:)`,
+    `draggable(_:preview:)` nor `onDrag(_:)` returns or accepts anything
+    that reports an outcome.
+  - `AppKit`, `NSDragging.h` line 157:
+    `draggingSession:endedAtPoint:operation:` is a method of
+    **`NSDraggingSource`** — the object that STARTED the session. With
+    `.draggable`, that object is SwiftUI's, and it is not vended. There
+    is no observer-side equivalent: nothing lets a view learn that a
+    session some other object began has ended with `NSDragOperationNone`.
+  - So the only route is an `NSViewRepresentable` that calls
+    `beginDraggingSession(with:event:source:)` itself and is its own
+    `NSDraggingSource`. That REPLACES `.draggable` on the tab rather than
+    sitting beside it: two drag sources on one view is two gestures, and
+    `TabContextMenuWiringGuardTests.TabDragWiringGuardTests` already
+    fails a second `.draggable(` by count. Rebuilding the in-strip
+    reorder on top of a hand-rolled AppKit drag was out of scope for a
+    task whose constraint was that the reorder keep working unchanged.
+
+  Detach therefore stays on the menu ("Move Tab to New Window", tab
+  context menu and Window menu), which the plan permits. The work this
+  leaves open is one of: raise the minimum to macOS 26 and use
+  `onDragSessionUpdated`, or move the whole tab drag to AppKit and own
+  both halves. Neither is a small edit, and both should be decided
+  rather than drifted into.
 - Last tab gone → the window closes, unless it is the last window
   (registry knows the window count).
 

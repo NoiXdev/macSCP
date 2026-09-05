@@ -72,6 +72,24 @@ struct TabRegistryNoTeardownGuardTests {
         .appendingPathComponent("Sources/MacSCPAppKit/TabDetachSequence.swift")
     private static let lifecycleFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
+    /// Added by Task 3 (drag between windows): the strip's drop handler is
+    /// the second place a move now starts from, and it lives inside a view
+    /// body rather than in a file of its own — hence a span rather than a
+    /// whole file below.
+    private static let stripFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/TabStripView.swift")
+
+    /// Matches the strip's drop modifier; the brace that follows it opens
+    /// the drop handler's own closure body. Task 3 kept the destination on
+    /// `String.self` — the payload is a JSON envelope carried as text — so
+    /// this anchor is the same text the reorder path has always used.
+    private static let dropDestinationDeclaration = ".dropDestination(for: String.self)"
+
+    /// Matches `func acceptDroppedTab(_ payload: TabDragPayload)` in
+    /// `ContentView+Lifecycle.swift` — the window-side half of a
+    /// cross-window drop, and the one function in that file this suite
+    /// scans NEGATIVELY (the file as a whole is its positive control).
+    private static let acceptDropDeclaration = "func acceptDroppedTab(_ payload: TabDragPayload)"
 
     /// Matches `public func detach(tabID: UUID) -> Tab?` in
     /// `TabsViewModel.swift` — the brace that follows it opens the body
@@ -127,6 +145,45 @@ struct TabRegistryNoTeardownGuardTests {
         let source = try Self.strictSource(of: Self.detachSequenceFile)
         for name in Self.forbidden {
             #expect(!source.contains(name), "TabDetachSequence.swift contains \"\(name)\"")
+        }
+    }
+
+    /// The strip's drop handler (Task 3), which now routes a drop either to
+    /// the in-strip reorder or to the window's cross-window handler. It
+    /// reaches a `TabsViewModel` and the registry, so it is exactly the kind
+    /// of place a teardown call could be added without any type refusing it.
+    ///
+    /// The three POSITIVE expectations come FIRST and are not decoration:
+    /// `declarationBodyRange` throws when the anchor is gone, but it cannot
+    /// tell a mislocated span from the right one, and a span that is not the
+    /// drop handler would satisfy four `!contains` checks perfectly
+    /// (CLAUDE.md, "A negative check whose SPAN is wrong can never match").
+    /// These three say the span really is the handler, by naming the plan it
+    /// asks and both routes it can take.
+    @Test func theStripsDropHandlerNeverCallsTeardown() throws {
+        let source = try Self.strictSource(of: Self.stripFile)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: Self.dropDestinationDeclaration, in: source)
+        #expect(body.contains("TabDropPlan.route("), "the scanned span is not the drop handler")
+        #expect(body.contains("onReorder("), "the drop handler's reorder route is gone")
+        #expect(body.contains("onDropFromOtherWindow("), "the drop handler's cross-window route is gone")
+        for name in Self.forbidden {
+            #expect(!body.contains(name), "the strip's drop handler contains \"\(name)\"")
+        }
+    }
+
+    /// `acceptDroppedTab(_:)`'s body — the window's side of a cross-window
+    /// drop. Same shape: one positive naming the sequence it delegates to,
+    /// so the span is known to be the right one, then the four negatives.
+    @Test func theCrossWindowDropHandlerNeverCallsTeardown() throws {
+        let source = try Self.strictSource(of: Self.lifecycleFile)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: Self.acceptDropDeclaration, in: source)
+        #expect(
+            body.contains("TabDetachSequence.moveBetweenWindows("),
+            "the scanned span is not the cross-window drop handler")
+        for name in Self.forbidden {
+            #expect(!body.contains(name), "acceptDroppedTab(_:)'s body contains \"\(name)\"")
         }
     }
 

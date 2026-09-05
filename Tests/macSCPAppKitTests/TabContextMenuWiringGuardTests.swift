@@ -1117,16 +1117,19 @@ struct TabContextMenuWiringGuardTests {
     ///   distance, which is checked there over every ordered pair of a
     ///   strip rather than at a couple of chosen distances.
     ///
-    /// What remains here are six claims about the gesture's own wiring,
-    /// which no type can carry: that the drag and the drop each exist
-    /// exactly once, that the drag carries this tab's id rather than some
-    /// other string AND writes that same tab down as the drag's origin,
-    /// that the drop hands both identities on rather than doing something
-    /// else with them, that the targeting closure records the targeting and
-    /// decides nothing about it, that the route reaching the item is the
-    /// strip's own and not a closure in front of it, and that the wiring
-    /// closure hands both identities to the one reordering rule. Two files
-    /// are read for that: the strip, and the place the route is wired.
+    /// What remains here are seven claims about the gesture's own wiring,
+    /// which no type can carry — counted in the pass that added the
+    /// seventh, 2026-09-05: that the drag and the drop each exist exactly
+    /// once, that the drag carries this tab's id and this window's rather
+    /// than some other string AND writes that same tab down as the drag's
+    /// origin, that the drop routes through `TabDropPlan` and hands each of
+    /// its two answers to the matching route, that the targeting closure
+    /// records the targeting and decides nothing about it, that the reorder
+    /// route reaching the item is the strip's own and not a closure in
+    /// front of it, that the cross-window route and the window identity
+    /// reach it the same way, and that the wiring closure hands both
+    /// identities to the one reordering rule. Two files are read for that:
+    /// the strip, and the place the route is wired.
     /// Fail-closed: a missing anchor, unbalanced braces, an unterminated
     /// literal or an unreadable file all fail, and every message names the
     /// file, the construct and what to do about it.
@@ -1154,7 +1157,7 @@ struct TabContextMenuWiringGuardTests {
         private static let sanctionedDragPayloadSource = """
             private func dragPayload() -> String {
                 dragOrigin.draggedTabID = tab.id
-                return tab.id.uuidString
+                return TabDragPayload(tabID: tab.id, sourceWindowID: windowID).encoded()
             }
             """
 
@@ -1167,18 +1170,39 @@ struct TabContextMenuWiringGuardTests {
         /// `TabBackgroundPlanTests` reaches it.
         private static let sanctionedTargeting = "isDropTargeted=$0"
 
-        /// The payload question, asked rather than answered inline.
-        private static let sanctionedPayloadRead = "TabDropPlan.draggedTabID(from:payload)"
+        /// The payload question, asked rather than answered inline. Since
+        /// Task 3 it is `route`, not `draggedTabID`: the drop now has two
+        /// answers to tell apart (this window's own drag, or another
+        /// window's), and where that line is drawn is a rule, so it belongs
+        /// in `TabDropPlan` where `TabDragTests` calls it.
+        private static let sanctionedPayloadRead = "TabDropPlan.route(payload:payload,ownWindow:windowID)"
 
-        /// The drop's only outward call: the id the payload named and the
-        /// tab this item draws. Also a complete call — `onReorder(draggedID,tab2)`
+        /// The drop's reorder call: the id the payload named and the tab
+        /// this item draws. A complete call — `onReorder(draggedID,tab2)`
         /// does not contain it.
         private static let sanctionedRoute = "onReorder(draggedID,tab)"
 
+        /// The drop's OTHER outward call (Task 3), for a tab dragged in from
+        /// another window: the payload, whole, handed on. The tab it was let
+        /// go on is deliberately not passed — a tab arriving from elsewhere
+        /// is appended, and where it lands is not a decision this gesture
+        /// gets to make.
+        private static let sanctionedCrossWindowRoute = "onDropFromOtherWindow(carried)"
+
         /// The strip handing the route to the item, up to and including the
-        /// closing parenthesis of the construction — so a route wrapped in
-        /// a closure, or merely renamed, does not contain it.
-        private static let sanctionedRouteHandOver = "onReorder:onReorder)"
+        /// comma that ends the argument — so a route wrapped in a closure,
+        /// or merely renamed, does not contain it. It was the construction's
+        /// closing parenthesis until Task 3 added two arguments after it.
+        private static let sanctionedRouteHandOver = "onReorder:onReorder,"
+
+        /// The same for Task 3's two additions: the window this strip is
+        /// drawing, and the route a tab arriving from another window takes.
+        /// Both bare, for the same reason — a closure in between could hand
+        /// the item a different window's id, which would make every drop
+        /// look like a reorder, or drop the cross-window route on the floor.
+        private static let sanctionedWindowHandOver = "windowID:windowID,"
+        private static let sanctionedCrossWindowHandOver =
+            "onDropFromOtherWindow:onDropFromOtherWindow)"
 
         /// The route as a stored property, with its type: one on the strip,
         /// one on the item. A computed property, or a local of another
@@ -1188,6 +1212,10 @@ struct TabContextMenuWiringGuardTests {
         /// Any binding of the name at all, whatever its shape — the count
         /// that notices a third one the two text anchors would not.
         private static let anyRouteBinding = "letonReorder"
+
+        /// The same, for Task 3's two additions.
+        private static let anyWindowBinding = "letwindowID"
+        private static let anyCrossWindowBinding = "letonDropFromOtherWindow"
 
         /// Where the route is wired to the model.
         private static let wiringFile = TabContextMenuWiringGuardTests.wiringFile
@@ -1248,7 +1276,7 @@ struct TabContextMenuWiringGuardTests {
             TabContextMenuWiringGuardTests.occurrences(of: needle, in: haystack)
         }
 
-        // MARK: - The five remaining claims
+        // MARK: - The seven remaining claims
 
         /// One drag source, one drop target. A second of either is a second
         /// gesture path, and would also make "the drop closure" ambiguous for
@@ -1311,9 +1339,14 @@ struct TabContextMenuWiringGuardTests {
                 describing: "this guard's own sanctioned drag payload")
         }
 
-        /// The drop reads the payload and hands both identities on. It can
-        /// no longer compute anything: there is nothing numeric in scope,
-        /// and the two values are of different types.
+        /// The drop asks `TabDropPlan` and hands each answer to the route
+        /// that matches it. It can no longer compute anything: there is
+        /// nothing numeric in scope, and the reorder's two values are of
+        /// different types.
+        ///
+        /// Both routes are counted, at exactly one each. A drop that had
+        /// lost its cross-window arm would still reorder perfectly, which is
+        /// precisely the shape that goes unnoticed.
         @Test func theDropHandsOverBothIdentitiesAndDoesNothingElse() throws {
             let body = try Self.dropBody(
                 in: String(contentsOf: Self.stripFile, encoding: .utf8))
@@ -1329,6 +1362,14 @@ struct TabContextMenuWiringGuardTests {
                 \(Self.stripFile.path), found \(routes) — the drop is not handing the \
                 dragged id and this tab to the one reorder route. If the route was \
                 renamed, update `sanctionedRoute` in this guard.
+                """)
+            let crossWindow = Self.occurrences(of: Self.sanctionedCrossWindowRoute, in: body)
+            #expect(crossWindow == 1, """
+                expected exactly 1 `\(Self.sanctionedCrossWindowRoute)` in the drop \
+                closure in \(Self.stripFile.path), found \(crossWindow) — a tab dragged \
+                in from another window reaches nothing, and the drop still reorders \
+                perfectly, so nothing else here notices. If the route was renamed, \
+                update `sanctionedCrossWindowRoute` in this guard.
                 """)
             for route in Self.foreignRoutes {
                 #expect(!body.contains(route), """
@@ -1416,6 +1457,57 @@ struct TabContextMenuWiringGuardTests {
                 """)
         }
 
+        /// Task 3's two additions reach the item the same way the reorder
+        /// route does: bare, with no closure in between.
+        ///
+        /// Each is a different silent failure. A wrapped or wrong `windowID`
+        /// makes the item compare the payload's source window against
+        /// something that is not this window — every drop then reads as a
+        /// cross-window move, or every one reads as a reorder, and the drop
+        /// closure, both routes and every type are untouched. A wrapped
+        /// `onDropFromOtherWindow` can swallow the payload entirely, which
+        /// looks exactly like a drag the user aimed badly.
+        ///
+        /// Counted while writing this check: the strip file binds `windowID`
+        /// once on the strip and once on the item, and hands it over once;
+        /// `onDropFromOtherWindow` likewise. The properties are counted
+        /// through `anyWindowBinding`/`anyCrossWindowBinding` rather than
+        /// through their spelled-out types, so a third binding of either
+        /// name — which could shadow the real one before the hand-over reads
+        /// it — is what the numbers below notice.
+        @Test func theCrossWindowRouteAndTheWindowIdentityReachTheItemUnwrapped() throws {
+            let canonical = try Self.canonicalStrip()
+            let windowHandOvers = Self.occurrences(of: Self.sanctionedWindowHandOver, in: canonical)
+            #expect(windowHandOvers == 1, """
+                expected exactly 1 `\(Self.sanctionedWindowHandOver)` in \
+                \(Self.stripFile.path), found \(windowHandOvers) — the item is not \
+                being handed the strip's own window id. Anything else there makes \
+                every drop read as the same kind, without changing the drop, the \
+                payload or either type.
+                """)
+            let crossHandOvers = Self.occurrences(
+                of: Self.sanctionedCrossWindowHandOver, in: canonical)
+            #expect(crossHandOvers == 1, """
+                expected exactly 1 `\(Self.sanctionedCrossWindowHandOver)` in \
+                \(Self.stripFile.path), found \(crossHandOvers) — a closure in between \
+                can swallow the payload, which is indistinguishable from a drag that \
+                missed.
+                """)
+            let windowBindings = Self.occurrences(of: Self.anyWindowBinding, in: canonical)
+            #expect(windowBindings == 2, """
+                expected exactly 2 `\(Self.anyWindowBinding)` in \(Self.stripFile.path), \
+                found \(windowBindings) — the window id is a stored property on the \
+                strip and on the item, and a third binding of that name can shadow it \
+                before the hand-over reads it.
+                """)
+            let crossBindings = Self.occurrences(of: Self.anyCrossWindowBinding, in: canonical)
+            #expect(crossBindings == 2, """
+                expected exactly 2 `\(Self.anyCrossWindowBinding)` in \
+                \(Self.stripFile.path), found \(crossBindings) — same shape as above, \
+                for the cross-window route.
+                """)
+        }
+
         /// What the route is wired to at the other end. The strip hands two
         /// identities out; this is the one place that decides what happens
         /// to them, and `onReorder: { _, _ in }` makes dragging do nothing
@@ -1450,9 +1542,16 @@ struct TabContextMenuWiringGuardTests {
         static let sanctionedDropSource = """
             .draggable(dragPayload())
             .dropDestination(for: String.self) { payload, _ in
-                guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
-                onReorder(draggedID, tab)
-                return true
+                switch TabDropPlan.route(payload: payload, ownWindow: windowID) {
+                case .reorder(let draggedID):
+                    onReorder(draggedID, tab)
+                    return true
+                case .acrossWindows(let carried):
+                    onDropFromOtherWindow(carried)
+                    return true
+                case .none:
+                    return false
+                }
             } isTargeted: { isDropTargeted = $0 }
             """
 
@@ -1460,6 +1559,7 @@ struct TabContextMenuWiringGuardTests {
             let body = try Self.dropBody(in: Self.sanctionedDropSource)
             #expect(body.contains(Self.sanctionedPayloadRead))
             #expect(Self.occurrences(of: Self.sanctionedRoute, in: body) == 1)
+            #expect(Self.occurrences(of: Self.sanctionedCrossWindowRoute, in: body) == 1)
             for route in Self.foreignRoutes { #expect(!body.contains(route)) }
             let canonical = try TabContextMenuWiringGuardTests
                 .canonicalize(Self.sanctionedDropSource)
@@ -1496,13 +1596,16 @@ struct TabContextMenuWiringGuardTests {
         }
 
         /// The mirror image: the origin is recorded correctly and the drag
-        /// carries something else.
+        /// carries something else. Since Task 3 the probe is the one that
+        /// costs nothing to write and cannot be seen from anywhere else — a
+        /// payload naming a window that is not this one, which makes every
+        /// drop on this strip read as a cross-window move.
         @Test func scannerFlagsAPayloadThatCarriesAnotherValue() throws {
             let sanctioned = try Self.sanctionedDragPayloadBody()
             let miscarried = try TabContextMenuWiringGuardTests.canonicalBody(
                 after: Self.dragPayloadAnchor,
                 in: Self.sanctionedDragPayloadSource.replacingOccurrences(
-                    of: "return tab.id.uuidString", with: "return tab.displayTitle"),
+                    of: "sourceWindowID: windowID", with: "sourceWindowID: WindowID()"),
                 describing: "a probe")
             #expect(miscarried != sanctioned)
         }
@@ -1574,10 +1677,10 @@ struct TabContextMenuWiringGuardTests {
         /// the shape the hand-over anchor exists for.
         @Test func scannerFlagsAWrappedReorderRoute() throws {
             let sanctioned = try TabContextMenuWiringGuardTests
-                .canonicalize("TabItemView(tab: tab, onReorder: onReorder)")
+                .canonicalize("TabItemView(tab: tab, onReorder: onReorder, windowID: windowID)")
             #expect(Self.occurrences(of: Self.sanctionedRouteHandOver, in: sanctioned) == 1)
-            let wrapped = try TabContextMenuWiringGuardTests
-                .canonicalize("TabItemView(tab: tab, onReorder: { id, _ in onReorder(id, tabs[0]) })")
+            let wrapped = try TabContextMenuWiringGuardTests.canonicalize(
+                "TabItemView(tab: tab, onReorder: { id, _ in onReorder(id, tabs[0]) }, x: y)")
             #expect(Self.occurrences(of: Self.sanctionedRouteHandOver, in: wrapped) == 0)
         }
 
@@ -1588,11 +1691,37 @@ struct TabContextMenuWiringGuardTests {
         @Test func scannerCountsARouteReboundBeforeTheHandOver() throws {
             let canonical = try TabContextMenuWiringGuardTests.canonicalize("""
                 let onReorder = { (id: UUID, _: SessionTab) in onReorder(id, tabs[0]) }
-                TabItemView(tab: tab, onReorder: onReorder)
+                TabItemView(tab: tab, onReorder: onReorder, windowID: windowID)
                 """)
             #expect(Self.occurrences(of: Self.sanctionedRouteHandOver, in: canonical) == 1)
             #expect(Self.occurrences(of: Self.sanctionedRouteProperty, in: canonical) == 0)
             #expect(Self.occurrences(of: Self.anyRouteBinding, in: canonical) == 1)
+        }
+
+        /// Task 3's two hand-overs, accepted bare and flagged wrapped —
+        /// the same property `scannerFlagsAWrappedReorderRoute` holds for
+        /// the reorder route, for the two arguments that were added beside
+        /// it.
+        @Test func scannerFlagsAWrappedWindowIdentityOrCrossWindowRoute() throws {
+            let sanctioned = try TabContextMenuWiringGuardTests.canonicalize(
+                "TabItemView(windowID: windowID, onDropFromOtherWindow: onDropFromOtherWindow)")
+            #expect(Self.occurrences(of: Self.sanctionedWindowHandOver, in: sanctioned) == 1)
+            #expect(Self.occurrences(of: Self.sanctionedCrossWindowHandOver, in: sanctioned) == 1)
+            let wrapped = try TabContextMenuWiringGuardTests.canonicalize(
+                "TabItemView(windowID: WindowID(), onDropFromOtherWindow: { _ in })")
+            #expect(Self.occurrences(of: Self.sanctionedWindowHandOver, in: wrapped) == 0)
+            #expect(Self.occurrences(of: Self.sanctionedCrossWindowHandOver, in: wrapped) == 0)
+        }
+
+        /// The drop that lost its cross-window arm: it reorders exactly as
+        /// it always did, so only the count of the second route sees it.
+        @Test func scannerFlagsADropThatLostItsCrossWindowRoute() throws {
+            let body = try Self.dropBody(
+                in: Self.sanctionedDropSource.replacingOccurrences(
+                    of: "onDropFromOtherWindow(carried)", with: "break"))
+            #expect(body.contains(Self.sanctionedPayloadRead))
+            #expect(Self.occurrences(of: Self.sanctionedRoute, in: body) == 1)
+            #expect(Self.occurrences(of: Self.sanctionedCrossWindowRoute, in: body) == 0)
         }
 
         /// The wiring closure accepted in its sanctioned shape, and flagged

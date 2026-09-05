@@ -161,7 +161,9 @@ extension ContentView {
                     onMenuEntry: { tab, entry in handleTabMenuEntry(entry, for: tab) },
                     onReorder: { draggedID, target in
                         tabsModel.move(tabID: draggedID, onto: target.id)
-                    }
+                    },
+                    windowID: windowID,
+                    onDropFromOtherWindow: { acceptDroppedTab($0) }
                 )
             }
             detail
@@ -261,6 +263,14 @@ extension ContentView {
         .onReceive(
             NotificationCenter.default.publisher(for: NSWindow.willCloseNotification),
             perform: handleWindowWillClose)
+        // The other half of a tab dragged into ANOTHER window (Detachable
+        // Tabs plan, Task 3): the window it arrived in performed the move
+        // and took the close decision on this window's behalf, because a
+        // drop is reported only to the strip it landed on. This is how the
+        // answer gets back — see `TabWindowCloseRequest`.
+        .onReceive(
+            NotificationCenter.default.publisher(for: TabWindowCloseRequest.notification),
+            perform: handleWindowShouldCloseAfterMove)
         // Publishes THIS window's menu bridge to SwiftUI's focus system
         // (Detachable Tabs plan, Task 2 fix round 1). `MacSCPCommands` reads
         // it back with `@FocusedValue`, so the menu bar always acts on the

@@ -26,6 +26,19 @@ struct TabStripView: View {
     /// The two are of different types so that handing them over the wrong
     /// way round does not compile.
     let onReorder: (UUID, SessionTab) -> Void
+    /// Which window this strip is drawing (Detachable Tabs plan, Task 3).
+    /// The strip does not act on it: it puts it into the drag payload and
+    /// hands it to `TabDropPlan.route(payload:ownWindow:)`, which is where
+    /// "this window" and "another window" are told apart. Without it every
+    /// drop would look alike, because a drop destination is told only that
+    /// something was let go on it.
+    let windowID: WindowID
+    /// The second route out of a tab drop (Task 3): a tab dragged here from
+    /// ANOTHER window's strip. Where it comes from is in the payload; what
+    /// the move costs — the registry lookup, the close decision on the
+    /// window it left — is `ContentView.acceptDroppedTab(_:)`'s, exactly as
+    /// the reorder's landing position is `TabsViewModel`'s.
+    let onDropFromOtherWindow: (TabDragPayload) -> Void
 
     /// Which tab the drag in flight is carrying — written where the drag
     /// starts, read where a drop is targeted. See `TabDragOrigin` for why
@@ -50,7 +63,9 @@ struct TabStripView: View {
                             onClose: { onClose(tab) },
                             menuEntries: { menuEntries(tab) },
                             onMenuEntry: { entry in onMenuEntry(tab, entry) },
-                            onReorder: onReorder)
+                            onReorder: onReorder,
+                            windowID: windowID,
+                            onDropFromOtherWindow: onDropFromOtherWindow)
                     }
                 }
             }
@@ -202,11 +217,60 @@ enum TabDropPlan {
     ///
     /// A drag carries one tab, so anything past the first item is a payload
     /// this gesture did not produce; the first item is what is read.
+    ///
+    /// Two spellings answer this one question since Task 3: this strip's own
+    /// envelope (`TabDragPayload`), and the bare uuid that both this strip
+    /// dragged before Task 3 and the session sidebar drags today. Which of
+    /// the two arrived says nothing about the tab — only about where the
+    /// drag started — so it is answered here, once, for every caller.
     static func draggedTabID(from payload: [String]) -> UUID? {
         guard let first = payload.first else { return nil }
+        if let carried = TabDragPayload(encoded: first) { return carried.tabID }
         return UUID(uuidString: first)
     }
 
+    /// What a drop on this strip should DO — the whole decision, taken from
+    /// the payload and the receiving window's own id (Detachable Tabs plan,
+    /// Task 3).
+    ///
+    /// The strip cannot take it: a drop destination is told only that
+    /// something was let go on it, so the payload is the only evidence there
+    /// is, and reading it is the last moment anything can be decided. The
+    /// three answers are the three things a drop can be worth.
+    ///
+    /// **A bare uuid is still the reorder.** It is what this strip dragged
+    /// before Task 3 and what the session sidebar drags today, and it names
+    /// no window, so it cannot be a move between two. A sidebar row dropped
+    /// on a tab therefore reaches `TabsViewModel.move(tabID:onto:)` with an
+    /// id it does not know, which leaves the order alone — the same no-op it
+    /// has always been, arrived at the same way.
+    /// Built ON `draggedTabID(from:)` rather than beside it: everything
+    /// about WHICH tab a payload names — the envelope, the bare uuid, only
+    /// the first item — is that function's, and stays pinned by
+    /// `TabDropPlanTests` alone. What is added here is one comparison, and
+    /// it is the only thing this function decides.
+    static func route(payload: [String], ownWindow: WindowID) -> TabDropRoute {
+        guard let first = payload.first else { return .none }
+        if let carried = TabDragPayload(encoded: first), carried.sourceWindowID != ownWindow {
+            return .acrossWindows(carried)
+        }
+        guard let id = draggedTabID(from: payload) else { return .none }
+        return .reorder(id)
+    }
+
+}
+
+/// The three things a drop on a tab can be worth — see
+/// `TabDropPlan.route(payload:ownWindow:)`, which is the only thing that
+/// makes one.
+enum TabDropRoute: Equatable {
+    /// A drag that never left this window's strip: the named tab takes the
+    /// position of the tab it was let go on.
+    case reorder(UUID)
+    /// A tab dragged in from another window's strip.
+    case acrossWindows(TabDragPayload)
+    /// Nothing this strip produced, and nothing it can act on.
+    case none
 }
 
 /// Which tab the drag currently in flight started from.
@@ -361,6 +425,10 @@ private struct TabItemView: View {
     /// Handed straight through from the strip — see `TabStripView`'s own
     /// property for what the two values mean and who acts on them.
     let onReorder: (UUID, SessionTab) -> Void
+    /// Both handed straight through from the strip as well; `TabStripView`'s
+    /// own properties document them.
+    let windowID: WindowID
+    let onDropFromOtherWindow: (TabDragPayload) -> Void
 
     @State private var isHovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -468,24 +536,32 @@ private struct TabItemView: View {
         // nothing there to drop onto, so no destination is ever computed
         // for it.
         //
-        // What a tab dragged OUT of the window can do is bounded rather
-        // than blocked, and the distinction is worth stating: the payload
-        // is a plain string, so the system lets it land wherever text is
-        // accepted, and the Finder will make a clipping carrying the uuid.
-        // No path there opens a window, moves a session, or touches this
-        // strip — which is what "multi-window is v2, and connection state
-        // belongs to its window" actually requires. The reverse direction
-        // is refused for the mirror-image reason: the session sidebar reads
-        // its drops through `SidebarDragPayload`, which a bare uuid is not,
-        // so a tab dropped there names no row.
+        // What a tab dragged OUT of the app can do is bounded rather than
+        // blocked, and the distinction is worth stating: the payload is a
+        // string, so the system lets it land wherever text is accepted, and
+        // the Finder will make a clipping carrying it. No path there opens a
+        // window, moves a session, or touches this strip — the drop that
+        // moves a tab is the one that lands on another WINDOW'S strip, and
+        // it goes through the registry. The reverse direction is refused for
+        // the mirror-image reason: the session sidebar reads its drops
+        // through `SidebarDragPayload`, which this envelope is not, so a tab
+        // dropped there names no row.
         .draggable(dragPayload())
         .dropDestination(for: String.self) { payload, _ in
-            // Reads the payload and routes; decides nothing else. Where
-            // this tab sits, and whether the drop changes anything, are
-            // `TabsViewModel.move(tabID:onto:)`'s answers.
-            guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
-            onReorder(draggedID, tab)
-            return true
+            // Reads the payload and routes; decides nothing else. Where this
+            // tab sits is `TabsViewModel.move(tabID:onto:)`'s answer, and
+            // what a tab arriving from another window costs is
+            // `ContentView.acceptDroppedTab(_:)`'s.
+            switch TabDropPlan.route(payload: payload, ownWindow: windowID) {
+            case .reorder(let draggedID):
+                onReorder(draggedID, tab)
+                return true
+            case .acrossWindows(let carried):
+                onDropFromOtherWindow(carried)
+                return true
+            case .none:
+                return false
+            }
         } isTargeted: { isDropTargeted = $0 }
         // The tab context menu. Everything about WHICH entries appear was
         // answered before this view saw it, and is drawn here without a
@@ -529,9 +605,14 @@ private struct TabItemView: View {
     /// is built. What happens if that ever stops holding is
     /// `TabDragOrigin`'s doc comment, and it was the reason for the shape
     /// that type has.
+    ///
+    /// Since Task 3 it carries the window as well as the tab — see
+    /// `TabDragPayload` for why the source window has to travel with the
+    /// drag, and for why it travels as text rather than as a type of its
+    /// own.
     private func dragPayload() -> String {
         dragOrigin.draggedTabID = tab.id
-        return tab.id.uuidString
+        return TabDragPayload(tabID: tab.id, sourceWindowID: windowID).encoded()
     }
 
     /// "SSH"/"S3" (M12/T7b) — reads `tab.connectionViewModel.kind`, the

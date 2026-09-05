@@ -5,7 +5,10 @@ import macSCPCore
 /// Tabs plan, Task 1). A UUID wrapper, not a raw `UUID`, so "the id of a
 /// window" and "the id of a tab" are two types a call site cannot
 /// accidentally swap — `move(_:to:)` below takes one of each.
-struct WindowID: Hashable, Sendable {
+///
+/// `Codable` since Task 3, because a tab's drag payload carries the window
+/// it started in (`TabDragPayload`) and that payload travels as text.
+struct WindowID: Hashable, Sendable, Codable {
     let id: UUID
 
     init(id: UUID = UUID()) {
@@ -39,6 +42,14 @@ final class TabRegistry {
     /// yet, keyed by the `WindowSeed.id` that window will appear with —
     /// see `park(_:for:)` (Task 2).
     private var parkedTabIDsBySeedID: [UUID: [UUID]] = [:]
+    /// Each open window's own `TabsViewModel`, held WEAKLY — see
+    /// `registerModel(_:for:)`.
+    private var modelsByWindow: [WindowID: WeakModel] = [:]
+
+    /// A weak reference in a place a dictionary cannot hold one directly.
+    private struct WeakModel {
+        weak var model: TabsViewModel<SessionTab>?
+    }
 
     init() {}
 
@@ -171,6 +182,53 @@ final class TabRegistry {
     /// both from the claim's own return value.
     func parkedTabs(for seedID: UUID) -> [SessionTab] {
         (parkedTabIDsBySeedID[seedID] ?? []).compactMap { tabsByID[$0] }
+    }
+
+    // MARK: - Each window's model, for a drop that arrives in another one
+
+    /// Records the `TabsViewModel` `window` renders, so a drop that lands in
+    /// a DIFFERENT window can reach it (Detachable Tabs plan, Task 3).
+    ///
+    /// **Why the registry has to answer this.** A drop is reported only to
+    /// the strip it landed on. That strip belongs to the target window,
+    /// which holds its own model and nothing else — no window in this app
+    /// has ever held another's, and the plan's "connection state belongs to
+    /// the window scope" is the reason it must not start to. The registry
+    /// already answers "which window holds this tab"; this is the same
+    /// bookkeeping from the other side, and it is the only thing added here
+    /// that a window did not already tell the registry.
+    ///
+    /// **Weak, and also unregistered explicitly.** The explicit
+    /// `unregisterModel(for:)` on the window's close path is what makes the
+    /// ordinary case immediate: the moment a window is closing it stops
+    /// being a place a drop can move a tab into. The weak reference is what
+    /// makes any other order harmless — the registry must never be the thing
+    /// that keeps a whole window's worth of live sessions alive, and this
+    /// type performs no `deinit` cleanup of its own (see the type's doc
+    /// comment).
+    ///
+    /// Registering is idempotent, like `register(_:in:)`: a window calls it
+    /// on every setup pass and the last call wins.
+    func registerModel(_ model: TabsViewModel<SessionTab>, for window: WindowID) {
+        modelsByWindow[window] = WeakModel(model: model)
+    }
+
+    /// Forgets `window`'s model. Called from the window's close path, before
+    /// its tabs are torn down — this removes a lookup, never a tab.
+    func unregisterModel(for window: WindowID) {
+        modelsByWindow[window] = nil
+    }
+
+    /// `window`'s model, or `nil` if it never registered one, has
+    /// unregistered, or has gone away. A stale entry is dropped here rather
+    /// than left to answer `nil` forever.
+    func model(for window: WindowID) -> TabsViewModel<SessionTab>? {
+        guard let box = modelsByWindow[window] else { return nil }
+        guard let model = box.model else {
+            modelsByWindow[window] = nil
+            return nil
+        }
+        return model
     }
 
     /// The convenience Task 2's drag calls: moves `id`'s ownership in the

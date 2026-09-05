@@ -31,6 +31,38 @@ import macSCPCore
 /// came from and removes the placeholder that stood in for it, and the
 /// caller then leaves that window open — a tab back where it started is a
 /// visible outcome, a tab parked forever is not.
+/// "The window this tab was dragged out of is now empty and should close."
+///
+/// A cross-window drop is reported to the window the tab arrived IN, and
+/// that window can close only itself — an `NSWindow` belongs to the
+/// `ContentView` that `WindowAccessor` handed it to, and no window in this
+/// app holds another's. So the outcome travels back as a notification the
+/// source window recognises by its own `WindowID`, the same shape
+/// `handleWindowWillClose(_:)` already uses for the close it observes.
+///
+/// The post happens on the main-actor turn AFTER the move, never inside the
+/// drop handler: `NSWindow.close()` is synchronous and tears its scene down
+/// where it stands, and the source window's model has just been edited by a
+/// closure still on the stack (`TabDetachSequence`'s own doc comment, "open
+/// before close", for the same reasoning one task earlier).
+enum TabWindowCloseRequest {
+    static let notification = Notification.Name("dev.noix.macscp.tabWindowShouldClose")
+    /// Spelled once, read by both halves below, so the two cannot disagree.
+    static let windowIDKey = "windowID"
+
+    static func post(_ window: WindowID) {
+        NotificationCenter.default.post(
+            name: notification, object: nil, userInfo: [windowIDKey: window])
+    }
+
+    /// The window a request names, or `nil` for a notification that carries
+    /// none — which no window matches, so an unreadable request closes
+    /// nothing rather than closing the wrong thing.
+    static func windowID(from notification: Notification) -> WindowID? {
+        notification.userInfo?[windowIDKey] as? WindowID
+    }
+}
+
 @MainActor
 enum TabDetachSequence {
     /// What one move did, and what the caller still owes it.
@@ -89,6 +121,67 @@ enum TabDetachSequence {
             model.addTab(fresh)
         }
         openWindow(seed)
+        return Outcome(closesWindow: closesWindow, replacementID: replacementID)
+    }
+
+    /// Moves `tabID` from one OPEN window's model into another's — the drag
+    /// between two windows (Task 3) — and answers whether the source window
+    /// is now left with nothing of its own.
+    ///
+    /// **No parking, and no reclaim.** Both windows already exist, so there
+    /// is no gap between letting go and being taken over: the whole handover
+    /// is `TabRegistry.move(_:from:to:targetWindow:)`, which detaches from
+    /// one model, reassigns ownership and adds to the other in one call. The
+    /// asymmetry with `move(_:outOf:parkingUnder:in:replacement:openWindow:)`
+    /// above is entirely that one, and it is why nothing here can strand a
+    /// tab.
+    ///
+    /// **What is the same is the ordering, and why.** The close decision is
+    /// taken while the source model still holds the tab, and a fresh tab
+    /// takes the leaver's place whenever the detach would empty the model —
+    /// unconditionally, exactly as above, because the caller closes the
+    /// source window on a LATER main-actor turn and a view body runs over
+    /// that model in between. `TabsViewModel.activeTab` traps on an emptied
+    /// model, which is that class's documented invariant.
+    ///
+    /// `Outcome.none`, changing nothing at all, in three cases: the two
+    /// windows are the same, `source` and `target` are the same model — both
+    /// describe a drop back onto the strip the drag started from, which is
+    /// the in-strip REORDER that `TabsViewModel.move(tabID:onto:)` owns —
+    /// or `source` does not hold `tabID` (a stale or repeated drop). None of
+    /// the three makes a replacement tab, so a repeated drop cannot mint
+    /// tabs into a window.
+    ///
+    /// The two same-window refusals are checked separately on purpose: a
+    /// window is its `WindowID` to the registry and its `TabsViewModel` to
+    /// the view, and the close decision below is about the first while the
+    /// detach is about the second. Checking only one would leave the other
+    /// able to express a "move" from a window to itself.
+    ///
+    /// Nothing here touches the tab's connection: see this type's doc
+    /// comment, `TabRegistry.move(_:from:to:targetWindow:)`, and
+    /// `TabRegistryNoTeardownGuardTests`.
+    @discardableResult
+    static func moveBetweenWindows(
+        _ tabID: UUID,
+        from source: TabsViewModel<SessionTab>,
+        sourceWindow: WindowID,
+        to target: TabsViewModel<SessionTab>,
+        targetWindow: WindowID,
+        in registry: TabRegistry,
+        replacement: () -> SessionTab
+    ) -> Outcome {
+        guard sourceWindow != targetWindow, source !== target else { return .none }
+        guard source.tabs.contains(where: { $0.id == tabID }) else { return .none }
+        let closesWindow = WindowCloseDecision.after(
+            removing: tabID, in: source.tabs.map(\.id), windowCount: registry.windowCount)
+        registry.move(tabID, from: source, to: target, targetWindow: targetWindow)
+        var replacementID: UUID?
+        if source.tabs.isEmpty {
+            let fresh = replacement()
+            replacementID = fresh.id
+            source.addTab(fresh)
+        }
         return Outcome(closesWindow: closesWindow, replacementID: replacementID)
     }
 
