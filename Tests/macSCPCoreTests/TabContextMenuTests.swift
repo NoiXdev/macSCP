@@ -22,7 +22,7 @@ struct TabContextMenuTests {
             atIndex: 0, ofTabCount: 3,
             supportsShell: false, isAdHoc: false, isConnected: true,
             filesToggle: Self.visibleAndLocked, terminalToggle: Self.unavailable)
-            == [.close, .closeOthers, .move(.right)])
+            == [.close, .closeOthers, .move(.right), .moveToNewWindow])
     }
 
     @Test func theLastOfThreeCannotMoveRight() {
@@ -30,7 +30,7 @@ struct TabContextMenuTests {
             atIndex: 2, ofTabCount: 3,
             supportsShell: false, isAdHoc: false, isConnected: true,
             filesToggle: Self.visibleAndLocked, terminalToggle: Self.unavailable)
-            == [.close, .closeOthers, .move(.left)])
+            == [.close, .closeOthers, .move(.left), .moveToNewWindow])
     }
 
     @Test func aMiddleTabMovesBothWays() {
@@ -38,7 +38,7 @@ struct TabContextMenuTests {
             atIndex: 1, ofTabCount: 3,
             supportsShell: false, isAdHoc: false, isConnected: true,
             filesToggle: Self.visibleAndLocked, terminalToggle: Self.unavailable)
-            == [.close, .closeOthers, .move(.left), .move(.right)])
+            == [.close, .closeOthers, .move(.left), .move(.right), .moveToNewWindow])
     }
 
     @Test func aVisiblePaneOffersHidingItAndAHiddenOneOffersShowing() {
@@ -126,12 +126,52 @@ struct TabContextMenuTests {
             .contains(.saveAsSession))
     }
 
+    /// A lone tab is offered no move into a new window: it would close the
+    /// window it is in and open another holding the same tab. The App
+    /// layer's Window-menu entry greys itself out on the same count (see
+    /// `TabCommands.canMoveTabToNewWindow`) — this menu omits rather than
+    /// greys, which is the difference between the two surfaces, not between
+    /// two rules.
+    @Test func aLoneTabIsNotOfferedAWindowOfItsOwn() {
+        #expect(!TabContextMenu.entries(
+            atIndex: 0, ofTabCount: 1,
+            supportsShell: false, isAdHoc: false, isConnected: true,
+            filesToggle: Self.visibleAndLocked, terminalToggle: Self.unavailable)
+            .contains(.moveToNewWindow))
+    }
+
+    /// The positive beside it, and at BOTH ends of the strip: unlike
+    /// `.move(_:)`, this entry needs no neighbour on a particular side —
+    /// only that there is another tab at all.
+    @Test func anyTabBesideAnotherIsOfferedAWindowOfItsOwn() {
+        for index in 0..<3 {
+            #expect(TabContextMenu.entries(
+                atIndex: index, ofTabCount: 3,
+                supportsShell: false, isAdHoc: false, isConnected: false,
+                filesToggle: Self.unavailable, terminalToggle: Self.unavailable)
+                .contains(.moveToNewWindow))
+        }
+    }
+
+    /// A connection is not a precondition: an unconnected form tab moves
+    /// into a window of its own like any other. It is the same entry a
+    /// connected tab gets, which is what makes "a move never touches the
+    /// connection" a statement about every tab rather than about the
+    /// connected ones.
+    @Test func anUnconnectedTabMovesIntoAWindowOfItsOwnToo() {
+        #expect(TabContextMenu.entries(
+            atIndex: 0, ofTabCount: 2,
+            supportsShell: false, isAdHoc: false, isConnected: false,
+            filesToggle: Self.unavailable, terminalToggle: Self.unavailable)
+            .contains(.moveToNewWindow))
+    }
+
     @Test func theOrderIsFixedRegardlessOfWhichEntriesApply() {
         #expect(TabContextMenu.entries(
             atIndex: 1, ofTabCount: 3,
             supportsShell: true, isAdHoc: true, isConnected: true,
             filesToggle: Self.bothVisible, terminalToggle: Self.hidden)
-            == [.close, .closeOthers, .move(.left), .move(.right),
+            == [.close, .closeOthers, .move(.left), .move(.right), .moveToNewWindow,
                 .pane(.files, .hide), .pane(.terminal, .show),
                 .openExternalTerminal, .saveAsSession])
     }

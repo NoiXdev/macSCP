@@ -166,6 +166,23 @@ final class TabCommands {
     /// "Manage Snippets…" — same bridge shape/key-window guard as
     /// `showLogins` above, opens the snippet management sheet.
     var showSnippets: (() -> Void)?
+    /// "Move Tab to New Window" (Detachable Tabs plan, Task 2) — the Window
+    /// menu's route to the action the tab strip's context menu also offers.
+    /// Same bridge shape and key-window guard as the entries above; it moves
+    /// the KEY window's ACTIVE tab, which is the only tab a menu with no
+    /// click target can mean.
+    var moveTabToNewWindow: (() -> Void)?
+    /// Whether that entry can do anything: `false` while the front window
+    /// holds a single tab, because moving the only tab of a window into a
+    /// new window closes one window and opens another holding the same
+    /// thing. Mirrored from `ContentView` for the same reason
+    /// `isActiveTabConnected` is — this Scene cannot see `tabsModel`.
+    ///
+    /// Defaults `false`, unlike the mirrors above, and deliberately: a
+    /// window comes up with exactly one tab, so `false` is the true value
+    /// until the mirror has run, and the entry is greyed rather than
+    /// enabled-and-inert in the moment before it does.
+    var canMoveTabToNewWindow = false
 }
 
 /// Wired into `MacSCPApp` through `@NSApplicationDelegateAdaptor` below —
@@ -383,33 +400,79 @@ struct MacSCPApp: App {
         return (current, toShow)
     }
 
+    /// The PRIMARY window: the one SwiftUI opens for the value-keyed
+    /// `WindowGroup` with no seed at launch.
+    ///
+    /// It is the only window that presents "What's New", and that is the
+    /// whole difference between the two branches. The decision was taken
+    /// ONCE PER PROCESS, in `init` (`decideWhatsNew(store:)`, which also
+    /// records `lastSeenVersion` there and then), so `showWhatsNew` is
+    /// app-scope `@State`: a second window attaching the same sheet would
+    /// present the same release notes again, over a window the user opened
+    /// to move a tab into.
+    @ViewBuilder
+    private func primaryWindow() -> some View {
+        windowContent(seed: nil)
+            // "What's New" (What's New plan, Task 2): `showWhatsNew` was
+            // decided once, in `init`, by `decideWhatsNew(store:)` — this
+            // only presents what that decision already made.
+            .sheet(isPresented: $showWhatsNew) {
+                WhatsNewSheet(
+                    currentVersion: whatsNewCurrentVersion, releases: whatsNewReleases,
+                    onClose: { showWhatsNew = false })
+            }
+    }
+
+    /// A window opened by moving a tab out of another one — see
+    /// `primaryWindow()` above for what it deliberately does NOT carry.
+    @ViewBuilder
+    private func detachedWindow(seed: WindowSeed) -> some View {
+        windowContent(seed: seed)
+    }
+
+    /// Everything both windows are: the same `ContentView` over the same
+    /// app-global stores, told which seed (if any) it opened with.
+    ///
+    /// The diagnostic-log observer lives here rather than in one branch
+    /// because a level change has to take effect while ANY window is open —
+    /// including after the primary one has been closed. `configure(level:)`
+    /// is idempotent, so several windows reacting to one change reconfigure
+    /// the same sink to the same level; what it costs is one `level=` line
+    /// per open window.
+    @ViewBuilder
+    private func windowContent(seed: WindowSeed?) -> some View {
+        ContentView(
+            settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
+            auditStore: auditStore, tabCommands: tabCommands, updateModel: updateModel,
+            menuBarModel: menuBarModel, seed: seed)
+            // Diagnostic log (Diagnostic Log plan, Task 2): the General
+            // settings pane's picker writes `settingsStore
+            // .diagnosticLogLevel` directly (`SettingsView.swift`), so
+            // this is the one place a level change reconfigures the
+            // sink — reusing `configure(level:)`'s own "takes effect at
+            // once" contract rather than re-deriving it here.
+            .onChange(of: settingsStore.diagnosticLogLevel) { _, newLevel in
+                DiagnosticLog.shared.configure(level: newLevel)
+                DiagnosticLog.shared.log(.info, "app", "level=\(newLevel.rawValue)")
+            }
+    }
+
     var body: some Scene {
         // The minimum size depends on the connection state (compact form vs.
         // browser) — it lives conditionally in `ContentView` instead of here
         // globally (M5c/T0).
-        WindowGroup("macSCP") {
-            ContentView(
-                settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
-                auditStore: auditStore, tabCommands: tabCommands, updateModel: updateModel,
-                menuBarModel: menuBarModel)
-                // "What's New" (What's New plan, Task 2): `showWhatsNew` was
-                // decided once, in `init`, by `decideWhatsNew(store:)` —
-                // this only presents what that decision already made.
-                .sheet(isPresented: $showWhatsNew) {
-                    WhatsNewSheet(
-                        currentVersion: whatsNewCurrentVersion, releases: whatsNewReleases,
-                        onClose: { showWhatsNew = false })
-                }
-                // Diagnostic log (Diagnostic Log plan, Task 2): the General
-                // settings pane's picker writes `settingsStore
-                // .diagnosticLogLevel` directly (`SettingsView.swift`), so
-                // this is the one place a level change reconfigures the
-                // sink — reusing `configure(level:)`'s own "takes effect at
-                // once" contract rather than re-deriving it here.
-                .onChange(of: settingsStore.diagnosticLogLevel) { _, newLevel in
-                    DiagnosticLog.shared.configure(level: newLevel)
-                    DiagnosticLog.shared.log(.info, "app", "level=\(newLevel.rawValue)")
-                }
+        // Value-keyed (Detachable Tabs plan, Task 2): each window instance
+        // is identified by the `WindowSeed` it was opened with, which is
+        // what lets `openWindow(value:)` open a SECOND window for a tab that
+        // moved out of this one. SwiftUI opens the group's own window with a
+        // `nil` value at launch — that one is the PRIMARY window, and the
+        // two branches below are what "primary" means in code.
+        WindowGroup("macSCP", for: WindowSeed.self) { $seed in
+            if let seed {
+                detachedWindow(seed: seed)
+            } else {
+                primaryWindow()
+            }
         }
         .commands {
             // "Check for Updates…" (M11b/T2), directly under "About macSCP"
@@ -445,11 +508,31 @@ struct MacSCPApp: App {
                 }
                 .keyboardShortcut("w", modifiers: .command)
             }
-            // ⌘1–⌘9: jump to tab n (1-indexed); no-op past the tab count
+            // The Window menu's own entries: "Move Tab to New Window"
+            // (Detachable Tabs plan, Task 2) and, below the divider, ⌘1–⌘9,
+            // which jump to tab n (1-indexed) and no-op past the tab count
             // (`ContentView.selectTab(atIndex:)`). ⌃Tab cycling was left out
             // — it could not be verified in this headless environment (no
             // NSEvent monitor per the M8a/T4 brief); flagged for the T5 smoke.
             CommandGroup(after: .windowList) {
+                // "Move Tab to New Window" (Detachable Tabs plan, Task 2):
+                // the Window menu's route to the action the tab strip's
+                // context menu offers on right-click, resolving the SAME
+                // catalogue key so the two can never read differently. No
+                // keyboard shortcut: none has been asked for, and this
+                // group's shortcuts belong to ⌘1–9 below.
+                //
+                // `.disabled` rather than absent, which is the opposite of
+                // what the context menu does with the same rule: a menu-bar
+                // entry that comes and goes is harder to find than one that
+                // is greyed, while a context menu is read top to bottom on
+                // every open. `canMoveTabToNewWindow` carries the count from
+                // the front window (see `TabCommands`).
+                Button(L10n.string("window.moveTabToNewWindow", "Move Tab to New Window")) {
+                    tabCommands.moveTabToNewWindow?()
+                }
+                .disabled(!tabCommands.canMoveTabToNewWindow)
+                Divider()
                 ForEach(1...9, id: \.self) { n in
                     Button(String(format: L10n.string("menu.selectTab", "Tab %lld"), n)) {
                         tabCommands.selectTab?(n - 1)

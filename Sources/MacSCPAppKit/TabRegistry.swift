@@ -35,6 +35,10 @@ final class TabRegistry {
     private var tabsByID: [UUID: SessionTab] = [:]
     private var windowByTabID: [UUID: WindowID] = [:]
     private var tabIDsByWindow: [WindowID: [UUID]] = [:]
+    /// Tabs that have left a window and whose new window does not exist
+    /// yet, keyed by the `WindowSeed.id` that window will appear with —
+    /// see `park(_:for:)` (Task 2).
+    private var parkedTabIDsBySeedID: [UUID: [UUID]] = [:]
 
     init() {}
 
@@ -103,6 +107,70 @@ final class TabRegistry {
         if tabIDsByWindow[window]?.isEmpty == true {
             tabIDsByWindow[window] = nil
         }
+    }
+
+    // MARK: - Parking, for a window that does not exist yet
+
+    /// Takes `tabs` out of whatever window holds them and holds them under
+    /// `seedID` until a window claims them (Task 2).
+    ///
+    /// It exists because of an ordering a move cannot avoid: the window a
+    /// tab is moving INTO has no `WindowID` at the moment `openWindow` is
+    /// called — it has no window yet — while the window it is moving OUT of
+    /// must let go of it in that same synchronous step, or its own close
+    /// path would tear the tab down on the way out. So the tab is parked
+    /// under the `WindowSeed.id` the new window will appear with, and
+    /// `claim(seedID:into:)` is what the new window calls once it has a
+    /// `WindowID` of its own.
+    ///
+    /// A parked tab is still KNOWN to the registry — `tab(for:)` finds it —
+    /// but belongs to no window, so `windowHolding(_:)` answers `nil` and
+    /// `windowCount` stops counting a window the parking emptied. Nothing
+    /// about the tab itself is touched: this is the same reference
+    /// bookkeeping the rest of this type does.
+    ///
+    /// Takes the tab OBJECTS rather than ids on purpose — a tab the
+    /// registry has never seen (a window that never registered it) is
+    /// parked correctly rather than silently dropped.
+    func park(_ tabs: [SessionTab], for seedID: UUID) {
+        var parked = parkedTabIDsBySeedID[seedID] ?? []
+        for tab in tabs {
+            tabsByID[tab.id] = tab
+            if let previous = windowByTabID[tab.id] {
+                tabIDsByWindow[previous]?.removeAll { $0 == tab.id }
+                if tabIDsByWindow[previous]?.isEmpty == true {
+                    tabIDsByWindow[previous] = nil
+                }
+            }
+            windowByTabID[tab.id] = nil
+            if !parked.contains(tab.id) { parked.append(tab.id) }
+        }
+        parkedTabIDsBySeedID[seedID] = parked
+    }
+
+    /// Hands `seedID`'s parked tabs to `window` and empties the slot, in
+    /// park order. The window that calls this is the one SwiftUI opened for
+    /// that seed; it adds the returned tabs to its own `TabsViewModel`.
+    ///
+    /// An empty answer is an ordinary outcome, not an error: a window
+    /// SwiftUI RESTORED from a previous launch carries a seed nobody parked
+    /// anything under, and it must come up with its own fresh tab rather
+    /// than with someone else's.
+    func claim(seedID: UUID, into window: WindowID) -> [SessionTab] {
+        let ids = parkedTabIDsBySeedID.removeValue(forKey: seedID) ?? []
+        return ids.compactMap { id in
+            guard let tab = tabsByID[id] else { return nil }
+            move(id, to: window)
+            return tab
+        }
+    }
+
+    /// What is parked under `seedID` right now — the slot `claim(seedID:
+    /// into:)` empties. Nothing in the app reads this; it is what lets a
+    /// test say the slot was filled and then emptied, rather than inferring
+    /// both from the claim's own return value.
+    func parkedTabs(for seedID: UUID) -> [SessionTab] {
+        (parkedTabIDsBySeedID[seedID] ?? []).compactMap { tabsByID[$0] }
     }
 
     /// The convenience Task 2's drag calls: moves `id`'s ownership in the

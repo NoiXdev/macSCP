@@ -33,6 +33,15 @@ public enum TabMenuEntry: Equatable, Sendable {
     /// Requires a neighbour on that side — a tab at either end is offered
     /// only the step that has somewhere to go.
     case move(TabMoveStep)
+    /// Take this tab out of the window it is in and give it one of its own.
+    /// Requires a neighbour — not on either side, just anywhere: moving the
+    /// only tab of a window into a new window would close one window and
+    /// open another holding the same thing, which is a no-op with a
+    /// flicker. That is the whole precondition, and it is a count, which is
+    /// why it can be decided here: what the app layer does with the answer
+    /// (open a window, park the tab, close the emptied one) is the app
+    /// layer's business, and nothing about a window is known here.
+    case moveToNewWindow
     /// Show or hide one of the window's two halves. Requires both a live
     /// connection and the pane's own `PaneToggleState` reporting
     /// `isEnabled`: there are no halves to switch on a tab still showing a
@@ -58,11 +67,11 @@ public enum TabMenuEntry: Equatable, Sendable {
 public enum TabContextMenu {
     /// Which entries a tab offers.
     ///
-    /// `index` and `count` decide the movement and the bulk close; the five
-    /// remaining facts decide the rest (see each `TabMenuEntry` case for its
-    /// precondition). Nothing here reaches for a `ConnectionKind`: what an
-    /// entry depends on is a capability or a state, never which protocol it
-    /// happens to be.
+    /// `index` and `count` decide the movement, the bulk close and the move
+    /// into a new window; the five remaining facts decide the rest (see each
+    /// `TabMenuEntry` case for its precondition). Nothing here reaches for a
+    /// `ConnectionKind`: what an entry depends on is a capability or a
+    /// state, never which protocol it happens to be.
     ///
     /// The two toggle states are read, not recomputed: `PaneVisibility.
     /// toggleState(for:hasShell:)` has already folded in both the shell's
@@ -77,6 +86,7 @@ public enum TabContextMenu {
         if count > 1 { entries.append(.closeOthers) }
         if index > 0 { entries.append(.move(.left)) }
         if index < count - 1 { entries.append(.move(.right)) }
+        if count > 1 { entries.append(.moveToNewWindow) }
         if isConnected && filesToggle.isEnabled {
             entries.append(.pane(.files, filesToggle.isOn ? .hide : .show))
         }

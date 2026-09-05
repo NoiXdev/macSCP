@@ -210,6 +210,21 @@ struct ContentView: View {
     /// Handed over by `WindowAccessor` — basis for the active resize calls
     /// on state transitions (M5c/T0).
     @State var window: NSWindow?
+    /// What this window was opened with (Detachable Tabs plan, Task 2):
+    /// `nil` for the PRIMARY window — the one SwiftUI opens for the
+    /// value-keyed `WindowGroup` with no value at launch — and a real seed
+    /// for a window opened by `openWindow(value:)` when a tab was moved out
+    /// of another one. `claimSeededTabs()` is what consumes it, once, on
+    /// this window's setup pass.
+    let seed: WindowSeed?
+    /// This window's identity in `TabRegistry` (Detachable Tabs plan, Task
+    /// 2). `@State`, so it is created once per window and survives every
+    /// re-init of this struct — a fresh `WindowID` per body evaluation would
+    /// make the registry believe a new window had opened on every repaint.
+    @State var windowID = WindowID()
+    /// Opens a second window for a moved tab — see `moveToNewWindow(_:)`.
+    /// Not `private`: the move itself lives in `ContentView+Lifecycle.swift`.
+    @Environment(\.openWindow) var openWindow
     /// Last browser window size, remembered on disconnect — the next
     /// connect grows to it instead of the minimum size, if it's larger.
     @State var lastBrowserSize: CGSize?
@@ -602,8 +617,10 @@ struct ContentView: View {
         tabCommands: TabCommands, updateModel: UpdateCheckModel, menuBarModel: MenuBarStatusModel,
         sessionListViewModel: SessionListViewModel? = nil,
         secretStore: (any SecretStore)? = nil,
-        managedKeyStore: ManagedKeyStore? = nil
+        managedKeyStore: ManagedKeyStore? = nil,
+        seed: WindowSeed? = nil
     ) {
+        self.seed = seed
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
         self.auditStore = auditStore

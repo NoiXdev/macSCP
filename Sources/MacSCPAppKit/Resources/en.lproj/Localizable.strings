@@ -442,6 +442,10 @@
 "tabs.menu.hideTerminal" = "Hide Terminal";
 "tabs.menu.openExternalTerminal" = "Open in External Terminal";
 "tabs.menu.saveAsSession" = "Save as Session…";
+
+/* Windows: the tab strip's context menu and the Window menu
+   resolve this one key for the same action. */
+"window.moveTabToNewWindow" = "Move Tab to New Window";
 "tabs.closeOthers.title" = "Close other tabs?";
 "tabs.alreadyOpen.title" = "This session is already open";
 "tabs.alreadyOpen.message %@" = "“%@” is already open in a tab.";

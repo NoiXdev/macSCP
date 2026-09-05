@@ -325,6 +325,11 @@ enum TabMenuEntryTitle {
             return L10n.string("tabs.menu.moveLeft", "Move Left")
         case .move(.right):
             return L10n.string("tabs.menu.moveRight", "Move Right")
+        // The same key the Window menu's own entry resolves
+        // (`MacSCPApp.swift`) — one string for one action, so the two
+        // surfaces cannot come to name it differently.
+        case .moveToNewWindow:
+            return L10n.string("window.moveTabToNewWindow", "Move Tab to New Window")
         case .pane(.files, .show):
             return L10n.string("tabs.menu.showFiles", "Show Files")
         case .pane(.files, .hide):

@@ -445,6 +445,10 @@
 "tabs.menu.hideTerminal" = "Ukryj terminal";
 "tabs.menu.openExternalTerminal" = "Otwórz w zewnętrznym terminalu";
 "tabs.menu.saveAsSession" = "Zapisz jako sesję…";
+
+/* Windows: the tab strip's context menu and the Window menu
+   resolve this one key for the same action. */
+"window.moveTabToNewWindow" = "Przenieś kartę do nowego okna";
 "tabs.closeOthers.title" = "Zamknąć pozostałe karty?";
 "tabs.alreadyOpen.title" = "Ta sesja jest już otwarta";
 "tabs.alreadyOpen.message %@" = "„%@” jest już otwarta w karcie.";

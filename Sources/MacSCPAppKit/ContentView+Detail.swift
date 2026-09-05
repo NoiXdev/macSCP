@@ -261,6 +261,13 @@ extension ContentView {
         .onReceive(
             NotificationCenter.default.publisher(for: NSWindow.willCloseNotification),
             perform: handleWindowWillClose)
+        // Re-points the app-wide menu bridge at this window when it comes to
+        // the front (Detachable Tabs plan, Task 2) — one `TabCommands`
+        // instance serves every window, so the closures belong to whichever
+        // window wrote them last. See `wireTabCommands()`.
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification),
+            perform: handleWindowDidBecomeKey)
         // Extracted wholesale into `performWindowSetup()` (M20 CI fix).
         // This closure had grown to ~125 statements in the same inference
         // scope as the `HSplitView` above, and the type checker gave up on

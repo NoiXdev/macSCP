@@ -178,6 +178,13 @@ extension ContentView {
         // `ContentView+Sheets.swift`).
         .onChange(of: tabIDs) { _, _ in
             menuBarModel.tabs = tabsModel.tabs
+            // Detachable Tabs plan, Task 2: a tab that arrived by any route
+            // (⊕, ⌘N, a sidebar row, a claim) is registered to this window,
+            // and the Window menu's move entry follows the count it is
+            // disabled on. Both are cheap and idempotent — see
+            // `registerHeldTabs()`.
+            registerHeldTabs()
+            tabCommands.canMoveTabToNewWindow = tabsModel.tabs.count > 1
         }
     }
 
@@ -639,9 +646,56 @@ extension ContentView {
         // that the type checker times out on it (M11d/M11f review
         // precedent for this exact failure mode).
         wireMenuBarBridge()
-        // Command bridge wiring (M8a/T4): `MacSCPApp` has no reference to
-        // this view, so the menu items call back through these closures.
-        //
+        // Windows (Detachable Tabs plan, Task 2). Claim FIRST, register
+        // second: `claimSeededTabs()` is what makes this window's model
+        // hold the tabs it was opened for, and `registerHeldTabs()` is what
+        // tells the registry which window every live tab belongs to — over
+        // the model as it stands once the claim is done. A seedless window
+        // (the primary one) claims nothing and simply registers its own
+        // fresh tab.
+        claimSeededTabs()
+        registerHeldTabs()
+        // Command bridge wiring (M8a/T4) — extracted into `wireTabCommands()`
+        // below, because it is no longer a once-per-window job: with more
+        // than one window open, `TabCommands` is still ONE app-wide bridge,
+        // so the window that runs this last owns every menu closure. It is
+        // therefore re-run whenever this window becomes key
+        // (`handleWindowDidBecomeKey(_:)`).
+        wireTabCommands()
+    }
+
+    /// Points the app-wide menu bridge at THIS window.
+    ///
+    /// `MacSCPApp` holds no reference to this view, so the menu items call
+    /// back through the closures assigned here (M8a/T4). Each one carries a
+    /// key-window guard, for the reason the original wiring states: SwiftUI
+    /// attaches one `.commands` set app-wide, and the `Settings` scene shares
+    /// it, so a closure that fired regardless of focus would act on this
+    /// window's tabs while Settings — or another macSCP window — was in
+    /// front.
+    ///
+    /// **Why it is re-run rather than wired once** (Detachable Tabs plan,
+    /// Task 2): there is one `TabCommands` instance for the whole app and
+    /// now more than one window assigning to it, so the closures belong to
+    /// whichever window wrote them last. Wired only from
+    /// `performWindowSetup()`, a second window would take the menu with it
+    /// on open and leave every entry inert on return to the first (its own
+    /// key-window guard would refuse, since the closures still named the
+    /// window that is no longer key). Re-running it when this window becomes
+    /// key makes the front window the one the menu acts on, which is what
+    /// the key-window guard was always trying to express.
+    ///
+    /// The VALUE mirrors on `TabCommands` (`isActiveTabConnected`,
+    /// `activeTabSupportsShell`, `activeTabTerminalToggleIsUnlocked`,
+    /// `hiddenImportsCount` — four, counted here) are NOT refreshed here:
+    /// they are written from `.onChange(…, initial: true)` observers in
+    /// `ContentView.body`, which is per window and which this function
+    /// cannot reach (they read `private` computed properties of that file).
+    /// They can therefore be stale for a menu entry's ENABLED state until
+    /// the front window's own state next changes. `canMoveTabToNewWindow`
+    /// below is refreshed here because it is derived from `tabsModel`, which
+    /// this file can read.
+    func wireTabCommands() {
         // Key-window guard (M8a T5 review, finding 1): the `Settings`
         // scene shares this exact ⌘N/⌘W/⌘1–9 command set (SwiftUI attaches
         // one `.commands` menu app-wide, not per window/scene), so with
@@ -649,6 +703,16 @@ extension ContentView {
         // against THIS window's tabs instead of Settings — e.g. ⌘W would
         // tear down a tab instead of closing the Settings window. Each
         // closure checks that this window is actually key before acting.
+        tabCommands.canMoveTabToNewWindow = tabsModel.tabs.count > 1
+        // "Move Tab to New Window" (Detachable Tabs plan, Task 2) — the
+        // Window menu's route to the same action the tab's context menu
+        // offers. The entry is `.disabled` on `canMoveTabToNewWindow` set
+        // just above, and this closure adds no second check of that count,
+        // for the reason `handleTabMenuEntry` states.
+        tabCommands.moveTabToNewWindow = {
+            guard window?.isKeyWindow == true else { return }
+            moveToNewWindow(tabsModel.activeTab)
+        }
         tabCommands.newTab = {
             guard window?.isKeyWindow == true else { return }
             tabsModel.addTab(makeTab())
@@ -810,6 +874,18 @@ extension ContentView {
         tabCommands.showSnippets = presentSnippets
     }
 
+    /// Re-points the app-wide menu bridge at this window when it comes to
+    /// the front, and drops nothing else — see `wireTabCommands()` for why
+    /// a single bridge and several windows make this necessary.
+    ///
+    /// Every window in the app posts this notification, including sheets and
+    /// the Settings window; the identity check is what keeps this window
+    /// from re-wiring on somebody else's activation.
+    func handleWindowDidBecomeKey(_ notification: Notification) {
+        guard let key = notification.object as? NSWindow, key === window else { return }
+        wireTabCommands()
+    }
+
     /// Menu-bar status bridge wiring (M11n), called once from `.task`:
     /// seeds `menuBarModel.tabs` and sets its window-raising closures.
     /// `MacSCPApp` owns a separate AppKit `MenuBarController` with no
@@ -909,11 +985,132 @@ extension ContentView {
     /// notification fires for every window in the app, and the guard already
     /// drops the ones that are not ours, but the assignment stays conditional
     /// so a repeated close of an already-absent window cannot re-notify.
+    /// Also where this window lets go of its tabs (Detachable Tabs plan,
+    /// Task 2): a window closing tears down exactly what it still holds AT
+    /// THIS MOMENT — a tab that has already moved to another window is gone
+    /// from `tabsModel` and is therefore not touched — and only then asks
+    /// the registry to forget them. See `releaseHeldTabsOnClose()`.
     func handleWindowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow, closing === window else { return }
         if tabCommands.hasMainWindow {
             tabCommands.hasMainWindow = false
         }
+        releaseHeldTabsOnClose()
+    }
+
+    // MARK: - Windows
+
+    /// Tears down every tab this window still holds and then releases them
+    /// from the registry (Detachable Tabs plan, Task 2).
+    ///
+    /// "Still holds" is the whole point: the list is read HERE, when the
+    /// window is already closing, so a tab that left for another window
+    /// earlier is not in it and keeps its connection. That is the plan's
+    /// invariant ("a window closing tears down exactly the tabs it holds at
+    /// that moment") and the reason this reads `tabsModel.tabs` rather than
+    /// the registry — the model is what this window owns.
+    ///
+    /// Teardown is the existing sequence, unchanged and unduplicated:
+    /// `teardown(_:reason:)`, whose two bounded stages are
+    /// `TeardownStage.stopEditWatchers` and `TeardownStage.shutDownTerminal`.
+    /// It is async and a `willClose` handler is not, so it runs in a task —
+    /// which is also why the ids and the window id are captured as values
+    /// first, before anything can suspend.
+    ///
+    /// **This never ends the process.** `AppDelegate.applicationWillTerminate`
+    /// is what writes the diagnostic log's "app quit" line and flushes it,
+    /// and it is reached by quitting the app, never by closing a window:
+    /// closing one window of several must leave every other window's
+    /// connections alone. Nothing here terminates anything.
+    func releaseHeldTabsOnClose() {
+        let held = tabsModel.tabs
+        let ids = held.map(\.id)
+        let closingWindow = windowID
+        Task { @MainActor in
+            for tab in held {
+                await teardown(tab, reason: .userRequested)
+            }
+            TabRegistry.shared.release(ids, from: closingWindow)
+        }
+    }
+
+    /// Registers everything this window's model currently holds, so the
+    /// registry knows which window each live tab belongs to.
+    ///
+    /// Called from `performWindowSetup()` and from the `.onChange(of:
+    /// tabIDs)` in this file's modifier chain, which together cover every
+    /// way a tab can arrive in this window — the ⊕ button, ⌘N, a sidebar
+    /// row opened in a new tab, and a claim from a seed. Registering is
+    /// idempotent (`TabRegistry.register(_:in:)` relocates a known tab
+    /// rather than duplicating it), so re-running it costs nothing and
+    /// needs no bookkeeping of its own.
+    ///
+    /// It only ever ADDS: a tab missing from the model is not released
+    /// here, because "missing from this model" is also what a tab parked
+    /// for a move looks like, and releasing it would drop the very tab the
+    /// new window is about to claim. Releasing happens where it is meant
+    /// to — a closed tab (`performClose`) and a closed window
+    /// (`releaseHeldTabsOnClose`).
+    func registerHeldTabs() {
+        for tab in tabsModel.tabs {
+            TabRegistry.shared.register(tab, in: windowID)
+        }
+    }
+
+    /// Takes over the tabs this window was opened for (Detachable Tabs
+    /// plan, Task 2): the seed carries ids, the registry carries the tabs
+    /// parked under that seed by the window they left.
+    ///
+    /// The window was built with a fresh form tab of its own — every
+    /// `ContentView` is (`init` seeds `tabsModel` with one) — so the
+    /// claimed tabs are added FIRST and the placeholder detached after:
+    /// `addTab` makes the last claimed tab active, so detaching the
+    /// placeholder never leaves `activeTabID` naming a tab that is gone
+    /// (`TabsViewModel.activeTab` traps on an id it cannot resolve).
+    ///
+    /// An empty claim leaves the window exactly as it was, with its own
+    /// fresh tab. That is what a window SwiftUI RESTORED from a previous
+    /// launch gets — its seed names ids no live tab carries — and it is
+    /// deliberately not an error: Task 5 is what turns such a seed back
+    /// into real, disconnected tabs.
+    func claimSeededTabs() {
+        guard let seed else { return }
+        let placeholders = tabsModel.tabs.map(\.id)
+        let claimed = TabRegistry.shared.claim(seedID: seed.id, into: windowID)
+        guard !claimed.isEmpty else { return }
+        for tab in claimed { tabsModel.addTab(tab) }
+        for id in placeholders { tabsModel.detach(tabID: id) }
+    }
+
+    /// "Move Tab to New Window" — the one route out of both surfaces that
+    /// offer it (the tab's context menu and the Window menu).
+    ///
+    /// The order below is the contract, and all of it happens in ONE
+    /// main-actor turn, before any view body can run:
+    ///
+    /// 1. `TabDetachSequence.move` takes the close decision while the model
+    ///    still holds the tab, detaches it, parks it under this seed, and —
+    ///    for a window that is staying and would be left empty — puts a
+    ///    fresh tab in its place. See that type for why the emptied model
+    ///    must not be observable.
+    /// 2. A window told to close closes here, in the same turn.
+    /// 3. `openWindow(value:)` opens the window that will claim the seed.
+    ///    Last, so the source window is already settled when the new one
+    ///    appears.
+    ///
+    /// No precondition is re-asked here. The context-menu entry exists only
+    /// because `TabContextMenu.entries` offered it, and the Window menu's
+    /// own entry is disabled on the same count via
+    /// `TabCommands.canMoveTabToNewWindow` — asking again here is how two
+    /// answers to one question start to disagree (see
+    /// `handleTabMenuEntry`'s doc comment).
+    func moveToNewWindow(_ tab: SessionTab) {
+        let seed = WindowSeed(tabIDs: [tab.id])
+        let closing = TabDetachSequence.move(
+            tab.id, outOf: tabsModel, parkingUnder: seed.id, in: TabRegistry.shared,
+            replacement: makeTab)
+        if closing { window?.close() }
+        openWindow(value: seed)
     }
 
     /// Tab close entry point (strip ✕, ⌘W): a tab with active transfers OF
@@ -949,6 +1146,11 @@ extension ContentView {
         if !tabsModel.isLastTab {
             let wasActive = tab.id == tabsModel.activeTabID
             tabsModel.closeTab(tab.id)
+            // The registry forgets a tab only after its teardown has run
+            // (Detachable Tabs plan): the last tab is NOT released, because
+            // `closeTab` refuses to remove it — it stays in this window as a
+            // torn-down form tab, which is still a tab this window holds.
+            TabRegistry.shared.release([tab.id], from: windowID)
             if wasActive {
                 tabsModel.activeTab.seenFailureCount =
                     tabsModel.activeTab.transferQueue.totalFailureCount
@@ -1000,6 +1202,8 @@ extension ContentView {
             requestCloseOthers(of: tab)
         case .move(let step):
             tabsModel.move(tabID: tab.id, oneStep: step)
+        case .moveToNewWindow:
+            moveToNewWindow(tab)
         case .pane(let toggle, _):
             togglePane(toggle, in: tab)
         case .openExternalTerminal:
