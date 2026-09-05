@@ -4,7 +4,7 @@ import Testing
 
 @testable import macSCPCore
 
-/// The five tests that MUST touch `DiagnosticLog.shared`, because the
+/// The seven tests that MUST touch `DiagnosticLog.shared`, because the
 /// production code under test — `LocalFileSystem`, `TransferEngine`,
 /// `ConnectionViewModel`, `RemoteBrowserViewModel` — logs through that
 /// exact singleton and cannot be pointed at a private instance instead
@@ -16,7 +16,7 @@ import Testing
 /// this is the ONE file its scan lets mention `DiagnosticLog.shared`, on
 /// the strength of the two things below.
 ///
-/// **`.serialized` is load-bearing** — two of these five tests running at
+/// **`.serialized` is load-bearing** — two of these seven tests running at
 /// once would each see the other's `configure` call on the one shared
 /// instance.
 ///
@@ -94,21 +94,30 @@ struct DiagnosticLogSharedSinkTests {
     ///
     /// Local-listing-never-blocks Task 2 moved the per-entry timed call (and
     /// its `entry slow` line) OUT of `list` and into `metadata(for:)` — so
-    /// this test now drives both: `list` for `list start`/`list done`, then
-    /// drains `metadata(for:)` for the entry timing. Driving only `list`
-    /// (as this test used to) would make the `entry slow` absence
-    /// structurally guaranteed rather than a live check of anything, because
-    /// `list` no longer calls the timed per-entry path at all — chip
-    /// `task_baf1cade` flagged exactly this after Task 1 landed; this test
-    /// is what closes it.
+    /// this test drives both: `list` for `list start`/`list done`, then
+    /// drains `metadata(for:)` for the entry timing. `list` itself carries
+    /// no per-entry timing any more, by design and permanently: driving
+    /// only `list` (as this test once did) would make the `entry slow`
+    /// absence structural — as true of a `LocalFileSystem` with the
+    /// threshold logic deleted outright as of a correct one — rather than
+    /// a live check of anything. Chip `task_baf1cade` flagged exactly this
+    /// after Task 1 landed; draining the stream is what closes it.
     ///
-    /// `.debug`, not `.info`: admitting `.debug` is what makes the absence
-    /// assertion below actually test the threshold logic — at `.info` an
-    /// `entry slow` line could never appear regardless of whether the
-    /// threshold check is right, and the absence would be trivially true.
-    /// Three PLAIN files read well under `LocalFileSystem.slowEntryThreshold`
-    /// (500 ms), so the negative (no `entry slow`) sits beside the positive
-    /// (`list start`/`list done` ARE present) rather than standing alone.
+    /// `.debug`, not `.info`: both `entry slow` writers in `metadata(for:)`
+    /// — the per-child line written ON RETURN, and the supervisor's
+    /// `(still pending)` line at the first deadline — log at `.debug`, so
+    /// admitting `.debug` is what makes the absence assertion below
+    /// actually test the threshold logic; at `.info` neither could appear
+    /// regardless of whether the threshold check is right, and the absence
+    /// would be trivially true. Three PLAIN files probe well under the
+    /// default `MetadataDeadlines.slowEntryThreshold` (500 ms), so the
+    /// negative (no `entry slow`) sits beside the positive (`list start`/
+    /// `list done` ARE present) rather than standing alone. That each
+    /// writer CAN fire is proven through the same shared sink by
+    /// `metadataSupervisorLogsAStillPendingLineForAPermanentlyStuckEntry`
+    /// (a parked entry, the supervisor's line) and
+    /// `metadataLogsAnEntrySlowLineOnReturnForAnEntryThatCameBackLate` (a
+    /// late-returning entry, the per-child line) below.
     @Test("LocalFileSystem.list/metadata write list start/done, with no entry-slow line for fast entries")
     func localFileSystemListWritesStartAndDoneWithoutAnEntrySlowLine() async throws {
         let logDirectory = makeTempDirectory()
@@ -223,6 +232,64 @@ struct DiagnosticLogSharedSinkTests {
         // out (it cancels the consumer right after).
         #expect(!stuckPaths.contains(stuckPath))
         consumer.cancel()
+    }
+
+    /// The OTHER `entry slow` writer in `LocalMetadataSource.metadata(for:)`:
+    /// the per-child line written ON RETURN, with a measured `ms=` and no
+    /// `(still pending)` suffix, for an entry that was slow but did come
+    /// back. The supervisor test above proves the deadline line; nothing
+    /// else proved this one — `LocalFileSystemTests` cannot read the shared
+    /// sink, and `localFileSystemListWritesStartAndDoneWithoutAnEntrySlowLine`
+    /// only ever asserts the line's absence. This is the positive beside
+    /// that negative (CLAUDE.md, "Guards that name what they watch").
+    ///
+    /// Outcome-driven, with no clock of the test's own beyond the suite's
+    /// `.timeLimit`: the probe parks on a `Gate` until the supervisor's
+    /// `(still pending)` line proves the (5 ms) threshold has elapsed; only
+    /// THEN does the gate open, the stream is drained to completion, and
+    /// the log must carry exactly one on-return line naming the entry. The
+    /// stuck deadline stays at its production five seconds, so the entry
+    /// is never marked — this test is about the log line, not the memory.
+    @Test("LocalFileSystem.metadata logs an entry-slow line on return for an entry that came back late")
+    func metadataLogsAnEntrySlowLineOnReturnForAnEntryThatCameBackLate() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let listedDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: listedDirectory) }
+        try Data("x".utf8).write(to: listedDirectory.appendingPathComponent("late.txt"))
+
+        let fixedNow = Date()
+        DiagnosticLog.shared.configure(level: .debug, directory: logDirectory, now: { fixedNow })
+
+        let gate = Gate()
+        let fs = LocalFileSystem(
+            metadataProbe: { _ in
+                await gate.opened()
+                return nil
+            },
+            metadataDeadlines: MetadataDeadlines(slowEntryThreshold: .milliseconds(5)))
+        let phaseOne = try await fs.list(path: listedDirectory.path(percentEncoded: false))
+        #expect(phaseOne.count == 1)
+
+        let consumer = Task {
+            for await _ in fs.metadata(for: phaseOne) {}
+        }
+        let fileURL = ownFileURL(directory: logDirectory, fixedNow: fixedNow)
+        try await pollUntil("the still-pending line, proving the threshold elapsed") {
+            await DiagnosticLog.shared.flush()
+            let contents = fileContents(fileURL)
+            return contents.contains("entry slow name=late.txt") && contents.contains("(still pending)")
+        }
+        await gate.open()
+        await consumer.value
+        await DiagnosticLog.shared.flush()
+
+        let onReturnLines = fileContents(fileURL)
+            .split(separator: "\n")
+            .filter { $0.contains("entry slow name=late.txt ms=") && !$0.contains("(still pending)") }
+        #expect(onReturnLines.count == 1, "\(onReturnLines)")
     }
 
     /// `TransferEngine.copyFile`'s own instrumentation, driven against
