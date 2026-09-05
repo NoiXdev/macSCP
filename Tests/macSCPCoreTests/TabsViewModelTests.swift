@@ -80,6 +80,62 @@ struct TabsViewModelTests {
         #expect(!vm.closeTab(UUID())) // unknown id -> false, no change
     }
 
+    // MARK: - Detaching (Detachable Tabs plan, Task 1: "remove without closing")
+
+    /// Unlike `closeTab`, the last tab CAN be detached — a move into
+    /// another window's model is not a close, so the model is allowed to
+    /// end up with none.
+    @Test func detachingTheLastTabEmptiesTheModel() {
+        let a = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        let detached = vm.detach(tabID: a.id)
+        #expect(detached?.id == a.id)
+        #expect(vm.tabs.isEmpty)
+    }
+
+    /// Same active-tab arithmetic `closeTab` uses: the right neighbor
+    /// takes over when the removed tab was active and one remains to its
+    /// right.
+    @Test func detachingTheActiveTabActivatesRightNeighbor() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        vm.activate(b.id)
+        let detached = vm.detach(tabID: b.id)
+        #expect(detached?.id == b.id)
+        #expect(vm.tabs.map(\.id) == [a.id, c.id])
+        #expect(vm.activeTabID == c.id)
+    }
+
+    /// Same rightmost-position arithmetic `closeTab` uses: no right
+    /// neighbor, so the left one takes over.
+    @Test func detachingTheActiveTabAtTheRightmostPositionActivatesLeftNeighbor() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b) // b active, rightmost
+        #expect(vm.detach(tabID: b.id)?.id == b.id)
+        #expect(vm.activeTabID == a.id)
+    }
+
+    /// Detaching a background tab leaves the active one active.
+    @Test func detachingAnInactiveTabKeepsActive() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b) // b active
+        #expect(vm.detach(tabID: a.id)?.id == a.id)
+        #expect(vm.activeTabID == b.id)
+        #expect(vm.tabs.map(\.id) == [b.id])
+    }
+
+    /// An unknown id is a no-op, mirroring `closeTab`'s `false`.
+    @Test func detachingAnUnknownTabIsANoOp() {
+        let a = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        #expect(vm.detach(tabID: UUID()) == nil)
+        #expect(vm.tabs.map(\.id) == [a.id])
+        #expect(vm.activeTabID == a.id)
+    }
+
     // MARK: - Which tab already holds a stored session
 
     /// Nothing holds it, so nothing stands in the way of a start — the case

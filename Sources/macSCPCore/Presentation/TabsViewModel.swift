@@ -126,6 +126,37 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
         return true
     }
 
+    /// Removes the tab WITHOUT `closeTab`'s last-tab rule and without any
+    /// close side effect (Detachable Tabs plan, Task 1): a move into
+    /// another window's model is not a close, and the rule that refuses to
+    /// empty a model exists for closing a window's last tab, which has
+    /// nothing to do with a tab this model is simply handing to another
+    /// one. The model IS allowed to end up empty here.
+    ///
+    /// Selection moves exactly like `closeTab` moves it — the right
+    /// neighbor, or the left one at the rightmost position — for every tab
+    /// count above one. At exactly one, the model empties and
+    /// `activeTabID` is left naming the tab that just left: there is no
+    /// neighbor to hand it to, and this type has no optional "no active
+    /// tab" state to put it in instead. That is safe precisely because
+    /// nothing is expected to read `activeTab` on an emptied model — the
+    /// caller that just detached its only tab is a window with nothing
+    /// left to render, not one asking this type what is active.
+    ///
+    /// Returns the removed tab so the caller can hand it to another
+    /// model's `addTab(_:)`; `nil` for an unknown id, mirroring
+    /// `closeTab`'s `false`.
+    @discardableResult
+    public func detach(tabID: UUID) -> Tab? {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return nil }
+        let tab = tabs.remove(at: index)
+        if activeTabID == tabID, !tabs.isEmpty {
+            let successor = min(index, tabs.count - 1)
+            activeTabID = tabs[successor].id
+        }
+        return tab
+    }
+
     /// The tabs a bulk close covers: **everything except the one it was
     /// asked about** — not everything except the ACTIVE one. The context
     /// menu hangs off a particular row and the user means that row, so a
