@@ -1459,19 +1459,28 @@ extension CitadelFileSystem: ChecksumCommandChannel {
     /// makes, and the reason the run bound is minutes rather than seconds.
     func standardOutput(of line: ChecksumCommandLine) async throws -> String {
         var collected = ByteBuffer()
-        for try await chunk in try await client.executeCommandStream(line.text) {
-            switch chunk {
-            case .stderr:
-                continue
-            case .stdout(let buffer):
-                guard
-                    collected.readableBytes + buffer.readableBytes <= Self.maxStandardOutputBytes
-                else {
-                    throw RemoteFSError.protocolError(
-                        reason: "checksum output past \(Self.maxStandardOutputBytes) bytes")
+        do {
+            for try await chunk in try await client.executeCommandStream(line.text) {
+                switch chunk {
+                case .stderr:
+                    continue
+                case .stdout(let buffer):
+                    guard
+                        collected.readableBytes + buffer.readableBytes
+                            <= Self.maxStandardOutputBytes
+                    else {
+                        throw RemoteFSError.protocolError(
+                            reason: "checksum output past \(Self.maxStandardOutputBytes) bytes")
+                    }
+                    collected.writeImmutableBuffer(buffer)
                 }
-                collected.writeImmutableBuffer(buffer)
             }
+        } catch let failure as SSHClient.CommandFailed {
+            // Translated here, at the one place this file's Citadel-specific
+            // error meets `RemoteChecksumRun`'s channel-agnostic classifier
+            // (`ChecksumCommandExitFailure`'s own doc comment) — everything
+            // above this channel stays free of Citadel's error types.
+            throw ChecksumCommandExitFailure(exitCode: failure.exitCode)
         }
         return String(buffer: collected)
     }

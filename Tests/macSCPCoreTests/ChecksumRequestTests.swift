@@ -110,6 +110,22 @@ struct ChecksumRequestTests {
             == .unavailableOnThisConnection)
     }
 
+    /// The one algorithm on this connection that has no tool, shown exactly
+    /// where the generic per-file failure shows today — the same `.failed`
+    /// case, carrying the dedicated `core.checksum.unavailable %@` sentence
+    /// instead of the generic one (docs/BACKLOG.md, "Checksums for files",
+    /// the residual item 3: `RemoteChecksumOutcome.algorithmUnavailable`
+    /// gets here, not `.unavailableOnThisConnection` — the connection can
+    /// answer for OTHER algorithms just fine).
+    @Test func anAlgorithmWithNoToolOnThisConnectionNamesItself() async {
+        let fs = AnsweringFS(.outcome(.algorithmUnavailable(.md5)))
+        let browser = RemoteBrowserViewModel(fs: fs)
+
+        #expect(await browser.checksum(of: Self.file, algorithm: .md5)
+            == .failed(String(
+                format: CoreL10n.string("core.checksum.unavailable %@"), "MD5")))
+    }
+
     /// A backend that does not conform at all — `MockRemoteFileSystem` is
     /// one — is reached through the same `as?` the capability is always
     /// reached through, and produces the same statement rather than a

@@ -235,6 +235,83 @@ struct RemoteChecksumTests {
         #expect(checksum.describesFileContent)
     }
 
+    // MARK: - "This algorithm does not exist here" (docs/BACKLOG.md,
+    // "Checksums for files", the residual item 3 left `.unavailableOnThisConnection`
+    // did not cover: a connection HAS a form — `sha256sum` is there, say —
+    // but not the specific tool the CALLER'S algorithm needs, e.g. no
+    // `md5sum` on a minimal image. `ChecksumFormMemory` only ever probes
+    // the PREFERRED algorithm's executable, so this is invisible to it.
+
+    /// Exit 127 is POSIX shells' own answer to "no such executable" — this
+    /// is the one exit status `RemoteChecksumRun` classifies further,
+    /// because it is exactly what asking for an algorithm the far side's
+    /// form does not carry looks like.
+    @Test("a command that exits 127 is 'this algorithm is not here', not a failure")
+    func exit127OnTheRunIsAnAlgorithmUnavailableAnswer() async throws {
+        let channel = ScriptedChannel { line, _ in
+            if line == ChecksumCommandForm.gnu.presenceProbeLine() { return "/usr/bin/sha256sum\n" }
+            throw ChecksumCommandExitFailure(exitCode: 127)
+        }
+        let outcome = try await RemoteChecksumRun.checksum(
+            forFileAt: "/srv/data.bin", algorithm: .md5,
+            over: channel, rememberedIn: ChecksumFormMemory(), bounds: quickBounds)
+
+        #expect(outcome == .algorithmUnavailable(.md5))
+    }
+
+    /// The algorithm named in the outcome is the one the CALLER asked for —
+    /// not `ChecksumAlgorithm.preferred`, which is only ever what the
+    /// presence probe checks.
+    @Test("the algorithm named is the one asked for, not the preferred one")
+    func theAlgorithmUnavailableCaseNamesTheAlgorithmAsked() async throws {
+        let channel = ScriptedChannel { line, _ in
+            if line == ChecksumCommandForm.gnu.presenceProbeLine() { return "/usr/bin/sha256sum\n" }
+            throw ChecksumCommandExitFailure(exitCode: 127)
+        }
+        let outcome = try await RemoteChecksumRun.checksum(
+            forFileAt: "/srv/data.bin", algorithm: .sha1,
+            over: channel, rememberedIn: ChecksumFormMemory(), bounds: quickBounds)
+
+        #expect(outcome == .algorithmUnavailable(.sha1))
+    }
+
+    /// Every other non-zero exit — this suite's stand-in for "the tool ran
+    /// and refused the file", "a permission error", and everything else a
+    /// shell reports with a code besides 127 — stays the generic failure it
+    /// already was. Classifying MORE than exit 127 would risk calling a
+    /// real per-file problem "this algorithm is not here", which is a
+    /// worse lie than the generic message it would replace.
+    @Test("a non-127 exit code stays the generic failure")
+    func aNonSpecificExitCodeStaysTheGenericFailure() async {
+        let channel = ScriptedChannel { line, _ in
+            if line == ChecksumCommandForm.gnu.presenceProbeLine() { return "/usr/bin/sha256sum\n" }
+            throw ChecksumCommandExitFailure(exitCode: 1)
+        }
+        await #expect(throws: RemoteFSError.self) {
+            _ = try await RemoteChecksumRun.checksum(
+                forFileAt: "/srv/data.bin", algorithm: .md5,
+                over: channel, rememberedIn: ChecksumFormMemory(), bounds: quickBounds)
+        }
+    }
+
+    /// A failure with no exit code at all (a dropped channel, a bound the
+    /// channel itself enforced) is exactly as unclassifiable as it was
+    /// before this case existed — `ScriptedFailure` carries no exit code,
+    /// so the classifier has nothing to read and falls back to the generic
+    /// message, same as `unreadableOutputThrows` above.
+    @Test("a failure with no exit code at all stays the generic failure")
+    func aFailureCarryingNoExitCodeStaysTheGenericFailure() async {
+        let channel = ScriptedChannel { line, _ in
+            if line == ChecksumCommandForm.gnu.presenceProbeLine() { return "/usr/bin/sha256sum\n" }
+            throw ScriptedFailure()
+        }
+        await #expect(throws: RemoteFSError.self) {
+            _ = try await RemoteChecksumRun.checksum(
+                forFileAt: "/srv/data.bin", algorithm: .md5,
+                over: channel, rememberedIn: ChecksumFormMemory(), bounds: quickBounds)
+        }
+    }
+
     /// The probe names the tool by asking the form for it, so a renamed
     /// executable moves in one place.
     @Test("the probe asks for the form's own tool and runs nothing")

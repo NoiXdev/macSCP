@@ -16,6 +16,22 @@ public enum RemoteChecksumOutcome: Sendable, Equatable {
     /// about one file is a `RemoteFSError`, because the next file may be
     /// fine.
     case unavailableOnThisConnection
+    /// This connection HAS a checksum form (`ChecksumCommandForm` answered
+    /// the presence probe), but the specific tool `algorithm` needs is not
+    /// on the far side — a host with `sha256sum` but no `md5sum`, say.
+    ///
+    /// Distinct from `unavailableOnThisConnection`, which is a property of
+    /// the WHOLE connection (no form answered at all): this is a property
+    /// of one algorithm on a connection that can otherwise answer just
+    /// fine, since `ChecksumFormMemory.form` only ever probes the
+    /// PREFERRED algorithm's executable (`ChecksumCommandForm
+    /// .presenceProbeLine()`, "the preferred algorithm's is the one that
+    /// stands for the family") — a claim about the family that a minimal
+    /// far side can fail for any algorithm besides the one actually
+    /// probed. A case rather than a throw for the same reason
+    /// `unavailableOnThisConnection` is one: "SHA-256 is not on this host"
+    /// is an answer to show, not a failure to report generically.
+    case algorithmUnavailable(ChecksumAlgorithm)
 }
 
 /// A backend capability queried via `as?`, like `RemoteShellProvider` and
@@ -84,6 +100,32 @@ public protocol RemoteChecksumProvider: Sendable {
 /// not what keeps it narrow.
 protocol ChecksumCommandChannel: Sendable {
     func standardOutput(of line: ChecksumCommandLine) async throws -> String
+}
+
+/// Thrown by a conforming channel when the command line's own exit status is
+/// KNOWN and non-zero — as opposed to a channel-level failure (a dropped
+/// connection, output past the byte bound, a bound that elapsed).
+///
+/// Exists so `RemoteChecksumRun` can tell "the shell could not find the
+/// executable this line names" (POSIX shells report that as exit 127,
+/// regardless of which of `sh`/`bash`/`zsh` is running it — bash writes
+/// "command not found" after the name, zsh before it, and a POSIX `sh`
+/// typically omits the word "command" entirely, so the wording is not a
+/// signal that generalizes across shells the way the exit code does) from
+/// every other non-zero exit, which stays the generic failure it already
+/// was. `standardOutput(of:)` discards standard error entirely (see this
+/// protocol's own doc comment above), so text was never an option here in
+/// the first place — only the exit code survives to be classified.
+///
+/// A plain value and not `RemoteFSError` itself: the channel that catches
+/// the backend-specific error (`SSHClient.CommandFailed`, Citadel-only)
+/// translates it to this BEFORE it reaches `RemoteChecksumRun`, which is
+/// where the classification into an outcome or a thrown `RemoteFSError`
+/// actually happens — keeping this file itself free of any concrete
+/// backend's error types, the same boundary `ChecksumCommandChannel` draws
+/// for everything else.
+struct ChecksumCommandExitFailure: Error, Sendable {
+    let exitCode: Int
 }
 
 extension ChecksumCommandChannel {
@@ -280,10 +322,21 @@ enum RemoteChecksumRun {
         switch result {
         case .success(let text):
             output = text
-        case .failure:
-            // The far side's own words are not repeated here. They are input,
-            // and this string is read by a log and by the App layer's error
-            // mapping.
+        case .failure(let failure):
+            // Exit 127 is the one exit status classified further: it is
+            // POSIX shells' own answer to "no such executable", which is
+            // exactly what asking for an algorithm this far side's checksum
+            // FORM does not actually carry looks like — the form only ever
+            // proved the PREFERRED algorithm's tool is there (see
+            // `RemoteChecksumOutcome.algorithmUnavailable`'s doc comment).
+            // Every other non-zero exit, and every failure whose exit code
+            // is not even known (a dropped channel, say), stays the generic
+            // failure it already was — the far side's own words are not
+            // repeated here regardless, since this string is read by a log
+            // and by the App layer's error mapping.
+            if let exitFailure = failure as? ChecksumCommandExitFailure, exitFailure.exitCode == 127 {
+                return .algorithmUnavailable(algorithm)
+            }
             throw RemoteFSError.protocolError(reason: "the checksum command failed on the far side")
         }
 

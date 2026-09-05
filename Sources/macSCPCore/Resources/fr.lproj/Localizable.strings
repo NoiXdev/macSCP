@@ -18,6 +18,10 @@
 "core.browse.protocolError %@" = "Erreur de protocole : %@";
 "core.error.unexpected %@" = "Erreur inattendue : %@";
 
+/* RemoteBrowserViewModel.checksum(of:algorithm:) — the far side has a
+   checksum form but not the specific tool this algorithm needs */
+"core.checksum.unavailable %@" = "%@ n’est pas disponible sur cet hôte.";
+
 /* RemoteBrowserViewModel.navigate(to:) (M11g/T1) */
 "core.browse.emptyPath" = "Saisissez un chemin vers lequel naviguer.";
 "core.browse.notADirectory %@" = "N'est pas un répertoire : %@";

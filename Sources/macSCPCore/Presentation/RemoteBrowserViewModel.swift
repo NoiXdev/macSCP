@@ -1206,6 +1206,19 @@ public final class RemoteBrowserViewModel {
                 return .checksum(value)
             case .unavailableOnThisConnection:
                 return .unavailableOnThisConnection
+            case .algorithmUnavailable(let algorithm):
+                // Not a per-file failure — the next file would answer the
+                // same way — but shown exactly where one does: the surface
+                // has no third visual treatment reserved for "this
+                // algorithm, specifically, is missing", and inventing one
+                // for a case this narrow would be a display path with no
+                // second caller to prove it right. `.failed`'s wrapping
+                // sentence ("The checksum could not be computed. %@") reads
+                // fine ahead of this one, which names the reason on its own
+                // terms rather than describing a failure that never threw.
+                return .failed(String(
+                    format: CoreL10n.string("core.checksum.unavailable %@"),
+                    algorithm.displayName))
             }
         } catch {
             return .failed(Self.message(for: error, path: item.path))
