@@ -42,12 +42,27 @@ struct TabDropPlanTests {
         #expect(TabDropPlan.draggedTabID(from: ["not a uuid", second.uuidString]) == nil)
     }
 
-    /// A session row dragged out of the sidebar carries a plain uuid string
-    /// too, so it parses here — and is meant to. The no-op comes from
-    /// `move(tabID:onto:)` not knowing the id, not from a second rule here
-    /// about which ids are real.
+    /// A well-formed uuid from somewhere else parses here — and is meant
+    /// to. The no-op comes from `move(tabID:onto:)` not knowing the id, not
+    /// from a second rule here about which ids are real.
+    ///
+    /// The session sidebar is not such a case, though this comment claimed
+    /// it was until 2026-09-05: `SidebarDragPayload` prefixes its uuid, so
+    /// a sidebar row names no tab here at all — see
+    /// `aSidebarRowNamesNoTab` below.
     @Test func aForeignUUIDStillParsesAndIsLeftToTheModelToRefuse() {
         let strangerID = UUID()
         #expect(TabDropPlan.draggedTabID(from: [strangerID.uuidString]) == strangerID)
+    }
+
+    /// What the sidebar actually drags, built through `SidebarDragPayload`
+    /// itself rather than spelled out here — a literal would be a second
+    /// copy of that type's prefixes, and the first thing a rename would
+    /// leave behind (CLAUDE.md, "Guards that name what they watch").
+    @Test func aSidebarRowNamesNoTab() {
+        let session = SidebarDragPayload.text(for: .session(UUID()))
+        let group = SidebarDragPayload.text(for: .group(UUID()))
+        #expect(TabDropPlan.draggedTabID(from: [session]) == nil)
+        #expect(TabDropPlan.draggedTabID(from: [group]) == nil)
     }
 }

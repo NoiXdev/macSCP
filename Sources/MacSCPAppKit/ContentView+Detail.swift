@@ -156,7 +156,7 @@ extension ContentView {
                     activeTabID: tabsModel.activeTab.id,
                     onActivate: { activate($0) },
                     onClose: { requestClose($0) },
-                    onAdd: { tabsModel.addTab(makeTab()) },
+                    onAdd: { addTabRegistering(makeTab()) },
                     menuEntries: { tabMenuEntries(for: $0) },
                     onMenuEntry: { tab, entry in handleTabMenuEntry(entry, for: tab) },
                     onReorder: { draggedID, target in

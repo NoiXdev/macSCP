@@ -2797,7 +2797,7 @@ struct ContentView: View {
     func newConnection() {
         let tab = activeTab
         if tab.isConnected {
-            tabsModel.addTab(makeTab())
+            addTabRegistering(makeTab())
             return
         }
         guard !tab.isReconnecting else { return }
@@ -2840,7 +2840,7 @@ struct ContentView: View {
         let tab = activeTab
         if tab.isConnected {
             let fresh = makeTab()
-            tabsModel.addTab(fresh)
+            addTabRegistering(fresh)
             return fresh
         }
         guard !tab.isReconnecting else { return nil }

@@ -99,12 +99,26 @@ struct TabDragTests {
                 == .acrossWindows(payload))
     }
 
-    /// The session sidebar drags a bare uuid string, and so did this strip
-    /// before Task 3. Neither names a window, so neither can be a
-    /// cross-window drop — it is the reorder, exactly as it was.
+    /// What this strip dragged before Task 3. It names no window, so it
+    /// cannot be a cross-window drop — it is the reorder, exactly as it
+    /// was. (The session sidebar is NOT an example of this: it prefixes its
+    /// uuid, and `aSidebarRowIsRefusedOutright` below is what that costs.)
     @Test func aBareUUIDStillRoutesToTheReorder() {
         let id = UUID()
         #expect(TabDropPlan.route(payload: [id.uuidString], ownWindow: WindowID()) == .reorder(id))
+    }
+
+    /// A session row from the sidebar is not "a foreign uuid that reorders
+    /// nothing" — it is not a uuid at all. `SidebarDragPayload` prefixes it
+    /// (`macscp.sidebar.session:<uuid>`), so the route is `.none` and the
+    /// strip's drop closure returns `false`: the drop is refused, not
+    /// accepted-and-ignored. Built through `SidebarDragPayload` rather than
+    /// spelled out, so its prefixes live in one place.
+    @Test func aSidebarRowIsRefusedOutright() {
+        let session = SidebarDragPayload.text(for: .session(UUID()))
+        let group = SidebarDragPayload.text(for: .group(UUID()))
+        #expect(TabDropPlan.route(payload: [session], ownWindow: WindowID()) == .none)
+        #expect(TabDropPlan.route(payload: [group], ownWindow: WindowID()) == .none)
     }
 
     @Test func aPayloadThisStripDidNotProduceRoutesNowhere() {

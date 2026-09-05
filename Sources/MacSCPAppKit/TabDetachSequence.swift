@@ -46,8 +46,8 @@ import macSCPCore
 /// The post happens on the main-actor turn AFTER the move, never inside the
 /// drop handler: `NSWindow.close()` is synchronous and tears its scene down
 /// where it stands, and the source window's model has just been edited by a
-/// closure still on the stack (`TabDetachSequence`'s own doc comment, "open
-/// before close", for the same reasoning one task earlier).
+/// closure still on the stack — the same reasoning as "open before close"
+/// in this file's opening comment, one task earlier.
 ///
 /// Task 2's own path posts it too, from the `onClaimed` handler it parks
 /// with: the window a tab was moved OUT of learns from the registry that
@@ -97,9 +97,10 @@ enum TabDetachSequence {
     /// `openWindow` for a window to claim it.
     ///
     /// `openWindow` is a parameter rather than a call the caller makes
-    /// afterwards, so the ordering this type documents cannot be got wrong
-    /// at a call site — and so a test can hand in a closure that does
-    /// nothing and drive the "the window never opened" path.
+    /// afterwards, so the ordering this file's opening comment sets out
+    /// cannot be got wrong at a call site — and so a test can hand in a
+    /// closure that does nothing and drive the "the window never opened"
+    /// path.
     ///
     /// `replacement` is called at most once, and only when the detach would
     /// leave `model` empty.
@@ -150,7 +151,8 @@ enum TabDetachSequence {
     /// is no gap between letting go and being taken over: the whole handover
     /// is `TabRegistry.move(_:from:to:targetWindow:)`, which detaches from
     /// one model, reassigns ownership and adds to the other in one call. The
-    /// asymmetry with `move(_:outOf:parkingUnder:in:replacement:openWindow:)`
+    /// asymmetry with
+    /// `move(_:outOf:parkingUnder:in:replacement:openWindow:onClaimed:)`
     /// above is entirely that one, and it is why nothing here can strand a
     /// tab.
     ///
@@ -176,9 +178,10 @@ enum TabDetachSequence {
     /// detach is about the second. Checking only one would leave the other
     /// able to express a "move" from a window to itself.
     ///
-    /// Nothing here touches the tab's connection: see this type's doc
-    /// comment, `TabRegistry.move(_:from:to:targetWindow:)`, and
-    /// `TabRegistryNoTeardownGuardTests`.
+    /// Nothing here touches the tab's connection: see
+    /// `TabRegistry.move(_:from:to:targetWindow:)`, which is the whole of
+    /// the handover, and `TabRegistryNoTeardownGuardTests`, which reads this
+    /// file for the four names a move must never reach.
     @discardableResult
     static func moveBetweenWindows(
         _ tabID: UUID,

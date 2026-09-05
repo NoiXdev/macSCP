@@ -312,6 +312,35 @@ extension ContentView {
         Self.makeTab(settingsStore: settingsStore, limiter: bandwidthLimiter)
     }
 
+    /// A fresh tab that `window` already owns (Detachable Tabs plan, Task 3
+    /// fix round 1).
+    ///
+    /// The window is a parameter rather than `windowID`, because the one
+    /// caller that is NOT about this window is the one that matters:
+    /// `acceptDroppedTab(_:)` builds the replacement tab that stands in for
+    /// a tab dragged OUT of the source window, and it must land in that
+    /// window's registry entry, not in the receiving window's. A helper
+    /// that assumed `windowID` would have been silently wrong exactly
+    /// there.
+    ///
+    /// Only the registry is written: the model this tab goes into is
+    /// `TabDetachSequence`'s to add to, which is why this is not
+    /// `addTabRegistering(_:)` below.
+    func makeTab(registeringIn window: WindowID) -> SessionTab {
+        let tab = makeTab()
+        TabRegistry.shared.register(tab, in: window)
+        return tab
+    }
+
+    /// The one way a tab enters THIS window (Detachable Tabs plan, Task 3
+    /// fix round 1): into the model and into the registry, in one
+    /// statement. See `TabAdmission` for why the pair is written once
+    /// rather than at each of the five sites that make a tab, and
+    /// `TabRegistrationWiringGuardTests` for what holds it to that.
+    func addTabRegistering(_ tab: SessionTab) {
+        TabAdmission.add(tab, to: tabsModel, in: TabRegistry.shared, window: windowID)
+    }
+
     /// Attaches this tab's audit recorder once it connects to a STORED
     /// session (M9b/T3) — called from both places `activeStoredSessionID`
     /// gets assigned: `connect(in:stored:)` and `startSession`'s "Save &
@@ -345,16 +374,29 @@ extension ContentView {
                 detail: "connected without TLS after an explicit confirmation"))
             tab.pendingPlaintextConfirmation = false
         }
-        // `[weak tabsModel]` (M9b/T4 review, finding 5): `TabsViewModel` is a
-        // class, and this sink is retained by `tab.transferQueue` for the
-        // tab's whole lifetime — a plain (implicit `self`) capture would
-        // deviate from this file's weak-capture convention and pin every
-        // `@State` box on `ContentView` (a full struct copy, including
-        // `tabsModel`'s own storage) alive if the window ever dies without
-        // running `teardown` (which nils this sink out).
-        tab.transferQueue.auditSink = { [weak tabsModel] item in
+        // The destination of a cross-session transfer is resolved through
+        // `TabRegistry`, not through this window's model (Detachable Tabs
+        // plan, Task 3 fix round 1). The model answer was right only while
+        // every tab lived in one window: once a tab can be moved or dragged
+        // into another one, the target of a transfer that is still running
+        // is routinely in a DIFFERENT window's model, and this closure would
+        // resolve it to `nil` — which `AuditRecorder.recordTransfer` renders
+        // as "unknown session". The registry knows every live tab in every
+        // window, so it answers for both cases and for neither wrongly; a
+        // tab already released (closed, or its window closed) still resolves
+        // to `nil`, which is the honest answer there.
+        //
+        // The old `[weak tabsModel]` capture is gone with the lookup it
+        // served (M9b/T4 review, finding 5, which existed because this sink
+        // is retained by `tab.transferQueue` for the tab's whole lifetime
+        // and a strong capture would have pinned every `@State` box on
+        // `ContentView` alive). Nothing of `ContentView` is captured here
+        // any more — `recorder` is a plain `Sendable` struct and
+        // `TabRegistry.shared` is a process-wide singleton — so the concern
+        // it answered no longer arises rather than being answered again.
+        tab.transferQueue.auditSink = { item in
             let targetTitle = item.destinationTabID.flatMap { id in
-                tabsModel?.tabs.first(where: { $0.id == id })?.displayTitle
+                TabRegistry.shared.tab(for: id)?.displayTitle
             }
             recorder.recordTransfer(item, targetTitle: targetTitle)
         }
@@ -737,7 +779,7 @@ extension ContentView {
             moveToNewWindow(tabsModel.activeTab)
         }
         tabCommands.newTab = {
-            tabsModel.addTab(makeTab())
+            addTabRegistering(makeTab())
         }
         tabCommands.selectTab = { index in
             selectTab(atIndex: index)
@@ -1152,7 +1194,7 @@ extension ContentView {
         let placeholders = tabsModel.tabs.map(\.id)
         let claimed = TabRegistry.shared.claim(seedID: seed.id, into: windowID)
         guard !claimed.isEmpty else { return }
-        for tab in claimed { tabsModel.addTab(tab) }
+        for tab in claimed { addTabRegistering(tab) }
         for id in placeholders { tabsModel.detach(tabID: id) }
     }
 
@@ -1193,7 +1235,7 @@ extension ContentView {
         let ownWindowID = windowID
         let outcome = TabDetachSequence.move(
             tab.id, outOf: tabsModel, parkingUnder: seed, in: TabRegistry.shared,
-            replacement: makeTab,
+            replacement: { makeTab(registeringIn: windowID) },
             openWindow: { openWindow(value: $0) },
             onClaimed: { claimed in
                 guard claimed.closesWindow else { return }
@@ -1266,7 +1308,7 @@ extension ContentView {
         let outcome = TabDetachSequence.moveBetweenWindows(
             payload.tabID, from: source, sourceWindow: payload.sourceWindowID,
             to: tabsModel, targetWindow: windowID, in: TabRegistry.shared,
-            replacement: makeTab)
+            replacement: { makeTab(registeringIn: payload.sourceWindowID) })
         guard outcome.closesWindow else { return }
         let leavingWindow = payload.sourceWindowID
         Task { @MainActor in TabWindowCloseRequest.post(leavingWindow) }
@@ -1486,6 +1528,13 @@ extension ContentView {
             await teardown(other, reason: .userRequested)
         }
         tabsModel.closeOthers(besides: tab.id)
+        // The same release `performClose` does, for the same reason and in
+        // the same order — after teardown, never before (Detachable Tabs
+        // plan, Task 3 fix round 1; this path was missing it, so a tab
+        // closed this way stayed resolvable through `TabRegistry.tab(for:)`
+        // and kept being answered by `tabs(in:)` for a window that no
+        // longer had it).
+        TabRegistry.shared.release(closing.map(\.id), from: windowID)
         if survivorTakesOver {
             tab.seenFailureCount = tab.transferQueue.totalFailureCount
         }

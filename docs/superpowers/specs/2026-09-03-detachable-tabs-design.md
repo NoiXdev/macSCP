@@ -96,11 +96,14 @@ today (teardown on close → `cancelAll` → `shutdown` → `disconnect`).
   - So the only route is an `NSViewRepresentable` that calls
     `beginDraggingSession(with:event:source:)` itself and is its own
     `NSDraggingSource`. That REPLACES `.draggable` on the tab rather than
-    sitting beside it: two drag sources on one view is two gestures, and
-    `TabContextMenuWiringGuardTests.TabDragWiringGuardTests` already
-    fails a second `.draggable(` by count. Rebuilding the in-strip
-    reorder on top of a hand-rolled AppKit drag was out of scope for a
-    task whose constraint was that the reorder keep working unchanged.
+    sitting beside it — two drag sources on one view is two gestures
+    racing the same mouse-down — which means the in-strip reorder has to
+    be rebuilt on a hand-rolled AppKit drag, and that was out of scope
+    for a task whose constraint was that the reorder keep working
+    unchanged. (Corrected 2026-09-05: this paragraph also claimed the
+    existing wiring guard would fail such an overlay "by count". It
+    would not — the guard counts `.draggable(`, and an AppKit overlay
+    adds none. The reason above is the whole reason.)
 
   Detach therefore stays on the menu ("Move Tab to New Window", tab
   context menu and Window menu), which the plan permits. The work this

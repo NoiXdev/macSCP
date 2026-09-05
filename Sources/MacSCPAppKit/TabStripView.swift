@@ -205,24 +205,31 @@ enum TabDropPlan {
     /// The tab a drop payload names, or `nil` when there is nothing in the
     /// payload this strip could act on.
     ///
-    /// The payload is a plain uuid string, the same spelling the session
-    /// sidebar's rows are dragged with, so a session row dropped onto a tab
-    /// arrives here as a well-formed uuid that names no tab. That is not
-    /// this function's problem to catch: `move(tabID:onto:)` leaves the
-    /// order alone for an id it does not know, which is the outcome a
-    /// foreign drop should have anyway. Answering `nil` here would only
-    /// trade one no-op for another, at the price of a second rule about
-    /// which ids are real — and the tabs the strip renders are not this
-    /// type's to know.
+    /// Two spellings answer this one question, and both are this strip's
+    /// own: the envelope a drag carries since Task 3 (`TabDragPayload`, tab
+    /// id plus source window, as JSON), and the bare uuid the strip dragged
+    /// before Task 3. Which of the two arrived says nothing about the tab —
+    /// only about where the drag started — so it is answered here, once,
+    /// for every caller.
+    ///
+    /// **The session sidebar is not one of them, and never was.**
+    /// `SidebarDragPayload` prefixes its uuid (`macscp.sidebar.session:` /
+    /// `macscp.sidebar.group:`), so a sidebar row dropped on a tab parses
+    /// as neither spelling and this function answers `nil` for it. It
+    /// therefore never reaches `TabsViewModel.move(tabID:onto:)` at all:
+    /// `route(payload:ownWindow:)` answers `.none` and the drop closure
+    /// returns `false`. Verified against `SidebarDrag.swift` on 2026-09-05;
+    /// the doc comment that used to stand here said the opposite, and had
+    /// said it since before this strip could cross windows.
     ///
     /// A drag carries one tab, so anything past the first item is a payload
-    /// this gesture did not produce; the first item is what is read.
-    ///
-    /// Two spellings answer this one question since Task 3: this strip's own
-    /// envelope (`TabDragPayload`), and the bare uuid that both this strip
-    /// dragged before Task 3 and the session sidebar drags today. Which of
-    /// the two arrived says nothing about the tab — only about where the
-    /// drag started — so it is answered here, once, for every caller.
+    /// this gesture did not produce; the first item is what is read. What
+    /// is NOT filtered here is a well-formed uuid from somewhere else
+    /// entirely: it names no tab this strip renders, and
+    /// `move(tabID:onto:)` leaves the order alone for an id it does not
+    /// know. Answering `nil` for those would trade one no-op for another,
+    /// at the price of a second rule about which ids are real — and the
+    /// tabs the strip renders are not this type's to know.
     static func draggedTabID(from payload: [String]) -> UUID? {
         guard let first = payload.first else { return nil }
         if let carried = TabDragPayload(encoded: first) { return carried.tabID }
@@ -239,11 +246,12 @@ enum TabDropPlan {
     /// three answers are the three things a drop can be worth.
     ///
     /// **A bare uuid is still the reorder.** It is what this strip dragged
-    /// before Task 3 and what the session sidebar drags today, and it names
-    /// no window, so it cannot be a move between two. A sidebar row dropped
-    /// on a tab therefore reaches `TabsViewModel.move(tabID:onto:)` with an
-    /// id it does not know, which leaves the order alone — the same no-op it
-    /// has always been, arrived at the same way.
+    /// before Task 3, and it names no window, so it cannot be a move
+    /// between two. Nothing else on this surface produces one: a session
+    /// row from the sidebar carries a prefixed spelling
+    /// (`SidebarDragPayload`), which parses as neither the envelope nor a
+    /// uuid, so it lands in `.none` and the drop is refused outright.
+    ///
     /// Built ON `draggedTabID(from:)` rather than beside it: everything
     /// about WHICH tab a payload names — the envelope, the bare uuid, only
     /// the first item — is that function's, and stays pinned by
@@ -519,12 +527,19 @@ private struct TabItemView: View {
         .overlay { Rectangle().strokeBorder(background.borderColor, lineWidth: 2) }
         .contentShape(Rectangle())
         .onTapGesture(perform: onActivate)
-        // Reordering by dragging, in two halves: the tab carries its own
-        // id, and a tab dropped on this one takes this one's position.
-        // Both halves are plain uuid strings. The session sidebar's rows
-        // carry a prefixed spelling of their own (`SidebarDragPayload`),
-        // because a row there is a folder or a connection and the drop has
-        // to know which; neither surface parses the other's payload.
+        // Dragging, in two halves: the tab carries its own id and the
+        // window it lives in, and what a drop does with that is
+        // `TabDropPlan.route`'s answer — this one's position for a drag
+        // that started here, a hand-over to the window for a drag that
+        // started in another one.
+        //
+        // The session sidebar's rows carry a prefixed spelling of their own
+        // (`SidebarDragPayload`), because a row there is a folder or a
+        // connection and the drop has to know which. Neither surface parses
+        // the other's payload, and the consequence is worth stating in the
+        // direction that reaches this closure: a sidebar row let go on a
+        // tab is refused here, not merely ignored downstream — `route`
+        // answers `.none` and this closure returns `false`.
         //
         // The drop also reports whether a drag is over this tab, which is
         // the whole of the feedback a drop destination gets: a `Bool`, with

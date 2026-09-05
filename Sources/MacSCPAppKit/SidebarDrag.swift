@@ -14,10 +14,13 @@ import macSCPCore
 /// deleted while the drag was in the air — is indistinguishable from a lookup
 /// for the other kind.
 ///
-/// The tab strip carries a bare uuid (`TabItemView.dragPayload`), which this
+/// The tab strip carries a JSON envelope of its own since the detachable-tabs
+/// work (`TabDragPayload`, written by `TabItemView.dragPayload`), which this
 /// deliberately does not parse: a tab dropped on the sidebar names no row
-/// here, and a sidebar row dropped on the strip is not a tab id there. Two
-/// surfaces, two spellings, neither able to move the other's rows.
+/// here, and a sidebar row dropped on the strip parses as neither that
+/// envelope nor the bare uuid the strip used to carry, so
+/// `TabDropPlan.route` refuses it outright. Two surfaces, two spellings,
+/// neither able to move the other's rows.
 enum SidebarDragPayload {
     private static let groupPrefix = "macscp.sidebar.group:"
     private static let sessionPrefix = "macscp.sidebar.session:"
