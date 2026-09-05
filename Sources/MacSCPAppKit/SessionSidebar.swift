@@ -258,16 +258,17 @@ struct SessionSidebar: View {
     /// `hiddenImportsErrorMessage = nil` `refreshImportedHosts()`'s success
     /// path already performs on the next successful read.
     let onDismissHiddenImportsError: () -> Void
-    /// Compact sidebar mode (sidebar-polish plan, Task 2) —
-    /// `SettingsStore.sidebarCompact`, read by `ContentView` and handed
-    /// over as a plain fact, same pattern as `showsTagFilterBar` right
-    /// below: nothing in this file has to know a settings layer exists.
-    /// Forwarded to each `SessionRow` as `isCompact`; changes row padding
-    /// only (5pt to 2pt) — no ordering, no selection behaviour, no
-    /// keyboard handling, and no other element of the row either: the
-    /// protocol badge stays visible in both densities (fix round 2,
-    /// coordinator ruling 2026-09-04 — see `SessionRow.isCompact`'s own
-    /// doc comment).
+    /// Compact sidebar mode (sidebar-polish plan, Task 2; extended to
+    /// folder rows 2026-09-05) — `SettingsStore.sidebarCompact`, read by
+    /// `ContentView` and handed over as a plain fact, same pattern as
+    /// `showsTagFilterBar` right below: nothing in this file has to know a
+    /// settings layer exists. Forwarded as `isCompact` to each
+    /// `SessionRow` (row padding only, 5pt to 2pt) AND to each
+    /// `SidebarGroupRow` (folder padding only, 3pt to 1pt) — no ordering,
+    /// no selection behaviour, no keyboard handling, and no other element
+    /// of either row: the session row's protocol badge stays visible in
+    /// both densities (fix round 2, coordinator ruling 2026-09-04 — see
+    /// `SessionRow.isCompact`'s own doc comment).
     let sidebarCompact: Bool
     /// Whether the tag FILTER is offered at all (E1) —
     /// `SettingsStore.sidebarTagFilterEnabled`, read by `ContentView` and
@@ -771,6 +772,7 @@ struct SessionSidebar: View {
             // is `SidebarSortMenuPlan`'s answer, not this line's.
             sortPlan: SidebarSortMenuPlan.build(childCount: viewModel.children(of: group.id).count),
             groups: viewModel.groups,
+            isCompact: sidebarCompact,
             onStartRename: { startRename(id: group.id, currentName: group.name) },
             onCommitRename: { commitGroupRename(group) },
             onCancelRename: endRename,
@@ -1146,6 +1148,15 @@ private struct SidebarGroupRow: View {
     /// carries it: `moveToMenuItems` needs the whole set to derive this
     /// folder's eligible targets and to look each target's name up by id.
     let groups: [StoredGroup]
+    /// Compact sidebar mode (sidebar-polish plan, Task 2; extended to
+    /// folder rows on the maintainer's dev-build report of 2026-09-05: "the
+    /// compact sidebar does not reduce the spacing between the folders").
+    /// `SessionRow.isCompact` carries the identical rule and the identical
+    /// reasoning — see that property's own doc comment — so it is not
+    /// repeated here: a plain fact handed down from `SessionSidebar`, one
+    /// padding density change (`.padding(.vertical, 3)` to `1`), nothing
+    /// else about the row.
+    let isCompact: Bool
     let onStartRename: () -> Void
     let onCommitRename: () -> Void
     let onCancelRename: () -> Void
@@ -1189,7 +1200,7 @@ private struct SidebarGroupRow: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, isCompact ? 1 : 3)
         .padding(.horizontal, 6)
         // Both the surface and the border are `SidebarDropTargetPlan`'s
         // answer, drawn without a condition of this view's own: the answer

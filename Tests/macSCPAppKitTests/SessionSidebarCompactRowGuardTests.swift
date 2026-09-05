@@ -81,6 +81,23 @@ struct SessionSidebarCompactRowGuardTests {
     private static let compactPaddingValue = 2
     private static let defaultPaddingValue = 5
 
+    /// `SidebarGroupRow` (the folder row), extended to `isCompact` on the
+    /// maintainer's dev-build report of 2026-09-05: "the compact sidebar
+    /// does not reduce the spacing between the folders, which does not
+    /// make it very compact." Same shape as `SessionRow`'s own anchors
+    /// above, at the folder row's own densities (3pt default, 1pt
+    /// compact) — a SEPARATE declaration and a separate scan, since a
+    /// change confined to `SessionRow`'s body would leave these checks
+    /// reading nothing.
+    private static let groupRowDeclaration = "private struct SidebarGroupRow: View"
+    private static let groupRowCompactPaddingValue = 1
+    private static let groupRowDefaultPaddingValue = 3
+
+    private static func groupRowBody() throws -> String {
+        try TransferQueueBarCancelGuardTests.declarationBody(
+            of: Self.groupRowDeclaration, in: try strictSource())
+    }
+
     private static func strictSource() throws -> String {
         let raw = try String(contentsOf: sidebarFile, encoding: .utf8)
         return try SwiftSource.blankingCommentsAndStrings(raw)
@@ -192,6 +209,73 @@ struct SessionSidebarCompactRowGuardTests {
             SessionRow's own declaration -- the stripper or the path is \
             wrong, and the checks above are reading something other than \
             the row they name.
+            """)
+    }
+
+    // MARK: - The guard, extended to the folder row (2026-09-05)
+
+    /// Positive anchor 1 for the folder row: it reads the setting at all.
+    /// Without this, a row that never varied its padding would pass the
+    /// checks below over nothing — same reasoning as
+    /// `theRowReadsTheCompactSetting`, on the other declaration.
+    @Test func theGroupRowReadsTheCompactSetting() throws {
+        let body = try Self.groupRowBody()
+        #expect(body.contains("isCompact"), """
+            SidebarGroupRow does not read isCompact -- the folder row was \
+            not tightened by compact mode (maintainer report 2026-09-05).
+            """)
+    }
+
+    /// The folder row's own two densities, paired the same way
+    /// `theRowsVerticalPaddingIsExactlyTheTwoDensitiesAndNothingElse` pairs
+    /// `SessionRow`'s: both values present, and no third one.
+    @Test func theGroupRowsVerticalPaddingIsExactlyTheTwoDensitiesAndNothingElse() throws {
+        let body = try Self.groupRowBody()
+        let values = Self.verticalPaddingValues(in: body)
+        #expect(values.contains(Self.groupRowCompactPaddingValue), """
+            SidebarGroupRow's .padding(.vertical, …) never contains \
+            \(Self.groupRowCompactPaddingValue) -- the folder row's compact \
+            density has been lost or renumbered.
+            """)
+        #expect(values.contains(Self.groupRowDefaultPaddingValue), """
+            SidebarGroupRow's .padding(.vertical, …) never contains \
+            \(Self.groupRowDefaultPaddingValue) -- the folder row's DEFAULT \
+            padding (unchanged from what it was before compact mode reached \
+            folders) has been lost or renumbered.
+            """)
+        let unexpected = Set(values).subtracting(
+            [Self.groupRowCompactPaddingValue, Self.groupRowDefaultPaddingValue])
+        #expect(unexpected.isEmpty, """
+            SidebarGroupRow's .padding(.vertical, …) also carries \
+            \(unexpected.sorted()) -- compact mode on the folder row is a \
+            density change ONLY (1 instead of 3); a third value means either \
+            a stray extra padding call or a density this task never agreed \
+            to.
+            """)
+    }
+
+    /// The negative half for the folder row, paired with the positive
+    /// above: nothing in `SidebarGroupRow`'s body is hidden behind
+    /// `isCompact` — the setting is a padding change alone, the same rule
+    /// `SessionRow`'s own negative check pins.
+    @Test func theGroupRowHidesNothingBehindACompactGate() throws {
+        let body = try Self.groupRowBody()
+        #expect(!body.contains(Self.compactGate), """
+            SidebarGroupRow contains `\(Self.compactGate)` -- compact mode \
+            is a padding change alone; a gate keyed off `isCompact` would \
+            hide something in compact mode that must stay visible.
+            """)
+    }
+
+    /// Positive anchor for the two checks above: the strict view must
+    /// actually be reaching `SidebarGroupRow`'s own declaration.
+    @Test func theStrictViewStillContainsTheGroupRowDeclaration() throws {
+        let code = try Self.strictSource()
+        #expect(code.contains(Self.groupRowDeclaration), """
+            the strict view of SessionSidebar.swift no longer contains \
+            SidebarGroupRow's own declaration -- the scanner or the path is \
+            wrong, and the folder-row checks above are reading something \
+            other than the row they name.
             """)
     }
 
