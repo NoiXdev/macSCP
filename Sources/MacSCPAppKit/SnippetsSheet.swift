@@ -594,6 +594,11 @@ private struct SnippetEditorView: View {
     /// or written to anything outside this view: the design rules out a
     /// remembered fold state in any form.
     @State private var folding = SnippetVariableFolding()
+    /// The variable row's reach into the command field's live `NSTextView`
+    /// selection — see `SnippetCommandEditorController`'s own doc comment
+    /// (`SnippetCommandEditor.swift`) for why a plain reference type held
+    /// here is what makes that reach possible.
+    @State private var commandEditorController = SnippetCommandEditorController()
     /// `Snippet.skipsPlaceholderPlacementCheck` while it is being edited.
     /// A plain `Bool` rather than a draft type: unlike a declaration it has
     /// no half-typed intermediate state a checkbox could be in.
@@ -796,7 +801,8 @@ private struct SnippetEditorView: View {
                 // in a command as `{{NAME}}` is applied in one place for
                 // both entrances.
                 SnippetCommandEditor(
-                    text: $command, accessibilityLabel: commandLabel, variables: variables)
+                    text: $command, controller: commandEditorController,
+                    accessibilityLabel: commandLabel, variables: variables)
                     .frame(height: SnippetCommandEditor.intrinsicHeight(for: command))
                     // `FormRow` aligns on `.firstTextBaseline`, and SwiftUI
                     // cannot read one out of an `NSViewRepresentable` -- the
@@ -1209,8 +1215,18 @@ private struct SnippetEditorView: View {
                     let insertLabel = L10n.string(
                         "snippets.variables.insert", "Insert in command")
                     Button {
-                        command = snippetCommandInsertingPlaceholder(
-                            draft.wrappedValue.variable.name, into: command)
+                        // The live path: lands at the command field's
+                        // caret, replacing a selection, via the field's
+                        // own NSTextView. Falls back to the old
+                        // append-only behaviour only if that view has
+                        // not registered with the controller yet, which
+                        // does not happen through this button in
+                        // practice — the field is always on screen
+                        // before it can be pressed.
+                        let name = draft.wrappedValue.variable.name
+                        if !commandEditorController.insertPlaceholder(named: name) {
+                            command = snippetCommandInsertingPlaceholder(name, into: command)
+                        }
                     } label: {
                         Image(systemName: "curlybraces")
                     }

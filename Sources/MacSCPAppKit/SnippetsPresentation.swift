@@ -652,19 +652,22 @@ func snippetInsertablePlaceholderNames(in variables: [SnippetVariable]) -> [Stri
         .filter { seen.insert($0).inserted }
 }
 
-/// `command` with `{{name}}` put at its end.
+/// `command` with `{{name}}` appended at its end.
 ///
-/// The end, because SwiftUI hands a `View` no caret position in the
-/// `NSTextView` below it — and a control that claimed to insert "where you
-/// are" while actually appending would be worse than one that says where it
-/// writes. Separated from what stands before it by one space, unless the
-/// command is empty or already ends in whitespace: a line break separates
-/// on its own, and turning it into a break plus a space would indent the
-/// new line for no reason.
+/// The fallback path: `SnippetCommandEditorController.insertPlaceholder`
+/// (in `SnippetCommandEditor.swift`) reaches the command field's live
+/// `NSTextView` selection and lands the placeholder there instead, so this
+/// only runs when no text view has registered with the controller yet —
+/// unreachable through the UI today, since the row's insert button sits
+/// beside a command field that is always on screen, but a pure fallback
+/// costs nothing to keep. It delegates its append rule (separated from
+/// what stands before it by one space, unless the command is empty or
+/// already ends in whitespace — a line break separates on its own) to
+/// `SnippetBodyInsertion`'s own `nil`-selection branch, so there is one
+/// algorithm for "no caret to speak of" rather than two that happen to
+/// agree.
 func snippetCommandInsertingPlaceholder(_ name: String, into command: String) -> String {
-    let placeholder = "{{\(name)}}"
-    guard let last = command.last else { return placeholder }
-    return last.isWhitespace ? command + placeholder : command + " " + placeholder
+    SnippetBodyInsertion.insert("{{\(name)}}", into: command, at: nil).body
 }
 
 /// The entries the command field's completion list offers, given the text

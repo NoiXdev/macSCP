@@ -39,8 +39,20 @@ import macSCPCore
 /// been a project of its own. What the list offers is decided by
 /// `snippetPlaceholderCompletions`, away from the view; the `Coordinator`
 /// below only supplies the text around the caret and shows the result.
+///
+/// A seventh hazard, closed later than the first six (the residual left
+/// open in `docs/BACKLOG.md` on 2026-09-02, "the row's insert path
+/// appends at the end"): the variable row's "Insert in command" button
+/// lives in `SnippetsSheet.swift`, nowhere near this view, and SwiftUI
+/// hands it no way to reach the `Coordinator` this file already builds
+/// the caret-aware insert on top of (`SnippetBodyInsertion`, Core). See
+/// `SnippetCommandEditorController`, below, for the reach.
 struct SnippetCommandEditor: NSViewRepresentable {
     @Binding var text: String
+    /// The reach the variable row's insert button needs into this field's
+    /// live selection. See `SnippetCommandEditorController`'s own doc
+    /// comment.
+    let controller: SnippetCommandEditorController
     /// VoiceOver's name for this field. The `TextField(commandLabel, ...)`
     /// this replaced supplied one implicitly, from its own title parameter;
     /// a raw `NSTextView` supplies none on its own, so the caller
@@ -100,7 +112,11 @@ struct SnippetCommandEditor: NSViewRepresentable {
         return CGFloat(clamped) * lineHeight + verticalInset * 2
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeCoordinator() -> Coordinator {
+        let coordinator = Coordinator(self)
+        controller.coordinator = coordinator
+        return coordinator
+    }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -172,6 +188,7 @@ struct SnippetCommandEditor: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
+        context.coordinator.textView = textView
         context.coordinator.apply(text, to: textView)
         return scroll
     }
@@ -192,6 +209,11 @@ struct SnippetCommandEditor: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: SnippetCommandEditor
+        /// Set once, in `makeNSView` — the same view for the coordinator's
+        /// whole lifetime, since `NSViewRepresentable` never swaps the view
+        /// out from under an existing coordinator. `weak` because the view
+        /// hierarchy owns it, not this object.
+        fileprivate weak var textView: NSTextView?
 
         init(_ parent: SnippetCommandEditor) { self.parent = parent }
 
@@ -271,6 +293,39 @@ struct SnippetCommandEditor: NSViewRepresentable {
             recolour(textView)
         }
 
+        /// Inserts `{{name}}` at this field's live caret or selection,
+        /// replacing a selection rather than only ever appending — the
+        /// residual `docs/BACKLOG.md` left open for the variable row's
+        /// insert button. The decision itself is `SnippetBodyInsertion`
+        /// (Core, pure); this method only supplies the live `NSRange`,
+        /// converted to the `String.Index` range that function wants, and
+        /// writes the result back into the text view (caret included) and
+        /// the SwiftUI binding.
+        ///
+        /// `Range(_:in:)` on an `NSRange` rounds to the nearest `Character`
+        /// boundaries, so a selection that (through some AppKit path this
+        /// project has not observed) split a grapheme cluster still yields
+        /// a valid `String.Index` range rather than a crash.
+        ///
+        /// Returns `false` when `textView` is `nil` — unreached through the
+        /// UI today, since the command field is always on screen before
+        /// this can be called, but real enough that the caller
+        /// (`SnippetCommandEditorController`) still owns a fallback rather
+        /// than this silently dropping the insert.
+        @discardableResult
+        fileprivate func insertPlaceholder(named name: String) -> Bool {
+            guard let textView else { return false }
+            let placeholder = "{{\(name)}}"
+            let body = textView.string
+            let selection = Range(textView.selectedRange(), in: body)
+            let result = SnippetBodyInsertion.insert(placeholder, into: body, at: selection)
+            apply(result.body, to: textView)
+            parent.text = result.body
+            textView.setSelectedRange(
+                NSRange(result.cursorAfter..<result.cursorAfter, in: result.body))
+            return true
+        }
+
         /// Hazards 1 and 2: the caret is put back where it was, and the
         /// attribute run is kept out of the undo stack.
         private func recolour(_ textView: NSTextView) {
@@ -309,5 +364,34 @@ struct SnippetCommandEditor: NSViewRepresentable {
         private static func colour(for kind: SnippetToken.Kind) -> NSColor {
             NSColor(snippetTokenColour(for: kind))
         }
+    }
+}
+
+/// A mailbox between the variable row's "Insert in command" button
+/// (`SnippetsSheet.swift`) and the command field's live `NSTextView`
+/// (this file). SwiftUI hands the button no way to reach a view built
+/// elsewhere in the sheet, and `SnippetCommandEditor`'s own `Coordinator`
+/// — which already holds that view, from `makeNSView` — is exactly that
+/// reach.
+///
+/// `@State`-held in `SnippetEditorView` so both sides see the same
+/// instance across body re-evaluations: the reference itself never
+/// changes, even though `coordinator` does, filled in once
+/// `SnippetCommandEditor.makeCoordinator()` runs. `coordinator` is `weak`
+/// because SwiftUI owns it, not this controller.
+@MainActor
+final class SnippetCommandEditorController {
+    fileprivate weak var coordinator: SnippetCommandEditor.Coordinator?
+
+    /// Attempts to insert `{{name}}` at the command field's live caret or
+    /// selection. Returns `false` when the `NSTextView` bridge has not
+    /// registered yet — unreached through the UI today, since the command
+    /// field always renders before this can be called, but real enough
+    /// that the caller (`variableRow`'s button) still owns a fallback to
+    /// `snippetCommandInsertingPlaceholder`'s append behaviour, rather than
+    /// this type silently dropping the insert.
+    @discardableResult
+    func insertPlaceholder(named name: String) -> Bool {
+        coordinator?.insertPlaceholder(named: name) ?? false
     }
 }
