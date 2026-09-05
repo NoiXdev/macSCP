@@ -123,7 +123,7 @@ struct TabsWindowLifecycleTests {
         registry.register(tab, in: source)
         let seedID = UUID()
 
-        registry.park([tab], for: seedID)
+        registry.park([tab], for: seedID, from: source)
         #expect(registry.windowHolding(tab.id) == nil)
         #expect(registry.parkedTabs(for: seedID).count == 1)
 
@@ -153,7 +153,7 @@ struct TabsWindowLifecycleTests {
         let tab = makeTab()
         registry.register(tab, in: source)
         #expect(registry.windowCount == 1)
-        registry.park([tab], for: UUID())
+        registry.park([tab], for: UUID(), from: source)
         #expect(registry.windowCount == 0)
         #expect(registry.tabs(in: source).isEmpty)
     }
@@ -176,7 +176,7 @@ struct TabsWindowLifecycleTests {
         let seed = WindowSeed(tabIDs: [tab.id])
 
         let outcome = TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            tab.id, outOf: model, parkingUnder: seed, from: window, in: registry,
             replacement: { self.makeTab() }, openWindow: { _ in },
             onClaimed: { _ in })
 
@@ -197,7 +197,8 @@ struct TabsWindowLifecycleTests {
         registry.register(tab, in: window)
 
         let outcome = TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: WindowSeed(tabIDs: [tab.id]), in: registry,
+            tab.id, outOf: model, parkingUnder: WindowSeed(tabIDs: [tab.id]), from: window,
+            in: registry,
             replacement: { self.makeTab() }, openWindow: { _ in },
             onClaimed: { _ in })
 
@@ -220,7 +221,7 @@ struct TabsWindowLifecycleTests {
 
         let outcome = TabDetachSequence.move(
             leaving.id, outOf: model, parkingUnder: WindowSeed(tabIDs: [leaving.id]),
-            in: registry, replacement: { self.makeTab() }, openWindow: { _ in },
+            from: window, in: registry, replacement: { self.makeTab() }, openWindow: { _ in },
             onClaimed: { _ in })
 
         #expect(outcome.closesWindow == false)
@@ -247,7 +248,7 @@ struct TabsWindowLifecycleTests {
         let seed = WindowSeed(tabIDs: [tab.id])
 
         TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            tab.id, outOf: model, parkingUnder: seed, from: source, in: registry,
             replacement: { self.makeTab() }, openWindow: { _ in },
             onClaimed: { _ in })
 
@@ -268,7 +269,7 @@ struct TabsWindowLifecycleTests {
         var opened: [WindowSeed] = []
 
         let outcome = TabDetachSequence.move(
-            UUID(), outOf: model, parkingUnder: seed, in: registry,
+            UUID(), outOf: model, parkingUnder: seed, from: WindowID(), in: registry,
             replacement: { self.makeTab() }, openWindow: { opened.append($0) },
             onClaimed: { _ in })
 
@@ -286,12 +287,13 @@ struct TabsWindowLifecycleTests {
         let tab = makeTab()
         let model = TabsViewModel<SessionTab>(initial: tab)
         model.addTab(makeTab())
-        registry.register(tab, in: WindowID())
+        let window = WindowID()
+        registry.register(tab, in: window)
         let seed = WindowSeed(tabIDs: [tab.id])
         var parkedWhenOpened: [UUID] = []
 
         TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            tab.id, outOf: model, parkingUnder: seed, from: window, in: registry,
             replacement: { self.makeTab() },
             openWindow: { parkedWhenOpened = registry.parkedTabs(for: $0.id).map(\.id) },
             onClaimed: { _ in })
@@ -313,7 +315,7 @@ struct TabsWindowLifecycleTests {
         let seedID = UUID()
         var claims = 0
 
-        registry.park([tab], for: seedID, onClaimed: { claims += 1 })
+        registry.park([tab], for: seedID, from: WindowID(), onClaimed: { claims += 1 })
         #expect(claims == 0)
 
         _ = registry.claim(seedID: seedID, into: WindowID())
@@ -328,27 +330,10 @@ struct TabsWindowLifecycleTests {
         let seedID = UUID()
         var claims = 0
 
-        registry.park([tab], for: seedID, onClaimed: { claims += 1 })
+        registry.park([tab], for: seedID, from: WindowID(), onClaimed: { claims += 1 })
         _ = registry.claim(seedID: seedID, into: WindowID())
         _ = registry.claim(seedID: seedID, into: WindowID())
         #expect(claims == 1)
-    }
-
-    /// Taking a parked tab BACK is not a claim, and must not fire the
-    /// handler — firing it would tell the source window to close over a tab
-    /// that had just been returned to it.
-    @Test func unparkingATabDoesNotFireTheClaimHandler() {
-        let registry = TabRegistry()
-        let window = WindowID()
-        let tab = makeTab()
-        let seedID = UUID()
-        var claims = 0
-
-        registry.park([tab], for: seedID, onClaimed: { claims += 1 })
-        let returned = registry.unpark(seedID: seedID, into: window)
-        #expect(claims == 0)
-        #expect(returned.first === tab)
-        #expect(registry.windowHolding(tab.id) == window)
     }
 
     /// The move tells the source window what to do WHEN the tab is claimed,
@@ -365,7 +350,7 @@ struct TabsWindowLifecycleTests {
         var closeRequests = 0
 
         let outcome = TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            tab.id, outOf: model, parkingUnder: seed, from: window, in: registry,
             replacement: { self.makeTab() }, openWindow: { _ in },
             onClaimed: { _ in closeRequests += 1 })
 
@@ -390,7 +375,7 @@ struct TabsWindowLifecycleTests {
         var claimed: [TabDetachSequence.Outcome] = []
 
         let outcome = TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            tab.id, outOf: model, parkingUnder: seed, from: window, in: registry,
             replacement: { self.makeTab() },
             openWindow: { _ = registry.claim(seedID: $0.id, into: target) },
             onClaimed: { claimed.append($0) })
@@ -400,77 +385,98 @@ struct TabsWindowLifecycleTests {
         #expect(registry.windowHolding(tab.id) == target)
     }
 
-    /// The recovery, driven from its real trigger rather than from a turn
-    /// count: the source window is activated again with the seed still
-    /// unclaimed, and the tab comes back to it.
-    @Test func theActivationTriggerReturnsATabNoWindowEverClaimed() {
+    // MARK: The registry owns pending moves (fix round 3)
+
+    /// The registry knows WHICH window parked a seed, so the window that
+    /// closes can be handed exactly its own unclaimed moves.
+    @Test func aParkedSeedIsListedAgainstTheWindowThatParkedIt() {
         let registry = TabRegistry()
-        let window = WindowID()
+        let source = WindowID()
         let tab = makeTab()
-        let model = TabsViewModel<SessionTab>(initial: tab)
-        registry.register(tab, in: window)
-        registry.register(makeTab(), in: WindowID())
-        let seed = WindowSeed(tabIDs: [tab.id])
+        let seedID = UUID()
 
-        let outcome = TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: seed, in: registry,
-            replacement: { self.makeTab() }, openWindow: { _ in },
-            onClaimed: { _ in })
+        registry.park([tab], for: seedID, from: source)
 
-        let cameBack = TabDetachSequence.reclaim(
-            seedID: seed.id, into: model, from: registry,
-            window: window, removing: outcome.replacementID)
-
-        #expect(cameBack)
-        #expect(model.tabs.count == 1)
-        #expect(model.tabs[0] === tab)
-        #expect(model.activeTab.id == tab.id)
-        #expect(registry.windowHolding(tab.id) == window)
-        #expect(registry.parkedTabs(for: seed.id).isEmpty)
+        let pending = registry.pendingSeeds(for: source)
+        #expect(pending.count == 1)
+        #expect(pending.first?.seedID == seedID)
+        #expect(pending.first?.tabs.first === tab)
+        #expect(registry.pendingSeeds(for: WindowID()).isEmpty)
     }
 
-    /// The positive beside it: a claim that arrived BEFORE the trigger
-    /// leaves nothing to reclaim, so a late activation of the source window
-    /// cannot steal a tab back out of the window that took it.
-    @Test func aClaimBeforeTheTriggerLeavesNothingToReclaim() {
+    /// A claim empties the pending list: the seed is another window's
+    /// business now, and the one that parked it has nothing left to answer
+    /// for.
+    @Test func claimingASeedTakesItOffItsSourcesPendingList() {
         let registry = TabRegistry()
-        let window = WindowID()
-        let target = WindowID()
+        let source = WindowID()
         let tab = makeTab()
-        let model = TabsViewModel<SessionTab>(initial: tab)
-        registry.register(tab, in: window)
-        registry.register(makeTab(), in: WindowID())
-        let seed = WindowSeed(tabIDs: [tab.id])
+        let seedID = UUID()
+        registry.park([tab], for: seedID, from: source)
 
-        let outcome = TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: seed, in: registry,
-            replacement: { self.makeTab() },
-            openWindow: { _ = registry.claim(seedID: $0.id, into: target) },
-            onClaimed: { _ in })
+        _ = registry.claim(seedID: seedID, into: WindowID())
 
-        let cameBack = TabDetachSequence.reclaim(
-            seedID: seed.id, into: model, from: registry,
-            window: window, removing: outcome.replacementID)
-
-        #expect(cameBack == false)
-        #expect(model.tabs.count == 1)
-        #expect(model.tabs[0].id == outcome.replacementID)
-        #expect(registry.windowHolding(tab.id) == target)
+        #expect(registry.pendingSeeds(for: source).isEmpty)
     }
 
-    /// A reclaim into a window that never lost anything is a no-op — the
-    /// same reading every other function here takes of an id or a seed it
-    /// does not know.
-    @Test func aSeedNothingWasParkedUnderReclaimsNothing() {
+    /// The sweep hands the tabs over EXACTLY ONCE. The App layer is what
+    /// tears them down (the registry never does — see
+    /// `TabRegistryNoTeardownGuardTests`), so handing the same live session
+    /// out twice would mean tearing it down twice.
+    @Test func takingAWindowsPendingSeedsHandsThemOverExactlyOnce() {
         let registry = TabRegistry()
+        let source = WindowID()
         let tab = makeTab()
-        let model = TabsViewModel<SessionTab>(initial: tab)
-        let cameBack = TabDetachSequence.reclaim(
-            seedID: UUID(), into: model, from: registry,
-            window: WindowID(), removing: nil)
-        #expect(cameBack == false)
-        #expect(model.tabs.count == 1)
-        #expect(model.tabs[0] === tab)
+        let seedID = UUID()
+        registry.park([tab], for: seedID, from: source)
+
+        let first = registry.takePendingSeeds(from: source)
+        #expect(first.count == 1)
+        #expect(first.first?.tabs.first === tab)
+
+        let second = registry.takePendingSeeds(from: source)
+        #expect(second.isEmpty)
+        #expect(registry.pendingSeeds(for: source).isEmpty)
+        #expect(registry.parkedTabs(for: seedID).isEmpty)
+    }
+
+    /// The quit sweep takes every window's, and empties the registry of
+    /// them the same way.
+    @Test func takingEveryPendingSeedEmptiesThemAll() {
+        let registry = TabRegistry()
+        let firstWindow = WindowID()
+        let secondWindow = WindowID()
+        registry.park([makeTab()], for: UUID(), from: firstWindow)
+        registry.park([makeTab()], for: UUID(), from: secondWindow)
+
+        let all = registry.takeAllPendingSeeds()
+        #expect(all.count == 2)
+        #expect(registry.takeAllPendingSeeds().isEmpty)
+        #expect(registry.pendingSeeds(for: firstWindow).isEmpty)
+        #expect(registry.pendingSeeds(for: secondWindow).isEmpty)
+    }
+
+    /// Two moves from ONE window — the case this round exists for. The
+    /// second move's claim closes the source window while the first is
+    /// still parked; both are on the same window's pending list, so the
+    /// close path reaches the one nobody claimed. Round 2's per-window
+    /// `pendingMoves` died with the window and left it unreachable.
+    @Test func aSecondMoveDoesNotHideTheFirstsUnclaimedSeed() {
+        let registry = TabRegistry()
+        let source = WindowID()
+        let stranded = makeTab()
+        let taken = makeTab()
+        let strandedSeed = UUID()
+        let takenSeed = UUID()
+
+        registry.park([stranded], for: strandedSeed, from: source)
+        registry.park([taken], for: takenSeed, from: source)
+        _ = registry.claim(seedID: takenSeed, into: WindowID())
+
+        let left = registry.takePendingSeeds(from: source)
+        #expect(left.count == 1)
+        #expect(left.first?.seedID == strandedSeed)
+        #expect(left.first?.tabs.first === stranded)
     }
 
     // MARK: - Is there a main window left?
@@ -550,6 +556,8 @@ struct TabsWindowLifecycleTests {
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
     private static let sheetsFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Sheets.swift")
+    private static let sequenceFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/TabDetachSequence.swift")
 
     private static let catalogLocales = ["en", "de", "fr", "pl"]
 
@@ -716,6 +724,127 @@ struct TabsWindowLifecycleTests {
             the window's close path terminates the application — closing one \
             window of several would quit macSCP and take every other \
             window's connections with it.
+            """)
+    }
+
+    /// A window closing tears down the moves nobody claimed BEFORE it
+    /// releases the tabs it still holds (fix round 3).
+    ///
+    /// The order is the claim: an unclaimed seed's tab belongs to no
+    /// window, so nothing else will ever reach it, and
+    /// `releaseHeldTabsOnClose()` starts an async teardown of everything
+    /// else. Both calls are pinned, and so is which comes first.
+    @Test func aClosingWindowTearsDownItsUnclaimedMovesBeforeItsHeldTabs() throws {
+        let source = try Self.code(of: Self.lifecycleFile)
+        let notified = try #require(
+            Self.body(after: "func handleWindowWillClose(_ notification: Notification) {",
+                      in: source), """
+                ContentView+Lifecycle.swift no longer declares \
+                handleWindowWillClose(_:) — re-anchor this guard.
+                """)
+        let unclaimed = notified.range(of: "releaseUnclaimedSeedsOnClose()")
+        let held = notified.range(of: "releaseHeldTabsOnClose()")
+        #expect(unclaimed != nil, """
+            the window's close path no longer tears down the moves nobody \
+            claimed — a parked tab would keep a live connection with no window \
+            and nothing left that could reach it.
+            """)
+        #expect(held != nil, """
+            the window's close path no longer releases the tabs it holds — \
+            re-anchor this guard.
+            """)
+        if let unclaimed, let held {
+            #expect(unclaimed.lowerBound < held.lowerBound, """
+                the window's close path releases its held tabs before its \
+                unclaimed moves. The unclaimed ones have to be taken out of \
+                the registry first — the held release starts an async teardown \
+                and the sweep must not race it.
+                """)
+        }
+    }
+
+    /// The teardown itself is the App layer's, through the same
+    /// `teardown(_:reason:)` every other path uses — the registry only hands
+    /// the tabs out (`TabRegistryNoTeardownGuardTests` is what holds that
+    /// boundary from the other side).
+    @Test func theUnclaimedSweepTearsDownThroughTheOrdinaryPath() throws {
+        let source = try Self.code(of: Self.lifecycleFile)
+        let sweep = try #require(
+            Self.body(after: "func releaseUnclaimedSeedsOnClose() {", in: source), """
+                ContentView+Lifecycle.swift no longer declares \
+                releaseUnclaimedSeedsOnClose() — re-anchor this guard.
+                """)
+        let asksTheRegistry = sweep.contains("takePendingSeeds(from:")
+        let tearsDown = sweep.contains("await teardown(")
+        #expect(asksTheRegistry, """
+            the unclaimed sweep no longer asks the registry for this window's \
+            pending seeds.
+            """)
+        #expect(tearsDown, """
+            the unclaimed sweep no longer runs what it took through \
+            teardown(_:reason:) — it would drop live sessions instead of \
+            closing them.
+            """)
+    }
+
+    /// Quitting sweeps what is left, from the one callback AppKit holds the
+    /// process open for.
+    @Test func quittingSweepsEveryStillParkedMove() throws {
+        let app = try Self.code(of: Self.appFile)
+        let terminate = try #require(
+            Self.body(after: "func applicationWillTerminate(_ notification: Notification) {",
+                      in: app), """
+                MacSCPApp.swift no longer declares applicationWillTerminate(_:) — \
+                re-anchor this guard.
+                """)
+        let sweeps = terminate.contains("sweepUnclaimedMoves()")
+        let stillFlushes = terminate.contains("flushSynchronously()")
+        #expect(sweeps, """
+            applicationWillTerminate(_:) no longer sweeps the registry's still \
+            parked moves — a tab whose window never appeared would go \
+            unrecorded at quit.
+            """)
+        let sweep = try #require(
+            Self.body(after: "private func sweepUnclaimedMoves() {", in: app), """
+                MacSCPApp.swift no longer declares sweepUnclaimedMoves() — \
+                re-anchor this guard.
+                """)
+        let takesThemAll = sweep.contains("takeAllPendingSeeds()")
+        #expect(takesThemAll, """
+            the quit sweep no longer takes the registry's pending seeds — the \
+            call above would then be doing nothing.
+            """)
+        #expect(stillFlushes, """
+            applicationWillTerminate(_:) no longer flushes the diagnostic log — \
+            the sweep's own lines are the durable half of what it does, so \
+            this is what makes them worth writing.
+            """)
+    }
+
+    /// The negative beside them: round 2's activation-triggered reclaim is
+    /// gone, and nothing has quietly put another guess in its place. There
+    /// is no signal for "this window will never appear" — SwiftUI reports
+    /// no `openWindow` failure — so a trigger that can beat the real claim
+    /// is worse than none.
+    @Test func noActivationTriggeredReclaimRemains() throws {
+        let lifecycle = try Self.code(of: Self.lifecycleFile)
+        let sequence = try Self.code(of: Self.sequenceFile)
+        // The positive: the activation hook is still there, doing the one
+        // thing it is still for.
+        let stillPublishes = lifecycle.contains(".onChange(of: controlActiveState")
+            && lifecycle.contains("publishToMenuBarIfKey()")
+        #expect(stillPublishes, """
+            the controlActiveState hook or its menu-bar publish is gone — the \
+            negative below would then be forbidding something nothing does \
+            any more.
+            """)
+        #expect(lifecycle.contains("reclaim") == false, """
+            ContentView+Lifecycle.swift reclaims a parked tab again. An \
+            unclaimed move is torn down when its source window closes, not \
+            guessed at from an activation.
+            """)
+        #expect(sequence.contains("reclaim") == false, """
+            TabDetachSequence.swift declares a reclaim again — see above.
             """)
     }
 
@@ -944,6 +1073,15 @@ struct TabsWindowLifecycleTests {
                 """)
         let savesTheFrame = autosave.contains("setFrameAutosaveName(")
         let onlyForThePrimary = autosave.contains("guard isPrimaryWindow")
+        // And somebody calls it (fix round 3): the two checks below said
+        // what `applyFrameAutosave(to:)` does, and nothing said it ran.
+        let detail = try Self.code(of: Self.detailFile)
+        let isCalled = detail.contains("applyFrameAutosave(")
+        #expect(isCalled, """
+            ContentView+Detail.swift never calls applyFrameAutosave( — the \
+            primary window's frame would be forgotten however correct that \
+            function is.
+            """)
         #expect(savesTheFrame, """
             applyFrameAutosave(to:) no longer sets a frame autosave name — the \
             primary window would forget its position, which is what \

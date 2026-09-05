@@ -203,10 +203,6 @@ extension ContentView {
         // empty until the first activation.
         .onChange(of: controlActiveState, initial: true) { _, _ in
             publishToMenuBarIfKey()
-            // The same activation is the reclaim's trigger (fix round 2) —
-            // see `reclaimStrandedMoves()` for why it is an activation and
-            // not a number of turns.
-            reclaimStrandedMoves()
         }
     }
 
@@ -1106,7 +1102,42 @@ extension ContentView {
         // are released only after teardown — so it excludes itself.
         writeMainWindowPresence(closingThisWindow: true)
         clearMenuBarIfMine()
+        // BEFORE the held tabs (fix round 3), and the order is the claim:
+        // an unclaimed seed's tab belongs to no window, so this is the last
+        // moment anything can reach it, and `releaseHeldTabsOnClose()`
+        // starts an async teardown that this sweep must not be racing.
+        releaseUnclaimedSeedsOnClose()
         releaseHeldTabsOnClose()
+    }
+
+    /// Tears down every move this window started that no window ever
+    /// claimed (Detachable Tabs plan, Task 2 fix round 3).
+    ///
+    /// A parked tab is in no window — no strip, no menu, nothing on screen
+    /// says it exists — and the window that parked it is the only thing
+    /// that ever knew about it. So when that window goes, the tab goes with
+    /// it, through the SAME `teardown(_:reason:)` every held tab runs, with
+    /// the same two `TeardownStage` bounds. `TabRegistry` hands the tabs
+    /// over and does nothing else to them: the App layer tears down, the
+    /// registry keeps references, and `TabRegistryNoTeardownGuardTests`
+    /// holds that boundary from the other side.
+    ///
+    /// One `info` line per seed, written BEFORE the teardown starts, so the
+    /// record survives even if the teardown does not (see the quit sweep in
+    /// `AppDelegate`, which has exactly that problem).
+    func releaseUnclaimedSeedsOnClose() {
+        let stranded = TabRegistry.shared.takePendingSeeds(from: windowID)
+        guard !stranded.isEmpty else { return }
+        for seed in stranded {
+            DiagnosticLog.shared.log(
+                .info, "app", "window move torn down unclaimed seed=\(seed.seedID)")
+        }
+        let tabs = stranded.flatMap(\.tabs)
+        Task { @MainActor in
+            for tab in tabs {
+                await teardown(tab, reason: .userRequested)
+            }
+        }
     }
 
     // MARK: - Windows
@@ -1220,9 +1251,12 @@ extension ContentView {
     ///
     /// Until the claim arrives the tab stays parked and this window keeps
     /// what it has (its remaining tabs, or the fresh one that took the
-    /// leaver's place). If no window ever claims it,
-    /// `reclaimStrandedMoves()` gives it back the next time this window is
-    /// activated.
+    /// leaver's place). If no window ever claims it, nothing gives it back
+    /// — `TabRegistry`'s doc comment states that limit and why there is no
+    /// honest signal to end it earlier — and it is torn down by
+    /// `releaseUnclaimedSeedsOnClose()` when this window closes, or by the
+    /// quit sweep in `AppDelegate`. The log line below is what makes the
+    /// interval visible in a diagnostic report.
     ///
     /// No precondition is re-asked here. The context-menu entry exists only
     /// because `TabContextMenu.entries` offered it, and the Window menu's
@@ -1233,8 +1267,11 @@ extension ContentView {
     func moveToNewWindow(_ tab: SessionTab) {
         let seed = WindowSeed(tabIDs: [tab.id])
         let ownWindowID = windowID
-        let outcome = TabDetachSequence.move(
-            tab.id, outOf: tabsModel, parkingUnder: seed, in: TabRegistry.shared,
+        DiagnosticLog.shared.log(
+            .info, "app", "window move parked seed=\(seed.id) tabs=\(seed.tabIDs.count)")
+        TabDetachSequence.move(
+            tab.id, outOf: tabsModel, parkingUnder: seed, from: ownWindowID,
+            in: TabRegistry.shared,
             replacement: { makeTab(registeringIn: windowID) },
             openWindow: { openWindow(value: $0) },
             onClaimed: { claimed in
@@ -1249,30 +1286,6 @@ extension ContentView {
                 // deferred.
                 Task { @MainActor in TabWindowCloseRequest.post(ownWindowID) }
             })
-        pendingMoves.append(PendingMove(seedID: seed.id, replacementID: outcome.replacementID))
-    }
-
-    /// Gives back any tab this window parked that no window ever claimed
-    /// (fix round 2).
-    ///
-    /// Run when this window is ACTIVATED — `controlActiveState` becoming
-    /// `.key` — and never on a turn count: by the time the user is back on
-    /// this window, a window that was going to open has opened and claimed.
-    /// A seed that has already been claimed is not in the registry any more,
-    /// so `reclaim` answers `false` for it and nothing moves; the pending
-    /// note is dropped either way, because a claimed seed will never need
-    /// one again.
-    ///
-    /// The `pendingMoves` list is this window's own: only the window that
-    /// parked a seed can give that seed's tab a model to come back to.
-    func reclaimStrandedMoves() {
-        guard controlActiveState == .key, !pendingMoves.isEmpty else { return }
-        for move in pendingMoves {
-            TabDetachSequence.reclaim(
-                seedID: move.seedID, into: tabsModel, from: TabRegistry.shared,
-                window: windowID, removing: move.replacementID)
-        }
-        pendingMoves = []
     }
 
     /// A tab was dragged out of ANOTHER window's strip and let go on this

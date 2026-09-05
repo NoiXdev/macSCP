@@ -28,6 +28,26 @@ struct WindowID: Hashable, Sendable, Codable {
 /// `@MainActor`, like `SessionTab` and `TabsViewModel`: every tab it holds
 /// is already main-actor-isolated, so the registry adds no isolation
 /// boundary of its own — a plain, ordinary main-actor object.
+///
+/// ## The accepted limit on a parked tab (Task 2 fix round 3)
+///
+/// A tab moved into a window of its own is parked here until that window
+/// appears and claims it. If the window never appears, the tab stays
+/// parked: it is in no window, so it is on no tab strip and in no menu,
+/// and nothing on screen says it exists. Two things end that state, and
+/// there is no third — the source window closing, which sweeps its own
+/// unclaimed seeds through the App layer's ordinary teardown, and the app
+/// quitting, which sweeps every window's.
+///
+/// It is a limit rather than a defect because SwiftUI reports no failure
+/// from `openWindow(value:)`: there is no signal that says "this window
+/// will never appear", and a guess at one is a guess that can beat the
+/// real claim. Fix round 2 shipped exactly that guess and it lost the tab
+/// out of the new window every time. So the invisible interval is
+/// accepted, and made visible in the record instead: one `info` line when
+/// a seed is parked, one when it is torn down unclaimed, both written by
+/// the App layer (`ContentView.moveToNewWindow` and the two sweeps) so a
+/// diagnostic report can show a move that never landed.
 @MainActor
 final class TabRegistry {
     /// The process-wide instance every window shares. Tests build their
@@ -40,8 +60,14 @@ final class TabRegistry {
     private var tabIDsByWindow: [WindowID: [UUID]] = [:]
     /// Tabs that have left a window and whose new window does not exist
     /// yet, keyed by the `WindowSeed.id` that window will appear with —
-    /// see `park(_:for:onClaimed:)` (Task 2).
+    /// see `park(_:for:from:onClaimed:)` (Task 2).
     private var parkedTabIDsBySeedID: [UUID: [UUID]] = [:]
+    /// Which window parked each of those seeds (Task 2 fix round 3). It is
+    /// what lets a closing window be handed exactly its own unclaimed
+    /// moves; before this the source was remembered per window, in the
+    /// view, and died with it — a window with two moves in flight lost the
+    /// unclaimed one the moment the claimed one closed it.
+    private var parkedSourceBySeedID: [UUID: WindowID] = [:]
     /// What to run once a window has actually claimed a parked seed — the
     /// signal the window the tab LEFT waits on (Task 2 fix round 2). Held
     /// beside the parked ids and removed with them, so it can fire at most
@@ -158,11 +184,17 @@ final class TabRegistry {
     /// claim itself is the only honest signal, and this is it. It fires from
     /// `claim(seedID:into:)` exactly once, after the tabs have changed
     /// hands, and never from `park` or `unpark(seedID:into:)`.
+    /// **`from` is what makes an unclaimed seed reachable** (fix round 3).
+    /// A parked tab belongs to no window, so nothing about the tab itself
+    /// says where it came from; this records it, and `pendingSeeds(for:)` /
+    /// `takePendingSeeds(from:)` are how the window that parked it finds it
+    /// again on its way out.
     func park(
-        _ tabs: [SessionTab], for seedID: UUID,
+        _ tabs: [SessionTab], for seedID: UUID, from sourceWindow: WindowID,
         onClaimed: @escaping () -> Void = {}
     ) {
         claimHandlersBySeedID[seedID] = onClaimed
+        parkedSourceBySeedID[seedID] = sourceWindow
         var parked = parkedTabIDsBySeedID[seedID] ?? []
         for tab in tabs {
             tabsByID[tab.id] = tab
@@ -189,32 +221,76 @@ final class TabRegistry {
     ///
     /// This is the CLAIM, so the seed's `onClaimed` handler runs — after the
     /// tabs have changed hands, so the window it wakes finds the registry
-    /// already telling the truth. `unpark(seedID:into:)` below is the same
-    /// hand-over without the signal, for the window taking its own tab back.
+    /// already telling the truth. The seed leaves its source window's
+    /// pending list at the same moment: it is somebody else's business now.
     func claim(seedID: UUID, into window: WindowID) -> [SessionTab] {
         let handler = claimHandlersBySeedID.removeValue(forKey: seedID)
-        let claimed = unpark(seedID: seedID, into: window)
-        handler?()
-        return claimed
-    }
-
-    /// Hands `seedID`'s parked tabs to `window` WITHOUT telling anyone the
-    /// move succeeded — because it did not. This is the window that parked
-    /// them taking them back (`TabDetachSequence.reclaim`), and firing
-    /// `onClaimed` here would tell that same window to close over a tab it
-    /// had just been handed back.
-    ///
-    /// The handler is dropped rather than kept: the park it belonged to is
-    /// over either way, and a handler left behind would fire on some later,
-    /// unrelated claim of a seed id that no longer means anything.
-    func unpark(seedID: UUID, into window: WindowID) -> [SessionTab] {
-        claimHandlersBySeedID[seedID] = nil
+        parkedSourceBySeedID[seedID] = nil
         let ids = parkedTabIDsBySeedID.removeValue(forKey: seedID) ?? []
-        return ids.compactMap { id in
+        let claimed = ids.compactMap { id -> SessionTab? in
             guard let tab = tabsByID[id] else { return nil }
             move(id, to: window)
             return tab
         }
+        handler?()
+        return claimed
+    }
+
+    /// A seed that has been parked and not yet claimed, with the tabs
+    /// waiting under it (fix round 3).
+    struct PendingSeed {
+        let seedID: UUID
+        let sourceWindow: WindowID
+        let tabs: [SessionTab]
+    }
+
+    /// Every seed `window` parked that nobody has claimed. Read-only — the
+    /// two `take…` functions below are what actually hands them over.
+    func pendingSeeds(for window: WindowID) -> [PendingSeed] {
+        parkedSourceBySeedID
+            .filter { $0.value == window }
+            .map { seedID, source in
+                PendingSeed(
+                    seedID: seedID, sourceWindow: source,
+                    tabs: (parkedTabIDsBySeedID[seedID] ?? []).compactMap { tabsByID[$0] })
+            }
+    }
+
+    /// Hands `window`'s unclaimed seeds over and forgets them — the sweep a
+    /// closing window runs.
+    ///
+    /// **Handing over is all this does.** The caller is what closes those
+    /// tabs' connections, through the App layer's own sequence; this type
+    /// never touches a session (see its doc comment, and
+    /// `TabRegistryNoTeardownGuardTests`, which reads this file for exactly
+    /// that). Exactly once, too: a second call answers nothing, so nobody
+    /// can be handed the same live session twice.
+    func takePendingSeeds(from window: WindowID) -> [PendingSeed] {
+        let taken = pendingSeeds(for: window)
+        for seed in taken { forgetPendingSeed(seed.seedID) }
+        return taken
+    }
+
+    /// The same, for every window at once — the sweep the app runs as it
+    /// quits.
+    func takeAllPendingSeeds() -> [PendingSeed] {
+        let taken = parkedSourceBySeedID.map { seedID, source in
+            PendingSeed(
+                seedID: seedID, sourceWindow: source,
+                tabs: (parkedTabIDsBySeedID[seedID] ?? []).compactMap { tabsByID[$0] })
+        }
+        for seed in taken { forgetPendingSeed(seed.seedID) }
+        return taken
+    }
+
+    private func forgetPendingSeed(_ seedID: UUID) {
+        for id in parkedTabIDsBySeedID[seedID] ?? [] {
+            tabsByID[id] = nil
+            windowByTabID[id] = nil
+        }
+        parkedTabIDsBySeedID[seedID] = nil
+        parkedSourceBySeedID[seedID] = nil
+        claimHandlersBySeedID[seedID] = nil
     }
 
     /// What is parked under `seedID` right now — the slot `claim(seedID:

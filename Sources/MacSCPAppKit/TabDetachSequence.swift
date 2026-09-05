@@ -22,17 +22,23 @@ import macSCPCore
 // first would leave a refused or lost open with a parked tab that has a
 // live connection, no window, and no teardown.
 //
-// **The claim is the signal, and the reclaim is the safety net** (fix round
-// 2). The source window does NOT close on a turn count: the window opened
-// for a seed claims it from its own setup pass, which is a later DISPLAY
-// pass and not a later main-actor turn, so a next-turn close-or-reclaim beat
-// it, pulled the tab back, and left the new window blank. The close is
-// driven instead by `TabRegistry.park(_:for:onClaimed:)`, which fires when a
-// window has actually taken the tab over. `reclaim` is the other half, and
-// it runs only from a definitely-later trigger — the source window being
-// activated again with the seed still unclaimed — putting the tab back where
-// it came from and removing the placeholder that stood in for it. A tab back
-// where it started is a visible outcome; a tab parked forever is not.
+// **The claim is the signal, and nothing guesses at its absence** (fix
+// rounds 2 and 3). The source window does NOT close on a turn count: the
+// window opened for a seed claims it from its own setup pass, which is a
+// later DISPLAY pass and not a later main-actor turn, so a next-turn
+// close-or-reclaim beat it, pulled the tab back, and left the new window
+// blank. The close is driven instead by
+// `TabRegistry.park(_:for:from:onClaimed:)`, which fires when a window has
+// actually taken the tab over.
+//
+// There is no other half. Round 2 added one — a reclaim on the source
+// window's next activation — and round 3 removed it: SwiftUI reports no
+// failure from `openWindow(value:)`, so no signal for "this window will
+// never appear" exists, and every trigger anyone can invent for it is a
+// guess that can beat the real claim. A seed nobody claims is instead torn
+// down where its fate is certain: when its source window closes, and when
+// the app quits. `TabRegistry`'s own doc comment states that limit and the
+// two log lines that make it visible.
 
 /// "The window this tab was dragged out of is now empty and should close."
 ///
@@ -82,11 +88,11 @@ enum TabDetachSequence {
     struct Outcome: Equatable {
         /// The source window is left with nothing of its own and is not the
         /// last window (`WindowCloseDecision`), so it should close — but
-        /// only once `reclaim` has confirmed the tab is gone.
+        /// only once the registry reports the tab claimed.
         let closesWindow: Bool
         /// The fresh tab put in the leaver's place, if the detach would
-        /// otherwise have emptied the model. `reclaim` removes it again if
-        /// the tab comes back.
+        /// otherwise have emptied the model. It is an ordinary tab of that
+        /// window from then on — nothing takes it away again.
         let replacementID: UUID?
 
         /// Nothing happened — the id was not in the model.
@@ -120,6 +126,7 @@ enum TabDetachSequence {
         _ tabID: UUID,
         outOf model: TabsViewModel<SessionTab>,
         parkingUnder seed: WindowSeed,
+        from sourceWindow: WindowID,
         in registry: TabRegistry,
         replacement: () -> SessionTab,
         openWindow: (WindowSeed) -> Void,
@@ -138,7 +145,8 @@ enum TabDetachSequence {
             model.addTab(fresh)
         }
         let outcome = Outcome(closesWindow: closesWindow, replacementID: replacementID)
-        registry.park([tab], for: seed.id, onClaimed: { onClaimed(outcome) })
+        registry.park(
+            [tab], for: seed.id, from: sourceWindow, onClaimed: { onClaimed(outcome) })
         openWindow(seed)
         return outcome
     }
@@ -147,7 +155,8 @@ enum TabDetachSequence {
     /// between two windows (Task 3) — and answers whether the source window
     /// is now left with nothing of its own.
     ///
-    /// **No parking, and no reclaim.** Both windows already exist, so there
+    /// **No parking, and nothing to wait for.** Both windows already exist,
+    /// so there
     /// is no gap between letting go and being taken over: the whole handover
     /// is `TabRegistry.move(_:from:to:targetWindow:)`, which detaches from
     /// one model, reassigns ownership and adds to the other in one call. The
@@ -204,39 +213,5 @@ enum TabDetachSequence {
             source.addTab(fresh)
         }
         return Outcome(closesWindow: closesWindow, replacementID: replacementID)
-    }
-
-    /// Puts back anything still parked under `seedID` — i.e. anything no
-    /// window claimed — and removes the placeholder `move` left in its
-    /// place. Answers whether it had to.
-    ///
-    /// **Never called on a turn count** (fix round 2). The window opened for
-    /// a seed claims it from its own setup pass, on a later display pass,
-    /// so "one turn later" is not late enough and was measured wrong. The
-    /// trigger is the source window being ACTIVATED again with the seed
-    /// still unclaimed: by then a window that was going to appear has
-    /// appeared. `false` — the ordinary case — means a window claimed the
-    /// tab and there was nothing to put back.
-    ///
-    /// It goes through `TabRegistry.unpark(seedID:into:)` rather than
-    /// `claim(seedID:into:)` precisely because this is NOT a claim: firing
-    /// the seed's `onClaimed` handler here would tell this same window to
-    /// close over the tab it has just been handed back.
-    @discardableResult
-    static func reclaim(
-        seedID: UUID,
-        into model: TabsViewModel<SessionTab>,
-        from registry: TabRegistry,
-        window: WindowID,
-        removing replacementID: UUID?
-    ) -> Bool {
-        let stranded = registry.unpark(seedID: seedID, into: window)
-        guard !stranded.isEmpty else { return false }
-        // Added BEFORE the placeholder goes, so the model is never empty and
-        // `activeTabID` never dangles — `addTab` also makes the returning
-        // tab the active one, which is where the user left it.
-        for tab in stranded { model.addTab(tab) }
-        if let replacementID { model.detach(tabID: replacementID) }
-        return true
     }
 }

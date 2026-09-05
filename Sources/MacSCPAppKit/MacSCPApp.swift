@@ -252,8 +252,56 @@ final class SettingsWindowBridge {
 /// nothing this app already depended on `NSApp.delegate` being.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
+        sweepUnclaimedMoves()
         DiagnosticLog.shared.log(.info, "app", "quit")
         DiagnosticLog.shared.flushSynchronously()
+    }
+
+    /// Every tab still parked for a window that never appeared, at the
+    /// moment the process is ending (Detachable Tabs plan, Task 2 fix
+    /// round 3).
+    ///
+    /// **What this guarantees is the RECORD, and deliberately not more.**
+    /// Two facts decide that, and both are worth writing down rather than
+    /// discovering again:
+    ///
+    /// 1. **No bound can apply to a teardown started here.** This callback
+    ///    is synchronous and AppKit holds the process open only until it
+    ///    returns, while `teardown(_:reason:)` and its `TeardownStage`
+    ///    bounds are `async` and main-actor isolated — and the main thread
+    ///    is the thread standing inside this function. Blocking it to await
+    ///    them deadlocks; starting a `Task` and returning gives the process
+    ///    permission to exit first. So there is no bounded teardown to be
+    ///    had here, only an unbounded hope.
+    /// 2. **The four-stage order has one owner.** `cancelAll` →
+    ///    `stopAll` → `shutdown` → `disconnect` is an architecture
+    ///    invariant (`CLAUDE.md`) and it is spelled in
+    ///    `ContentView.teardown(_:reason:)`. Spelling it a second time here
+    ///    — for a case that cannot be guaranteed to run — is the second
+    ///    copy this project's rules exist to prevent, and the copy would be
+    ///    the one that goes stale.
+    ///
+    /// What actually happens to those connections is what happens to every
+    /// HELD tab's at quit, which is nothing: ⌘Q does not close windows, so
+    /// no window's close path runs, and the sockets die with the process.
+    /// The residue a hard exit leaves is already swept at the NEXT launch
+    /// by `EditSessionManager.sweepOrphanedTempDirectories()` and
+    /// `ExternalTerminalLauncher.sweepOrphanedTempDirectories()` in
+    /// `MacSCPApp.init`.
+    ///
+    /// So this takes the seeds out of the registry and writes one `info`
+    /// line each, before the `flushSynchronously()` in the caller — which
+    /// is the half that IS guaranteed, and the half that lets a diagnostic
+    /// report show a move that never landed. The bounded, ordinary teardown
+    /// of a stranded move is the SOURCE WINDOW's close path
+    /// (`ContentView.releaseUnclaimedSeedsOnClose()`); this is the one case
+    /// that path cannot cover.
+    @MainActor
+    private func sweepUnclaimedMoves() {
+        for seed in TabRegistry.shared.takeAllPendingSeeds() {
+            DiagnosticLog.shared.log(
+                .info, "app", "window move torn down unclaimed seed=\(seed.seedID)")
+        }
     }
 }
 
