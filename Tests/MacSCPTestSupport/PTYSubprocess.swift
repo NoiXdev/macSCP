@@ -39,11 +39,17 @@ import Darwin
 ///
 /// Not `DispatchSource.makeProcessSource(identifier:eventMask:.exit)`, the
 /// shape this file started with: on this toolchain, resuming that source
-/// crashes the whole process with `SIGTRAP` the instant its event fires —
-/// reproduced eight times while building this file, including with a
-/// deliberately empty event handler (so the fault is the source itself, not
-/// anything this code does with it), across both a `posix_spawn`ed pty child
-/// and a plain `Foundation.Process`. Instead, a dedicated `Thread` blocks in
+/// crashes the whole process the instant its event fires — reproduced
+/// eight times while building this file, including with a deliberately
+/// empty event handler (so the fault is the source itself, not anything
+/// this code does with it), across both a `posix_spawn`ed pty child and a
+/// plain `Foundation.Process`. A scratch reproduction outside the suite
+/// (`Foundation.Process` running `/bin/sleep 1`, an empty `setEventHandler`,
+/// `resume()`) captured the crash report: termination indicator
+/// `"Trace/BPT trap: 5"` (`EXC_BREAKPOINT`/`SIGTRAP`), faulting thread's top
+/// frame `_dispatch_assert_queue_fail` — a Dispatch/Swift-concurrency
+/// executor assertion failing outright rather than the source's own code
+/// throwing or trapping. Instead, a dedicated `Thread` blocks in
 /// `waitpid(2)` — the same call the process source would have made
 /// internally — and resumes a `SingleShot` continuation from it. That thread
 /// is not one of Swift's cooperative-pool threads, so this still holds
@@ -53,7 +59,7 @@ import Darwin
 ///
 /// ## Reading the master, and the second slave reference
 ///
-/// A dedicated `Thread` blocks in a plain `read(2)` loop on the master
+/// A dedicated `Thread` runs a `poll(2)`-then-`read(2)` loop on the master
 /// descriptor — not `DispatchIO`, which was this file's first shape and
 /// which lost every byte of a fast child's output the instant real
 /// concurrency entered the picture (below). Each chunk it reads feeds both
@@ -61,6 +67,26 @@ import Darwin
 /// `AsyncStream<String>` a caller's `interact` closure can watch for prompt
 /// text as it arrives. Like the exit-reaping thread above, this is a plain
 /// OS thread, not one of Swift's cooperative-pool threads.
+///
+/// ## Cancellation
+///
+/// `run(_:...)` wraps `interact` in `withTaskCancellationHandler`, because
+/// the common shape a caller gives `interact` — `for await chunk in
+/// handle.output { ... }` — never observes task cancellation on its own: a
+/// plain `AsyncStream` only ends when its continuation finishes, not merely
+/// because the enclosing task was cancelled. Without the wrapper, a
+/// suite's own `.timeLimit` (the gated PTY cases in `CLIMatrixITests.swift`
+/// each carry one) would cancel the task and still leave the loop
+/// suspended forever. The `onCancel` handler raises a flag the read loop
+/// above checks every `poll` cycle (at most 100ms) and kills the child.
+/// It does NOT close `masterFD` — an earlier shape did, and a scratch
+/// probe reproduced it hanging the whole process: `close(2)` on a
+/// descriptor another thread is blocked in `read(2)` on, with nothing ever
+/// going to be written, left that probe in an uninterruptible kernel wait
+/// (`ps` state `U`) that not even `SIGKILL` reached. Polling with a short
+/// timeout, rather than blocking in `read(2)` indefinitely, is what makes
+/// the loop interruptible from outside without ever touching its fd from
+/// another thread.
 ///
 /// `openMaster()` also opens a SECOND reference to the slave
 /// (`extraSlaveFD`), held by this side alone and closed only once the child
@@ -352,10 +378,26 @@ public struct PTYSubprocess: Sendable {
         let collected = Mutex(Data())
         let (outputStream, outputContinuation) = AsyncStream<String>.makeStream(of: String.self)
 
+        // Set by a cancellation (see `withTaskCancellationHandler` below)
+        // to tell the read loop to give up on its own — NOT by closing
+        // `masterFD` out from under it, which was this file's first shape
+        // for cancellation and which measurably HANGS on this toolchain: a
+        // `close(2)` from one thread while another is blocked in `read(2)`
+        // on the same fd, with nothing ever going to be written, left the
+        // process in an uninterruptible kernel wait (`ps` state `U`) that
+        // not even `SIGKILL` reached — reproduced in a scratch probe
+        // outside the suite before this shape replaced it. `poll(2)` is
+        // what makes the loop interruptible instead: it waits on the fd
+        // with a short timeout rather than blocking in `read(2)`
+        // indefinitely, so the loop revisits this flag on every timeout
+        // and stops in well under a second without ever touching the fd
+        // from another thread.
+        let shouldStopReading = Mutex(false)
+
         // See this file's doc comment ("Reading the master, and the second
-        // slave reference"): a plain blocking `read(2)` loop on a dedicated
+        // slave reference"): a `poll(2)`-then-`read(2)` loop on a dedicated
         // OS thread, not `DispatchIO` — which lost every byte of a fast
-        // child's output the moment real concurrency entered the picture,
+        // child's output the instant real concurrency entered the picture,
         // regardless of how early its read was registered. Every chunk
         // read feeds both the accumulator behind `Result.output` and
         // `Handle.output`'s stream, in the order it arrived.
@@ -363,6 +405,16 @@ public struct PTYSubprocess: Sendable {
         Thread.detachNewThread {
             var buffer = [UInt8](repeating: 0, count: 4096)
             readLoop: while true {
+                if shouldStopReading.withLock({ $0 }) { break readLoop }
+                var pollDescriptor = pollfd(fd: masterFD, events: Int16(POLLIN), revents: 0)
+                let pollResult = poll(&pollDescriptor, 1, 100)
+                guard pollResult > 0 else {
+                    // A timeout (`0`) or `EINTR` (`< 0`): neither means
+                    // there is anything to read yet, so loop back and
+                    // recheck `shouldStopReading` rather than blocking in
+                    // `read(2)` on a descriptor with nothing pending.
+                    continue
+                }
                 let bytesRead = buffer.withUnsafeMutableBytes { rawBuffer -> Int in
                     guard let base = rawBuffer.baseAddress else { return -1 }
                     return read(masterFD, base, rawBuffer.count)
@@ -373,7 +425,9 @@ public struct PTYSubprocess: Sendable {
                     // hang-up a PTY reports once every slave reference is
                     // gone) or a plain zero-length read (the orderly EOF
                     // the same event can also produce): both mean the
-                    // master has nothing further to give, ever.
+                    // master has nothing further to give, ever. `poll`
+                    // having reported the fd ready is what makes calling
+                    // `read` here safe from blocking at all.
                     break readLoop
                 default:
                     let chunk = Array(buffer[0..<bytesRead])
@@ -411,7 +465,29 @@ public struct PTYSubprocess: Sendable {
 
         var interactError: Error?
         do {
-            try await interact(handle)
+            // `interact` is caller-supplied, and the common shape — `for
+            // await chunk in handle.output { ... }` — does not observe
+            // task cancellation on its own: a plain `AsyncStream` only
+            // ends when its continuation finishes, never merely because
+            // the enclosing task was cancelled. Without this wrapper, a
+            // suite's own `.timeLimit` (the gated PTY cases in
+            // `CLIMatrixITests.swift` carry one) would cancel the task but
+            // leave the loop suspended forever, holding the child, both
+            // background threads and every descriptor open past the
+            // timeout. `onCancel` runs synchronously the moment
+            // cancellation reaches this task, on whatever thread requested
+            // it: it raises `shouldStopReading`, which is what actually
+            // unblocks a `for await` over `handle.output` (the read loop
+            // notices within one 100ms `poll` cycle and finishes the
+            // stream), and kills the child, so the exit-reaping thread's
+            // `waitpid` also returns promptly instead of waiting for the
+            // child's own schedule.
+            try await withTaskCancellationHandler {
+                try await interact(handle)
+            } onCancel: {
+                shouldStopReading.withLock { $0 = true }
+                if pid > 0 { kill(pid, SIGKILL) }
+            }
         } catch {
             interactError = error
         }
@@ -428,7 +504,10 @@ public struct PTYSubprocess: Sendable {
         // it before it had done its work — measured the hard way, as every
         // case in this file but `terminateEndsAChildWithASignal()` first
         // came back `signal == SIGKILL` before this guard was narrowed to
-        // the two failure paths.
+        // the two failure paths. Redundant with `onCancel`'s own kill on
+        // the cancellation path (a second `kill(2)` on an already-dying
+        // pid is a harmless no-op), and still the only kill on the plain
+        // throw path, where `onCancel` never runs.
         //
         // `isResolved` false here means the pid is either still running or
         // a not-yet-reaped zombie — either way still safely addressed by
@@ -443,7 +522,11 @@ public struct PTYSubprocess: Sendable {
         // Awaited unconditionally, whether `interact` threw or returned
         // normally: the child's exit is always reaped and its master
         // reader always drained before this function returns on any path —
-        // no child outlives this call.
+        // no child outlives this call. Both awaits are guaranteed to
+        // settle even after a cancellation: `onCancel` above already made
+        // sure of it, by killing the child (so `waitpid` returns) and
+        // raising `shouldStopReading` (so the read loop gives up within
+        // one poll cycle).
         let exitResult = await exitDone.value()
         await readDone.value()
         close(masterFD)

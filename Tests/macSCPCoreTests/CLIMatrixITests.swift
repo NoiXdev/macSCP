@@ -1041,7 +1041,8 @@ struct CLIMatrixSSHITests {
     /// `CLIMatrix.make` hands the child a `MACSCP_STORAGE_DIRECTORY` whose
     /// `known_hosts.json` does not exist yet, so the rig's SSH host key is
     /// unknown to it.
-    @Test func nonInteractiveUnderAPTYRefusesWithoutPrompting() async throws {
+    @Test(.timeLimit(.minutes(2)))
+    func nonInteractiveUnderAPTYRefusesWithoutPrompting() async throws {
         let rig = try CLIMatrix.make(for: Self.kind, label: "ptynoninteractive")
         defer { rig.tearDown() }
         let target = rig.target(rig.remoteRoot)
@@ -1051,14 +1052,21 @@ struct CLIMatrixSSHITests {
             arguments: ["ls", "--non-interactive", "--json", target],
             environment: rig.environmentForPTY())
 
+        // Reduced to `Bool`s before anything is asserted, exactly like
+        // `theSecretComesFromThePasswordCommand` above (`:676-683`):
+        // `#expect` prints the SOURCE TEXT of a failed expression, so an
+        // interpolated `result.output` would leak the secret it names the
+        // instant a sibling expectation failed too — Swift Testing keeps
+        // running after one failure, so that sibling is a real risk, not a
+        // hypothetical one (CLAUDE.md, "A value a test must not leak has
+        // two exits, not one").
         let leaks = rig.leaksSecret(result.output)
+        let containsPrompt = result.output.contains(Self.hostKeyPromptText)
+        let containsRefusal = result.output.contains(
+            "Confirm it interactively, or pass --accept-new to trust new hosts.")
         #expect(leaks == false, "the run printed the secret under a PTY")
-        #expect(
-            !result.output.contains(Self.hostKeyPromptText),
-            "the prompt appeared under --non-interactive: \(result.output.debugDescription)")
-        #expect(
-            result.output.contains("Confirm it interactively, or pass --accept-new to trust new hosts."),
-            "the --non-interactive refusal text did not appear: \(result.output.debugDescription)")
+        #expect(containsPrompt == false, "the prompt appeared under --non-interactive")
+        #expect(containsRefusal, "the --non-interactive refusal text did not appear")
         #expect(
             result.status == CLIExitCode.hostKeyUnknown.rawValue,
             "an unknown host key under a PTY with --non-interactive exited \(result.status)")
@@ -1073,7 +1081,8 @@ struct CLIMatrixSSHITests {
     /// alone produces above. Nothing but `n` ever reaches the terminal;
     /// the rig's secret rides `environmentForPTY()` exactly as it does for
     /// every other SSH case in this file, never the terminal.
-    @Test func askUnderAPTYPromptsAndNoRefuses() async throws {
+    @Test(.timeLimit(.minutes(2)))
+    func askUnderAPTYPromptsAndNoRefuses() async throws {
         let rig = try CLIMatrix.make(for: Self.kind, label: "ptyask")
         defer { rig.tearDown() }
         let target = rig.target(rig.remoteRoot)
@@ -1093,11 +1102,13 @@ struct CLIMatrixSSHITests {
             }
         }
 
+        // Reduced to `Bool`s before anything is asserted — see the sibling
+        // case above for why an interpolated `result.output` is a leak
+        // waiting for a second failure to trigger it.
         let leaks = rig.leaksSecret(result.output)
+        let containsPrompt = result.output.contains(Self.hostKeyPromptText)
         #expect(leaks == false, "the run printed the secret under a PTY")
-        #expect(
-            result.output.contains(Self.hostKeyPromptText),
-            "the prompt did not appear without --non-interactive: \(result.output.debugDescription)")
+        #expect(containsPrompt, "the prompt did not appear without --non-interactive")
         #expect(
             result.status == CLIExitCode.hostKeyUnknown.rawValue,
             "answering 'n' to the prompt exited \(result.status), not the refusal --non-interactive produces")

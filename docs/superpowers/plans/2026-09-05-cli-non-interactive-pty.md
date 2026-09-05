@@ -12,12 +12,23 @@ stdin, so `CLIEnvironment.hasTTY` is false and
 `HostKeyPolicy.decision(for: .ask, hasTTY: false)` already resolves to
 `.reject` before the flag is read (`SessionConnecting.swift:21-23`,
 `:130`; `CLIEnvironment.swift:7`). A test-support `PTYSubprocess`
-(`posix_openpt`/`grantpt`/`unlockpt`/`ptsname`, then `posix_spawn` with
-the slave as stdin/stdout/stderr) runs the CLI with a real terminal;
-the case that closes the row asserts that `--non-interactive` refuses
-an unknown host key under the PTY, while the same command WITHOUT the
-flag reaches the prompt (observed as the prompt text on the PTY, then
-the test writes `no` and the CLI refuses).
+(`posix_openpt`/`grantpt`/`unlockpt`/`ptsname_r`, then `posix_spawn`)
+runs the CLI with a real terminal — what shipped differs from what was
+sketched here in three ways, each forced by a measurement made while
+building it: the slave is opened INSIDE the child, via
+`posix_spawn_file_actions_addopen` for fd 0 under
+`POSIX_SPAWN_SETSID`, then `adddup2`'d onto fds 1/2 — a parent-opened
+slave merely `adddup2`'d onto all three does not acquire a controlling
+terminal at all; the child's exit is reaped on a dedicated `Thread`
+blocking in `waitpid(2)`, not `DispatchSource.makeProcessSource`, which
+crashes this toolchain outright when its event fires; and the master is
+read by a second dedicated `Thread` running a `poll(2)`-then-`read(2)`
+loop, not `DispatchIO`, which lost a fast child's output under real
+concurrency regardless of how early its read was registered. The case
+that closes the row asserts that `--non-interactive` refuses an unknown
+host key under the PTY, while the same command WITHOUT the flag reaches
+the prompt (observed as the prompt text on the PTY, then the test
+writes `n` and the CLI refuses).
 
 **Tech Stack:** Swift 6 strict, Swift Testing, Darwin PTY calls,
 `MacSCPTestSupport`, the Docker rig (`MACSCP_ITEST=1`).
