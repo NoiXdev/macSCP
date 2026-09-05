@@ -40,12 +40,26 @@ import MacSCPTestSupport
 /// entry, resume nobody real, and never reach the `waiters.isEmpty` branch
 /// that clears `isLocked` — the lock leaks forever, in a process-wide
 /// `static let shared`, and every later `AgentEnvLock.shared.run` queues
-/// indefinitely. Fixed by giving each waiter a token (`id`) and passing
-/// `awaitResumption`'s `onCancel:` a closure that removes it under the
-/// same lock before the `CancellationError` reaches the caller — see
-/// `AwaitResumption.swift`'s own doc comment for why that closure is safe
-/// to run at most once. `AgentEnvLockTests` pins the scenario this bug
-/// produced.
+/// indefinitely.
+///
+/// Two rounds of the same lesson, both on 2026-09-05: round 1 gave each
+/// QUEUED waiter a token (`id`) and an `awaitResumption` `onCancel:`
+/// closure that removes it under the same lock before the
+/// `CancellationError` reaches the caller — but `acquire()`'s FAST,
+/// uncontested path (the lock is free, so this call takes it immediately)
+/// used to run as an ordinary `body`, which committed `isLocked = true`
+/// asynchronously with respect to `awaitResumption`'s own cancellation
+/// bookkeeping — a cancellation landing in that gap left `isLocked` stuck
+/// at `true` forever, held by nobody, because a token-removal `cleanup`
+/// cannot undo an already-taken lock the way it undoes an entry sitting
+/// in `waiters`. Round 3 moved that fast path into `tryImmediate` (see
+/// `acquire()` below and `AwaitResumption.swift`'s own doc comment, "round
+/// 3"): a synchronous, atomic "take it now or don't" callback that
+/// commits inside the SAME critical section `awaitResumption` uses to
+/// decide whether a cancellation still has anything to cancel — so a
+/// cancellation arriving after `tryImmediate` commits finds nothing left
+/// to undo, and one arriving before it never lets `tryImmediate` run at
+/// all. `AgentEnvLockTests` pins the scenarios both rounds fixed.
 final class AgentEnvLock: @unchecked Sendable {
     static let shared = AgentEnvLock()
 
@@ -70,19 +84,28 @@ final class AgentEnvLock: @unchecked Sendable {
     /// not leave this stuck at `true` forever.
     var isCurrentlyLocked: Bool { lock.withLock { isLocked } }
 
-    private func acquire() async throws {
+    /// Internal, not private (same reason as `init()` above):
+    /// `AgentEnvLockTests` calls `acquire()`/`release()` directly to
+    /// model "this task now holds the lock, and I release it myself"
+    /// versus "cancellation won and nothing was ever acquired" —
+    /// `run(_:)`'s own acquire-body-release bundling can't express that
+    /// distinction from outside.
+    func acquire() async throws {
         let id = UUID()
         try await awaitResumption(
+            // Queuing only — the uncontested fast path is `tryImmediate`
+            // below, not here, per fix round 3: this closure runs on
+            // `awaitResumption`'s own `bodyTask`, asynchronously with
+            // respect to its `state`'s cancellation transition, so
+            // anything it commits here is only ever a REVOCABLE queue
+            // entry (`cleanup` below can always remove it). An
+            // IRREVOCABLE commitment — actually taking the lock — must
+            // happen inside `tryImmediate`'s own atomic step instead; see
+            // `AwaitResumption.swift`'s doc comment, "round 3".
             { (continuation: CheckedContinuation<Void, Never>) in
-                let shouldResumeNow = self.lock.withLock { () -> Bool in
-                    if !self.isLocked {
-                        self.isLocked = true
-                        return true
-                    }
+                self.lock.withLock {
                     self.waiters.append((id, continuation))
-                    return false
                 }
-                if shouldResumeNow { continuation.resume() }
             },
             onCancel: {
                 self.lock.withLock {
@@ -90,11 +113,18 @@ final class AgentEnvLock: @unchecked Sendable {
                         self.waiters.remove(at: index)
                     }
                 }
+            },
+            tryImmediate: {
+                self.lock.withLock { () -> Void? in
+                    guard !self.isLocked else { return nil }
+                    self.isLocked = true
+                    return ()
+                }
             }
         )
     }
 
-    private func release() {
+    func release() {
         let pending: CheckedContinuation<Void, Never>? = lock.withLock {
             if waiters.isEmpty {
                 isLocked = false

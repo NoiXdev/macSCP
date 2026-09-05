@@ -219,4 +219,66 @@ struct AwaitResumptionTests {
             onCancel must fire even when cancellation wins before the body             has registered anything — round 1 only fired it when a             continuation had already been stored in `state`.
             """)
     }
+
+    // MARK: - `tryImmediate` (fix round 3)
+
+    /// `AgentEnvLock.acquire()`'s FAST, uncontested path used to commit
+    /// `isLocked = true` and resume its OWN continuation as an ordinary
+    /// `body`, leaving `state` at `.waiting` until a SEPARATE monitor task
+    /// later transitioned it to `.done` — a cancellation landing in that
+    /// gap threw `CancellationError` at a caller that had, in fact,
+    /// already been handed an irrevocable commitment (docs/BACKLOG.md's
+    /// fix round 3). `tryImmediate` closes that gap by committing to
+    /// `.done`, and resuming the outer continuation, in the SAME
+    /// `state.withLockedValue` step that decides whether the commitment
+    /// happens at all — so a cancellation racing against that ONE
+    /// synchronous step cannot land inside it, only before or after.
+    ///
+    /// `body` here would prove the bug if it ever ran: `tryImmediate`
+    /// commits on every call in this test, so `body` (the queuing path)
+    /// must never be invoked at all.
+    @Test func tryImmediateCommitsAtomicallyWithStateSoALateCancelIsIgnored() async throws {
+        let started = AsyncSignal()
+        let task = Task<Int, any Error> {
+            try await awaitResumption(
+                { (_: CheckedContinuation<Int, Never>) in
+                    Issue.record("body must not run when tryImmediate already committed")
+                },
+                tryImmediate: {
+                    started.signal()
+                    return 42
+                }
+            )
+        }
+
+        let outcome = await started.wait()
+        #expect(outcome == .signalled)
+
+        // By the time `started` is observed signalled, `tryImmediate` has
+        // already returned and `state` has already moved to `.done` and
+        // resumed the outer continuation — all inside the same locked
+        // step `started.signal()` ran in. This cancel is therefore always
+        // racing AFTER that commitment, never during it (there is no
+        // "during" to race against from outside this function), so it
+        // must be a no-op.
+        task.cancel()
+
+        let value = try await task.value
+        #expect(value == 42)
+    }
+
+    /// The positive companion: `tryImmediate` returning `nil` (no
+    /// capacity) falls through to the ordinary queued path, and `body` —
+    /// unlike the test above — DOES run. Without this, the negative
+    /// above (`body` must not run) could pass merely because `body` is
+    /// never called at all, `tryImmediate` present or not.
+    @Test func tryImmediateReturningNilFallsThroughToBody() async throws {
+        let value = try await awaitResumption(
+            { (continuation: CheckedContinuation<Int, Never>) in
+                continuation.resume(returning: 7)
+            },
+            tryImmediate: { nil }
+        )
+        #expect(value == 7)
+    }
 }

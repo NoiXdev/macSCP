@@ -127,4 +127,56 @@ struct AgentEnvLockTests {
         #expect(lock.isCurrentlyLocked == false)
         #expect(lock.queuedCount == 0)
     }
+
+    /// Fix round 3: `acquire()`'s FAST, uncontested path (no holder, no
+    /// queue — `tryImmediate` takes the lock immediately) used to commit
+    /// `isLocked = true` asynchronously with respect to
+    /// `awaitResumption`'s own cancellation bookkeeping, so a cancellation
+    /// landing in that gap left `isLocked` stuck at `true` forever with no
+    /// queued token for `cleanup` to remove — a DIFFERENT leak shape than
+    /// `aWaiterCancelledBeforeItRegistersDoesNotLeakTheLockForever` above,
+    /// which is about a QUEUED (contested) waiter.
+    ///
+    /// `task.cancel()` runs in the same synchronous step that creates the
+    /// task — no lock is held by anyone, so this task's `acquire()` is
+    /// racing the cancellation against `tryImmediate`'s own commit, not
+    /// against another waiter. Both outcomes of that race are valid
+    /// (`tryImmediate` may win and commit before the cancellation is
+    /// processed, or the cancellation may win first) — round 3's fix
+    /// (`AwaitResumption.swift`, "order 3": cancel after the fast path
+    /// commits) requires that EITHER way, nothing leaks.
+    @Test func aTaskCancelledInTheSameStepAsAnUncontestedAcquireNeverLeaksTheLock() async throws {
+        let lock = AgentEnvLock()
+
+        let task = Task<Void, any Error> {
+            try await lock.acquire()
+        }
+        task.cancel()
+
+        do {
+            try await task.value
+            // Won the race: `tryImmediate` committed before the
+            // cancellation was processed, so this task genuinely holds
+            // the lock now and must release it itself — `run(_:)` isn't
+            // used here precisely because it would do that bundling
+            // automatically, hiding which outcome actually happened.
+            lock.release()
+        } catch is CancellationError {
+            // Cancellation won before `tryImmediate` ever ran — nothing
+            // was committed, so there is nothing to release.
+        }
+
+        #expect(lock.isCurrentlyLocked == false, """
+            neither outcome of the race should leave the lock held by a             task that no longer exists.
+            """)
+
+        // A fresh task acquires without waiting, either way.
+        let taskC = Task<Void, any Error> {
+            try await lock.acquire()
+        }
+        try await taskC.value
+        lock.release()
+
+        #expect(lock.isCurrentlyLocked == false)
+    }
 }
