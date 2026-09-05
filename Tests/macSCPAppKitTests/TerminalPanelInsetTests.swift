@@ -186,7 +186,12 @@ struct TerminalPanelInsetTests {
         ]
         for lineIndex in bannerLines {
             for range in ranges {
-                #expect(range.map { !$0.contains(lineIndex) } ?? true)
+                // A missing range passes on purpose: whether each range EXISTS is
+                // what the three `…ReadsTheSharedConstants` tests pin; this test
+                // only asks that no banner line falls inside one that does.
+                #expect(
+                    range?.contains(lineIndex) != true,
+                    "banner line \(lineIndex + 1) lies inside a reader range \(String(describing: range))")
             }
         }
     }
