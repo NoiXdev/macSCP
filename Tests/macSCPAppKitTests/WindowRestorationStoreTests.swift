@@ -16,6 +16,13 @@ import macSCPCore
 /// rather than a search for a forbidden word, because a search only finds
 /// the words whoever wrote it thought of — a key set that must MATCH
 /// fails the moment anything else appears in the file.
+///
+/// Fix round 1 moved the write: there is one, at `applicationWillTerminate`,
+/// replacing the file with the windows that were still open. So the cases
+/// below say "a quit" and "a launch" rather than "a close", and the pair
+/// that matters most is the one at each end of a seed file's life — a
+/// launch consumes it, and a quit or launch that is not restoring
+/// discards it.
 @Suite("WindowRestorationStore — windows.json")
 @MainActor
 struct WindowRestorationStoreTests {
@@ -49,17 +56,32 @@ struct WindowRestorationStoreTests {
         #expect(store.fileURL == dir.appendingPathComponent("windows.json"))
     }
 
-    // MARK: - Writing, in the order the windows closed
+    // MARK: - Writing, once, with the windows that were open
 
-    @Test func seedsComeBackInTheOrderTheyWereWritten() {
+    @Test func theSeedsComeBackInTheOrderTheyWereWritten() {
         let dir = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = WindowRestorationStore(directory: dir)
-        let first = Self.describedWindow(isPrimary: false)
-        let second = Self.describedWindow(isPrimary: true, keepOnTop: true)
-        store.append(first, whenEnabled: true)
-        store.append(second, whenEnabled: true)
+        let first = Self.describedWindow(isPrimary: true)
+        let second = Self.describedWindow(isPrimary: false, keepOnTop: true)
+        store.replace([first, second], whenEnabled: true)
         #expect(store.read() == [first, second])
+    }
+
+    /// The file describes ONE quit. A second write replaces it whole
+    /// rather than adding to it — the first version of this appended per
+    /// closed window, which is how a session's deliberately closed windows
+    /// piled up in a file that is supposed to say what was on screen at
+    /// the end.
+    @Test func aSecondWriteReplacesTheFileRatherThanAddingToIt() {
+        let dir = Self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = WindowRestorationStore(directory: dir)
+        let earlier = Self.describedWindow(isPrimary: true)
+        let later = Self.describedWindow(isPrimary: false)
+        store.replace([earlier, earlier], whenEnabled: true)
+        store.replace([later], whenEnabled: true)
+        #expect(store.read() == [later])
     }
 
     @Test func aWrittenSeedKeepsEveryFactTheWindowHad() {
@@ -73,7 +95,7 @@ struct WindowRestorationStoreTests {
                 TabSeed(sessionID: nil, paneVisibility: .filesOnly),
             ],
             keepOnTop: true, isPrimary: true)
-        store.append(seed, whenEnabled: true)
+        store.replace([seed], whenEnabled: true)
         let read = store.read()
         #expect(read == [seed])
         #expect(read.first?.tabs.first?.sessionID == sessionID)
@@ -82,13 +104,13 @@ struct WindowRestorationStoreTests {
         #expect(read.first?.isPrimary == true)
     }
 
-    // MARK: - The setting off changes nothing on disk
+    // MARK: - The setting off leaves no file behind
 
     @Test func nothingIsWrittenWhileTheSettingIsOff() {
         let dir = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = WindowRestorationStore(directory: dir)
-        store.append(Self.describedWindow(isPrimary: true), whenEnabled: false)
+        store.replace([Self.describedWindow(isPrimary: true)], whenEnabled: false)
         #expect(store.read().isEmpty)
         #expect(
             FileManager.default.fileExists(atPath: store.fileURL.path(percentEncoded: false))
@@ -96,39 +118,54 @@ struct WindowRestorationStoreTests {
             "the store must not even create windows.json while the setting is off")
     }
 
-    /// The reason the flag-off write is a no-op rather than a clear:
-    /// turning the setting ON later must not resurrect windows from
-    /// whenever it was last on. An existing file is left exactly as it
-    /// was found, and the launch that reads it is what consumes it.
-    @Test func anExistingFileIsLeftAloneWhileTheSettingIsOff() {
+    /// A quit with the setting off DELETES an existing file rather than
+    /// leaving it. A seed file describes one quit; a stale one has no
+    /// owner, and leaving it would mean the next launch with the setting
+    /// on restored a generation of windows two quits old.
+    @Test func aQuitWithTheSettingOffDiscardsAnEarlierFile() {
         let dir = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = WindowRestorationStore(directory: dir)
-        let earlier = Self.describedWindow(isPrimary: true)
-        store.append(earlier, whenEnabled: true)
-        store.append(Self.describedWindow(isPrimary: false), whenEnabled: false)
-        #expect(store.read() == [earlier])
-        #expect(store.readAndClear(whenEnabled: false).isEmpty)
-        #expect(store.read() == [earlier], """
-            a read with the setting off must not consume the file either — \
-            only a launch that is actually restoring may clear it
-            """)
+        store.replace([Self.describedWindow(isPrimary: true)], whenEnabled: true)
+        #expect(store.read().count == 1)
+        store.replace([Self.describedWindow(isPrimary: false)], whenEnabled: false)
+        #expect(store.read().isEmpty)
+        #expect(
+            FileManager.default.fileExists(atPath: store.fileURL.path(percentEncoded: false))
+                == false)
     }
 
-    // MARK: - A seed file is consumed once
+    // MARK: - A seed file never outlives the launch that finds it
 
     @Test func theLaunchReadTakesTheFileAndLeavesNothingBehind() {
         let dir = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = WindowRestorationStore(directory: dir)
         let seed = Self.describedWindow(isPrimary: true)
-        store.append(seed, whenEnabled: true)
-        #expect(store.readAndClear(whenEnabled: true) == [seed])
+        store.replace([seed], whenEnabled: true)
+        #expect(store.consumeAtLaunch(whenEnabled: true) == [seed])
         #expect(store.read().isEmpty, """
             the file must be consumed by the launch that read it — a second \
-            launch that crashed before writing anything would otherwise \
+            launch that crashed before its quit sweep ran would otherwise \
             reopen the windows of the launch before it, forever
             """)
+    }
+
+    /// The other direction of the same rule, and the one that keeps a
+    /// launch from ever seeing two generations: with the setting off the
+    /// file is deleted UNREAD. Turning the setting on afterwards restores
+    /// nothing, because there is nothing left to restore from.
+    @Test func aLaunchWithTheSettingOffDiscardsTheFileUnread() {
+        let dir = Self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = WindowRestorationStore(directory: dir)
+        store.replace([Self.describedWindow(isPrimary: true)], whenEnabled: true)
+        #expect(store.consumeAtLaunch(whenEnabled: false).isEmpty)
+        #expect(store.read().isEmpty)
+        #expect(
+            FileManager.default.fileExists(atPath: store.fileURL.path(percentEncoded: false))
+                == false,
+            "a launch that is not restoring must leave no seed file behind")
     }
 
     @Test func readingAMissingFileIsEmptyAndNotAnError() {
@@ -136,7 +173,7 @@ struct WindowRestorationStoreTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = WindowRestorationStore(directory: dir)
         #expect(store.read().isEmpty)
-        #expect(store.readAndClear(whenEnabled: true).isEmpty)
+        #expect(store.consumeAtLaunch(whenEnabled: true).isEmpty)
     }
 
     @Test func unreadableContentIsEmptyRatherThanAFailedLaunch() throws {
@@ -158,10 +195,10 @@ struct WindowRestorationStoreTests {
         let dir = Self.makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = WindowRestorationStore(directory: dir)
-        store.append(
-            WindowSeed(
+        store.replace(
+            [WindowSeed(
                 tabs: [TabSeed(sessionID: UUID(), paneVisibility: .bothVisible)],
-                keepOnTop: true, isPrimary: true),
+                keepOnTop: true, isPrimary: true)],
             whenEnabled: true)
 
         let data = try Data(contentsOf: store.fileURL)

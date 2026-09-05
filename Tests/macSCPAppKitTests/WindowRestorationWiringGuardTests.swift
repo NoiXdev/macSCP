@@ -31,6 +31,9 @@ struct WindowRestorationWiringGuardTests {
         .appendingPathComponent("ContentView+Lifecycle.swift")
     private static let contentViewFile = sourceDir.appendingPathComponent("ContentView.swift")
     private static let seedFile = sourceDir.appendingPathComponent("WindowSeed.swift")
+    private static let detailFile = sourceDir.appendingPathComponent("ContentView+Detail.swift")
+    private static let storeFile = sourceDir
+        .appendingPathComponent("WindowRestorationStore.swift")
 
     private static func code(of url: URL) throws -> String {
         try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: url, encoding: .utf8))
@@ -46,10 +49,16 @@ struct WindowRestorationWiringGuardTests {
     private static let connectingCalls = ["connect(", "connectFromSidebar(", "runSnippet("]
 
     /// Every declaration the launch path is made of: the once-per-process
-    /// decision, the code that opens the restored windows, and the code
-    /// that builds a restored tab.
+    /// decision, the per-window setup pass that runs the restoration, the
+    /// code that opens the restored windows, and the code that builds a
+    /// restored tab.
+    ///
+    /// `performWindowSetup()` was missing from the first version of this
+    /// list (fix round 1) — it is the body that CALLS the other three, so
+    /// a connect planted between them would have been scanned by nothing.
     private static let launchBodies: [(name: String, declaration: String, file: URL)] = [
         ("MacSCPApp.init", "init()", appFile),
+        ("performWindowSetup()", "func performWindowSetup()", lifecycleFile),
         ("openRestoredWindows()", "func openRestoredWindows()", lifecycleFile),
         ("restoreDescribedWindow()", "func restoreDescribedWindow()", lifecycleFile),
         ("makeRestoredTab(from:)", "func makeRestoredTab(from described: TabSeed)", lifecycleFile),
@@ -111,10 +120,12 @@ struct WindowRestorationWiringGuardTests {
             MacSCPApp.init no longer builds a WindowRestorationStore — there \
             is nothing for the launch to restore from.
             """)
-        #expect(body.contains("readAndClear("), """
-            MacSCPApp.init no longer calls readAndClear( — a seed file must \
-            be consumed by the launch that reads it, or every later launch \
-            reopens the same windows.
+        #expect(body.contains("consumeAtLaunch("), """
+            MacSCPApp.init no longer calls consumeAtLaunch( — a seed file \
+            must be consumed by the launch that finds it, in both \
+            directions (read then deleted while restoring, deleted unread \
+            while not), or a launch can see two generations of windows at \
+            once.
             """)
         #expect(body.contains("WindowRestorationLaunch("), """
             MacSCPApp.init no longer builds the WindowRestorationLaunch the \
@@ -138,10 +149,12 @@ struct WindowRestorationWiringGuardTests {
     @Test func aRestoredTabIsBuiltWithItsSessionShownAndNothingDialed() throws {
         let body = try Self.body(
             "func makeRestoredTab(from described: TabSeed)", in: Self.lifecycleFile)
-        #expect(body.contains("beginEditing("), """
-            makeRestoredTab(from:) no longer prefills the tab's form from the \
-            stored session — a restored tab must come back showing the \
-            session it had, one click from connecting.
+        #expect(body.contains("restoredSessionID"), """
+            makeRestoredTab(from:) no longer points the tab at its stored \
+            session — a restored tab must come back showing that session's \
+            overview, one click from connecting. (Fix round 1 replaced a \
+            beginEditing( prefill here, which put the form in edit mode and \
+            offered "Save & connect" instead.)
             """)
         #expect(body.contains("restoredPaneVisibility"), """
             makeRestoredTab(from:) no longer carries the described pane \
@@ -151,38 +164,112 @@ struct WindowRestorationWiringGuardTests {
             """)
     }
 
-    // MARK: - The closing window writes what it held
+    // MARK: - The file is written at quit, and only there
 
-    @Test func aClosingWindowWritesItsSeedBeforeItTearsAnythingDown() throws {
-        let body = try Self.body("func handleWindowWillClose(", in: Self.lifecycleFile)
-        guard let write = body.range(of: "writeRestorationSeedOnClose()"),
-            let release = body.range(of: "releaseHeldTabsOnClose()")
-        else {
-            Issue.record("""
-                handleWindowWillClose no longer calls both \
-                writeRestorationSeedOnClose() and releaseHeldTabsOnClose() — \
-                the seed write is gone, or the close path is.
-                """)
-            return
-        }
-        #expect(write.lowerBound < release.lowerBound, """
-            the seed must be written BEFORE the teardown starts: \
-            teardown(_:reason:) clears a tab's activeStoredSessionID, so a \
-            seed written afterwards would describe every tab as having no \
-            session at all.
+    /// The ruling this round exists for. ⌘Q closes no windows, so the
+    /// windows a `willClose` handler can describe are exactly the ones
+    /// restoration is NOT about.
+    @Test func theQuitSweepDescribesEveryOpenWindowAndReplacesTheFile() throws {
+        let body = try Self.body("func writeRestorationSeeds()", in: Self.appFile)
+        #expect(body.contains("TabRegistry.shared.describeAllWindows()"), """
+            writeRestorationSeeds() no longer asks the registry to describe \
+            the open windows — there is nothing left that knows which \
+            windows exist at quit.
+            """)
+        #expect(body.contains(".replace("), """
+            writeRestorationSeeds() no longer replaces the file — a quit \
+            must write what was on screen, whole.
+            """)
+        #expect(body.contains("restoresWindows"), """
+            writeRestorationSeeds() no longer reads the setting — every quit \
+            would write a file whether or not the user asked for restoration.
             """)
     }
 
-    @Test func theSeedWriteAsksTheSettingAndTheStore() throws {
-        let body = try Self.body("func writeRestorationSeedOnClose()", in: Self.lifecycleFile)
-        #expect(body.contains("settingsStore.restoresWindows"), """
-            writeRestorationSeedOnClose() no longer reads \
-            settingsStore.restoresWindows — a window would write its seed \
-            whether or not the user asked for restoration.
+    /// Positive beside the negative below: `applicationWillTerminate` is
+    /// what runs it, so the write really is on the one path that is
+    /// guaranteed to run when the app ends.
+    @Test func terminatingIsWhatRunsTheWrite() throws {
+        let body = try Self.body(
+            "func applicationWillTerminate(_ notification: Notification)", in: Self.appFile)
+        #expect(body.contains("writeRestorationSeeds()"), """
+            applicationWillTerminate no longer calls writeRestorationSeeds() \
+            — nothing would ever describe the windows that were open.
             """)
-        #expect(body.contains("restorationStore.append("), """
-            writeRestorationSeedOnClose() no longer appends to the store — \
-            nothing would reach windows.json.
+    }
+
+    /// NEGATIVE, with the two positives above beside it: no window writes
+    /// the restoration file on its own close path, and nothing appends to
+    /// it anywhere. Both are how the first version of this feature
+    /// described the wrong set of windows.
+    @Test func noWindowWritesTheRestorationFileWhenItCloses() throws {
+        let lifecycle = try Self.code(of: Self.lifecycleFile)
+        for forbidden in ["restorationStore.append(", "restorationStore.replace(",
+                          "writeRestorationSeedOnClose("] {
+            #expect(!lifecycle.contains(forbidden), """
+                ContentView+Lifecycle.swift contains \(forbidden) — the \
+                restoration file is written once, at quit, from the windows \
+                still registered. A window writing it as it closes describes \
+                exactly the windows restoration is not about, because ⌘Q \
+                closes none of them.
+                """)
+        }
+        let store = try Self.code(of: Self.storeFile)
+        #expect(!store.contains("func append("), """
+            WindowRestorationStore still offers append( — the file describes \
+            one quit and is replaced whole; an append is how a session's \
+            deliberately closed windows piled up in it.
+            """)
+    }
+
+    /// A closing window stops being one to bring back — the other half of
+    /// the ruling above, and the reason a describer is unregistered rather
+    /// than left to answer at quit for a window that is gone.
+    @Test func aClosingWindowStopsDescribingItself() throws {
+        let body = try Self.body("func handleWindowWillClose(", in: Self.lifecycleFile)
+        #expect(body.contains("unregisterWindowDescriber(for: windowID)"), """
+            handleWindowWillClose no longer unregisters this window's \
+            describer — a window the user closed would still be described at \
+            quit, and restored at the next launch.
+            """)
+    }
+
+    /// Positive beside `aClosingWindowStopsDescribingItself`: the window
+    /// registers a describer in the first place, on the setup pass.
+    @Test func anAppearingWindowRegistersItsDescriber() throws {
+        let body = try Self.body("func performWindowSetup()", in: Self.lifecycleFile)
+        #expect(body.contains("registerWindowDescriber("), """
+            performWindowSetup() no longer registers this window's describer \
+            — the quit sweep would find no windows to describe at all.
+            """)
+    }
+
+    // MARK: - A restored tab shows its own session's overview
+
+    /// The overview branch resolves per TAB before it resolves per
+    /// WINDOW (fix round 1). Without that, N restored tabs would all show
+    /// whichever session the one window-wide sidebar selection names — or,
+    /// with no selection, an empty form.
+    @Test func theOverviewBranchResolvesTheTabsOwnSessionFirst() throws {
+        let detail = try Self.code(of: Self.detailFile)
+        #expect(detail.contains("overviewSession(for: tab)"), """
+            ContentView+Detail.swift's overview branch no longer resolves \
+            the session per tab — a restored window's tabs would all show \
+            the window's one sidebar selection instead of the session each \
+            of them was restored pointing at.
+            """)
+        let resolver = try Self.body(
+            "func overviewSession(for tab: SessionTab) -> StoredSession?",
+            in: Self.contentViewFile)
+        #expect(resolver.contains("tab.restoredSessionID"), """
+            overviewSession(for:) no longer reads the tab's restored \
+            pointer, so it can only ever answer with the window's own \
+            sidebar selection.
+            """)
+        #expect(resolver.contains("overviewSession"), """
+            overviewSession(for:) no longer falls back to the window's \
+            selection — every tab made any other way must keep behaving \
+            exactly as it did before restoration existed.
             """)
     }
 
@@ -206,6 +293,12 @@ struct WindowRestorationWiringGuardTests {
             restoredPaneVisibility — the description would keep overriding \
             every later connect on that tab, including one the user made \
             after changing the panes.
+            """)
+        #expect(body.contains("restoredSessionID = nil"), """
+            connect(in:stored:paneVisibility:) no longer clears the tab's \
+            restoredSessionID — a later disconnect would put the restored \
+            session's overview back instead of this window's own sidebar \
+            selection.
             """)
     }
 

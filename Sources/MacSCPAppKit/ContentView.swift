@@ -241,12 +241,6 @@ struct ContentView: View {
     /// back empty and `restoreDescribedWindow()` builds the tabs instead.
     /// See `WindowSeed` for the two halves.
     let seed: WindowSeed?
-    /// Where a closing window writes its description (Detachable Tabs
-    /// plan, Task 5). One instance for the whole app, passed down like the
-    /// other app-scope stores — a stateless struct over a directory, so
-    /// sharing it costs nothing and spelling the directory twice would be
-    /// the risk.
-    let restorationStore: WindowRestorationStore
     /// What this LAUNCH still has to restore (Detachable Tabs plan,
     /// Task 5) — `nil` in a `ContentView` built outside the app (every
     /// test that constructs one), which restores nothing.
@@ -427,6 +421,25 @@ struct ContentView: View {
     var overviewSession: StoredSession? {
         guard let overviewSessionID else { return nil }
         return sessionListViewModel.sessions.first { $0.id == overviewSessionID }
+    }
+
+    /// What the DETAIL pane's overview branch shows for `tab`: the session
+    /// that tab was restored pointing at, if it still is, and otherwise the
+    /// one the sidebar is pointing at (Detachable Tabs plan, Task 5 fix
+    /// round 1).
+    ///
+    /// The per-tab answer comes first because a restored window has N tabs
+    /// that were each pointed at a different session, and
+    /// `overviewSessionID` — matching where the sidebar is — can only name
+    /// one. A tab with no restored pointer, which is every tab made any
+    /// other way, gets exactly what it got before this existed.
+    ///
+    /// Resolved against the live list here, like `overviewSession` above,
+    /// so a restored pointer at a session that has since been deleted
+    /// falls through to nothing rather than to a stale copy.
+    func overviewSession(for tab: SessionTab) -> StoredSession? {
+        guard let restored = tab.restoredSessionID else { return overviewSession }
+        return sessionListViewModel.sessions.first { $0.id == restored } ?? overviewSession
     }
 
     /// The group and login-set NAMES behind the two ids a session carries,
@@ -666,20 +679,15 @@ struct ContentView: View {
         secretStore: (any SecretStore)? = nil,
         managedKeyStore: ManagedKeyStore? = nil,
         seed: WindowSeed? = nil,
-        restorationStore: WindowRestorationStore? = nil,
         restorationLaunch: WindowRestorationLaunch? = nil
     ) {
         self.seed = seed
-        // Same defaulting rule as `auditStore`'s directory and
-        // `managedKeyStore`'s above: production passes the app's own
-        // instance (`MacSCPApp.windowContent(seed:)`), and a caller that
-        // passes nothing gets one over the ordinary storage directory.
-        // Nothing is written through it unless `settingsStore
-        // .restoresWindows` is on, which is off by default — so a test
-        // that constructs a `ContentView` and never touches that setting
-        // cannot write into the running user's data through this.
-        self.restorationStore = restorationStore
-            ?? WindowRestorationStore(directory: WindowRestorationStore.defaultDirectory)
+        // No restoration STORE here (Task 5 fix round 1): a window neither
+        // reads nor writes `windows.json`. It is read once in
+        // `MacSCPApp.init` and written once in
+        // `AppDelegate.applicationWillTerminate`; what a window offers is
+        // `describeThisWindow()`, through the closure it hands
+        // `TabRegistry.registerWindowDescriber(_:for:)`.
         self.restorationLaunch = restorationLaunch
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
@@ -2192,6 +2200,11 @@ struct ContentView: View {
                 // later connect the user makes on it.
                 let restoredPanes = tab.restoredPaneVisibility
                 tab.restoredPaneVisibility = nil
+                // And the restored pointer with it: a connected tab shows
+                // its browser, and on a later disconnect it should fall
+                // back to this window's own sidebar selection rather than
+                // to the session it happened to be restored with.
+                tab.restoredSessionID = nil
                 restorePaneVisibility(
                     for: tab,
                     visibility: WindowRestorationPlan.paneVisibility(

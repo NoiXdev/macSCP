@@ -9,7 +9,7 @@ document** before the plan. From item 17 of
 (`docs/superpowers/plans/2026-09-03-detachable-tabs.md`, six tasks; see
 `docs/BACKLOG.md`'s "Detachable, optionally sticky tabs" row for the full
 commit list and sight checks). All four decisions below shipped as
-written, with three deviations measured along the way: **detaching by
+written, with four deviations measured along the way: **detaching by
 dragging a tab out and dropping it on the desktop was not built** —
 SwiftUI's only drag-ended callback is a macOS 26 API and this package
 targets macOS 15, so detach stays a menu action only (its own open
@@ -19,7 +19,19 @@ one-shot description rather than a value SwiftUI keeps synchronised with
 the window; and **a tab moved into a window of its own can be
 permanently parked** if that window never appears — SwiftUI reports no
 `openWindow(value:)` failure, so there is no signal to reclaim it early,
-and it is torn down only when its source window closes or the app quits.
+and it is torn down only when its source window closes or the app quits;
+and **the restoration file is written once, at quit, from the windows
+still open** rather than by each window as it closes (Task 5 fix round
+1) — the "Restoration" section below still says "written on close",
+which is what was designed and is not what shipped: ⌘Q closes no
+windows, so a close-path write described every window the user had
+deliberately shut and none of the ones on screen at the end.
+`AppDelegate.applicationWillTerminate` asks
+`TabRegistry.describeAllWindows()` and replaces the file. The same round
+also replaced the restored tab's `beginEditing` prefill with a per-tab
+pointer at the session, so the tab comes back showing that session's
+`SessionOverviewView` (Connect / Edit / Diagnose) instead of an edit form
+offering "Save & connect" for a session that is already saved.
 
 ## The decisions
 

@@ -741,6 +741,15 @@ extension ContentView {
         // plan, Task 3) — `TabRegistry.registerModel(_:for:)` holds it
         // weakly, and `releaseHeldTabsOnClose()` is where it is given up.
         TabRegistry.shared.registerModel(tabsModel, for: windowID)
+        // Fourth: how this window describes itself, for the quit that
+        // restores it (Detachable Tabs plan, Task 5 fix round 1). A
+        // closure, asked once at `applicationWillTerminate`, because the
+        // answer changes with every tab opened, closed or connected and a
+        // stored value would have to be refreshed by all of them. Same
+        // capture shape as the `TabCommands` closures in
+        // `wireTabCommands()` below — what a captured `ContentView` copy
+        // reaches is SwiftUI's own `@State` storage, not a snapshot.
+        TabRegistry.shared.registerWindowDescriber({ describeThisWindow() }, for: windowID)
         // Snippet list for the Terminal menu, read once per window — a
         // synchronous `snippets.json` read, which is why it is here and not
         // in `wireTabCommands()` below (Task 2 fix round 1: it briefly was,
@@ -1126,38 +1135,39 @@ extension ContentView {
         // an unclaimed seed's tab belongs to no window, so this is the last
         // moment anything can reach it, and `releaseHeldTabsOnClose()`
         // starts an async teardown that this sweep must not be racing.
-        // BEFORE both releases (Detachable Tabs plan, Task 5): teardown
-        // clears a tab's `activeStoredSessionID`, so a description written
-        // afterwards would say every tab had no session at all.
-        writeRestorationSeedOnClose()
+        // A window the user closed is not one to bring back (Detachable
+        // Tabs plan, Task 5 fix round 1). Nothing is WRITTEN here: the
+        // restoration file is written once, at quit, from the windows
+        // still registered — see `AppDelegate.writeRestorationSeeds()`.
+        TabRegistry.shared.unregisterWindowDescriber(for: windowID)
         releaseUnclaimedSeedsOnClose()
         releaseHeldTabsOnClose()
     }
 
-    /// Writes what this window was showing, for the next launch to rebuild
-    /// (Detachable Tabs plan, Task 5).
+    /// How this window describes itself for restoration (Detachable Tabs
+    /// plan, Task 5 fix round 1).
     ///
-    /// Runs on every window's close and writes nothing unless the setting
-    /// is on — the decision is `WindowRestorationPlan.shouldWrite(flag:)`'s
-    /// and is taken inside the store, so this call site has no second
-    /// spelling of it.
+    /// Called by the closure this window hands `TabRegistry
+    /// .registerWindowDescriber(_:for:)`, at one moment only: the quit
+    /// sweep in `AppDelegate.writeRestorationSeeds()`. It reads and
+    /// returns; it writes nothing, touches no file, and asks no question
+    /// that could suspend — `applicationWillTerminate` is synchronous and
+    /// on the main thread.
     ///
-    /// The primary window's description is written too, marked as such:
-    /// it is the one window a launch cannot OPEN (being seedless is what
-    /// makes it primary), so its tabs are handed to the window SwiftUI
-    /// opens by itself. See `WindowSeed.isPrimary`.
+    /// The primary window describes itself too, marked as such: it is the
+    /// one window a launch cannot OPEN (being seedless is what makes it
+    /// primary), so its tabs are handed to the window SwiftUI opens by
+    /// itself. See `WindowSeed.isPrimary`.
     ///
     /// What it describes is deliberately less than what is on screen: per
     /// tab, the stored session's id and the panes it was showing; per
     /// window, whether it floated. No host, no username, no path, no
     /// secret — see `TabSeed`.
-    func writeRestorationSeedOnClose() {
-        restorationStore.append(
-            WindowSeed(
-                tabs: tabsModel.tabs.map(describeForRestoration),
-                keepOnTop: keepOnTop,
-                isPrimary: isPrimaryWindow),
-            whenEnabled: settingsStore.restoresWindows)
+    func describeThisWindow() -> WindowSeed {
+        WindowSeed(
+            tabs: tabsModel.tabs.map(describeForRestoration),
+            keepOnTop: keepOnTop,
+            isPrimary: isPrimaryWindow)
     }
 
     /// One tab, as little of it as a later launch needs.
@@ -1341,27 +1351,41 @@ extension ContentView {
     /// sessions did not — all three come up with the window's own fresh
     /// tab, which is what the app does anyway.
     func restoreDescribedWindow() {
-        let description = seed ?? restorationLaunch?.takePrimarySeed()
-        guard let description, !description.tabs.isEmpty else { return }
+        guard let description = seed ?? restorationLaunch?.takePrimarySeed() else { return }
+        // Outside the tab guard below (fix round 1): a window that floated
+        // floats again whether or not any of its tabs could be rebuilt.
+        // The sticky flag is the window's fact, not a property of what it
+        // happens to hold.
+        keepOnTop = description.keepOnTop
+        guard !description.tabs.isEmpty else { return }
         let placeholders = tabsModel.tabs.map(\.id)
         for described in description.tabs {
             addTabRegistering(makeRestoredTab(from: described))
         }
         for id in placeholders { tabsModel.detach(tabID: id) }
-        keepOnTop = description.keepOnTop
     }
 
-    /// One restored tab: a NEW tab, showing the session it had, connected
-    /// to nothing.
+    /// One restored tab: a NEW tab, pointed at the session it had,
+    /// connected to nothing.
     ///
-    /// `beginEditing(_:)` is the same prefill the sidebar's "Edit…" makes
-    /// (`ContentView.editStored(_:)`), and it is chosen for the property
-    /// that method's own doc comment names: it fills the form and
-    /// deliberately does not connect, leaving the user one click from
-    /// either. The session is looked up in the live list, so a session
-    /// deleted or renamed since the description was written resolves to
-    /// what it is NOW, or to nothing — a description never puts stale
-    /// connection details back on screen, because it never carried any.
+    /// **The session is pointed at, not loaded into the form** (fix round
+    /// 1). The first version called `ConnectionViewModel.beginEditing(_:)`,
+    /// the sidebar's "Edit…" prefill, which puts the form in `.edit` mode
+    /// and offers "Save" / "Save & connect" — a tab that came back looking
+    /// like an unsaved draft of a session that is saved already. What this
+    /// project shows for "a session, not connected" is
+    /// `SessionOverviewView`, with Connect, Edit and Diagnose; the tab
+    /// carries the session's id (`SessionTab.restoredSessionID`) and
+    /// `ContentView+Detail.swift`'s overview branch reads it ahead of the
+    /// window-wide `overviewSessionID`, so N restored tabs each show their
+    /// own session rather than all showing the sidebar's one selection.
+    ///
+    /// Only an id is carried, never a resolved `StoredSession`: the
+    /// overview branch resolves it against the live list on every render,
+    /// which is what makes a session deleted since the description was
+    /// written simply disappear instead of coming back as a stale copy.
+    /// Nothing about the session is read here at all, so nothing about it
+    /// can be read from a file that never held it.
     ///
     /// The described pane visibility is parked on the tab rather than
     /// applied: there are no panes on a disconnected tab. See
@@ -1369,11 +1393,7 @@ extension ContentView {
     func makeRestoredTab(from described: TabSeed) -> SessionTab {
         let tab = makeTab()
         tab.restoredPaneVisibility = described.paneVisibility
-        if let sessionID = described.sessionID,
-            let stored = sessionListViewModel.sessions.first(where: { $0.id == sessionID })
-        {
-            tab.connectionViewModel.beginEditing(stored)
-        }
+        tab.restoredSessionID = described.sessionID
         return tab
     }
 

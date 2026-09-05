@@ -6,10 +6,9 @@ import macSCPCore
 ///
 /// A stateless struct over a directory, exactly like `AuditLogStore`: the
 /// file is the state, and every call reads or writes it whole. The list is
-/// in the order the windows CLOSED, because that is the order the
-/// descriptions arrive in — one append per `NSWindow.willCloseNotification`
-/// — and quitting closes windows, so the order is close to the order they
-/// were opened in.
+/// every window that was OPEN at the quit that wrote it, in the order
+/// those windows appeared (`TabRegistry.describeAllWindows()`), written
+/// once from `AppDelegate.applicationWillTerminate`.
 ///
 /// **The directory is resolved, not spelled.** `defaultDirectory` defers to
 /// `SessionStore.defaultDirectory`, the one lookup that honours the
@@ -24,13 +23,12 @@ import macSCPCore
 /// (`SecretStore`) and JSON stores never contain them; this is one more
 /// JSON store.
 ///
-/// **Both mutating entry points take the setting**, rather than being
-/// called behind an `if` at each site, so "the setting is off" is one
-/// decision (`WindowRestorationPlan`) expressed once. With it off an
-/// existing file is left exactly as found: not written to, not read, not
-/// cleared. Turning the setting on later must not resurrect the windows of
-/// whenever it was last on — and what prevents that is the read side,
-/// which CONSUMES the file it restores from.
+/// **Both entry points take the setting**, rather than being called behind
+/// an `if` at each site, so "the setting is off" is one decision
+/// (`WindowRestorationPlan`) expressed once. With it off, both of them
+/// DELETE the file: a seed file describes one quit, and a stale one has no
+/// owner. Consumed at the launch that reads it, discarded by any launch or
+/// quit that is not restoring — never kept.
 struct WindowRestorationStore: Sendable {
     /// The same directory every other JSON store uses — see the type's doc
     /// comment for why this defers rather than spelling a path.
@@ -46,19 +44,32 @@ struct WindowRestorationStore: Sendable {
         self.directory = directory
     }
 
-    /// Adds one closing window's description to the end of the file.
+    /// Replaces the file with the windows open at this moment.
     ///
-    /// A no-op — including creating the file — when the setting is off.
-    /// A failed read of an existing file is treated as an empty list
-    /// rather than an error: losing a description is a smaller harm than
-    /// refusing to record the one this window has, and the launch that
-    /// reads it already tolerates junk.
-    func append(_ seed: WindowSeed, whenEnabled flag: Bool) {
-        guard WindowRestorationPlan.shouldWrite(flag: flag) else { return }
-        write(read() + [seed])
+    /// One write, at one moment — `applicationWillTerminate` — and never
+    /// an append. The first version of this appended on each window's
+    /// `willClose`, which described exactly the wrong set: ⌘Q closes no
+    /// windows (measured in this repository for the parked-move sweep, and
+    /// recorded in `AppDelegate.sweepUnclaimedMoves()`'s doc comment), so
+    /// the windows actually on screen at quit were never described, while
+    /// every window the user had deliberately closed during the session
+    /// accumulated in the file.
+    ///
+    /// With the setting off the file is DELETED rather than left alone. A
+    /// seed file describes one quit; a stale one has no owner and no
+    /// meaning, and leaving it would mean a later switch-on restored the
+    /// windows of whenever the setting was last on. Consumed or discarded,
+    /// never kept — the launch side (`consumeAtLaunch(whenEnabled:)`)
+    /// states the same rule from the other end.
+    func replace(_ seeds: [WindowSeed], whenEnabled flag: Bool) {
+        guard WindowRestorationPlan.shouldWrite(flag: flag) else {
+            clear()
+            return
+        }
+        write(seeds)
     }
 
-    /// Every description in the file, oldest close first. Empty when the
+    /// Every description in the file, oldest window first. Empty when the
     /// file is missing, unreadable, or not the JSON this version writes —
     /// a launch must never fail because of what is in here.
     func read() -> [WindowSeed] {
@@ -66,17 +77,23 @@ struct WindowRestorationStore: Sendable {
         return (try? JSONDecoder().decode([WindowSeed].self, from: data)) ?? []
     }
 
-    /// What this launch should restore, taking the file with it.
+    /// What this launch should restore. **The file is always consumed.**
     ///
-    /// The clear is the whole reason this is one call rather than a read
-    /// and a later delete: a seed file is consumed ONCE. Without that, a
-    /// launch that crashed before any window closed would reopen the
-    /// windows of the launch before it, and so would the one after that,
-    /// forever. With the setting off nothing is read and nothing is
-    /// cleared.
-    func readAndClear(whenEnabled flag: Bool) -> [WindowSeed] {
-        guard WindowRestorationPlan.shouldRead(flag: flag) else { return [] }
-        let seeds = read()
+    /// Read then deleted when the setting is on; deleted unread when it is
+    /// off. Both directions matter and they are the same rule seen twice:
+    ///
+    /// - Without the delete-after-read, a launch that crashed before its
+    ///   quit sweep ran would reopen its predecessor's windows, and so
+    ///   would the launch after that, forever.
+    /// - Without the delete-when-off, a run with the setting off would
+    ///   leave the previous run's file untouched while writing nothing of
+    ///   its own, and the next launch with the setting on would restore a
+    ///   generation of windows that is two quits old.
+    ///
+    /// So no launch can ever see two generations mixed, and no file
+    /// outlives the launch that found it.
+    func consumeAtLaunch(whenEnabled flag: Bool) -> [WindowSeed] {
+        let seeds = WindowRestorationPlan.shouldRead(flag: flag) ? read() : []
         clear()
         return seeds
     }

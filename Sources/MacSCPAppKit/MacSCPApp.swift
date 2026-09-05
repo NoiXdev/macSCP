@@ -265,8 +265,47 @@ final class SettingsWindowBridge {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         sweepUnclaimedMoves()
+        writeRestorationSeeds()
         DiagnosticLog.shared.log(.info, "app", "quit")
         DiagnosticLog.shared.flushSynchronously()
+    }
+
+    /// Describes every window still open and replaces `windows.json` with
+    /// the result (Detachable Tabs plan, Task 5 fix round 1).
+    ///
+    /// **This is the only place the file is written**, and the reason is
+    /// the fact `sweepUnclaimedMoves()` below already records: **⌘Q closes
+    /// no windows.** The first version of restoration wrote a window's
+    /// description from its own `willClose` handler, which described
+    /// exactly the wrong set — every window the user deliberately closed
+    /// during a session accumulated in the file, and the windows actually
+    /// on screen at quit, the ones "restore windows" is about, were never
+    /// described at all.
+    ///
+    /// Unlike the parked-move teardown this callback cannot perform, this
+    /// one is a thing it CAN guarantee: `describeAllWindows()` is a
+    /// synchronous read of values that returns a `[WindowSeed]`, and
+    /// `replace(_:whenEnabled:)` is one synchronous file write. Nothing
+    /// here awaits, so nothing here depends on the process outliving a
+    /// task that may never be scheduled.
+    ///
+    /// Both stores are built here rather than handed down from
+    /// `MacSCPApp`. `SettingsStore` persists on every set, so a store
+    /// constructed now reads the value the user last chose; and
+    /// `WindowRestorationStore` is a stateless struct over a directory
+    /// both sides resolve the same way. An `NSApplicationDelegateAdaptor`
+    /// instance is built by SwiftUI before `MacSCPApp.init` can reach it,
+    /// so the alternative would be a mutable app-wide handle for the sake
+    /// of two values that are cheap and unambiguous to read.
+    ///
+    /// With the setting off the file is deleted rather than skipped — see
+    /// `WindowRestorationStore.replace(_:whenEnabled:)`.
+    @MainActor
+    private func writeRestorationSeeds() {
+        let settings = SettingsStore(directory: SettingsStore.defaultDirectory)
+        let store = WindowRestorationStore(directory: WindowRestorationStore.defaultDirectory)
+        store.replace(
+            TabRegistry.shared.describeAllWindows(), whenEnabled: settings.restoresWindows)
     }
 
     /// Every tab still parked for a window that never appeared, at the
@@ -358,11 +397,6 @@ struct MacSCPApp: App {
     /// `MenuBarController` below, same no-singleton pattern as the other
     /// app-global stores above.
     @State private var menuBarModel: MenuBarStatusModel
-    /// Where a closing window writes its description, and where this
-    /// launch read the last quit's (Detachable Tabs plan, Task 5). One
-    /// instance for the whole app, passed to every `ContentView` — same
-    /// no-singleton pattern as the stores above.
-    @State private var restorationStore: WindowRestorationStore
     /// What this launch still has to restore. Filled in `init` from the
     /// file, handed out once per half — see `WindowRestorationLaunch`.
     @State private var restorationLaunch: WindowRestorationLaunch
@@ -449,12 +483,13 @@ struct MacSCPApp: App {
         // What's New decision above because it is the same kind of thing:
         // something this launch decides ONCE, before any window exists.
         //
-        // The read consumes the file (`readAndClear`) — a seed file is
-        // used by exactly one launch, or a launch that crashed before
-        // any window closed would reopen its predecessor's windows
-        // forever. With the setting off nothing is read and the file is
-        // left exactly as it was found, so turning the setting on later
-        // cannot resurrect the windows of whenever it was last on.
+        // The read CONSUMES the file, in both directions: read then
+        // deleted with the setting on, deleted unread with it off. A seed
+        // file describes one quit and is used by exactly one launch —
+        // otherwise a launch that crashed before its quit sweep ran would
+        // reopen its predecessor's windows forever, and a run with the
+        // setting off would leave a file behind for the next run with it
+        // on to restore a generation of windows two quits old.
         //
         // NOTHING here connects. The windows come back with their tabs
         // showing the sessions they had and no connection behind them;
@@ -465,8 +500,7 @@ struct MacSCPApp: App {
         // is what opens the rest (`ContentView.openRestoredWindows()`).
         let restoration = WindowRestorationStore(
             directory: WindowRestorationStore.defaultDirectory)
-        let restoredWindows = restoration.readAndClear(whenEnabled: store.restoresWindows)
-        _restorationStore = State(initialValue: restoration)
+        let restoredWindows = restoration.consumeAtLaunch(whenEnabled: store.restoresWindows)
         _restorationLaunch = State(initialValue: WindowRestorationLaunch(
             flag: store.restoresWindows, stored: restoredWindows))
 
@@ -585,7 +619,7 @@ struct MacSCPApp: App {
             settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
             auditStore: auditStore, settingsBridge: settingsBridge, updateModel: updateModel,
             menuBarModel: menuBarModel, seed: seed,
-            restorationStore: restorationStore, restorationLaunch: restorationLaunch)
+            restorationLaunch: restorationLaunch)
             // Diagnostic log (Diagnostic Log plan, Task 2): the General
             // settings pane's picker writes `settingsStore
             // .diagnosticLogLevel` directly (`SettingsView.swift`), so

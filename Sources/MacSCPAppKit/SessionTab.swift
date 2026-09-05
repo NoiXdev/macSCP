@@ -179,6 +179,29 @@ final class SessionTab: Identifiable {
     /// and clears it there — one use, so a later connect on the same tab
     /// gets the ordinary answer.
     var restoredPaneVisibility: PaneVisibility?
+    /// The stored session this tab was pointed at when it came back from a
+    /// restored window (Detachable Tabs plan, Task 5 fix round 1) — `nil`
+    /// for every tab that was made any other way.
+    ///
+    /// Per TAB, deliberately, where `ContentView.overviewSessionID` is per
+    /// WINDOW. The window-wide one matches where the sidebar is: one
+    /// sidebar, one selection. A restored window has N tabs that were each
+    /// pointed at a different session, and one window-wide pointer could
+    /// only show them all the same overview — so the overview branch in
+    /// `ContentView+Detail.swift` reads this FIRST and falls back to the
+    /// sidebar's selection.
+    ///
+    /// An id, not a `StoredSession`, for the same reason
+    /// `overviewSessionID` is one: it is resolved against the live list on
+    /// every render, so a session deleted or renamed since the description
+    /// was written disappears or updates without a second clearing rule.
+    ///
+    /// Cleared in the two places this tab stops being "a restored pointer
+    /// at a session": when it connects (`ContentView.connect(in:stored:
+    /// paneVisibility:)`, alongside `restoredPaneVisibility`), and when
+    /// the sidebar reports a new selection, which is the user pointing
+    /// this window's front tab somewhere else.
+    var restoredSessionID: UUID?
     /// Per-session audit recorder (M9b) — set only when this tab connects to
     /// a STORED session (never for an ad-hoc connect), alongside
     /// `activeStoredSessionID`; nilled in `teardown(_:)` after the final

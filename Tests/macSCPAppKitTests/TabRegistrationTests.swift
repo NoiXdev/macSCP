@@ -203,12 +203,16 @@ struct TabRegistrationWiringGuardTests {
     }
 
     /// POSITIVE beside it: the route that replaced those calls exists and is
-    /// used. Recounted 2026-09-05 across the three files that have any:
-    /// `ContentView+Lifecycle.swift` 4 (the declaration plus the ⌘N command,
-    /// the claim, and the restoration rebuild added by the Detachable Tabs
-    /// plan's Task 5), `ContentView.swift` 2 (a new connection over a
-    /// connected tab, and `formTarget()`), `ContentView+Detail.swift` 1
-    /// (the strip's ⊕ button) — seven occurrences, six of them calls.
+    /// used. Recounted 2026-09-05 in the COMMENT-AND-STRING-BLANKED view
+    /// this suite reads (`contentViewFiles()`), which is the only count the
+    /// numbers below can mean — a raw `grep` sees one more, a doc comment
+    /// in `ContentView+Lifecycle.swift` that names the helper. Across the
+    /// three files that have any: `ContentView+Lifecycle.swift` 4 (the
+    /// declaration plus the ⌘N command, the claim, and the restoration
+    /// rebuild added by the Detachable Tabs plan's Task 5),
+    /// `ContentView.swift` 2 (a new connection over a connected tab, and
+    /// `formTarget()`), `ContentView+Detail.swift` 1 (the strip's ⊕
+    /// button) — seven occurrences, six of them calls.
     @Test func everyTabThisWindowMakesGoesThroughTheOneDoor() throws {
         let counts = try Self.contentViewFiles().reduce(into: [String: Int]()) { totals, file in
             totals[file.name] = TransferQueueBarCancelGuardTests.occurrenceCount(

@@ -76,11 +76,31 @@ final class TabRegistry {
     /// Each open window's own `TabsViewModel`, held WEAKLY — see
     /// `registerModel(_:for:)`.
     private var modelsByWindow: [WindowID: WeakModel] = [:]
+    /// How each open window describes itself for restoration — see
+    /// `registerWindowDescriber(_:for:)` (Detachable Tabs plan, Task 5 fix
+    /// round 1).
+    private var describersByWindow: [WindowID: WindowDescriber] = [:]
+    /// The order those windows first registered, which is the order they
+    /// appeared. A dictionary has no order and the restored windows must
+    /// come back in a stable one, so the sequence is kept beside the
+    /// closures rather than inferred from them.
+
+    private var describerWindowOrder: [WindowID] = []
 
     /// A weak reference in a place a dictionary cannot hold one directly.
     private struct WeakModel {
         weak var model: TabsViewModel<SessionTab>?
     }
+
+    /// What a window answers when asked to describe itself: a `WindowSeed`
+    /// carrying its tabs' descriptions, its sticky flag and whether it is
+    /// the primary window.
+    ///
+    /// A closure rather than a stored value, because the answer changes
+    /// with every tab opened, closed, connected or moved, and a value
+    /// would have to be refreshed by whoever changed any of those. The
+    /// window is asked once, at the one moment the answer is needed.
+    typealias WindowDescriber = @MainActor () -> WindowSeed
 
     init() {}
 
@@ -346,6 +366,59 @@ final class TabRegistry {
             return nil
         }
         return model
+    }
+
+    // MARK: - Each window's description, for the quit that restores it
+
+    /// Records how `window` describes itself, for the restoration sweep at
+    /// quit (Detachable Tabs plan, Task 5 fix round 1).
+    ///
+    /// **Why the registry has to answer this, and why a closure.** The
+    /// windows that matter for restoration are exactly the ones still OPEN
+    /// when the app quits, and ⌘Q closes none of them — this repository
+    /// measured that for the parked-move sweep and it is the whole reason
+    /// the first version of restoration, which wrote on `willClose`,
+    /// described only the windows the user had deliberately shut. So the
+    /// description has to be pulled at terminate, from something that
+    /// knows which windows exist. That is this type. What it must NOT
+    /// become is a second copy of each window's state: the sticky flag and
+    /// the tab list live in the window's own `ContentView`, and a closure
+    /// asks that view rather than mirroring it here.
+    ///
+    /// Idempotent, like `register(_:in:)` and `registerModel(_:for:)`: a
+    /// window calls this on every setup pass, the last closure wins, and
+    /// the window keeps the position it first registered in.
+    ///
+    /// The closure is STRONG, unlike `registerModel`'s weak model box,
+    /// which is why `unregisterWindowDescriber(for:)` on the window's
+    /// close path is not optional bookkeeping. A `ContentView` is a struct
+    /// and what a captured copy reaches is SwiftUI's own storage, so the
+    /// closure keeps no window alive by itself — but a describer left
+    /// behind would still answer at quit for a window that is gone, and
+    /// describe it as one to restore.
+    func registerWindowDescriber(_ describe: @escaping WindowDescriber, for window: WindowID) {
+        if describersByWindow[window] == nil {
+            describerWindowOrder.append(window)
+        }
+        describersByWindow[window] = describe
+    }
+
+    /// Forgets how `window` describes itself. Called from the window's
+    /// close path — a window the user closed is not one to bring back.
+    func unregisterWindowDescriber(for window: WindowID) {
+        describersByWindow[window] = nil
+        describerWindowOrder.removeAll { $0 == window }
+    }
+
+    /// Every open window, described, in the order the windows appeared.
+    ///
+    /// Pure in the sense that matters here: it reads and returns values
+    /// and changes nothing — not the registry, not a window, not a tab. It
+    /// is called from `applicationWillTerminate`, which is synchronous and
+    /// on the main thread, so anything that could suspend or await would
+    /// be a promise this callback cannot keep (see `AppDelegate`).
+    func describeAllWindows() -> [WindowSeed] {
+        describerWindowOrder.compactMap { describersByWindow[$0]?() }
     }
 
     /// The convenience Task 2's drag calls: moves `id`'s ownership in the

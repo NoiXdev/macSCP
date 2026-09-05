@@ -479,6 +479,86 @@ struct TabsWindowLifecycleTests {
         #expect(left.first?.tabs.first === stranded)
     }
 
+    // MARK: - How the windows describe themselves at quit
+
+    /// The registry is asked once, at `applicationWillTerminate`, for
+    /// every window still open — because ⌘Q closes none of them, so
+    /// nothing on any window's own close path can see the set that
+    /// matters (Task 5 fix round 1).
+    ///
+    /// Order is part of the answer: a dictionary has none, and the
+    /// restored windows have to come back in a stable one, so the registry
+    /// keeps the order the windows registered in.
+    @Test func everyRegisteredWindowDescribesItselfInTheOrderItAppeared() {
+        let registry = TabRegistry()
+        let first = WindowID()
+        let second = WindowID()
+        let firstSeed = WindowSeed(tabs: [TabSeed(sessionID: UUID())],
+                                   keepOnTop: false, isPrimary: true)
+        let secondSeed = WindowSeed(tabs: [TabSeed(sessionID: UUID())],
+                                    keepOnTop: true, isPrimary: false)
+        registry.registerWindowDescriber({ firstSeed }, for: first)
+        registry.registerWindowDescriber({ secondSeed }, for: second)
+        #expect(registry.describeAllWindows() == [firstSeed, secondSeed])
+    }
+
+    /// A window that has closed is not one to bring back, and the
+    /// remaining windows keep their order.
+    @Test func aWindowThatUnregisteredIsNotDescribed() {
+        let registry = TabRegistry()
+        let first = WindowID()
+        let second = WindowID()
+        let third = WindowID()
+        let firstSeed = WindowSeed(tabs: [TabSeed(sessionID: UUID())],
+                                   keepOnTop: false, isPrimary: true)
+        let thirdSeed = WindowSeed(tabs: [TabSeed(sessionID: UUID())],
+                                   keepOnTop: false, isPrimary: false)
+        registry.registerWindowDescriber({ firstSeed }, for: first)
+        registry.registerWindowDescriber(
+            { WindowSeed(tabs: [], keepOnTop: false, isPrimary: false) }, for: second)
+        registry.registerWindowDescriber({ thirdSeed }, for: third)
+        registry.unregisterWindowDescriber(for: second)
+        #expect(registry.describeAllWindows() == [firstSeed, thirdSeed])
+    }
+
+    /// A window runs its setup pass more than once. Re-registering must
+    /// replace the closure and keep the window where it was, or a window
+    /// would be described twice, or jump to the back of the order for
+    /// having repainted.
+    @Test func reRegisteringReplacesTheDescriberAndKeepsThePosition() {
+        let registry = TabRegistry()
+        let first = WindowID()
+        let second = WindowID()
+        let firstSeed = WindowSeed(tabs: [TabSeed(sessionID: UUID())],
+                                   keepOnTop: false, isPrimary: true)
+        let laterFirstSeed = WindowSeed(tabs: [TabSeed(sessionID: UUID())],
+                                        keepOnTop: true, isPrimary: true)
+        let secondSeed = WindowSeed(tabs: [], keepOnTop: false, isPrimary: false)
+        registry.registerWindowDescriber({ firstSeed }, for: first)
+        registry.registerWindowDescriber({ secondSeed }, for: second)
+        registry.registerWindowDescriber({ laterFirstSeed }, for: first)
+        #expect(registry.describeAllWindows() == [laterFirstSeed, secondSeed])
+    }
+
+    /// The answer is pulled at the moment it is needed, not stored when
+    /// the window registers: a window's tabs, its sticky flag and its
+    /// connections all change after the setup pass that registers it.
+    @Test func aDescriberIsAskedAtTheMomentItIsRead() {
+        let registry = TabRegistry()
+        let window = WindowID()
+        var answer = WindowSeed(tabs: [], keepOnTop: false, isPrimary: true)
+        registry.registerWindowDescriber({ answer }, for: window)
+        let later = WindowSeed(
+            tabs: [TabSeed(sessionID: UUID(), paneVisibility: .bothVisible)],
+            keepOnTop: true, isPrimary: true)
+        answer = later
+        #expect(registry.describeAllWindows() == [later])
+    }
+
+    @Test func aRegistryNoWindowRegisteredWithDescribesNothing() {
+        #expect(TabRegistry().describeAllWindows().isEmpty)
+    }
+
     // MARK: - Is there a main window left?
 
     /// The Settings window's "Manage Data" entries route into A main

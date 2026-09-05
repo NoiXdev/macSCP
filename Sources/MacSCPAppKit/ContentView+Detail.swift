@@ -82,7 +82,15 @@ extension ContentView {
             // because an unconnected tab shows that session's overview
             // instead of an empty form. `nil` arrives from the two "New
             // connection" entries and from an `~/.ssh/config` row.
-            onSelectSession: { overviewSessionID = $0 },
+            onSelectSession: { selected in
+                overviewSessionID = selected
+                // A click on a row is the user pointing the FRONT tab
+                // somewhere else, so it also ends that tab's restored
+                // pointer (Detachable Tabs plan, Task 5 fix round 1).
+                // Only the active tab's: the other restored tabs are not
+                // what the user just pointed at, and each keeps its own.
+                tabsModel.activeTab.restoredSessionID = nil
+            },
             onEdit: { stored in editStored(stored) },
             // The two terminal entries (P3c/T2). "Open Terminal" is
             // `connectFromSidebar` with one argument filled in — both are a
@@ -768,11 +776,17 @@ extension ContentView {
                     //   .beginEditing`, so reading the form's own mode covers
                     //   them all rather than one clearing rule per entry.
                     //
-                    // Nothing here is per-tab: `overviewSession` is the
-                    // window's, so a second unconnected tab shows the same
-                    // overview. That matches where the sidebar is — one
-                    // sidebar, one selection.
-                    else if let stored = overviewSession,
+                    // Per tab FIRST, then the window's (Detachable Tabs
+                    // plan, Task 5 fix round 1). `overviewSession` alone is
+                    // the window's — one sidebar, one selection, and a
+                    // second unconnected tab shows the same overview, which
+                    // is what matches where the sidebar is. A RESTORED
+                    // window breaks that tie: its N tabs were each pointed
+                    // at a different session, so `overviewSession(for:)`
+                    // reads the tab's own restored pointer ahead of the
+                    // sidebar's and falls back to it for every tab that has
+                    // none — which is every tab made any other way.
+                    else if let stored = overviewSession(for: tab),
                             tab.connectionViewModel.mode == .new {
                         // Resolved on the main actor, where the two lists
                         // live, and handed down as names — see
