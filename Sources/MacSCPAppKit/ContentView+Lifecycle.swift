@@ -428,9 +428,15 @@ extension ContentView {
     /// different decisions on a path that also runs for a liveness give-up
     /// nobody asked for.
     ///
-    /// **Its callers, counted at this commit** (2026-09-05, `grep -n "await
-    /// teardown(" Sources/MacSCPAppKit/*.swift`): eight `await teardown(`
-    /// call sites, in eight functions. Seven of them are a deliberate
+    /// **Its callers, counted at this commit** (2026-09-05): eight `await
+    /// teardown(` call sites, in eight functions. Counted in the
+    /// COMMENT-BLANKED view of `Sources/MacSCPAppKit/*.swift` — the view
+    /// this project's source guards read
+    /// (`SwiftSource.blankingCommentsAndStrings`), not raw text. A plain
+    /// `grep` answers nine, and the ninth is this sentence: a comment that
+    /// quotes the needle is indistinguishable from the call to anything
+    /// scanning for it (CLAUDE.md, "Source-scanning guards read comments
+    /// too"). Seven of the eight are a deliberate
     /// "leave this connection" and pass `.userRequested` —
     /// `disconnectToForm` (the toolbar "Disconnect" button), `performClose`
     /// (closing a tab), `performCloseOthers` (closing every other tab), the
@@ -990,12 +996,23 @@ extension ContentView {
         TabRegistry.shared.unregisterWindowDescriber(for: windowID)
         // And what this window would have done at quit (Quit Teardown plan,
         // Task 1) — BEFORE the two sweeps below, which are that very
-        // sequence, running now. A window is torn down exactly once: either
-        // here, because the user closed it, or by the quit sweep, because it
-        // was still open. Unregistering first is what makes the two
-        // mutually exclusive even while the `Task` those sweeps start is
-        // still in flight — the quit can no longer be handed a closure that
-        // would sweep an already-swept window.
+        // sequence, running now. Unregistering first is what stops the quit
+        // from being handed a closure for a window that is already tearing
+        // itself down, even while the `Task` those sweeps start is still in
+        // flight.
+        //
+        // That is ONE direction, not both, and the other one is open by
+        // construction: `applicationShouldTerminate` snapshots
+        // `allWindowTeardowns()` before it starts its task, so a window
+        // closing AFTER that snapshot is still in the list and its sequence
+        // runs a second time. It is benign rather than guarded against —
+        // teardown has already set `tab.session = nil`, so `TabTeardown.run`
+        // skips its whole `if let session` block on the second pass, the
+        // seed sweep finds nothing left to take (`takePendingSeeds` hands a
+        // seed over exactly once), and the registry release is idempotent.
+        // Closing the direction properly would mean the quit re-reading the
+        // registry between windows, which buys nothing a second no-op pass
+        // does not already give.
         TabRegistry.shared.unregisterWindowTeardown(for: windowID)
         releaseUnclaimedSeedsOnClose()
         releaseHeldTabsOnClose()
@@ -1131,8 +1148,23 @@ extension ContentView {
     }
 
     /// The async half: the ordinary teardown, one parked tab at a time.
+    ///
+    /// The cancellation check is BETWEEN tabs and never inside one (fix
+    /// round 1, and the same rule `QuitTeardownChain.run` states one level
+    /// up): the app's quit races this whole chain against
+    /// `QuitWatchdog.bound`, and without a check here a window with several
+    /// tabs would run every one of them after the watchdog had already
+    /// fired. Inside a tab it must NOT be checked — `teardown` half-run
+    /// leaves a shell open on a connection whose queue is already swept.
+    ///
+    /// A cancelled pass returns with tabs still parked in nothing; that is
+    /// harmless because the only caller that can be cancelled is the quit,
+    /// and the process ends as soon as it replies. The window's own close
+    /// path runs this in an uncancelled `Task`, so there the check never
+    /// fires.
     private func tearDownUnclaimedSeeds(_ tabs: [SessionTab]) async {
         for tab in tabs {
+            if Task.isCancelled { return }
             await teardown(tab, reason: .userRequested)
         }
     }
@@ -1197,8 +1229,18 @@ extension ContentView {
     /// The async half: the ordinary teardown, one held tab at a time, and
     /// only then the registry release — a tab is forgotten after its
     /// connection is closed, never before.
+    ///
+    /// The cancellation check is BETWEEN tabs and never inside one, for the
+    /// reason `tearDownUnclaimedSeeds(_:)` above gives. It returns rather
+    /// than breaking, so the release does not run either: a tab whose
+    /// connection is still open must not be forgotten by the registry. The
+    /// only caller that can be cancelled is the app's quit, which ends the
+    /// process immediately afterwards, so nothing reads that registry
+    /// again; the window's own close path runs this in an uncancelled
+    /// `Task` and always reaches the release.
     private func tearDownHeldTabs(_ held: [SessionTab], from closingWindow: WindowID) async {
         for tab in held {
+            if Task.isCancelled { return }
             await teardown(tab, reason: .userRequested)
         }
         TabRegistry.shared.release(held.map(\.id), from: closingWindow)

@@ -262,29 +262,6 @@ final class SettingsWindowBridge {
 /// "NSApp.delegate\|applicationDidFinishLaunching" Sources/MacSCPAppKit`
 /// before adding this — no matches), so installing this adaptor changes
 /// nothing this app already depended on `NSApp.delegate` being.
-/// What the deferred quit still has to tear down, in one main-actor box.
-///
-/// It exists for a type-system reason, not a design one: `TaskGroup
-/// .addTask`'s closure must be `Sendable`, and a `[SessionTab]` is not (the
-/// type is `@MainActor`), nor is a list of `@MainActor` closures. A
-/// `@MainActor final class` is implicitly `Sendable`, so the box crosses the
-/// boundary and its contents never do — the child that reads it is
-/// `@MainActor` as well, and runs on the same actor the values already
-/// belong to.
-@MainActor
-private final class QuitWorkList {
-    /// Tabs parked for a window that never appeared, already taken out of
-    /// the registry by `AppDelegate.sweepUnclaimedMoves()`.
-    let parked: [SessionTab]
-    /// Every open window's teardown, in the order the windows appeared.
-    let windows: [(WindowID, TabRegistry.WindowTeardown)]
-
-    init(parked: [SessionTab], windows: [(WindowID, TabRegistry.WindowTeardown)]) {
-        self.parked = parked
-        self.windows = windows
-    }
-}
-
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The quit sequence (Quit Teardown plan, Task 1).
     ///
@@ -375,13 +352,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `[SessionTab]` (main-actor isolated) nor a list of main-actor
     /// closures is. A `@MainActor` class IS `Sendable`, and the child that
     /// reads it is `@MainActor` too, so nothing crosses an actor at all.
+    ///
+    /// The chain itself lives in `QuitTeardownChain` (`QuitSequence.swift`)
+    /// rather than here: it makes no AppKit call, and a test can drive it
+    /// with recording closures — which is how "a cancelled chain starts no
+    /// further item" is a measured property rather than a read of the
+    /// source (fix round 1).
     @MainActor
     private func runBoundedQuitTeardown(
         parked: [SessionTab], windows: [(WindowID, TabRegistry.WindowTeardown)]
     ) async -> (tornDown: Int, forced: Bool) {
         let work = QuitWorkList(parked: parked, windows: windows)
         return await withTaskGroup(of: QuitRaceOutcome.self) { group in
-            group.addTask { await Self.runTeardownChain(work) }
+            group.addTask { await QuitTeardownChain.run(work) }
             group.addTask {
                 try? await Task.sleep(for: QuitWatchdog.bound)
                 return .watchdogFired
@@ -401,33 +384,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The chain the group races: every parked tab, then every window's
-    /// closure, in order, through the one teardown owner.
-    ///
-    /// **Cancellation is checked BETWEEN items and never inside one.**
-    /// `TabTeardown.run` does not check it at all, on purpose — a teardown
-    /// abandoned half way leaves a shell open on a connection whose queue is
-    /// already swept, which is worse than either end state. So the watchdog
-    /// stops this chain from STARTING further work; the item it is inside
-    /// finishes under its own per-stage bounds.
-    ///
-    /// The returned count is window closures completed, so a chain the
-    /// watchdog cut short reports fewer than it was handed — which is
-    /// exactly what `tornDown=` beside `windows=` is read for.
-    @MainActor
-    private static func runTeardownChain(_ work: QuitWorkList) async -> QuitRaceOutcome {
-        var tornDown = 0
-        for tab in work.parked {
-            if Task.isCancelled { return .chainFinished(tornDown: tornDown) }
-            await TabTeardown.run(tab, reason: .userRequested)
-        }
-        for (_, runWindowTeardown) in work.windows {
-            if Task.isCancelled { return .chainFinished(tornDown: tornDown) }
-            await runWindowTeardown()
-            tornDown += 1
-        }
-        return .chainFinished(tornDown: tornDown)
-    }
 
     /// The last synchronous moment the process has, and all that is left of
     /// what this callback used to do.

@@ -121,15 +121,30 @@ enum QuitWatchdog {
     /// an app that will not close. The cap is what says the quit is the
     /// user's to take back.
     ///
-    /// **What it actually bounds.** Not a kill: nothing here can stop a
-    /// suspension inside Citadel or NIO from taking as long as it takes.
-    /// When this bound wins, the teardown chain is CANCELLED, and a
-    /// cancelled chain finishes the window it is inside — under that
-    /// window's own per-stage bounds — and starts no further one. So the
-    /// real ceiling is this bound plus at most one window's bounded
-    /// teardown, and the log line says `forced=true` so a reader knows the
-    /// difference. `QuitWatchdog` is production code and a wall clock here
-    /// is deliberate; CLAUDE.md's rule against wall-clock ceilings is about
+    /// **What it actually bounds, said plainly: this is the point after
+    /// which no further TAB is started, not a hard ceiling on the quit.**
+    /// Nothing here can stop a suspension inside Citadel or NIO from taking
+    /// as long as it takes. When the bound wins, the teardown chain is
+    /// CANCELLED, and cancellation is read between items and never inside
+    /// one — at both levels: `QuitTeardownChain.run` checks between parked
+    /// tabs and between windows, and each window's own two loops
+    /// (`ContentView.tearDownHeldTabs(_:from:)`,
+    /// `tearDownUnclaimedSeeds(_:)`) check between the tabs they hold. So
+    /// when this bound elapses, at most ONE tab's teardown is still running,
+    /// and it runs to its own end: two `TeardownStage` bounds plus
+    /// `disconnect()`'s, on top of a `cancelAll` that carries no bound at
+    /// all (see `TabTeardown.run`, which measured it under six milliseconds
+    /// against a frozen peer three runs out of three — measured, not
+    /// guaranteed). A quit can therefore outlast this number by roughly one
+    /// tab's worth, and that is the honest statement of what it buys.
+    ///
+    /// Fix round 1 is what made "one tab" true: before it, the per-tab loops
+    /// checked nothing, so a cancelled window still ran every tab it held
+    /// and the overrun scaled with the tab count.
+    ///
+    /// `forced=true` in the quit line is what tells a reader the bound won.
+    /// `QuitWatchdog` is production code and a wall clock here is
+    /// deliberate; CLAUDE.md's rule against wall-clock ceilings is about
     /// TESTS, and no test asserts how long a quit took.
     static let bound: Duration = .seconds(15)
 }
@@ -147,4 +162,66 @@ enum QuitRaceOutcome: Equatable, Sendable {
     case chainFinished(tornDown: Int)
     /// `QuitWatchdog.bound` elapsed first.
     case watchdogFired
+}
+
+/// What the deferred quit still has to tear down, in one main-actor box.
+///
+/// It exists for a type-system reason, not a design one: `TaskGroup
+/// .addTask`'s closure must be `Sendable`, and a `[SessionTab]` is not (the
+/// type is `@MainActor`), nor is a list of `@MainActor` closures. A
+/// `@MainActor final class` is implicitly `Sendable`, so the box crosses the
+/// boundary and its contents never do — the chain that reads it is
+/// `@MainActor` as well, and runs on the same actor the values already
+/// belong to.
+@MainActor
+final class QuitWorkList {
+    /// Tabs parked for a window that never appeared, already taken out of
+    /// the registry by `AppDelegate.sweepUnclaimedMoves()`.
+    let parked: [SessionTab]
+    /// Every open window's teardown, in the order the windows appeared.
+    let windows: [(WindowID, TabRegistry.WindowTeardown)]
+
+    init(parked: [SessionTab], windows: [(WindowID, TabRegistry.WindowTeardown)]) {
+        self.parked = parked
+        self.windows = windows
+    }
+}
+
+/// The chain the quit's task group races against `QuitWatchdog.bound`:
+/// every parked tab, then every window's own close sequence, in order,
+/// through the one teardown owner.
+///
+/// It lives here rather than on `AppDelegate` because it makes no AppKit
+/// call at all — which is what lets a test drive it with recording closures
+/// in place of real windows, and turn "a cancelled chain starts no further
+/// item" into a measured property instead of a read of the source (fix
+/// round 1).
+@MainActor
+enum QuitTeardownChain {
+    /// **Cancellation is checked BETWEEN items and never inside one.**
+    /// `TabTeardown.run` does not check it at all, on purpose — a teardown
+    /// abandoned half way leaves a shell open on a connection whose queue is
+    /// already swept, which is worse than either end state. The same rule
+    /// applies one level down, inside a window's closure: its two loops
+    /// (`ContentView.tearDownHeldTabs(_:from:)` and
+    /// `tearDownUnclaimedSeeds(_:)`) check between TABS, so a cancelled
+    /// window stops after the tab it is inside rather than after all of
+    /// them.
+    ///
+    /// The returned count is window closures completed, so a chain the
+    /// watchdog cut short reports fewer than it was handed — which is
+    /// exactly what `tornDown=` beside `windows=` is read for.
+    static func run(_ work: QuitWorkList) async -> QuitRaceOutcome {
+        var tornDown = 0
+        for tab in work.parked {
+            if Task.isCancelled { return .chainFinished(tornDown: tornDown) }
+            await TabTeardown.run(tab, reason: .userRequested)
+        }
+        for (_, runWindowTeardown) in work.windows {
+            if Task.isCancelled { return .chainFinished(tornDown: tornDown) }
+            await runWindowTeardown()
+            tornDown += 1
+        }
+        return .chainFinished(tornDown: tornDown)
+    }
 }

@@ -151,13 +151,15 @@ struct QuitSequenceTests {
         .appendingPathComponent("Sources/MacSCPAppKit/TeardownStage.swift")
     private static let lifecycleFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
+    private static let quitSequenceFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/QuitSequence.swift")
 
     /// The signature wraps over three lines in the source, so the anchor is
     /// the part that cannot: the name and its opening parenthesis.
     private static let shouldTerminateDeclaration = "func applicationShouldTerminate("
     private static let boundedTeardownDeclaration = "private func runBoundedQuitTeardown("
     private static let teardownChainDeclaration =
-        "private static func runTeardownChain(_ work: QuitWorkList) async -> QuitRaceOutcome"
+        "static func run(_ work: QuitWorkList) async -> QuitRaceOutcome"
 
     /// The strict (comments-and-string-literals-blanked) view of one file —
     /// a guard reading raw source cannot tell a call from a sentence about a
@@ -238,14 +240,18 @@ struct QuitSequenceTests {
         #expect(body.contains("Task.sleep("), "the watchdog child no longer sleeps")
         #expect(body.contains("group.cancelAll()"), "the loser of the race is no longer cancelled")
         #expect(
-            body.contains("Self.runTeardownChain("),
+            body.contains("QuitTeardownChain.run("),
             "the race no longer runs the teardown chain")
 
         // The chain itself: the one owner for a parked tab, the window
         // closures in order, and the cancellation check that is what makes
-        // the watchdog mean anything.
+        // the watchdog mean anything. It moved to QuitSequence.swift in fix
+        // round 1 so a test could drive it — see
+        // `aCancelledChainStartsNoFurtherWindow` below, which measures the
+        // property this source read only describes.
         let chain = try TransferQueueBarCancelGuardTests.declarationBody(
-            of: Self.teardownChainDeclaration, in: source)
+            of: Self.teardownChainDeclaration,
+            in: try Self.strictSource(of: Self.quitSequenceFile))
         #expect(
             chain.contains("TabTeardown.run("),
             "the quit no longer tears parked tabs down through the one owner")
@@ -253,8 +259,143 @@ struct QuitSequenceTests {
             chain.contains("await runWindowTeardown()"),
             "the quit no longer runs each window's own teardown closure")
         #expect(
-            chain.contains("Task.isCancelled"),
-            "the chain no longer stops when the watchdog cancels it")
+            chain.components(separatedBy: "Task.isCancelled").count - 1 == 2, """
+            the chain no longer checks cancellation before BOTH of its loops — the parked \
+            sweep and the window loop each need their own check, or the watchdog stops \
+            meaning anything for whichever one lost it.
+            """)
+    }
+
+    /// The window's own two loops check cancellation between TABS (fix
+    /// round 1). Without this, a cancelled window still tore down every tab
+    /// it held, so the overrun past `QuitWatchdog.bound` scaled with the tab
+    /// count instead of being one tab.
+    ///
+    /// A source guard rather than a value test, and the reason is worth
+    /// writing down: both loops are methods on `ContentView`, a SwiftUI
+    /// view this project has no way to construct in a test (see
+    /// `ViewTestabilitySpike`). The property they share with the chain IS
+    /// measured, on the chain, by `aCancelledChainStartsNoFurtherWindow`
+    /// below; this says the same check is in the two places a test cannot
+    /// reach.
+    ///
+    /// POSITIVE first in both: the loop still tears a tab down at all. A
+    /// `!contains`-shaped claim over a body that no longer runs `teardown`
+    /// would pass while doing nothing (CLAUDE.md, "Guards that name what
+    /// they watch").
+    @Test func eachWindowsOwnLoopsStopBetweenTabsWhenCancelled() throws {
+        let source = try Self.strictSource(of: Self.lifecycleFile)
+        for declaration in [
+            "private func tearDownUnclaimedSeeds(_ tabs: [SessionTab]) async",
+            "private func tearDownHeldTabs(_ held: [SessionTab], from closingWindow: WindowID) async",
+        ] {
+            let body = try TransferQueueBarCancelGuardTests.declarationBody(
+                of: declaration, in: source)
+            let tearsDown = Self.firstIndex(of: "await teardown(", in: body)
+            let checks = Self.firstIndex(of: "if Task.isCancelled { return }", in: body)
+            #expect(tearsDown != nil, "\(declaration) no longer tears any tab down")
+            #expect(checks != nil, """
+                \(declaration) no longer stops between tabs when the quit's watchdog cancels \
+                it — one frozen window would run every tab it holds past the bound.
+                """)
+            if let tearsDown, let checks {
+                #expect(checks < tearsDown, """
+                    \(declaration) checks cancellation AFTER tearing a tab down rather than \
+                    before — the check has to sit between tabs, never inside one.
+                    """)
+            }
+        }
+    }
+
+    // MARK: - A cancelled chain starts nothing further
+
+    /// A one-shot gate, opened once and awaited any number of times before
+    /// or after. `AsyncStream` buffers the yield, so the two sides need no
+    /// ordering between them and nothing blocks a thread (CLAUDE.md, "Tests
+    /// never block the cooperative pool" — every wait here is an `await`).
+    @MainActor
+    private final class Gate {
+        private let stream: AsyncStream<Void>
+        private let continuation: AsyncStream<Void>.Continuation
+
+        init() {
+            var escaping: AsyncStream<Void>.Continuation!
+            stream = AsyncStream { escaping = $0 }
+            continuation = escaping
+        }
+
+        func open() {
+            continuation.yield(())
+            continuation.finish()
+        }
+
+        func wait() async {
+            for await _ in stream { return }
+        }
+    }
+
+    /// The property `QuitWatchdog.bound` is worth anything for: once the
+    /// chain is cancelled, it starts no further window.
+    ///
+    /// **No clock anywhere** (CLAUDE.md, "A wall-clock ceiling in a test
+    /// measures the runner"). The ordering is forced by a seam instead: the
+    /// first window's closure signals that it has been entered and then
+    /// parks on a gate, so the cancellation provably lands while the chain
+    /// is INSIDE the first item. Which items ran is then a recorded value,
+    /// not a race.
+    ///
+    /// The window closures are the real production seam — `TabRegistry
+    /// .WindowTeardown` is exactly `@MainActor () async -> Void` — so
+    /// nothing here is a stand-in for the shape under test.
+    @Test func aCancelledChainStartsNoFurtherWindow() async {
+        let entered = Gate()
+        let release = Gate()
+        let recorder = TeardownRecorder()
+        let work = QuitWorkList(
+            parked: [],
+            windows: [
+                (WindowID(), { @MainActor @Sendable in
+                    recorder.record("first")
+                    entered.open()
+                    await release.wait()
+                }),
+                (WindowID(), { @MainActor @Sendable in recorder.record("second") }),
+                (WindowID(), { @MainActor @Sendable in recorder.record("third") }),
+            ])
+
+        let chain = Task { @MainActor in await QuitTeardownChain.run(work) }
+        await entered.wait()
+        chain.cancel()
+        release.open()
+        let outcome = await chain.value
+
+        #expect(recorder.ran == ["first"], """
+            a cancelled chain went on to start further windows — the watchdog would then \
+            bound nothing at all.
+            """)
+        #expect(outcome == .chainFinished(tornDown: 1), """
+            the chain reported \(outcome) — the count must be the windows that actually \
+            finished, which is what tornDown= beside windows= is read for.
+            """)
+    }
+
+    /// The control beside it: an UNCANCELLED chain runs every window, in
+    /// registration order, exactly once. Without this, the expectation above
+    /// would be satisfied by a chain that never ran anything past its first
+    /// item for any reason at all.
+    @Test func anUncancelledChainRunsEveryWindowInOrder() async {
+        let recorder = TeardownRecorder()
+        let work = QuitWorkList(
+            parked: [],
+            windows: [
+                (WindowID(), { @MainActor @Sendable in recorder.record("first") }),
+                (WindowID(), { @MainActor @Sendable in recorder.record("second") }),
+                (WindowID(), { @MainActor @Sendable in recorder.record("third") }),
+            ])
+
+        let outcome = await QuitTeardownChain.run(work)
+        #expect(recorder.ran == ["first", "second", "third"])
+        #expect(outcome == .chainFinished(tornDown: 3))
     }
 
     /// Both ends of the window's own registration, in the two places its
