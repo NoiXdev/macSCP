@@ -153,7 +153,7 @@ extension ContentView {
             if !isPristine {
                 TabStripView(
                     tabs: tabsModel.tabs,
-                    activeTabID: tabsModel.activeTabID,
+                    activeTabID: tabsModel.activeTab.id,
                     onActivate: { activate($0) },
                     onClose: { requestClose($0) },
                     onAdd: { tabsModel.addTab(makeTab()) },

@@ -22,10 +22,10 @@ import Testing
 ///    window it leaves, claimed by the window that opens for its seed, the
 ///    same object on both sides.
 /// 4. **The order those two happen in is what keeps `activeTab` safe.**
-///    `TabsViewModel.detach(tabID:)` may leave `activeTabID` naming the tab
-///    that just left when it empties the model, and `activeTab` traps on an
-///    id it cannot resolve (`TabsViewModel`'s own documented invariant). So
-///    `TabDetachSequence.move` performs the detach, the park and the
+///    `TabsViewModel.detach(tabID:)` sets `activeTabID` to `nil` when it
+///    empties the model (Task 1 fix round 1), and `activeTab` traps on a
+///    `nil` or unresolved id either way (`TabsViewModel`'s own documented
+///    invariant). So `TabDetachSequence.move` performs the detach, the park and the
 ///    close decision in ONE synchronous step, and — when the window is
 ///    staying — puts a fresh tab in place before it returns. The tests
 ///    below read the model after that step, which is the only moment a view

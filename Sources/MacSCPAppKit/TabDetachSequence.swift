@@ -8,12 +8,12 @@ import macSCPCore
 ///
 /// **Why one step, and why it is the whole point of this type.**
 /// `TabsViewModel.detach(tabID:)` empties the model when the tab it removes
-/// was the only one, and it leaves `activeTabID` naming the tab that left;
-/// `TabsViewModel.activeTab` traps on an id it cannot resolve, which is that
-/// class's documented invariant. So between the detach and whatever restores
-/// the invariant there must be no chance for a view body to run — and a view
-/// body runs at the end of a main-actor turn, not in the middle of one.
-/// Everything below happens in a single turn:
+/// was the only one, and sets `activeTabID` to `nil` (Task 1 fix round 1);
+/// `TabsViewModel.activeTab` traps on a `nil` or unresolved id either way,
+/// which is that class's documented invariant. So between the detach and
+/// whatever restores the invariant there must be no chance for a view body
+/// to run — and a view body runs at the end of a main-actor turn, not in
+/// the middle of one. Everything below happens in a single turn:
 ///
 /// 1. the close decision is taken while the model still holds the tab,
 /// 2. the tab is detached and parked under the seed,

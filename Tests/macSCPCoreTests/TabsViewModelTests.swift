@@ -85,12 +85,17 @@ struct TabsViewModelTests {
     /// Unlike `closeTab`, the last tab CAN be detached — a move into
     /// another window's model is not a close, so the model is allowed to
     /// end up with none.
-    @Test func detachingTheLastTabEmptiesTheModel() {
+    /// Fix round 1: `activeTabID` used to be left dangling — naming the
+    /// tab that just left — when `detach` emptied the model. It is `nil`
+    /// now, a state this type actually documents rather than a stale id
+    /// that happens to be safe only because nothing reads it.
+    @Test func detachingTheLastTabLeavesActiveTabIDNilAndTheModelEmpty() {
         let a = StubTab(id: UUID())
         let vm = TabsViewModel(initial: a)
         let detached = vm.detach(tabID: a.id)
         #expect(detached?.id == a.id)
         #expect(vm.tabs.isEmpty)
+        #expect(vm.activeTabID == nil)
     }
 
     /// Same active-tab arithmetic `closeTab` uses: the right neighbor

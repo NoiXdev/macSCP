@@ -9,17 +9,22 @@ import Observation
 @Observable
 public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
     public private(set) var tabs: [Tab]
-    public private(set) var activeTabID: UUID
+    /// `nil` exactly while `tabs` is empty (Detachable Tabs plan, Task 1
+    /// fix round 1) — `detach(tabID:)` is the only way `tabs` can become
+    /// empty, and it is the one place that sets this to `nil`. Everywhere
+    /// else it is maintained to reference an existing element.
+    public private(set) var activeTabID: UUID?
 
     public init(initial: Tab) {
         self.tabs = [initial]
         self.activeTabID = initial.id
     }
 
-    /// The active tab. `activeTabID` is maintained to always reference an
-    /// existing element, so lookup failure is a programmer error.
+    /// The active tab. Traps when `activeTabID` is `nil` or does not
+    /// resolve — both are programmer error: nothing is expected to read
+    /// this on an emptied model (see `detach(tabID:)`).
     public var activeTab: Tab {
-        guard let tab = tabs.first(where: { $0.id == activeTabID }) else {
+        guard let activeTabID, let tab = tabs.first(where: { $0.id == activeTabID }) else {
             fatalError("activeTabID does not reference an existing tab")
         }
         return tab
@@ -136,12 +141,17 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
     /// Selection moves exactly like `closeTab` moves it — the right
     /// neighbor, or the left one at the rightmost position — for every tab
     /// count above one. At exactly one, the model empties and
-    /// `activeTabID` is left naming the tab that just left: there is no
-    /// neighbor to hand it to, and this type has no optional "no active
-    /// tab" state to put it in instead. That is safe precisely because
-    /// nothing is expected to read `activeTab` on an emptied model — the
-    /// caller that just detached its only tab is a window with nothing
-    /// left to render, not one asking this type what is active.
+    /// `activeTabID` is set to `nil` (fix round 1: it used to be left
+    /// naming the tab that just left, a dangling id no different in
+    /// practice from `nil` since `activeTab` traps on either — but `nil`
+    /// is a state this type actually documents, where the dangling id was
+    /// only ever safe because nothing read it). Nothing is expected to
+    /// read `activeTab` on an emptied model — the caller that just
+    /// detached its only tab is a window with nothing left to render, not
+    /// one asking this type what is active — and `TabDetachSequence`
+    /// (`MacSCPAppKit`) is what keeps that true: it performs the detach,
+    /// the park, and — for a window that stays — the replacement tab, all
+    /// in one synchronous step before any view can run.
     ///
     /// Returns the removed tab so the caller can hand it to another
     /// model's `addTab(_:)`; `nil` for an unknown id, mirroring
@@ -150,9 +160,8 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
     public func detach(tabID: UUID) -> Tab? {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return nil }
         let tab = tabs.remove(at: index)
-        if activeTabID == tabID, !tabs.isEmpty {
-            let successor = min(index, tabs.count - 1)
-            activeTabID = tabs[successor].id
+        if activeTabID == tabID {
+            activeTabID = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id
         }
         return tab
     }
