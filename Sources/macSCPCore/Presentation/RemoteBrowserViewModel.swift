@@ -243,6 +243,60 @@ public final class RemoteBrowserViewModel {
         selectedItems = [match]
     }
 
+    /// The Task Task 3's phase-two metadata merge runs as (local-listing-
+    /// never-blocks design, point 3), stored so a NEW `load()` call — or
+    /// simply calling `load()` again for the SAME directory, e.g. a
+    /// `rename`/`delete` refresh — cancels whatever merge is still running
+    /// for a PREVIOUS listing. Nothing else does: `LocalMetadataSource
+    /// .metadata(for:)`'s stream can sit open indefinitely behind one stuck
+    /// entry (Task 2's accepted cost — a child that never returns leaves
+    /// `MetadataTally`'s count short forever, so the stream never calls
+    /// `finish()` on its own), and this Task is not the one SwiftUI's
+    /// `.task { await viewModel.load() }` (`BrowserPane.swift`) owns — that
+    /// Task is cancelled only when the PANE goes away, while
+    /// `open(_:)`/`goUp()`/`navigate(to:)` each call `load()` again from
+    /// whatever Task the button/double-click handler created, a Task
+    /// entirely unrelated to the one still consuming the OLD directory's
+    /// stream. The staleness guard inside the loop below still stops a late
+    /// arrival from repainting the wrong directory even if this
+    /// cancellation somehow lost a race, but by itself that guard would
+    /// leave the old consumption loop parked forever, doing nothing useful
+    /// — cancelling it here is what actually lets it go: a cancelled `for
+    /// await` over an `AsyncStream` observes the cancellation at its next
+    /// suspension point, ends the loop, and fires the stream's
+    /// `onTermination` (`consumerWentAway`, `LocalMetadataSource.swift`),
+    /// exactly as if this loop had `break`-ed out on its own.
+    private var mergeTask: Task<Void, Never>?
+
+    /// `true` between a merge arrival that changed `displayedAll` and the
+    /// `publishMergedMetadata` call that reflects it — the coalescing flag
+    /// `load()`'s merge loop and its own scheduled flush (see
+    /// `mergeFlushScheduled`) share. Backing STORAGE for that sharing is
+    /// ordinary `@MainActor`-isolated instance state, deliberately not a
+    /// local `var` captured by two separate `Task { }` closures: two
+    /// escaping closures over the same mutable local works out in practice
+    /// (Swift boxes a captured `var` shared by every closure that closes
+    /// over it), but going through `self` avoids the question entirely and
+    /// reads the same as `mergeTask` itself.
+    private var mergeDirty = false
+
+    /// `true` while a flush `Task` is already scheduled to run
+    /// `publishMergedMetadata` — sibling to `mergeDirty`. This is what
+    /// keeps a burst of arrivals from scheduling one flush Task per item:
+    /// only the FIRST arrival since the last flush schedules one; every
+    /// arrival after it just updates `mergeDirty` and relies on the
+    /// already-scheduled flush to pick it up.
+    private var mergeFlushScheduled = false
+
+    /// Sort keys phase two's arriving `size`/`modifiedAt`/`permissions`/
+    /// `owner`/`group` can change the order of — `.name` and `.type` are
+    /// already correct from phase one's own `kind`/name, so re-sorting for
+    /// either of those on every arrival would just repeat phase one's own
+    /// sort for no visible change (Task 3 coordinator resolution).
+    private static let metadataOrderedSortKeys: Set<FileSortKey> = [
+        .size, .modified, .permissions, .owner, .group,
+    ]
+
     /// Re-lists `currentPath` and re-derives `items` (M11k: WITH the
     /// currently active search, unchanged). `load()` is also the
     /// same-directory refresh path used after `rename`/`createFolder`/
@@ -267,6 +321,14 @@ public final class RemoteBrowserViewModel {
     /// guards against the same race for its own (silent, timer-driven)
     /// refresh.
     public func load() async {
+        mergeTask?.cancel()
+        // A merge session abandoned mid-flight (by the cancel above) may
+        // leave these set — reset unconditionally so a stale
+        // `mergeFlushScheduled == true` from a cancelled session can never
+        // make THIS session's loop believe a flush is already pending when
+        // none will ever run (see both properties' doc comments).
+        mergeDirty = false
+        mergeFlushScheduled = false
         state = .loading
         lastLoadError = nil
         selectedItems = []
@@ -292,6 +354,111 @@ public final class RemoteBrowserViewModel {
             let count = displayedAll.count
             DiagnosticLog.shared.log(
                 .info, logCategory, "load done path=\(path) count=\(count) ms=\(ms)")
+
+            // Phase two (Task 3, local-listing-never-blocks design, point
+            // 3): a local backend's size/modified/owner/group arrive after
+            // the fact, one entry at a time — `LocalMetadataSource
+            // .metadata(for:)` yields each of `listed`, filled in, in
+            // ARRIVAL order (not `listed`'s own order — see that
+            // protocol's doc comment). A remote backend never satisfies
+            // `as?` here: SFTP's `readdir` already returns attributes with
+            // the names, so it has no second phase to run.
+            //
+            // Spawned as its own Task rather than awaited inline: every
+            // existing caller of `load()` (`open`, `goUp`,
+            // `refreshAndSelect`, `navigate(to:)`) already awaits it
+            // expecting it to return once phase one is on screen, and a
+            // directory with one permanently stuck entry must not turn
+            // every one of them into a hang — Task 2's accepted cost is
+            // one stuck THREAD, never a stuck caller. A plain `Task`, not
+            // `.detached`: `load()` is already `@MainActor`-isolated, so
+            // the merge inherits that isolation for free, the same
+            // reasoning `LocalMetadataSource.metadata(for:)`'s own
+            // children give for themselves. Stored in `mergeTask` so the
+            // NEXT `load()` call can cancel it — see that property's doc
+            // comment.
+            //
+            // `metadataSource.metadata(for: listed)` is called HERE,
+            // synchronously, before the Task below is even created —
+            // deliberately not inside the Task's own closure. `Task { }`
+            // only ENQUEUES its closure; it does not start running it
+            // before `load()` itself returns (there is no further `await`
+            // below this point). A test — or a caller — that inspects the
+            // file system's own bookkeeping right after `await load()`
+            // returns (e.g. "was `metadata(for:)` called with phase one's
+            // listing yet?") must see it already true, not racing whether
+            // the spawned Task has had a turn on the executor yet. Calling
+            // it here, before spawning, makes that true by construction:
+            // only the (potentially long-running, potentially never-
+            // ending) CONSUMPTION of the stream happens inside the Task.
+            if let metadataSource = fs as? any LocalMetadataSource, !listed.isEmpty {
+                let needsResort = Self.metadataOrderedSortKeys.contains(sortKey)
+                let stream = metadataSource.metadata(for: listed)
+                mergeTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    // Looked up by `firstIndex(where:)` at EACH arrival,
+                    // deliberately not a `[path: index]` dictionary computed
+                    // once up front: `needsResort` can reorder `displayedAll`
+                    // between arrivals (a resort runs inside
+                    // `publishMergedMetadata`, from the scheduled flush
+                    // below, WHILE this loop is still consuming later
+                    // arrivals), and a precomputed index goes stale the
+                    // instant that happens — the row it used to name may now
+                    // hold a different entry, so writing through it would
+                    // silently corrupt the WRONG row (measured 2026-09-05:
+                    // exactly this shape hung `sizeSortReordersOnceArrivals
+                    // AreMerged` at its `pollUntil`, not on a crash — the
+                    // listing just never reached the expected order because
+                    // later arrivals were landing on the wrong rows). O(n)
+                    // per arrival is the accepted cost of staying correct
+                    // across an in-flight resort.
+                    // Batches UI updates rather than publishing once per
+                    // arrival (measured 2026-09-05: a naive one-publish-
+                    // per-item republish would fire once per file in a
+                    // 5000-entry directory), WITHOUT reaching for a
+                    // wall-clock duration: only the FIRST arrival since the
+                    // last flush schedules a plain `Task` (inheriting this
+                    // one's `@MainActor` isolation) to run
+                    // `publishMergedMetadata` — every arrival after it,
+                    // while that flush is still pending, just updates
+                    // `mergeDirty` and relies on the already-scheduled
+                    // flush to pick it up (`mergeFlushScheduled` is the
+                    // guard against scheduling a second one). This is
+                    // deliberately NOT "wait N ms since the last publish
+                    // and check again on the next arrival" (an earlier
+                    // version of this loop measured 2026-09-05): with a
+                    // stuck entry in the SAME directory as fast ones, that
+                    // shape can leave a fast entry's own update sitting in
+                    // `mergeDirty` forever, since nothing but ANOTHER
+                    // arrival or the stream's own `finish()` ever
+                    // re-checked the elapsed time — and a directory with a
+                    // stuck entry is precisely the case where neither may
+                    // ever happen again. Scheduling the flush as its own
+                    // Task instead means it runs on the next turn this
+                    // Task's priority gets from the executor regardless of
+                    // whether the stream ever yields again.
+                    for await filled in stream {
+                        guard self.currentPath == path else { return }
+                        guard let index = self.displayedAll.firstIndex(where: { $0.path == filled.path })
+                        else { continue }
+                        self.displayedAll[index] = filled
+                        self.mergeDirty = true
+                        guard !self.mergeFlushScheduled else { continue }
+                        self.mergeFlushScheduled = true
+                        Task { @MainActor [weak self] in
+                            guard let self, self.currentPath == path else { return }
+                            if self.mergeDirty {
+                                self.publishMergedMetadata(needsResort: needsResort)
+                                self.mergeDirty = false
+                            }
+                            self.mergeFlushScheduled = false
+                        }
+                    }
+                    guard self.currentPath == path, self.mergeDirty else { return }
+                    self.publishMergedMetadata(needsResort: needsResort)
+                    self.mergeDirty = false
+                }
+            }
         } catch {
             guard currentPath == path else { return }
             displayedAll = []
@@ -308,6 +475,20 @@ public final class RemoteBrowserViewModel {
             // happens.
             DiagnosticLog.shared.log(.info, logCategory, "load failed path=\(path)", reason: error)
         }
+    }
+
+    /// The one publish point `load()`'s phase-two merge loop uses, for both
+    /// its per-arrival batch and its final catch-up after the stream ends
+    /// — so the two can never drift into applying the sort/search pipeline
+    /// differently. Re-sorts `displayedAll` only when `needsResort` is set
+    /// (i.e. `sortKey` is one of `metadataOrderedSortKeys`), then re-derives
+    /// `items` via `applySearch()` exactly like every other mutation of
+    /// `displayedAll` in this type.
+    private func publishMergedMetadata(needsResort: Bool) {
+        if needsResort {
+            displayedAll = Self.sortedForDisplay(displayedAll, key: sortKey, ascending: sortAscending)
+        }
+        applySearch()
     }
 
     /// Shared display pipeline for `load()` and `refreshQuietly()` — the
