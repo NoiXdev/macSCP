@@ -745,6 +745,27 @@ struct ContentView: View {
     /// twice.
     var isPrimaryWindow: Bool { seed == nil }
 
+    /// The AppKit autosave name under which the primary window's frame is
+    /// remembered — see `applyFrameAutosave(to:)`. One constant, read at the
+    /// single call site, so the string cannot come to differ between the
+    /// place that writes the frame and the place that reads it.
+    static let primaryFrameAutosaveName = "macSCP.primary"
+
+    /// A tab this window sent off to a window of its own, still waiting to
+    /// be claimed (Detachable Tabs plan, Task 2 fix round 2).
+    ///
+    /// One note per `moveToNewWindow(_:)`: the seed the tab is parked under
+    /// and the id of the fresh tab that took its place, which is what has to
+    /// go again if the tab comes back. `reclaimStrandedMoves()` empties the
+    /// list on this window's next activation — see its doc comment for why
+    /// that, and not a turn count, is the trigger.
+    struct PendingMove: Equatable {
+        let seedID: UUID
+        let replacementID: UUID?
+    }
+
+    @State var pendingMoves: [PendingMove] = []
+
     /// "Fresh window" state: a single, unconnected tab. Drives the compact
     /// form geometry — with a second tab around, the window keeps its
     /// browser size even while the active tab shows a form.

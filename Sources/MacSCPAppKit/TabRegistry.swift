@@ -40,8 +40,13 @@ final class TabRegistry {
     private var tabIDsByWindow: [WindowID: [UUID]] = [:]
     /// Tabs that have left a window and whose new window does not exist
     /// yet, keyed by the `WindowSeed.id` that window will appear with —
-    /// see `park(_:for:)` (Task 2).
+    /// see `park(_:for:onClaimed:)` (Task 2).
     private var parkedTabIDsBySeedID: [UUID: [UUID]] = [:]
+    /// What to run once a window has actually claimed a parked seed — the
+    /// signal the window the tab LEFT waits on (Task 2 fix round 2). Held
+    /// beside the parked ids and removed with them, so it can fire at most
+    /// once per park.
+    private var claimHandlersBySeedID: [UUID: () -> Void] = [:]
     /// Each open window's own `TabsViewModel`, held WEAKLY — see
     /// `registerModel(_:for:)`.
     private var modelsByWindow: [WindowID: WeakModel] = [:]
@@ -143,7 +148,21 @@ final class TabRegistry {
     /// Takes the tab OBJECTS rather than ids on purpose — a tab the
     /// registry has never seen (a window that never registered it) is
     /// parked correctly rather than silently dropped.
-    func park(_ tabs: [SessionTab], for seedID: UUID) {
+    ///
+    /// **`onClaimed` is how the source window learns the move happened**
+    /// (Task 2 fix round 2). The window a tab leaves cannot work that out by
+    /// waiting: the new window claims from its own setup pass, which is a
+    /// later DISPLAY pass, not a later main-actor turn, so no number of
+    /// turns is enough and a fixed count is a guess that was measured wrong
+    /// (a next-turn reclaim ran first and left the new window blank). The
+    /// claim itself is the only honest signal, and this is it. It fires from
+    /// `claim(seedID:into:)` exactly once, after the tabs have changed
+    /// hands, and never from `park` or `unpark(seedID:into:)`.
+    func park(
+        _ tabs: [SessionTab], for seedID: UUID,
+        onClaimed: @escaping () -> Void = {}
+    ) {
+        claimHandlersBySeedID[seedID] = onClaimed
         var parked = parkedTabIDsBySeedID[seedID] ?? []
         for tab in tabs {
             tabsByID[tab.id] = tab
@@ -167,7 +186,29 @@ final class TabRegistry {
     /// SwiftUI RESTORED from a previous launch carries a seed nobody parked
     /// anything under, and it must come up with its own fresh tab rather
     /// than with someone else's.
+    ///
+    /// This is the CLAIM, so the seed's `onClaimed` handler runs — after the
+    /// tabs have changed hands, so the window it wakes finds the registry
+    /// already telling the truth. `unpark(seedID:into:)` below is the same
+    /// hand-over without the signal, for the window taking its own tab back.
     func claim(seedID: UUID, into window: WindowID) -> [SessionTab] {
+        let handler = claimHandlersBySeedID.removeValue(forKey: seedID)
+        let claimed = unpark(seedID: seedID, into: window)
+        handler?()
+        return claimed
+    }
+
+    /// Hands `seedID`'s parked tabs to `window` WITHOUT telling anyone the
+    /// move succeeded — because it did not. This is the window that parked
+    /// them taking them back (`TabDetachSequence.reclaim`), and firing
+    /// `onClaimed` here would tell that same window to close over a tab it
+    /// had just been handed back.
+    ///
+    /// The handler is dropped rather than kept: the park it belonged to is
+    /// over either way, and a handler left behind would fire on some later,
+    /// unrelated claim of a seed id that no longer means anything.
+    func unpark(seedID: UUID, into window: WindowID) -> [SessionTab] {
+        claimHandlersBySeedID[seedID] = nil
         let ids = parkedTabIDsBySeedID.removeValue(forKey: seedID) ?? []
         return ids.compactMap { id in
             guard let tab = tabsByID[id] else { return nil }

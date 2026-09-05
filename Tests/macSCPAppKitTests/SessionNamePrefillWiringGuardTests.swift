@@ -122,6 +122,27 @@ struct SessionNamePrefillWiringGuardTests {
             lines[index...].prefix { !$0.hasPrefix("    }") }.joined(separator: "\n"))
     }
 
+    /// `occurrences(of:in:)`, but only where the match does not continue an
+    /// identifier to its left — so "saveName = " is not found inside
+    /// "primaryFrameAutosaveName = ". Nothing here needs a right-hand
+    /// boundary: every needle this is called with ends in " = ".
+    static func identifierOccurrences(of needle: String, in haystack: String) -> Int {
+        var count = 0
+        var search = haystack.startIndex..<haystack.endIndex
+        while let found = haystack.range(of: needle, range: search) {
+            let continuesAnIdentifier: Bool
+            if found.lowerBound == haystack.startIndex {
+                continuesAnIdentifier = false
+            } else {
+                let before = haystack[haystack.index(before: found.lowerBound)]
+                continuesAnIdentifier = before.isLetter || before.isNumber || before == "_"
+            }
+            if !continuesAnIdentifier { count += 1 }
+            search = found.upperBound..<haystack.endIndex
+        }
+        return count
+    }
+
     private static func occurrences(of needle: String, in haystack: String) -> Int {
         haystack.components(separatedBy: needle).count - 1
     }
@@ -305,8 +326,14 @@ struct SessionNamePrefillWiringGuardTests {
         let asks = sources.reduce(0) {
             $0 + Self.occurrences(of: "SessionNameCollision.freeName(", in: $1)
         }
+        // Counted at an IDENTIFIER boundary, not as a bare substring
+        // (found 2026-09-05, while `ContentView.swift` gained an unrelated
+        // `primaryFrameAutosaveName = …`: "AutosaveName = " contains
+        // "saveName = ", so the plain substring count read four assignments
+        // where there are three). The same whole-word rule
+        // `TabContextMenuWiringGuardTests` states for its own token scan.
         let assignments = sources.reduce(0) {
-            $0 + Self.occurrences(of: "saveName = ", in: $1)
+            $0 + Self.identifierOccurrences(of: "saveName = ", in: $1)
         }
         #expect(asks == 2, """
             \(asks) call sites ask `SessionNameCollision.freeName` across ContentView.swift and \

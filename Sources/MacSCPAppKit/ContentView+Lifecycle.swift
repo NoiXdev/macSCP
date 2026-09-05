@@ -192,6 +192,10 @@ extension ContentView {
             // `registerHeldTabs()`.
             registerHeldTabs()
             tabCommands.canMoveTabToNewWindow = tabsModel.tabs.count > 1
+            // A window that has just lost its last tab, or gained its
+            // first, changes `TabRegistry.windowCount` — which is what the
+            // Settings pane's entries are enabled on (fix round 2).
+            updateMainWindowPresence()
         }
         // The menu-bar status item shows the KEY window's tabs (Detachable
         // Tabs plan, Task 2 fix round 1) — see `publishToMenuBarIfKey()`.
@@ -199,6 +203,10 @@ extension ContentView {
         // empty until the first activation.
         .onChange(of: controlActiveState, initial: true) { _, _ in
             publishToMenuBarIfKey()
+            // The same activation is the reclaim's trigger (fix round 2) —
+            // see `reclaimStrandedMoves()` for why it is an activation and
+            // not a number of turns.
+            reclaimStrandedMoves()
         }
     }
 
@@ -673,6 +681,11 @@ extension ContentView {
         // fresh tab.
         claimSeededTabs()
         registerHeldTabs()
+        // Now that this window is counted, the Settings pane's answer can be
+        // recomputed from the registry (fix round 2) — `WindowAccessor` may
+        // have asked before this pass ran, when the count did not yet
+        // include this window.
+        updateMainWindowPresence()
         // Third, and only after the claim: a drop arriving in ANOTHER window
         // resolves this window's model through the registry (Detachable Tabs
         // plan, Task 3) — `TabRegistry.registerModel(_:for:)` holds it
@@ -888,21 +901,41 @@ extension ContentView {
     /// is key, so the window they should raise is the one assigning them.
     func publishToMenuBarIfKey() {
         guard controlActiveState == .key else { return }
-        menuBarModel.tabs = tabsModel.tabs
+        // WEAKLY (fix round 2): these closures outlive the publish, and a
+        // strong reference to an `NSWindow` that has since closed both keeps
+        // it alive and lets `makeKeyAndOrderFront` put a closed window back
+        // on screen. Weak, a stale closure raises nothing — and the window's
+        // own close path clears the whole publication anyway
+        // (`clearMenuBarIfMine()`), so this is the second line of defence,
+        // not the first.
         let ownWindow = window
-        menuBarModel.focusTab = { id in
-            NSApplication.shared.activate(ignoringOtherApps: true)
-            ownWindow?.makeKeyAndOrderFront(nil)
-            // Route through the `activate(_:)` wrapper, not `tabsModel.activate`
-            // directly (M11n final review): a menu-bar row tap is an activation
-            // call site and must clear the tab's attention indicator (reset
-            // `seenFailureCount`) just like a tab-strip click or ⌘1–9.
-            activate(id)
-        }
-        menuBarModel.showMainWindow = {
-            NSApplication.shared.activate(ignoringOtherApps: true)
-            ownWindow?.makeKeyAndOrderFront(nil)
-        }
+        menuBarModel.publish(
+            tabs: tabsModel.tabs,
+            from: windowID,
+            focusTab: { [weak ownWindow] id in
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                ownWindow?.makeKeyAndOrderFront(nil)
+                // Route through the `activate(_:)` wrapper, not `tabsModel.activate`
+                // directly (M11n final review): a menu-bar row tap is an activation
+                // call site and must clear the tab's attention indicator (reset
+                // `seenFailureCount`) just like a tab-strip click or ⌘1–9.
+                activate(id)
+            },
+            showMainWindow: { [weak ownWindow] in
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                ownWindow?.makeKeyAndOrderFront(nil)
+            })
+    }
+
+    /// Takes this window's tabs out of the menu-bar status item when it
+    /// closes — but only if they are the ones showing (fix round 2).
+    ///
+    /// `MenuBarStatusModel.clearIfPublished(by:)` is what makes that "only
+    /// if" true: a background window closing must not wipe the front
+    /// window's list. Whichever window is key next publishes its own from
+    /// `publishToMenuBarIfKey()`.
+    func clearMenuBarIfMine() {
+        menuBarModel.clearIfPublished(by: windowID)
     }
 
     /// `tabCommands.closeActiveTab` handler (⌘W) — extracted out of the
@@ -963,10 +996,48 @@ extension ContentView {
     /// written from `.onChange` for the same reason; M11n was a render storm
     /// over a bridge in this repo already.
     func updateMainWindowPresence() {
-        let present = window != nil
+        writeMainWindowPresence(closingThisWindow: false)
+    }
+
+    /// The one place `SettingsWindowBridge.hasMainWindow` is written.
+    ///
+    /// `MainWindowPresence.remains(windowCount:closingOneOfThem:)` decides
+    /// it, from `TabRegistry.windowCount` rather than from this window's own
+    /// `NSWindow` — see that type for why a per-window answer was wrong (any
+    /// window's close greyed the Settings entries while others were still
+    /// open).
+    ///
+    /// Write-on-change, for the reason `updateMainWindowPresence()`'s doc
+    /// comment gives: `@Observable` notifies on every set, this runs from
+    /// `WindowAccessor.updateNSView` on ordinary body updates, and the
+    /// Settings scene reads the bridge.
+    func writeMainWindowPresence(closingThisWindow: Bool) {
+        let present = MainWindowPresence.remains(
+            windowCount: TabRegistry.shared.windowCount,
+            closingOneOfThem: closingThisWindow)
         if settingsBridge.hasMainWindow != present {
             settingsBridge.hasMainWindow = present
         }
+    }
+
+    /// The PRIMARY window remembers where it was; a window opened by a move
+    /// does not (Detachable Tabs plan, Task 2 fix round 2).
+    ///
+    /// `MacSCPApp`'s `WindowGroup` declares `.restorationBehavior(.disabled)`
+    /// so macOS does not reopen one window per moved tab at the next launch
+    /// — and SwiftUI has no per-value knob, so that switch is thrown for the
+    /// whole group, taking the primary window's frame with it. An AppKit
+    /// frame autosave name puts exactly that much back: the position and
+    /// size of the one window that is always there, and nothing about which
+    /// windows existed.
+    ///
+    /// A seeded window deliberately gets none. Two windows sharing one
+    /// autosave name would each write the other's frame away, and a window
+    /// that exists only because a tab was dragged into it has no remembered
+    /// place to come back to in the first place.
+    func applyFrameAutosave(to window: NSWindow?) {
+        guard isPrimaryWindow else { return }
+        window?.setFrameAutosaveName(Self.primaryFrameAutosaveName)
     }
 
     /// `NSWindow.willCloseNotification` for THIS window — the one moment
@@ -987,9 +1058,12 @@ extension ContentView {
     /// the registry to forget them. See `releaseHeldTabsOnClose()`.
     func handleWindowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow, closing === window else { return }
-        if settingsBridge.hasMainWindow {
-            settingsBridge.hasMainWindow = false
-        }
+        // Not an unconditional `false` any more (fix round 2): another
+        // window may still be open, and the Settings entries route into any
+        // of them. This window is still counted at this moment — its tabs
+        // are released only after teardown — so it excludes itself.
+        writeMainWindowPresence(closingThisWindow: true)
+        clearMenuBarIfMine()
         releaseHeldTabsOnClose()
     }
 
@@ -1086,17 +1160,27 @@ extension ContentView {
     /// offer it (the tab's context menu and the Window menu).
     ///
     /// The order is the contract, and `TabDetachSequence` owns it rather
-    /// than this call site (fix round 1): decide, detach, park, put a fresh
-    /// tab in the leaver's place if the model would otherwise be empty, and
+    /// than this call site (fix round 1): decide, detach, put a fresh tab in
+    /// the leaver's place if the model would otherwise be empty, park, and
     /// OPEN the new window — all before anything closes. `NSWindow.close()`
     /// is synchronous and tears its scene down where it stands, so closing
     /// first would strand a parked tab, with a live connection and no
     /// window, whenever the open was refused or lost.
     ///
-    /// The close therefore happens one main-actor turn later, and only
-    /// after `reclaim` has confirmed nothing is still parked under this
-    /// seed. If something is — no window claimed it — the tab goes back
-    /// into this window and this window stays open with it.
+    /// **The close waits for the CLAIM, not for a turn** (fix round 2). The
+    /// new window claims its seed from its own setup pass, which is a later
+    /// display pass rather than a later main-actor turn; a next-turn close
+    /// (with its reclaim) ran first, took the tab back, and left the new
+    /// window blank. So the registry is asked to say when the tab has
+    /// actually been taken over — that is the `onClaimed` handler below —
+    /// and this window asks itself to close only then, through the same
+    /// `TabWindowCloseRequest` the cross-window drag already posts.
+    ///
+    /// Until the claim arrives the tab stays parked and this window keeps
+    /// what it has (its remaining tabs, or the fresh one that took the
+    /// leaver's place). If no window ever claims it,
+    /// `reclaimStrandedMoves()` gives it back the next time this window is
+    /// activated.
     ///
     /// No precondition is re-asked here. The context-menu entry exists only
     /// because `TabContextMenu.entries` offered it, and the Window menu's
@@ -1106,17 +1190,47 @@ extension ContentView {
     /// `handleTabMenuEntry`'s doc comment).
     func moveToNewWindow(_ tab: SessionTab) {
         let seed = WindowSeed(tabIDs: [tab.id])
+        let ownWindowID = windowID
         let outcome = TabDetachSequence.move(
             tab.id, outOf: tabsModel, parkingUnder: seed, in: TabRegistry.shared,
-            replacement: makeTab, openWindow: { openWindow(value: $0) })
-        let ownWindow = window
-        let ownWindowID = windowID
-        Task { @MainActor in
-            let cameBack = TabDetachSequence.reclaim(
-                seedID: seed.id, into: tabsModel, from: TabRegistry.shared,
-                window: ownWindowID, removing: outcome.replacementID)
-            if outcome.closesWindow && !cameBack { ownWindow?.close() }
+            replacement: makeTab,
+            openWindow: { openWindow(value: $0) },
+            onClaimed: { claimed in
+                guard claimed.closesWindow else { return }
+                // Posted on the turn after the claim, not inside it: the
+                // claim runs from the NEW window's setup pass, and
+                // `NSWindow.close()` is synchronous — closing this window
+                // from inside another window's setup is the shape Task 3
+                // already avoids in `acceptDroppedTab`. Waiting a turn HERE
+                // is not the turn-count the Critical was about: the signal
+                // has already arrived, and only the acting on it is
+                // deferred.
+                Task { @MainActor in TabWindowCloseRequest.post(ownWindowID) }
+            })
+        pendingMoves.append(PendingMove(seedID: seed.id, replacementID: outcome.replacementID))
+    }
+
+    /// Gives back any tab this window parked that no window ever claimed
+    /// (fix round 2).
+    ///
+    /// Run when this window is ACTIVATED — `controlActiveState` becoming
+    /// `.key` — and never on a turn count: by the time the user is back on
+    /// this window, a window that was going to open has opened and claimed.
+    /// A seed that has already been claimed is not in the registry any more,
+    /// so `reclaim` answers `false` for it and nothing moves; the pending
+    /// note is dropped either way, because a claimed seed will never need
+    /// one again.
+    ///
+    /// The `pendingMoves` list is this window's own: only the window that
+    /// parked a seed can give that seed's tab a model to come back to.
+    func reclaimStrandedMoves() {
+        guard controlActiveState == .key, !pendingMoves.isEmpty else { return }
+        for move in pendingMoves {
+            TabDetachSequence.reclaim(
+                seedID: move.seedID, into: tabsModel, from: TabRegistry.shared,
+                window: windowID, removing: move.replacementID)
         }
+        pendingMoves = []
     }
 
     /// A tab was dragged out of ANOTHER window's strip and let go on this

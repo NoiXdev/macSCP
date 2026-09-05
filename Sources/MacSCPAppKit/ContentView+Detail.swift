@@ -255,6 +255,9 @@ extension ContentView {
         .navigationTitle(activeTab.titleName.map { "macSCP — \($0)" } ?? "macSCP")
         .background(WindowAccessor {
             window = $0
+            // Frame memory for the primary window only (Detachable Tabs
+            // plan, Task 2 fix round 2) — see `applyFrameAutosave(to:)`.
+            applyFrameAutosave(to: $0)
             updateMainWindowPresence()
         })
         // Tells the Settings window when this window goes away, so its

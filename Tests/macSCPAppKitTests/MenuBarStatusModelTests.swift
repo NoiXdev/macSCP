@@ -38,7 +38,9 @@ struct MenuBarStatusModelTests {
     /// many sessions are live, not how many tabs are open.
     @Test func disconnectedTabsDoNotCount() {
         let model = MenuBarStatusModel()
-        model.tabs = [makeTab(), makeTab()]
+        model.publish(
+            tabs: [makeTab(), makeTab()], from: WindowID(),
+            focusTab: { _ in }, showMainWindow: {})
 
         #expect(model.connectedCount == 0)
     }
@@ -48,7 +50,9 @@ struct MenuBarStatusModelTests {
     /// that defaulted to "active" would make it useless.
     @Test func tabsWithoutRunningTransfersLeaveTheIconIdle() {
         let model = MenuBarStatusModel()
-        model.tabs = [makeTab()]
+        model.publish(
+            tabs: [makeTab()], from: WindowID(),
+            focusTab: { _ in }, showMainWindow: {})
 
         #expect(model.anyTransferActive == false)
     }

@@ -397,10 +397,20 @@ extension ContentView {
             set: { isPresented in if !isPresented { externalTerminalErrorMessage = nil } })
     }
 
-    /// "Manage Snippets…" — same key-window guard as the other menu-driven
-    /// sheets in this bridge.
+    /// "Manage Snippets…" — the Terminal menu's route to the snippet
+    /// management sheet, assigned to `TabCommands.showSnippets` in
+    /// `wireTabCommands()`.
+    ///
+    /// It carried a `window?.isKeyWindow` guard until fix round 2 of the
+    /// Detachable Tabs plan's Task 2, when the last one in the app was
+    /// found here: `TabCommands` is per window and published as a focused
+    /// scene value, so the menu can only ever reach the front window's
+    /// closure — which is what that guard was asking. Re-adding it would be
+    /// a second answer to a question SwiftUI has already answered, and it
+    /// would also make this function unreachable from a test, since
+    /// `window` is `@State` and a `ContentView` built outside a SwiftUI
+    /// hierarchy reads it as `nil`.
     func presentSnippets() {
-        guard window?.isKeyWindow == true else { return }
         showSnippetsSheet = true
     }
 

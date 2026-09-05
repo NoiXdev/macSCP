@@ -33,19 +33,19 @@ final class TabCommands {
     /// M9a handlers (`exportSheetItem`/`showImportFileImporter`) — the
     /// sidebar's own "Export All…"/"Import…" entries are untouched.
     var showKnownHosts: (() -> Void)?
-    /// "Server Certificates…" — same bridge shape/key-window guard as
+    /// "Server Certificates…" — same bridge shape as
     /// `showKnownHosts` above, opens the server-certificate management sheet.
     /// Its own entry rather than a section inside the known-hosts sheet; see
     /// `ServerCertificatesSheet`'s doc comment.
     var showServerCertificates: (() -> Void)?
-    /// "Logins…" (M10b/T3) — same bridge shape/key-window guard as
+    /// "Logins…" (M10b/T3) — same bridge shape as
     /// `showKnownHosts` above, opens the login-sets management sheet.
     var showLogins: (() -> Void)?
-    /// "Hidden Imports…" (M11f/T2) — same bridge shape/key-window guard as
+    /// "Hidden Imports…" (M11f/T2) — same bridge shape as
     /// `showKnownHosts`/`showLogins` above, opens the hidden-imports
     /// management sheet.
     var showHiddenImports: (() -> Void)?
-    /// "SSH Keys…" (M18/T5) — same bridge shape/key-window guard as
+    /// "SSH Keys…" (M18/T5) — same bridge shape as
     /// `showKnownHosts`/`showLogins`/`showHiddenImports` above, opens the
     /// SSH-key management sheet (replaces the M17 Settings tab).
     var showSSHKeys: (() -> Void)?
@@ -77,9 +77,11 @@ final class TabCommands {
     var toggleTerminal: (() -> Void)?
     var openExternalTerminal: (() -> Void)?
     /// Transfer-bar toggle (M11o): the "Show/Hide Transfers" menu entry and
-    /// ⌘⇧Y drive this; `ContentView.task` wires it against `window?.isKeyWindow`
-    /// and toggles the active tab's `transfersPanelVisible`. Enabled state
-    /// mirrors `isActiveTabConnected` (same as the Terminal entries).
+    /// ⌘⇧Y drive this. Each window fills in its own closure, which toggles
+    /// that window's active tab's `transfersPanelVisible`, and the menu
+    /// reaches only the focused window's — there is no key-window check
+    /// anywhere on this bridge any more. Enabled state mirrors
+    /// `isActiveTabConnected` (same as the Terminal entries).
     var toggleTransfers: (() -> Void)?
     /// Mirrors `ContentView`'s active tab connection state (M11d/T2): this
     /// `TabCommands` instance is the only thing `MacSCPApp`'s `.commands`
@@ -144,19 +146,20 @@ final class TabCommands {
     /// describes the run (`SnippetDryRun.describing`, which is where the
     /// send plan is made) and sends the resulting bytes to that tab's
     /// `TerminalPanelViewModel`. Same
-    /// bridge shape and key-window guard as `toggleTerminal` above.
+    /// bridge shape as `toggleTerminal` above.
     /// `execute` is the trigger's own choice (Terminal-Snippets, Task 6):
     /// every snippet offers both an Insert and an Execute action, so this
     /// bridge carries WHICH ONE fired rather than deciding for it.
     var runSnippet: ((Snippet, Bool) -> Void)?
-    /// "Manage Snippets…" — same bridge shape/key-window guard as
-    /// `showLogins` above, opens the snippet management sheet.
+    /// "Manage Snippets…" — same bridge shape as `showLogins` above, opens
+    /// the snippet management sheet in the focused window.
     var showSnippets: (() -> Void)?
     /// "Move Tab to New Window" (Detachable Tabs plan, Task 2) — the Window
     /// menu's route to the action the tab strip's context menu also offers.
-    /// Same bridge shape and key-window guard as the entries above; it moves
-    /// the KEY window's ACTIVE tab, which is the only tab a menu with no
-    /// click target can mean.
+    /// Same bridge shape as the entries above; it moves the ACTIVE tab of
+    /// the window this bridge belongs to, which — the bridge being read
+    /// through `@FocusedValue` — is the window in front, and the only tab a
+    /// menu with no click target can mean.
     var moveTabToNewWindow: (() -> Void)?
     /// Whether that entry can do anything: `false` while the front window
     /// holds a single tab, because moving the only tab of a window into a

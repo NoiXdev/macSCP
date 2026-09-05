@@ -177,7 +177,8 @@ struct TabsWindowLifecycleTests {
 
         let outcome = TabDetachSequence.move(
             tab.id, outOf: model, parkingUnder: seed, in: registry,
-            replacement: { self.makeTab() }, openWindow: { _ in })
+            replacement: { self.makeTab() }, openWindow: { _ in },
+            onClaimed: { _ in })
 
         #expect(outcome.closesWindow)
         #expect(model.tabs.count == 1)
@@ -197,7 +198,8 @@ struct TabsWindowLifecycleTests {
 
         let outcome = TabDetachSequence.move(
             tab.id, outOf: model, parkingUnder: WindowSeed(tabIDs: [tab.id]), in: registry,
-            replacement: { self.makeTab() }, openWindow: { _ in })
+            replacement: { self.makeTab() }, openWindow: { _ in },
+            onClaimed: { _ in })
 
         #expect(outcome.closesWindow == false)
         #expect(model.tabs.count == 1)
@@ -218,7 +220,8 @@ struct TabsWindowLifecycleTests {
 
         let outcome = TabDetachSequence.move(
             leaving.id, outOf: model, parkingUnder: WindowSeed(tabIDs: [leaving.id]),
-            in: registry, replacement: { self.makeTab() }, openWindow: { _ in })
+            in: registry, replacement: { self.makeTab() }, openWindow: { _ in },
+            onClaimed: { _ in })
 
         #expect(outcome.closesWindow == false)
         #expect(outcome.replacementID == nil)
@@ -245,7 +248,8 @@ struct TabsWindowLifecycleTests {
 
         TabDetachSequence.move(
             tab.id, outOf: model, parkingUnder: seed, in: registry,
-            replacement: { self.makeTab() }, openWindow: { _ in })
+            replacement: { self.makeTab() }, openWindow: { _ in },
+            onClaimed: { _ in })
 
         let target = WindowID()
         let arrived = registry.claim(seedID: seed.id, into: target)
@@ -265,7 +269,8 @@ struct TabsWindowLifecycleTests {
 
         let outcome = TabDetachSequence.move(
             UUID(), outOf: model, parkingUnder: seed, in: registry,
-            replacement: { self.makeTab() }, openWindow: { opened.append($0) })
+            replacement: { self.makeTab() }, openWindow: { opened.append($0) },
+            onClaimed: { _ in })
 
         #expect(outcome == .none)
         #expect(opened.isEmpty)
@@ -288,19 +293,117 @@ struct TabsWindowLifecycleTests {
         TabDetachSequence.move(
             tab.id, outOf: model, parkingUnder: seed, in: registry,
             replacement: { self.makeTab() },
-            openWindow: { parkedWhenOpened = registry.parkedTabs(for: $0.id).map(\.id) })
+            openWindow: { parkedWhenOpened = registry.parkedTabs(for: $0.id).map(\.id) },
+            onClaimed: { _ in })
 
         #expect(parkedWhenOpened == [tab.id])
     }
 
-    // MARK: The reclaim (the window never opened)
+    // MARK: The claim is the signal (fix round 2)
 
-    /// The failure the ordering exists for (fix round 1): the open is
-    /// refused or lost, nothing claims the seed, and one turn later the tab
-    /// must be back where it started rather than parked forever with a live
-    /// connection and no window. Driven through the seam — an `openWindow`
-    /// that does nothing is exactly "the window never opened".
-    @Test func aWindowThatNeverOpenedGivesTheTabBack() {
+    /// The registry tells the source window when its tab has actually been
+    /// taken over. Nothing else can: the new window's claim happens on a
+    /// later DISPLAY pass, not a later main-actor turn, so no amount of
+    /// hopping turns will see it (fix round 2's Critical — a next-turn
+    /// reclaim ran before the new window's setup and pulled the tab back,
+    /// leaving the new window blank).
+    @Test func parkingDoesNotFireTheClaimHandlerButClaimingDoes() {
+        let registry = TabRegistry()
+        let tab = makeTab()
+        let seedID = UUID()
+        var claims = 0
+
+        registry.park([tab], for: seedID, onClaimed: { claims += 1 })
+        #expect(claims == 0)
+
+        _ = registry.claim(seedID: seedID, into: WindowID())
+        #expect(claims == 1)
+    }
+
+    /// Exactly once, however often the claim is repeated: the handler goes
+    /// with the tabs, so a second claim of the same seed finds neither.
+    @Test func theClaimHandlerFiresExactlyOnce() {
+        let registry = TabRegistry()
+        let tab = makeTab()
+        let seedID = UUID()
+        var claims = 0
+
+        registry.park([tab], for: seedID, onClaimed: { claims += 1 })
+        _ = registry.claim(seedID: seedID, into: WindowID())
+        _ = registry.claim(seedID: seedID, into: WindowID())
+        #expect(claims == 1)
+    }
+
+    /// Taking a parked tab BACK is not a claim, and must not fire the
+    /// handler — firing it would tell the source window to close over a tab
+    /// that had just been returned to it.
+    @Test func unparkingATabDoesNotFireTheClaimHandler() {
+        let registry = TabRegistry()
+        let window = WindowID()
+        let tab = makeTab()
+        let seedID = UUID()
+        var claims = 0
+
+        registry.park([tab], for: seedID, onClaimed: { claims += 1 })
+        let returned = registry.unpark(seedID: seedID, into: window)
+        #expect(claims == 0)
+        #expect(returned.first === tab)
+        #expect(registry.windowHolding(tab.id) == window)
+    }
+
+    /// The move tells the source window what to do WHEN the tab is claimed,
+    /// and not before. Driven through both seams: an `openWindow` that never
+    /// claims leaves the handler unfired and the tab parked.
+    @Test func aWindowThatNeverClaimsLeavesTheTabParkedAndTheSourceOpen() {
+        let registry = TabRegistry()
+        let window = WindowID()
+        let tab = makeTab()
+        let model = TabsViewModel<SessionTab>(initial: tab)
+        registry.register(tab, in: window)
+        registry.register(makeTab(), in: WindowID())
+        let seed = WindowSeed(tabIDs: [tab.id])
+        var closeRequests = 0
+
+        let outcome = TabDetachSequence.move(
+            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            replacement: { self.makeTab() }, openWindow: { _ in },
+            onClaimed: { _ in closeRequests += 1 })
+
+        #expect(outcome.closesWindow)
+        #expect(closeRequests == 0)
+        #expect(registry.parkedTabs(for: seed.id).first === tab)
+        #expect(model.tabs.count == 1)
+        #expect(model.tabs[0].id == outcome.replacementID)
+    }
+
+    /// And when a window DOES claim it, the handler fires with the outcome
+    /// the move decided — which is what the source window closes on.
+    @Test func aClaimFiresTheHandlerWithTheMovesOwnOutcome() {
+        let registry = TabRegistry()
+        let window = WindowID()
+        let target = WindowID()
+        let tab = makeTab()
+        let model = TabsViewModel<SessionTab>(initial: tab)
+        registry.register(tab, in: window)
+        registry.register(makeTab(), in: WindowID())
+        let seed = WindowSeed(tabIDs: [tab.id])
+        var claimed: [TabDetachSequence.Outcome] = []
+
+        let outcome = TabDetachSequence.move(
+            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            replacement: { self.makeTab() },
+            openWindow: { _ = registry.claim(seedID: $0.id, into: target) },
+            onClaimed: { claimed.append($0) })
+
+        #expect(claimed == [outcome])
+        #expect(outcome.closesWindow)
+        #expect(registry.windowHolding(tab.id) == target)
+    }
+
+    /// The recovery, driven from its real trigger rather than from a turn
+    /// count: the source window is activated again with the seed still
+    /// unclaimed, and the tab comes back to it.
+    @Test func theActivationTriggerReturnsATabNoWindowEverClaimed() {
         let registry = TabRegistry()
         let window = WindowID()
         let tab = makeTab()
@@ -311,8 +414,8 @@ struct TabsWindowLifecycleTests {
 
         let outcome = TabDetachSequence.move(
             tab.id, outOf: model, parkingUnder: seed, in: registry,
-            replacement: { self.makeTab() }, openWindow: { _ in })
-        #expect(outcome.closesWindow)
+            replacement: { self.makeTab() }, openWindow: { _ in },
+            onClaimed: { _ in })
 
         let cameBack = TabDetachSequence.reclaim(
             seedID: seed.id, into: model, from: registry,
@@ -326,10 +429,10 @@ struct TabsWindowLifecycleTests {
         #expect(registry.parkedTabs(for: seed.id).isEmpty)
     }
 
-    /// The positive beside it: when a window DID claim the seed, the
-    /// reclaim finds nothing, answers `false`, and leaves the source window
-    /// exactly as the move left it — so the caller goes on to close it.
-    @Test func aWindowThatClaimedTheSeedLeavesNothingToReclaim() {
+    /// The positive beside it: a claim that arrived BEFORE the trigger
+    /// leaves nothing to reclaim, so a late activation of the source window
+    /// cannot steal a tab back out of the window that took it.
+    @Test func aClaimBeforeTheTriggerLeavesNothingToReclaim() {
         let registry = TabRegistry()
         let window = WindowID()
         let target = WindowID()
@@ -342,14 +445,14 @@ struct TabsWindowLifecycleTests {
         let outcome = TabDetachSequence.move(
             tab.id, outOf: model, parkingUnder: seed, in: registry,
             replacement: { self.makeTab() },
-            openWindow: { _ = registry.claim(seedID: $0.id, into: target) })
+            openWindow: { _ = registry.claim(seedID: $0.id, into: target) },
+            onClaimed: { _ in })
 
         let cameBack = TabDetachSequence.reclaim(
             seedID: seed.id, into: model, from: registry,
             window: window, removing: outcome.replacementID)
 
         #expect(cameBack == false)
-        #expect(outcome.closesWindow)
         #expect(model.tabs.count == 1)
         #expect(model.tabs[0].id == outcome.replacementID)
         #expect(registry.windowHolding(tab.id) == target)
@@ -368,6 +471,59 @@ struct TabsWindowLifecycleTests {
         #expect(cameBack == false)
         #expect(model.tabs.count == 1)
         #expect(model.tabs[0] === tab)
+    }
+
+    // MARK: - Is there a main window left?
+
+    /// The Settings window's "Manage Data" entries route into A main
+    /// window. Which one does not matter; that one exists does. Before fix
+    /// round 2 any window's close wrote `false`, greying those entries while
+    /// another window was still open (fix round 2, finding 2).
+    @Test func anotherOpenWindowKeepsTheManageDataEntriesAlive() {
+        #expect(MainWindowPresence.remains(windowCount: 2, closingOneOfThem: true))
+    }
+
+    @Test func theLastWindowClosingLeavesNoMainWindow() {
+        #expect(MainWindowPresence.remains(windowCount: 1, closingOneOfThem: true) == false)
+    }
+
+    @Test func anOpenWindowIsAMainWindow() {
+        #expect(MainWindowPresence.remains(windowCount: 1, closingOneOfThem: false))
+        #expect(MainWindowPresence.remains(windowCount: 2, closingOneOfThem: false))
+    }
+
+    @Test func noWindowAtAllIsNoMainWindow() {
+        #expect(MainWindowPresence.remains(windowCount: 0, closingOneOfThem: false) == false)
+        // A count that has already dropped to zero and a window that says it
+        // is closing must not read as -1 remaining and wrap into anything
+        // truthy.
+        #expect(MainWindowPresence.remains(windowCount: 0, closingOneOfThem: true) == false)
+    }
+
+    // MARK: - The menu bar follows the window that published it
+
+    /// A closed window's tabs leave the status item with it (fix round 2,
+    /// finding 5). The model remembers WHICH window published, so a window
+    /// closing in the background cannot wipe the front window's list.
+    @Test func aClosedWindowsEntriesLeaveTheMenuBar() {
+        let model = MenuBarStatusModel()
+        let publisher = WindowID()
+        model.publish(tabs: [makeTab()], from: publisher, focusTab: { _ in }, showMainWindow: {})
+        #expect(model.tabs.count == 1)
+
+        model.clearIfPublished(by: publisher)
+        #expect(model.tabs.isEmpty)
+    }
+
+    /// The positive beside it: another window closing leaves the published
+    /// list alone.
+    @Test func aDifferentWindowClosingLeavesTheMenuBarAlone() {
+        let model = MenuBarStatusModel()
+        let publisher = WindowID()
+        model.publish(tabs: [makeTab()], from: publisher, focusTab: { _ in }, showMainWindow: {})
+
+        model.clearIfPublished(by: WindowID())
+        #expect(model.tabs.count == 1)
     }
 
     // MARK: - Source guards
@@ -689,10 +845,24 @@ struct TabsWindowLifecycleTests {
         let commands = try Self.code(of: Self.commandsFile)
         let lifecycle = try Self.code(of: Self.lifecycleFile)
         let detail = try Self.code(of: Self.detailFile)
+        // `ContentView+Sheets.swift` joined the list in fix round 2: a live
+        // `window?.isKeyWindow` guard survived there, in `presentSnippets()`,
+        // because the scan named only the three files round 1 had edited.
+        // The positive below is what stops that from happening again in the
+        // other direction — a file that stopped containing the thing it is
+        // scanned for would otherwise pass every negative here vacuously.
+        let sheets = try Self.code(of: Self.sheetsFile)
+        let sheetsIsTheRightFile = sheets.contains("func presentSnippets()")
+        #expect(sheetsIsTheRightFile, """
+            ContentView+Sheets.swift no longer declares presentSnippets() — \
+            re-anchor this guard on wherever the menu-driven sheets are \
+            presented now.
+            """)
         for (name, source) in [
             ("MacSCPCommands.swift", commands),
             ("ContentView+Lifecycle.swift", lifecycle),
             ("ContentView+Detail.swift", detail),
+            ("ContentView+Sheets.swift", sheets),
         ] {
             let readsKeyWindow = source.contains("NSApp.keyWindow")
             let observesBecomeKey = source.contains("didBecomeKeyNotification")
@@ -722,14 +892,16 @@ struct TabsWindowLifecycleTests {
                 publishToMenuBarIfKey() — re-anchor this guard.
                 """)
         let gated = publish.contains("controlActiveState == .key")
-        let publishesTabs = publish.contains("menuBarModel.tabs = tabsModel.tabs")
+        let publishesTabs = publish.contains("menuBarModel.publish(")
+            && publish.contains("tabs: tabsModel.tabs")
         #expect(gated, """
             the menu-bar publish is no longer gated on this window being key — \
             a background window's tabs would appear in the status item.
             """)
         #expect(publishesTabs, """
-            the menu-bar publish no longer writes menuBarModel.tabs — the gate \
-            above would then be guarding nothing.
+            the menu-bar publish no longer hands this window's tabs to \
+            menuBarModel.publish( — the gate above would then be guarding \
+            nothing.
             """)
     }
 
@@ -755,6 +927,49 @@ struct TabsWindowLifecycleTests {
             a window that does not present the alert still claims \
             updateModel.hasPresentationTarget — a manual check's result would go \
             to an alert nobody shows instead of to the NSAlert fallback.
+            """)
+    }
+
+    /// The primary window keeps remembering where it was, even though the
+    /// group opts out of system restoration (fix round 2).
+    /// `.restorationBehavior(.disabled)` is per GROUP — SwiftUI offers no
+    /// per-value knob — so the frame is preserved the AppKit way instead,
+    /// by an autosave name, and only for the seedless window.
+    @Test func onlyThePrimaryWindowRemembersItsFrame() throws {
+        let lifecycle = try Self.code(of: Self.lifecycleFile)
+        let autosave = try #require(
+            Self.body(after: "func applyFrameAutosave(to window: NSWindow?) {", in: lifecycle), """
+                ContentView+Lifecycle.swift no longer declares \
+                applyFrameAutosave(to:) — re-anchor this guard.
+                """)
+        let savesTheFrame = autosave.contains("setFrameAutosaveName(")
+        let onlyForThePrimary = autosave.contains("guard isPrimaryWindow")
+        #expect(savesTheFrame, """
+            applyFrameAutosave(to:) no longer sets a frame autosave name — the \
+            primary window would forget its position, which is what \
+            .restorationBehavior(.disabled) took away.
+            """)
+        #expect(onlyForThePrimary, """
+            applyFrameAutosave(to:) is no longer gated on isPrimaryWindow — a \
+            window opened by a move would fight the primary one for the same \
+            saved frame.
+            """)
+        // The negative beside them, over the whole App target: there is
+        // exactly ONE place a frame autosave name is set, so no seeded
+        // window can quietly acquire one somewhere else.
+        let sources = try FileManager.default.contentsOfDirectory(
+            at: Self.repoRoot.appendingPathComponent("Sources/MacSCPAppKit"),
+            includingPropertiesForKeys: nil)
+        var callSites = 0
+        for file in sources where file.pathExtension == "swift" {
+            callSites += Self.occurrences(
+                of: "setFrameAutosaveName(", in: try Self.code(of: file))
+        }
+        #expect(callSites == 1, """
+            Sources/MacSCPAppKit sets a frame autosave name in \(callSites) \
+            places, not the one applyFrameAutosave(to:) owns. Counted in the \
+            pass that writes this; a second call site means two windows can \
+            claim the same saved frame.
             """)
     }
 
