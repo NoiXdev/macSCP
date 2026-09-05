@@ -42,6 +42,74 @@ enum TabDropOutsidePlan {
     }
 }
 
+/// Which mouse events the drag overlay takes for itself, and which it
+/// leaves to the SwiftUI tab underneath.
+///
+/// An `NSView` inside a SwiftUI hierarchy that answers `hitTest` takes the
+/// event outright — the hosting view never sees it, and every SwiftUI
+/// gesture on the content below stops working for that event. So this is
+/// the narrowest question in the file, and it is asked here rather than
+/// inside the override, where nothing in this package could call it.
+///
+/// **A left-button event carrying `.control` is a SECONDARY click**, and
+/// that is the whole of what fix round 1 changed here. macOS delivers
+/// control-click as `.leftMouseDown` with `.control` set; it is how the
+/// context menu is opened on a one-button mouse, and how many people open
+/// it on a trackpad. Claiming it by event type alone meant `mouseDown`
+/// swallowed it and control-clicking a tab's label opened nothing —
+/// exactly the failure the right-click exemption exists to prevent, in the
+/// spelling nobody tried. All three left-button types are exempted, not
+/// just the down: the modifier is carried on each of them, and an overlay
+/// that let the down through but claimed the drag or the up would be
+/// half-in on a gesture it must stay out of entirely.
+///
+/// The OTHER modifiers change nothing. `⌘`, `⇧` and `⌥` do not make a
+/// secondary click, and a tab click is still a tab click while one is
+/// held; "ignore modified clicks" is the obvious wrong generalisation of
+/// the rule above, and `TabDragSourceDecisionTests` pins against it.
+enum TabDragHitTestDecision {
+    /// `eventType` is optional because `NSApp.currentEvent` is `nil` when
+    /// AppKit asks outside an event — a cursor-rect update, say — and a hit
+    /// with no event to handle is a hit this overlay has no use for.
+    static func claims(eventType: NSEvent.EventType?, modifiers: NSEvent.ModifierFlags) -> Bool {
+        guard modifiers.contains(.control) == false else { return false }
+        switch eventType {
+        case .leftMouseDown, .leftMouseDragged, .leftMouseUp: return true
+        default: return false
+        }
+    }
+}
+
+/// What the drag source offers a destination, per dragging context.
+///
+/// **`[.move, .copy]` within the application** (fix round 1). The tab is
+/// always moved — there is no such thing as a second copy of a live
+/// session, and `TabDetachSequence` is what actually runs — but the mask
+/// is not a statement of intent, it is the set a destination may choose
+/// from. SwiftUI's `dropDestination` negotiates its own operation and has
+/// historically asked for `.copy`; a source offering `.move` alone can
+/// therefore be REFUSED by one of this app's own strips. The consequence
+/// was not a drop that quietly did nothing: the refused session ends with
+/// an empty operation, the pointer is outside the source window's frame
+/// for every drop on another window, and `TabDropOutsidePlan` reads that
+/// pair as "landed nowhere" — so a move between two windows would have
+/// detached into a THIRD one. Offering both leaves the destination free to
+/// pick either, and nothing downstream reads which it picked.
+///
+/// **`[]` outside it**, unchanged: the source's own half of the Finder
+/// fix. With no operation offered, no other application can accept the
+/// drop at all, whatever it makes of the pasteboard type. The payload's
+/// private `UTType` is the other half, and neither is relied on alone.
+enum TabDragOperationMask {
+    static func offered(for context: NSDraggingContext) -> NSDragOperation {
+        switch context {
+        case .withinApplication: return [.move, .copy]
+        case .outsideApplication: return []
+        @unknown default: return []
+        }
+    }
+}
+
 /// The one pasteboard item a tab drag writes: the payload's JSON, offered
 /// under the app's own content type and under no other.
 ///
@@ -104,13 +172,15 @@ final class TabDragPasteboardWriter: NSObject, NSPasteboardWriting {
 /// working. Covering the ✕ would have made it undismissable, so the overlay
 /// stops short of it and the button keeps SwiftUI's own handling.
 ///
-/// **What `hitTest` lets through.** Only the three left-button event types
-/// this view actually handles. Everything else — the right-click that opens
-/// the tab's SwiftUI `.contextMenu`, the moves that drive `.onHover`, and a
-/// `hitTest` asked outside any event at all — is answered with `nil`, which
-/// makes this view invisible to it and leaves it to the SwiftUI content
-/// underneath. That is what keeps the context menu (and the guards that
-/// anchor on it) working with an AppKit view lying over the tab.
+/// **What `hitTest` lets through.** Only an UNMODIFIED left-button event of
+/// the three types this view actually handles — `TabDragHitTestDecision`
+/// owns that rule and states why the modifier is part of it. Everything
+/// else — the right-click that opens the tab's SwiftUI `.contextMenu`, the
+/// control-click that opens the same menu, the moves that drive `.onHover`,
+/// and a `hitTest` asked outside any event at all — is answered with `nil`,
+/// which makes this view invisible to it and leaves it to the SwiftUI
+/// content underneath. That is what keeps the context menu (and the guards
+/// that anchor on it) working with an AppKit view lying over the tab.
 ///
 /// **The click, therefore, is this view's to forward.** A left click that
 /// never exceeds the drag threshold is a selection, and it reaches the same
@@ -167,20 +237,36 @@ final class TabDragSourceNSView: NSView, NSDraggingSource {
 
     // MARK: - Which events this view is visible to
 
-    /// `nil` for everything but the three left-button events below, which
-    /// makes this view transparent to the right-click that opens the tab's
-    /// SwiftUI context menu and to the pointer moves that drive its hover
-    /// state. `NSApp.currentEvent` is `nil` when AppKit asks outside an
-    /// event — a cursor-rect update, say — and that is answered the same
-    /// way, because a hit with no event to handle is a hit this view has no
-    /// use for.
+    /// Asked of `TabDragHitTestDecision`, which carries the reasoning and
+    /// is where `TabDragSourceDecisionTests` reaches it: `nil` for
+    /// everything but an unmodified left-button event, which makes this
+    /// view transparent to BOTH ways of opening the tab's SwiftUI context
+    /// menu — the right-click and the control-click — and to the pointer
+    /// moves that drive its hover state.
     override func hitTest(_ point: NSPoint) -> NSView? {
-        switch NSApp.currentEvent?.type {
-        case .leftMouseDown, .leftMouseDragged, .leftMouseUp:
-            return super.hitTest(point)
-        default:
-            return nil
-        }
+        let event = NSApp.currentEvent
+        guard
+            TabDragHitTestDecision.claims(
+                eventType: event?.type, modifiers: event?.modifierFlags ?? [])
+        else { return nil }
+        return super.hitTest(point)
+    }
+
+    /// A press on a tab of a window that is not in front is the gesture it
+    /// looks like, not a throwaway that only brings the window forward.
+    /// AppKit's default is `false`, so without this a drag from a
+    /// background window's tab cost two gestures: one to activate, one to
+    /// drag.
+    ///
+    /// What this does NOT change: the click still activates the window.
+    /// AppKit orders a window front on a press regardless of this answer —
+    /// `acceptsFirstMouse` decides whether that same press is ALSO
+    /// delivered to the view, not whether the window comes forward. So a
+    /// background tab dragged straight out both raises its window and
+    /// starts the drag, and a background tab merely clicked both raises its
+    /// window and selects the tab.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 
     // MARK: - Press, drag, click
@@ -234,22 +320,13 @@ final class TabDragSourceNSView: NSView, NSDraggingSource {
 
     // MARK: - NSDraggingSource
 
-    /// `.move` inside this app — every destination that takes this payload
-    /// moves the tab rather than copying it, and there is no such thing as
-    /// a second copy of a live session.
-    ///
-    /// **`[]` outside it**, which is the source's own half of the Finder
-    /// fix: with no operation offered, no other application can accept the
-    /// drop at all, whatever it makes of the pasteboard type. The payload's
-    /// private `UTType` is the other half, and neither is relied on alone.
+    /// Asked of `TabDragOperationMask`, which carries the reasoning for
+    /// both branches and is where `TabDragSourceDecisionTests` reaches
+    /// them.
     func draggingSession(
         _ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext
     ) -> NSDragOperation {
-        switch context {
-        case .withinApplication: return .move
-        case .outsideApplication: return []
-        @unknown default: return []
-        }
+        TabDragOperationMask.offered(for: context)
     }
 
     /// The report the whole AppKit detour exists for. A drop one of this

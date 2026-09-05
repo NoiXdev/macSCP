@@ -502,6 +502,49 @@ struct TabDetachOnDropOutsideGuardTests {
             "a drag that ended nowhere reaches no detach route")
     }
 
+    /// The two decisions the overlay takes before anything else are asked
+    /// of the types that own them, not written into the `NSView` overrides
+    /// where no test could call them (fix round 1). Each override names its
+    /// decision; that is what makes `TabDragSourceDecisionTests` a guard
+    /// over the real behaviour rather than over a second copy of it.
+    @Test func theOverridesAskTheDecisionTypesRatherThanDecidingThemselves() throws {
+        let source = try Self.strictSource(of: Self.dragSourcePath)
+        let hitTest = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "override func hitTest(_ point: NSPoint) -> NSView?", in: source)
+        #expect(hitTest.contains("TabDragHitTestDecision.claims("))
+        let mask = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "sourceOperationMaskFor context: NSDraggingContext", in: source)
+        #expect(mask.contains("TabDragOperationMask.offered(for: context)"))
+    }
+
+    /// The mask's own two branches, read where they are written. The
+    /// NEGATIVE is the outside one — an empty offer is what stops another
+    /// application accepting the drop — and the positive beside it is the
+    /// within-application branch naming `.move`, because a function that
+    /// offered nothing anywhere would satisfy the negative perfectly and
+    /// break every drag in the app (CLAUDE.md, "Guards that name what they
+    /// watch").
+    @Test func theMaskOffersNothingOutsideAndAMoveWithin() throws {
+        let source = try Self.strictSource(of: Self.dragSourcePath)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "static func offered(for context: NSDraggingContext) -> NSDragOperation",
+            in: source)
+        #expect(
+            body.contains("case .outsideApplication: return []"),
+            "the outside branch no longer refuses every operation")
+        #expect(
+            body.contains("case .withinApplication: return [.move, .copy]"),
+            "the within-application branch does not offer a move")
+    }
+
+    /// A drag begun on a tab of a window that is not in front must not cost
+    /// two gestures (fix round 1). See the override's own doc comment for
+    /// what it does and does not change about activation.
+    @Test func theOverlayAcceptsTheFirstMouse() throws {
+        let source = try Self.strictSource(of: Self.dragSourcePath)
+        #expect(source.contains("override func acceptsFirstMouse("))
+    }
+
     /// And the other end of that route: the strip's detach callback is
     /// wired to the window's existing "move this tab to a window of its
     /// own" path, the same one the tab context menu and the Window menu
@@ -673,5 +716,98 @@ struct TabDragTypeDeclarationTests {
             let close = script.range(of: "</dict>", range: hit.upperBound..<script.endIndex)
         else { return nil }
         return String(script[open.upperBound..<close.lowerBound])
+    }
+}
+
+
+/// The two rules the AppKit overlay applies before it does anything at
+/// all: which mouse events it takes for itself, and what it offers a
+/// destination. Both were `switch`es inside `NSView` overrides until fix
+/// round 1 (2026-09-05); both were wrong in a way no test could reach,
+/// which is the argument for pulling them out.
+@Suite("What the tab's drag source claims and offers")
+struct TabDragSourceDecisionTests {
+
+    // MARK: - Which events the overlay claims
+
+    /// The gesture it exists for. Without the drag types it can never
+    /// recognise a drag; without the down it never sees one begin.
+    @Test func aPlainLeftButtonEventIsClaimed() {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseDragged, .leftMouseUp] {
+            #expect(TabDragHitTestDecision.claims(eventType: type, modifiers: []))
+        }
+    }
+
+    /// **Fix round 1's first finding.** A control-click is delivered as a
+    /// `.leftMouseDown` carrying `.control`, and macOS treats it as a
+    /// secondary click: it is how the context menu is opened on a
+    /// one-button mouse, and how many people open it on a trackpad. The
+    /// overlay used to claim it by event type alone, `mouseDown` then
+    /// swallowed it, and control-clicking a tab's label opened nothing.
+    ///
+    /// Every left-button type is checked, not just the down: the modifier
+    /// is carried on all of them, and claiming the drag or the up of a
+    /// control-click would leave the overlay half-in on a gesture it must
+    /// stay out of entirely.
+    @Test func aControlHeldLeftButtonEventIsLeftToTheContextMenu() {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseDragged, .leftMouseUp] {
+            #expect(
+                TabDragHitTestDecision.claims(eventType: type, modifiers: .control) == false,
+                "\(type) with .control must reach the SwiftUI context menu")
+        }
+    }
+
+    /// The other modifiers are not secondary clicks and must not be
+    /// mistaken for one — a ⌘- or ⇧-click on a tab is still a click on a
+    /// tab. Stated because "ignore modified clicks" is the obvious wrong
+    /// generalisation of the rule above.
+    @Test func otherModifiersDoNotChangeWhatIsClaimed() {
+        for modifiers in [NSEvent.ModifierFlags.command, .shift, .option, [.command, .shift]] {
+            #expect(
+                TabDragHitTestDecision.claims(eventType: .leftMouseDown, modifiers: modifiers),
+                "\(modifiers) is not a secondary click")
+        }
+    }
+
+    /// Everything the overlay must stay invisible to: the right-click that
+    /// opens the same context menu, the moves that drive the tab's hover
+    /// state (and therefore whether its ✕ is on screen at all), and a
+    /// `hitTest` AppKit asks outside any event — a cursor-rect update, say.
+    @Test func nonLeftButtonEventsAndNoEventAtAllAreNotClaimed() {
+        for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp, .mouseMoved, .scrollWheel] {
+            #expect(TabDragHitTestDecision.claims(eventType: type, modifiers: []) == false)
+        }
+        #expect(TabDragHitTestDecision.claims(eventType: nil, modifiers: []) == false)
+    }
+
+    // MARK: - What the source offers
+
+    /// **Fix round 1's second finding, and the worse one.** SwiftUI's
+    /// `dropDestination` negotiates its own operation and has historically
+    /// asked for `.copy`. A source offering `.move` alone can therefore be
+    /// refused by one of this app's OWN strips: the drop is declined, the
+    /// session ends with an empty operation, and if the pointer is outside
+    /// the source window's frame — which it is, for every drop on another
+    /// window — `TabDropOutsidePlan` reads that as "landed nowhere" and
+    /// detaches into a third window instead of moving. Offering both leaves
+    /// the destination free to pick either.
+    ///
+    /// Asserted as containment of each, not as equality with a literal
+    /// pair: what matters is that neither is withheld, and an equality here
+    /// would go red on a future third operation that harmed nothing.
+    @Test func withinTheApplicationBothMoveAndCopyAreOffered() {
+        let offered = TabDragOperationMask.offered(for: .withinApplication)
+        #expect(offered.contains(.move))
+        #expect(offered.contains(.copy))
+    }
+
+    /// The source's own half of the Finder fix, unchanged by round 1: with
+    /// no operation offered, no other application can accept the drop
+    /// whatever it makes of the pasteboard type. This is the negative, and
+    /// the check above it is the positive beside it — a mask function that
+    /// returned `[]` for everything would satisfy an empty-outside test
+    /// perfectly.
+    @Test func outsideTheApplicationNothingIsOffered() {
+        #expect(TabDragOperationMask.offered(for: .outsideApplication).isEmpty)
     }
 }
