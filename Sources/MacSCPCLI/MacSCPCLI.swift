@@ -73,7 +73,22 @@ struct MacSCPCLI: AsyncParsableCommand {
     /// `.success`, while every error `CLIErrorMapping` knows about maps to a
     /// non-zero `CLIExitCode` — so `.success` here can only mean "hand this
     /// to ArgumentParser's own handling", never one of our own errors.
-    static func main() async {
+    ///
+    /// Explicitly `nonisolated`: an `@main` type's `static func main()` is
+    /// otherwise treated like top-level code in a `main.swift` file and
+    /// implicitly runs on the main actor. `asyncParseAsRoot()` itself is a
+    /// nonisolated `AsyncParsableCommand` extension method, so without this
+    /// annotation the `await` below would resume on the main actor and hand
+    /// the non-Sendable `any ParsableCommand` it returns across that
+    /// isolation boundary — the warning this annotation removes (measured
+    /// on CI, Swift 6.1.2: `MacSCPCLI.swift:82:37`, "non-sendable result
+    /// type 'any ParsableCommand' cannot be sent from nonisolated context in
+    /// call to static method 'asyncParseAsRoot'"; the local 6.3.3 toolchain
+    /// does not diagnose it). Marking `main()` nonisolated instead keeps
+    /// parsing and running in the same, already-nonisolated context the
+    /// value is produced in, so it never crosses an isolation boundary at
+    /// all — nothing here needs `Sendable` or an unsafe opt-out.
+    nonisolated static func main() async {
         if let name = unrecognizedHelpSubcommand(in: CommandLine.arguments) {
             OutputFormatter.note("Unknown subcommand '\(name)'")
             Foundation.exit(CLIExitCode.usage.rawValue)
