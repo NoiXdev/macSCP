@@ -112,6 +112,22 @@ struct MacSCPCommands: Commands {
                 tabCommands?.moveTabToNewWindow?()
             }
             .disabled(tabCommands?.canMoveTabToNewWindow != true)
+            // "Keep on Top" (Detachable Tabs plan, Task 4): a checkmark
+            // item rather than a plain `Button`, so the item itself shows
+            // the focused window's sticky state — the same information a
+            // `Toggle`'s binding would show inline in an ordinary view.
+            // The binding's getter/setter both go through the focused
+            // `tabCommands` box: the getter shows what IS true, the setter
+            // never computes the next value itself, it only asks the
+            // focused window to flip it (`toggleKeepOnTop`), the same
+            // "menu never owns the state" shape `moveTabToNewWindow` above
+            // it uses. Disabled — not absent — with no window focused, the
+            // same rule "New Tab"/"Close Tab" follow above.
+            Toggle(L10n.string("window.keepOnTop", "Keep on Top"), isOn: Binding(
+                get: { tabCommands?.keepOnTop ?? false },
+                set: { _ in tabCommands?.toggleKeepOnTop?() }
+            ))
+            .disabled(tabCommands == nil)
             Divider()
             ForEach(1...9, id: \.self) { n in
                 Button(String(format: L10n.string("menu.selectTab", "Tab %lld"), n)) {

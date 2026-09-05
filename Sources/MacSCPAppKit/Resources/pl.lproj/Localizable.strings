@@ -449,6 +449,7 @@
 /* Windows: the tab strip's context menu and the Window menu
    resolve this one key for the same action. */
 "window.moveTabToNewWindow" = "Przenieś kartę do nowego okna";
+"window.keepOnTop" = "Zawsze na wierzchu";
 "tabs.closeOthers.title" = "Zamknąć pozostałe karty?";
 "tabs.alreadyOpen.title" = "Ta sesja jest już otwarta";
 "tabs.alreadyOpen.message %@" = "„%@” jest już otwarta w karcie.";

@@ -219,6 +219,15 @@ struct ContentView: View {
     /// Handed over by `WindowAccessor` — basis for the active resize calls
     /// on state transitions (M5c/T0).
     @State var window: NSWindow?
+    /// "Keep on Top" (Detachable Tabs plan, Task 4): per window, not
+    /// persisted — Task 5's restoration seed is where a sticky flag would
+    /// travel across launches, and this task adds nothing there. Applied
+    /// to `window` through `WindowLevelPlan.level(keepOnTop:)` in
+    /// `windowChrome(_:)`'s `.onChange` and in the `WindowAccessor` closure
+    /// itself, and mirrored onto `tabCommands.keepOnTop` the same way
+    /// `isActiveTabConnected` mirrors below — see `body`'s `.onChange(of:
+    /// keepOnTop, …)`.
+    @State var keepOnTop = false
     /// What this window was opened with (Detachable Tabs plan, Task 2):
     /// `nil` for the PRIMARY window — the one SwiftUI opens for the
     /// value-keyed `WindowGroup` with no value at launch — and a real seed
@@ -857,6 +866,18 @@ struct ContentView: View {
             // enabled while the click cannot land.
             .onChange(of: activeTabTerminalToggleIsUnlocked, initial: true) { _, newValue in
                 tabCommands.activeTabTerminalToggleIsUnlocked = newValue
+            }
+            // Keeps `tabCommands.keepOnTop` in sync (Detachable Tabs plan,
+            // Task 4) — same mirror shape as the three above, and applies
+            // `WindowLevelPlan`'s decision to THIS window's `NSWindow` in
+            // the same place: `window` may still be nil at the `initial:
+            // true` firing (before `WindowAccessor` has resolved it), in
+            // which case this is a no-op and the `WindowAccessor` closure
+            // in `windowChrome(_:)` is what applies the level once the
+            // window exists.
+            .onChange(of: keepOnTop, initial: true) { _, newValue in
+                tabCommands.keepOnTop = newValue
+                window?.level = WindowLevelPlan.level(keepOnTop: newValue)
             }
             // Mirrors `hiddenImportAliases.count` into the command bridge
             // (M11f/T2, same rationale as `isActiveTabConnected` above):

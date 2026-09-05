@@ -774,6 +774,14 @@ extension ContentView {
         tabCommands.moveTabToNewWindow = {
             moveToNewWindow(tabsModel.activeTab)
         }
+        // "Keep on Top" (Detachable Tabs plan, Task 4) — the menu never
+        // flips `keepOnTop` itself, it only asks THIS window to; the
+        // `.onChange(of: keepOnTop, …)` in `ContentView.body` is what
+        // mirrors the new value back onto `tabCommands.keepOnTop` and
+        // applies it to `window.level`.
+        tabCommands.toggleKeepOnTop = {
+            keepOnTop.toggle()
+        }
         tabCommands.newTab = {
             addTabRegistering(makeTab())
         }

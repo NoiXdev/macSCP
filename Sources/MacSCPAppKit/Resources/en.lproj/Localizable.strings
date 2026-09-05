@@ -446,6 +446,7 @@
 /* Windows: the tab strip's context menu and the Window menu
    resolve this one key for the same action. */
 "window.moveTabToNewWindow" = "Move Tab to New Window";
+"window.keepOnTop" = "Keep on Top";
 "tabs.closeOthers.title" = "Close other tabs?";
 "tabs.alreadyOpen.title" = "This session is already open";
 "tabs.alreadyOpen.message %@" = "“%@” is already open in a tab.";

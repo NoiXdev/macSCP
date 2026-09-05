@@ -447,6 +447,7 @@
 /* Windows: the tab strip's context menu and the Window menu
    resolve this one key for the same action. */
 "window.moveTabToNewWindow" = "Tab in neues Fenster verschieben";
+"window.keepOnTop" = "Immer im Vordergrund";
 "tabs.closeOthers.title" = "Andere Tabs schließen?";
 "tabs.alreadyOpen.title" = "Diese Sitzung ist schon offen";
 "tabs.alreadyOpen.message %@" = "„%@“ ist bereits in einem Tab geöffnet.";

@@ -172,6 +172,18 @@ final class TabCommands {
     /// until the mirror has run, and the entry is greyed rather than
     /// enabled-and-inert in the moment before it does.
     var canMoveTabToNewWindow = false
+    /// "Keep on Top" (Detachable Tabs plan, Task 4): mirrors `ContentView`'s
+    /// own `keepOnTop` `@State`, the same way `canMoveTabToNewWindow` mirrors
+    /// its tab count — this Scene cannot see that `@State` directly. The
+    /// Window menu's checkmark reads this rather than a constant, so it
+    /// always shows the FOCUSED window's sticky state, not whichever
+    /// window last changed it.
+    var keepOnTop = false
+    /// Toggles `ContentView`'s `keepOnTop` for the window this bridge
+    /// belongs to — same bridge shape as `moveTabToNewWindow` above: the
+    /// menu never flips `keepOnTop` itself, it only asks the focused
+    /// window to.
+    var toggleKeepOnTop: (() -> Void)?
 }
 
 /// The Settings window's route into a main window, and the one bridge in

@@ -450,6 +450,7 @@
 /* Windows: the tab strip's context menu and the Window menu
    resolve this one key for the same action. */
 "window.moveTabToNewWindow" = "Déplacer l'onglet dans une nouvelle fenêtre";
+"window.keepOnTop" = "Toujours au premier plan";
 "tabs.closeOthers.title" = "Fermer les autres onglets ?";
 "tabs.alreadyOpen.title" = "Cette session est déjà ouverte";
 "tabs.alreadyOpen.message %@" = "« %@ » est déjà ouvert dans un onglet.";

@@ -259,6 +259,13 @@ extension ContentView {
             // plan, Task 2 fix round 2) — see `applyFrameAutosave(to:)`.
             applyFrameAutosave(to: $0)
             updateMainWindowPresence()
+            // "Keep on Top" (Detachable Tabs plan, Task 4): applied again
+            // on every resolution, not just once — `WindowAccessor` calls
+            // back on ordinary body updates too (see its own doc comment),
+            // and a freshly resolved `NSWindow` has AppKit's own default
+            // level until this runs, regardless of what `keepOnTop`
+            // already holds.
+            $0?.level = WindowLevelPlan.level(keepOnTop: keepOnTop)
         })
         // Tells the Settings window when this window goes away, so its
         // "Manage Data" entries that route HERE can disable themselves
