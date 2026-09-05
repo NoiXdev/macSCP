@@ -87,9 +87,17 @@ struct TabRegistryNoTeardownGuardTests {
 
     /// Matches `func acceptDroppedTab(_ payload: TabDragPayload)` in
     /// `ContentView+Lifecycle.swift` — the window-side half of a
-    /// cross-window drop, and the one function in that file this suite
-    /// scans NEGATIVELY (the file as a whole is its positive control).
+    /// cross-window drop, and one of two functions in that file this
+    /// suite scans NEGATIVELY (the file as a whole is its positive
+    /// control).
     private static let acceptDropDeclaration = "func acceptDroppedTab(_ payload: TabDragPayload)"
+
+    /// Matches `func moveToNewWindow(_ tab: SessionTab)` in
+    /// `ContentView+Lifecycle.swift` — the menu/context-menu route for
+    /// "Move Tab to New Window", the other function this suite scans
+    /// NEGATIVELY (final review fix, Detachable Tabs plan: the drag route
+    /// through `acceptDroppedTab` was covered, this menu route was not).
+    private static let moveToNewWindowDeclaration = "func moveToNewWindow(_ tab: SessionTab)"
 
     /// Matches `public func detach(tabID: UUID) -> Tab?` in
     /// `TabsViewModel.swift` — the brace that follows it opens the body
@@ -184,6 +192,32 @@ struct TabRegistryNoTeardownGuardTests {
             "the scanned span is not the cross-window drop handler")
         for name in Self.forbidden {
             #expect(!body.contains(name), "acceptDroppedTab(_:)'s body contains \"\(name)\"")
+        }
+    }
+
+    /// `moveToNewWindow(_:)`'s body — the menu/context-menu route for
+    /// "Move Tab to New Window" (final review fix, Detachable Tabs plan:
+    /// the drag route through `acceptDroppedTab` was covered here, this
+    /// menu route was not). Same shape as the cross-window drop handler
+    /// above: one positive naming the sequence it delegates to, then the
+    /// four negatives.
+    ///
+    /// Sensitivity checked by hand: planting
+    /// `tab.transferQueue.cancelAll(reason: .userRequested)` right after
+    /// `let ownWindowID = windowID` inside this function's body turned
+    /// `theMoveToNewWindowMenuRouteNeverCallsTeardown` red with
+    /// `moveToNewWindow(_:)'s body contains "cancelAll("`; reverting the
+    /// plant turned the suite green again, nothing else in this file
+    /// changed between the two runs.
+    @Test func theMoveToNewWindowMenuRouteNeverCallsTeardown() throws {
+        let source = try Self.strictSource(of: Self.lifecycleFile)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: Self.moveToNewWindowDeclaration, in: source)
+        #expect(
+            body.contains("TabDetachSequence.move("),
+            "the scanned span is not moveToNewWindow(_:)'s body")
+        for name in Self.forbidden {
+            #expect(!body.contains(name), "moveToNewWindow(_:)'s body contains \"\(name)\"")
         }
     }
 

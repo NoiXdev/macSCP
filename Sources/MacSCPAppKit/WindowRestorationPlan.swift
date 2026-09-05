@@ -12,15 +12,21 @@ import macSCPCore
 /// store and the views ask this rather than each spelling `if flag`
 /// somewhere of their own.
 enum WindowRestorationPlan {
-    /// Whether a closing window writes its description to `windows.json`.
+    /// Whether `windows.json` is written for this quit.
     ///
-    /// A window that closes with the setting off writes nothing AND
-    /// clears nothing: the file is left exactly as it was found. That is
-    /// deliberate and it is the reason this is a write decision rather
-    /// than a "keep the file in step" one — an old file must not be
-    /// half-updated by a run that is not restoring. What keeps stale
-    /// windows from coming back when the setting is turned on again is
-    /// the read side: a launch that restores CONSUMES the file.
+    /// The file is written exactly once, from
+    /// `AppDelegate.applicationWillTerminate`, from the descriptions
+    /// `TabRegistry.describeAllWindows()` hands back for every window
+    /// still registered at that moment — REPLACING whatever the file held
+    /// before, never appended to as windows close during the session (an
+    /// earlier version wrote on each window's `willClose` instead, which
+    /// described exactly the wrong set: ⌘Q closes no windows, so the
+    /// windows actually on screen at quit were never described, while
+    /// every window the user had deliberately closed mid-session
+    /// accumulated in the file — see `WindowRestorationStore.replace(_:
+    /// whenEnabled:)`'s own doc comment). With the setting off the file is
+    /// CLEARED rather than left alone: a seed file describes one quit, and
+    /// a stale one has no owner once restoration is off.
     static func shouldWrite(flag: Bool) -> Bool { flag }
 
     /// Whether a launch reads `windows.json` at all.
@@ -45,9 +51,11 @@ enum WindowRestorationPlan {
     }
 
     /// The descriptions that need a window opened for them, in the order
-    /// their windows closed: everything except the one
-    /// `primarySeed(flag:stored:)` answered with, which is already on
-    /// screen.
+    /// the registry's describers were registered — the order the windows
+    /// THEMSELVES appeared during the quit that wrote the file, not the
+    /// order any of them closed (`TabRegistry.describeAllWindows()`) —
+    /// everything except the one `primarySeed(flag:stored:)` answered
+    /// with, which is already on screen.
     static func seedsToOpen(flag: Bool, stored: [WindowSeed]) -> [WindowSeed] {
         guard shouldRead(flag: flag) else { return [] }
         guard let primary = primarySeed(flag: flag, stored: stored) else { return stored }
@@ -75,6 +83,26 @@ enum WindowRestorationPlan {
         override: PaneVisibility?, restored: PaneVisibility?, stored: PaneVisibility
     ) -> PaneVisibility {
         override ?? restored ?? stored
+    }
+
+    /// Which stored session a tab's restoration description names (final
+    /// review fix, Detachable Tabs plan).
+    ///
+    /// `active` — `SessionTab.activeStoredSessionID` — wins when the tab is
+    /// connected; it is the more recent statement of where the tab points.
+    /// `restored` — `SessionTab.restoredSessionID` — is the fallback for a
+    /// tab that came back from `windows.json` and was never connected:
+    /// `activeStoredSessionID` is written only by a connect, so without
+    /// this fallback a tab restored once and then quit again untouched
+    /// described itself with `sessionID: nil` and came back blank a
+    /// second time. The designed path is a click that connects and
+    /// replaces the restored pointer with a live one; nothing forces that
+    /// click before a second quit, so the fallback covers the tab that
+    /// never got it. `nil` when neither is set — an ad-hoc connection or
+    /// an untouched form, which `describeForRestoration(_:)` writes as an
+    /// empty tab on purpose.
+    static func sessionID(active: UUID?, restored: UUID?) -> UUID? {
+        active ?? restored
     }
 }
 

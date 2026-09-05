@@ -1172,14 +1172,26 @@ extension ContentView {
 
     /// One tab, as little of it as a later launch needs.
     ///
-    /// `activeStoredSessionID` is `nil` for an ad-hoc connection and for
-    /// an untouched form, and both come back as an empty tab — an ad-hoc
-    /// connection exists only in the form the user typed it into, and
-    /// writing its host and username to a file is the thing not saving a
-    /// session was meant to avoid.
+    /// The session id is `WindowRestorationPlan.sessionID(active:
+    /// restored:)`: `activeStoredSessionID` wins when the tab is
+    /// connected, and `restoredSessionID` — what THIS tab was itself
+    /// restored pointing at — is the fallback for a tab that came back
+    /// from `windows.json` and was never connected. Without the fallback
+    /// (final review, Detachable Tabs plan), a tab restored once and then
+    /// quit again untouched described itself with `sessionID: nil` and
+    /// came back blank a second time — `activeStoredSessionID` is written
+    /// only by a connect, and the designed path is a click that connects,
+    /// but nothing forces that click before a second quit.
+    ///
+    /// Both are `nil` for an ad-hoc connection and for an untouched form,
+    /// and the tab comes back empty either way — an ad-hoc connection
+    /// exists only in the form the user typed it into, and writing its
+    /// host and username to a file is the thing not saving a session was
+    /// meant to avoid.
     func describeForRestoration(_ tab: SessionTab) -> TabSeed {
         TabSeed(
-            sessionID: tab.activeStoredSessionID,
+            sessionID: WindowRestorationPlan.sessionID(
+                active: tab.activeStoredSessionID, restored: tab.restoredSessionID),
             paneVisibility: paneVisibilityForRestoration(of: tab))
     }
 
@@ -1193,11 +1205,14 @@ extension ContentView {
     /// what was on screen rather than a re-derivation that could disagree.
     ///
     /// A DISCONNECTED tab has no panes to read, so it answers with the
-    /// description it was itself restored with, if it was, and otherwise
-    /// with the default a session with no recorded preference gets. A tab
-    /// that came back from a restoration and was never connected therefore
-    /// keeps its description across a second quit instead of quietly
-    /// flattening to the default.
+    /// pane visibility it was itself restored with, if it was, and
+    /// otherwise with the default a session with no recorded preference
+    /// gets. A tab that came back from a restoration and was never
+    /// connected therefore keeps THIS — its pane visibility — across a
+    /// second quit instead of quietly flattening to the default;
+    /// `describeForRestoration(_:)` above answers the matching question
+    /// for which session the tab points at, through
+    /// `WindowRestorationPlan.sessionID(active:restored:)`.
     func paneVisibilityForRestoration(of tab: SessionTab) -> PaneVisibility {
         guard let session = tab.session else {
             return tab.restoredPaneVisibility ?? .filesOnly

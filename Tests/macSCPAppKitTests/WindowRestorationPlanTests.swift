@@ -118,6 +118,33 @@ struct WindowRestorationPlanTests {
             == PaneVisibility.bothVisible)
     }
 
+    // MARK: - Which session a restored tab's description names
+
+    /// A connected tab's live pointer wins over whatever it was restored
+    /// with — the more recent statement of where the tab points (final
+    /// review fix, Detachable Tabs plan).
+    @Test func aConnectedTabsActivePointerWinsOverItsRestoredOne() {
+        let active = UUID()
+        let restored = UUID()
+        #expect(WindowRestorationPlan.sessionID(active: active, restored: restored) == active)
+    }
+
+    /// The fallback this fix exists for: a tab restored once and never
+    /// connected has no `activeStoredSessionID` at all — without the
+    /// fallback to `restoredSessionID` it would describe itself as
+    /// `nil` and come back blank a second time.
+    @Test func aNeverConnectedRestoredTabKeepsItsRestoredSessionID() {
+        let restored = UUID()
+        #expect(WindowRestorationPlan.sessionID(active: nil, restored: restored) == restored)
+    }
+
+    /// An ad-hoc tab or an untouched form has neither pointer — the
+    /// description is `nil`, which `describeForRestoration(_:)` writes
+    /// as an empty tab on purpose.
+    @Test func aTabWithNeitherPointerDescribesAsNil() {
+        #expect(WindowRestorationPlan.sessionID(active: nil, restored: nil) == nil)
+    }
+
     // MARK: - Read once, at launch, and never again
 
     @Test func theLaunchHandsThePrimaryDescriptionOverExactlyOnce() {

@@ -155,7 +155,7 @@ broken one. A ceiling always can.
 - TOFU host-key handling is security-critical: a key **mismatch is a hard
   stop** (the user decider is never consulted); unknown keys require explicit
   consent; there is no accept-anything path.
-- One SSH connection per window; SFTP and the terminal shell multiplex over
+- One SSH connection per tab; SFTP and the terminal shell multiplex over
   it as child channels. Connection/session state belongs to the window scope,
   never to an app-wide singleton. Multi-window is here: a tab moves between
   windows carrying its connection, and the process-wide `TabRegistry` holds
