@@ -78,12 +78,22 @@ struct TabRegistryNoTeardownGuardTests {
     /// whole file below.
     private static let stripFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/TabStripView.swift")
+    /// Added by the drag-detach fix (2026-09-05): the tab's drag SOURCE is
+    /// now an AppKit view of this project's own, and its
+    /// `draggingSession(_:endedAt:operation:)` starts the third path a tab
+    /// can leave a window by. It reaches a route out to `moveToNewWindow`,
+    /// so it is exactly the kind of place a teardown call could be added
+    /// without any type refusing it.
+    private static let dragSourceFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/TabDragSourceView.swift")
 
     /// Matches the strip's drop modifier; the brace that follows it opens
-    /// the drop handler's own closure body. Task 3 kept the destination on
-    /// `String.self` — the payload is a JSON envelope carried as text — so
-    /// this anchor is the same text the reorder path has always used.
-    private static let dropDestinationDeclaration = ".dropDestination(for: String.self)"
+    /// the drop handler's own closure body. The destination reads the
+    /// payload STRUCT since the drag-detach fix (2026-09-05) — it used to
+    /// read `String.self`, which is what let the Finder accept the drag and
+    /// write a text clipping.
+    private static let dropDestinationDeclaration =
+        ".dropDestination(for: TabDragPayload.self)"
 
     /// Matches `func acceptDroppedTab(_ payload: TabDragPayload)` in
     /// `ContentView+Lifecycle.swift` — the window-side half of a
@@ -218,6 +228,31 @@ struct TabRegistryNoTeardownGuardTests {
             "the scanned span is not moveToNewWindow(_:)'s body")
         for name in Self.forbidden {
             #expect(!body.contains(name), "moveToNewWindow(_:)'s body contains \"\(name)\"")
+        }
+    }
+
+    /// `TabDragSourceView.swift` in full — the AppKit drag source, its
+    /// pasteboard writer and the one decision it takes
+    /// (`TabDropOutsidePlan`). A drag that ends nowhere hands the tab to
+    /// `moveToNewWindow`, which is a move like any other: the connection
+    /// travels with the tab and nothing here may end it.
+    ///
+    /// The two POSITIVE expectations come first, and are not decoration:
+    /// a whole-file `!contains` scan of a file that no longer exists under
+    /// this name, or that has been emptied, passes perfectly (CLAUDE.md,
+    /// "Guards that name what they watch"). They say the file really is
+    /// the drag source, by naming the AppKit call that starts a session and
+    /// the callback that reports one ended.
+    @Test func theDragSourceFileNeverCallsTeardown() throws {
+        let source = try Self.strictSource(of: Self.dragSourceFile)
+        #expect(
+            source.contains("beginDraggingSession("),
+            "the scanned file is not the tab's drag source")
+        #expect(
+            source.contains("endedAt screenPoint"),
+            "the drag source no longer reports where a session ended")
+        for name in Self.forbidden {
+            #expect(!source.contains(name), "TabDragSourceView.swift contains \"\(name)\"")
         }
     }
 

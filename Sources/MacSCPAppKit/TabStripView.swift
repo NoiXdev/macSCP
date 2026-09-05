@@ -19,6 +19,14 @@ struct TabStripView: View {
     /// tab and the chosen `TabMenuEntry` back to `ContentView`, which owns
     /// the tab lifecycle those actions run through.
     let onMenuEntry: (SessionTab, TabMenuEntry) -> Void
+    /// The THIRD way a tab leaves this window (drag-detach fix,
+    /// 2026-09-05): its drag ended where nothing accepted it, so it gets a
+    /// window of its own. The strip decides none of that — the route it is
+    /// handed is `ContentView.moveToNewWindow(_:)`, the same one the tab
+    /// context menu's "Move Tab to New Window" entry and the Window menu
+    /// already take, so a detached tab travels exactly one path however the
+    /// user asked for it.
+    let onDetachToNewWindow: (SessionTab) -> Void
     /// The one route out of a tab drop, in the only two things a drop
     /// knows: the id the payload carried, and the tab it was let go on.
     /// **No position travels this way**, which is what makes shifting one
@@ -63,6 +71,7 @@ struct TabStripView: View {
                             onClose: { onClose(tab) },
                             menuEntries: { menuEntries(tab) },
                             onMenuEntry: { entry in onMenuEntry(tab, entry) },
+                            onDetachToNewWindow: onDetachToNewWindow,
                             onReorder: onReorder,
                             windowID: windowID,
                             onDropFromOtherWindow: onDropFromOtherWindow)
@@ -202,38 +211,29 @@ enum TabIndicatorPlan {
 /// that defines it. Nothing between the gesture and the model holds an
 /// index, so nothing between them can shift one.
 enum TabDropPlan {
-    /// The tab a drop payload names, or `nil` when there is nothing in the
-    /// payload this strip could act on.
+    /// The tab a drop payload names, or `nil` for a drop that carried
+    /// nothing.
     ///
-    /// Two spellings answer this one question, and both are this strip's
-    /// own: the envelope a drag carries since Task 3 (`TabDragPayload`, tab
-    /// id plus source window, as JSON), and the bare uuid the strip dragged
-    /// before Task 3. Which of the two arrived says nothing about the tab —
-    /// only about where the drag started — so it is answered here, once,
-    /// for every caller.
+    /// **There is only one spelling left to read.** Until 2026-09-05 the
+    /// destination took `String`, and this function told three of them
+    /// apart: the JSON envelope, the bare uuid the strip dragged before
+    /// Task 3, and everything else. The destination now takes
+    /// `TabDragPayload` itself over a `UTType` of this app's own, so the
+    /// system decides what may arrive here at all — a line of text, a file,
+    /// a session row from the sidebar (`SidebarDragPayload`, a `String`)
+    /// reach no destination on this strip and no closure of ours runs for
+    /// them. That is a stronger refusal than the parse that used to stand
+    /// here, and it is the same change that stopped the Finder accepting
+    /// the drag (see `TabDragPayload`).
     ///
-    /// **The session sidebar is not one of them, and never was.**
-    /// `SidebarDragPayload` prefixes its uuid (`macscp.sidebar.session:` /
-    /// `macscp.sidebar.group:`), so a sidebar row dropped on a tab parses
-    /// as neither spelling and this function answers `nil` for it. It
-    /// therefore never reaches `TabsViewModel.move(tabID:onto:)` at all:
-    /// `route(payload:ownWindow:)` answers `.none` and the drop closure
-    /// returns `false`. Verified against `SidebarDrag.swift` on 2026-09-05;
-    /// the doc comment that used to stand here said the opposite, and had
-    /// said it since before this strip could cross windows.
-    ///
-    /// A drag carries one tab, so anything past the first item is a payload
-    /// this gesture did not produce; the first item is what is read. What
-    /// is NOT filtered here is a well-formed uuid from somewhere else
-    /// entirely: it names no tab this strip renders, and
-    /// `move(tabID:onto:)` leaves the order alone for an id it does not
-    /// know. Answering `nil` for those would trade one no-op for another,
-    /// at the price of a second rule about which ids are real — and the
-    /// tabs the strip renders are not this type's to know.
-    static func draggedTabID(from payload: [String]) -> UUID? {
-        guard let first = payload.first else { return nil }
-        if let carried = TabDragPayload(encoded: first) { return carried.tabID }
-        return UUID(uuidString: first)
+    /// A drag carries one tab, so anything past the first item belongs to a
+    /// gesture this strip did not start; the first item is what is read.
+    /// What is still NOT filtered is an id naming no tab this strip
+    /// renders: `move(tabID:onto:)` leaves the order alone for an id it
+    /// does not know, and the tabs the strip renders are not this type's to
+    /// know.
+    static func draggedTabID(from payload: [TabDragPayload]) -> UUID? {
+        payload.first?.tabID
     }
 
     /// What a drop on this strip should DO — the whole decision, taken from
@@ -245,23 +245,20 @@ enum TabDropPlan {
     /// is, and reading it is the last moment anything can be decided. The
     /// three answers are the three things a drop can be worth.
     ///
-    /// **A bare uuid is still the reorder.** It is what this strip dragged
-    /// before Task 3, and it names no window, so it cannot be a move
-    /// between two. Nothing else on this surface produces one: a session
-    /// row from the sidebar carries a prefixed spelling
-    /// (`SidebarDragPayload`), which parses as neither the envelope nor a
-    /// uuid, so it lands in `.none` and the drop is refused outright.
+    /// **`.none` is now only the empty drop.** Since the destination reads
+    /// this app's own type, nothing a user can carry from elsewhere — a
+    /// line of text, a file, a session row from the sidebar — reaches this
+    /// function at all; the system refuses it a step earlier. What remains
+    /// is a payload this strip produced, and the one question left is which
+    /// window produced it.
     ///
-    /// Built ON `draggedTabID(from:)` rather than beside it: everything
-    /// about WHICH tab a payload names — the envelope, the bare uuid, only
-    /// the first item — is that function's, and stays pinned by
+    /// Built ON `draggedTabID(from:)` rather than beside it: which tab a
+    /// payload names is that function's, and stays pinned by
     /// `TabDropPlanTests` alone. What is added here is one comparison, and
     /// it is the only thing this function decides.
-    static func route(payload: [String], ownWindow: WindowID) -> TabDropRoute {
+    static func route(payload: [TabDragPayload], ownWindow: WindowID) -> TabDropRoute {
         guard let first = payload.first else { return .none }
-        if let carried = TabDragPayload(encoded: first), carried.sourceWindowID != ownWindow {
-            return .acrossWindows(carried)
-        }
+        if first.sourceWindowID != ownWindow { return .acrossWindows(first) }
         guard let id = draggedTabID(from: payload) else { return .none }
         return .reorder(id)
     }
@@ -430,11 +427,10 @@ private struct TabItemView: View {
     /// computed for every tab on every repaint.
     let menuEntries: () -> [TabMenuEntry]
     let onMenuEntry: (TabMenuEntry) -> Void
-    /// Handed straight through from the strip — see `TabStripView`'s own
-    /// property for what the two values mean and who acts on them.
+    /// Handed straight through from the strip, like the three below it —
+    /// `TabStripView`'s own properties document them.
+    let onDetachToNewWindow: (SessionTab) -> Void
     let onReorder: (UUID, SessionTab) -> Void
-    /// Both handed straight through from the strip as well; `TabStripView`'s
-    /// own properties document them.
     let windowID: WindowID
     let onDropFromOtherWindow: (TabDragPayload) -> Void
 
@@ -475,26 +471,23 @@ private struct TabItemView: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            livenessDot
-            switch indicator {
-            case .none: EmptyView()
-            case .upload: dot(DesignTokens.localAmber, pulse: true)
-            case .download: dot(DesignTokens.remoteBlue, pulse: true)
-            case .attention: dot(.red, pulse: false)
-            }
-            Text(tab.displayTitle)
-                .font(.system(size: 12, weight: isActive ? .semibold : .regular))
-                .italic(!tab.isConnected)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(
-                    isActive ? DesignTokens.ink
-                    : tab.isConnected ? DesignTokens.inkSecondary : DesignTokens.inkTertiary)
-            // Protocol badge (M12/T7b): same small-label typography as the
-            // sidebar's own badge — "SSH"/"S3" from the backend descriptor.
-            Text(kindBadgeLabel)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(DesignTokens.inkTertiary)
+            // The label and the close button are separated so that the drag
+            // source can lie over the first without lying over the second.
+            // An `NSView` that answers `hitTest` takes the mouse event
+            // outright, and a ✕ underneath one would never be clickable —
+            // see `TabDragSourceView`'s own doc comment. The inner stack
+            // holds exactly what the outer one used to hold before the
+            // button, in the same order and at the same spacing, and the
+            // title is still the only flexible child, so the layout is the
+            // one that was there.
+            label
+                .contentShape(Rectangle())
+                .overlay {
+                    TabDragSourceView(
+                        makePayload: dragPayload,
+                        onActivate: onActivate,
+                        onDetach: { onDetachToNewWindow(tab) })
+                }
             if isHovering {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -551,18 +544,22 @@ private struct TabItemView: View {
         // nothing there to drop onto, so no destination is ever computed
         // for it.
         //
-        // What a tab dragged OUT of the app can do is bounded rather than
-        // blocked, and the distinction is worth stating: the payload is a
-        // string, so the system lets it land wherever text is accepted, and
-        // the Finder will make a clipping carrying it. No path there opens a
-        // window, moves a session, or touches this strip — the drop that
-        // moves a tab is the one that lands on another WINDOW'S strip, and
-        // it goes through the registry. The reverse direction is refused for
-        // the mirror-image reason: the session sidebar reads its drops
-        // through `SidebarDragPayload`, which this envelope is not, so a tab
-        // dropped there names no row.
-        .draggable(dragPayload())
-        .dropDestination(for: String.self) { payload, _ in
+        // What a tab dragged OUT of the app does is no longer bounded but
+        // refused, which is the drag-detach fix of 2026-09-05. The payload
+        // used to be a string: the system let it land wherever text was
+        // accepted, and the Finder wrote a clipping carrying it while no
+        // window opened. It is now a type of this app's own, offered under
+        // no operation at all outside the process, and a drag that ends
+        // where nothing took it hands the tab to a window of its own
+        // instead. `TabDragPayload` and `TabDragSourceView` carry the whole
+        // reasoning; the drag SOURCE is the AppKit overlay attached above,
+        // not a modifier here.
+        //
+        // The reverse direction stays refused for the mirror-image reason:
+        // the session sidebar reads its drops through `SidebarDragPayload`,
+        // a string, which this envelope is not, so a tab dropped there names
+        // no row.
+        .dropDestination(for: TabDragPayload.self) { payload, _ in
             // Reads the payload and routes; decides nothing else. Where this
             // tab sits is `TabsViewModel.move(tabID:onto:)`'s answer, and
             // what a tab arriving from another window costs is
@@ -600,6 +597,36 @@ private struct TabItemView: View {
         .accessibilityValue(accessibilityState)
     }
 
+    /// Everything in the tab except the close button: the two dots, the
+    /// title and the protocol badge. Greedy, so it takes the width the
+    /// close button leaves and the title inside it truncates exactly as it
+    /// did while these were the outer stack's own children.
+    @ViewBuilder
+    private var label: some View {
+        HStack(spacing: 7) {
+            livenessDot
+            switch indicator {
+            case .none: EmptyView()
+            case .upload: dot(DesignTokens.localAmber, pulse: true)
+            case .download: dot(DesignTokens.remoteBlue, pulse: true)
+            case .attention: dot(.red, pulse: false)
+            }
+            Text(tab.displayTitle)
+                .font(.system(size: 12, weight: isActive ? .semibold : .regular))
+                .italic(!tab.isConnected)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundStyle(
+                    isActive ? DesignTokens.ink
+                    : tab.isConnected ? DesignTokens.inkSecondary : DesignTokens.inkTertiary)
+            // Protocol badge (M12/T7b): same small-label typography as the
+            // sidebar's own badge — "SSH"/"S3" from the backend descriptor.
+            Text(kindBadgeLabel)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(DesignTokens.inkTertiary)
+        }
+    }
+
     /// This tab's surface, decided by `TabBackgroundPlan` — see that type's
     /// own doc comment for the precedence, and for what a highlight does
     /// and does not promise.
@@ -615,19 +642,20 @@ private struct TabItemView: View {
     /// strip can learn WHICH tab is being carried, because a drop
     /// destination is told only that something is over it.
     ///
-    /// `draggable(_:)` takes its payload as an `@autoclosure @escaping`
-    /// closure, so this runs when a drag begins rather than when the body
-    /// is built. What happens if that ever stops holding is
-    /// `TabDragOrigin`'s doc comment, and it was the reason for the shape
-    /// that type has.
+    /// Handed to `TabDragSourceView` as a function rather than a value, so
+    /// it runs when a drag actually begins rather than when the body is
+    /// built. That is the same timing `draggable(_:)`'s `@autoclosure
+    /// @escaping` payload had, and it is why `TabDragOrigin` is a box
+    /// rather than `@State` — see that type's doc comment.
     ///
-    /// Since Task 3 it carries the window as well as the tab — see
+    /// Since Task 3 it carries the window as well as the tab (see
     /// `TabDragPayload` for why the source window has to travel with the
-    /// drag, and for why it travels as text rather than as a type of its
-    /// own.
-    private func dragPayload() -> String {
+    /// drag); since 2026-09-05 it carries them as that struct rather than
+    /// as its JSON text, which is what stopped the Finder accepting the
+    /// drag.
+    private func dragPayload() -> TabDragPayload {
         dragOrigin.draggedTabID = tab.id
-        return TabDragPayload(tabID: tab.id, sourceWindowID: windowID).encoded()
+        return TabDragPayload(tabID: tab.id, sourceWindowID: windowID)
     }
 
     /// "SSH"/"S3" (M12/T7b) — reads `tab.connectionViewModel.kind`, the

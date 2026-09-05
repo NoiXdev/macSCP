@@ -118,11 +118,15 @@ CLI completion → connection tools → FTP/FTPS → SMB) stands first.
     connection untouched; a per-window "Keep on Top" holds a window above
     the rest; an emptied window closes unless it is the app's last one;
     windows can be restored, disconnected, at the next launch behind a
-    default-off setting. Full details, the accepted limits (drop-outside
-    detach blocked by the deployment target; a moved tab can be
-    permanently parked if its new window never appears) and the sight
-    checks are in the `docs/BACKLOG.md` "Interface" row for this design
-    doc.
+    default-off setting. Drop-outside detach was out of scope for that
+    plan and blocked by the deployment target at the time; it shipped
+    separately on 2026-09-05 by moving the tab's drag source to AppKit,
+    on a maintainer report that dragging a tab out wrote a file on the
+    Desktop and opened no window. Full details, the accepted limits (an
+    Escape-cancelled drag away from the source window also detaches; a
+    moved tab can be permanently parked if its new window never appears)
+    and the sight checks are in the `docs/BACKLOG.md` "Interface" rows
+    for this design doc.
 18. **S3: show the key's access level** — a probe of which S3 API rights
     the key has, in the context menu / connection info. Fits the
     connection-tools seam decided the same evening (per-protocol

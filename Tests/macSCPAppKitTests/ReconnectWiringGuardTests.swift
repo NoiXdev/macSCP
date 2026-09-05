@@ -406,10 +406,22 @@ struct ReconnectWiringGuardTests {
     /// transport somehow, and naming the libraries it must NOT use is a
     /// list that fails open on the first one nobody thought of.
     ///
-    /// Ten entries, counted while writing this sentence. Adding an eleventh
-    /// is a deliberate edit, which is the point — `import Citadel`,
+    /// Eleven entries, counted while writing this sentence. Adding a
+    /// twelfth is a deliberate edit, which is the point — `import Citadel`,
     /// `import NIOCore` or `import Network` appearing in the App layer is
     /// exactly the change that should stop a reader.
+    ///
+    /// The eleventh was `CoreTransferable`, added 2026-09-05 with the
+    /// drag-detach fix: `TabDragPayload` conforms to `Transferable` over a
+    /// `UTType` of this app's own, which is what stopped a dragged tab from
+    /// being accepted by the Finder as plain text. It is an interchange
+    /// framework — `Transferable`, `TransferRepresentation`,
+    /// `CodableRepresentation` and nothing that opens a socket — so it
+    /// reaches no transport, which is the property this list exists to
+    /// hold. It could have been avoided by importing `SwiftUI` instead
+    /// (which re-exports it) into a file that otherwise needs no view
+    /// framework; naming the smaller module was preferred to widening what
+    /// that file can see.
     ///
     /// Measured in the pass that made every backend's `connect`
     /// module-internal, because it is why this list outlived that change:
@@ -421,8 +433,9 @@ struct ReconnectWiringGuardTests {
     /// closed macSCP's own dials; this list is what stands in front of that
     /// one.
     private static let permittedImports: Set<String> = [
-        "AppKit", "Combine", "Foundation", "MacSCPAppKit", "Observation",
-        "SwiftTerm", "SwiftUI", "UniformTypeIdentifiers", "macSCPCore", "os",
+        "AppKit", "Combine", "CoreTransferable", "Foundation", "MacSCPAppKit",
+        "Observation", "SwiftTerm", "SwiftUI", "UniformTypeIdentifiers",
+        "macSCPCore", "os",
     ]
 
     private struct SanctionedSite {

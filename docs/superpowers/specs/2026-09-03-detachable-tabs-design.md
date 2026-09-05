@@ -103,9 +103,11 @@ today (teardown on close → `cancelAll` → `shutdown` → `disconnect`).
 - Drag between windows: the strip's drag payload becomes the tab id; a
   drop on another window's strip claims it; a drop outside any strip
   (on the desktop) is "detach" — the same path as the menu.
-- **Measured 2026-09-05 (Task 3): the drop-outside half is NOT built,
-  because macOS 15 offers no hook that reports it.** What was read, in
-  the macOS 26.5 SDK, against this package's `platforms:
+- **Measured 2026-09-05 (Task 3): the drop-outside half was NOT built
+  then, because macOS 15 offers no SwiftUI hook that reports it. It was
+  built on 2026-09-05, the same day, on a maintainer report — the AppKit
+  route this note names below is the one that shipped.** What was read,
+  in the macOS 26.5 SDK, against this package's `platforms:
   [.macOS(.v15)]`:
   - `SwiftUI.swiftinterface`: the only "this drag has ended" callback is
     `View.onDragSessionUpdated(_:)`, whose `DragSession.Phase` carries
@@ -125,20 +127,53 @@ today (teardown on close → `cancelAll` → `shutdown` → `disconnect`).
     `beginDraggingSession(with:event:source:)` itself and is its own
     `NSDraggingSource`. That REPLACES `.draggable` on the tab rather than
     sitting beside it — two drag sources on one view is two gestures
-    racing the same mouse-down — which means the in-strip reorder has to
-    be rebuilt on a hand-rolled AppKit drag, and that was out of scope
-    for a task whose constraint was that the reorder keep working
-    unchanged. (Corrected 2026-09-05: this paragraph also claimed the
-    existing wiring guard would fail such an overlay "by count". It
-    would not — the guard counts `.draggable(`, and an AppKit overlay
-    adds none. The reason above is the whole reason.)
+    racing the same mouse-down. (Corrected 2026-09-05: this paragraph
+    also claimed the existing wiring guard would fail such an overlay "by
+    count". It would not — the guard counted `.draggable(`, and an AppKit
+    overlay adds none. The reason above is the whole reason. The guard
+    now counts the AppKit source positively and `.draggable(` negatively
+    beside it, which is the shape that WOULD have noticed.)
 
-  Detach therefore stays on the menu ("Move Tab to New Window", tab
-  context menu and Window menu), which the plan permits. The work this
-  leaves open is one of: raise the minimum to macOS 26 and use
-  `onDragSessionUpdated`, or move the whole tab drag to AppKit and own
-  both halves. Neither is a small edit, and both should be decided
-  rather than drifted into.
+  **What was built, 2026-09-05, when the maintainer reported that
+  dragging a tab out wrote a file on the Desktop and opened no window.**
+  Both halves of that report were one cause — the drag carried a
+  `String`:
+
+  - `TabDragPayload` is `Transferable` over
+    `UTType(exportedAs: "dev.noix.macscp.tab")`, declared in
+    `scripts/package-app` as conforming to `public.data` with no text
+    conformance and no filename extension. A `String` payload exports
+    `public.utf8-plain-text`, which the Finder accepts by writing a text
+    clipping; this exports one private type, which nothing outside the
+    app imports and which names no file to write.
+  - The tab's drag source is `TabDragSourceView`, an
+    `NSViewRepresentable` over the tab's label (not over its ✕: an
+    `NSView` that answers `hitTest` takes the event outright, and a
+    button underneath one stops working). Its `NSView` answers `hitTest`
+    only for the three left-button event types, so the right-click that
+    opens the SwiftUI `.contextMenu` and the moves that drive `.onHover`
+    pass through to the SwiftUI content; a left press that never crosses
+    a 3 pt threshold is forwarded to the same `onActivate` the tab's tap
+    gesture calls.
+  - It offers `.move` within the application and `[]` outside it, so no
+    other app can accept the drop whatever it makes of the pasteboard
+    type — the source's own half of the Finder fix, beside the type's.
+  - `draggingSession(_:endedAt:operation:)` asks `TabDropOutsidePlan`:
+    an empty operation AND a point outside the source window's frame is
+    "this landed nowhere", and calls `ContentView.moveToNewWindow(_:)` —
+    the same path the tab context menu and the Window menu take. The
+    second condition keeps a drop into the strip's own blank area the
+    no-op it has always been.
+  - The drop destination reads `TabDragPayload.self` instead of
+    `String.self`. The in-strip reorder and the cross-window move are
+    unchanged in behaviour; what changed is that text, files and the
+    sidebar's own row payload now reach no closure at all.
+  - Accepted limits: an Escape-cancelled drag also ends with an empty
+    operation and AppKit reports no reason, so cancelling over the
+    desktop or over another window detaches; and the new window opens
+    where SwiftUI puts it, since `openWindow(value:)` takes no frame and
+    a position hint through `WindowSeed` was scoped out.
+
 - Last tab gone → the window closes, unless it is the last window
   (registry knows the window count).
 
@@ -164,6 +199,12 @@ is the user's click.
 - Registry: a move keeps the `BrowserSession` instance; teardown of a
   window tears down only its tabs; the last-window rule.
 - Strip: the drag payload carries the id; a drop claims across models.
+  Since the drag-detach fix: the payload declares exactly one content
+  type (its own) and the pasteboard writer offers exactly that one; the
+  bundle declares the same identifier with no text conformance and no
+  filename extension; `TabDropOutsidePlan` answers the detach question
+  over both its facts; and a source guard holds the strip to the AppKit
+  drag source with `.draggable(` counted at zero beside it.
 - Sticky: the level toggles and is read back.
 - Restoration: seeds round-trip; with the setting off nothing is
   written or read; with it on, tabs come back disconnected (no connect

@@ -1,4 +1,24 @@
+import CoreTransferable
 import Foundation
+import UniformTypeIdentifiers
+
+extension UTType {
+    /// The type a tab drag carries, and the only one it carries.
+    ///
+    /// **Exported, not merely declared.** `UTType(exportedAs:)` says this
+    /// process OWNS the identifier; the matching `UTExportedTypeDeclarations`
+    /// entry in `scripts/package-app` is what makes a packaged build say the
+    /// same thing to the rest of the system. `TabDragTypeDeclarationTests`
+    /// reads that script and pins the two spellings against each other, so
+    /// the declaration cannot drift from the code that names it.
+    ///
+    /// **What it conforms to, and what it deliberately is not.**
+    /// `public.data` and nothing more: no `public.text`, no
+    /// `public.utf8-plain-text`, and no filename extension in the
+    /// declaration. That combination is the whole of the Finder fix — see
+    /// `TabDragPayload`'s own doc comment.
+    static let macSCPTab = UTType(exportedAs: "dev.noix.macscp.tab")
+}
 
 /// What a dragged tab carries (Detachable Tabs plan, Task 3): the tab, and
 /// the window it was dragged out of.
@@ -16,34 +36,42 @@ import Foundation
 /// never left its strip. `TabDropPlan.route(payload:ownWindow:)` is where
 /// that comparison lives.
 ///
-/// ## Carried as JSON text, through the destination the strip already had
+/// ## Carried as a type of this app's own, not as text
 ///
-/// The strip's drop destination is `dropDestination(for: String.self)` and
-/// stays that way; `encoded()`/`init(encoded:)` are the whole of the wire
-/// format. The alternative — a `Transferable` conformance with a `UTType`
-/// of this app's own (`dev.noix.macscp.tab`) — was measured and rejected
-/// for three reasons:
+/// Until 2026-09-05 this envelope travelled as JSON *text*, through a
+/// `.draggable(_:)` over `String` and a `dropDestination(for: String.self)`.
+/// That was reported as a defect and it was one: **a `String` drag exports
+/// `public.utf8-plain-text`**, the Finder accepts anything that conforms to
+/// it, and dragging a tab onto the desktop therefore wrote a text clipping
+/// file carrying this JSON — while no window opened, because nothing on the
+/// SwiftUI side could learn that the drag had ended nowhere.
 ///
-/// 1. **The reorder path would have to change type.** A second
-///    `dropDestination` for a custom type beside the `String` one, or a
-///    single destination over a new type, both rewrite the code path that
-///    reorders tabs today. This payload has to be additive to that path,
-///    not a replacement for it.
-/// 2. **A custom `UTType` wants a declaration in the bundle.**
-///    `Scripts/package-app` writes `UTExportedTypeDeclarations` by hand
-///    (three entries today: sessions, logins, snippets), so a fourth would
-///    be a packaging change for a type that never leaves the process — a
-///    tab drag is meaningful only to the window that started it.
-/// 3. **Text is what the other drags on this surface already speak.** The
-///    session sidebar drags `SidebarDragPayload`'s own string spelling, and
-///    a bare uuid is what this strip dragged before Task 3.
-///    `TabDropPlan.route` still reads a bare uuid as a reorder, so nothing
-///    that used to work stopped working.
+/// So the payload is a `Transferable` over a private `UTType`. Three
+/// properties do the work, and they are worth stating separately because
+/// each closes a different half of the report:
 ///
-/// What that costs: a tab dragged to the Finder still makes a text clipping,
-/// as it did before, now carrying this JSON instead of a bare uuid. No path
-/// there opens a window or touches any strip.
-struct TabDragPayload: Codable, Equatable, Sendable {
+/// 1. **No text representation at all.** The only representation is the
+///    `CodableRepresentation` below, so the drag advertises exactly
+///    `dev.noix.macscp.tab` and nothing that any text destination accepts.
+///    `TabDragTests` pins that the declared list is one entry long.
+/// 2. **A private type nothing else claims.** `dev.noix.macscp.tab` is
+///    exported by this app; no other app declares an importer for it, so
+///    no other app offers to take the drop.
+/// 3. **No filename extension in the declaration.** A Finder drop writes a
+///    file named after the type's preferred extension; with none declared
+///    there is nothing for it to write, which is the belt beside the two
+///    braces above.
+///
+/// The drag SOURCE is AppKit now (`TabDragSourceView`), because the second
+/// half of the report — "no new window opens" — needs
+/// `NSDraggingSource.draggingSession(_:endedAt:operation:)`, which
+/// `.draggable` does not vend. The pasteboard writer there offers this same
+/// single type with this same JSON, so SwiftUI's `dropDestination(for:)`
+/// reads it back unchanged: `CodableRepresentation` maps the content type
+/// straight onto the pasteboard type, and its coder is a default
+/// `JSONEncoder`/`JSONDecoder` pair — which is exactly what
+/// `pasteboardData()` below produces.
+struct TabDragPayload: Codable, Equatable, Sendable, Transferable {
     let tabID: UUID
     let sourceWindowID: WindowID
 
@@ -52,27 +80,32 @@ struct TabDragPayload: Codable, Equatable, Sendable {
         self.sourceWindowID = sourceWindowID
     }
 
-    /// `nil` for anything that is not this envelope — a bare uuid, a file
-    /// path, a sentence, an envelope missing either field. Refusing rather
-    /// than filling a gap in is the point: a payload with a made-up source
-    /// window would name a model the registry cannot resolve, and the drop
-    /// would silently do nothing instead of falling through to the reorder
-    /// route that a bare uuid correctly takes.
-    init?(encoded: String) {
-        guard let data = encoded.data(using: .utf8),
-            let decoded = try? JSONDecoder().decode(TabDragPayload.self, from: data)
-        else { return nil }
-        self = decoded
+    /// One representation, over one content type. Adding a second — a
+    /// `ProxyRepresentation` to `String` for "convenience", say — would put
+    /// `public.utf8-plain-text` back on the pasteboard and hand the Finder
+    /// its clipping again.
+    ///
+    /// The return type is written unparameterised. `some
+    /// TransferRepresentation<TabDragPayload>` — the spelling that names
+    /// the item type — does not compile here (Swift 6.3.3, macOS 26.5 SDK,
+    /// measured 2026-09-05): the conformance is rejected with "protocol
+    /// requires nested type 'Representation'", because `CodableRepresentation`
+    /// constrains its `Item` to `Transferable` and naming the item inside
+    /// the very declaration that establishes that conformance closes the
+    /// circle. Reproduced on a four-line file outside this package before
+    /// being written down.
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .macSCPTab)
     }
 
-    /// The string the drag carries. Encoding cannot fail for two `UUID`s —
-    /// `JSONEncoder` has nothing here to refuse — so the fallback is a
-    /// spelling `init?(encoded:)` will itself refuse, which routes the drop
-    /// to nothing rather than to a wrong window.
-    func encoded() -> String {
-        guard let data = try? JSONEncoder().encode(self),
-            let text = String(data: data, encoding: .utf8)
-        else { return "" }
-        return text
+    /// The bytes the AppKit drag source puts on the pasteboard, in the
+    /// encoding `CodableRepresentation` decodes: a default `JSONEncoder`.
+    ///
+    /// `nil` cannot happen for two `UUID`s — `JSONEncoder` has nothing here
+    /// to refuse — and the writer that calls this refuses to construct
+    /// rather than offering an item with no data, so a drag either carries a
+    /// readable payload or never begins.
+    func pasteboardData() -> Data? {
+        try? JSONEncoder().encode(self)
     }
 }

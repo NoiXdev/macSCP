@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import MacSCPAppKit
 @testable import macSCPCore
 
@@ -8,10 +10,14 @@ import Testing
 ///
 /// Three properties, one section each below:
 ///
-/// 1. **The payload says where the tab came from.** Reordering inside one
-///    strip only ever needed the tab's id; crossing windows needs the
-///    window it left, because the target strip is the only place the drop
-///    is reported and it holds neither the source model nor its id.
+/// 1. **The payload says where the tab came from, and says it in a type
+///    of this app's own.** Reordering inside one strip only ever needed the
+///    tab's id; crossing windows needs the window it left, because the
+///    target strip is the only place the drop is reported and it holds
+///    neither the source model nor its id. Since 2026-09-05 the envelope
+///    travels as a `Transferable` over `dev.noix.macscp.tab` rather than as
+///    JSON text — see `TabDragPayload` for the report that forced the
+///    change, and for what a text payload let the Finder do.
 /// 2. **Which route a drop takes is a decision over that payload**
 ///    (`TabDropPlan.route(payload:ownWindow:)`), not an `if` inside a
 ///    gesture closure — this project has no SwiftUI rendering harness, so a
@@ -54,31 +60,72 @@ struct TabDragTests {
 
     // MARK: - 1. The payload
 
-    @Test func aPayloadSurvivesAnEncodeDecodeRoundTrip() throws {
+    /// The real round trip, through the machinery a drag actually uses:
+    /// register the payload on an `NSItemProvider` exactly as SwiftUI's own
+    /// drag does, then load it back as the same type. Nothing here spells
+    /// JSON — `CodableRepresentation` owns the wire format, and a test that
+    /// re-implemented it would pin its own spelling rather than the one
+    /// that travels.
+    ///
+    /// `withCheckedThrowingContinuation`, not a semaphore: every wait in a
+    /// test target of this project is an `await` (CLAUDE.md, "Tests never
+    /// block the cooperative pool").
+    @Test func aPayloadSurvivesARoundTripThroughItsTransferRepresentation() async throws {
         let payload = TabDragPayload(tabID: UUID(), sourceWindowID: WindowID())
-        let decoded = try #require(TabDragPayload(encoded: payload.encoded()))
+        let provider = NSItemProvider()
+        provider.register(payload)
+        let decoded: TabDragPayload = try await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadTransferable(type: TabDragPayload.self) { result in
+                continuation.resume(with: result)
+            }
+        }
         #expect(decoded == payload)
         #expect(decoded.tabID == payload.tabID)
         #expect(decoded.sourceWindowID == payload.sourceWindowID)
     }
 
-    /// The strip's own drag is the only thing that produces this shape.
-    /// Everything else that can land on a tab — a session row from the
-    /// sidebar, a line of text from anywhere — is text that is not this
-    /// envelope, and must read as "no payload of mine" rather than as a
-    /// payload with a made-up source window.
-    @Test func textThatIsNotTheEnvelopeIsNotAPayload() {
-        #expect(TabDragPayload(encoded: UUID().uuidString) == nil)
-        #expect(TabDragPayload(encoded: "") == nil)
-        #expect(TabDragPayload(encoded: "{}") == nil)
-        #expect(TabDragPayload(encoded: "/Users/someone/a-dropped-file.txt") == nil)
+    /// **The reported defect, as a property.** A drag registers exactly the
+    /// types its `Transferable` declares, and this one declares one: the
+    /// app's own. While the payload was a `String`, that list read
+    /// `public.utf8-plain-text` (plus the text types conforming to it),
+    /// which is what the Finder accepts — a tab dropped on the desktop
+    /// became a text clipping.
+    ///
+    /// Asserted as equality against a single-element list rather than as
+    /// "does not contain text": a `!contains` here would pass the day the
+    /// payload grew a second, non-text representation nobody meant to add,
+    /// and it would pass for a payload that registered nothing at all
+    /// (CLAUDE.md, "Guards that name what they watch").
+    @Test func aDragOffersTheAppsOwnTypeAndNothingElse() {
+        let provider = NSItemProvider()
+        provider.register(TabDragPayload(tabID: UUID(), sourceWindowID: WindowID()))
+        #expect(provider.registeredTypeIdentifiers == [UTType.macSCPTab.identifier])
     }
 
-    /// Both fields or nothing: a half-decoded payload would name a tab with
-    /// no window to take it from, and the cross-window route has nowhere to
-    /// go without one.
-    @Test func anEnvelopeMissingItsSourceWindowIsNotAPayload() {
-        #expect(TabDragPayload(encoded: "{\"tabID\":\"\(UUID().uuidString)\"}") == nil)
+    /// The pasteboard writer the AppKit drag source uses says the same
+    /// thing, and it has to: SwiftUI's `dropDestination(for:)` reads the
+    /// pasteboard type that `CodableRepresentation`'s content type maps to,
+    /// so an item offered under any other type reaches no strip in this app.
+    @Test func theWriterOffersTheSameSingleTypeTheRepresentationDeclares() throws {
+        let payload = TabDragPayload(tabID: UUID(), sourceWindowID: WindowID())
+        let writer = try #require(TabDragPasteboardWriter(payload: payload))
+        let types = writer.writableTypes(for: NSPasteboard.general)
+        #expect(types == [NSPasteboard.PasteboardType(UTType.macSCPTab.identifier)])
+    }
+
+    /// And the bytes it writes for that type are the payload. Decoded with
+    /// the decoder `CodableRepresentation` uses by default, which is the
+    /// claim being made: what the AppKit source puts on the pasteboard is
+    /// what the SwiftUI destination reads off it.
+    @Test func theWriterWritesThePayloadForItsOwnTypeAndNothingForAnother() throws {
+        let payload = TabDragPayload(tabID: UUID(), sourceWindowID: WindowID())
+        let writer = try #require(TabDragPasteboardWriter(payload: payload))
+        let written = try #require(
+            writer.pasteboardPropertyList(
+                forType: NSPasteboard.PasteboardType(UTType.macSCPTab.identifier)) as? Data)
+        #expect(try JSONDecoder().decode(TabDragPayload.self, from: written) == payload)
+        let asText = writer.pasteboardPropertyList(forType: .string)
+        #expect(asText == nil)
     }
 
     // MARK: - 2. Which route a drop takes
@@ -87,45 +134,24 @@ struct TabDragTests {
         let window = WindowID()
         let tabID = UUID()
         let payload = TabDragPayload(tabID: tabID, sourceWindowID: window)
-        #expect(
-            TabDropPlan.route(payload: [payload.encoded()], ownWindow: window)
-                == .reorder(tabID))
+        #expect(TabDropPlan.route(payload: [payload], ownWindow: window) == .reorder(tabID))
     }
 
     @Test func aPayloadFromAnotherWindowRoutesAcrossWindows() {
         let payload = TabDragPayload(tabID: UUID(), sourceWindowID: WindowID())
         #expect(
-            TabDropPlan.route(payload: [payload.encoded()], ownWindow: WindowID())
+            TabDropPlan.route(payload: [payload], ownWindow: WindowID())
                 == .acrossWindows(payload))
     }
 
-    /// What this strip dragged before Task 3. It names no window, so it
-    /// cannot be a cross-window drop — it is the reorder, exactly as it
-    /// was. (The session sidebar is NOT an example of this: it prefixes its
-    /// uuid, and `aSidebarRowIsRefusedOutright` below is what that costs.)
-    @Test func aBareUUIDStillRoutesToTheReorder() {
-        let id = UUID()
-        #expect(TabDropPlan.route(payload: [id.uuidString], ownWindow: WindowID()) == .reorder(id))
-    }
-
-    /// A session row from the sidebar is not "a foreign uuid that reorders
-    /// nothing" — it is not a uuid at all. `SidebarDragPayload` prefixes it
-    /// (`macscp.sidebar.session:<uuid>`), so the route is `.none` and the
-    /// strip's drop closure returns `false`: the drop is refused, not
-    /// accepted-and-ignored. Built through `SidebarDragPayload` rather than
-    /// spelled out, so its prefixes live in one place.
-    @Test func aSidebarRowIsRefusedOutright() {
-        let session = SidebarDragPayload.text(for: .session(UUID()))
-        let group = SidebarDragPayload.text(for: .group(UUID()))
-        #expect(TabDropPlan.route(payload: [session], ownWindow: WindowID()) == .none)
-        #expect(TabDropPlan.route(payload: [group], ownWindow: WindowID()) == .none)
-    }
-
-    @Test func aPayloadThisStripDidNotProduceRoutesNowhere() {
+    /// A drop carrying nothing is the one `.none` left. Everything that
+    /// used to land here as text — a file path, a sentence, a session row
+    /// from the sidebar — no longer reaches the strip at all: the
+    /// destination takes `TabDragPayload`, so the system refuses those a
+    /// step earlier and no closure of ours runs. `TabDropPlanTests` states
+    /// the same boundary from the other side.
+    @Test func aDropCarryingNothingRoutesNowhere() {
         #expect(TabDropPlan.route(payload: [], ownWindow: WindowID()) == .none)
-        #expect(
-            TabDropPlan.route(payload: ["/Users/someone/a-file.txt"], ownWindow: WindowID())
-                == .none)
     }
 
     // MARK: - 3. The cross-window move
@@ -393,5 +419,259 @@ struct CrossWindowDropWiringGuardTests {
         let detail = try Self.strictSource(of: "Sources/MacSCPAppKit/ContentView+Detail.swift")
         #expect(detail.contains("publisher(for: TabWindowCloseRequest.notification)"))
         #expect(detail.contains("perform: handleWindowShouldCloseAfterMove"))
+    }
+}
+
+/// The third way a tab can leave a window: its drag ends where nothing
+/// accepted it, and the tab gets a window of its own (maintainer report,
+/// dev build dev-46da7909 — "a new file is created on the Desktop and no
+/// new window opens").
+///
+/// **Why this is a source guard and not a behavior test.** Every step of
+/// the path is AppKit event handling inside an `NSView` that only exists
+/// once SwiftUI has mounted it: `mouseDragged` past a threshold,
+/// `beginDraggingSession(with:event:source:)`, and the
+/// `NSDraggingSource` callback that reports where the session ended.
+/// Nothing in this package draws an `NSViewRepresentable` (the same
+/// boundary `SnippetCommandEditor`'s own doc comment states), and no test
+/// here can synthesise a real drag session. What CAN be called directly is
+/// the one decision that path takes — `TabDropOutsidePlan.detaches(...)`,
+/// exercised by `TabDropOutsidePlanTests` — so what is left for a scanner
+/// is the wiring around it.
+///
+/// Each negative below has a positive beside it naming the same construct
+/// (CLAUDE.md, "Guards that name what they watch").
+@Suite("Detach on a drop that landed nowhere (source guard)")
+struct TabDetachOnDropOutsideGuardTests {
+    private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+
+    private static func strictSource(of path: String) throws -> String {
+        try SwiftSource.blankingCommentsAndStrings(
+            String(
+                contentsOf: repoRoot.appendingPathComponent(path),
+                encoding: .utf8))
+    }
+
+    private static let dragSourcePath = "Sources/MacSCPAppKit/TabDragSourceView.swift"
+    private static let stripPath = "Sources/MacSCPAppKit/TabStripView.swift"
+    private static let wiringPath = "Sources/MacSCPAppKit/ContentView+Detail.swift"
+
+    /// The view really is an `NSDraggingSource` that starts sessions of its
+    /// own. Without both of these the file could be anything, and the
+    /// negative below would have nothing to prove.
+    @Test func theTabsDragSourceIsTheAppKitOne() throws {
+        let source = try Self.strictSource(of: Self.dragSourcePath)
+        #expect(source.contains("NSDraggingSource"))
+        #expect(source.contains("beginDraggingSession("))
+        #expect(source.contains("NSViewRepresentable"))
+    }
+
+    /// The negative beside it, in the file that would otherwise be the
+    /// obvious place to put a second gesture: the strip no longer uses
+    /// SwiftUI's drag source at all. `.draggable(_:)` over a `String`
+    /// exports `public.utf8-plain-text` — that is the whole of the reported
+    /// defect — and it vends no `NSDraggingSource`, so no drag started
+    /// through it can report that it ended nowhere.
+    ///
+    /// The count of the AppKit source above it is the positive: a strip
+    /// that dragged nothing at all would satisfy the `== 0` perfectly.
+    @Test func theStripHasNoSwiftUIDragSourceLeft() throws {
+        let strip = try Self.strictSource(of: Self.stripPath)
+        // Both answers are computed before the expectation, so a failure
+        // message names the claim rather than reprinting the whole file.
+        let hasAppKitSource = strip.contains("TabDragSourceView(")
+        let hasSwiftUIDrag = strip.contains(".draggable(")
+        #expect(hasAppKitSource, "the strip has no drag source at all")
+        #expect(hasSwiftUIDrag == false, "TabStripView.swift still calls .draggable(")
+    }
+
+    /// The nowhere-branch: the callback that reports a finished session
+    /// asks the one decision a test can call, and a `true` there goes out
+    /// through the detach route.
+    @Test func theEndedCallbackAsksThePlanAndTakesTheDetachRoute() throws {
+        let source = try Self.strictSource(of: Self.dragSourcePath)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "endedAt screenPoint: NSPoint, operation: NSDragOperation", in: source)
+        #expect(
+            body.contains("TabDropOutsidePlan.detaches("),
+            "the scanned span is not the drag-ended callback")
+        #expect(
+            body.contains("onDetach?()"),
+            "a drag that ended nowhere reaches no detach route")
+    }
+
+    /// And the other end of that route: the strip's detach callback is
+    /// wired to the window's existing "move this tab to a window of its
+    /// own" path, the same one the tab context menu and the Window menu
+    /// use. A route wired to anything else — or to nothing — is a drag
+    /// that still ends in no window.
+    @Test func theDetachRouteIsWiredToTheWindowsMovePath() throws {
+        let wiring = try Self.strictSource(of: Self.wiringPath)
+        let isWired = wiring.contains("onDetachToNewWindow: { moveToNewWindow($0) }")
+        #expect(isWired, """
+            the strip's detach route in \(Self.wiringPath) is not wired to \
+            `moveToNewWindow(_:)` — a tab dropped outside every window reaches no \
+            window-opening path, which is the defect this fix repaired.
+            """)
+    }
+}
+
+
+/// The one decision the AppKit drag source takes, called directly — the
+/// half of `draggingSession(_:endedAt:operation:)` a test can reach at all.
+///
+/// Two facts go in, and both matter; see `TabDropOutsidePlan`'s own doc
+/// comment for why the second is there. The cases below are the four
+/// corners of that pair plus the no-window edge.
+@Suite("A drag that ended nowhere")
+struct TabDropOutsidePlanTests {
+    /// The window the drag started in, at a frame with room around it in
+    /// every direction, so "outside" can be expressed on all four sides.
+    private let window = CGRect(x: 100, y: 100, width: 400, height: 300)
+
+    /// The reported case: let go over the desktop, nothing accepted it.
+    @Test func anUnacceptedDropOutsideTheSourceWindowDetaches() {
+        #expect(
+            TabDropOutsidePlan.detaches(
+                operation: [], endedAt: CGPoint(x: 900, y: 900), sourceWindowFrame: window))
+    }
+
+    /// A drop one of this app's strips took. SwiftUI has already delivered
+    /// it and the registry has already moved the tab; a second window here
+    /// would be one window too many.
+    @Test func anAcceptedDropDetachesNothingWhereverItLanded() {
+        #expect(
+            TabDropOutsidePlan.detaches(
+                operation: .move, endedAt: CGPoint(x: 900, y: 900), sourceWindowFrame: window)
+                == false)
+        #expect(
+            TabDropOutsidePlan.detaches(
+                operation: .move, endedAt: CGPoint(x: 200, y: 200), sourceWindowFrame: window)
+                == false)
+    }
+
+    /// The strip's own blank area, and everything else inside the window
+    /// the drag started in. `TabItemView` is the only drop target, so a
+    /// drop beside the tabs is accepted by nothing — and it has always been
+    /// a no-op ("only tabs are drop targets, so a drop into the empty space
+    /// of the strip leaves the order as it was"). It stays one.
+    @Test func anUnacceptedDropInsideTheSourceWindowDetachesNothing() {
+        #expect(
+            TabDropOutsidePlan.detaches(
+                operation: [], endedAt: CGPoint(x: 200, y: 200), sourceWindowFrame: window)
+                == false)
+    }
+
+    /// Just past each edge, so the comparison cannot be satisfied by one
+    /// axis alone — a `<` written for the wrong side passes on three of
+    /// these four and fails on the fourth.
+    @Test func eachSideOfTheSourceWindowIsOutsideIt() {
+        let outside = [
+            CGPoint(x: 99, y: 200), CGPoint(x: 501, y: 200),
+            CGPoint(x: 200, y: 99), CGPoint(x: 200, y: 401),
+        ]
+        for point in outside {
+            #expect(
+                TabDropOutsidePlan.detaches(
+                    operation: [], endedAt: point, sourceWindowFrame: window),
+                "\(point) should count as outside \(window)")
+        }
+    }
+
+    /// A source with no window cannot happen while a drag it started is in
+    /// flight. It answers "detach" rather than "do nothing": an empty
+    /// operation is still a drop nobody took, and the second fact simply
+    /// has nothing to say.
+    @Test func aSourceWithNoWindowFallsBackToTheOperationAlone() {
+        #expect(
+            TabDropOutsidePlan.detaches(
+                operation: [], endedAt: CGPoint(x: 200, y: 200), sourceWindowFrame: nil))
+        #expect(
+            TabDropOutsidePlan.detaches(
+                operation: .move, endedAt: CGPoint(x: 200, y: 200), sourceWindowFrame: nil)
+                == false)
+    }
+}
+
+/// The drag's content type is declared in two places that must agree: the
+/// `UTType` the code drags under, and the `UTExportedTypeDeclarations`
+/// entry a packaged build ships. A type exported by the code and absent
+/// from the bundle is a type the system does not know this app owns.
+///
+/// The identifier is never spelled here. It is read off `UTType.macSCPTab`
+/// and searched for in the script, so renaming the type moves this guard
+/// with it instead of leaving it matching a string nobody uses (CLAUDE.md,
+/// "Guards that name what they watch": a guard that spells a symbol it
+/// could read instead is waiting for a rename).
+///
+/// **What this cannot check.** The packaged `Info.plist` is written by a
+/// shell heredoc at release time; nothing here runs `scripts/package-app`,
+/// so this reads the recipe rather than the artefact. A `plutil -lint` of
+/// the produced file is the script's own step.
+@Suite("The tab drag's exported type declaration")
+struct TabDragTypeDeclarationTests {
+    private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+
+    private static func packagingScript() throws -> String {
+        try String(
+            contentsOf: repoRoot.appendingPathComponent("scripts/package-app"), encoding: .utf8)
+    }
+
+    private static func occurrences(of needle: String, in haystack: String) -> Int {
+        haystack.components(separatedBy: needle).count - 1
+    }
+
+    /// Exactly once: absent means the packaged app never claims the type,
+    /// and twice means two declarations of one identifier, which is a plist
+    /// the system reads unpredictably.
+    @Test func theBundleDeclaresTheIdentifierTheCodeDragsUnder() throws {
+        let script = try Self.packagingScript()
+        let identifier = UTType.macSCPTab.identifier
+        let declarations = Self.occurrences(of: identifier, in: script)
+        #expect(declarations == 1, """
+            expected exactly 1 `\(identifier)` in scripts/package-app, found \
+            \(declarations). The type the tab drag is exported under must be declared \
+            in the bundle the release ships, once.
+            """)
+        #expect(script.contains("<string>macSCP Tab</string>"))
+    }
+
+    /// The three properties that keep the Finder out of it, as they appear
+    /// in the entry itself: `public.data` and no text conformance, and no
+    /// filename extension for a drop to name a file after.
+    ///
+    /// Read from the entry's own span rather than the whole script, because
+    /// the file declares three other types that DO conform to `public.json`
+    /// and DO carry extensions — a whole-file scan would find theirs and
+    /// call it this one's (CLAUDE.md, "A negative check whose SPAN is wrong
+    /// can never match").
+    @Test func theDeclarationCarriesNoTextConformanceAndNoFileExtension() throws {
+        let script = try Self.packagingScript()
+        let entry = try #require(
+            Self.declarationEntry(for: UTType.macSCPTab.identifier, in: script),
+            "no <dict> entry around \(UTType.macSCPTab.identifier) in scripts/package-app")
+        #expect(entry.contains("<string>public.data</string>"), "the entry declares no conformance")
+        let conformsToText = entry.contains("public.text") || entry.contains("public.utf8-plain-text")
+        let conformsToJSON = entry.contains("public.json")
+        let namesAnExtension = entry.contains("public.filename-extension")
+        #expect(conformsToText == false, "the tab type conforms to a text type")
+        #expect(conformsToJSON == false, "the tab type conforms to public.json")
+        #expect(namesAnExtension == false, "the tab type declares a filename extension")
+    }
+
+    /// The `<dict>`…`</dict>` around one identifier: from the last `<dict>`
+    /// before it to the first `</dict>` after it. `nil` when either is
+    /// missing, so a caller fails rather than scanning a guessed span.
+    private static func declarationEntry(for identifier: String, in script: String) -> String? {
+        guard let hit = script.range(of: identifier),
+            let open = script.range(
+                of: "<dict>", options: .backwards, range: script.startIndex..<hit.lowerBound),
+            let close = script.range(of: "</dict>", range: hit.upperBound..<script.endIndex)
+        else { return nil }
+        return String(script[open.upperBound..<close.lowerBound])
     }
 }

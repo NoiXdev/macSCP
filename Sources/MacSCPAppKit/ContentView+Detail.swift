@@ -158,22 +158,7 @@ extension ContentView {
             // Hidden in the pristine (single unconnected tab) state — a
             // strip with nothing to switch between would just be clutter
             // (M8a/T4 spec 2).
-            if !isPristine {
-                TabStripView(
-                    tabs: tabsModel.tabs,
-                    activeTabID: tabsModel.activeTab.id,
-                    onActivate: { activate($0) },
-                    onClose: { requestClose($0) },
-                    onAdd: { addTabRegistering(makeTab()) },
-                    menuEntries: { tabMenuEntries(for: $0) },
-                    onMenuEntry: { tab, entry in handleTabMenuEntry(entry, for: tab) },
-                    onReorder: { draggedID, target in
-                        tabsModel.move(tabID: draggedID, onto: target.id)
-                    },
-                    windowID: windowID,
-                    onDropFromOtherWindow: { acceptDroppedTab($0) }
-                )
-            }
+            if !isPristine { tabStrip }
             detail
         }
         // The detail minimum must fit inside the window minimum
@@ -316,6 +301,38 @@ extension ContentView {
     /// See the `.onChange(of: tabIDs)` call in `ContentView+Lifecycle.swift`.
     var tabIDs: [UUID] {
         tabsModel.tabs.map(\.id)
+    }
+
+    /// The window's tab strip and every route out of it.
+    ///
+    /// A property of its own rather than an expression inside `body`
+    /// (drag-detach fix, 2026-09-05): the detach route was the eighth
+    /// argument, and with it in place the whole `body` expression stopped
+    /// type-checking in reasonable time — the compiler gave up on the
+    /// sidebar's `GeometryReader`, several hundred lines away, which is
+    /// what a too-large expression looks like from the outside. Nothing
+    /// about the wiring changed in the move.
+    private var tabStrip: some View {
+        TabStripView(
+            tabs: tabsModel.tabs,
+            activeTabID: tabsModel.activeTab.id,
+            onActivate: { activate($0) },
+            onClose: { requestClose($0) },
+            onAdd: { addTabRegistering(makeTab()) },
+            menuEntries: { tabMenuEntries(for: $0) },
+            onMenuEntry: { tab, entry in handleTabMenuEntry(entry, for: tab) },
+            // A tab whose drag ended where nothing accepted it takes the
+            // window's existing move path — the same one the tab context
+            // menu's "Move Tab to New Window" and the Window menu already
+            // call, so a detached tab is parked, opened and claimed exactly
+            // once however the user asked for it.
+            onDetachToNewWindow: { moveToNewWindow($0) },
+            onReorder: { draggedID, target in
+                tabsModel.move(tabID: draggedID, onto: target.id)
+            },
+            windowID: windowID,
+            onDropFromOtherWindow: { acceptDroppedTab($0) }
+        )
     }
 
     @ViewBuilder

@@ -109,6 +109,29 @@ cat > "$APP/Contents/Info.plist" <<PLIST
                 </array>
             </dict>
         </dict>
+        <!-- The tab drag's own type (drag-detach fix, 2026-09-05). Shaped
+             deliberately unlike the other three below: it conforms to raw
+             data only, never to a text kind, and it declares no filename
+             extension. A tab drag means something only inside this app, and
+             a type with neither of those gives the Finder nothing to accept
+             and nothing to write; before this entry existed the drag was
+             carried as plain text, and dropping a tab on the desktop made a
+             clipping file instead of opening a window. See
+             Sources/MacSCPAppKit/TabDragPayload.swift.
+
+             This comment sits OUTSIDE the <dict> on purpose:
+             TabDragTypeDeclarationTests reads the entry's own span and would
+             otherwise find a type name in a sentence about it (CLAUDE.md,
+             "Source-scanning guards read comments too"). It also avoids
+             naming the type identifiers it describes, for the same reason. -->
+        <dict>
+            <key>UTTypeIdentifier</key><string>dev.noix.macscp.tab</string>
+            <key>UTTypeDescription</key><string>macSCP Tab</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+        </dict>
         <dict>
             <key>UTTypeIdentifier</key><string>dev.noix.macscp.snippets</string>
             <key>UTTypeDescription</key><string>macSCP Snippets</string>

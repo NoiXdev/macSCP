@@ -1118,18 +1118,21 @@ struct TabContextMenuWiringGuardTests {
     ///   strip rather than at a couple of chosen distances.
     ///
     /// What remains here are seven claims about the gesture's own wiring,
-    /// which no type can carry — counted in the pass that added the
-    /// seventh, 2026-09-05: that the drag and the drop each exist exactly
-    /// once, that the drag carries this tab's id and this window's rather
-    /// than some other string AND writes that same tab down as the drag's
-    /// origin, that the drop routes through `TabDropPlan` and hands each of
-    /// its two answers to the matching route, that the targeting closure
-    /// records the targeting and decides nothing about it, that the reorder
-    /// route reaching the item is the strip's own and not a closure in
-    /// front of it, that the cross-window route and the window identity
-    /// reach it the same way, and that the wiring closure hands both
-    /// identities to the one reordering rule. Two files are read for that:
-    /// the strip, and the place the route is wired.
+    /// which no type can carry — re-counted on 2026-09-05, when the
+    /// drag-detach fix rewrote what the first two of them name: that the
+    /// drag and the drop each exist exactly once AND that SwiftUI's own
+    /// `.draggable` is not among them, that the drag source is handed this
+    /// tab's payload function, this tab's activation and this tab's detach
+    /// route rather than some other closure AND that the payload function
+    /// writes that same tab down as the drag's origin, that the drop routes
+    /// through `TabDropPlan` and hands each of its two answers to the
+    /// matching route, that the targeting closure records the targeting and
+    /// decides nothing about it, that the reorder route reaching the item is
+    /// the strip's own and not a closure in front of it, that the
+    /// cross-window route, the detach route and the window identity reach it
+    /// the same way, and that the wiring closure hands both identities to
+    /// the one reordering rule. Two files are read for that: the strip, and
+    /// the place the route is wired.
     /// Fail-closed: a missing anchor, unbalanced braces, an unterminated
     /// literal or an unreadable file all fail, and every message names the
     /// file, the construct and what to do about it.
@@ -1137,27 +1140,42 @@ struct TabContextMenuWiringGuardTests {
     struct TabDragWiringGuardTests {
         private static let stripFile = TabContextMenuWiringGuardTests.sourceFile
 
-        private static let dragSource = ".draggable("
+        /// SwiftUI's own drag source, which this tab must NOT have any
+        /// more. `.draggable(_:)` on a `String` exports
+        /// `public.utf8-plain-text`, which the Finder accepts: dragging a
+        /// tab to the desktop wrote a text clipping instead of opening a
+        /// window (maintainer report, dev-46da7909). It also vends no
+        /// `NSDraggingSource`, so nothing could learn that a drag ended
+        /// nowhere. This is the NEGATIVE anchor of this suite's first
+        /// claim; `sanctionedDragSource` below is the positive beside it.
+        private static let forbiddenDragSource = ".draggable("
+        private static let dragSource = "TabDragSourceView("
         private static let dropTarget = ".dropDestination("
-        private static let dropAnchor = ".dropDestination(for: String.self) {"
+        private static let dropAnchor = ".dropDestination(for: TabDragPayload.self) {"
 
-        /// The drag as the strip is allowed to spell it: the payload
-        /// function below, and nothing else. A complete call, so nothing
-        /// can be appended to it and still match.
-        private static let sanctionedDrag = ".draggable(dragPayload())"
+        /// The drag as the strip is allowed to spell it: the AppKit source
+        /// view, handed the payload function below, this tab's activation,
+        /// and the route a drag that ended nowhere takes. A complete call,
+        /// so nothing can be appended to it and still match, and all three
+        /// closures are pinned bare — a wrapper around any of them is a
+        /// different gesture with the same shape.
+        private static let sanctionedDragSource =
+            "TabDragSourceView(makePayload:dragPayload,onActivate:onActivate,"
+            + "onDetach:{onDetachToNewWindow(tab)})"
 
         /// Where the payload is produced, and where the drag writes down
         /// which tab it is carrying.
-        private static let dragPayloadAnchor = "private func dragPayload() -> String {"
+        private static let dragPayloadAnchor =
+            "private func dragPayload() -> TabDragPayload {"
 
         /// The one sanctioned shape of that function: this tab recorded as
         /// the origin, this tab's id carried. Compared as a whole body,
         /// because recording one tab and carrying another is a defect no
         /// single anchor sees, and either half alone can be substituted.
         private static let sanctionedDragPayloadSource = """
-            private func dragPayload() -> String {
+            private func dragPayload() -> TabDragPayload {
                 dragOrigin.draggedTabID = tab.id
-                return TabDragPayload(tabID: tab.id, sourceWindowID: windowID).encoded()
+                return TabDragPayload(tabID: tab.id, sourceWindowID: windowID)
             }
             """
 
@@ -1203,6 +1221,15 @@ struct TabContextMenuWiringGuardTests {
         private static let sanctionedWindowHandOver = "windowID:windowID,"
         private static let sanctionedCrossWindowHandOver =
             "onDropFromOtherWindow:onDropFromOtherWindow)"
+
+        /// The same for the detach route the drag-detach fix added: a tab
+        /// whose drag ended nowhere goes to a window of its own. A closure
+        /// in between could send every detached tab to the same tab's
+        /// window, or swallow the detach entirely — which looks exactly
+        /// like the defect this fix repaired.
+        private static let sanctionedDetachHandOver =
+            "onDetachToNewWindow:onDetachToNewWindow,"
+        private static let anyDetachBinding = "letonDetachToNewWindow"
 
         /// The route as a stored property, with its type: one on the strip,
         /// one on the item. A computed property, or a local of another
@@ -1278,17 +1305,34 @@ struct TabContextMenuWiringGuardTests {
 
         // MARK: - The seven remaining claims
 
-        /// One drag source, one drop target. A second of either is a second
-        /// gesture path, and would also make "the drop closure" ambiguous for
+        /// One drag source, one drop target — and the drag source is the
+        /// AppKit one. A second of either is a second gesture path, and
+        /// would also make "the drop closure" ambiguous for
         /// `theDropHandsOverBothIdentitiesAndDoesNothingElse`.
+        ///
+        /// The `.draggable(` count is the NEGATIVE half, and it has the two
+        /// positives above it: two drag sources on one view race the same
+        /// mouse-down, and SwiftUI's one is precisely the one that cannot
+        /// report a drop that landed nowhere. A negative alone would go
+        /// green the day the whole strip stopped dragging at all
+        /// (CLAUDE.md, "Guards that name what they watch").
         @Test func theDragAndTheDropAreAttachedExactlyOnceEach() throws {
             let source = try Self.canonicalStrip()
             let drags = Self.occurrences(of: Self.dragSource, in: source)
             let drops = Self.occurrences(of: Self.dropTarget, in: source)
+            let swiftUIDrags = Self.occurrences(of: Self.forbiddenDragSource, in: source)
             #expect(drags == 1, """
                 expected exactly 1 `\(Self.dragSource)` in \(Self.stripFile.path), found \
                 \(drags). A second drag source is a second thing a tab can carry; if \
                 that is intended, say what it carries and extend this guard.
+                """)
+            #expect(swiftUIDrags == 0, """
+                found \(swiftUIDrags) `\(Self.forbiddenDragSource)` in \
+                \(Self.stripFile.path), expected none. A `String` payload exports \
+                `public.utf8-plain-text`, which the Finder accepts — that is how a tab \
+                dragged to the desktop became a text clipping instead of a window — and \
+                `.draggable` vends no `NSDraggingSource`, so nothing can learn that a \
+                drag ended nowhere.
                 """)
             #expect(drops == 1, """
                 expected exactly 1 `\(Self.dropTarget)` in \(Self.stripFile.path), found \
@@ -1311,12 +1355,13 @@ struct TabContextMenuWiringGuardTests {
         /// `TabsViewModel.move(tabID:onto:)` will not make.
         @Test func theDragCarriesTheTabItIsAttachedToAndRecordsItAsTheOrigin() throws {
             let source = try Self.canonicalStrip()
-            #expect(source.contains(Self.sanctionedDrag), """
-                the drag payload in \(Self.stripFile.path) is not \
-                `\(Self.sanctionedDrag)` — a drag carrying anything else names a \
-                different tab than the one under the pointer. If the payload type \
-                changed deliberately, update `sanctionedDrag` in this guard to the new \
-                spelling.
+            #expect(source.contains(Self.sanctionedDragSource), """
+                the drag source in \(Self.stripFile.path) is not \
+                `\(Self.sanctionedDragSource)` — a drag carrying anything else names a \
+                different tab than the one under the pointer, and a wrapped detach \
+                route sends a tab that was dropped nowhere to the wrong window or to \
+                none. If the source view legitimately changed shape, update \
+                `sanctionedDragSource` in this guard to the new spelling.
                 """)
             let payload = try TabContextMenuWiringGuardTests.canonicalBody(
                 after: Self.dragPayloadAnchor, inFileAt: Self.stripFile)
@@ -1506,6 +1551,18 @@ struct TabContextMenuWiringGuardTests {
                 \(Self.stripFile.path), found \(crossBindings) — same shape as above, \
                 for the cross-window route.
                 """)
+            let detachHandOvers = Self.occurrences(of: Self.sanctionedDetachHandOver, in: canonical)
+            #expect(detachHandOvers == 1, """
+                expected exactly 1 `\(Self.sanctionedDetachHandOver)` in \
+                \(Self.stripFile.path), found \(detachHandOvers) — the item is not \
+                being handed the strip's own detach route, and a closure in between \
+                can send every tab dropped outside to one window or to none.
+                """)
+            let detachBindings = Self.occurrences(of: Self.anyDetachBinding, in: canonical)
+            #expect(detachBindings == 2, """
+                expected exactly 2 `\(Self.anyDetachBinding)` in \(Self.stripFile.path), \
+                found \(detachBindings) — same shape as above, for the detach route.
+                """)
         }
 
         /// What the route is wired to at the other end. The strip hands two
@@ -1540,8 +1597,13 @@ struct TabContextMenuWiringGuardTests {
         // MARK: - Scanner self-tests
 
         static let sanctionedDropSource = """
-            .draggable(dragPayload())
-            .dropDestination(for: String.self) { payload, _ in
+            .overlay {
+                TabDragSourceView(
+                    makePayload: dragPayload,
+                    onActivate: onActivate,
+                    onDetach: { onDetachToNewWindow(tab) })
+            }
+            .dropDestination(for: TabDragPayload.self) { payload, _ in
                 switch TabDropPlan.route(payload: payload, ownWindow: windowID) {
                 case .reorder(let draggedID):
                     onReorder(draggedID, tab)
@@ -1563,7 +1625,8 @@ struct TabContextMenuWiringGuardTests {
             for route in Self.foreignRoutes { #expect(!body.contains(route)) }
             let canonical = try TabContextMenuWiringGuardTests
                 .canonicalize(Self.sanctionedDropSource)
-            #expect(canonical.contains(Self.sanctionedDrag))
+            #expect(canonical.contains(Self.sanctionedDragSource))
+            #expect(Self.occurrences(of: Self.forbiddenDragSource, in: canonical) == 0)
             let targeting = try TabContextMenuWiringGuardTests.canonicalBody(
                 after: Self.targetingAnchor, in: Self.sanctionedDropSource,
                 describing: "a probe")
@@ -1626,29 +1689,53 @@ struct TabContextMenuWiringGuardTests {
             #expect(inert != Self.sanctionedTargeting)
         }
 
-        /// A payload naming something other than this tab — the shape the
-        /// second claim exists for.
+        /// A drag source wired to something other than this tab's own
+        /// three closures — the shape the second claim exists for. The
+        /// count still reads 1, which is the point: only the whole-call
+        /// anchor sees it.
         @Test func scannerFlagsADragThatNamesSomethingElse() throws {
-            let canonical = try TabContextMenuWiringGuardTests
-                .canonicalize(".draggable(tab.displayTitle)")
-            #expect(!canonical.contains(Self.sanctionedDrag))
+            let canonical = try TabContextMenuWiringGuardTests.canonicalize("""
+                TabDragSourceView(
+                    makePayload: dragPayload,
+                    onActivate: onActivate,
+                    onDetach: { onDetachToNewWindow(tabs[0]) })
+                """)
+            #expect(!canonical.contains(Self.sanctionedDragSource))
             #expect(Self.occurrences(of: Self.dragSource, in: canonical) == 1)
         }
 
         /// A second drag source, carrying who knows what.
         @Test func scannerCountsASecondDragSource() throws {
             let canonical = try TabContextMenuWiringGuardTests.canonicalize("""
-                .draggable(tab.id.uuidString)
-                .draggable(tab.displayTitle)
+                TabDragSourceView(makePayload: dragPayload)
+                TabDragSourceView(makePayload: otherPayload)
                 """)
             #expect(Self.occurrences(of: Self.dragSource, in: canonical) == 2)
+        }
+
+        /// SwiftUI's own drag source planted back on the tab — the exact
+        /// defect this fix removed, and the one the negative half of the
+        /// first claim exists to catch. Planted beside the AppKit source
+        /// rather than instead of it, because that is the cheap edit: the
+        /// tab still detaches, and the Finder starts accepting the drag
+        /// again with nothing else changing.
+        @Test func scannerCountsASwiftUIDragSourcePlantedBesideTheAppKitOne() throws {
+            let canonical = try TabContextMenuWiringGuardTests.canonicalize("""
+                .draggable(dragPayload())
+                TabDragSourceView(
+                    makePayload: dragPayload,
+                    onActivate: onActivate,
+                    onDetach: { onDetachToNewWindow(tab) })
+                """)
+            #expect(Self.occurrences(of: Self.forbiddenDragSource, in: canonical) == 1)
+            #expect(canonical.contains(Self.sanctionedDragSource))
         }
 
         /// A drop that fires another of the item's routes instead of
         /// reordering.
         @Test func scannerFlagsADropRoutedSomewhereElse() throws {
             let body = try Self.dropBody(in: """
-                .dropDestination(for: String.self) { payload, _ in
+                .dropDestination(for: TabDragPayload.self) { payload, _ in
                     guard let draggedID = TabDropPlan.draggedTabID(from: payload) else { return false }
                     onMenuEntry(.move(.left))
                     return true
@@ -1662,8 +1749,8 @@ struct TabContextMenuWiringGuardTests {
         /// function a test can call.
         @Test func scannerFlagsAPayloadReadInsideTheGesture() throws {
             let body = try Self.dropBody(in: """
-                .dropDestination(for: String.self) { payload, _ in
-                    guard let draggedID = payload.first.flatMap(UUID.init(uuidString:))
+                .dropDestination(for: TabDragPayload.self) { payload, _ in
+                    guard let draggedID = payload.first?.tabID
                     else { return false }
                     onReorder(draggedID, tab)
                     return true
@@ -1703,14 +1790,22 @@ struct TabContextMenuWiringGuardTests {
         /// the reorder route, for the two arguments that were added beside
         /// it.
         @Test func scannerFlagsAWrappedWindowIdentityOrCrossWindowRoute() throws {
-            let sanctioned = try TabContextMenuWiringGuardTests.canonicalize(
-                "TabItemView(windowID: windowID, onDropFromOtherWindow: onDropFromOtherWindow)")
+            let sanctioned = try TabContextMenuWiringGuardTests.canonicalize("""
+                TabItemView(
+                    onDetachToNewWindow: onDetachToNewWindow, windowID: windowID,
+                    onDropFromOtherWindow: onDropFromOtherWindow)
+                """)
             #expect(Self.occurrences(of: Self.sanctionedWindowHandOver, in: sanctioned) == 1)
             #expect(Self.occurrences(of: Self.sanctionedCrossWindowHandOver, in: sanctioned) == 1)
-            let wrapped = try TabContextMenuWiringGuardTests.canonicalize(
-                "TabItemView(windowID: WindowID(), onDropFromOtherWindow: { _ in })")
+            #expect(Self.occurrences(of: Self.sanctionedDetachHandOver, in: sanctioned) == 1)
+            let wrapped = try TabContextMenuWiringGuardTests.canonicalize("""
+                TabItemView(
+                    onDetachToNewWindow: { _ in }, windowID: WindowID(),
+                    onDropFromOtherWindow: { _ in })
+                """)
             #expect(Self.occurrences(of: Self.sanctionedWindowHandOver, in: wrapped) == 0)
             #expect(Self.occurrences(of: Self.sanctionedCrossWindowHandOver, in: wrapped) == 0)
+            #expect(Self.occurrences(of: Self.sanctionedDetachHandOver, in: wrapped) == 0)
         }
 
         /// The drop that lost its cross-window arm: it reorders exactly as
@@ -1760,7 +1855,7 @@ struct TabContextMenuWiringGuardTests {
 
         @Test func scannerFailsClosedOnUnbalancedBraces() {
             #expect(Self.body(after: Self.dropAnchor, in: """
-                .dropDestination(for: String.self) { payload, _ in
+                .dropDestination(for: TabDragPayload.self) { payload, _ in
                     onReorder(draggedID, tab)
                 """) == nil)
         }
@@ -1770,7 +1865,7 @@ struct TabContextMenuWiringGuardTests {
         /// drop's.
         @Test func extractionStopsAtItsOwnClosingBrace() throws {
             let body = try Self.dropBody(in: """
-                .dropDestination(for: String.self) { payload, _ in
+                .dropDestination(for: TabDragPayload.self) { payload, _ in
                     onReorder(draggedID, tab)
                 }
                 .contextMenu { onMenuEntry(.close) }
