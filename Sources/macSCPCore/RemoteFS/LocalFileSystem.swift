@@ -1,4 +1,5 @@
 import Crypto
+import Darwin
 import Foundation
 
 /// Local file system behind the same abstraction as SFTP — so both panes
@@ -40,54 +41,62 @@ public struct LocalFileSystem: RemoteFileSystem {
     /// a true one.
     public static let permissionModel: PermissionModel = .posixMode
 
+    /// Phase one of the local-listing-never-blocks design
+    /// (`docs/superpowers/specs/2026-09-04-local-listing-never-blocks-design.md`):
+    /// returns names and kinds straight from the directory read, with every
+    /// `size`/`modifiedAt`/`owner`/`group`/`permissions` nil. `item(for:)`
+    /// below — the per-entry metadata call — is NOT invoked from this loop
+    /// any more; Task 2 adds a `metadata(for items:)` stream that calls it
+    /// once per entry, on its own child task, so one entry's stuck syscall
+    /// can no longer hold up the rest of the listing the way it did when
+    /// this ran `item(for:)` in a plain loop.
+    ///
+    /// Getting there took two Foundation quirks into account, both measured
+    /// live on 2026-09-05:
+    ///
+    /// 1. The URL-based enumeration, `contentsOfDirectory(at:
+    ///    includingPropertiesForKeys:)`, throws ENOTDIR (POSIX 20) for a
+    ///    symlinked PARENT whose target directory exists — confirmed against
+    ///    a fresh `real/` + `link -> real` pair — which is why an earlier
+    ///    version of this method used the string-path API instead
+    ///    (`contentsOfDirectory(atPath:)`, one `readdir`, no bulk metadata
+    ///    prefetch, and therefore a `stat`/`lstat` per child in `item(for:)`
+    ///    to get anything beyond the name). Resolving the parent's own
+    ///    symlinks ONCE — `resolvingSymlinksInPath()` — before the URL call
+    ///    fixes exactly that case: the resolved directory has no symlink of
+    ///    its own left for the API to reject, and the one bulk
+    ///    `getattrlistbulk` read (`includingPropertiesForKeys:`) answers
+    ///    `.isDirectoryKey`/`.isSymbolicLinkKey` for every child in a single
+    ///    call, not one `stat` per child.
+    /// 2. `resolvingSymlinksInPath()` is a no-op for a path it cannot fully
+    ///    resolve — a DANGLING symlinked parent, whose target does not
+    ///    exist, is the case that stays broken even after step 1. Confirmed
+    ///    live against `/usr/X11` (`lrwxr-xr-x /usr/X11 ->
+    ///    ../private/var/select/X11`, and that target does not exist on
+    ///    this machine): resolving is a no-op, the URL API still throws
+    ///    ENOTDIR, and `listByReaddir(at:)` below is the fallback —
+    ///    `opendir`/`readdir` on the ORIGINAL path, reading the kind
+    ///    straight from `d_type`. Separately (and unrelated to the ENOTDIR
+    ///    case): `resolvingSymlinksInPath()` also leaves `/tmp`, `/var` and
+    ///    `/etc` themselves unresolved — a documented `NSString` exclusion,
+    ///    not a bug — but the URL enumeration API already has its own
+    ///    `/private` rewrite for exactly those three (confirmed live), so
+    ///    they list correctly through the primary path regardless.
+    ///
+    /// Either way, every returned item's `path` is rebuilt from the
+    /// ORIGINAL, UNRESOLVED parent plus the child's own name — never from
+    /// the resolved directory — so a listing through a symlinked directory
+    /// keeps the path the user navigated to (T1/M11g review I-1 follow-up:
+    /// this is exactly what `navigate(to:)`'s "try list()" symlink check
+    /// depends on).
     public func list(path: String) async throws -> [RemoteFileItem] {
-        let url = URL(fileURLWithPath: path)
-        // Uses the STRING-path API (`contentsOfDirectory(atPath:)`), not the
-        // URL-based one: `contentsOfDirectory(at:includingPropertiesForKeys:)`
-        // rejects a symlinked directory outright with ENOTDIR (POSIX code
-        // 20) — confirmed live against `/usr/X11` (`lrwxr-xr-x /usr/X11 ->
-        // ../private/var/select/X11`, an ordinary symlink), which throws
-        // through the URL API. It only *appears* to work for macOS's
-        // `/tmp`, `/var`, `/etc` — those are plain symlinks too (`/tmp ->
-        // private/tmp`), not some special case — because Foundation
-        // hardcodes a `/private` prefix rewrite for exactly those three
-        // paths and resolves the real, non-symlinked location before
-        // opening it; that's also why the URL API's returned children come
-        // back as `/private/etc/...` rather than `/etc/...` (T1/M11g review
-        // I-1 follow-up: this is exactly what `navigate(to:)`'s "try
-        // list()" symlink check depends on to be correct for an ordinary
-        // symlinked directory, not just the three Foundation-mapped ones).
-        // Each child URL below is a normal path, so `item(for:)`'s
-        // per-entry `resourceValues` lookups are unaffected by how the
-        // parent was reached.
-        //
-        // Cost: dropping `includingPropertiesForKeys:` also drops
-        // Foundation's metadata prefetch, which the M11g review measured at
-        // roughly 3x slower per-entry metadata lookups (31.5 ms → 93.8 ms
-        // for a 5000-entry directory, ~12-14 µs/entry). The coordinator
-        // accepted this deliberately: correctness over a saving that's
-        // immaterial below tens of thousands of entries. If it ever does
-        // matter, a try-URL-first-then-fall-back-to-`atPath` variant is
-        // possible — not implemented here.
-        //
-        // M11m adds a second per-entry cost on top of the above: `item(for:)`
-        // calls `ownerGroup(for:)`, which does its own
-        // `FileManager.attributesOfItem(atPath:)` (an `lstat` plus
-        // `getpwuid`/`getgrgid` to resolve NAMEs, not just numeric ids —
-        // `getpwuid`/`getgrgid` can block on directory-service-bound Macs,
-        // e.g. AD/LDAP-joined machines) for every entry. Owner/group account
-        // NAMEs are not exposed via `URLResourceValues` at all (only the
-        // numeric `.ownerAccountID`/`.groupOwnerAccountID` are), so there is
-        // no way to fold this into the `resourceValues` call above — but
-        // M18a made the whole lookup opt-in via `fetchesOwnerGroup` (see
-        // `ownerGroup(for:)`), since on TCC-protected folders it can also
-        // trigger a blocking macOS permission prompt, not just a slow syscall.
+        let originalURL = URL(fileURLWithPath: path)
         DiagnosticLog.shared.log(.info, "browser.local", "list start path=\(path)")
         let clock = ContinuousClock()
         let listStart = clock.now
-        let names: [String]
+        let items: [RemoteFileItem]
         do {
-            names = try FileManager.default.contentsOfDirectory(atPath: path)
+            items = try Self.listNamesAndKinds(originalURL: originalURL)
         } catch {
             let mapped = Self.map(error, path: path)
             // The ORIGINAL (mapped) `RemoteFSError`, not a hand-formatted
@@ -97,27 +106,112 @@ public struct LocalFileSystem: RemoteFileSystem {
                 .info, "browser.local", "list failed path=\(path)", reason: mapped)
             throw mapped
         }
-        // Per-entry timing (the design's hypothesis-1/2 line): `item(for:)`
-        // is timed on its own clock reading around EACH call, not derived
-        // from a running total, so one slow entry cannot be masked by
-        // several fast ones averaging it out. This wrap changes nothing
-        // about what `list` returns — only whether one `.debug` line gets
-        // written alongside a given entry.
-        let items = names.map { url.appendingPathComponent($0) }.map { childURL -> RemoteFileItem in
-            let entryStart = clock.now
-            let entryItem = item(for: childURL)
-            let entryDuration = entryStart.duration(to: clock.now)
-            if entryDuration >= Self.slowEntryThreshold {
-                DiagnosticLog.shared.log(
-                    .debug, "browser.local",
-                    "entry slow name=\(childURL.lastPathComponent) ms=\(Int(entryDuration.milliseconds.rounded()))")
-            }
-            return entryItem
-        }
         let listMs = Int(listStart.duration(to: clock.now).milliseconds.rounded())
         DiagnosticLog.shared.log(
             .info, "browser.local", "list done path=\(path) count=\(items.count) ms=\(listMs)")
         return items
+    }
+
+    /// The primary path: resolve `originalURL`'s symlinks once, read the
+    /// resolved directory through the bulk-prefetching URL API, and fall
+    /// back to `listByReaddir` on the ORIGINAL path when that still throws
+    /// ENOTDIR (a dangling symlinked parent — see `list`'s doc comment).
+    /// Every other error (missing path, permission denied) propagates
+    /// unchanged, to `Self.map` in `list`.
+    private static func listNamesAndKinds(originalURL: URL) throws -> [RemoteFileItem] {
+        let resolvedURL = originalURL.resolvingSymlinksInPath()
+        do {
+            let children = try FileManager.default.contentsOfDirectory(
+                at: resolvedURL,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .nameKey])
+            return children.map { child in
+                let values = try? child.resourceValues(
+                    forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .nameKey])
+                let name = values?.name ?? child.lastPathComponent
+                let kind = Self.kind(
+                    isSymbolicLink: values?.isSymbolicLink, isDirectory: values?.isDirectory)
+                return Self.phaseOneItem(name: name, kind: kind, originalParent: originalURL)
+            }
+        } catch {
+            guard Self.isENOTDIR(error) else { throw error }
+            return try Self.listByReaddir(originalParent: originalURL)
+        }
+    }
+
+    /// The ENOTDIR fallback: `opendir`/`readdir` on the ORIGINAL (unresolved)
+    /// path, deriving each child's kind from `d_type` rather than any
+    /// `stat` call — `DT_DIR`/`DT_LNK`/`DT_REG` map to `.directory`/
+    /// `.symlink`/`.file`; `DT_UNKNOWN` (some network file systems don't
+    /// populate `d_type`) and every other value map to `.other`, resolved
+    /// only once metadata arrives in Task 2. `.` and `..` are skipped, same
+    /// as `FileManager.contentsOfDirectory` already omits them.
+    private static func listByReaddir(originalParent: URL) throws -> [RemoteFileItem] {
+        let path = originalParent.path(percentEncoded: false)
+        guard let directory = opendir(path) else {
+            // `errno` is a POSIX code (e.g. ENOENT, EACCES) — `Self.map`
+            // below has its own `NSPOSIXErrorDomain` branch for exactly
+            // this, so a dangling symlinked parent (opendir fails ENOENT,
+            // since there is no target to open) still maps to `.notFound`,
+            // not a generic `.protocolError`.
+            throw NSError(
+                domain: NSPOSIXErrorDomain, code: Int(errno),
+                userInfo: [NSFilePathErrorKey: path])
+        }
+        defer { closedir(directory) }
+        var items: [RemoteFileItem] = []
+        while let entry = readdir(directory) {
+            let name = withUnsafeBytes(of: entry.pointee.d_name) { raw -> String in
+                String(cString: raw.baseAddress!.assumingMemoryBound(to: CChar.self))
+            }
+            if name == "." || name == ".." { continue }
+            let kind: RemoteFileKind
+            switch Int32(entry.pointee.d_type) {
+            case Int32(DT_DIR): kind = .directory
+            case Int32(DT_LNK): kind = .symlink
+            case Int32(DT_REG): kind = .file
+            default: kind = .other
+            }
+            items.append(Self.phaseOneItem(name: name, kind: kind, originalParent: originalParent))
+        }
+        return items
+    }
+
+    /// Kind precedence shared by phase one and `item(for:)`: a symlink is
+    /// `.symlink` even when it points at a directory (checked first), a
+    /// dangling symlink is still `.symlink` (there is no target to answer
+    /// `isDirectory`), and anything else that isn't a directory is `.file`.
+    private static func kind(isSymbolicLink: Bool?, isDirectory: Bool?) -> RemoteFileKind {
+        if isSymbolicLink == true {
+            .symlink
+        } else if isDirectory == true {
+            .directory
+        } else {
+            .file
+        }
+    }
+
+    /// Builds one phase-one `RemoteFileItem`: `path` is `originalParent`
+    /// (the UNRESOLVED path `list` was called with) plus `name`, normalized
+    /// the same way `item(for:)` normalizes its own `path` (no trailing
+    /// slash). Every metadata field is nil — that is the entire point of
+    /// phase one.
+    private static func phaseOneItem(
+        name: String, kind: RemoteFileKind, originalParent: URL
+    ) -> RemoteFileItem {
+        var normalizedPath = originalParent.appendingPathComponent(name).path(percentEncoded: false)
+        if normalizedPath.count > 1, normalizedPath.hasSuffix("/") {
+            normalizedPath.removeLast()
+        }
+        return RemoteFileItem(
+            name: name,
+            path: normalizedPath,
+            kind: kind,
+            size: nil,
+            modifiedAt: nil,
+            permissions: nil,
+            owner: nil,
+            group: nil
+        )
     }
 
     public func stat(path: String) async throws -> RemoteFileItem {
@@ -324,16 +418,17 @@ public struct LocalFileSystem: RemoteFileSystem {
         return values?.isSymbolicLink == true || FileManager.default.fileExists(atPath: path)
     }
 
+    /// The per-entry metadata call. Local-listing-never-blocks Task 1 stops
+    /// calling this from `list`'s own loop (see `list`'s doc comment) — it
+    /// still backs `stat` (a single-entry call may stay synchronous) and
+    /// stays in the file for Task 2, which calls it once per entry from a
+    /// new `metadata(for items:)` stream, each call on its own child task.
+    /// The `entry slow` debug line that used to wrap calls to this method
+    /// inside `list`'s loop moves there too — nothing in this function logs
+    /// timing on its own.
     private func item(for url: URL) -> RemoteFileItem {
         let values = try? url.resourceValues(forKeys: Set(Self.resourceKeys))
-        let kind: RemoteFileKind
-        if values?.isSymbolicLink == true {
-            kind = .symlink
-        } else if values?.isDirectory == true {
-            kind = .directory
-        } else {
-            kind = .file
-        }
+        let kind = Self.kind(isSymbolicLink: values?.isSymbolicLink, isDirectory: values?.isDirectory)
         var normalizedPath = url.path(percentEncoded: false)
         if normalizedPath.count > 1, normalizedPath.hasSuffix("/") {
             normalizedPath.removeLast()
@@ -368,6 +463,10 @@ public struct LocalFileSystem: RemoteFileSystem {
     /// permission prompt — which is what made a plain directory listing
     /// (e.g. behind the "New Folder" dialog) appear to hang. When the flag
     /// is off, this returns the nil pair without touching the filesystem.
+    ///
+    /// Reached only through `item(for:)`, so Task 1 already moved this
+    /// behind `stat` and Task 2's `metadata(for items:)` stream — `list`
+    /// itself never calls it any more, flag or no flag.
     private func ownerGroup(for url: URL) -> (owner: String?, group: String?) {
         guard fetchesOwnerGroup else { return (nil, nil) }
         guard
@@ -393,7 +492,38 @@ public struct LocalFileSystem: RemoteFileSystem {
         if ns.domain == NSCocoaErrorDomain, ns.code == NSFileReadNoPermissionError {
             return RemoteFSError.permissionDenied(path: path)
         }
+        // `listByReaddir`'s `opendir` failure surfaces as a raw
+        // `NSPOSIXErrorDomain` error (there is no Cocoa wrapping for it, the
+        // way there is for `FileManager`'s own calls above) — measured live
+        // on 2026-09-05: a dangling symlinked parent's `opendir` fails
+        // ENOENT (there is no target to open), the same outcome a missing
+        // path already gets above.
+        if ns.domain == NSPOSIXErrorDomain {
+            switch Int32(ns.code) {
+            case ENOENT, ENOTDIR: return RemoteFSError.notFound(path: path)
+            case EACCES: return RemoteFSError.permissionDenied(path: path)
+            default: break
+            }
+        }
         return RemoteFSError.protocolError(reason: String(describing: error))
+    }
+
+    /// Whether `error` is the URL enumeration API's ENOTDIR failure for a
+    /// symlinked parent (see `list`'s doc comment) — checked on the
+    /// UNDERLYING POSIX error, not the top-level Cocoa code alone: Cocoa
+    /// wraps several distinct POSIX failures under the same
+    /// `NSFileReadUnknownError` (256), and only POSIX code 20 is the one
+    /// this fallback exists for. Measured live on 2026-09-05 against both a
+    /// working symlinked parent and a dangling one (`/usr/X11`): both throw
+    /// exactly `NSCocoaErrorDomain` code 256 with an `NSUnderlyingError` of
+    /// `NSPOSIXErrorDomain` code 20.
+    private static func isENOTDIR(_ error: Error) -> Bool {
+        let ns = error as NSError
+        guard ns.domain == NSCocoaErrorDomain,
+              let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError,
+              underlying.domain == NSPOSIXErrorDomain
+        else { return false }
+        return underlying.code == Int(ENOTDIR)
     }
 }
 

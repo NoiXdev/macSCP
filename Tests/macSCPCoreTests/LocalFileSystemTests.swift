@@ -27,15 +27,19 @@ struct LocalFileSystemTests {
         #expect(byName["datei.txt"]?.kind == .file)
     }
 
-    @Test func fileSizeAndDateAreReported() async throws {
+    /// Phase one (local-listing-never-blocks Task 1): `list` no longer runs
+    /// a per-entry metadata call, so `size`/`modifiedAt` are nil straight off
+    /// the directory read. Renamed from `fileSizeAndDateAreReported`, which
+    /// asserted the opposite before this change — a metadata-carrying `list`.
+    @Test func fileSizeAndDateAreNilAfterPhaseOne() async throws {
         let root = try makeTempTree()
         defer { try? FileManager.default.removeItem(at: root) }
         let fs = LocalFileSystem()
 
         let items = try await fs.list(path: root.path(percentEncoded: false))
         let file = items.first { $0.name == "datei.txt" }
-        #expect(file?.size == 5)
-        #expect(file?.modifiedAt != nil)
+        #expect(file?.size == nil)
+        #expect(file?.modifiedAt == nil)
     }
 
     @Test func statReturnsDirectory() async throws {
@@ -120,6 +124,44 @@ struct LocalFileSystemTests {
         #expect(child != nil)
         #expect(child?.path.hasPrefix(link.path(percentEncoded: false)) == true)
         #expect(child?.path.contains("/real/") == false)
+    }
+
+    /// Phase one (local-listing-never-blocks Task 1): listing through a
+    /// symlinked parent goes through the resolve-once-then-URL-API path
+    /// (`resolvingSymlinksInPath` on the parent, then `contentsOfDirectory(
+    /// at:includingPropertiesForKeys:)` on the resolved directory — the
+    /// bulk `getattrlistbulk` read that answers kind for every child without
+    /// a per-child `stat`). Every returned item must still (a) report the
+    /// same kinds the old per-entry path produced, (b) keep a `path` under
+    /// the UNRESOLVED `link/...` parent — never the resolved `real/...`
+    /// target — and (c) carry no metadata, exactly like every other phase-one
+    /// listing.
+    @Test func listThroughSymlinkedParentReportsKindsAndNilMetadataUnderTheUnresolvedPath() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appendingPathComponent("real", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: real.appendingPathComponent("innerDir"), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: real.appendingPathComponent("innen.txt"))
+        let link = root.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+        let fs = LocalFileSystem()
+        let items = try await fs.list(path: link.path(percentEncoded: false))
+
+        let file = items.first { $0.name == "innen.txt" }
+        let directory = items.first { $0.name == "innerDir" }
+        #expect(file?.kind == .file)
+        #expect(directory?.kind == .directory)
+        for item in items {
+            #expect(item.path.hasPrefix(link.path(percentEncoded: false)) == true)
+            #expect(item.path.contains("/real/") == false)
+            #expect(item.size == nil)
+            #expect(item.modifiedAt == nil)
+            #expect(item.owner == nil)
+            #expect(item.group == nil)
+            #expect(item.permissions == nil)
+        }
     }
 
     /// Pins a behavior change (M11g final review, Minor): the old URL-based
@@ -525,20 +567,21 @@ struct LocalFileSystemTests {
 
     // MARK: - Owner/group (M11m/T1)
 
-    /// A file created by the current process is owned by the current user —
-    /// the resource-value NAME lookup must resolve it, not fall back to the
-    /// numeric uid (that fallback is for uids the local machine can't name).
-    /// Uses `fetchesOwnerGroup: true` (M18a): the lookup is opt-in now, so
-    /// this test must explicitly ask for it to exercise the name resolution.
-    @Test func listReportsOwnerAndGroupNamesForOwnFiles() async throws {
+    /// Phase one (local-listing-never-blocks Task 1): `list` no longer calls
+    /// `item(for:)`/`ownerGroup(for:)` at all, so `fetchesOwnerGroup: true`
+    /// no longer has any effect on a `list` result — owner/group are nil
+    /// regardless, exactly like every other metadata field. Renamed from
+    /// `listReportsOwnerAndGroupNamesForOwnFiles`, which asserted the
+    /// opposite (non-nil names resolved through `list`) before this change.
+    @Test func listOmitsOwnerAndGroupNamesForOwnFilesAfterPhaseOne() async throws {
         let root = try makeTempTree()
         defer { try? FileManager.default.removeItem(at: root) }
         let fs = LocalFileSystem(fetchesOwnerGroup: true)
 
         let items = try await fs.list(path: root.path(percentEncoded: false))
         let file = items.first { $0.name == "datei.txt" }
-        #expect(file?.owner == NSUserName())
-        #expect(file?.group != nil)
+        #expect(file?.owner == nil)
+        #expect(file?.group == nil)
     }
 
     @Test func statReportsOwnerAndGroupNamesForOwnFiles() async throws {
@@ -569,16 +612,12 @@ struct LocalFileSystemTests {
         #expect(file?.group == nil)
     }
 
-    @Test func listIncludesOwnerAndGroupWhenRequested() async throws {
-        let root = try makeTempTree()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let fs = LocalFileSystem(fetchesOwnerGroup: true)
-
-        let items = try await fs.list(path: root.path(percentEncoded: false))
-        let file = items.first { $0.name == "datei.txt" }
-        #expect(file?.owner != nil)
-        #expect(file?.group != nil)
-    }
+    // `listIncludesOwnerAndGroupWhenRequested` (M18a) used to live here,
+    // asserting that `fetchesOwnerGroup: true` makes `list` resolve owner/
+    // group names. Removed (local-listing-never-blocks Task 1): phase one
+    // makes that assertion permanently false, and its setup is now identical
+    // to `listOmitsOwnerAndGroupNamesForOwnFilesAfterPhaseOne` above, which
+    // asserts what `list` actually does today.
 
     // MARK: - Checksums (computed here, over a file that is already here)
 
