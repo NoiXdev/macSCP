@@ -380,7 +380,7 @@ struct AgentAuthTests {
     /// the gated agent tests in `CitadelFileSystemIntegrationTests`, which
     /// mutate the same process-global `SSH_AUTH_SOCK` — `.serialized` above
     /// only protects against interleaving WITHIN this suite.
-    private func withTemporarySSHAuthSock(_ value: String, _ body: () async throws -> Void) async rethrows {
+    private func withTemporarySSHAuthSock(_ value: String, _ body: () async throws -> Void) async throws {
         try await AgentEnvLock.shared.run {
             let original = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]
             setenv("SSH_AUTH_SOCK", value, 1)

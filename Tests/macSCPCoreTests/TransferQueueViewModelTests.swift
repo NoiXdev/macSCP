@@ -12,42 +12,51 @@ struct TransferQueueViewModelTests {
 
     /// One-shot signal: `wait()` blocks until `fire()` is called; if the
     /// waiting task is cancelled, `wait()` throws `CancellationError`. This
-    /// lets a gated transfer be cancelled without `fire()` ever arriving.
-    actor TestSignal {
+    /// lets a gated transfer be cancelled without `fire()` ever arriving —
+    /// `cancelAllCancelsQueuedAndRunning`'s `gate1` (never fired; cancel
+    /// must release it) depends on exactly this.
+    ///
+    /// `@unchecked Sendable` behind an `NSLock` rather than an `actor`:
+    /// `wait()` routes through `awaitResumptionThrowing`
+    /// (`Tests/MacSCPTestSupport/AwaitResumption.swift`), whose body closure
+    /// must be `@Sendable` to run on the unstructured task that watches for
+    /// cancellation — an actor's isolated state cannot be touched from a
+    /// `@Sendable` closure that way, so the lock takes over the isolation
+    /// an actor used to provide. This also drops the old per-waiter `UUID`
+    /// map and its `cancelWaiter`: `awaitResumptionThrowing` already
+    /// guarantees a cancelled wait resumes with `CancellationError` exactly
+    /// once, so nothing here has to remove a cancelled continuation from
+    /// `continuations` to keep `fire()` from double-resuming it — an
+    /// orphaned entry left behind by a cancellation is simply resumed,
+    /// harmlessly, the next time `fire()` runs, the same way an abandoned
+    /// continuation elsewhere in `Tests/MacSCPTestSupport` is left to
+    /// complete into a callback nobody is listening to any more.
+    final class TestSignal: @unchecked Sendable {
+        private let lock = NSLock()
         private var fired = false
-        private var continuations: [UUID: CheckedContinuation<Void, Error>] = [:]
+        private var continuations: [CheckedContinuation<Void, any Error>] = []
 
         func fire() {
-            fired = true
-            let pending = continuations
-            continuations.removeAll()
-            for continuation in pending.values { continuation.resume() }
+            let pending: [CheckedContinuation<Void, any Error>] = lock.withLock {
+                fired = true
+                defer { continuations.removeAll() }
+                return continuations
+            }
+            for continuation in pending { continuation.resume() }
         }
 
         func wait() async throws {
-            if fired { return }
-            let id = UUID()
-            try await withTaskCancellationHandler {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    if fired {
-                        continuation.resume()
-                    } else if Task.isCancelled {
-                        continuation.resume(throwing: CancellationError())
-                    } else {
-                        continuations[id] = continuation
-                    }
+            try await awaitResumptionThrowing { (continuation: CheckedContinuation<Void, any Error>) in
+                let shouldResumeNow = self.lock.withLock { () -> Bool in
+                    if self.fired { return true }
+                    self.continuations.append(continuation)
+                    return false
                 }
-            } onCancel: {
-                Task { await self.cancelWaiter(id) }
-            }
-        }
-
-        private func cancelWaiter(_ id: UUID) {
-            if let continuation = continuations.removeValue(forKey: id) {
-                continuation.resume(throwing: CancellationError())
+                if shouldResumeNow { continuation.resume() }
             }
         }
     }
+
 
     /// Controllable file system: content plus optional signals per source path
     /// (`started` fires on the first chunk pull, `gate` blocks before it).
@@ -157,7 +166,7 @@ struct TransferQueueViewModelTests {
 
         func list(path: String) async throws -> [RemoteFileItem] {
             listedPaths.append(path)
-            await listEntered?.fire()
+            listEntered?.fire()
             if let listGate { try await listGate.wait() }
             if let gate = listGates[path] { try await gate.wait() }
             if let entries = listings[path] { return entries }
@@ -166,7 +175,7 @@ struct TransferQueueViewModelTests {
 
         func stat(path: String) async throws -> RemoteFileItem {
             statedPaths.append(path)
-            await statEntered?.fire()
+            statEntered?.fire()
             if let statGate { try await statGate.wait() }
             if let gate = statGates[path] { try await gate.wait() }
             guard let read = reads[path] else { throw RemoteFSError.notFound(path: path) }
@@ -198,7 +207,7 @@ struct TransferQueueViewModelTests {
                     return true
                 }
                 if isFirstPull {
-                    await started?.fire()
+                    started?.fire()
                     if let gate { try await gate.wait() }
                     if let failWith { throw failWith }
                 }
@@ -343,7 +352,7 @@ struct TransferQueueViewModelTests {
             fileName: "a.txt", direction: .download,
             source: source, sourcePath: "/a.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         // Right after enqueue (no await yet): deterministically queued.
         #expect(vm.items.count == 1)
@@ -352,7 +361,7 @@ struct TransferQueueViewModelTests {
         try await started.wait()
         #expect(vm.items[0].status.isRunning)
 
-        await gate.fire()
+        gate.fire()
         try await done.wait()
 
         #expect(vm.items[0].status == .finished)
@@ -380,19 +389,19 @@ struct TransferQueueViewModelTests {
             fileName: "1.txt", direction: .upload,
             source: source, sourcePath: "/1.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done1.fire() })
+            onCompleted: { done1.fire() })
         vm.enqueue(
             fileName: "2.txt", direction: .upload,
             source: source, sourcePath: "/2.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done2.fire() })
+            onCompleted: { done2.fire() })
 
         try await started1.wait()
         // Item 1 is running, item 2 was NOT dropped, but is waiting.
         #expect(vm.items[0].status.isRunning)
         #expect(vm.items[1].status == .queued)
 
-        await gate1.fire()
+        gate1.fire()
         try await done1.wait()
         try await done2.wait()
 
@@ -427,7 +436,7 @@ struct TransferQueueViewModelTests {
             fileName: "3.txt", direction: .upload,
             source: source, sourcePath: "/3.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() })
+            onCompleted: { done.fire() })
 
         try await done.wait()
 
@@ -453,7 +462,7 @@ struct TransferQueueViewModelTests {
             fileName: "2.txt", direction: .download,
             source: source, sourcePath: "/2.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done2.fire() })
+            onCompleted: { done2.fire() })
 
         try await done2.wait()
 
@@ -487,7 +496,7 @@ struct TransferQueueViewModelTests {
         #expect(returned.value == 0)
         #expect(vm.items[0].status.isRunning)
 
-        await gate.fire()
+        gate.fire()
         try await waitTask.value
 
         #expect(returned.value == 1)
@@ -563,7 +572,7 @@ struct TransferQueueViewModelTests {
             fileName: "3.txt", direction: .upload,
             source: source, sourcePath: "/3.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done3.fire() })
+            onCompleted: { done3.fire() })
         try await done3.wait()
         #expect(vm.items.last?.status == .finished)
         #expect(vm.isActive == false)
@@ -632,7 +641,7 @@ struct TransferQueueViewModelTests {
             fileName: "3.txt", direction: .upload,
             source: source, sourcePath: "/3.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done3.fire() })
+            onCompleted: { done3.fire() })
         try await done3.wait()
         #expect(vm.items.last?.status == .finished)
         #expect(vm.isActive == false)
@@ -724,14 +733,14 @@ struct TransferQueueViewModelTests {
             fileName: "a.txt", direction: .download,
             source: source, sourcePath: "/a.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() })
+            onCompleted: { done.fire() })
         #expect(vm.isActive == true)
 
         try await started.wait()
         #expect(vm.isActive == true)
         #expect(vm.pendingCount == 1)
 
-        await gate.fire()
+        gate.fire()
         try await done.wait()
         await waitUntil { vm.isActive == false }
         #expect(vm.isActive == false)
@@ -1011,7 +1020,7 @@ struct TransferQueueViewModelTests {
 
         let vm = TransferQueueViewModel()
         vm.conflictDecider = { _ in
-            await deciderEntered.fire()
+            deciderEntered.fire()
             try? await releaseDecider.wait()
             return (.overwrite, false)
         }
@@ -1037,7 +1046,7 @@ struct TransferQueueViewModelTests {
         #expect(vm.items[0].status == .cancelled)
 
         // cancelAll blocks until the decider returns (documented/accepted).
-        await releaseDecider.fire()
+        releaseDecider.fire()
         await cancelTask.value
         await waitTask.value
 
@@ -1076,7 +1085,7 @@ struct TransferQueueViewModelTests {
         await waitUntil { vm.items[0].status == .cancelled }
         #expect(vm.items[0].status == .cancelled)
 
-        await statGate.fire()
+        statGate.fire()
         await cancelTask.value
         await waitTask.value
 
@@ -1131,7 +1140,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() })
+            onCompleted: { done.fire() })
 
         // Wait for full expansion (all three directories created),
         // without relying on onCompleted (writes are gated).
@@ -1139,7 +1148,7 @@ struct TransferQueueViewModelTests {
         #expect(await destination.createdDirectories == ["/ziel/dir", "/ziel/dir/sub", "/ziel/dir/leer"])
         #expect(await destination.writeOrder.isEmpty)   // directories first, writes still gated
 
-        await gateA.fire(); await gateB.fire()
+        gateA.fire(); gateB.fire()
         try await done.wait()
         #expect(await destination.writeOrder == ["/ziel/dir/a.txt", "/ziel/dir/sub/b.txt"])
     }
@@ -1165,7 +1174,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         try await done.wait()
         await waitUntil { vm.isActive == false }
@@ -1197,7 +1206,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() })
+            onCompleted: { done.fire() })
 
         try await done.wait()
 
@@ -1229,7 +1238,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() })
+            onCompleted: { done.fire() })
 
         try await done.wait()
 
@@ -1256,7 +1265,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() })
+            onCompleted: { done.fire() })
 
         try await done.wait()
         #expect(await destination.createdDirectories.contains("/ziel/dir/leer"))
@@ -1284,14 +1293,14 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         // b.txt is running (gated), a.txt is already finished — still no onCompleted.
         try await startedB.wait()
         await waitUntil { status(vm, "a.txt") == .finished }
         #expect(counter.value == 0)
 
-        await gateB.fire()
+        gateB.fire()
         try await done.wait()
         #expect(counter.value == 1)
         #expect(status(vm, "b.txt") == .finished)
@@ -1317,7 +1326,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() })
+            onCompleted: { done.fire() })
 
         try await done.wait()
 
@@ -1350,7 +1359,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         try await done.wait()
         await waitUntil { vm.isActive == false }
@@ -1402,7 +1411,7 @@ struct TransferQueueViewModelTests {
             fileName: "x.txt", direction: .upload,
             source: plain, sourcePath: "/x.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() })
+            onCompleted: { done.fire() })
         try await done.wait()
         #expect(vm.items.last?.status == .finished)
     }
@@ -1438,12 +1447,12 @@ struct TransferQueueViewModelTests {
             directoryName: "dirA", direction: .download,
             source: source, sourceDirectory: "/dirA",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counterA.increment(); await doneA.fire() })
+            onCompleted: { counterA.increment(); doneA.fire() })
         vm.enqueueTree(
             directoryName: "dirB", direction: .download,
             source: source, sourceDirectory: "/dirB",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counterB.increment(); await doneB.fire() })
+            onCompleted: { counterB.increment(); doneB.fire() })
 
         try await doneA.wait()
         try await doneB.wait()
@@ -1482,7 +1491,7 @@ struct TransferQueueViewModelTests {
             directoryName: "leerdir", direction: .download,
             source: source, sourceDirectory: "/leerdir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         try await done.wait()
         for _ in 0..<50 { await Task.yield() }
@@ -1576,11 +1585,11 @@ struct TransferQueueViewModelTests {
         #expect(await tracker.peak == 2)
 
         // Free one slot → the third starts; still never three at once.
-        await gate0.fire()
+        gate0.fire()
         try await started2.wait()
         await waitUntil { vm.items[2].status.isRunning }
 
-        await gate1.fire(); await gate2.fire()
+        gate1.fire(); gate2.fire()
         await waitUntil { vm.items.allSatisfy { $0.status == .finished } }
         #expect(await tracker.peak == 2)   // never exceeded the limit
     }
@@ -1625,18 +1634,18 @@ struct TransferQueueViewModelTests {
         // Free item 0's slot → it goes to item 2 (next in FIFO), NOT item 3.
         // `started2.wait()` only returns once item 2 actually starts; a FIFO
         // violation (item 3 first) would leave item 2 unstarted and hang here.
-        await gate0.fire()
+        gate0.fire()
         try await started2.wait()
         await waitUntil { vm.items[0].status == .finished }
         #expect(vm.items[2].status.isRunning)
         #expect(vm.items[3].status == .queued)   // item 3 still waits behind item 2
 
         // Free item 1's slot → it goes to item 3.
-        await gate1.fire()
+        gate1.fire()
         try await started3.wait()
         await waitUntil { vm.items[3].status.isRunning }
 
-        await gate2.fire(); await gate3.fire()
+        gate2.fire(); gate3.fire()
         await waitUntil { vm.isActive == false }
     }
 
@@ -1902,7 +1911,7 @@ struct TransferQueueViewModelTests {
             source: source, sourcePath: "/a.txt",
             destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
         try await startedA.wait()
-        await gateA.fire()
+        gateA.fire()
         await waitUntil { vm.items[0].status == .interrupted }
         #expect(vm.items[0].status == .interrupted)
         #expect(vm.hasInterrupted)
@@ -1914,7 +1923,7 @@ struct TransferQueueViewModelTests {
             source: source, sourcePath: "/b.txt",
             destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
         try await startedB.wait()
-        await gateB.fire()
+        gateB.fire()
         await waitUntil { if case .failed = vm.items[1].status { return true }; return false }
         if case .failed = vm.items[1].status {} else {
             Issue.record("b.txt should be .failed, was \(String(describing: vm.items[1].status))")
@@ -1942,7 +1951,7 @@ struct TransferQueueViewModelTests {
             source: local1, sourcePath: "/a.txt",
             destination: remote1, destinationDirectory: "/ziel", onCompleted: nil)
         try await started1.wait()
-        await gate1.fire()
+        gate1.fire()
         await waitUntil { vm.items[0].status == .interrupted }
 
         // New session refs: full source + a destination that already holds a
@@ -1988,7 +1997,7 @@ struct TransferQueueViewModelTests {
             source: source, sourcePath: "/a.txt",
             destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
         try await startedA.wait()
-        await gateA.fire()
+        gateA.fire()
         await waitUntil { vm.items[0].status == .interrupted }
 
         // c.txt runs (gated), then cancelAll strikes.
@@ -2025,7 +2034,7 @@ struct TransferQueueViewModelTests {
             source: local1, sourcePath: "/a.txt",
             destination: remote1, destinationDirectory: "/ziel", onCompleted: nil)
         try await started1.wait()
-        await gate1.fire()
+        gate1.fire()
         await waitUntil { vm.items[0].status == .interrupted }
 
         // Simulated teardown, exactly as ContentView does on disconnect.
@@ -2071,7 +2080,7 @@ struct TransferQueueViewModelTests {
             source: flaky, sourcePath: "/x.txt",
             destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
         try await started.wait()
-        await gate.fire()
+        gate.fire()
         await waitUntil { vm.hasInterrupted }
         #expect(vm.hasInterrupted)
     }
@@ -2097,7 +2106,7 @@ struct TransferQueueViewModelTests {
             source: source, sourcePath: "/a.txt",
             destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
         try await started.wait()
-        await gate.fire()
+        gate.fire()
         await waitUntil { vm.items[0].status == .interrupted }
         #expect(vm.items[0].fileName == "a (2).txt")   // displayed under the renamed name
 
@@ -2169,7 +2178,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         try await done.wait()
 
@@ -2224,17 +2233,17 @@ struct TransferQueueViewModelTests {
             directoryName: "dirA", direction: .download,
             source: source, sourceDirectory: "/dirA",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counterA.increment(); await doneA.fire() })
+            onCompleted: { counterA.increment(); doneA.fire() })
         vm.enqueue(
             fileName: "solo.txt", direction: .download,
             source: source, sourcePath: "/solo.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await soloDone.fire() })
+            onCompleted: { soloDone.fire() })
         vm.enqueueTree(
             directoryName: "dirB", direction: .download,
             source: source, sourceDirectory: "/dirB",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counterB.increment(); await doneB.fire() })
+            onCompleted: { counterB.increment(); doneB.fire() })
 
         try await doneA.wait()
         try await soloDone.wait()
@@ -2291,7 +2300,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         try await done.wait()
 
@@ -2325,7 +2334,7 @@ struct TransferQueueViewModelTests {
             fileName: "b.txt", direction: .upload,
             source: source, sourcePath: "/b.txt",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() })
+            onCompleted: { done.fire() })
 
         try await done.wait()
 
@@ -2365,7 +2374,7 @@ struct TransferQueueViewModelTests {
                 // decider (i.e. the gate is held), then wait until the test
                 // has confirmed slot 2 is queued behind it before answering
                 // with an "apply to all" rule.
-                await slot1EnteredDecider.fire()
+                slot1EnteredDecider.fire()
                 try? await letSlot1Proceed.wait()
                 return (.overwrite, true)
             }
@@ -2390,19 +2399,19 @@ struct TransferQueueViewModelTests {
 
         // File 1's stat returns (conflict) → it acquires the gate and calls
         // the decider (call #1), which then blocks on `letSlot1Proceed`.
-        await statGate1.fire()
+        statGate1.fire()
         try await slot1EnteredDecider.wait()
 
         // File 2's stat now returns (conflict too). `queueRule` is still nil
         // (slot 1 hasn't answered yet) so it takes the decider branch and
         // suspends on `conflictGate.acquire()` — slot 1 already holds it.
-        await statGate2.fire()
+        statGate2.fire()
         await waitUntil { vm.conflictGateWaiterCount == 1 }
 
         // Let slot 1 answer: sets the rule, releases the gate straight to
         // slot 2 (FIFO hand-off). A correct implementation re-checks the rule
         // right there and does NOT call the decider again.
-        await letSlot1Proceed.fire()
+        letSlot1Proceed.fire()
 
         await waitUntil { vm.items.allSatisfy { $0.status == .finished } }
         #expect(await calls.count == 1)   // decider asked exactly once overall
@@ -2461,7 +2470,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         try await done.wait()
 
@@ -2474,7 +2483,7 @@ struct TransferQueueViewModelTests {
         // expansion task is already cancelled, so `list` throws regardless
         // of this fire; see `TestSignal.wait()`'s cancellation-awareness).
         // Guards against leaking a permanently-parked task past the test.
-        await subListGate.fire()
+        subListGate.fire()
         for _ in 0..<50 { await Task.yield() }
         #expect(status(vm, "inner.txt") == nil)
     }
@@ -2531,7 +2540,7 @@ struct TransferQueueViewModelTests {
         #expect(status(vm, "inner.txt") == nil)
         #expect(counter.value == 0)   // nothing ever finished — onCompleted must NOT fire
 
-        await subListGate.fire()   // let the parked expansion task unwind
+        subListGate.fire()   // let the parked expansion task unwind
         for _ in 0..<50 { await Task.yield() }
         #expect(counter.value == 0)
         #expect(status(vm, "inner.txt") == nil)
@@ -2575,7 +2584,7 @@ struct TransferQueueViewModelTests {
             await calls.increment()
             // Only the FIRST call (2.txt) parks here; a second call would
             // mean 3.txt got prompted despite already having been swept.
-            await enteredDecider.fire()
+            enteredDecider.fire()
             try? await letProceed.wait()
             return nil   // Cancel
         }
@@ -2583,7 +2592,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         // 2.txt's slot reached the decider (call #1) and is parked there.
         try await enteredDecider.wait()
@@ -2609,7 +2618,7 @@ struct TransferQueueViewModelTests {
         // must be swept via `resolvingJobIDs` WITHOUT the decider ever being
         // asked about it — its own `jobs[id] != nil` guard, right after the
         // gate hand-off, must catch the cancellation instead.
-        await letProceed.fire()
+        letProceed.fire()
         try await done.wait()
 
         #expect(status(vm, "1.txt") == .finished)
@@ -2668,7 +2677,7 @@ struct TransferQueueViewModelTests {
             while await destination.statedPaths.contains(renameCandidatePath) == false {
                 await Task.yield()
             }
-            await cStatGate.fire()
+            cStatGate.fire()
         }
 
         let vm = TransferQueueViewModel()
@@ -2683,7 +2692,7 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         try await done.wait()
 
@@ -2698,7 +2707,7 @@ struct TransferQueueViewModelTests {
         // Let B's parked rename probe unwind — a no-op in fixed code (its
         // job was already cleared by `cancelGroup`, so `process` bails at
         // the `jobs[jobID] != nil` guard without touching status again).
-        await renameProbeGate.fire()
+        renameProbeGate.fire()
         for _ in 0..<50 { await Task.yield() }
 
         // Stable after the probe resolves: no double terminal transition.
@@ -2741,7 +2750,7 @@ struct TransferQueueViewModelTests {
             fileName: "a.txt", localURL: localURL,
             source: source, destination: destination, remoteDirectory: "/ziel")
         try await startedEdit.wait()
-        await gateEdit.fire()
+        gateEdit.fire()
         await waitUntil {
             if case .failed = vm.items[0].status { return true }; return false
         }
@@ -2761,7 +2770,7 @@ struct TransferQueueViewModelTests {
             source: source, sourcePath: "/normal.txt",
             destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
         try await startedNormal.wait()
-        await gateNormal.fire()
+        gateNormal.fire()
         await waitUntil { vm.items[1].status == .interrupted }
         #expect(vm.items[1].status == .interrupted)
         #expect(vm.hasInterrupted)
@@ -2951,11 +2960,11 @@ struct TransferQueueViewModelTests {
             fileName: "2.txt", direction: .download,
             source: source, sourcePath: "/2.txt",
             destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
-        await gate1.fire()
+        gate1.fire()
         try await started2.wait()
         #expect(vm.lastStartedDirection == .download)
 
-        await gate2.fire()
+        gate2.fire()
         await waitUntil { vm.isActive == false }
     }
 
@@ -2980,7 +2989,7 @@ struct TransferQueueViewModelTests {
             fileName: "quelle.bin", direction: .upload,
             source: source, sourcePath: "/quelle.bin",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() }, destinationTabID: nil, crossRemote: true)
+            onCompleted: { done.fire() }, destinationTabID: nil, crossRemote: true)
         try await done.wait()
 
         #expect(vm.items.first?.direction == .upload)
@@ -3008,7 +3017,7 @@ struct TransferQueueViewModelTests {
         #expect(vm.hasActiveItems(destinationTabID: tabID) == true)
         #expect(vm.hasActiveItems(destinationTabID: UUID()) == false)
 
-        await gate.fire()
+        gate.fire()
         await waitUntil { vm.isActive == false }
         #expect(vm.hasActiveItems(destinationTabID: tabID) == false)
     }
@@ -3035,13 +3044,13 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() }, destinationTabID: tabID)
+            onCompleted: { done.fire() }, destinationTabID: tabID)
 
         try await startedA.wait()
         try await startedB.wait()
         #expect(vm.hasActiveItems(destinationTabID: tabID) == true)
 
-        await gateA.fire(); await gateB.fire()
+        gateA.fire(); gateB.fire()
         try await done.wait()
         #expect(vm.hasActiveItems(destinationTabID: tabID) == false)
     }
@@ -3078,7 +3087,7 @@ struct TransferQueueViewModelTests {
             onCompleted: nil, destinationTabID: tabID, crossRemote: true)
 
         try await started.wait()
-        await gate.fire()
+        gate.fire()
         await waitUntil {
             if case .failed = vm.items[0].status { return true }; return false
         }
@@ -3130,7 +3139,7 @@ struct TransferQueueViewModelTests {
             onCompleted: nil, destinationTabID: nil, crossRemote: true)
 
         try await started.wait()
-        await gate.fire()
+        gate.fire()
         await waitUntil { vm.items[0].status == .interrupted }
 
         // Reconnect: retry against fresh file systems, same limiter.
@@ -3176,7 +3185,7 @@ struct TransferQueueViewModelTests {
             fileName: "a.bin", direction: .upload,
             source: source, sourcePath: "/a.bin",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { await done.fire() }, destinationTabID: nil, crossRemote: true)
+            onCompleted: { done.fire() }, destinationTabID: nil, crossRemote: true)
         try await done.wait()
 
         #expect(await destination.writtenData(at: "/ziel/a.bin") == content)
@@ -3493,7 +3502,7 @@ struct TransferQueueViewModelTests {
         await waitTask.value
         #expect(waiterThrew.value == 1)
 
-        await gate1.fire()
+        gate1.fire()
         await waitUntil { vm.isActive == false }
         #expect(vm.items[0].status == .finished)
         #expect(vm.items[2].status == .finished)
@@ -3527,14 +3536,14 @@ struct TransferQueueViewModelTests {
             directoryName: "dir", direction: .download,
             source: source, sourceDirectory: "/dir",
             destination: destination, destinationDirectory: "/ziel",
-            onCompleted: { counter.increment(); await done.fire() })
+            onCompleted: { counter.increment(); done.fire() })
 
         try await startedA.wait()
         await waitUntil { self.status(vm, "b.txt") == .queued }
         let bID = try #require(vm.items.first(where: { $0.fileName == "b.txt" })?.id)
 
         #expect(vm.cancel(itemID: bID))
-        await gateA.fire()
+        gateA.fire()
 
         try await done.wait()
         await waitUntil { vm.isActive == false }
@@ -3569,7 +3578,7 @@ struct TransferQueueViewModelTests {
             fileName: "1.txt", direction: .upload,
             source: source, sourcePath: "/1.txt",
             destination: destination, destinationDirectory: "/dest",
-            onCompleted: { await done1.fire() })
+            onCompleted: { done1.fire() })
         try await done1.wait()
         #expect(vm.items[0].status == .finished)
 
@@ -3611,7 +3620,7 @@ struct TransferQueueViewModelTests {
 
         let vm = TransferQueueViewModel()
         vm.conflictDecider = { _ in
-            await deciderEntered.fire()
+            deciderEntered.fire()
             try? await releaseDecider.wait()
             return (.overwrite, false)
         }
@@ -3637,7 +3646,7 @@ struct TransferQueueViewModelTests {
         // Release the prompt only AFTER the postcondition above is read: the
         // decider answers `.overwrite`, and a `process` that resolved a
         // second time would write the file and overwrite the status.
-        await releaseDecider.fire()
+        releaseDecider.fire()
         await waitUntil { waiterThrew.value == 1 }
         try #require(waiterThrew.value == 1)
         await waitTask.value
@@ -3661,7 +3670,7 @@ struct TransferQueueViewModelTests {
             fileName: "1.txt", direction: .upload,
             source: source, sourcePath: "/1.txt",
             destination: destination, destinationDirectory: "/dest",
-            onCompleted: { await done.fire() })
+            onCompleted: { done.fire() })
         try await done.wait()
         await waitUntil { vm.isActive == false }
         #expect(vm.items[0].status == .finished)

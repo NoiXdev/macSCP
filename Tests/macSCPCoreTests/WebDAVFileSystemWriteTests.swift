@@ -58,6 +58,15 @@ private final class FirstResult<T: Sendable>: @unchecked Sendable {
 /// the timer measured the runner (CLAUDE.md, "A wall-clock ceiling in a test
 /// measures the runner"). The only clock now is the harness limit, and the
 /// cancellation it performs is what resumes the waiter with `nil`.
+///
+/// For `PollingGuardTests`' purposes, the continuation IS the API under test here:
+/// this function already IS the cancellation-aware helper — the same race `awaitResumption`
+/// (`Tests/MacSCPTestSupport/AwaitResumption.swift`) generalizes, built by
+/// hand here because `abandonable` returns a plain `T?` on cancellation
+/// rather than throwing `CancellationError`, which `awaitResumption` always
+/// does. Routing through it would mean changing this function's signature
+/// to `async throws` and every caller's `nil`-check to a catch, for a
+/// mechanism that is already measured correct (the CI run cited above).
 private func abandonable<T: Sendable>(
     _ work: @escaping @Sendable () async -> T
 ) async -> T? {

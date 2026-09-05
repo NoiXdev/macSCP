@@ -139,7 +139,7 @@ func addKey(atPath keyPath: String, to agent: SpawnedAgent,
 @discardableResult
 func withAgentEnv<T>(
     _ agent: SpawnedAgent, _ body: () async throws -> T
-) async rethrows -> T {
+) async throws -> T {
     try await AgentEnvLock.shared.run {
         let original = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]
         setenv("SSH_AUTH_SOCK", agent.socketPath, 1)

@@ -69,7 +69,15 @@ struct TabDragTests {
     ///
     /// `withCheckedThrowingContinuation`, not a semaphore: every wait in a
     /// test target of this project is an `await` (CLAUDE.md, "Tests never
-    /// block the cooperative pool").
+    /// block the cooperative pool"). Not routed through `awaitResumptionThrowing`
+    /// (`Tests/MacSCPTestSupport/AwaitResumption.swift`) — tried and
+    /// reverted: `awaitResumptionThrowing`'s body must be `@Sendable` to run
+    /// on the unstructured task that watches for cancellation, and
+    /// `NSItemProvider` is not `Sendable`, so it cannot be captured there.
+    /// For this exemption's purposes, the continuation IS the API under test here —
+    /// `loadTransferable`'s completion handler is documented to run exactly
+    /// once, so this bare continuation carries none of the "may never
+    /// resume" risk the backlog finding is about.
     @Test func aPayloadSurvivesARoundTripThroughItsTransferRepresentation() async throws {
         let payload = TabDragPayload(tabID: UUID(), sourceWindowID: WindowID())
         let provider = NSItemProvider()

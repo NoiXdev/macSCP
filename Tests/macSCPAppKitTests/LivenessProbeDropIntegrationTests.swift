@@ -793,6 +793,18 @@ private final class CompletionStamp: @unchecked Sendable {
 /// free. A teardown that BLOCKED the main actor rather than suspending on
 /// it would take this bound down with it — which is what the out-of-process
 /// watchdog in `pruneAfter(seconds:)` is for.
+///
+/// For this exemption's purposes, the continuation IS the API under test here:
+/// this is not the shape `awaitResumption`
+/// (`Tests/MacSCPTestSupport/AwaitResumption.swift`) exists to fix. Unlike a
+/// bare continuation that may never resume at all, this one is not at risk
+/// of that — one of the two unstructured tasks above always calls
+/// `box.resume(with:)` within `boundSeconds`, by construction. Wrapping the
+/// outer wait for outside-task cancellation would additionally require
+/// `Box` to give up `@MainActor` isolation for an `@unchecked Sendable`
+/// lock, the same restructuring the other actor-isolated gates in this
+/// plan needed, for a wait that is already bounded and was never at risk of
+/// outliving its own limit.
 @MainActor
 private enum BoundedRun {
     static func run(

@@ -147,6 +147,13 @@ struct DiagnosticLogSharedSinkTests {
 
     /// Mirrors `LocalFileSystemTests`' own private `Gate`: a probe parks on
     /// `opened()` and never returns while this test never calls `open()`.
+    ///
+    /// `opened()`'s bare continuation is deliberate — the continuation IS the API under test here.
+    /// `consumer.cancel()` (below) cancels the `Task` parked in `opened()`,
+    /// and cancellation must not unstick it, mirroring Citadel's real
+    /// uncancellable in-flight I/O (CLAUDE.md, architecture invariants) —
+    /// the same shape as `LocalFileSystemTests`' and
+    /// `ConnectionDiagnosticsTests`' own `Gate.opened()`.
     private actor Gate {
         private var isOpen = false
         private var waiters: [CheckedContinuation<Void, Never>] = []

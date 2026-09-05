@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -15,16 +16,16 @@ private final class ConnectorGate: @unchecked Sendable {
     private var continuation: CheckedContinuation<Void, Never>?
     private var released = false
 
-    func wait() async {
-        await withCheckedContinuation { continuation in
-            lock.lock()
-            if released {
-                lock.unlock()
+    func wait() async throws {
+        try await awaitResumption { (continuation: CheckedContinuation<Void, Never>) in
+            self.lock.lock()
+            if self.released {
+                self.lock.unlock()
                 continuation.resume()
                 return
             }
             self.continuation = continuation
-            lock.unlock()
+            self.lock.unlock()
         }
     }
 
@@ -232,7 +233,7 @@ struct ConnectionConfigResolutionTests {
     @Test func resolvingLeavesAnInFlightConnectUndisturbed() async {
         let gate = ConnectorGate()
         let vm = ConnectionViewModel(connector: { _, _ in
-            await gate.wait()
+            try await gate.wait()
             return MockRemoteFileSystem(tree: ["/": []])
         })
         vm.host = "example.com"

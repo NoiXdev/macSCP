@@ -1,12 +1,17 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
-/// Cancellation-INDEPENDENT one-shot signal (mirrors `PlainSignal` in
+/// One-shot signal (mirrors `PlainSignal` in
 /// `RemoteBrowserViewModelTests`/`TerminalPanelViewModelTests`, duplicated
-/// per file per that established convention): `wait()` ignores task
-/// cancellation on the waiting side, which is exactly what the concurrency
-/// tests below need to park a decider mid-flight deterministically.
+/// per file per that established convention). Nothing in this file ever
+/// calls `Task.cancel()` — the tests below simulate a decider's own
+/// cancellation by returning `nil`, a value, not a `Task`-level
+/// cancellation — so `wait()` routes through `awaitResumption`
+/// (`Tests/MacSCPTestSupport/AwaitResumption.swift`) for the same reason
+/// every other bare continuation in `Tests/` does, with no change to what
+/// these tests exercise.
 private final class PlainSignal: @unchecked Sendable {
     private let lock = NSLock()
     private var fired = false
@@ -21,15 +26,15 @@ private final class PlainSignal: @unchecked Sendable {
         for continuation in pending { continuation.resume() }
     }
 
-    func wait() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            lock.lock()
-            if fired {
-                lock.unlock()
+    func wait() async throws {
+        try await awaitResumption { (continuation: CheckedContinuation<Void, Never>) in
+            self.lock.lock()
+            if self.fired {
+                self.lock.unlock()
                 continuation.resume()
             } else {
-                continuations.append(continuation)
-                lock.unlock()
+                self.continuations.append(continuation)
+                self.lock.unlock()
             }
         }
     }
@@ -99,7 +104,7 @@ struct ImportConflictTests {
     /// call "b" is then let through with a DIFFERENT, non-rule answer.
     /// Correct behaviour: "b" must return "a"'s rule, not its own answer —
     /// that is what "don't ask again" means once a rule exists.
-    @Test func applyToAllRuleWinsOverAConcurrentlySuspendedCallsOwnAnswer() async {
+    @Test func applyToAllRuleWinsOverAConcurrentlySuspendedCallsOwnAnswer() async throws {
         let log = DeciderCallLog()
         let aStarted = PlainSignal()
         let aMayReturn = PlainSignal()
@@ -110,20 +115,20 @@ struct ImportConflictTests {
             await log.record(conflict.itemName)
             if conflict.itemName == "a" {
                 aStarted.fire()
-                await aMayReturn.wait()
+                try? await aMayReturn.wait()
                 return (.replace, true)   // applyToAll
             } else {
                 bStarted.fire()
-                await bMayReturn.wait()
+                try? await bMayReturn.wait()
                 return (.skip, false)     // a different, non-rule answer
             }
         }
 
         let taskA = Task { await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set", reason: .name)) }
-        await aStarted.wait()
+        try await aStarted.wait()
 
         let taskB = Task { await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set", reason: .name)) }
-        await bStarted.wait()
+        try await bStarted.wait()
         // Both calls are now genuinely suspended inside their own decider
         // invocation, with `rule` still nil for both.
 
@@ -143,7 +148,7 @@ struct ImportConflictTests {
     /// decider(...)`. Correct behaviour: "b" must return nil once it
     /// resumes, discarding its own (already-collected) answer, and the
     /// cancellation must not be undone.
-    @Test func cancelWinsOverAConcurrentlySuspendedCallsOwnAnswer() async {
+    @Test func cancelWinsOverAConcurrentlySuspendedCallsOwnAnswer() async throws {
         let log = DeciderCallLog()
         let bStarted = PlainSignal()
         let bMayReturn = PlainSignal()
@@ -154,13 +159,13 @@ struct ImportConflictTests {
                 return nil   // cancels — no need to block "a" itself
             } else {
                 bStarted.fire()
-                await bMayReturn.wait()
+                try? await bMayReturn.wait()
                 return (.replace, false)
             }
         }
 
         let taskB = Task { await arbiter.resolve(ImportConflict(itemName: "b", kindLabel: "login set", reason: .name)) }
-        await bStarted.wait()
+        try await bStarted.wait()
         // "b" is now genuinely suspended inside its own decider invocation.
 
         let taskA = Task { await arbiter.resolve(ImportConflict(itemName: "a", kindLabel: "login set", reason: .name)) }

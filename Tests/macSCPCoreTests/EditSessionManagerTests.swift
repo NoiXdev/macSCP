@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -9,41 +10,45 @@ struct EditSessionManagerTests {
 
     // MARK: - Test signal (same pattern as TransferQueueViewModelTests/TransferEngineTests)
 
-    /// One-shot async gate: `wait()` suspends until `fire()` is called (or
+    /// One-shot gate: `wait()` suspends until `fire()` is called (or
     /// resolves immediately if `fire()` already happened). Lets a test pin a
     /// mock download mid-flight without a real sleep.
-    actor TestSignal {
+    ///
+    /// `@unchecked Sendable` behind an `NSLock` rather than an `actor`:
+    /// `wait()` routes through `awaitResumptionThrowing`
+    /// (`Tests/MacSCPTestSupport/AwaitResumption.swift`), whose body closure
+    /// must be `@Sendable` to run on the unstructured task that watches for
+    /// cancellation — an actor's isolated state cannot be touched from a
+    /// `@Sendable` closure that way, so the lock takes over the isolation
+    /// an actor used to provide. This also drops the old per-waiter `UUID`
+    /// map and its `cancelWaiter`, the same simplification as
+    /// `TransferQueueViewModelTests.TestSignal`: `awaitResumptionThrowing`
+    /// already guarantees a cancelled wait resumes with `CancellationError`
+    /// exactly once, so an orphaned continuation left behind by a
+    /// cancellation is simply resumed, harmlessly, the next time `fire()`
+    /// runs.
+    final class TestSignal: @unchecked Sendable {
+        private let lock = NSLock()
         private var fired = false
-        private var continuations: [UUID: CheckedContinuation<Void, Error>] = [:]
+        private var continuations: [CheckedContinuation<Void, any Error>] = []
 
         func fire() {
-            fired = true
-            let pending = continuations
-            continuations.removeAll()
-            for continuation in pending.values { continuation.resume() }
+            let pending: [CheckedContinuation<Void, any Error>] = lock.withLock {
+                fired = true
+                defer { continuations.removeAll() }
+                return continuations
+            }
+            for continuation in pending { continuation.resume() }
         }
 
         func wait() async throws {
-            if fired { return }
-            let id = UUID()
-            try await withTaskCancellationHandler {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    if fired {
-                        continuation.resume()
-                    } else if Task.isCancelled {
-                        continuation.resume(throwing: CancellationError())
-                    } else {
-                        continuations[id] = continuation
-                    }
+            try await awaitResumptionThrowing { (continuation: CheckedContinuation<Void, any Error>) in
+                let shouldResumeNow = self.lock.withLock { () -> Bool in
+                    if self.fired { return true }
+                    self.continuations.append(continuation)
+                    return false
                 }
-            } onCancel: {
-                Task { await self.cancelWaiter(id) }
-            }
-        }
-
-        private func cancelWaiter(_ id: UUID) {
-            if let continuation = continuations.removeValue(forKey: id) {
-                continuation.resume(throwing: CancellationError())
+                if shouldResumeNow { continuation.resume() }
             }
         }
     }
@@ -86,7 +91,7 @@ struct EditSessionManagerTests {
 
         func readStream(path: String, fromOffset offset: UInt64) async throws -> AsyncThrowingStream<Data, Error> {
             readStreamCallCount += 1
-            await entered?.fire()
+            entered?.fire()
             if let gate { try await gate.wait() }
             return try await inner.readStream(path: path, fromOffset: offset)
         }
@@ -95,7 +100,7 @@ struct EditSessionManagerTests {
             writeCallCount += 1
             concurrentWrites += 1
             maxConcurrentWrites = max(maxConcurrentWrites, concurrentWrites)
-            await writeEntered?.fire()
+            writeEntered?.fire()
             if let writeGate { try await writeGate.wait() }
             defer { concurrentWrites -= 1 }
             try await inner.write(path: path, mode: mode, contents: contents)
@@ -244,7 +249,7 @@ struct EditSessionManagerTests {
         // behind) the first call's in-flight entry before releasing the gate.
         for _ in 0..<50 { await Task.yield() }
 
-        await gate.fire()
+        gate.fire()
 
         let firstURL = try await first
         let secondURL = try await second
@@ -360,7 +365,7 @@ struct EditSessionManagerTests {
 
         // Release #1. Its completion must enqueue EXACTLY ONE more write-back,
         // which reads the latest ("v3") content — still never concurrent.
-        await writeGate.fire()
+        writeGate.fire()
         await waitUntil { uploadCount(queue) == 2 }
         #expect(uploadCount(queue) == 2)
         await waitUntil {

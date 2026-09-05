@@ -625,6 +625,13 @@ struct LocalFileSystemTests {
     /// `isClosed` is read by the parked-entry test to prove the abandoned
     /// child really never got past the gate, not merely that it finished
     /// quickly by some other route.
+    ///
+    /// `opened()`'s bare continuation is deliberate — the continuation IS the API under test here.
+    /// `consumer.cancel()` (below) cancels the `Task` parked in `opened()`,
+    /// and the test then reads `gate.isClosed` to prove that cancellation
+    /// did NOT unstick it, mirroring Citadel's real uncancellable in-flight
+    /// I/O (CLAUDE.md, architecture invariants) — the same shape and the
+    /// same reasoning as `ConnectionDiagnosticsTests`' own `Gate.opened()`.
     private actor Gate {
         private var isOpen = false
         private var waiters: [CheckedContinuation<Void, Never>] = []

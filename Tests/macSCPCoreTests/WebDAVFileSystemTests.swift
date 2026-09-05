@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Synchronization
 import Testing
 @testable import macSCPCore
@@ -108,7 +109,7 @@ final class FakeHTTPTransport: HTTPTransport, Sendable {
     /// the very pump that has to keep feeding the other end.
     private static func drain(_ stream: InputStream) async throws -> Data {
         let boxed = Unchecked(value: stream)
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await awaitResumptionThrowing { (continuation: CheckedContinuation<Data, any Error>) in
             DispatchQueue.global().async {
                 let input = boxed.value
                 input.open()

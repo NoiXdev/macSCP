@@ -49,6 +49,21 @@ jobs:
         # interleaved output, and the run's one failing test never appeared
         # by name (run 33698102652 lost 60 suite verdicts the same way). The
         # step below reads the file back; the artifact keeps it.
+        #
+        # `timeout-minutes: 8` (docs/BACKLOG.md, "A test parked on a bare
+        # continuation outlives its time limit"): a test parked on a bare
+        # continuation ignores Swift Testing's own `.timeLimit` cancellation
+        # and would otherwise run on to the JOB's 20-minute budget above
+        # instead of failing near its own stated limit. Measured from the
+        # last three green `develop` runs before this step timeout was
+        # added (`gh run list --branch develop --limit 5 --json
+        # databaseId,conclusion`, then `gh run view <id> --json jobs --jq
+        # '.jobs[].steps[] | select(.name|test("Unit-Tests")) |
+        # "\(.startedAt) \(.completedAt)"'`): runs 33972030162, 33959532085
+        # and 33955366191 took 181 s, 230 s and 184 s — a measured maximum
+        # of 230 s (3 m 50 s). 8 minutes (480 s) is 2.09x that maximum,
+        # comfortably above the "at least 2x" floor.
+        timeout-minutes: 8
         run: |
           set -o pipefail
           swift test --event-stream-output-path "$RUNNER_TEMP/test-events.jsonl" \

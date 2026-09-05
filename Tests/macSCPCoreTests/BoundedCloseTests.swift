@@ -20,6 +20,13 @@ struct BoundedCloseTests {
     /// runtime's "leaked its continuation" note on stdout is the expected
     /// consequence of the race abandoning it, not a failure; that suite has
     /// printed the same line for as long as it has existed.
+    ///
+    /// In this test, the continuation IS the API under test here: `BoundedClose` must
+    /// finish inside its bound by RACING this call, not by cancelling it —
+    /// mirroring Citadel's real uncancellable in-flight I/O (CLAUDE.md,
+    /// architecture invariants) — so this stays a genuinely bare, never-
+    /// resumed `withCheckedContinuation` rather than going through
+    /// `awaitResumption`.
     private func neverReturns() async {
         await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in
             // Deliberately never resumed.

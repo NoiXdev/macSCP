@@ -284,7 +284,7 @@ struct ConnectionDiagnosticsTests {
                 ) { _, _ in
                     let timer = DiagnosticStepTimer(
                         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
-                    await gate.open()
+                    gate.open()
                     try? await Task.sleep(for: .seconds(30))
                     return timer.finish(.ok, "never reached")
                 }),
@@ -378,7 +378,7 @@ struct ConnectionDiagnosticsTests {
                 ) { _, _ in
                     let timer = DiagnosticStepTimer(
                         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
-                    await gate.open()
+                    gate.open()
                     try? await Task.sleep(for: .seconds(30))
                     return timer.finish(.ok, "never reached")
                 }),
@@ -531,7 +531,7 @@ struct ConnectionDiagnosticsTests {
                 ) { _, _ in
                     let timer = DiagnosticStepTimer(
                         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
-                    await gate.open()
+                    gate.open()
                     try? await Task.sleep(for: .seconds(30))
                     return timer.finish(.ok, "never reached")
                 }),
@@ -1416,11 +1416,11 @@ struct ConnectionDiagnosticsTests {
                     let timer = DiagnosticStepTimer(
                         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
                     await release.opened()
-                    await probeFinished.open()
+                    probeFinished.open()
                     return timer.finish(.ok, "never reported")
                 }),
             stepTimeout: .seconds(1))
-        let stillRunning = await probeFinished.isClosed
+        let stillRunning = probeFinished.isClosed
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
         #expect(dial.outcome == .timedOut)
@@ -1430,9 +1430,9 @@ struct ConnectionDiagnosticsTests {
         // satisfy it vacuously. Releasing the abandoned probe now and waiting
         // for it to reach its own end proves the gate can open at all — and
         // that the probe really was still alive after the step returned.
-        await release.open()
+        release.open()
         await probeFinished.opened()
-        let openedInTheEnd = await probeFinished.isClosed == false
+        let openedInTheEnd = probeFinished.isClosed == false
         #expect(openedInTheEnd)
     }
 
@@ -1819,25 +1819,49 @@ private final class CountingSecretSource: SecretSource, @unchecked Sendable {
     }
 }
 
-private actor Gate {
+/// `@unchecked Sendable` behind an `NSLock` rather than an `actor` (so a
+/// `@Sendable` body closure elsewhere in this file can touch the same shape
+/// of state safely), but `opened()` itself is a deliberately BARE
+/// `withCheckedContinuation` — the continuation IS the API under test here.
+/// `aProbeThatIgnoresCancellationDoesNotHoldTheStepPastItsDeadline` measures
+/// that a step's own `Task` cancellation, once its `stepTimeout` fires, does
+/// NOT unstick a probe waiting on `release.opened()` — mirroring Citadel's
+/// real, uncancellable in-flight I/O (CLAUDE.md, architecture invariants).
+/// Routing this through `awaitResumption` was tried and reverted: it made
+/// `release.opened()` resume on cancellation instead of ignoring it, so the
+/// step's own cancellation raced ahead and opened `probeFinished` before the
+/// probe would have on its own — `stillRunning` read false instead of the
+/// true the test exists to pin. `PollingGuardTests.noBareContinuationEscapesAwaitResumption`
+/// exempts this file by that first sentence.
+private final class Gate: @unchecked Sendable {
+    private let lock = NSLock()
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func open() {
-        guard !isOpen else { return }
-        isOpen = true
-        for waiter in waiters { waiter.resume() }
-        waiters.removeAll()
+        let toResume: [CheckedContinuation<Void, Never>] = lock.withLock {
+            guard !isOpen else { return [] }
+            isOpen = true
+            defer { waiters.removeAll() }
+            return waiters
+        }
+        for waiter in toResume { waiter.resume() }
     }
 
     func opened() async {
-        if isOpen { return }
-        await withCheckedContinuation { waiters.append($0) }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let shouldResumeNow = lock.withLock { () -> Bool in
+                if isOpen { return true }
+                waiters.append(continuation)
+                return false
+            }
+            if shouldResumeNow { continuation.resume() }
+        }
     }
 
     /// Whether nothing has opened it yet — read by the deadline case, which
     /// asks "was the probe still running when the step returned?".
-    var isClosed: Bool { !isOpen }
+    var isClosed: Bool { lock.withLock { !isOpen } }
 }
 
 /// A loopback TCP socket a test owns, for the two ends of the ping: one that

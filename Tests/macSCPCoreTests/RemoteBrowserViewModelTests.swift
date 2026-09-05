@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -478,12 +479,17 @@ struct RemoteBrowserViewModelTests {
         }
     }
 
-    /// Cancellation-INDEPENDENT one-shot signal (mirrors `PlainSignal` in
+    /// One-shot signal (mirrors `PlainSignal` in
     /// `PermissionsTreeApplierTests`/`TransferEngineTests`, duplicated per
-    /// file per that established convention): `wait()` ignores task
-    /// cancellation on the WAITING side, since it is the walker's own
-    /// `Task.isCancelled` checks — not this signal — that must observe
-    /// cancellation in `recursiveApplyMarksCancelledRunAndStillReloads`.
+    /// file per that established convention). Every `wait()` call in this
+    /// file runs on the TEST's own task, never on the one that later gets
+    /// cancelled (`recursiveApplyMarksCancelledRunAndStillReloads` cancels a
+    /// separate `Task` only after its own `reached.wait()` has already
+    /// returned) — it is the walker's own `Task.isCancelled` checks that
+    /// must observe cancellation there, not this signal — so routing
+    /// `wait()` through `awaitResumption`
+    /// (`Tests/MacSCPTestSupport/AwaitResumption.swift`) changes nothing
+    /// any test here exercises.
     private final class PlainSignal: @unchecked Sendable {
         private let lock = NSLock()
         private var fired = false
@@ -498,15 +504,15 @@ struct RemoteBrowserViewModelTests {
             for continuation in pending { continuation.resume() }
         }
 
-        func wait() async {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                lock.lock()
-                if fired {
-                    lock.unlock()
+        func wait() async throws {
+            try await awaitResumption { (continuation: CheckedContinuation<Void, Never>) in
+                self.lock.lock()
+                if self.fired {
+                    self.lock.unlock()
                     continuation.resume()
                 } else {
-                    continuations.append(continuation)
-                    lock.unlock()
+                    self.continuations.append(continuation)
+                    self.lock.unlock()
                 }
             }
         }
@@ -809,7 +815,7 @@ struct RemoteBrowserViewModelTests {
             await vm.applyPermissionsRecursively(
                 filePermissions: 0o644, directoryPermissions: 0o755, to: root)
         }
-        await reached.wait()
+        try await reached.wait()
         task.cancel()
         let result = await task.value
 
@@ -1293,7 +1299,7 @@ struct RemoteBrowserViewModelTests {
     /// directory's contents while `currentPath` still (correctly) names the
     /// new one. `load()` must apply the same "late writer must lose" rule
     /// `refreshQuietly()` already documents.
-    @Test func loadIgnoresStaleResultFromEarlierDirectory() async {
+    @Test func loadIgnoresStaleResultFromEarlierDirectory() async throws {
         let fs = MockRemoteFileSystem(tree: [
             "/": [
                 RemoteFileItem(name: "A", path: "/A", kind: .directory),
@@ -1314,7 +1320,7 @@ struct RemoteBrowserViewModelTests {
         let arrived = PlainSignal()
         await fs.gateListCall(at: "/A") { arrived.fire() }
         let staleLoad = Task { await vm.load() }
-        await arrived.wait()
+        try await arrived.wait()
 
         // Navigate to "/B" while the stale "/A" load is still in flight —
         // this is the fast path that must win.
@@ -1343,7 +1349,7 @@ struct RemoteBrowserViewModelTests {
     /// while `.loading`, so the user is left staring at a spinner over a
     /// perfectly correct listing. The rollback restores a fully derived
     /// `displayedAll`, so `.loaded` is the truthful state to restore.
-    @Test func navigateRollbackDoesNotRestoreAConcurrentLoadingState() async {
+    @Test func navigateRollbackDoesNotRestoreAConcurrentLoadingState() async throws {
         let fs = MockRemoteFileSystem(tree: [
             "/": [
                 RemoteFileItem(name: "good.txt", path: "/good.txt", kind: .file, size: 1),
@@ -1361,7 +1367,7 @@ struct RemoteBrowserViewModelTests {
         let refreshArrived = PlainSignal()
         await fs.gateListCall(at: "/") { refreshArrived.fire() }
         let detachedRefresh = Task { await vm.load() }
-        await refreshArrived.wait()
+        try await refreshArrived.wait()
         #expect(vm.state == .loading)
 
         // Start the doomed navigation and let it get as far as its own
@@ -1369,7 +1375,7 @@ struct RemoteBrowserViewModelTests {
         let navArrived = PlainSignal()
         await fs.gateListCall(at: "/bad") { navArrived.fire() }
         let navigation = Task { await vm.navigate(to: "/bad") }
-        await navArrived.wait()
+        try await navArrived.wait()
 
         // Let the detached refresh finish FIRST — it loses to the newer
         // `currentPath` and leaves nothing in flight to repair the state.
@@ -1394,7 +1400,7 @@ struct RemoteBrowserViewModelTests {
     /// undoing the winner's navigation, and return the winner's failure
     /// message as its own verdict. A superseded navigation must return
     /// without claiming a verdict and without touching anything.
-    @Test func supersededNavigateDoesNotClaimAnotherNavigationsVerdict() async {
+    @Test func supersededNavigateDoesNotClaimAnotherNavigationsVerdict() async throws {
         let fs = MockRemoteFileSystem(tree: [
             "/": [
                 RemoteFileItem(name: "A", path: "/A", kind: .directory),
@@ -1411,7 +1417,7 @@ struct RemoteBrowserViewModelTests {
         let arrived = PlainSignal()
         await fs.gateListCall(at: "/A") { arrived.fire() }
         let navigation = Task { await vm.navigate(to: "/A") }
-        await arrived.wait()
+        try await arrived.wait()
 
         // A second, faster navigation supersedes it and ends in `.failed`.
         await vm.open(badItem)

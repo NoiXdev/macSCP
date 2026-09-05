@@ -206,6 +206,13 @@ struct LivenessProbeCancellationTests {
 ///
 /// Everything except `stat` traps if called, so a future change that routes
 /// through one of them fails loudly instead of passing quietly.
+///
+/// For `stat`, the continuation IS the API under test here — this whole suite
+/// exists because cancelling the probing task must NOT shorten `stat`,
+/// mirroring Citadel's real uncancellable in-flight I/O (CLAUDE.md,
+/// architecture invariants), so it stays a genuinely bare, never-resumed
+/// `withCheckedThrowingContinuation` rather than going through
+/// `awaitResumption`.
 private final class NeverRespondingFileSystem: RemoteFileSystem, @unchecked Sendable {
     private let lock = NSLock()
     private var statArrived = false

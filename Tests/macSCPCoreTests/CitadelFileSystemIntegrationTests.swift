@@ -1551,7 +1551,7 @@ struct CitadelFileSystemIntegrationTests {
             .appendingPathComponent("macscp-kh-agent-wrong-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
         let store = KnownHostsStore(directory: khDir)
-        await withAgentEnv(agent) {
+        try await withAgentEnv(agent) {
             await #expect(throws: RemoteFSError.authenticationFailed) {
                 _ = try await CitadelFileSystem.connect(
                     config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
@@ -1673,7 +1673,7 @@ struct CitadelFileSystemIntegrationTests {
             .appendingPathComponent("macscp-kh-agent-jump-wrong-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
         let store = KnownHostsStore(directory: khDir)
-        await withAgentEnv(agent) {
+        try await withAgentEnv(agent) {
             await #expect(throws: RemoteFSError.jumpAuthenticationFailed) {
                 _ = try await CitadelFileSystem.connect(
                     config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })

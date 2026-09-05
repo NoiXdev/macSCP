@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import macSCPCore
@@ -307,8 +308,8 @@ struct NetworkTraceTests {
     /// remaining errnos are `EINVAL`, `EFAULT` and `ENOMEM`, none of which is
     /// reachable through this signature. Both exits return `.failed` with
     /// `strerror`'s own sentence, so the shape they produce is the same one.
-    @Test func aBrokenReceivingSocketIsAFailureAndNeverASilentHop() async {
-        let result = await Self.onOwnQueue { Self.waitOnASocketAndOnABrokenOne() }
+    @Test func aBrokenReceivingSocketIsAFailureAndNeverASilentHop() async throws {
+        let result = try await Self.onOwnQueue { Self.waitOnASocketAndOnABrokenOne() }
 
         #expect(result.openSocketIsSilent)
         #expect(result.brokenSocketFails)
@@ -628,7 +629,7 @@ struct NetworkTraceTests {
     /// running at once, in this process or in `ICMPSpikeTests` alongside it,
     /// since those pick the same destination port).
     @Test func aForeignPortUnreachableIsNotCountedAsThisProbesAnswer() async throws {
-        let result = await Self.onOwnQueue { Self.injectForeignUnreachable() }
+        let result = try await Self.onOwnQueue { Self.injectForeignUnreachable() }
 
         // The anchors come first, and they have to: without them the two
         // rejections below would be satisfied by a socket that received
@@ -810,8 +811,8 @@ struct NetworkTraceTests {
     /// `poll` or `recvfrom`.
     private static func onOwnQueue<T: Sendable>(
         _ body: @escaping @Sendable () -> T
-    ) async -> T {
-        await withCheckedContinuation { (continuation: CheckedContinuation<T, Never>) in
+    ) async throws -> T {
+        try await awaitResumption { (continuation: CheckedContinuation<T, Never>) in
             DispatchQueue(label: "macscp.tests.network-trace").async {
                 continuation.resume(returning: body())
             }

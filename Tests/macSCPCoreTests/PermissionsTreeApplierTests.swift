@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -127,7 +128,7 @@ struct PermissionsTreeApplierTests {
                 root: "/r", kind: .directory, filePermissions: 0o644, directoryPermissions: 0o755, on: fs)
         }
 
-        await reached.wait()
+        try await reached.wait()
         task.cancel()
         let result = await task.value
 
@@ -274,15 +275,15 @@ private final class PlainSignal: @unchecked Sendable {
         for continuation in pending { continuation.resume() }
     }
 
-    func wait() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            lock.lock()
-            if fired {
-                lock.unlock()
+    func wait() async throws {
+        try await awaitResumption { (continuation: CheckedContinuation<Void, Never>) in
+            self.lock.lock()
+            if self.fired {
+                self.lock.unlock()
                 continuation.resume()
             } else {
-                continuations.append(continuation)
-                lock.unlock()
+                self.continuations.append(continuation)
+                self.lock.unlock()
             }
         }
     }

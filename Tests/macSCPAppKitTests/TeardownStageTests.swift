@@ -29,6 +29,11 @@ struct TeardownStageTests {
     /// bound is for, and nothing built out of `Task.sleep` stands in for it.
     /// The runtime's "leaked its continuation" note on stdout is the
     /// expected consequence of the abandonment, not a failure.
+    ///
+    /// For the same reason as `BoundedCloseTests.neverReturns`, the continuation IS the API under test here.
+    /// A teardown stage must finish inside its bound by RACING this call,
+    /// not by cancelling it, so this stays a genuinely bare, never-resumed
+    /// `withCheckedContinuation`.
     private func neverReturns() async {
         await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in
             // Deliberately never resumed.

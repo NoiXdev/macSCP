@@ -33,3 +33,21 @@ CI step's own outer timeout is, or the runner's default if none is set.
    cannot recur silently in a future test.
 
 Neither question is decided here.
+
+## Closed
+
+**2026-09-05.** Both questions answered; see `docs/BACKLOG.md`'s own
+entry for this row for the full measurement and count. Summary: (1) the
+`Unit-Tests` step in `.github/workflows/ci.yml` now carries its own
+`timeout-minutes: 8`, measured at 2.09x the maximum of the last three
+green runs' step durations (230 s), below the job's existing 20-minute
+budget. (2) Yes — a new helper, `awaitResumption`/`awaitResumptionThrowing`
+(`Tests/MacSCPTestSupport/AwaitResumption.swift`), wraps a bare
+continuation in `withTaskCancellationHandler` the same way
+`awaitCancellably` already does for NIO futures; a `PollingGuardTests`
+guard (`noBareContinuationEscapesAwaitResumption`) requires every test-side
+bare continuation outside `Tests/MacSCPTestSupport/` to either route
+through it or carry a documented, sentence-matched reason it must stay
+raw (a mock modelling an uncancellable peer, a race already bounded by
+construction, a cancellation that must complete the wait rather than
+throw, or a body that cannot be `@Sendable`).

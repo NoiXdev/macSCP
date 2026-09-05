@@ -405,6 +405,85 @@ struct PollingGuardTests {
         #expect(fixtureMatches.count == 3, "\(fixtureMatches.count)")
     }
 
+    /// Negative: no test target file outside `Tests/MacSCPTestSupport/`
+    /// calls `withCheckedContinuation(`/`withCheckedThrowingContinuation(`/
+    /// `withUnsafeContinuation(`/`withUnsafeThrowingContinuation(` directly,
+    /// unless that file's own comment carries the sentence "the
+    /// continuation IS the API under test here" — the same exemption shape
+    /// `noLatchIsWaitedOnWithATimeout` and `noSleepingChildRacesWorkInAGroup`
+    /// already use, matched by sentence rather than by file name so a
+    /// rewording without also removing the shape turns this check red
+    /// instead of quietly staying green.
+    ///
+    /// `docs/BACKLOG.md`, "A test parked on a bare continuation outlives its
+    /// time limit": a bare continuation does not observe `Task`
+    /// cancellation, so Swift Testing's `.timeLimit` cancels the enclosing
+    /// test's task but never unparks the continuation underneath it — the
+    /// "exceeded" report is not the process actually stopping, and on CI the
+    /// job runs on to its own outer timeout instead of failing at the
+    /// suite's stated limit. Every ordinary wait instead goes through
+    /// `awaitResumption`/`awaitResumptionThrowing`
+    /// (`Tests/MacSCPTestSupport/AwaitResumption.swift`), which resumes with
+    /// `CancellationError` the moment the awaiting task is cancelled. The 12
+    /// files exempted here (counted 2026-09-05) each carry a doc comment
+    /// explaining why THEIR bare continuation is not this bug: a mock that
+    /// deliberately never resumes to model a frozen peer or an uncancellable
+    /// probe, a hand-built race that is already bounded by construction, or
+    /// a body that cannot be `@Sendable` (`NSItemProvider`).
+    ///
+    /// Scanned over comment-and-string-blanked source, per CLAUDE.md
+    /// "Source-scanning guards read comments too": several of those same
+    /// exemption doc comments quote `withCheckedContinuation` verbatim to
+    /// explain themselves, which would otherwise look like the call itself
+    /// to this regex.
+    @Test func noBareContinuationEscapesAwaitResumption() throws {
+        // `\s*[({]`, not a literal `\(`: every real call site in this tree
+        // uses trailing-closure syntax (`withCheckedContinuation { ... }`),
+        // never `withCheckedContinuation({ ... })` — a first version of this
+        // pattern required the paren and matched nothing at all.
+        let pattern = try NSRegularExpression(
+            pattern: #"with(?:Unsafe(?:Throwing)?|Checked(?:Throwing)?)Continuation\s*[({]"#)
+        let exemptionSentence = "the continuation IS the API under test here"
+
+        let candidates = try Self.sources().filter { !$0.path.contains("/MacSCPTestSupport/") }
+
+        let matched = try candidates.filter { source in
+            let blanked = try Self.blankCommentsAndStrings(source.text)
+            let range = NSRange(blanked.startIndex..., in: blanked)
+            return pattern.firstMatch(in: blanked, range: range) != nil
+        }
+
+        let offenders = matched.filter { !$0.text.contains(exemptionSentence) }.map(\.path)
+        #expect(offenders.isEmpty, "\(offenders)")
+
+        // Positive: the exemption is actually exercised — without this, the
+        // negative above could pass over a tree where the pattern matches
+        // nothing at all, exempt or otherwise. 12 files match today (counted
+        // 2026-09-05).
+        #expect(matched.count >= 10, "\(matched.count)")
+    }
+
+    /// Positive for `noBareContinuationEscapesAwaitResumption`: the helper
+    /// it exempts callers into actually exists and declares both entry
+    /// points, and real test files call it — without this, the negative
+    /// above could pass simply because nothing in the tree ever adopted the
+    /// helper at all. 16 files call `awaitResumption(`/`awaitResumptionThrowing(`
+    /// today (counted 2026-09-05, `grep -rl 'awaitResumption[Throwing]* {'`),
+    /// outside `AwaitResumption.swift` itself.
+    @Test func theAwaitResumptionHelperExistsAndIsAdopted() throws {
+        let helperURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/AwaitResumption.swift")
+        let helperText = try String(contentsOf: helperURL, encoding: .utf8)
+        #expect(helperText.contains("public func awaitResumption<"))
+        #expect(helperText.contains("public func awaitResumptionThrowing<"))
+
+        let callers = try Self.sources().filter { source in
+            !source.path.contains("/MacSCPTestSupport/")
+                && (source.text.contains("awaitResumption {")
+                    || source.text.contains("awaitResumptionThrowing {"))
+        }
+        #expect(callers.count >= 15, "\(callers.count)")
+    }
+
     /// The name of every `func` a helper file declares whose body contains
     /// `pollUntil(`. A small local brace-balancer, not a shared one: this
     /// guard lives in Core and the model

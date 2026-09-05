@@ -91,7 +91,7 @@ struct TransferEngineTests {
         }
 
         // First chunk has arrived at the destination → transfer is running, destination parks.
-        await reached.wait()
+        try await reached.wait()
         task.cancel()
 
         // Timeout race so that a (regressed) missing cancellation doesn't
@@ -336,7 +336,7 @@ struct TransferEngineTests {
                 onProgress: { _ in })
         }
 
-        await reached.wait()
+        try await reached.wait()
         task.cancel()
 
         let outcome = try await awaitOutcome(task)
@@ -439,15 +439,15 @@ private final class PlainSignal: @unchecked Sendable {
         for continuation in pending { continuation.resume() }
     }
 
-    func wait() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            lock.lock()
-            if fired {
-                lock.unlock()
+    func wait() async throws {
+        try await awaitResumption { (continuation: CheckedContinuation<Void, Never>) in
+            self.lock.lock()
+            if self.fired {
+                self.lock.unlock()
                 continuation.resume()
             } else {
-                continuations.append(continuation)
-                lock.unlock()
+                self.continuations.append(continuation)
+                self.lock.unlock()
             }
         }
     }

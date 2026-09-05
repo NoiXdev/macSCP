@@ -23,6 +23,13 @@ struct LivenessProbeRaceTests {
     /// connection. Every other requirement is unreached by this test and
     /// traps if ever called, so a future change that routes through one of
     /// them fails loudly instead of silently passing.
+    ///
+    /// For `stat`, the continuation IS the API under test here: the liveness probe
+    /// must detect a dead connection by RACING this call against a bound,
+    /// not by relying on cancellation to unstick it — matching Citadel's
+    /// real, uncancellable in-flight I/O (CLAUDE.md, architecture
+    /// invariants) — so it stays a genuinely bare, never-resumed
+    /// `withCheckedThrowingContinuation`.
     private struct NeverRespondingFileSystem: RemoteFileSystem {
         func list(path: String) async throws -> [RemoteFileItem] {
             fatalError("not exercised by this test")

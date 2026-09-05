@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import MacSCPAppKit
@@ -96,10 +97,10 @@ struct DiagnosticsViewModelTests {
     @Test func isRunningIsSetBeforeTheRunnerAnswers() async {
         let gate = Gate()
         let model = Self.model(
-            runner: { _, _ in await gate.wait(); return Self.report([]) }, clipboard: Clipboard())
+            runner: { _, _ in try? await gate.wait(); return Self.report([]) }, clipboard: Clipboard())
         model.run()
         #expect(model.isRunning, "the panel must be able to show progress while the run is in flight")
-        await gate.open()
+        gate.open()
         await model.runTask?.value
         #expect(model.isRunning == false)
     }
@@ -173,13 +174,13 @@ struct DiagnosticsViewModelTests {
     /// `withTaskCancellationHandler`, and a `true` here cannot have come from
     /// a run that simply finished. `DiagnosticsLifecycleTests` drives the same
     /// property through the sheet and the tab teardown.
-    @Test func cancelReachesTheRunnerBeforeAnythingHeals() async {
+    @Test func cancelReachesTheRunnerBeforeAnythingHeals() async throws {
         let observed = CancellationFlag()
         let started = Gate()
         let model = Self.model(
             runner: { [observed, started] _, _ in
                 await withTaskCancellationHandler {
-                    await started.open()
+                    started.open()
                     try? await Task.sleep(for: .seconds(600))
                     return Self.report([])
                 } onCancel: {
@@ -188,7 +189,7 @@ struct DiagnosticsViewModelTests {
             },
             clipboard: Clipboard())
         model.run()
-        await started.wait()
+        try await started.wait()
         #expect(observed.isSet == false, "nothing has asked it to stop yet")
 
         model.cancel()
@@ -344,7 +345,7 @@ struct DiagnosticsViewModelTests {
         let model = Self.model(
             runner: { _, observer in
                 for step in emitted { await observer.onStep(step) }
-                await parked.wait()
+                try? await parked.wait()
                 return Self.report(emitted)
             },
             clipboard: Clipboard())
@@ -358,7 +359,7 @@ struct DiagnosticsViewModelTests {
         #expect(model.isRunning, "and the run is genuinely still in flight")
         #expect(model.report == nil, "nothing has been published as a finished report yet")
 
-        await parked.open()
+        parked.open()
         await model.runTask?.value
         #expect(model.steps.map(\.id) == emitted.map(\.id))
         #expect(model.report?.steps == emitted, """
@@ -485,7 +486,7 @@ struct DiagnosticsViewModelTests {
         let model = Self.model(
             runner: { _, observer in
                 if await calls.next() == 1 {
-                    await released.wait()
+                    try? await released.wait()
                     await observer.onStep(stale)
                     return Self.report([stale])
                 }
@@ -497,7 +498,7 @@ struct DiagnosticsViewModelTests {
         let abandoned = model.runTask
         model.run()
         await model.runTask?.value
-        await released.open()
+        released.open()
         await abandoned?.value
 
         #expect(model.steps.map(\.id) == [current.id], """
@@ -521,7 +522,7 @@ struct DiagnosticsViewModelTests {
         let model = Self.model(
             runner: { _, observer in
                 await observer.onStepStarted(walking.id, walking.titleKey)
-                await parked.wait()
+                try? await parked.wait()
                 return Self.report([walking])
             },
             clipboard: Clipboard())
@@ -534,7 +535,7 @@ struct DiagnosticsViewModelTests {
             """)
         #expect(model.isRunning, "and the run is genuinely still in flight")
 
-        await parked.open()
+        parked.open()
         await model.runTask?.value
         #expect(model.runningStepTitleKey == nil, """
             a run that has ended is measuring nothing, and a name left behind would be a step \
@@ -552,7 +553,7 @@ struct DiagnosticsViewModelTests {
             runner: { _, observer in
                 await observer.onStepStarted(measured.id, measured.titleKey)
                 await observer.onStep(measured)
-                await parked.wait()
+                try? await parked.wait()
                 return Self.report([measured])
             },
             clipboard: Clipboard())
@@ -565,7 +566,7 @@ struct DiagnosticsViewModelTests {
             """)
         #expect(model.isRunning, "while the walk itself is still going")
 
-        await parked.open()
+        parked.open()
         await model.runTask?.value
     }
 
@@ -1008,22 +1009,40 @@ struct DiagnosticsViewModelTests {
         }
     }
 
-    /// Opens once, and lets either side arrive first. An actor rather than a
-    /// semaphore: nothing in this target may block the cooperative pool
-    /// (CLAUDE.md, "Tests never block the cooperative pool").
-    private actor Gate {
+    /// Opens once, and lets either side arrive first. `@unchecked Sendable`
+    /// behind an `NSLock` rather than an actor: `wait()` routes through
+    /// `awaitResumption` (`Tests/MacSCPTestSupport/AwaitResumption.swift`),
+    /// whose body closure must be `@Sendable` to run on the unstructured
+    /// task that watches for cancellation — an actor's isolated state
+    /// cannot be touched from a `@Sendable` closure that way, so the lock
+    /// takes over the isolation an actor used to provide. Nothing here
+    /// tests cancellation of `wait()` itself (every test that cancels the
+    /// model uses `Task.sleep` instead, which already observes it), so
+    /// making the wait cancellation-aware is a plain safety net, not a
+    /// change to any test's meaning.
+    private final class Gate: @unchecked Sendable {
+        private let lock = NSLock()
         private var waiter: CheckedContinuation<Void, Never>?
         private var opened = false
 
-        func wait() async {
-            if opened { return }
-            await withCheckedContinuation { waiter = $0 }
+        func wait() async throws {
+            try await awaitResumption { (continuation: CheckedContinuation<Void, Never>) in
+                let shouldResumeNow = self.lock.withLock { () -> Bool in
+                    if self.opened { return true }
+                    self.waiter = continuation
+                    return false
+                }
+                if shouldResumeNow { continuation.resume() }
+            }
         }
 
         func open() {
-            opened = true
-            waiter?.resume()
-            waiter = nil
+            let pending: CheckedContinuation<Void, Never>? = lock.withLock {
+                opened = true
+                defer { waiter = nil }
+                return waiter
+            }
+            pending?.resume()
         }
     }
 }

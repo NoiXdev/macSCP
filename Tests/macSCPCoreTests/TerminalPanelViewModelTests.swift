@@ -700,7 +700,8 @@ final class LateFinishShell: RemoteShell, Sendable {
 /// readable from a non-async expression. Every WAIT is still an `await`.
 ///
 /// Deliberately NOT cancellation-aware, unlike the gates in the AppKit sizing
-/// suite. This one stands in for `CitadelShell.resize` -> `TTYStdinWriter
+/// suite — the continuation IS the API under test here. This one stands in
+/// for `CitadelShell.resize` -> `TTYStdinWriter
 /// .changeSize` awaiting a NIO future, which does not observe cancellation
 /// either — a window-change that `cancelPendingSends()` has flagged still
 /// goes out and still returns. Making it cancellable would model away the
@@ -948,16 +949,16 @@ struct TerminalPanelViewModelDeliveryTests {
         private var continuation: CheckedContinuation<Void, Never>?
         private var isOpen = false
 
-        func waitUntilOpened() async {
-            await withCheckedContinuation { c in
-                lock.lock()
-                if isOpen {
-                    lock.unlock()
-                    c.resume()
+        func waitUntilOpened() async throws {
+            try await awaitResumption { (continuation: CheckedContinuation<Void, Never>) in
+                self.lock.lock()
+                if self.isOpen {
+                    self.lock.unlock()
+                    continuation.resume()
                     return
                 }
-                continuation = c
-                lock.unlock()
+                self.continuation = continuation
+                self.lock.unlock()
             }
         }
 
@@ -1010,7 +1011,6 @@ struct TerminalPanelViewModelDeliveryTests {
         private let lock = NSLock()
         private var _count = 0
         private var continuation: CheckedContinuation<Void, Never>?
-        private var wasReleased = false
 
         var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
 
@@ -1028,44 +1028,28 @@ struct TerminalPanelViewModelDeliveryTests {
         /// happened. The caller asserts on the count either way, so a
         /// give-up lands on the diagnostic rather than on a bare timeout
         /// message.
+        ///
+        /// Routed through `awaitResumption`
+        /// (`Tests/MacSCPTestSupport/AwaitResumption.swift`) rather than a
+        /// hand-rolled `withTaskCancellationHandler` + `wasReleased` flag —
+        /// the two used to be spelled out here separately (the flag existed
+        /// so a cancellation arriving before this parked would not be lost);
+        /// `awaitResumption`'s own state machine already covers exactly that
+        /// race, so folding this into one call removes a duplicate copy of
+        /// it rather than changing what either outcome reports.
         @discardableResult
         func waitForFirstDelivery() async -> Bool {
-            await withTaskCancellationHandler {
-                await self.parkUntilDelivered()
-            } onCancel: {
-                // The waiter is parked on the continuation and nothing else
-                // will touch it if the callback never comes; releasing it
-                // here is what lets the caller reach its assertion.
-                self.resumePendingWaiter()
+            try? await awaitResumption { (continuation: CheckedContinuation<Void, Never>) in
+                self.lock.lock()
+                if self._count > 0 {
+                    self.lock.unlock()
+                    continuation.resume()
+                } else {
+                    self.continuation = continuation
+                    self.lock.unlock()
+                }
             }
             return count > 0
-        }
-
-        private func parkUntilDelivered() async {
-            await withCheckedContinuation { c in
-                lock.lock()
-                // `wasReleased` and not just the count: the handler above can
-                // run BEFORE this parks (a task already cancelled runs it
-                // immediately), and a resume that arrives then has nothing to
-                // resume. Recording it under the same lock is what keeps that
-                // race from parking forever.
-                if _count > 0 || wasReleased {
-                    lock.unlock()
-                    c.resume()
-                    return
-                }
-                continuation = c
-                lock.unlock()
-            }
-        }
-
-        private func resumePendingWaiter() {
-            lock.lock()
-            wasReleased = true
-            let pending = continuation
-            continuation = nil
-            lock.unlock()
-            pending?.resume()
         }
     }
 
@@ -1090,7 +1074,7 @@ struct TerminalPanelViewModelDeliveryTests {
         let shell = MockShell()
         let gate = OpenGate()
         let vm = TerminalPanelViewModel(openShell: { _, _, _ in
-            await gate.waitUntilOpened()
+            try await gate.waitUntilOpened()
             return shell
         })
         vm.openIfNeeded()

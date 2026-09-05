@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// The ICMP spike of `docs/superpowers/plans/2026-09-03-connection-tools-spike.md`.
@@ -67,8 +68,8 @@ struct ICMPSpikeTests {
     /// measurement found it UNCHANGED on 26.6.2 (three runs, design §5). A
     /// matcher may therefore read the identifier but must not require it —
     /// `ICMPEcho` pins the sequence instead.
-    @Test func unprivilegedICMPv4EchoReachesLoopback() async {
-        let result = await Self.onDedicatedQueue("macscp.spike.icmp4-echo") {
+    @Test func unprivilegedICMPv4EchoReachesLoopback() async throws {
+        let result = try await Self.onDedicatedQueue("macscp.spike.icmp4-echo") {
             Self.measureEcho(
                 family: AF_INET,
                 proto: Int32(IPPROTO_ICMP),
@@ -85,8 +86,8 @@ struct ICMPSpikeTests {
     /// (a) IPv6 — the same through `IPPROTO_ICMPV6` to `::1`. The kernel owns
     /// the ICMPv6 checksum (it needs the pseudo-header), so the request goes
     /// out with a zero there.
-    @Test func unprivilegedICMPv6EchoReachesLoopback() async {
-        let result = await Self.onDedicatedQueue("macscp.spike.icmp6-echo") {
+    @Test func unprivilegedICMPv6EchoReachesLoopback() async throws {
+        let result = try await Self.onDedicatedQueue("macscp.spike.icmp6-echo") {
             Self.measureEcho(
                 family: AF_INET6,
                 proto: Int32(IPPROTO_ICMPV6),
@@ -107,8 +108,8 @@ struct ICMPSpikeTests {
     /// the kernel has somewhere to report an error at all, and both exits are
     /// read afterwards: `getsockopt(SO_ERROR)` and a non-blocking `recvfrom`.
     /// `SO_RECVERR`, Linux's third exit, does not exist here.
-    @Test func timeExceededForTTLLimitedIPv4Probe() async {
-        let result = await Self.onDedicatedQueue("macscp.spike.icmp4-ttl") {
+    @Test func timeExceededForTTLLimitedIPv4Probe() async throws {
+        let result = try await Self.onDedicatedQueue("macscp.spike.icmp4-ttl") {
             Self.measureTimeExceeded(
                 family: AF_INET,
                 icmpProto: Int32(IPPROTO_ICMP),
@@ -126,8 +127,8 @@ struct ICMPSpikeTests {
     /// route. The route is probed by `connect`ing an unconnected UDP socket,
     /// which puts no packet on the wire; without a route the verdict is
     /// "no IPv6 route, unmeasured" and nothing is sent.
-    @Test func timeExceededForHopLimitedIPv6Probe() async {
-        let result = await Self.onDedicatedQueue("macscp.spike.icmp6-hoplimit") {
+    @Test func timeExceededForHopLimitedIPv6Probe() async throws {
+        let result = try await Self.onDedicatedQueue("macscp.spike.icmp6-hoplimit") {
             let destination = Endpoint(ipv6: Spike.documentationV6, port: Spike.probePort)
             guard let route = Self.probeIPv6Route(to: destination) else {
                 return Self.measureTimeExceeded(
@@ -377,9 +378,9 @@ struct ICMPSpikeTests {
     private static func onDedicatedQueue(
         _ label: String,
         _ body: @escaping @Sendable () -> SpikeResult
-    ) async -> SpikeResult {
+    ) async throws -> SpikeResult {
         let queue = DispatchQueue(label: label)
-        return await withCheckedContinuation { (continuation: CheckedContinuation<SpikeResult, Never>) in
+        return try await awaitResumption { (continuation: CheckedContinuation<SpikeResult, Never>) in
             queue.async { continuation.resume(returning: body()) }
         }
     }

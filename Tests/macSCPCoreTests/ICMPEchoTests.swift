@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import macSCPCore
@@ -120,7 +121,7 @@ struct ICMPEchoTests {
     @Test func aForeignEchoReplyIsNotCountedAsThisProbesAnswer() async throws {
         let ours = ICMPEcho.probePayload()
         let theirs = Array("not-this-probes-payload".utf8)
-        let result = await Self.onOwnQueue { Self.injectForeignReply(ours: ours, theirs: theirs) }
+        let result = try await Self.onOwnQueue { Self.injectForeignReply(ours: ours, theirs: theirs) }
 
         // The positive anchor, and it has to come first: the foreign datagram
         // really did reach OUR socket, and the wait really does return a reply
@@ -141,7 +142,7 @@ struct ICMPEchoTests {
     /// mismatch never occurs by accident.
     @Test func aReplyWithAnEarlierProbesSequenceIsNotCountedForThisOne() async throws {
         let ours = ICMPEcho.probePayload()
-        let result = await Self.onOwnQueue { Self.injectStaleSequence(payload: ours) }
+        let result = try await Self.onOwnQueue { Self.injectStaleSequence(payload: ours) }
 
         // Anchor first, same reasoning as above: the datagram reaches this
         // socket and IS returned when the wait expects the sequence it
@@ -193,7 +194,7 @@ struct ICMPEchoTests {
     /// the same way — a counter that cannot rise would prove nothing either.
     @Test func anIPv6AddressWithNoRouteIsUnavailableAndSendsNothing() async throws {
         let address = try #require(await Self.loopback(Self.documentationV6))
-        switch await Self.onOwnQueue({ Self.routeVerdict(for: Self.documentationV6) }) {
+        switch try await Self.onOwnQueue({ Self.routeVerdict(for: Self.documentationV6) }) {
         case .routed:
             print(
                 "ICMPEcho: this machine has a route to \(Self.documentationV6) — the routeless "
@@ -489,8 +490,8 @@ struct ICMPEchoTests {
     /// `poll` or `recvfrom`.
     private static func onOwnQueue<T: Sendable>(
         _ body: @escaping @Sendable () -> T
-    ) async -> T {
-        await withCheckedContinuation { (continuation: CheckedContinuation<T, Never>) in
+    ) async throws -> T {
+        try await awaitResumption { (continuation: CheckedContinuation<T, Never>) in
             DispatchQueue(label: "macscp.tests.icmp-echo").async {
                 continuation.resume(returning: body())
             }

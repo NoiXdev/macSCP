@@ -119,6 +119,15 @@ struct SSHTerminalViewSizingTests {
     /// panel while the view model is still `.opening` — the app's real
     /// order, in which the surface is on screen and laid out before any
     /// shell exists.
+    ///
+    /// In `wait()`, the continuation IS the API under test here, and it is
+    /// deliberately not routed through `awaitResumption`
+    /// (`Tests/MacSCPTestSupport/AwaitResumption.swift`): a cancelled
+    /// `wait()` here must complete NORMALLY, by triggering the same
+    /// `open()` a real release would (see `onCancel` below) — not throw
+    /// `CancellationError`, which is the only thing `awaitResumption` can
+    /// do on cancellation. Changing that would change what a cancelled
+    /// mount test observes.
     private actor OpenGate: HeldOpen {
         private var continuation: CheckedContinuation<Void, Never>?
         private var isOpen = false

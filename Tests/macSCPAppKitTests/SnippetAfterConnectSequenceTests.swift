@@ -497,7 +497,7 @@ struct SnippetAfterConnectSequenceTests {
         // would be mid-way through a real one.
         view.deliverPendingSnippetRun(on: tab)
 
-        await gate.open()
+        gate.open()
         await teardownTask.value
 
         let opensAfter = await shells.openCount
@@ -604,7 +604,7 @@ private final class ShellingFileSystem: RemoteFileSystem, RemoteShellProvider, S
 
     func homeDirectoryPath() async throws -> String { "/home/snippet-after-connect" }
 
-    func disconnect() async { await disconnectGate?.wait() }
+    func disconnect() async { try? await disconnectGate?.wait() }
 }
 
 /// Holds `ShellingFileSystem.disconnect()` open until the test resumes it —
@@ -616,19 +616,36 @@ private final class ShellingFileSystem: RemoteFileSystem, RemoteShellProvider, S
 /// `open()` is called, so replaying the observer between the terminal
 /// closing and that return lands at the exact point the fix is about,
 /// every run, rather than at whatever point a race happened to reach.
-private actor DisconnectGate {
+/// `@unchecked Sendable` behind an `NSLock` rather than an `actor`: `wait()`
+/// routes through `awaitResumption`
+/// (`Tests/MacSCPTestSupport/AwaitResumption.swift`), whose body closure
+/// must be `@Sendable` to run on the unstructured task that watches for
+/// cancellation — an actor's isolated state cannot be touched from a
+/// `@Sendable` closure that way, so the lock takes over the isolation an
+/// actor used to provide.
+private final class DisconnectGate: @unchecked Sendable {
+    private let lock = NSLock()
     private var isOpen = false
     private var continuation: CheckedContinuation<Void, Never>?
 
-    func wait() async {
-        if isOpen { return }
-        await withCheckedContinuation { continuation = $0 }
+    func wait() async throws {
+        try await awaitResumption { (continuation: CheckedContinuation<Void, Never>) in
+            let shouldResumeNow = self.lock.withLock { () -> Bool in
+                if self.isOpen { return true }
+                self.continuation = continuation
+                return false
+            }
+            if shouldResumeNow { continuation.resume() }
+        }
     }
 
     func open() {
-        isOpen = true
-        continuation?.resume()
-        continuation = nil
+        let pending: CheckedContinuation<Void, Never>? = lock.withLock {
+            isOpen = true
+            defer { continuation = nil }
+            return continuation
+        }
+        pending?.resume()
     }
 }
 
