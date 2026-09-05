@@ -287,10 +287,14 @@ extension LocalFileSystem: LocalMetadataSource {
                             .debug, "browser.local",
                             "entry slow name=\(item.name) ms=\(Int(elapsed.milliseconds.rounded()))")
                     }
-                    // Self-healing (round 2): unconditional, harmless no-op
-                    // if this path was never marked.
-                    stuckPaths?.clear(item.path)
+                    // Self-healing (round 2): unconditional, a harmless no-op
+                    // if this path was never marked. The order matters: the
+                    // tally learns the child finished FIRST, so a supervisor
+                    // mark that lands in between cannot see this item as
+                    // pending any more; the clear is the last write, and a
+                    // mark can never undo it (round 3, reviewer-caught).
                     await tally.childFinished(item: item, yielding: filled ?? item, into: continuation)
+                    stuckPaths?.clear(item.path)
                 }
             }
         }
