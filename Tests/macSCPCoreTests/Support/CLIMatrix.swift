@@ -208,6 +208,16 @@ struct CLIMatrix: Sendable {
     /// which of them prints the line at all.
     static let secretSourceNote = "secret source: "
 
+    /// The same environment `run(_:...)` builds for the built binary,
+    /// exposed for a caller that drives the binary through something other
+    /// than `SubprocessRunner` — `PTYSubprocessTests`' gated pair
+    /// (`Tests/macSCPCoreTests/CLIMatrixITests.swift`), which needs a real
+    /// pseudo-terminal on stdin rather than the null device
+    /// `SubprocessRunner` always hands the child.
+    func environmentForPTY() -> [String: String] {
+        environment(secretVariable: descriptor.secretEnvironmentVariable)
+    }
+
     /// Runs the built binary with `arguments` and this rig's store and
     /// secret. Through `SubprocessRunner`, which awaits the child instead of
     /// parking a cooperative-pool thread on it (CLAUDE.md, "Tests never block

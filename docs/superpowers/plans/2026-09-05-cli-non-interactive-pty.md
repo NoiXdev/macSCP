@@ -43,6 +43,6 @@ apart from its own absence in this harness".
 - Test: `Tests/macSCPCoreTests/CLIMatrixITests.swift` (gated `MACSCP_ITEST=1`): `nonInteractiveUnderAPTYRefusesWithoutPrompting` — the CLI binary from `CLIMatrix`'s existing lookup, `ls --non-interactive --json <target>` against a fresh known-hosts file: output carries the refusal and NOT the prompt text (name the exact prompt string from `SessionConnecting.swift`'s announcing branch — count its occurrences); `askUnderAPTYPromptsAndNoRefuses` — the same command without the flag: the prompt text appears, the test writes `no`, the CLI refuses with the same exit code. The pair is the measurement: same TTY, the flag is the only difference.
 - Modify: `docs/BACKLOG.md` (the row → Done: the two cases, the exit codes observed, the prompt text counted), `docs/superpowers/plans/2026-09-05-cli-non-interactive-pty.md` checkboxes.
 
-- [ ] **Step 1: Red first** — `cannot find 'PTYSubprocess'`; then, with the support in place, the gated pair against the rig.
-- [ ] **Step 2: Implement**; `swift test --filter PTYSubprocess` green; `MACSCP_ITEST=1 swift test --filter "CLIMatrix"` green; full `swift test`; zero warnings.
-- [ ] **Step 3: Commit** `test(cli): --non-interactive is measured under a pseudo-terminal, where the flag is the only difference`.
+- [x] **Step 1: Red first** — `cannot find 'PTYSubprocess'`; then, with the support in place, the gated pair against the rig.
+- [x] **Step 2: Implement**; `swift test --filter PTYSubprocess` green; `MACSCP_ITEST=1 swift test --filter "CLIMatrix"` green; full `swift test`; zero warnings.
+- [x] **Step 3: Commit** `test(cli): --non-interactive is measured under a pseudo-terminal, where the flag is the only difference`.

@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Synchronization
 import Testing
 @testable import macSCPCore
@@ -952,6 +953,13 @@ enum CLIMatrixCases {
 struct CLIMatrixSSHITests {
     static let kind: ConnectionKind = .ssh
 
+    /// The exact prompt text `makeDecider(policy:)`'s `.prompt` branch
+    /// writes to stderr (`Sources/MacSCPCLI/SessionConnecting.swift:147`).
+    /// Occurs exactly once in `Sources/` — `grep -rn "Trust this host? \
+    /// \[y/N\]" Sources/` on 2026-09-05 — so this is the one and only
+    /// place either PTY case below could see it appear.
+    private static let hostKeyPromptText = "Trust this host? [y/N]"
+
     @Test func listsASeededFileAsJSON() async throws {
         try await CLIMatrixCases.listsASeededFileAsJSON(Self.kind)
     }
@@ -1007,6 +1015,92 @@ struct CLIMatrixSSHITests {
 
     @Test func diagnoseDialMeasuresTheBackendsOwnConnect() async throws {
         try await CLIMatrixCases.diagnoseDialMeasuresTheBackendsOwnConnect(Self.kind)
+    }
+
+    // MARK: - `--non-interactive` under a real terminal
+
+    /// Closes the backlog row "`--non-interactive` cannot be told apart
+    /// from its own absence in this harness"
+    /// (`anUnknownHostKeyIsRefusedUntilAccepted`'s own doc comment measured
+    /// why: `SubprocessRunner` hands every child `/dev/null` for stdin, so
+    /// `CLIEnvironment.hasTTY` is false and `HostKeyPolicy.decision(for:
+    /// .ask, hasTTY: false)` already resolves to `.reject` before the flag
+    /// is read at all — the refusal that case measures is the POLICY's,
+    /// not proof `--non-interactive` itself produced it).
+    ///
+    /// This case and `askUnderAPTYPromptsAndNoRefuses` below run the same
+    /// command over the built binary under `PTYSubprocess`, where
+    /// `isatty(stdin)` really is true, so `.ask` resolves to `.prompt`
+    /// instead of `.reject` — and the ONLY thing that can still turn a
+    /// `.prompt` back into a refusal without ever asking is
+    /// `--non-interactive` itself. The pair is the measurement: same
+    /// terminal, same fresh store, same unknown key; the flag is the only
+    /// difference between them.
+    ///
+    /// A fresh store, exactly like `anUnknownHostKeyIsRefusedUntilAccepted`:
+    /// `CLIMatrix.make` hands the child a `MACSCP_STORAGE_DIRECTORY` whose
+    /// `known_hosts.json` does not exist yet, so the rig's SSH host key is
+    /// unknown to it.
+    @Test func nonInteractiveUnderAPTYRefusesWithoutPrompting() async throws {
+        let rig = try CLIMatrix.make(for: Self.kind, label: "ptynoninteractive")
+        defer { rig.tearDown() }
+        let target = rig.target(rig.remoteRoot)
+
+        let result = try await PTYSubprocess.run(
+            executable: try CLIMatrix.binaryURL(),
+            arguments: ["ls", "--non-interactive", "--json", target],
+            environment: rig.environmentForPTY())
+
+        let leaks = rig.leaksSecret(result.output)
+        #expect(leaks == false, "the run printed the secret under a PTY")
+        #expect(
+            !result.output.contains(Self.hostKeyPromptText),
+            "the prompt appeared under --non-interactive: \(result.output.debugDescription)")
+        #expect(
+            result.output.contains("Confirm it interactively, or pass --accept-new to trust new hosts."),
+            "the --non-interactive refusal text did not appear: \(result.output.debugDescription)")
+        #expect(
+            result.status == CLIExitCode.hostKeyUnknown.rawValue,
+            "an unknown host key under a PTY with --non-interactive exited \(result.status)")
+    }
+
+    /// The other half of the pair: the SAME command, without
+    /// `--non-interactive`, under the SAME kind of terminal. The prompt
+    /// text appears — proving `.prompt` really was reached, which the case
+    /// above could never show on its own — this writes `n` (neither `y`
+    /// nor `yes`, so `makeDecider(policy:)`'s prompt branch returns
+    /// `false`), and the CLI refuses with the identical exit code the flag
+    /// alone produces above. Nothing but `n` ever reaches the terminal;
+    /// the rig's secret rides `environmentForPTY()` exactly as it does for
+    /// every other SSH case in this file, never the terminal.
+    @Test func askUnderAPTYPromptsAndNoRefuses() async throws {
+        let rig = try CLIMatrix.make(for: Self.kind, label: "ptyask")
+        defer { rig.tearDown() }
+        let target = rig.target(rig.remoteRoot)
+
+        let result = try await PTYSubprocess.run(
+            executable: try CLIMatrix.binaryURL(),
+            arguments: ["ls", "--json", target],
+            environment: rig.environmentForPTY()
+        ) { handle in
+            var accumulated = ""
+            for await chunk in handle.output {
+                accumulated += chunk
+                if accumulated.contains(Self.hostKeyPromptText) {
+                    handle.write("n\n")
+                    break
+                }
+            }
+        }
+
+        let leaks = rig.leaksSecret(result.output)
+        #expect(leaks == false, "the run printed the secret under a PTY")
+        #expect(
+            result.output.contains(Self.hostKeyPromptText),
+            "the prompt did not appear without --non-interactive: \(result.output.debugDescription)")
+        #expect(
+            result.status == CLIExitCode.hostKeyUnknown.rawValue,
+            "answering 'n' to the prompt exited \(result.status), not the refusal --non-interactive produces")
     }
 }
 
