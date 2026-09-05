@@ -313,14 +313,20 @@ struct PKCS12ImportIsolationGuardTests {
     /// The files worth parsing: the ones whose bytes mention the function
     /// at all.
     ///
-    /// Not an optimization. `SwiftSource.stripCommentsAndStrings` refuses
-    /// raw strings, which are ordinary in this tree, so stripping every
-    /// test file would throw on files that could not hold a call in the
-    /// first place — and a guard that throws on unrelated files is a guard
-    /// somebody switches off. A file that never spells the function does
-    /// not call it (barring a runtime lookup; see this suite's gaps), and
-    /// every file that DOES spell it is still read through the fail-closed
-    /// stripper.
+    /// A plain optimization now, not a necessity: `SwiftSource
+    /// .stripCommentsAndStrings` (the compatibility name for
+    /// `blankingCommentsAndStrings`, `Tests/MacSCPTestSupport
+    /// /SwiftSourceStripping.swift`) PARSES raw strings — which are
+    /// ordinary in this tree — rather than refusing them, since the
+    /// convergence of docs/BACKLOG.md's "Polish: terminal resize, transfer
+    /// cancel and paths"; stripping every test file would no longer throw
+    /// on one that merely holds a raw string it cannot resolve. The
+    /// pre-filter is kept anyway because it is still cheaper to `contains`
+    /// a few hundred files than to walk the raw-string-aware stripper over
+    /// all of them: a file that never spells the function does not call it
+    /// (barring a runtime lookup; see this suite's gaps), and every file
+    /// that DOES spell it is still read through the stripper, which still
+    /// fails closed on an UNTERMINATED literal — string, comment, or raw.
     ///
     /// A file that cannot be read as text is kept rather than skipped, so
     /// the read fails later where it is a failure, instead of quietly

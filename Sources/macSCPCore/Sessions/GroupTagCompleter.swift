@@ -17,15 +17,36 @@ import Foundation
 public enum GroupTagCompleter {
     /// Every group name in `catalog` that starts with `prefix`
     /// (case-sensitive — same convention as
-    /// `SessionNameCompleter.complete(prefix:in:)`), sorted.
+    /// `SessionNameCompleter.complete(prefix:in:)`), sorted, EXCLUDING any
+    /// name containing whitespace (see `hasNoWhitespace` below for why).
     public static func completeGroups(prefix: String, in catalog: SessionCatalog) -> [String] {
-        catalog.groupNames.filter { $0.hasPrefix(prefix) }
+        catalog.groupNames.filter { $0.hasPrefix(prefix) && Self.hasNoWhitespace($0) }
     }
 
     /// Every tag in use across any session in `catalog` that starts with
-    /// `prefix`, sorted.
+    /// `prefix`, sorted, EXCLUDING any tag containing whitespace (see
+    /// `hasNoWhitespace` below for why).
     public static func completeTags(prefix: String, in catalog: SessionCatalog) -> [String] {
-        catalog.tagNames.filter { $0.hasPrefix(prefix) }
+        catalog.tagNames.filter { $0.hasPrefix(prefix) && Self.hasNoWhitespace($0) }
+    }
+
+    /// Whether `value` carries no whitespace or newline character.
+    ///
+    /// `swift-argument-parser`'s generated BASH script hands a `.custom`
+    /// completion's answers to `compgen -W`, which splits its word list on
+    /// IFS (whitespace) with no quoting — a group like `"Work / Prod"` or
+    /// a tag like `"needs review"` would therefore complete as two or more
+    /// separate words instead of one, silently offering a value the user
+    /// never typed and the CLI would then read as something else entirely.
+    /// Zsh's own completion function does not have this problem (it
+    /// receives the list as an array, not a word-split string), so this
+    /// filter costs zsh nothing while keeping bash honest: a name WITH a
+    /// space is simply absent from completion there, rather than present
+    /// and wrong. `SessionNameCompleter.complete(prefix:in:)` carries the
+    /// identical limit for session names and was not revisited here —
+    /// see docs/BACKLOG.md, "CLI: completion, help, host list".
+    private static func hasNoWhitespace(_ value: String) -> Bool {
+        !value.contains(where: \.isWhitespace)
     }
 
     /// The store-opening convenience the CLI wrapper calls with the

@@ -64,6 +64,48 @@ struct GroupTagCompleterTests {
             == ["prod", "production-adjacent"])
     }
 
+    /// `swift-argument-parser`'s generated BASH script hands a `.custom`
+    /// completion's answers to `compgen -W`, which splits unquoted on
+    /// whitespace — a group like "Work / Prod" would complete as several
+    /// separate words there, offering a value the user never typed. A name
+    /// WITH whitespace is therefore absent from completion; a name WITHOUT
+    /// any is present beside it — the positive is what proves the filter
+    /// is actually whitespace-scoped rather than one that happens to
+    /// exclude everything.
+    @Test func aGroupNameContainingWhitespaceIsAbsentAPlainOneIsPresent() {
+        let spaced = StoredGroup(name: "Work / Prod")
+        let plain = StoredGroup(name: "WorkProd")
+        let catalog = SessionCatalog(sessions: [], groups: [spaced, plain])
+
+        let completed = GroupTagCompleter.completeGroups(prefix: "", in: catalog)
+        #expect(!completed.contains("Work / Prod"))
+        #expect(completed.contains("WorkProd"))
+    }
+
+    /// Same property, for tags — a tag such as "needs review" would
+    /// complete as "needs" and "review" under bash's unquoted
+    /// `compgen -W` word split.
+    @Test func aTagContainingWhitespaceIsAbsentAPlainOneIsPresent() {
+        var session = sshSession(name: "a")
+        session.tags = ["needs review", "reviewed"]
+        let catalog = SessionCatalog(sessions: [session], groups: [])
+
+        let completed = GroupTagCompleter.completeTags(prefix: "", in: catalog)
+        #expect(!completed.contains("needs review"))
+        #expect(completed.contains("reviewed"))
+    }
+
+    /// A newline is whitespace too, and a tag or group name is free text
+    /// (`StoredSession.tags`/`StoredGroup.name` carry no character
+    /// restriction) — the same filter must catch it, not just the space
+    /// character the two tests above happen to use.
+    @Test func aNameContainingANewlineIsAbsent() {
+        let newlineGroup = StoredGroup(name: "Work\nProd")
+        let catalog = SessionCatalog(sessions: [], groups: [newlineGroup])
+
+        #expect(GroupTagCompleter.completeGroups(prefix: "", in: catalog).isEmpty)
+    }
+
     @Test func aSessionWithNoTagsContributesNothing() {
         let catalog = SessionCatalog(sessions: [sshSession(name: "a")], groups: [])
 

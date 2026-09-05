@@ -117,7 +117,7 @@ public enum SwiftSource {
         var blockCommentDepth = 0
 
         func blanked(_ character: Character) -> Character {
-            character == "\n" ? "\n" : " "
+            isLineBreak(character) ? "\n" : " "
         }
         func appendBlanked(_ range: Range<Int>) {
             for position in range { result.append(blanked(chars[position])) }
@@ -148,7 +148,13 @@ public enum SwiftSource {
                 continue
             }
             if character == "/", index + 1 < chars.count, chars[index + 1] == "/" {
-                while index < chars.count, chars[index] != "\n" {
+                // `isLineBreak`, not a literal `!= "\n"`: a `\r\n`-terminated
+                // line comment's line ending is ONE grapheme cluster equal
+                // to neither `"\n"` nor `"\r"` alone, and a literal
+                // comparison would run this loop straight past it into the
+                // next line, blanking real code as if it were still inside
+                // the comment.
+                while index < chars.count, !isLineBreak(chars[index]) {
                     appendBlanked(index..<(index + 1))
                     index += 1
                 }
@@ -215,11 +221,16 @@ public enum SwiftSource {
             // happens to be `"` — reading it as a triple-quote OPEN would
             // send the walker hunting for a closing `"""#` that is never
             // there. Swift's own rule for a multiline literal breaks the
-            // tie: its opening `"""` must be immediately followed by a
-            // line break, so that is what is required here too.
+            // tie: its opening `"""` must be followed by a line break
+            // (`opensMultilineLiteral`'s own doc comment has the rest of
+            // that rule — trailing whitespace, `\r\n` — and `endOfLiteral`
+            // below applies the SAME rule to a plain, hashless `"""` for
+            // exactly the same reason, so the two inferences cannot drift
+            // apart over which whitespace or line-ending forms they accept).
             let isMultiline =
-                lookahead + 3 < chars.count && chars[lookahead + 1] == "\""
-                    && chars[lookahead + 2] == "\"" && chars[lookahead + 3] == "\n"
+                lookahead + 2 < chars.count && chars[lookahead + 1] == "\""
+                    && chars[lookahead + 2] == "\""
+                    && opensMultilineLiteral(chars, at: lookahead)
             let quotes = isMultiline ? 3 : 1
             var cursor = lookahead + quotes
             while cursor < chars.count {
@@ -232,6 +243,48 @@ public enum SwiftSource {
         }
 
         return nil
+    }
+
+    /// Whether the three characters at `chars[start..<start+3]` — already
+    /// confirmed by the caller to be `"""` — open a MULTILINE literal
+    /// rather than three ordinary quotes that only happen to sit together.
+    ///
+    /// Swift requires a multiline literal's opening `"""` to be followed by
+    /// a line break, with trailing spaces or tabs on that same line
+    /// allowed between the quotes and the break (SE-0168), and a line
+    /// break is `\n`, `\r`, or `\r\n` — any one of the three ends a line
+    /// wherever Swift's own lexer is asked. This mirrors exactly that:
+    /// walk past any run of spaces/tabs, then accept `\r` (whether or not
+    /// a `\n` follows it) or a bare `\n`. Reaching the end of `chars`
+    /// without finding either answers `false` — an opener with nothing
+    /// after it at all cannot be a multiline one, which is one more
+    /// disambiguating fact than "no line break", but leads to the same
+    /// answer here.
+    private static func opensMultilineLiteral(_ chars: [Character], at start: Int) -> Bool {
+        var cursor = start + 3
+        while cursor < chars.count, chars[cursor] == " " || chars[cursor] == "\t" {
+            cursor += 1
+        }
+        guard cursor < chars.count else { return false }
+        return isLineBreak(chars[cursor])
+    }
+
+    /// Whether `character` is a line break — `\n`, `\r`, or `\r\n` — all
+    /// three checked explicitly because Swift's `Character` is an extended
+    /// GRAPHEME CLUSTER, and `\r\n` normalizes to exactly ONE such cluster,
+    /// not two: `Array("a\r\nb")` has four elements, not five, and that one
+    /// `Character` is equal to neither `"\r"` nor `"\n"` alone. Missing
+    /// this once already broke `opensMultilineLiteral` for a `\r\n` file
+    /// (its own two-condition `||` checked exactly those two, which the
+    /// combined grapheme satisfies neither) — caught by
+    /// `SwiftSourceStrippingTests.aMultilineOpenerAcceptsCarriageReturnLineFeedLineEndings`
+    /// proving RED before this helper existed. Used here and by `blanked`
+    /// in `blank(_:keepStringLiterals:)`, so a length- and line-preserving
+    /// walk stays both for CRLF source: blanking a `\r\n` grapheme to a
+    /// single space here would have cost one line from the output for
+    /// every one this comparison missed.
+    private static func isLineBreak(_ character: Character) -> Bool {
+        character == "\n" || character == "\r" || character == "\r\n"
     }
 
     /// Whether the terminator of a raw string or extended regex literal
@@ -263,8 +316,21 @@ public enum SwiftSource {
     /// needle cannot pose as a call, and over-blanking an interpolated
     /// expression costs a guard nothing, where under-blanking one costs it
     /// the property it watches.
+    /// A plain, hashless `"""` is not the ambiguous case `#"""#` is — there
+    /// is no single-quote reading of it competing for the same three
+    /// characters — but it is held to the SAME "followed by a line break"
+    /// rule as `endOfHashDelimited`'s raw-string opener anyway
+    /// (`opensMultilineLiteral`), for a reason that is not about
+    /// ambiguity: four bare quotes with nothing after them on the line
+    /// (`""""`) are two adjacent empty single-line strings in real Swift,
+    /// never a triple-quote open with no line break — treating them as an
+    /// (unterminated, since no closing `"""` follows on the same line)
+    /// multiline open was this stripper's own bug before this rule existed
+    /// here too, not merely an inconsistency with the raw-string opener.
     private static func endOfLiteral(in chars: [Character], from start: Int) throws -> Int {
-        if start + 2 < chars.count, chars[start + 1] == "\"", chars[start + 2] == "\"" {
+        if start + 2 < chars.count, chars[start + 1] == "\"", chars[start + 2] == "\"",
+            opensMultilineLiteral(chars, at: start)
+        {
             var cursor = start + 3
             while cursor + 2 < chars.count,
                 !(chars[cursor] == "\"" && chars[cursor + 1] == "\"" && chars[cursor + 2] == "\"")

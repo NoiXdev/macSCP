@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Keeps the wall-clock deadline shape out of the test tree, now that
@@ -178,7 +179,7 @@ struct PollingGuardTests {
         let sources = try Self.sources()
 
         let scanned = try sources.map { source -> (path: String, text: String, matched: Bool) in
-            let blanked = try Self.blankCommentsAndStrings(source.text)
+            let blanked = try SwiftSource.blankingCommentsAndStrings(source.text)
             let range = NSRange(blanked.startIndex..., in: blanked)
             return (source.path, source.text, pattern.firstMatch(in: blanked, range: range) != nil)
         }
@@ -211,7 +212,7 @@ struct PollingGuardTests {
         // matching while the plain shape stayed green.
         let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/SleepingChildRegexFixture.swift")
         let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
-        let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
+        let fixtureBlanked = try SwiftSource.blankingCommentsAndStrings(fixtureText)
         let fixtureMatches = pattern.matches(
             in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
         #expect(fixtureMatches.count == 2, "\(fixtureMatches.count)")
@@ -233,7 +234,7 @@ struct PollingGuardTests {
     @Test func noTestAssertsAnElapsedSinceCeiling() throws {
         let pattern = try NSRegularExpression(pattern: #"Date\(\)\.timeIntervalSince\([^)]*\)\s*<=?"#)
         let offenders = try Self.sources().compactMap { source -> String? in
-            let blanked = try Self.blankCommentsAndStrings(source.text)
+            let blanked = try SwiftSource.blankingCommentsAndStrings(source.text)
             let range = NSRange(blanked.startIndex..., in: blanked)
             return pattern.firstMatch(in: blanked, range: range) != nil ? source.path : nil
         }
@@ -248,7 +249,7 @@ struct PollingGuardTests {
         // raw-text path the negative no longer uses.
         let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/CeilingRegexFixture.swift")
         let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
-        let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
+        let fixtureBlanked = try SwiftSource.blankingCommentsAndStrings(fixtureText)
         #expect(
             pattern.firstMatch(
                 in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
@@ -271,7 +272,7 @@ struct PollingGuardTests {
     @Test func noWaitTakesAWallClockDeadline() throws {
         let pattern = try NSRegularExpression(pattern: #"\.wait\(until:\s*Date\("#)
         let offenders = try Self.sources().compactMap { source -> String? in
-            let blanked = try Self.blankCommentsAndStrings(source.text)
+            let blanked = try SwiftSource.blankingCommentsAndStrings(source.text)
             let range = NSRange(blanked.startIndex..., in: blanked)
             return pattern.firstMatch(in: blanked, range: range) != nil ? source.path : nil
         }
@@ -280,7 +281,7 @@ struct PollingGuardTests {
         // Positive, same fixture as the check above, blanked the same way.
         let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/CeilingRegexFixture.swift")
         let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
-        let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
+        let fixtureBlanked = try SwiftSource.blankingCommentsAndStrings(fixtureText)
         #expect(
             pattern.firstMatch(
                 in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
@@ -376,7 +377,7 @@ struct PollingGuardTests {
     @Test func noEventLoopFutureIsAwaitedWithGet() throws {
         let pattern = try NSRegularExpression(pattern: #"\w*(?:futureResult|future|Future)\s*\.get\(\)"#)
         let offenders = try Self.sources().compactMap { source -> String? in
-            let blanked = try Self.blankCommentsAndStrings(source.text)
+            let blanked = try SwiftSource.blankingCommentsAndStrings(source.text)
             let range = NSRange(blanked.startIndex..., in: blanked)
             return pattern.firstMatch(in: blanked, range: range) != nil ? source.path : nil
         }
@@ -399,7 +400,7 @@ struct PollingGuardTests {
         // first shape alone.
         let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/FutureGetRegexFixture.swift")
         let fixtureText = try String(contentsOf: fixtureURL, encoding: .utf8)
-        let fixtureBlanked = try Self.blankCommentsAndStrings(fixtureText)
+        let fixtureBlanked = try SwiftSource.blankingCommentsAndStrings(fixtureText)
         let fixtureMatches = pattern.matches(
             in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
         #expect(fixtureMatches.count == 3, "\(fixtureMatches.count)")
@@ -462,7 +463,7 @@ struct PollingGuardTests {
         var offenders: [String] = []
         var matchCount = 0
         for source in candidates {
-            let blanked = try Self.blankCommentsAndStrings(source.text)
+            let blanked = try SwiftSource.blankingCommentsAndStrings(source.text)
             let blankedLines = blanked.components(separatedBy: "\n")
             let originalLines = source.text.components(separatedBy: "\n")
             for (index, line) in blankedLines.enumerated() {
@@ -589,163 +590,17 @@ struct PollingGuardTests {
     private enum ScanError: Error {
         case bodyNotFound
         case unbalancedBraces
-        case unterminatedLiteral
     }
 
-    // MARK: - Comment-and-string blanking, for `noSleepingChildRacesWorkInAGroup`
-    //
-    // Adapted from `TabContextMenuWiringGuardTests`'s own copy — the only
-    // other place in `Tests/` that PARSES a raw string rather than
-    // refusing one (counted 2026-09-04, `grep -rl 'hashes: Int' Tests`:
-    // two hits, that file and this one — the second). Two more private
-    // copies of `stripCommentsAndStrings` exist (`ReconnectWiringGuardTests.swift`,
-    // `ConnectingAttemptWiringGuardTests.swift`), plus a shared module per
-    // test target (`Tests/macSCPCoreTests/SwiftSourceStripping.swift`,
-    // `Tests/macSCPAppKitTests/SwiftSourceStripping.swift`) — but all four
-    // FAIL CLOSED on a raw-string delimiter instead of parsing one, which
-    // a single-file guard can afford and this scan cannot: it reads the
-    // whole test tree, and 35 files under `Tests/` carry a raw string
-    // (counted 2026-09-04, `grep -rl '#"' Tests | wc -l`), so refusing
-    // them would make the check unusable rather than merely cautious.
-    // `TabContextMenuWiringGuardTests`'s own comment states why a private
-    // copy at all, rather than a shared one, is kept — the copies had
-    // already drifted once — and that reasoning is not restated here.
+    // The comment/string blanking these checks scan over used to be a
+    // private copy here (`blankCommentsAndStrings`/`closesRawString`,
+    // adapted from `TabContextMenuWiringGuardTests`' own raw-string-aware
+    // stripper, back when the shared `SwiftSource` module still refused a
+    // raw-string delimiter outright) — converged onto
+    // `SwiftSource.blankingCommentsAndStrings`
+    // (`Tests/MacSCPTestSupport/SwiftSourceStripping.swift`), which now
+    // parses raw strings and extended regex literals the same way, per
+    // docs/BACKLOG.md's "Polish: terminal resize, transfer cancel and
+    // paths".
 
-    /// Whether a raw-string/regex-literal opened with `hashes` hashes and
-    /// `quotes` quotes ends exactly at `index`. With `quotes: 0` it answers
-    /// the same question for an extended regex literal (`#/…/#`), whose
-    /// closing slash the caller has already stepped over.
-    private static func closesRawString(
-        _ chars: [Character], at index: Int, quotes: Int, hashes: Int
-    ) -> Bool {
-        guard index + quotes + hashes <= chars.count else { return false }
-        for offset in 0..<quotes where chars[index + offset] != "\"" { return false }
-        for offset in 0..<hashes where chars[index + quotes + offset] != "#" { return false }
-        return true
-    }
-
-    /// Strips `//` and `/* */` comments (nesting-aware) and `"..."`,
-    /// `"""..."""`, and raw (`#"…"#`, `##"…"##`, `#"""…"""#`) string
-    /// literals, replacing their content with spaces so a regex sees only
-    /// real code. Line breaks are preserved, so a scan can still work line
-    /// by line. Raw strings are parsed rather than refused: this scan
-    /// covers the whole test tree, and 35 files under `Tests/` carry one
-    /// (counted 2026-09-04, `grep -rl '#"' Tests | wc -l`) — refusing them
-    /// would make this check unusable rather than merely cautious. The
-    /// delimiter states its own hash count, and the terminator is that
-    /// count spelled backwards, so parsing it is not a guess.
-    ///
-    /// Still fails closed on an unterminated literal — string, comment, or
-    /// raw — because that means the scan ran off the end of the file still
-    /// inside one, and everything after that point would be judged as
-    /// something it is not.
-    private static func blankCommentsAndStrings(_ source: String) throws -> String {
-        var result = ""
-        result.reserveCapacity(source.count)
-        let chars = Array(source)
-        var i = 0
-        var blockCommentDepth = 0
-        while i < chars.count {
-            let c = chars[i]
-            if blockCommentDepth > 0 {
-                if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                    blockCommentDepth += 1
-                    i += 2
-                    continue
-                }
-                if c == "*", i + 1 < chars.count, chars[i + 1] == "/" {
-                    blockCommentDepth -= 1
-                    i += 2
-                    continue
-                }
-                result.append(c == "\n" ? "\n" : " ")
-                i += 1
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
-                while i < chars.count, chars[i] != "\n" {
-                    result.append(" ")
-                    i += 1
-                }
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                blockCommentDepth = 1
-                i += 2
-                continue
-            }
-            if c == "#" {
-                var j = i
-                while j < chars.count, chars[j] == "#" { j += 1 }
-                let hashes = j - i
-                if j < chars.count, chars[j] == "/" {
-                    var k = j + 1
-                    var closed = false
-                    while k < chars.count {
-                        if chars[k] == "/", Self.closesRawString(
-                            chars, at: k + 1, quotes: 0, hashes: hashes)
-                        {
-                            k += 1 + hashes
-                            closed = true
-                            break
-                        }
-                        result.append(chars[k] == "\n" ? "\n" : " ")
-                        k += 1
-                    }
-                    guard closed else { throw ScanError.unterminatedLiteral }
-                    result.append(" ")
-                    i = k
-                    continue
-                }
-                if j < chars.count, chars[j] == "\"" {
-                    let isMultiline =
-                        j + 2 < chars.count && chars[j + 1] == "\"" && chars[j + 2] == "\""
-                    let quotes = isMultiline ? 3 : 1
-                    var k = j + quotes
-                    var closed = false
-                    while k < chars.count {
-                        if Self.closesRawString(chars, at: k, quotes: quotes, hashes: hashes) {
-                            k += quotes + hashes
-                            closed = true
-                            break
-                        }
-                        result.append(chars[k] == "\n" ? "\n" : " ")
-                        k += 1
-                    }
-                    guard closed else { throw ScanError.unterminatedLiteral }
-                    result.append(" ")
-                    i = k
-                    continue
-                }
-                // Not a string delimiter: `#expect`, `#filePath`, `#if`.
-            }
-            if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
-                i += 3
-                while i + 2 < chars.count,
-                    !(chars[i] == "\"" && chars[i + 1] == "\"" && chars[i + 2] == "\"")
-                {
-                    result.append(chars[i] == "\n" ? "\n" : " ")
-                    i += 1
-                }
-                guard i + 2 < chars.count else { throw ScanError.unterminatedLiteral }
-                i += 3
-                result.append(" ")
-                continue
-            }
-            if c == "\"" {
-                i += 1
-                while i < chars.count, chars[i] != "\"" {
-                    if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
-                }
-                guard i < chars.count else { throw ScanError.unterminatedLiteral }
-                i += 1
-                result.append(" ")
-                continue
-            }
-            result.append(c)
-            i += 1
-        }
-        guard blockCommentDepth == 0 else { throw ScanError.unterminatedLiteral }
-        return result
-    }
 }

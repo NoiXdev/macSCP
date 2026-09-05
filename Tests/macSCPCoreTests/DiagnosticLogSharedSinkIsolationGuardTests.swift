@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Diagnostic-log plan, final fix round 2. The re-review traced an
@@ -24,7 +25,7 @@ import Testing
 /// This guard holds that split in place. NEGATIVE: no `.swift` file under
 /// `Tests/` other than `DiagnosticLogSharedSinkTests.swift` mentions
 /// `DiagnosticLog.shared` AS CODE — comments and string literals blanked
-/// first (`stripCommentsAndStrings` below), so a doc comment explaining the
+/// first (`SwiftSource.blankingCommentsAndStrings`), so a doc comment explaining the
 /// split (this one included) cannot trip the check, and neither can a
 /// guard that holds the identifier only as SCAN-TARGET DATA rather than
 /// calling it —
@@ -91,158 +92,19 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
         return String(chars[start..<(i - 1)])
     }
 
-    // MARK: - Comment-and-string blanking, raw strings included
-    //
-    // Adapted from `TabContextMenuWiringGuardTests`'s own copy — that
-    // file's doc comment states why raw strings are PARSED here rather
-    // than refused the way the shared `SwiftSource` module (`Tests/
-    // macSCPCoreTests/SwiftSourceStripping.swift`) deliberately still
-    // does: refusing a raw-string delimiter is right for a scan that reads
-    // one file with none, and wrong for a scan that reads the whole
-    // `Tests/` tree, where an ordinary raw string in an unrelated file
-    // would turn this guard red with a message naming neither the file
-    // nor a remedy. `PollingGuardTests.swift` copied the same reasoning
-    // for the same reason — this is the third copy in this target, all
-    // citing the first.
+    // The comment/string blanking this guard scans over used to be a
+    // private copy here (`stripCommentsAndStrings`/`closesRawString`,
+    // adapted from `TabContextMenuWiringGuardTests`' own raw-string-aware
+    // stripper — this was the third copy in `macSCPCoreTests`/
+    // `macSCPAppKitTests` combined, after `PollingGuardTests`' and that
+    // one, all citing the first for why raw strings are PARSED here
+    // rather than refused) — converged onto
+    // `SwiftSource.blankingCommentsAndStrings`
+    // (`Tests/MacSCPTestSupport/SwiftSourceStripping.swift`), which parses
+    // raw strings and extended regex literals the same way, per
+    // docs/BACKLOG.md's "Polish: terminal resize, transfer cancel and
+    // paths".
 
-    private enum StripError: Error, CustomStringConvertible {
-        case unterminatedLiteral
-
-        var description: String {
-            "unterminated string or comment literal — the scanner ran to the end of the file still inside one"
-        }
-    }
-
-    /// Whether a raw-string/regex-literal opened with `hashes` hashes and
-    /// `quotes` quotes ends exactly at `index`. With `quotes: 0` it answers
-    /// the same question for an extended regex literal (`#/…/#`), whose
-    /// closing slash the caller has already stepped over.
-    private static func closesRawString(
-        _ chars: [Character], at index: Int, quotes: Int, hashes: Int
-    ) -> Bool {
-        guard index + quotes + hashes <= chars.count else { return false }
-        for offset in 0..<quotes where chars[index + offset] != "\"" { return false }
-        for offset in 0..<hashes where chars[index + quotes + offset] != "#" { return false }
-        return true
-    }
-
-    /// Strips `//` and `/* */` comments (nesting-aware) and `"..."`,
-    /// `"""..."""`, and raw (`#"…"#`, `##"…"##`, `#"""…"""#`) string
-    /// literals, replacing their content with spaces so a scan sees only
-    /// code — never a sentence about code, and never a fixture string
-    /// holding the identifier as data.
-    private static func stripCommentsAndStrings(_ source: String) throws -> String {
-        var result = ""
-        result.reserveCapacity(source.count)
-        let chars = Array(source)
-        var i = 0
-        var blockCommentDepth = 0
-        while i < chars.count {
-            let c = chars[i]
-            if blockCommentDepth > 0 {
-                if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                    blockCommentDepth += 1
-                    i += 2
-                    continue
-                }
-                if c == "*", i + 1 < chars.count, chars[i + 1] == "/" {
-                    blockCommentDepth -= 1
-                    i += 2
-                    continue
-                }
-                result.append(c == "\n" ? "\n" : " ")
-                i += 1
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
-                while i < chars.count, chars[i] != "\n" {
-                    result.append(" ")
-                    i += 1
-                }
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                blockCommentDepth = 1
-                i += 2
-                continue
-            }
-            if c == "#" {
-                var j = i
-                while j < chars.count, chars[j] == "#" { j += 1 }
-                let hashes = j - i
-                if j < chars.count, chars[j] == "/" {
-                    // An extended regex literal, `#/…/#`.
-                    var k = j + 1
-                    var closed = false
-                    while k < chars.count {
-                        if chars[k] == "/",
-                            closesRawString(chars, at: k + 1, quotes: 0, hashes: hashes)
-                        {
-                            k += 1 + hashes
-                            closed = true
-                            break
-                        }
-                        result.append(chars[k] == "\n" ? "\n" : " ")
-                        k += 1
-                    }
-                    guard closed else { throw StripError.unterminatedLiteral }
-                    result.append(" ")
-                    i = k
-                    continue
-                }
-                if j < chars.count, chars[j] == "\"" {
-                    // A raw string states its own terminator: the same
-                    // number of hashes, after the same number of quotes.
-                    let isMultiline =
-                        j + 2 < chars.count && chars[j + 1] == "\"" && chars[j + 2] == "\""
-                    let quotes = isMultiline ? 3 : 1
-                    var k = j + quotes
-                    var closed = false
-                    while k < chars.count {
-                        if closesRawString(chars, at: k, quotes: quotes, hashes: hashes) {
-                            k += quotes + hashes
-                            closed = true
-                            break
-                        }
-                        result.append(chars[k] == "\n" ? "\n" : " ")
-                        k += 1
-                    }
-                    guard closed else { throw StripError.unterminatedLiteral }
-                    result.append(" ")
-                    i = k
-                    continue
-                }
-                // Not a string delimiter: `#expect`, `#filePath`, `#if`.
-            }
-            if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
-                i += 3
-                while i + 2 < chars.count,
-                    !(chars[i] == "\"" && chars[i + 1] == "\"" && chars[i + 2] == "\"")
-                {
-                    result.append(chars[i] == "\n" ? "\n" : " ")
-                    i += 1
-                }
-                guard i + 2 < chars.count else { throw StripError.unterminatedLiteral }
-                i += 3
-                result.append(" ")
-                continue
-            }
-            if c == "\"" {
-                i += 1
-                while i < chars.count, chars[i] != "\"" {
-                    if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
-                }
-                guard i < chars.count else { throw StripError.unterminatedLiteral }
-                i += 1
-                result.append(" ")
-                continue
-            }
-            result.append(c)
-            i += 1
-        }
-        guard blockCommentDepth == 0 else { throw StripError.unterminatedLiteral }
-        return result
-    }
 
     @Test("no file other than the shared-sink suite mentions DiagnosticLog.shared as code")
     func onlyTheSharedSinkSuiteFileTouchesTheSingleton() throws {
@@ -262,7 +124,7 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
             // `Tests/` that do not.
             guard raw.contains(Self.marker) else { continue }
 
-            let stripped = try Self.stripCommentsAndStrings(raw)
+            let stripped = try SwiftSource.blankingCommentsAndStrings(raw)
             let count = stripped.components(separatedBy: Self.marker).count - 1
 
             if file.lastPathComponent == Self.allowedFileName {

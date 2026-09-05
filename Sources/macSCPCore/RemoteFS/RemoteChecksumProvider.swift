@@ -31,6 +31,18 @@ public enum RemoteChecksumOutcome: Sendable, Equatable {
     /// probed. A case rather than a throw for the same reason
     /// `unavailableOnThisConnection` is one: "SHA-256 is not on this host"
     /// is an answer to show, not a failure to report generically.
+    ///
+    /// Accepted false positive: exit 127 is a shell's own "no such
+    /// executable", but it is not RESERVED for that meaning — a tool that
+    /// DOES exist could still exit 127 on its own (a broken shared-library
+    /// load, or a wrapper script that happens to `exit 127` for an
+    /// unrelated reason), and this classifier has no way to tell that
+    /// case apart from the far more common one. Misreporting "the
+    /// algorithm is not here" for a tool that is, in fact, present but
+    /// broken in some other way is judged the safer of two wrong answers:
+    /// the generic failure it would otherwise fall back to says nothing
+    /// more informative either way, and 127 specifically is what POSIX
+    /// shells document as their own convention for a missing command.
     case algorithmUnavailable(ChecksumAlgorithm)
 }
 

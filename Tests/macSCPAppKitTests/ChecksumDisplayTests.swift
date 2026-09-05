@@ -1,8 +1,8 @@
 import Foundation
 import Testing
-import macSCPCore
 
 @testable import MacSCPAppKit
+@testable import macSCPCore
 
 /// What the surface SAYS for each answer a backend can give.
 ///
@@ -149,16 +149,18 @@ struct ChecksumDisplayTests {
     /// for files") reaches the surface through the SAME `.failed` display
     /// as any other per-file failure — `RemoteBrowserViewModel.checksum(of:
     /// algorithm:)` is what turns `RemoteChecksumOutcome.algorithmUnavailable`
-    /// into a `CoreL10n`-produced sentence naming the algorithm (proved
-    /// against the real catalog lookup in
-    /// `ChecksumRequestTests.anAlgorithmWithNoToolOnThisConnectionNamesItself`,
-    /// which `@testable import`s Core; this file cannot reach `CoreL10n`
-    /// itself, since it is internal to that module). This is the other
-    /// half of the same claim: whatever sentence Core hands `.failed`, this
-    /// PURE display function reads it as a failure like any other, naming
-    /// the algorithm it carries.
+    /// into a `CoreL10n`-produced sentence naming the algorithm. The
+    /// message here is the REAL catalog lookup, not a hand-typed English
+    /// copy of it (fix round 1: a hardcoded copy would silently drift from
+    /// the catalog the moment either one changed and neither suite would
+    /// notice) — `CoreL10n` is internal to `macSCPCore`, reachable from
+    /// this AppKit-target file only via `@testable import`, which this
+    /// file now carries alongside `@testable import MacSCPAppKit`.
     @Test func anAlgorithmWithNoToolOnThisHostReadsAsAFailureNamingTheAlgorithm() {
-        let display = ChecksumDisplay.of(.failed("SHA-256 is not available on this host."))
+        let message = String(
+            format: CoreL10n.string("core.checksum.unavailable %@"),
+            ChecksumAlgorithm.sha256.displayName)
+        let display = ChecksumDisplay.of(.failed(message))
 
         #expect(display.value.contains("SHA-256"))
         #expect(display.severity == .failure)
