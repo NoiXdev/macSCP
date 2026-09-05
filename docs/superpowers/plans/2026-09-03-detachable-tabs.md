@@ -15,7 +15,9 @@ owns every live `SessionTab` by id and records which window holds it;
 from ids the registry resolves. A move reassigns ownership — the
 `SessionTab` object, its `BrowserSession`, queue and terminal are never
 recreated, which the tests pin (same `BrowserSession.id`, no
-`disconnect`). The app's `WindowGroup` (read `Sources/MacSCPMain/Main.swift`)
+`disconnect`). The app's `WindowGroup` (`Sources/MacSCPAppKit/MacSCPApp.swift`, inside
+`AppMain.body`; `Sources/MacSCPMain/Main.swift` only forwards to
+`AppMain.main()` — corrected 2026-09-05 by the pre-flight)
 gains a value-typed instance keyed by a `WindowSeed` (the tab ids it
 starts with); `openWindow(value:)` opens a second window; the window's
 `ContentView` claims its seed's tabs from the registry on appear and
@@ -68,7 +70,8 @@ disconnected.
   registry: same object identity (`===`), same `BrowserSession.id`, the
   source model no longer lists it, the target does; a fake `BrowserSession`
   double records that `disconnect`/`cancelAll`/`shutdown` were not called;
-  releasing a window's tabs releases only its own; `windowCount`.
+  releasing a window's tabs releases only its own; `windowCount`; a
+  moved tab keeps its `pendingSnippetRun` (the same object — pin it).
 
 - [ ] Red → green → commit `feat(tabs): a registry that lets a tab change windows without changing hands`
 
@@ -87,7 +90,25 @@ disconnected.
   value (`WindowCloseDecision.after(removing:in:)` — a pure function,
   tested; the view calls it); the last-window exception; a source guard
   that the window's close path releases through the existing teardown
-  (positive anchor on the teardown call order).
+  (positive anchor on the teardown call order — the real sequence is
+  `TeardownStage` (`Sources/MacSCPAppKit/TeardownStage.swift`, `.runBounded`
+  with its stage names), not the three-verb gloss above; anchor on the
+  stage names).
+- Landed since the plan was written (pre-flight 2026-09-05), each one line
+  this task adds: `MacSCPApp.swift` carries `@NSApplicationDelegateAdaptor`
+  and a what's-new `.sheet(isPresented:)` on App-scope `@State` inside the
+  `WindowGroup` — a second window would present it again; move that state
+  per window (or gate the sheet to the primary window) and pin it. The
+  diagnostic log's `app launch` (in `AppMain.init`) and `app quit` (in
+  `AppDelegate.applicationWillTerminate`) are process-wide: closing a
+  non-last window must not reach the quit path. The sidebar selection /
+  session overview (`overviewSessionID` in `ContentView+Detail.swift`) is
+  already per window and is not tab-keyed — untouched by a registry move;
+  say so in the report. `WindowSeed` (this task) starts as the tab ids a
+  window opens with; Task 5 GROWS the same struct with, per tab, the
+  session id, the pane visibility, and the window's sticky flag — one
+  type, declared here as `Codable` from the start so Task 5 adds fields,
+  not a second type.
 
 - [ ] Red → green → commit `feat(windows): a tab moves into its own window`
 
