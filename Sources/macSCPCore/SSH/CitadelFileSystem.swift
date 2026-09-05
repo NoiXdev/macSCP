@@ -68,7 +68,10 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// host-key box evaluation — verdicts still flow through `jumpBox`/
     /// `targetBox` exactly as before; this only wraps the underlying error
     /// for `mapStageAware` to route correctly.
-    private struct JumpStageError: Error {
+    ///
+    /// Internal (not private), like `mapStageAware` itself, so the jump-hop
+    /// mapping is unit-testable without a server.
+    struct JumpStageError: Error {
         let underlying: Error
     }
 
@@ -597,7 +600,10 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     }
 
     /// Translates raw connection errors into typed errors (auth/key/generic).
-    private static func mapConnectError(_ error: Error) -> Error {
+    /// Whatever stays generic carries `connectFailureText(for:)` as its
+    /// reason — see that helper for the text rule and its one exception.
+    /// Internal (not private) so the mapping is unit-testable without a server.
+    static func mapConnectError(_ error: Error) -> Error {
         switch error {
         case let error as SSHKeyError:
             return error
@@ -617,11 +623,46 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             case .allAuthenticationOptionsFailed:
                 return RemoteFSError.authenticationFailed
             default:
-                return RemoteFSError.connectionFailed(reason: String(describing: error))
+                return RemoteFSError.connectionFailed(reason: connectFailureText(for: error))
             }
         default:
-            return RemoteFSError.connectionFailed(reason: String(describing: error))
+            return RemoteFSError.connectionFailed(reason: connectFailureText(for: error))
         }
+    }
+
+    /// The text a connect-time `connectionFailed(reason:)` carries when it is
+    /// built out of a foreign error: `localizedDescription`, never
+    /// `String(describing:)` or a bare `\(error)` — the rule `mapSFTPError`
+    /// has followed since the diagnostic-log plan's Task 3 fix round 1 and
+    /// the one `DialSupport.reason(for:)`'s doc comment states: describing an
+    /// arbitrary error prints its stored properties, and a transport error
+    /// is exactly the kind of value that carries the configuration it was
+    /// dialling with. Defense in depth at the construction site: the
+    /// browser banner and the diagnostic log already drop this text
+    /// (`DialSupport.reason(for:)`), but the connect form
+    /// (`ConnectionViewModel.failedState`), the CLI (`CLIErrorMapping`)
+    /// and the transfer queue (`TransferQueueViewModel.message(for:)`)
+    /// still render it, and any future consumer could. For NIO's own
+    /// `IOError` — the refused-dial shape a person
+    /// actually reads in the connect form — nothing changes: its
+    /// `description` IS its `localizedDescription`.
+    ///
+    /// One typed exception, and it narrows rather than widens: a
+    /// `NIOSSHError` is rendered as its `type` alone. `localizedDescription`
+    /// on it is Foundation's generic sentence (the type adopts neither
+    /// `LocalizedError` nor a description Foundation reads), and
+    /// `ConnectionViewModel.failedState` recognises a jump host refusing the
+    /// tunnel by the name `channelSetupRejected` in this very text — a plain
+    /// `localizedDescription` would have switched that message off in
+    /// silence. `ErrorType` is a closed enumeration whose description is the
+    /// case name; the `diagnostics` the full description appends (`Reason:
+    /// <code> <the server's own text>`) is the part that is dropped.
+    /// `CitadelConnectErrorMappingTests` pins both halves.
+    static func connectFailureText(for error: Error) -> String {
+        if let sshError = error as? NIOSSHError {
+            return "NIOSSHError.\(sshError.type)"
+        }
+        return error.localizedDescription
     }
 
     /// Like `mapConnectError`, but attributes stage-1 (jump) failures
@@ -632,7 +673,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// carries its own context (e.g. `fileNotFound(path:)`). Everything that
     /// isn't a `JumpStageError` (i.e. every target-hop failure) goes through
     /// the existing `mapConnectError` unchanged.
-    private static func mapStageAware(_ error: Error) -> Error {
+    /// Internal (not private) so the mapping is unit-testable without a server.
+    static func mapStageAware(_ error: Error) -> Error {
         guard let jumpStageError = error as? JumpStageError else {
             return mapConnectError(error)
         }
@@ -651,19 +693,19 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 return RemoteFSError.jumpAuthenticationFailed
             default:
                 return RemoteFSError.connectionFailed(
-                    reason: "jump host: \(String(describing: clientError))")
+                    reason: "jump host: \(connectFailureText(for: clientError))")
             }
         default:
             // Typed security errors (host-key verdicts, key-loading failures)
             // must never be downgraded to a resumable generic failure — only
-            // stringify what's left after `mapConnectError` has had a chance
-            // to recognize a typed error underneath.
+            // reduce to text what's left after `mapConnectError` has had a
+            // chance to recognize a typed error underneath.
             let mapped = mapConnectError(jumpStageError.underlying)
             if mapped is HostKeyError || mapped is SSHKeyError {
                 return mapped
             }
             return RemoteFSError.connectionFailed(
-                reason: "jump host: \(String(describing: jumpStageError.underlying))")
+                reason: "jump host: \(connectFailureText(for: jumpStageError.underlying))")
         }
     }
 

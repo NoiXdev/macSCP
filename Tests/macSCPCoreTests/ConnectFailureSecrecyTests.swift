@@ -186,7 +186,8 @@ struct ConnectFailureSecrecyTests {
             Issue.record("expected the SSH dial to fail")
         } catch {
             // Positive half: the dial really failed on the transport, which
-            // is the arm that stringifies a foreign NIO error.
+            // is the arm that reduces a foreign NIO error to text
+            // (`CitadelFileSystem.connectFailureText(for:)`).
             guard case RemoteFSError.connectionFailed = error else {
                 Issue.record("expected a connection failure, got \(error)")
                 return

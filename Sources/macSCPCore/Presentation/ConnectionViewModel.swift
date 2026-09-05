@@ -1960,9 +1960,13 @@ public final class ConnectionViewModel {
                 message: CoreL10n.string("core.connect.s3BucketListEmpty"),
                 field: nil)
         // Jump host refusing TCP forwarding (M10c/T1 review hand-off,
-        // finding 2): Citadel/NIOSSH surfaces this as a plain
-        // `connectionFailed(reason:)` whose text contains
-        // "channelSetupRejected" -- caught here, ONLY while a jump is
+        // finding 2): NIOSSH raises a `NIOSSHError` of type
+        // `channelSetupRejected`, and `CitadelFileSystem.mapConnectError`
+        // renders it into a plain `connectionFailed(reason:)` as that
+        // type name alone (`connectFailureText(for:)` — the rendering this
+        // substring match depends on, and the reason it is a typed
+        // exception there rather than `localizedDescription`) -- caught
+        // here, ONLY while a jump is
         // configured, so a matching reason on a direct (no-jump) connection
         // still falls through to the generic message below.
         case RemoteFSError.connectionFailed(let reason)

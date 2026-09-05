@@ -119,8 +119,16 @@ public final class CitadelShell: RemoteShell, @unchecked Sendable {
             // `reason=\(error)` interpolated the raw handshake error
             // directly.
             DiagnosticLog.shared.log(.debug, "shell", "shell open failed", reason: error)
+            // The thrown reason follows the same rule as the log line:
+            // `localizedDescription`, never the bare value — describing an
+            // arbitrary error prints its stored properties
+            // (`DialSupport.reason(for:)`'s rule; `CitadelFileSystem
+            // .connectFailureText(for:)` is the connect-time twin). The
+            // browser banner and the diagnostic log drop a `.protocolError`'s
+            // text; the CLI and the transfer queue still render it, and
+            // this keeps the construction site honest for either.
             throw RemoteFSError.protocolError(
-                reason: "failed to open shell: \(error)")
+                reason: "failed to open shell: \(error.localizedDescription)")
         }
     }
 
