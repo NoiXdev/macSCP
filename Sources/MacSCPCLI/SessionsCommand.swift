@@ -20,7 +20,9 @@ struct SessionsCommand: AsyncParsableCommand {
 
     @OptionGroup var options: JSONOptions
 
-    @Option(name: .long, help: "Only sessions in this group or one of its subgroups.")
+    @Option(
+        name: .long, help: "Only sessions in this group or one of its subgroups.",
+        completion: GroupTagCompletion.group)
     var group: String?
 
     @Option(name: .long, help: "Only this backend.")
@@ -29,7 +31,9 @@ struct SessionsCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Only names containing this text (case-insensitive substring).")
     var name: String?
 
-    @Option(name: .long, help: "Only sessions carrying this tag.")
+    @Option(
+        name: .long, help: "Only sessions carrying this tag.",
+        completion: GroupTagCompletion.tag)
     var tag: String?
 
     func run() async throws {

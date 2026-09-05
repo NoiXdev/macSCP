@@ -61,6 +61,20 @@ struct CLISessionsCommandGuardTests {
     private static let completionCoreFile = repoRoot
         .appendingPathComponent("Sources/macSCPCore/Sessions/SessionNameCompleter.swift")
 
+    /// The `CompletionKind` wiring for `SessionsCommand`'s `--group` and
+    /// `--tag` OPTIONS (docs/BACKLOG.md, "CLI: completion, help, host
+    /// list", the value-completion item left open after session-name
+    /// completion shipped) — same silence constraint as
+    /// `completionCommandFile` above, for the same reason.
+    private static let groupTagCommandFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPCLI/GroupTagCompletion.swift")
+
+    /// The decision logic behind `--group`/`--tag` completion — same split
+    /// as `completionCoreFile` above: this is the one that actually
+    /// constructs a `SessionCatalog(`.
+    private static let groupTagCoreFile = repoRoot
+        .appendingPathComponent("Sources/macSCPCore/Sessions/GroupTagCompleter.swift")
+
     /// The APIs that would reach a secret or open a connection. Any one of
     /// these appearing in `SessionsCommand.swift` is the violation this
     /// guard exists to catch.
@@ -246,6 +260,63 @@ struct CLISessionsCommandGuardTests {
         #expect(found.isEmpty, """
             SessionNameCompleter.swift names \(found) — the completer reads \
             the session store and nothing else, and must stay silent (no \
+            secret, no keychain, no connection, no stdout, no stderr).
+            """)
+    }
+
+    // MARK: - The `--group`/`--tag` value completer: same shape, same
+    // silence constraint, two more files
+
+    @Test func theGroupTagWrapperFileExists() {
+        #expect(FileManager.default.fileExists(atPath: Self.groupTagCommandFile.path))
+    }
+
+    @Test func theGroupTagWrapperWiresTheCoreCompleter() throws {
+        let source = try String(contentsOf: Self.groupTagCommandFile, encoding: .utf8)
+        #expect(source.contains("GroupTagCompleter.completeGroups("), """
+            GroupTagCompletion.swift no longer calls \
+            GroupTagCompleter.completeGroups( — the positive anchor beside \
+            the negative check below has nothing to confirm the scanner is \
+            reading a real implementation.
+            """)
+        #expect(source.contains("GroupTagCompleter.completeTags("), """
+            GroupTagCompletion.swift no longer calls \
+            GroupTagCompleter.completeTags( — same concern as \
+            completeGroups( above.
+            """)
+    }
+
+    @Test func theGroupTagWrapperNamesNoForbiddenAPI() throws {
+        let source = try String(contentsOf: Self.groupTagCommandFile, encoding: .utf8)
+        let found = Self.forbiddenMatches(
+            in: source, identifiers: Self.completionForbiddenIdentifiers)
+        #expect(found.isEmpty, """
+            GroupTagCompletion.swift names \(found) — the completer reads \
+            the session store and nothing else, and must stay silent (no \
+            secret, no keychain, no connection, no stdout, no stderr).
+            """)
+    }
+
+    @Test func theGroupTagCoreFileExists() {
+        #expect(FileManager.default.fileExists(atPath: Self.groupTagCoreFile.path))
+    }
+
+    @Test func theGroupTagCoreFileBuildsItsListFromTheCatalog() throws {
+        let source = try String(contentsOf: Self.groupTagCoreFile, encoding: .utf8)
+        #expect(source.contains("SessionCatalog("), """
+            GroupTagCompleter.swift no longer constructs a SessionCatalog( — \
+            the positive anchor beside the negative check below has nothing \
+            to confirm the scanner is reading a real implementation.
+            """)
+    }
+
+    @Test func theGroupTagCoreFileNamesNoForbiddenAPI() throws {
+        let source = try String(contentsOf: Self.groupTagCoreFile, encoding: .utf8)
+        let found = Self.forbiddenMatches(
+            in: source, identifiers: Self.completionForbiddenIdentifiers)
+        #expect(found.isEmpty, """
+            GroupTagCompleter.swift names \(found) — the completer reads the \
+            session store and nothing else, and must stay silent (no \
             secret, no keychain, no connection, no stdout, no stderr).
             """)
     }

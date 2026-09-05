@@ -81,6 +81,26 @@ public struct SessionCatalog: Sendable {
         self.groups = groups
     }
 
+    /// Every group's own name, deduplicated and sorted — the values
+    /// `GroupTagCompleter.completeGroups(prefix:in:)` filters and offers
+    /// for `--group` shell completion.
+    ///
+    /// Deliberately not derived from `rows(matching:)`'s ancestry paths
+    /// (`Row.groupPath`, `" / "`-joined): splitting that string back apart
+    /// would misread a group whose own name happens to contain `" / "` as
+    /// two levels, and gets nothing in return, since every group's `name`
+    /// is already sitting right here.
+    public var groupNames: [String] {
+        Set(groups.map(\.name)).sorted()
+    }
+
+    /// Every tag used by any session, deduplicated and sorted — the values
+    /// `GroupTagCompleter.completeTags(prefix:in:)` filters and offers for
+    /// `--tag` shell completion.
+    public var tagNames: [String] {
+        Set(sessions.flatMap(\.tags)).sorted()
+    }
+
     /// Every session matching `filter`, in the sidebar's own order.
     ///
     /// The order is not reinvented here: `SidebarOrdering.children(of:in:)`

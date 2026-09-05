@@ -51,6 +51,31 @@ struct CLISessionNameCompletionTests {
         }
     }
 
+    /// `--group` and `--tag`'s VALUE completion (`GroupTagCompletion`,
+    /// docs/BACKLOG.md's "CLI: completion, help, host list", the item left
+    /// open after session-name completion shipped): `swift-argument-parser`
+    /// wires a `.custom` completion into the generated zsh script as a call
+    /// to `__<binary>_custom_complete ---completion <command> -- <option>`,
+    /// so the positive proof that these two options actually get DYNAMIC
+    /// completion (not the generator's static fallback) is that exact call
+    /// naming `sessions` and each option, present in the real generated
+    /// script — the same binary-level proof
+    /// `theGeneratedZshScriptNamesEverySubcommand` uses for subcommands,
+    /// one level down.
+    @Test func theGeneratedZshScriptWiresCustomCompletionForGroupAndTag() async throws {
+        let binary = try Self.locateCLIBinary()
+        let result = try await Self.runProcess(binary, ["--generate-completion-script", "zsh"])
+        #expect(result.status == 0, "--generate-completion-script zsh failed: \(result.stderr)")
+        #expect(result.stdout.contains("---completion sessions -- --group"), """
+            zsh completion script does not wire custom completion onto \
+            `sessions --group`: \(result.stdout)
+            """)
+        #expect(result.stdout.contains("---completion sessions -- --tag"), """
+            zsh completion script does not wire custom completion onto \
+            `sessions --tag`: \(result.stdout)
+            """)
+    }
+
     // MARK: - Binary-level harness (self-contained rather than shared —
     // see `CLISessionsJSONRoundtripTests`'s doc comment for why each
     // gated/ungated suite here carries its own small copy)
