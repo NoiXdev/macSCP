@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the "What's New" wiring (What's New plan, Task 2):

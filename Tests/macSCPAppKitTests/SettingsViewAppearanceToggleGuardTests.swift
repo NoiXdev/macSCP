@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the Settings → View (Appearance) wiring for "Compact sidebar"

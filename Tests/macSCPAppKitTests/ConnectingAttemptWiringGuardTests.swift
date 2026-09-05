@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the shape of the connecting-surface branch and its Cancel control
@@ -48,7 +49,8 @@ import Testing
 /// measured against THIS suite: a mutation that deleted the real
 /// `cancelConnecting()` call still passed, because the surrounding doc
 /// comment names that method in prose, and a bare `.contains` check cannot
-/// tell prose from code). See `stripCommentsAndStrings`'s own doc comment.
+/// tell prose from code). See `SwiftSource.blankingCommentsAndStrings`'s own
+/// doc comment (`Tests/MacSCPTestSupport/SwiftSourceStripping.swift`).
 @Suite("Connecting attempt wiring guard")
 struct ConnectingAttemptWiringGuardTests {
     /// `#filePath` here is
@@ -70,7 +72,6 @@ struct ConnectingAttemptWiringGuardTests {
 
     private enum ScanError: Error {
         case anchorNotFound, openBraceNotFound, unbalancedBraces
-        case unrecognizedStringDelimiter, unterminatedLiteral
     }
 
     // MARK: - The three guarded claims, run against the real file
@@ -213,49 +214,12 @@ struct ConnectingAttemptWiringGuardTests {
             """)
     }
 
-    @Test func stripperSelfTestRemovesLineAndBlockCommentsAndStringLiterals() throws {
-        let source = #"""
-            let a = "cancelConnecting()" // cancelConnecting()
-            /* cancelConnecting() */ let b = 1
-            let c = """
-                cancelConnecting()
-                """
-            cancelConnecting()
-            """#
-        let stripped = try Self.stripCommentsAndStrings(source)
-        #expect(stripped.components(separatedBy: "cancelConnecting()").count - 1 == 1, """
-            expected exactly 1 real occurrence of `cancelConnecting()` to survive stripping \
-            (the un-commented, un-quoted call on the last line); found \
-            \(stripped.components(separatedBy: "cancelConnecting()").count - 1).
-            """)
-    }
-
-    /// Fail-closed self-test: a raw-string delimiter (`#"…"#`) is a form
-    /// this stripper does not parse. Left unhandled, it used to
-    /// desynchronize the plain-quote counting instead — `#"""#`, an
-    /// entirely ordinary literal for one quote character, is read as one
-    /// opening quote, one closing quote, and a fresh string that swallows
-    /// everything up to the next real `"` in the file, which could hide a
-    /// deleted `cancelConnecting()` call past that point. The fix must
-    /// throw instead.
-    @Test func stripperFailsClosedOnARawStringDelimiter() {
-        let source = "static let quote = #\"\"\"#\ncancelConnecting()"
-        #expect(throws: ScanError.unrecognizedStringDelimiter) {
-            _ = try Self.stripCommentsAndStrings(source)
-        }
-    }
-
-    /// Fail-closed self-test: a string or block comment that never closes
-    /// must not be treated as "closed at end of file" — that is the same
-    /// truncation risk under a different cause.
-    @Test func stripperFailsClosedOnAnUnterminatedLiteral() {
-        #expect(throws: ScanError.unterminatedLiteral) {
-            _ = try Self.stripCommentsAndStrings("let x = \"unterminated")
-        }
-        #expect(throws: ScanError.unterminatedLiteral) {
-            _ = try Self.stripCommentsAndStrings("/* never closes")
-        }
-    }
+    // The stripper's own behaviour (comment/string removal, line-structure
+    // preservation, raw-string parsing, fail-closed on the unterminated
+    // forms) used to have self-tests here; they are now pinned once, for
+    // the shared implementation, by `SwiftSourceStrippingTests` in
+    // `macSCPCoreTests` — see docs/BACKLOG.md, "Polish: terminal resize,
+    // transfer cancel and paths".
 
     // MARK: - Scanner
     //
@@ -263,7 +227,7 @@ struct ConnectingAttemptWiringGuardTests {
     // the first opening `{` found after it to its matching close — the same
     // brace-matching technique `LivenessProbeWiringGuardTests`/
     // `LivenessDotWiringGuardTests` use. The extracted text is then run
-    // through `stripCommentsAndStrings` before any caller sees it.
+    // through `SwiftSource.blankingCommentsAndStrings` before any caller sees it.
 
     /// Convenience over `strippedBody(after:in:)` for the real file — reads
     /// it fresh on every call rather than caching it, so a test run always
@@ -296,7 +260,8 @@ struct ConnectingAttemptWiringGuardTests {
     /// be searched for.
     private static func strippedBody(after anchor: String, in source: String) throws -> String {
         guard let anchorRange = source.range(of: anchor) else { throw ScanError.anchorNotFound }
-        let stripped = try stripCommentsAndStrings(String(source[anchorRange.upperBound...]))
+        let stripped = try SwiftSource.blankingCommentsAndStrings(
+            String(source[anchorRange.upperBound...]))
         guard let openBraceIndex = stripped.firstIndex(of: "{") else {
             throw ScanError.openBraceNotFound
         }
@@ -316,104 +281,4 @@ struct ConnectingAttemptWiringGuardTests {
         throw ScanError.unbalancedBraces
     }
 
-    /// Strips `//` and `/* */` comments and both `"..."` and `"""..."""`
-    /// string literals from Swift source, replacing each with a single
-    /// space (connection-liveness plan, Task 6 fix round 1) — so a
-    /// `contains(...)` check below can no longer be satisfied by a doc
-    /// comment or a log/error string merely NAMING the call it is meant to
-    /// verify actually runs. Measured necessary, not theoretical: a
-    /// mutation that deleted the real `cancelConnecting()` call from
-    /// `ContentView+Detail.swift` still passed `cancelReleasesStateAndRunsTeardown`
-    /// before this fix, because the surrounding doc comment names that
-    /// method in prose.
-    ///
-    /// Applied to the text AFTER the anchor, before the brace scan runs
-    /// over it (fix round 2 — see `strippedBody(after:in:)`'s own doc
-    /// comment for why that order, not the reverse, matters) — not to the
-    /// whole source before searching for the anchor itself, which is a
-    /// `//` comment and would vanish under a global strip before it could
-    /// ever be found.
-    ///
-    /// Handles `\"`-escaped quotes inside regular string literals and
-    /// nested `/* */` block comments (Swift allows both). Does not attempt
-    /// string-interpolation-aware parsing (`\(...)` inside a string literal
-    /// is treated as ordinary string content and stripped along with the
-    /// rest of the literal) — nothing in the regions this guard scans uses
-    /// interpolation, and stripping a stray interpolation body along with
-    /// its enclosing string is the safe direction for this guard's purpose
-    /// (it can only make a `contains` check find LESS text, never invent a
-    /// match that was not really code).
-    /// Fails closed: a raw-string delimiter (`#"…"#`) is a form this
-    /// stripper does not parse, and an unterminated string or comment means
-    /// it ran off the end of the file without finding what it was looking
-    /// for. Both throw rather than return whatever was collected so far —
-    /// the alternative is a scan that silently reads less than the file it
-    /// claims to have checked.
-    private static func stripCommentsAndStrings(_ source: String) throws -> String {
-        var result = ""
-        result.reserveCapacity(source.count)
-        let chars = Array(source)
-        var i = 0
-        var blockCommentDepth = 0
-        while i < chars.count {
-            let c = chars[i]
-            if blockCommentDepth > 0 {
-                if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                    blockCommentDepth += 1
-                    i += 2
-                    continue
-                }
-                if c == "*", i + 1 < chars.count, chars[i + 1] == "/" {
-                    blockCommentDepth -= 1
-                    i += 2
-                    continue
-                }
-                i += 1
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
-                while i < chars.count, chars[i] != "\n" { i += 1 }
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                blockCommentDepth = 1
-                i += 2
-                continue
-            }
-            if c == "#" {
-                var j = i
-                while j < chars.count, chars[j] == "#" { j += 1 }
-                if j < chars.count, chars[j] == "\"" {
-                    throw ScanError.unrecognizedStringDelimiter
-                }
-            }
-            if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
-                // Triple-quoted literal: skip to the closing `"""`.
-                i += 3
-                while i + 2 < chars.count,
-                    !(chars[i] == "\"" && chars[i + 1] == "\"" && chars[i + 2] == "\"")
-                {
-                    i += 1
-                }
-                guard i + 2 < chars.count else { throw ScanError.unterminatedLiteral }
-                i += 3
-                result.append(" ")
-                continue
-            }
-            if c == "\"" {
-                i += 1
-                while i < chars.count, chars[i] != "\"" {
-                    if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
-                }
-                guard i < chars.count else { throw ScanError.unterminatedLiteral }
-                i += 1
-                result.append(" ")
-                continue
-            }
-            result.append(c)
-            i += 1
-        }
-        guard blockCommentDepth == 0 else { throw ScanError.unterminatedLiteral }
-        return result
-    }
 }

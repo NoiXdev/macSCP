@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards `SettingsSection`'s sidebar titles (`SettingsView.swift`,

@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the load-bearing security decision of the connection-liveness
@@ -545,7 +546,7 @@ struct ReconnectWiringGuardTests {
         var unsanctioned: [String] = []
         for file in try Self.appSwiftFiles() {
             let relative = Self.relativePath(of: file)
-            let stripped = try Self.stripCommentsAndStrings(
+            let stripped = try SwiftSource.blankingCommentsAndStrings(
                 try String(contentsOf: file, encoding: .utf8))
             let codeLines = stripped.split(separator: "\n", omittingEmptySubsequences: false)
                 .map { Self.normalized(String($0)) }
@@ -580,7 +581,7 @@ struct ReconnectWiringGuardTests {
     /// sanctioned one is riding on its allowance.
     @Test func everySanctionedSiteStillExistsExactlyAsOftenAsDeclared() throws {
         for site in Self.sanctionedSites {
-            let stripped = try Self.stripCommentsAndStrings(
+            let stripped = try SwiftSource.blankingCommentsAndStrings(
                 try String(contentsOf: Self.file(site.file), encoding: .utf8))
             let matches = stripped
                 .split(separator: "\n", omittingEmptySubsequences: false)
@@ -835,7 +836,7 @@ struct ReconnectWiringGuardTests {
     /// The literal reader, on every shape the two surface tests depend on
     /// — including the wrapped one that defeated the line-based version.
     @Test func theLiteralReaderSeesAWrappedCallTheSameAsAnInlineOne() throws {
-        let stripped = try Self.stripCommentsAndStrings("""
+        let stripped = try SwiftSource.blankingCommentsAndStrings("""
             Text(L10n.string(content.title.key, content.title.fallback))
             Text(L10n.string(
                 content.body.key,
@@ -848,13 +849,13 @@ struct ReconnectWiringGuardTests {
             \(Self.localizedCallsWithALiteralArgument(in: stripped))
             """)
 
-        let inlineLiteral = try Self.stripCommentsAndStrings("""
+        let inlineLiteral = try SwiftSource.blankingCommentsAndStrings("""
             Text(L10n.string("connection.failed.close", "Close"))
             """)
         #expect(Self.localizedCallsWithALiteralArgument(in: inlineLiteral).count == 1)
 
         // The measured escape: identical call, wrapped.
-        let wrappedLiteral = try Self.stripCommentsAndStrings("""
+        let wrappedLiteral = try SwiftSource.blankingCommentsAndStrings("""
             Text(L10n.string(
                 "connection.failed.body",
                 "Host: prod-db.internal"))
@@ -866,7 +867,7 @@ struct ReconnectWiringGuardTests {
 
         // A literal in the SECOND position only — the shape a check that
         // looked at the first argument alone would wave through.
-        let literalFallback = try Self.stripCommentsAndStrings("""
+        let literalFallback = try SwiftSource.blankingCommentsAndStrings("""
             Text(L10n.string(content.body.key, "Host: prod-db.internal"))
             """)
         #expect(Self.localizedCallsWithALiteralArgument(in: literalFallback).count == 1)
@@ -876,7 +877,7 @@ struct ReconnectWiringGuardTests {
     /// window and all.
     private static func flaggedLines(in source: String) throws -> [String] {
         let detectors = try chokePointDetectors()
-        let lines = try stripCommentsAndStrings(source)
+        let lines = try SwiftSource.blankingCommentsAndStrings(source)
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { normalized(String($0)) }
         return lines.enumerated().compactMap { index, code in
@@ -1041,30 +1042,34 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
-    /// Fail-closed self-test, the exact shape a re-review measured as a
-    /// gap in this suite: `stripCommentsAndStrings` did not know Swift's
-    /// raw-string delimiters (`#"…"#`). `#"""#` — an entirely ordinary
+    /// The exact shape a re-review once measured as a gap in this suite's
+    /// OWN, since-deleted private stripper: it did not know Swift's
+    /// raw-string delimiters (`#"…"#`), so `#"""#` — an entirely ordinary
     /// literal for one quote character — desynchronized the plain-quote
     /// counting instead, reading it as one opening quote, one closing
     /// quote, and a fresh string that swallowed everything up to the next
     /// real `"` in the file. Measured: a real backend dial with
     /// accept-anything host-key deciders, sitting after such a line in a
     /// brand-new App-layer file, vanished from the scan along with it, and
-    /// all 38 tests in this suite passed GREEN. The fix must throw instead
-    /// of silently reading less than the source it claims to have checked.
-    @Test func theScanFailsClosedOnARawStringDelimiterRatherThanHidingWhatFollowsIt() {
+    /// all 38 tests in this suite passed GREEN. That private stripper's
+    /// fix was to throw rather than silently read less than the source it
+    /// claimed to have checked; the shared stripper this suite calls now
+    /// (`SwiftSource`, `Tests/MacSCPTestSupport/SwiftSourceStripping.swift`)
+    /// goes one step further and PARSES the raw string correctly instead,
+    /// so the dial after it is still found rather than merely not hidden
+    /// behind a thrown error.
+    @Test func theScanIsNotFooledByARawStringDelimiterRatherThanHidingWhatFollowsIt() throws {
         let source =
             "static let quote = #\"\"\"#\n"
             + "async let dialed = tab.connectionViewModel.connect()"
-        #expect(throws: (any Error).self) {
-            _ = try Self.flaggedLines(in: source)
-        }
+        let flagged = try Self.flaggedLines(in: source)
+        #expect(flagged.contains("async let dialed = tab.connectionViewModel.connect()"))
     }
 
     /// The other half of the same proof: with the raw-string line gone,
-    /// the identical dial must still be caught. The fix must not have
-    /// traded a silent truncation for a blanket refusal that also
-    /// swallows source that never had a raw string in it.
+    /// the identical dial must still be caught — a stripper that parses raw
+    /// strings must not have traded a silent truncation for over-eagerly
+    /// blanking source that never had one in it.
     @Test func theControlDialIsStillCaughtOnceTheRawStringIsGone() throws {
         let flagged = try Self.flaggedLines(
             in: "async let dialed = tab.connectionViewModel.connect()")
@@ -1108,7 +1113,7 @@ struct ReconnectWiringGuardTests {
         var seen: Set<String> = []
         var forbidden: [String] = []
         for file in try Self.appSwiftFiles() {
-            let stripped = try Self.stripCommentsAndStrings(
+            let stripped = try SwiftSource.blankingCommentsAndStrings(
                 try String(contentsOf: file, encoding: .utf8))
             for module in try Self.importedModules(in: stripped) {
                 seen.insert(module)
@@ -1156,8 +1161,6 @@ struct ReconnectWiringGuardTests {
         case openBraceNotFound
         case unbalancedBraces
         case symbolicLinkInSources([String])
-        case unrecognizedStringDelimiter
-        case unterminatedLiteral
 
         var description: String {
             switch self {
@@ -1174,13 +1177,6 @@ struct ReconnectWiringGuardTests {
                     what a link pointing outside the repository means for `sanctionedSites`' \
                     repo-relative paths.
                     """
-            case .unrecognizedStringDelimiter:
-                return """
-                    unrecognized string delimiter (a raw string's `#"`, `##"`, …) — this \
-                    stripper does not parse raw strings and refuses to guess where one ends
-                    """
-            case .unterminatedLiteral:
-                return "unterminated string or comment literal"
             }
         }
     }
@@ -1348,7 +1344,7 @@ struct ReconnectWiringGuardTests {
     ///    round-1 comment made about `fileprivate`.
     @Test func theDetailsTextHasNoWayOutOfItsOwnFile() throws {
         let file = Self.file("Sources/MacSCPAppKit/ConnectFailureDetails.swift")
-        let stripped = try Self.stripCommentsAndStrings(
+        let stripped = try SwiftSource.blankingCommentsAndStrings(
             try String(contentsOf: file, encoding: .utf8))
         #expect(stripped.contains("fileprivate let text: String"), """
             `ConnectFailureDetailText`'s storage is no longer `fileprivate let text: String`. \
@@ -1586,32 +1582,12 @@ struct ReconnectWiringGuardTests {
         #expect(!body.contains("connect(in: tab, stored: stored)"))
     }
 
-    @Test func stripperSelfTestRemovesLineAndBlockCommentsAndStringLiterals() throws {
-        let source = #"""
-            let a = "ReconnectPlan.step(" // ReconnectPlan.step(
-            /* ReconnectPlan.step( */ let b = 1
-            let c = """
-                ReconnectPlan.step(
-                """
-            ReconnectPlan.step(
-            """#
-        let stripped = try Self.stripCommentsAndStrings(source)
-        #expect(stripped.components(separatedBy: "ReconnectPlan.step(").count - 1 == 1, """
-            expected exactly 1 real occurrence of `ReconnectPlan.step(` to survive stripping; \
-            found \(stripped.components(separatedBy: "ReconnectPlan.step(").count - 1).
-            """)
-    }
-
-    /// The stripper must not swallow line breaks, or the allow-list scan
-    /// would see one enormous line and match nothing.
-    @Test func stripperKeepsLineStructure() throws {
-        let stripped = try Self.stripCommentsAndStrings("""
-            let a = 1 /* a
-            comment across lines */
-            let b = "text"
-            """)
-        #expect(stripped.split(separator: "\n", omittingEmptySubsequences: false).count == 3)
-    }
+    // The stripper's own behaviour (comment/string removal, line-structure
+    // preservation, raw-string parsing, fail-closed on the unterminated
+    // forms) used to have self-tests here; they are now pinned once, for
+    // the shared implementation, by `SwiftSourceStrippingTests` in
+    // `macSCPCoreTests` — see docs/BACKLOG.md, "Polish: terminal resize,
+    // transfer cancel and paths".
 
     // MARK: - Scanner
 
@@ -1789,21 +1765,27 @@ struct ReconnectWiringGuardTests {
     /// returned as the compacted call text.
     ///
     /// Round 5, review-measured: the previous check was `!body.contains(
-    /// "L10n.string( ")` — a claim about ONE LINE. `stripCommentsAndStrings`
-    /// turns a literal into a single space, so a hardcoded label reads as
-    /// `L10n.string( , )` and was caught, but the identical call with its
-    /// arguments wrapped onto the next line reads as `L10n.string(` followed
-    /// by a NEWLINE and was green — with `Host: prod-db.internal` on the
-    /// surface. Wrapping is not a semantic difference, and a check that a
-    /// reformat can defeat is not a check.
+    /// "L10n.string( ")` — a claim about ONE LINE. The stripper blanked a
+    /// literal to whitespace, so a hardcoded label read as `L10n.string( ,
+    /// )` and was caught, but the identical call with its arguments wrapped
+    /// onto the next line read as `L10n.string(` followed by a NEWLINE and
+    /// was green — with `Host: prod-db.internal` on the surface. Wrapping
+    /// is not a semantic difference, and a check that a reformat can defeat
+    /// is not a check.
     ///
     /// So this reads the CALL: whitespace is removed entirely, the argument
     /// list is taken by matching parentheses, and it is split at top-level
     /// commas. A blanked literal leaves an EMPTY argument in any position —
     /// `L10n.string(,)`, `L10n.string(key,)` — while every legitimate
-    /// argument is an identifier path and survives compaction intact.
-    /// Nesting is handled by the depth counter, so `L10n.string(key(a, b),
-    /// fallback)` is not mistaken for three arguments.
+    /// argument is an identifier path and survives compaction intact. That
+    /// holds whether the stripper blanks a literal to one space (the
+    /// pre-convergence private copy this suite used to carry) or to one
+    /// space per character (`SwiftSource.blankingCommentsAndStrings`, the
+    /// shared implementation this suite calls now) — `compact` strips ALL
+    /// whitespace before the argument split runs, so either shape collapses
+    /// to the same empty slot. Nesting is handled by the depth counter, so
+    /// `L10n.string(key(a, b), fallback)` is not mistaken for three
+    /// arguments.
     private static func localizedCallsWithALiteralArgument(in body: String) -> [String] {
         let compact = String(body.filter { !$0.isWhitespace })
         let token = "L10n.string("
@@ -1863,7 +1845,8 @@ struct ReconnectWiringGuardTests {
     /// comments a global strip would delete first.
     private static func strippedBody(after anchor: String, in source: String) throws -> String {
         guard let anchorRange = source.range(of: anchor) else { throw ScanError.anchorNotFound }
-        let stripped = try stripCommentsAndStrings(String(source[anchorRange.upperBound...]))
+        let stripped = try SwiftSource.blankingCommentsAndStrings(
+            String(source[anchorRange.upperBound...]))
         guard let openBraceIndex = stripped.firstIndex(of: "{") else {
             throw ScanError.openBraceNotFound
         }
@@ -1883,99 +1866,4 @@ struct ReconnectWiringGuardTests {
         throw ScanError.unbalancedBraces
     }
 
-    /// Strips `//` and `/* */` comments and both `"..."` and `"""..."""`
-    /// string literals, preserving line breaks so the allow-list scan can
-    /// still work line by line. Measured necessary, not theoretical: a
-    /// mutation that deleted a real call from this project's source once
-    /// passed a guard because the surrounding doc comment named the method
-    /// in prose.
-    ///
-    /// Handles `\"`-escaped quotes and nested `/* */` comments. Does not
-    /// parse string interpolation — `\(...)` inside a literal is treated as
-    /// string content, which can only make a check find LESS text, never
-    /// invent a match that was not code.
-    ///
-    /// Fails closed: a raw-string delimiter (`#"…"#`) is a form this
-    /// stripper does not parse, and an unterminated string or comment means
-    /// it ran off the end of the file without finding what it was looking
-    /// for. Both throw rather than return whatever was collected so far —
-    /// the alternative is a scan that silently reads less than the file it
-    /// claims to have checked. Measured necessary, not theoretical: an
-    /// unhandled `#"""#` — an entirely ordinary raw-string literal for one
-    /// quote character — desynchronized the plain-quote counting instead,
-    /// reading it as one opening quote, one closing quote, and a fresh
-    /// string that swallowed everything up to the next real `"` in the
-    /// file, silently. A raw backend dial with accept-anything host-key
-    /// deciders sitting past that point left the whole suite green.
-    private static func stripCommentsAndStrings(_ source: String) throws -> String {
-        var result = ""
-        result.reserveCapacity(source.count)
-        let chars = Array(source)
-        var i = 0
-        var blockCommentDepth = 0
-        while i < chars.count {
-            let c = chars[i]
-            if blockCommentDepth > 0 {
-                if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                    blockCommentDepth += 1
-                    i += 2
-                    continue
-                }
-                if c == "*", i + 1 < chars.count, chars[i + 1] == "/" {
-                    blockCommentDepth -= 1
-                    i += 2
-                    continue
-                }
-                result.append(c == "\n" ? "\n" : " ")
-                i += 1
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
-                while i < chars.count, chars[i] != "\n" {
-                    result.append(" ")
-                    i += 1
-                }
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                blockCommentDepth = 1
-                i += 2
-                continue
-            }
-            if c == "#" {
-                var j = i
-                while j < chars.count, chars[j] == "#" { j += 1 }
-                if j < chars.count, chars[j] == "\"" {
-                    throw ScanError.unrecognizedStringDelimiter
-                }
-            }
-            if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
-                i += 3
-                while i + 2 < chars.count,
-                    !(chars[i] == "\"" && chars[i + 1] == "\"" && chars[i + 2] == "\"")
-                {
-                    result.append(chars[i] == "\n" ? "\n" : " ")
-                    i += 1
-                }
-                guard i + 2 < chars.count else { throw ScanError.unterminatedLiteral }
-                i += 3
-                result.append(" ")
-                continue
-            }
-            if c == "\"" {
-                i += 1
-                while i < chars.count, chars[i] != "\"" {
-                    if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
-                }
-                guard i < chars.count else { throw ScanError.unterminatedLiteral }
-                i += 1
-                result.append(" ")
-                continue
-            }
-            result.append(c)
-            i += 1
-        }
-        guard blockCommentDepth == 0 else { throw ScanError.unterminatedLiteral }
-        return result
-    }
 }

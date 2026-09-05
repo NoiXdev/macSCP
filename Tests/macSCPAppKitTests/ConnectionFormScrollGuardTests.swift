@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards that `ConnectionFormView`'s field area scrolls independently of

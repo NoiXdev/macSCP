@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Keeps `String(describing:)` out of `Sources/macSCPCore/Diagnostics/`.

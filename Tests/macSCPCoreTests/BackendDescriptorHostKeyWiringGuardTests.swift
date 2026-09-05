@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Reads `Sources/macSCPCore/Capabilities/BackendDescriptor.swift`'s own

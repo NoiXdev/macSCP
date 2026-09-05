@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import MacSCPTestSupport
 import Testing
 import UniformTypeIdentifiers
 @testable import MacSCPAppKit

@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the doors onto the diagnostics panel, and the rules the panel itself

@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards ONE property of the tab strip's context menu in
@@ -289,7 +290,7 @@ struct TabContextMenuWiringGuardTests {
     /// Comments and string literals removed, whitespace kept — the form the
     /// token scan reads, so `if` and `iffy` stay distinguishable.
     private static func stripped(_ source: String) throws -> String {
-        try stripCommentsAndStrings(source)
+        try SwiftSource.blankingCommentsAndStrings(source)
     }
 
     /// The body of the closure or function `anchor` opens — everything
@@ -355,7 +356,7 @@ struct TabContextMenuWiringGuardTests {
     /// away — the form the shape checks read, so line-wrapping or
     /// re-indenting the call cannot affect a match.
     private static func canonicalize(_ source: String) throws -> String {
-        try stripCommentsAndStrings(source).filter { !$0.isWhitespace }
+        try SwiftSource.blankingCommentsAndStrings(source).filter { !$0.isWhitespace }
     }
 
     /// Every identifier-like token in `source`. Splitting on anything that
@@ -807,81 +808,6 @@ struct TabContextMenuWiringGuardTests {
         #expect(Self.contextMenuBody(in: ".contextMenu { Button(\"a\") {}") == nil)
     }
 
-    /// Raw strings are parsed (fix round 2). The three things that must
-    /// hold: the body disappears like any other literal, the code after it
-    /// survives to be judged, and a quote inside the body does not end it
-    /// early — which is precisely what a plain-quote scanner gets wrong,
-    /// and why this used to throw instead.
-    @Test func stripperParsesRawStrings() throws {
-        let singleLine = try Self.stripCommentsAndStrings(
-            "let quote = #\"a \" quote and TabContextMenu.entries(\"#\nlet after = 1")
-        #expect(Self.occurrences(of: Self.decisionCall, in: singleLine) == 0)
-        #expect(singleLine.contains("let after = 1"))
-
-        let extraHashes = try Self.stripCommentsAndStrings(
-            "let quote = ##\"ends only here \"# TabContextMenu.entries(\"##\nlet after = 2")
-        #expect(Self.occurrences(of: Self.decisionCall, in: extraHashes) == 0)
-        #expect(extraHashes.contains("let after = 2"))
-
-        let multiline = try Self.stripCommentsAndStrings(
-            "let quote = #\"\"\"\nTabContextMenu.entries(\n\"\"\"#\nlet after = 3")
-        #expect(Self.occurrences(of: Self.decisionCall, in: multiline) == 0)
-        #expect(multiline.contains("let after = 3"))
-
-        // A `#` that opens no string must not swallow what follows it.
-        let hashKeyword = try Self.stripCommentsAndStrings("#expect(entries.isEmpty)")
-        #expect(hashKeyword.contains("#expect(entries.isEmpty)"))
-    }
-
-    /// Extended regex literals are parsed for the same reason raw strings
-    /// are: they are ordinary Swift, they carry `/` and `"` and `#`, and a
-    /// guard that reds on one in an unrelated line gets switched off. The
-    /// bare `/…/` form is deliberately not parsed — see the stripper.
-    @Test func stripperParsesExtendedRegexLiterals() throws {
-        let simple = try Self.stripCommentsAndStrings(
-            "let r = #/TabContextMenu.entries\\(/#\nlet after = 1")
-        #expect(Self.occurrences(of: Self.decisionCall, in: simple) == 0)
-        #expect(simple.contains("let after = 1"))
-
-        // A `/#` inside the body must not end a `##/…/##` literal early.
-        let extraHashes = try Self.stripCommentsAndStrings(
-            "let r = ##/ends /# only here/##\nlet after = 2")
-        #expect(extraHashes.contains("let after = 2"))
-
-        #expect(throws: (any Error).self) {
-            try Self.stripCommentsAndStrings("let r = #/unterminated")
-        }
-    }
-
-    @Test func stripperFailsClosedOnAnUnterminatedLiteral() {
-        #expect(throws: (any Error).self) {
-            try Self.stripCommentsAndStrings("let x = \"unterminated")
-        }
-        #expect(throws: (any Error).self) {
-            try Self.stripCommentsAndStrings("/* never closes")
-        }
-        #expect(throws: (any Error).self) {
-            try Self.stripCommentsAndStrings("let x = #\"unterminated raw")
-        }
-    }
-
-    @Test func stripperRemovesLineAndBlockCommentsAndStringLiterals() throws {
-        let source = #"""
-            let a = "TabContextMenu.entries(" // TabContextMenu.entries(
-            /* TabContextMenu.entries( */ let b = 1
-            let c = """
-                TabContextMenu.entries(
-                """
-            TabContextMenu.entries(
-            """#
-        let stripped = try Self.stripCommentsAndStrings(source)
-        let survivors = Self.occurrences(of: Self.decisionCall, in: stripped)
-        #expect(survivors == 1, """
-            expected exactly 1 real occurrence of `\(Self.decisionCall)` to survive \
-            stripping; found \(survivors).
-            """)
-    }
-
     /// The token scan must match whole words, or `title(for:)` and
     /// `\\.offset` would read as branching and the guard would be permanently
     /// red for the wrong reason.
@@ -892,181 +818,18 @@ struct TabContextMenuWiringGuardTests {
         #expect(tokens.contains("for"))
     }
 
-    // MARK: - Stripper
-    //
-    // One private copy per guard file, as this project's other wiring
-    // guards keep it: the copies have drifted before, and a shared helper
-    // was rejected there for the same reason it would be here.
+    // The comment/string stripper used to be a private copy here (this
+    // file's own raw-string- and extended-regex-literal-aware variant, the
+    // most capable of the four the AppKit target carried) — a doc comment
+    // right here used to say a shared helper was rejected because per-file
+    // copies had drifted before. They had, which is exactly why they are
+    // gone now: this file's raw-string/regex support moved into
+    // `SwiftSource` (`Tests/MacSCPTestSupport/SwiftSourceStripping.swift`),
+    // the shared implementation both test targets call, and the self-tests
+    // that used to pin it here moved to `SwiftSourceStrippingTests` in
+    // `macSCPCoreTests` — see docs/BACKLOG.md, "Polish: terminal resize,
+    // transfer cancel and paths".
 
-    /// Strips `//` and `/* */` comments and both `"..."` and `"""..."""`
-    /// string literals, preserving line breaks. Handles `\"`-escaped quotes
-    /// and nested `/* */` comments. Does not parse string interpolation —
-    /// `\(...)` inside a literal is treated as string content, which can
-    /// only make a check find LESS text, never invent a match that was not
-    /// code.
-    ///
-    /// Raw strings (`#"…"#`, `##"…"##`, `#"""…"""#`) are parsed rather than
-    /// refused — changed in fix round 2, and the reasoning is worth keeping
-    /// because it reverses an earlier decision. Refusing them was right
-    /// while this stripper read one file that has none: "I do not
-    /// understand this" beat guessing. It stopped being right when the scan
-    /// grew to a whole module, where an ordinary raw string in any
-    /// unrelated file turned these guards red with a message that named
-    /// neither the file nor a remedy. A guard that fires on innocent code
-    /// is switched off by the next person who trips over it. Parsing a raw
-    /// string is also not a guess: the delimiter states its own hash count,
-    /// and the terminator is that count spelled backwards.
-    ///
-    /// Still fails closed on an unterminated string or comment — raw ones
-    /// included — because that means it ran off the end without finding
-    /// what it was looking for, and everything after that point would be
-    /// judged as something it is not.
-    private enum StripError: Error, CustomStringConvertible {
-        case unterminatedLiteral
-
-        var description: String {
-            switch self {
-            case .unterminatedLiteral:
-                return """
-                    unterminated string or comment literal — the scanner ran to the end of \
-                    the file still inside one, so nothing after it can be judged
-                    """
-            }
-        }
-    }
-
-    /// Whether a literal opened with `hashes` hashes and `quotes` quotes
-    /// ends exactly at `index`. With `quotes: 0` it answers the same
-    /// question for an extended regex literal, whose closing slash the
-    /// caller has already stepped over.
-    private static func closesRawString(
-        _ chars: [Character], at index: Int, quotes: Int, hashes: Int
-    ) -> Bool {
-        guard index + quotes + hashes <= chars.count else { return false }
-        for offset in 0..<quotes where chars[index + offset] != "\"" { return false }
-        for offset in 0..<hashes where chars[index + quotes + offset] != "#" { return false }
-        return true
-    }
-
-    private static func stripCommentsAndStrings(_ source: String) throws -> String {
-        var result = ""
-        result.reserveCapacity(source.count)
-        let chars = Array(source)
-        var i = 0
-        var blockCommentDepth = 0
-        while i < chars.count {
-            let c = chars[i]
-            if blockCommentDepth > 0 {
-                if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                    blockCommentDepth += 1
-                    i += 2
-                    continue
-                }
-                if c == "*", i + 1 < chars.count, chars[i + 1] == "/" {
-                    blockCommentDepth -= 1
-                    i += 2
-                    continue
-                }
-                result.append(c == "\n" ? "\n" : " ")
-                i += 1
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
-                while i < chars.count, chars[i] != "\n" {
-                    result.append(" ")
-                    i += 1
-                }
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                blockCommentDepth = 1
-                i += 2
-                continue
-            }
-            if c == "#" {
-                var j = i
-                while j < chars.count, chars[j] == "#" { j += 1 }
-                let hashes = j - i
-                if j < chars.count, chars[j] == "/" {
-                    // An extended regex literal, `#/…/#`. Same idea as a
-                    // raw string: the delimiter states its hash count and
-                    // the terminator is that count spelled backwards. The
-                    // BARE form, `/…/`, is not parsed — it cannot be told
-                    // from division without parsing Swift, and this
-                    // scanner would rather read one as code than guess.
-                    var k = j + 1
-                    var closed = false
-                    while k < chars.count {
-                        if chars[k] == "/", closesRawString(
-                            chars, at: k + 1, quotes: 0, hashes: hashes)
-                        {
-                            k += 1 + hashes
-                            closed = true
-                            break
-                        }
-                        result.append(chars[k] == "\n" ? "\n" : " ")
-                        k += 1
-                    }
-                    guard closed else { throw StripError.unterminatedLiteral }
-                    result.append(" ")
-                    i = k
-                    continue
-                }
-                if j < chars.count, chars[j] == "\"" {
-                    // A raw string states its own terminator: the same
-                    // number of hashes, after the same number of quotes.
-                    // Escapes inside need `\` plus those hashes, so nothing
-                    // in the body can fake an end.
-                    let isMultiline =
-                        j + 2 < chars.count && chars[j + 1] == "\"" && chars[j + 2] == "\""
-                    let quotes = isMultiline ? 3 : 1
-                    var k = j + quotes
-                    var closed = false
-                    while k < chars.count {
-                        if closesRawString(chars, at: k, quotes: quotes, hashes: hashes) {
-                            k += quotes + hashes
-                            closed = true
-                            break
-                        }
-                        result.append(chars[k] == "\n" ? "\n" : " ")
-                        k += 1
-                    }
-                    guard closed else { throw StripError.unterminatedLiteral }
-                    result.append(" ")
-                    i = k
-                    continue
-                }
-                // Not a string delimiter: `#expect`, `#filePath`, `#if`.
-            }
-            if c == "\"", i + 2 < chars.count, chars[i + 1] == "\"", chars[i + 2] == "\"" {
-                i += 3
-                while i + 2 < chars.count,
-                    !(chars[i] == "\"" && chars[i + 1] == "\"" && chars[i + 2] == "\"")
-                {
-                    result.append(chars[i] == "\n" ? "\n" : " ")
-                    i += 1
-                }
-                guard i + 2 < chars.count else { throw StripError.unterminatedLiteral }
-                i += 3
-                result.append(" ")
-                continue
-            }
-            if c == "\"" {
-                i += 1
-                while i < chars.count, chars[i] != "\"" {
-                    if chars[i] == "\\", i + 1 < chars.count { i += 2 } else { i += 1 }
-                }
-                guard i < chars.count else { throw StripError.unterminatedLiteral }
-                i += 1
-                result.append(" ")
-                continue
-            }
-            result.append(c)
-            i += 1
-        }
-        guard blockCommentDepth == 0 else { throw StripError.unterminatedLiteral }
-        return result
-    }
     // MARK: - The drag half of the same feature
 
     /// Guards what is left to guard about reordering by dragging, which is

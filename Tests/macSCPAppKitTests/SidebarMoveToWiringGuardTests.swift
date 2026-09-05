@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the "Move to…" submenu (Sidebar Polish, Task 3): the session row

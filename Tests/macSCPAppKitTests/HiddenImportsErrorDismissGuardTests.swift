@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the `ContentView`-side half of `hiddenImportsErrorBanner`'s close

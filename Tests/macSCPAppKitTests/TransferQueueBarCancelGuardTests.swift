@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards how the transfer bar's two cancel controls are GATED — that the

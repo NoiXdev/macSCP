@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// One property, guarded the only way it can be: **`ConnectionViewModel

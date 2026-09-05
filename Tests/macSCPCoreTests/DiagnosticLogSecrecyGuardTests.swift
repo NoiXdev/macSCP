@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Scans every `.swift` file under `Sources/` for calls to

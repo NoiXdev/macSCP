@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the Settings → General "Diagnostic log" row (Diagnostic Log plan,

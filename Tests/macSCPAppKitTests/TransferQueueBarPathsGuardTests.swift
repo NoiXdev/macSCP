@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards how the transfer bar offers a row's FULL paths on demand: a hover

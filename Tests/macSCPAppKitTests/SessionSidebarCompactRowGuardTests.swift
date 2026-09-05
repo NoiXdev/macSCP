@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards `SessionRow`'s compact-mode wiring (sidebar-polish plan, Task 2,
