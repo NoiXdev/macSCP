@@ -454,6 +454,75 @@ struct S3FileSystemIntegrationTests {
         }
     }
 
+    /// A recording decorator around the real transport — the seam
+    /// `S3FileSystem.connect(_:transport:)` exposes for exactly this: every
+    /// `send`/`sendStreaming` call goes through a real `URLSessionHTTPTransport`
+    /// underneath, so the requests genuinely reach MinIO, and this only
+    /// records the HTTP method of each. `actor`, like `FakeS3Transport` in
+    /// the unit tests, because the log is mutated across concurrent `await`s.
+    ///
+    /// Records METHODS, not a bare count: the seed bucket the rig starts
+    /// with holds only a handful of keys, so the OLD parent-listing lookup
+    /// (a single `GET ?list-type=2&delimiter=/`, one page for that few
+    /// siblings) and the new lookup (one `HEAD`) both cost exactly one
+    /// request here — a plain count could not tell the two apart, and would
+    /// stay green against either. The method sequence can: the old lookup's
+    /// request is a `GET`, the new one's is a `HEAD`, and only the exact
+    /// sequence `["HEAD", "DELETE"]` proves which one ran.
+    private actor RecordingHTTPTransport: HTTPTransport {
+        private let inner: any HTTPTransport
+        private(set) var methods: [String] = []
+
+        init(inner: any HTTPTransport) { self.inner = inner }
+
+        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            methods.append(request.httpMethod ?? "?")
+            return try await inner.send(request)
+        }
+
+        func sendStreaming(_ request: URLRequest) async throws
+            -> (body: AsyncThrowingStream<Data, Error>, response: HTTPURLResponse) {
+            methods.append(request.httpMethod ?? "?")
+            return try await inner.sendStreaming(request)
+        }
+    }
+
+    /// The backlog row's headline shape, proven against a REAL server rather
+    /// than the unit tests' canned responses: `delete` on a file issues
+    /// exactly a `HEAD` then a `DELETE` — two constant requests, never a
+    /// `GET` listing of the parent prefix in between.
+    @Test func deleteOnAFileCostsExactlyTwoRequestsAgainstMinIO() async throws {
+        let config = S3ConnectionConfig(
+            accessKeyID: "macscp", secretAccessKey: "macscpsecretkey",
+            region: "us-east-1", endpoint: "http://127.0.0.1:19000",
+            bucket: "macscp-seed", usePathStyle: true, sessionToken: nil)
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.finishTasksAndInvalidate() }
+        let recorder = RecordingHTTPTransport(inner: URLSessionHTTPTransport(session: session))
+        let fs = try await S3FileSystem.connect(config, transport: recorder)
+        defer { Task { await fs.disconnect() } }
+        let key = "m21-s3-delete-request-count-\(UUID().uuidString).bin"
+
+        var caught: Error?
+        do {
+            let uploadStream = AsyncThrowingStream<Data, Error> { continuation in
+                continuation.yield(Data("count me".utf8))
+                continuation.finish()
+            }
+            try await fs.write(path: "/\(key)", mode: .overwrite, contents: uploadStream)
+
+            let before = await recorder.methods.count
+            try await fs.delete(path: "/\(key)")
+            let deleteMethods = await Array(recorder.methods.dropFirst(before))
+
+            #expect(deleteMethods == ["HEAD", "DELETE"])
+        } catch {
+            caught = error
+        }
+        try? await fs.delete(path: "/\(key)")
+        if let caught { throw caught }
+    }
+
     /// `stat` at `path` must answer `RemoteFSError.notFound` — spelled once
     /// here because the three cases above all end on it.
     private static func expectNotFound(

@@ -40,6 +40,30 @@ public enum S3ListParser {
         return (delegate.items, delegate.continuationToken, delegate.eTags)
     }
 
+    /// Whether a `ListObjectsV2` response matched ANYTHING at all under its
+    /// query prefix — used only by `S3FileSystem`'s cheap delete lookup,
+    /// which asks a different question than `parse` does.
+    ///
+    /// `parse` drops a `Contents` entry whose `Key` equals the query prefix
+    /// exactly, because in every OTHER caller that entry is the directory
+    /// being listed, not something inside it. The delete lookup queries
+    /// `<key>/` to ask "is this key a directory", and an empty directory's
+    /// own folder-marker object (`createDirectory`'s zero-byte `<key>/`) IS
+    /// that excluded entry — so reusing `parse` and checking `items.isEmpty`
+    /// would call an empty directory absent. This checks presence only, with
+    /// no such exclusion: `<Contents>` or `<CommonPrefixes>` anywhere in the
+    /// response, marker included, means something is there.
+    public static func hasAnyEntries(_ data: Data) throws -> Bool {
+        let delegate = PresenceParserDelegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        guard parser.parse() else {
+            let reason = parser.parserError?.localizedDescription ?? "unknown XML error"
+            throw RemoteFSError.protocolError(reason: "Failed to parse S3 ListObjectsV2 response: \(reason)")
+        }
+        return delegate.foundAny
+    }
+
     /// Parses a `ListBuckets` (`ListAllMyBucketsResult`) response into one
     /// row per bucket (2026-09-02, design §4).
     ///
@@ -259,6 +283,23 @@ public enum S3ListParser {
         func parserDidEndDocument(_ parser: XMLParser) {
             if !isTruncated {
                 continuationToken = nil
+            }
+        }
+    }
+
+    /// Backs `hasAnyEntries`: sets a flag the moment either element starts,
+    /// with no leaf-name computation and no exclusion of the entry that
+    /// equals the query prefix.
+    private final class PresenceParserDelegate: NSObject, XMLParserDelegate {
+        private(set) var foundAny = false
+
+        func parser(
+            _ parser: XMLParser, didStartElement elementName: String,
+            namespaceURI: String?, qualifiedName qName: String?,
+            attributes attributeDict: [String: String] = [:]
+        ) {
+            if elementName == "Contents" || elementName == "CommonPrefixes" {
+                foundAny = true
             }
         }
     }

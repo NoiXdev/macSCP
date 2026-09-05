@@ -315,6 +315,69 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         throw RemoteFSError.notFound(path: path)
     }
 
+    /// What `deleteLookup` found at a path — a file, a directory, or
+    /// nothing.
+    private enum DeleteLookup {
+        case file
+        case directory
+        case absent
+    }
+
+    /// Answers "is this a file, a directory, or nothing" for `delete` and
+    /// `deleteTree` — the one question their pre-check needs — in exactly
+    /// two requests, always, instead of `listedEntry`'s page walk over the
+    /// PARENT prefix (1…`ceil(siblings / 1000)` requests, decided by where
+    /// the leaf name sorts among its siblings).
+    ///
+    /// A `HEAD` on the key answers "does the object exist" directly — 200 is
+    /// `.file`, 404 falls through, anything else is the ordinary status
+    /// mapping. A key that is not an object might still be a directory, so a
+    /// one-key `ListObjectsV2` on `<key>/` (`max-keys=1`) answers "is
+    /// anything AT ALL there" — a child, or the key's own empty-folder
+    /// marker `createDirectory` writes — through
+    /// `S3ListParser.hasAnyEntries`, not `parse`: `parse` would drop that
+    /// marker as the "directory being listed", which is exactly wrong here.
+    ///
+    /// `RemotePath.normalizedAbsolute(path) == "/"` short-circuits to
+    /// `.directory` before either request, matching `listedEntry`'s own
+    /// unconditional top-of-function case for the bucket root in `.bucket`
+    /// mode — the only mode that can still reach here with an empty
+    /// resolved key, since `refuseBucketLevelOperation` (both callers run it
+    /// first) already refuses that shape in `.bucketList` mode.
+    ///
+    /// `list` keeps `listedEntry`'s page walk: it needs the whole
+    /// `CommonPrefixes` grouping this lookup never computes.
+    private func deleteLookup(path: String) async throws -> DeleteLookup {
+        if RemotePath.normalizedAbsolute(path) == "/" {
+            return .directory
+        }
+        let (bucket, key) = try mode.resolve(path: path)
+
+        let headRequest = try buildSignedRequest(
+            bucket: bucket, method: "HEAD", key: key, query: [],
+            payloadHash: SigV4Signer.emptyPayloadHash)
+        let (_, headResponse) = try await send(headRequest)
+        switch headResponse.statusCode {
+        case 200..<300:
+            return .file
+        case 404:
+            break
+        default:
+            throw Self.mapErrorStatus(headResponse.statusCode, path: reportedPath(bucket: bucket, key: key))
+        }
+
+        let listRequest = try buildListRequest(
+            bucket: bucket, prefix: key + "/", continuationToken: nil, maxKeys: 1)
+        let (data, listResponse) = try await send(listRequest)
+        switch listResponse.statusCode {
+        case 200..<300:
+            return try S3ListParser.hasAnyEntries(data) ? .directory : .absent
+        default:
+            throw Self.mapErrorStatus(
+                listResponse.statusCode, path: reportedPath(bucket: bucket, key: key + "/"))
+        }
+    }
+
     /// A signed range GET on the object key, streamed through
     /// `transport.sendStreaming`. Maps 2xx → the body stream, 416 (range at
     /// or beyond EOF) → an EMPTY stream (per the `RemoteFileSystem` contract
@@ -377,18 +440,22 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// addresses the bare key `<name>`, never the `<name>/` marker a
     /// directory is; so without the lookup both "nothing is there" and
     /// "that is a directory" came back as a silent success having deleted
-    /// nothing (measured 2026-09-04 against MinIO). `stat` raises the
-    /// `notFound` half itself, which is why only the directory half is
-    /// thrown here. A non-2xx on the DELETE itself is still mapped through
-    /// `sendExpectingSuccess` like any other request.
+    /// nothing (measured 2026-09-04 against MinIO). A non-2xx on the DELETE
+    /// itself is still mapped through `sendExpectingSuccess` like any other
+    /// request.
     ///
-    /// One extra round trip per call, not a second lookup path: `stat` is
-    /// the same parent listing every other caller uses.
+    /// Two extra round trips per call, not a second delete path:
+    /// `deleteLookup` is the cheap HEAD-then-one-key-list check every other
+    /// delete-shaped caller below uses too.
     public func delete(path: String) async throws {
         try refuseBucketLevelOperation(.delete, path: path)
-        let entry = try await stat(path: path)
-        guard entry.kind != .directory else {
+        switch try await deleteLookup(path: path) {
+        case .directory:
             throw RemoteFSError.protocolError(reason: "S3 delete: \(path) is a directory")
+        case .absent:
+            throw RemoteFSError.notFound(path: path)
+        case .file:
+            break
         }
         let (bucket, key) = try mode.resolve(path: path)
         try await delete(bucket: bucket, key: key)
@@ -511,13 +578,15 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// without a full XML parse.
     ///
     /// A PLAIN FILE takes the single-`DELETE` branch instead — see the
-    /// comment on it. Which of the two runs is what the lookup in front
-    /// decides; that is one extra round trip per call, not a second delete
-    /// path.
+    /// comment on it. Which of the two runs is what `deleteLookup` in front
+    /// decides; that is two extra round trips per call (a `HEAD` and a
+    /// one-key list), not a second delete path.
     public func deleteTree(at path: String) async throws {
         try refuseBucketLevelOperation(.deleteTree, path: path)
-        let entry = try await stat(path: path)
-        if entry.kind != .directory {
+        switch try await deleteLookup(path: path) {
+        case .absent:
+            throw RemoteFSError.notFound(path: path)
+        case .file:
             // "A plain file behaves exactly like `delete`", says the
             // protocol. The prefix walk below cannot: it would enumerate
             // `<key>/`, which a plain object's key never matches, batch
@@ -526,6 +595,8 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             let (bucket, key) = try mode.resolve(path: path)
             try await delete(bucket: bucket, key: key)
             return
+        case .directory:
+            break
         }
         let (bucket, treePrefix) = try resolvePrefix(path: path)
         let keys = try await allObjectKeys(bucket: bucket, underPrefix: treePrefix)
@@ -995,12 +1066,14 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     }
 
     private func buildListRequest(
-        bucket: String, prefix: String, continuationToken: String?, delimiter: Bool = true
+        bucket: String, prefix: String, continuationToken: String?, delimiter: Bool = true,
+        maxKeys: Int? = nil
     ) throws -> URLRequest {
         try Self.signedRequest(
             .bucketRoot(bucket: bucket), method: "GET",
             query: Self.queryPairs(
-                prefix: prefix, continuationToken: continuationToken, delimiter: delimiter),
+                prefix: prefix, continuationToken: continuationToken, delimiter: delimiter,
+                maxKeys: maxKeys),
             config: config)
     }
 
@@ -1118,9 +1191,11 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `delimiter` defaults to `true` (the file-browser shape: group
     /// anything past the next `/` into `CommonPrefixes`); `allObjectKeys`
     /// passes `false` to get every key under `prefix` flattened, with no
-    /// grouping, regardless of depth.
+    /// grouping, regardless of depth. `maxKeys` is `nil` for every caller
+    /// except `deleteLookup`, which caps the response at a single entry —
+    /// the question there is only whether anything matches, not what.
     private static func queryPairs(
-        prefix: String, continuationToken: String?, delimiter: Bool = true
+        prefix: String, continuationToken: String?, delimiter: Bool = true, maxKeys: Int? = nil
     ) -> [(name: String, value: String)] {
         var pairs: [(name: String, value: String)] = [
             (name: "list-type", value: "2"),
@@ -1131,6 +1206,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         }
         if let continuationToken {
             pairs.append((name: "continuation-token", value: continuationToken))
+        }
+        if let maxKeys {
+            pairs.append((name: "max-keys", value: String(maxKeys)))
         }
         return pairs
     }
