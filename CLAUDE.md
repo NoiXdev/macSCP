@@ -162,7 +162,13 @@ broken one. A ceiling always can.
   ownership — which window has which tab — never state. Nothing in Core
   knows about windows.
 - The UI owns lifecycles explicitly (queue `cancelAll` → terminal `shutdown`
-  → `disconnect` in `teardownSession`); no `deinit` cleanup.
+  → `disconnect` in `teardownSession`); no `deinit` cleanup. **⌘Q owns one
+  too**, and it reaches the same single owner:
+  `AppDelegate.applicationShouldTerminate(_:)` defers the quit, sweeps the
+  parked seeds, runs every open window's own close sequence in registration
+  order, and each of those ends in `TabTeardown.run(_:reason:)` — the one
+  place the four stages are spelled. Bounded by `QuitWatchdog.bound`, which
+  is the point after which no further tab is started, not a hard ceiling.
 - Transfer queue invariants: FIFO start order, exactly-once waiter
   continuations, `cancelAll` leaves no orphaned shells/transfers, group
   `onCompleted` fires exactly once.

@@ -55,9 +55,9 @@ true)`. The registry only hands the closures out; it never tears down
 - Modify: `Sources/MacSCPAppKit/MacSCPApp.swift` (`AppDelegate.applicationShouldTerminate(_:)`: count live tabs through the registry (a tab counts when `session != nil`); `.now` → `writeRestorationSeeds()`, log `app quit`, flush, return `.terminateNow`; `.later` → `writeRestorationSeeds()` synchronously, then one `Task { @MainActor in }` that runs `sweepUnclaimedMoves()` (now tearing the parked tabs down through the App layer — a small helper that runs `teardown` on each parked `SessionTab`; find the one place that can own it: a `ContentView`-free `TabTeardown.run(tab:reason:)` extracted from `ContentView.teardown` — that extraction IS the "one owner" the invariant names; `ContentView.teardown` becomes a call into it) then every window's closure in order, racing a `Task.sleep(QuitWatchdog.bound)`; whichever finishes first: log `app quit windows=<n> tornDown=<m> forced=<bool>`, `flushSynchronously()`, `NSApp.reply(toApplicationShouldTerminate: true)`; `applicationWillTerminate` keeps only what must run synchronously at the very end (nothing that duplicates the above — read it and reduce it))
 - Test: `Tests/macSCPAppKitTests/QuitSequenceTests.swift` — the decision (0 live → now; 1 → later); the steps array order; a registry instance: two teardown closures registered, `allWindowTeardowns()` yields them in registration order, each invoked once by a test-side loop (the registry itself invokes nothing — a source guard scans `TabRegistry.swift` for no `await` of a teardown closure, positive beside it: the closures are stored and returned); a source guard on `AppDelegate.applicationShouldTerminate`'s body: `writeRestorationSeeds(` precedes the teardown loop, which precedes `app quit`/`flushSynchronously(`/`reply(` (positional pin, each positive), `QuitWatchdog.bound` is referenced (positive), no second copy of the stage names outside `TabTeardown`/`ContentView.teardown` (negative beside the positive that `TabTeardown` names them); the `TabTeardown` extraction pinned by the existing teardown tests still green (`grep -rn "teardown(" Tests/MacSCPAppKitTests | head` to find them).
 
-- [ ] **Step 1: Red first** — `cannot find 'QuitSequence'`, the registry API, the guards.
-- [ ] **Step 2: Implement**; `swift test --filter "Quit|Teardown|TabRegistry|Window"` green; full `swift test`; zero warnings.
-- [ ] **Step 3: Commit** `feat(app): quitting tears every live tab down through the one owner, bounded`.
+- [x] **Step 1: Red first** — `cannot find 'QuitSequence'`, the registry API, the guards.
+- [x] **Step 2: Implement**; `swift test --filter "Quit|Teardown|TabRegistry|Window"` green; full `swift test`; zero warnings.
+- [x] **Step 3: Commit** `feat(app): quitting tears every live tab down through the one owner, bounded`.
 
 ---
 
@@ -66,4 +66,4 @@ true)`. The registry only hands the closures out; it never tears down
 **Files:**
 - Modify: `docs/BACKLOG.md` (the row → Done: the sequence, the bound, what the audit log now shows, the sight check), `CLAUDE.md` ("The UI owns lifecycles explicitly" bullet gains the quit path in one clause), `README.md` (optional, one sentence if the sessions section mentions quitting — likely nothing).
 
-- [ ] **Step 1:** the row and the bullet; commit `docs(backlog): quit tears down through the one owner`.
+- [x] **Step 1:** the row and the bullet; commit `docs(backlog): quit tears down through the one owner`.
