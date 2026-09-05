@@ -262,11 +262,190 @@ final class SettingsWindowBridge {
 /// "NSApp.delegate\|applicationDidFinishLaunching" Sources/MacSCPAppKit`
 /// before adding this — no matches), so installing this adaptor changes
 /// nothing this app already depended on `NSApp.delegate` being.
+/// What the deferred quit still has to tear down, in one main-actor box.
+///
+/// It exists for a type-system reason, not a design one: `TaskGroup
+/// .addTask`'s closure must be `Sendable`, and a `[SessionTab]` is not (the
+/// type is `@MainActor`), nor is a list of `@MainActor` closures. A
+/// `@MainActor final class` is implicitly `Sendable`, so the box crosses the
+/// boundary and its contents never do — the child that reads it is
+/// `@MainActor` as well, and runs on the same actor the values already
+/// belong to.
+@MainActor
+private final class QuitWorkList {
+    /// Tabs parked for a window that never appeared, already taken out of
+    /// the registry by `AppDelegate.sweepUnclaimedMoves()`.
+    let parked: [SessionTab]
+    /// Every open window's teardown, in the order the windows appeared.
+    let windows: [(WindowID, TabRegistry.WindowTeardown)]
+
+    init(parked: [SessionTab], windows: [(WindowID, TabRegistry.WindowTeardown)]) {
+        self.parked = parked
+        self.windows = windows
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The quit sequence (Quit Teardown plan, Task 1).
+    ///
+    /// **Why this callback and not `applicationWillTerminate`.** ⌘Q closes
+    /// no window, so no window's close path runs and nothing tears a held
+    /// tab down. `applicationWillTerminate` cannot fix that: it is
+    /// synchronous, AppKit holds the process open only until it returns, and
+    /// `TabTeardown.run(_:reason:)` is main-actor `async` — blocking the
+    /// main thread to await it deadlocks, and starting a `Task` and
+    /// returning gives the process permission to exit first. This callback
+    /// is the one that can wait: `.terminateLater` defers the quit, and
+    /// `NSApp.reply(toApplicationShouldTerminate: true)` is what releases
+    /// it. That is why the four-stage order had to leave `ContentView`
+    /// (see `TabTeardown`): a delegate has no view to call it on.
+    ///
+    /// **The order is `QuitSequence.steps`**, and
+    /// `QuitSequenceTests.theDelegateRunsTheQuitStepsInOrder` pins this
+    /// body against it positionally. The `.later` case is written FIRST so
+    /// that reading is possible — it is the branch that runs all six steps,
+    /// and `.now` repeats three of the same calls.
+    ///
+    /// **`.now` is not a shortcut past the teardown.** It is chosen only
+    /// when `liveTabCount` is zero, counted over every tab the registry
+    /// knows — parked ones included — so there is provably no session to
+    /// close. The parked sweep still runs, because the RECORD of a move
+    /// that never landed is written whether or not the tab was connected;
+    /// with nothing live, the tabs it hands back have no session and their
+    /// teardown would be a no-op, so this branch discards them and stays
+    /// synchronous.
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        let liveTabCount = TabRegistry.shared.allTabs().filter { $0.session != nil }.count
+        switch QuitSequence.decision(liveTabCount: liveTabCount) {
+        case .later:
+            // FIRST, and synchronously, before any teardown can run: a
+            // teardown clears `tab.activeStoredSessionID`, which is exactly
+            // what `describeForRestoration(_:)` writes into a seed. Ask the
+            // windows afterwards and every restored tab comes back blank.
+            writeRestorationSeeds()
+            let windowTeardowns = TabRegistry.shared.allWindowTeardowns()
+            Task { @MainActor in
+                let parked = sweepUnclaimedMoves()
+                let outcome = await runBoundedQuitTeardown(
+                    parked: parked, windows: windowTeardowns)
+                DiagnosticLog.shared.log(
+                    .info, "app",
+                    QuitSequence.quitLine(
+                        windows: windowTeardowns.count,
+                        tornDown: outcome.tornDown,
+                        forced: outcome.forced))
+                DiagnosticLog.shared.flushSynchronously()
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
+        case .now:
+            writeRestorationSeeds()
+            _ = sweepUnclaimedMoves()
+            DiagnosticLog.shared.log(.info, "app", "quit")
+            DiagnosticLog.shared.flushSynchronously()
+            return .terminateNow
+        }
+    }
+
+    /// The whole deferred teardown, raced against `QuitWatchdog.bound`.
+    ///
+    /// **The race is two children of one group**, and the first to finish
+    /// wins: the teardown chain (parked tabs, then every window's closure in
+    /// registration order) and a sleeper. `group.cancelAll()` then cancels
+    /// the loser.
+    ///
+    /// **What cancelling the chain does, exactly.** `TabTeardown.run`
+    /// deliberately does not check `Task.isCancelled` — a teardown abandoned
+    /// half way would leave a shell open on a connection whose queue had
+    /// already been swept. So the chain checks between items instead: a
+    /// cancelled chain finishes the tab or window it is already inside,
+    /// under that tab's own per-stage bounds, and starts no further one. The
+    /// real ceiling on a quit is therefore this bound plus at most one more
+    /// window's bounded teardown, and `forced=true` in the log line is what
+    /// tells a reader the difference.
+    ///
+    /// `tornDown` counts WINDOW closures that ran to completion, which is
+    /// the number the log line reports beside `windows=`; the parked sweep
+    /// is reported by its own `info` line per seed.
+    ///
+    /// The work list travels in a `QuitWorkList` rather than as two plain
+    /// arrays: a task group's child closure must be `Sendable`, and neither
+    /// `[SessionTab]` (main-actor isolated) nor a list of main-actor
+    /// closures is. A `@MainActor` class IS `Sendable`, and the child that
+    /// reads it is `@MainActor` too, so nothing crosses an actor at all.
+    @MainActor
+    private func runBoundedQuitTeardown(
+        parked: [SessionTab], windows: [(WindowID, TabRegistry.WindowTeardown)]
+    ) async -> (tornDown: Int, forced: Bool) {
+        let work = QuitWorkList(parked: parked, windows: windows)
+        return await withTaskGroup(of: QuitRaceOutcome.self) { group in
+            group.addTask { await Self.runTeardownChain(work) }
+            group.addTask {
+                try? await Task.sleep(for: QuitWatchdog.bound)
+                return .watchdogFired
+            }
+            // Whoever answers first decides `forced`; the other child is
+            // cancelled and then drained, because a task group awaits its
+            // children before it returns either way. Draining is also how
+            // the chain's own count is read when the watchdog won it.
+            let first = await group.next() ?? .watchdogFired
+            group.cancelAll()
+            var tornDown = 0
+            if case .chainFinished(let count) = first { tornDown = count }
+            for await outcome in group {
+                if case .chainFinished(let count) = outcome { tornDown = count }
+            }
+            return (tornDown, first == .watchdogFired)
+        }
+    }
+
+    /// The chain the group races: every parked tab, then every window's
+    /// closure, in order, through the one teardown owner.
+    ///
+    /// **Cancellation is checked BETWEEN items and never inside one.**
+    /// `TabTeardown.run` does not check it at all, on purpose — a teardown
+    /// abandoned half way leaves a shell open on a connection whose queue is
+    /// already swept, which is worse than either end state. So the watchdog
+    /// stops this chain from STARTING further work; the item it is inside
+    /// finishes under its own per-stage bounds.
+    ///
+    /// The returned count is window closures completed, so a chain the
+    /// watchdog cut short reports fewer than it was handed — which is
+    /// exactly what `tornDown=` beside `windows=` is read for.
+    @MainActor
+    private static func runTeardownChain(_ work: QuitWorkList) async -> QuitRaceOutcome {
+        var tornDown = 0
+        for tab in work.parked {
+            if Task.isCancelled { return .chainFinished(tornDown: tornDown) }
+            await TabTeardown.run(tab, reason: .userRequested)
+        }
+        for (_, runWindowTeardown) in work.windows {
+            if Task.isCancelled { return .chainFinished(tornDown: tornDown) }
+            await runWindowTeardown()
+            tornDown += 1
+        }
+        return .chainFinished(tornDown: tornDown)
+    }
+
+    /// The last synchronous moment the process has, and all that is left of
+    /// what this callback used to do.
+    ///
+    /// Everything else moved to `applicationShouldTerminate(_:)` above —
+    /// AppKit calls that one first on every route that reaches this one at
+    /// all, so a restoration write, a parked sweep or an `app quit` line
+    /// here would be a second copy of work already done, and on the deferred
+    /// path it would run AFTER the reply.
+    ///
+    /// The flush stays because it is cheap and it is the only guaranteed
+    /// point after the reply: the teardown chain's own lines (a
+    /// `TeardownStage` abandonment goes to `os.Logger`, but the parked
+    /// sweep's `info` lines do not) are already flushed by the sequence
+    /// itself, and anything appended between the reply and the process
+    /// actually ending would otherwise be lost. It is defensive, not load
+    /// bearing.
     func applicationWillTerminate(_ notification: Notification) {
-        sweepUnclaimedMoves()
-        writeRestorationSeeds()
-        DiagnosticLog.shared.log(.info, "app", "quit")
         DiagnosticLog.shared.flushSynchronously()
     }
 
@@ -310,49 +489,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Every tab still parked for a window that never appeared, at the
     /// moment the process is ending (Detachable Tabs plan, Task 2 fix
-    /// round 3).
+    /// round 3; it TEARS DOWN as of the Quit Teardown plan, Task 1).
     ///
-    /// **What this guarantees is the RECORD, and deliberately not more.**
-    /// Two facts decide that, and both are worth writing down rather than
-    /// discovering again:
+    /// **This used to guarantee the RECORD and deliberately not more**, and
+    /// the two reasons it gave are worth keeping, because the second is what
+    /// made the first fixable:
     ///
-    /// 1. **No bound can apply to a teardown started here.** This callback
-    ///    is synchronous and AppKit holds the process open only until it
-    ///    returns, while `teardown(_:reason:)` and its `TeardownStage`
-    ///    bounds are `async` and main-actor isolated — and the main thread
-    ///    is the thread standing inside this function. Blocking it to await
-    ///    them deadlocks; starting a `Task` and returning gives the process
-    ///    permission to exit first. So there is no bounded teardown to be
-    ///    had here, only an unbounded hope.
+    /// 1. **No bound could apply to a teardown started from
+    ///    `applicationWillTerminate`.** That callback is synchronous and
+    ///    AppKit holds the process open only until it returns, while the
+    ///    teardown and its `TeardownStage` bounds are `async` and
+    ///    main-actor isolated — and the main thread is the thread standing
+    ///    inside it. Blocking it to await them deadlocks; starting a `Task`
+    ///    and returning gives the process permission to exit first.
     /// 2. **The four-stage order has one owner.** `cancelAll` →
     ///    `stopAll` → `shutdown` → `disconnect` is an architecture
-    ///    invariant (`CLAUDE.md`) and it is spelled in
-    ///    `ContentView.teardown(_:reason:)`. Spelling it a second time here
-    ///    — for a case that cannot be guaranteed to run — is the second
-    ///    copy this project's rules exist to prevent, and the copy would be
-    ///    the one that goes stale.
+    ///    invariant (`CLAUDE.md`), and spelling it a second time here would
+    ///    be the second copy this project's rules exist to prevent.
     ///
-    /// What actually happens to those connections is what happens to every
-    /// HELD tab's at quit, which is nothing: ⌘Q does not close windows, so
-    /// no window's close path runs, and the sockets die with the process.
-    /// The residue a hard exit leaves is already swept at the NEXT launch
+    /// Both are answered rather than argued around (Quit Teardown plan,
+    /// Task 1): the sweep moved to `applicationShouldTerminate(_:)`, which
+    /// CAN wait, and the order moved out of `ContentView` into
+    /// `TabTeardown`, which a delegate can call. So this function now hands
+    /// its tabs to a caller that tears them down — under
+    /// `QuitWatchdog.bound` — instead of only writing that they existed.
+    ///
+    /// What it still does itself is the record: one `info` line per seed,
+    /// written BEFORE the teardown starts, so a diagnostic report shows a
+    /// move that never landed even if the teardown is the thing that hangs.
+    /// The residue a hard exit can still leave is swept at the NEXT launch
     /// by `EditSessionManager.sweepOrphanedTempDirectories()` and
     /// `ExternalTerminalLauncher.sweepOrphanedTempDirectories()` in
     /// `MacSCPApp.init`.
     ///
-    /// So this takes the seeds out of the registry and writes one `info`
-    /// line each, before the `flushSynchronously()` in the caller — which
-    /// is the half that IS guaranteed, and the half that lets a diagnostic
-    /// report show a move that never landed. The bounded, ordinary teardown
-    /// of a stranded move is the SOURCE WINDOW's close path
-    /// (`ContentView.releaseUnclaimedSeedsOnClose()`); this is the one case
-    /// that path cannot cover.
+    /// The same sweep for a single window is that window's own close path,
+    /// `ContentView.releaseUnclaimedSeedsOnClose()`; this is the one case
+    /// that path cannot cover, because ⌘Q closes no window.
     @MainActor
-    private func sweepUnclaimedMoves() {
-        for seed in TabRegistry.shared.takeAllPendingSeeds() {
+    private func sweepUnclaimedMoves() -> [SessionTab] {
+        let taken = TabRegistry.shared.takeAllPendingSeeds()
+        for seed in taken {
             DiagnosticLog.shared.log(
                 .info, "app", TabMoveLogLines.tornDownUnclaimed(seedID: seed.seedID))
         }
+        return taken.flatMap(\.tabs)
     }
 }
 

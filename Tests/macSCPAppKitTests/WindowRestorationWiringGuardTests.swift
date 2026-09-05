@@ -186,15 +186,28 @@ struct WindowRestorationWiringGuardTests {
             """)
     }
 
-    /// Positive beside the negative below: `applicationWillTerminate` is
+    /// Positive beside the negative below: `applicationShouldTerminate` is
     /// what runs it, so the write really is on the one path that is
     /// guaranteed to run when the app ends.
+    ///
+    /// It moved off `applicationWillTerminate` in the Quit Teardown plan,
+    /// Task 1, and the ORDER is why: a teardown clears
+    /// `tab.activeStoredSessionID`, which is exactly what a seed is written
+    /// from. The write has to happen before any teardown, and
+    /// `applicationWillTerminate` runs after the whole deferred sequence —
+    /// it would describe every window empty. Both branches of the decision
+    /// write, so the count is two.
     @Test func terminatingIsWhatRunsTheWrite() throws {
-        let body = try Self.body(
-            "func applicationWillTerminate(_ notification: Notification)", in: Self.appFile)
+        let body = try Self.body("func applicationShouldTerminate(", in: Self.appFile)
         #expect(body.contains("writeRestorationSeeds()"), """
-            applicationWillTerminate no longer calls writeRestorationSeeds() \
+            applicationShouldTerminate no longer calls writeRestorationSeeds() \
             — nothing would ever describe the windows that were open.
+            """)
+        let writes = body.components(separatedBy: "writeRestorationSeeds()").count - 1
+        #expect(writes == 2, """
+            applicationShouldTerminate writes the restoration seeds \(writes) \
+            times — it must write them on both branches of the decision, and \
+            on neither of them after a teardown has run.
             """)
     }
 

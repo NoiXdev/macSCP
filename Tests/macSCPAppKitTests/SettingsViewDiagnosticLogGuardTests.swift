@@ -261,27 +261,44 @@ struct SettingsViewDiagnosticLogGuardTests {
             """)
     }
 
-    /// `AppDelegate.applicationWillTerminate` -- installed as `NSApp
-    /// .delegate` through `@NSApplicationDelegateAdaptor` (Diagnostic Log
-    /// plan, Task 2 round 1) -- must call `flushSynchronously(` on the
-    /// terminating thread, not `flush()` awaited from a `Task`: the finding
-    /// this round fixes is that a `NotificationCenter` callback which starts
-    /// a `Task` and returns has no guarantee the process outlives that
-    /// `Task` ever being scheduled.
+    /// The app's termination callbacks -- installed as `NSApp.delegate`
+    /// through `@NSApplicationDelegateAdaptor` (Diagnostic Log plan, Task 2
+    /// round 1) -- must call `flushSynchronously(` on the terminating
+    /// thread, not `flush()` awaited from a `Task`: the finding that round
+    /// fixed is that a callback which starts a `Task` and returns has no
+    /// guarantee the process outlives that `Task` ever being scheduled.
+    ///
+    /// It is TWO callbacks since the Quit Teardown plan, Task 1. The `app
+    /// quit` line and the flush that carries it moved to
+    /// `applicationShouldTerminate(_:)`, which is the one that can defer and
+    /// therefore the one that can tear the live tabs down first;
+    /// `applicationWillTerminate` kept a defensive flush and nothing else,
+    /// for whatever is appended after the reply. So the log line is asserted
+    /// where it now is, and the flush in both.
     @Test func appDelegateApplicationWillTerminateCallsFlushSynchronously() throws {
         let all = try Self.views(of: Self.macSCPAppFile)
-        let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
-            of: "func applicationWillTerminate(_ notification: Notification)", in: all.code)
-        let body = TransferQueueBarCancelGuardTests.slice(range, of: all.code)
-        #expect(body.contains("DiagnosticLog.shared.log("), """
-            AppDelegate.applicationWillTerminate no longer logs anything -- \
+        let shouldTerminate = TransferQueueBarCancelGuardTests.slice(
+            try TransferQueueBarCancelGuardTests.declarationBodyRange(
+                of: "func applicationShouldTerminate(", in: all.code),
+            of: all.code)
+        #expect(shouldTerminate.contains("DiagnosticLog.shared.log("), """
+            AppDelegate.applicationShouldTerminate no longer logs anything -- \
             a log file could no longer be told the app quit.
             """)
-        #expect(body.contains("flushSynchronously("), """
-            AppDelegate.applicationWillTerminate no longer calls \
+        #expect(shouldTerminate.contains("flushSynchronously("), """
+            AppDelegate.applicationShouldTerminate no longer calls \
             flushSynchronously( -- the buffered lines (and the "app quit" \
-            line above) are no longer guaranteed to reach disk before the \
-            process exits.
+            line beside them) are no longer guaranteed to reach disk before \
+            the process exits.
+            """)
+        let willTerminate = TransferQueueBarCancelGuardTests.slice(
+            try TransferQueueBarCancelGuardTests.declarationBodyRange(
+                of: "func applicationWillTerminate(_ notification: Notification)", in: all.code),
+            of: all.code)
+        #expect(willTerminate.contains("flushSynchronously("), """
+            AppDelegate.applicationWillTerminate no longer calls \
+            flushSynchronously( -- it is the last synchronous point the \
+            process has, and anything appended after the reply would be lost.
             """)
     }
 

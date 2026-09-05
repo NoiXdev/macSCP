@@ -86,6 +86,13 @@ final class TabRegistry {
     /// closures rather than inferred from them.
 
     private var describerWindowOrder: [WindowID] = []
+    /// What each open window does to its own tabs when the app quits — see
+    /// `registerWindowTeardown(_:for:)` (Quit Teardown plan, Task 1). Kept
+    /// beside its own order for the same reason the describers are: a
+    /// dictionary has none, and the windows must be torn down in the order
+    /// they appeared.
+    private var windowTeardowns: [WindowID: WindowTeardown] = [:]
+    private var windowTeardownOrder: [WindowID] = []
 
     /// A weak reference in a place a dictionary cannot hold one directly.
     private struct WeakModel {
@@ -101,6 +108,25 @@ final class TabRegistry {
     /// would have to be refreshed by whoever changed any of those. The
     /// window is asked once, at the one moment the answer is needed.
     typealias WindowDescriber = @MainActor () -> WindowSeed
+
+    /// What a window does to everything it holds when the APP is quitting
+    /// (Quit Teardown plan, Task 1): its own close-time sequence — the
+    /// unclaimed seeds it parked, then the tabs still on its strip — run to
+    /// completion rather than fired off into a `Task` nobody waits on.
+    ///
+    /// `async`, unlike `WindowDescriber` above, and that is the whole
+    /// difference between the two: describing a window is a synchronous read
+    /// of values, while tearing one down suspends on every stage of every
+    /// tab. `applicationWillTerminate` could hold the first and not the
+    /// second, which is why the quit moved to
+    /// `applicationShouldTerminate(_:)`, the callback that can defer.
+    ///
+    /// The registry stores these and hands them back. It never calls one —
+    /// see this type's own doc comment, and
+    /// `TabRegistryNoTeardownGuardTests`, which reads this file for exactly
+    /// that (there is no `await` anywhere in it, so there is nothing here
+    /// that COULD run one).
+    typealias WindowTeardown = @MainActor () async -> Void
 
     init() {}
 
@@ -419,6 +445,70 @@ final class TabRegistry {
     /// be a promise this callback cannot keep (see `AppDelegate`).
     func describeAllWindows() -> [WindowSeed] {
         describerWindowOrder.compactMap { describersByWindow[$0]?() }
+    }
+
+    // MARK: - Each window's teardown, for the quit that waits for it
+
+    /// Records what `window` does to everything it holds when the app is
+    /// quitting (Quit Teardown plan, Task 1).
+    ///
+    /// **Why the registry has to answer this.** It is the same argument
+    /// `registerWindowDescriber(_:for:)` above makes, one step further:
+    /// ⌘Q closes no window, so no window's `willClose` handler runs, so
+    /// nothing a window does on its own way out happens at quit. The set of
+    /// windows that still exist at that moment is known here and nowhere
+    /// else, and `AppDelegate` has no `ContentView` to ask.
+    ///
+    /// **What it must NOT become is a teardown of its own.** The closure is
+    /// the window's OWN close-time sequence, and the four stages inside it
+    /// are `TabTeardown`'s (Global Constraints: one owner). This type stores
+    /// a function value and returns it; it does not know what is in it and
+    /// cannot run it.
+    ///
+    /// Idempotent, and order-stable, like the three registrations above: a
+    /// window calls this on every setup pass, the last closure wins, and the
+    /// window keeps the position it first registered in.
+    ///
+    /// STRONG, like the describer, and for the same reason
+    /// `unregisterWindowTeardown(for:)` is not optional bookkeeping: a
+    /// closure left behind after a window closed would tear down, at quit,
+    /// tabs that window already released.
+    func registerWindowTeardown(_ run: @escaping WindowTeardown, for window: WindowID) {
+        if windowTeardowns[window] == nil {
+            windowTeardownOrder.append(window)
+        }
+        windowTeardowns[window] = run
+    }
+
+    /// Forgets what `window` does at quit. Called from the window's close
+    /// path, which is running that very sequence itself — so a window the
+    /// user closed is torn down exactly once, by its own `willClose`
+    /// handler, and never a second time by the quit sweep.
+    func unregisterWindowTeardown(for window: WindowID) {
+        windowTeardowns[window] = nil
+        windowTeardownOrder.removeAll { $0 == window }
+    }
+
+    /// Every open window's teardown, in the order the windows appeared,
+    /// paired with the window it belongs to.
+    ///
+    /// Handing over is all this does. The caller — `AppDelegate`'s deferred
+    /// quit — is what awaits them, in this order, under its own watchdog.
+    func allWindowTeardowns() -> [(WindowID, WindowTeardown)] {
+        windowTeardownOrder.compactMap { window in
+            windowTeardowns[window].map { (window, $0) }
+        }
+    }
+
+    /// Every tab the registry knows about — held by a window or parked for
+    /// one that never appeared — in no particular order.
+    ///
+    /// The quit's decision is counted over this (`QuitSequence
+    /// .decision(liveTabCount:)`): a parked tab can hold a live session and
+    /// is in no window, so counting windows' tabs alone would answer
+    /// "nothing to do" for a connection nothing else can reach.
+    func allTabs() -> [SessionTab] {
+        Array(tabsByID.values)
     }
 
     /// The convenience Task 2's drag calls: moves `id`'s ownership in the

@@ -626,6 +626,11 @@ struct TabsWindowLifecycleTests {
         .appendingPathComponent("Sources/MacSCPAppKit/MacSCPApp.swift")
     private static let lifecycleFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
+    /// The one owner of a tab's four teardown stages since the Quit
+    /// Teardown plan, Task 1 — they used to be spelled inside
+    /// `ContentView.teardown(_:reason:)`, which no delegate could call.
+    private static let tabTeardownFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/TabTeardown.swift")
     private static let stripFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/TabStripView.swift")
     /// Every menu this app adds — its own `Commands` type since the bridge
@@ -719,12 +724,42 @@ struct TabsWindowLifecycleTests {
     /// Positive: the window's close path hands its tabs to the teardown
     /// this project already has, and only then asks the registry to forget
     /// them.
+    ///
+    /// The loop moved into `tearDownHeldTabs(_:from:)` (Quit Teardown plan,
+    /// Task 1) so the app's quit can AWAIT the same sequence a `willClose`
+    /// handler can only fire into a `Task`. Both entry points are pinned
+    /// first, then the one body they share — a scan of the shared half alone
+    /// would stay green if nothing called it any more.
     @Test func theWindowsClosePathTearsDownWhatItHoldsAndThenReleasesIt() throws {
         let source = try Self.code(of: Self.lifecycleFile)
-        let closePath = try #require(
+        let notified = try #require(
             Self.body(after: "func releaseHeldTabsOnClose() {", in: source), """
                 ContentView+Lifecycle.swift no longer declares \
                 releaseHeldTabsOnClose() — re-anchor this guard on whatever \
+                the window's close path is called now.
+                """)
+        let awaited = try #require(
+            Self.body(after: "func releaseHeldTabsOnCloseAndWait() async {", in: source), """
+                ContentView+Lifecycle.swift no longer declares \
+                releaseHeldTabsOnCloseAndWait() — the app's quit has nothing \
+                left to await.
+                """)
+        #expect(notified.contains("tearDownHeldTabs("), """
+            releaseHeldTabsOnClose() no longer hands its tabs to \
+            tearDownHeldTabs(_:from:).
+            """)
+        #expect(awaited.contains("tearDownHeldTabs("), """
+            releaseHeldTabsOnCloseAndWait() no longer hands its tabs to \
+            tearDownHeldTabs(_:from:) — the quit would await a different \
+            sequence than the close path runs.
+            """)
+        let closePath = try #require(
+            Self.body(
+                after: "private func tearDownHeldTabs("
+                    + "_ held: [SessionTab], from closingWindow: WindowID) async {",
+                in: source), """
+                ContentView+Lifecycle.swift no longer declares \
+                tearDownHeldTabs(_:from:) — re-anchor this guard on whatever \
                 the window's close path is called now.
                 """)
         // Each Bool is computed BEFORE the expectation: `#expect` reports
@@ -751,21 +786,35 @@ struct TabsWindowLifecycleTests {
     /// `teardown` stopped being that sequence.
     @Test func theTeardownTheClosePathCallsIsStillTheStagedOne() throws {
         let source = try Self.code(of: Self.lifecycleFile)
-        let teardown = try #require(
+        let view = try #require(
             Self.body(
                 after: "func teardown(_ tab: SessionTab, reason: CancelReason) async {",
                 in: source), """
                 ContentView+Lifecycle.swift no longer declares \
                 teardown(_:reason:) with that signature — re-anchor this guard.
                 """)
+        // The stages left the view for `TabTeardown` (Quit Teardown plan,
+        // Task 1), so "the staged sequence" is now two claims: the view
+        // calls the one owner, and the one owner runs the stages.
+        #expect(view.contains("TabTeardown.run(tab, reason: reason)"), """
+            ContentView.teardown(_:reason:) no longer calls the one teardown \
+            owner — a second copy of the four stages is what that means.
+            """)
+        let teardown = try #require(
+            Self.body(
+                after: "static func run(_ tab: SessionTab, reason: CancelReason) async {",
+                in: try Self.code(of: Self.tabTeardownFile)), """
+                TabTeardown.swift no longer declares run(_:reason:) with that \
+                signature — re-anchor this guard.
+                """)
         let stopsWatchers = teardown.contains("TeardownStage.stopEditWatchers.runBounded")
         let shutsDownTerminal = teardown.contains("TeardownStage.shutDownTerminal.runBounded")
         #expect(stopsWatchers, """
-            teardown(_:reason:) no longer runs the edit watchers through \
+            TabTeardown.run(_:reason:) no longer runs the edit watchers through \
             TeardownStage.stopEditWatchers.runBounded.
             """)
         #expect(shutsDownTerminal, """
-            teardown(_:reason:) no longer runs the terminal shutdown through \
+            TabTeardown.run(_:reason:) no longer runs the terminal shutdown through \
             TeardownStage.shutDownTerminal.runBounded — the one stage measured \
             to need a bound.
             """)
@@ -850,12 +899,19 @@ struct TabsWindowLifecycleTests {
     @Test func theUnclaimedSweepTearsDownThroughTheOrdinaryPath() throws {
         let source = try Self.code(of: Self.lifecycleFile)
         let sweep = try #require(
-            Self.body(after: "func releaseUnclaimedSeedsOnClose() {", in: source), """
+            Self.body(after: "private func takeUnclaimedSeedsOnClose() -> [SessionTab] {",
+                      in: source), """
                 ContentView+Lifecycle.swift no longer declares \
-                releaseUnclaimedSeedsOnClose() — re-anchor this guard.
+                takeUnclaimedSeedsOnClose() — re-anchor this guard.
+                """)
+        let teardownLoop = try #require(
+            Self.body(after: "private func tearDownUnclaimedSeeds(_ tabs: [SessionTab]) async {",
+                      in: source), """
+                ContentView+Lifecycle.swift no longer declares \
+                tearDownUnclaimedSeeds(_:) — re-anchor this guard.
                 """)
         let asksTheRegistry = sweep.contains("takePendingSeeds(from:")
-        let tearsDown = sweep.contains("await teardown(")
+        let tearsDown = teardownLoop.contains("await teardown(")
         #expect(asksTheRegistry, """
             the unclaimed sweep no longer asks the registry for this window's \
             pending seeds.
@@ -871,21 +927,23 @@ struct TabsWindowLifecycleTests {
     /// process open for.
     @Test func quittingSweepsEveryStillParkedMove() throws {
         let app = try Self.code(of: Self.appFile)
+        // `applicationShouldTerminate(_:)` since the Quit Teardown plan,
+        // Task 1 — the callback that can defer, and therefore the one that
+        // can tear the swept tabs down instead of only recording them.
         let terminate = try #require(
-            Self.body(after: "func applicationWillTerminate(_ notification: Notification) {",
-                      in: app), """
-                MacSCPApp.swift no longer declares applicationWillTerminate(_:) — \
+            Self.body(after: "func applicationShouldTerminate(", in: app), """
+                MacSCPApp.swift no longer declares applicationShouldTerminate(_:) — \
                 re-anchor this guard.
                 """)
         let sweeps = terminate.contains("sweepUnclaimedMoves()")
         let stillFlushes = terminate.contains("flushSynchronously()")
         #expect(sweeps, """
-            applicationWillTerminate(_:) no longer sweeps the registry's still \
+            applicationShouldTerminate(_:) no longer sweeps the registry's still \
             parked moves — a tab whose window never appeared would go \
             unrecorded at quit.
             """)
         let sweep = try #require(
-            Self.body(after: "private func sweepUnclaimedMoves() {", in: app), """
+            Self.body(after: "private func sweepUnclaimedMoves() -> [SessionTab] {", in: app), """
                 MacSCPApp.swift no longer declares sweepUnclaimedMoves() — \
                 re-anchor this guard.
                 """)
@@ -895,7 +953,7 @@ struct TabsWindowLifecycleTests {
             call above would then be doing nothing.
             """)
         #expect(stillFlushes, """
-            applicationWillTerminate(_:) no longer flushes the diagnostic log — \
+            applicationShouldTerminate(_:) no longer flushes the diagnostic log — \
             the sweep's own lines are the durable half of what it does, so \
             this is what makes them worth writing.
             """)

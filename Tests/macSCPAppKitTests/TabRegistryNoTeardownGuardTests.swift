@@ -17,25 +17,43 @@ import Testing
 /// This guard closes that gap from the other side: it reads the SOURCE,
 /// not the behavior.
 ///
-/// **NEGATIVE half.** None of four names a move must never reach —
-/// `cancelAll(`, `shutdown(`, `disconnect(`, `teardown` — appear, outside
-/// a comment or a string, in `TabRegistry.swift`, in
+/// **NEGATIVE half.** None of five names a move must never reach —
+/// `cancelAll(`, `shutdown(`, `disconnect(`, `teardown`, `TabTeardown` —
+/// appear, outside a comment or a string, in `TabRegistry.swift`, in
 /// `TabsViewModel.detach`'s body, or in `TabDetachSequence.swift`.
+///
+/// A FIFTH name joined them in the Quit Teardown plan, Task 1:
+/// `TabTeardown`, the type the four stages moved into. Without it the
+/// lowercase `teardown` needle would not catch `TabTeardown.run(` — the
+/// capital T means the two spellings are different strings — and calling
+/// the one owner from inside the registry is exactly the violation this
+/// guard exists for. The registry's own `WindowTeardown` API
+/// (`registerWindowTeardown`, `unregisterWindowTeardown`,
+/// `allWindowTeardowns`) also spells the word with a capital T and is
+/// deliberately NOT forbidden: storing a closure is not running one, and
+/// `theRegistryStoresWindowTeardownsWithoutRunningThem` below is the check
+/// that says so structurally rather than by spelling.
 ///
 /// **POSITIVE half beside it** (CLAUDE.md, "Guards that name what they
 /// watch": a negative check needs a positive beside it, or it is a
-/// comment that runs). The same four names genuinely occur, as real
-/// calls, in `ContentView+Lifecycle.swift` — the window's OWN teardown
-/// path, which every one of the four names describes for THIS project.
-/// Counted in the stripped (comments-and-string-literals-blanked) view,
-/// at commit `0a56bd7a`, 2026-09-05, with a throwaway script built on
-/// this file's own `SwiftSource.blankingCommentsAndStrings`:
-/// `cancelAll(` once, `shutdown(` once, `disconnect(` once, `teardown`
-/// five times. `teardownVocabularyIsRealInTheLifecyclePath` below only
-/// asserts presence (>= 1), not these exact counts — a number this
-/// specific belongs to the doc comment that was counted for it, not to an
-/// assertion that would need re-counting on every unrelated edit to that
-/// file.
+/// comment that runs). The same names genuinely occur, as real calls, in
+/// the App's own teardown path — which is now TWO files, because the four
+/// stages left `ContentView` so that a delegate with no view (the app's
+/// quit) could reach them. Counted in the stripped
+/// (comments-and-string-literals-blanked) view, on 2026-09-05, after that
+/// extraction, with a throwaway script built on this file's own
+/// `SwiftSource.blankingCommentsAndStrings`: in `TabTeardown.swift`,
+/// `cancelAll(` once, `shutdown(` once, `disconnect(` once, `TabTeardown`
+/// once (and `teardown`, lowercase, not at all — that file declares the
+/// sequence, it does not call `ContentView.teardown`); in
+/// `ContentView+Lifecycle.swift`, `teardown` six times (the declaration
+/// plus five `await teardown(` call sites; the other three of the eight
+/// in the App target are in `ContentView.swift` and
+/// `ContentView+Detail.swift`) and `TabTeardown` once, and none of the
+/// other three names at all. The two positive tests below assert presence
+/// (>= 1), not these exact counts — a number this specific belongs to the
+/// doc comment that was counted for it, not to an assertion that would
+/// need re-counting on every unrelated edit to either file.
 ///
 /// **Sensitivity, checked by hand, not just claimed** (fix round 1,
 /// 2026-09-05): before this guard existed,
@@ -52,7 +70,10 @@ import Testing
 /// same limitation `TransferQueueBarCancelGuardTests`'s own doc comment
 /// names for its guard. A call reached only through a stored closure or a
 /// protocol witness rather than spelled out at the call site would not be
-/// found by any of these four literal needles.
+/// found by any of these five literal needles. For `TabRegistry.swift`
+/// that blind spot is closed from the other side by
+/// `theRegistryStoresWindowTeardownsWithoutRunningThem`'s `await` check,
+/// which no spelling can slip past; the other scanned spans still have it.
 @Suite("TabRegistry: a move never tears anything down (source guard)")
 struct TabRegistryNoTeardownGuardTests {
     /// `#filePath` here is
@@ -114,11 +135,18 @@ struct TabRegistryNoTeardownGuardTests {
     /// `declarationBodyRange(of:in:)` isolates.
     private static let detachDeclaration = "public func detach(tabID: UUID) -> Tab?"
 
-    /// The four names, spelled once here — a rename of any of them turns
+    /// The five names, spelled once here — a rename of any of them turns
     /// this guard red (nothing left to find) rather than silently
     /// satisfying it, the same "positive, not a literal nobody would ever
     /// plant" shape `TransferQueueBarCancelGuardTests`'s own needles take.
-    private static let forbidden = ["cancelAll(", "shutdown(", "disconnect(", "teardown"]
+    private static let forbidden = [
+        "cancelAll(", "shutdown(", "disconnect(", "teardown", "TabTeardown",
+    ]
+
+    /// The one owner of the four stages since the Quit Teardown plan, Task
+    /// 1 — where three of the five names above are now real calls.
+    private static let tabTeardownFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/TabTeardown.swift")
 
     /// The strict (comments-and-string-literals-blanked) view of one file
     /// — a guard reading raw source cannot tell a call from a sentence
@@ -258,19 +286,71 @@ struct TabRegistryNoTeardownGuardTests {
 
     // MARK: - POSITIVE: the same four names are real vocabulary here
 
-    /// Beside the three negatives above: `ContentView+Lifecycle.swift` —
-    /// the window's OWN teardown path — really does call all four, so a
-    /// scan that found nothing everywhere would prove nothing about a
-    /// move in particular. See this suite's own doc comment for the exact
-    /// counts at the commit this was written against.
+    /// Beside the negatives above: `TabTeardown.swift` — the one owner of
+    /// the four stages — really does call three of the five names, so a
+    /// scan that found nothing everywhere would prove nothing about a move
+    /// in particular. See this suite's own doc comment for the exact counts
+    /// at the commit this was written against.
+    ///
+    /// `teardown` (lowercase) is not among them and must not be: this file
+    /// declares the sequence rather than calling `ContentView.teardown`.
+    /// Its own control is the lifecycle file below.
+    @Test func teardownVocabularyIsRealInTheOneOwner() throws {
+        let source = try Self.strictSource(of: Self.tabTeardownFile)
+        for name in ["cancelAll(", "shutdown(", "disconnect(", "TabTeardown"] {
+            #expect(source.contains(name), """
+                "\(name)" is missing from TabTeardown.swift — the positive half of this suite \
+                has nothing left to stand on if the one teardown owner stops naming it.
+                """)
+        }
+    }
+
+    /// The other half of the same control: `ContentView+Lifecycle.swift` is
+    /// still the window's own teardown path, so the two names a move must
+    /// never reach from THERE are real there — `teardown`, its own method
+    /// and its callers, and `TabTeardown`, the owner it hands the stages to.
     @Test func teardownVocabularyIsRealInTheLifecyclePath() throws {
         let source = try Self.strictSource(of: Self.lifecycleFile)
-        for name in Self.forbidden {
+        for name in ["teardown", "TabTeardown"] {
             #expect(source.contains(name), """
                 "\(name)" is missing from ContentView+Lifecycle.swift — the positive half of \
                 this suite has nothing left to stand on if the window's own teardown path stops \
                 naming it.
                 """)
         }
+    }
+
+    /// The registry's `WindowTeardown` API (Quit Teardown plan, Task 1)
+    /// hands closures out; it never runs one.
+    ///
+    /// **POSITIVE first:** the three API members really are there, so the
+    /// negative below is read over a file that actually stores teardowns —
+    /// a scan of a registry that never grew the API would satisfy any
+    /// `!contains` perfectly (CLAUDE.md, "Guards that name what they
+    /// watch").
+    ///
+    /// **NEGATIVE, and structural rather than spelled:** there is no
+    /// `await ` anywhere in this file's code. A `WindowTeardown` is
+    /// `@MainActor () async -> Void`, so running one requires an `await`,
+    /// and a file with none cannot run one under ANY spelling — including a
+    /// closure reached through a stored value, which the four literal
+    /// needles above would miss. It is also the negative that cannot go
+    /// stale in silence: `await` is a keyword, not a name somebody can
+    /// rename out from under it.
+    @Test func theRegistryStoresWindowTeardownsWithoutRunningThem() throws {
+        let source = try Self.strictSource(of: Self.registryFile)
+        #expect(
+            source.contains("typealias WindowTeardown"),
+            "TabRegistry.swift no longer declares WindowTeardown")
+        #expect(
+            source.contains("func registerWindowTeardown("),
+            "TabRegistry.swift no longer stores a window's teardown")
+        #expect(
+            source.contains("func allWindowTeardowns("),
+            "TabRegistry.swift no longer hands the teardowns back")
+        #expect(!source.contains("await "), """
+            TabRegistry.swift contains an "await" — the registry has no async work of its own, \
+            so the only thing it could be awaiting is somebody else's teardown.
+            """)
     }
 }

@@ -409,226 +409,50 @@ extension ContentView {
         tab.session?.remote.auditSink = { event in recorder.recordAction(event) }
     }
 
-    /// Tab-local teardown, in the invariant order: bridge dismiss →
-    /// `cancelAll` → `editManager.stopAll` → `terminal.shutdown` →
-    /// `remote.disconnect`. Touches ONLY this tab; other tabs' sessions,
-    /// queues and forms are untouched.
+    /// This window's route into the one teardown owner, `TabTeardown.run(
+    /// _:reason:)` — plus the one step of a tab's teardown that needs the
+    /// WINDOW rather than the tab.
     ///
-    /// `reason` (connection-liveness plan, Task 8; required — see
-    /// `CancelReason`'s own doc comment for why a
-    /// `Bool` default was rejected) forwards straight into
-    /// `cancelAll(reason:)`: the ONE caller that passes `.connectionLost` is
-    /// `handleLivenessGiveUp(_:)` below, so the running transfer fails with
-    /// a "connection lost" reason and every queued item is marked and kept
-    /// — every OTHER caller here passes `.userRequested` (a deliberate
-    /// disconnect, not a drop), which keeps the plain `.cancelled` this
-    /// function always produced. The order itself (`cancelAll` first,
-    /// everything else after) is unchanged by this parameter — it only
-    /// changes what `cancelAll` writes onto the queue's own items, not when
-    /// it runs.
+    /// The four-stage order (`cancelAll` → `editManager.stopAll` →
+    /// `terminal.shutdown` → `remote.disconnect`) and everything it resets
+    /// live in `TabTeardown`, which is where the App's quit reaches them
+    /// too: `AppDelegate` has no `ContentView`, and neither has a tab parked
+    /// for a window that never appeared. See that type's doc comment for the
+    /// order, the bounds, and what each reset is for.
     ///
-    /// **What is bounded here, and what is not.** Three of the four stages
-    /// carry a wall-clock bound; the first one does not.
+    /// `stopDiagnostics(of:)` is what stayed here, and it could not move:
+    /// it reads `ContentView.diagnostics`, this window's own
+    /// `DiagnosticsPresenter`, which nothing on the tab can reach. It stops
+    /// the RUN and leaves the panel up — see `DiagnosticsPresenter
+    /// .stopRun(openedFor:)` for why stopping and dismissing are two
+    /// different decisions on a path that also runs for a liveness give-up
+    /// nobody asked for.
     ///
-    /// - `editManager.stopAll()` and `terminal.shutdown()` are bounded HERE,
-    ///   through `TeardownStage.runBounded` — see that type for the
-    ///   measurements behind the five seconds and for which of the two was
-    ///   measured to need it (`terminal.shutdown()`; it did not return
-    ///   inside a 20-second watchdog against a frozen peer, in three runs
-    ///   out of three).
-    /// - `remote.disconnect()` carries its own bound INSIDE
-    ///   `CitadelFileSystem.disconnect()` (`7ac7f7e`) and is deliberately
-    ///   not wrapped again: measured against that same frozen peer it
-    ///   returned in 5.002063 s / 5.304208 s / 5.333977 s.
-    /// - `transferQueue.cancelAll(reason:)` is **not bounded** — neither
-    ///   here nor inside itself. It was wrapped for one commit (`eed1c8a`)
-    ///   and the maintainer removed the wrapper on 2026-08-28, because the
-    ///   bound was measured to catch nothing and to cost something. Against
-    ///   the frozen peer, with an open PTY shell AND an 8 MB download
-    ///   running at the moment of the freeze, `cancelAll` returned in
-    ///   0.004462916 s / 0.004904750 s / 0.005558917 s — three runs out of
-    ///   three, none of them near a bound. What the wrapper cost is
-    ///   visible right below: `BoundedClose` runs its operation in a
-    ///   separate task, so wrapping this call makes `teardown` suspend
-    ///   BEFORE the queue is swept, and a transfer that fails completely
-    ///   inside that one extra main-actor turn then keeps its own error
-    ///   text instead of reading "Connection lost." (one that merely starts
-    ///   is still marked correctly). Swift has no version with both: an
-    ///   async function cannot be run synchronously up to its first
-    ///   suspension point inside another task.
+    /// **Its callers, counted at this commit** (2026-09-05, `grep -n "await
+    /// teardown(" Sources/MacSCPAppKit/*.swift`): eight `await teardown(`
+    /// call sites, in eight functions. Seven of them are a deliberate
+    /// "leave this connection" and pass `.userRequested` —
+    /// `disconnectToForm` (the toolbar "Disconnect" button), `performClose`
+    /// (closing a tab), `performCloseOthers` (closing every other tab), the
+    /// reconnect-in-place branch of `connect(in:stored:)`,
+    /// `ConnectingAttemptView`'s `onCancel` in `ContentView+Detail.swift`,
+    /// and the two close-path loops in this file, `tearDownHeldTabs(_:from:)`
+    /// and `tearDownUnclaimedSeeds(_:)`. The eighth is
+    /// `handleLivenessGiveUp(_:)` below, the only one that passes
+    /// `.connectionLost` and the only one that is not a user action.
     ///
-    /// **So the guarantee this function can make is narrower than "it always
-    /// reaches its end".** What holds is: whatever `cancelAll` does, the
-    /// three stages after it are bounded, so once `cancelAll` returns this
-    /// function reaches its end within roughly
-    /// `2 × TeardownStage.boundSeconds + CitadelFileSystem
-    /// .sftpCloseBoundSeconds`. `cancelAll` itself has no such ceiling: it
-    /// awaits every running transfer to unwind (step 3) and is documented as
-    /// able to block on an open decider prompt — which is why
-    /// `conflictBridge.cancelOpenPrompt()` runs first, and why the
-    /// measurement above, not an argument, is what says this is safe today.
-    /// If a teardown is ever seen to hang before the first stage bound can
-    /// fire, this is the stage to measure first.
+    /// The count matters to `DiagnosticsLifecycleTests`, which drives
+    /// `handleLivenessGiveUp` by name and the others by their shape —
+    /// `teardown` of a tab the panel was not opened for — rather than by
+    /// calling `performCloseOthers` or the reconnect branch. So an
+    /// `endDiagnostics()` added back into either of those two for tidiness
+    /// goes red nowhere.
     ///
-    /// A bound around this whole function instead of one per stage was
-    /// considered and rejected by the maintainer: it would abandon the
-    /// invariant order wherever it stood and could not name the stage that
-    /// hung.
+    /// The app's quit does NOT come through here: it runs each window's
+    /// registered closure, which reaches the same two loops below, and
+    /// reaches a parked tab through `TabTeardown.run` directly.
     func teardown(_ tab: SessionTab, reason: CancelReason) async {
-        tab.editErrorMessage = nil
-        if let session = tab.session {
-            // MUST run before `cancelAll(reason:)`: an open conflict sheet would
-            // otherwise keep the decider prompt open, which `cancelAll`
-            // (documented) hangs on until it's answered — deadlock on disconnect.
-            tab.conflictBridge.cancelOpenPrompt()
-            // Called directly, NOT through `TeardownStage.runBounded` (see
-            // this function's doc comment): a bound would put a suspension
-            // point in front of the sweep, and the queue sweep running in
-            // teardown's own first main-actor turn is worth more than a
-            // bound that three frozen-peer runs measured at under six
-            // milliseconds.
-            await tab.transferQueue.cancelAll(reason: reason)
-            // Binding order (M5e/T4 plan): AFTER `cancelAll` (any in-flight
-            // edit download/upload has already been cancelled/settled by the
-            // queue, so `stopAll` isn't racing a still-running transfer) and
-            // BEFORE `terminal.shutdown`/`disconnect` (teardown proceeds
-            // outward from the queue to the connection).
-            await TeardownStage.stopEditWatchers.runBounded { [editManager = session.editManager] in
-                await editManager.stopAll()
-            }
-            // The first thing this function does to the tab's own snippet
-            // state (fix round: session overview plan, final review) —
-            // BEFORE `terminal.shutdown()`, not after it. That call sets the
-            // panel `.closed` and then this function still suspends once
-            // more, on `session.remote.disconnect()` right below: two points
-            // where `PendingSnippetRunner` — which fires on every state
-            // change the tab produces, not only on the ones this function
-            // causes — can observe "closed, and a snippet still armed" and
-            // read it the same way it would after a real drop: call
-            // `deliverPendingSnippetRun(on:)`, see `.closed`, and call
-            // `terminal.openIfNeeded()` — reopening a shell on a connection
-            // this function is in the middle of taking down, and, once that
-            // reopen itself ends in `.ended`, following it with a "the shell
-            // did not open" alert over a disconnect the user asked for.
-            // Clearing here removes the fact the runner would have acted on
-            // before either suspension point is reached, so a snippet armed
-            // when the user disconnects is dropped in silence, the same as
-            // every other fact this function clears for the same reason
-            // (`liveness`, `lostConnection`, `connectFailure`, below).
-            tab.pendingSnippetRun = nil
-            await TeardownStage.shutDownTerminal.runBounded { [terminal = session.terminal] in
-                await terminal.shutdown()
-            }
-            await session.remote.disconnect()
-            // Audit recorder teardown (M9b/T3): only present for a stored
-            // session (`attachAuditRecorder` never runs for an ad-hoc
-            // connect), so this is a no-op otherwise. `recordDisconnected()`
-            // FIRST, then release the recorder and BOTH sinks it wired.
-            if let recorder = tab.auditRecorder {
-                recorder.recordDisconnected()
-                tab.auditRecorder = nil
-                tab.transferQueue.auditSink = nil
-                session.remote.auditSink = nil
-            }
-        }
-        let form = tab.connectionViewModel
-        // `clearRetainedSecrets()` (not the narrower `clearPassword()`):
-        // this tab's `connectionViewModel` survives past this teardown, so
-        // its `lastConnectedConfig` (the external-terminal launcher's own
-        // copy of the same secret) must be forgotten here too, or it would
-        // keep the first connect's plaintext password in memory across
-        // every later disconnect/reconnect in this tab (review finding,
-        // M11d fix round 1).
-        form.clearRetainedSecrets()
-        form.authChoice = .password
-        form.keyPath = ""
-        // Reset any pending edit context: a stale `.edit(sessionID:)`
-        // surviving into the next Save would overwrite the wrong stored
-        // session (M5f/T4 review).
-        form.exitEditMode()
-        tab.session = nil
-        tab.activeStoredSessionID = nil
-        tab.titleName = nil
-        // Stale liveness (connection-liveness plan, Task 4, fix round 2;
-        // recounted for the tab-context-menu plan's final review): this
-        // function has exactly six OTHER callers — `disconnectToForm` (the
-        // toolbar "Disconnect" button), `performClose` (closing a tab),
-        // `performCloseOthers` (closing every other tab), the
-        // reconnect-in-place branch of `connect(in:stored:)`,
-        // `ConnectingAttemptView`'s `onCancel` in `ContentView+Detail.swift`,
-        // and `releaseHeldTabsOnClose` (the window closing, Detachable Tabs
-        // plan, Task 2) — and every one of them is a deliberate "leave this
-        // connection".  Counted at this commit: seven `await teardown(` call
-        // sites in all, this function's own callers plus
-        // `handleLivenessGiveUp` below.
-        // There is no connection left to describe afterward, so a dot left
-        // reading `.degraded`/`.lost` from before this call would be
-        // describing a session that is no longer there.
-        // The ONE exception is `handleLivenessGiveUp`, which writes
-        // `.lost` AFTER calling this function precisely so that write is
-        // not the one this line clears.
-        tab.liveness = nil
-        // Same rule, same sentence, for the lost-connection record (Task
-        // 7): every one of those six callers is leaving this connection on
-        // purpose, and a record of a DROP would be describing something
-        // that did not happen. `handleLivenessGiveUp` is the same one
-        // exception it is for `liveness` — it writes this afterwards,
-        // deliberately after this line has run.
-        tab.lostConnection = nil
-        // And the third fact describing a connection that is over
-        // (failed-connect surface plan, review round 1): a FAILED ATTEMPT.
-        // Measured before this line existed: on a window with one tab —
-        // the normal case at launch — typing a host, timing out and
-        // pressing "Close" ran `performClose`, which tears the tab down
-        // but does NOT remove the last tab, and the failed-connect surface
-        // stayed up with all four buttons while the window shrank around
-        // it. A button named "Close" that visibly does nothing is the
-        // exact complaint this whole surface was written to answer.
-        //
-        // The sibling surface never had this defect because it hangs off
-        // `liveness == .lost`, which this function's own `tab.liveness`
-        // reset clears; this one hangs off a property teardown did not
-        // touch. Same sentence as the other two resets, therefore: every one
-        // of those six callers is leaving this connection on purpose, so a
-        // record of an attempt that failed is describing something the tab
-        // has been taken past.
-        tab.connectFailure = nil
-        // `tab.pendingSnippetRun` is NOT reset here. It was, until the final
-        // review of the session overview plan moved the clear up to right
-        // before `terminal.shutdown()` above — the fact it protects
-        // (`PendingSnippetRunner` reopening a shell mid-teardown) can only
-        // arise once that call has run, so clearing after it would already
-        // be too late. See the comment at the new call site for why the
-        // clear itself is unchanged: every caller of this function is
-        // leaving this connection on purpose, and the connection the
-        // snippet was armed for is the one being left.
-        //
-        // And the run of a diagnosis of THIS tab — the run, not the panel.
-        //
-        // Stopping it explicitly, not by letting the sheet's own
-        // `.onDisappear` do it: `DiagnosticsViewModel.run()` starts a free
-        // `Task`, which no view teardown touches, and closing a tab does not
-        // dismiss the sheet at all. Without this the walk continues — the
-        // remaining steps under their budgets, and the SSH dial holding
-        // Citadel's uncancellable `openSFTP` timer — dialling a server the
-        // window has just finished with. CLAUDE.md, "The UI owns lifecycles
-        // explicitly … no `deinit` cleanup".
-        //
-        // What it does NOT do any more is close the panel. This function has
-        // seven callers and `handleLivenessGiveUp` is not a user action at all:
-        // the session dropping is exactly why somebody opened Diagnose… on
-        // this tab, and dismissing the sheet there threw away the only thing
-        // that could say whether the host stopped resolving, the port stopped
-        // accepting, or the auth started failing. Two of the others
-        // (`performCloseOthers`, the reconnect-in-place branch) were closing a
-        // panel belonging to a different connection entirely.
-        //
-        // `DiagnosticsLifecycleTests` drives `handleLivenessGiveUp` by name,
-        // and the OTHER TWO by their shape — `teardown` of a tab the panel was
-        // not opened for — not by calling `performCloseOthers` or the
-        // reconnect branch. That distinction is the point of writing it down:
-        // an `endDiagnostics()` added back into either of those two functions
-        // for tidiness goes red nowhere.
+        await TabTeardown.run(tab, reason: reason)
         stopDiagnostics(of: tab)
     }
 
@@ -760,6 +584,20 @@ extension ContentView {
         // `wireTabCommands()` below — what a captured `ContentView` copy
         // reaches is SwiftUI's own `@State` storage, not a snapshot.
         TabRegistry.shared.registerWindowDescriber({ describeThisWindow() }, for: windowID)
+        // Fifth: what this window does to everything it holds when the APP
+        // quits (Quit Teardown plan, Task 1). ⌘Q closes no window, so this
+        // window's `willClose` handler never runs at quit and its two
+        // close-time sweeps would never happen; this closure is the same
+        // sequence in the same order, in the AWAITABLE form the quit needs
+        // (`releaseUnclaimedSeedsOnClose()` and `releaseHeldTabsOnClose()`
+        // both hand their teardown to a free `Task` — right for a
+        // notification handler that cannot suspend, useless to a caller
+        // that must know when it finished). Same capture shape as the
+        // describer above.
+        TabRegistry.shared.registerWindowTeardown({
+            await releaseUnclaimedSeedsOnCloseAndWait()
+            await releaseHeldTabsOnCloseAndWait()
+        }, for: windowID)
         // Snippet list for the Terminal menu, read once per window — a
         // synchronous `snippets.json` read, which is why it is here and not
         // in `wireTabCommands()` below (Task 2 fix round 1: it briefly was,
@@ -1150,6 +988,15 @@ extension ContentView {
         // restoration file is written once, at quit, from the windows
         // still registered — see `AppDelegate.writeRestorationSeeds()`.
         TabRegistry.shared.unregisterWindowDescriber(for: windowID)
+        // And what this window would have done at quit (Quit Teardown plan,
+        // Task 1) — BEFORE the two sweeps below, which are that very
+        // sequence, running now. A window is torn down exactly once: either
+        // here, because the user closed it, or by the quit sweep, because it
+        // was still open. Unregistering first is what makes the two
+        // mutually exclusive even while the `Task` those sweeps start is
+        // still in flight — the quit can no longer be handed a closure that
+        // would sweep an already-swept window.
+        TabRegistry.shared.unregisterWindowTeardown(for: windowID)
         releaseUnclaimedSeedsOnClose()
         releaseHeldTabsOnClose()
     }
@@ -1239,27 +1086,54 @@ extension ContentView {
     /// A parked tab is in no window — no strip, no menu, nothing on screen
     /// says it exists — and the window that parked it is the only thing
     /// that ever knew about it. So when that window goes, the tab goes with
-    /// it, through the SAME `teardown(_:reason:)` every held tab runs, with
-    /// the same two `TeardownStage` bounds. `TabRegistry` hands the tabs
-    /// over and does nothing else to them: the App layer tears down, the
-    /// registry keeps references, and `TabRegistryNoTeardownGuardTests`
-    /// holds that boundary from the other side.
+    /// it, through the SAME `teardown(_:reason:)` every held tab runs, and
+    /// so through the same one owner and its bounds (`TabTeardown.run`).
+    /// `TabRegistry` hands the tabs over and does nothing else to them: the
+    /// App layer tears down, the registry keeps references, and
+    /// `TabRegistryNoTeardownGuardTests` holds that boundary from the other
+    /// side.
     ///
     /// One `info` line per seed, written BEFORE the teardown starts, so the
-    /// record survives even if the teardown does not (see the quit sweep in
-    /// `AppDelegate`, which has exactly that problem).
+    /// record survives even if the teardown does not.
+    ///
+    /// This is the fire-and-forget form, for the `willClose` handler, which
+    /// cannot suspend. `releaseUnclaimedSeedsOnCloseAndWait()` below is the
+    /// same thing awaited, for the app's quit.
     func releaseUnclaimedSeedsOnClose() {
+        let tabs = takeUnclaimedSeedsOnClose()
+        guard !tabs.isEmpty else { return }
+        Task { @MainActor in await tearDownUnclaimedSeeds(tabs) }
+    }
+
+    /// The same sweep and the same teardown, awaited (Quit Teardown plan,
+    /// Task 1).
+    ///
+    /// The app's quit runs this window's close sequence and has to know when
+    /// it is done — it replies to AppKit afterwards — so it cannot use the
+    /// `Task`-and-return form above. Both spellings share the two halves
+    /// below, so there is one sweep and one teardown loop, not two of each.
+    func releaseUnclaimedSeedsOnCloseAndWait() async {
+        await tearDownUnclaimedSeeds(takeUnclaimedSeedsOnClose())
+    }
+
+    /// The synchronous half: takes this window's unclaimed seeds out of the
+    /// registry and writes their record. Separate from the teardown so it
+    /// happens in the caller's own turn, before anything can suspend — a
+    /// seed still in the registry at a suspension point is a seed the quit
+    /// sweep could take a second time.
+    private func takeUnclaimedSeedsOnClose() -> [SessionTab] {
         let stranded = TabRegistry.shared.takePendingSeeds(from: windowID)
-        guard !stranded.isEmpty else { return }
         for seed in stranded {
             DiagnosticLog.shared.log(
                 .info, "app", TabMoveLogLines.tornDownUnclaimed(seedID: seed.seedID))
         }
-        let tabs = stranded.flatMap(\.tabs)
-        Task { @MainActor in
-            for tab in tabs {
-                await teardown(tab, reason: .userRequested)
-            }
+        return stranded.flatMap(\.tabs)
+    }
+
+    /// The async half: the ordinary teardown, one parked tab at a time.
+    private func tearDownUnclaimedSeeds(_ tabs: [SessionTab]) async {
+        for tab in tabs {
+            await teardown(tab, reason: .userRequested)
         }
     }
 
@@ -1276,32 +1150,58 @@ extension ContentView {
     /// the registry — the model is what this window owns.
     ///
     /// Teardown is the existing sequence, unchanged and unduplicated:
-    /// `teardown(_:reason:)`, whose two bounded stages are
-    /// `TeardownStage.stopEditWatchers` and `TeardownStage.shutDownTerminal`.
+    /// `teardown(_:reason:)`, and through it the one owner, `TabTeardown
+    /// .run(_:reason:)`, which is where the two bounded stages are named.
     /// It is async and a `willClose` handler is not, so it runs in a task —
-    /// which is also why the ids and the window id are captured as values
-    /// first, before anything can suspend.
+    /// which is also why the window id and the held tabs are captured as
+    /// values first, before anything can suspend.
     ///
-    /// **This never ends the process.** `AppDelegate.applicationWillTerminate`
-    /// is what writes the diagnostic log's "app quit" line and flushes it,
-    /// and it is reached by quitting the app, never by closing a window:
-    /// closing one window of several must leave every other window's
-    /// connections alone. Nothing here terminates anything.
+    /// **This never ends the process.** `AppDelegate
+    /// .applicationShouldTerminate(_:)` is what writes the diagnostic log's
+    /// `app quit` line, flushes it and lets the process go, and it is
+    /// reached by quitting the app, never by closing a window: closing one
+    /// window of several must leave every other window's connections alone.
+    /// Nothing here terminates anything.
+    ///
+    /// This is the fire-and-forget form. `releaseHeldTabsOnCloseAndWait()`
+    /// below is the same thing awaited, for the app's quit — which needs to
+    /// know when it finished, because it replies to AppKit afterwards.
     func releaseHeldTabsOnClose() {
-        let held = tabsModel.tabs
-        let ids = held.map(\.id)
         let closingWindow = windowID
-        // Synchronously, before anything can suspend: from this moment a
-        // drag let go on another window's strip must not be able to name
-        // this window as a source. The teardown below is what still has to
-        // happen; the lookup is not part of it.
+        let held = takeHeldTabsOnClose(from: closingWindow)
+        Task { @MainActor in await tearDownHeldTabs(held, from: closingWindow) }
+    }
+
+    /// The same list and the same teardown, awaited (Quit Teardown plan,
+    /// Task 1) — see `releaseUnclaimedSeedsOnCloseAndWait()` for why the
+    /// quit needs a form it can wait on, and why both forms share the two
+    /// halves below rather than spelling the loop twice.
+    func releaseHeldTabsOnCloseAndWait() async {
+        let closingWindow = windowID
+        await tearDownHeldTabs(takeHeldTabsOnClose(from: closingWindow), from: closingWindow)
+    }
+
+    /// The synchronous half: the tabs this window holds AT THIS MOMENT, and
+    /// the model lookup given up in the same turn.
+    ///
+    /// The unregistration happens here, before anything can suspend: from
+    /// this moment a drag let go on another window's strip must not be able
+    /// to name this window as a source. The teardown is what still has to
+    /// happen; the lookup is not part of it.
+    private func takeHeldTabsOnClose(from closingWindow: WindowID) -> [SessionTab] {
+        let held = tabsModel.tabs
         TabRegistry.shared.unregisterModel(for: closingWindow)
-        Task { @MainActor in
-            for tab in held {
-                await teardown(tab, reason: .userRequested)
-            }
-            TabRegistry.shared.release(ids, from: closingWindow)
+        return held
+    }
+
+    /// The async half: the ordinary teardown, one held tab at a time, and
+    /// only then the registry release — a tab is forgotten after its
+    /// connection is closed, never before.
+    private func tearDownHeldTabs(_ held: [SessionTab], from closingWindow: WindowID) async {
+        for tab in held {
+            await teardown(tab, reason: .userRequested)
         }
+        TabRegistry.shared.release(held.map(\.id), from: closingWindow)
     }
 
     /// Registers everything this window's model currently holds, so the

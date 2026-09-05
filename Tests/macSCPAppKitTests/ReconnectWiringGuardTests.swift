@@ -492,10 +492,10 @@ struct ReconnectWiringGuardTests {
             occurrences: 1,
             reason: "`connect(in:stored:)` — the stored-session path's hand-off, behind its own attempt-token check."),
         SanctionedSite(
-            file: "Sources/MacSCPAppKit/ContentView+Lifecycle.swift",
+            file: "Sources/MacSCPAppKit/TabTeardown.swift",
             code: "tab.session = nil",
             occurrences: 1,
-            reason: "`teardown(_:)` releasing the session — the only other writer of that property."),
+            reason: "`TabTeardown.run(_:reason:)` releasing the session — the only other writer of that property. It moved out of `ContentView.teardown(_:reason:)` in the Quit Teardown plan, Task 1, so a delegate with no view could reach the same one sequence."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
             code: "return LostConnectionContent(",
