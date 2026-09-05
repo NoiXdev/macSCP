@@ -1218,7 +1218,7 @@ extension ContentView {
         guard !stranded.isEmpty else { return }
         for seed in stranded {
             DiagnosticLog.shared.log(
-                .info, "app", "window move torn down unclaimed seed=\(seed.seedID)")
+                .info, "app", TabMoveLogLines.tornDownUnclaimed(seedID: seed.seedID))
         }
         let tabs = stranded.flatMap(\.tabs)
         Task { @MainActor in
@@ -1434,9 +1434,12 @@ extension ContentView {
     func moveToNewWindow(_ tab: SessionTab) {
         let seed = WindowSeed(tabIDs: [tab.id])
         let ownWindowID = windowID
-        DiagnosticLog.shared.log(
-            .info, "app", "window move parked seed=\(seed.id) tabs=\(seed.tabIDs.count)")
-        TabDetachSequence.move(
+        // Logged AFTER the call, and only when something actually parked
+        // (Task 6 closeout): logging before `move` ran risked naming a seed
+        // that never held a tab at all — `move` returns `Outcome.none`
+        // exactly when `tabID` was not in `model` (see its own doc comment),
+        // and nothing parks or opens a window in that case either.
+        let outcome = TabDetachSequence.move(
             tab.id, outOf: tabsModel, parkingUnder: seed, from: ownWindowID,
             in: TabRegistry.shared,
             replacement: { makeTab(registeringIn: windowID) },
@@ -1453,6 +1456,9 @@ extension ContentView {
                 // deferred.
                 Task { @MainActor in TabWindowCloseRequest.post(ownWindowID) }
             })
+        guard outcome != .none else { return }
+        DiagnosticLog.shared.log(
+            .info, "app", TabMoveLogLines.parked(seedID: seed.id, tabCount: seed.tabIDs.count))
     }
 
     /// A tab was dragged out of ANOTHER window's strip and let go on this
@@ -1701,20 +1707,34 @@ extension ContentView {
     /// among the ones closing — the same rule `performClose` follows: a tab
     /// the user did not actually visit must not have its failures
     /// acknowledged for it.
+    ///
+    /// **The release list comes from `closeOthersReportingRemoved`, not
+    /// from `closing`** (Detachable Tabs plan, Task 6 closeout). `closing`
+    /// is a snapshot taken before the teardown loop's `await`s, and a
+    /// cross-window drag can land a tab in THIS window during one of those
+    /// suspensions — `TabRegistry` already has it registered here by the
+    /// time the model closes everything but `tab.id`, regardless of what
+    /// `closing` named. Releasing only `closing`'s ids would leave such an
+    /// arrival in the registry's bookkeeping for a window that no longer
+    /// holds it — the same staleness the fix above closed for the ordinary
+    /// case, reopened by a tab neither list saw coming.
+    /// `TabsViewModel.closeOthersReportingRemoved(besides:)` answers what
+    /// actually left, an arrival included, whether or not it ever went
+    /// through this function's teardown loop; see its own doc comment.
     func performCloseOthers(of tab: SessionTab) async {
         let closing = tabsModel.tabsToClose(besides: tab.id)
         let survivorTakesOver = tabsModel.activeTabID != tab.id
         for other in closing {
             await teardown(other, reason: .userRequested)
         }
-        tabsModel.closeOthers(besides: tab.id)
+        let removedIDs = tabsModel.closeOthersReportingRemoved(besides: tab.id)
         // The same release `performClose` does, for the same reason and in
         // the same order — after teardown, never before (Detachable Tabs
         // plan, Task 3 fix round 1; this path was missing it, so a tab
         // closed this way stayed resolvable through `TabRegistry.tab(for:)`
         // and kept being answered by `tabs(in:)` for a window that no
         // longer had it).
-        TabRegistry.shared.release(closing.map(\.id), from: windowID)
+        TabRegistry.shared.release(removedIDs, from: windowID)
         if survivorTakesOver {
             tab.seenFailureCount = tab.transferQueue.totalFailureCount
         }

@@ -584,4 +584,72 @@ struct TabsViewModelTests {
         #expect(vm.tabs.map(\.id) == [a.id])
         #expect(vm.activeTabID == a.id)
     }
+
+    // MARK: - closeOthersReportingRemoved
+
+    /// The ordinary case: everything `tabsToClose(besides:)` would have
+    /// named comes back as removed.
+    @Test func reportingRemovedNamesEveryTabItActuallyTookOut() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b); vm.addTab(c)
+        let removed = vm.closeOthersReportingRemoved(besides: a.id)
+        #expect(Set(removed) == [b.id, c.id])
+        #expect(vm.tabs.map(\.id) == [a.id])
+    }
+
+    /// `ContentView.performCloseOthers`'s own reason for calling this
+    /// instead of reusing an earlier `tabsToClose(besides:)` snapshot
+    /// (Detachable Tabs plan, Task 6 closeout): a caller's per-tab teardown
+    /// loop `await`s between reading that snapshot and calling
+    /// `closeOthers`, and something else — a cross-window drag — can
+    /// `addTab` into this same model during one of those suspensions.
+    /// `closeOthers(besides:)` removes everything but the kept tab
+    /// regardless of any snapshot, so the arrival is swept out too; this
+    /// method must report it as removed even though no earlier list ever
+    /// named it.
+    @Test func reportingRemovedNamesAnArrivalNoEarlierSnapshotKnewAbout() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        let snapshot = vm.tabsToClose(besides: a.id)
+        #expect(snapshot.map(\.id) == [b.id])
+
+        // The arrival: something the snapshot above could not have seen.
+        let arrival = StubTab(id: UUID())
+        vm.addTab(arrival)
+
+        let removed = vm.closeOthersReportingRemoved(besides: a.id)
+        #expect(Set(removed) == [b.id, arrival.id], """
+            expected both the snapshotted tab and the late arrival to be reported as \
+            removed, got \(removed)
+            """)
+        #expect(vm.tabs.map(\.id) == [a.id])
+    }
+
+    /// The control beside it (CLAUDE.md, "Guards that name what they
+    /// watch"): reusing the STALE snapshot instead of this method's own
+    /// return value really would miss the arrival — proving the test above
+    /// can fail.
+    @Test func theStaleSnapshotAloneWouldHaveMissedTheArrival() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        let snapshot = vm.tabsToClose(besides: a.id)
+        let arrival = StubTab(id: UUID())
+        vm.addTab(arrival)
+        vm.closeOthers(besides: a.id)
+        #expect(!snapshot.map(\.id).contains(arrival.id))
+    }
+
+    /// A no-op call (unknown id) reports nothing removed, mirroring
+    /// `closeOthers(besides:)`'s own no-op for the same input.
+    @Test func reportingRemovedIsEmptyForAnUnknownID() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        let removed = vm.closeOthersReportingRemoved(besides: UUID())
+        #expect(removed.isEmpty)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id])
+    }
 }

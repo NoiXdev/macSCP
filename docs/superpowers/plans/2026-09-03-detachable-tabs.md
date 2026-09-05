@@ -73,7 +73,7 @@ disconnected.
   releasing a window's tabs releases only its own; `windowCount`; a
   moved tab keeps its `pendingSnippetRun` (the same object — pin it).
 
-- [ ] Red → green → commit `feat(tabs): a registry that lets a tab change windows without changing hands`
+- [x] Red → green → commit `feat(tabs): a registry that lets a tab change windows without changing hands`
 
 ### Task 2: A second window, "Move Tab to New Window", the last-window rule
 
@@ -110,7 +110,7 @@ disconnected.
   type, declared here as `Codable` from the start so Task 5 adds fields,
   not a second type.
 
-- [ ] Red → green → commit `feat(windows): a tab moves into its own window`
+- [x] Red → green → commit `feat(windows): a tab moves into its own window`
 
 ### Task 3: Drag between windows
 
@@ -126,7 +126,7 @@ disconnected.
   the registry (Task 1's property); reorder within one strip unchanged
   (existing tests green).
 
-- [ ] Red → green → commit `feat(tabs): drag a tab into another window`
+- [x] Red → green → commit `feat(tabs): drag a tab into another window`
 
 ### Task 4: Keep on Top
 
@@ -137,7 +137,7 @@ disconnected.
 - Test: the decision value (`WindowLevelPlan`) and a source guard that
   the level is set only from that plan.
 
-- [ ] Red → green → commit `feat(windows): keep a window on top`
+- [x] Red → green → commit `feat(windows): keep a window on top`
 
 ### Task 5: Restoration as a setting
 
@@ -151,11 +151,11 @@ disconnected.
   → windows described, and a guard that the launch path contains no
   `connect(` (negative check with a positive anchor on the seed read).
 
-- [ ] Red → green → commit `feat(windows): restore windows, disconnected, when asked`
+- [x] Red → green → commit `feat(windows): restore windows, disconnected, when asked`
 
 ### Task 6: Closeout
 
-- [ ] `docs/superpowers/specs/2026-09-02-backlog-maintainer-notes.md`
+- [x] `docs/superpowers/specs/2026-09-02-backlog-maintainer-notes.md`
   (item 17 → Done), `docs/BACKLOG.md`, the design's status line, and
   CLAUDE.md's "multi-window is planned for v2" sentence updated to what
   is true; commit `docs(backlog): detachable tabs done; multi-window is here`.

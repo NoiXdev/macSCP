@@ -203,6 +203,28 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
         activeTabID = id
     }
 
+    /// `closeOthers(besides:)`, reporting exactly which ids it removed
+    /// (Detachable Tabs plan, Task 6 closeout).
+    ///
+    /// A caller that snapshots `tabsToClose(besides:)` before an `await`
+    /// (its own per-tab teardown loop, in `ContentView.performCloseOthers`)
+    /// cannot reuse that snapshot afterward to say what to release from a
+    /// registry: something else — a cross-window drag landing a tab in
+    /// this same window — can add to `tabs` during the suspension, and
+    /// `closeOthers(besides:)` removes everything but `id` regardless of
+    /// what the snapshot named. Releasing only the snapshot would leave
+    /// such an arrival removed from the model but never released from
+    /// whatever external bookkeeping tracks it. Comparing membership
+    /// before and after this call answers the question this type can
+    /// actually answer — what did leave — without knowing anything about
+    /// registries or windows.
+    @discardableResult
+    public func closeOthersReportingRemoved(besides id: UUID) -> [UUID] {
+        let before = Set(tabs.map(\.id))
+        closeOthers(besides: id)
+        return Array(before.subtracting(tabs.map(\.id)))
+    }
+
     /// The tab that already holds stored session `storedSessionID`, or
     /// `nil` when none does. It answers WHICH tab, and deliberately not
     /// what to do about one: jumping there and opening a second tab anyway

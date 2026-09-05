@@ -108,6 +108,21 @@ CLI completion → connection tools → FTP/FTPS → SMB) stands first.
     (floating above other windows). Touches the one-connection-per-window
     invariant: a detached tab IS a window; the invariant holds, the
     ownership moves.
+
+    **Done 2026-09-05** (`docs/superpowers/specs/2026-09-03-detachable-tabs-design.md`,
+    `docs/superpowers/plans/2026-09-03-detachable-tabs.md`, six tasks,
+    commits `84459616`/`36fb81d9` Task 1, `aee95e98`/`c9ae9e7b`/`71fdf913`/
+    `33d508f4` Task 2, `fb612134`/`c52c83b5` Task 3, `3fd16e67` Task 4,
+    `3b3f8e02` Task 5, this row's own commit Task 6). A `TabRegistry` lets
+    a tab move into a new window or between two open windows by drag, its
+    connection untouched; a per-window "Keep on Top" holds a window above
+    the rest; an emptied window closes unless it is the app's last one;
+    windows can be restored, disconnected, at the next launch behind a
+    default-off setting. Full details, the accepted limits (drop-outside
+    detach blocked by the deployment target; a moved tab can be
+    permanently parked if its new window never appears) and the sight
+    checks are in the `docs/BACKLOG.md` "Interface" row for this design
+    doc.
 18. **S3: show the key's access level** — a probe of which S3 API rights
     the key has, in the context menu / connection info. Fits the
     connection-tools seam decided the same evening (per-protocol

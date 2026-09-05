@@ -312,7 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func sweepUnclaimedMoves() {
         for seed in TabRegistry.shared.takeAllPendingSeeds() {
             DiagnosticLog.shared.log(
-                .info, "app", "window move torn down unclaimed seed=\(seed.seedID)")
+                .info, "app", TabMoveLogLines.tornDownUnclaimed(seedID: seed.seedID))
         }
     }
 }

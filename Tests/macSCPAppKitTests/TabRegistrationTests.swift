@@ -114,15 +114,19 @@ struct TabRegistrationTests {
 /// test can reach, because a `ContentView` cannot be built outside a view
 /// graph (the boundary every wiring guard in this target documents).
 ///
-/// **The negative and its positives.** The negative is that
-/// `tabsModel.addTab(` appears nowhere in `ContentView*.swift`. On its own
-/// that would be a check that goes quiet the day the property is renamed
-/// (CLAUDE.md, "Guards that name what they watch"), so three positives
-/// stand beside it: `TabAdmission.add(` really is called from
-/// `ContentView+Lifecycle.swift`, `addTabRegistering(` occurs there and in
-/// the two other files the counted number of times, and `TabAdmission`'s
-/// own body really does both halves. A rename of `addTab`, of
-/// `addTabRegistering` or of `tabsModel` turns at least one of those red.
+/// **The negative and its positives.** The negative is that no
+/// `ContentView*.swift` file calls `.addTab(` on any receiver, outside
+/// `addTabRegistering(_:)`'s own body — widened (Task 6 closeout) from a
+/// literal match on `tabsModel.addTab(` alone, which would have gone quiet
+/// the moment that property, not the method, was renamed (CLAUDE.md,
+/// "Guards that name what they watch"). Four positives stand beside it:
+/// `TabAdmission.add(` really is called from `ContentView+Lifecycle.swift`,
+/// `addTabRegistering(` occurs there and in the two other files the
+/// counted number of times, `TabAdmission`'s own body really does both
+/// halves, and the replacement tab each of `TabDetachSequence`'s moves
+/// makes registers into the window it lands in the same way. A rename of
+/// `addTab`, of `addTabRegistering`, of `tabsModel`, or of
+/// `makeTab(registeringIn:)` turns at least one of those red.
 @Suite("Tab registration wiring (source guard)")
 struct TabRegistrationWiringGuardTests {
     private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
@@ -171,13 +175,29 @@ struct TabRegistrationWiringGuardTests {
     }
 
     /// NEGATIVE: no window adds a tab to its own model without admitting it.
+    ///
+    /// Matches `.addTab(` on ANY receiver, not only `tabsModel` by name
+    /// (Task 6 closeout) — a model reached under a different local name
+    /// would otherwise slip past a check spelled for one identifier. The
+    /// one legitimate caller, `addTabRegistering(_:)`'s own body (which
+    /// reaches `model.addTab(` indirectly through `TabAdmission.add`, never
+    /// directly), is excluded by span rather than by teaching the scan a
+    /// second exception to remember.
     @Test func noWindowAddsATabWithoutAdmittingIt() throws {
         for file in try Self.contentViewFiles() {
-            #expect(!file.source.contains("tabsModel.addTab("), """
-                \(file.name) calls `tabsModel.addTab(` directly. A tab added that way is \
-                unknown to `TabRegistry` until the next `.onChange(of: tabIDs)` pass, and \
-                `WindowCloseDecision` reads `windowCount` in the same turn a drag lands. \
-                Route it through `addTabRegistering(_:)`.
+            var scanned = file.source
+            if file.name == "ContentView+Lifecycle.swift" {
+                let bodyRange = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+                    of: "func addTabRegistering(_ tab: SessionTab)", in: scanned)
+                var chars = Array(scanned)
+                for index in bodyRange { chars[index] = " " }
+                scanned = String(chars)
+            }
+            #expect(!scanned.contains(".addTab("), """
+                \(file.name) calls `.addTab(` directly outside `addTabRegistering(_:)`. A \
+                tab added that way is unknown to `TabRegistry` until the next \
+                `.onChange(of: tabIDs)` pass, and `WindowCloseDecision` reads `windowCount` \
+                in the same turn a drag lands. Route it through `addTabRegistering(_:)`.
                 """)
         }
     }
@@ -246,14 +266,20 @@ struct TabRegistrationWiringGuardTests {
     /// releases them from the registry too — otherwise `tabs(in:)` keeps
     /// answering with tabs that are gone and `tab(for:)` resolves them.
     /// `performClose` had this from Task 2; `performCloseOthers` did not,
-    /// and gained it in this round.
+    /// and gained it in this round — through
+    /// `closeOthersReportingRemoved(besides:)` since Task 6 closeout, not
+    /// the plain `closeOthers(besides:)` (see that method's own doc
+    /// comment for why: a snapshot taken before this function's teardown
+    /// loop can miss a tab a cross-window drag adds mid-loop).
     @Test func everyPathThatRemovesTabsReleasesThem() throws {
         let source = try Self.strictSource(of: "Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
         for closer in ["func performClose(_ tab: SessionTab) async",
                        "func performCloseOthers(of tab: SessionTab) async"] {
             let body = try TransferQueueBarCancelGuardTests.declarationBody(
                 of: closer, in: source)
-            #expect(body.contains("closeTab(") || body.contains("closeOthers("),
+            #expect(
+                body.contains("closeTab(") || body.contains("closeOthers(")
+                    || body.contains("closeOthersReportingRemoved("),
                 "the scanned span is not \(closer)")
             #expect(body.contains("TabRegistry.shared.release("), """
                 `\(closer)` removes tabs from the model without releasing them from the \

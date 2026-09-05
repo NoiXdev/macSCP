@@ -24,6 +24,10 @@ and move files between them with drag and drop, buttons, or the Finder.
   passwords and passphrases live only in the macOS Keychain. Click a
   session to see its details before connecting: connection facts,
   recent connections, and its snippets with a one-click Run.
+- **Multiple windows** — move a tab into a window of its own or drag it
+  into another open window, keep any window above the rest with Keep on
+  Top, and optionally have your windows reopen the way you left them the
+  next time you launch, disconnected until you click in.
 - **SSH key authentication** — ed25519, RSA, and ECDSA keys, from a file
   or your SSH agent, with or without a passphrase; entries from
   `~/.ssh/config` appear automatically.

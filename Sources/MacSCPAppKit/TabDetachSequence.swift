@@ -77,6 +77,35 @@ enum TabWindowCloseRequest {
     }
 }
 
+/// The two `"app"`-category lines the move sequence's callers write about a
+/// parked or a torn-down seed (Task 6 closeout).
+///
+/// Spelled once here rather than at each `DiagnosticLog.shared.log(...)`
+/// call site — `ContentView.moveToNewWindow`,
+/// `ContentView.releaseUnclaimedSeedsOnClose()`, and `AppDelegate
+/// .sweepUnclaimedMoves()` — because none of those three can be driven by a
+/// test (they are View/`NSApplicationDelegate` methods in a project with no
+/// SwiftUI rendering harness, the same boundary `TabsWindowLifecycleTests`'
+/// own doc comment states). A pure function is testable directly:
+/// `TabMoveLogLinesTests` pins the exact text these three sites write, and
+/// a shared spelling is one a caller cannot drift from by retyping it.
+enum TabMoveLogLines {
+    /// Written when a tab is parked under a seed on its way to a new
+    /// window — before Task 6, this line was written before `TabDetachSequence
+    /// .move` even ran, so it could name a seed the move refused to park
+    /// (an id no longer in the source model). Callers write it only after
+    /// `move` returns an outcome other than `.none`.
+    static func parked(seedID: UUID, tabCount: Int) -> String {
+        "window move parked seed=\(seedID) tabs=\(tabCount)"
+    }
+
+    /// Written once per seed a source window's close, or the app's quit
+    /// sweep, tears down unclaimed.
+    static func tornDownUnclaimed(seedID: UUID) -> String {
+        "window move torn down unclaimed seed=\(seedID)"
+    }
+}
+
 /// Everything that happens to a window's own model and to the registry when
 /// one of its tabs leaves — for a window of its own (Task 2) or for another
 /// open window (Task 3). Outside any view, so it can be driven with values
@@ -161,7 +190,7 @@ enum TabDetachSequence {
     /// is `TabRegistry.move(_:from:to:targetWindow:)`, which detaches from
     /// one model, reassigns ownership and adds to the other in one call. The
     /// asymmetry with
-    /// `move(_:outOf:parkingUnder:in:replacement:openWindow:onClaimed:)`
+    /// `move(_:outOf:parkingUnder:from:in:replacement:openWindow:onClaimed:)`
     /// above is entirely that one, and it is why nothing here can strand a
     /// tab.
     ///

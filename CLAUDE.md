@@ -157,7 +157,10 @@ broken one. A ceiling always can.
   consent; there is no accept-anything path.
 - One SSH connection per window; SFTP and the terminal shell multiplex over
   it as child channels. Connection/session state belongs to the window scope,
-  never to an app-wide singleton (multi-window is planned for v2).
+  never to an app-wide singleton. Multi-window is here: a tab moves between
+  windows carrying its connection, and the process-wide `TabRegistry` holds
+  ownership — which window has which tab — never state. Nothing in Core
+  knows about windows.
 - The UI owns lifecycles explicitly (queue `cancelAll` → terminal `shutdown`
   → `disconnect` in `teardownSession`); no `deinit` cleanup.
 - Transfer queue invariants: FIFO start order, exactly-once waiter

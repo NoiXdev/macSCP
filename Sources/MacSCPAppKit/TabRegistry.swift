@@ -183,7 +183,7 @@ final class TabRegistry {
     /// (a next-turn reclaim ran first and left the new window blank). The
     /// claim itself is the only honest signal, and this is it. It fires from
     /// `claim(seedID:into:)` exactly once, after the tabs have changed
-    /// hands, and never from `park` or `unpark(seedID:into:)`.
+    /// hands, and never from `park` itself.
     /// **`from` is what makes an unclaimed seed reachable** (fix round 3).
     /// A parked tab belongs to no window, so nothing about the tab itself
     /// says where it came from; this records it, and `pendingSeeds(for:)` /
