@@ -346,6 +346,64 @@ struct DiagnosticLogSecrecyGuardTests {
         #expect(offenders.isEmpty, "\(offenders.joined(separator: "\n"))")
     }
 
+    /// Whether a call site's arguments use the `reason:` labeled overload
+    /// (`DiagnosticLog.log(_:_:_:reason:)`) — a top-level argument (outside
+    /// any string literal or nested call) whose trimmed text starts with
+    /// `reason:` (colon). That label is the ONLY spelling of the word
+    /// `reason` this project's calls may write; the formatted key
+    /// (`reason=`, equals sign) is appended by the overload itself, never
+    /// typed by a caller — see `noHandWrittenMessageSpellsReasonEquals`,
+    /// this check's negative counterpart.
+    private static func usesReasonOverload(_ arguments: String) -> Bool {
+        Self.topLevelCommaSplit(arguments).contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("reason:")
+        }
+    }
+
+    /// The structural fix (diagnostic-log plan, Task 3 fix round 1,
+    /// Critical/Important/Structural findings): a regex over category
+    /// spellings cannot tell a safe `reason=\(DialSupport.reason(for:
+    /// error))` from an unsafe `reason=\(error)` or `reason=\(message)` —
+    /// both are "a call whose category is on the fixed list, with no
+    /// forbidden identifier interpolated," which is everything the two
+    /// checks above ask. So this project no longer writes `reason=` by
+    /// hand at all: `DiagnosticLog.log(_:_:_:reason:)` is the one place
+    /// that key is formatted, and it always builds the value through
+    /// `DialSupport.reason(for:)`. NEGATIVE: no call's arguments contain
+    /// the literal text `reason=` (an equals sign) anywhere — that
+    /// substring can only appear if a caller typed it into the message
+    /// argument by hand, since the label callers DO write is `reason:`
+    /// (a colon, checked separately by `usesReasonOverload`, never
+    /// confused with this one because `=` and `:` are different
+    /// characters). POSITIVE beside it: at least 3 call sites use the
+    /// `reason:` overload — 7 measured 2026-09-05 (`LocalFileSystem.list`,
+    /// `RemoteBrowserViewModel.load`, `ConnectionViewModel.connect`
+    /// (`connect failed`), `CitadelFileSystem`'s `measured` helper,
+    /// `CitadelShell.open`, `TransferEngine.copyFile`,
+    /// `BrowserPane`'s App-layer `error` line) — matching
+    /// `docs/BACKLOG.md`'s row.
+    @Test func noHandWrittenMessageSpellsReasonEquals() throws {
+        let sites = try Self.collectCallSites()
+        let offenders = sites.filter { $0.arguments.contains("reason=") }
+            .map { "\($0.file): \($0.arguments)" }
+        #expect(
+            offenders.isEmpty,
+            """
+            a DiagnosticLog.shared.log(...) call spells `reason=` by hand instead of using \
+            the `reason:` overload, which builds that key itself through \
+            `DialSupport.reason(for:)`:
+            \(offenders.joined(separator: "\n"))
+            """)
+
+        let reasonOverloadSites = sites.filter { Self.usesReasonOverload($0.arguments) }
+        #expect(
+            reasonOverloadSites.count >= 3,
+            """
+            only \(reasonOverloadSites.count) call sites use the `reason:` overload — the scan \
+            is not reaching them, or the conversion this fix round made regressed.
+            """)
+    }
+
     // MARK: - Self-tests
 
     /// `literalValues(assignedTo:in:)`'s own correctness: a defaulted typed
@@ -402,5 +460,24 @@ struct DiagnosticLogSecrecyGuardTests {
         #expect(Self.categoryLiteral(in: sites[0].arguments) == "browser.local")
         #expect(Self.categoryLiteral(in: sites[1].arguments) == "made.up.category")
         #expect(!Self.fixedCategories.contains(Self.categoryLiteral(in: sites[1].arguments) ?? ""))
+    }
+
+    /// `usesReasonOverload`'s own correctness, and the negative it backs:
+    /// a call using the `reason:` label is recognized as such and carries
+    /// no literal `reason=`; a call that still hand-formats `reason=` is
+    /// caught by the OTHER half of `noHandWrittenMessageSpellsReasonEquals`
+    /// regardless of what it's labeled.
+    @Test func selfTestReasonOverloadDetection() throws {
+        let stripped = try SwiftSource.stripComments(
+            """
+            DiagnosticLog.shared.log(.debug, "sftp", "op failed", reason: error)
+            DiagnosticLog.shared.log(.debug, "sftp", "op failed reason=\\(error)")
+            """)
+        let sites = Self.callSites(in: stripped, file: "planted.swift")
+        #expect(sites.count == 2)
+        #expect(Self.usesReasonOverload(sites[0].arguments))
+        #expect(!sites[0].arguments.contains("reason="))
+        #expect(!Self.usesReasonOverload(sites[1].arguments))
+        #expect(sites[1].arguments.contains("reason="))
     }
 }

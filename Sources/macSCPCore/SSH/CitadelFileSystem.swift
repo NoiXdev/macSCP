@@ -669,8 +669,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
 
     /// Times `body` with a `ContinuousClock` and writes exactly one
     /// `.debug` line to the diagnostic log — `sftp <op> path=<path> ms=<ms>
-    /// ok` on success, `sftp <op> path=<path> ms=<ms> failed reason=<error>`
-    /// if it throws (the error is rethrown unchanged either way).
+    /// ok` on success, `sftp <op> path=<path> ms=<ms> failed
+    /// reason=<DialSupport.reason(for: error)>` if it throws (the error is
+    /// rethrown unchanged either way).
     ///
     /// The ONE place every `RemoteFileSystem` operation this type
     /// implements funnels its timing/outcome line through — eleven public
@@ -687,13 +688,18 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// `measured` anyway so it is the same one shape as the other ten, not
     /// a twelfth, differently-written line.
     ///
-    /// The reason text is `String(describing: error)` of whatever the
-    /// wrapped body throws — for every method here that is already the
-    /// MAPPED `RemoteFSError` (the body's own `catch` runs `mapSFTPError`
-    /// before this ever sees it), never the raw Citadel/NIOSSH error and
-    /// never anything from `SSHConnectionConfig.AuthMethod`'s secret cases —
-    /// there is no SSH auth error shape on this SFTP-operation path in the
-    /// first place, only per-request status codes.
+    /// Fix round 1 (Important): the failure line used to interpolate the
+    /// wrapped body's error DIRECTLY (`reason=\(error)`, i.e.
+    /// `String(describing: error)`) — for every method here that error is
+    /// already the MAPPED `RemoteFSError` (the body's own `catch` runs
+    /// `mapSFTPError` first), and `mapSFTPError`'s own `default:` arms build
+    /// `.protocolError`/`.connectionFailed` out of `String(describing:)` on
+    /// the RAW Citadel/NIO value underneath — exactly the shape
+    /// `DialSupport.reason(for:)`'s own doc comment names as unsafe.
+    /// `DiagnosticLog.log(_:_:_:reason:)` is the fix: it converts `error`
+    /// through `DialSupport.reason(for:)` itself, so this call passes the
+    /// error straight through instead of formatting a `reason=` string by
+    /// hand.
     private func measured<T>(
         _ op: String, path: String, _ body: () async throws -> T
     ) async rethrows -> T {
@@ -707,7 +713,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         } catch {
             let ms = Int(start.duration(to: clock.now).milliseconds.rounded())
             DiagnosticLog.shared.log(
-                .debug, "sftp", "sftp \(op) path=\(path) ms=\(ms) failed reason=\(error)")
+                .debug, "sftp", "sftp \(op) path=\(path) ms=\(ms) failed", reason: error)
             throw error
         }
     }
@@ -789,17 +795,28 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// queue (M5d) classifies the item `.interrupted` (resumable) instead of
     /// `.failed`.
     /// Internal (not private) so the mapping is unit-testable without a server.
+    ///
+    /// `localizedDescription`, not `String(describing:)` (fix round 1,
+    /// Important): `error`/`status` here are raw NIO/Citadel values, and
+    /// `String(describing:)` on an arbitrary error prints its stored
+    /// properties — `DialSupport.reason(for:)`'s own doc comment names
+    /// exactly this as unsafe. The `.protocolError`/`.connectionFailed`
+    /// text built here is dropped again, unread, wherever it is displayed
+    /// or logged (`RemoteBrowserViewModel.message(for:path:)`,
+    /// `DiagnosticLog.log(_:_:_:reason:)`, both routed through
+    /// `DialSupport.reason(for:)`) — this change is defense in depth at the
+    /// construction site itself, not the only place the leak is closed.
     static func mapSFTPError(_ error: Error, path: String) -> Error {
         if isConnectionLoss(error) {
-            return RemoteFSError.connectionFailed(reason: String(describing: error))
+            return RemoteFSError.connectionFailed(reason: error.localizedDescription)
         }
         guard let status = error as? SFTPMessage.Status else {
-            return RemoteFSError.protocolError(reason: String(describing: error))
+            return RemoteFSError.protocolError(reason: error.localizedDescription)
         }
         switch status.errorCode {
         case .noSuchFile: return RemoteFSError.notFound(path: path)
         case .permissionDenied: return RemoteFSError.permissionDenied(path: path)
-        default: return RemoteFSError.protocolError(reason: String(describing: status))
+        default: return RemoteFSError.protocolError(reason: status.localizedDescription)
         }
     }
 

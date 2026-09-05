@@ -247,6 +247,47 @@ public final class DiagnosticLog: Sendable {
         }
     }
 
+    /// The one way a call site may append `reason=<…>` to a line: never by
+    /// hand-interpolating an error (`"… reason=\(error)"`), always through
+    /// here, which converts `error` itself via `DialSupport.reason(for:)` —
+    /// the fixed, credential-free sentence per error shape — before it ever
+    /// becomes text (diagnostic-log plan, Task 3 fix round 1).
+    ///
+    /// The finding this closes: a hand-written `"failed reason=\(error)"`
+    /// interpolates whatever `error`'s own description happens to be.
+    /// `CustomStringConvertible`/`String(describing:)` on a raw NIO/Citadel
+    /// error prints its stored properties (`DialSupport.reason(for:)`'s own
+    /// doc comment names this), and `RemoteFSError.connectionFailed(reason:)`
+    /// / `.protocolError(reason:)` carry free text that `S3FileSystem` and
+    /// `WebDAVFileSystem` build out of the endpoint the user typed — a field
+    /// that takes `scheme://KEY:SECRET@host` as ordinary input. A regex
+    /// guard over category spellings cannot catch this: `reason=\(message)`
+    /// is a perfectly well-formed line whether `message` is safe or not.
+    /// This overload is the structural fix — the ONLY spelling of `reason=`
+    /// any caller writes is the parameter LABEL (`reason:`, with a colon),
+    /// never the formatted key (`reason=`, with an equals sign), and
+    /// `DiagnosticLogSecrecyGuardTests` holds every OTHER call to
+    /// `log(_:_:_:)` to writing neither.
+    ///
+    /// `DialSupport.reason(for:)` is computed eagerly, right here, rather
+    /// than inside another layer of deferred autoclosure: unlike an
+    /// arbitrary message body it is a plain `switch` over a handful of known
+    /// error shapes (see its own doc comment) — cheap enough that paying it
+    /// once per call, even one that ultimately drops the line, is not worth
+    /// deferring. `message` itself stays exactly as lazy as `log(_:_:_:)`'s
+    /// own: the interpolated string this method builds is itself the
+    /// argument handed to that method's `@autoclosure` parameter, so
+    /// `message()` is not called until `log(_:_:_:)`'s own admission check
+    /// has already decided the line will be written.
+    public func log(
+        _ level: DiagnosticLogLevel, _ category: String,
+        _ message: @autoclosure @Sendable () -> String,
+        reason error: any Error
+    ) {
+        let reasonText = DialSupport.reason(for: error)
+        log(level, category, "\(message()) reason=\(reasonText)")
+    }
+
     /// Returns once every line appended before this call is on disk (or, if
     /// `.off` intervenes, abandoned — see `configure`'s doc comment).
     ///

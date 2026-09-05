@@ -115,7 +115,10 @@ public final class CitadelShell: RemoteShell, @unchecked Sendable {
             return CitadelShell(output: output, writer: writer, pump: pump)
         } catch {
             pump.cancel()
-            DiagnosticLog.shared.log(.debug, "shell", "shell open failed reason=\(error)")
+            // The ORIGINAL `error` (fix round 1, Structural): the previous
+            // `reason=\(error)` interpolated the raw handshake error
+            // directly.
+            DiagnosticLog.shared.log(.debug, "shell", "shell open failed", reason: error)
             throw RemoteFSError.protocolError(
                 reason: "failed to open shell: \(error)")
         }

@@ -543,6 +543,60 @@ struct DiagnosticLogTests {
         #expect(contents.contains("connect start host=example.com port=22 kind=ssh"))
         #expect(contents.contains("connect done"))
     }
+
+    // MARK: - Fix round 1: a mapped RemoteFSError's own reason never leaks
+
+    /// `RemoteFSError.connectionFailed(reason:)`/`.protocolError(reason:)`
+    /// carry FREE TEXT — `S3FileSystem`/`WebDAVFileSystem` build it out of
+    /// the endpoint the user typed, a field that takes
+    /// `scheme://KEY:SECRET@host` as ordinary input. Before this fix round,
+    /// `RemoteBrowserViewModel.message(for:path:)` returned that text
+    /// verbatim (the on-screen banner) and `load()` wrote it to the
+    /// diagnostic log via a hand-formatted `reason=\(message)` — two
+    /// separate exits for the same secret. Both now route through
+    /// `DialSupport.reason(for:)`, which drops the reason for exactly these
+    /// two cases.
+    ///
+    /// The planted secret lives in a named constant, and both checks below
+    /// compute their `Bool` BEFORE the expectation (CLAUDE.md "A value a
+    /// test must not leak has two exits"): `#expect` reports the SOURCE
+    /// TEXT of the expression it checks, and Swift Testing's own rich diff
+    /// prints the runtime VALUE of a failing subexpression — writing
+    /// `#expect(!message.contains(secret))` directly would print `message`
+    /// itself, secret included, into the failure output exactly when the
+    /// test is red. `inMessage`/`inLog` carry only the answer, never the
+    /// string that was searched.
+    @MainActor
+    @Test("a connectionFailed reason never reaches the browser message or the log")
+    func connectionFailedReasonNeverReachesMessageOrLog() async throws {
+        let secret = "AKIA:hunter2@example"
+        let leakingReason = "Invalid S3 endpoint: https://\(secret)"
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let fs = MockRemoteFileSystem(tree: [:])
+        await fs.setListFailure(RemoteFSError.connectionFailed(reason: leakingReason))
+        let vm = RemoteBrowserViewModel(fs: fs, startPath: "/", logCategory: "browser.remote")
+
+        DiagnosticLog.shared.configure(level: .info, directory: logDirectory)
+        await vm.load()
+        await DiagnosticLog.shared.flush()
+
+        let message: String
+        if case .failed(let bannerText) = vm.state {
+            message = bannerText
+        } else {
+            message = ""
+        }
+        let inMessage = message.contains(secret)
+        #expect(inMessage == false)
+
+        let url = try #require(DiagnosticLog.shared.currentFileURL)
+        let logText = fileContents(url)
+        let inLog = logText.contains(secret)
+        #expect(inLog == false)
+    }
 }
 
 /// Counts how many times its `touch()` autoclosure body actually ran.

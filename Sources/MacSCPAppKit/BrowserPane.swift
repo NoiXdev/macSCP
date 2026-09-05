@@ -368,13 +368,24 @@ struct BrowserPane: View {
         // call written directly in `body` would), so a pane sitting on a
         // failure and simply being redrawn writes nothing more.
         .onChange(of: viewModel.state) { _, newValue in
-            if case .failed(let message) = newValue {
+            // The ORIGINAL error (fix round 1, Structural), read from
+            // `viewModel.lastLoadError` rather than hand-formatting
+            // `reason=\(message)` from the already-rendered banner text —
+            // `message` at this point may itself have carried a raw
+            // reason before the Critical fix in `message(for:path:)`, and
+            // the secrecy guard now refuses ANY hand-written `reason=` text
+            // regardless. `lastLoadError` is `nil` only when `load()`
+            // never actually caught anything for the CURRENT `.failed`
+            // state, which does not happen on this path (`state` and
+            // `lastLoadError` are written in the same breath) — a `nil`
+            // here writes no `error` line at all rather than guessing.
+            if case .failed = newValue, let error = viewModel.lastLoadError {
                 // `viewModel.logCategory` captured into a local first —
                 // same reason as the Core-side captures this task adds:
                 // the message argument is `@Sendable @autoclosure` and
                 // `viewModel` is `@MainActor`-isolated.
                 let category = viewModel.logCategory
-                DiagnosticLog.shared.log(.error, "error", "\(category) reason=\(message)")
+                DiagnosticLog.shared.log(.error, "error", category, reason: error)
             }
         }
         .sheet(item: $renameTarget) { target in

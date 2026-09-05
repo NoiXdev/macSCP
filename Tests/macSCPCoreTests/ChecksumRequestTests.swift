@@ -124,14 +124,24 @@ struct ChecksumRequestTests {
     /// An error about THIS file is not "no checksums here" — it is a
     /// failure about one file, carrying the same localized text every
     /// other browse action produces for the same error.
+    ///
+    /// The `%@` slot carries `DialSupport.reason(for: error)`, not the
+    /// `RemoteFSError`'s own `reason` verbatim (diagnostic-log plan, Task 3
+    /// fix round 1, Critical): `.protocolError`'s free text is exactly
+    /// where `S3FileSystem`/`WebDAVFileSystem` embed the endpoint the user
+    /// typed, which may carry `KEY:SECRET@` — planted here as
+    /// `"unreadable ETag"`, an innocuous stand-in, but `message(for:path:)`
+    /// cannot tell that string apart from a credential-bearing one, so it
+    /// no longer reads either.
     @Test func anErrorAboutOneFileIsAFailureAndNotAnAbsence() async {
-        let fs = AnsweringFS(.failure(.protocolError(reason: "unreadable ETag")))
+        let error = RemoteFSError.protocolError(reason: "unreadable ETag")
+        let fs = AnsweringFS(.failure(error))
         let browser = RemoteBrowserViewModel(fs: fs)
 
         let result = await browser.checksum(of: Self.file, algorithm: .sha256)
 
         #expect(result == .failed(String(
-            format: CoreL10n.string("core.browse.protocolError %@"), "unreadable ETag")))
+            format: CoreL10n.string("core.browse.protocolError %@"), DialSupport.reason(for: error))))
     }
 
     @Test func aMissingFileReportsThePathTheCallerAskedAbout() async {

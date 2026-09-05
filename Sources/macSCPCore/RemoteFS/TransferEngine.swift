@@ -248,10 +248,13 @@ public enum TransferEngine {
                 .info, "transfer", "transfer done path=\(destinationPath) ms=\(ms)")
         } catch {
             let ms = Int(transferStart.duration(to: clock.now).milliseconds.rounded())
-            let reasonText = error is CancellationError ? "cancelled" : String(describing: error)
+            // The ORIGINAL `error` (fix round 1, Structural): the previous
+            // hand-written `reason=\(reasonText)` fell back to `String(
+            // describing: error)` for anything but `CancellationError` —
+            // exactly the raw-error shape the new overload exists to
+            // replace with `DialSupport.reason(for:)`.
             DiagnosticLog.shared.log(
-                .info, "transfer",
-                "transfer failed path=\(destinationPath) ms=\(ms) reason=\(reasonText)")
+                .info, "transfer", "transfer failed path=\(destinationPath) ms=\(ms)", reason: error)
             throw error
         }
     }

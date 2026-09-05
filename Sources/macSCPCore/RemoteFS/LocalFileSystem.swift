@@ -90,8 +90,11 @@ public struct LocalFileSystem: RemoteFileSystem {
             names = try FileManager.default.contentsOfDirectory(atPath: path)
         } catch {
             let mapped = Self.map(error, path: path)
+            // The ORIGINAL (mapped) `RemoteFSError`, not a hand-formatted
+            // `reason=\(mapped)` (fix round 1, Structural): the overload
+            // computes `DialSupport.reason(for:)` itself.
             DiagnosticLog.shared.log(
-                .info, "browser.local", "list failed path=\(path) reason=\(mapped)")
+                .info, "browser.local", "list failed path=\(path)", reason: mapped)
             throw mapped
         }
         // Per-entry timing (the design's hypothesis-1/2 line): `item(for:)`

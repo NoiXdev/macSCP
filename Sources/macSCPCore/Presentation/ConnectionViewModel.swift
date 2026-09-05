@@ -900,11 +900,14 @@ public final class ConnectionViewModel {
             if let hostKeyError = error as? HostKeyError, case .mismatch = hostKeyError {
                 DiagnosticLog.shared.log(.info, "connect", "hostkey mismatch")
             }
-            // Same reason as the auth-method capture above: `lastFailureReason`
-            // is `@MainActor`-isolated, and the message argument is
-            // `@Sendable`.
-            let reasonText = lastFailureReason ?? ""
-            DiagnosticLog.shared.log(.info, "connect", "connect failed reason=\(reasonText)")
+            // The ORIGINAL `error`, not `lastFailureReason` (fix round 1,
+            // Structural): `error` is a plain local here (the `catch`
+            // clause's own binding), not a `@MainActor`-isolated property,
+            // so no capture-before-interpolating step is needed the way the
+            // auth-method line above needs one — and the overload computes
+            // the identical `DialSupport.reason(for:)` text
+            // `lastFailureReason` already holds, from the same error.
+            DiagnosticLog.shared.log(.info, "connect", "connect failed", reason: error)
             // The one call that passes a `kind`, and so the only one that
             // can reach `.other`: this is the only failure in this type
             // that got as far as the wire.

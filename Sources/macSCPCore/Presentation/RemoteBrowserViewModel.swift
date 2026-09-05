@@ -43,6 +43,18 @@ public final class RemoteBrowserViewModel {
     public private(set) var items: [RemoteFileItem] = []
     public private(set) var state: State = .loading
 
+    /// The error `load()` most recently caught, set in the same breath as
+    /// `state = .failed(message:)` and `nil` again from the top of every
+    /// `load()` call (fix round 1, Structural). `State` stays `Equatable`
+    /// and carries only the display text; this is the seam the App layer
+    /// reads to log `error` `\(logCategory) reason=…` through
+    /// `DiagnosticLog.log(_:_:_:reason:)` — which needs the ORIGINAL error,
+    /// not the already-rendered `message`, so it can compute
+    /// `DialSupport.reason(for:)` itself rather than have a caller
+    /// hand-format `reason=\(message)` (the shape the secrecy guard now
+    /// refuses).
+    public private(set) var lastLoadError: (any Error)?
+
     /// Currently selected entries, in table order (M7a multi-select).
     /// The single source of truth for selection.
     public var selectedItems: [RemoteFileItem] = []
@@ -256,6 +268,7 @@ public final class RemoteBrowserViewModel {
     /// refresh.
     public func load() async {
         state = .loading
+        lastLoadError = nil
         selectedItems = []
         let path = currentPath
         let clock = ContinuousClock()
@@ -285,7 +298,15 @@ public final class RemoteBrowserViewModel {
             applySearch()
             let message = Self.message(for: error, path: path)
             state = .failed(message: message)
-            DiagnosticLog.shared.log(.info, logCategory, "load failed path=\(path) reason=\(message)")
+            lastLoadError = error
+            // The ORIGINAL `error`, not `message` (fix round 1, Structural):
+            // `message` is already the user-facing, localized banner text —
+            // interpolating it a second time here is exactly the
+            // hand-written `reason=` shape the new `log(_:_:_:reason:)`
+            // overload replaces. Passing `error` lets that overload compute
+            // `DialSupport.reason(for:)` itself, the one place that mapping
+            // happens.
+            DiagnosticLog.shared.log(.info, logCategory, "load failed path=\(path)", reason: error)
         }
     }
 
@@ -972,10 +993,23 @@ public final class RemoteBrowserViewModel {
         // browser, not an error.
         case RemoteFSError.bucketListForbidden:
             return CoreL10n.string("core.connect.s3BucketListForbidden")
-        case RemoteFSError.protocolError(let reason):
-            return String(format: CoreL10n.string("core.browse.protocolError %@"), reason)
-        case RemoteFSError.connectionFailed(let reason):
-            return String(format: CoreL10n.string("core.error.connectionLost %@"), reason)
+        // `.protocolError`/`.connectionFailed` (fix round 1, Critical): the
+        // associated `reason` is dropped, unread, on purpose — it is where
+        // `S3FileSystem`/`WebDAVFileSystem` embed the endpoint the user
+        // typed, a field that takes `scheme://KEY:SECRET@host` as ordinary
+        // input, and this method's return value is written both to the
+        // on-screen banner and (`RemoteBrowserViewModel.load()`'s catch)
+        // to the diagnostic log. `DialSupport.reason(for: error)` maps the
+        // SAME two cases to a fixed, credential-free English sentence — the
+        // same mapper the connect path and the diagnostics report already
+        // trust with exactly this error, so the browse banner does not get
+        // a second, less-audited path to the same information.
+        case RemoteFSError.protocolError:
+            return String(
+                format: CoreL10n.string("core.browse.protocolError %@"), DialSupport.reason(for: error))
+        case RemoteFSError.connectionFailed:
+            return String(
+                format: CoreL10n.string("core.error.connectionLost %@"), DialSupport.reason(for: error))
         default:
             return String(format: CoreL10n.string("core.error.unexpected %@"), String(describing: error))
         }
