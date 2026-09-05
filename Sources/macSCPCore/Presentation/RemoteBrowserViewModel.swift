@@ -288,14 +288,59 @@ public final class RemoteBrowserViewModel {
     /// already-scheduled flush to pick it up.
     private var mergeFlushScheduled = false
 
-    /// Sort keys phase two's arriving `size`/`modifiedAt`/`permissions`/
-    /// `owner`/`group` can change the order of — `.name` and `.type` are
-    /// already correct from phase one's own `kind`/name, so re-sorting for
-    /// either of those on every arrival would just repeat phase one's own
-    /// sort for no visible change (Task 3 coordinator resolution).
+    /// `true` between a merge arrival whose `kind` changed in a way that
+    /// flips `isDirectory` (`.other` resolving to `.directory` once
+    /// metadata arrives is the case this exists for — `listByReaddir`
+    /// returns `.other` for a `DT_UNKNOWN` child, and phase two's `item(for:)`
+    /// never returns `.other`, so such a row can only ever move INTO one of
+    /// `.file`/`.directory`/`.symlink`) and the next `publishMergedMetadata`
+    /// call that reflects it (final fix round, Minor). `sortedForDisplay`
+    /// groups directories first regardless of `sortKey`, so a kind change
+    /// that flips `isDirectory` reorders the listing under EVERY sort key,
+    /// not only the ones in `metadataOrderedSortKeys` below — `publish
+    /// MergedMetadata` resorts when either this or the sort-key-based
+    /// `needsResort` is set, and clears this flag right after.
+    private var mergeGroupingChanged = false
+
+    /// `load()`'s own path→index map into `displayedAll`, built once when
+    /// the merge starts and rebuilt inside `publishMergedMetadata` whenever
+    /// a resort actually reordered `displayedAll` (final fix round,
+    /// Important — replaces a `firstIndex(where:)` scan per arrival, which
+    /// is O(n) per arrival and therefore O(n²) over a full listing; 5000
+    /// entries meant roughly 12.5 million compares on the main actor for a
+    /// single merge). Looking an arrival up here instead is O(1). Kept
+    /// current the same way the old per-arrival scan stayed correct across
+    /// an in-flight resort: `sortedForDisplay` is the only thing that moves
+    /// an entry to a DIFFERENT index without changing its `path` (a plain
+    /// metadata fill-in overwrites the element in place, so the index
+    /// itself never changes for that), and every call that runs it
+    /// (`publishMergedMetadata`'s own resort) rebuilds this map in the same
+    /// breath — see that method's doc comment.
+    private var mergePathIndex: [String: Int] = [:]
+
+    /// Sort keys phase two's arriving `size`/`modifiedAt`/`owner`/`group`
+    /// can change the order of — `.name` and `.type` are already correct
+    /// from phase one's own `kind`/name, so re-sorting for either of those
+    /// on every arrival would just repeat phase one's own sort for no
+    /// visible change (Task 3 coordinator resolution). `.permissions` is
+    /// deliberately NOT in this set (final fix round, Minor): phase two's
+    /// `item(for:)` never fills `permissions` (the local pane's own
+    /// `permissionModel` doc comment states this — the field stays nil
+    /// straight through phase two), so re-sorting for it on every arrival
+    /// would, like `.name`/`.type`, produce no visible change — the
+    /// difference is `.permissions` looks like a phase-two field, not a
+    /// phase-one one, which is exactly why it needs saying rather than
+    /// simply being absent from the list.
     private static let metadataOrderedSortKeys: Set<FileSortKey> = [
-        .size, .modified, .permissions, .owner, .group,
+        .size, .modified, .owner, .group,
     ]
+
+    /// The path→index map for `mergePathIndex`, freshly built from
+    /// `items`' current order — `path` (`RemoteFileItem.id`) is unique
+    /// within one directory listing, so `uniqueKeysWithValues` never traps.
+    private static func pathIndex(for items: [RemoteFileItem]) -> [String: Int] {
+        Dictionary(uniqueKeysWithValues: items.enumerated().map { ($1.path, $0) })
+    }
 
     /// Re-lists `currentPath` and re-derives `items` (M11k: WITH the
     /// currently active search, unchanged). `load()` is also the
@@ -329,6 +374,8 @@ public final class RemoteBrowserViewModel {
         // none will ever run (see both properties' doc comments).
         mergeDirty = false
         mergeFlushScheduled = false
+        mergeGroupingChanged = false
+        mergePathIndex = [:]
         state = .loading
         lastLoadError = nil
         selectedItems = []
@@ -394,24 +441,19 @@ public final class RemoteBrowserViewModel {
             if let metadataSource = fs as? any LocalMetadataSource, !listed.isEmpty {
                 let needsResort = Self.metadataOrderedSortKeys.contains(sortKey)
                 let stream = metadataSource.metadata(for: listed)
+                // Built once, here, from phase one's just-sorted
+                // `displayedAll` — before the merge loop below ever reads
+                // it (final fix round, Important, replacing a per-arrival
+                // `firstIndex(where:)` scan: 5000 entries meant roughly
+                // 12.5 million compares on the main actor for one merge).
+                // `publishMergedMetadata` rebuilds this whenever ITS OWN
+                // resort actually reorders `displayedAll` — the only thing
+                // that moves an entry to a different index without
+                // changing its `path` — so the loop below can trust a
+                // single dictionary lookup instead of re-scanning.
+                mergePathIndex = Self.pathIndex(for: displayedAll)
                 mergeTask = Task { @MainActor [weak self] in
                     guard let self else { return }
-                    // Looked up by `firstIndex(where:)` at EACH arrival,
-                    // deliberately not a `[path: index]` dictionary computed
-                    // once up front: `needsResort` can reorder `displayedAll`
-                    // between arrivals (a resort runs inside
-                    // `publishMergedMetadata`, from the scheduled flush
-                    // below, WHILE this loop is still consuming later
-                    // arrivals), and a precomputed index goes stale the
-                    // instant that happens — the row it used to name may now
-                    // hold a different entry, so writing through it would
-                    // silently corrupt the WRONG row (measured 2026-09-05:
-                    // exactly this shape hung `sizeSortReordersOnceArrivals
-                    // AreMerged` at its `pollUntil`, not on a crash — the
-                    // listing just never reached the expected order because
-                    // later arrivals were landing on the wrong rows). O(n)
-                    // per arrival is the accepted cost of staying correct
-                    // across an in-flight resort.
                     // Batches UI updates rather than publishing once per
                     // arrival (measured 2026-09-05: a naive one-publish-
                     // per-item republish would fire once per file in a
@@ -439,24 +481,35 @@ public final class RemoteBrowserViewModel {
                     // whether the stream ever yields again.
                     for await filled in stream {
                         guard self.currentPath == path else { return }
-                        guard let index = self.displayedAll.firstIndex(where: { $0.path == filled.path })
-                        else { continue }
+                        guard let index = self.mergePathIndex[filled.path] else { continue }
+                        // A `.other` row resolving to `.directory` (or, in
+                        // principle, the reverse) moves between the
+                        // directories-first and non-directory groups no
+                        // matter which `sortKey` is active — see
+                        // `mergeGroupingChanged`'s own doc comment.
+                        let previousKind = self.displayedAll[index].kind
                         self.displayedAll[index] = filled
+                        if (previousKind == .directory) != (filled.kind == .directory) {
+                            self.mergeGroupingChanged = true
+                        }
                         self.mergeDirty = true
                         guard !self.mergeFlushScheduled else { continue }
                         self.mergeFlushScheduled = true
                         Task { @MainActor [weak self] in
                             guard let self, self.currentPath == path else { return }
                             if self.mergeDirty {
-                                self.publishMergedMetadata(needsResort: needsResort)
+                                self.publishMergedMetadata(
+                                    needsResort: needsResort || self.mergeGroupingChanged)
                                 self.mergeDirty = false
+                                self.mergeGroupingChanged = false
                             }
                             self.mergeFlushScheduled = false
                         }
                     }
                     guard self.currentPath == path, self.mergeDirty else { return }
-                    self.publishMergedMetadata(needsResort: needsResort)
+                    self.publishMergedMetadata(needsResort: needsResort || self.mergeGroupingChanged)
                     self.mergeDirty = false
+                    self.mergeGroupingChanged = false
                 }
             }
         } catch {
@@ -481,14 +534,28 @@ public final class RemoteBrowserViewModel {
     /// its per-arrival batch and its final catch-up after the stream ends
     /// — so the two can never drift into applying the sort/search pipeline
     /// differently. Re-sorts `displayedAll` only when `needsResort` is set
-    /// (i.e. `sortKey` is one of `metadataOrderedSortKeys`), then re-derives
+    /// (`sortKey` is one of `metadataOrderedSortKeys`, OR a kind change
+    /// flipped the directories-first grouping — see `mergeGroupingChanged`),
+    /// rebuilding `mergePathIndex` in the same breath so the merge loop's
+    /// next lookup sees the entries at their NEW indices, then re-derives
     /// `items` via `applySearch()` exactly like every other mutation of
     /// `displayedAll` in this type.
+    ///
+    /// `selectedItems` is re-derived from the fresh `items` afterwards
+    /// (final fix round, Minor) — the same rebuild-by-path
+    /// `refreshQuietly()` already does for its own refresh, applied here so
+    /// a row selected before its metadata arrived (Get Info opened on a
+    /// still-loading entry) reads the FILLED struct once the merge catches
+    /// up, not the nil-metadata one `load()`'s phase-one publish handed to
+    /// `selectedItems` originally.
     private func publishMergedMetadata(needsResort: Bool) {
         if needsResort {
             displayedAll = Self.sortedForDisplay(displayedAll, key: sortKey, ascending: sortAscending)
+            mergePathIndex = Self.pathIndex(for: displayedAll)
         }
+        let selectedPaths = Set(selectedItems.map(\.path))
         applySearch()
+        selectedItems = items.filter { selectedPaths.contains($0.path) }
     }
 
     /// Shared display pipeline for `load()` and `refreshQuietly()` — the
@@ -509,6 +576,16 @@ public final class RemoteBrowserViewModel {
     /// problems. Both guards are needed: the state can change while the
     /// listing is in flight (e.g. a manual `load()` or `open()`), and the
     /// late writer must lose.
+    ///
+    /// Wired only to the remote pane today (`ContentView+Detail.swift`'s
+    /// auto-refresh timer) — never to the local one, which is what lets
+    /// this method call `fs.list(path:)` directly rather than through
+    /// `load()`'s own phase-two merge. If it were ever wired to the local
+    /// pane, this WOULD be a regression: `fs.list` alone only ever returns
+    /// phase one (every metadata field nil), so `displayItems(from:)` below
+    /// would silently overwrite whatever `size`/`modifiedAt`/`owner`/`group`
+    /// a previous merge had already filled in, with no second phase of its
+    /// own to fill them back in afterwards.
     public func refreshQuietly() async {
         guard state == .loaded else { return }
         let path = currentPath

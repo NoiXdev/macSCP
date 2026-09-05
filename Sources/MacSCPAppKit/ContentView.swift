@@ -1553,12 +1553,20 @@ struct ContentView: View {
         // through as a snapshot at each call site.
         let wantsOwnerGroup = settingsStore.visibleColumns.contains(.owner)
             || settingsStore.visibleColumns.contains(.group)
+        // One `StuckPaths` per session, shared by both `LocalFileSystem`
+        // instances below (local-listing-never-blocks final fix round): a
+        // path either instance's `metadata(for:)` proves stuck is then
+        // skipped by the OTHER instance too, so the tester's own home
+        // folder — the folder one keeps returning to — does not spend a
+        // fresh thread rediscovering the same stuck entry on every visit.
+        let stuckPaths = StuckPaths()
         tab.session = BrowserSession(
             id: sessionID,
-            localFS: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup),
+            localFS: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup, stuckPaths: stuckPaths),
             remoteFS: fs,
             local: RemoteBrowserViewModel(
-                fs: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup), startPath: NSHomeDirectory(),
+                fs: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup, stuckPaths: stuckPaths),
+                startPath: NSHomeDirectory(),
                 logCategory: "browser.local"),
             remote: RemoteBrowserViewModel(fs: fs, startPath: startPath, logCategory: "browser.remote"),
             terminal: TerminalPanelViewModel(openShell: { term, cols, rows in

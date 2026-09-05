@@ -664,7 +664,7 @@ struct LocalFileSystemTests {
     @Test func metadataFillsInSizeAndDateForPlainFilesThenFinishes() async throws {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
-        let names = ["eins.txt", "zwei.txt", "drei.txt"]
+        let names = ["one.txt", "two.txt", "three.txt"]
         for name in names {
             try Data("x".utf8).write(to: root.appendingPathComponent(name))
         }
@@ -696,7 +696,7 @@ struct LocalFileSystemTests {
     @Test func metadataAbandonsAStuckEntryWhenTheConsumerCancels() async throws {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
-        let fastNames = ["eins.txt", "zwei.txt"]
+        let fastNames = ["one.txt", "two.txt"]
         for name in fastNames + ["stuck.txt"] {
             try Data("x".utf8).write(to: root.appendingPathComponent(name))
         }
@@ -746,7 +746,7 @@ struct LocalFileSystemTests {
     @Test func metadataConsumerCancelledBeforeAnyYieldEndsTheLoop() async throws {
         let root = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }
-        try Data("x".utf8).write(to: root.appendingPathComponent("eins.txt"))
+        try Data("x".utf8).write(to: root.appendingPathComponent("one.txt"))
         let gate = Gate()
         let fs = LocalFileSystem(metadataProbe: { _ in
             await gate.opened()
@@ -787,6 +787,65 @@ struct LocalFileSystemTests {
         var filledWithoutOwner: [RemoteFileItem] = []
         for await item in fsWithoutOwner.metadata(for: phaseOneWithoutOwner) { filledWithoutOwner.append(item) }
         #expect(filledWithoutOwner.first { $0.name == "datei.txt" }?.owner == nil)
+    }
+
+    // MARK: - Session-scoped memory of stuck paths (final fix round)
+
+    /// Records the paths `metadataProbe` was actually called with — an
+    /// `actor` for the same cross-task-boundary reason `CollectedItems`
+    /// above is.
+    private actor CallLog {
+        private(set) var paths: [String] = []
+        func record(_ path: String) { paths.append(path) }
+    }
+
+    /// A path already in `StuckPaths` never gets a child on the NEXT
+    /// `metadata(for:)` call — proven by counting probe calls, never by
+    /// timing — while an unmarked path in the SAME listing is still probed
+    /// normally, so this is a positive beside the negative (CLAUDE.md,
+    /// "Guards that name what they watch"). `filled` also carries only the
+    /// unmarked entry, and only it: the marked one's row stays exactly as
+    /// phase one left it.
+    @Test func metadataSkipsAPathAlreadyMarkedStuckButStillProbesOthers() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["stuck.txt", "fine.txt"] {
+            try Data("x".utf8).write(to: root.appendingPathComponent(name))
+        }
+        let stuckPath = root.appendingPathComponent("stuck.txt").path(percentEncoded: false)
+        let finePath = root.appendingPathComponent("fine.txt").path(percentEncoded: false)
+        let stuckPaths = StuckPaths()
+        stuckPaths.markStuck(stuckPath)
+
+        let calls = CallLog()
+        let fs = LocalFileSystem(
+            metadataProbe: { url in
+                let path = url.path(percentEncoded: false)
+                await calls.record(path)
+                return RemoteFileItem(name: url.lastPathComponent, path: path, kind: .file, size: 1)
+            },
+            stuckPaths: stuckPaths)
+        let phaseOne = try await fs.list(path: root.path(percentEncoded: false))
+        #expect(phaseOne.count == 2)
+
+        var filled: [RemoteFileItem] = []
+        for await item in fs.metadata(for: phaseOne) { filled.append(item) }
+
+        #expect(filled.map(\.name) == ["fine.txt"])
+        let calledPaths = await calls.paths
+        #expect(!calledPaths.contains(stuckPath))
+        #expect(calledPaths.contains(finePath))
+    }
+
+    /// `StuckPaths.contains`/`.markStuck` themselves, without going through
+    /// `metadata(for:)` — the direct positive/negative this test's sibling
+    /// above relies on.
+    @Test func stuckPathsContainsOnlyMarkedPaths() {
+        let stuckPaths = StuckPaths()
+        #expect(!stuckPaths.contains("/a"))
+        stuckPaths.markStuck("/a")
+        #expect(stuckPaths.contains("/a"))
+        #expect(!stuckPaths.contains("/b"))
     }
 
     // `listIncludesOwnerAndGroupWhenRequested` (M18a) used to live here,

@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import macSCPCore
@@ -116,7 +117,7 @@ struct DiagnosticLogSharedSinkTests {
 
         let listedDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: listedDirectory) }
-        for name in ["eins.txt", "zwei.txt", "drei.txt"] {
+        for name in ["one.txt", "two.txt", "three.txt"] {
             try Data("x".utf8).write(to: listedDirectory.appendingPathComponent(name))
         }
         let listedPath = listedDirectory.path(percentEncoded: false)
@@ -133,6 +134,77 @@ struct DiagnosticLogSharedSinkTests {
         #expect(contents.contains("list start path=\(listedPath)"))
         #expect(contents.contains("list done path=\(listedPath) count=3"))
         #expect(!contents.contains("entry slow"))
+    }
+
+    /// Mirrors `LocalFileSystemTests`' own private `Gate`: a probe parks on
+    /// `opened()` and never returns while this test never calls `open()`.
+    private actor Gate {
+        private var isOpen = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func open() {
+            guard !isOpen else { return }
+            isOpen = true
+            for waiter in waiters { waiter.resume() }
+            waiters.removeAll()
+        }
+
+        func opened() async {
+            if isOpen { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+    }
+
+    /// Final fix round, Important: the per-entry `entry slow` line only
+    /// ever wrote AFTER `metadataProbe` returned — so an entry that never
+    /// returns, the exact case this design exists to name in a report,
+    /// never got a line at all. `LocalMetadataSource.metadata(for:)` now
+    /// runs a supervisor `Task` per call, alongside every child, that
+    /// sleeps `LocalFileSystem.slowEntryThreshold` once and then writes a
+    /// `(still pending)` line for every item its tally has not yet
+    /// accounted for. This test parks one entry's probe on a `Gate` it
+    /// never opens and waits — through `pollUntil`, no clock of the test's
+    /// own beyond the suite's `.timeLimit` — for exactly that line to name
+    /// the parked entry. Lives here, not in `LocalFileSystemTests`, for the
+    /// same singleton reason every other test in this file does: the
+    /// supervisor logs through `DiagnosticLog.shared` directly.
+    @Test("LocalFileSystem.metadata's supervisor logs a still-pending line for a permanently stuck entry")
+    func metadataSupervisorLogsAStillPendingLineForAPermanentlyStuckEntry() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let listedDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: listedDirectory) }
+        try Data("x".utf8).write(to: listedDirectory.appendingPathComponent("stuck.txt"))
+
+        let fixedNow = Date()
+        DiagnosticLog.shared.configure(level: .debug, directory: logDirectory, now: { fixedNow })
+
+        let gate = Gate()
+        let fs = LocalFileSystem(metadataProbe: { _ in
+            await gate.opened()
+            return nil
+        })
+        let phaseOne = try await fs.list(path: listedDirectory.path(percentEncoded: false))
+        #expect(phaseOne.count == 1)
+        // Deliberately never awaited to completion — the stream would only
+        // finish once the parked child returns, which this test never lets
+        // happen. Consuming it on its own `Task` is enough to drive the
+        // supervisor; the loop (and the permanently parked child behind it)
+        // is simply abandoned once this test ends, the same accepted cost
+        // `LocalFileSystemTests`' own parked-probe tests carry.
+        let consumer = Task {
+            for await _ in fs.metadata(for: phaseOne) {}
+        }
+
+        let fileURL = ownFileURL(directory: logDirectory, fixedNow: fixedNow)
+        try await pollUntil("the still-pending line for the stuck entry", every: .milliseconds(20)) {
+            await DiagnosticLog.shared.flush()
+            let contents = fileContents(fileURL)
+            return contents.contains("entry slow name=stuck.txt") && contents.contains("(still pending)")
+        }
+        consumer.cancel()
     }
 
     /// `TransferEngine.copyFile`'s own instrumentation, driven against

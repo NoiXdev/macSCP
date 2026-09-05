@@ -117,6 +117,35 @@ struct RemoteBrowserViewModelMetadataMergeTests {
         fs.continuations[0].finish()
     }
 
+    /// `selectedItems` is re-derived after a merge (final fix round,
+    /// Minor) — a row selected before its metadata arrived must read the
+    /// FILLED struct afterwards, the same way `items` itself already does,
+    /// so Get Info (which reads `selectedItems`, not `items`) shows the
+    /// size once it fills in rather than the nil-metadata struct that was
+    /// current at selection time.
+    @Test func selectedItemReflectsFilledMetadataAfterAMerge() async throws {
+        let fs = MetadataStreamFakeFS(tree: [
+            "/": [
+                RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file),
+                RemoteFileItem(name: "b.txt", path: "/b.txt", kind: .file),
+            ]
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+
+        await vm.load()
+        vm.selectedItems = [vm.items[0]]
+        #expect(vm.selectedItems.first?.path == "/a.txt")
+        #expect(vm.selectedItems.first?.size == nil)
+
+        fs.continuations[0].yield(RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 42))
+        fs.continuations[0].finish()
+
+        try await pollUntil("the selected item's size to fill in") {
+            vm.selectedItems.first?.size == 42
+        }
+        #expect(vm.selectedItems.first?.path == "/a.txt")
+    }
+
     /// `.size` is fed by phase two: once every arrival is merged in (the
     /// stream finished, so the loop's final catch-up publish ran), the
     /// listing re-sorts by the now-known sizes — expected order written out
@@ -151,6 +180,47 @@ struct RemoteBrowserViewModelMetadataMergeTests {
         }
     }
 
+    /// O(1)-per-arrival lookup (final fix round, Important — replacing a
+    /// `firstIndex(where:)` scan per arrival, O(n) per arrival and O(n²)
+    /// over a full listing): 200 entries, arriving in the REVERSE of their
+    /// final ascending-size order, all merge into the right place. A
+    /// regression back to a stale or misaligned index would either hang
+    /// (measured 2026-09-05 on this exact shape — see `mergePathIndex`'s
+    /// own doc comment) or land an arrival on the WRONG row; this only
+    /// counts rows filled and checks the final order, never elapsed time
+    /// (CLAUDE.md: a wall-clock ceiling measures the runner).
+    @Test func twoHundredEntriesArrivingInReverseOrderMergeUnderSizeSort() async throws {
+        let count = 200
+        func name(_ i: Int) -> String { "file\(String(format: "%03d", i)).txt" }
+        let phaseOneItems = (0..<count).map { i in
+            RemoteFileItem(name: name(i), path: "/\(name(i))", kind: .file)
+        }
+        let fs = MetadataStreamFakeFS(tree: ["/": phaseOneItems])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        vm.sortKey = .size
+
+        await vm.load()
+        #expect(vm.items.count == count)
+
+        // `name(0)` gets the LARGEST size and arrives FIRST; `name(count -
+        // 1)` gets the SMALLEST and arrives LAST — the reverse of the final
+        // ascending order, so a correct result can only come from each
+        // arrival landing on its OWN row, never from insertion order.
+        for i in 0..<count {
+            fs.continuations[0].yield(
+                RemoteFileItem(name: name(i), path: "/\(name(i))", kind: .file, size: UInt64(count - i)))
+        }
+        fs.continuations[0].finish()
+
+        try await pollUntil("all 200 arrivals to merge and the size sort to settle") {
+            vm.items.allSatisfy { $0.size != nil }
+        }
+
+        #expect(vm.items.count == count, "every row filled — none dropped or duplicated")
+        let expectedOrder = (0..<count).reversed().map { name($0) }
+        #expect(vm.items.map(\.name) == expectedOrder)
+    }
+
     /// `.name` is NOT fed by phase two (phase one's kind/name are already
     /// final) — arrivals fill in `size` in place but must not disturb the
     /// name-sorted order, regardless of the order they arrive in.
@@ -180,6 +250,36 @@ struct RemoteBrowserViewModelMetadataMergeTests {
         }
         #expect(vm.items.map(\.name) == ["a.txt", "b.txt", "c.txt"])
         #expect(vm.items.map(\.size) == [999, 50, 1])
+    }
+
+    /// A `.other` row resolving to `.directory` reorders the listing even
+    /// under `.name` — a key outside `metadataOrderedSortKeys`, so an
+    /// ordinary arrival never triggers a resort under it — because
+    /// `sortedForDisplay` groups directories first under EVERY sort key
+    /// (final fix round, Minor). `.other` is what `listByReaddir` reports
+    /// for a `DT_UNKNOWN` child (some network file systems never populate
+    /// `d_type`); phase two's `item(for:)` never returns `.other`, so such
+    /// a row can only ever resolve INTO one of `.file`/`.directory`/
+    /// `.symlink` once its own metadata call returns.
+    @Test func otherKindResolvingToDirectoryReordersEvenUnderNameSort() async throws {
+        let fs = MetadataStreamFakeFS(tree: [
+            "/": [
+                RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file),
+                RemoteFileItem(name: "b", path: "/b", kind: .other),
+            ]
+        ])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        vm.sortKey = .name
+
+        await vm.load()
+        #expect(vm.items.map(\.name) == ["a.txt", "b"])
+
+        fs.continuations[0].yield(RemoteFileItem(name: "b", path: "/b", kind: .directory))
+        fs.continuations[0].finish()
+
+        try await pollUntil("the resolved directory to move ahead of the plain file") {
+            vm.items.map(\.name) == ["b", "a.txt"]
+        }
     }
 
     /// Navigating away mid-stream must both (a) cancel the old merge Task —

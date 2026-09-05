@@ -56,6 +56,14 @@ either.
    (the `abandonable` shape the WebDAV tests use). The thread that child
    holds stays held; the design accepts one stuck thread per stuck
    entry over a stuck pane, and the diagnostic log names the entry.
+   A session-scoped memory (`StuckPaths`, designed, not yet measured
+   against a live report) is intended to keep that acceptance from
+   compounding across repeated visits to the SAME directory: a path
+   named stuck once is remembered for the life of the browser session
+   and skipped on every later listing of it, so a folder someone keeps
+   returning to — the design's own working example is the tester's home
+   folder — is not expected to cost a fresh stuck thread on each visit,
+   only on the first.
 3. **The view model merges.** `RemoteBrowserViewModel.load` publishes
    phase one (`state = .loaded`, rows with `-` where metadata is
    missing), then consumes the stream and replaces rows by path as they

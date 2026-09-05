@@ -53,14 +53,29 @@ public struct LocalFileSystem: RemoteFileSystem {
     /// see it. Still invisible outside this module.
     let metadataProbe: @Sendable (URL) async -> RemoteFileItem?
 
+    /// Session-scoped memory of paths whose metadata probe was still
+    /// running when `slowEntryThreshold` elapsed on a PREVIOUS
+    /// `metadata(for:)` call (final fix round, local-listing-never-blocks
+    /// design). Default `nil`, so every existing construction site — every
+    /// call in this tree before this parameter existed — is unaffected: no
+    /// memory means every listing probes every entry, exactly as before.
+    /// `ContentView.swift` builds one `StuckPaths` per browser session and
+    /// passes it to both `LocalFileSystem` instances that session owns, so
+    /// a path proven stuck through one is remembered by the other. See
+    /// `StuckPaths`' own doc comment (`LocalMetadataSource.swift`) and
+    /// `metadata(for:)`'s for what "remembered" skips.
+    public let stuckPaths: StuckPaths?
+
     public init(
         fetchesOwnerGroup: Bool = false,
-        metadataProbe: (@Sendable (URL) async -> RemoteFileItem?)? = nil
+        metadataProbe: (@Sendable (URL) async -> RemoteFileItem?)? = nil,
+        stuckPaths: StuckPaths? = nil
     ) {
         self.fetchesOwnerGroup = fetchesOwnerGroup
         self.metadataProbe = metadataProbe ?? { url in
             Self.item(for: url, fetchesOwnerGroup: fetchesOwnerGroup)
         }
+        self.stuckPaths = stuckPaths
     }
 
     /// How this file system expresses permissions — the one capability of
