@@ -147,7 +147,13 @@ public final class DiagnosticLog: Sendable {
     /// can never deadlock against each other.
     private let writeLock = Mutex<Void>(())
 
-    private init() {}
+    /// `internal`, not `public`: `.shared` is the only production
+    /// instance, but a test that needs an ISOLATED sink — one no other
+    /// suite's production code can write into, since it is never assigned
+    /// to `.shared` — constructs its own through this initializer instead
+    /// of sharing the process-wide singleton. Reachable only through
+    /// `@testable import`, same as `setWriterGateForTesting` below.
+    init() {}
 
     /// Sets the level, the directory lines are written to, the zone
     /// timestamps and file names are read in, and the clock the sink reads
