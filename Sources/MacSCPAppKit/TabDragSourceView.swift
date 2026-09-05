@@ -58,18 +58,29 @@ enum TabDropOutsidePlan {
 /// Which of the application's windows count as "ours" for the question
 /// above.
 ///
-/// A pure filter over three facts read off each `NSWindow`, because
+/// A pure filter over four facts read off each `NSWindow`, because
 /// `NSApp.windows` cannot be built in a test and a filter written inline
 /// at the call site would be a rule nothing in this package could call.
 ///
-/// **Two exclusions, and each has a reason of its own.**
+/// **Three exclusions, and each has a reason of its own.**
 ///
-/// A window that is not on screen has no area a pointer can be inside, and
-/// `NSApp.windows` holds plenty of them — windows AppKit keeps around
-/// after a close, windows on another Space. Counting one would make a drop
-/// onto the desktop read as "inside a window of ours" whenever a stale
-/// frame happened to cover the point, and the tab would stay put with
-/// nothing to show for the gesture.
+/// A window that is not ordered in has no area a pointer can be inside,
+/// and `NSApp.windows` holds plenty of them — windows AppKit keeps around
+/// after a close, windows never shown. Counting one would make a drop onto
+/// the desktop read as "inside a window of ours" whenever a stale frame
+/// happened to cover the point, and the tab would stay put with nothing to
+/// show for the gesture.
+///
+/// **A window on another Space is NOT one of those**, and assuming it was
+/// is what fix round 3 corrected. `isVisible` reports whether a window is
+/// ordered in, not whether the user can see it: a window on another Space
+/// answers `true`. The case that matters is a second macSCP window left
+/// FULL-SCREEN on another Space — ordered in, and carrying a screen-sized
+/// frame that covers wherever the pointer happens to be. Every drop onto
+/// the desktop would read as "inside a window of ours", and detach would
+/// silently stop working, with no error and nothing on screen to explain
+/// it. So `isOnActiveSpace` is asked separately: a frame on another Space
+/// describes a rectangle in a place the pointer is not.
 ///
 /// A panel is not a window a tab can live in: sheets, popovers, the font
 /// and colour panels. A tab let go over one was let go over nothing that
@@ -80,17 +91,21 @@ enum TabDropWindowFrames {
     struct Candidate: Equatable {
         let frame: CGRect
         let isVisible: Bool
+        let isOnActiveSpace: Bool
         let isPanel: Bool
 
-        init(frame: CGRect, isVisible: Bool, isPanel: Bool) {
+        init(frame: CGRect, isVisible: Bool, isOnActiveSpace: Bool, isPanel: Bool) {
             self.frame = frame
             self.isVisible = isVisible
+            self.isOnActiveSpace = isOnActiveSpace
             self.isPanel = isPanel
         }
     }
 
     static func ours(_ candidates: [Candidate]) -> [CGRect] {
-        candidates.filter { $0.isVisible && $0.isPanel == false }.map(\.frame)
+        candidates
+            .filter { $0.isVisible && $0.isOnActiveSpace && $0.isPanel == false }
+            .map(\.frame)
     }
 }
 
@@ -377,12 +392,13 @@ final class TabDragSourceNSView: NSView, NSDraggingSource {
     /// Which windows count is `TabDropWindowFrames.ours(_:)`'s answer, not
     /// this function's: gathering and filtering are separated so the filter
     /// is reachable by a test, and so this function has nothing in it that
-    /// could be wrong except the three facts it reads off each window.
+    /// could be wrong except the four facts it reads off each window.
     static func ourWindowFrames() -> [CGRect] {
         TabDropWindowFrames.ours(
             NSApp.windows.map {
                 TabDropWindowFrames.Candidate(
-                    frame: $0.frame, isVisible: $0.isVisible, isPanel: $0 is NSPanel)
+                    frame: $0.frame, isVisible: $0.isVisible,
+                    isOnActiveSpace: $0.isOnActiveSpace, isPanel: $0 is NSPanel)
             })
     }
 

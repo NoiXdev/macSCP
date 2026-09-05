@@ -520,6 +520,7 @@ struct TabDetachOnDropOutsideGuardTests {
             body.contains("TabDropWindowFrames.ours("),
             "the collection decides which windows count instead of asking the filter")
         #expect(body.contains("isVisible: $0.isVisible"))
+        #expect(body.contains("isOnActiveSpace: $0.isOnActiveSpace"))
         #expect(body.contains("isPanel: $0 is NSPanel"))
     }
 
@@ -561,9 +562,27 @@ struct TabDetachOnDropOutsideGuardTests {
     /// A drag begun on a tab of a window that is not in front must not cost
     /// two gestures (fix round 1). See the override's own doc comment for
     /// what it does and does not change about activation.
+    ///
+    /// Round 3 made this a source scan AND an answer. The scan alone was
+    /// blind to the only mutation that matters: an override returning
+    /// `false` still contains `override func acceptsFirstMouse(`, so the
+    /// check read as satisfied while the behaviour it names was gone —
+    /// measured directly, see the report's Round 3. The class is reachable
+    /// through `@testable`, so the answer can simply be asked for.
     @Test func theOverlayAcceptsTheFirstMouse() throws {
         let source = try Self.strictSource(of: Self.dragSourcePath)
         #expect(source.contains("override func acceptsFirstMouse("))
+    }
+
+    /// The answer itself, asked of a bare view. `for: nil` is the shape
+    /// AppKit uses when it has no event to offer, and the override must not
+    /// make its answer depend on one — a view that accepted the first mouse
+    /// only for some events would be the same two-gesture defect for the
+    /// rest.
+    @MainActor
+    @Test func theOverlayReallyAnswersThatItAcceptsTheFirstMouse() {
+        let view = TabDragSourceNSView(frame: .zero)
+        #expect(view.acceptsFirstMouse(for: nil))
     }
 
     /// And the other end of that route: the strip's detach callback is
@@ -694,9 +713,12 @@ struct TabDropOutsidePlanTests {
 @Suite("Which windows count as ours")
 struct TabDropWindowFramesTests {
     private static func candidate(
-        _ frame: CGRect, isVisible: Bool = true, isPanel: Bool = false
+        _ frame: CGRect, isVisible: Bool = true, isOnActiveSpace: Bool = true,
+        isPanel: Bool = false
     ) -> TabDropWindowFrames.Candidate {
-        TabDropWindowFrames.Candidate(frame: frame, isVisible: isVisible, isPanel: isPanel)
+        TabDropWindowFrames.Candidate(
+            frame: frame, isVisible: isVisible, isOnActiveSpace: isOnActiveSpace,
+            isPanel: isPanel)
     }
 
     private let main = CGRect(x: 0, y: 0, width: 100, height: 100)
@@ -713,13 +735,36 @@ struct TabDropWindowFramesTests {
     }
 
     /// A window that is not on screen has no area a pointer can be inside,
-    /// and `NSApp.windows` holds plenty of them — closed windows AppKit
-    /// keeps around, windows on another Space. Counting one would make a
-    /// drop onto the desktop read as "inside a window of ours" whenever a
-    /// hidden window's stale frame happened to cover the point.
+    /// and `NSApp.windows` holds plenty of them — windows AppKit keeps
+    /// around after a close, windows never ordered in. Counting one would
+    /// make a drop onto the desktop read as "inside a window of ours"
+    /// whenever a hidden window's stale frame happened to cover the point.
+    ///
+    /// A window on ANOTHER SPACE is not one of these: `isVisible` is `true`
+    /// for it. That is the next test, and round 3's whole finding.
     @Test func aWindowThatIsNotOnScreenDoesNotCount() {
         let frames = TabDropWindowFrames.ours([
             Self.candidate(main), Self.candidate(second, isVisible: false),
+        ])
+        #expect(frames == [main])
+    }
+
+    /// **Fix round 3's finding.** `isVisible` reports whether a window is
+    /// ordered in, NOT whether the user can see it: a window on another
+    /// Space is `isVisible == true`, and rounds 2 and 3's prose claimed
+    /// otherwise in three places. The case that matters is a second macSCP
+    /// window left FULL-SCREEN on another Space — `isVisible` true, and a
+    /// screen-sized frame that covers wherever the pointer is. Every drop
+    /// onto the desktop would then read as "inside a window of ours", and
+    /// detach would silently stop working, with no error and nothing on
+    /// screen to explain it.
+    ///
+    /// So `isOnActiveSpace` is a fact of its own. A frame on another Space
+    /// describes a rectangle in a place the pointer is not.
+    @Test func aVisibleWindowOnAnotherSpaceDoesNotCount() {
+        let frames = TabDropWindowFrames.ours([
+            Self.candidate(main),
+            Self.candidate(second, isVisible: true, isOnActiveSpace: false),
         ])
         #expect(frames == [main])
     }
@@ -735,14 +780,15 @@ struct TabDropWindowFramesTests {
         #expect(frames == [main])
     }
 
-    /// Both exclusions at once, and the empty case: a filter that dropped
-    /// only the first disqualified window it met would pass the two tests
-    /// above and fail here.
-    @Test func theTwoExclusionsCompose() {
+    /// All three exclusions at once, and the empty case: a filter that
+    /// dropped only the first disqualified window it met would pass the
+    /// three tests above and fail here.
+    @Test func theThreeExclusionsCompose() {
         let frames = TabDropWindowFrames.ours([
-            Self.candidate(main, isVisible: false, isPanel: true),
+            Self.candidate(main, isVisible: false, isOnActiveSpace: false, isPanel: true),
             Self.candidate(second, isVisible: false),
-            Self.candidate(CGRect(x: 400, y: 0, width: 10, height: 10), isPanel: true),
+            Self.candidate(CGRect(x: 400, y: 0, width: 10, height: 10), isOnActiveSpace: false),
+            Self.candidate(CGRect(x: 600, y: 0, width: 10, height: 10), isPanel: true),
         ])
         #expect(frames.isEmpty)
     }

@@ -150,19 +150,35 @@ today (teardown on close → `cancelAll` → `shutdown` → `disconnect`).
     `NSViewRepresentable` over the tab's label (not over its ✕: an
     `NSView` that answers `hitTest` takes the event outright, and a
     button underneath one stops working). Its `NSView` answers `hitTest`
-    only for the three left-button event types, so the right-click that
-    opens the SwiftUI `.contextMenu` and the moves that drive `.onHover`
-    pass through to the SwiftUI content; a left press that never crosses
-    a 3 pt threshold is forwarded to the same `onActivate` the tab's tap
-    gesture calls.
-  - It offers `.move` within the application and `[]` outside it, so no
-    other app can accept the drop whatever it makes of the pasteboard
-    type — the source's own half of the Finder fix, beside the type's.
+    only for an UNMODIFIED left-button event of the three types it
+    handles, so both ways of opening the tab's SwiftUI `.contextMenu`
+    pass through to the SwiftUI content — the right-click and the
+    control-click, which macOS delivers as a `.leftMouseDown` carrying
+    `.control` (fix round 1) — and so do the moves that drive
+    `.onHover`; a left press that never crosses a 3 pt threshold is
+    forwarded to the same `onActivate` the tab's tap gesture calls. It
+    accepts the first mouse, so a drag from a background window's tab
+    costs one gesture rather than two.
+  - It offers `[.move, .copy]` within the application and `[]` outside
+    it. Outside: no other app can accept the drop whatever it makes of
+    the pasteboard type — the source's own half of the Finder fix,
+    beside the type's. Within: the mask is the set a destination may
+    CHOOSE from, and SwiftUI's `dropDestination` negotiates its own
+    operation and has historically asked for `.copy`, so `.move` alone
+    could be refused by one of our own strips (fix round 1). The tab is
+    always moved whichever is picked — `TabDetachSequence` is what runs.
   - `draggingSession(_:endedAt:operation:)` asks `TabDropOutsidePlan`:
-    an empty operation AND a point outside the source window's frame is
-    "this landed nowhere", and calls `ContentView.moveToNewWindow(_:)` —
-    the same path the tab context menu and the Window menu take. The
-    second condition keeps a drop into the strip's own blank area the
+    an empty operation AND a point inside NONE of the app's own windows
+    is "this landed nowhere", and calls `ContentView.moveToNewWindow(_:)`
+    — the same path the tab context menu and the Window menu take. The
+    second condition started as "outside the source window's frame",
+    which detached a tab dropped on another of our windows' file list or
+    terminal into a third window (fix round 2). Which windows count is
+    `TabDropWindowFrames.ours(_:)`: visible, on the active Space, not a
+    panel — the Space check because `isVisible` is `true` for a window
+    on another Space, and a second window left full-screen there would
+    otherwise cover every point on the desktop (fix round 3). The
+    condition still keeps a drop into the strip's own blank area the
     no-op it has always been.
   - The drop destination reads `TabDragPayload.self` instead of
     `String.self`. The in-strip reorder and the cross-window move are
@@ -170,9 +186,10 @@ today (teardown on close → `cancelAll` → `shutdown` → `disconnect`).
     sidebar's own row payload now reach no closure at all.
   - Accepted limits: an Escape-cancelled drag also ends with an empty
     operation and AppKit reports no reason, so cancelling over the
-    desktop or over another window detaches; and the new window opens
-    where SwiftUI puts it, since `openWindow(value:)` takes no frame and
-    a position hint through `WindowSeed` was scoped out.
+    desktop or over another application's window detaches, while
+    cancelling over any window of ours does not; and the new window
+    opens where SwiftUI puts it, since `openWindow(value:)` takes no
+    frame and a position hint through `WindowSeed` was scoped out.
 
 - Last tab gone → the window closes, unless it is the last window
   (registry knows the window count).
@@ -203,8 +220,11 @@ is the user's click.
   type (its own) and the pasteboard writer offers exactly that one; the
   bundle declares the same identifier with no text conformance and no
   filename extension; `TabDropOutsidePlan` answers the detach question
-  over both its facts; and a source guard holds the strip to the AppKit
-  drag source with `.draggable(` counted at zero beside it.
+  over both its facts, and `TabDropWindowFrames.ours(_:)` over its four,
+  each exclusion with a positive beside it; `TabDragHitTestDecision`
+  and `TabDragOperationMask` answer what the overlay claims and what it
+  offers; and a source guard holds the strip to the AppKit drag source
+  with `.draggable(` counted at zero beside it.
 - Sticky: the level toggles and is read back.
 - Restoration: seeds round-trip; with the setting off nothing is
   written or read; with it on, tabs come back disconnected (no connect
