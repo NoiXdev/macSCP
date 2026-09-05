@@ -1,17 +1,18 @@
 import Foundation
 import Testing
 
-/// Guards ten properties of the snippet editor — `SnippetsSheet.swift`
-/// and the presentation functions it calls: five in
-/// `SnippetCommandEditor.swift`'s own wiring, raised by the whole-branch
-/// review of the snippet syntax-highlighting feature, plus five in
+/// Guards eleven properties of the snippet editor — `SnippetsSheet.swift`
+/// and the presentation functions it calls: six in
+/// `SnippetCommandEditor.swift`'s own wiring (five raised by the
+/// whole-branch review of the snippet syntax-highlighting feature, the
+/// sixth by fix round 1 on the row's insert path, 2026-09-06) plus five in
 /// `SnippetEditorView` itself (variable-declaration Save-gating, Task 5,
 /// the per-snippet placement-check waiver, folding the variable rows, the
 /// two entrances that put a declared name into the command, and the hint
 /// about a placeholder no declaration carries).
-/// None of the ten are provable any other way in this project (no test here
-/// renders an `NSViewRepresentable` or a `View` body — see `SnippetsSheet
-/// .swift`'s own doc comment on that boundary):
+/// None of the eleven are provable any other way in this project (no test
+/// here renders an `NSViewRepresentable` or a `View` body — see
+/// `SnippetsSheet.swift`'s own doc comment on that boundary):
 ///
 /// 1. **Automatic substitutions disabled.** An `NSTextField`'s field editor
 ///    disables smart quotes/dashes/text-replacement/spelling/insert-delete
@@ -93,6 +94,14 @@ import Testing
 ///    environment variable, was savable and sendable before either hint
 ///    existed and stays so; a check that refused one would be a behaviour
 ///    change at the one gate this project treats as security-critical.
+/// 11. **The row's insert path is undoable like typing.** `insertPlaceholder`
+///    used to assign `textView.string` directly, which registers no undo
+///    action and posts no change notification: "Insert in command" could
+///    not be undone with ⌘Z while ordinary typing could. It must instead go
+///    through `NSTextView`'s own edit bracket —
+///    `shouldChangeText(in:replacementString:)` then `didChangeText()` —
+///    which is what makes the insertion join the normal undo group and
+///    run `textDidChange(_:)` afterwards exactly as a keystroke does.
 ///
 /// Each is a SOURCE-TEXT scan, same shape and same blind spots as
 /// `SnippetActionSheetKeyboardShortcutGuardTests`/
@@ -934,6 +943,60 @@ struct SnippetCommandEditorGuardTests {
         body.components(separatedBy: "\n")
             .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("case ") }
             .count
+    }
+
+    // MARK: - Finding 11: the row's insert path is undoable like typing
+
+    /// Two positives and a negative beside them, per this suite's own rule
+    /// about negative checks: a scan that only looked for the ABSENCE of
+    /// `.string =` would go quiet the moment `insertPlaceholder` was
+    /// renamed or deleted outright, so the two positives prove the method
+    /// this negative is scanning still does the edit at all.
+    @Test("the live insert path goes through NSTextView's own edit bracket")
+    func theLiveInsertPathGoesThroughTextViewsOwnEditBracket() throws {
+        let source = try String(contentsOf: Self.editorSourceFile, encoding: .utf8)
+        let body = try Self.functionBody(
+            containing: "fileprivate func insertPlaceholder(named name: String) -> Bool {",
+            in: source)
+        #expect(body.contains("shouldChangeText(in:"), """
+            insertPlaceholder must ask shouldChangeText(in:replacementString:) before editing \
+            -- without it the change bypasses the delegate's own veto and, more importantly, \
+            is not bracketed for undo. Scanned body: \(body)
+            """)
+        #expect(body.contains("didChangeText()"), """
+            insertPlaceholder must call didChangeText() after the edit -- it is what posts \
+            NSText.didChangeNotification, which is what runs textDidChange(_:) afterwards \
+            exactly as it does for a typed character (recolouring, updating the binding). \
+            Without it none of that happens and the field is left showing stale colours. \
+            Scanned body: \(body)
+            """)
+        #expect(!body.contains(".string ="), """
+            insertPlaceholder must NOT assign textView.string directly -- that registers no \
+            undo action and posts no change notification, so "Insert in command" would be \
+            immune to \u{2318}Z while ordinary typing is not. Scanned body: \(body)
+            """)
+    }
+
+    @Test("the insert-path scan reacts to a regression back to a direct assignment")
+    func theInsertPathScanReactsToARegressionBackToDirectAssignment() throws {
+        let regressed = """
+            fileprivate func insertPlaceholder(named name: String) -> Bool {
+                guard let textView else { return false }
+                let placeholder = "{{\\(name)}}"
+                let body = textView.string
+                let selection = Range(textView.selectedRange(), in: body)
+                let result = SnippetBodyInsertion.insert(placeholder, into: body, at: selection)
+                textView.string = result.body
+                parent.text = result.body
+                return true
+            }
+            """
+        let body = try Self.functionBody(
+            containing: "fileprivate func insertPlaceholder(named name: String) -> Bool {",
+            in: regressed)
+        #expect(!body.contains("shouldChangeText(in:"))
+        #expect(!body.contains("didChangeText()"))
+        #expect(body.contains(".string ="))
     }
 
     // MARK: - Scanner (shared)

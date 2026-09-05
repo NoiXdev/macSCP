@@ -296,33 +296,55 @@ struct SnippetCommandEditor: NSViewRepresentable {
         /// Inserts `{{name}}` at this field's live caret or selection,
         /// replacing a selection rather than only ever appending — the
         /// residual `docs/BACKLOG.md` left open for the variable row's
-        /// insert button. The decision itself is `SnippetBodyInsertion`
-        /// (Core, pure); this method only supplies the live `NSRange`,
-        /// converted to the `String.Index` range that function wants, and
-        /// writes the result back into the text view (caret included) and
-        /// the SwiftUI binding.
+        /// insert button.
         ///
-        /// `Range(_:in:)` on an `NSRange` rounds to the nearest `Character`
-        /// boundaries, so a selection that (through some AppKit path this
-        /// project has not observed) split a grapheme cluster still yields
-        /// a valid `String.Index` range rather than a crash.
+        /// Goes through `NSTextView`'s own edit bracket —
+        /// `shouldChangeText(in:replacementString:)`, `replaceCharacters
+        /// (in:with:)`, `didChangeText()` — rather than assigning
+        /// `.string` directly the way `apply(_:to:)` does (fix round 1,
+        /// 2026-09-06, on a review finding: the first version of this
+        /// method used exactly that assignment, and it registers no undo
+        /// action and posts no change notification, so the field let you
+        /// type ⌘Z back over a keystroke but not over "Insert in
+        /// command"). `didChangeText()` posts `NSText.didChangeNotification`,
+        /// which runs this Coordinator's own `textDidChange(_:)` — the
+        /// SAME delegate method a typed character reaches — so recolouring
+        /// and updating `parent.text` happen exactly as they do for
+        /// typing, and this method does not also call `apply` or write
+        /// `parent.text` itself: doing both would be two updates racing
+        /// each other for the same result.
         ///
-        /// Returns `false` when `textView` is `nil` — unreached through the
-        /// UI today, since the command field is always on screen before
-        /// this can be called, but real enough that the caller
-        /// (`SnippetCommandEditorController`) still owns a fallback rather
-        /// than this silently dropping the insert.
+        /// `NSTextView.replaceCharacters(in:with:)` — the `NSText`
+        /// protocol method this type inherits, not `NSTextStorage`'s
+        /// method of the same name — leaves the selection as an empty
+        /// range right after the replacement text once the edit bracket
+        /// completes, which is why `recolour` above has to save and
+        /// restore the selection for a mere attribute change and this
+        /// method does not: the cursor lands after the inserted
+        /// placeholder by construction, with nothing left here to set.
+        ///
+        /// `SnippetBodyInsertion` (Core, pure) still decides the outcome,
+        /// but only for the one case with no live text view to edit — see
+        /// `snippetCommandInsertingPlaceholder`'s own doc comment, the
+        /// fallback `SnippetCommandEditorController` reaches for when
+        /// `textView` below is `nil`.
+        ///
+        /// Returns `false` when `textView` is `nil`, or when
+        /// `shouldChangeText` itself declines the edit — the first is
+        /// unreached through the UI today, since the command field is
+        /// always on screen before this can be called, but real enough
+        /// that the caller (`SnippetCommandEditorController`) still owns a
+        /// fallback rather than this silently dropping the insert.
         @discardableResult
         fileprivate func insertPlaceholder(named name: String) -> Bool {
             guard let textView else { return false }
             let placeholder = "{{\(name)}}"
-            let body = textView.string
-            let selection = Range(textView.selectedRange(), in: body)
-            let result = SnippetBodyInsertion.insert(placeholder, into: body, at: selection)
-            apply(result.body, to: textView)
-            parent.text = result.body
-            textView.setSelectedRange(
-                NSRange(result.cursorAfter..<result.cursorAfter, in: result.body))
+            let range = textView.selectedRange()
+            guard textView.shouldChangeText(in: range, replacementString: placeholder) else {
+                return false
+            }
+            textView.replaceCharacters(in: range, with: placeholder)
+            textView.didChangeText()
             return true
         }
 

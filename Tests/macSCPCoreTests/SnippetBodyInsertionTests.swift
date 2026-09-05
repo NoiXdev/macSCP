@@ -39,9 +39,9 @@ struct SnippetBodyInsertionTests {
         #expect(String(result.body[..<result.cursorAfter]) == prefix + "{{SRC}}")
     }
 
-    @Test func aNonEmptySelectionIsReplaced() {
+    @Test func aNonEmptySelectionIsReplaced() throws {
         let body = "echo OLD done"
-        let range = body.range(of: "OLD")!
+        let range = try #require(body.range(of: "OLD"))
         let result = SnippetBodyInsertion.insert("{{NEW}}", into: body, at: range)
         #expect(result.body == "echo {{NEW}} done")
         #expect(String(result.body[..<result.cursorAfter]) == "echo {{NEW}}")
