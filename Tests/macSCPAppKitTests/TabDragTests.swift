@@ -500,6 +500,27 @@ struct TabDetachOnDropOutsideGuardTests {
         #expect(
             body.contains("onDetach?()"),
             "a drag that ended nowhere reaches no detach route")
+        #expect(
+            body.contains("ourWindowFrames: Self.ourWindowFrames()"),
+            "the plan is asked about one window rather than about all of ours")
+    }
+
+    /// The facts the plan cannot gather for itself. `NSApp.windows` cannot
+    /// be built in a test, so what a scanner can say is that the collection
+    /// reads it, asks the filter, and reads the three facts off each window
+    /// rather than deciding anything here — the deciding is
+    /// `TabDropWindowFrames.ours(_:)`'s, where
+    /// `TabDropWindowFramesTests` calls it.
+    @Test func theFrameCollectionAsksAppKitAndThenTheFilter() throws {
+        let source = try Self.strictSource(of: Self.dragSourcePath)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "static func ourWindowFrames() -> [CGRect]", in: source)
+        #expect(body.contains("NSApp.windows"), "the collection does not ask AppKit at all")
+        #expect(
+            body.contains("TabDropWindowFrames.ours("),
+            "the collection decides which windows count instead of asking the filter")
+        #expect(body.contains("isVisible: $0.isVisible"))
+        #expect(body.contains("isPanel: $0 is NSPanel"))
     }
 
     /// The two decisions the overlay takes before anything else are asked
@@ -570,29 +591,30 @@ struct TabDetachOnDropOutsideGuardTests {
 /// corners of that pair plus the no-window edge.
 @Suite("A drag that ended nowhere")
 struct TabDropOutsidePlanTests {
-    /// The window the drag started in, at a frame with room around it in
-    /// every direction, so "outside" can be expressed on all four sides.
-    private let window = CGRect(x: 100, y: 100, width: 400, height: 300)
+    /// The window the drag started in, with room around it in every
+    /// direction so "outside" can be expressed on all four sides.
+    private let source = CGRect(x: 100, y: 100, width: 400, height: 300)
+    /// A second window of this app's, nowhere near the first.
+    private let other = CGRect(x: 900, y: 600, width: 400, height: 300)
 
     /// The reported case: let go over the desktop, nothing accepted it.
-    @Test func anUnacceptedDropOutsideTheSourceWindowDetaches() {
+    @Test func anUnacceptedDropOutsideEveryWindowOfOursDetaches() {
         #expect(
             TabDropOutsidePlan.detaches(
-                operation: [], endedAt: CGPoint(x: 900, y: 900), sourceWindowFrame: window))
+                operation: [], endedAt: CGPoint(x: 2000, y: 2000),
+                ourWindowFrames: [source, other]))
     }
 
     /// A drop one of this app's strips took. SwiftUI has already delivered
     /// it and the registry has already moved the tab; a second window here
     /// would be one window too many.
     @Test func anAcceptedDropDetachesNothingWhereverItLanded() {
-        #expect(
-            TabDropOutsidePlan.detaches(
-                operation: .move, endedAt: CGPoint(x: 900, y: 900), sourceWindowFrame: window)
-                == false)
-        #expect(
-            TabDropOutsidePlan.detaches(
-                operation: .move, endedAt: CGPoint(x: 200, y: 200), sourceWindowFrame: window)
-                == false)
+        for point in [CGPoint(x: 2000, y: 2000), CGPoint(x: 200, y: 200)] {
+            #expect(
+                TabDropOutsidePlan.detaches(
+                    operation: .move, endedAt: point, ourWindowFrames: [source, other])
+                    == false)
+        }
     }
 
     /// The strip's own blank area, and everything else inside the window
@@ -603,14 +625,39 @@ struct TabDropOutsidePlanTests {
     @Test func anUnacceptedDropInsideTheSourceWindowDetachesNothing() {
         #expect(
             TabDropOutsidePlan.detaches(
-                operation: [], endedAt: CGPoint(x: 200, y: 200), sourceWindowFrame: window)
+                operation: [], endedAt: CGPoint(x: 200, y: 200),
+                ourWindowFrames: [source, other])
                 == false)
     }
 
-    /// Just past each edge, so the comparison cannot be satisfied by one
-    /// axis alone — a `<` written for the wrong side passes on three of
-    /// these four and fails on the fourth.
-    @Test func eachSideOfTheSourceWindowIsOutsideIt() {
+    /// **Fix round 2's whole finding.** A drop on ANOTHER of our windows,
+    /// but not on its strip — its file list, its terminal, its sidebar —
+    /// is accepted by nothing, so the session ends with an empty
+    /// operation, and the point is outside the SOURCE window's frame. Round
+    /// 1 read that pair as "landed nowhere" and detached the tab into a
+    /// THIRD window, which contradicts what the feature says it does:
+    /// outside means outside every window of ours, and a window of ours was
+    /// under the pointer.
+    ///
+    /// Both orders are checked. The rule is "inside none of them", and a
+    /// first draft that only ever consulted `frames.first` would pass this
+    /// with the frames one way round and fail with them the other.
+    @Test func anUnacceptedDropInsideAnotherOfOurWindowsDetachesNothing() {
+        let insideTheOther = CGPoint(x: 1000, y: 700)
+        #expect(
+            TabDropOutsidePlan.detaches(
+                operation: [], endedAt: insideTheOther, ourWindowFrames: [source, other])
+                == false)
+        #expect(
+            TabDropOutsidePlan.detaches(
+                operation: [], endedAt: insideTheOther, ourWindowFrames: [other, source])
+                == false)
+    }
+
+    /// Just past each edge of the only window there is, so the comparison
+    /// cannot be satisfied by one axis alone — a `<` written for the wrong
+    /// side passes on three of these four and fails on the fourth.
+    @Test func eachSideOfOurOnlyWindowIsOutsideIt() {
         let outside = [
             CGPoint(x: 99, y: 200), CGPoint(x: 501, y: 200),
             CGPoint(x: 200, y: 99), CGPoint(x: 200, y: 401),
@@ -618,23 +665,86 @@ struct TabDropOutsidePlanTests {
         for point in outside {
             #expect(
                 TabDropOutsidePlan.detaches(
-                    operation: [], endedAt: point, sourceWindowFrame: window),
-                "\(point) should count as outside \(window)")
+                    operation: [], endedAt: point, ourWindowFrames: [source]),
+                "\(point) should count as outside \(source)")
         }
     }
 
-    /// A source with no window cannot happen while a drag it started is in
-    /// flight. It answers "detach" rather than "do nothing": an empty
+    /// No windows at all cannot happen while a drag one of them started is
+    /// in flight. It answers "detach" rather than "do nothing": an empty
     /// operation is still a drop nobody took, and the second fact simply
     /// has nothing to say.
-    @Test func aSourceWithNoWindowFallsBackToTheOperationAlone() {
+    @Test func noWindowsAtAllFallsBackToTheOperationAlone() {
         #expect(
             TabDropOutsidePlan.detaches(
-                operation: [], endedAt: CGPoint(x: 200, y: 200), sourceWindowFrame: nil))
+                operation: [], endedAt: CGPoint(x: 200, y: 200), ourWindowFrames: []))
         #expect(
             TabDropOutsidePlan.detaches(
-                operation: .move, endedAt: CGPoint(x: 200, y: 200), sourceWindowFrame: nil)
+                operation: .move, endedAt: CGPoint(x: 200, y: 200), ourWindowFrames: [])
                 == false)
+    }
+}
+
+/// Which of the application's windows the rule above is asked about.
+///
+/// A pure filter over the three facts read off each `NSWindow`, so the
+/// decision is reachable: `NSApp.windows` cannot be built in a test, and a
+/// filter written inline at the call site would be a rule nothing in this
+/// package could call.
+@Suite("Which windows count as ours")
+struct TabDropWindowFramesTests {
+    private static func candidate(
+        _ frame: CGRect, isVisible: Bool = true, isPanel: Bool = false
+    ) -> TabDropWindowFrames.Candidate {
+        TabDropWindowFrames.Candidate(frame: frame, isVisible: isVisible, isPanel: isPanel)
+    }
+
+    private let main = CGRect(x: 0, y: 0, width: 100, height: 100)
+    private let second = CGRect(x: 200, y: 0, width: 100, height: 100)
+
+    /// The ordinary case, and the positive half of this suite: two visible
+    /// main windows both count, in the order they arrived. Without it the
+    /// two exclusions below would be satisfied by a filter that returned
+    /// nothing at all — which would make every unaccepted drop "outside
+    /// every window of ours" and detach on all of them.
+    @Test func everyVisibleMainWindowCounts() {
+        let frames = TabDropWindowFrames.ours([Self.candidate(main), Self.candidate(second)])
+        #expect(frames == [main, second])
+    }
+
+    /// A window that is not on screen has no area a pointer can be inside,
+    /// and `NSApp.windows` holds plenty of them — closed windows AppKit
+    /// keeps around, windows on another Space. Counting one would make a
+    /// drop onto the desktop read as "inside a window of ours" whenever a
+    /// hidden window's stale frame happened to cover the point.
+    @Test func aWindowThatIsNotOnScreenDoesNotCount() {
+        let frames = TabDropWindowFrames.ours([
+            Self.candidate(main), Self.candidate(second, isVisible: false),
+        ])
+        #expect(frames == [main])
+    }
+
+    /// Panels are not windows a tab can live in — this app's sheets,
+    /// popovers, the font panel, the colour panel. A tab let go over one is
+    /// let go over nothing that could have taken it, and it should get a
+    /// window of its own rather than silently staying put.
+    @Test func aPanelDoesNotCount() {
+        let frames = TabDropWindowFrames.ours([
+            Self.candidate(main), Self.candidate(second, isPanel: true),
+        ])
+        #expect(frames == [main])
+    }
+
+    /// Both exclusions at once, and the empty case: a filter that dropped
+    /// only the first disqualified window it met would pass the two tests
+    /// above and fail here.
+    @Test func theTwoExclusionsCompose() {
+        let frames = TabDropWindowFrames.ours([
+            Self.candidate(main, isVisible: false, isPanel: true),
+            Self.candidate(second, isVisible: false),
+            Self.candidate(CGRect(x: 400, y: 0, width: 10, height: 10), isPanel: true),
+        ])
+        #expect(frames.isEmpty)
     }
 }
 

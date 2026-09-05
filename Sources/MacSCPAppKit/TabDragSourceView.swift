@@ -18,27 +18,79 @@ import UniformTypeIdentifiers
 /// blank area accepts nothing either, and letting a tab dropped beside its
 /// neighbours fly out into a new window would turn a documented no-op
 /// ("only tabs are drop targets, so a drop into the empty space of the
-/// strip leaves the order as it was") into a window nobody asked for. So
-/// the point where the drag ended must also be outside the window it
-/// started in.
+/// strip leaves the order as it was") into a window nobody asked for.
+///
+/// **"Outside" means outside EVERY window of ours** (fix round 2). Until
+/// then the second fact was the SOURCE window's frame alone, and the
+/// consequence contradicted what the feature says it does: a drop on
+/// another of our windows but not on its strip — its file list, its
+/// terminal, its sidebar — is accepted by nothing and lands outside the
+/// source window, so the tab was detached into a THIRD window. A window of
+/// ours was under the pointer; the drag did not land nowhere. It is a
+/// no-op now, and the tab stays where it was. Which windows count is
+/// `TabDropWindowFrames.ours(_:)`'s answer.
 ///
 /// **What this cannot tell apart**, stated rather than implied: a drag
 /// CANCELLED with Escape ends with an empty operation too, and AppKit
-/// reports no reason. Cancelling over another window, or over the desktop,
-/// therefore detaches. Cancelling over the source window — the common case,
-/// since that is where the pointer started — does not.
+/// reports no reason. Cancelling over the desktop, or over another
+/// application's window, therefore detaches. Cancelling over any window of
+/// ours does not — which since round 2 is the larger half of the screen a
+/// user is likely to be over.
 enum TabDropOutsidePlan {
-    /// `sourceWindowFrame` is `nil` for a view with no window, which cannot
-    /// happen while a drag it started is in flight; it answers "detach"
-    /// then, because an empty operation is still an unaccepted drop and the
-    /// second fact simply has nothing to say.
+    /// Empty `ourWindowFrames` cannot happen while a drag one of those
+    /// windows started is in flight; it answers "detach" then, because an
+    /// empty operation is still an unaccepted drop and the second fact
+    /// simply has nothing to say.
+    ///
+    /// `contains(where:)` over all of them rather than a comparison against
+    /// one: the question is "is this point inside NONE of our windows", and
+    /// consulting only the first would be the round-1 rule wearing the
+    /// round-2 signature.
     static func detaches(
         operation: NSDragOperation, endedAt screenPoint: CGPoint,
-        sourceWindowFrame: CGRect?
+        ourWindowFrames: [CGRect]
     ) -> Bool {
         guard operation.isEmpty else { return false }
-        guard let frame = sourceWindowFrame else { return true }
-        return !frame.contains(screenPoint)
+        return ourWindowFrames.contains { $0.contains(screenPoint) } == false
+    }
+}
+
+/// Which of the application's windows count as "ours" for the question
+/// above.
+///
+/// A pure filter over three facts read off each `NSWindow`, because
+/// `NSApp.windows` cannot be built in a test and a filter written inline
+/// at the call site would be a rule nothing in this package could call.
+///
+/// **Two exclusions, and each has a reason of its own.**
+///
+/// A window that is not on screen has no area a pointer can be inside, and
+/// `NSApp.windows` holds plenty of them — windows AppKit keeps around
+/// after a close, windows on another Space. Counting one would make a drop
+/// onto the desktop read as "inside a window of ours" whenever a stale
+/// frame happened to cover the point, and the tab would stay put with
+/// nothing to show for the gesture.
+///
+/// A panel is not a window a tab can live in: sheets, popovers, the font
+/// and colour panels. A tab let go over one was let go over nothing that
+/// could have taken it, so it gets a window of its own — which is the
+/// answer for the desktop, and a panel is closer to the desktop here than
+/// it is to a window with a strip.
+enum TabDropWindowFrames {
+    struct Candidate: Equatable {
+        let frame: CGRect
+        let isVisible: Bool
+        let isPanel: Bool
+
+        init(frame: CGRect, isVisible: Bool, isPanel: Bool) {
+            self.frame = frame
+            self.isVisible = isVisible
+            self.isPanel = isPanel
+        }
+    }
+
+    static func ours(_ candidates: [Candidate]) -> [CGRect] {
+        candidates.filter { $0.isVisible && $0.isPanel == false }.map(\.frame)
     }
 }
 
@@ -318,6 +370,22 @@ final class TabDragSourceNSView: NSView, NSDraggingSource {
         return image
     }
 
+    /// The frames of every window this application currently shows on
+    /// screen, in screen coordinates — the facts `TabDropOutsidePlan` needs
+    /// and cannot gather, since it is pure and knows nothing of `NSApp`.
+    ///
+    /// Which windows count is `TabDropWindowFrames.ours(_:)`'s answer, not
+    /// this function's: gathering and filtering are separated so the filter
+    /// is reachable by a test, and so this function has nothing in it that
+    /// could be wrong except the three facts it reads off each window.
+    static func ourWindowFrames() -> [CGRect] {
+        TabDropWindowFrames.ours(
+            NSApp.windows.map {
+                TabDropWindowFrames.Candidate(
+                    frame: $0.frame, isVisible: $0.isVisible, isPanel: $0 is NSPanel)
+            })
+    }
+
     // MARK: - NSDraggingSource
 
     /// Asked of `TabDragOperationMask`, which carries the reasoning for
@@ -334,7 +402,8 @@ final class TabDragSourceNSView: NSView, NSDraggingSource {
     /// already done — SwiftUI delivered it, the registry moved the tab, and
     /// there is nothing left to do. An empty one means nothing took it, and
     /// `TabDropOutsidePlan` decides whether that counts as "outside every
-    /// window of ours".
+    /// window of ours" — asked with every one of their frames, not just
+    /// this view's own (fix round 2).
     func draggingSession(
         _ session: NSDraggingSession,
         endedAt screenPoint: NSPoint, operation: NSDragOperation
@@ -342,7 +411,7 @@ final class TabDragSourceNSView: NSView, NSDraggingSource {
         guard
             TabDropOutsidePlan.detaches(
                 operation: operation, endedAt: screenPoint,
-                sourceWindowFrame: window?.frame)
+                ourWindowFrames: Self.ourWindowFrames())
         else { return }
         onDetach?()
     }
