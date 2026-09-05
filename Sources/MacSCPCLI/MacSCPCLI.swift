@@ -74,42 +74,36 @@ struct MacSCPCLI: AsyncParsableCommand {
     /// non-zero `CLIExitCode` — so `.success` here can only mean "hand this
     /// to ArgumentParser's own handling", never one of our own errors.
     ///
-    /// Explicitly `nonisolated`: an `@main` type's `static func main()` is
-    /// otherwise treated like top-level code in a `main.swift` file and
-    /// implicitly runs on the main actor. `asyncParseAsRoot()` itself is a
-    /// nonisolated `AsyncParsableCommand` extension method, so without this
-    /// annotation the `await` below would resume on the main actor and hand
-    /// the non-Sendable `any ParsableCommand` it returns across that
-    /// isolation boundary — the warning this annotation removes (measured
-    /// on CI, Swift 6.1.2: `MacSCPCLI.swift:82:37`, "non-sendable result
-    /// type 'any ParsableCommand' cannot be sent from nonisolated context in
-    /// call to static method 'asyncParseAsRoot'"; the local 6.3.3 toolchain
-    /// does not diagnose it). Marking `main()` nonisolated instead keeps
-    /// parsing and running in the same, already-nonisolated context the
-    /// value is produced in, so it never crosses an isolation boundary at
-    /// all — nothing here needs `Sendable` or an unsafe opt-out.
-    nonisolated static func main() async {
+    /// The parse and the run happen inside `parseAndRunRootCommand()`, a
+    /// free function with no actor isolation at all, and only a `Sendable`
+    /// outcome comes back here. That is what keeps the non-`Sendable`
+    /// `any ParsableCommand` in the context that produced it: an `@main`
+    /// type's `static func main()` is a protocol witness whose isolation
+    /// Swift 6.1.2 pins to the main actor, so annotating it `nonisolated`
+    /// (the first attempt, `0b771fec`) still left the `await` on
+    /// `asyncParseAsRoot()` handing the value across a boundary — measured
+    /// on CI run 33946526921 as the same diagnostic at `:97:37`
+    /// ("non-sendable result type 'any ParsableCommand' cannot be sent from
+    /// nonisolated context in call to static method 'asyncParseAsRoot'").
+    /// A free function is not a witness and has nothing to inherit. The
+    /// local 6.3.3 toolchain diagnoses neither shape, so the proof is the
+    /// CI log's warning count, not a local build.
+    static func main() async {
         if let name = unrecognizedHelpSubcommand(in: CommandLine.arguments) {
             OutputFormatter.note("Unknown subcommand '\(name)'")
             Foundation.exit(CLIExitCode.usage.rawValue)
         }
-        do {
-            var command = try await asyncParseAsRoot()
-            do {
-                if var asyncCommand = command as? AsyncParsableCommand {
-                    try await asyncCommand.run()
-                } else {
-                    try command.run()
-                }
-            } catch {
-                if exitCode(for: error) == .success {
-                    exit(withError: error)
-                }
-                OutputFormatter.note(CLIErrorMapping.message(for: error))
-                Foundation.exit(CLIErrorMapping.exitCode(for: error).rawValue)
-            }
-        } catch {
+        switch await parseAndRunRootCommand() {
+        case .ran:
+            return
+        case .parseFailed(let error):
             exit(withError: error)
+        case .runFailed(let error):
+            if exitCode(for: error) == .success {
+                exit(withError: error)
+            }
+            OutputFormatter.note(CLIErrorMapping.message(for: error))
+            Foundation.exit(CLIErrorMapping.exitCode(for: error).rawValue)
         }
     }
 
@@ -140,4 +134,36 @@ struct MacSCPCLI: AsyncParsableCommand {
         guard !known.contains(name) else { return nil }
         return name
     }
+}
+
+/// What `MacSCPCLI.main()` learns from a parse-and-run: the command itself
+/// never leaves `parseAndRunRootCommand()`. `any Error` is `Sendable`, so
+/// both failure cases can travel back to whatever isolation `main()` has.
+enum RootRunOutcome: Sendable {
+    case ran
+    case parseFailed(any Error)
+    case runFailed(any Error)
+}
+
+/// Parses the root command and runs it, in one context with no actor
+/// isolation, so the non-`Sendable` `any ParsableCommand` that
+/// `asyncParseAsRoot()` returns is consumed where it was produced. See the
+/// doc comment on `MacSCPCLI.main()` for the measurement behind this shape.
+nonisolated func parseAndRunRootCommand() async -> RootRunOutcome {
+    var command: any ParsableCommand
+    do {
+        command = try await MacSCPCLI.asyncParseAsRoot()
+    } catch {
+        return .parseFailed(error)
+    }
+    do {
+        if var asyncCommand = command as? any AsyncParsableCommand {
+            try await asyncCommand.run()
+        } else {
+            try command.run()
+        }
+    } catch {
+        return .runFailed(error)
+    }
+    return .ran
 }
