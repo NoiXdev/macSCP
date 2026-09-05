@@ -10,16 +10,14 @@ public struct LocalFileSystem: RemoteFileSystem {
         .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey,
     ]
 
-    /// How long a single entry's `item(for:)` call may take before `list`
-    /// logs it by name at `.debug` — the line the diagnostic-log design
-    /// exists for (`docs/superpowers/specs/2026-09-04-diagnostic-log-design.md`,
-    /// hypothesis 1: a metadata call that never returns, and hypothesis 2: a
-    /// dead mount or cloud placeholder answering after a network timeout).
-    /// Half a second is far above any local syscall's normal cost — the
-    /// M11g review measured 12-14 µs/entry for the plain `resourceValues`
-    /// lookup — so a crossing means something is actually stuck, not that
-    /// the disk is merely busy.
-    static let slowEntryThreshold: Duration = .milliseconds(500)
+    /// The two deadlines `metadata(for items:)`'s supervisor drives — see
+    /// `MetadataDeadlines`' own doc comment (`LocalMetadataSource.swift`)
+    /// for what each one does and why 500 ms / 5 s were chosen. An
+    /// instance property rather than a fixed constant (round 2, final fix
+    /// round) so a test can drive the whole two-deadline sequence in
+    /// milliseconds instead of the production five seconds; every existing
+    /// construction site keeps compiling unchanged via `.default` below.
+    public let metadataDeadlines: MetadataDeadlines
 
     /// `fetchesOwnerGroup`: whether `list`/`stat` resolve owner/group NAMES
     /// (default `false`). See `ownerGroup(for:fetchesOwnerGroup:)` for why
@@ -54,27 +52,34 @@ public struct LocalFileSystem: RemoteFileSystem {
     let metadataProbe: @Sendable (URL) async -> RemoteFileItem?
 
     /// Session-scoped memory of paths whose metadata probe was still
-    /// running when `slowEntryThreshold` elapsed on a PREVIOUS
-    /// `metadata(for:)` call (final fix round, local-listing-never-blocks
-    /// design). Default `nil`, so every existing construction site — every
-    /// call in this tree before this parameter existed — is unaffected: no
-    /// memory means every listing probes every entry, exactly as before.
-    /// `ContentView.swift` builds one `StuckPaths` per browser session and
-    /// passes it to both `LocalFileSystem` instances that session owns, so
-    /// a path proven stuck through one is remembered by the other. See
-    /// `StuckPaths`' own doc comment (`LocalMetadataSource.swift`) and
-    /// `metadata(for:)`'s for what "remembered" skips.
+    /// running when `metadataDeadlines.stuckEntryDeadline` elapsed on a
+    /// PREVIOUS `metadata(for:)` call (final fix round, local-listing-
+    /// never-blocks design; the deadline moved from `slowEntryThreshold`
+    /// to the longer `stuckEntryDeadline` in round 2, so a merely slow
+    /// entry is never blacklisted off one slow listing — see
+    /// `MetadataDeadlines`' own doc comment). Default `nil`, so every
+    /// existing construction site — every call in this tree before this
+    /// parameter existed — is unaffected: no memory means every listing
+    /// probes every entry, exactly as before. `ContentView.swift` builds
+    /// one `StuckPaths` per browser session and passes it to both
+    /// `LocalFileSystem` instances that session owns, so a path proven
+    /// stuck through one is remembered by the other. See `StuckPaths`'
+    /// own doc comment (`LocalMetadataSource.swift`) and `metadata(for:)`'s
+    /// for what "remembered" skips, and how a path that eventually answers
+    /// is cleared again.
     public let stuckPaths: StuckPaths?
 
     public init(
         fetchesOwnerGroup: Bool = false,
         metadataProbe: (@Sendable (URL) async -> RemoteFileItem?)? = nil,
+        metadataDeadlines: MetadataDeadlines = .default,
         stuckPaths: StuckPaths? = nil
     ) {
         self.fetchesOwnerGroup = fetchesOwnerGroup
         self.metadataProbe = metadataProbe ?? { url in
             Self.item(for: url, fetchesOwnerGroup: fetchesOwnerGroup)
         }
+        self.metadataDeadlines = metadataDeadlines
         self.stuckPaths = stuckPaths
     }
 

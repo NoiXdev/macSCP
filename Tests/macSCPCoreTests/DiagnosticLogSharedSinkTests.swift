@@ -160,14 +160,23 @@ struct DiagnosticLogSharedSinkTests {
     /// returns, the exact case this design exists to name in a report,
     /// never got a line at all. `LocalMetadataSource.metadata(for:)` now
     /// runs a supervisor `Task` per call, alongside every child, that
-    /// sleeps `LocalFileSystem.slowEntryThreshold` once and then writes a
-    /// `(still pending)` line for every item its tally has not yet
-    /// accounted for. This test parks one entry's probe on a `Gate` it
-    /// never opens and waits — through `pollUntil`, no clock of the test's
-    /// own beyond the suite's `.timeLimit` — for exactly that line to name
-    /// the parked entry. Lives here, not in `LocalFileSystemTests`, for the
-    /// same singleton reason every other test in this file does: the
-    /// supervisor logs through `DiagnosticLog.shared` directly.
+    /// sleeps to `slowEntryThreshold` once and then writes a `(still
+    /// pending)` line for every item its tally has not yet accounted for.
+    /// This test parks one entry's probe on a `Gate` it never opens and
+    /// waits — through `pollUntil`, no clock of the test's own beyond the
+    /// suite's `.timeLimit` — for exactly that line to name the parked
+    /// entry. Lives here, not in `LocalFileSystemTests`, for the same
+    /// singleton reason every other test in this file does: the supervisor
+    /// logs through `DiagnosticLog.shared` directly.
+    ///
+    /// Round 2, Important — the regression this file's own review found:
+    /// the FIRST deadline (`slowEntryThreshold`, 500 ms) is a LOG line
+    /// only, never a mark — a cloud file that answers a second or two
+    /// later must not be blacklisted for the rest of the session. Marking
+    /// happens only at the LATER `stuckEntryDeadline` (5 s). So this test
+    /// also asserts the path is NOT YET in `StuckPaths` right after the
+    /// pending line appears — run red first against the pre-round-2 code,
+    /// which marked at the first deadline unconditionally.
     @Test("LocalFileSystem.metadata's supervisor logs a still-pending line for a permanently stuck entry")
     func metadataSupervisorLogsAStillPendingLineForAPermanentlyStuckEntry() async throws {
         let logDirectory = makeTempDirectory()
@@ -177,15 +186,19 @@ struct DiagnosticLogSharedSinkTests {
         let listedDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: listedDirectory) }
         try Data("x".utf8).write(to: listedDirectory.appendingPathComponent("stuck.txt"))
+        let stuckPath = listedDirectory.appendingPathComponent("stuck.txt").path(percentEncoded: false)
 
         let fixedNow = Date()
         DiagnosticLog.shared.configure(level: .debug, directory: logDirectory, now: { fixedNow })
 
         let gate = Gate()
-        let fs = LocalFileSystem(metadataProbe: { _ in
-            await gate.opened()
-            return nil
-        })
+        let stuckPaths = StuckPaths()
+        let fs = LocalFileSystem(
+            metadataProbe: { _ in
+                await gate.opened()
+                return nil
+            },
+            stuckPaths: stuckPaths)
         let phaseOne = try await fs.list(path: listedDirectory.path(percentEncoded: false))
         #expect(phaseOne.count == 1)
         // Deliberately never awaited to completion — the stream would only
@@ -204,6 +217,11 @@ struct DiagnosticLogSharedSinkTests {
             let contents = fileContents(fileURL)
             return contents.contains("entry slow name=stuck.txt") && contents.contains("(still pending)")
         }
+        // Round 2 regression check: the 500 ms line is a log only — the
+        // path must NOT be blacklisted yet. Marking waits for the later
+        // `stuckEntryDeadline` (5 s default), which this test never waits
+        // out (it cancels the consumer right after).
+        #expect(!stuckPaths.contains(stuckPath))
         consumer.cancel()
     }
 

@@ -62,6 +62,63 @@ public final class StuckPaths: Sendable {
     public func markStuck(_ path: String) {
         paths.withLock { _ = $0.insert(path) }
     }
+
+    /// Un-marks `path` (round 2, self-healing): a probe that eventually DOES
+    /// return, even after its own listing's supervisor already marked it,
+    /// removes its own path here — that visit's row still fills in (the
+    /// child was never cancelled, only ignored), and a LATER listing of the
+    /// same directory probes the path again rather than skipping it
+    /// forever. Idempotent — clearing a path that was never marked, or was
+    /// already cleared, changes nothing.
+    public func clear(_ path: String) {
+        paths.withLock { _ = $0.remove(path) }
+    }
+}
+
+/// The two deadlines `LocalFileSystem.metadata(for:)`'s supervisor drives
+/// (round 2 of the final fix round, from the review): a SHORT one that only
+/// ever writes a log line, and a LONGER one that is the sole trigger for
+/// blacklisting a path in `StuckPaths`. Splitting them is the fix for the
+/// exact regression the review named — the original supervisor logged AND
+/// marked at the same 500 ms deadline, so a cloud file that simply took a
+/// second or two to answer was blacklisted for the rest of the session
+/// after its very first slow listing.
+///
+/// `slowEntryThreshold` (default 500 ms) is unchanged from before round 2:
+/// far above any local syscall's normal cost (the M11g review measured
+/// 12-14 µs/entry for the plain `resourceValues` lookup), so crossing it
+/// means something is actually slow, not that the disk is merely busy —
+/// but "slow" alone is not "stuck," which is why it only ever writes the
+/// `(still pending)` log line, never a mark.
+///
+/// `stuckEntryDeadline` (default 5 s) is what actually blacklists a path.
+/// Five seconds, not five hundred milliseconds: a cloud placeholder or a
+/// momentarily busy network mount answering within a second or two is
+/// ordinary slowness, not stuck, and must not cost every later listing of
+/// the same directory a skipped probe for the rest of the session; a
+/// genuinely dead mount does not answer in five seconds either, so the
+/// deadline still catches the case `StuckPaths` exists for.
+///
+/// Both are `init` parameters (with an `initializer` on `LocalFileSystem`
+/// defaulting to `.default` below) rather than fixed constants, so a test
+/// can drive the whole two-deadline sequence — the log-only line, then the
+/// mark — in milliseconds instead of the production five seconds, without
+/// ever asserting on elapsed time itself (CLAUDE.md: a wall-clock ceiling
+/// measures the runner; these tests wait on the OUTCOME — the log's
+/// contents, `StuckPaths`' membership — never on a duration).
+public struct MetadataDeadlines: Sendable {
+    public let slowEntryThreshold: Duration
+    public let stuckEntryDeadline: Duration
+
+    public init(
+        slowEntryThreshold: Duration = .milliseconds(500),
+        stuckEntryDeadline: Duration = .seconds(5)
+    ) {
+        self.slowEntryThreshold = slowEntryThreshold
+        self.stuckEntryDeadline = stuckEntryDeadline
+    }
+
+    public static let `default` = MetadataDeadlines()
 }
 
 extension LocalFileSystem: LocalMetadataSource {
@@ -129,22 +186,52 @@ extension LocalFileSystem: LocalMetadataSource {
     /// at all. The per-child line only runs after `probe` RETURNS, so a
     /// permanently stuck entry — the exact case this design exists to name
     /// — never reached it (final whole-plan review, Important). The
-    /// supervisor sleeps `Self.slowEntryThreshold` once, then asks the tally
-    /// which items it has not yet accounted for and, for each, writes
-    /// `browser.local entry slow name=… ms=… (still pending)` — the
-    /// trailing `(still pending)` keeping this text distinct from the
-    /// per-child line above, so a log reader can tell "this one came back
-    /// late" from "this one had not come back at THIS instant" — and marks
-    /// the path stuck in `stuckPaths`, if this instance carries one. The
-    /// supervisor fires at most once per call (a single sleep, not a
+    /// supervisor sleeps to `MetadataDeadlines.slowEntryThreshold` once,
+    /// then asks the tally which items it has not yet accounted for and,
+    /// for each, writes `browser.local entry slow name=… ms=… (still
+    /// pending)` — the trailing `(still pending)` keeping this text
+    /// distinct from the per-child line above, so a log reader can tell
+    /// "this one came back late" from "this one had not come back at THIS
+    /// instant." That first deadline is a LOG LINE ONLY (round 2, from the
+    /// review): it does NOT mark anything in `stuckPaths` — a cloud file
+    /// that merely takes a second or two to answer must not be blacklisted
+    /// off one slow listing.
+    ///
+    /// The supervisor then sleeps the REMAINDER to
+    /// `MetadataDeadlines.stuckEntryDeadline` and, only THEN, asks the
+    /// tally to mark whatever is still pending — `tally.markStillPending`
+    /// reads the pending set and inserts each path into `stuckPaths` in
+    /// ONE actor turn (round 2, Important: the previous shape snapshotted
+    /// the pending set and marked it in two separate steps with an actor
+    /// hop in between, so a child that finished in that gap was still
+    /// blacklisted forever). Because `MetadataTally` is an actor and
+    /// `markStillPending`'s own body has no `await` in it, it runs to
+    /// completion without yielding to any concurrently-arriving
+    /// `childFinished` call — the read and the mark are atomic with
+    /// respect to the tally's own state. Each newly-marked path gets its
+    /// own `browser.local entry stuck name=…` line at `.debug` — the mark
+    /// is the event a tester actually wants to see in a report, distinct
+    /// from the two "still running" lines above it.
+    ///
+    /// The supervisor fires its two sleeps at most once each per call (no
     /// repeating timer) and is cancelled the moment the tally finishes —
-    /// every child done, or the consumer gone — so a listing that completes
-    /// well inside the threshold never has a live supervisor Task to clean
-    /// up later.
+    /// every child done, or the consumer gone — so a listing that
+    /// completes well inside either deadline never has a live supervisor
+    /// Task to clean up later.
+    ///
+    /// Self-healing (round 2, ruled in alongside the above): a child that
+    /// eventually DOES return — even one already marked stuck by the
+    /// SECOND deadline, a cloud file that finally answers at 6 s — clears
+    /// its own path from `stuckPaths` right here, unconditionally (a path
+    /// never marked is a harmless no-op to clear). That visit's row still
+    /// fills in normally (the child was never cancelled, only ignored by
+    /// the tally once past the threshold), and a LATER listing of the same
+    /// directory probes the path again instead of skipping it forever.
     public func metadata(for items: [RemoteFileItem]) -> AsyncStream<RemoteFileItem> {
         let probe = metadataProbe
         let clock = ContinuousClock()
         let stuckPaths = self.stuckPaths
+        let deadlines = self.metadataDeadlines
         return AsyncStream { continuation in
             guard !items.isEmpty else {
                 continuation.finish()
@@ -169,16 +256,23 @@ extension LocalFileSystem: LocalMetadataSource {
                 Task { await tally.consumerWentAway(continuation) }
             }
             let supervisor = Task {
-                try? await Task.sleep(for: Self.slowEntryThreshold)
+                try? await Task.sleep(for: deadlines.slowEntryThreshold)
                 guard !Task.isCancelled else { return }
                 let pending = await tally.itemsStillPending(among: toProbe)
-                guard !pending.isEmpty else { return }
-                let thresholdMs = Int(Self.slowEntryThreshold.milliseconds.rounded())
-                for item in pending {
-                    stuckPaths?.markStuck(item.path)
-                    DiagnosticLog.shared.log(
-                        .debug, "browser.local",
-                        "entry slow name=\(item.name) ms=\(thresholdMs) (still pending)")
+                if !pending.isEmpty {
+                    let thresholdMs = Int(deadlines.slowEntryThreshold.milliseconds.rounded())
+                    for item in pending {
+                        DiagnosticLog.shared.log(
+                            .debug, "browser.local",
+                            "entry slow name=\(item.name) ms=\(thresholdMs) (still pending)")
+                    }
+                }
+                let remainder = max(.zero, deadlines.stuckEntryDeadline - deadlines.slowEntryThreshold)
+                try? await Task.sleep(for: remainder)
+                guard !Task.isCancelled else { return }
+                let marked = await tally.markStillPending(among: toProbe, into: stuckPaths)
+                for item in marked {
+                    DiagnosticLog.shared.log(.debug, "browser.local", "entry stuck name=\(item.name)")
                 }
             }
             Task { await tally.supervisorStarted(supervisor) }
@@ -188,11 +282,14 @@ extension LocalFileSystem: LocalMetadataSource {
                     let entryStart = clock.now
                     let filled = await probe(url)
                     let elapsed = entryStart.duration(to: clock.now)
-                    if elapsed >= Self.slowEntryThreshold {
+                    if elapsed >= deadlines.slowEntryThreshold {
                         DiagnosticLog.shared.log(
                             .debug, "browser.local",
                             "entry slow name=\(item.name) ms=\(Int(elapsed.milliseconds.rounded()))")
                     }
+                    // Self-healing (round 2): unconditional, harmless no-op
+                    // if this path was never marked.
+                    stuckPaths?.clear(item.path)
                     await tally.childFinished(item: item, yielding: filled ?? item, into: continuation)
                 }
             }
@@ -280,5 +377,32 @@ private actor MetadataTally {
     func itemsStillPending(among candidates: [RemoteFileItem]) -> [RemoteFileItem] {
         guard !finished else { return [] }
         return candidates.filter { !accountedPaths.contains($0.path) }
+    }
+
+    /// Round 2: the supervisor's SECOND-deadline query, which both reads
+    /// AND marks in one actor turn — the fix for the exact regression the
+    /// review named. The previous shape called `itemsStillPending` to get
+    /// a snapshot, then marked each path in `stuckPaths` from OUTSIDE the
+    /// actor; a child whose `childFinished` ran on this actor in the gap
+    /// between those two steps had already left `accountedPaths`, but the
+    /// snapshot taken before it was stale, and marked it anyway. This
+    /// method's own body has no `await` in it, so once the actor dispatches
+    /// it, it runs to completion without yielding the actor to any
+    /// concurrently-arriving `childFinished`/`consumerWentAway` call — the
+    /// read of `accountedPaths` and the calls to `stuckPaths.markStuck`
+    /// happen as one indivisible step relative to this tally's own state.
+    /// Returns exactly the items actually marked (empty once the stream
+    /// has already finished, same as `itemsStillPending`, and empty when
+    /// `stuckPaths` is `nil` — nothing to mark, so nothing is reported
+    /// marked either).
+    func markStillPending(
+        among candidates: [RemoteFileItem], into stuckPaths: StuckPaths?
+    ) -> [RemoteFileItem] {
+        guard !finished, let stuckPaths else { return [] }
+        let pending = candidates.filter { !accountedPaths.contains($0.path) }
+        for item in pending {
+            stuckPaths.markStuck(item.path)
+        }
+        return pending
     }
 }

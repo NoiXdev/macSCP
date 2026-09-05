@@ -848,6 +848,116 @@ struct LocalFileSystemTests {
         #expect(!stuckPaths.contains("/b"))
     }
 
+    /// `StuckPaths.clear` directly — the third state (never marked, marked
+    /// then cleared) beside `stuckPathsContainsOnlyMarkedPaths`' two above.
+    @Test func stuckPathsClearRemovesAMarkedPath() {
+        let stuckPaths = StuckPaths()
+        stuckPaths.clear("/never-marked")
+        #expect(!stuckPaths.contains("/never-marked"), "clearing an absent path is a harmless no-op")
+
+        stuckPaths.markStuck("/a")
+        stuckPaths.clear("/a")
+        #expect(!stuckPaths.contains("/a"))
+    }
+
+    /// Round 2, Important: the FIRST deadline (`slowEntryThreshold`) is a
+    /// log line only — it must not mark anything, exactly the regression
+    /// `DiagnosticLogSharedSinkTests
+    /// .metadataSupervisorLogsAStillPendingLineForAPermanentlyStuckEntry`
+    /// also covers. This test drives the SECOND deadline
+    /// (`stuckEntryDeadline`) with a tiny injected `MetadataDeadlines`, so
+    /// a permanently parked entry gets marked without a real five-second
+    /// wait, while a fast sibling in the SAME listing is never marked.
+    /// Waits on `StuckPaths`' own membership via `pollUntil`, never on a
+    /// clock of its own beyond the suite's `.timeLimit`.
+    @Test func metadataMarksAPermanentlyStuckEntryOnlyAfterTheStuckEntryDeadlineNotTheSlowThreshold() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["stuck.txt", "fast.txt"] {
+            try Data("x".utf8).write(to: root.appendingPathComponent(name))
+        }
+        let stuckPath = root.appendingPathComponent("stuck.txt").path(percentEncoded: false)
+        let fastPath = root.appendingPathComponent("fast.txt").path(percentEncoded: false)
+        let stuckPaths = StuckPaths()
+        let gate = Gate()
+        let deadlines = MetadataDeadlines(
+            slowEntryThreshold: .milliseconds(5), stuckEntryDeadline: .milliseconds(30))
+        let fs = LocalFileSystem(
+            metadataProbe: { url in
+                let path = url.path(percentEncoded: false)
+                guard path == stuckPath else {
+                    return RemoteFileItem(name: url.lastPathComponent, path: path, kind: .file, size: 1)
+                }
+                await gate.opened()
+                return nil
+            },
+            metadataDeadlines: deadlines,
+            stuckPaths: stuckPaths)
+        let phaseOne = try await fs.list(path: root.path(percentEncoded: false))
+        #expect(phaseOne.count == 2)
+
+        let consumer = Task {
+            for await _ in fs.metadata(for: phaseOne) {}
+        }
+
+        try await pollUntil("the permanently stuck entry to be marked after the stuck-entry deadline") {
+            stuckPaths.contains(stuckPath)
+        }
+        #expect(!stuckPaths.contains(fastPath))
+        consumer.cancel()
+    }
+
+    /// Round 2, ruled in: a probe marked stuck by the supervisor's second
+    /// deadline but NOT cancelled (Task 2's own accepted cost — nothing
+    /// here ever cancels a child) still eventually returns, and doing so
+    /// clears its own path — this visit's row fills in, and a later
+    /// listing of the same directory probes it again instead of skipping
+    /// it forever.
+    @Test func metadataClearsAMarkedPathOnceItsProbeFinallyReturns() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("x".utf8).write(to: root.appendingPathComponent("late.txt"))
+        let latePath = root.appendingPathComponent("late.txt").path(percentEncoded: false)
+        let stuckPaths = StuckPaths()
+        let gate = Gate()
+        let deadlines = MetadataDeadlines(
+            slowEntryThreshold: .milliseconds(5), stuckEntryDeadline: .milliseconds(15))
+        let fs = LocalFileSystem(
+            metadataProbe: { url in
+                await gate.opened()
+                return RemoteFileItem(
+                    name: url.lastPathComponent, path: url.path(percentEncoded: false),
+                    kind: .file, size: 1)
+            },
+            metadataDeadlines: deadlines,
+            stuckPaths: stuckPaths)
+        let phaseOne = try await fs.list(path: root.path(percentEncoded: false))
+        #expect(phaseOne.count == 1)
+
+        let collected = CollectedItems()
+        let consumer = Task<Int, Never> {
+            var seen = 0
+            for await item in fs.metadata(for: phaseOne) {
+                await collected.append(item)
+                seen += 1
+            }
+            return seen
+        }
+
+        try await pollUntil("the late entry to be marked stuck") {
+            stuckPaths.contains(latePath)
+        }
+        await gate.open()
+
+        try await pollUntil("the mark to be cleared once the probe returns") {
+            !stuckPaths.contains(latePath)
+        }
+        let yielded = await consumer.value
+        #expect(yielded == 1)
+        let byName = await collected.items
+        #expect(byName.map(\.name) == ["late.txt"])
+    }
+
     // `listIncludesOwnerAndGroupWhenRequested` (M18a) used to live here,
     // asserting that `fetchesOwnerGroup: true` makes `list` resolve owner/
     // group names. Removed (local-listing-never-blocks Task 1): phase one

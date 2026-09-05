@@ -63,7 +63,16 @@ either.
    and skipped on every later listing of it, so a folder someone keeps
    returning to — the design's own working example is the tester's home
    folder — is not expected to cost a fresh stuck thread on each visit,
-   only on the first.
+   only on the first. Two separate deadlines are intended to drive this,
+   not one: a short one (500 ms) that only ever writes the `entry slow`
+   log line, so an ordinarily slow entry is never mistaken for a stuck
+   one, and a longer one (5 s, designed, not yet measured against a
+   live report) that is the sole trigger for the memory above, chosen
+   so a cloud placeholder or a momentarily busy network mount answering
+   within a second or two is never blacklisted off one slow listing.
+   An entry marked by the longer deadline that still eventually answers
+   is intended to clear its own mark, so only a genuinely, persistently
+   stuck path stays remembered.
 3. **The view model merges.** `RemoteBrowserViewModel.load` publishes
    phase one (`state = .loaded`, rows with `-` where metadata is
    missing), then consumes the stream and replaces rows by path as they
