@@ -454,6 +454,27 @@ struct S3FileSystemIntegrationTests {
         }
     }
 
+    // NO gated test exercises `delete`/`deleteTree`'s `.both` case
+    // (`docs/BACKLOG.md`, "A key that is both an object and a prefix")
+    // against this rig, and none was added here after measuring why one
+    // would not prove anything: a key `x` and a key `x/child` were written
+    // through `fs.write` exactly as `deleteLookup`'s ambiguity check would
+    // see them, then probed directly against the running container
+    // (`docker exec macscp-test-minio mc find/ls/cat`, 2026-09-05). `mc cat`
+    // retrieves `x/child`'s content — the object exists and answers a direct
+    // GET — but `mc find` and `mc ls --recursive` never list it while `x`
+    // also exists as a bare key; removing `x` makes it appear in listings
+    // again, and recreating `x` makes it vanish from them again, in either
+    // creation order. `deleteLookup`'s one-key `ListObjectsV2` on `x/` is
+    // exactly the kind of call this reconfirms as blind here, so
+    // `delete("x")` never observes the ambiguity and never refuses on this
+    // rig — a rig limitation, not a code defect, and the same one row 28
+    // already measured 2026-09-04 (`?list-type=2&prefix=<key>` there,
+    // `?list-type=2&prefix=<key>/&max-keys=1` here; same invisibility either
+    // way). The `.both` code path is proven only by the unit tests' canned
+    // responses (`S3FileSystemTests.swift`); real AWS S3, which the row
+    // already flags as listing both, remains unmeasured.
+
     /// A recording decorator around the real transport — the seam
     /// `S3FileSystem.connect(_:transport:)` exposes for exactly this: every
     /// `send`/`sendStreaming` call goes through a real `URLSessionHTTPTransport`
@@ -461,14 +482,10 @@ struct S3FileSystemIntegrationTests {
     /// records the HTTP method of each. `actor`, like `FakeS3Transport` in
     /// the unit tests, because the log is mutated across concurrent `await`s.
     ///
-    /// Records METHODS, not a bare count: the seed bucket the rig starts
-    /// with holds only a handful of keys, so the OLD parent-listing lookup
-    /// (a single `GET ?list-type=2&delimiter=/`, one page for that few
-    /// siblings) and the new lookup (one `HEAD`) both cost exactly one
-    /// request here — a plain count could not tell the two apart, and would
-    /// stay green against either. The method sequence can: the old lookup's
-    /// request is a `GET`, the new one's is a `HEAD`, and only the exact
-    /// sequence `["HEAD", "DELETE"]` proves which one ran.
+    /// Records METHODS, not a bare count, so a regression that swapped the
+    /// `HEAD`/one-key-list pair for a different-shaped lookup that happened
+    /// to cost the same number of requests would still be caught — the
+    /// method sequence names which requests those were, a count never does.
     private actor RecordingHTTPTransport: HTTPTransport {
         private let inner: any HTTPTransport
         private(set) var methods: [String] = []
@@ -489,9 +506,14 @@ struct S3FileSystemIntegrationTests {
 
     /// The backlog row's headline shape, proven against a REAL server rather
     /// than the unit tests' canned responses: `delete` on a file issues
-    /// exactly a `HEAD` then a `DELETE` — two constant requests, never a
-    /// `GET` listing of the parent prefix in between.
-    @Test func deleteOnAFileCostsExactlyTwoRequestsAgainstMinIO() async throws {
+    /// exactly a `HEAD`, then the one-key list that checks the key is not
+    /// ALSO a prefix (`docs/BACKLOG.md`, "A key that is both an object and
+    /// a prefix"), then a `DELETE` — three constant requests, never a
+    /// paged `GET` listing of the parent prefix in between. Grew from two to
+    /// three on 2026-09-05: the ambiguity check used to run only when the
+    /// `HEAD` answered 404, so a plain file (`HEAD` 200) skipped it and left
+    /// through `["HEAD", "DELETE"]` alone.
+    @Test func deleteOnAFileCostsExactlyThreeRequestsAgainstMinIO() async throws {
         let config = S3ConnectionConfig(
             accessKeyID: "macscp", secretAccessKey: "macscpsecretkey",
             region: "us-east-1", endpoint: "http://127.0.0.1:19000",
@@ -515,7 +537,7 @@ struct S3FileSystemIntegrationTests {
             try await fs.delete(path: "/\(key)")
             let deleteMethods = await Array(recorder.methods.dropFirst(before))
 
-            #expect(deleteMethods == ["HEAD", "DELETE"])
+            #expect(deleteMethods == ["HEAD", "GET", "DELETE"])
         } catch {
             caught = error
         }

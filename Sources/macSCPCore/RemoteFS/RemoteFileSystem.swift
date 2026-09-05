@@ -30,7 +30,12 @@ public protocol RemoteFileSystem: Sendable {
     func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws
     /// Deletes a FILE at `path` (not a directory). Throws
     /// `RemoteFSError.notFound` if nothing exists there, and
-    /// `RemoteFSError.protocolError` if `path` is a directory.
+    /// `RemoteFSError.protocolError` if `path` is a directory. S3's own
+    /// backend additionally treats a key that is BOTH an object and a
+    /// prefix as its own case, stated once where it is decided: `delete`
+    /// refuses it and `deleteTree` removes the object and the subtree
+    /// (`S3FileSystem.deleteLookup`/`.both`) — no other backend can reach
+    /// that shape.
     func delete(path: String) async throws
     /// Creates the directory. IDEMPOTENT: if it already exists as a directory,
     /// the call returns silently. If a FILE exists at the path, throws

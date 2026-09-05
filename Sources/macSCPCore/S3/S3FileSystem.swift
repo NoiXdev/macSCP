@@ -315,28 +315,40 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         throw RemoteFSError.notFound(path: path)
     }
 
-    /// What `deleteLookup` found at a path — a file, a directory, or
-    /// nothing.
-    private enum DeleteLookup {
+    /// What `deleteLookup` found at a path — a file, a directory, nothing,
+    /// or (`docs/BACKLOG.md`, "A key that is both an object and a prefix")
+    /// BOTH: S3 permits `a.txt` and `a.txt/child` to coexist, and `delete`
+    /// and `deleteTree` need to tell that shape apart from a plain file
+    /// rather than let the listing's document order pick a winner.
+    private enum DeleteLookup: Equatable {
         case file
         case directory
+        case both
         case absent
     }
 
-    /// Answers "is this a file, a directory, or nothing" for `delete` and
-    /// `deleteTree` — the one question their pre-check needs — in exactly
-    /// two requests, always, instead of `listedEntry`'s page walk over the
-    /// PARENT prefix (1…`ceil(siblings / 1000)` requests, decided by where
-    /// the leaf name sorts among its siblings).
+    /// Answers "is this a file, a directory, both, or nothing" for `delete`
+    /// and `deleteTree` — the one question their pre-check needs — in
+    /// exactly two requests, ALWAYS, instead of `listedEntry`'s page walk
+    /// over the PARENT prefix (1…`ceil(siblings / 1000)` requests, decided
+    /// by where the leaf name sorts among its siblings).
     ///
-    /// A `HEAD` on the key answers "does the object exist" directly — 200 is
-    /// `.file`, 404 falls through, anything else is the ordinary status
-    /// mapping. A key that is not an object might still be a directory, so a
-    /// one-key `ListObjectsV2` on `<key>/` (`max-keys=1`) answers "is
-    /// anything AT ALL there" — a child, or the key's own empty-folder
-    /// marker `createDirectory` writes — through
-    /// `S3ListParser.hasAnyEntries`, not `parse`: `parse` would drop that
-    /// marker as the "directory being listed", which is exactly wrong here.
+    /// A `HEAD` on the key answers "does the object exist" directly — 200
+    /// or 404, anything else is the ordinary status mapping. A one-key
+    /// `ListObjectsV2` on `<key>/` (`max-keys=1`) answers "is anything AT
+    /// ALL there" — a child, or the key's own empty-folder marker
+    /// `createDirectory` writes — through `S3ListParser.hasAnyEntries`, not
+    /// `parse`: `parse` would drop that marker as the "directory being
+    /// listed", which is exactly wrong here.
+    ///
+    /// The list runs UNCONDITIONALLY, even when the `HEAD` already answered
+    /// 200: stopping there, as an earlier version of this function did,
+    /// answers `.file` for a key that is ALSO a prefix, and which of the two
+    /// truths survives then depends on the server's listing order rather
+    /// than on any rule this code states. Asking both questions every time
+    /// is what makes `.both` visible; `list` and `stat` still resolve such a
+    /// key by listing order (unchanged this round) — only the delete side no
+    /// longer depends on it.
     ///
     /// `RemotePath.normalizedAbsolute(path) == "/"` short-circuits to
     /// `.directory` before either request, matching `listedEntry`'s own
@@ -357,11 +369,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             bucket: bucket, method: "HEAD", key: key, query: [],
             payloadHash: SigV4Signer.emptyPayloadHash)
         let (_, headResponse) = try await send(headRequest)
+        let isObject: Bool
         switch headResponse.statusCode {
         case 200..<300:
-            return .file
+            isObject = true
         case 404:
-            break
+            isObject = false
         default:
             throw Self.mapErrorStatus(headResponse.statusCode, path: reportedPath(bucket: bucket, key: key))
         }
@@ -369,12 +382,24 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         let listRequest = try buildListRequest(
             bucket: bucket, prefix: key + "/", continuationToken: nil, maxKeys: 1)
         let (data, listResponse) = try await send(listRequest)
+        let hasChildren: Bool
         switch listResponse.statusCode {
         case 200..<300:
-            return try S3ListParser.hasAnyEntries(data) ? .directory : .absent
+            hasChildren = try S3ListParser.hasAnyEntries(data)
         default:
             throw Self.mapErrorStatus(
                 listResponse.statusCode, path: reportedPath(bucket: bucket, key: key + "/"))
+        }
+
+        switch (isObject, hasChildren) {
+        case (true, true):
+            return .both
+        case (true, false):
+            return .file
+        case (false, true):
+            return .directory
+        case (false, false):
+            return .absent
         }
     }
 
@@ -452,6 +477,13 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         switch try await deleteLookup(path: path) {
         case .directory:
             throw RemoteFSError.protocolError(reason: "S3 delete: \(path) is a directory")
+        case .both:
+            // Ambiguous on purpose: `delete` is documented to remove a
+            // FILE, and a key that is also a prefix is not unambiguously
+            // one — `deleteTree` is the call that knows what to do with
+            // both halves.
+            throw RemoteFSError.protocolError(
+                reason: "S3 delete: \(path) is both an object and a folder")
         case .absent:
             throw RemoteFSError.notFound(path: path)
         case .file:
@@ -462,14 +494,18 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     }
 
     /// Raw-key counterpart to `delete(path:)`, for callers that already hold
-    /// a full S3 object key rather than a browser path. Four call sites in
-    /// three methods, counted 2026-09-04: `delete(path:)` above and
-    /// `deleteTree`'s plain-file branch, once each after their lookup, and
-    /// `rename` twice — its file branch and its directory re-key loop,
-    /// which enumerates keys via `allObjectKeys(bucket:underPrefix:)` and
-    /// needs to delete exactly those keys, including a directory's own
-    /// trailing-slash marker key, which `objectKey(forPath:)` cannot
-    /// address (it always strips trailing slashes).
+    /// a full S3 object key rather than a browser path. Five call sites in
+    /// three methods, counted 2026-09-06: `delete(path:)` above, once,
+    /// after its lookup; `rename` twice — its file branch and its
+    /// directory re-key loop, which enumerates keys via
+    /// `allObjectKeys(bucket:underPrefix:)` and needs to delete exactly
+    /// those keys, including a directory's own trailing-slash marker key,
+    /// which `objectKey(forPath:)` cannot address (it always strips
+    /// trailing slashes); and `deleteTree` twice — its plain-file branch
+    /// after its lookup, and, since 2026-09-06, one more after the
+    /// prefix-batch walk for a key that is BOTH an object and a prefix
+    /// (`docs/BACKLOG.md`, "A key that is both an object and a prefix"),
+    /// since that walk never reaches the bare key itself.
     private func delete(bucket: String, key: String) async throws {
         let request = try buildSignedRequest(
             bucket: bucket, method: "DELETE", key: key, query: [],
@@ -581,9 +617,23 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// comment on it. Which of the two runs is what `deleteLookup` in front
     /// decides; that is two extra round trips per call (a `HEAD` and a
     /// one-key list), not a second delete path.
+    ///
+    /// A key that is BOTH an object and a prefix (`docs/BACKLOG.md`, "A key
+    /// that is both an object and a prefix") takes the directory branch AND
+    /// an extra `DELETE` of the bare key at the end: the prefix walk below
+    /// enumerates `<key>/*` and never the bare key itself (`resolvePrefix`
+    /// always appends the trailing slash), so the object half would
+    /// otherwise survive untouched while the subtree it addresses vanishes
+    /// around it. `delete(path:)` refuses this shape outright — see its own
+    /// `.both` case — because removing only the object would silently orphan
+    /// the children, and removing only the subtree would silently leave the
+    /// object; `deleteTree` is the call whose contract ("recursively deletes
+    /// the entry … with its entire contents") already covers taking both.
     public func deleteTree(at path: String) async throws {
         try refuseBucketLevelOperation(.deleteTree, path: path)
-        switch try await deleteLookup(path: path) {
+        let lookup = try await deleteLookup(path: path)
+        let (bucket, key) = try mode.resolve(path: path)
+        switch lookup {
         case .absent:
             throw RemoteFSError.notFound(path: path)
         case .file:
@@ -592,13 +642,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             // `<key>/`, which a plain object's key never matches, batch
             // zero keys and report success having deleted nothing
             // (measured 2026-09-04 against MinIO).
-            let (bucket, key) = try mode.resolve(path: path)
             try await delete(bucket: bucket, key: key)
             return
-        case .directory:
+        case .directory, .both:
             break
         }
-        let (bucket, treePrefix) = try resolvePrefix(path: path)
+        let (_, treePrefix) = try resolvePrefix(path: path)
         let keys = try await allObjectKeys(bucket: bucket, underPrefix: treePrefix)
         for batch in keys.chunked(into: 1000) {
             try Task.checkCancellation()
@@ -626,6 +675,11 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 throw RemoteFSError.protocolError(
                     reason: "S3 deleteTree: one or more objects could not be deleted")
             }
+        }
+        if lookup == .both {
+            // The prefix walk above never reaches the bare key itself (see
+            // the comment on the function) — this is the object half.
+            try await delete(bucket: bucket, key: key)
         }
     }
 

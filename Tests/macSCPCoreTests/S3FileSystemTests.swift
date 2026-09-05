@@ -499,37 +499,52 @@ struct S3FileSystemTests {
     </ListBucketResult>
     """
 
-    /// `delete`'s pre-check (`deleteLookup`) on a KEY THAT IS AN OBJECT: one
-    /// `HEAD` answers "does it exist" directly, so the `DELETE` follows with
-    /// no parent listing in between at all — the backlog row's whole point
-    /// (`docs/BACKLOG.md`, "The S3 delete lookup pages the whole parent
-    /// listing"), against the page walk `listedEntry` used to run.
-    @Test func deleteOnAFileSendsHeadThenDeleteAndNeverAParentListing() async throws {
+    /// `delete`'s pre-check (`deleteLookup`) on a KEY THAT IS AN OBJECT: a
+    /// `HEAD` answers "does it exist" directly, and — since 2026-09-05 — a
+    /// one-key list on `<key>/` always follows it too, to catch a key that
+    /// is ALSO a prefix (`docs/BACKLOG.md`, "A key that is both an object
+    /// and a prefix"). Neither is a page walk over the PARENT listing, the
+    /// backlog row's whole point (`docs/BACKLOG.md`, "The S3 delete lookup
+    /// pages the whole parent listing"), against the page walk
+    /// `listedEntry` used to run.
+    @Test func deleteOnAFileSendsHeadThenAOneKeyListThenDeleteAndNeverAParentListing() async throws {
         let (fs, transport) = try await connect(responses: [
             (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
+            (Data(emptyOneKeyListingXML.utf8), httpResponse(status: 200)),  // one-key list: no children
             (Data(), httpResponse(status: 204)),  // DELETE
         ])
 
         try await fs.delete(path: "/dir/file.txt")
 
         let requests = await transport.requests
-        // The positive: exactly the connect probe, then HEAD, then DELETE —
-        // a request-list equality, not just a count.
-        #expect(requests.map(\.httpMethod) == ["GET", "HEAD", "DELETE"])
+        // The positive: exactly the connect probe, then HEAD, the one-key
+        // list, then DELETE — a request-list equality, not just a count.
+        #expect(requests.map(\.httpMethod) == ["GET", "HEAD", "GET", "DELETE"])
         #expect(requests[1].url!.path(percentEncoded: true).hasSuffix("/dir/file.txt"))
-        #expect(requests[2].url!.path(percentEncoded: true).hasSuffix("/dir/file.txt"))
-        // The negative beside it: nothing after the connect probe carries a
-        // `delimiter` query — the shape only a parent listing has.
-        #expect(!requests.dropFirst().contains { ($0.url?.query ?? "").contains("delimiter") })
+        #expect(requests[3].url!.path(percentEncoded: true).hasSuffix("/dir/file.txt"))
+        // The negative beside it: the one-key list's `prefix` names the KEY
+        // itself (`dir/file.txt/`), never the shorter PARENT prefix
+        // (`dir/`) a page walk over siblings would use — that walk is
+        // exactly what this lookup replaced.
+        let listQuery = try #require(
+            URLComponents(url: requests[2].url!, resolvingAgainstBaseURL: false)?.queryItems)
+        #expect(listQuery.contains(URLQueryItem(name: "prefix", value: "dir/file.txt/")))
+        #expect(!listQuery.contains(URLQueryItem(name: "prefix", value: "dir/")))
     }
 
     /// A 404 on the DELETE ITSELF still maps to `notFound` — the `HEAD`
-    /// found the object, so the 404 can only have come from the DELETE.
-    /// (`deleteOnAMissingKeyThrowsNotFoundAndSendsNoDelete` below covers
-    /// the other, now far more common, way to reach that case.)
+    /// found the object and the one-key list found no children, so the 404
+    /// can only have come from the DELETE. (Without the intervening
+    /// one-key-list response, the second canned response would be consumed
+    /// as THAT list's answer instead, and a 404 there maps to `notFound`
+    /// too — passing this test for the wrong reason, without the `DELETE`
+    /// it claims to cover ever being sent. `deleteOnAMissingKeyThrowsNotFoundAndSendsNoDelete`
+    /// below covers the other, now far more common, way to reach
+    /// `.notFound`.)
     @Test func deleteNotFoundResponseThrowsNotFound() async throws {
-        let (fs, _) = try await connect(responses: [
+        let (fs, transport) = try await connect(responses: [
             (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
+            (Data(emptyOneKeyListingXML.utf8), httpResponse(status: 200)),  // one-key list: no children
             (Data(), httpResponse(status: 404)),  // DELETE
         ])
         do {
@@ -543,6 +558,11 @@ struct S3FileSystemTests {
         } catch {
             Issue.record("unexpected error type: \(error)")
         }
+        // The positive this comment's claim depends on: the `DELETE`
+        // actually went out. Without this, the test above would still pass
+        // if the 404 came from the one-key list instead, which is exactly
+        // the wrong-reason failure mode the comment above warns about.
+        #expect(await transport.requests.map(\.httpMethod) == ["GET", "HEAD", "GET", "DELETE"])
     }
 
     /// `RemoteFileSystem.delete`'s contract: "Throws
@@ -603,6 +623,32 @@ struct S3FileSystemTests {
 
         let requests = await transport.requests
         #expect(requests.map(\.httpMethod) == ["GET", "HEAD", "GET"])
+        #expect(!requests.contains { $0.httpMethod == "DELETE" })
+    }
+
+    /// The rule this backlog row states (`docs/BACKLOG.md`, "A key that is
+    /// both an object and a prefix"): S3 permits `a.txt` and `a.txt/child`
+    /// to coexist, and `delete` on such a key REFUSES rather than let the
+    /// listing's document order silently pick which half wins. The `HEAD`
+    /// answers 200 (it is an object) and the one-key list on `x/` comes
+    /// back non-empty (it is also a prefix) — `deleteLookup`'s `.both`.
+    @Test func deleteOnAKeyThatIsBothAnObjectAndAPrefixRefusesAndSendsNoDelete() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
+            (Data(listingWithKeys(["x/child"]).utf8), httpResponse(status: 200)),  // one-key list: a child exists
+        ])
+
+        await #expect(throws: RemoteFSError.protocolError(
+            reason: "S3 delete: /x is both an object and a folder")
+        ) {
+            try await fs.delete(path: "/x")
+        }
+
+        // The positive: exactly the connect probe, the HEAD, and the
+        // one-key list — nothing else.
+        let requests = await transport.requests
+        #expect(requests.map(\.httpMethod) == ["GET", "HEAD", "GET"])
+        // The negative beside it: no DELETE is ever sent.
         #expect(!requests.contains { $0.httpMethod == "DELETE" })
     }
 
@@ -1052,11 +1098,15 @@ struct S3FileSystemTests {
     /// The assertion is the request SHAPE, not just the count: a plain file
     /// leaves through the same single `DELETE` on its own key that `delete`
     /// sends, and no `POST ?delete` batch is issued at all. `deleteLookup`
-    /// settles it with the `HEAD` alone — 200 is `.file`, so the one-key
-    /// list never runs.
+    /// runs its one-key list too — unconditionally, since 2026-09-05, to
+    /// tell a plain file apart from a key that is ALSO a prefix
+    /// (`docs/BACKLOG.md`, "A key that is both an object and a prefix") —
+    /// but that list comes back with no children, so the object branch is
+    /// still `.file`, not `.both`.
     @Test func deleteTreeOnAPlainFileSendsOneDeleteOnItsKey() async throws {
         let (fs, transport) = try await connect(responses: [
             (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
+            (Data(emptyOneKeyListingXML.utf8), httpResponse(status: 200)),  // one-key list: no children
             (Data(), httpResponse(status: 204)),
         ])
 
@@ -1067,6 +1117,38 @@ struct S3FileSystemTests {
         #expect(deletes.count == 1)
         #expect(deletes.first?.url?.path(percentEncoded: true).hasSuffix("/a.txt") == true)
         #expect(!requests.contains { ($0.url?.query ?? "").contains("delete") })
+    }
+
+    /// `deleteTree` on a key that is BOTH an object and a prefix
+    /// (`docs/BACKLOG.md`, "A key that is both an object and a prefix")
+    /// does NOT refuse the way `delete` does: its own contract already
+    /// promises "the entire contents", so it removes the object AND the
+    /// subtree. The subtree goes through the same batched `DeleteObjects`
+    /// walk any directory takes; the object needs its own extra `DELETE` on
+    /// the bare key, since the prefix walk enumerates `<key>/*` and never
+    /// reaches the bare key itself.
+    @Test func deleteTreeOnAKeyThatIsBothAnObjectAndAPrefixRemovesTheObjectAndTheSubtree() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
+            (Data(listingWithKeys(["x/child"]).utf8), httpResponse(status: 200)),  // one-key list: a child exists
+            (Data(listingWithKeys(["x/child"]).utf8), httpResponse(status: 200)),  // allObjectKeys: the subtree
+            (Data("<DeleteResult></DeleteResult>".utf8), httpResponse(status: 200)),  // batch DELETE of the subtree
+            (Data(), httpResponse(status: 204)),  // DELETE of the bare key itself
+        ])
+
+        try await fs.deleteTree(at: "/x")
+
+        // The positive: the exact request sequence, not just a count —
+        // connect probe, HEAD, the one-key list, the subtree list, the
+        // batch DELETE, and finally the bare key's own DELETE.
+        let requests = await transport.requests
+        #expect(requests.map(\.httpMethod) == ["GET", "HEAD", "GET", "GET", "POST", "DELETE"])
+        let batchBody = String(data: requests[4].httpBody!, encoding: .utf8)!
+        #expect(batchBody.contains("<Key>x/child</Key>"))
+        // The negative beside it: the batch never names the bare key —
+        // that one goes out on its own `DELETE`, last.
+        #expect(!batchBody.contains("<Key>x</Key>"))
+        #expect(requests.last!.url!.path(percentEncoded: true).hasSuffix("/x"))
     }
 
     // MARK: - Checksums (the ETag from the listing, read for what it is)
@@ -1500,6 +1582,7 @@ struct S3FileSystemTests {
     @Test func aDeleteRoutesIntoTheBucketNamedByThePath() async throws {
         let (fs, transport) = try await connectAtBucketList(responses: [
             (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
+            (Data(emptyOneKeyListingXML.utf8), httpResponse(status: 200)),  // one-key list: no children
             (Data(), httpResponse(status: 204)),
         ])
 
@@ -1662,6 +1745,7 @@ struct S3FileSystemTests {
     @Test func oneLevelInsideABucketTheSameOperationsGoThrough() async throws {
         let (fs, transport) = try await connectAtBucketList(responses: [
             (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
+            (Data(emptyOneKeyListingXML.utf8), httpResponse(status: 200)),  // one-key list: no children
             (Data(), httpResponse(status: 204)),
         ])
 
@@ -1819,6 +1903,7 @@ struct S3FileSystemTests {
     @Test func anErrorInListModeNamesThePathWithItsBucket() async throws {
         let (fs, _) = try await connectAtBucketList(responses: [
             (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
+            (Data(emptyOneKeyListingXML.utf8), httpResponse(status: 200)),  // one-key list: no children
             (Data(), httpResponse(status: 404)),  // DELETE
         ])
 
@@ -1840,6 +1925,7 @@ struct S3FileSystemTests {
     @Test func withTheToggleOffAnErrorNamesTheSamePathAsBefore() async throws {
         let (fs, _) = try await connect(responses: [
             (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
+            (Data(emptyOneKeyListingXML.utf8), httpResponse(status: 200)),  // one-key list: no children
             (Data(), httpResponse(status: 404)),  // DELETE
         ])
 
