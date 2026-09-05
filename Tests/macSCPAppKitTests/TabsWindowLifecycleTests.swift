@@ -160,13 +160,12 @@ struct TabsWindowLifecycleTests {
 
     // MARK: - The sequence
 
-    /// The window is leaving, so the model is allowed to end up empty — and
-    /// this test reads it in exactly the state a view would find it in, one
-    /// synchronous step after the move. `activeTab` is deliberately NOT
-    /// read: on an emptied model it traps, and the whole point of the
-    /// sequence returning `true` here is that the window closes before
-    /// anything can read it.
-    @Test func theLastTabOfANonLastWindowLeavesAnEmptyModelAndAsksForTheClose() {
+    /// A window that is losing its only tab still ends the step with a tab
+    /// in it — a fresh one, standing in for the leaver. It has to: the
+    /// close no longer happens in this turn (it waits for `reclaim`), so a
+    /// view body WILL run over this model, and `activeTab` traps on the
+    /// emptied one. Reading `activeTab` here is the assertion.
+    @Test func theLastTabOfANonLastWindowIsReplacedAndTheWindowIsToldToClose() {
         let registry = TabRegistry()
         let window = WindowID()
         let tab = makeTab()
@@ -174,33 +173,33 @@ struct TabsWindowLifecycleTests {
         registry.register(tab, in: window)
         // A second window, so this one is not the last.
         registry.register(makeTab(), in: WindowID())
-        let seedID = UUID()
+        let seed = WindowSeed(tabIDs: [tab.id])
 
-        let closing = TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: seedID, in: registry,
-            replacement: { self.makeTab() })
+        let outcome = TabDetachSequence.move(
+            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            replacement: { self.makeTab() }, openWindow: { _ in })
 
-        #expect(closing)
-        #expect(model.tabs.isEmpty)
-        #expect(registry.parkedTabs(for: seedID).first === tab)
+        #expect(outcome.closesWindow)
+        #expect(model.tabs.count == 1)
+        #expect(model.tabs[0].id == outcome.replacementID)
+        #expect(model.activeTab.id == outcome.replacementID)
+        #expect(registry.parkedTabs(for: seed.id).first === tab)
     }
 
-    /// The last window stays, so the invariant `activeTab` depends on has to
-    /// be restored before the step returns: a fresh tab is put in its place
-    /// and `activeTab` resolves again. Reading `activeTab` here is the
-    /// assertion — it would trap if the model had been left empty.
-    @Test func theLastTabOfTheLastWindowIsReplacedRatherThanLeavingItEmpty() {
+    /// The last window is told to stay, and gets the same replacement — the
+    /// only difference between the two cases is the answer, not the state.
+    @Test func theLastTabOfTheLastWindowIsReplacedAndTheWindowStays() {
         let registry = TabRegistry()
         let window = WindowID()
         let tab = makeTab()
         let model = TabsViewModel<SessionTab>(initial: tab)
         registry.register(tab, in: window)
 
-        let closing = TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: UUID(), in: registry,
-            replacement: { self.makeTab() })
+        let outcome = TabDetachSequence.move(
+            tab.id, outOf: model, parkingUnder: WindowSeed(tabIDs: [tab.id]), in: registry,
+            replacement: { self.makeTab() }, openWindow: { _ in })
 
-        #expect(closing == false)
+        #expect(outcome.closesWindow == false)
         #expect(model.tabs.count == 1)
         #expect(model.tabs[0].id != tab.id)
         #expect(model.activeTab.id == model.tabs[0].id)
@@ -217,11 +216,12 @@ struct TabsWindowLifecycleTests {
         registry.register(staying, in: window)
         registry.register(makeTab(), in: WindowID())
 
-        let closing = TabDetachSequence.move(
-            leaving.id, outOf: model, parkingUnder: UUID(), in: registry,
-            replacement: { self.makeTab() })
+        let outcome = TabDetachSequence.move(
+            leaving.id, outOf: model, parkingUnder: WindowSeed(tabIDs: [leaving.id]),
+            in: registry, replacement: { self.makeTab() }, openWindow: { _ in })
 
-        #expect(closing == false)
+        #expect(outcome.closesWindow == false)
+        #expect(outcome.replacementID == nil)
         #expect(model.tabs.count == 1)
         #expect(model.tabs[0] === staying)
         #expect(model.activeTab.id == staying.id)
@@ -232,7 +232,8 @@ struct TabsWindowLifecycleTests {
     /// path can touch it — `detach`, `park` and `claim` move a reference
     /// between collections and nothing else (Global Constraints: "a move
     /// never touches the connection", pinned against the connection itself
-    /// in `TabRegistryTests`).
+    /// in `TabRegistryTests` and structurally in
+    /// `TabRegistryNoTeardownGuardTests`).
     @Test func theTabThatArrivesIsTheTabThatLeft() {
         let registry = TabRegistry()
         let source = WindowID()
@@ -240,34 +241,133 @@ struct TabsWindowLifecycleTests {
         let model = TabsViewModel<SessionTab>(initial: tab)
         model.addTab(makeTab())
         registry.register(tab, in: source)
-        let seedID = UUID()
+        let seed = WindowSeed(tabIDs: [tab.id])
 
         TabDetachSequence.move(
-            tab.id, outOf: model, parkingUnder: seedID, in: registry,
-            replacement: { self.makeTab() })
+            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            replacement: { self.makeTab() }, openWindow: { _ in })
 
         let target = WindowID()
-        let arrived = registry.claim(seedID: seedID, into: target)
+        let arrived = registry.claim(seedID: seed.id, into: target)
         #expect(arrived.first === tab)
         #expect(registry.windowHolding(tab.id) == target)
     }
 
-    /// An id the model does not hold moves nothing and parks nothing — a
-    /// repeated or stale invocation cannot conjure a window.
+    /// An id the model does not hold moves nothing, parks nothing, and — the
+    /// part the `openWindow` seam makes visible — opens no window.
     @Test func anIDTheModelDoesNotHoldMovesNothing() {
         let registry = TabRegistry()
         let tab = makeTab()
         let model = TabsViewModel<SessionTab>(initial: tab)
         registry.register(tab, in: WindowID())
-        let seedID = UUID()
+        let seed = WindowSeed(tabIDs: [UUID()])
+        var opened: [WindowSeed] = []
 
-        let closing = TabDetachSequence.move(
-            UUID(), outOf: model, parkingUnder: seedID, in: registry,
-            replacement: { self.makeTab() })
+        let outcome = TabDetachSequence.move(
+            UUID(), outOf: model, parkingUnder: seed, in: registry,
+            replacement: { self.makeTab() }, openWindow: { opened.append($0) })
 
-        #expect(closing == false)
+        #expect(outcome == .none)
+        #expect(opened.isEmpty)
         #expect(model.tabs.count == 1)
-        #expect(registry.parkedTabs(for: seedID).isEmpty)
+        #expect(registry.parkedTabs(for: seed.id).isEmpty)
+    }
+
+    /// The tab is parked BEFORE the window is asked for, so a window that
+    /// claims synchronously finds something to claim. Read through the seam:
+    /// the closure sees the parked tab at the moment it is called.
+    @Test func theTabIsParkedBeforeTheWindowIsOpened() {
+        let registry = TabRegistry()
+        let tab = makeTab()
+        let model = TabsViewModel<SessionTab>(initial: tab)
+        model.addTab(makeTab())
+        registry.register(tab, in: WindowID())
+        let seed = WindowSeed(tabIDs: [tab.id])
+        var parkedWhenOpened: [UUID] = []
+
+        TabDetachSequence.move(
+            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            replacement: { self.makeTab() },
+            openWindow: { parkedWhenOpened = registry.parkedTabs(for: $0.id).map(\.id) })
+
+        #expect(parkedWhenOpened == [tab.id])
+    }
+
+    // MARK: The reclaim (the window never opened)
+
+    /// The failure the ordering exists for (fix round 1): the open is
+    /// refused or lost, nothing claims the seed, and one turn later the tab
+    /// must be back where it started rather than parked forever with a live
+    /// connection and no window. Driven through the seam — an `openWindow`
+    /// that does nothing is exactly "the window never opened".
+    @Test func aWindowThatNeverOpenedGivesTheTabBack() {
+        let registry = TabRegistry()
+        let window = WindowID()
+        let tab = makeTab()
+        let model = TabsViewModel<SessionTab>(initial: tab)
+        registry.register(tab, in: window)
+        registry.register(makeTab(), in: WindowID())
+        let seed = WindowSeed(tabIDs: [tab.id])
+
+        let outcome = TabDetachSequence.move(
+            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            replacement: { self.makeTab() }, openWindow: { _ in })
+        #expect(outcome.closesWindow)
+
+        let cameBack = TabDetachSequence.reclaim(
+            seedID: seed.id, into: model, from: registry,
+            window: window, removing: outcome.replacementID)
+
+        #expect(cameBack)
+        #expect(model.tabs.count == 1)
+        #expect(model.tabs[0] === tab)
+        #expect(model.activeTab.id == tab.id)
+        #expect(registry.windowHolding(tab.id) == window)
+        #expect(registry.parkedTabs(for: seed.id).isEmpty)
+    }
+
+    /// The positive beside it: when a window DID claim the seed, the
+    /// reclaim finds nothing, answers `false`, and leaves the source window
+    /// exactly as the move left it — so the caller goes on to close it.
+    @Test func aWindowThatClaimedTheSeedLeavesNothingToReclaim() {
+        let registry = TabRegistry()
+        let window = WindowID()
+        let target = WindowID()
+        let tab = makeTab()
+        let model = TabsViewModel<SessionTab>(initial: tab)
+        registry.register(tab, in: window)
+        registry.register(makeTab(), in: WindowID())
+        let seed = WindowSeed(tabIDs: [tab.id])
+
+        let outcome = TabDetachSequence.move(
+            tab.id, outOf: model, parkingUnder: seed, in: registry,
+            replacement: { self.makeTab() },
+            openWindow: { _ = registry.claim(seedID: $0.id, into: target) })
+
+        let cameBack = TabDetachSequence.reclaim(
+            seedID: seed.id, into: model, from: registry,
+            window: window, removing: outcome.replacementID)
+
+        #expect(cameBack == false)
+        #expect(outcome.closesWindow)
+        #expect(model.tabs.count == 1)
+        #expect(model.tabs[0].id == outcome.replacementID)
+        #expect(registry.windowHolding(tab.id) == target)
+    }
+
+    /// A reclaim into a window that never lost anything is a no-op — the
+    /// same reading every other function here takes of an id or a seed it
+    /// does not know.
+    @Test func aSeedNothingWasParkedUnderReclaimsNothing() {
+        let registry = TabRegistry()
+        let tab = makeTab()
+        let model = TabsViewModel<SessionTab>(initial: tab)
+        let cameBack = TabDetachSequence.reclaim(
+            seedID: UUID(), into: model, from: registry,
+            window: WindowID(), removing: nil)
+        #expect(cameBack == false)
+        #expect(model.tabs.count == 1)
+        #expect(model.tabs[0] === tab)
     }
 
     // MARK: - Source guards
@@ -286,6 +386,14 @@ struct TabsWindowLifecycleTests {
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
     private static let stripFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/TabStripView.swift")
+    /// Every menu this app adds — its own `Commands` type since the bridge
+    /// became a focused scene value (fix round 1).
+    private static let commandsFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/MacSCPCommands.swift")
+    private static let detailFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
+    private static let sheetsFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Sheets.swift")
 
     private static let catalogLocales = ["en", "de", "fr", "pl"]
 
@@ -425,12 +533,29 @@ struct TabsWindowLifecycleTests {
     /// closing must not reach it.
     @Test func theWindowsClosePathNeverTerminatesTheApplication() throws {
         let source = try Self.code(of: Self.lifecycleFile)
+        // BOTH halves of the close path, not just the second (fix round 1):
+        // `handleWindowWillClose(_:)` is what the notification reaches, and
+        // it could quit the app before ever calling the function below.
+        let notified = try #require(
+            Self.body(after: "func handleWindowWillClose(_ notification: Notification) {",
+                      in: source), """
+                ContentView+Lifecycle.swift no longer declares \
+                handleWindowWillClose(_:) — re-anchor this guard.
+                """)
         let closePath = try #require(
             Self.body(after: "func releaseHeldTabsOnClose() {", in: source), """
                 ContentView+Lifecycle.swift no longer declares \
                 releaseHeldTabsOnClose() — re-anchor this guard.
                 """)
-        let terminates = closePath.contains("terminate(")
+        // The positive: the notified half really does hand over to the
+        // released half, so neither body is being scanned in isolation from
+        // the other.
+        let handsOver = notified.contains("releaseHeldTabsOnClose()")
+        #expect(handsOver, """
+            handleWindowWillClose(_:) no longer calls releaseHeldTabsOnClose() — \
+            a closing window would leave its tabs connected and registered.
+            """)
+        let terminates = notified.contains("terminate(") || closePath.contains("terminate(")
         #expect(terminates == false, """
             the window's close path terminates the application — closing one \
             window of several would quit macSCP and take every other \
@@ -500,7 +625,7 @@ struct TabsWindowLifecycleTests {
     /// read differently.
     @Test func bothSurfacesResolveTheMoveEntryThroughOneKey() throws {
         let strip = try Self.codeWithLiterals(of: Self.stripFile)
-        let app = try Self.codeWithLiterals(of: Self.appFile)
+        let app = try Self.codeWithLiterals(of: Self.commandsFile)
         let stripResolves = strip.contains("L10n.string(\"window.moveTabToNewWindow\"")
         let appResolves = app.contains("L10n.string(\"window.moveTabToNewWindow\"")
         #expect(stripResolves, """
@@ -509,7 +634,7 @@ struct TabsWindowLifecycleTests {
             own key text.
             """)
         #expect(appResolves, """
-            MacSCPApp.swift no longer resolves window.moveTabToNewWindow \
+            MacSCPCommands.swift no longer resolves window.moveTabToNewWindow \
             through L10n.string( — the Window menu entry would render as its \
             own key text.
             """)
@@ -532,6 +657,126 @@ struct TabsWindowLifecycleTests {
     /// language can return it, so the assertion holds in all four.
     @Test func theMoveEntrysKeyResolvesInTheBundleTheAppReads() {
         #expect(L10n.string("window.moveTabToNewWindow", "ZZ-UNRESOLVED-ZZ") != "ZZ-UNRESOLVED-ZZ")
+    }
+
+    // MARK: The menus follow the focused window
+
+    /// The shape that replaced one app-wide bridge and its key-window
+    /// guards (fix round 1): each window publishes its own `TabCommands`
+    /// and the menus read the focused one back.
+    @Test func theMenusReadTheFocusedWindowsBridge() throws {
+        let commands = try Self.code(of: Self.commandsFile)
+        let detail = try Self.code(of: Self.detailFile)
+        let readsFocusedValue = commands.contains("@FocusedValue(\\.tabCommands)")
+        let windowPublishesIt = detail.contains(".focusedSceneValue(\\.tabCommands, tabCommands)")
+        #expect(readsFocusedValue, """
+            MacSCPCommands.swift no longer reads @FocusedValue(\\.tabCommands) — \
+            the menus would act on no window, or on whichever one wrote last.
+            """)
+        #expect(windowPublishesIt, """
+            ContentView+Detail.swift no longer publishes this window's bridge \
+            with .focusedSceneValue(\\.tabCommands, tabCommands) — the menus \
+            would read nil from every window.
+            """)
+    }
+
+    /// The negative beside the two positives above: nothing works out
+    /// afterwards WHICH window it is. A `NSApp.keyWindow` read or a
+    /// `didBecomeKeyNotification` observer in either file is the old shape
+    /// coming back — one bridge, several writers, and a guard in every
+    /// closure to sort out the mess.
+    @Test func nothingReAsksWhichWindowIsKey() throws {
+        let commands = try Self.code(of: Self.commandsFile)
+        let lifecycle = try Self.code(of: Self.lifecycleFile)
+        let detail = try Self.code(of: Self.detailFile)
+        for (name, source) in [
+            ("MacSCPCommands.swift", commands),
+            ("ContentView+Lifecycle.swift", lifecycle),
+            ("ContentView+Detail.swift", detail),
+        ] {
+            let readsKeyWindow = source.contains("NSApp.keyWindow")
+            let observesBecomeKey = source.contains("didBecomeKeyNotification")
+            let guardsOnKeyWindow = source.contains("isKeyWindow")
+            #expect(readsKeyWindow == false, """
+                \(name) reads NSApp.keyWindow again — the focused value already \
+                names the window the menus act on.
+                """)
+            #expect(observesBecomeKey == false, """
+                \(name) observes didBecomeKeyNotification again — the re-wire it \
+                drove was replaced by the focused value.
+                """)
+            #expect(guardsOnKeyWindow == false, """
+                \(name) guards on isKeyWindow again — being focused is already the \
+                precondition for the bridge being read at all.
+                """)
+        }
+    }
+
+    /// The menu-bar status item shows the KEY window's tabs, and says so
+    /// where it publishes them.
+    @Test func theMenuBarIsPublishedOnlyByTheKeyWindow() throws {
+        let lifecycle = try Self.code(of: Self.lifecycleFile)
+        let publish = try #require(
+            Self.body(after: "func publishToMenuBarIfKey() {", in: lifecycle), """
+                ContentView+Lifecycle.swift no longer declares \
+                publishToMenuBarIfKey() — re-anchor this guard.
+                """)
+        let gated = publish.contains("controlActiveState == .key")
+        let publishesTabs = publish.contains("menuBarModel.tabs = tabsModel.tabs")
+        #expect(gated, """
+            the menu-bar publish is no longer gated on this window being key — \
+            a background window's tabs would appear in the status item.
+            """)
+        #expect(publishesTabs, """
+            the menu-bar publish no longer writes menuBarModel.tabs — the gate \
+            above would then be guarding nothing.
+            """)
+    }
+
+    /// The update-check alert belongs to the primary window, like the
+    /// what's-new sheet: one check writes one result, and every window that
+    /// attached the alert raised its own copy of it.
+    @Test func theUpdateAlertIsPresentedByThePrimaryWindowAlone() throws {
+        let sheets = try Self.code(of: Self.sheetsFile)
+        let lifecycle = try Self.code(of: Self.lifecycleFile)
+        let alertIsThere = sheets.contains("updateModel.presentedResult != nil")
+        let alertIsGated = sheets.contains("isPrimaryWindow && updateModel.presentedResult != nil")
+        let targetIsGated = sheets.contains("isPrimaryWindow")
+            && lifecycle.contains("if isPrimaryWindow { updateModel.hasPresentationTarget = true }")
+        #expect(alertIsThere, """
+            ContentView+Sheets.swift no longer presents updateModel.presentedResult \
+            at all — re-anchor this guard.
+            """)
+        #expect(alertIsGated, """
+            the update-check alert is no longer gated on isPrimaryWindow — every \
+            open window would raise its own copy of one result.
+            """)
+        #expect(targetIsGated, """
+            a window that does not present the alert still claims \
+            updateModel.hasPresentationTarget — a manual check's result would go \
+            to an alert nobody shows instead of to the NSAlert fallback.
+            """)
+    }
+
+    // MARK: Restoration
+
+    /// A `Codable` seed on a value-keyed `WindowGroup` is enough for macOS
+    /// to reopen every detached window at the next launch, each with a seed
+    /// nobody parked anything under. Task 5 is what makes restoration mean
+    /// something; until then the group opts out.
+    @Test func theWindowGroupOptsOutOfSystemRestoration() throws {
+        let source = try Self.code(of: Self.appFile)
+        let keyed = source.contains("for: WindowSeed.self")
+        let optedOut = source.contains(".restorationBehavior(.disabled)")
+        #expect(keyed, """
+            MacSCPApp.swift's WindowGroup is no longer value-keyed — re-anchor \
+            this guard, and check whether restoration is still a hazard.
+            """)
+        #expect(optedOut, """
+            MacSCPApp.swift's WindowGroup no longer declares \
+            .restorationBehavior(.disabled) — the next launch would reopen one \
+            window per moved tab, each holding an empty form tab.
+            """)
     }
 
     // MARK: - The scanner reacts (self-tests over synthetic source)

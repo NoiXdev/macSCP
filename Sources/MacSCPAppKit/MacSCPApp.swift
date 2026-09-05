@@ -1,12 +1,27 @@
 import SwiftUI
 import macSCPCore
 
-/// Command bridge (M8a/T4): the WindowGroup's `.commands` closures are built
-/// by `MacSCPApp`, which holds no reference to `ContentView` — the menu
-/// items call these closures, and `ContentView` assigns them (in `.task`) to
-/// its own tab-lifecycle methods. `@Observable` for consistency with the
-/// app's other cross-layer bridges (`ConflictPromptBridge`); the closures
-/// themselves are read once per invocation, not observed reactively.
+/// One window's menu bridge (M8a/T4): `MacSCPCommands` holds no reference
+/// to `ContentView` — the menu items call these closures, and `ContentView`
+/// assigns them (in `wireTabCommands()`) to its own tab-lifecycle methods.
+/// `@Observable` for consistency with the app's other cross-layer bridges
+/// (`ConflictPromptBridge`); the closures themselves are read once per
+/// invocation, not observed reactively.
+///
+/// **Per window, not per app** (Detachable Tabs plan, Task 2 fix round 1).
+/// Each `ContentView` owns one and publishes it with
+/// `.focusedSceneValue(\.tabCommands, …)`; the menus read the FOCUSED
+/// window's instance back with `@FocusedValue`. Before that there was one
+/// instance for the whole app, and every closure carried a
+/// `window?.isKeyWindow` guard to decide after the fact whether it was the
+/// right window — which a second window broke twice over: the closures
+/// belonged to whichever window ran its setup last, and the mirrored
+/// enabled-state values to whichever window changed last, background
+/// windows included. None of those guards survives; being focused is now
+/// the precondition for being read at all.
+///
+/// What could NOT become per window is on `SettingsWindowBridge` — see
+/// that type for why.
 @MainActor
 @Observable
 final class TabCommands {
@@ -38,35 +53,6 @@ final class TabCommands {
     /// parameter on the existing audit hook, because there is no session to
     /// pass -- the ad-hoc log's session is a value the App layer builds.
     var showAdHocAuditLog: (() -> Void)?
-    /// Settings-window route to the login-sets sheet ("Manage Data" section).
-    ///
-    /// Deliberately a SEPARATE closure from `showLogins` above, and the only
-    /// pair in this bridge whose `ContentView` end carries NO key-window
-    /// guard: the Settings window is the key window when this fires, so the
-    /// guard would turn it into a no-op. It exists at all because Settings
-    /// must not present its own copy of `LoginSetsSheet` — see the wiring
-    /// comment in `ContentView.performWindowSetup()` for the exact hazard.
-    var showLoginsFromSettings: (() -> Void)?
-    /// Settings-window route to the server-certificate sheet — same shape as
-    /// `showLoginsFromSettings` above; the reason is trust, not state (see
-    /// `ContentView.presentServerCertificatesFromSettings()`).
-    var showServerCertificatesFromSettings: (() -> Void)?
-    /// Settings-window route to the hidden-imports sheet — same shape and
-    /// same reason as `showLoginsFromSettings` above.
-    var showHiddenImportsFromSettings: (() -> Void)?
-    /// Whether a main window EXISTS (M8a/T4 mirror pattern, same as
-    /// `isActiveTabConnected` below): the three routed entries above have
-    /// nowhere to go without one, so the "Manage Data" section disables them
-    /// rather than letting the click vanish. `ContentView` keeps this in sync
-    /// from `updateMainWindowPresence()`/`handleWindowWillClose(_:)`, and it
-    /// starts `false` — no window has resolved yet at that point.
-    ///
-    /// Existence, not visibility: the routed handlers raise the window before
-    /// presenting, and raising deminiaturizes and unhides it, so a minimized
-    /// window or a hidden app is still a window those entries work on. Asking
-    /// `isVisible` here would grey them out (or worse, leave them enabled on a
-    /// stale `true`) for states in which the action would have succeeded.
-    var hasMainWindow = false
     /// Mirrors `ContentView`'s `hiddenImportAliases.count` (M11f/T2, same
     /// rationale as `isActiveTabConnected` below): the "Hidden Imports…"
     /// menu title's count suffix needs this observed value since `MacSCPApp`
@@ -185,6 +171,64 @@ final class TabCommands {
     var canMoveTabToNewWindow = false
 }
 
+/// The Settings window's route into a main window, and the one bridge in
+/// this app that is deliberately NOT per window.
+///
+/// The "Manage Data" section presents login sets, server certificates and
+/// hidden imports through a MAIN window's sheets rather than opening a
+/// second copy of each in the Settings window. It cannot use the focused
+/// value `TabCommands` travels on (`MacSCPCommands.swift`): when these
+/// entries are clicked the Settings window IS the focused one, so the
+/// focused bridge is `nil` by definition. So this stays an app-wide object
+/// every window writes into, and "the main window" means the window that
+/// wrote last — the same meaning it had when there was only ever one.
+///
+/// It was carved out of `TabCommands` in the Detachable Tabs plan, Task 2
+/// fix round 1, when that type became per window: these five members are
+/// the ones that could not travel with it.
+@MainActor
+@Observable
+final class SettingsWindowBridge {
+    /// Settings-window route to the login-sets sheet ("Manage Data"
+    /// section).
+    ///
+    /// Deliberately a SEPARATE closure from `TabCommands.showLogins`: that
+    /// one belongs to the focused window and would be `nil` here, because
+    /// the Settings window is the focused one when this fires. It exists at
+    /// all because Settings must not present its own copy of
+    /// `LoginSetsSheet` — see the wiring comment in
+    /// `ContentView.wireTabCommands()` for the exact hazard.
+    var showLoginsFromSettings: (() -> Void)?
+    /// Settings-window route to the server-certificate sheet — same shape as
+    /// `showLoginsFromSettings` above; the reason is trust, not state (see
+    /// `ContentView.presentServerCertificatesFromSettings()`).
+    var showServerCertificatesFromSettings: (() -> Void)?
+    /// Settings-window route to the hidden-imports sheet — same shape and
+    /// same reason as `showLoginsFromSettings` above.
+    var showHiddenImportsFromSettings: (() -> Void)?
+    /// Whether a main window EXISTS: the three routed entries above have
+    /// nowhere to go without one, so the "Manage Data" section disables them
+    /// rather than letting the click vanish. `ContentView` keeps this in sync
+    /// from `updateMainWindowPresence()`/`handleWindowWillClose(_:)`, and it
+    /// starts `false` — no window has resolved yet at that point.
+    ///
+    /// Existence, not visibility: the routed handlers raise the window before
+    /// presenting, and raising deminiaturizes and unhides it, so a minimized
+    /// window or a hidden app is still a window those entries work on. Asking
+    /// `isVisible` here would grey them out (or worse, leave them enabled on a
+    /// stale `true`) for states in which the action would have succeeded.
+    var hasMainWindow = false
+    /// The hidden-import count the "Manage Data" entry's title shows.
+    ///
+    /// The SAME number also lives on `TabCommands`, and the duplication is
+    /// deliberate rather than an oversight: the Sessions menu's own "Hidden
+    /// Imports…" title shows the FOCUSED window's count, and this one shows
+    /// the count of whichever window the "Manage Data" entries would route
+    /// to. With one window open the two are the same number; with two open
+    /// they are answers to different questions.
+    var hiddenImportsCount = 0
+}
+
 /// Wired into `MacSCPApp` through `@NSApplicationDelegateAdaptor` below —
 /// SwiftUI's own `App` protocol has no termination callback of its own, and
 /// `NSApplication.willTerminateNotification` (a prior round's choice, now
@@ -233,7 +277,7 @@ struct MacSCPApp: App {
     /// fixed directory, so a plain default-initialized `@State` is enough.
     @State private var auditStore = AuditLogStore(directory: AuditLogStore.defaultDirectory)
     /// Tab menu command bridge (M8a/T4) — see `TabCommands`.
-    @State private var tabCommands = TabCommands()
+    @State private var settingsBridge = SettingsWindowBridge()
     /// App-global update-check state (M11b/T2) — see `UpdateCheckModel`'s
     /// doc comment for why this lives here rather than in `ContentView`'s
     /// per-tab machinery.
@@ -443,7 +487,7 @@ struct MacSCPApp: App {
     private func windowContent(seed: WindowSeed?) -> some View {
         ContentView(
             settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
-            auditStore: auditStore, tabCommands: tabCommands, updateModel: updateModel,
+            auditStore: auditStore, settingsBridge: settingsBridge, updateModel: updateModel,
             menuBarModel: menuBarModel, seed: seed)
             // Diagnostic log (Diagnostic Log plan, Task 2): the General
             // settings pane's picker writes `settingsStore
@@ -474,178 +518,33 @@ struct MacSCPApp: App {
                 primaryWindow()
             }
         }
-        .commands {
-            // "Check for Updates…" (M11b/T2), directly under "About macSCP"
-            // (spec §4). App-global, not routed through the `tabCommands`
-            // key-window bridge like the tab/session commands below — the
-            // check itself doesn't depend on which window is focused, it
-            // just compares the running bundle against the latest GitHub
-            // release. Disabled while a check is already running (spec §4
-            // multi-click guard); a manual click always presents a result,
-            // shown via `updateModel.presentedResult` in `ContentView`'s
-            // alert (the app's one window, where app-global result dialogs
-            // already live — see the import/export alerts there).
-            CommandGroup(after: .appInfo) {
-                Button(L10n.string("menu.checkForUpdates", "Check for Updates…")) {
-                    Task { await updateModel.check(manual: true, settingsStore: settingsStore) }
-                }
-                .disabled(updateModel.isChecking)
-            }
-            // Replaces the default "New Window" (⌘N) — this is a single-window,
-            // multi-tab app (M8a/T4): ⌘N opens a new TAB instead. "Close Tab"
-            // (⌘W) lives in the same group; it shadows the system "Close"
-            // command with the same shortcut (there is no dedicated
-            // `CommandGroupPlacement` to replace it outright), routing through
-            // `tabCommands.closeActiveTab` which falls back to closing the
-            // window when the active tab is the last, unconnected one.
-            CommandGroup(replacing: .newItem) {
-                Button(L10n.string("menu.newTab", "New Tab")) {
-                    tabCommands.newTab?()
-                }
-                .keyboardShortcut("n", modifiers: .command)
-                Button(L10n.string("menu.closeTab", "Close Tab")) {
-                    tabCommands.closeActiveTab?()
-                }
-                .keyboardShortcut("w", modifiers: .command)
-            }
-            // The Window menu's own entries: "Move Tab to New Window"
-            // (Detachable Tabs plan, Task 2) and, below the divider, ⌘1–⌘9,
-            // which jump to tab n (1-indexed) and no-op past the tab count
-            // (`ContentView.selectTab(atIndex:)`). ⌃Tab cycling was left out
-            // — it could not be verified in this headless environment (no
-            // NSEvent monitor per the M8a/T4 brief); flagged for the T5 smoke.
-            CommandGroup(after: .windowList) {
-                // "Move Tab to New Window" (Detachable Tabs plan, Task 2):
-                // the Window menu's route to the action the tab strip's
-                // context menu offers on right-click, resolving the SAME
-                // catalogue key so the two can never read differently. No
-                // keyboard shortcut: none has been asked for, and this
-                // group's shortcuts belong to ⌘1–9 below.
-                //
-                // `.disabled` rather than absent, which is the opposite of
-                // what the context menu does with the same rule: a menu-bar
-                // entry that comes and goes is harder to find than one that
-                // is greyed, while a context menu is read top to bottom on
-                // every open. `canMoveTabToNewWindow` carries the count from
-                // the front window (see `TabCommands`).
-                Button(L10n.string("window.moveTabToNewWindow", "Move Tab to New Window")) {
-                    tabCommands.moveTabToNewWindow?()
-                }
-                .disabled(!tabCommands.canMoveTabToNewWindow)
-                Divider()
-                ForEach(1...9, id: \.self) { n in
-                    Button(String(format: L10n.string("menu.selectTab", "Tab %lld"), n)) {
-                        tabCommands.selectTab?(n - 1)
-                    }
-                    .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
-                }
-            }
-            CommandGroup(after: .sidebar) {
-                Button(L10n.string("menu.toggleHidden", "Show/Hide Hidden Files")) {
-                    settingsStore.showHiddenFiles.toggle()
-                }
-                .keyboardShortcut(".", modifiers: [.command, .shift])
-
-                Button(L10n.string("menu.transfers.toggle", "Show/Hide Transfers")) {
-                    tabCommands.toggleTransfers?()
-                }
-                .keyboardShortcut("y", modifiers: [.command, .shift])
-                .disabled(!tabCommands.isActiveTabConnected)
-            }
-            // "Sessions" menu (M10a/T2, mockup section 4): bundles the
-            // management sheets and the sidebar's existing export/import
-            // actions in one menu-bar home. Same key-window guard as the
-            // other `tabCommands` closures above — `ContentView.task` wires
-            // these against `window?.isKeyWindow`.
-            CommandMenu(L10n.string("menu.sessions", "Sessions")) {
-                Button(L10n.string("menu.knownHosts", "Known Hosts…")) {
-                    tabCommands.showKnownHosts?()
-                }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
-                // "Server Certificates…": no shortcut — ⇧⌘K and ⇧⌘L are
-                // taken, and "SSH Keys…"/"Hidden Imports…" set the precedent
-                // that a management sheet does not need one.
-                Button(L10n.string("menu.serverCertificates", "Server Certificates…")) {
-                    tabCommands.showServerCertificates?()
-                }
-                Button(L10n.string("menu.logins", "Logins…")) {
-                    tabCommands.showLogins?()
-                }
-                .keyboardShortcut("l", modifiers: [.command, .shift])
-                // "SSH Keys…" (M18/T5): opens the SSH-key management sheet —
-                // same key-window guard as the other entries in this menu.
-                Button(L10n.string("menu.sshKeys", "SSH Keys…")) {
-                    tabCommands.showSSHKeys?()
-                }
-                // "Hidden Imports…" (M11f/T2): the count suffix is the ONLY
-                // way back once every imported entry is hidden and the
-                // IMPORTED sidebar section itself disappears — see
-                // `hiddenImportsMenuTitle(count:)`.
-                Button(hiddenImportsMenuTitle(count: tabCommands.hiddenImportsCount)) {
-                    tabCommands.showHiddenImports?()
-                }
-                .keyboardShortcut("i", modifiers: [.command, .shift])
-                // "Ad-hoc Connection Log…" (M31): the audit trail of every
-                // connection that was never saved. It has no sidebar row to
-                // open it from -- its session is a value, not a record.
-                Button(L10n.string("menu.adHocAuditLog", "Ad-hoc Connection Log…")) {
-                    tabCommands.showAdHocAuditLog?()
-                }
-                Divider()
-                Button(L10n.string("menu.exportAllSessions", "Export All Sessions…")) {
-                    tabCommands.exportAllSessions?()
-                }
-                Button(L10n.string("menu.importSessions", "Import Sessions…")) {
-                    tabCommands.importSessions?()
-                }
-                Button(L10n.string("menu.importLogins", "Import Logins…")) {
-                    tabCommands.importLogins?()
-                }
-                // "From Cyberduck…" — beside the two entries above because
-                // it ends in the same place they do (the store), and reads
-                // as the third answer to "where do these sessions come
-                // from". No shortcut: it is a once-in-a-while migration,
-                // not a working action.
-                Button(L10n.string("menu.importFromCyberduck", "From Cyberduck…")) {
-                    tabCommands.importFromCyberduck?()
-                }
-            }
-            // "Terminal" menu (M11d/T2, spec §4): always offers BOTH ways to
-            // open a session's shell — the toolbar button/⌘T follow
-            // `SettingsStore.terminalTarget`, but these two entries never
-            // change with that setting, so switching it never takes a
-            // capability away. Both disabled while the active tab has no
-            // connected session (`tabCommands.isActiveTabConnected`, kept in
-            // sync by `ContentView`), OR the active backend has no shell
-            // (`tabCommands.activeTabSupportsShell`, M12/T7b — e.g. an S3
-            // session). "Show/Hide Terminal" is additionally disabled while
-            // the pane lock would refuse the click (whole-phase review, Fix
-            // 2) — see `TabCommands.canToggleTerminal`; the external route
-            // is not subject to that lock.
-            CommandMenu(L10n.string("menu.terminal", "Terminal")) {
-                Button(L10n.string("menu.terminal.toggle", "Show/Hide Terminal")) {
-                    tabCommands.toggleTerminal?()
-                }
-                .disabled(!tabCommands.canToggleTerminal)
-                Button(L10n.string("menu.terminal.openExternal", "Open in External Terminal")) {
-                    tabCommands.openExternalTerminal?()
-                }
-                .disabled(!tabCommands.isActiveTabConnected || !tabCommands.activeTabSupportsShell)
-                snippetMenuItems
-            }
-        }
+        // Every menu this app adds lives in `MacSCPCommands`
+        // (`MacSCPCommands.swift`): it reads the focused window's
+        // `TabCommands` through `@FocusedValue`, which `App.body` — not a
+        // dynamic-property type — cannot do.
+        // Windows are NOT restored at the next launch (Detachable Tabs
+        // plan, Task 2 fix round 1). A value-keyed group persists its
+        // `WindowSeed`s, so without this macOS would reopen every detached
+        // window on the next launch with a seed nobody parked anything
+        // under: a window per moved tab, each holding one fresh, empty form
+        // tab. Task 5 is what makes restoration mean something — from
+        // `SettingsStore`, off by default, and reconstructing the tabs
+        // rather than the window frames — and it turns this off on its own
+        // terms.
+        .restorationBehavior(.disabled)
+        .commands { MacSCPCommands(settingsStore: settingsStore, updateModel: updateModel) }
 
         // Opened via Cmd-, or the app menu's "Settings…" item (M5c/T3).
         // `updateModel` passed through (M11h/T2) so the General tab's "Check
         // Now" button can drive the SAME `UpdateCheckModel` instance as the
         // app-menu item above — one shared `isChecking`/`presentedResult`,
-        // not a second check path. `tabCommands` passed through for the
+        // not a second check path. `settingsBridge` passed through for the
         // "Manage Data" section's two window-scoped entries (logins, hidden
         // imports), which reach the main window's sheets instead of opening
         // a second copy of their own.
         Settings {
             SettingsView(store: settingsStore, updateModel: updateModel,
-                         launchLanguage: launchLanguage, tabCommands: tabCommands)
+                         launchLanguage: launchLanguage, settingsBridge: settingsBridge)
                 .tint(DesignTokens.remoteBlue)
         }
 
@@ -655,54 +554,4 @@ struct MacSCPApp: App {
         // `MenuBarController`.
     }
 
-    /// The snippet half of the "Terminal" menu (Terminal-Snippets milestone,
-    /// Task 6): renders `SnippetMenuModel` through the shared
-    /// `SnippetMenuItems` view — the SAME rendering a session's context
-    /// menu, the terminal header popover and the terminal's right-click
-    /// menu (Tasks 7/8) will reuse, so all four surfaces read one computed
-    /// model instead of four hand-guessed ones. Two actions per snippet,
-    /// "Insert" and "Execute" — never a per-snippet flag, see
-    /// `SnippetMenuItems`'s doc comment.
-    ///
-    /// `shortcutOrder` carries the STORE order (`tabCommands.snippetsLoad.
-    /// snippets`, unsorted): ⌃⌘1–3 insert the first three snippets in THAT
-    /// order, not the tag-grouped order `SnippetMenuModel.groups` presents
-    /// them in — see `SnippetMenuPlan.build`'s doc comment. Execute never
-    /// gets a shortcut at all: a keystroke that fires a command on a remote
-    /// host the instant it is pressed has no good failure mode — there is no
-    /// undo and no confirmation.
-    ///
-    /// An unreadable store is not silence: it gets a disabled notice entry
-    /// (see `SnippetsLoad`). That state lives only at the App layer —
-    /// `SnippetMenuModel` is built from the already-unwrapped `[Snippet]`
-    /// list, so it has no way to tell "empty" from "unreadable" apart —
-    /// which is why this check stays here instead of moving into
-    /// `SnippetMenuItems`. Disabled entries are this menu's existing way of
-    /// saying "not available right now" — the two pre-existing entries use
-    /// them for a missing connection — and "Manage Snippets…" stays enabled
-    /// right below it, which is where the user can go look.
-    @ViewBuilder
-    private var snippetMenuItems: some View {
-        let model = SnippetMenuModel.build(
-            snippets: tabCommands.snippetsLoad.snippets,
-            isConnected: tabCommands.isActiveTabConnected,
-            supportsShell: tabCommands.activeTabSupportsShell)
-        SnippetMenuItems(
-            model: model, shortcutOrder: tabCommands.snippetsLoad.snippets
-        ) { snippet, execute in
-            tabCommands.runSnippet?(snippet, execute)
-        }
-        Divider()
-        if tabCommands.snippetsLoad.isUnreadable {
-            Button(L10n.string(
-                "menu.snippets.unreadable", "Snippets Couldn't Be Read")) {}
-                .disabled(true)
-        }
-        // Not disabled with the entries above: editing snippets needs no
-        // connection, the same way the Sessions menu's management sheets
-        // are reachable without one.
-        Button(L10n.string("menu.snippets.manage", "Manage Snippets…")) {
-            tabCommands.showSnippets?()
-        }
-    }
 }

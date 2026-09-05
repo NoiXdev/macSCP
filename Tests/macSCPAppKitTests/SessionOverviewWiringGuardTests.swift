@@ -73,6 +73,7 @@ struct SessionOverviewWiringGuardTests {
     /// (Task 3), never for anything the view draws.
     private static let contentViewPath = "Sources/MacSCPAppKit/ContentView.swift"
     private static let lifecyclePath = "Sources/MacSCPAppKit/ContentView+Lifecycle.swift"
+    private static let commandsPath = "Sources/MacSCPAppKit/MacSCPCommands.swift"
     /// Where the already-open query's three answers are pressed — read for
     /// the one that has to carry the overview's pending snippet.
     private static let sheetsPath = "Sources/MacSCPAppKit/ContentView+Sheets.swift"
@@ -486,15 +487,21 @@ struct SessionOverviewWiringGuardTests {
             """)
     }
 
-    /// Task 3 MOVED the key-window guard off `triggerSnippet(_:execute:)`
-    /// and onto the Terminal menu's own bridge, which is the one caller it
-    /// was ever about. Both halves are pinned, because either one alone is
-    /// the bug: left on `triggerSnippet`, the overview's Run cannot send at
-    /// all from anywhere the window is not key (and no test can reach the
-    /// send path, since `window` is `@State`); missing from the bridge, the
-    /// Terminal menu's snippet entries fire against a window that is not in
-    /// front.
-    @Test func theSnippetMenuBridgeIsWhatChecksForTheKeyWindow() throws {
+    /// Task 3 moved the key-window guard off `triggerSnippet(_:execute:)`
+    /// and onto the Terminal menu's own bridge, which was the one caller it
+    /// was ever about; the Detachable Tabs plan's Task 2 fix round 1 then
+    /// removed it from there too, because the bridge became per window and
+    /// is published as a focused scene value — the menu reaches the front
+    /// window's closure or none at all.
+    ///
+    /// So both halves are still pinned, and both are now negatives with a
+    /// positive beside them: `triggerSnippet` must not re-acquire the guard
+    /// (a `ContentView` built outside a SwiftUI hierarchy reads `window` as
+    /// nil, which would make the whole send path unreachable from
+    /// `SnippetAfterConnectSequenceTests`), and the bridge must not either,
+    /// while still calling `triggerSnippet(` and while the menus still read
+    /// the bridge through `@FocusedValue`.
+    @Test func theSnippetMenuBridgeReachesOnlyTheFocusedWindow() throws {
         let lifecycle = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.lifecyclePath))
         // Anchored on the ASSIGNMENT PLUS ITS BRACE, not on the assignment
         // alone (fix round 1). `declarationBodyRange` opens its span at the
@@ -520,11 +527,24 @@ struct SessionOverviewWiringGuardTests {
             menu's snippet entries reach nothing, and the check below would then be about a \
             closure that does not act.
             """)
-        #expect(bridge.contains("isKeyWindow"), """
-            the tabCommands.runSnippet bridge no longer checks isKeyWindow. SwiftUI attaches \
-            one .commands menu app-wide and every window assigns this same closure, so without \
-            it a snippet picked from the Terminal menu runs in whichever window last wired \
-            itself rather than the one in front.
+        // The bridge used to re-check `isKeyWindow` here, because one
+        // `TabCommands` served every window and each closure had to work
+        // out afterwards whether it was the right one. It is per window now
+        // and published as a focused scene value, so the menu can only
+        // reach the front window's closure (Detachable Tabs plan, Task 2
+        // fix round 1) — and a second answer to a question SwiftUI has
+        // already answered is what this negative now forbids. The positive
+        // beside it is the `triggerSnippet(` check above: a closure that
+        // stopped acting could not satisfy that one.
+        #expect(bridge.contains("isKeyWindow") == false, """
+            the tabCommands.runSnippet bridge asks isKeyWindow again. The bridge is per \
+            window and reached through @FocusedValue, so being the front window is already \
+            the precondition for this closure being called at all.
+            """)
+        let commands = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.commandsPath))
+        #expect(commands.contains("@FocusedValue"), """
+            MacSCPCommands.swift no longer reads the bridge through @FocusedValue — the \
+            negative above would then be forbidding a guard that nothing had replaced.
             """)
         let contentView = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.contentViewPath))
         let trigger = try TransferQueueBarCancelGuardTests.declarationBody(

@@ -75,8 +75,11 @@ struct PaneVisibilityWiringGuardTests {
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView.swift")
     private static let lifecycleFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
+    /// The menu entries moved out of `MacSCPApp.swift` into their own
+    /// `Commands` type when the bridge became a focused scene value
+    /// (Detachable Tabs plan, Task 2 fix round 1).
     private static let appFile = repoRoot
-        .appendingPathComponent("Sources/MacSCPAppKit/MacSCPApp.swift")
+        .appendingPathComponent("Sources/MacSCPAppKit/MacSCPCommands.swift")
 
     // MARK: - The guard
 

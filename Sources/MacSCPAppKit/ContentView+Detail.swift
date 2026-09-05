@@ -261,20 +261,19 @@ extension ContentView {
         .onReceive(
             NotificationCenter.default.publisher(for: NSWindow.willCloseNotification),
             perform: handleWindowWillClose)
-        // Re-points the app-wide menu bridge at this window when it comes to
-        // the front (Detachable Tabs plan, Task 2) — one `TabCommands`
-        // instance serves every window, so the closures belong to whichever
-        // window wrote them last. See `wireTabCommands()`.
-        .onReceive(
-            NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification),
-            perform: handleWindowDidBecomeKey)
+        // Publishes THIS window's menu bridge to SwiftUI's focus system
+        // (Detachable Tabs plan, Task 2 fix round 1). `MacSCPCommands` reads
+        // it back with `@FocusedValue`, so the menu bar always acts on the
+        // window in front — no notification observer, no key-window guard,
+        // and nothing for a background window to overwrite.
+        .focusedSceneValue(\.tabCommands, tabCommands)
         // Extracted wholesale into `performWindowSetup()` (M20 CI fix).
         // This closure had grown to ~125 statements in the same inference
         // scope as the `HSplitView` above, and the type checker gave up on
         // the whole `mainContent` expression -- on the CI runner first,
         // which is slower than a dev machine and hits the per-expression
         // time budget sooner. Same failure mode and same remedy as
-        // `wireMenuBarBridge()` (M11n/T2) and `handleCloseActiveTabCommand`
+        // `publishToMenuBarIfKey()` (M11n/T2) and `handleCloseActiveTabCommand`
         // (M14/T5); this time the whole body moves rather than one closure.
         .task { performWindowSetup() }
         // Destructive confirmation for closing a tab with active transfers

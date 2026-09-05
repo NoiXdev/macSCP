@@ -328,10 +328,16 @@ extension ContentView {
         // Updates…" always shows one of these four outcomes; the startup
         // automatic only ever reaches this alert for `.updateAvailable`
         // (see `UpdateCheckModel.check`, which stays silent otherwise).
+        //
+        // The PRIMARY window presents it, and no other (Detachable Tabs
+        // plan, Task 2 fix round 1): one check writes one
+        // `updateModel.presentedResult`, and with the alert attached to
+        // every window each open window raised its own copy of it — the
+        // same duplication the what's-new sheet was gated for.
         .alert(
             updateAlertTitle,
             isPresented: Binding(
-                get: { updateModel.presentedResult != nil },
+                get: { isPrimaryWindow && updateModel.presentedResult != nil },
                 set: { isPresented in if !isPresented { updateModel.presentedResult = nil } })
         ) {
             if case .updateAvailable(_, _, let url) = updateModel.presentedResult {

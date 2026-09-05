@@ -18,10 +18,17 @@ extension ContentView {
         content
         // never resurface as a stale, unrequested dialog the next time a
         // fresh window opens.
-        .onAppear { updateModel.hasPresentationTarget = true }
+        // Only the PRIMARY window claims to be the presenter: it is the one
+        // that attaches the alert (`ContentView+Sheets.swift`), so a
+        // detached window saying "yes, somebody is mounted" would send a
+        // manual check's result to an alert nobody shows, instead of to
+        // `UpdateCheckModel`'s own `NSAlert` fallback.
+        .onAppear { if isPrimaryWindow { updateModel.hasPresentationTarget = true } }
         .onDisappear {
-            updateModel.hasPresentationTarget = false
-            updateModel.presentedResult = nil
+            if isPrimaryWindow {
+                updateModel.hasPresentationTarget = false
+                updateModel.presentedResult = nil
+            }
         }
         // Session actions live in the window's native toolbar (M5f/T5) —
         // attached at the outer container so it belongs to the window, not
@@ -177,7 +184,7 @@ extension ContentView {
         // time" budget (same failure class as `passwordHintPresented` in
         // `ContentView+Sheets.swift`).
         .onChange(of: tabIDs) { _, _ in
-            menuBarModel.tabs = tabsModel.tabs
+            publishToMenuBarIfKey()
             // Detachable Tabs plan, Task 2: a tab that arrived by any route
             // (⊕, ⌘N, a sidebar row, a claim) is registered to this window,
             // and the Window menu's move entry follows the count it is
@@ -185,6 +192,13 @@ extension ContentView {
             // `registerHeldTabs()`.
             registerHeldTabs()
             tabCommands.canMoveTabToNewWindow = tabsModel.tabs.count > 1
+        }
+        // The menu-bar status item shows the KEY window's tabs (Detachable
+        // Tabs plan, Task 2 fix round 1) — see `publishToMenuBarIfKey()`.
+        // `initial: true` publishes at first render too, so the item is not
+        // empty until the first activation.
+        .onChange(of: controlActiveState, initial: true) { _, _ in
+            publishToMenuBarIfKey()
         }
     }
 
@@ -481,12 +495,16 @@ extension ContentView {
         tab.titleName = nil
         // Stale liveness (connection-liveness plan, Task 4, fix round 2;
         // recounted for the tab-context-menu plan's final review): this
-        // function has exactly five OTHER callers — `disconnectToForm` (the
+        // function has exactly six OTHER callers — `disconnectToForm` (the
         // toolbar "Disconnect" button), `performClose` (closing a tab),
         // `performCloseOthers` (closing every other tab), the
-        // reconnect-in-place branch of `connect(in:stored:)`, and
-        // `ConnectingAttemptView`'s `onCancel` in `ContentView+Detail.swift`
-        // — and every one of them is a deliberate "leave this connection".
+        // reconnect-in-place branch of `connect(in:stored:)`,
+        // `ConnectingAttemptView`'s `onCancel` in `ContentView+Detail.swift`,
+        // and `releaseHeldTabsOnClose` (the window closing, Detachable Tabs
+        // plan, Task 2) — and every one of them is a deliberate "leave this
+        // connection".  Counted at this commit: seven `await teardown(` call
+        // sites in all, this function's own callers plus
+        // `handleLivenessGiveUp` below.
         // There is no connection left to describe afterward, so a dot left
         // reading `.degraded`/`.lost` from before this call would be
         // describing a session that is no longer there.
@@ -495,7 +513,7 @@ extension ContentView {
         // not the one this line clears.
         tab.liveness = nil
         // Same rule, same sentence, for the lost-connection record (Task
-        // 7): every one of those five callers is leaving this connection on
+        // 7): every one of those six callers is leaving this connection on
         // purpose, and a record of a DROP would be describing something
         // that did not happen. `handleLivenessGiveUp` is the same one
         // exception it is for `liveness` — it writes this afterwards,
@@ -515,7 +533,7 @@ extension ContentView {
         // `liveness == .lost`, which this function's own `tab.liveness`
         // reset clears; this one hangs off a property teardown did not
         // touch. Same sentence as the other two resets, therefore: every one
-        // of those five callers is leaving this connection on purpose, so a
+        // of those six callers is leaving this connection on purpose, so a
         // record of an attempt that failed is describing something the tab
         // has been taken past.
         tab.connectFailure = nil
@@ -541,7 +559,7 @@ extension ContentView {
         // explicitly … no `deinit` cleanup".
         //
         // What it does NOT do any more is close the panel. This function has
-        // six callers and `handleLivenessGiveUp` is not a user action at all:
+        // seven callers and `handleLivenessGiveUp` is not a user action at all:
         // the session dropping is exactly why somebody opened Diagnose… on
         // this tab, and dismissing the sheet there threw away the only thing
         // that could say whether the host stopped resolving, the port stopped
@@ -645,7 +663,7 @@ extension ContentView {
         // inlined here: this `.task` closure is already large enough
         // that the type checker times out on it (M11d/M11f review
         // precedent for this exact failure mode).
-        wireMenuBarBridge()
+        publishToMenuBarIfKey()
         // Windows (Detachable Tabs plan, Task 2). Claim FIRST, register
         // second: `claimSeededTabs()` is what makes this window's model
         // hold the tabs it was opened for, and `registerHeldTabs()` is what
@@ -655,46 +673,34 @@ extension ContentView {
         // fresh tab.
         claimSeededTabs()
         registerHeldTabs()
-        // Command bridge wiring (M8a/T4) — extracted into `wireTabCommands()`
-        // below, because it is no longer a once-per-window job: with more
-        // than one window open, `TabCommands` is still ONE app-wide bridge,
-        // so the window that runs this last owns every menu closure. It is
-        // therefore re-run whenever this window becomes key
-        // (`handleWindowDidBecomeKey(_:)`).
+        // Snippet list for the Terminal menu, read once per window — a
+        // synchronous `snippets.json` read, which is why it is here and not
+        // in `wireTabCommands()` below (Task 2 fix round 1: it briefly was,
+        // and ran on every window activation). The management sheet's own
+        // close is what refreshes it afterwards.
+        reloadSnippets()
+        // Command bridge wiring (M8a/T4) — a method rather than inline, for
+        // the same type-checker reason as `publishToMenuBarIfKey()` above.
         wireTabCommands()
     }
 
-    /// Points the app-wide menu bridge at THIS window.
+    /// Fills in THIS window's own menu bridge, once, when the window
+    /// appears.
     ///
-    /// `MacSCPApp` holds no reference to this view, so the menu items call
-    /// back through the closures assigned here (M8a/T4). Each one carries a
-    /// key-window guard, for the reason the original wiring states: SwiftUI
-    /// attaches one `.commands` set app-wide, and the `Settings` scene shares
-    /// it, so a closure that fired regardless of focus would act on this
-    /// window's tabs while Settings — or another macSCP window — was in
-    /// front.
+    /// `MacSCPCommands` holds no reference to this view, so the menu items
+    /// call back through the closures assigned here (M8a/T4). Every one of
+    /// them used to open with a `window?.isKeyWindow` guard; none does now
+    /// (Detachable Tabs plan, Task 2 fix round 1). `TabCommands` is per
+    /// window and published as a focused scene value
+    /// (`ContentView+Detail.swift`), so the menus can only ever reach the
+    /// bridge of the window that is in front — being focused is the
+    /// precondition for being called at all, rather than something each
+    /// closure re-checks after the fact.
     ///
-    /// **Why it is re-run rather than wired once** (Detachable Tabs plan,
-    /// Task 2): there is one `TabCommands` instance for the whole app and
-    /// now more than one window assigning to it, so the closures belong to
-    /// whichever window wrote them last. Wired only from
-    /// `performWindowSetup()`, a second window would take the menu with it
-    /// on open and leave every entry inert on return to the first (its own
-    /// key-window guard would refuse, since the closures still named the
-    /// window that is no longer key). Re-running it when this window becomes
-    /// key makes the front window the one the menu acts on, which is what
-    /// the key-window guard was always trying to express.
-    ///
-    /// The VALUE mirrors on `TabCommands` (`isActiveTabConnected`,
-    /// `activeTabSupportsShell`, `activeTabTerminalToggleIsUnlocked`,
-    /// `hiddenImportsCount` — four, counted here) are NOT refreshed here:
-    /// they are written from `.onChange(…, initial: true)` observers in
-    /// `ContentView.body`, which is per window and which this function
-    /// cannot reach (they read `private` computed properties of that file).
-    /// They can therefore be stale for a menu entry's ENABLED state until
-    /// the front window's own state next changes. `canMoveTabToNewWindow`
-    /// below is refreshed here because it is derived from `tabsModel`, which
-    /// this file can read.
+    /// That is also why this runs once rather than on every activation: a
+    /// bridge nobody else writes into needs no refreshing, and the values
+    /// mirrored onto it from `ContentView.body`'s `.onChange(…, initial:
+    /// true)` observers describe this window and only this window.
     func wireTabCommands() {
         // Key-window guard (M8a T5 review, finding 1): the `Settings`
         // scene shares this exact ⌘N/⌘W/⌘1–9 command set (SwiftUI attaches
@@ -710,19 +716,16 @@ extension ContentView {
         // just above, and this closure adds no second check of that count,
         // for the reason `handleTabMenuEntry` states.
         tabCommands.moveTabToNewWindow = {
-            guard window?.isKeyWindow == true else { return }
             moveToNewWindow(tabsModel.activeTab)
         }
         tabCommands.newTab = {
-            guard window?.isKeyWindow == true else { return }
             tabsModel.addTab(makeTab())
         }
         tabCommands.selectTab = { index in
-            guard window?.isKeyWindow == true else { return }
             selectTab(atIndex: index)
         }
         // Extracted into its own method (M14/T5 build fix — see
-        // `wireMenuBarBridge()`'s doc comment above for the exact same
+        // `publishToMenuBarIfKey()`'s doc comment above for the exact same
         // failure mode): inlined here, this closure's `if`/`else` body
         // was the straw that finally tipped the surrounding `.task`
         // closure over the type checker's "unable to type-check this
@@ -730,38 +733,33 @@ extension ContentView {
         // reference assignment is far cheaper for the checker than a
         // multi-statement closure literal in the same inference scope.
         tabCommands.closeActiveTab = handleCloseActiveTabCommand
-        // Sessions menu bridge (M10a/T2) — same key-window guard as the
+        // Sessions menu bridge (M10a/T2) — same shape as the
         // tab commands above. Export/import route through the EXISTING
         // M9a state (`exportSheetItem`/`showImportFileImporter`), not a
         // duplicate handler.
         tabCommands.showKnownHosts = {
-            guard window?.isKeyWindow == true else { return }
             showKnownHostsSheet = true
         }
-        // "Server Certificates…" — same key-window guard, opens the
+        // "Server Certificates…" — same shape, opens the
         // server-certificate management sheet.
         tabCommands.showServerCertificates = {
-            guard window?.isKeyWindow == true else { return }
             showServerCertificatesSheet = true
         }
-        // "Logins…" (M10b/T3) — same key-window guard, opens the
+        // "Logins…" (M10b/T3) — same shape, opens the
         // login-sets management sheet.
         tabCommands.showLogins = {
-            guard window?.isKeyWindow == true else { return }
             loginSetsSheetStartsImport = false
             showLoginSetsSheet = true
         }
         // "Import Logins…" (M19/T8) — opens the same sheet, with its file
         // picker already armed.
         tabCommands.importLogins = {
-            guard window?.isKeyWindow == true else { return }
             loginSetsSheetStartsImport = true
             showLoginSetsSheet = true
         }
-        // "Hidden Imports…" (M11f/T2) — same key-window guard, opens the
+        // "Hidden Imports…" (M11f/T2) — same shape, opens the
         // hidden-imports management sheet.
         tabCommands.showHiddenImports = {
-            guard window?.isKeyWindow == true else { return }
             showHiddenImportsSheet = true
         }
         // "Ad-hoc Connection Log…" (M31): the audit trail of connections that
@@ -771,41 +769,36 @@ extension ContentView {
         // session but its id and its name, so building one here is enough;
         // nothing persists it.
         tabCommands.showAdHocAuditLog = {
-            guard window?.isKeyWindow == true else { return }
             auditLogSession = StoredSession(
                 id: AdHocAudit.sessionID,
                 name: L10n.string("audit.adhoc.name", "Ad-hoc connections"),
                 kind: .ssh)
         }
-        // "SSH Keys…" (M18/T5) — same key-window guard, opens the
+        // "SSH Keys…" (M18/T5) — same shape, opens the
         // SSH-key management sheet.
         tabCommands.showSSHKeys = {
-            guard window?.isKeyWindow == true else { return }
             showSSHKeysSheet = true
         }
         // Settings "Manage Data" bridge — the two entries that must NOT get
         // their own copy of the sheet in the Settings window. Extracted into
         // methods rather than inlined closures for the same type-checker
         // reason as `handleCloseActiveTabCommand` above.
-        tabCommands.showLoginsFromSettings = presentLoginSetsFromSettings
-        tabCommands.showServerCertificatesFromSettings = presentServerCertificatesFromSettings
-        tabCommands.showHiddenImportsFromSettings = presentHiddenImportsFromSettings
+        settingsBridge.showLoginsFromSettings = presentLoginSetsFromSettings
+        settingsBridge.showServerCertificatesFromSettings = presentServerCertificatesFromSettings
+        settingsBridge.showHiddenImportsFromSettings = presentHiddenImportsFromSettings
         tabCommands.exportAllSessions = {
-            guard window?.isKeyWindow == true else { return }
             exportSheetItem = ExportSheetItem(scope: .all)
         }
         tabCommands.importSessions = {
-            guard window?.isKeyWindow == true else { return }
             showImportFileImporter = true
         }
-        // "From Cyberduck…" — same key-window guard as every other entry on
+        // "From Cyberduck…" — same shape as every other entry on
         // this bridge. Reading the folder happens here, before any sheet is
         // presented, so an absent folder can raise the picker instead.
         tabCommands.importFromCyberduck = {
-            guard window?.isKeyWindow == true else { return }
             beginExternalImport()
         }
-        // "Terminal" menu bridge (M11d/T2) — same key-window guard as
+        // "Terminal" menu bridge (M11d/T2) — same shape as
         // the tab commands above. Unlike the toolbar button, these two
         // ALWAYS route to their own specific action regardless of
         // `settingsStore.terminalTarget` (spec §4 item 5).
@@ -828,7 +821,6 @@ extension ContentView {
         // Files toggle: not a capability problem needing
         // `presentTerminalUnavailable()`, just a click that doesn't land.
         tabCommands.toggleTerminal = {
-            guard window?.isKeyWindow == true else { return }
             guard activeTabSupportsShell else {
                 presentTerminalUnavailable()
                 return
@@ -841,65 +833,61 @@ extension ContentView {
             terminal.toggle()
             persistActivePaneVisibility()
         }
-        // Transfer-bar menu bridge (M11o) — same key-window guard as
+        // Transfer-bar menu bridge (M11o) — same shape as
         // the other tab commands; toggles the active tab's per-tab flag.
         tabCommands.toggleTransfers = {
-            guard window?.isKeyWindow == true else { return }
             activeTab.transfersPanelVisible.toggle()
         }
         tabCommands.openExternalTerminal = {
-            guard window?.isKeyWindow == true else { return }
             guard activeTabSupportsShell else {
                 presentTerminalUnavailable()
                 return
             }
             requestExternalTerminal(for: activeTab)
         }
-        // Snippets in the Terminal menu (Terminal-Snippets milestone) —
-        // seeds the mirrored list once, then wires the two entry points.
-        //
-        // `presentSnippets` is a method reference rather than an inline
-        // closure, for the same type-checker reason as
-        // `handleCloseActiveTabCommand` above, and carries the key-window
-        // guard itself. `runSnippet` cannot: the guard belongs to THIS
-        // bridge and not to `triggerSnippet(_:execute:)`, which every other
-        // caller reaches from inside one window (session overview plan, Task
-        // 3 — see that method's own doc comment). A two-line closure is well
-        // inside what the checker handles here.
-        reloadSnippets()
+        // Snippets in the Terminal menu (Terminal-Snippets milestone). The
+        // list itself is seeded by `reloadSnippets()` in
+        // `performWindowSetup()`, not here — this only wires the two entry
+        // points. `presentSnippets` is a method reference rather than an
+        // inline closure, for the same type-checker reason as
+        // `handleCloseActiveTabCommand` above.
         tabCommands.runSnippet = { snippet, execute in
-            guard window?.isKeyWindow == true else { return }
             triggerSnippet(snippet, execute: execute)
         }
         tabCommands.showSnippets = presentSnippets
     }
 
-    /// Re-points the app-wide menu bridge at this window when it comes to
-    /// the front, and drops nothing else — see `wireTabCommands()` for why
-    /// a single bridge and several windows make this necessary.
+    /// Publishes THIS window's tabs and window-raising closures to the
+    /// menu-bar status item — but only while this window is the key one.
     ///
-    /// Every window in the app posts this notification, including sheets and
-    /// the Settings window; the identity check is what keeps this window
-    /// from re-wiring on somebody else's activation.
-    func handleWindowDidBecomeKey(_ notification: Notification) {
-        guard let key = notification.object as? NSWindow, key === window else { return }
-        wireTabCommands()
-    }
-
-    /// Menu-bar status bridge wiring (M11n), called once from `.task`:
-    /// seeds `menuBarModel.tabs` and sets its window-raising closures.
     /// `MacSCPApp` owns a separate AppKit `MenuBarController` with no
-    /// reference to this view, so the menu's row taps and "Show macSCP" item
-    /// call back through these closures — same shape as the `tabCommands` bridge
-    /// below, minus the key-window guard (there is nothing to guard against:
-    /// raising/activating this one window is always the right action,
-    /// whichever window happened to be key when the menu-bar item was
-    /// clicked).
-    func wireMenuBarBridge() {
+    /// reference to this view, so the menu's row taps and the "Show macSCP"
+    /// item call back through these closures (M11n).
+    ///
+    /// **Why it is gated** (Detachable Tabs plan, Task 2 fix round 1):
+    /// `MenuBarStatusModel` is one object for the whole app, and with more
+    /// than one window every one of them mirrored its own tabs into it — so
+    /// the item listed whichever window published last, background windows
+    /// included. The key window's tabs are the ones a menu-bar list means.
+    ///
+    /// **Why `controlActiveState` and not a `didBecomeKey` observer**: it is
+    /// a per-window SwiftUI environment value, so it needs no notification
+    /// subscription and no polling, and it re-runs this through
+    /// `.onChange(…, initial: true)` on every transition in either
+    /// direction. `MenuBarController` is AppKit and cannot read a focused
+    /// scene value the way `MacSCPCommands` does, which is why this one
+    /// bridge is published rather than read.
+    ///
+    /// The two closures raise THIS window rather than searching `NSApp
+    /// .windows` for a candidate: they are re-assigned by whichever window
+    /// is key, so the window they should raise is the one assigning them.
+    func publishToMenuBarIfKey() {
+        guard controlActiveState == .key else { return }
         menuBarModel.tabs = tabsModel.tabs
+        let ownWindow = window
         menuBarModel.focusTab = { id in
             NSApplication.shared.activate(ignoringOtherApps: true)
-            NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+            ownWindow?.makeKeyAndOrderFront(nil)
             // Route through the `activate(_:)` wrapper, not `tabsModel.activate`
             // directly (M11n final review): a menu-bar row tap is an activation
             // call site and must clear the tab's attention indicator (reset
@@ -908,22 +896,23 @@ extension ContentView {
         }
         menuBarModel.showMainWindow = {
             NSApplication.shared.activate(ignoringOtherApps: true)
-            NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+            ownWindow?.makeKeyAndOrderFront(nil)
         }
     }
 
     /// `tabCommands.closeActiveTab` handler (⌘W) — extracted out of the
     /// `.task` closure above (M14/T5 build fix) purely to keep that closure
-    /// small enough for the type checker; behavior is unchanged from the
-    /// inline version.
+    /// small enough for the type checker.
+    ///
+    /// It used to open with a `window?.isKeyWindow` guard whose else-branch
+    /// forwarded Close to whichever window WAS key. Both are gone
+    /// (Detachable Tabs plan, Task 2 fix round 1): this bridge now reaches
+    /// the menu only while THIS window is the focused one, so the guard
+    /// could no longer be false, and the forwarding it protected has moved
+    /// to where it belongs — the menu item is `.disabled` with no focused
+    /// window, which lets the system Close command it shadows take ⌘W (see
+    /// `MacSCPCommands`).
     func handleCloseActiveTabCommand() {
-        guard window?.isKeyWindow == true else {
-            // Not our window: route Close to whichever window IS key
-            // (typically Settings) via the system path instead of silently
-            // doing nothing.
-            NSApp.keyWindow?.performClose(nil)
-            return
-        }
         let tab = tabsModel.activeTab
         if tabsModel.isLastTab && !tab.isConnected {
             // The only tab left, already a pristine form: Cmd-W closes the
@@ -935,9 +924,10 @@ extension ContentView {
         }
     }
 
-    /// Mirrors "this window EXISTS" onto `TabCommands`, for the same reason
-    /// `isActiveTabConnected`/`hiddenImportsCount` are mirrored there: the
-    /// Settings scene cannot see this view's `@State`.
+    /// Mirrors "this window EXISTS" onto `SettingsWindowBridge` — the
+    /// app-wide bridge the Settings window's "Manage Data" entries route
+    /// through, which cannot be a focused value because the Settings window
+    /// is the focused one when those entries are clicked.
     ///
     /// The three "Manage Data" entries that route here are `.disabled` when
     /// this is `false`. Without it they would still be clickable with no main
@@ -969,8 +959,8 @@ extension ContentView {
     /// over a bridge in this repo already.
     func updateMainWindowPresence() {
         let present = window != nil
-        if tabCommands.hasMainWindow != present {
-            tabCommands.hasMainWindow = present
+        if settingsBridge.hasMainWindow != present {
+            settingsBridge.hasMainWindow = present
         }
     }
 
@@ -992,8 +982,8 @@ extension ContentView {
     /// the registry to forget them. See `releaseHeldTabsOnClose()`.
     func handleWindowWillClose(_ notification: Notification) {
         guard let closing = notification.object as? NSWindow, closing === window else { return }
-        if tabCommands.hasMainWindow {
-            tabCommands.hasMainWindow = false
+        if settingsBridge.hasMainWindow {
+            settingsBridge.hasMainWindow = false
         }
         releaseHeldTabsOnClose()
     }
@@ -1085,18 +1075,18 @@ extension ContentView {
     /// "Move Tab to New Window" — the one route out of both surfaces that
     /// offer it (the tab's context menu and the Window menu).
     ///
-    /// The order below is the contract, and all of it happens in ONE
-    /// main-actor turn, before any view body can run:
+    /// The order is the contract, and `TabDetachSequence` owns it rather
+    /// than this call site (fix round 1): decide, detach, park, put a fresh
+    /// tab in the leaver's place if the model would otherwise be empty, and
+    /// OPEN the new window — all before anything closes. `NSWindow.close()`
+    /// is synchronous and tears its scene down where it stands, so closing
+    /// first would strand a parked tab, with a live connection and no
+    /// window, whenever the open was refused or lost.
     ///
-    /// 1. `TabDetachSequence.move` takes the close decision while the model
-    ///    still holds the tab, detaches it, parks it under this seed, and —
-    ///    for a window that is staying and would be left empty — puts a
-    ///    fresh tab in its place. See that type for why the emptied model
-    ///    must not be observable.
-    /// 2. A window told to close closes here, in the same turn.
-    /// 3. `openWindow(value:)` opens the window that will claim the seed.
-    ///    Last, so the source window is already settled when the new one
-    ///    appears.
+    /// The close therefore happens one main-actor turn later, and only
+    /// after `reclaim` has confirmed nothing is still parked under this
+    /// seed. If something is — no window claimed it — the tab goes back
+    /// into this window and this window stays open with it.
     ///
     /// No precondition is re-asked here. The context-menu entry exists only
     /// because `TabContextMenu.entries` offered it, and the Window menu's
@@ -1106,11 +1096,17 @@ extension ContentView {
     /// `handleTabMenuEntry`'s doc comment).
     func moveToNewWindow(_ tab: SessionTab) {
         let seed = WindowSeed(tabIDs: [tab.id])
-        let closing = TabDetachSequence.move(
-            tab.id, outOf: tabsModel, parkingUnder: seed.id, in: TabRegistry.shared,
-            replacement: makeTab)
-        if closing { window?.close() }
-        openWindow(value: seed)
+        let outcome = TabDetachSequence.move(
+            tab.id, outOf: tabsModel, parkingUnder: seed, in: TabRegistry.shared,
+            replacement: makeTab, openWindow: { openWindow(value: $0) })
+        let ownWindow = window
+        let ownWindowID = windowID
+        Task { @MainActor in
+            let cameBack = TabDetachSequence.reclaim(
+                seedID: seed.id, into: tabsModel, from: TabRegistry.shared,
+                window: ownWindowID, removing: outcome.replacementID)
+            if outcome.closesWindow && !cameBack { ownWindow?.close() }
+        }
     }
 
     /// Tab close entry point (strip ✕, ⌘W): a tab with active transfers OF

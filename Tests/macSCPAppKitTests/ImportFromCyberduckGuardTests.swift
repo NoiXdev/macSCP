@@ -54,7 +54,10 @@ struct ImportFromCyberduckGuardTests {
 
     private static let sheetFile = "ImportFromSourceSheet.swift"
     private static let modelFile = "Presentation/ImportFromSourceViewModel.swift"
-    private static let menuFile = "MacSCPApp.swift"
+    private static let menuFile = "MacSCPCommands.swift"
+    /// Where `TabCommands` itself is declared — a different file from the
+    /// menu since the menus moved into their own `Commands` type.
+    private static let bridgeFile = "MacSCPApp.swift"
     private static let ownerFile = "ContentView+ExportImport.swift"
     private static let wiringFile = "ContentView+Lifecycle.swift"
     private static let presentationFile = "ContentView+Sheets.swift"
@@ -78,8 +81,9 @@ struct ImportFromCyberduckGuardTests {
         let owner = try Self.strictSource(Self.ownerFile)
         let presentation = try Self.strictSource(Self.presentationFile)
 
-        let bridgeDeclaresIt = menu.contains("var importFromCyberduck")
-        let menuCallsIt = menu.contains("tabCommands.importFromCyberduck?(")
+        let bridgeDeclaresIt = try Self.strictSource(Self.bridgeFile)
+            .contains("var importFromCyberduck")
+        let menuCallsIt = menu.contains("tabCommands?.importFromCyberduck?(")
         let windowAssignsIt = wiring.contains("tabCommands.importFromCyberduck =")
         let ownerBuildsTheModel = owner.contains("ImportFromSourceViewModel(")
         let windowPresentsTheSheet = presentation.contains("ImportFromSourceSheet(")
@@ -97,14 +101,27 @@ struct ImportFromCyberduckGuardTests {
         #expect(windowPresentsTheSheet)
     }
 
-    /// The menu entry is keyed to the key window like every other entry on
-    /// that bridge: without the guard, a click while Settings is in front
-    /// reaches whichever window happens to answer.
-    @Test func theMenuEntryIsGuardedByTheKeyWindow() throws {
+    /// The menu entry reaches the FOCUSED window and no other (Detachable
+    /// Tabs plan, Task 2 fix round 1). It used to carry a
+    /// `window?.isKeyWindow` guard inside the assignment below; the guard is
+    /// gone because the bridge itself is per window and published as a
+    /// focused scene value, so the menu can only ever hold the front
+    /// window's closure. Two checks, because the negative alone would pass
+    /// over a file that stopped wiring this entry at all: the assignment is
+    /// still there (positive) and it no longer re-asks which window it is
+    /// (negative).
+    @Test func theMenuEntryReachesTheFocusedWindowWithoutReAskingWhichItIs() throws {
         let assignment = try #require(
             Self.declarationBody(after: "tabCommands.importFromCyberduck =",
                                  in: try Self.strictSource(Self.wiringFile)))
-        #expect(assignment.contains("isKeyWindow"), "\(assignment)")
+        let doesTheWork = assignment.contains("beginExternalImport()")
+        let reAsksTheWindow = assignment.contains("isKeyWindow")
+        #expect(doesTheWork, """
+            the Cyberduck import closure no longer calls beginExternalImport() —             the menu entry would be wired to nothing.
+            """)
+        #expect(reAsksTheWindow == false, """
+            the Cyberduck import closure asks isKeyWindow again. The bridge is             per window and reached through @FocusedValue, so that question is             already answered — and answering it twice is how two answers start             to disagree.
+            """)
     }
 
     // MARK: - The sheet's controls

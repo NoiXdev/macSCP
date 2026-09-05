@@ -141,11 +141,20 @@ struct ContentView: View {
     /// cleanup on delete) and every stored-session tab's `AuditRecorder`
     /// (see `attachAuditRecorder`).
     let auditStore: AuditLogStore
-    /// Command bridge (M8a/T4): `MacSCPApp` holds no reference to
-    /// `ContentView`, so the menu's Cmd-N/Cmd-W/Cmd-1…9 items call into the
-    /// closures `performWindowSetup()` assigns, run from the `.task` in
-    /// `ContentView+Detail.swift`.
-    let tabCommands: TabCommands
+    /// THIS window's menu bridge (M8a/T4), published as a focused scene
+    /// value in `windowChrome(_:)` and read back by `MacSCPCommands`
+    /// through `@FocusedValue` — so the menus act on the window in front
+    /// without any closure having to ask whether it is that window
+    /// (Detachable Tabs plan, Task 2 fix round 1). One instance per window:
+    /// `@State`, so it survives every re-init of this struct.
+    ///
+    /// A caller may inject one (tests do); production passes nothing and
+    /// gets the window's own.
+    @State var tabCommands: TabCommands
+    /// The Settings window's route into a main window — app-wide, and the
+    /// one bridge that could not become per window. See
+    /// `SettingsWindowBridge`.
+    let settingsBridge: SettingsWindowBridge
     /// App-global update-check state (M11b/T2), created once in
     /// `MacSCPApp` (no singleton, same pattern as the stores above). Its
     /// result alert lives here because this is the app's one window — the
@@ -155,10 +164,10 @@ struct ContentView: View {
     /// Menu-bar status bridge (M11n), created once in `MacSCPApp` (no
     /// singleton, same pattern as the stores above) and shared with the
     /// AppKit `MenuBarController` there. This view mirrors `tabsModel.tabs`
-    /// into it — once in `wireMenuBarBridge()`, run from
+    /// into it — once in `publishToMenuBarIfKey()`, run from
     /// `performWindowSetup()`, and again whenever the `.onChange(of: tabIDs)`
     /// in the same file's modifier chain fires — and sets its window-raising
-    /// closures in `wireMenuBarBridge()` alone (both in
+    /// closures in `publishToMenuBarIfKey()` alone (both in
     /// `ContentView+Lifecycle.swift`); see `MenuBarStatusModel`'s doc
     /// comment.
     let menuBarModel: MenuBarStatusModel
@@ -225,6 +234,12 @@ struct ContentView: View {
     /// Opens a second window for a moved tab — see `moveToNewWindow(_:)`.
     /// Not `private`: the move itself lives in `ContentView+Lifecycle.swift`.
     @Environment(\.openWindow) var openWindow
+    /// Whether THIS window is the key one — the per-window signal the
+    /// menu-bar bridge is gated on (see `publishToMenuBarIfKey()`). An
+    /// environment value rather than a `didBecomeKey` observer: it needs no
+    /// subscription and no polling, and `.onChange(…, initial: true)` sees
+    /// every transition in both directions.
+    @Environment(\.controlActiveState) var controlActiveState
     /// Last browser window size, remembered on disconnect — the next
     /// connect grows to it instead of the minimum size, if it's larger.
     @State var lastBrowserSize: CGSize?
@@ -614,7 +629,9 @@ struct ContentView: View {
 
     init(
         settingsStore: SettingsStore, bandwidthLimiter: BandwidthLimiter, auditStore: AuditLogStore,
-        tabCommands: TabCommands, updateModel: UpdateCheckModel, menuBarModel: MenuBarStatusModel,
+        settingsBridge: SettingsWindowBridge? = nil,
+        tabCommands: TabCommands? = nil,
+        updateModel: UpdateCheckModel, menuBarModel: MenuBarStatusModel,
         sessionListViewModel: SessionListViewModel? = nil,
         secretStore: (any SecretStore)? = nil,
         managedKeyStore: ManagedKeyStore? = nil,
@@ -624,7 +641,8 @@ struct ContentView: View {
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
         self.auditStore = auditStore
-        self.tabCommands = tabCommands
+        _tabCommands = State(initialValue: tabCommands ?? TabCommands())
+        self.settingsBridge = settingsBridge ?? SettingsWindowBridge()
         self.updateModel = updateModel
         self.menuBarModel = menuBarModel
         _sidebarOpeningWidth = State(initialValue: CGFloat(settingsStore.sidebarWidth))
@@ -717,6 +735,15 @@ struct ContentView: View {
     /// The mounted tab. Every view below renders THIS tab's state; switching
     /// tabs re-resolves all of it (sheet, banners, queue bar, toolbar).
     var activeTab: SessionTab { tabsModel.activeTab }
+
+    /// The PRIMARY window is the one SwiftUI opened for the value-keyed
+    /// `WindowGroup` with no seed (`MacSCPApp.primaryWindow()`). Two things
+    /// belong to it alone and to no window opened by a move: the what's-new
+    /// sheet (attached in `MacSCPApp` itself) and the update-check result
+    /// alert below — both are decisions taken once per PROCESS, and a
+    /// second window presenting either would show the user the same thing
+    /// twice.
+    var isPrimaryWindow: Bool { seed == nil }
 
     /// "Fresh window" state: a single, unconnected tab. Drives the compact
     /// form geometry — with a second tab around, the window keeps its
@@ -832,6 +859,7 @@ struct ContentView: View {
             // Imports…" title's count suffix has to be mirrored here too.
             .onChange(of: hiddenImportAliases.count, initial: true) { _, newValue in
                 tabCommands.hiddenImportsCount = newValue
+                settingsBridge.hiddenImportsCount = newValue
             }
             // Password-login hint (M11d/T2, spec §4 item 6): shown once
             // before the FIRST external-terminal open of a
@@ -1000,20 +1028,22 @@ struct ContentView: View {
     /// already disabled for a non-shell backend, and this re-checks anyway so
     /// no path can reach a silent no-op.
     ///
-    /// **No key-window guard here** (session overview plan, Task 3), and the
-    /// reason it moved rather than being dropped: that guard exists for the
-    /// APP-WIDE command set — `MacSCPApp`'s Terminal menu holds one
-    /// `tabCommands.runSnippet` closure for every window, so without it the
-    /// menu would fire against a window that is not the one in front. Every
-    /// other caller of this method is a control inside one window (the
+    /// **No key-window guard here** (session overview plan, Task 3), and
+    /// none on the menu bridge either any more (Detachable Tabs plan, Task 2
+    /// fix round 1). The guard existed for an APP-WIDE command set: one
+    /// `tabCommands.runSnippet` closure served every window, so the Terminal
+    /// menu could fire against a window that was not the one in front.
+    /// `TabCommands` is per window now and published as a focused scene
+    /// value, so the menu can only reach the front window's closure — being
+    /// focused is the precondition, not something a closure re-checks.
+    ///
+    /// Every other caller of this method is a control inside one window (the
     /// terminal panel's header and its right-click menu, the sidebar row's
     /// snippet submenu, the multi-line refusal alert's "Execute", and the
-    /// session overview's Run), where the check can only ever be true. It
-    /// now sits on the menu bridge itself, in `ContentView+Lifecycle.swift`,
-    /// which is the one call site it was ever about — and, because
-    /// `window` is `@State`, having it here also made the whole send path
-    /// unreachable from a test (a `ContentView` built outside a SwiftUI
-    /// hierarchy reads `window` as `nil`).
+    /// session overview's Run), where such a check could only ever be true —
+    /// and, because `window` is `@State`, having it here also made the whole
+    /// send path unreachable from a test (a `ContentView` built outside a
+    /// SwiftUI hierarchy reads `window` as `nil`).
     ///
     /// The panel is revealed and the shell opened first, because the panel is
     /// closed until the user opens it and a snippet must work on a tab that

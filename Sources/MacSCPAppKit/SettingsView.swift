@@ -87,7 +87,7 @@ struct SettingsView: View {
     /// "Manage Data" section only: two of its five entries must reach the
     /// sheets the main window already presents rather than open a second
     /// copy here (see `ManageDataSettingsSection`).
-    var tabCommands: TabCommands
+    var settingsBridge: SettingsWindowBridge
 
     @State private var selection: SettingsSection? = .general
 
@@ -137,7 +137,7 @@ struct SettingsView: View {
                 case .cli:
                     CLISettingsSection()
                 case .manageData:
-                    ManageDataSettingsSection(tabCommands: tabCommands)
+                    ManageDataSettingsSection(settingsBridge: settingsBridge)
                 case .ssh:
                     SSHSettingsSection(store: store)
                 case .s3:
@@ -1247,7 +1247,7 @@ private struct SSHSettingsSection: View {
 /// all-sessions audit view for a global list to link to, and inventing a
 /// session picker here would be a new feature, not a shortcut.
 private struct ManageDataSettingsSection: View {
-    var tabCommands: TabCommands
+    var settingsBridge: SettingsWindowBridge
     /// The two overlays this window presents itself — same `@State` flag +
     /// `.sheet(isPresented:)` pattern the "SSH" section used for keys before
     /// this section existed.
@@ -1267,13 +1267,13 @@ private struct ManageDataSettingsSection: View {
                     Label(L10n.string("menu.sshKeys", "SSH Keys…"), systemImage: "key")
                 }
                 Button {
-                    tabCommands.showLoginsFromSettings?()
+                    settingsBridge.showLoginsFromSettings?()
                 } label: {
                     Label(
                         L10n.string("menu.logins", "Logins…"),
                         systemImage: "person.badge.key")
                 }
-                .disabled(!tabCommands.hasMainWindow)
+                .disabled(!settingsBridge.hasMainWindow)
                 Button {
                     showKnownHostsSheet = true
                 } label: {
@@ -1282,24 +1282,24 @@ private struct ManageDataSettingsSection: View {
                         systemImage: "lock.shield")
                 }
                 Button {
-                    tabCommands.showServerCertificatesFromSettings?()
+                    settingsBridge.showServerCertificatesFromSettings?()
                 } label: {
                     Label(
                         L10n.string("menu.serverCertificates", "Server Certificates…"),
                         systemImage: "checkmark.seal")
                 }
-                .disabled(!tabCommands.hasMainWindow)
+                .disabled(!settingsBridge.hasMainWindow)
                 Button {
-                    tabCommands.showHiddenImportsFromSettings?()
+                    settingsBridge.showHiddenImportsFromSettings?()
                 } label: {
                     // Same count-suffixed title as the Sessions-menu entry,
                     // from the same helper — the count is the only signal
                     // that anything is hidden at all.
                     Label(
-                        hiddenImportsMenuTitle(count: tabCommands.hiddenImportsCount),
+                        hiddenImportsMenuTitle(count: settingsBridge.hiddenImportsCount),
                         systemImage: "eye.slash")
                 }
-                .disabled(!tabCommands.hasMainWindow)
+                .disabled(!settingsBridge.hasMainWindow)
             } footer: {
                 // Two lines, the second only when it applies: where the
                 // routed entries land, said BEFORE the window changes under
@@ -1311,7 +1311,7 @@ private struct ManageDataSettingsSection: View {
                         "settings.manageData.footer",
                         "Logins, server certificates and hidden imports open in the main "
                             + "window, where the state they change belongs."))
-                    if !tabCommands.hasMainWindow {
+                    if !settingsBridge.hasMainWindow {
                         Text(L10n.string(
                             "settings.manageData.needsMainWindow",
                             "They are unavailable while no main window is open."))
