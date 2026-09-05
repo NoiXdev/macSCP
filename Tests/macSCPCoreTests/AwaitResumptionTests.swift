@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 import MacSCPTestSupport
@@ -110,5 +111,73 @@ struct AwaitResumptionTests {
         await #expect(throws: CancellationError.self) {
             try await task.value
         }
+    }
+
+    // MARK: - `onCancel` (fix round 1, docs/BACKLOG.md's own entry)
+
+    /// A `@unchecked Sendable` box for a plain `Int` count, guarded by a
+    /// lock — `onCancel` and the test body both touch it from different
+    /// tasks.
+    private final class LockedCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func increment() { lock.withLock { count += 1 } }
+        var value: Int { lock.withLock { count } }
+    }
+
+    /// `AgentEnvLock.acquire()` appended its continuation to a `waiters`
+    /// list and never removed it on cancellation (docs/BACKLOG.md's fix
+    /// round 1): a cancelled waiter's entry stayed behind, and the next
+    /// `release()` popped that stale entry and handed the lock to a task
+    /// that no longer existed — a permanent leak in a process-wide lock.
+    /// `onCancel` exists so a caller with its own bookkeeping can clean it
+    /// up exactly when THIS function's cancellation path wins the race.
+    /// `started` proves the body actually ran (and so really is parked,
+    /// not merely not-yet-scheduled) before the cancel is issued.
+    @Test func onCancelRunsWhenCancellationWinsTheRace() async throws {
+        let started = AsyncSignal()
+        let cleanupCalls = LockedCounter()
+        let task = Task<Void, any Error> {
+            _ = try await awaitResumption(
+                { (_: CheckedContinuation<Void, Never>) in
+                    started.signal()
+                    // Deliberately never resumes.
+                },
+                onCancel: { cleanupCalls.increment() }
+            )
+        }
+
+        let outcome = await started.wait()
+        #expect(outcome == .signalled)
+
+        task.cancel()
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(cleanupCalls.value == 1)
+    }
+
+    /// The positive companion: a body that already resumed must not ALSO
+    /// run `onCancel` if the (now-finished) task is cancelled afterward —
+    /// `onCancel` runs only on a WINNING cancellation, per its own doc
+    /// comment's once-latch. Without this, `onCancelRunsWhenCancellationWinsTheRace`
+    /// could pass merely because `onCancel` always runs, cancellation or
+    /// not.
+    @Test func onCancelDoesNotRunAfterABodyHasAlreadyResumed() async throws {
+        let cleanupCalls = LockedCounter()
+        let task = Task<Int, any Error> {
+            try await awaitResumption(
+                { (continuation: CheckedContinuation<Int, Never>) in
+                    continuation.resume(returning: 3)
+                },
+                onCancel: { cleanupCalls.increment() }
+            )
+        }
+
+        let value = try await task.value
+        #expect(value == 3)
+
+        task.cancel()
+        #expect(cleanupCalls.value == 0)
     }
 }

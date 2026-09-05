@@ -228,6 +228,7 @@ private final class NeverRespondingFileSystem: RemoteFileSystem, @unchecked Send
         fatalError("not exercised by this test")
     }
 
+    // Here too: the continuation IS the API under test here (see this type's doc comment above).
     func stat(path: String) async throws -> RemoteFileItem {
         lock.withLock { statArrived = true }
         return try await withCheckedThrowingContinuation {

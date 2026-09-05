@@ -1,0 +1,76 @@
+import Foundation
+import MacSCPTestSupport
+import Testing
+
+/// Pins the fix for `docs/BACKLOG.md`'s "A test parked on a bare
+/// continuation outlives its time limit", fix round 1: `AgentEnvLock`
+/// (`Tests/macSCPCoreTests/AgentEnvLock.swift`) is an EXCLUSIVE hand-off
+/// primitive, unlike the broadcast latches (`PlainSignal`, `TestSignal`,
+/// `Gate`) also converted to `awaitResumption` in this plan. A cancelled
+/// waiter that left its entry behind made `release()` pop that stale
+/// entry, hand the lock to a task that no longer existed, and never clear
+/// `isLocked` — a permanent leak in a process-wide lock.
+///
+/// A fresh `AgentEnvLock()` instance, never `.shared`: this test cancels a
+/// queued waiter on purpose, and `.shared` is a process-wide lock other
+/// suites use concurrently for their own, unrelated `SSH_AUTH_SOCK`
+/// critical sections — sharing it here would risk this test interfering
+/// with (or being interfered with by) them.
+@Suite("AgentEnvLock", .timeLimit(.minutes(1)))
+struct AgentEnvLockTests {
+    /// The scenario the bug produced: A holds the lock, B queues behind
+    /// it, B is cancelled while still queued, A releases — and a fresh C
+    /// must still be able to acquire without waiting, with `isLocked` false
+    /// again once C releases. Under the bug this test's own `.timeLimit`
+    /// is what turns C's hang into a red rather than an actual deadlock —
+    /// C's `run` would queue forever behind a lock nothing will ever
+    /// release again.
+    @Test func aCancelledWaiterDoesNotLeakTheLockForever() async throws {
+        let lock = AgentEnvLock()
+        let aHolds = AsyncSignal()
+        let releaseA = AsyncSignal()
+
+        let taskA = Task<Void, any Error> {
+            try await lock.run {
+                aHolds.signal()
+                _ = await releaseA.wait()
+            }
+        }
+        let aOutcome = await aHolds.wait()
+        #expect(aOutcome == .signalled)
+
+        let taskB = Task<Void, any Error> {
+            try await lock.run {}
+        }
+        // B must be genuinely parked in `acquire()` — appended to
+        // `waiters`, not merely scheduled — before it is cancelled; a
+        // `pollUntil` on the lock's own queued count, no clock, is the
+        // deterministic way to know that without a sleep.
+        try await pollUntil("B queues behind A") { lock.queuedCount == 1 }
+
+        taskB.cancel()
+        await #expect(throws: CancellationError.self) {
+            try await taskB.value
+        }
+
+        // Positive, read BEFORE A releases: the cancelled waiter's entry
+        // is already gone, not merely "will be skipped later" — without
+        // this, the fix could be proven only by C eventually succeeding,
+        // which the bug would also eventually do if some UNRELATED task
+        // happened to call release() again.
+        #expect(lock.queuedCount == 0, "B's cancelled entry should have been removed from the queue")
+
+        releaseA.signal()
+        try await taskA.value
+
+        // A fresh task acquires without waiting — under the bug this hangs
+        // until the suite's own `.timeLimit`, because `isLocked` never
+        // cleared and nothing will ever call `release()` again to serve it.
+        let taskC = Task<Void, any Error> {
+            try await lock.run {}
+        }
+        try await taskC.value
+
+        #expect(lock.isCurrentlyLocked == false)
+    }
+}

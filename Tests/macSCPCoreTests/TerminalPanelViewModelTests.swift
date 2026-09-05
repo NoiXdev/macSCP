@@ -716,6 +716,7 @@ final class ParkGate: @unchecked Sendable {
     var entered: Int { lock.lock(); defer { lock.unlock() }; return enteredCount }
 
     func wait() async {
+        // Here too: the continuation IS the API under test here (see ParkGate's doc comment above).
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             lock.lock()
             enteredCount += 1

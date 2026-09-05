@@ -72,6 +72,7 @@ private func abandonable<T: Sendable>(
 ) async -> T? {
     let outcome = FirstResult<T?>()
     let worker = Task.detached { outcome.offer(await work()) }
+    // Here too: the continuation IS the API under test here (see this function's doc comment above).
     let result = await withTaskCancellationHandler {
         await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
             outcome.attach(continuation)

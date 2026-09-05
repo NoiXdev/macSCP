@@ -167,6 +167,7 @@ struct DiagnosticLogSharedSinkTests {
 
         func opened() async {
             if isOpen { return }
+            // Here too: the continuation IS the API under test here (see Gate's doc comment above).
             await withCheckedContinuation { waiters.append($0) }
         }
     }

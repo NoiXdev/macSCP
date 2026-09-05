@@ -156,6 +156,7 @@ struct SSHTerminalViewSizingTests {
 
         func wait() async {
             if isOpen { return }
+            // Here too: the continuation IS the API under test here (see OpenGate's doc comment above).
             await withTaskCancellationHandler {
                 await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
                     // Re-checked INSIDE the actor: `open()` or a cancellation
@@ -222,6 +223,7 @@ struct SSHTerminalViewSizingTests {
                 permits -= 1
                 return
             }
+            // Here too, the continuation IS the API under test here, the same reasoning as `OpenGate.wait()` above.
             await withTaskCancellationHandler {
                 await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
                     // See `OpenGate.wait()`: re-checked inside the actor,

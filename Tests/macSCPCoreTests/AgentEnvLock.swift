@@ -30,27 +30,68 @@ import MacSCPTestSupport
 /// short synchronous mutation (append/remove-first on `waiters`), so an
 /// `NSLock` is exactly as safe here as the actor was — the actor was chosen
 /// for idiom, not because a plain lock could not do this job.
+///
+/// UNLIKE the broadcast latches elsewhere in this plan (`PlainSignal`,
+/// `TestSignal`, `Gate`) — where an orphaned, never-removed waiter is
+/// harmless because it is simply resumed later, a no-op nobody is
+/// listening to — this is an EXCLUSIVE hand-off primitive: `release()`
+/// pops exactly one waiter and hands it the lock. A cancelled `acquire()`
+/// that left its entry in `waiters` would have `release()` pop that stale
+/// entry, resume nobody real, and never reach the `waiters.isEmpty` branch
+/// that clears `isLocked` — the lock leaks forever, in a process-wide
+/// `static let shared`, and every later `AgentEnvLock.shared.run` queues
+/// indefinitely. Fixed by giving each waiter a token (`id`) and passing
+/// `awaitResumption`'s `onCancel:` a closure that removes it under the
+/// same lock before the `CancellationError` reaches the caller — see
+/// `AwaitResumption.swift`'s own doc comment for why that closure is safe
+/// to run at most once. `AgentEnvLockTests` pins the scenario this bug
+/// produced.
 final class AgentEnvLock: @unchecked Sendable {
     static let shared = AgentEnvLock()
 
     private let lock = NSLock()
     private var isLocked = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Void, Never>)] = []
 
-    private init() {}
+    /// Internal, not private: `AgentEnvLockTests` constructs its own
+    /// instance rather than mutating `.shared`, so a test that deliberately
+    /// cancels a queued waiter cannot interfere with — or be interfered
+    /// with by — some other suite's concurrent, ordinary use of the
+    /// process-wide lock.
+    init() {}
+
+    /// How many callers are currently queued behind the lock — read by
+    /// `AgentEnvLockTests` to poll for "B has genuinely parked" before
+    /// cancelling it, rather than guessing with a sleep.
+    var queuedCount: Int { lock.withLock { waiters.count } }
+
+    /// Whether the lock is currently held by anyone — read by
+    /// `AgentEnvLockTests` to confirm a cancelled waiter's stale entry did
+    /// not leave this stuck at `true` forever.
+    var isCurrentlyLocked: Bool { lock.withLock { isLocked } }
 
     private func acquire() async throws {
-        try await awaitResumption { (continuation: CheckedContinuation<Void, Never>) in
-            let shouldResumeNow = self.lock.withLock { () -> Bool in
-                if !self.isLocked {
-                    self.isLocked = true
-                    return true
+        let id = UUID()
+        try await awaitResumption(
+            { (continuation: CheckedContinuation<Void, Never>) in
+                let shouldResumeNow = self.lock.withLock { () -> Bool in
+                    if !self.isLocked {
+                        self.isLocked = true
+                        return true
+                    }
+                    self.waiters.append((id, continuation))
+                    return false
                 }
-                self.waiters.append(continuation)
-                return false
+                if shouldResumeNow { continuation.resume() }
+            },
+            onCancel: {
+                self.lock.withLock {
+                    if let index = self.waiters.firstIndex(where: { $0.id == id }) {
+                        self.waiters.remove(at: index)
+                    }
+                }
             }
-            if shouldResumeNow { continuation.resume() }
-        }
+        )
     }
 
     private func release() {
@@ -59,7 +100,7 @@ final class AgentEnvLock: @unchecked Sendable {
                 isLocked = false
                 return nil
             } else {
-                return waiters.removeFirst()
+                return waiters.removeFirst().continuation
             }
         }
         pending?.resume()

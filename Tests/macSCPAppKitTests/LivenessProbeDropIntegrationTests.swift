@@ -810,6 +810,7 @@ private enum BoundedRun {
     static func run(
         boundSeconds: Int, operation: @escaping @MainActor () async -> Void
     ) async -> Bool {
+        // Here too: the continuation IS the API under test here (see this type's doc comment above).
         await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             let box = Box(continuation: continuation)
             Task { @MainActor in

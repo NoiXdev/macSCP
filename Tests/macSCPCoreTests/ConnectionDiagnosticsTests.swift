@@ -1849,6 +1849,7 @@ private final class Gate: @unchecked Sendable {
     }
 
     func opened() async {
+        // Here too: the continuation IS the API under test here (see this type's doc comment above).
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let shouldResumeNow = lock.withLock { () -> Bool in
                 if isOpen { return true }

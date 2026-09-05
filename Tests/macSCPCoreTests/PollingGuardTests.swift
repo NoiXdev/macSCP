@@ -408,11 +408,18 @@ struct PollingGuardTests {
     /// Negative: no test target file outside `Tests/MacSCPTestSupport/`
     /// calls `withCheckedContinuation(`/`withCheckedThrowingContinuation(`/
     /// `withUnsafeContinuation(`/`withUnsafeThrowingContinuation(` directly,
-    /// unless that file's own comment carries the sentence "the
-    /// continuation IS the API under test here" — the same exemption shape
-    /// `noLatchIsWaitedOnWithATimeout` and `noSleepingChildRacesWorkInAGroup`
-    /// already use, matched by sentence rather than by file name so a
-    /// rewording without also removing the shape turns this check red
+    /// unless the sentence "the continuation IS the API under test here"
+    /// appears within `continuationExemptionWindow` lines directly ABOVE
+    /// that specific use — the same PROXIMITY shape
+    /// `IconTooltipLintTests.hintWindow` uses (12 lines, read there for the
+    /// reasoning), not a file-level exemption. A file-level version of this
+    /// check shipped first (fix round 1 review, Important finding) and was
+    /// too coarse: one sentence anywhere in a file exempted EVERY bare
+    /// continuation in it, so a second, unrelated bare continuation added
+    /// to an already-exempted file would have passed silently. Matched by
+    /// sentence rather than by file name, same as
+    /// `noLatchIsWaitedOnWithATimeout` and `noSleepingChildRacesWorkInAGroup`,
+    /// so a rewording without also removing the shape turns this check red
     /// instead of quietly staying green.
     ///
     /// `docs/BACKLOG.md`, "A test parked on a bare continuation outlives its
@@ -424,18 +431,23 @@ struct PollingGuardTests {
     /// suite's stated limit. Every ordinary wait instead goes through
     /// `awaitResumption`/`awaitResumptionThrowing`
     /// (`Tests/MacSCPTestSupport/AwaitResumption.swift`), which resumes with
-    /// `CancellationError` the moment the awaiting task is cancelled. The 12
-    /// files exempted here (counted 2026-09-05) each carry a doc comment
-    /// explaining why THEIR bare continuation is not this bug: a mock that
-    /// deliberately never resumes to model a frozen peer or an uncancellable
-    /// probe, a hand-built race that is already bounded by construction, or
-    /// a body that cannot be `@Sendable` (`NSItemProvider`).
+    /// `CancellationError` the moment the awaiting task is cancelled. The 13
+    /// call sites exempted here, across 12 files (counted 2026-09-05, one
+    /// file — `SSHTerminalViewSizingTests` — carries two, each with its own
+    /// nearby sentence), each sit beside a comment explaining why THAT
+    /// bare continuation is not this bug: a mock that deliberately never
+    /// resumes to model a frozen peer or an uncancellable probe, a
+    /// hand-built race that is already bounded by construction, or a body
+    /// that cannot be `@Sendable` (`NSItemProvider`).
     ///
-    /// Scanned over comment-and-string-blanked source, per CLAUDE.md
-    /// "Source-scanning guards read comments too": several of those same
-    /// exemption doc comments quote `withCheckedContinuation` verbatim to
-    /// explain themselves, which would otherwise look like the call itself
-    /// to this regex.
+    /// Matching is done PER LINE, on comment-and-string-blanked source (per
+    /// CLAUDE.md "Source-scanning guards read comments too": several
+    /// exemption doc comments quote `withCheckedContinuation` verbatim,
+    /// which would otherwise look like the call itself to this regex) —
+    /// blanking preserves line breaks, so a match's line number in the
+    /// blanked text is the same line number in the ORIGINAL text, which is
+    /// where the sentence itself lives (inside a `///`/`//` comment the
+    /// blanking would otherwise erase).
     @Test func noBareContinuationEscapesAwaitResumption() throws {
         // `\s*[({]`, not a literal `\(`: every real call site in this tree
         // uses trailing-closure syntax (`withCheckedContinuation { ... }`),
@@ -447,21 +459,39 @@ struct PollingGuardTests {
 
         let candidates = try Self.sources().filter { !$0.path.contains("/MacSCPTestSupport/") }
 
-        let matched = try candidates.filter { source in
+        var offenders: [String] = []
+        var matchCount = 0
+        for source in candidates {
             let blanked = try Self.blankCommentsAndStrings(source.text)
-            let range = NSRange(blanked.startIndex..., in: blanked)
-            return pattern.firstMatch(in: blanked, range: range) != nil
+            let blankedLines = blanked.components(separatedBy: "\n")
+            let originalLines = source.text.components(separatedBy: "\n")
+            for (index, line) in blankedLines.enumerated() {
+                let lineRange = NSRange(line.startIndex..., in: line)
+                guard pattern.firstMatch(in: line, range: lineRange) != nil else { continue }
+                matchCount += 1
+                let windowStart = max(0, index - Self.continuationExemptionWindow)
+                let above = originalLines[windowStart..<index].joined(separator: "\n")
+                if !above.contains(exemptionSentence) {
+                    offenders.append("\(source.path):\(index + 1)")
+                }
+            }
         }
 
-        let offenders = matched.filter { !$0.text.contains(exemptionSentence) }.map(\.path)
         #expect(offenders.isEmpty, "\(offenders)")
 
         // Positive: the exemption is actually exercised — without this, the
         // negative above could pass over a tree where the pattern matches
-        // nothing at all, exempt or otherwise. 12 files match today (counted
-        // 2026-09-05).
-        #expect(matched.count >= 10, "\(matched.count)")
+        // nothing at all, exempt or otherwise. 13 call sites match today
+        // (counted 2026-09-05).
+        #expect(matchCount >= 10, "\(matchCount)")
     }
+
+    /// The proximity window `noBareContinuationEscapesAwaitResumption` scans
+    /// above a bare continuation for its exemption sentence — same size as
+    /// `IconTooltipLintTests.hintWindow` (12 lines), a value that lint
+    /// measured against its own false-negative rate rather than one picked
+    /// here independently.
+    private static let continuationExemptionWindow = 12
 
     /// Positive for `noBareContinuationEscapesAwaitResumption`: the helper
     /// it exempts callers into actually exists and declares both entry

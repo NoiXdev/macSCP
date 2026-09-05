@@ -50,8 +50,26 @@ private enum ResumptionWaitState<Value: Sendable>: Sendable {
 /// continuation) rather than evidence of a crash or a hang, and the CI
 /// warning gate does not see it — it scans compiler `file:line:col:
 /// warning:` lines, not a runtime print with neither.
+///
+/// `onCancel`, when given, runs synchronously as part of a WINNING
+/// cancellation — the same once-latch that decides whether `body`'s own
+/// resume or the cancellation gets to resume the outer wait, so it never
+/// runs after `body` has already resumed (there is nothing left to clean
+/// up then) and never runs twice. It exists for a caller that stored a
+/// token derived from `body`'s continuation somewhere OUTSIDE this
+/// function's own state — `AgentEnvLock.acquire()` appends its
+/// continuation to a FIFO `waiters` list, and a cancelled wait must remove
+/// that entry before this function's own `CancellationError` reaches the
+/// caller, or a later, unrelated `release()` pops the stale entry, "hands
+/// off" the lock to a task that no longer exists, and never clears
+/// `isLocked` — a permanent leak in a process-wide `static let shared`
+/// lock. Measured 2026-09-05 (fix round 1): reproduced with the scenario
+/// this file's own tests now pin (`AwaitResumptionTests
+/// .onCancelRunsOnceOnACancellingWinAndNeverAfterAResume`,
+/// `AgentEnvLockTests`), before `onCancel` existed here.
 public func awaitResumption<Value: Sendable>(
-    _ body: @escaping @Sendable (CheckedContinuation<Value, Never>) -> Void
+    _ body: @escaping @Sendable (CheckedContinuation<Value, Never>) -> Void,
+    onCancel cleanup: (@Sendable () -> Void)? = nil
 ) async throws -> Value {
     let state = NIOLockedValueBox(ResumptionWaitState<Value>.waiting(nil))
 
@@ -101,7 +119,17 @@ public func awaitResumption<Value: Sendable>(
                 return nil
             }
         }
-        waiter?.resume(throwing: CancellationError())
+        // `waiter != nil` IS the once-latch: only the caller that actually
+        // transitioned `.waiting` to `.cancelled` reaches here, so `cleanup`
+        // runs at most once, and never after `body` has already resumed
+        // (that path leaves `waiter == nil`). Runs BEFORE the outer
+        // continuation is resumed, so a caller like `AgentEnvLock` has
+        // already removed its token by the time anything downstream of
+        // this cancellation can run.
+        if let waiter {
+            cleanup?()
+            waiter.resume(throwing: CancellationError())
+        }
     }
 }
 

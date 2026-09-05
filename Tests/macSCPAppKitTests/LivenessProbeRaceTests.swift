@@ -35,6 +35,7 @@ struct LivenessProbeRaceTests {
             fatalError("not exercised by this test")
         }
 
+        // Here too: the continuation IS the API under test here (see this type's doc comment above).
         func stat(path: String) async throws -> RemoteFileItem {
             try await withCheckedThrowingContinuation { (_: CheckedContinuation<RemoteFileItem, Error>) in
                 // Deliberately never resumed.
