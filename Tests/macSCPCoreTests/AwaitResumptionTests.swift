@@ -180,4 +180,43 @@ struct AwaitResumptionTests {
         task.cancel()
         #expect(cleanupCalls.value == 0)
     }
+
+    /// Fix round 2 (docs/BACKLOG.md's own entry): round 1's `onCancel` only
+    /// fired `cleanup` when a continuation had ALREADY been stored in
+    /// `state` — cancel-BEFORE-the-body-registers slipped through it. A
+    /// task cancelled before it is even scheduled reaches
+    /// `withTaskCancellationHandler` already cancelled, so `onCancel` fires
+    /// before the operation closure has stored anything, and `state` was
+    /// still `.waiting(nil)` — round 1 read that as "nothing to clean up"
+    /// and skipped `cleanup`, while `body` (on its own, uncancelled
+    /// `bodyTask`) went on to register later, orphaned.
+    ///
+    /// `task.cancel()` runs in the SAME synchronous step as the `Task {}`
+    /// that creates it — no `AsyncSignal`, no `pollUntil` — so the task
+    /// never gets a chance to run before it is marked cancelled, pinning
+    /// exactly the scenario the finding named rather than a cancellation
+    /// that merely happens to land early.
+    @Test func aTaskCancelledBeforeItIsScheduledStillThrowsCancellationError() async throws {
+        let cleanupCalls = LockedCounter()
+        let task = Task<Void, any Error> {
+            _ = try await awaitResumption(
+                { (_: CheckedContinuation<Void, Never>) in
+                    // Deliberately never resumes. Whether this ever runs
+                    // at all depends on which of `body`'s own gate and the
+                    // cancellation wins the race inside `awaitResumption`
+                    // — both outcomes are correct, and neither changes
+                    // `cleanupCalls` below.
+                },
+                onCancel: { cleanupCalls.increment() }
+            )
+        }
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(cleanupCalls.value == 1, """
+            onCancel must fire even when cancellation wins before the body             has registered anything — round 1 only fired it when a             continuation had already been stored in `state`.
+            """)
+    }
 }

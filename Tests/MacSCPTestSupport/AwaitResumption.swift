@@ -4,7 +4,10 @@ import NIOConcurrencyHelpers
 /// through, mirroring `CancellableWaitState` in `AwaitCancellably.swift`:
 /// a value can arrive from the body's continuation, cancellation can arrive
 /// from `withTaskCancellationHandler`, and only the first of the two may
-/// resume the outer wait.
+/// resume the outer wait. `awaitResumption` (not `awaitResumptionThrowing`,
+/// which has no `onCancel` yet) also uses this SAME lock to gate whether
+/// `body` is invoked at all — see its own doc comment, "fix round 2" — so
+/// there is exactly one lock deciding both questions, not two.
 private enum ResumptionWaitState<Value: Sendable>: Sendable {
     /// The payload is the outer continuation, EMPTY until the outer body
     /// stores it — `onCancel` can run before that happens.
@@ -52,21 +55,61 @@ private enum ResumptionWaitState<Value: Sendable>: Sendable {
 /// warning:` lines, not a runtime print with neither.
 ///
 /// `onCancel`, when given, runs synchronously as part of a WINNING
-/// cancellation — the same once-latch that decides whether `body`'s own
-/// resume or the cancellation gets to resume the outer wait, so it never
-/// runs after `body` has already resumed (there is nothing left to clean
-/// up then) and never runs twice. It exists for a caller that stored a
-/// token derived from `body`'s continuation somewhere OUTSIDE this
-/// function's own state — `AgentEnvLock.acquire()` appends its
-/// continuation to a FIFO `waiters` list, and a cancelled wait must remove
-/// that entry before this function's own `CancellationError` reaches the
-/// caller, or a later, unrelated `release()` pops the stale entry, "hands
-/// off" the lock to a task that no longer exists, and never clears
-/// `isLocked` — a permanent leak in a process-wide `static let shared`
-/// lock. Measured 2026-09-05 (fix round 1): reproduced with the scenario
-/// this file's own tests now pin (`AwaitResumptionTests
-/// .onCancelRunsOnceOnACancellingWinAndNeverAfterAResume`,
-/// `AgentEnvLockTests`), before `onCancel` existed here.
+/// cancellation — the once-latch below decides who gets to run it, so it
+/// never runs after `body` has already resumed and never runs twice. It
+/// exists for a caller that stores a token derived from `body`'s
+/// continuation somewhere OUTSIDE this function's own state —
+/// `AgentEnvLock.acquire()` appends its continuation to a FIFO `waiters`
+/// list, and a cancelled wait must remove that entry before this
+/// function's own `CancellationError` reaches the caller, or a later,
+/// unrelated `release()` pops the stale entry, "hands off" the lock to a
+/// task that no longer exists, and never clears `isLocked` — a permanent
+/// leak in a process-wide `static let shared` lock.
+///
+/// Fix round 1 (2026-09-05) added `onCancel` but tied it to whether a
+/// continuation had ALREADY been stored in `state` — `waiter != nil` was
+/// the once-latch. Fix round 2 (2026-09-05, same day, code review):
+/// cancel-BEFORE-the-body-registers slipped through that. A task cancelled
+/// before it is even SCHEDULED reaches `withTaskCancellationHandler`
+/// already cancelled, so `onCancel` fires before the operation closure has
+/// stored anything — `state` was still `.waiting(nil)`, round 1's
+/// `onCancel` transitioned it to `.cancelled` but found no stored
+/// continuation and skipped `cleanup`, while `body` — running
+/// independently on `bodyTask`, an unstructured task that inherits no
+/// cancellation from anywhere — went on to register its token later,
+/// orphaned, because nothing had told it not to.
+///
+/// Two changes close this, both using the SAME lock:
+///
+/// 1. `onCancel` now runs `cleanup` whenever the transition to `.cancelled`
+///    succeeds, whether or not a continuation was stored yet — the
+///    once-latch is now "did THIS call win the transition", not "was
+///    there something to resume".
+/// 2. `body` is now called from INSIDE the same `state.withLockedValue`
+///    critical section `onCancel` uses to transition, so the two can never
+///    interleave: either `body` runs to completion first (fully,
+///    including whatever it registers) and the LATER transition's
+///    `cleanup` correctly finds and undoes it, or the transition happens
+///    first and `body` is never called at all — the "does not append"
+///    shape, not "appends and immediately removes". Skipping `body`
+///    entirely needs no separate undo path, and holding `state`'s lock
+///    across the call costs nothing in practice: every `body` in this
+///    family is a plain synchronous register-or-resume callback, never
+///    `async` work, so the critical section is exactly as short as the
+///    plain `NSLock.withLock` calls these bodies already make internally
+///    (`AgentEnvLock`'s own `self.lock`, nested safely inside — a fixed,
+///    non-reversing lock order, since nothing else ever acquires
+///    `AgentEnvLock`'s lock while holding `state`'s). A second, separate
+///    lock guarding only "may I call body" would still race against
+///    `onCancel`'s use of `state` — the two decisions have to share one
+///    lock to be atomic with each other, and `state` already exists for
+///    the other one.
+///
+/// Measured 2026-09-05: `AwaitResumptionTests
+/// .aTaskCancelledBeforeItIsScheduledStillThrowsCancellationError` and
+/// `AgentEnvLockTests.aWaiterCancelledBeforeItRegistersDoesNotLeakTheLockForever`
+/// pin the exact scenario — a task cancelled in the same synchronous step
+/// that creates it, before it is ever scheduled.
 public func awaitResumption<Value: Sendable>(
     _ body: @escaping @Sendable (CheckedContinuation<Value, Never>) -> Void,
     onCancel cleanup: (@Sendable () -> Void)? = nil
@@ -74,12 +117,25 @@ public func awaitResumption<Value: Sendable>(
     let state = NIOLockedValueBox(ResumptionWaitState<Value>.waiting(nil))
 
     // Unstructured: this task is the only thing that ever calls `body`,
-    // and it is deliberately left running (never cancelled, never awaited
-    // to completion by anything but the closure below) when `body` never
-    // resumes — the same abandonment `AwaitCancellably.swift` documents
-    // for the NIO future it never cancels either.
+    // and it is deliberately left running — never cancelled, never
+    // awaited to completion by anything but the closure below — in TWO
+    // cases: `body` never resumes (the same abandonment
+    // `AwaitCancellably.swift` documents for the NIO future it never
+    // cancels either), or `state` is already `.cancelled` by the time
+    // this runs and `body` is skipped entirely (fix round 2, see above).
     let bodyTask = Task<Value, Never> {
-        await withCheckedContinuation(body)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Value, Never>) in
+            state.withLockedValue { current in
+                // Only calls `body` while `current` is still `.waiting` —
+                // `.cancelled` means the transition in `onCancel` already
+                // won the race, and `body`'s own registration must not
+                // happen after that. `.done` cannot appear here: it
+                // requires `body` to have already resumed, which requires
+                // this very call to have already happened.
+                guard case .waiting = current else { return }
+                body(continuation)
+            }
+        }
     }
 
     return try await withTaskCancellationHandler {
@@ -110,26 +166,29 @@ public func awaitResumption<Value: Sendable>(
             }
         }
     } onCancel: {
-        let waiter = state.withLockedValue { (current) -> CheckedContinuation<Value, any Error>? in
+        let (transitioned, waiter) = state.withLockedValue {
+            (current) -> (Bool, CheckedContinuation<Value, any Error>?) in
             switch current {
             case .waiting(let stored):
                 current = .cancelled
-                return stored
+                return (true, stored)
             case .cancelled, .done:
-                return nil
+                return (false, nil)
             }
         }
-        // `waiter != nil` IS the once-latch: only the caller that actually
-        // transitioned `.waiting` to `.cancelled` reaches here, so `cleanup`
-        // runs at most once, and never after `body` has already resumed
-        // (that path leaves `waiter == nil`). Runs BEFORE the outer
-        // continuation is resumed, so a caller like `AgentEnvLock` has
-        // already removed its token by the time anything downstream of
-        // this cancellation can run.
-        if let waiter {
+        // `transitioned` IS the once-latch: only the caller that actually
+        // moved `.waiting` to `.cancelled` reaches here, so `cleanup` runs
+        // at most once, and never after `body` has already resumed (that
+        // path leaves `current` at `.done`, so `transitioned` reads
+        // false). Unlike round 1, this does NOT require a continuation to
+        // have been stored yet — a cancellation that wins before the
+        // operation closure above has even run must still fire `cleanup`,
+        // because `bodyTask`'s own gate is reading this SAME `.cancelled`
+        // value to decide whether to call `body` at all.
+        if transitioned {
             cleanup?()
-            waiter.resume(throwing: CancellationError())
         }
+        waiter?.resume(throwing: CancellationError())
     }
 }
 

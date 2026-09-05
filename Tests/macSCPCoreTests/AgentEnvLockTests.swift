@@ -73,4 +73,58 @@ struct AgentEnvLockTests {
 
         #expect(lock.isCurrentlyLocked == false)
     }
+
+    /// Fix round 2: the SAME scenario as `aCancelledWaiterDoesNotLeakTheLockForever`,
+    /// but B is created and cancelled in the SAME synchronous step — no
+    /// `pollUntil` gives B's own task a chance to run and append itself to
+    /// `waiters` before the cancel lands. This is the exact shape the
+    /// round-2 finding named: cancellation arriving before the body has
+    /// registered anything. Under round 1's fix, `onCancel` fired
+    /// `cleanup` only when a continuation had already been stored in
+    /// `awaitResumption`'s own `state` — which nothing here guarantees —
+    /// so B's body could still register its token AFTER `cleanup` had
+    /// already run (or without `cleanup` ever running at all), leaving it
+    /// orphaned exactly as before.
+    @Test func aWaiterCancelledBeforeItRegistersDoesNotLeakTheLockForever() async throws {
+        let lock = AgentEnvLock()
+        let aHolds = AsyncSignal()
+        let releaseA = AsyncSignal()
+
+        let taskA = Task<Void, any Error> {
+            try await lock.run {
+                aHolds.signal()
+                _ = await releaseA.wait()
+            }
+        }
+        let aOutcome = await aHolds.wait()
+        #expect(aOutcome == .signalled)
+
+        // Created and cancelled in the same synchronous step: B's own task
+        // never gets a chance to run before `.cancel()` marks it, so any
+        // registration `acquire()` performs happens strictly AFTER the
+        // cancellation already won — the ordering round 1 did not cover.
+        let taskB = Task<Void, any Error> {
+            try await lock.run {}
+        }
+        taskB.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await taskB.value
+        }
+
+        releaseA.signal()
+        try await taskA.value
+
+        // A fresh task acquires without waiting — under the bug this hangs
+        // until the suite's own `.timeLimit`, because a stale entry from
+        // B (registered after its own cancellation) leaves `isLocked`
+        // stuck at `true` forever.
+        let taskC = Task<Void, any Error> {
+            try await lock.run {}
+        }
+        try await taskC.value
+
+        #expect(lock.isCurrentlyLocked == false)
+        #expect(lock.queuedCount == 0)
+    }
 }
