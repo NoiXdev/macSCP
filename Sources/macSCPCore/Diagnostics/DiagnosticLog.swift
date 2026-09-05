@@ -484,26 +484,39 @@ public final class DiagnosticLog: Sendable {
     /// call (from either the writer task's loop or `flushSynchronously()`),
     /// so this function does not acquire it again — `Mutex` is not
     /// reentrant, and a nested `writeLock.withLock` here would deadlock.
-    /// The short `state.withLock` below is still needed, to read/open the
-    /// shared file handle.
+    ///
+    /// The open-or-reuse AND the write itself happen inside the SAME
+    /// `state.withLock` call, not two separate ones. A version that read
+    /// the handle under the lock, released it, and wrote after had a gap: a
+    /// concurrent `configure(.off)` (or a level change onto a new
+    /// directory) closes `s.fileHandle` under its own `state.withLock`
+    /// between this function's read and its write, and `FileHandle
+    /// .write(_:)` on an already-closed handle raises
+    /// `NSFileHandleOperationException` — an uncaught Objective-C exception,
+    /// not a Swift error, so nothing here could have caught it. Writing
+    /// inside the lock closes that gap: `configure` cannot close the handle
+    /// while this function still holds it open for the write. `write
+    /// (contentsOf:)` is used instead of `write(_:)` on top of that, as a
+    /// second, independent backstop — it reports an I/O failure as a thrown
+    /// Swift error rather than an exception, so `try?` can drop the line
+    /// instead of the process trapping, even in a future refactor that
+    /// reopens the gap this lock closes.
     private func writeRun(_ textLines: [String], directory: URL, dayKey: String) {
-        let handle = state.withLock { s -> FileHandle? in
+        let payload = Data((textLines.map { $0 + "\n" }.joined()).utf8)
+        state.withLock { s in
             if s.fileHandle == nil || s.fileDayKey != dayKey {
                 s.fileHandle?.closeFile()
                 s.fileHandle = nil
                 s.fileDayKey = nil
                 guard let opened = Self.openHandle(directory: directory, dayKey: dayKey) else {
-                    return nil
+                    return
                 }
                 s.fileHandle = opened
                 s.fileDayKey = dayKey
             }
-            return s.fileHandle
+            guard let handle = s.fileHandle else { return }
+            try? handle.write(contentsOf: payload)
         }
-        guard let handle else { return }
-
-        let payload = Data((textLines.map { $0 + "\n" }.joined()).utf8)
-        handle.write(payload)
     }
 
     /// Resumes every `flush()` waiter whose target sequence is now on disk.

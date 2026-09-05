@@ -29,6 +29,25 @@ struct DiagnosticLogTests {
         (try? String(contentsOf: url, encoding: .utf8)) ?? ""
     }
 
+    /// Lines this test itself wrote, out of a file `DiagnosticLog.shared`
+    /// may also be receiving lines from another suite running in parallel.
+    ///
+    /// `.serialized` (on this suite's own `@Suite`) only keeps two tests
+    /// IN THIS FILE from configuring the shared sink at once — it says
+    /// nothing about `LocalFileSystemTests`, `TransferEngineTests`, or any
+    /// other suite that runs concurrently with this one and logs through
+    /// the very same process-wide `DiagnosticLog.shared` while this suite
+    /// holds `.info`/`.debug`. A raw `lines.count` on the file this test
+    /// configured could count a line a different suite's production code
+    /// happened to write into the same file during that window. Filtering
+    /// by both `category` (the field the format spells as `] <category> `)
+    /// and a `marker` unique to this one test call narrows the count back
+    /// down to lines only this call could have produced.
+    private func ownLines(_ contents: String, category: String, marker: String) -> [String] {
+        contents.split(separator: "\n").map(String.init)
+            .filter { $0.contains("] \(category) ") && $0.contains(marker) }
+    }
+
     @Test("a debug line is dropped at .info and kept at .debug")
     func debugLineFilteredByLevel() async throws {
         let directory = makeTempDirectory()
@@ -85,15 +104,16 @@ struct DiagnosticLogTests {
     func linesPreserveCallOrder() async throws {
         let directory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = UUID().uuidString
 
         DiagnosticLog.shared.configure(level: .debug, directory: directory)
-        DiagnosticLog.shared.log(.info, "test", "first")
-        DiagnosticLog.shared.log(.info, "test", "second")
-        DiagnosticLog.shared.log(.info, "test", "third")
+        DiagnosticLog.shared.log(.info, "test", "\(marker) first")
+        DiagnosticLog.shared.log(.info, "test", "\(marker) second")
+        DiagnosticLog.shared.log(.info, "test", "\(marker) third")
         await DiagnosticLog.shared.flush()
 
         let url = try #require(DiagnosticLog.shared.currentFileURL)
-        let lines = fileContents(url).split(separator: "\n").map(String.init)
+        let lines = ownLines(fileContents(url), category: "test", marker: marker)
         #expect(lines.count == 3)
         #expect(lines[0].hasSuffix("first"))
         #expect(lines[1].hasSuffix("second"))
@@ -104,16 +124,24 @@ struct DiagnosticLogTests {
     func lineFormatMatchesRegex() async throws {
         let directory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = UUID().uuidString
 
         DiagnosticLog.shared.configure(level: .info, directory: directory)
-        DiagnosticLog.shared.log(.info, "browser.local", "list start path=/x")
+        DiagnosticLog.shared.log(.info, "browser.local", "list start path=/x-\(marker)")
         await DiagnosticLog.shared.flush()
 
         let url = try #require(DiagnosticLog.shared.currentFileURL)
-        let line = fileContents(url).split(separator: "\n").map(String.init).first ?? ""
+        // `.first`, not the raw file's first line: another suite's
+        // production code can log a `browser.local` line into this same
+        // process-wide sink while this test holds `.info` (see `ownLines`'
+        // own doc comment), and that line could land ahead of this one.
+        // The marker (baked into the path, since the pattern below anchors
+        // the message with `$`) picks this call's own line out regardless
+        // of where it landed.
+        let line = ownLines(fileContents(url), category: "browser.local", marker: marker).first ?? ""
 
         let pattern =
-            #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} \[info\] browser\.local list start path=/x$"#
+            #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} \[info\] browser\.local list start path=/x-\#(marker)$"#
         let regex = try NSRegularExpression(pattern: pattern)
         let range = NSRange(line.startIndex..<line.endIndex, in: line)
         #expect(regex.firstMatch(in: line, range: range) != nil)
@@ -123,14 +151,17 @@ struct DiagnosticLogTests {
     func lineFormatUsesNumericOffsetInUTC() async throws {
         let directory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = UUID().uuidString
 
         let utc = try #require(TimeZone(identifier: "UTC"))
         DiagnosticLog.shared.configure(level: .info, directory: directory, timeZone: utc)
-        DiagnosticLog.shared.log(.info, "browser.local", "list start path=/x")
+        DiagnosticLog.shared.log(.info, "browser.local", "list start path=/x-\(marker)")
         await DiagnosticLog.shared.flush()
 
         let url = try #require(DiagnosticLog.shared.currentFileURL)
-        let line = fileContents(url).split(separator: "\n").map(String.init).first ?? ""
+        // Same reasoning as `lineFormatMatchesRegex` above: filtered by
+        // this call's own marker, not the file's raw first line.
+        let line = ownLines(fileContents(url), category: "browser.local", marker: marker).first ?? ""
 
         // The exact same pattern `lineFormatMatchesRegex` checks against the
         // local zone: `[+-]\d{2}:\d{2}`, never a bare `Z`. A CI runner
@@ -138,7 +169,7 @@ struct DiagnosticLogTests {
         // is pinned directly here rather than left to depend on whatever
         // zone the machine running the suite happens to be in.
         let pattern =
-            #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} \[info\] browser\.local list start path=/x$"#
+            #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} \[info\] browser\.local list start path=/x-\#(marker)$"#
         let regex = try NSRegularExpression(pattern: pattern)
         let range = NSRange(line.startIndex..<line.endIndex, in: line)
         #expect(regex.firstMatch(in: line, range: range) != nil)
@@ -231,6 +262,14 @@ struct DiagnosticLogTests {
         let gate = AsyncSignal()
         DiagnosticLog.shared.setWriterGateForTesting { _ = await gate.wait() }
         defer { DiagnosticLog.shared.setWriterGateForTesting(nil) }
+        // A safety net, not the test's own signal below: `gate.signal()` is
+        // idempotent (`AsyncSignal.signal()`'s own doc comment), so this
+        // costs nothing when the test reaches its own `gate.signal()` call
+        // normally. Without it, a failed `#expect`/`#require` between here
+        // and that call would return early and leave the writer parked on a
+        // gate nothing else in the process ever opens — hanging every LATER
+        // `flush()` this process calls, not just this test's.
+        defer { gate.signal() }
 
         DiagnosticLog.shared.configure(level: .info, directory: directory)
         DiagnosticLog.shared.log(.info, "test", "one")
@@ -265,6 +304,70 @@ struct DiagnosticLogTests {
         #expect(afterOpen.isEmpty)
     }
 
+    /// Final whole-plan review, Important: `writeRun` used to read
+    /// `s.fileHandle` under `state`'s lock, release the lock, and only then
+    /// call `handle.write(_:)` — outside any lock. `configure(.off)` closes
+    /// that same handle under `state`'s lock alone (it never takes
+    /// `writeLock`), so a `configure(.off)` landing in the gap between the
+    /// read and the write closed a handle a write was still about to reach.
+    /// `FileHandle.write(_:)` on an already-closed handle raises
+    /// `NSFileHandleOperationException` — an uncaught Objective-C
+    /// exception, confirmed against this exact API by a standalone probe
+    /// outside this suite (see the final fix report): it aborts the whole
+    /// process rather than becoming a Swift error a `do`/`catch` or `try?`
+    /// could intercept. The fix moves the write inside the SAME
+    /// `state.withLock` call that reads/opens the handle (so `configure`
+    /// cannot close it out from under an in-progress write) and switches to
+    /// `write(contentsOf:)`, a throwing API, so `try?` can drop a line on
+    /// an I/O failure as a second, independent backstop.
+    ///
+    /// This test drives the exact sequence the finding names — writer
+    /// gated, two lines logged, `configure(.off)`, gate opened — and pins
+    /// the outcome a caller can observe: no crash reaching the final
+    /// `#expect`, `flush()` returns, and the two lines (dropped by `.off`
+    /// before the writer ever got to drain them) never reach disk. It
+    /// shares `offResolvesAPendingFlush`'s shape on purpose: with the
+    /// writer gated for its ENTIRE lifetime up to `gate.signal()`, the
+    /// buffer is already empty by the time the writer's drain runs, so
+    /// `writeRun` is never reached in EITHER the pre-fix or the post-fix
+    /// code — like `flushSynchronouslyThenTheWriterWakingUpWritesNothingMore`'s
+    /// own doc comment states for a sibling finding, `setWriterGateForTesting`'s
+    /// gate sits BEFORE `drainAndWriteUntilEmpty` starts, not inside it, so
+    /// no seam here can force the single-instruction race window between
+    /// reading and writing the handle. Forcing that window deterministically
+    /// would mean racing `configure(.off)` against an in-flight write on
+    /// the pre-fix code, which — if it lands — aborts the whole `swift
+    /// test` process rather than reporting a red test; that is not a risk
+    /// to take inside the shared test binary. What this test verifies is
+    /// that the fixed lock order and the throwing write API introduce no
+    /// regression in the already-covered `offResolvesAPendingFlush`
+    /// behaviour.
+    @Test("configure(.off) while the writer is gated with lines buffered does not crash, and flush() still returns")
+    func offWhileWriterGatedWithBufferedLinesDoesNotCrash() async {
+        let directory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let gate = AsyncSignal()
+        DiagnosticLog.shared.setWriterGateForTesting { _ = await gate.wait() }
+        defer { DiagnosticLog.shared.setWriterGateForTesting(nil) }
+        defer { gate.signal() }
+
+        DiagnosticLog.shared.configure(level: .info, directory: directory)
+        DiagnosticLog.shared.log(.info, "test", "one")
+        DiagnosticLog.shared.log(.info, "test", "two")
+
+        DiagnosticLog.shared.configure(level: .off, directory: directory)
+        await DiagnosticLog.shared.flush()
+
+        gate.signal()
+
+        // Reaching this line at all is the primary property: the process
+        // did not abort. The file assertion is the secondary one — the two
+        // buffered lines were dropped by `.off`, never written.
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        #expect(entries.isEmpty)
+    }
+
     /// `flushSynchronously()` (Diagnostic Log plan, Task 2 round 1): the
     /// path `AppDelegate.applicationWillTerminate` calls, where nothing can
     /// be `await`ed. Same writer-gate shape as `offResolvesAPendingFlush`
@@ -277,14 +380,21 @@ struct DiagnosticLogTests {
     func flushSynchronouslyWritesBufferedLinesWithTheWriterGated() async throws {
         let directory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = UUID().uuidString
 
         let gate = AsyncSignal()
         DiagnosticLog.shared.setWriterGateForTesting { _ = await gate.wait() }
         defer { DiagnosticLog.shared.setWriterGateForTesting(nil) }
+        // Safety net — see `offResolvesAPendingFlush`'s own comment on its
+        // matching `defer`: idempotent, so it costs nothing once the test
+        // reaches its own `gate.signal()` below, and keeps a failed
+        // `#expect`/`#require` above that call from parking the writer
+        // forever.
+        defer { gate.signal() }
 
         DiagnosticLog.shared.configure(level: .info, directory: directory)
-        DiagnosticLog.shared.log(.info, "test", "one")
-        DiagnosticLog.shared.log(.info, "test", "two")
+        DiagnosticLog.shared.log(.info, "test", "\(marker) one")
+        DiagnosticLog.shared.log(.info, "test", "\(marker) two")
 
         // Provably not drained by the writer, exactly as
         // offResolvesAPendingFlush establishes above.
@@ -299,7 +409,7 @@ struct DiagnosticLogTests {
         DiagnosticLog.shared.flushSynchronously()
 
         let url = try #require(DiagnosticLog.shared.currentFileURL)
-        let lines = fileContents(url).split(separator: "\n").map(String.init)
+        let lines = ownLines(fileContents(url), category: "test", marker: marker)
         #expect(lines.count == 2)
         #expect(lines[0].hasSuffix("one"))
         #expect(lines[1].hasSuffix("two"))
@@ -332,14 +442,21 @@ struct DiagnosticLogTests {
     func flushSynchronouslyThenTheWriterWakingUpWritesNothingMore() async throws {
         let directory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = UUID().uuidString
 
         let gate = AsyncSignal()
         DiagnosticLog.shared.setWriterGateForTesting { _ = await gate.wait() }
         defer { DiagnosticLog.shared.setWriterGateForTesting(nil) }
+        // Safety net — see `offResolvesAPendingFlush`'s own comment on its
+        // matching `defer`: idempotent, so it costs nothing once the test
+        // reaches its own `gate.signal()` below, and keeps a failed
+        // `#expect`/`#require` above that call from parking the writer
+        // forever.
+        defer { gate.signal() }
 
         DiagnosticLog.shared.configure(level: .info, directory: directory)
-        DiagnosticLog.shared.log(.info, "test", "one")
-        DiagnosticLog.shared.log(.info, "test", "two")
+        DiagnosticLog.shared.log(.info, "test", "\(marker) one")
+        DiagnosticLog.shared.log(.info, "test", "\(marker) two")
 
         // `flushSynchronously()` is NOT gated (the gate belongs to
         // `runWriter`'s loop alone) — it drains and writes both lines here,
@@ -356,7 +473,7 @@ struct DiagnosticLogTests {
         await DiagnosticLog.shared.flush()
 
         let url = try #require(DiagnosticLog.shared.currentFileURL)
-        let lines = fileContents(url).split(separator: "\n").map(String.init)
+        let lines = ownLines(fileContents(url), category: "test", marker: marker)
         #expect(lines.count == 2, """
             expected exactly 2 lines (\"one\" then \"two\") after \
             flushSynchronously() plus the writer's own later wake -- \
@@ -370,6 +487,7 @@ struct DiagnosticLogTests {
     func batchSpanningMidnightSplitsAcrossFiles() async throws {
         let directory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = UUID().uuidString
 
         var beforeMidnight = DateComponents()
         beforeMidnight.year = 2026
@@ -401,15 +519,25 @@ struct DiagnosticLogTests {
         // `now` was already read before them.
         let clock = SequencedClock(values: [firstInstant, firstInstant, secondInstant])
         DiagnosticLog.shared.configure(level: .info, directory: directory, now: clock.next)
-        DiagnosticLog.shared.log(.info, "test", "last line of the day")
-        DiagnosticLog.shared.log(.info, "test", "first line of the next day")
+        DiagnosticLog.shared.log(.info, "test", "\(marker) last line of the day")
+        DiagnosticLog.shared.log(.info, "test", "\(marker) first line of the next day")
         await DiagnosticLog.shared.flush()
 
         let firstFile = directory.appending(path: "macSCP-2026-09-04.log")
         let secondFile = directory.appending(path: "macSCP-2026-09-05.log")
 
-        let firstLines = fileContents(firstFile).split(separator: "\n").map(String.init)
-        let secondLines = fileContents(secondFile).split(separator: "\n").map(String.init)
+        // Filtered by `marker`, not raw `lines.count`: this test's own
+        // `now` closure (`clock.next`) becomes the SHARED sink's `now` for
+        // as long as this configuration stands, so any other suite's
+        // production code that logs through the same process-wide
+        // `DiagnosticLog.shared` during this narrow window lands in the
+        // SAME directory and, once `clock.next` has exhausted its fixed
+        // values, the SAME day file as this test's own second line
+        // (`SequencedClock` repeats its last value past the end) —
+        // observed directly: `secondLines.count` came back `3`, not `1`,
+        // under exactly this raw count before this fix.
+        let firstLines = ownLines(fileContents(firstFile), category: "test", marker: marker)
+        let secondLines = ownLines(fileContents(secondFile), category: "test", marker: marker)
         #expect(firstLines.count == 1)
         #expect(secondLines.count == 1)
         #expect(firstLines.first?.hasSuffix("last line of the day") == true)
@@ -583,12 +711,22 @@ struct DiagnosticLogTests {
         await vm.load()
         await DiagnosticLog.shared.flush()
 
+        // The positive beside the negative below (CLAUDE.md, "Guards that
+        // name what they watch"): without it, an `RemoteBrowserViewModel`
+        // that stopped reaching `.failed` at all — the vacuous case this
+        // `if`/`else` falls into — would still read `inMessage == false`
+        // (`message` is `""`, and `""` never contains `secret`), passing
+        // while the very state transition under test had silently broken.
+        let stateIsFailed: Bool
         let message: String
         if case .failed(let bannerText) = vm.state {
+            stateIsFailed = true
             message = bannerText
         } else {
+            stateIsFailed = false
             message = ""
         }
+        #expect(stateIsFailed)
         let inMessage = message.contains(secret)
         #expect(inMessage == false)
 
@@ -596,6 +734,60 @@ struct DiagnosticLogTests {
         let logText = fileContents(url)
         let inLog = logText.contains(secret)
         #expect(inLog == false)
+    }
+
+    // MARK: - Final whole-plan review: the connect line drops endpoint userinfo
+
+    /// Final whole-plan review, Critical: `ConnectionViewModel
+    /// .connectLogFields` interpolated `s3.endpoint`/`webdav.baseURL`
+    /// verbatim into `connect start host=…` — free text a user types into
+    /// the endpoint field, which takes `scheme://KEY:SECRET@host` as
+    /// ordinary input no schema here strips (`ConnectFailureSecrecyTests`).
+    /// A stored S3 session whose endpoint carries a credential would
+    /// otherwise write that credential straight into the diagnostic log's
+    /// `connect start` line. The fix routes both `s3.endpoint` and
+    /// `webdav.baseURL` through `URLText.withoutUserinfo` before they reach
+    /// the log call; this test drives the S3 side end to end, through
+    /// `ConnectionViewModel.connect()` itself, rather than the helper in
+    /// isolation.
+    ///
+    /// The secret lives in a named constant, and both checks below compute
+    /// their `Bool` before the expectation, for the same reason
+    /// `connectionFailedReasonNeverReachesMessageOrLog` above does:
+    /// `#expect` prints the source text of a failing expression, and
+    /// `contents.contains(secret)` written directly would print `contents`
+    /// — secret included — into the failure output exactly when the test
+    /// is red. The negative sits beside a positive: the host name itself
+    /// must still reach the line, or the fix would be indistinguishable
+    /// from silently dropping `host=` altogether.
+    @MainActor
+    @Test("ConnectionViewModel.connect() drops the S3 endpoint's userinfo from the connect start line")
+    func connectStartLineDropsS3EndpointUserinfo() async throws {
+        let secret = "AKIAEXAMPLE:hunter2"
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem(tree: ["/": []]) })
+        vm.kind = .s3
+        vm.s3AccessKeyID = "AKIAEXAMPLE"
+        vm.s3SecretAccessKey = "shh-secret"
+        vm.s3Region = "eu-central-1"
+        vm.s3Endpoint = "https://\(secret)@s3.example.test"
+        vm.s3Bucket = "my-bucket"
+        vm.s3UsePathStyle = true
+
+        DiagnosticLog.shared.configure(level: .info, directory: logDirectory)
+        _ = await vm.connect()
+        await DiagnosticLog.shared.flush()
+
+        let url = try #require(DiagnosticLog.shared.currentFileURL)
+        let contents = fileContents(url)
+        let inLog = contents.contains(secret)
+        #expect(inLog == false)
+
+        let hostStillPresent = contents.contains("s3.example.test")
+        #expect(hostStillPresent)
     }
 }
 

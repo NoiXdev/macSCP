@@ -99,18 +99,30 @@ At `debug`:
 - `browser.local entry slow name=… ms=…` for every entry whose metadata
   call took ≥ 500 ms — the line that answers the tester's report.
 - Every SFTP operation `CitadelFileSystem` issues: `sftp <op> path=…
-  ms=… <ok|failed reason=…>` (12 operations at HEAD, counted with
+  ms=… <ok|failed reason=…>` (11 operations at HEAD, counted with
   `grep -c "func " …` filtered to the protocol methods); shell channel
   open/close; keep-alive ticks; S3 and WebDAV requests as method + path
   + status + ms.
 
 **Not logged, at any level:** passwords, passphrases, private keys,
-tokens, presigned URLs, the bytes of any transfer, host keys (the
-fingerprint's type and the decision only). The wire level of SSH
-(packets, KEX) is out of scope: the SSH library exposes no hook for it,
-and packet bytes would carry exactly what must not be written. "All SSH
-communication" therefore means every request the app makes over the
-connection, at the protocol level, with its outcome and timing.
+tokens, presigned URLs, the bytes of any transfer, and host keys
+themselves — never the key material a server presents or this app
+holds. A host-key MISMATCH is the one exception, and it is a narrow
+one: `HostKeyError.mismatch`'s two fingerprints (the expected key's and
+the presented key's) reach the log, because a fingerprint is a public
+value of a public key, not a secret, and a mismatch line is exactly
+what a tester reports back to whoever holds the other end. They reach
+the log only through the audited mapper, `DialSupport.reason(for:)` —
+never through a hand-written `"...\(fingerprint)..."` interpolation
+elsewhere — so `DiagnosticLogSecrecyGuardTests`' forbidden-identifier
+list (below) still stands as the check on every OTHER, hand-written log
+line; it does not need a fingerprint exemption carved into it. Every
+other host-key outcome (known, unknown, rejected) logs the decision
+only, never the key. The wire level of SSH (packets, KEX) is out of
+scope: the SSH library exposes no hook for it, and packet bytes would
+carry exactly what must not be written. "All SSH communication"
+therefore means every request the app makes over the connection, at the
+protocol level, with its outcome and timing.
 
 ### Guards
 

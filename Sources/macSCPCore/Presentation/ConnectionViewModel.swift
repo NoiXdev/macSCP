@@ -923,6 +923,15 @@ public final class ConnectionViewModel {
     /// endpoint URL/base URL stands in for `host` (both are server names the
     /// user typed, the same category of thing a hostname is) and `port` is
     /// `"-"` since neither protocol config carries one of its own.
+    ///
+    /// `s3.endpoint`/`webdav.baseURL` are free text a user typed into a form
+    /// field, not a value this module built — the same category of input
+    /// `URLText`'s own doc comment warns about (`scheme://KEY:SECRET@host`
+    /// is ordinary input no schema here strips). Routed through
+    /// `URLText.withoutUserinfo` for the same reason
+    /// `SessionOverviewModel`'s summary rows do: this is text reaching a
+    /// diagnosis, and a diagnosis is written to be pasted into a public
+    /// issue.
     private static func connectLogFields(
         for config: ConnectionConfig
     ) -> (host: String, port: String, kind: String) {
@@ -930,9 +939,9 @@ public final class ConnectionViewModel {
         case .ssh(let ssh):
             return (ssh.host, String(ssh.port), "ssh")
         case .s3(let s3):
-            return (s3.endpoint, "-", "s3")
+            return (URLText.withoutUserinfo(s3.endpoint), "-", "s3")
         case .webdav(let webdav):
-            return (webdav.baseURL, "-", "webdav")
+            return (URLText.withoutUserinfo(webdav.baseURL), "-", "webdav")
         }
     }
 
