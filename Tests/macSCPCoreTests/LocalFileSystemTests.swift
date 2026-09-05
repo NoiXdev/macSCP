@@ -1,9 +1,15 @@
 import Crypto
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
-@Suite("LocalFileSystem")
+/// `.timeLimit(.minutes(1))`: the parked-entry tests below abandon a child
+/// `Task` on a `Gate` the test never opens — the ONLY clock that ends such a
+/// test is cancellation from this trait, never a wall-clock bound of the
+/// test's own (CLAUDE.md, "A wall-clock ceiling in a test measures the
+/// runner").
+@Suite("LocalFileSystem", .timeLimit(.minutes(1)))
 struct LocalFileSystemTests {
     /// Creates a throwaway tree: <root>/unterordner/ and <root>/datei.txt (5 bytes).
     private func makeTempTree() throws -> URL {
@@ -610,6 +616,177 @@ struct LocalFileSystemTests {
         let file = items.first { $0.name == "datei.txt" }
         #expect(file?.owner == nil)
         #expect(file?.group == nil)
+    }
+
+    // MARK: - metadata(for:) as a stream (local-listing-never-blocks Task 2)
+
+    /// Mirrors `ConnectionDiagnosticsTests`' private `Gate`: a probe parks
+    /// on `opened()` and never returns while this test never calls `open()`.
+    /// `isClosed` is read by the parked-entry test to prove the abandoned
+    /// child really never got past the gate, not merely that it finished
+    /// quickly by some other route.
+    private actor Gate {
+        private var isOpen = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func open() {
+            guard !isOpen else { return }
+            isOpen = true
+            for waiter in waiters { waiter.resume() }
+            waiters.removeAll()
+        }
+
+        func opened() async {
+            if isOpen { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        var isClosed: Bool { !isOpen }
+    }
+
+    /// Collects the items a `metadata(for:)` consumer receives, across the
+    /// task boundary between the consumer `Task` (below) and this test's own
+    /// polling — an `actor` so the two sides never race on the same array.
+    private actor CollectedItems {
+        private(set) var items: [RemoteFileItem] = []
+
+        func append(_ item: RemoteFileItem) {
+            items.append(item)
+        }
+
+        var count: Int { items.count }
+    }
+
+    /// Test (a): three plain files, no substituted probe (the REAL
+    /// `item(for:fetchesOwnerGroup:)` runs) — `metadata(for:)` yields all
+    /// three, each filled in, and then finishes on its own (every child
+    /// completed; nothing here cancels the consumer).
+    @Test func metadataFillsInSizeAndDateForPlainFilesThenFinishes() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let names = ["eins.txt", "zwei.txt", "drei.txt"]
+        for name in names {
+            try Data("x".utf8).write(to: root.appendingPathComponent(name))
+        }
+        let fs = LocalFileSystem()
+        let phaseOne = try await fs.list(path: root.path(percentEncoded: false))
+        #expect(phaseOne.count == 3)
+
+        var filled: [RemoteFileItem] = []
+        for await item in fs.metadata(for: phaseOne) {
+            filled.append(item)
+        }
+
+        #expect(filled.count == 3)
+        let byName = Dictionary(uniqueKeysWithValues: filled.map { ($0.name, $0) })
+        for name in names {
+            #expect(byName[name]?.size != nil)
+            #expect(byName[name]?.modifiedAt != nil)
+        }
+    }
+
+    /// Test (b): one entry's probe is parked on a `Gate` this test never
+    /// opens. `metadata(for:)` still yields the other two entries — proving
+    /// the stuck one does not hold up the rest — and then the test CANCELS
+    /// the consumer task itself. The stream must finish (the consumer's
+    /// `for await` loop ends) with the gate STILL closed: the parked child
+    /// was abandoned, not waited for and not cancelled-and-joined. Nothing
+    /// here asserts elapsed time (CLAUDE.md: a ceiling measures the runner,
+    /// not the property) — only the outcome and the ordering.
+    @Test func metadataAbandonsAStuckEntryWhenTheConsumerCancels() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fastNames = ["eins.txt", "zwei.txt"]
+        for name in fastNames + ["stuck.txt"] {
+            try Data("x".utf8).write(to: root.appendingPathComponent(name))
+        }
+        let stuckPath = root.appendingPathComponent("stuck.txt").path(percentEncoded: false)
+        let gate = Gate()
+        let fs = LocalFileSystem(metadataProbe: { url in
+            guard url.path(percentEncoded: false) == stuckPath else {
+                return RemoteFileItem(
+                    name: url.lastPathComponent, path: url.path(percentEncoded: false),
+                    kind: .file, size: 1)
+            }
+            // Never opened by this test — parks forever. `async` lets this
+            // suspend on the actor's continuation instead of blocking a
+            // thread (CLAUDE.md: tests never block the cooperative pool).
+            await gate.opened()
+            return nil
+        })
+        let phaseOne = try await fs.list(path: root.path(percentEncoded: false))
+        #expect(phaseOne.count == 3)
+
+        let collected = CollectedItems()
+        let consumer = Task<Int, Never> {
+            var seen = 0
+            for await item in fs.metadata(for: phaseOne) {
+                await collected.append(item)
+                seen += 1
+            }
+            return seen
+        }
+
+        try await pollUntil("the two fast entries to arrive") {
+            await collected.count == 2
+        }
+        consumer.cancel()
+        let yieldedBeforeCancellation = await consumer.value
+
+        #expect(yieldedBeforeCancellation == 2)
+        let byName = Dictionary(uniqueKeysWithValues: await collected.items.map { ($0.name, $0) })
+        #expect(Set(byName.keys) == Set(fastNames))
+        #expect(await gate.isClosed)
+    }
+
+    /// Test (c): the consumer is cancelled before the stream has any chance
+    /// to yield — a single entry, its probe permanently parked. The `for
+    /// await` loop must still end (the consumer task completes) rather than
+    /// hang waiting for a first item that will never come.
+    @Test func metadataConsumerCancelledBeforeAnyYieldEndsTheLoop() async throws {
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("x".utf8).write(to: root.appendingPathComponent("eins.txt"))
+        let gate = Gate()
+        let fs = LocalFileSystem(metadataProbe: { _ in
+            await gate.opened()
+            return nil
+        })
+        let phaseOne = try await fs.list(path: root.path(percentEncoded: false))
+
+        let consumer = Task<Bool, Never> {
+            for await _ in fs.metadata(for: phaseOne) {
+                Issue.record("expected no item before cancellation")
+            }
+            return true
+        }
+        consumer.cancel()
+        let loopEnded = await consumer.value
+
+        #expect(loopEnded)
+        #expect(await gate.isClosed)
+    }
+
+    /// Test (d): owner/group in phase two are gated by `fetchesOwnerGroup`,
+    /// exactly like `stat` (`ownerGroup(for:fetchesOwnerGroup:)`) — this
+    /// drives the REAL probe (no substitution) so it also proves the default
+    /// `metadataProbe` is wired to the flag correctly, not just that the
+    /// gate exists somewhere.
+    @Test func metadataIncludesOwnerOnlyWhenFetchesOwnerGroupIsTrue() async throws {
+        let root = try makeTempTree()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fsWithOwner = LocalFileSystem(fetchesOwnerGroup: true)
+        let phaseOneWithOwner = try await fsWithOwner.list(path: root.path(percentEncoded: false))
+        var filledWithOwner: [RemoteFileItem] = []
+        for await item in fsWithOwner.metadata(for: phaseOneWithOwner) { filledWithOwner.append(item) }
+        #expect(filledWithOwner.first { $0.name == "datei.txt" }?.owner != nil)
+
+        let fsWithoutOwner = LocalFileSystem(fetchesOwnerGroup: false)
+        let phaseOneWithoutOwner = try await fsWithoutOwner.list(path: root.path(percentEncoded: false))
+        var filledWithoutOwner: [RemoteFileItem] = []
+        for await item in fsWithoutOwner.metadata(for: phaseOneWithoutOwner) { filledWithoutOwner.append(item) }
+        #expect(filledWithoutOwner.first { $0.name == "datei.txt" }?.owner == nil)
     }
 
     // `listIncludesOwnerAndGroupWhenRequested` (M18a) used to live here,

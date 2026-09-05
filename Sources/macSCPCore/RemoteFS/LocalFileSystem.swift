@@ -22,11 +22,45 @@ public struct LocalFileSystem: RemoteFileSystem {
     static let slowEntryThreshold: Duration = .milliseconds(500)
 
     /// `fetchesOwnerGroup`: whether `list`/`stat` resolve owner/group NAMES
-    /// (default `false`). See `ownerGroup(for:)` for why this is opt-in.
+    /// (default `false`). See `ownerGroup(for:fetchesOwnerGroup:)` for why
+    /// this is opt-in.
     public let fetchesOwnerGroup: Bool
 
-    public init(fetchesOwnerGroup: Bool = false) {
+    /// The seam `metadata(for items:)` (`LocalMetadataSource.swift`) runs per
+    /// entry, on its own child task. Defaults to `Self.item(for:
+    /// fetchesOwnerGroup:)` with THIS instance's `fetchesOwnerGroup` baked
+    /// in — the closure captures the flag's VALUE, not `self`, so it stays
+    /// `Sendable` without capturing the struct.
+    ///
+    /// `async`, though the real implementation it defaults to never
+    /// suspends: a plain synchronous closure satisfies an `async` parameter
+    /// type just fine (Swift allows sync code wherever async is expected),
+    /// and declaring the SEAM `async` is what lets a test's substitute probe
+    /// suspend on an actor-backed `Gate` (`await gate.opened()`) instead of
+    /// blocking a thread to simulate "parked" — CLAUDE.md's "tests never
+    /// block the pool" forbids a semaphore or any other synchronous wait
+    /// here. A genuinely stuck PRODUCTION probe (a dead network mount's
+    /// `resourceValues` call) still costs a real thread regardless of the
+    /// `async` keyword — that call never reaches a suspension point, it
+    /// just never returns — so the design's accepted cost (one thread per
+    /// stuck entry) is unchanged; only the TEST'S way of modeling "stuck"
+    /// avoids paying that cost against the shared cooperative pool.
+    ///
+    /// Not `private`: `LocalMetadataSource.swift`'s conformance extension
+    /// reads it, and Swift's `private` is scoped to the declaring FILE, not
+    /// just the declaring type — an extension of the same type in a
+    /// different file needs at least `internal` (the unmarked default) to
+    /// see it. Still invisible outside this module.
+    let metadataProbe: @Sendable (URL) async -> RemoteFileItem?
+
+    public init(
+        fetchesOwnerGroup: Bool = false,
+        metadataProbe: (@Sendable (URL) async -> RemoteFileItem?)? = nil
+    ) {
         self.fetchesOwnerGroup = fetchesOwnerGroup
+        self.metadataProbe = metadataProbe ?? { url in
+            Self.item(for: url, fetchesOwnerGroup: fetchesOwnerGroup)
+        }
     }
 
     /// How this file system expresses permissions — the one capability of
@@ -223,7 +257,7 @@ public struct LocalFileSystem: RemoteFileSystem {
            !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
             throw RemoteFSError.notFound(path: path)
         }
-        return item(for: url)
+        return Self.item(for: url, fetchesOwnerGroup: fetchesOwnerGroup)
     }
 
     public func readStream(
@@ -418,22 +452,28 @@ public struct LocalFileSystem: RemoteFileSystem {
         return values?.isSymbolicLink == true || FileManager.default.fileExists(atPath: path)
     }
 
-    /// The per-entry metadata call. Local-listing-never-blocks Task 1 stops
-    /// calling this from `list`'s own loop (see `list`'s doc comment) — it
-    /// still backs `stat` (a single-entry call may stay synchronous) and
-    /// stays in the file for Task 2, which calls it once per entry from a
-    /// new `metadata(for items:)` stream, each call on its own child task.
-    /// The `entry slow` debug line that used to wrap calls to this method
-    /// inside `list`'s loop moves there too — nothing in this function logs
-    /// timing on its own.
-    private func item(for url: URL) -> RemoteFileItem {
+    /// The per-entry metadata call. Local-listing-never-blocks Task 1 stopped
+    /// calling this from `list`'s own loop (see `list`'s doc comment); Task 2
+    /// makes it back `stat` (a single-entry call may stay synchronous) AND
+    /// the default `metadataProbe` that `metadata(for items:)` runs once per
+    /// entry, each call on its own child task (`LocalMetadataSource.swift`).
+    /// `entry slow` — the debug line that used to wrap calls to this method
+    /// inside `list`'s loop — moves to `metadata(for:)`; nothing in this
+    /// function logs timing on its own.
+    ///
+    /// `static`, taking `fetchesOwnerGroup` as a parameter rather than
+    /// reading `self.fetchesOwnerGroup`: the default `metadataProbe` closure
+    /// built in `init` captures the flag's VALUE (a plain `Bool`, trivially
+    /// `Sendable`) instead of `self` — so the closure stored on the struct
+    /// does not have to capture the struct that holds it.
+    private static func item(for url: URL, fetchesOwnerGroup: Bool) -> RemoteFileItem {
         let values = try? url.resourceValues(forKeys: Set(Self.resourceKeys))
         let kind = Self.kind(isSymbolicLink: values?.isSymbolicLink, isDirectory: values?.isDirectory)
         var normalizedPath = url.path(percentEncoded: false)
         if normalizedPath.count > 1, normalizedPath.hasSuffix("/") {
             normalizedPath.removeLast()
         }
-        let (owner, group) = ownerGroup(for: url)
+        let (owner, group) = ownerGroup(for: url, fetchesOwnerGroup: fetchesOwnerGroup)
         return RemoteFileItem(
             name: url.lastPathComponent,
             path: normalizedPath,
@@ -464,10 +504,12 @@ public struct LocalFileSystem: RemoteFileSystem {
     /// (e.g. behind the "New Folder" dialog) appear to hang. When the flag
     /// is off, this returns the nil pair without touching the filesystem.
     ///
-    /// Reached only through `item(for:)`, so Task 1 already moved this
-    /// behind `stat` and Task 2's `metadata(for items:)` stream — `list`
-    /// itself never calls it any more, flag or no flag.
-    private func ownerGroup(for url: URL) -> (owner: String?, group: String?) {
+    /// Reached only through `item(for:fetchesOwnerGroup:)`, so Task 1 already
+    /// moved this behind `stat` and Task 2's `metadata(for items:)` stream —
+    /// `list` itself never calls it any more, flag or no flag. `static` for
+    /// the same reason `item(for:fetchesOwnerGroup:)` is: the flag arrives as
+    /// a parameter, not read off `self`.
+    private static func ownerGroup(for url: URL, fetchesOwnerGroup: Bool) -> (owner: String?, group: String?) {
         guard fetchesOwnerGroup else { return (nil, nil) }
         guard
             let attributes = try? FileManager.default.attributesOfItem(

@@ -91,6 +91,16 @@ struct DiagnosticLogSharedSinkTests {
     /// that suite runs its tests in parallel and carries no serialization of
     /// its own.
     ///
+    /// Local-listing-never-blocks Task 2 moved the per-entry timed call (and
+    /// its `entry slow` line) OUT of `list` and into `metadata(for:)` — so
+    /// this test now drives both: `list` for `list start`/`list done`, then
+    /// drains `metadata(for:)` for the entry timing. Driving only `list`
+    /// (as this test used to) would make the `entry slow` absence
+    /// structurally guaranteed rather than a live check of anything, because
+    /// `list` no longer calls the timed per-entry path at all — chip
+    /// `task_baf1cade` flagged exactly this after Task 1 landed; this test
+    /// is what closes it.
+    ///
     /// `.debug`, not `.info`: admitting `.debug` is what makes the absence
     /// assertion below actually test the threshold logic — at `.info` an
     /// `entry slow` line could never appear regardless of whether the
@@ -98,7 +108,7 @@ struct DiagnosticLogSharedSinkTests {
     /// Three PLAIN files read well under `LocalFileSystem.slowEntryThreshold`
     /// (500 ms), so the negative (no `entry slow`) sits beside the positive
     /// (`list start`/`list done` ARE present) rather than standing alone.
-    @Test("LocalFileSystem.list writes list start/done, with no entry-slow line for fast entries")
+    @Test("LocalFileSystem.list/metadata write list start/done, with no entry-slow line for fast entries")
     func localFileSystemListWritesStartAndDoneWithoutAnEntrySlowLine() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
@@ -114,7 +124,9 @@ struct DiagnosticLogSharedSinkTests {
         let fixedNow = Date()
         DiagnosticLog.shared.configure(
             level: .debug, directory: logDirectory, now: { fixedNow })
-        _ = try await LocalFileSystem().list(path: listedPath)
+        let fs = LocalFileSystem()
+        let phaseOne = try await fs.list(path: listedPath)
+        for await _ in fs.metadata(for: phaseOne) {}
         await DiagnosticLog.shared.flush()
 
         let contents = fileContents(ownFileURL(directory: logDirectory, fixedNow: fixedNow))
