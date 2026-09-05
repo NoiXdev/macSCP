@@ -165,6 +165,20 @@ final class SessionTab: Identifiable {
     var editErrorMessage: String?
     /// Stored session this tab is connected to (sidebar highlight).
     var activeStoredSessionID: UUID?
+    /// The pane visibility this tab was DESCRIBED with, when it came back
+    /// from a restored window (Detachable Tabs plan, Task 5) — `nil` for
+    /// every tab that was made any other way.
+    ///
+    /// It has to wait here rather than being applied when the tab is
+    /// built, because a restored tab is disconnected: `showsFiles` writes
+    /// through to `BrowserSession.showsFiles` and there is no session, and
+    /// the terminal half belongs to a `TerminalPanelViewModel` that no
+    /// shell is behind. The first moment there is anything to apply it to
+    /// is the connect, which reads it through
+    /// `WindowRestorationPlan.paneVisibility(override:restored:stored:)`
+    /// and clears it there — one use, so a later connect on the same tab
+    /// gets the ordinary answer.
+    var restoredPaneVisibility: PaneVisibility?
     /// Per-session audit recorder (M9b) — set only when this tab connects to
     /// a STORED session (never for an ad-hoc connect), alongside
     /// `activeStoredSessionID`; nilled in `teardown(_:)` after the final

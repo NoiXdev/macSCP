@@ -234,7 +234,28 @@ struct ContentView: View {
     /// for a window opened by `openWindow(value:)` when a tab was moved out
     /// of another one. `claimSeededTabs()` is what consumes it, once, on
     /// this window's setup pass.
+    ///
+    /// A RESTORED window is opened with a seed too, and the same setup
+    /// pass consumes it — but through the other half of the type: it
+    /// carries described tabs rather than live ids, so the claim comes
+    /// back empty and `restoreDescribedWindow()` builds the tabs instead.
+    /// See `WindowSeed` for the two halves.
     let seed: WindowSeed?
+    /// Where a closing window writes its description (Detachable Tabs
+    /// plan, Task 5). One instance for the whole app, passed down like the
+    /// other app-scope stores — a stateless struct over a directory, so
+    /// sharing it costs nothing and spelling the directory twice would be
+    /// the risk.
+    let restorationStore: WindowRestorationStore
+    /// What this LAUNCH still has to restore (Detachable Tabs plan,
+    /// Task 5) — `nil` in a `ContentView` built outside the app (every
+    /// test that constructs one), which restores nothing.
+    ///
+    /// Both halves are handed over exactly once: the primary window takes
+    /// its own description here, and it is also the window that opens the
+    /// others, because `openWindow(value:)` needs an environment value
+    /// `MacSCPApp.init` does not have.
+    let restorationLaunch: WindowRestorationLaunch?
     /// This window's identity in `TabRegistry` (Detachable Tabs plan, Task
     /// 2). `@State`, so it is created once per window and survives every
     /// re-init of this struct — a fresh `WindowID` per body evaluation would
@@ -644,9 +665,22 @@ struct ContentView: View {
         sessionListViewModel: SessionListViewModel? = nil,
         secretStore: (any SecretStore)? = nil,
         managedKeyStore: ManagedKeyStore? = nil,
-        seed: WindowSeed? = nil
+        seed: WindowSeed? = nil,
+        restorationStore: WindowRestorationStore? = nil,
+        restorationLaunch: WindowRestorationLaunch? = nil
     ) {
         self.seed = seed
+        // Same defaulting rule as `auditStore`'s directory and
+        // `managedKeyStore`'s above: production passes the app's own
+        // instance (`MacSCPApp.windowContent(seed:)`), and a caller that
+        // passes nothing gets one over the ordinary storage directory.
+        // Nothing is written through it unless `settingsStore
+        // .restoresWindows` is on, which is off by default — so a test
+        // that constructs a `ContentView` and never touches that setting
+        // cannot write into the running user's data through this.
+        self.restorationStore = restorationStore
+            ?? WindowRestorationStore(directory: WindowRestorationStore.defaultDirectory)
+        self.restorationLaunch = restorationLaunch
         self.settingsStore = settingsStore
         self.bandwidthLimiter = bandwidthLimiter
         self.auditStore = auditStore
@@ -2142,14 +2176,27 @@ struct ContentView: View {
                 // it. Reuses `descriptor` (already resolved above for
                 // `stored.kind`) rather than re-deriving it.
                 //
-                // `paneVisibility ?? stored.paneVisibility` (P3c/T2): the
-                // caller's override wins, and with none — the ordinary
-                // Connect — this is byte-for-byte the saved value P2 put
-                // back. Resolved HERE rather than inside
+                // Three answers can exist at once, and which wins is
+                // `WindowRestorationPlan.paneVisibility`'s to say (P3c/T2
+                // for the first two, Detachable Tabs plan Task 5 for the
+                // third): the caller's override — the sidebar's "Open
+                // Terminal" — then the shape a RESTORED tab was described
+                // with, then the value P2 saved on the session itself,
+                // which is byte-for-byte what an ordinary Connect used to
+                // get here. Resolved HERE rather than inside
                 // `restorePaneVisibility`, which stays the "put a value
                 // back" step and gains no opinion about where it came from.
+                //
+                // The restored description is cleared as it is used: it
+                // describes the launch this tab came back from, not every
+                // later connect the user makes on it.
+                let restoredPanes = tab.restoredPaneVisibility
+                tab.restoredPaneVisibility = nil
                 restorePaneVisibility(
-                    for: tab, visibility: paneVisibility ?? stored.paneVisibility,
+                    for: tab,
+                    visibility: WindowRestorationPlan.paneVisibility(
+                        override: paneVisibility, restored: restoredPanes,
+                        stored: stored.paneVisibility),
                     descriptor: descriptor)
                 // Audit recorder (M9b/T3): this IS the stored-session connect
                 // path — attach right after `activeStoredSessionID`, once

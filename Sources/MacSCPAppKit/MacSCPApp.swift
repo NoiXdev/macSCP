@@ -358,6 +358,14 @@ struct MacSCPApp: App {
     /// `MenuBarController` below, same no-singleton pattern as the other
     /// app-global stores above.
     @State private var menuBarModel: MenuBarStatusModel
+    /// Where a closing window writes its description, and where this
+    /// launch read the last quit's (Detachable Tabs plan, Task 5). One
+    /// instance for the whole app, passed to every `ContentView` — same
+    /// no-singleton pattern as the stores above.
+    @State private var restorationStore: WindowRestorationStore
+    /// What this launch still has to restore. Filled in `init` from the
+    /// file, handed out once per half — see `WindowRestorationLaunch`.
+    @State private var restorationLaunch: WindowRestorationLaunch
 
     /// AppKit menu-bar status item (M11n, re-landed). Retained for the app's
     /// lifetime; reads `menuBarModel` and shows/hides itself from
@@ -436,6 +444,31 @@ struct MacSCPApp: App {
         whatsNewCurrentVersion = whatsNew.current
         _whatsNewReleases = State(initialValue: whatsNew.releases)
         _showWhatsNew = State(initialValue: !whatsNew.releases.isEmpty)
+
+        // Window restoration (Detachable Tabs plan, Task 5), beside the
+        // What's New decision above because it is the same kind of thing:
+        // something this launch decides ONCE, before any window exists.
+        //
+        // The read consumes the file (`readAndClear`) — a seed file is
+        // used by exactly one launch, or a launch that crashed before
+        // any window closed would reopen its predecessor's windows
+        // forever. With the setting off nothing is read and the file is
+        // left exactly as it was found, so turning the setting on later
+        // cannot resurrect the windows of whenever it was last on.
+        //
+        // NOTHING here connects. The windows come back with their tabs
+        // showing the sessions they had and no connection behind them;
+        // the first connect is the user's click, which is the promise the
+        // settings footer makes and `WindowRestorationWiringGuardTests`
+        // keeps. `openWindow(value:)` is not reachable from here either —
+        // it is an environment value — so the primary window's setup pass
+        // is what opens the rest (`ContentView.openRestoredWindows()`).
+        let restoration = WindowRestorationStore(
+            directory: WindowRestorationStore.defaultDirectory)
+        let restoredWindows = restoration.readAndClear(whenEnabled: store.restoresWindows)
+        _restorationStore = State(initialValue: restoration)
+        _restorationLaunch = State(initialValue: WindowRestorationLaunch(
+            flag: store.restoresWindows, stored: restoredWindows))
 
         let model = MenuBarStatusModel()
         _settingsStore = State(initialValue: store)
@@ -551,7 +584,8 @@ struct MacSCPApp: App {
         ContentView(
             settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
             auditStore: auditStore, settingsBridge: settingsBridge, updateModel: updateModel,
-            menuBarModel: menuBarModel, seed: seed)
+            menuBarModel: menuBarModel, seed: seed,
+            restorationStore: restorationStore, restorationLaunch: restorationLaunch)
             // Diagnostic log (Diagnostic Log plan, Task 2): the General
             // settings pane's picker writes `settingsStore
             // .diagnosticLogLevel` directly (`SettingsView.swift`), so
@@ -585,15 +619,20 @@ struct MacSCPApp: App {
         // (`MacSCPCommands.swift`): it reads the focused window's
         // `TabCommands` through `@FocusedValue`, which `App.body` — not a
         // dynamic-property type — cannot do.
-        // Windows are NOT restored at the next launch (Detachable Tabs
-        // plan, Task 2 fix round 1). A value-keyed group persists its
-        // `WindowSeed`s, so without this macOS would reopen every detached
-        // window on the next launch with a seed nobody parked anything
-        // under: a window per moved tab, each holding one fresh, empty form
-        // tab. Task 5 is what makes restoration mean something — from
-        // `SettingsStore`, off by default, and reconstructing the tabs
-        // rather than the window frames — and it turns this off on its own
-        // terms.
+        // SYSTEM window restoration stays off (Detachable Tabs plan,
+        // Task 2 fix round 1), and Task 5 did not turn it back on. A
+        // value-keyed group persists its `WindowSeed`s, so without this
+        // macOS would reopen every detached window on the next launch with
+        // a seed nobody parked anything under: a window per moved tab,
+        // each holding one fresh, empty form tab.
+        //
+        // The app's own restoration (Task 5) is a different mechanism and
+        // deliberately so: it is off unless `SettingsStore.restoresWindows`
+        // says otherwise, it reads `windows.json` in `init` above, and it
+        // rebuilds TABS — each showing its stored session, connected to
+        // nothing — rather than window frames. The one frame that is
+        // remembered is the primary window's, through AppKit's own autosave
+        // name (`ContentView.applyFrameAutosave(to:)`).
         .restorationBehavior(.disabled)
         .commands { MacSCPCommands(settingsStore: settingsStore, updateModel: updateModel) }
 

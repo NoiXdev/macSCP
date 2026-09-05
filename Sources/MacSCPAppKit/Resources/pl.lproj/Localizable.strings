@@ -5,6 +5,8 @@
 "settings.general.showHidden" = "Pokaż ukryte pliki";
 "settings.general.tagFilter" = "Pokaż filtr tagów na pasku bocznym";
 "settings.general.tagFilter.footer" = "Tagi nadal można przypisywać podczas edycji połączenia.";
+"settings.general.restoreWindows" = "Przywracaj okna przy uruchamianiu";
+"settings.general.restoreWindows.footer" = "Okna i ich karty wracają w takim stanie, w jakim były, bez połączenia. Nic się nie łączy, dopóki tego nie zrobisz.";
 "settings.appearance.sidebarCompact" = "Kompaktowy pasek boczny";
 "settings.general.showHiddenHint" = "Dotyczy obu paneli. Skrót: ⌘⇧.";
 "settings.general.autoRefresh" = "Automatyczne odświeżanie widoku zdalnego";

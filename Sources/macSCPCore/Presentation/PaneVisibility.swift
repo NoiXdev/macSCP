@@ -23,7 +23,13 @@ import Foundation
 /// its own doc comment is what says there must be only one such place —
 /// the toolbar's `paneToggleState`, the render conditions, the restore and
 /// the persist all read it rather than pairing the two booleans again.
-public struct PaneVisibility: Equatable, Sendable, Codable {
+/// `Hashable` rather than only `Equatable` since the Detachable Tabs
+/// plan's Task 5: a restored tab's description carries one of these, and
+/// the window seed that holds the description is `Hashable` because
+/// SwiftUI keys a `WindowGroup` instance on it. The conformance is
+/// synthesized over the two stored properties, so it says exactly what
+/// `Equatable` already said.
+public struct PaneVisibility: Hashable, Sendable, Codable {
     public let showsFiles: Bool
     public let showsTerminal: Bool
 

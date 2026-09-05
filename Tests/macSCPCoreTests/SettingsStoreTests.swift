@@ -101,6 +101,26 @@ struct SettingsStoreTests {
         #expect(reloaded.sidebarCompact == true)
     }
 
+    /// Window restoration (Detachable Tabs plan, Task 5) is OFF unless the
+    /// user asks for it: a launch that reopens windows is a launch that
+    /// puts hosts on screen nobody asked to see, so it is opt-in and a
+    /// settings.json predating this key starts exactly one window.
+    @Test func restoresWindowsDefaultsFalse() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.restoresWindows == false)
+    }
+
+    @Test func restoresWindowsRoundtrips() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.restoresWindows = true
+        let reloaded = SettingsStore(directory: dir)
+        #expect(reloaded.restoresWindows == true)
+    }
+
     @Test func maxConcurrentTransfersClampsBelowRange() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

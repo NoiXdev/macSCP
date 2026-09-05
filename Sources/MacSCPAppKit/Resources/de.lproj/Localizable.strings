@@ -3,6 +3,8 @@
 "settings.general.showHidden" = "Versteckte Dateien anzeigen";
 "settings.general.tagFilter" = "Tag-Filter in der Seitenleiste anzeigen";
 "settings.general.tagFilter.footer" = "Tags bleiben beim Bearbeiten einer Verbindung zuweisbar.";
+"settings.general.restoreWindows" = "Fenster beim Start wiederherstellen";
+"settings.general.restoreWindows.footer" = "Fenster und Tabs kommen so zurück, wie sie waren, ohne Verbindung. Verbunden wird erst, wenn du es tust.";
 "settings.appearance.sidebarCompact" = "Kompakte Seitenleiste";
 "settings.general.showHiddenHint" = "Gilt für beide Seiten. Kürzel: ⌘⇧.";
 "settings.general.autoRefresh" = "Remote-Ansicht automatisch aktualisieren";

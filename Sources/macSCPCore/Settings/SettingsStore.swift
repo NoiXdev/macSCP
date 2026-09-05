@@ -87,6 +87,7 @@ public final class SettingsStore {
         static let transfersShowFullPaths = "transfersShowFullPaths"
         static let lastSeenVersion = "lastSeenVersion"
         static let diagnosticLogLevel = "diagnosticLogLevel"
+        static let restoresWindows = "restoresWindows"
     }
 
     private enum Defaults {
@@ -115,6 +116,7 @@ public final class SettingsStore {
         static let checksumAlgorithm = ChecksumAlgorithm.preferred
         static let transfersShowFullPaths = false
         static let diagnosticLogLevel = DiagnosticLogLevel.off
+        static let restoresWindows = false
     }
 
     /// Identical to `SessionStore.defaultDirectory` — both stores share the
@@ -318,6 +320,27 @@ public final class SettingsStore {
     public var sidebarTagFilterEnabled: Bool {
         get { boolValue(for: Keys.sidebarTagFilterEnabled, default: Defaults.sidebarTagFilterEnabled) }
         set { setBool(newValue, for: Keys.sidebarTagFilterEnabled) }
+    }
+
+    /// Whether a launch reopens the windows the last quit left behind
+    /// (Detachable Tabs plan, Task 5). Default OFF.
+    ///
+    /// Off is the default because restoring is not free of consequence: it
+    /// puts hosts on screen that nobody asked to see this morning, and a
+    /// settings.json predating this key must open exactly the one window
+    /// it always has. What restoration brings back is deliberately less
+    /// than what was there — windows, their tabs and each tab's stored
+    /// session, DISCONNECTED. Nothing connects until the user does, which
+    /// is the promise the settings footer makes and a source guard on the
+    /// launch path keeps.
+    ///
+    /// Core stores the flag and knows nothing else about it: which file
+    /// the seeds live in, what a seed contains and when it is read are all
+    /// App-layer facts (`WindowRestorationStore`, `WindowRestorationPlan`),
+    /// because nothing in Core knows about windows.
+    public var restoresWindows: Bool {
+        get { boolValue(for: Keys.restoresWindows, default: Defaults.restoresWindows) }
+        set { setBool(newValue, for: Keys.restoresWindows) }
     }
 
     /// Compact sidebar mode (sidebar-polish plan, Task 2): tighter row

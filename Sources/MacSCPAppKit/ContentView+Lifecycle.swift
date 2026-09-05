@@ -718,6 +718,18 @@ extension ContentView {
         // (the primary one) claims nothing and simply registers its own
         // fresh tab.
         claimSeededTabs()
+        // Restoration (Detachable Tabs plan, Task 5), after the claim and
+        // before the registration, for the same reason the claim runs
+        // where it does: what this window holds has to be settled before
+        // the registry is told about it. The two are mutually exclusive by
+        // construction — a seed carries live ids or described tabs, never
+        // both — so exactly one of them ever changes this window's model.
+        restoreDescribedWindow()
+        // Only the primary window does this, and only once per launch.
+        // `openWindow(value:)` is an environment value, which
+        // `MacSCPApp.init` — where the seeds are read — cannot reach; this
+        // is the earliest place that can.
+        openRestoredWindows()
         registerHeldTabs()
         // Now that this window is counted, the Settings pane's answer can be
         // recomputed from the registry (fix round 2) — `WindowAccessor` may
@@ -1114,8 +1126,76 @@ extension ContentView {
         // an unclaimed seed's tab belongs to no window, so this is the last
         // moment anything can reach it, and `releaseHeldTabsOnClose()`
         // starts an async teardown that this sweep must not be racing.
+        // BEFORE both releases (Detachable Tabs plan, Task 5): teardown
+        // clears a tab's `activeStoredSessionID`, so a description written
+        // afterwards would say every tab had no session at all.
+        writeRestorationSeedOnClose()
         releaseUnclaimedSeedsOnClose()
         releaseHeldTabsOnClose()
+    }
+
+    /// Writes what this window was showing, for the next launch to rebuild
+    /// (Detachable Tabs plan, Task 5).
+    ///
+    /// Runs on every window's close and writes nothing unless the setting
+    /// is on — the decision is `WindowRestorationPlan.shouldWrite(flag:)`'s
+    /// and is taken inside the store, so this call site has no second
+    /// spelling of it.
+    ///
+    /// The primary window's description is written too, marked as such:
+    /// it is the one window a launch cannot OPEN (being seedless is what
+    /// makes it primary), so its tabs are handed to the window SwiftUI
+    /// opens by itself. See `WindowSeed.isPrimary`.
+    ///
+    /// What it describes is deliberately less than what is on screen: per
+    /// tab, the stored session's id and the panes it was showing; per
+    /// window, whether it floated. No host, no username, no path, no
+    /// secret — see `TabSeed`.
+    func writeRestorationSeedOnClose() {
+        restorationStore.append(
+            WindowSeed(
+                tabs: tabsModel.tabs.map(describeForRestoration),
+                keepOnTop: keepOnTop,
+                isPrimary: isPrimaryWindow),
+            whenEnabled: settingsStore.restoresWindows)
+    }
+
+    /// One tab, as little of it as a later launch needs.
+    ///
+    /// `activeStoredSessionID` is `nil` for an ad-hoc connection and for
+    /// an untouched form, and both come back as an empty tab — an ad-hoc
+    /// connection exists only in the form the user typed it into, and
+    /// writing its host and username to a file is the thing not saving a
+    /// session was meant to avoid.
+    func describeForRestoration(_ tab: SessionTab) -> TabSeed {
+        TabSeed(
+            sessionID: tab.activeStoredSessionID,
+            paneVisibility: paneVisibilityForRestoration(of: tab))
+    }
+
+    /// What a tab is showing right now, in the one form that survives a
+    /// quit.
+    ///
+    /// A CONNECTED tab is asked through `effectivePaneVisibility(
+    /// terminalIsVisible:hasShell:)`, the single place this project turns
+    /// the two independent flags into a `PaneVisibility` — the toolbar and
+    /// the render conditions read the same method, so what gets written is
+    /// what was on screen rather than a re-derivation that could disagree.
+    ///
+    /// A DISCONNECTED tab has no panes to read, so it answers with the
+    /// description it was itself restored with, if it was, and otherwise
+    /// with the default a session with no recorded preference gets. A tab
+    /// that came back from a restoration and was never connected therefore
+    /// keeps its description across a second quit instead of quietly
+    /// flattening to the default.
+    func paneVisibilityForRestoration(of tab: SessionTab) -> PaneVisibility {
+        guard let session = tab.session else {
+            return tab.restoredPaneVisibility ?? .filesOnly
+        }
+        let hasShell = BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
+            .capabilities.supportsShell
+        return tab.effectivePaneVisibility(
+            terminalIsVisible: session.terminal.isVisible, hasShell: hasShell)
     }
 
     /// Tears down every move this window started that no window ever
@@ -1235,6 +1315,85 @@ extension ContentView {
         guard !claimed.isEmpty else { return }
         for tab in claimed { addTabRegistering(tab) }
         for id in placeholders { tabsModel.detach(tabID: id) }
+    }
+
+    /// Rebuilds the tabs this window was DESCRIBED with (Detachable Tabs
+    /// plan, Task 5) — the other half of `claimSeededTabs()` above, and
+    /// what that method's doc comment has been pointing at since Task 2.
+    ///
+    /// Where the description comes from depends on which window this is,
+    /// and there is no third case:
+    ///
+    /// - A window opened by `openRestoredWindows()` carries it in its own
+    ///   seed, exactly like a moved tab's window does.
+    /// - The PRIMARY window has no seed — being seedless is what makes it
+    ///   primary — so it takes its description off the launch, once.
+    ///
+    /// The placeholder dance is `claimSeededTabs()`'s, for the same
+    /// reason: every `ContentView` is built holding one fresh form tab, so
+    /// the rebuilt tabs are added FIRST and the placeholder detached
+    /// after, because `addTab` makes the last added tab active and
+    /// `TabsViewModel.activeTab` traps on an id it cannot resolve.
+    ///
+    /// An empty description is left alone rather than treated as an error.
+    /// That covers a move seed (which describes nothing), a launch that is
+    /// not restoring, and a window whose description survived but whose
+    /// sessions did not — all three come up with the window's own fresh
+    /// tab, which is what the app does anyway.
+    func restoreDescribedWindow() {
+        let description = seed ?? restorationLaunch?.takePrimarySeed()
+        guard let description, !description.tabs.isEmpty else { return }
+        let placeholders = tabsModel.tabs.map(\.id)
+        for described in description.tabs {
+            addTabRegistering(makeRestoredTab(from: described))
+        }
+        for id in placeholders { tabsModel.detach(tabID: id) }
+        keepOnTop = description.keepOnTop
+    }
+
+    /// One restored tab: a NEW tab, showing the session it had, connected
+    /// to nothing.
+    ///
+    /// `beginEditing(_:)` is the same prefill the sidebar's "Edit…" makes
+    /// (`ContentView.editStored(_:)`), and it is chosen for the property
+    /// that method's own doc comment names: it fills the form and
+    /// deliberately does not connect, leaving the user one click from
+    /// either. The session is looked up in the live list, so a session
+    /// deleted or renamed since the description was written resolves to
+    /// what it is NOW, or to nothing — a description never puts stale
+    /// connection details back on screen, because it never carried any.
+    ///
+    /// The described pane visibility is parked on the tab rather than
+    /// applied: there are no panes on a disconnected tab. See
+    /// `SessionTab.restoredPaneVisibility`.
+    func makeRestoredTab(from described: TabSeed) -> SessionTab {
+        let tab = makeTab()
+        tab.restoredPaneVisibility = described.paneVisibility
+        if let sessionID = described.sessionID,
+            let stored = sessionListViewModel.sessions.first(where: { $0.id == sessionID })
+        {
+            tab.connectionViewModel.beginEditing(stored)
+        }
+        return tab
+    }
+
+    /// Opens one window per remaining description (Detachable Tabs plan,
+    /// Task 5).
+    ///
+    /// It runs from the PRIMARY window's setup pass because that is the
+    /// earliest place `openWindow(value:)` can be called at all — it is an
+    /// environment value, and `MacSCPApp.init`, where the file is read,
+    /// has no environment. `takeSeedsToOpen()` answers once, so a primary
+    /// window that appears a second time opens nothing again.
+    ///
+    /// Each seed carries its own fresh `id`, so the value-keyed
+    /// `WindowGroup` opens a window per description instead of raising the
+    /// first one repeatedly — see `WindowSeed`.
+    func openRestoredWindows() {
+        guard isPrimaryWindow, let restorationLaunch else { return }
+        for restored in restorationLaunch.takeSeedsToOpen() {
+            openWindow(value: restored)
+        }
     }
 
     /// "Move Tab to New Window" — the one route out of both surfaces that

@@ -5,6 +5,8 @@
 "settings.general.showHidden" = "Afficher les fichiers cachés";
 "settings.general.tagFilter" = "Afficher le filtre par tag dans la barre latérale";
 "settings.general.tagFilter.footer" = "Les tags restent assignables lors de la modification d'une connexion.";
+"settings.general.restoreWindows" = "Restaurer les fenêtres au démarrage";
+"settings.general.restoreWindows.footer" = "Les fenêtres et leurs onglets reviennent tels quels, sans connexion. Rien ne se connecte tant que vous ne le faites pas.";
 "settings.appearance.sidebarCompact" = "Barre latérale compacte";
 "settings.general.showHiddenHint" = "S'applique aux deux volets. Raccourci : ⌘⇧.";
 "settings.general.autoRefresh" = "Actualisation automatique de la vue distante";

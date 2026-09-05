@@ -183,22 +183,23 @@ struct TabRegistrationWiringGuardTests {
     }
 
     /// POSITIVE beside it: the route that replaced those calls exists and is
-    /// used. Counted 2026-09-05 across the three files that have any:
-    /// `ContentView+Lifecycle.swift` 3 (the declaration plus the ⌘N command
-    /// and the claim), `ContentView.swift` 2 (a new connection over a
+    /// used. Recounted 2026-09-05 across the three files that have any:
+    /// `ContentView+Lifecycle.swift` 4 (the declaration plus the ⌘N command,
+    /// the claim, and the restoration rebuild added by the Detachable Tabs
+    /// plan's Task 5), `ContentView.swift` 2 (a new connection over a
     /// connected tab, and `formTarget()`), `ContentView+Detail.swift` 1
-    /// (the strip's ⊕ button) — six occurrences, five of them calls.
+    /// (the strip's ⊕ button) — seven occurrences, six of them calls.
     @Test func everyTabThisWindowMakesGoesThroughTheOneDoor() throws {
         let counts = try Self.contentViewFiles().reduce(into: [String: Int]()) { totals, file in
             totals[file.name] = TransferQueueBarCancelGuardTests.occurrenceCount(
                 of: "addTabRegistering(", in: file.source)
         }
-        #expect(counts["ContentView+Lifecycle.swift"] == 3)
+        #expect(counts["ContentView+Lifecycle.swift"] == 4)
         #expect(counts["ContentView.swift"] == 2)
         #expect(counts["ContentView+Detail.swift"] == 1)
-        #expect(counts.values.reduce(0, +) == 6, """
-            expected 6 `addTabRegistering(` occurrences across ContentView*.swift (one \
-            declaration and five calls), found \(counts.values.reduce(0, +)). A new tab \
+        #expect(counts.values.reduce(0, +) == 7, """
+            expected 7 `addTabRegistering(` occurrences across ContentView*.swift (one \
+            declaration and six calls), found \(counts.values.reduce(0, +)). A new tab \
             site is not a problem — count it here and say what it does.
             """)
     }

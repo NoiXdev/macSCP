@@ -260,6 +260,27 @@ private struct GeneralSettingsSection: View {
                     isOn: $store.menuBarEnabled)
             }
 
+            // Window restoration (Detachable Tabs plan, Task 5). Off by
+            // default; what it brings back is windows and tabs, each tab
+            // showing the session it had, with no connection behind it.
+            // The footer says exactly that, because "restore" is a word a
+            // user can reasonably read as including the connections — and
+            // this deliberately does not (`MacSCPApp.init` reads the seeds,
+            // `ContentView.restoreDescribedWindow()` rebuilds the tabs, and
+            // neither one dials anything).
+            Section {
+                Toggle(
+                    L10n.string(
+                        "settings.general.restoreWindows", "Restore windows at launch"),
+                    isOn: $store.restoresWindows)
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.restoreWindows.footer",
+                    "Windows and their tabs come back as they were, disconnected. "
+                        + "Nothing connects until you do."))
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
                 Toggle(
                     L10n.string("settings.general.updateCheck", "Automatically check for updates"),
