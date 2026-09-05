@@ -14,10 +14,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+USAGE="usage: scripts/third-party-notices [--check]"
+
 MODE="generate"
-if [ "${1:-}" = "--check" ]; then
-    MODE="check"
-fi
+case "${1:-}" in
+    "") ;;
+    --check) MODE="check" ;;
+    *)
+        echo "third-party-notices: unknown argument '$1'" >&2
+        echo "$USAGE" >&2
+        exit 2
+        ;;
+esac
 
 OUT_FILE="THIRD_PARTY_NOTICES.md"
 

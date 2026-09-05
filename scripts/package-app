@@ -49,6 +49,10 @@ cp -R "$ARM_BIN/macSCP_macSCPCore.bundle" "$APP/Contents/Resources/"
 # resource bundle, which cannot carry a file living outside its target
 # directory. See `ChangelogResource.swift`'s doc comment.
 cp CHANGELOG.md "$APP/Contents/Resources/CHANGELOG.md"
+# docs/BACKLOG.md, "Third-party notices": until this line, the packaged
+# .app shipped no licence text at all — THIRD_PARTY_NOTICES.md existed only
+# in the repository, a legal-notice gap for distributed builds.
+cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
 mkdir "$APP/Contents/Resources/en.lproj" "$APP/Contents/Resources/de.lproj" \
       "$APP/Contents/Resources/fr.lproj" "$APP/Contents/Resources/pl.lproj"
 
@@ -163,6 +167,7 @@ done
 test -d "$APP/Contents/Resources/macSCP_MacSCPAppKit.bundle"
 test -d "$APP/Contents/Resources/macSCP_macSCPCore.bundle"
 test -f "$APP/Contents/Resources/CHANGELOG.md"
+test -f "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
 test -d "$APP/Contents/Resources/en.lproj" -a -d "$APP/Contents/Resources/de.lproj" \
      -a -d "$APP/Contents/Resources/fr.lproj" -a -d "$APP/Contents/Resources/pl.lproj"
 echo "wrote $APP (v${VERSION}, build ${BUILD})"

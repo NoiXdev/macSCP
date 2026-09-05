@@ -42,6 +42,15 @@ jobs:
         run: |
           set -o pipefail
           swift build 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Third-party notices are up to date
+        # docs/BACKLOG.md, "Third-party notices": a pin bump in
+        # Package.resolved used to leave THIRD_PARTY_NOTICES.md stale while
+        # every ThirdPartyNoticesTests case stayed green (those pin the file
+        # against Package.resolved's own pins, not against a fresh
+        # regeneration). `--check` regenerates to a temp file and diffs it
+        # against the committed one, exiting 1 on any difference; it needs
+        # .build/checkouts/, which the Build step above already resolved.
+        run: scripts/third-party-notices --check
       - name: Unit-Tests
         # `--event-stream-output-path` writes one JSON line per Swift Testing
         # event into a file the job log cannot lose. Measured 2026-09-03 on

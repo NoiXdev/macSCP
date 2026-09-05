@@ -203,4 +203,83 @@ struct ThirdPartyNoticesTests {
             from the repository root.
             """)
     }
+
+    // MARK: - The three residuals (docs/BACKLOG.md, "Third-party notices")
+
+    /// Positive: `scripts/package-app` was actually read — without this,
+    /// the assertions below could pass vacuously against an empty or
+    /// unreadable script (CLAUDE.md, "Guards that name what they watch").
+    @Test func packageAppScriptIsReadable() throws {
+        let script = try String(
+            contentsOf: Self.repoRoot.appendingPathComponent("scripts/package-app"), encoding: .utf8)
+        #expect(script.count > 500, "scripts/package-app read back only \(script.count) characters")
+    }
+
+    /// Pins the residual "the packaged .app ships no licence text": the
+    /// packaging script both copies `THIRD_PARTY_NOTICES.md` into the
+    /// bundle and verifies the copy landed, the same two-line shape it
+    /// already uses for `CHANGELOG.md`.
+    @Test func packageAppCopiesAndVerifiesTheThirdPartyNoticesFile() throws {
+        let script = try String(
+            contentsOf: Self.repoRoot.appendingPathComponent("scripts/package-app"), encoding: .utf8)
+        #expect(script.contains("cp THIRD_PARTY_NOTICES.md"), """
+            scripts/package-app no longer copies THIRD_PARTY_NOTICES.md into \
+            the .app bundle.
+            """)
+        #expect(script.contains("test -f \"$APP/Contents/Resources/THIRD_PARTY_NOTICES.md\""), """
+            scripts/package-app no longer verifies THIRD_PARTY_NOTICES.md \
+            landed in the .app bundle.
+            """)
+    }
+
+    /// Positive: the CI workflow file was actually read — same reasoning as
+    /// `packageAppScriptIsReadable`.
+    @Test func ciWorkflowIsReadable() throws {
+        let workflow = try String(
+            contentsOf: Self.repoRoot.appendingPathComponent(".github/workflows/ci.yml"),
+            encoding: .utf8)
+        #expect(workflow.count > 500, "ci.yml read back only \(workflow.count) characters")
+    }
+
+    /// Pins the residual "`--check` is not wired into CI yet": a pin bump
+    /// that left THIRD_PARTY_NOTICES.md stale used to leave every other
+    /// test in this suite green (they pin the file against
+    /// `Package.resolved`'s pins, not against a fresh regeneration) — only
+    /// a CI step that actually re-derives the file and diffs it catches
+    /// that. Matched on the invocation, not merely on the two substrings
+    /// appearing anywhere in the file, so a `--check` mentioned only in a
+    /// comment elsewhere could not satisfy this by accident.
+    @Test func ciWorkflowChecksThirdPartyNoticesAreUpToDate() throws {
+        let workflow = try String(
+            contentsOf: Self.repoRoot.appendingPathComponent(".github/workflows/ci.yml"),
+            encoding: .utf8)
+        #expect(workflow.contains("scripts/third-party-notices --check"), """
+            .github/workflows/ci.yml no longer runs \
+            `scripts/third-party-notices --check` as a CI step.
+            """)
+    }
+
+    /// Pins the residual "an unknown flag ... is not refused": before the
+    /// fix, `scripts/third-party-notices --bogus` silently ran the default
+    /// (generate) mode and overwrote the committed file rather than
+    /// refusing. Run through `SubprocessRunner`, the same helper
+    /// `CLIMatrixITests` uses to drive the built CLI binary
+    /// (`grep -rn "scripts/" Tests/macSCPCoreTests/*.swift`).
+    ///
+    /// `--check`, a real flag, sits beside it as the positive half — a
+    /// negative check ("an unknown flag is refused") needs a positive
+    /// check beside it ("a known flag still works"), per CLAUDE.md "Guards
+    /// that name what they watch" — so a change that refused EVERY flag,
+    /// known or not, could not pass this by accident.
+    @Test func anUnknownFlagIsRefusedWithUsageAndExitCodeTwo() async throws {
+        let script = Self.repoRoot.appendingPathComponent("scripts/third-party-notices")
+
+        let unknown = try await SubprocessRunner.run(script, arguments: ["--bogus"])
+        #expect(unknown.status == 2, "exit \(unknown.status), stderr: \(unknown.stderrText)")
+        #expect(unknown.stderrText.contains("--bogus"))
+        #expect(unknown.stderrText.lowercased().contains("usage"))
+
+        let known = try await SubprocessRunner.run(script, arguments: ["--check"])
+        #expect(known.status == 0, "exit \(known.status), stderr: \(known.stderrText)")
+    }
 }
