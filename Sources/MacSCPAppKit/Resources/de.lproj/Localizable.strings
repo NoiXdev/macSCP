@@ -439,6 +439,7 @@
 "tabs.menu.closeOthers" = "Andere Tabs schließen";
 "tabs.menu.moveLeft" = "Nach links";
 "tabs.menu.moveRight" = "Nach rechts";
+"tab.duplicate" = "Tab duplizieren";
 "tabs.menu.showFiles" = "Dateien einblenden";
 "tabs.menu.hideFiles" = "Dateien ausblenden";
 "tabs.menu.showTerminal" = "Terminal einblenden";

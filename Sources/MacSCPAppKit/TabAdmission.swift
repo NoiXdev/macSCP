@@ -36,13 +36,23 @@ enum TabAdmission {
     /// than duplicating it, so admitting a tab the registry placed here
     /// first — which is exactly what the claim path does — says the same
     /// thing twice and changes nothing.
+    ///
+    /// `after` places the arriving tab next to another one instead of at
+    /// the far end of the strip — "Duplicate Tab"'s own admission, through
+    /// `ContentView.addTabRegistering(_:after:)` — and is `nil` for every
+    /// other caller, which keeps `model.addTab(_:)`'s ordinary append.
     static func add(
         _ tab: SessionTab,
         to model: TabsViewModel<SessionTab>,
         in registry: TabRegistry,
-        window: WindowID
+        window: WindowID,
+        after id: UUID? = nil
     ) {
-        model.addTab(tab)
+        if let id {
+            model.addTab(tab, after: id)
+        } else {
+            model.addTab(tab)
+        }
         registry.register(tab, in: window)
     }
 }

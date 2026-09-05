@@ -203,27 +203,30 @@ struct TabRegistrationWiringGuardTests {
     }
 
     /// POSITIVE beside it: the route that replaced those calls exists and is
-    /// used. Recounted 2026-09-05 in the COMMENT-AND-STRING-BLANKED view
-    /// this suite reads (`contentViewFiles()`), which is the only count the
-    /// numbers below can mean — a raw `grep` sees one more, a doc comment
-    /// in `ContentView+Lifecycle.swift` that names the helper. Across the
-    /// three files that have any: `ContentView+Lifecycle.swift` 4 (the
-    /// declaration plus the ⌘N command, the claim, and the restoration
-    /// rebuild added by the Detachable Tabs plan's Task 5),
-    /// `ContentView.swift` 2 (a new connection over a connected tab, and
-    /// `formTarget()`), `ContentView+Detail.swift` 1 (the strip's ⊕
-    /// button) — seven occurrences, six of them calls.
+    /// used. Recounted 2026-09-05, twice — once for the Detachable Tabs
+    /// plan's own tally and again the same day for "Duplicate Tab" — in the
+    /// COMMENT-AND-STRING-BLANKED view this suite reads
+    /// (`contentViewFiles()`), which is the only count the numbers below
+    /// can mean — a raw `grep` sees more, including the doc comments in
+    /// `ContentView+Lifecycle.swift` that name the helper. Across the three
+    /// files that have any: `ContentView+Lifecycle.swift` 7 (the plain
+    /// declaration, the `after:` overload "Duplicate Tab" added, the ⌘N
+    /// command, the claim, the restoration rebuild, and `duplicateTab(_:)`'s
+    /// own two calls — one per `TabDuplicationPlan` case that makes a
+    /// tab), `ContentView.swift` 2 (a new connection over a connected tab,
+    /// and `formTarget()`), `ContentView+Detail.swift` 1 (the strip's ⊕
+    /// button) — ten occurrences, eight of them calls.
     @Test func everyTabThisWindowMakesGoesThroughTheOneDoor() throws {
         let counts = try Self.contentViewFiles().reduce(into: [String: Int]()) { totals, file in
             totals[file.name] = TransferQueueBarCancelGuardTests.occurrenceCount(
                 of: "addTabRegistering(", in: file.source)
         }
-        #expect(counts["ContentView+Lifecycle.swift"] == 4)
+        #expect(counts["ContentView+Lifecycle.swift"] == 7)
         #expect(counts["ContentView.swift"] == 2)
         #expect(counts["ContentView+Detail.swift"] == 1)
-        #expect(counts.values.reduce(0, +) == 7, """
-            expected 7 `addTabRegistering(` occurrences across ContentView*.swift (one \
-            declaration and six calls), found \(counts.values.reduce(0, +)). A new tab \
+        #expect(counts.values.reduce(0, +) == 10, """
+            expected 10 `addTabRegistering(` occurrences across ContentView*.swift (two \
+            declarations and eight calls), found \(counts.values.reduce(0, +)). A new tab \
             site is not a problem — count it here and say what it does.
             """)
     }

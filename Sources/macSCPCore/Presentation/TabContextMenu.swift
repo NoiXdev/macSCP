@@ -62,6 +62,16 @@ public enum TabMenuEntry: Equatable, Sendable {
     /// connected. Absent for a tab that already belongs to a stored
     /// session, because there is nothing to save.
     case saveAsSession
+    /// A fresh tab carrying the SAME stored session, inserted right after
+    /// this one (maintainer report 2026-09-05: "the tab context menu still
+    /// lacks Duplicate Tab"). Requires a stored session — a pristine "New
+    /// connection" tab, or one dialed ad hoc, has no record to duplicate.
+    /// What the app layer does with the duplicate once it exists —
+    /// connect it at once, or point it at the session's overview without
+    /// connecting — is `TabDuplicationPlan.plan(sourceConnected:
+    /// storedSessionID:)`'s decision, not this entry's: a menu entry only
+    /// says an action is offered, never what it does.
+    case duplicateTab
 }
 
 public enum TabContextMenu {
@@ -77,9 +87,17 @@ public enum TabContextMenu {
     /// toggleState(for:hasShell:)` has already folded in both the shell's
     /// absence and the lock on the last visible half, so `isEnabled` is the
     /// whole question of whether a pane entry can be offered at all.
+    ///
+    /// `hasStoredSession` decides `.duplicateTab` alone: whether the tab is
+    /// connected to a stored session right now, or merely pointed at one
+    /// (an unconnected tab showing that session's overview) — the same
+    /// `active ?? restored` rule `WindowRestorationPlan.sessionID` states
+    /// for restoration, asked here for the identical reason: a tab that
+    /// has never touched a stored record has nothing for "Duplicate Tab"
+    /// to copy.
     public static func entries(
         atIndex index: Int, ofTabCount count: Int,
-        supportsShell: Bool, isAdHoc: Bool, isConnected: Bool,
+        supportsShell: Bool, isAdHoc: Bool, isConnected: Bool, hasStoredSession: Bool,
         filesToggle: PaneToggleState, terminalToggle: PaneToggleState
     ) -> [TabMenuEntry] {
         var entries: [TabMenuEntry] = [.close]
@@ -87,6 +105,7 @@ public enum TabContextMenu {
         if index > 0 { entries.append(.move(.left)) }
         if index < count - 1 { entries.append(.move(.right)) }
         if count > 1 { entries.append(.moveToNewWindow) }
+        if hasStoredSession { entries.append(.duplicateTab) }
         if isConnected && filesToggle.isEnabled {
             entries.append(.pane(.files, filesToggle.isOn ? .hide : .show))
         }
@@ -96,5 +115,37 @@ public enum TabContextMenu {
         if supportsShell && isConnected { entries.append(.openExternalTerminal) }
         if isAdHoc && isConnected { entries.append(.saveAsSession) }
         return entries
+    }
+}
+
+/// What "Duplicate Tab" does with the fresh tab, once the app layer has
+/// made one — a pure decision over the two facts a tab itself carries,
+/// tested here rather than in `ContentView` (the app target has no test
+/// target of its own).
+///
+/// One SSH connection per TAB is this project's invariant, not one per
+/// stored session (`CLAUDE.md`, "Architecture invariants") — so a source
+/// tab that is CONNECTED duplicates into a SECOND, independent connection
+/// to the same session, dialed at once, never a jump to the existing one
+/// (that already exists as "Go to Existing Tab" and answers a different
+/// question). A source tab that merely POINTS at a stored session without
+/// being connected — an unconnected tab showing that session's overview —
+/// duplicates into another tab pointed at the same session the same way,
+/// so the duplicate reads as a copy of what was on screen rather than an
+/// unexplained empty form. Neither case reaches a host from this decision
+/// alone: `.connect` only says which stored session the app layer should
+/// dial, not that it has.
+public enum TabDuplicationPlan: Equatable, Sendable {
+    /// Dial `storedSessionID` on the duplicate at once.
+    case connect(UUID)
+    /// Point the duplicate at `storedSessionID`'s overview, unconnected.
+    case overview(UUID)
+    /// Nothing to duplicate: the source tab has no stored session at all
+    /// (a pristine "New connection" tab, or one dialed ad hoc).
+    case none
+
+    public static func plan(sourceConnected: Bool, storedSessionID: UUID?) -> TabDuplicationPlan {
+        guard let storedSessionID else { return .none }
+        return sourceConnected ? .connect(storedSessionID) : .overview(storedSessionID)
     }
 }

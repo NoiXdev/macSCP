@@ -399,6 +399,8 @@ enum TabMenuEntryTitle {
         // surfaces cannot come to name it differently.
         case .moveToNewWindow:
             return L10n.string("window.moveTabToNewWindow", "Move Tab to New Window")
+        case .duplicateTab:
+            return L10n.string("tab.duplicate", "Duplicate Tab")
         case .pane(.files, .show):
             return L10n.string("tabs.menu.showFiles", "Show Files")
         case .pane(.files, .hide):

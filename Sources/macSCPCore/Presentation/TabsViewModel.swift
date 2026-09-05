@@ -38,6 +38,26 @@ public final class TabsViewModel<Tab: Identifiable> where Tab.ID == UUID {
         activeTabID = tab.id
     }
 
+    /// Inserts and activates a tab immediately after another — "Duplicate
+    /// Tab" (tab context menu), so the copy sits beside the tab it was
+    /// made from rather than at the far end of the strip, the way
+    /// `addTab(_:)` would leave it.
+    ///
+    /// Falls back to `addTab(_:)`'s plain append when `id` names no tab —
+    /// the same "stale reference is an ordinary outcome" reading every
+    /// other lookup in this type takes (`move(tabID:onto:)`,
+    /// `tabHolding(_:storedSessionIDOf:)`): a menu built against a tab
+    /// that closed a moment later still has somewhere sensible to put the
+    /// tab it already promised, rather than losing it.
+    public func addTab(_ tab: Tab, after id: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }) else {
+            addTab(tab)
+            return
+        }
+        tabs.insert(tab, at: index + 1)
+        activeTabID = tab.id
+    }
+
     /// Moves a tab to another position. The only reordering there is — the
     /// context menu reaches it through `move(tabID:oneStep:)` and dragging
     /// through `move(tabID:onto:)`, so the rule exists once. Neither route

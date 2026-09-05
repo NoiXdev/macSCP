@@ -442,6 +442,7 @@
 "tabs.menu.closeOthers" = "Fermer les autres onglets";
 "tabs.menu.moveLeft" = "Déplacer vers la gauche";
 "tabs.menu.moveRight" = "Déplacer vers la droite";
+"tab.duplicate" = "Dupliquer l'onglet";
 "tabs.menu.showFiles" = "Afficher les fichiers";
 "tabs.menu.hideFiles" = "Masquer les fichiers";
 "tabs.menu.showTerminal" = "Afficher le terminal";

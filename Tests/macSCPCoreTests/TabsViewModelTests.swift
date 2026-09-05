@@ -33,6 +33,44 @@ struct TabsViewModelTests {
         #expect(!vm.isLastTab)
     }
 
+    /// "Duplicate Tab": the new tab sits right after the one it was made
+    /// from, not appended at the far end — and becomes active, the same as
+    /// `addTab(_:)`.
+    @Test func addTabAfterInsertsRightAfterAndActivates() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID()), c = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        vm.addTab(c)
+        let duplicate = StubTab(id: UUID())
+        vm.addTab(duplicate, after: a.id)
+        #expect(vm.tabs.map(\.id) == [a.id, duplicate.id, b.id, c.id])
+        #expect(vm.activeTabID == duplicate.id)
+    }
+
+    /// Same insertion rule at the far end of the strip: "after the last
+    /// tab" is still "right after", not "appended past it a second time".
+    @Test func addTabAfterTheLastTabInsertsAtTheEnd() {
+        let a = StubTab(id: UUID()), b = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        vm.addTab(b)
+        let duplicate = StubTab(id: UUID())
+        vm.addTab(duplicate, after: b.id)
+        #expect(vm.tabs.map(\.id) == [a.id, b.id, duplicate.id])
+        #expect(vm.activeTabID == duplicate.id)
+    }
+
+    /// A stale id — the source tab closed between the menu opening and the
+    /// click landing — falls back to `addTab(_:)`'s plain append rather
+    /// than losing the tab this call already promised to make.
+    @Test func addTabAfterAnUnknownIDAppendsInstead() {
+        let a = StubTab(id: UUID())
+        let vm = TabsViewModel(initial: a)
+        let duplicate = StubTab(id: UUID())
+        vm.addTab(duplicate, after: UUID())
+        #expect(vm.tabs.map(\.id) == [a.id, duplicate.id])
+        #expect(vm.activeTabID == duplicate.id)
+    }
+
     @Test func activateSwitchesAndIgnoresUnknown() {
         let first = StubTab(id: UUID())
         let vm = TabsViewModel(initial: first)
@@ -348,7 +386,7 @@ struct TabsViewModelTests {
         vm.addTab(b); vm.addTab(c)
         let entries = TabContextMenu.entries(
             atIndex: 0, ofTabCount: vm.tabs.count,
-            supportsShell: false, isAdHoc: false, isConnected: true,
+            supportsShell: false, isAdHoc: false, isConnected: true, hasStoredSession: false,
             filesToggle: PaneToggleState(isOn: true, isEnabled: false),
             terminalToggle: PaneToggleState(isOn: false, isEnabled: false))
         let steps = entries.compactMap { entry -> TabMoveStep? in

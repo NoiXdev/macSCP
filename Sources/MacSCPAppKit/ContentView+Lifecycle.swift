@@ -337,6 +337,16 @@ extension ContentView {
         TabAdmission.add(tab, to: tabsModel, in: TabRegistry.shared, window: windowID)
     }
 
+    /// "Duplicate Tab"'s own admission: the same door, placing the arriving
+    /// tab right after `sourceTab` instead of at the far end of the strip.
+    /// Still the one route a tab enters this window by — it reaches
+    /// `TabAdmission.add` exactly as `addTabRegistering(_:)` does, with the
+    /// source tab's id forwarded as `after:`.
+    func addTabRegistering(_ tab: SessionTab, after sourceTab: SessionTab) {
+        TabAdmission.add(
+            tab, to: tabsModel, in: TabRegistry.shared, window: windowID, after: sourceTab.id)
+    }
+
     /// Attaches this tab's audit recorder once it connects to a STORED
     /// session (M9b/T3) — called from both places `activeStoredSessionID`
     /// gets assigned: `connect(in:stored:)` and `startSession`'s "Save &
@@ -1648,6 +1658,49 @@ extension ContentView {
             requestExternalTerminal(for: tab)
         case .saveAsSession:
             saveAsSession(from: tab)
+        case .duplicateTab:
+            duplicateTab(tab)
+        }
+    }
+
+    /// "Duplicate Tab" — a fresh tab carrying the SAME stored session as
+    /// `tab`, inserted right after it (`addTabRegistering(_:after:)`)
+    /// rather than appended at the end of the strip.
+    ///
+    /// `TabDuplicationPlan` (Core) is asked with the one fact `tab` itself
+    /// carries — the stored session it is connected to, or merely pointed
+    /// at (`active ?? restored`, the same rule `describeForRestoration`
+    /// reads off this tab for window restoration) — and decides everything
+    /// about what happens next: `.connect` dials that session on the
+    /// duplicate AT ONCE, a second, independent connection (one SSH
+    /// connection per TAB is the invariant, not one per stored session);
+    /// `.overview` points the duplicate at the session without connecting,
+    /// the same idiom `restoredSessionID` already carries for a restored,
+    /// unconnected tab; `.none` — no stored session at all, a pristine
+    /// "New connection" tab or one dialed ad hoc — makes this a no-op,
+    /// defensively: `tabMenuEntries(for:)` never offers `.duplicateTab` for
+    /// that case in the first place.
+    ///
+    /// `connect(in:stored:)` directly, not `connectFromSidebar`/
+    /// `sidebarStart`: duplicating is an explicit request for a SECOND tab
+    /// on the same session, so the "this session is already open" query
+    /// `sidebarStart` would raise has nothing to ask here.
+    func duplicateTab(_ tab: SessionTab) {
+        let storedSessionID = WindowRestorationPlan.sessionID(
+            active: tab.activeStoredSessionID, restored: tab.restoredSessionID)
+        switch TabDuplicationPlan.plan(sourceConnected: tab.isConnected, storedSessionID: storedSessionID) {
+        case .none:
+            return
+        case .connect(let sessionID):
+            guard let stored = sessionListViewModel.sessions.first(where: { $0.id == sessionID })
+            else { return }
+            let duplicate = makeTab()
+            addTabRegistering(duplicate, after: tab)
+            connect(in: duplicate, stored: stored)
+        case .overview(let sessionID):
+            let duplicate = makeTab()
+            addTabRegistering(duplicate, after: tab)
+            duplicate.restoredSessionID = sessionID
         }
     }
 
@@ -1690,6 +1743,8 @@ extension ContentView {
             supportsShell: capabilities.supportsShell,
             isAdHoc: tab.activeStoredSessionID == nil,
             isConnected: tab.isConnected,
+            hasStoredSession: WindowRestorationPlan.sessionID(
+                active: tab.activeStoredSessionID, restored: tab.restoredSessionID) != nil,
             filesToggle: tab.paneToggleState(
                 for: .files, terminalIsVisible: terminalIsVisible,
                 hasShell: capabilities.supportsShell),

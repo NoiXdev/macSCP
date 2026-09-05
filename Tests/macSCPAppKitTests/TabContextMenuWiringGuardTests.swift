@@ -171,6 +171,14 @@ struct TabContextMenuWiringGuardTests {
     private static let decisionAnchor =
         "func tabMenuEntries(for tab: SessionTab) -> [TabMenuEntry] {"
 
+    /// Where every `TabMenuEntry` case is dispatched to its effect.
+    private static let handlerSwitchAnchor =
+        "func handleTabMenuEntry(_ entry: TabMenuEntry, for tab: SessionTab) {"
+
+    /// The one sanctioned shape of the `.duplicateTab` arm — canonicalized
+    /// (whitespace stripped), matching `canonicalBody`'s own return shape.
+    private static let sanctionedDuplicateTabArm = "case.duplicateTab:duplicateTab(tab)"
+
     /// The one sanctioned shape of asking it: every fact read off the model
     /// or off the tab in the same expression that hands it over, and
     /// nothing folded into any of them. Compared as a whole body rather
@@ -190,6 +198,14 @@ struct TabContextMenuWiringGuardTests {
     /// `terminalIsVisible` is bound once and handed to both readings on
     /// purpose: two readings of `tab.session?.terminal.isVisible` would be
     /// two chances for the halves to be asked about different states.
+    /// `hasStoredSession` (Duplicate Tab, 2026-09-05) joined the argument
+    /// list in the same shape every other fact here has: read off the tab
+    /// in this expression, nothing asserted. It reuses the `active ??
+    /// restored` rule `WindowRestorationPlan.sessionID` already states for
+    /// window restoration — the same combined fact
+    /// `describeForRestoration` reads off this tab elsewhere in this file
+    /// — rather than inventing a second way to ask "does this tab have a
+    /// stored session".
     private static let sanctionedDecisionBody = """
         guard let index = tabsModel.tabs.firstIndex(where: { $0.id == tab.id }) else { return [] }
         let capabilities = BackendDescriptor
@@ -201,6 +217,8 @@ struct TabContextMenuWiringGuardTests {
             supportsShell: capabilities.supportsShell,
             isAdHoc: tab.activeStoredSessionID == nil,
             isConnected: tab.isConnected,
+            hasStoredSession: WindowRestorationPlan.sessionID(
+                active: tab.activeStoredSessionID, restored: tab.restoredSessionID) != nil,
             filesToggle: tab.paneToggleState(
                 for: .files, terminalIsVisible: terminalIsVisible,
                 hasShell: capabilities.supportsShell),
@@ -509,6 +527,27 @@ struct TabContextMenuWiringGuardTests {
             `TabContextMenuTests` reaches it. If this function legitimately changed \
             shape, update `sanctionedDecisionBody` in this guard and add a probe for \
             the shape it now has.
+            """)
+    }
+
+    /// "Duplicate Tab"'s own dispatch (2026-09-05): `handleTabMenuEntry`'s
+    /// `.duplicateTab` arm calls the one function that makes the copy, by
+    /// name, and nothing else — the same discipline the pane arm and the
+    /// move arm already keep (see this suite's own doc comment on why an
+    /// INERT handler, not a wrong one, is the one shape a source scan
+    /// cannot see: an entry that calls nothing still compiles). This check
+    /// only proves the call exists in the right arm, in the shape
+    /// `duplicateTab(_:)`'s own doc comment describes acting on;
+    /// `TabDuplicationPlanTests` (Core) is what proves what that call does.
+    @Test func theDuplicateTabEntryCallsTheOneDuplicationPath() throws {
+        let body = try Self.canonicalBody(
+            after: Self.handlerSwitchAnchor, inFileAt: Self.handlerFile)
+        #expect(body.contains(Self.sanctionedDuplicateTabArm), """
+            `handleTabMenuEntry`'s `.duplicateTab` arm in \(Self.handlerFile.path) is not \
+            `\(Self.sanctionedDuplicateTabArm)` — either the arm was dropped (an inert \
+            entry the user can click and nothing happens) or it now calls something other \
+            than `duplicateTab(tab)`. If it legitimately changed shape, update \
+            `sanctionedDuplicateTabArm` in this guard.
             """)
     }
 

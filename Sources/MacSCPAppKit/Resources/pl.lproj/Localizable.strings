@@ -441,6 +441,7 @@
 "tabs.menu.closeOthers" = "Zamknij pozostałe karty";
 "tabs.menu.moveLeft" = "Przesuń w lewo";
 "tabs.menu.moveRight" = "Przesuń w prawo";
+"tab.duplicate" = "Duplikuj kartę";
 "tabs.menu.showFiles" = "Pokaż pliki";
 "tabs.menu.hideFiles" = "Ukryj pliki";
 "tabs.menu.showTerminal" = "Pokaż terminal";
