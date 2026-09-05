@@ -25,8 +25,11 @@ public protocol LocalMetadataSource: Sendable {
 }
 
 /// A session-scoped memory of paths whose `metadata(for:)` probe was still
-/// running when `LocalFileSystem.slowEntryThreshold` elapsed (final fix
-/// round, ruled IN by the whole-plan review): without it, a stuck child
+/// running when `LocalFileSystem.metadataDeadlines.stuckEntryDeadline`
+/// (default 5 s) elapsed — the LONGER of the two `MetadataDeadlines`; the
+/// shorter `slowEntryThreshold` only writes a log line since round 2, it
+/// never marks (final fix round, ruled IN by the whole-plan review):
+/// without it, a stuck child
 /// costs one fresh thread on EVERY visit to the same directory, and the
 /// tester's own home folder — the folder behind the report this design
 /// exists for — is exactly the folder one keeps returning to. Once a path
@@ -175,7 +178,8 @@ extension LocalFileSystem: LocalMetadataSource {
     /// Each child is timed with a `ContinuousClock` reading taken
     /// immediately around its own `metadataProbe` call — never derived from
     /// a running total, so one slow entry cannot be hidden by several fast
-    /// ones averaging it out. `>= LocalFileSystem.slowEntryThreshold` (500 ms)
+    /// ones averaging it out.
+    /// `>= LocalFileSystem.metadataDeadlines.slowEntryThreshold` (500 ms)
     /// writes the `browser.local entry slow` `.debug` line ON RETURN — the
     /// line used to wrap `list`'s own per-entry loop (Task 1 removed that
     /// loop; this is where the same line lives now) — for an entry that was
