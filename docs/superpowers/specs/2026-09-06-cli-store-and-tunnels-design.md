@@ -57,8 +57,13 @@ the same way `ls`/`get`/`put` are.
    store or print a password or passphrase. Key- and agent-backed
    sessions work at once; a password session is asked for its password
    by the app on first connect (the app's existing flow stores it in
-   the keychain); the CLI itself connects with the environment variable
-   or `--password-command`, exactly as today.
+   the keychain); the CLI itself connects with `--password-command`,
+   then the environment variable, then the keychain entry the app
+   stored — read with the per-entry consent of the M20 addendum, never
+   written — exactly as `ls` does today (`secretSources(for:…)` in
+   `CLISecretSources.swift` appends `KeychainSecretSource` last; this
+   line said "environment variable or --password-command" until Task 4
+   measured the chain).
 3. **No `apply`.** The verbs are enough for scripts; a declarative file
    with reconciliation is its own plan (export format, conflict rule).
 4. **`tunnels start` runs in the CLI process, in the foreground**, like
