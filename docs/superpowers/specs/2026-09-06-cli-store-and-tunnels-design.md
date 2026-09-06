@@ -1,7 +1,8 @@
 # CLI: sessions and tunnels from the command line — design
 
-**Status:** approved by the maintainer in chat on 2026-09-06 (scope:
-tunnels AND sessions; no secret through the CLI); plan follows.
+**Status:** implemented 2026-09-07 at `935286e1` (scope: tunnels AND
+sessions; no secret through the CLI). Approved by the maintainer in chat
+on 2026-09-06; plan at `docs/superpowers/plans/2026-09-06-cli-store-and-tunnels.md`.
 
 ## Goal
 

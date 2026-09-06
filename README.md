@@ -227,6 +227,21 @@ of them, out of the default `complete`, which runs every step. It never
 remembers a server's identity on your behalf: a server this app has not
 been introduced to is reported as such, and no flag here changes that.
 
+**Sessions and tunnels** can be created, changed and removed from a
+script or a terminal too, and a tunnel can be held open in the
+foreground the way `ssh -L` does:
+
+```sh
+macscp-cli sessions add prod --kind ssh --host db.example.com --user deploy
+macscp-cli tunnels add prod-db --session prod --local 5432:127.0.0.1:5432
+macscp-cli tunnels start prod-db --session prod
+macscp-cli tunnels list --session prod
+```
+
+`sessions add/edit/rm` and `tunnels list/add/edit/rm/start` write to the
+same files the app itself reads, and the app picks up what the command
+line wrote the next time it becomes active — no restart needed.
+
 **Secrets.** A session's password or key passphrase is looked up in this
 order, stopping at the first one that answers: an explicit
 `--password-command <cmd>` (the command's own stdout, trimmed); an
