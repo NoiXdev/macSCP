@@ -20,7 +20,8 @@ the same way `ls`/`get`/`put` are.
 - `SessionStore` (`Sources/macSCPCore/Sessions/SessionStore.swift`)
   offers `all()`, `upsert(_:)`, `delete(id:)`, `upsertGroup(_:)`;
   `TunnelStore` (`Sources/macSCPCore/Tunnels/TunnelStore.swift`) offers
-  `all()`, `upsert(_:)`, `delete(id:)`, `deleteAll(for:)`. Both are
+  `allProfiles()`, `profiles(for:)`, `upsert(_:)`, `delete(id:)`,
+  `deleteAll(for:)` (this line said `all()` until Task 3 measured it). Both are
   in Core and take a directory, and the CLI already honours
   `MACSCP_STORAGE_DIRECTORY` for the session store.
 - `TunnelRunner` (Core) drives one profile through connect → forward →
