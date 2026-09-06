@@ -25,6 +25,28 @@ struct TunnelConnectionTests {
         }
     }
 
+    /// The three refusals are `TunnelCarriers`', word for word — the dial
+    /// does not word them a second time. Derived from the rule rather than
+    /// spelled here, so a reworded sentence cannot leave the dial saying one
+    /// thing and the command line, which asks `TunnelCarriers` directly
+    /// before dialling at all, saying another.
+    @Test(arguments: [
+        TunnelSessionShape.notSSH, .loginSet, .jumpHost,
+    ])
+    func aRefusedSessionThrowsTheCarriersSentence(shape: TunnelSessionShape) async throws {
+        let directory = throwawayDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = shape.session
+        let store = KnownHostsStore(directory: directory)
+        let refusal = try #require(TunnelCarriers.refusal(for: session))
+
+        await #expect(throws: TunnelFailure.connectFailed(reason: refusal)) {
+            _ = try await TunnelConnection.connect(
+                session: session, secrets: [FixedSecret("unused")],
+                knownHosts: store, decider: .refusing)
+        }
+    }
+
     /// A missing secret is NOT a `TunnelFailure`: it is the existing
     /// stored-session error, propagated unchanged, which is what lets the
     /// App map it to `TunnelState.needsConfirmation` rather than to
@@ -43,6 +65,29 @@ struct TunnelConnectionTests {
 }
 
 // MARK: - Helpers
+
+/// The three session shapes a forwarding refuses. An enum rather than the
+/// sessions themselves because `@Test(arguments:)` wants `Sendable`
+/// `CustomTestArgumentEncodable` values, and a case name reads better in a
+/// failure than a whole `StoredSession` would.
+enum TunnelSessionShape: Sendable {
+    case notSSH
+    case loginSet
+    case jumpHost
+
+    var session: StoredSession {
+        switch self {
+        case .notSSH:
+            return s3Session(name: "objects")
+        case .loginSet:
+            return sshSession(name: "prod", loginSetID: UUID())
+        case .jumpHost:
+            return sshSession(
+                name: "behind",
+                jump: StoredSession.JumpSpec(host: "example.invalid", username: "tim"))
+        }
+    }
+}
 
 private struct FixedSecret: SecretSource {
     let label = "fixture"

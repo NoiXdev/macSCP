@@ -55,17 +55,22 @@ extension SOCKS5ReplyCode {
     /// |---|---|---|
     /// | `.channelOpenFailed` | `01` | `CitadelFileSystem.openDirectTCPIP`'s own catch, and any foreign error before the factory answers |
     /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install` or `confirm` |
-    /// | `.connectFailed` | `05` | nothing on this path. Its one producer is `TunnelConnection.connect`, for a session that is not SSH, which runs before a listener exists. Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
+    /// | `.connectFailed` | `05` | nothing on this path. Its producers are `TunnelConnection.connect`, which refuses a session that cannot carry a forwarding (`TunnelCarriers.refusal`) before a listener exists; `RemoteForward`, which is not this path at all; and `TunnelManager`, for a profile whose session has been deleted. Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
     /// | `.portInUse`, `.bindFailed`, `.alreadyStarted` | `01` | `start`, before any client has connected — unreachable here |
     ///
     /// So in production **`01` is what every refusal produces**, `05` is
     /// waiting for a factory that distinguishes a refusal, and `04` is
-    /// produced by nothing. Counted 2026-09-06 with `grep -rn "throw
-    /// TunnelFailure\." Sources/`: FOUR throw sites —
-    /// `TunnelConnection.swift:57`, `LocalForwardListener.swift:168` and
-    /// `:194`, `CitadelFileSystem.swift:1451` — plus the two helpers that
-    /// RETURN one rather than throw it, `LocalForwardListener.bindFailure`
-    /// and `.acceptFailure`.
+    /// produced by nothing. Recounted 2026-09-06 with `grep -rn "throw
+    /// TunnelFailure\." Sources/`: ELEVEN throw sites — `TunnelConnection
+    /// .swift:71` and `:83`, `LocalForwardListener.swift:179` and `:205`,
+    /// `RemoteForward.swift:132`, `:288` and `:322`,
+    /// `CitadelFileSystem.swift:1451`, `:1556` and `:1574`,
+    /// `TunnelManager.swift:521` — plus the two helpers that RETURN one
+    /// rather than throw it, `LocalForwardListener.bindFailure` and
+    /// `.acceptFailure`. The earlier count of FOUR here predated
+    /// `RemoteForward` and the two bind sites in `CitadelFileSystem`; none
+    /// of the additions is on the accept path this table is about, so the
+    /// table itself did not change with them.
     ///
     /// The mapping reads the FAILURE'S CASE and never its `reason` text. Two
     /// measurements, both 2026-09-06, say it has to:

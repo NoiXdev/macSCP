@@ -10,33 +10,24 @@ import Foundation
 /// would either step aside from a name saving would have left alone, or call
 /// a name free that saving then overwrites.
 ///
-/// That is why `asSaved` lives here and not at the call sites. Neither
-/// write path ever sees what a name field holds:
-/// `ContentView.persistFormAsSession` trims before calling
-/// `SessionListViewModel.save`, and `ConnectionViewModel
-/// .validateForEditSave` trims before building the session it hands to
-/// `updateSession`. A caller that trimmed for the warning and forgot to
-/// trim for the stepping-aside had exactly one broken half, with the other
-/// half's test green beside it; that happened.
+/// That comparison is not written here any more. It is
+/// `SessionNameRule.conflict(_:among:excluding:matching:)` under
+/// `.exactAsSaved`, together with the trim (`SessionNameRule.asSaved`) that
+/// makes it compare the value `save` will receive rather than the value a
+/// name field holds. The command line asks the same function a different
+/// way — `.caseInsensitive`, because a writer that REFUSES may refuse more
+/// than saving would overwrite, while a warning that DESCRIBES may not. That
+/// difference is spelled once, in `SessionNameRule.Matching`, instead of
+/// twice by accident.
 ///
-/// Trimming in one place makes that harder to write, not impossible: one
-/// line — `collides(name.lowercased(), …)` at a caller — still diverges
-/// with the whole suite green. What holds this is the tests on both
-/// functions, not the arrangement of them.
+/// One place makes divergence harder to write, not impossible: one line —
+/// `conflict(name.lowercased(), …)` at a caller — still diverges with the
+/// whole suite green. What holds this is the tests on both functions, not
+/// the arrangement of them.
 public enum SessionNameCollision {
     /// The name as `SessionListViewModel.save` will receive it.
-    ///
-    /// One direction only: the stored names it is compared against are NOT
-    /// trimmed, because `save` does not compare them trimmed either. This
-    /// mirrors `save`, it does not repair the store — the import path
-    /// already trims deliberately (`SessionImportPlanner`, which says in so
-    /// many words that import must not be the one path storing a name with
-    /// surrounding whitespace), so no known writer produces such a name.
-    /// Should one exist, it is a different name, and a rule that folded the
-    /// two together would step aside from a name saving would have left
-    /// alone.
     private static func asSaved(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines)
+        SessionNameRule.asSaved(name)
     }
 
     /// The session `name` would replace, or `nil` if none. `excluding` is the
@@ -47,8 +38,8 @@ public enum SessionNameCollision {
     public static func collides(
         _ name: String, with existing: [StoredSession], excluding: UUID?
     ) -> StoredSession? {
-        let candidate = asSaved(name)
-        return existing.first { $0.name == candidate && $0.id != excluding }
+        SessionNameRule.conflict(
+            name, among: existing, excluding: excluding, matching: .exactAsSaved)
     }
 
     /// `desired` if it is free, otherwise the first free `"<desired> N"` —

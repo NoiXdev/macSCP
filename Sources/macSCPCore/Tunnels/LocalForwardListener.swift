@@ -4,12 +4,23 @@ import NIOPosix
 
 /// What can go wrong while a tunnel is being carried — transport only.
 ///
-/// Deliberately narrow: a missing secret, an unknown host key or a stored
-/// session that cannot be turned into a configuration are NOT cases here.
-/// Those already have typed errors of their own (`SecretSourceFailure`,
-/// `HostKeyError`, `StoredSessionConnectionError`) and the App maps them to
+/// Deliberately narrow: a missing secret and an unknown host key are NOT
+/// cases here. Those already have typed errors of their own
+/// (`SecretSourceFailure`, `HostKeyError`, `StoredSessionConnectionError
+/// .secretRequired`) and `TunnelRunner.needsAPerson` maps them to
 /// `TunnelState.needsConfirmation`, which is a different answer from
 /// `.failed` and must stay distinguishable.
+///
+/// The three refusals a stored session earns BEFORE any of that — not SSH,
+/// bound to a login set, dialling through a jump host — are `.connectFailed`
+/// with `TunnelCarriers.refusal(for:)`'s sentence. They were the two
+/// `StoredSessionConnectionError` cases plus one hand-written string until
+/// 2026-09-06. Nothing lost an answer: `needsAPerson` reads
+/// `.secretRequired` and `HostKeyError.rejectedByUser` and nothing else, so
+/// all three were already `.failed`, and the sentences those errors carry
+/// are the session-connect path's ("the CLI does not resolve this yet"),
+/// which is the wrong reason on a path where a forwarding dials with the
+/// session's own login by design.
 ///
 /// Every `reason` is a MAPPED sentence — `DialSupport.reason(for:)`, never
 /// `String(describing:)` — for the reason that function's own doc comment
