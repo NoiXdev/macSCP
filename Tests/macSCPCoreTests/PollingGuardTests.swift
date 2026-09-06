@@ -432,14 +432,17 @@ struct PollingGuardTests {
     /// suite's stated limit. Every ordinary wait instead goes through
     /// `awaitResumption`/`awaitResumptionThrowing`
     /// (`Tests/MacSCPTestSupport/AwaitResumption.swift`), which resumes with
-    /// `CancellationError` the moment the awaiting task is cancelled. The 13
-    /// call sites exempted here, across 12 files (counted 2026-09-05, one
+    /// `CancellationError` the moment the awaiting task is cancelled. The 14
+    /// call sites exempted here, across 13 files (counted 2026-09-06, one
     /// file — `SSHTerminalViewSizingTests` — carries two, each with its own
     /// nearby sentence), each sit beside a comment explaining why THAT
     /// bare continuation is not this bug: a mock that deliberately never
     /// resumes to model a frozen peer or an uncancellable probe, a
     /// hand-built race that is already bounded by construction, or a body
-    /// that cannot be `@Sendable` (`NSItemProvider`).
+    /// that cannot be `@Sendable` (`NSItemProvider`). The newest of them,
+    /// `RemoteForwardTests`, is the first kind: a transport that ignores its
+    /// own cancellation, which is what `RemoteForward.stop()`'s bound
+    /// exists for.
     ///
     /// Matching is done PER LINE, on comment-and-string-blanked source (per
     /// CLAUDE.md "Source-scanning guards read comments too": several
@@ -482,8 +485,8 @@ struct PollingGuardTests {
 
         // Positive: the exemption is actually exercised — without this, the
         // negative above could pass over a tree where the pattern matches
-        // nothing at all, exempt or otherwise. 13 call sites match today
-        // (counted 2026-09-05).
+        // nothing at all, exempt or otherwise. 14 call sites match today
+        // (counted 2026-09-06).
         #expect(matchCount >= 10, "\(matchCount)")
     }
 

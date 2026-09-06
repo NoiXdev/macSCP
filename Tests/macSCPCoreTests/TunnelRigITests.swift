@@ -253,6 +253,145 @@ struct TunnelRigITests {
         await listener.stop()
         await carrier.disconnect()
     }
+
+    /// A remote forward (`-R`) driven from INSIDE the container: the rig's
+    /// sshd is asked to listen on `127.0.0.1:45321`, it confirms the port
+    /// through `onOpen`, and `docker exec` then opens a connection to that
+    /// port in the container's own network namespace. The bytes arrive on a
+    /// loopback listener this test owns, on this Mac.
+    ///
+    /// **The port is named rather than left to the server**, which the brief
+    /// asked for the other way round, and the reason is measured rather than
+    /// preferred: `port: 0` binds on the server, reports its port through
+    /// `onOpen`, and then delivers nothing at all — the pinned Citadel keys
+    /// its inbound handler on the REQUESTED port and looks it up under the
+    /// BOUND one. The first run of this test with `remotePort: 0` failed with
+    /// `(sent.stdoutText → "") == "ho"` and then ran into the suite's
+    /// five-minute limit waiting for bytes that could not come; changing only
+    /// that number to `45321` made it pass in 0.104 s.
+    /// `CitadelFileSystem.withRemotePortForward` now refuses port 0 outright,
+    /// with the line numbers of the mismatch, and
+    /// `aRemoteForwardOnPortZeroIsRefused` below pins that refusal.
+    ///
+    /// `127.0.0.1` deliberately: `GatewayPorts` is off in the rig (nothing
+    /// sets it, and OpenSSH's default is `no`), so a `0.0.0.0` bind would be
+    /// silently narrowed to loopback anyway. `AllowTcpForwarding yes` in
+    /// `docker/test-server/sshd_config.d/99-macscp-testrig.conf` covers this
+    /// direction as well as the `direct-tcpip` one — `yes` allows both, and
+    /// the file needed no change for this test.
+    ///
+    /// The client inside the container is OpenBSD `nc`, which
+    /// `lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230` ships at
+    /// `/usr/bin/nc` (checked on the running rig, 2026-09-06; `/bin/bash` is
+    /// there too, so the `/dev/tcp` fallback was available and not needed).
+    /// It exits on its own because the local target answers and then closes,
+    /// which the pump carries back through the SSH channel — so this waits
+    /// for a process to end rather than for a clock.
+    ///
+    /// Both directions are asserted: `hi` reaching the listener proves the
+    /// server→Mac leg, and `ho` in `nc`'s standard output proves the Mac→
+    /// server leg. Nothing inside the container writes `ho`.
+    @Test func aRemoteForwardCarriesAConnectionFromInsideTheContainer() async throws {
+        let carrierHosts = throwawayDirectory("remote-carrier")
+        defer { try? FileManager.default.removeItem(at: carrierHosts) }
+
+        let session = sshSession(
+            name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
+        let carrier = try await connectWithRetry {
+            try await TunnelConnection.connect(
+                session: session, secrets: [RigSecret()],
+                knownHosts: KnownHostsStore(directory: carrierHosts),
+                decider: .asking { _ in true })
+        }
+
+        let inbox = RigByteInbox()
+        let target = try await awaitCancellably(
+            ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+                .childChannelInitializer { channel in
+                    channel.pipeline.addHandler(RigAnswerAndClose(inbox: inbox, answer: "ho"))
+                }
+                .bind(host: "127.0.0.1", port: 0))
+        let targetPort = target.localAddress?.port ?? 0
+
+        let forward = RemoteForward(transport: carrier)
+        let seen = RigEventRecorder()
+        do {
+            #expect(targetPort > 0)
+            let boundPort = try await forward.start(
+                bind: "127.0.0.1", remotePort: 45321,
+                localHost: "127.0.0.1", localPort: targetPort,
+                observer: { seen.record($0) })
+            #expect(boundPort > 0)
+
+            let sent = try await SubprocessRunner.run(
+                URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: [
+                    "docker", "exec", "macscp-test-sshd", "sh", "-c",
+                    "printf hi | nc 127.0.0.1 \(boundPort)",
+                ],
+                timeout: .seconds(60))
+            #expect(sent.status == 0)
+            #expect(sent.stdoutText == "ho")
+
+            try await pollUntil("the bytes to arrive from inside the container") {
+                String(decoding: inbox.bytes, as: UTF8.self) == "hi"
+            }
+            #expect(seen.events.contains(.opened))
+        } catch {
+            await forward.stop()
+            target.close(promise: nil)
+            await carrier.disconnect()
+            throw error
+        }
+        await forward.stop()
+        target.close(promise: nil)
+        try? await awaitCancellably(target.closeFuture)
+        await carrier.disconnect()
+    }
+
+    /// Port 0 — "let the server choose" — is refused before anything is sent
+    /// to the server, and the reason says what the caller has to do instead.
+    ///
+    /// This test exists to go RED the day the limitation is lifted. It pins a
+    /// defect in a dependency, not a property of this code: when the fork
+    /// carries a Citadel that keys its inbound handler on the bound port, the
+    /// guard in `CitadelFileSystem.withRemotePortForward` comes out and this
+    /// case comes out with it. The measurement that put it there is in that
+    /// function's doc comment and in the case above.
+    ///
+    /// It runs against the rig rather than in the unit suite because the
+    /// accessor it measures belongs to a connected `CitadelFileSystem`, and
+    /// there is no such thing without a server.
+    @Test func aRemoteForwardOnPortZeroIsRefused() async throws {
+        let carrierHosts = throwawayDirectory("remote-zero")
+        defer { try? FileManager.default.removeItem(at: carrierHosts) }
+
+        let session = sshSession(
+            name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
+        let carrier = try await connectWithRetry {
+            try await TunnelConnection.connect(
+                session: session, secrets: [RigSecret()],
+                knownHosts: KnownHostsStore(directory: carrierHosts),
+                decider: .asking { _ in true })
+        }
+
+        let raised: (any Error)?
+        do {
+            try await carrier.withRemotePortForward(
+                bind: "127.0.0.1", port: 0, onOpen: { _ in }, handleChannel: { _ in })
+            raised = nil
+        } catch {
+            raised = error
+        }
+        await carrier.disconnect()
+
+        let isBindFailure: Bool = {
+            guard case .bindFailed = raised as? TunnelFailure else { return false }
+            return true
+        }()
+        #expect(isBindFailure)
+    }
 }
 
 // MARK: - Helpers
@@ -314,6 +453,33 @@ private final class RigByteInbox: @unchecked Sendable {
         lock.lock()
         collected += chunk
         lock.unlock()
+    }
+}
+
+/// The local target of the remote-forward case: it records what arrives,
+/// answers once, and closes. Closing is what lets `nc` inside the container
+/// exit on its own — the pump carries the close back through the SSH channel
+/// — so the test waits for a process to end rather than for a timeout.
+private final class RigAnswerAndClose: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+    typealias OutboundOut = ByteBuffer
+
+    private let inbox: RigByteInbox
+    private let answer: String
+    private var answered = false
+
+    init(inbox: RigByteInbox, answer: String) {
+        self.inbox = inbox
+        self.answer = answer
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var buffer = unwrapInboundIn(data)
+        inbox.append(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        guard !answered else { return }
+        answered = true
+        context.writeAndFlush(wrapOutboundOut(ByteBuffer(string: answer)), promise: nil)
+        context.close(promise: nil)
     }
 }
 

@@ -1451,7 +1451,153 @@ extension CitadelFileSystem {
             throw TunnelFailure.channelOpenFailed(reason: DialSupport.reason(for: error))
         }
     }
+
+    /// Asks the server to listen on `bind:port` and hands every connection it
+    /// accepts there back as a channel — the `forwarded-tcpip` side of a
+    /// remote forward (`-R`).
+    ///
+    /// Runs until the calling task is cancelled. Citadel's own wrapper sends
+    /// `tcpip-forward`, reports the bound port, dispatches inbound channels,
+    /// sleeps, and sends `cancel-tcpip-forward` when the sleep is cancelled
+    /// (`RemotePortForward+Client.swift`), so cancelling the task is what
+    /// takes the listener down on the server.
+    ///
+    /// **The codec is installed here, and that is a difference from
+    /// `openDirectTCPIP`.** Citadel adds its own `DataToBufferCodec` to a
+    /// channel it opens (`DirectTCPIP+Client.swift`), but an INBOUND child
+    /// channel reaches `handleChannel` raw, straight from NIOSSH's
+    /// `inboundChildChannelInitializer` — it speaks `SSHChannelData`, and a
+    /// `BytePump` installed on it would unwrap the wrong type. Citadel's
+    /// codec is `internal` to that package, so `ForwardedTCPIPCodec` below is
+    /// this module's own; like Citadel's it also turns remote half-closure
+    /// on, without which a far side that shuts down its write half would
+    /// close the whole connection instead.
+    ///
+    /// Nothing is read from the channel before `handleChannel` returns: an
+    /// inbound child channel does not ACTIVATE until the initializer's future
+    /// completes (`SSHChildChannel.configure`), and that future is this
+    /// closure. Which is also why `handleChannel` must return once the
+    /// connection is wired rather than when it ends.
+    ///
+    /// A `handleChannel` that THROWS refuses that one connection: the
+    /// initializer's failure makes NIOSSH answer the server with
+    /// `SSH_MSG_CHANNEL_OPEN_FAILURE` and reason code 2, "connect failed",
+    /// which is exactly what a local target that refused is. The forward
+    /// itself is unaffected.
+    ///
+    /// A server that refuses the global request — `AllowTcpForwarding no`, or
+    /// a non-loopback `bind` without `GatewayPorts` — comes back as
+    /// `TunnelFailure.bindFailed`. The reason names `GatewayPorts` when the
+    /// bind is not loopback, because the server does not say which of the two
+    /// it was and that is the one the user can do something about. A
+    /// cancellation is NOT mapped: it is how a forward ends normally.
+    ///
+    /// **`port` 0 is refused**, and that is a limitation of the pinned
+    /// Citadel rather than a decision. Measured against the rig on
+    /// 2026-09-06: with port 0 the server binds and reports its port, and no
+    /// connection ever arrives; with a named port the identical test passes
+    /// in 0.1 s. The cause is a key mismatch in Citadel `0.12.1-noix.3`.
+    /// `SSHClientInboundChannelHandler.registerForwardedTCPIP`
+    /// (`ClientSession.swift:19-31`) stores the handler under the port that
+    /// was REQUESTED, while `handleChannel` (`:47-60`) looks it up under
+    /// `forwardedTCPIP.listeningPort`, the port actually BOUND — so for
+    /// port 0 the lookup misses and every inbound channel is failed with
+    /// `CitadelError.channelCreationFailed` inside the library, where nothing
+    /// here can see it. Refusing is the alternative to a forward that looks
+    /// healthy and silently swallows every connection. Removing this guard is
+    /// a one-line change once the fork carries the fix, and
+    /// `TunnelRigITests.aRemoteForwardOnPortZeroIsRefused` goes red the day
+    /// it does.
+    public func withRemotePortForward(
+        bind: String, port: Int,
+        onOpen: @escaping @Sendable (Int) -> Void,
+        handleChannel: @escaping @Sendable (Channel) async throws -> Void
+    ) async throws {
+        guard port != 0 else {
+            throw TunnelFailure.bindFailed(
+                reason:
+                    "a remote forward must name the port the server listens on; "
+                    + "letting the server choose it is not supported by this client")
+        }
+        do {
+            try await client.withRemotePortForward(
+                host: bind, port: port,
+                onOpen: { forward in onOpen(forward.boundPort) },
+                handleChannel: { channel, _ in
+                    channel.eventLoop.makeFutureWithTask {
+                        try await channel.pipeline.addHandler(ForwardedTCPIPCodec()).get()
+                        try await handleChannel(channel)
+                    }
+                })
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw TunnelFailure.bindFailed(reason: Self.bindReason(for: error, bind: bind))
+        }
+    }
+
+    /// Loopback binds are the server's default and need no permission; every
+    /// other bind address needs `GatewayPorts`, and a refusal that does not
+    /// say so is a dead end for the user.
+    private static func bindReason(for error: any Error, bind: String) -> String {
+        let reason = DialSupport.reason(for: error)
+        let loopback = ["127.0.0.1", "::1", "localhost"]
+        guard !loopback.contains(bind) else { return reason }
+        return reason + " (a bind address other than loopback needs the server's GatewayPorts)"
+    }
 }
+
+/// `SSHChannelData` in, `ByteBuffer` out, on a `forwarded-tcpip` child
+/// channel — the same translation Citadel installs on a channel IT opens,
+/// written here because that type is `internal` to Citadel and an inbound
+/// channel never passes through the code that adds it.
+///
+/// `allowRemoteHalfClosure` is turned on from `handlerAdded`, as Citadel's
+/// does: without it NIOSSH turns a peer's EOF into a full close, and
+/// `BytePumpHandler`'s half-close propagation — the shape a client that shuts
+/// its write side down and waits for an answer depends on — never sees
+/// `ChannelEvent.inputClosed`.
+final class ForwardedTCPIPCodec: ChannelDuplexHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    typealias InboundOut = ByteBuffer
+    typealias OutboundIn = ByteBuffer
+    typealias OutboundOut = SSHChannelData
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        // `syncOptions` rather than the future-returning `setOption`, which
+        // would have to report a failure from a `@Sendable` closure that
+        // cannot legally capture the context. `handlerAdded` runs on the
+        // event loop, which is exactly the precondition `syncOptions` has.
+        do {
+            try context.channel.syncOptions?.setOption(
+                ChannelOptions.allowRemoteHalfClosure, value: true)
+        } catch {
+            context.fireErrorCaught(error)
+        }
+    }
+
+    /// Anything that is not ordinary channel data — an `extended` stream, or
+    /// a payload NIOSSH did not deliver as a buffer — is an error rather than
+    /// something to guess at. Citadel's own codec traps on the second of
+    /// those; a tunnel closes the one connection instead.
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let payload = unwrapInboundIn(data)
+        guard case .channel = payload.type, case .byteBuffer(let bytes) = payload.data else {
+            context.fireErrorCaught(SSHChannelError.invalidDataType)
+            return
+        }
+        context.fireChannelRead(wrapInboundOut(bytes))
+    }
+
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        let bytes = unwrapOutboundIn(data)
+        context.write(
+            wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(bytes))),
+            promise: promise)
+    }
+}
+
+extension CitadelFileSystem: RemoteForwardTransport {}
 
 extension CitadelFileSystem: RemoteShellProvider {
     /// Shell channel over the SAME connection as SFTP (multiplexed, like WinSCP).
