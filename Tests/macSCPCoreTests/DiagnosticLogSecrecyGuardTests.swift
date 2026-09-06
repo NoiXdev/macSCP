@@ -12,8 +12,9 @@ import Testing
 ///
 /// 1. `noInterpolationNamesASecretIdentifier`: the direct call-site floor
 ///    (`direct.count >= 20`).
-/// 2. …: every file the forwarding walk names a wrapper in yields at least
-///    one of that wrapper's call sites.
+/// 2. …: each of the six files measured as having its wrapper call sites
+///    reached by the forwarding walk still yields them
+///    (`filesWithReachableForwardedSites`).
 /// 3. …: the `tunnel` category yields forwarded call sites at all.
 /// 4. …: every one of those `tunnel` sites carries an interpolation.
 /// 5. `everyCategoryLiteralIsOnTheFixedList`: every entry on
@@ -98,6 +99,31 @@ struct DiagnosticLogSecrecyGuardTests {
         "shell", "transfer", "error", "tunnel",
     ]
 
+    /// The files under `Sources/` in which the forwarding walk actually
+    /// LOCATES a wrapper's call sites — SIX, measured 2026-09-06 by running
+    /// the walk and printing what it collects per file (the table is in
+    /// `noInterpolationNamesASecretIdentifier`, beside the assertion that
+    /// reads this list).
+    ///
+    /// It is a measurement, not a name the guard could derive: the walk's own
+    /// output is what would have to be trusted to derive it, and a check whose
+    /// antecedent comes from the thing under test cancels out — extraction
+    /// that stops finding a wrapper's calls also stops the fixpoint growing
+    /// onto its callers, so the file quietly leaves the set the check
+    /// quantifies over. Naming the six files is what makes the check able to
+    /// fail: break the extraction for any one of their wrappers and that file
+    /// stops yielding sites while its name stays here.
+    ///
+    /// Eleven files have a forwarder; the five absent from this list have a
+    /// name set equal to their seed set — no wrapper, an ordinary function
+    /// holding a line that the direct scan reads. Adding them would be red on
+    /// correct code.
+    private static let filesWithReachableForwardedSites: Set<String> = [
+        "CitadelFileSystem.swift", "ContentView+Lifecycle.swift",
+        "MacSCPApp.swift", "RemoteBrowserViewModel.swift",
+        "TunnelRunner.swift", "TunnelStore.swift",
+    ]
+
     private struct CallSite {
         let file: String
         let arguments: String
@@ -151,6 +177,22 @@ struct DiagnosticLogSecrecyGuardTests {
     private struct WalkResult {
         let all: [CallSite]
         let seeded: [CallSite]
+        /// Every forwarder NAME the walk found in this file — reported
+        /// independently of whether any of their call sites were then
+        /// located.
+        ///
+        /// It is reported separately because the two questions were
+        /// conflated in round 3 of the port-forwarding plan's Task 5, and its
+        /// re-review caught it: the collection skipped a file whose call-site
+        /// list came back empty, which made every entry it returned non-empty
+        /// BY CONSTRUCTION — and the per-file positive asserting exactly that
+        /// could never be false. A check that cannot fail is not a guard.
+        /// Naming a wrapper and then locating none of its calls is the silent
+        /// breakage that positive is for, so `hasForwarders` is what the
+        /// collection filters on and the call sites are what it asserts
+        /// about.
+        let names: Set<String>
+        var hasForwarders: Bool { !names.isEmpty }
     }
 
     /// Call sites of a file's OWN wrapper around the marker.
@@ -192,7 +234,13 @@ struct DiagnosticLogSecrecyGuardTests {
             let blanked = try SwiftSource.stripCommentsAndStrings(raw)
             let walked = Self.walk(
                 stripped: stripped, blanked: blanked, file: file.lastPathComponent)
-            guard !walked.all.isEmpty else { continue }
+            // Filter on whether the walk NAMED a wrapper here, never on
+            // whether it found that wrapper's calls. Filtering on the call
+            // sites would drop exactly the files the per-file positive in
+            // `noInterpolationNamesASecretIdentifier` exists to catch, and
+            // would leave every surviving entry non-empty by construction —
+            // an assertion that cannot be false. See `WalkResult`.
+            guard walked.hasForwarders else { continue }
             let categories = Set(
                 Self.callSites(in: stripped, file: file.lastPathComponent)
                     .compactMap { Self.categoryLiteral(in: $0.arguments) })
@@ -215,10 +263,14 @@ struct DiagnosticLogSecrecyGuardTests {
 
     private static func walk(stripped: String, blanked: String, file: String) -> WalkResult {
         let markers = Self.occurrences(of: marker, in: stripped)
-        guard !markers.isEmpty else { return WalkResult(all: [], seeded: []) }
+        guard !markers.isEmpty else {
+            return WalkResult(all: [], seeded: [], names: [])
+        }
         let seeds = Self.seedForwarderNames(markerStarts: markers, blanked: blanked)
         let names = Self.forwarderNames(markerStarts: markers, blanked: blanked)
-        guard !names.isEmpty else { return WalkResult(all: [], seeded: []) }
+        guard !names.isEmpty else {
+            return WalkResult(all: [], seeded: [], names: [])
+        }
 
         // The marker text ends in `log(`, which would match a forwarder
         // actually named `log`; blanking the marker occurrences first is what
@@ -235,7 +287,7 @@ struct DiagnosticLogSecrecyGuardTests {
             sites.append(contentsOf: found)
             if seeds.contains(name) { seeded.append(contentsOf: found) }
         }
-        return WalkResult(all: sites, seeded: seeded)
+        return WalkResult(all: sites, seeded: seeded, names: names)
     }
 
     /// The innermost function whose body contains each marker occurrence —
@@ -592,49 +644,64 @@ struct DiagnosticLogSecrecyGuardTests {
             this task added regressed.
             """)
 
-        // Positives 2, 3 and 4 (see this type's doc comment), added in round
-        // 2 and split in round 3: a file
-        // that routes its lines through its own wrapper contributes NOTHING
-        // to the negative below unless `collectForwardedCallSites()` reaches
-        // it — the wrapper's own marker call interpolates nothing at all.
+        // Positives 2, 3 and 4 (see this type's doc comment): a file that
+        // routes its lines through its own wrapper contributes NOTHING to the
+        // negative below unless `collectForwardedCallSites()` reaches it — the
+        // wrapper's own marker call interpolates nothing at all.
+        //
+        // Positive 2 is round 4's replacement for a check that could not fail.
+        // Round 3 asserted, per collected file, that the walk yielded at least
+        // one call site — but the collection SKIPPED a file whose call-site
+        // list came back empty, so every entry it returned was non-empty by
+        // construction and the assertion was dead code wearing a guard's
+        // failure message. The collection now filters on whether the walk
+        // NAMED a forwarder (see `WalkResult`), which made the observation
+        // possible and showed round 3's property to be not merely dead but
+        // FALSE.
         //
         // Measured 2026-09-06 by running the walk and printing what it
-        // collects, seeded/grown split — SIX files have a forwarder, and
-        // every one of them yields call sites:
+        // collects, per file, with the name set split into seeds and the names
+        // the fixpoint grew onto. ELEVEN files under `Sources/` have a
+        // forwarder; SIX of them yield call sites:
         //
-        //   file                       all  seeded  seeded interpolations
-        //   CitadelFileSystem           23      11                     2
-        //   TunnelRunner                18       9                    17
-        //   RemoteBrowserViewModel       8       8                     0
-        //   ContentView+Lifecycle        7       4                     0
-        //   TunnelStore                  7       6                     0
-        //   MacSCPApp                    6       4                     0
+        //   file                       all  seeded  names  seeds  direct
+        //   CitadelFileSystem           23      11     13      1       2
+        //   TunnelRunner                18       9      9      1       2
+        //   RemoteBrowserViewModel       8       8      9      1       2
+        //   ContentView+Lifecycle        7       4      8      2       2
+        //   TunnelStore                  7       6      8      1       1
+        //   MacSCPApp                    6       4      5      3       5
         //
-        // `CitadelFileSystem`'s wrapper is `measured<T>`, and it is the
-        // reason the claim this comment used to make — that `TunnelRunner`
-        // is the only file under `Sources/` that wraps the marker — was
-        // FALSE. `TunnelRunner` is the only file whose whole CATEGORY goes
-        // through a wrapper (both of its direct marker sites carry zero
-        // interpolations); `measured` is the other real wrapper, and it
-        // interpolates at the marker itself, so the direct scan was never
-        // blind there. The remaining four are ordinary functions that happen
-        // to contain a line, collected too rather than guessing which
-        // wrappers are "real".
+        // and FIVE yield none, correctly — `CitadelShell`, `ConnectionViewModel`,
+        // `LocalFileSystem`, `LocalMetadataSource`, `TransferEngine`. In every
+        // one of those the name set equals the seed set: the fixpoint never
+        // grew, because the function holding the marker is ordinary public API
+        // that nothing in its own file calls. There is no wrapper to reach
+        // through and nothing hidden — those lines interpolate at the marker
+        // (or are constant messages, as all three of `CitadelShell`'s are) and
+        // the DIRECT scan reads them. Requiring call sites there would be red
+        // on correct code, which is why the assertion below names the files it
+        // watches instead of quantifying over everything the walk touches.
         //
-        // So the per-FILE positive is stated in call sites, not in
-        // interpolations: four of those six yield zero interpolations,
-        // because their lines are constant messages with nothing to
-        // interpolate. A floor on interpolations per file would be red on
-        // code that is perfectly fine.
-        for entry in forwarded {
-            #expect(
-                entry.sites.count > 0,
-                """
-                the forwarding walk named a wrapper in \(entry.file) but found none of its \
-                call sites — the walk is naming functions it cannot then locate, so every line \
-                that file writes through that wrapper is invisible to the negative below.
-                """)
-        }
+        // `CitadelFileSystem`'s wrapper is `measured<T>`, and it is the reason
+        // the claim this comment used to make — that `TunnelRunner` is the only
+        // file under `Sources/` that wraps the marker — was FALSE.
+        // `TunnelRunner` is the only file whose whole CATEGORY goes through a
+        // wrapper (both of its direct marker sites carry zero interpolations);
+        // `measured` interpolates at the marker itself, so the direct scan was
+        // never blind there.
+        let filesYieldingSites = Set(forwarded.filter { !$0.sites.isEmpty }.map(\.file))
+        let unreached = Self.filesWithReachableForwardedSites
+            .subtracting(filesYieldingSites).sorted()
+        #expect(
+            unreached.isEmpty,
+            """
+            the forwarding walk located none of the wrapper call sites in \(unreached) — \
+            each of those files was measured as yielding them, so every line written through \
+            a wrapper there is now invisible to the negative below. Either the call-site \
+            extraction regressed, or that file stopped logging through a wrapper and this \
+            list should shrink with it.
+            """)
 
         // Positives 3 and 4: `TunnelRunner` is the one file whose WHOLE CATEGORY is
         // written through a wrapper — its two direct marker sites carry zero
