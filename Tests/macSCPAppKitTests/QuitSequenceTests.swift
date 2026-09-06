@@ -289,58 +289,77 @@ struct QuitSequenceTests {
 
     // MARK: - The bound, driven
 
-    /// A fake `stopAll()` that never returns — the shape a runner parked in
-    /// a dial has, and the one round 1's group could not walk away from.
+    /// A fake `stopAll()` that parks the way the real one can — and, the
+    /// half that matters, parks UNCANCELLABLY.
+    ///
+    /// `TunnelRunner.stop()` ends at `await mine.value` on a
+    /// `Task<Void, Never>`, which ignores its awaiter's cancellation (its
+    /// own `performStop()` doc comment says so, and says why). A fake that
+    /// parked on something cancellable would let round 1's `TaskGroup`
+    /// version pass this suite — measured 2026-09-06: with a cancellable
+    /// park, planting that version back is GREEN, because `cancelAll()` then
+    /// really does end the work. The defect was never "the group forgot to
+    /// cancel"; it was "the work cannot be cancelled", and only a fake with
+    /// that property can tell the two apart.
     @MainActor
     private final class ParkingStopper {
         private(set) var entered = 0
+        private(set) var finished = false
+        private var release: AsyncStream<Void>.Continuation?
 
         func stopAll() async {
             entered += 1
-            // Answers cancellation (an `AsyncStream` iteration does), so
-            // this task does not outlive the test — but nothing ever yields
-            // to it, so it never finishes on its own.
-            let (never, continuation) = AsyncStream<Void>.makeStream(of: Void.self)
-            for await _ in never { break }
-            _ = continuation
+            let (parked, continuation) = AsyncStream<Void>.makeStream(of: Void.self)
+            release = continuation
+            await Task { @MainActor in
+                for await _ in parked { break }
+            }.value
+            finished = true
         }
+
+        /// Lets the parked work end, so the test leaves no task suspended
+        /// behind it.
+        func releaseTheWork() { release?.finish() }
+    }
+
+    /// Carries a result out of an unstructured task — the test never awaits
+    /// that task's `value`, which would be the very uncancellable wait this
+    /// suite is about.
+    @MainActor
+    private final class OutcomeBox {
+        private(set) var outcome: BoundedStepOutcome?
+        func record(_ value: BoundedStepOutcome) { outcome = value }
     }
 
     /// The property the comment claims: the CALLER stops waiting when the
-    /// bound elapses, even though the work has not finished.
+    /// bound elapses, even though the work has not finished and cannot be
+    /// cancelled.
     ///
     /// The sleeper is injected and returns at once, so nothing here waits on
-    /// a clock — what is measured is that the step returns `.timedOut` while
-    /// the work is still parked (CLAUDE.md, "A wall-clock ceiling in a test
-    /// measures the runner").
-    @Test func aBoundedStepReturnsWhenTheBoundElapsesEvenIfTheWorkNeverDoes() async {
+    /// a clock (CLAUDE.md, "A wall-clock ceiling in a test measures the
+    /// runner"), and the step is read through a box rather than awaited —
+    /// under a version that does not bound, the poll is what the suite's
+    /// `.timeLimit` ends, which is a verdict; `await step.value` would be a
+    /// hang.
+    @Test func aBoundedStepReturnsWhenTheBoundElapsesEvenIfTheWorkNeverDoes() async throws {
         let stopper = ParkingStopper()
-        let outcome = await BoundedStep.run(
-            bound: QuitWatchdog.bound, sleeper: { _ in }
-        ) {
-            await stopper.stopAll()
+        let box = OutcomeBox()
+        _ = Task { @MainActor in
+            box.record(
+                await BoundedStep.run(bound: QuitWatchdog.bound, sleeper: { _ in }) {
+                    await stopper.stopAll()
+                })
         }
-        #expect(outcome == .timedOut)
-        #expect(stopper.entered == 1, "the bounded step never started the work")
-    }
 
-    /// The other half, without which the test above would pass over a step
-    /// that always times out: work that finishes reports `.finished`, and
-    /// the sleeper that never returns does not hold the caller.
-    @Test func aBoundedStepReturnsAsSoonAsTheWorkIsDone() async {
-        let done = Done()
-        let outcome = await BoundedStep.run(
-            bound: .seconds(1), sleeper: { _ in
-                // Never returns, and answers cancellation so the group can
-                // end it once the work has won.
-                let (never, _) = AsyncStream<Void>.makeStream(of: Void.self)
-                for await _ in never { break }
-            }
-        ) {
-            done.record()
-        }
-        #expect(outcome == .finished)
-        #expect(done.count == 1)
+        try await pollUntil("the bounded step returned") { box.outcome != nil }
+        #expect(box.outcome == .timedOut)
+        #expect(stopper.entered == 1, "the bounded step never started the work")
+        #expect(
+            stopper.finished == false,
+            "the work finished by itself — this test proves nothing about the bound")
+
+        stopper.releaseTheWork()
+        try await pollUntil("the abandoned work ended") { stopper.finished }
     }
 
     @MainActor
