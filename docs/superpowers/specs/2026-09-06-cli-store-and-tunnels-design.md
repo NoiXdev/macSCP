@@ -158,7 +158,11 @@ runner's `stop()`, awaited, then exit 0) or until the runner reaches
 (exit 11 unknown key without `--accept-new`, exit 12 on a mismatch —
 which is a hard stop, never confirmable). Prints one line per state
 change (`--json`: one object per line, `{"state":"active","connections":0}`
-etc.); `active` includes the bound port for `--remote`. The secret comes
+etc.); `active` includes the bound port whenever the runtime has one —
+for `--remote` and for a `--local`/`--dynamic` bound on port 0 (Task 4
+widened this from "for `--remote`"; the `--local 0:` case is the one
+that makes the number useful). JSON keys are sorted; consumers decode,
+they do not compare text. The secret comes
 from the environment variable or `--password-command`, resolved once
 before the dial, exactly as `ls` does; `--non-interactive` forbids the
 host-key question. Reconnect follows the profile's `reconnects` flag
