@@ -46,6 +46,16 @@ public enum BytePump {
     /// lifecycle (`BytePumpHandler.handlerAdded`/`channelActive`), never
     /// from the task that called this. The long comment on those two methods
     /// is the reason, and it is a measured one.
+    ///
+    /// There is no second, read-starting step after this one. Round 2 of
+    /// this file moved the work into the handlers and left the old
+    /// task-driven `BytePump.startReading` behind as an empty function,
+    /// because comments in three other files described the accept path in
+    /// terms of it. Task 4's round 1 reworded every one of them and deleted
+    /// it: a function that does nothing, kept so that prose about it stays
+    /// resolvable, is a worse anchor than prose that says what actually
+    /// happens. (`BytePumpHandler.startReading` below is a different,
+    /// private thing — the per-channel body both lifecycle arms call.)
     public static func install(
         local: Channel, remote: Channel, observer: TunnelConnectionObserver? = nil
     ) -> EventLoopFuture<Void> {
@@ -59,47 +69,6 @@ public enum BytePump {
         return localInstalled.and(remoteInstalled).map { _ in
             counters.opened(local: local, remote: remote)
         }
-    }
-
-    /// Kept, and deliberately empty: by the time anyone can call this, both
-    /// sides are already reading.
-    ///
-    /// This function used to do the work its name describes —
-    /// `setOption(autoRead, true)` followed by `read()`, on both channels,
-    /// from the accept task. That shape hangs, and Task 3 measured it
-    /// hanging (3 of 7 runs, a different test each time, every selector
-    /// thread parked in `kevent` with no frame of ours in the sample): a
-    /// `read()` issued before NIO has finished registering the accepted
-    /// channel latches `readPending` without registering read interest, and
-    /// the `readIfNeeded0` that follows activation then skips its own read
-    /// BECAUSE `readPending` is already true. An `await` in front does not
-    /// order it — the accepted channel's registration is enqueued by
-    /// `ServerSocketChannel.channelRead0` with `eventLoop.execute` on a loop
-    /// that need not be the server's. `BytePumpHandler.handlerAdded` and
-    /// `.channelActive` carry the work now; the full argument, with the
-    /// swift-nio line numbers, is on those two.
-    ///
-    /// Why it is still here rather than deleted. Three files this task must
-    /// not edit describe the accept path in terms of this step, and every
-    /// one of them stays RESOLVABLE with the symbol present and dangles
-    /// without it — a reader who follows them lands on this comment, which
-    /// says what actually happens: `SOCKS5Handshake.swift`'s reply-code
-    /// table and its `refuse`-after-handover argument (`:53`, `:409`,
-    /// `:478`), `RemoteForward.swift`'s pointer to the SSH-child
-    /// measurement (`:315`), and `SOCKS5HandshakeTests.swift:244`. Counted
-    /// 2026-09-06 with `grep -rn startReading Sources/ Tests/`. Its call
-    /// site in `LocalForwardListener` is kept for the same reason: those
-    /// comments say this step runs after `confirm`, and it still does.
-    ///
-    /// The measurement the old body carried, moved rather than lost: a
-    /// socket channel's `setOption(autoRead, true)` issues the first read
-    /// itself (`BaseSocketChannel.setOption0`, on the transition), but
-    /// NIOSSH's `SSHChildChannel.setOption0` only assigns the flag — its
-    /// reads come from `unsatisfiedRead`, which nothing sets until someone
-    /// calls `read()`. So the explicit `read()` is not redundant on the
-    /// remote side; it now happens in `BytePumpHandler.startReading`.
-    public static func startReading(local: Channel, remote: Channel) -> EventLoopFuture<Void> {
-        local.eventLoop.makeSucceededVoidFuture()
     }
 }
 
@@ -255,7 +224,7 @@ final class BytePumpHandler: ChannelInboundHandler, @unchecked Sendable {
     /// start again when it drains.
     ///
     /// The `read()` on the RESUME is the same necessity `startReading`
-    /// documents, and for the same reason: turning `autoRead` back on is
+    /// above documents, and for the same reason: turning `autoRead` back on is
     /// enough for a socket, which kicks the read itself on the transition,
     /// and does nothing at all for an SSH child channel, whose
     /// `setOption0` only assigns the flag. Without it a pair that has been

@@ -264,14 +264,24 @@ struct TunnelRigITests {
     /// asked for the other way round, and the reason is measured rather than
     /// preferred: `port: 0` binds on the server, reports its port through
     /// `onOpen`, and then delivers nothing at all — the pinned Citadel keys
-    /// its inbound handler on the REQUESTED port and looks it up under the
-    /// BOUND one. The first run of this test with `remotePort: 0` failed with
-    /// `(sent.stdoutText → "") == "ho"` and then ran into the suite's
-    /// five-minute limit waiting for bytes that could not come; changing only
-    /// that number to `45321` made it pass in 0.104 s.
+    /// its inbound handler on the REQUESTED `(host, port)` and looks it up
+    /// under the BOUND one. The first run of this test with `remotePort: 0`
+    /// failed with `(sent.stdoutText → "") == "ho"` and then ran into the
+    /// suite's five-minute limit waiting for bytes that could not come;
+    /// changing only that number to a named port made it pass in 0.104 s.
     /// `CitadelFileSystem.withRemotePortForward` now refuses port 0 outright,
     /// with the line numbers of the mismatch, and
     /// `aRemoteForwardOnPortZeroIsRefused` below pins that refusal.
+    ///
+    /// The number is drawn at RANDOM from 40000–60000 rather than fixed. A
+    /// fixed one is a shared resource inside the container, and two rig runs
+    /// on one machine — two checkouts, or a rerun overlapping its
+    /// predecessor's teardown — would collide on it and fail with a
+    /// `bindFailed` that says nothing about this code. One retry covers a
+    /// collision; a second failure is reported rather than papered over,
+    /// because two collisions in a row is evidence of something other than
+    /// bad luck. A fresh `RemoteForward` per attempt, since one forward
+    /// starts once.
     ///
     /// `127.0.0.1` deliberately: `GatewayPorts` is off in the rig (nothing
     /// sets it, and OpenSSH's default is `no`), so a `0.0.0.0` bind would be
@@ -292,36 +302,40 @@ struct TunnelRigITests {
     /// server→Mac leg, and `ho` in `nc`'s standard output proves the Mac→
     /// server leg. Nothing inside the container writes `ho`.
     @Test func aRemoteForwardCarriesAConnectionFromInsideTheContainer() async throws {
-        let carrierHosts = throwawayDirectory("remote-carrier")
-        defer { try? FileManager.default.removeItem(at: carrierHosts) }
+        try await withRigTeardown { teardown in
+            let carrierHosts = throwawayDirectory("remote-carrier")
+            teardown.add { try? FileManager.default.removeItem(at: carrierHosts) }
 
-        let session = sshSession(
-            name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
-        let carrier = try await connectWithRetry {
-            try await TunnelConnection.connect(
-                session: session, secrets: [RigSecret()],
-                knownHosts: KnownHostsStore(directory: carrierHosts),
-                decider: .asking { _ in true })
-        }
+            let session = sshSession(
+                name: "rig", host: "127.0.0.1", port: 2222, username: "testuser",
+                authKind: .password)
+            let carrier = try await connectWithRetry {
+                try await TunnelConnection.connect(
+                    session: session, secrets: [RigSecret()],
+                    knownHosts: KnownHostsStore(directory: carrierHosts),
+                    decider: .asking { _ in true })
+            }
+            teardown.add { await carrier.disconnect() }
 
-        let inbox = RigByteInbox()
-        let target = try await awaitCancellably(
-            ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
-                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-                .childChannelInitializer { channel in
-                    channel.pipeline.addHandler(RigAnswerAndClose(inbox: inbox, answer: "ho"))
-                }
-                .bind(host: "127.0.0.1", port: 0))
-        let targetPort = target.localAddress?.port ?? 0
-
-        let forward = RemoteForward(transport: carrier)
-        let seen = RigEventRecorder()
-        do {
+            let inbox = RigByteInbox()
+            let target = try await awaitCancellably(
+                ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                    .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+                    .childChannelInitializer { channel in
+                        channel.pipeline.addHandler(RigAnswerAndClose(inbox: inbox, answer: "ho"))
+                    }
+                    .bind(host: "127.0.0.1", port: 0))
+            teardown.add {
+                target.close(promise: nil)
+                try? await awaitCancellably(target.closeFuture)
+            }
+            let targetPort = target.localAddress?.port ?? 0
             #expect(targetPort > 0)
-            let boundPort = try await forward.start(
-                bind: "127.0.0.1", remotePort: 45321,
-                localHost: "127.0.0.1", localPort: targetPort,
-                observer: { seen.record($0) })
+
+            let seen = RigEventRecorder()
+            let (forward, boundPort) = try await forwardOnAFreeRemotePort(
+                carrier: carrier, targetPort: targetPort, observer: { seen.record($0) })
+            teardown.add { await forward.stop() }
             #expect(boundPort > 0)
 
             let sent = try await SubprocessRunner.run(
@@ -338,63 +352,133 @@ struct TunnelRigITests {
                 String(decoding: inbox.bytes, as: UTF8.self) == "hi"
             }
             #expect(seen.events.contains(.opened))
-        } catch {
-            await forward.stop()
-            target.close(promise: nil)
-            await carrier.disconnect()
-            throw error
         }
-        await forward.stop()
-        target.close(promise: nil)
-        try? await awaitCancellably(target.closeFuture)
-        await carrier.disconnect()
     }
 
     /// Port 0 — "let the server choose" — is refused before anything is sent
     /// to the server, and the reason says what the caller has to do instead.
     ///
-    /// This test exists to go RED the day the limitation is lifted. It pins a
-    /// defect in a dependency, not a property of this code: when the fork
-    /// carries a Citadel that keys its inbound handler on the bound port, the
-    /// guard in `CitadelFileSystem.withRemotePortForward` comes out and this
-    /// case comes out with it. The measurement that put it there is in that
-    /// function's doc comment and in the case above.
+    /// **This test cannot announce the fix, and does not claim to.** It pins
+    /// OUR guard, not Citadel's behaviour: it would stay green against a
+    /// fixed Citadel, because the guard would still refuse before anything
+    /// reached the library. It must be REMOVED together with the guard —
+    /// both are one change, recorded as a debt in
+    /// `docs/superpowers/specs/2026-08-20-backlog-dependencies.md` with what
+    /// the fork would have to do. The measurement that put the guard there
+    /// is in `CitadelFileSystem.withRemotePortForward`'s doc comment and in
+    /// the case above.
     ///
     /// It runs against the rig rather than in the unit suite because the
     /// accessor it measures belongs to a connected `CitadelFileSystem`, and
     /// there is no such thing without a server.
     @Test func aRemoteForwardOnPortZeroIsRefused() async throws {
-        let carrierHosts = throwawayDirectory("remote-zero")
-        defer { try? FileManager.default.removeItem(at: carrierHosts) }
+        try await withRigTeardown { teardown in
+            let carrierHosts = throwawayDirectory("remote-zero")
+            teardown.add { try? FileManager.default.removeItem(at: carrierHosts) }
 
-        let session = sshSession(
-            name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
-        let carrier = try await connectWithRetry {
-            try await TunnelConnection.connect(
-                session: session, secrets: [RigSecret()],
-                knownHosts: KnownHostsStore(directory: carrierHosts),
-                decider: .asking { _ in true })
+            let session = sshSession(
+                name: "rig", host: "127.0.0.1", port: 2222, username: "testuser",
+                authKind: .password)
+            let carrier = try await connectWithRetry {
+                try await TunnelConnection.connect(
+                    session: session, secrets: [RigSecret()],
+                    knownHosts: KnownHostsStore(directory: carrierHosts),
+                    decider: .asking { _ in true })
+            }
+            teardown.add { await carrier.disconnect() }
+
+            let raised: (any Error)?
+            do {
+                try await carrier.withRemotePortForward(
+                    bind: "127.0.0.1", port: 0, onOpen: { _ in }, handleChannel: { _ in })
+                raised = nil
+            } catch {
+                raised = error
+            }
+
+            let isBindFailure: Bool = {
+                guard case .bindFailed = raised as? TunnelFailure else { return false }
+                return true
+            }()
+            #expect(isBindFailure)
         }
-
-        let raised: (any Error)?
-        do {
-            try await carrier.withRemotePortForward(
-                bind: "127.0.0.1", port: 0, onOpen: { _ in }, handleChannel: { _ in })
-            raised = nil
-        } catch {
-            raised = error
-        }
-        await carrier.disconnect()
-
-        let isBindFailure: Bool = {
-            guard case .bindFailed = raised as? TunnelFailure else { return false }
-            return true
-        }()
-        #expect(isBindFailure)
     }
 }
 
 // MARK: - Helpers
+/// Runs `body` and then every registered clean-up, in reverse, on EVERY exit
+/// — including a thrown expectation.
+///
+/// Swift has no `async defer`, and the shape this replaces —
+/// `defer { Task { await …} }` — is fire-and-forget: the test returns, the
+/// rig connection is disconnected some time later or not at all, and a
+/// failing expectation leaves an SFTP session and a remote listener behind on
+/// the container. Registering into a list that one `await` drains keeps the
+/// "clean up next to where you allocated" reading of a `defer` while actually
+/// waiting for each step.
+///
+/// Reverse order because the resources nest: the forward is stopped before
+/// the connection carrying it is disconnected.
+private func withRigTeardown(
+    _ body: (RigTeardown) async throws -> Void
+) async throws {
+    let teardown = RigTeardown()
+    do {
+        try await body(teardown)
+    } catch {
+        await teardown.run()
+        throw error
+    }
+    await teardown.run()
+}
+
+/// The clean-up list `withRigTeardown` drains. Not `Sendable` and not meant
+/// to be: it is only ever touched from the test's own task.
+private final class RigTeardown {
+    private var steps: [() async -> Void] = []
+
+    func add(_ step: @escaping () async -> Void) {
+        steps.append(step)
+    }
+
+    /// Drains the list, so a second call is a no-op rather than a second
+    /// teardown.
+    func run() async {
+        let taken = steps
+        steps = []
+        for step in taken.reversed() {
+            await step()
+        }
+    }
+}
+
+/// Starts a remote forward on a random port in 40000–60000, with one retry if
+/// the server refuses the bind.
+///
+/// A fresh `RemoteForward` per attempt: one forward starts once, and `start`
+/// consumes that use even when it fails. A second `bindFailed` is thrown
+/// rather than retried — see the calling test's doc comment.
+private func forwardOnAFreeRemotePort(
+    carrier: CitadelFileSystem, targetPort: Int,
+    observer: @escaping TunnelConnectionObserver
+) async throws -> (RemoteForward, Int) {
+    var lastFailure: (any Error)?
+    for _ in 1...2 {
+        let forward = RemoteForward(transport: carrier)
+        do {
+            let port = try await forward.start(
+                bind: "127.0.0.1", remotePort: Int.random(in: 40_000...60_000),
+                localHost: "127.0.0.1", localPort: targetPort,
+                observer: observer)
+            return (forward, port)
+        } catch let failure as TunnelFailure {
+            guard case .bindFailed = failure else { throw failure }
+            lastFailure = failure
+        }
+    }
+    throw lastFailure ?? TunnelFailure.bindFailed(reason: "no remote port could be bound")
+}
+
 
 /// The rig's password, as a `SecretSource` — the same seam the app's Keychain
 /// source plugs into, so `TunnelConnection.connect` is exercised through its

@@ -279,18 +279,16 @@ public final class LocalForwardListener: @unchecked Sendable {
                     channel.close(promise: nil)
                     return
                 }
+                // Installing IS starting: each handler turns its own
+                // channel's `autoRead` on and issues the first read from
+                // that channel's own lifecycle, never from this task. There
+                // is no second, read-starting step after `confirm` any more:
+                // the one that stood there had an empty body, so deleting
+                // the call changed neither how nor when either side's first
+                // read happens.
                 try await BytePump.install(
                     local: channel, remote: throughTheServer, observer: observer).get()
                 try await negotiation?.confirm(on: channel)
-                // A no-op since round 2 — both sides began reading when
-                // `install` added their handlers, from the channels' own
-                // lifecycles rather than from this task, which is what
-                // stopped it racing NIO's registration. Kept as a step
-                // because `SOCKS5Handshake` and its tests describe this
-                // path in terms of it running after `confirm`; see
-                // `BytePump.startReading`.
-                try await BytePump.startReading(
-                    local: channel, remote: throughTheServer).get()
             } catch {
                 let failure = Self.acceptFailure(error, afterOpen: opened != nil)
                 await negotiation?.reject(failure, on: channel)

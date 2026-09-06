@@ -240,11 +240,12 @@ struct SOCKS5HandshakeTests {
     }
 
     /// **After the handover, a rejection writes nothing.** The accept path
-    /// calls `reject` for a `pumpFailed` as well, and `pumpFailed` is what
-    /// `startReading` raises — which runs AFTER `confirm` has already sent
-    /// the success frame and let the pump take over. Ten bytes of `05 01 …`
-    /// at that point are not a reply; they are ten bytes injected into an
-    /// established payload stream.
+    /// calls `reject` for a `pumpFailed` as well, and `confirm` itself can
+    /// raise one AFTER the handover has happened: `succeed` sets
+    /// `.handedOver` and writes the success frame before its final
+    /// `removeHandler`, and it is that future the accept path awaits. Ten
+    /// bytes of `05 01 …` at that point are not a reply; they are ten bytes
+    /// injected into an established payload stream.
     ///
     /// The negative check — nothing written by the reject — has the positive
     /// one beside it in the same case: the success frame WAS written first,

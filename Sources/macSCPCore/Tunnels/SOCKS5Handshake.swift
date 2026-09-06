@@ -45,12 +45,15 @@ extension SOCKS5ReplyCode {
     /// `TunnelFailure` through unchanged instead of re-mapping every error to
     /// `channelOpenFailed`. `reject` is called from exactly one place — that
     /// accept path's catch — so the reachable set is whatever can be thrown
-    /// between the factory call and `startReading`:
+    /// between the factory call and the end of `confirm`, which is where
+    /// that path ends — `BytePump.install` starts both sides reading when it
+    /// adds their handlers, so there is no read-starting step after
+    /// `confirm` for anything to fail in:
     ///
     /// | `TunnelFailure` | code | raised by, today |
     /// |---|---|---|
     /// | `.channelOpenFailed` | `01` | `CitadelFileSystem.openDirectTCPIP`'s own catch, and any foreign error before the factory answers |
-    /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install`, `confirm`, `startReading` |
+    /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install` or `confirm` |
     /// | `.connectFailed` | `05` | nothing on this path. Its one producer is `TunnelConnection.connect`, for a session that is not SSH, which runs before a listener exists. Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
     /// | `.portInUse`, `.bindFailed`, `.alreadyStarted` | `01` | `start`, before any client has connected — unreachable here |
     ///
@@ -405,8 +408,10 @@ final class SOCKS5HandshakeHandler: ChannelInboundHandler, RemovableChannelHandl
     /// reply are no longer a reply: they are ten bytes of `05 01 …` injected
     /// into an established payload stream, which the client would read as
     /// part of whatever it asked for. That is reachable — the accept path
-    /// calls `reject` for a `pumpFailed` too, and `pumpFailed` is raised by
-    /// `startReading`, which runs AFTER `confirm` — so the state is checked
+    /// calls `reject` for a `pumpFailed` too, and `confirm` itself can fail
+    /// AFTER it has already handed over: `succeed` sets `.handedOver` and
+    /// writes the success frame before its final `removeHandler`, whose
+    /// future is the one the accept path awaits. So the state is checked
     /// rather than assumed. In `.handedOver` and `.done` the connection is
     /// closed and nothing is written.
     func reject(_ code: SOCKS5ReplyCode, on channel: Channel) -> EventLoopFuture<Void> {
@@ -475,8 +480,9 @@ final class SOCKS5HandshakeHandler: ChannelInboundHandler, RemovableChannelHandl
                     // delivered stays in `accumulator` and is handed to the
                     // pump by `succeed`; the kernel's receive buffer holds
                     // the rest, which is the backpressure a bare `accumulate
-                    // everything` would not have. `BytePump.startReading`
-                    // turns reading back on.
+                    // everything` would not have. The pump's own handler
+                    // turns reading back on when `BytePump.install` adds
+                    // it, from this channel's lifecycle.
                     context.channel.setOption(ChannelOptions.autoRead, value: false)
                         .whenFailure { _ in }
                     requested.resolve(.success(destination))

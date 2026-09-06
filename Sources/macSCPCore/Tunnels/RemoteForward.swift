@@ -16,9 +16,14 @@ public protocol RemoteForwardTransport: Sendable {
     /// server too.
     ///
     /// - Parameters:
-    ///   - port: `0` asks the SERVER for an ephemeral port; the answer
-    ///     arrives through `onOpen`, which fires exactly once, before any
-    ///     connection.
+    ///   - port: the port the SERVER listens on. **`0` — "let the server
+    ///     pick" — is refused by the only transport there is**; see
+    ///     `CitadelFileSystem.withRemotePortForward`, which carries the
+    ///     measurement. The protocol still takes an `Int` rather than
+    ///     forbidding zero in the type, because the refusal belongs to that
+    ///     transport's dependency and not to this seam. `onOpen` fires
+    ///     exactly once, before any connection, with the port the server
+    ///     confirmed.
     ///   - handleChannel: called for every connection the server accepts on
     ///     the bound port, with a channel that speaks `ByteBuffer` in both
     ///     directions and has not been read from yet. **Throwing refuses
@@ -55,14 +60,24 @@ public final class RemoteForward: @unchecked Sendable {
 
     private let transport: any RemoteForwardTransport
     private let open = OpenPairs()
+    private let cancellationBoundSeconds: Int
 
-    /// The port the SERVER bound, once it has named one — the answer for a
-    /// forward configured on port 0, and `nil` before `start` and after
-    /// `stop`.
+    /// The port the SERVER confirmed, once it has — `nil` before `start`
+    /// and after `stop`. It is the port that was ASKED for: a forward cannot
+    /// ask the server to choose (see `start`), so this never carries a
+    /// number the caller did not already know.
     public var boundPort: Int? { open.boundPort }
 
-    public init(transport: any RemoteForwardTransport) {
+    public convenience init(transport: any RemoteForwardTransport) {
+        self.init(transport: transport, cancellationBoundSeconds: Self.cancellationBound)
+    }
+
+    /// The teardown bound as an argument, so a test can measure the
+    /// abandonment in `stop()` without spending the production number on
+    /// every run. Module-internal: production has exactly one value for it.
+    init(transport: any RemoteForwardTransport, cancellationBoundSeconds: Int) {
         self.transport = transport
+        self.cancellationBoundSeconds = cancellationBoundSeconds
     }
 
     /// Asks the server to listen, and returns the port it bound.
@@ -80,19 +95,37 @@ public final class RemoteForward: @unchecked Sendable {
     /// only sentence that says why a non-loopback bind was turned down —
     /// while a foreign error is mapped to `bindFailed`.
     ///
+    /// **That wait is bounded and cancellable**, because the thing being
+    /// waited for is a server's reply to a global request and a server that
+    /// never answers is not a hypothetical. `tcpip-forward` is sent with
+    /// `wantReply`, and Citadel completes its promise only from the reply;
+    /// nothing underneath times it out. So: `answerBound` elapsing stops the
+    /// forward and throws `bindFailed`, and cancelling the calling task
+    /// throws `CancellationError` rather than parking forever. The default
+    /// bound is `SettingsStore.defaultConnectTimeoutSeconds`, the same
+    /// number `TunnelConnection.connect` dials this connection with — one
+    /// round trip on a connection that is already established cannot
+    /// reasonably need longer than the connect itself was given.
+    ///
     /// - Parameters:
     ///   - bind, remotePort: the address the SERVER listens on. `0.0.0.0`
-    ///     needs the server's `GatewayPorts`; `remotePort` `0` asks the
-    ///     server to pick.
+    ///     needs the server's `GatewayPorts`. **`remotePort` must name a
+    ///     port**: the SSH transport refuses `0`; see
+    ///     `CitadelFileSystem.withRemotePortForward` for why, and for what
+    ///     would have to change to allow it.
     ///   - localHost, localPort: where each inbound connection is connected
     ///     to on THIS machine.
     ///   - onConnectionFailure: one call per inbound connection that could
     ///     not be served.
+    ///   - answerBound: how long the server has to answer the forwarding
+    ///     request. Production passes the default; a test passes a small one
+    ///     so the bound is measured rather than spent.
     @discardableResult
     public func start(
         bind: String, remotePort: Int, localHost: String, localPort: Int,
         observer: TunnelConnectionObserver? = nil,
-        onConnectionFailure: ConnectionFailureObserver? = nil
+        onConnectionFailure: ConnectionFailureObserver? = nil,
+        answerBound: Duration = .seconds(SettingsStore.defaultConnectTimeoutSeconds)
     ) async throws -> Int {
         let open = self.open
         guard open.claimStart() else { throw TunnelFailure.alreadyStarted }
@@ -125,13 +158,31 @@ public final class RemoteForward: @unchecked Sendable {
             }
         }
         open.running(task)
+        // The bound is a task of its own resolving the same once-latch,
+        // rather than a `withTaskGroup` race: a group awaits every child
+        // before its scope returns, even a cancelled one, and the child here
+        // is a transport that by construction does not finish early. It is
+        // the argument `BoundedClose`'s doc comment makes, applied to a
+        // latch that already exists.
+        let deadline = Task {
+            try? await Task.sleep(for: answerBound)
+            opened.resolve(
+                .failure(
+                    TunnelFailure.bindFailed(
+                        reason: "the server did not answer the forwarding request")))
+        }
+        defer { deadline.cancel() }
         do {
             return try await opened.wait()
         } catch {
-            // The task is already over, or is about to be: cancel it so a
-            // transport that failed after naming a port leaves nothing
-            // running, and let `stop()` remain the only place that waits.
-            task.cancel()
+            // Everything that reaches here — the transport's refusal, the
+            // bound elapsing, the caller's own cancellation — leaves a
+            // forward that must not stay half-started: the task may still be
+            // running, and on the bound-elapsed path the server may yet
+            // answer and begin sending connections to a forward nobody is
+            // holding. `stop()` cancels it, which is also what sends
+            // `cancel-tcpip-forward`, and closes anything already open.
+            await stop()
             throw error
         }
     }
@@ -145,7 +196,7 @@ public final class RemoteForward: @unchecked Sendable {
     /// real one, not enough to be a hang. A copy of the number rather than a
     /// reference to it, because the two bounds are for different round trips
     /// and one moving is no reason for the other to.
-    private static let cancellationBoundSeconds = 5
+    private static let cancellationBound = 5
 
     /// Cancels the forward on the server, closes every pair still open, and
     /// returns once each of those channels has actually closed and the
@@ -173,13 +224,6 @@ public final class RemoteForward: @unchecked Sendable {
     /// cancelled, every channel is already closed and awaited above, and the
     /// SSH connection's own teardown ends what is left.
     public func stop() async {
-        await stop(cancellationBoundSeconds: Self.cancellationBoundSeconds)
-    }
-
-    /// `stop()` with the bound as an argument, so a test can measure the
-    /// abandonment without spending the production number on every run.
-    /// Module-internal: production has exactly one value for it.
-    func stop(cancellationBoundSeconds: Int) async {
         let (task, channels) = open.drain()
         task?.cancel()
         for channel in channels {
@@ -211,6 +255,22 @@ public final class RemoteForward: @unchecked Sendable {
     /// (`GetaddrinfoResolver` offloads `getaddrinfo` to a `DispatchQueue`),
     /// so a local host that needs looking up cannot stall the connection.
     ///
+    /// **Nothing here starts the reads.** `BytePumpHandler` does it itself,
+    /// from each channel's own lifecycle, the moment it is added — this file
+    /// carried a `ReadStarter` handler of its own until Task 2's round 2
+    /// moved that work into the pump, and round 1 of this task deleted the
+    /// duplicate. Which of the pump's two arms fires depends on the
+    /// channel, and both are reachable here. The local channel takes
+    /// `channelActive`: its handler is installed from the bootstrap's
+    /// `channelInitializer`, before the channel is registered. The inbound
+    /// channel takes `channelActive` too on the SSH transport — a
+    /// `forwarded-tcpip` child channel does not activate until the
+    /// initializer's future completes, and that future is the closure this
+    /// runs inside — and `handlerAdded` on a transport that hands over an
+    /// already connected socket, which is what `RemoteForwardTests` does.
+    /// Neither case starts a read from this task, which is the property
+    /// that matters.
+    ///
     /// A failure to reach the local target **throws**, which the transport
     /// turns into a channel-open failure for the server, AND closes the
     /// inbound channel here. Both, because the two halves are needed by
@@ -231,8 +291,11 @@ public final class RemoteForward: @unchecked Sendable {
         do {
             local = try await ClientBootstrap(group: inbound.eventLoop)
                 // Nothing may be read before the pump is in place, and the
-                // pump owns the option from then on as its backpressure
-                // control. `ReadStarter` below turns it on again.
+                // pump owns the option from then on — as its backpressure
+                // control, and as the thing that turns it back on. The
+                // handler added below does that from this channel's own
+                // lifecycle: `handlerAdded` if it is somehow already active,
+                // `channelActive` otherwise, exactly one of the two.
                 .channelOption(ChannelOptions.autoRead, value: false)
                 .channelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
                 .channelInitializer { channel in
@@ -240,10 +303,8 @@ public final class RemoteForward: @unchecked Sendable {
                     // channel is ever registered, so no byte can be read
                     // before there is somewhere to put it. Its peer already
                     // exists: an inbound connection is what brought us here.
-                    channel.pipeline.addHandlers([
-                        BytePumpHandler(peer: inbound, side: .local, counters: counters),
-                        ReadStarter(),
-                    ])
+                    channel.pipeline.addHandler(
+                        BytePumpHandler(peer: inbound, side: .local, counters: counters))
                 }
                 .connect(host: localHost, port: localPort)
                 .get()
@@ -259,10 +320,8 @@ public final class RemoteForward: @unchecked Sendable {
                 inbound.close(promise: nil)
                 throw TunnelFailure.connectFailed(reason: "the forward has been stopped")
             }
-            try await inbound.pipeline.addHandlers([
-                BytePumpHandler(peer: local, side: .remote, counters: counters),
-                ReadStarter(),
-            ]).get()
+            try await inbound.pipeline.addHandler(
+                BytePumpHandler(peer: local, side: .remote, counters: counters)).get()
         } catch {
             let failure = Self.pairFailure(error)
             local.close(promise: nil)
@@ -289,52 +348,6 @@ public final class RemoteForward: @unchecked Sendable {
     private static func pairFailure(_ error: any Error) -> TunnelFailure {
         if let failure = error as? TunnelFailure { return failure }
         return .pumpFailed(reason: DialSupport.reason(for: error))
-    }
-}
-
-/// Turns reading on from the EVENT LOOP, at the moment the channel is
-/// demonstrably registered and active.
-///
-/// This is the shape `SOCKS5HandshakeHandler` arrived at after a measured
-/// hang (Task 3, 2026-09-06), and it is used here rather than
-/// `BytePump.startReading` because both channels of a remote-forward pair
-/// reach the pump before they are active: the local one is being connected,
-/// and the inbound one does not activate until the transport's per-connection
-/// closure returns. A `read()` issued from a task in that window races the
-/// registration and can be lost — `BaseSocketChannel.setOption0` only kicks a
-/// read once pre-registered, `read0` latches `readPending` and
-/// `becomeFullyRegistered0` never consults it, so the channel ends up open,
-/// active and permanently deaf with no error anywhere.
-///
-/// Both entry points are needed and exactly one of them fires: a channel
-/// added to a pipeline before it is active gets `channelActive`, and one
-/// added afterwards — which is how a transport that hands over an already
-/// connected socket behaves — gets only `handlerAdded`.
-///
-/// The explicit `read()` beside the option is not redundant; `BytePump
-/// .startReading` records the measurement that says so.
-final class ReadStarter: ChannelInboundHandler, @unchecked Sendable {
-    typealias InboundIn = Any
-
-    private var started = false
-
-    func handlerAdded(context: ChannelHandlerContext) {
-        if context.channel.isActive { startReading(context) }
-    }
-
-    func channelActive(context: ChannelHandlerContext) {
-        startReading(context)
-        context.fireChannelActive()
-    }
-
-    private func startReading(_ context: ChannelHandlerContext) {
-        guard !started else { return }
-        started = true
-        // On the event loop, so `setOption` assigns before `read()` is
-        // issued rather than completing a future later.
-        context.eventLoop.assertInEventLoop()
-        context.channel.setOption(ChannelOptions.autoRead, value: true).whenComplete { _ in }
-        context.channel.read()
     }
 }
 
@@ -426,9 +439,22 @@ private final class OpenPairs: @unchecked Sendable {
 ///
 /// An `NSLock` and at most one continuation rather than an `AsyncStream`: the
 /// value is delivered exactly once and never again, which a stream would let
-/// a later edit violate silently. A second `resolve` is dropped, so the two
-/// paths that can reach it — the transport naming a port, and the task ending
-/// — cannot resume a continuation twice.
+/// a later edit violate silently. A second `resolve` is dropped, so the three
+/// paths that can reach it — the transport naming a port, the task ending,
+/// and the answer bound elapsing — cannot resume a continuation twice.
+///
+/// **`wait()` answers task cancellation.** A bare
+/// `withCheckedThrowingContinuation` does not: it parks until somebody
+/// resumes it, so a cancelled `start` would sit here forever while its
+/// caller believed the cancellation had taken. That is the defect
+/// `docs/BACKLOG.md`'s "A test parked on a bare continuation outlives its
+/// time limit" records for the test suite, in production. The shape is
+/// `Tests/MacSCPTestSupport/AwaitResumption.swift`'s and
+/// `AwaitCancellably.swift`'s: `withTaskCancellationHandler` around the
+/// continuation, and ONE latch — `settled` — deciding which of the two
+/// racing sides gets to resume it. `onCancel` can run before the
+/// continuation has even been stored, which is why `cancel()` records the
+/// outcome whether or not there is a waiter to hand it to.
 private final class OpenPortBox: @unchecked Sendable {
     private let lock = NSLock()
     private var settled: Result<Int, any Error>?
@@ -449,12 +475,17 @@ private final class OpenPortBox: @unchecked Sendable {
     }
 
     func wait() async throws -> Int {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            let already = settled
-            if already == nil { waiter = continuation }
-            lock.unlock()
-            if let already { continuation.resume(with: already) }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Int, any Error>) in
+                lock.lock()
+                let already = settled
+                if already == nil { waiter = continuation }
+                lock.unlock()
+                if let already { continuation.resume(with: already) }
+            }
+        } onCancel: {
+            resolve(.failure(CancellationError()))
         }
     }
 }

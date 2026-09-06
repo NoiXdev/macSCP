@@ -812,3 +812,69 @@ swift-crypto's own `LICENSE.txt` and `NOTICE.txt` under the
 generator faithfully reports what is on disk in this checkout. If a
 later swift-crypto pin adds a vendored BoringSSL `LICENSE`, the
 generator picks it up unchanged; the test does not check for it.
+
+
+## Open 2026-09-06 — Citadel `0.12.1-noix.3` swallows a remote forward whose bound key differs from the requested one
+
+**A fork debt, recorded on the day it was found, per CLAUDE.md "Forks are
+a debt with a review date". No fork change has been made.**
+
+**What is wrong.** A remote forward (`-R`) asks the server to listen and
+gets its inbound connections back as `forwarded-tcpip` channels. Citadel
+routes each of those to a handler it looked up in a dictionary, and the
+key is the pair `(host, port)`:
+
+- `SSHClientInboundChannelHandler.registerForwardedTCPIP`
+  (`Sources/Citadel/ClientSession.swift:19-31`) stores the handler under
+  `SSHRemotePortForward(host:boundPort:)` built from the values the
+  CALLER passed — and it does so BEFORE `tcpip-forward` is sent, so the
+  server's answer cannot have influenced it
+  (`RemotePortForward+Client.swift:65-88`).
+- `handleChannel` (`ClientSession.swift:47-60`) rebuilds that key from
+  `forwardedTCPIP.listeningHost` and `.listeningPort` — what the server
+  actually BOUND — and a miss returns
+  `makeFailedFuture(CitadelError.channelCreationFailed)`.
+
+When the two differ, every inbound connection is refused inside the
+library. Nothing is thrown to the caller, nothing is logged by us, and
+the forward looks healthy: `onOpen` has already reported a port.
+
+**Measured 2026-09-06, against the Docker rig, on Citadel
+`0.12.1-noix.3`.** With `port: 0` the rig's sshd bound a port and
+reported it; `docker exec macscp-test-sshd sh -c 'printf hi | nc
+127.0.0.1 <port>'` then produced nothing on this side and the test ran
+into its five-minute limit. Changing only that number to a named port
+made the identical test pass in **0.104 s**. Port 0 is the reachable
+instance: the requested port is `0` and the bound one never is.
+
+**The host half is UNVERIFIED.** The same miss would follow from a server
+that echoes a `listeningHost` other than the string that was sent — an
+empty string for `0.0.0.0`, or a name resolved to an address. That was
+not measured and cannot be on this rig: `GatewayPorts` is off there
+(nothing sets it; OpenSSH's default is `no`), so a non-loopback bind
+cannot be exercised at all. Stated, not guarded.
+
+**What a fix in the fork would be.** Register the handler under the pair
+the SERVER confirmed, after the reply, rather than under the requested
+pair before it: `withRemotePortForward` already has `response.boundPort`
+in hand (`RemotePortForward+Client.swift:82-93`), so the registration
+moves below that point and keys on `(response.boundHost ?? host,
+response.boundPort ?? port)`. Registering after the reply opens a window
+in which a very eager server could deliver a channel before the handler
+exists, so the honest shape is to register under the requested pair
+first — preserving today's behaviour for a named port — and ADD the
+bound pair when the reply arrives. That is a PR candidate against
+`orlandos-nl/Citadel` as well as a fork tag; it is a bug in upstream, not
+something macSCP needs differently.
+
+**What macSCP does today instead.**
+`CitadelFileSystem.withRemotePortForward` refuses `port` 0 outright with
+`TunnelFailure.bindFailed`, so the black hole is a named failure. The
+guard and its test
+(`TunnelRigITests.aRemoteForwardOnPortZeroIsRefused`) are one change and
+must be **removed together** when the fork carries the fix — the test
+pins OUR guard, so it stays green against a fixed Citadel and cannot
+announce it. The general `(host, port)` hazard is not guarded at all.
+
+**Review date:** at the next release and before the next Citadel fork
+change, with the rest of the fork check this document prescribes.

@@ -156,6 +156,16 @@ its profiles (the store is told; pinned).
   "Open at login" ships alone and the row says so.
 - Remote forwards bound to `0.0.0.0` on the server work only with the
   server's `GatewayPorts` allowing it; the failure reason names it.
+- A remote forward must **name** the port the server listens on; `0` —
+  "let the server choose" — is refused, with the port in the reason.
+  Measured 2026-09-06: the pinned Citadel registers its inbound handler
+  under the REQUESTED `(host, port)` and dispatches on the BOUND one, so
+  a server-chosen port binds and then swallows every connection inside
+  the library. Recorded as a fork debt in
+  `2026-08-20-backlog-dependencies.md`. The same mismatch could in
+  principle come from the HOST half — a server echoing a different
+  `listeningHost` for a non-loopback bind — which is **unverified**: the
+  rig has `GatewayPorts` off, so it cannot be measured there.
 - SOCKS5 without authentication, CONNECT only (no BIND, no UDP).
 - A local port in use fails the start with the port in the reason.
 

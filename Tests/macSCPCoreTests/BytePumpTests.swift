@@ -234,25 +234,6 @@ struct BytePumpTests {
         finish(local, remote)
     }
 
-    /// The old task-driven entry point is kept as a step in the accept path
-    /// and does nothing — see its doc comment for the three files that still
-    /// name it. Pinned so that "nothing" stays true: calling it after the
-    /// pump is installed neither reads again nor disturbs the option.
-    @Test func theKeptStartReadingStepDoesNothing() throws {
-        let (local, remote) = try activeEmbeddedPair()
-        let localReads = ReadRecorder()
-        try local.pipeline.syncOperations.addHandler(localReads)
-        try installPump(local: local, remote: remote)
-        let readsAfterInstall = localReads.count
-
-        try completing(BytePump.startReading(local: local, remote: remote))
-
-        #expect(localReads.count == readsAfterInstall)
-        #expect(autoRead(of: local) == true)
-
-        finish(local, remote)
-    }
-
     // MARK: - Two loops
 
     /// The production shape: the two pumped channels are on different event

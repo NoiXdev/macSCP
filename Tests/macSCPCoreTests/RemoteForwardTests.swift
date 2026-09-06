@@ -164,7 +164,7 @@ struct RemoteForwardTests {
     /// `stop()` — Citadel's cancellation is a round trip to a server that
     /// may already be gone, and Task 5 calls this from the quit sequence.
     ///
-    /// The forward is asked to abandon after one second rather than the
+    /// The forward is built to abandon after one second rather than the
     /// production five, so the bound is measured without spending it. There
     /// is no ceiling on how long `stop()` took: what is asserted is that it
     /// RETURNED while the transport was demonstrably still running, which a
@@ -175,15 +175,80 @@ struct RemoteForwardTests {
     /// release would find exactly the state the test wants, defect or not.
     @Test func stopIsNotHeldByATransportThatIgnoresItsCancellation() async throws {
         let fake = StubbornTransport(boundPort: 45_006)
-        let forward = RemoteForward(transport: fake)
+        let forward = RemoteForward(transport: fake, cancellationBoundSeconds: 1)
         _ = try await forward.start(
             bind: "127.0.0.1", remotePort: 8080, localHost: "127.0.0.1", localPort: 1)
 
-        await forward.stop(cancellationBoundSeconds: 1)
+        await forward.stop()
 
         #expect(fake.isRunning)
         fake.release()
         try await pollUntil("the abandoned transport to end") { !fake.isRunning }
+    }
+
+    /// A server that never answers `tcpip-forward` must not park `start`
+    /// forever. The bound is the code under test, not a ceiling on the test:
+    /// it is injected small, and what is asserted is the FAILURE the bound
+    /// produces and the state it leaves behind — a slow machine can make
+    /// this take longer, and cannot make it pass.
+    ///
+    /// The forward is read as stopped afterwards, which is the second half
+    /// of the contract: a `tcpip-forward` the server has not answered may
+    /// still be answered, and a forward nobody holds would then be a
+    /// listener on the server with no reader on this side.
+    @Test func aServerThatNeverAnswersEndsTheStartAndStopsTheForward() async throws {
+        let fake = SilentTransport()
+        let forward = RemoteForward(transport: fake, cancellationBoundSeconds: 1)
+
+        let raised: (any Error)?
+        do {
+            _ = try await forward.start(
+                bind: "127.0.0.1", remotePort: 8080, localHost: "127.0.0.1", localPort: 1,
+                answerBound: .milliseconds(50))
+            raised = nil
+        } catch {
+            raised = error
+        }
+
+        let isBindFailure: Bool = {
+            guard case .bindFailed = raised as? TunnelFailure else { return false }
+            return true
+        }()
+        #expect(isBindFailure)
+        #expect(forward.boundPort == nil)
+        #expect(fake.sawCancellation)
+    }
+
+    /// A cancelled `start` throws `CancellationError` instead of parking on
+    /// the box's continuation.
+    ///
+    /// The bound is deliberately far away (a minute) so that nothing but the
+    /// cancellation can end this wait — with a small bound the test would
+    /// pass on the bound's failure and prove nothing about cancellation.
+    /// That is a FLOOR, not a ceiling: a slow machine cannot reach it.
+    @Test func aCancelledStartThrowsCancellationRatherThanParking() async throws {
+        let fake = SilentTransport()
+        let forward = RemoteForward(transport: fake, cancellationBoundSeconds: 1)
+
+        let started = Task { () -> (any Error)? in
+            do {
+                _ = try await forward.start(
+                    bind: "127.0.0.1", remotePort: 8080, localHost: "127.0.0.1", localPort: 1,
+                    answerBound: .seconds(60))
+                return nil
+            } catch {
+                return error
+            }
+        }
+        // Cancel only once the transport is demonstrably inside the request,
+        // so this measures a cancellation of the WAIT and not of a task that
+        // had not begun it.
+        try await pollUntil("the transport to be asked for the forward") { fake.isRunning }
+        started.cancel()
+
+        let raised = await started.value
+        #expect(raised is CancellationError)
+        #expect(forward.boundPort == nil)
     }
 
     /// A server that refuses the global request fails the START, and the
@@ -359,6 +424,46 @@ private final class StubbornTransport: RemoteForwardTransport, Sendable {
             return taken
         }
         parked?.resume()
+    }
+}
+
+/// A transport that accepts the request and then says nothing — never calls
+/// `onOpen`, never returns — which is what a server that does not answer
+/// `tcpip-forward` looks like from this side. It ends when its task is
+/// cancelled, so both `start`'s bound and `stop()` can be measured against
+/// it.
+private final class SilentTransport: RemoteForwardTransport, Sendable {
+    private struct State {
+        var running = false
+        var cancelled = false
+    }
+
+    private let state = NIOLockedValueBox(State())
+
+    var isRunning: Bool { state.withLockedValue { $0.running } }
+    var sawCancellation: Bool { state.withLockedValue { $0.cancelled } }
+
+    func withRemotePortForward(
+        bind: String, port: Int,
+        onOpen: @escaping @Sendable (Int) -> Void,
+        handleChannel: @escaping @Sendable (Channel) async throws -> Void
+    ) async throws {
+        state.withLockedValue { $0.running = true }
+        do {
+            while !Task.isCancelled {
+                try await Task.sleep(for: .seconds(3600))
+            }
+        } catch {
+            state.withLockedValue {
+                $0.cancelled = true
+                $0.running = false
+            }
+            throw error
+        }
+        state.withLockedValue {
+            $0.cancelled = true
+            $0.running = false
+        }
     }
 }
 

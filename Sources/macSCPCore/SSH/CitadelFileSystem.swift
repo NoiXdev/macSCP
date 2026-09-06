@@ -1496,18 +1496,38 @@ extension CitadelFileSystem {
     /// Citadel rather than a decision. Measured against the rig on
     /// 2026-09-06: with port 0 the server binds and reports its port, and no
     /// connection ever arrives; with a named port the identical test passes
-    /// in 0.1 s. The cause is a key mismatch in Citadel `0.12.1-noix.3`.
+    /// in 0.1 s.
+    ///
+    /// The cause is a key mismatch in Citadel `0.12.1-noix.3`, and the key is
+    /// the PAIR `(host, port)`, not the port alone.
     /// `SSHClientInboundChannelHandler.registerForwardedTCPIP`
-    /// (`ClientSession.swift:19-31`) stores the handler under the port that
-    /// was REQUESTED, while `handleChannel` (`:47-60`) looks it up under
-    /// `forwardedTCPIP.listeningPort`, the port actually BOUND — so for
-    /// port 0 the lookup misses and every inbound channel is failed with
+    /// (`ClientSession.swift:19-31`) stores the handler under an
+    /// `SSHRemotePortForward(host:boundPort:)` built from what was
+    /// REQUESTED, before the request is even sent; the dispatch in
+    /// `handleChannel` (`:47-60`) rebuilds that key from
+    /// `forwardedTCPIP.listeningHost` and `.listeningPort` — what the server
+    /// actually BOUND — and a miss fails the channel with
     /// `CitadelError.channelCreationFailed` inside the library, where nothing
-    /// here can see it. Refusing is the alternative to a forward that looks
-    /// healthy and silently swallows every connection. Removing this guard is
-    /// a one-line change once the fork carries the fix, and
-    /// `TunnelRigITests.aRemoteForwardOnPortZeroIsRefused` goes red the day
-    /// it does.
+    /// here can see it.
+    ///
+    /// So port 0 is one instance of a general hazard, and the HOST half is
+    /// **unverified**: a server that echoes a `listeningHost` other than the
+    /// string that was sent — `0.0.0.0` answered as `""`, or a name resolved
+    /// to an address — would produce the identical silent swallow with a
+    /// perfectly ordinary port. That was not measured, and could not be on
+    /// this rig: `GatewayPorts` is off there, so a non-loopback bind cannot
+    /// be exercised at all. It is stated rather than guarded because
+    /// guessing which spellings a server may answer with would be a second
+    /// unmeasured claim on top of the first.
+    ///
+    /// Refusing port 0 is the alternative to a forward that looks healthy and
+    /// silently swallows every connection. What would retire the guard is a
+    /// fork that registers the handler under the BOUND pair, after the reply,
+    /// instead of under the requested one before it — written down as a debt
+    /// in `docs/superpowers/specs/2026-08-20-backlog-dependencies.md`.
+    /// `TunnelRigITests.aRemoteForwardOnPortZeroIsRefused` pins THIS guard,
+    /// not Citadel's behaviour, so it cannot announce the fix: it must be
+    /// removed together with the guard.
     public func withRemotePortForward(
         bind: String, port: Int,
         onOpen: @escaping @Sendable (Int) -> Void,
