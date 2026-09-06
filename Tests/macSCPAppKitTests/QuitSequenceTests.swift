@@ -274,9 +274,10 @@ struct QuitSequenceTests {
     /// front of a quit whose watchdog is 15 s.
     ///
     /// **Two spans, because the step is two pieces since round 2.** The
-    /// wrapper's own body is three lines and holds no race any more: what is
-    /// claimed of it is that it stops the tunnels, runs them under a bound,
-    /// and takes that bound from the one place that names it. The RACE moved
+    /// wrapper's own body is a bounded call and the line it may write, and
+    /// holds no race any more: what is claimed of it is that it stops the
+    /// tunnels, runs them under a bound, takes that bound from the one place
+    /// that names it, and writes the forced outcome down. The RACE moved
     /// into `BoundedStep`, so the second slice below is where `withTaskGroup`
     /// and `cancelAll()` are read — and, more to the point, the bound is
     /// DRIVEN by the two cases under "The bound, driven" rather than only
