@@ -100,24 +100,66 @@ struct SOCKS5ListenerTests {
     /// A factory that refuses answers the SOCKS client with a failure reply
     /// before the connection closes, and reports the failure to the tunnel —
     /// both, not one or the other.
-    @Test func aRefusedChannelAnswersTheClientAndReportsTheFailure() async throws {
+    ///
+    /// Parameterised over WHICH failure, because since
+    /// `LocalForwardListener.acceptFailure` passes a `TunnelFailure` through
+    /// unchanged, the code the client reads is the one the factory's own case
+    /// chose. A foreign error stands in for "anything the listener had to map
+    /// itself". The reason strings are deliberately different from each other
+    /// and never asserted on: the mapping reads the case, and a test that
+    /// read the text would licence a mapping that did.
+    @Test(arguments: [
+        SOCKS5RefusalCase(
+            label: "a foreign error before the factory answers",
+            failure: nil, expected: 0x01),
+        SOCKS5RefusalCase(
+            label: "channelOpenFailed, as openDirectTCPIP raises it",
+            failure: .channelOpenFailed(reason: "the server refuses forwarding"), expected: 0x01),
+        SOCKS5RefusalCase(
+            label: "connectFailed, the one case with a code of its own",
+            failure: .connectFailed(reason: "nothing listening there"), expected: 0x05),
+        SOCKS5RefusalCase(
+            label: "pumpFailed, raised after the channel is open",
+            failure: .pumpFailed(reason: "the pump did not install"), expected: 0x01),
+    ])
+    func aRefusedChannelAnswersTheClientAndReportsTheFailure(_ refusal: SOCKS5RefusalCase) async throws {
         let listener = SOCKS5Listener()
         let failures = FailureRecorder()
         do {
+            let raised = refusal.failure
             let port = try await listener.start(
                 bind: "127.0.0.1", localPort: 0,
-                directTCPIPFactory: { _, _ in throw FactoryRefusedTheChannel() },
+                directTCPIPFactory: { _, _ in
+                    if let raised { throw raised }
+                    throw FactoryRefusedTheChannel()
+                },
                 onFailure: { failures.record($0) })
 
             let inbox = ByteInbox()
             let client = try await connectClient(port: port, inbox: inbox)
             try await awaitCancellably(
                 client.writeAndFlush(ByteBuffer(bytes: [0x05, 0x01, 0x00] + connectToADomain)))
+            try await pollUntil("the method selection and the failure reply come back") {
+                inbox.bytes.count >= 12
+            }
             try await awaitCancellably(client.closeFuture)
 
             #expect(Array(inbox.bytes.prefix(2)) == [0x05, 0x00])
-            #expect(Array(inbox.bytes[2..<12]) == [0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            #expect(
+                Array(inbox.bytes[2..<12])
+                    == [0x05, refusal.expected, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
             try await pollUntil("the failure is reported") { failures.failures.count == 1 }
+            let reported = try #require(failures.failures.first)
+            if let raised {
+                // Passed through unchanged: the factory's own case is what
+                // chose the reply code above.
+                #expect(reported == raised)
+            } else {
+                #expect(
+                    reported
+                        == .channelOpenFailed(
+                            reason: DialSupport.reason(for: FactoryRefusedTheChannel())))
+            }
         } catch {
             await listener.stop()
             throw error
@@ -172,6 +214,17 @@ private let connectToADomain: [UInt8] = [
 ]
 
 private struct FactoryRefusedTheChannel: Error {}
+
+/// One way a `direct-tcpip` factory can refuse, and the SOCKS5 code the
+/// client must read for it. `failure: nil` means "throw something that is not
+/// a `TunnelFailure` at all", which is the arm the listener maps itself.
+struct SOCKS5RefusalCase: Sendable, CustomStringConvertible {
+    let label: String
+    let failure: TunnelFailure?
+    let expected: UInt8
+
+    var description: String { label }
+}
 
 private struct EchoServer {
     let channel: Channel

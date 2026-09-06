@@ -25,12 +25,12 @@ public struct SOCKS5Destination: Sendable, Equatable {
 public enum SOCKS5ReplyCode: UInt8, Sendable, Equatable {
     case succeeded = 0x00
     case generalFailure = 0x01
-    /// Defined by RFC 1928 and **produced by no arm of `init(_:)` today**,
-    /// for the reason that initialiser documents: an SSH `direct-tcpip`
-    /// refusal reaches this module with its reason code already discarded, so
-    /// "the destination was unreachable" cannot be distinguished from any
-    /// other refusal. Kept named rather than dropped so the day the
-    /// distinction becomes available there is somewhere for it to go.
+    /// Defined by RFC 1928 and **produced by no arm of `init(_:)`**, for the
+    /// reason that initialiser documents: an SSH `direct-tcpip` refusal
+    /// reaches this module with its reason code already discarded, so "the
+    /// destination was unreachable" cannot be distinguished from any other
+    /// refusal. Kept named rather than dropped so the day the distinction
+    /// becomes available there is somewhere for it to go.
     case hostUnreachable = 0x04
     case connectionRefused = 0x05
     case commandNotSupported = 0x07
@@ -39,6 +39,29 @@ public enum SOCKS5ReplyCode: UInt8, Sendable, Equatable {
 
 extension SOCKS5ReplyCode {
     /// What the SOCKS client is told when a tunnel's transport failed.
+    ///
+    /// **Which codes actually reach a client**, re-derived from the tree on
+    /// 2026-09-06 after `LocalForwardListener.acceptFailure` began passing a
+    /// `TunnelFailure` through unchanged instead of re-mapping every error to
+    /// `channelOpenFailed`. `reject` is called from exactly one place — that
+    /// accept path's catch — so the reachable set is whatever can be thrown
+    /// between the factory call and `startReading`:
+    ///
+    /// | `TunnelFailure` | code | raised by, today |
+    /// |---|---|---|
+    /// | `.channelOpenFailed` | `01` | `CitadelFileSystem.openDirectTCPIP`'s own catch, and any foreign error before the factory answers |
+    /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install`, `confirm`, `startReading` |
+    /// | `.connectFailed` | `05` | nothing on this path. Its one producer is `TunnelConnection.connect`, for a session that is not SSH, which runs before a listener exists. Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
+    /// | `.portInUse`, `.bindFailed`, `.alreadyStarted` | `01` | `start`, before any client has connected — unreachable here |
+    ///
+    /// So in production **`01` is what every refusal produces**, `05` is
+    /// waiting for a factory that distinguishes a refusal, and `04` is
+    /// produced by nothing. Counted 2026-09-06 with `grep -rn "throw
+    /// TunnelFailure\." Sources/`: FOUR throw sites —
+    /// `TunnelConnection.swift:57`, `LocalForwardListener.swift:168` and
+    /// `:194`, `CitadelFileSystem.swift:1451` — plus the two helpers that
+    /// RETURN one rather than throw it, `LocalForwardListener.bindFailure`
+    /// and `.acceptFailure`.
     ///
     /// The mapping reads the FAILURE'S CASE and never its `reason` text. Two
     /// measurements, both 2026-09-06, say it has to:
@@ -57,6 +80,9 @@ extension SOCKS5ReplyCode {
     ///    `NSError.localizedDescription`, which for `NIOSSHError` reads "The
     ///    operation couldn't be completed. (NIOSSH.NIOSSHError error 1.)" —
     ///    no code, no sentence. So `.channelOpenFailed` becomes `01`.
+    ///    `openDirectTCPIP` now keeps its `TunnelFailure` intact all the way
+    ///    here, but what it kept was already built from that sentence — the
+    ///    reason survives, the reason CODE was never in it.
     /// 2. **The reason text is not a channel.** `DialSupport.reason(for:)`
     ///    exists to produce a fixed, secret-free SENTENCE for a human; a
     ///    mapping that pattern-matched it would turn every rewording of that
@@ -73,9 +99,11 @@ extension SOCKS5ReplyCode {
             // it", so it joins the general failure.
             self = .generalFailure
         case .connectFailed:
-            // The one arm that IS specific: `connectFailed` is raised where
-            // this machine dialled something itself, and a refusal is the
-            // overwhelmingly common cause.
+            // The one arm that IS specific: `connectFailed` means this
+            // machine dialled something itself and was turned away, and a
+            // refusal is the overwhelmingly common cause. No factory in the
+            // tree raises it on this path (see the table above); the arm
+            // exists for the one that will.
             self = .connectionRefused
         case .portInUse, .bindFailed, .alreadyStarted:
             // None of the three can reach a connected SOCKS client — the
@@ -279,6 +307,43 @@ final class SOCKS5HandshakeHandler: ChannelInboundHandler, RemovableChannelHandl
     private var state: State = .greeting
     private var accumulator = ByteBuffer()
 
+    /// Reading is turned on HERE, on the event loop, and not by whoever
+    /// installed this handler.
+    ///
+    /// The listener accepts with `autoRead` off — nothing may be read before
+    /// there is somewhere to put it — so something has to turn it back on,
+    /// and doing that from the accept task races NIO's registration of the
+    /// accepted channel. `BaseSocketChannel.setOption0` only kicks a read
+    /// when `lifecycleManager.isPreRegistered` ("this will be automatically
+    /// done once register0 is called", `BaseSocketChannel.swift:700-707`),
+    /// and `read0` (`:833-844`) latches `readPending = true` while
+    /// registering interest only if pre-registered. Registration itself asks
+    /// for `[.reset, .error]` and never consults `readPending`
+    /// (`becomeFullyRegistered0`, `:1398`), and the `readIfNeeded0` that
+    /// follows activation (`:755-765`) skips its `pipeline.read()` precisely
+    /// BECAUSE `readPending` is already true. An early `setOption` + `read()`
+    /// therefore leaves a channel that is open, active, and registered for no
+    /// read interest at all — forever.
+    ///
+    /// Both entry points below run on the event loop and both imply
+    /// registration, and exactly one of them fires: a handler added before
+    /// activation sees `isActive == false` and gets `channelActive` later; a
+    /// handler added after it sees `isActive == true` and will never get
+    /// another `channelActive`.
+    func handlerAdded(context: ChannelHandlerContext) {
+        if context.channel.isActive { startReading(context: context) }
+    }
+
+    func channelActive(context: ChannelHandlerContext) {
+        startReading(context: context)
+        context.fireChannelActive()
+    }
+
+    private func startReading(context: ChannelHandlerContext) {
+        context.channel.setOption(ChannelOptions.autoRead, value: true).whenFailure { _ in }
+        context.read()
+    }
+
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         if case .handedOver = state {
             context.fireChannelRead(data)
@@ -335,11 +400,26 @@ final class SOCKS5HandshakeHandler: ChannelInboundHandler, RemovableChannelHandl
 
     /// The channel through the SSH server could not be opened: tell the
     /// client which kind of "no" it was, then close.
+    /// **A reply frame is written only while the client is still waiting for
+    /// one.** After `succeed` handed the connection over, the ten bytes of a
+    /// reply are no longer a reply: they are ten bytes of `05 01 …` injected
+    /// into an established payload stream, which the client would read as
+    /// part of whatever it asked for. That is reachable — the accept path
+    /// calls `reject` for a `pumpFailed` too, and `pumpFailed` is raised by
+    /// `startReading`, which runs AFTER `confirm` — so the state is checked
+    /// rather than assumed. In `.handedOver` and `.done` the connection is
+    /// closed and nothing is written.
     func reject(_ code: SOCKS5ReplyCode, on channel: Channel) -> EventLoopFuture<Void> {
         channel.eventLoop.flatSubmit {
-            self.state = .done
-            return channel.writeAndFlush(ByteBuffer(bytes: SOCKS5Frames.reply(code)))
-                .always { _ in channel.close(promise: nil) }
+            switch self.state {
+            case .handedOver, .done:
+                channel.close(promise: nil)
+                return channel.eventLoop.makeSucceededVoidFuture()
+            case .greeting, .request, .connecting:
+                self.state = .done
+                return channel.writeAndFlush(ByteBuffer(bytes: SOCKS5Frames.reply(code)))
+                    .always { _ in channel.close(promise: nil) }
+            }
         }
     }
 
@@ -486,17 +566,13 @@ enum SOCKS5Handshake {
     /// Adds the handshake to `channel`, lets the client speak, and answers
     /// once it has named a destination.
     ///
-    /// Reading is turned on here and nowhere else: the listener accepts with
-    /// `autoRead` off (nothing may be read before there is somewhere to put
-    /// it), and the handshake IS the somewhere. The explicit `read()` beside
-    /// the option is the same belt-and-braces `BytePump.startReading`
-    /// documents — harmless on a socket, and this handler may one day sit on
-    /// a channel that needs it.
+    /// Nothing here touches `autoRead` or calls `read()`. The handler turns
+    /// reading on itself, from `handlerAdded`/`channelActive` — see the long
+    /// comment on those, which is the whole reason this function is three
+    /// lines instead of five.
     static func negotiate(on channel: Channel) async throws -> any ForwardNegotiation {
         let handshake = SOCKS5HandshakeHandler()
         try await channel.pipeline.addHandler(handshake).get()
-        try await channel.setOption(ChannelOptions.autoRead, value: true).get()
-        channel.read()
         let destination = try await handshake.requested.value()
         return SOCKS5Negotiation(handshake: handshake, destination: destination)
     }

@@ -25,6 +25,47 @@ import Testing
 @Suite("SOCKS5 handshake", .timeLimit(.minutes(1)))
 struct SOCKS5HandshakeTests {
 
+    // MARK: - Turning reading on
+
+    /// The handler asks for its own reads, and asks on the EVENT LOOP.
+    ///
+    /// The listener accepts with `autoRead` off, so something has to turn it
+    /// on; doing it from the accept task races NIO's registration of the
+    /// accepted channel, and the loser of that race is a channel registered
+    /// for no read interest at all (see `handlerAdded`'s comment). Measured
+    /// as a hang, 3 of 7 whole-suite runs, before the reads moved in here.
+    ///
+    /// The two cases below are the two orders the handler can be installed
+    /// in, and exactly one entry point may fire in each.
+    @Test func aHandlerAddedBeforeActivationReadsOnceTheChannelIsActive() throws {
+        let channel = EmbeddedChannel()
+        let reads = ReadRecorder()
+        try channel.pipeline.syncOperations.addHandler(reads)
+        try channel.pipeline.syncOperations.addHandler(SOCKS5HandshakeHandler())
+
+        #expect(channel.isActive == false)
+        #expect(reads.count == 0, "nothing may be read before the channel is active")
+
+        channel.connect(to: try SocketAddress(ipAddress: "127.0.0.1", port: 0), promise: nil)
+
+        #expect(autoRead(of: channel) == true)
+        #expect(reads.count >= 1)
+    }
+
+    @Test func aHandlerAddedAfterActivationReadsAtOnce() throws {
+        let channel = EmbeddedChannel()
+        let reads = ReadRecorder()
+        try channel.pipeline.syncOperations.addHandler(reads)
+        channel.connect(to: try SocketAddress(ipAddress: "127.0.0.1", port: 0), promise: nil)
+        #expect(channel.isActive)
+        #expect(reads.count == 0)
+
+        try channel.pipeline.syncOperations.addHandler(SOCKS5HandshakeHandler())
+
+        #expect(autoRead(of: channel) == true)
+        #expect(reads.count >= 1)
+    }
+
     // MARK: - The greeting
 
     @Test func aGreetingOfferingNoAuthIsAnswered() throws {
@@ -198,6 +239,36 @@ struct SOCKS5HandshakeTests {
         #expect(socks.tail.bytes == Array("early".utf8))
     }
 
+    /// **After the handover, a rejection writes nothing.** The accept path
+    /// calls `reject` for a `pumpFailed` as well, and `pumpFailed` is what
+    /// `startReading` raises — which runs AFTER `confirm` has already sent
+    /// the success frame and let the pump take over. Ten bytes of `05 01 …`
+    /// at that point are not a reply; they are ten bytes injected into an
+    /// established payload stream.
+    ///
+    /// The negative check — nothing written by the reject — has the positive
+    /// one beside it in the same case: the success frame WAS written first,
+    /// so "no bytes" is a statement about a channel that demonstrably writes.
+    @Test func aRejectionAfterTheHandoverWritesNothing() throws {
+        let socks = try socks5Channel()
+        try socks.channel.writeInbound(ByteBuffer(bytes: greetingOfferingNoAuth))
+        try socks.channel.writeInbound(ByteBuffer(bytes: connectToIPv4))
+
+        socks.handshake.succeed(on: socks.channel).whenComplete { _ in }
+        socks.channel.embeddedEventLoop.run()
+        #expect(try outboundBytes(socks.channel) == [0x05, 0x00] + replyFrame(code: 0x00))
+
+        let finished = CompletionBox()
+        socks.handshake.reject(.generalFailure, on: socks.channel).whenComplete {
+            finished.record($0)
+        }
+        socks.channel.embeddedEventLoop.run()
+
+        #expect(finished.succeeded)
+        #expect(try outboundBytes(socks.channel).isEmpty)
+        #expect(socks.channel.isActive == false)
+    }
+
     /// A refused `direct-tcpip` channel is answered with a SOCKS5 failure
     /// reply and the connection closed — the client learns WHY rather than
     /// seeing a bare disconnect.
@@ -315,6 +386,33 @@ private func socks5Channel() throws
     // and without it `isActive` would be false before anything closed it.
     channel.connect(to: try SocketAddress(ipAddress: "127.0.0.1", port: 0), promise: nil)
     return (channel, handshake, tail)
+}
+
+/// Counts the outbound `read()` events that pass it. A handler added BEFORE
+/// the handshake sits closer to the head, so the handshake's own reads travel
+/// through it.
+private final class ReadRecorder: ChannelOutboundHandler, @unchecked Sendable {
+    typealias OutboundIn = ByteBuffer
+
+    private let lock = NSLock()
+    private var reads = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return reads
+    }
+
+    func read(context: ChannelHandlerContext) {
+        lock.lock()
+        reads += 1
+        lock.unlock()
+        context.read()
+    }
+}
+
+private func autoRead(of channel: EmbeddedChannel) -> Bool? {
+    channel.options.first { $0.option is ChannelOptions.Types.AutoReadOption }?.value as? Bool
 }
 
 private func outboundBytes(_ channel: EmbeddedChannel) throws -> [UInt8] {
