@@ -1,6 +1,7 @@
 import Foundation
 import MacSCPTestSupport
 import NIOCore
+import NIOPosix
 import Testing
 
 @testable import macSCPCore
@@ -80,6 +81,77 @@ struct TunnelRigITests {
         }
         #expect(closed)
     }
+
+    /// A dynamic forward (`-D`): a hand-written SOCKS5 client asks the
+    /// listener to CONNECT to the rig's own sshd — `127.0.0.1:2222` as the
+    /// SERVER sees it, the same target the local forward above uses — and
+    /// then reads the SSH banner that comes back through the pump. The
+    /// banner is the proof that the bytes are the far side's own and not the
+    /// listener's: nothing in this process writes `SSH-2.0`.
+    ///
+    /// The payload is deliberately tiny (a banner is a few dozen bytes).
+    /// `BytePump`'s backpressure resume turns `autoRead` back on without an
+    /// explicit `read()`, which an SSH child channel needs; a transfer large
+    /// enough to make the local socket unwritable would therefore stall.
+    /// That is Task 2's to fix and is written down in this task's report.
+    @Test func aDynamicForwardCarriesASOCKS5Connect() async throws {
+        let carrierHosts = throwawayDirectory("socks-carrier")
+        defer { try? FileManager.default.removeItem(at: carrierHosts) }
+
+        let session = sshSession(
+            name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
+        let carrier = try await TunnelConnection.connect(
+            session: session, secrets: [RigSecret()],
+            knownHosts: KnownHostsStore(directory: carrierHosts),
+            decider: .asking { _ in true })
+
+        let listener = SOCKS5Listener()
+        let seen = RigEventRecorder()
+        do {
+            let port = try await listener.start(
+                bind: "127.0.0.1", localPort: 0,
+                directTCPIPFactory: { host, port in
+                    try await carrier.openDirectTCPIP(host: host, port: port)
+                },
+                observer: { seen.record($0) })
+            #expect(port > 0)
+
+            let inbox = RigByteInbox()
+            let client = try await awaitCancellably(
+                ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                    .channelInitializer { channel in
+                        channel.pipeline.addHandler(RigByteCollector(inbox: inbox))
+                    }
+                    .connect(host: "127.0.0.1", port: port))
+
+            try await awaitCancellably(client.writeAndFlush(ByteBuffer(bytes: [0x05, 0x01, 0x00])))
+            try await pollUntil("the SOCKS5 method selection") { inbox.bytes.count >= 2 }
+            #expect(Array(inbox.bytes.prefix(2)) == [0x05, 0x00])
+
+            // `05 01 00 01 7f 00 00 01 08 ae` — CONNECT 127.0.0.1:2222.
+            try await awaitCancellably(
+                client.writeAndFlush(
+                    ByteBuffer(bytes: [0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x08, 0xAE])))
+            try await pollUntil("the SOCKS5 success reply") { inbox.bytes.count >= 12 }
+            #expect(Array(inbox.bytes[2..<4]) == [0x05, 0x00])
+
+            try await pollUntil("the SSH banner through the dynamic forward") {
+                inbox.bytes.count >= 12 + 7
+            }
+            let banner = String(decoding: inbox.bytes[12..<19], as: UTF8.self)
+            #expect(banner == "SSH-2.0")
+            #expect(seen.events.contains(.opened))
+
+            client.close(promise: nil)
+            try await awaitCancellably(client.closeFuture)
+        } catch {
+            await listener.stop()
+            await carrier.disconnect()
+            throw error
+        }
+        await listener.stop()
+        await carrier.disconnect()
+    }
 }
 
 // MARK: - Helpers
@@ -112,5 +184,35 @@ private final class RigEventRecorder: @unchecked Sendable {
         lock.lock()
         recorded.append(event)
         lock.unlock()
+    }
+}
+
+private final class RigByteInbox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var collected: [UInt8] = []
+
+    var bytes: [UInt8] {
+        lock.lock()
+        defer { lock.unlock() }
+        return collected
+    }
+
+    func append(_ chunk: [UInt8]) {
+        lock.lock()
+        collected += chunk
+        lock.unlock()
+    }
+}
+
+private final class RigByteCollector: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+
+    private let inbox: RigByteInbox
+
+    init(inbox: RigByteInbox) { self.inbox = inbox }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var buffer = unwrapInboundIn(data)
+        inbox.append(buffer.readBytes(length: buffer.readableBytes) ?? [])
     }
 }

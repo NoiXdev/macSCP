@@ -33,6 +33,43 @@ public enum TunnelFailure: Error, Sendable, Equatable {
     case connectFailed(reason: String)
 }
 
+/// What decides where an accepted connection is forwarded to.
+///
+/// The seam exists because the two local listeners differ in exactly one
+/// place: a local forward (`-L`) knows the destination before it binds, and a
+/// dynamic forward (`-D`) learns it from the connection itself. Everything
+/// else — the bootstrap, the pair tracking, the pump, the teardown — is the
+/// same code, so `SOCKS5Listener` is this enum's `.negotiated` arm rather
+/// than a second `ServerBootstrap`.
+enum ForwardDestination: Sendable {
+    /// Every connection goes to the same place.
+    case fixed(host: String, remotePort: Int)
+    /// The connection names its own destination. The closure runs on the
+    /// accepted channel, before the factory, and answers a negotiation the
+    /// accept path then drives to its end.
+    case negotiated(@Sendable (Channel) async throws -> any ForwardNegotiation)
+}
+
+/// One connection's negotiation, in the three moments the accept path has to
+/// tell it about.
+///
+/// A protocol rather than a single closure returning `(host, port)`: the
+/// negotiated arm has to be told how the attempt ENDED as well as what it
+/// asked for — a SOCKS5 client is owed a reply frame either way — and those
+/// two moments are on the far side of an `await` from the first.
+protocol ForwardNegotiation: Sendable {
+    /// Where the connection asked to go, as the SSH server will reach it.
+    var host: String { get }
+    var port: Int { get }
+    /// The channel through the server is open and the pump is installed.
+    /// Called before reading starts, so nothing can arrive between the
+    /// negotiation's last word and the pump's first.
+    func confirm(on channel: Channel) async throws
+    /// The channel through the server could not be opened. Best effort: the
+    /// connection may already be gone.
+    func reject(_ failure: TunnelFailure, on channel: Channel) async
+}
+
 /// The listening half of a local forward (`-L`): a loopback (by default)
 /// `ServerBootstrap`, and for every connection it accepts, one channel
 /// through the SSH server plus a `BytePump` between the two.
@@ -84,6 +121,23 @@ public final class LocalForwardListener: @unchecked Sendable {
         observer: TunnelConnectionObserver? = nil,
         onFailure: (@Sendable (TunnelFailure) -> Void)? = nil
     ) async throws -> Int {
+        try await start(
+            bind: bind, localPort: localPort,
+            destination: .fixed(host: host, remotePort: remotePort),
+            directTCPIPFactory: directTCPIPFactory, observer: observer, onFailure: onFailure)
+    }
+
+    /// Binds `bind:localPort` for a `destination` that may be per-connection.
+    ///
+    /// Module-internal: `SOCKS5Listener` is the one caller, and the public
+    /// face of a dynamic forward is that type rather than an argument here.
+    @discardableResult
+    func start(
+        bind: String, localPort: Int, destination: ForwardDestination,
+        directTCPIPFactory: @escaping DirectTCPIPFactory,
+        observer: TunnelConnectionObserver? = nil,
+        onFailure: (@Sendable (TunnelFailure) -> Void)? = nil
+    ) async throws -> Int {
         let open = self.open
         let bootstrap = ServerBootstrap(group: group)
             // Lets the listener rebind a port whose previous connections are
@@ -96,7 +150,7 @@ public final class LocalForwardListener: @unchecked Sendable {
             .childChannelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
             .childChannelInitializer { channel in
                 Self.accepted(
-                    channel, host: host, remotePort: remotePort,
+                    channel, destination: destination,
                     directTCPIPFactory: directTCPIPFactory, observer: observer,
                     onFailure: onFailure, open: open)
                 return channel.eventLoop.makeSucceededVoidFuture()
@@ -137,8 +191,9 @@ public final class LocalForwardListener: @unchecked Sendable {
         }
     }
 
-    /// One accepted connection: open the channel through the server, glue the
-    /// two together, then let both start reading.
+    /// One accepted connection: find out where it is going, open the channel
+    /// through the server, glue the two together, then let both start
+    /// reading.
     ///
     /// `static` and taking everything it needs as arguments so the
     /// bootstrap's child initializer captures the shared state and not the
@@ -146,7 +201,7 @@ public final class LocalForwardListener: @unchecked Sendable {
     /// `listener → server channel → pipeline → closure → listener` would
     /// otherwise be.
     private static func accepted(
-        _ channel: Channel, host: String, remotePort: Int,
+        _ channel: Channel, destination: ForwardDestination,
         directTCPIPFactory: @escaping DirectTCPIPFactory,
         observer: TunnelConnectionObserver?,
         onFailure: (@Sendable (TunnelFailure) -> Void)?,
@@ -157,6 +212,32 @@ public final class LocalForwardListener: @unchecked Sendable {
             return
         }
         Task {
+            let negotiation: (any ForwardNegotiation)?
+            let host: String
+            let remotePort: Int
+            switch destination {
+            case .fixed(let fixedHost, let fixedPort):
+                negotiation = nil
+                host = fixedHost
+                remotePort = fixedPort
+            case .negotiated(let negotiate):
+                do {
+                    let negotiated = try await negotiate(channel)
+                    negotiation = negotiated
+                    host = negotiated.host
+                    remotePort = negotiated.port
+                } catch {
+                    // A conversation that never named a destination is the
+                    // CLIENT's failure, not the tunnel's — a browser pointed
+                    // at the SOCKS port, a client offering only
+                    // username/password. The negotiation has already said so
+                    // in its own protocol and is closing; `onFailure` is not
+                    // called, because a tunnel that refuses one bad client is
+                    // working exactly as intended.
+                    channel.close(promise: nil)
+                    return
+                }
+            }
             do {
                 let throughTheServer = try await directTCPIPFactory(host, remotePort)
                 guard open.track(throughTheServer) else {
@@ -166,11 +247,15 @@ public final class LocalForwardListener: @unchecked Sendable {
                 }
                 try await BytePump.install(
                     local: channel, remote: throughTheServer, observer: observer).get()
+                try await negotiation?.confirm(on: channel)
                 try await BytePump.startReading(
                     local: channel, remote: throughTheServer).get()
             } catch {
+                let failure = TunnelFailure.channelOpenFailed(
+                    reason: DialSupport.reason(for: error))
+                await negotiation?.reject(failure, on: channel)
                 channel.close(promise: nil)
-                onFailure?(.channelOpenFailed(reason: DialSupport.reason(for: error)))
+                onFailure?(failure)
             }
         }
     }
