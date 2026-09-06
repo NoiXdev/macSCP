@@ -735,8 +735,15 @@ struct CLISessionsEditingTests {
 /// The security constraint the store-editing verbs exist under: **no secret
 /// through the CLI**. `sessions add`/`edit` take no password, no passphrase
 /// and no S3 secret key — not as a flag, not from stdin, not from the
-/// keychain — so the two files that carry their flag table and their store
-/// access must name none of the four APIs that could do it.
+/// keychain — and neither does any `tunnels` verb, so the files that carry
+/// their flag table, their store access and the tunnel verbs themselves must
+/// name none of the four APIs that could do it. FOUR files are scanned,
+/// counted 2026-09-06: `SessionFieldOptions.swift` and `StoreEditing.swift`
+/// against the whole list, `SessionsCommand.swift` against the stdin half
+/// (`CLISessionsCommandGuardTests` already forbids `SecretStore` in it, and
+/// the two suites keep one owner per claim), and `TunnelsCommand.swift`
+/// against the whole list, added the day the `tunnels` group arrived with a
+/// header claiming exactly this and nothing measuring it.
 ///
 /// A NEGATIVE check alone goes stale in silence the moment the files it
 /// scans are renamed out from under it (CLAUDE.md, "Guards that name what
@@ -746,7 +753,7 @@ struct CLISessionsEditingTests {
 /// an empty file that vacuously passes.
 ///
 /// `rm`'s confirmation is the one place these verbs read a person's answer,
-/// and it is deliberately NOT in either scanned file: it goes through
+/// and it is deliberately NOT in any scanned file: it goes through
 /// `CLIEnvironment.confirm(_:)`, the same terminal path `--accept-new`'s
 /// host-key prompt uses, called from `SessionsCommand.swift`. The positive
 /// check below pins that call INSIDE the `rm` command's own source slice, so
@@ -771,6 +778,16 @@ struct CLISessionsStoreEditingGuardTests {
         .appendingPathComponent("Sources/MacSCPCLI/StoreEditing.swift")
     private static let sessionsCommandFile = repoRoot
         .appendingPathComponent("Sources/MacSCPCLI/SessionsCommand.swift")
+
+    /// The `tunnels` group's own file, scanned since 2026-09-06 for the
+    /// claim its header makes: "no secret, no keychain, no connection, in
+    /// any verb here". Nothing held that claim when it was written — the
+    /// other CLI guard (`CLISessionsCommandGuardTests`) scans a fixed list
+    /// of five files this is not on, and the two files scanned above are the
+    /// session verbs' — so the sentence was an assertion about code with
+    /// nothing measuring it.
+    private static let tunnelsCommandFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPCLI/TunnelsCommand.swift")
 
     /// The four ways a secret could reach these verbs. `readLine` and
     /// `FileHandle.standardInput` are the stdin halves — a password piped in
@@ -856,6 +873,51 @@ struct CLISessionsStoreEditingGuardTests {
                 keychain.
                 """)
         }
+    }
+
+    // MARK: - The tunnels group, under the same constraint
+
+    /// The positive beside the negative below: the file really is the
+    /// `tunnels` verbs' implementation, so a scan reading a renamed or
+    /// emptied file cannot report its absence of secrets as a pass.
+    ///
+    /// Both anchors are load-bearing rather than decorative.
+    /// `TunnelCarriers.refusal(` is the refusal every verb's `--session`
+    /// runs through — the file that stopped naming it would be one that
+    /// stopped asking Core whether a session can carry a forwarding — and
+    /// `StoreEditing.` is how the group reaches both stores, which is what
+    /// keeps `onlyTheStoreEditingFileWritesTheStores` true of it.
+    @Test func theTunnelsCommandFileExistsAndDoesTheRealWork() throws {
+        #expect(FileManager.default.fileExists(atPath: Self.tunnelsCommandFile.path))
+        let source = try String(contentsOf: Self.tunnelsCommandFile, encoding: .utf8)
+        #expect(source.contains("TunnelCarriers.refusal("), """
+            TunnelsCommand.swift no longer names TunnelCarriers.refusal( — the \
+            positive anchor beside the negative check below has nothing to \
+            confirm the scanner is reading a real implementation.
+            """)
+        #expect(source.contains("StoreEditing."), """
+            TunnelsCommand.swift no longer reaches StoreEditing — same concern \
+            as TunnelCarriers.refusal( above.
+            """)
+    }
+
+    /// The negative: the `tunnels` verbs name none of the four APIs that
+    /// could carry a secret, in either direction.
+    ///
+    /// The CASE-SENSITIVITY of the scan is load-bearing here for the second
+    /// time in this suite: the file's own prose says a forwarding "reads the
+    /// keychain" nowhere and that the session's login is what it dials with,
+    /// and those lowercase sentences say the opposite of a violation. The
+    /// forbidden identifiers are spelled as the APIs are (`SecretStore`,
+    /// `Keychain`), so prose about the idea cannot read as a use of the
+    /// thing.
+    @Test func theTunnelsVerbsNameNoSecretAPI() throws {
+        let source = try String(contentsOf: Self.tunnelsCommandFile, encoding: .utf8)
+        let found = Self.forbiddenMatches(in: source)
+        #expect(found.isEmpty, """
+            TunnelsCommand.swift names \(found) — tunnels list/add/edit/rm take \
+            no secret: not as a flag, not from stdin, not from the keychain.
+            """)
     }
 
     /// The verbs' own file. `sessions rm` asks a question — through

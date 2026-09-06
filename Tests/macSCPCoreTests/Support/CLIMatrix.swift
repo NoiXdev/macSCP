@@ -692,9 +692,10 @@ struct CLIMatrix: Sendable {
     /// name the moment an abstract wrapped. Nothing wraps today — recounted
     /// 2026-09-06 from the built binary's own `--help`, all EIGHT rows fit on
     /// one line, the widest being `get` at 72 columns against
-    /// ArgumentParser's 80 (`tunnels` 70, `diagnose` 69, `sessions` 68 since
-    /// it became a group) — so the hazard was invisible and entirely
-    /// reachable: eight more characters in one abstract. The count said six
+    /// ArgumentParser's 80, then `put` and `tunnels` at 70, `diagnose` 69
+    /// and `sessions` 68 (68 since it became a group) — so the hazard was
+    /// invisible and entirely reachable: eight more characters in one
+    /// abstract. The count said six
     /// until the recount of 2026-09-04, when `diagnose` had been the seventh
     /// row and the sentence went on claiming six; `tunnels` made it eight on
     /// 2026-09-06. This help

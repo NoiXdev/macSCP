@@ -1962,8 +1962,8 @@ struct CLIMatrixCoverageTests {
     /// wraps: the continuation's first token is `directory.`, which the
     /// column-blind parse returned as a subcommand name. Nothing in today's
     /// help wraps — all eight rows fit, the widest still `get`'s at 72
-    /// columns (recounted 2026-09-06 from the built binary, with `tunnels`
-    /// at 70 and `diagnose` at 69) — so this fixture is the only place the
+    /// columns, with `put` and `tunnels` next at 70 (recounted 2026-09-06
+    /// from the built binary) — so this fixture is the only place the
     /// hazard is reachable, and the assertion is that `directory.` is absent
     /// while every real name is present.
     @Test func theSubcommandParseReadsNamesAndStopsAtTheBlock() {

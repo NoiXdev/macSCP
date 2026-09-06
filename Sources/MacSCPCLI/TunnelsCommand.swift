@@ -68,8 +68,12 @@ struct TunnelsListCommand: ParsableCommand {
     }
 
     func run() throws {
+        // One read of the session store per run: the rows below name every
+        // profile's session, so the whole listing is needed either way and
+        // `--session` is resolved against it rather than through a second
+        // read of the same file.
         let sessions = try StoreEditing.sessionStore().all()
-        let named = try session.map { try StoreEditing.requireSession(named: $0) }
+        let named = try session.map { try StoreEditing.requireSession(named: $0, in: sessions) }
         let profiles = named.map(StoreEditing.profiles(on:))
             ?? StoreEditing.tunnelStore().allProfiles()
         OutputFormatter.print(

@@ -417,6 +417,70 @@ struct CLITunnelsEditingTests {
         #expect(refused.stderr.contains("gone"))
     }
 
+    /// A name is what `SessionNameRule.asSaved` makes of it — trimmed — and
+    /// BOTH refusals about a name say so. They disagreed once: the
+    /// "no forwarding named" sentence echoed the raw argument while the
+    /// ambiguity sentence trimmed it, so the same typo read as two different
+    /// names depending on which refusal answered.
+    @Test func aRefusalNamesTheTrimmedNameTheStoreWouldHaveUsed() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        for verb in ["rm", "edit"] {
+            let refused = try await cli.run([
+                "tunnels", verb, "  gone  ", "--session", CLI.sshSessionName,
+            ])
+            #expect(refused.status == Self.validationFailure)
+            #expect(refused.stderr.contains("no forwarding named gone on session"), """
+                tunnels \(verb) refused with "\(refused.stderr)"
+                """)
+        }
+    }
+
+    /// `--reconnect` and `--no-reconnect` in one invocation is a usage
+    /// error, not a last-one-wins: the pair is declared
+    /// `exclusivity: .exclusive`, so a script that computed both flags is
+    /// told rather than silently given one of them.
+    @Test func bothReconnectFlagsTogetherAreRefused() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        #expect(try await cli.run([
+            "tunnels", "add", "db", "--session", CLI.sshSessionName,
+            "--local", "8080:db:5432", "--reconnect",
+        ]).status == 0)
+
+        let refused = try await cli.run([
+            "tunnels", "edit", "db", "--session", CLI.sshSessionName,
+            "--reconnect", "--no-reconnect",
+        ])
+        #expect(refused.status == Self.validationFailure)
+        #expect(refused.stderr.contains("--no-reconnect"))
+        #expect(cli.profile(named: "db")?.reconnects == true, "the refused edit changed the store")
+    }
+
+    /// An `--autostart` value outside Core's own three spellings is refused,
+    /// and the refusal offers exactly those three — read from
+    /// `TunnelProfile.AutoStart.rowName` here as `AutoStartOption` reads
+    /// them for `allValueStrings`, so a fourth choice appears in the help
+    /// without an edit in either place.
+    @Test func anAutostartValueCoreDoesNotSpellIsRefused() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        let refused = try await cli.run([
+            "tunnels", "add", "db", "--session", CLI.sshSessionName,
+            "--dynamic", "1080", "--autostart", "at-login",
+        ])
+        #expect(refused.status == Self.validationFailure)
+        for spelling in TunnelProfile.AutoStart.allCases.map(\.rowName) {
+            #expect(refused.stderr.contains(spelling), """
+                the refusal does not offer \(spelling): "\(refused.stderr)"
+                """)
+        }
+        #expect(cli.profiles().isEmpty)
+    }
+
     // MARK: - The ambiguity only the app can create
 
     /// The app allows two profiles with the same name on one session; the

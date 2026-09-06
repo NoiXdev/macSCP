@@ -48,7 +48,20 @@ enum StoreEditing {
 
     /// The session `name` addresses, or a usage error naming what was typed.
     static func requireSession(named name: String) throws -> StoredSession {
-        guard let session = session(named: name, in: try sessionStore().all()) else {
+        try requireSession(named: name, in: try sessionStore().all())
+    }
+
+    /// The same question against a listing the caller has ALREADY read.
+    ///
+    /// `tunnels list` is the caller: it needs every session anyway, to name
+    /// the one each profile belongs to, and resolving `--session` through
+    /// the overload above would open and decode `sessions-v2.json` a second
+    /// time in the same run. The refusal is worded in ONE place — here — so
+    /// the two entry points cannot drift apart in what they say.
+    static func requireSession(
+        named name: String, in sessions: [StoredSession]
+    ) throws -> StoredSession {
+        guard let session = session(named: name, in: sessions) else {
             throw ValidationError("no session named \(name)")
         }
         return session
@@ -223,17 +236,24 @@ enum StoreEditing {
 
     /// The one profile `name` addresses on `session`, or a usage error: none
     /// of that name, or the ambiguity only the app can create.
+    ///
+    /// BOTH sentences name the TRIMMED name, because that is what the name
+    /// means here — `profiles(named:on:)` matches on `asSaved`, so echoing
+    /// the raw argument in one of them would quote text the lookup never
+    /// used. They disagreed until 2026-09-06: the first sentence echoed the
+    /// argument and the second trimmed it.
     static func requireProfile(named name: String, on session: StoredSession) throws
         -> TunnelProfile
     {
+        let asked = SessionNameRule.asSaved(name)
         let matches = profiles(named: name, on: session)
         guard let first = matches.first else {
             throw ValidationError(
-                "no forwarding named \(name) on session \(session.name)")
+                "no forwarding named \(asked) on session \(session.name)")
         }
         guard matches.count == 1 else {
             throw ValidationError(
-                "two forwardings named \(SessionNameRule.asSaved(name)) on session "
+                "two forwardings named \(asked) on session "
                     + "\(session.name) — rename one in the app")
         }
         return first
