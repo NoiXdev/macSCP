@@ -706,10 +706,17 @@ struct TunnelManagerTests {
         #expect(rig.manager.states[parked.id] == nil)
     }
 
-    /// A reconcile that follows a COMPLETED one runs its own pass (fix round
-    /// 3, N2): the in-flight handle is cleared by the task itself, so a
-    /// caller arriving after that task finished can never await a completed
-    /// task and skip its own read.
+    /// The ORDINARY-PATH POSITIVE: a reconcile that follows a completed one
+    /// runs a pass of its own, which is what a single ⌘-Tab does all day.
+    ///
+    /// Round 3's doc said this pinned where the in-flight handle was cleared.
+    /// It never did, and no test here could: that placement's failure mode
+    /// was a livelock — no verdict at all rather than a red — which is why
+    /// it was measured by a plant and written into a comment instead. Round
+    /// 4 removed the handle's clear along with the loop it was coupled to,
+    /// so what remains is this: the manager's stored handle goes on naming
+    /// the previous, FINISHED task, and awaiting it must not stand in for
+    /// this caller's own read of the store.
     @Test func aReconcileFollowingACompletedOneRunsItsOwnPass() async throws {
         let rig = Rig()
         defer { rig.tearDown() }

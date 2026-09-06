@@ -312,14 +312,31 @@ struct StoreReloadOnActivationGuardTests {
     /// Positional, over the same derived names the count check above uses.
     /// Each is asserted PRESENT first — an ordering claim over a needle that
     /// is not there is no claim at all.
+    ///
+    /// **The session side is anchored on the RELOAD, not on the enumeration**
+    /// (fix round 4). It used to compare the index of
+    /// `TabRegistry.shared.allSessionLists(` against the reconcile's, which
+    /// is not the claim: a body that enumerates the windows, awaits the
+    /// reconcile, and reloads them afterwards puts the enumeration first and
+    /// the sidebar still waits out the dial. The needle is the derived
+    /// session-list reload name, whose spelling cannot collide with the
+    /// tunnel one — `reload(` does not occur inside `reloadReconciling(`,
+    /// because a character follows the `reload` there.
     @Test func theActivationReloadsTheSessionListsBeforeItReconcilesTheTunnels() throws {
         let source = try Self.strictSource(of: Self.appFile)
         let body = try TransferQueueBarCancelGuardTests.declarationBody(
             of: Self.observerDeclaration, in: source)
         let tunnelReload = try Self.asyncReloadFunctionName(in: Self.tunnelManagerFile)
+        let listReload = try Self.reloadFunctionName(in: Self.sessionListFile)
         let enumeration = try Self.sessionListEnumerationName()
 
-        let lists = Self.firstIndex(of: "TabRegistry.shared.\(enumeration)(", in: body)
+        #expect(
+            body.contains("TabRegistry.shared.\(enumeration)("), """
+                the activation no longer asks the registry for the open windows' session \
+                lists — the reload below reaches no window.
+                """)
+
+        let lists = Self.firstIndex(of: "\(listReload)(", in: body)
         let tunnels = Self.firstIndex(of: "TunnelManager.shared.\(tunnelReload)(", in: body)
         #expect(lists != nil, "the activation no longer reloads the windows' session lists")
         #expect(tunnels != nil, "the activation no longer reconciles the tunnel store")

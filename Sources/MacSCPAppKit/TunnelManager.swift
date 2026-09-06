@@ -82,9 +82,13 @@ final class TunnelManager {
     /// the counter that hands them out.
     @ObservationIgnored private var generations: [UUID: Int] = [:]
     @ObservationIgnored private var generation = 0
-    /// The reconcile currently running, if any — see `reloadReconciling()`.
-    /// A `Task` handle rather than a `Bool` because a second caller has to
-    /// be able to WAIT for the first, not merely notice it.
+    /// The LAST reconcile installed — the tail of the chain
+    /// `reloadReconciling()` links each new pass onto. It is not cleared
+    /// when its pass finishes: the handle goes on naming that completed task
+    /// until the next call replaces it, which is what lets a caller arriving
+    /// after a quiet period link onto a task that returns at once. A `Task`
+    /// handle rather than a `Bool` because a caller has to be able to WAIT
+    /// for what is ahead of it, not merely notice it.
     @ObservationIgnored private var reconcileInFlight: Task<Void, Never>?
 
     /// Every stored profile, as the store last read them. Kept here rather
@@ -164,10 +168,16 @@ final class TunnelManager {
     /// 1). This used to snapshot the doomed ids itself and run its own copy
     /// of that loop; the activation re-read needs exactly the same one, for
     /// exactly the same reason, so there is one of them and this deletes
-    /// through it. Deleting first still loses nothing: `reloadReconciling()`
-    /// snapshots the ids off the MIRROR as it stands on entry, and the
-    /// mirror has not been re-read yet, so it still lists every row this
-    /// call just removed from the file.
+    /// through it. Deleting first still loses nothing — but NOT because "the
+    /// mirror has not been re-read yet", which the chain makes false as soon
+    /// as another pass is in flight and reads after the `deleteAll` above.
+    /// What holds either way is that some pass sees the TRANSITION. Every
+    /// read older than the delete left a mirror still listing these rows, so
+    /// whichever chained pass performs the first read AFTER it snapshots
+    /// them off that mirror and finds them gone from the file — and discards
+    /// them there. That pass is this call's own when no other is in flight,
+    /// and one ahead of it in the chain otherwise; either way it is ordered
+    /// before this call returns.
     ///
     /// **And it is reconciled by a pass of its OWN** (fix round 3). A pass
     /// already in flight read the store before the `deleteAll` above, so
@@ -445,60 +455,67 @@ final class TunnelManager {
     /// written in terms of this one, so there is one such loop rather than
     /// two.
     ///
-    /// **One pass at a time, and one pass per caller** — the gate is the
-    /// function body below, and it both waits and re-runs.
+    /// **The passes are CHAINED** (fix round 4): every call links a pass of
+    /// its own behind whatever was installed last, and awaits it. Passes
+    /// never overlap, every caller gets a read that follows its own entry,
+    /// and they run in the order they arrived.
     func reloadReconciling() async {
-        // One pass at a time (fix round 2), and every caller gets a pass of
-        // its own (fix round 3).
+        // Two properties are wanted here, and the chain below is both of
+        // them at once.
         //
-        // The waiting is what round 2 added: two activations arriving close
-        // together — ⌘-Tab away and back — would otherwise each start a
-        // pass, and a pass suspends for as long as a discarded runner's
-        // `stop()` takes, which for a runner parked in a dial is
+        // **One pass at a time** (round 2): two activations arriving close
+        // together — ⌘-Tab away and back — must not discard runners beside
+        // each other, and a pass suspends for as long as a discarded
+        // runner's `stop()` takes, which for a runner parked in a dial is
         // `connectTimeoutSeconds`.
         //
-        // **Waiting is not the same as being reconciled**, which is what
-        // round 3 corrected: a pass reads the store when it STARTS, so a
-        // caller that WROTE the store and then coalesced onto a pass already
-        // in flight was waiting for a read older than its own write.
-        // `forgetEverything(for:)` could return having deleted the rows and
-        // stopped nothing — round 1's defect, reached through round 2's
-        // gate. So this waits and then runs a pass of its own; the cost is
-        // one extra read of a small JSON file per coalesced caller.
+        // **Waiting is not the same as being reconciled** (round 3): a pass
+        // reads the store when it STARTS, so a caller that WROTE the store
+        // and then coalesced onto a pass already in flight was waiting for a
+        // read older than its own write. `forgetEverything(for:)` could
+        // return having deleted the rows and stopped nothing — round 1's
+        // defect, reached through round 2's gate. The price of a pass per
+        // caller is one extra read of a small JSON file.
         //
-        // A `while` rather than an `if`: by the time a waiter resumes, a
-        // third caller may already have installed its own pass, and that one
-        // is just as old relative to this caller's write.
-        while let inFlight = reconcileInFlight {
-            await inFlight.value
-        }
-        // The handle is cleared INSIDE the task (fix round 3, N2), and with
-        // the loop above that placement is load-bearing rather than tidy.
+        // Rounds 2 and 3 spelled those as a GATE: a `while` loop over the
+        // handle, and a clear written as the task's last statement. That
+        // code was correct, and its two halves were coupled by a liveness
+        // invariant nothing enforced — with the clear moved to the caller's
+        // side there is a turn in which a waiter re-checks, on an actor it
+        // never yields, a handle only that caller can clear. Planting
+        // exactly that move on 2026-09-06 produced NO VERDICT in 100 s
+        // rather than a red. That is history: the loop and the clear are
+        // both gone, so the invariant is not documented here, it does not
+        // exist.
         //
-        // Cleared by this caller after `await task.value` instead, there is a
-        // turn in which the task has finished and the handle still names it.
-        // A caller arriving in that turn would await a completed task — which
-        // resumes without suspending — and then re-check a handle only this
-        // caller can clear, on an actor it never yields. Measured 2026-09-06
-        // by planting exactly that move: the run did not finish in 100 s and
-        // produced no verdict at all, because a main actor spinning in the
-        // loop cannot deliver the suite's own time limit either. Clearing
-        // here means a waiter resumes knowing the task that woke it has
-        // already given the slot up, so the loop re-checks once and exits.
+        // What replaces them, as structure rather than as a rule to keep:
         //
-        // The body cannot run before the assignment below, because nothing
-        // between them suspends.
+        // - **No two passes overlap**, because every pass awaits its
+        //   predecessor as its first statement.
+        // - **Every caller's read follows its own write**, because the pass
+        //   this call installs cannot start before this call entered.
+        // - **FIFO by entry**, because the read of `reconcileInFlight` and
+        //   the assignment below it have nothing suspending between them on
+        //   the main actor.
+        //
+        // The handle is never cleared. It names the last task installed and
+        // keeps it alive after that task has completed, until the next call
+        // replaces it — one finished `Task<Void, Never>`. A caller arriving
+        // then awaits a task that is already done, which costs it a resume
+        // and no read; its own pass runs after that, which is what
+        // `aReconcileFollowingACompletedOneRunsItsOwnPass` reads.
+        let previous = reconcileInFlight
         let task = Task { @MainActor in
+            await previous?.value
             await performReconcilingReload()
-            reconcileInFlight = nil
         }
         reconcileInFlight = task
         await task.value
     }
 
-    /// The pass itself. Separate from the gate above so the `Task` the gate
-    /// hands out has exactly one body, and so a second caller awaiting that
-    /// task cannot re-enter this.
+    /// The pass itself. Separate from the chaining above so the `Task` each
+    /// call installs has exactly one body, and so a caller awaiting the task
+    /// ahead of it cannot re-enter this.
     private func performReconcilingReload() async {
         // Read through `readProfiles()`, NOT `reload()` (fix round 2).
         // `TunnelStore.allProfiles()` answers `[]` for a present-but-

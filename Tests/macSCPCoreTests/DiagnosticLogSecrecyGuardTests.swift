@@ -12,9 +12,10 @@ import Testing
 ///
 /// 1. `noInterpolationNamesASecretIdentifier`: the direct call-site floor
 ///    (`direct.count >= 20`).
-/// 2. …: each of the six files measured as having its wrapper call sites
+/// 2. …: each of the SEVEN files measured as having its wrapper call sites
 ///    reached by the forwarding walk still yields them
-///    (`filesWithReachableForwardedSites`).
+///    (`filesWithReachableForwardedSites` — counted 2026-09-06 by listing
+///    that set, which is seven names long).
 /// 3. …: the `tunnel` category yields forwarded call sites at all.
 /// 4. …: every one of those `tunnel` sites carries an interpolation.
 /// 5. `everyCategoryLiteralIsOnTheFixedList`: every entry on
@@ -106,10 +107,14 @@ struct DiagnosticLogSecrecyGuardTests {
     ]
 
     /// The files under `Sources/` in which the forwarding walk actually
-    /// LOCATES a wrapper's call sites — SIX, measured 2026-09-06 by running
-    /// the walk and printing what it collects per file (the table is in
-    /// `noInterpolationNamesASecretIdentifier`, beside the assertion that
-    /// reads this list).
+    /// LOCATES a wrapper's call sites — SEVEN, measured 2026-09-06 by
+    /// running the walk and printing what it collects per file (the table is
+    /// in `noInterpolationNamesASecretIdentifier`, beside the assertion that
+    /// reads this list) and recounted against the literal below in the same
+    /// pass. It said SIX until 2026-09-06 (CLI-store plan, Task 5 round 4),
+    /// having been written before `TunnelManager.swift` joined the literal
+    /// below — the number and the list disagreed, in a file whose own
+    /// subject is that a count is a claim to be recounted.
     ///
     /// It is a measurement, not a name the guard could derive: the walk's own
     /// output is what would have to be trusted to derive it, and a check whose
