@@ -45,9 +45,9 @@ AppKit, `ServiceManagement`, Swift Testing, the Docker rig.
 - Modify: `Sources/macSCPCore/Sessions/SessionStore.swift` (deleting a session tells the tunnel store — find how deletion is done and add the one call, or a `SessionDeletionObserver` seam if the store must not know tunnels; say which)
 - Test: `Tests/macSCPCoreTests/TunnelProfileTests.swift` (round trip of each kind; old-envelope decode), `TunnelStoreTests.swift` (temp dir; upsert/delete/autoStart filter; the JSON holds no key named like a secret — a scan of the written file's keys against `password|secret|token|key|passphrase`; deleting a session removes its profiles), `TunnelStatePlanTests.swift` (every transition in the spec's table; backoff 2,4,8,16,32,60,60)
 
-- [ ] **Step 1: Red first** — `cannot find 'TunnelProfile'`.
-- [ ] **Step 2: Implement**; `swift test --filter Tunnel` green; full `swift test`; zero warnings.
-- [ ] **Step 3: Commit** `feat(tunnels): profiles, their store, and the state machine`.
+- [x] **Step 1: Red first** — `cannot find 'TunnelProfile'`.
+- [x] **Step 2: Implement**; `swift test --filter Tunnel` green; full `swift test`; zero warnings.
+- [x] **Step 3: Commit** `feat(tunnels): profiles, their store, and the state machine`.
 
 ---
 
@@ -60,9 +60,9 @@ AppKit, `ServiceManagement`, Swift Testing, the Docker rig.
 - Create: `Sources/macSCPCore/Tunnels/TunnelConnection.swift` (builds the SSH connection for a stored session the way the CLI does — read `Sources/MacSCPCLI/SessionConnecting.swift` and `Sources/macSCPCore/CLI/` for the stored-session → `SSHConnectionConfig` path and the `SecretSource` protocol; takes a `HostKeyDecider`; returns the `CitadelFileSystem`)
 - Test: `Tests/macSCPCoreTests/BytePumpTests.swift` (`EmbeddedChannel` pairs: bytes both ways, order, half-close, a closed peer closes the other, writability toggles the peer's `autoRead`), `LocalForwardListenerTests.swift` (port 0 on loopback with a FAKE factory that returns a loopback echo channel: connect, write, read back; `portInUse` when bound twice; `stop()` closes an accepted pair; every wait an `await`), gated `TunnelRigITests.swift` (`MACSCP_ITEST=1`: a local forward from port 0 to the rig's sshd `127.0.0.1:22` inside the container as seen by the server — i.e. `host: "127.0.0.1", port: 22` behind the tunnel; then a second `CitadelFileSystem.connect` to `127.0.0.1:<boundPort>` lists a directory through the tunnel — end to end)
 
-- [ ] **Step 1: Red first** — `cannot find 'LocalForwardListener'`; the pump tests.
-- [ ] **Step 2: Implement**; unit green; `MACSCP_ITEST=1 swift test --filter TunnelRig` green against the rig; full `swift test`; zero warnings.
-- [ ] **Step 3: Commit** `feat(tunnels): a local forward pumps bytes through a direct-tcpip channel`.
+- [x] **Step 1: Red first** — `cannot find 'LocalForwardListener'`; the pump tests.
+- [x] **Step 2: Implement**; unit green; `MACSCP_ITEST=1 swift test --filter TunnelRig` green against the rig; full `swift test`; zero warnings.
+- [x] **Step 3: Commit** `feat(tunnels): a local forward pumps bytes through a direct-tcpip channel`.
 
 ---
 
@@ -73,7 +73,7 @@ AppKit, `ServiceManagement`, Swift Testing, the Docker rig.
 - Create: `Sources/macSCPCore/Tunnels/SOCKS5Listener.swift` (the local listener with the handshake in front; the decoded destination fed to the same factory)
 - Test: `SOCKS5HandshakeTests.swift` (byte fixtures for each frame; a wrong version → close; BIND → `07`; a domain name decoded exactly; the removal after success; counted: N fixtures), `SOCKS5ListenerTests.swift` (port 0 with the fake factory: a hand-written greeting + CONNECT → success reply → echo), gated: a SOCKS5 CONNECT to the rig's sshd through the tunnel followed by an SSH banner read (`SSH-2.0` prefix)
 
-- [ ] **Step 1: Red first**; **Step 2: Implement**; green + gated green; **Step 3: Commit** `feat(tunnels): a dynamic forward speaks SOCKS5`.
+- [x] **Step 1: Red first**; **Step 2: Implement**; green + gated green; **Step 3: Commit** `feat(tunnels): a dynamic forward speaks SOCKS5`.
 
 ---
 
@@ -84,7 +84,7 @@ AppKit, `ServiceManagement`, Swift Testing, the Docker rig.
 - Create: `Sources/macSCPCore/Tunnels/RemoteForward.swift` (a long-lived `Task` inside the wrapper; each inbound channel: `ClientBootstrap` to `localHost:localPort` → pump; a connect failure closes the inbound channel and counts a `.failed` per connection, not for the tunnel; `stop()` cancels the task — Citadel sends `cancel-tcpip-forward` on cancellation, read `RemotePortForward+Client.swift:100-112`)
 - Test: `RemoteForwardTests.swift` (with a fake `withRemotePortForward` seam: an inbound `EmbeddedChannel` is connected to a loopback listener the test owns; bytes both ways; a refused local connect closes the inbound side), gated: a remote forward `127.0.0.1:0` on the rig (the server picks the port, reported through `onOpen`), a loopback listener in the test as the local target; `docker exec macscp-test-ssh sh -c 'printf hi | nc 127.0.0.1 <port>'` (read the container name from `docker/test-server/compose.yml`) lands `hi` on the test's listener — through `SubprocessRunner`; skip with a reason if `nc` is absent in the image and use `bash -c 'exec 3<>/dev/tcp/127.0.0.1/<port>; printf hi >&3'` instead (say which worked)
 
-- [ ] **Step 1: Red first**; **Step 2: Implement**; green + gated green; **Step 3: Commit** `feat(tunnels): a remote forward brings the server's port to this Mac`.
+- [x] **Step 1: Red first**; **Step 2: Implement**; green + gated green; **Step 3: Commit** `feat(tunnels): a remote forward brings the server's port to this Mac`.
 
 ---
 
@@ -95,7 +95,7 @@ AppKit, `ServiceManagement`, Swift Testing, the Docker rig.
 - Modify: `Sources/macSCPCore/Diagnostics/` call sites — `tunnel <name> start|active port=… |failed reason=… |reconnecting attempt=… |stop` at `.info`, category `tunnel` (add it to the secrecy guard's fixed list, count it); each accepted connection at `.debug` with destination and duration; reasons through `DialSupport.reason(for:)` (the `reason:` overload)
 - Test: `TunnelRunnerTests.swift` (with a fake connection factory and fake runtimes: the state sequence for a clean start/stop; connection lost → reconnecting with the injected sleep called with 2, 4, 8; stop during backoff ends it; an unknown host key under `.refusing` → `.needsConfirmation`; no secret → `.needsConfirmation`; every wait an `await` on the stream), the secrecy guard's category list updated (positive beside negative)
 
-- [ ] **Step 1: Red first**; **Step 2: Implement**; green; **Step 3: Commit** `feat(tunnels): a runner drives a profile through its states, reconnecting with backoff`.
+- [x] **Step 1: Red first**; **Step 2: Implement**; green; **Step 3: Commit** `feat(tunnels): a runner drives a profile through its states, reconnecting with backoff`.
 
 ---
 
@@ -107,7 +107,7 @@ AppKit, `ServiceManagement`, Swift Testing, the Docker rig.
 - Modify: the quit chain (`MacSCPApp.swift`'s deferred quit): `TunnelManager.shared.stopAll()` BEFORE the windows' closures, pinned in the delegate-order guard
 - Test: `TunnelManagerTests.swift` (a store in a temp dir, fake runners: start/stop/startAll/stopAll; `startAutoStart(.appStart)` starts only `.appStart` profiles; `stopAll()` stops every running one), `TunnelMenuWiringGuardTests.swift` (the submenu only for SSH — positive + negative; every entry reads its key through `L10n.string(`; the manager is the only caller of the runner's start — positive; no `connect(` in the sheet — negative beside it), catalogue parity, `QuitSequenceTests` gains `.stopTunnels` before `.teardownWindows`
 
-- [ ] **Step 1: Red first**; **Step 2: Implement**; green; **Step 3: Commit** `feat(tunnels): profiles per session, started from the context menu, stopped at quit`.
+- [x] **Step 1: Red first**; **Step 2: Implement**; green; **Step 3: Commit** `feat(tunnels): profiles per session, started from the context menu, stopped at quit`.
 
 ---
 
@@ -119,10 +119,10 @@ AppKit, `ServiceManagement`, Swift Testing, the Docker rig.
 - Modify: `SessionSidebar.swift` (`SessionRow`: the forwarding glyph with count/`!` and colour by the worst state, tooltip with the reason; no glyph without a profile; both densities), `MacSCPApp.swift`/`AppDelegate` (`applicationDockMenu(_:)` with the block; `NSApp.dockTile.badgeLabel` from a pure `DockBadgePlan.label(activeCount:failedCount:) -> String?` — count, `!` on any failure, nil when none active — updated on every state change), the menu-bar model's block when the setting is on, the four catalogs
 - Test: `DockBadgePlanTests` (the three cases), `TunnelSidebarGlyphTests` (a pure `TunnelGlyphPlan.glyph(states:) -> (colour, text)?`: none → nil; all stopped → grey no count; one active → green "1"; any failed → red "!"), the sidebar guard (the row reads the plan; positive + negative), `LoginItemTests` (the status mapping from `SMAppService.Status` — pure; registration not exercised in tests), the Dock-menu guard (the block reads the manager; no `connect(` there), catalogue parity
 
-- [ ] **Step 1: Red first**; **Step 2: Implement**; green; **Step 3: Commit** `feat(tunnels): autostart at app start or login, and the state in the sidebar and the Dock`.
+- [x] **Step 1: Red first**; **Step 2: Implement**; green; **Step 3: Commit** `feat(tunnels): autostart at app start or login, and the state in the sidebar and the Dock`.
 
 ---
 
 ### Task 8: Closeout
 
-- [ ] `docs/BACKLOG.md` (a Done row: the eight commits, what shipped per task, the limits from the spec, the sight check — a local forward to a database, a dynamic forward with a browser's SOCKS setting, a remote forward, ⌘Q with a tunnel running, autostart across a relaunch and a login), `README.md` (one sentence, no tech-stack terms), `CLAUDE.md` ("Architecture invariants": the tunnel exception in one clause — tunnels are app-wide, not window-scoped, with an explicit lifecycle), the design's status line, the plan's checkboxes; commit `docs(backlog): port forwarding is in`.
+- [x] `docs/BACKLOG.md` (a Done row: the eight commits, what shipped per task, the limits from the spec, the sight check — a local forward to a database, a dynamic forward with a browser's SOCKS setting, a remote forward, ⌘Q with a tunnel running, autostart across a relaunch and a login), `README.md` (one sentence, no tech-stack terms), `CLAUDE.md` ("Architecture invariants": the tunnel exception in one clause — tunnels are app-wide, not window-scoped, with an explicit lifecycle), the design's status line, the plan's checkboxes; commit `docs(backlog): port forwarding is in`.

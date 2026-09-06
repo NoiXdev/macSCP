@@ -42,6 +42,9 @@ and move files between them with drag and drop, buttons, or the Finder.
   ping, the connection attempt itself, a network route trace, and
   protocol-specific checks for S3 and WebDAV; run everything at once or
   just one, and copy the report as plain text or Markdown.
+- **Port forwarding** — local, dynamic (SOCKS5), and remote forwardings as
+  saved profiles per session, started and stopped from its context menu,
+  with the option to bring them up automatically at app start or at login.
 - **Integrated terminal** — a real shell on the same connection, one
   keystroke (⌘T) away, sized to match its panel whenever it opens or
   reopens.

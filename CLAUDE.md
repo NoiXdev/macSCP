@@ -160,7 +160,10 @@ broken one. A ceiling always can.
   never to an app-wide singleton. Multi-window is here: a tab moves between
   windows carrying its connection, and the process-wide `TabRegistry` holds
   ownership — which window has which tab — never state. Nothing in Core
-  knows about windows.
+  knows about windows. Tunnels are the exception: app-wide, owned by a
+  process-wide `TunnelManager`, each with its own SSH connection and an
+  explicit lifecycle — started from the menu or at launch, stopped by the
+  user or at quit before the windows.
 - The UI owns lifecycles explicitly (queue `cancelAll` → terminal `shutdown`
   → `disconnect` in `teardownSession`); no `deinit` cleanup. **⌘Q owns one
   too**, and it reaches the same single owner:

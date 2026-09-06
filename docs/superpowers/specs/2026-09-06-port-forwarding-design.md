@@ -1,5 +1,10 @@
 # SSH port forwarding — design
 
+**Status:** implemented 2026-09-06 (final commit `1a4b94b1`), through
+`docs/superpowers/plans/2026-09-06-port-forwarding.md`'s eight tasks; the
+record of what shipped, what is limited and the sight check is
+`docs/BACKLOG.md`'s "Done" row for this entry.
+
 **Date:** 2026-09-06. **Requested by the maintainer** (2026-09-06, in
 their words): all three forwarding kinds, freely configurable, as
 "mapping profiles" in an overlay per session like the login/host
