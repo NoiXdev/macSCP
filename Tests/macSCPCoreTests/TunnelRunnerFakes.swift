@@ -334,32 +334,48 @@ final class TunnelParkingSleeper: @unchecked Sendable {
     }
 }
 
-/// A latch a test opens by hand, awaited without throwing.
+/// A latch a test opens by hand, awaited without throwing and without
+/// answering cancellation.
 ///
-/// `try?` around the sleep on purpose: what waits on this is a teardown
-/// running inside an ALREADY-CANCELLED task (`TunnelRunner.stop()` cancels
-/// the run task before its `releaseCurrent()` runs), so a wait that
-/// propagated cancellation would return immediately and the window this
-/// exists to hold open would never open. No deadline of its own — the
-/// suite's `.timeLimit` ends a latch nobody releases.
-final class TunnelLatch: @unchecked Sendable {
-    private let lock = NSLock()
-    private var opened = false
+/// Ignoring cancellation is the point, not an oversight: what waits on this
+/// is a teardown running inside an ALREADY-CANCELLED task —
+/// `TunnelRunner.performStop` cancels the run task, and the run loop's own
+/// `releaseCurrent()`, which is where `TunnelFakeRuntime.stop()` is
+/// entered, then runs inside it. A wait that returned on cancellation would
+/// return at once and the window this exists to hold open would never open.
+/// Measured 2026-09-07 by building exactly that wait: with `wait()`
+/// returning on cancellation, `aStartThatLandsWhileStopIsSuspendedWaitsForIt`
+/// failed 3 runs out of 3 (`connections.made.count → 2` against `== 1`,
+/// `runtimes.made.count → 2` against `== 1`).
+///
+/// It used to hold the window with `while !isOpen { try? await
+/// Task.sleep(…) }`, which is a hot spin on precisely that path: under
+/// cancellation `Task.sleep` throws immediately, `try?` discards the throw,
+/// and the loop turns without ever suspending — a cooperative-pool thread
+/// burnt for as long as the gate is held (CLAUDE.md, "Tests never block the
+/// cooperative pool"). `PollingGuardTests.noWhileLoopSwallowsItsSleeps
+/// Cancellation` now forbids the shape across `Tests/`.
+///
+/// The wait is a suspension instead. `AsyncSignal` releases every waiter
+/// when the latch is raised, and the wait is taken on a DETACHED task
+/// because `AsyncSignal.wait()` does answer cancellation while a detached
+/// task is not cancelled by whoever awaits it — so the cancellation stops
+/// at the boundary and the suspension survives it.
+///
+/// No deadline of its own, and — said plainly, because the sentence here
+/// used to claim the opposite — a latch nobody releases is NOT ended by the
+/// suite's `.timeLimit` either: a wait that ignores cancellation cannot be.
+/// It parks at 0 % CPU rather than spinning, and every call site opens the
+/// latch on its way out with a `defer`.
+final class TunnelLatch: Sendable {
+    private let signal = AsyncSignal()
 
-    var isOpen: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return opened
-    }
+    var isOpen: Bool { signal.isRaised }
 
-    func release() {
-        lock.withLock { opened = true }
-    }
+    func release() { signal.signal() }
 
     func wait() async {
-        while !isOpen {
-            try? await Task.sleep(for: .milliseconds(1))
-        }
+        await Task.detached { _ = await self.signal.wait() }.value
     }
 }
 

@@ -441,7 +441,8 @@ struct TunnelRunnerTests {
     @Test func aStartThatLandsWhileStopIsSuspendedWaitsForIt() async throws {
         let latch = TunnelLatch()
         // A failing expectation below would otherwise leave the gated
-        // teardown parked on a 1 ms spinner for the rest of the process.
+        // teardown parked for the rest of the process: `TunnelLatch.wait()`
+        // ignores cancellation on purpose, so nothing else ends it.
         defer { latch.release() }
         let connections = TunnelFakeConnections()
         let runtimes = TunnelFakeRuntimes(boundPort: 8080, firstStopGate: latch)

@@ -334,6 +334,174 @@ struct PollingGuardTests {
         #expect(withoutLimit.isEmpty, "\(withoutLimit)")
     }
 
+    /// Negative: no `while` loop in `Tests/` waits by sleeping with its
+    /// sleep's cancellation swallowed.
+    ///
+    /// `while <condition> { try? await Task.sleep(...) }` is a poll whose
+    /// only suspension point stops suspending the moment the task is
+    /// cancelled: `Task.sleep` then throws at once, `try?` discards the
+    /// throw, and the loop becomes a tight spin on a cooperative-pool
+    /// thread that nothing can end (CLAUDE.md, "Tests never block the
+    /// cooperative pool"). `TunnelRunnerFakes.TunnelLatch.wait()` was
+    /// exactly that shape, and it is entered from an already-cancelled
+    /// task by design, so the spin was on the ONLY path it ever took.
+    ///
+    /// A condition that reads `Task.isCancelled` is not this shape: the
+    /// loop's own test ends it on the first turn after cancellation, which
+    /// is why three of the six `while` blocks this check finds are allowed
+    /// by their condition alone (counted 2026-09-07 by this check's own
+    /// scan; `everyCancellationObservingLoopIsSeen` below records the
+    /// totals).
+    ///
+    /// Two more are allowed by a sentence instead, searched for in the 12
+    /// lines above the `while` plus the block's own body — never by path,
+    /// so that moving or renaming a file cannot widen the exemption, and
+    /// so that removing the sentence without removing the loop turns this
+    /// check red:
+    ///
+    /// - `TerminalPanelViewModelTests`' output stub, whose whole purpose
+    ///   is a stream that does not answer cancellation ("does not observe
+    ///   task cancellation").
+    /// - `CitadelFileSystemIntegrationTests.waitForServerToCloseDescriptors`,
+    ///   whose loop carries its own iteration bound ("bounded at roughly
+    ///   two seconds") and so cannot spin without end.
+    ///
+    /// Scanned over comment-and-string-blanked source for the SHAPE, per
+    /// CLAUDE.md "Source-scanning guards read comments too" — a doc
+    /// comment quoting the forbidden loop, or a fixture holding one in a
+    /// string, would otherwise BE one — and over the ORIGINAL lines for
+    /// the exemption sentences, which live in comments the blanking has
+    /// erased.
+    @Test func noWhileLoopSwallowsItsSleepsCancellation() throws {
+        let blocks = try Self.sleepingWhileBlocks()
+        let offenders = blocks.filter { !$0.observesCancellation && $0.exemption == nil }
+            .map { "\($0.path):\($0.line)" }
+        #expect(offenders.isEmpty, "\(offenders)")
+    }
+
+    /// Positive for the check above, three ways: the scan finds `while`
+    /// blocks that sleep at all, it finds the cancellation-observing ones
+    /// its condition rule is written for, and each exemption sentence is
+    /// still earning its keep. Without these, `noWhileLoopSwallowsItsSleeps
+    /// Cancellation` could pass over a tree where the block finder matches
+    /// nothing, or keep exempting a loop that no longer exists.
+    ///
+    /// Counted 2026-09-07 by running this scan over `Tests/`: 6 blocks,
+    /// 3 of them ending on `Task.isCancelled`, 1 per exemption sentence,
+    /// and — once `TunnelLatch.wait()` stopped polling — none left over.
+    /// A first draft scanned RAW source and reported 12; the six extra
+    /// were `while !Task.isCancelled` loops quoted inside
+    /// `LivenessProbeWiringGuardTests`\' fixture strings, which is exactly
+    /// what the blanking is for.
+    @Test func everyCancellationObservingLoopIsSeen() throws {
+        let blocks = try Self.sleepingWhileBlocks()
+        #expect(blocks.count >= 5, "\(blocks.count) sleeping while-blocks found")
+        #expect(
+            blocks.filter(\.observesCancellation).count >= 3,
+            "\(blocks.filter(\.observesCancellation).count) end on Task.isCancelled")
+        for sentence in Self.sleepExemptionSentences {
+            #expect(
+                blocks.contains { $0.exemption == sentence },
+                "no block is exempted by \(sentence) any more")
+        }
+    }
+
+    /// The two sentences that allow a swallowed sleep inside a `while`.
+    private static let sleepExemptionSentences = [
+        "does not observe task cancellation",
+        "bounded at roughly two seconds",
+    ]
+
+    /// One `while` block whose body sleeps with the throw discarded.
+    private struct SleepingWhileBlock {
+        let path: String
+        let line: Int
+        let observesCancellation: Bool
+        let exemption: String?
+    }
+
+    /// Every `while` block under `Tests/` whose body contains a
+    /// `try? await Task.sleep`, with the two facts that decide whether it
+    /// is allowed.
+    ///
+    /// Line-based, the way `noBareContinuationEscapesAwaitResumption` above
+    /// pairs blanked lines with original ones: the SHAPE is read off
+    /// comment-and-string-blanked source (a `{` inside a comment or a
+    /// string would otherwise close the block early, and a doc comment
+    /// quoting the forbidden loop would otherwise BE one), and the
+    /// exemption sentence off the original lines at the same indices.
+    /// `SwiftSource.blankingCommentsAndStrings` preserves line structure,
+    /// so the two arrays line up; pairing them by index rather than by
+    /// `String.Index` keeps that true whatever the blanking does to a
+    /// line's length.
+    ///
+    /// The exemption context is the 12 lines above the `while` plus the
+    /// block itself, with comment markers and line breaks flattened to
+    /// single spaces so a sentence that wraps across two `///` lines is
+    /// still one sentence. 12 lines is `continuationExemptionWindow`'s
+    /// window, reused rather than picked again here.
+    ///
+    /// The `while` and its `{` must sit on one line. A condition wrapped
+    /// across lines would go unseen — a hole named here rather than
+    /// hidden, and the reason the positive below counts what the scan
+    /// does find rather than trusting it to find everything.
+    private static func sleepingWhileBlocks() throws -> [SleepingWhileBlock] {
+        let pattern = try NSRegularExpression(pattern: #"\bwhile\b[^{]*\{\s*$"#)
+        var found: [SleepingWhileBlock] = []
+        for source in try Self.sources() {
+            let blanked = try SwiftSource.blankingCommentsAndStrings(source.text).components(
+                separatedBy: "\n")
+            let original = source.text.components(separatedBy: "\n")
+            for (index, line) in blanked.enumerated() {
+                let range = NSRange(line.startIndex..., in: line)
+                guard pattern.firstMatch(in: line, range: range) != nil else { continue }
+                guard let last = Self.blockEndLine(openingAt: index, in: blanked) else { continue }
+                let body = blanked[index...last].joined(separator: "\n")
+                guard body.contains("try? await Task.sleep") else { continue }
+
+                let windowStart = max(0, index - Self.continuationExemptionWindow)
+                let context = Self.flattened(original[windowStart...last].joined(separator: "\n"))
+                found.append(
+                    SleepingWhileBlock(
+                        path: source.path,
+                        line: index + 1,
+                        observesCancellation: line.contains("Task.isCancelled"),
+                        exemption: Self.sleepExemptionSentences.first { context.contains($0) }))
+            }
+        }
+        return found
+    }
+
+    /// The index of the line carrying the `}` that closes the block opened
+    /// on `first`, by counting braces from that line onwards.
+    private static func blockEndLine(openingAt first: Int, in lines: [String]) -> Int? {
+        var depth = 0
+        for index in first..<lines.count {
+            depth += lines[index].filter { $0 == "{" }.count
+            depth -= lines[index].filter { $0 == "}" }.count
+            if depth <= 0 { return index }
+        }
+        return nil
+    }
+
+    /// Comment markers and every run of whitespace flattened to one space,
+    /// so a sentence a formatter wrapped across two `///` lines reads as
+    /// the one sentence it is.
+    private static func flattened(_ text: String) -> String {
+        text.components(separatedBy: "\n")
+            .map { line -> String in
+                var trimmed = line.trimmingCharacters(in: .whitespaces)
+                for marker in ["///", "//"] where trimmed.hasPrefix(marker) {
+                    trimmed = String(trimmed.dropFirst(marker.count))
+                    break
+                }
+                return trimmed
+            }
+            .joined(separator: " ")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
     /// Negative: no `EventLoopFuture` is awaited with `.get()` — the shape
     /// `awaitCancellably` (`Tests/MacSCPTestSupport/AwaitCancellably.swift`)
     /// exists to replace, per its own doc comment and

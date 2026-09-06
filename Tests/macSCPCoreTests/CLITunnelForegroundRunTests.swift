@@ -321,6 +321,11 @@ struct CLITunnelForegroundRunTests {
     /// while the stop is still inside its own body.
     @Test func aSecondSignalLeavesWhileTheStopIsStillRunning() async throws {
         let gate = TunnelLatch()
+        // Opened on the way out whatever happens: a failed expectation
+        // below would otherwise leave the scripted stop parked on a latch
+        // nothing opens, and `TunnelLatch.wait()` ignores the cancellation
+        // the suite's `.timeLimit` sends (its own doc comment says why).
+        defer { gate.release() }
         let tunnel = ScriptedForegroundTunnel(boundPort: 8080, stopGate: gate)
         let out = ForegroundOutputCollector()
         let (stops, signal) = AsyncStream.makeStream(of: Void.self)
@@ -341,8 +346,6 @@ struct CLITunnelForegroundRunTests {
         #expect(code == .success)
         #expect(out.lines.last == "stopped")
         #expect(finishedStops == 0, "the run waited for the stop it was told to abandon")
-
-        gate.release()
     }
 }
 
