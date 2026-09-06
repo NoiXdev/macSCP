@@ -187,6 +187,27 @@ enum QuitWatchdog {
     /// checked nothing, so a cancelled window still ran every tab it held
     /// and the overrun scaled with the tab count.
     ///
+    /// **This number is spent TWICE per quit, serially** (recorded by the
+    /// port-forwarding plan's final review, 2026-09-06). The deferred quit
+    /// runs two bounded steps one after the other —
+    /// `AppDelegate.runBoundedTunnelStop()` and then
+    /// `runBoundedQuitTeardown(parked:windows:)`, in that order — and each
+    /// races this same bound. The worst case for a quit is therefore about
+    /// **30 seconds**, plus the one-tab overrun described above, not the 15
+    /// the paragraphs before this argue: those argue what ONE step is worth
+    /// waiting for.
+    ///
+    /// It is two budgets rather than one shared deadline because the two
+    /// steps are bounded by different things and neither number bounds the
+    /// other. A tunnel stop can be parked inside a DIAL, whose own ceiling is
+    /// `connectTimeoutSeconds` — 10 s by default and settable to 120 s — so
+    /// giving the tunnel step whatever a shared budget had left over would
+    /// mean a quit that spent 15 s on tunnels tore no window down at all,
+    /// and one that spent them on windows never cancelled a forward. Each
+    /// step gets a full bound and each writes its own `forced` fact
+    /// (`tunnelStopLine(_:)`, `quitLine(windows:tornDown:forced:)`), so a log
+    /// read afterwards says which of the two ran out.
+    ///
     /// `forced=true` in the quit line is what tells a reader the bound won.
     /// `QuitWatchdog` is production code and a wall clock here is
     /// deliberate; CLAUDE.md's rule against wall-clock ceilings is about

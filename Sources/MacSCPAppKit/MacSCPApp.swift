@@ -430,6 +430,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// mine.value` on a `Task<Void, Never>`), so `cancelAll()` was a no-op
     /// and the group waited for the work anyway.
     ///
+    /// **Its own bound, spent before the window teardown's.** This step and
+    /// `runBoundedQuitTeardown(parked:windows:)` each race `QuitWatchdog
+    /// .bound` in turn, so a worst-case quit spends it twice — see that
+    /// constant's doc comment, which states the arithmetic and why the two
+    /// steps do not share one deadline.
+    ///
     /// **What losing the race costs**, stated: the stop keeps running,
     /// detached, and the quit goes on without it — so a forwarding that had
     /// not finished stopping is dropped by process exit instead, the same

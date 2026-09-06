@@ -553,6 +553,22 @@ final class SOCKS5RequestBox: @unchecked Sendable {
         waiting?.resume(with: result)
     }
 
+    /// Parks until the conversation settles.
+    ///
+    /// **A bare continuation with no cancellation handler, deliberately, and
+    /// only while nothing cancels the caller** (recorded 2026-09-06 by the
+    /// port-forwarding plan's final review). The one caller is the accept
+    /// task in `SOCKS5Handshake.negotiate(on:)`, which nothing cancels: the
+    /// listener ends a handshake by closing the channel, and
+    /// `channelInactive` resolves this box, so the park ends through
+    /// `resolve` on every path there is today. If a caller ever DOES cancel
+    /// it — a per-handshake deadline is the obvious candidate, and the design
+    /// records the missing timeout as a limit — this becomes a task parked
+    /// forever, and the shape to rebuild it from is `OpenPortBox` in
+    /// `RemoteForward.swift`, which was itself a bare continuation until Task
+    /// 4's review: `withTaskCancellationHandler` around the park, with the
+    /// box's one latch deciding which of the two racing sides resumes the
+    /// continuation.
     func value() async throws -> SOCKS5Destination {
         try await withCheckedThrowingContinuation { continuation in
             lock.lock()

@@ -207,8 +207,20 @@ struct TunnelMenuWiringGuardTests {
                 keys.insert(String(rest[..<end.lowerBound]))
             }
         }
-        // 48 as counted on 2026-09-06 — every `tunnel.*` key in the
-        // catalogue. The floor is lower than the count so that adding one
+        // 49, RECOUNTED on 2026-09-06 by running this test's own regex over
+        // those three files: 43 in the profiles sheet, 5 in the sidebar, 1 in
+        // the host-key prompt, 49 distinct. It was written as 48 and as
+        // "every `tunnel.*` key in the catalogue", and both halves were
+        // wrong: the count missed `tunnel.glyph.tooltip %@`
+        // (`SessionSidebar.swift`), and the catalogue holds 63 `tunnel.*`
+        // keys (`grep -c '"tunnel\.' Sources/MacSCPAppKit/Resources/
+        // en.lproj/Localizable.strings`, counted the same day). The other 14
+        // are Task 7's surfaces — `TunnelAutostartSheet.swift`,
+        // `TunnelDockPresence.swift`, `LoginItem.swift`,
+        // `MacSCPCommands.swift`, `SettingsView.swift` — and
+        // `TunnelPresenceWiringGuardTests
+        // .everyKeyTheseSurfacesReadResolvesInTheCatalogue` resolves those.
+        // The floor is lower than the count so that adding one
         // key is not a test edit, and high enough that a pattern which
         // silently stopped matching most of them (see above) fails here.
         #expect(keys.count >= 45, "found \(keys.count) tunnel keys — re-anchor this guard")

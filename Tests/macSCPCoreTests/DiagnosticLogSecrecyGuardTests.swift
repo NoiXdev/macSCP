@@ -24,14 +24,17 @@ import Testing
 ///
 /// They keep the negative from going stale in silence the way
 /// "Guards that name what they watch" describes: `grep -rc
-/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **39** as
-/// of 2026-09-06 (re-counted in Task 5's round 2, which added the second
-/// `reason:` overload wrapper in `TunnelRunner`; 38 before it, 27 on
-/// 2026-09-05). That grep and this scan do NOT count the same thing, and
-/// the difference is two: the grep counts the literal text wherever it
-/// appears, INCLUDING inside a doc comment — `TabDetachSequence.swift` and
-/// `TunnelRunner.swift` each spell it in prose — while this scan blanks
-/// comments first and sees 37 real calls. Both numbers are stated because
+/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **40** as
+/// of 2026-09-06 — recounted in the port-forwarding plan's final fix round
+/// by running exactly that command and summing its per-file numbers, and it
+/// is one more than the 39 this paragraph carried, because Task 6's round 3
+/// (`7046da25`) added a call in `MacSCPApp.swift` (39 was Task 5's round 2,
+/// which added the second `reason:` overload wrapper in `TunnelRunner`; 38
+/// before it, 27 on 2026-09-05). That grep and this scan do NOT count the
+/// same thing, and the difference is two: the grep counts the literal text
+/// wherever it appears, INCLUDING inside a doc comment —
+/// `TabDetachSequence.swift` and `TunnelRunner.swift` each spell it in prose
+/// — while this scan blanks comments first and sees 38 real calls. Both numbers are stated because
 /// either one alone is a claim somebody will later check with the other's
 /// method. (`docs/BACKLOG.md` records 27, the number measured on
 /// 2026-09-05; that row is a dated record of that day, not a claim about

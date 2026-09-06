@@ -30,6 +30,15 @@ public final class SOCKS5Listener: @unchecked Sendable {
     /// Binds `bind:localPort` as a SOCKS5 server and returns the port
     /// actually bound.
     ///
+    /// **One listener binds once.** A second `start` — including one after
+    /// `stop()` — throws `TunnelFailure.alreadyStarted`, inherited from the
+    /// `LocalForwardListener` underneath and stated here because it is this
+    /// type's contract too: `LiveTunnelRuntimeFactory` asserts it for all
+    /// three runtimes on their behalf, and the two siblings
+    /// (`LocalForwardListener.start`, `RemoteForward.start`) each say it
+    /// themselves. A reconnect builds a fresh SSH connection, so it builds a
+    /// fresh listener with it.
+    ///
     /// - Parameters:
     ///   - localPort: `0` asks the kernel for an ephemeral port; the answer
     ///     is the return value and `boundPort`.
@@ -56,7 +65,8 @@ public final class SOCKS5Listener: @unchecked Sendable {
     }
 
     /// Closes the server socket and every pair still open, and returns only
-    /// once each of them has actually closed.
+    /// once each of them has actually closed. Final: this listener cannot be
+    /// started again (see `start`).
     public func stop() async {
         await listener.stop()
     }

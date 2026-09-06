@@ -490,6 +490,17 @@ struct TunnelProfilesSheet: View {
     /// The state, as one line. `.failed` carries the sentence Core already
     /// audited (`DialSupport.reason(for:)`) and it is shown as it is — the
     /// hand-off from Task 5 is explicit that it must never be re-mapped.
+    ///
+    /// **That sentence is English on every localized surface, by
+    /// construction**, and the four places it reaches are this column, the
+    /// autostart sheet's state column, the Dock menu's tooltip and the
+    /// sidebar glyph's tooltip. It cannot be localized from here: `TunnelState
+    /// .failed(reason:)` carries the rendered text and not the case it was
+    /// rendered from, so the App has nothing left to map — a translation
+    /// would have to guess the failure back out of its own message. Recorded
+    /// as a limit in the port-forwarding design and as a row in
+    /// `docs/BACKLOG.md` (Interface), whose fix shape is a typed failure on
+    /// the state, mapped through `L10n` here.
     static func stateLabel(_ state: TunnelState) -> String {
         switch state {
         case .stopped: return L10n.string("tunnel.state.stopped", "Stopped")

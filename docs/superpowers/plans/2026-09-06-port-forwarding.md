@@ -84,6 +84,17 @@ AppKit, `ServiceManagement`, Swift Testing, the Docker rig.
 - Create: `Sources/macSCPCore/Tunnels/RemoteForward.swift` (a long-lived `Task` inside the wrapper; each inbound channel: `ClientBootstrap` to `localHost:localPort` → pump; a connect failure closes the inbound channel and counts a `.failed` per connection, not for the tunnel; `stop()` cancels the task — Citadel sends `cancel-tcpip-forward` on cancellation, read `RemotePortForward+Client.swift:100-112`)
 - Test: `RemoteForwardTests.swift` (with a fake `withRemotePortForward` seam: an inbound `EmbeddedChannel` is connected to a loopback listener the test owns; bytes both ways; a refused local connect closes the inbound side), gated: a remote forward `127.0.0.1:0` on the rig (the server picks the port, reported through `onOpen`), a loopback listener in the test as the local target; `docker exec macscp-test-ssh sh -c 'printf hi | nc 127.0.0.1 <port>'` (read the container name from `docker/test-server/compose.yml`) lands `hi` on the test's listener — through `SubprocessRunner`; skip with a reason if `nc` is absent in the image and use `bash -c 'exec 3<>/dev/tcp/127.0.0.1/<port>; printf hi >&3'` instead (say which worked)
 
+> **Correction, 2026-09-06** (final review; this plan is a historical record
+> and is annotated rather than rewritten). The gated case above prescribes a
+> remote forward on `127.0.0.1:0` — "the server picks the port". Port 0 is
+> **refused** by what shipped, and the gated case that exists is
+> `TunnelRigITests.aRemoteForwardOnPortZeroIsRefused`: the pinned Citadel
+> registers its inbound handler under the REQUESTED `(host, port)` and
+> dispatches on the BOUND one, so a server-chosen port binds and then swallows
+> every connection inside the library. Measured in Task 4 and recorded as a
+> fork debt in `docs/superpowers/specs/2026-08-20-backlog-dependencies.md`
+> ("Open 2026-09-06"); the rig case therefore names a port.
+
 - [x] **Step 1: Red first**; **Step 2: Implement**; green + gated green; **Step 3: Commit** `feat(tunnels): a remote forward brings the server's port to this Mac`.
 
 ---
@@ -118,6 +129,15 @@ AppKit, `ServiceManagement`, Swift Testing, the Docker rig.
 - Modify: `MacSCPApp.swift` (`startAutoStart(.appStart)` after the what's-new decision; `.login` profiles start too when the app was launched as a login item — measure `NSAppleEventManager.shared().currentAppleEvent`'s `keyAEPropLaunchedAsLogInItem` or `ProcessInfo` — if the flag is readable and true only at login launch, ship "Start in the background" (the main window ordered out at such a launch); if not measurable, ship "Open at login" alone and say so in the sheet's footer and the backlog row)
 - Modify: `SessionSidebar.swift` (`SessionRow`: the forwarding glyph with count/`!` and colour by the worst state, tooltip with the reason; no glyph without a profile; both densities), `MacSCPApp.swift`/`AppDelegate` (`applicationDockMenu(_:)` with the block; `NSApp.dockTile.badgeLabel` from a pure `DockBadgePlan.label(activeCount:failedCount:) -> String?` — count, `!` on any failure, nil when none active — updated on every state change), the menu-bar model's block when the setting is on, the four catalogs
 - Test: `DockBadgePlanTests` (the three cases), `TunnelSidebarGlyphTests` (a pure `TunnelGlyphPlan.glyph(states:) -> (colour, text)?`: none → nil; all stopped → grey no count; one active → green "1"; any failed → red "!"), the sidebar guard (the row reads the plan; positive + negative), `LoginItemTests` (the status mapping from `SMAppService.Status` — pure; registration not exercised in tests), the Dock-menu guard (the block reads the manager; no `connect(` there), catalogue parity
+
+> **Correction, 2026-09-06** (final review; annotation, not a rewrite). The
+> two test names above do not exist: `DockBadgePlan` and `TunnelGlyphPlan` are
+> pinned together in one suite, `TunnelStatusPlanTests`
+> (`Tests/macSCPAppKitTests/TunnelStatusPlanTests.swift`) — the two plans ship
+> in one file and are read by the same surfaces, so splitting the tests would
+> have split one subject in two. The wiring guards named alongside them are
+> `TunnelPresenceWiringGuardTests`. Also from Task 7: "Start in the background"
+> was NOT built, and the design's Limits section records why.
 
 - [x] **Step 1: Red first**; **Step 2: Implement**; green; **Step 3: Commit** `feat(tunnels): autostart at app start or login, and the state in the sidebar and the Dock`.
 

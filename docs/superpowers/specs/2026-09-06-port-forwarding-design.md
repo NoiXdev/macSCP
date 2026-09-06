@@ -134,9 +134,13 @@ its profiles (the store is told; pinned).
   (not at save — a port can be freed later; the start reports it).
 - The autostart overlay (Window menu "Forwardings at launch…" and a
   button in Settings › General): "Open macSCP at login" (`SMAppService
-  .mainApp`, status shown as the system reports it), "Start in the
-  background" (see limits), and the table of every autostart profile
-  across sessions with state, "when", "last", start/stop.
+  .mainApp`, status shown as the system reports it) and the table of
+  every autostart profile across sessions with state, "when", "last",
+  start/stop.
+  **"Start in the background" was NOT built** (Task 7, 2026-09-06) and
+  is struck from this list rather than left standing as a description
+  of a control nobody can click; the Limits section below records why
+  and what would have to be measured first.
   **"Last active" is not recorded; the column is deferred until the
   runner keeps a timestamp** (Task 7, 2026-09-06). Nothing in Core holds
   one — `TunnelState` carries no time and `TunnelStore` writes no
@@ -167,11 +171,25 @@ its profiles (the store is told; pinned).
 - Autostart never prompts: a profile whose session has no stored
   secret or an unknown host key stays `.needsConfirmation` until the
   user connects that session once in a window.
-- "Start in the background" hides the main window at a login-item
-  launch; the app cannot tell a login launch from a Dock click on
-  every macOS — the plan measures `LaunchServices`' launch-as-login
-  flag and ships the toggle only if the measurement holds; otherwise
-  "Open at login" ships alone and the row says so.
+- **"Start in the background" is not shipped; "Open at login" ships
+  alone** (outcome, 2026-09-06). The toggle would hide the main window
+  at a login-item launch, and it is only correct if the app can tell a
+  login launch from an ordinary one. That signal — the launch Apple
+  event's `keyAELaunchedAsLogInItem` reason, read by
+  `LoginLaunchDetector` — has its PARSING measured (`LoginItemTests`)
+  and its ARRIVAL unmeasured: a real login launch needs a signed,
+  registered `.app` opened by loginwindow, which neither `swift test`
+  nor the dev build performs. Two hypotheses remain open and are
+  indistinguishable from outside — (a) macOS 15 no longer sends that
+  reason, (b) it is sent but a delegate installed by
+  `@NSApplicationDelegateAdaptor` is in place too late to see it. The
+  failure direction is the safe one (an unread flag starts nothing),
+  which is why the `.login` moment shipped and the toggle did not: a
+  wrong `true` would hide the window of an ordinary launch. The
+  procedure that separates the two hypotheses is the Bugs row
+  `Forwardings "At login": the launch flag is unverified, and "Start in
+  the background" is not shipped` in `docs/BACKLOG.md`; the sheet's
+  footer states the limit to the user.
 - Remote forwards bound to `0.0.0.0` on the server work only with the
   server's `GatewayPorts` allowing it; the failure reason names it.
 - A remote forward must **name** the port the server listens on; `0` —
@@ -187,6 +205,31 @@ its profiles (the store is told; pinned).
   rig has `GatewayPorts` off, so it cannot be measured there.
 - SOCKS5 without authentication, CONNECT only (no BIND, no UDP).
 - A local port in use fails the start with the port in the reason.
+- **The SOCKS5 handshake has no timeout** (recorded 2026-09-06 by the
+  final review; a Task 3 hand-off that never reached Task 5's brief). A
+  client that connects to a `-D` port and then stalls mid-greeting holds
+  an accepted socket and a task parked on `SOCKS5RequestBox.value()`
+  until the tunnel's `stop()`, and nothing caps how many such clients
+  there may be. **Accepted for now: `ssh -D` behaves the same way**, so
+  this is not a regression against the tool the feature imitates, and
+  the port is a loopback bind by default. The fix shape, when it is
+  wanted: a per-handshake deadline that closes the socket and resolves
+  the box with a failure, plus a cap on how many handshakes may be
+  parked at once. Written down as a row in `docs/BACKLOG.md` (Security
+  and testability).
+- **A failure reason reaches the user in English, on four localized
+  surfaces** (recorded 2026-09-06 by the final review).
+  `TunnelState.failed(reason:)` carries the sentence
+  `DialSupport.reason(for:)` rendered — English by construction, and by
+  design a paste artifact of the audited log line — and the App shows it
+  verbatim in the profiles sheet's state column, the autostart sheet's
+  state column, the Dock menu's tooltip and the sidebar glyph's tooltip.
+  It is not fixable at the App layer as the state is written: the case
+  identity is discarded when the sentence is rendered, so there is
+  nothing left to map through `L10n`. The fix shape is a typed failure
+  on the state (the case and its data, not its prose), mapped at the App
+  layer — a Core change, recorded as a row in `docs/BACKLOG.md`
+  (Interface).
 
 ## What the tests pin
 
