@@ -870,11 +870,15 @@ struct CLISessionsStoreEditingGuardTests {
     @Test func theVerbsThemselvesReadNothingFromStandardInput() throws {
         let source = try String(contentsOf: Self.sessionsCommandFile, encoding: .utf8)
         #expect(source.contains("struct SessionsRemoveCommand"), """
-            SessionsCommand.swift no longer declares SessionsRemoveCommand —             the positive anchor beside the negative check has nothing to             confirm the scanner is reading a real implementation.
+            SessionsCommand.swift no longer declares SessionsRemoveCommand — \
+            the positive anchor beside the negative check has nothing to \
+            confirm the scanner is reading a real implementation.
             """)
         let found = Self.forbiddenMatches(in: source, identifiers: Self.stdinIdentifiers)
         #expect(found.isEmpty, """
-            SessionsCommand.swift names \(found) — sessions add/edit/rm read             nothing from standard input; the one question rm asks goes             through CLIEnvironment.confirm(_:).
+            SessionsCommand.swift names \(found) — sessions add/edit/rm read \
+            nothing from standard input; the one question rm asks goes \
+            through CLIEnvironment.confirm(_:).
             """)
     }
 
