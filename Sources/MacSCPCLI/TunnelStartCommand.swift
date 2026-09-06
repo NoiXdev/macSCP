@@ -58,7 +58,17 @@ struct TunnelStartCommand: AsyncParsableCommand {
     /// do instead. A person asking for two forwardings at once has a real
     /// intention and a real answer (two terminals), and the refusal is worth
     /// wording rather than inheriting.
-    @Argument(help: "Refused: one forwarding per invocation, so run two terminals.")
+    /// `.allUnrecognized`: ArgumentParser's default strategy for a variadic
+    /// positional DROPS an unknown dash-prefixed input and keeps its value,
+    /// so `--password x` used to arrive here as `["x"]` and was refused with
+    /// the two-names sentence — exit 64 and no secret accepted, but the
+    /// wrong reason, and the flag itself nowhere to be seen (measured
+    /// 2026-09-07, final review of the CLI plan). With every unrecognised
+    /// input collected, `validate()` refuses a dash-prefixed one as the
+    /// unknown option it is, and a bare one as the second name it is.
+    @Argument(
+        parsing: .allUnrecognized,
+        help: "Refused: one forwarding per invocation, so run two terminals.")
     var alsoNamed: [String] = []
 
     /// Everything that can be answered before anything is dialled: one name,
@@ -71,6 +81,9 @@ struct TunnelStartCommand: AsyncParsableCommand {
     /// connection failure, telling a script the server was unreachable when
     /// its arguments were wrong.
     func validate() throws {
+        if let stray = alsoNamed.first(where: { $0.hasPrefix("-") }) {
+            throw ValidationError("unknown option '\(stray)'")
+        }
         guard alsoNamed.isEmpty else {
             throw ValidationError("one forwarding per invocation; run two terminals")
         }
@@ -111,9 +124,11 @@ struct TunnelStartCommand: AsyncParsableCommand {
     /// loop.
     ///
     /// The same composition `TunnelManager.liveRunner` makes for a window,
-    /// with this tool's own pieces in place of the app's. FOUR differences,
+    /// with this tool's own pieces in place of the app's. FIVE differences,
     /// counted 2026-09-07 by reading `TunnelManager.liveRunner` against the
-    /// `TunnelRunner(` call below, argument by argument:
+    /// `TunnelRunner(` call below — four in the `connect:` closure's body,
+    /// and the decider, which is a parameter of that closure in both and
+    /// differs in who supplies it:
     ///
     /// 1. **The secret chain.** The app's is keychain-only
     ///    (`TunnelSecretSources.chain`: the session's item, plus a managed
@@ -132,6 +147,10 @@ struct TunnelStartCommand: AsyncParsableCommand {
     /// 4. **The session.** This one resolves it once in `run()` and captures
     ///    the value; the app re-reads its store per dial, so a session
     ///    edited between two dials reaches the second one.
+    /// 5. **The dial-failure record.** This one wraps the dial in
+    ///    `dialFailure.dialing { … }` so the exit code can name the error
+    ///    class of the LAST dial; the app keeps no such record — its
+    ///    states carry the mapped reason instead.
     ///
     /// The runtime factory and the backoff sleeper are `TunnelRunner`'s own
     /// defaults — the live factory and `Task.sleep` — which is what the app

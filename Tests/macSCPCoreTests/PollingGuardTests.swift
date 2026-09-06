@@ -348,7 +348,7 @@ struct PollingGuardTests {
     ///
     /// A condition that reads `Task.isCancelled` is not this shape: the
     /// loop's own test ends it on the first turn after cancellation, which
-    /// is why three of the six `while` blocks this check finds are allowed
+    /// is why three of the five `while` blocks this check finds are allowed
     /// by their condition alone (counted 2026-09-07 by this check's own
     /// scan; `everyCancellationObservingLoopIsSeen` below records the
     /// totals).
@@ -386,10 +386,11 @@ struct PollingGuardTests {
     /// Cancellation` could pass over a tree where the block finder matches
     /// nothing, or keep exempting a loop that no longer exists.
     ///
-    /// Counted 2026-09-07 by running this scan over `Tests/`: 6 blocks,
-    /// 3 of them ending on `Task.isCancelled`, 1 per exemption sentence,
-    /// and — once `TunnelLatch.wait()` stopped polling — none left over.
-    /// A first draft scanned RAW source and reported 12; the six extra
+    /// Counted 2026-09-07 by running this scan over `Tests/` AFTER
+    /// `TunnelLatch.wait()` stopped polling: 5 blocks, 3 of them ending on
+    /// `Task.isCancelled`, 1 per exemption sentence, none left over (the
+    /// latch was the sixth block and the one offender before the fix).
+    /// A first draft scanned RAW source and reported 11; the six extra
     /// were `while !Task.isCancelled` loops quoted inside
     /// `LivenessProbeWiringGuardTests`\' fixture strings, which is exactly
     /// what the blanking is for.

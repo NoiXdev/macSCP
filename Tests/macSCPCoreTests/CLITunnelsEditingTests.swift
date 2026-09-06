@@ -550,16 +550,16 @@ struct CLITunnelsEditingTests {
     /// satisfy every scan for a keychain call, and only the binary can say
     /// whether the flag parses.
     ///
-    /// **What the refusal actually says, measured 2026-09-07.** Not
-    /// "unknown option". `alsoNamed` is a variadic `@Argument`, and
-    /// ArgumentParser's default strategy for one is `.remaining`, which
-    /// takes dash-prefixed inputs it did not match — so BOTH the flag and
-    /// its value land there and the refusal is this tool's own "one
-    /// forwarding per invocation". Exit 64 either way, and the value never
-    /// reaches a secret, which is what this case is for; the misleading
-    /// sentence is recorded as a deferred minor in `docs/BACKLOG.md` rather
-    /// than fixed here, because changing `parsing:` after the review would
-    /// be a behaviour change nobody has reviewed.
+    /// **What the refusal says, measured 2026-09-07.** An unknown option
+    /// is refused as one, naming the flag. It did not use to be: `alsoNamed`
+    /// is a variadic `@Argument`, and ArgumentParser's default strategy for
+    /// one takes dash-prefixed inputs it did not match — so BOTH the flag
+    /// and its value landed there and the refusal was this tool's own "one
+    /// forwarding per invocation" (exit 64 and no secret accepted, but the
+    /// wrong reason). A dash check in `validate()` closed it after the final
+    /// review (no parsing strategy refuses an unknown option while still
+    /// collecting a bare second name); the two-names sentence is driven
+    /// below with what it exists for, a real second name.
     ///
     /// The positive that keeps the negative honest is the same command line
     /// without the flag: it must NOT be refused with that sentence, so the
@@ -579,10 +579,22 @@ struct CLITunnelsEditingTests {
             #expect(
                 refused.status == Self.validationFailure,
                 "\(flag) exited \(refused.status): \(refused.stderr)")
+            // The trailing positional refuses a dash-prefixed stray AS AN
+            // OPTION, naming it, not as a second name.
             #expect(
-                refused.stderr.contains(twoNames),
+                refused.stderr.contains(flag) && !refused.stderr.contains(twoNames),
                 "\(flag) was refused for another reason: \(refused.stderr)")
         }
+
+        // The sentence the positional exists for, driven with what it is
+        // for: a real second name.
+        let twoForwardings = try await cli.run([
+            "tunnels", "start", "db", "other", "--session", CLI.sshSessionName,
+        ])
+        #expect(twoForwardings.status == Self.validationFailure)
+        #expect(
+            twoForwardings.stderr.contains(twoNames),
+            "two names were refused for another reason: \(twoForwardings.stderr)")
 
         let withoutTheFlag = try await cli.run([
             "tunnels", "start", "db", "--session", CLI.sshSessionName,

@@ -42,10 +42,11 @@ the same way `ls`/`get`/`put` are.
   driving case per subcommand. Whether a backend can do an OPERATION is
   asked of `ProtocolCapabilities` (`CLIMatrix.supports(_:named:operation:)`);
   there is no notion of a subcommand that applies to one backend only.
-- Secrets reach the CLI through the environment
-  (`BackendDescriptor.secretEnvironmentVariable`) or `--password-command`;
-  keychain entries are shared with the app by per-entry consent (M20
-  addendum, 2026-08-04). The CLI writes no keychain entry today.
+- Secrets reach the CLI through `--password-command`, then the
+  environment variable (`BackendDescriptor.secretEnvironmentVariable`),
+  then the keychain entry the app wrote, shared by per-entry consent (M20
+  addendum, 2026-08-04) — in that precedence. The CLI writes no keychain
+  entry today.
 - Exit codes (M20): 0 success, 2 usage, 10 secret, 11 host key unknown,
   12 host key mismatch, 13 connection failed, 14 path/remote error,
   15 conflict. ArgumentParser's `validate()` failures exit 64.
