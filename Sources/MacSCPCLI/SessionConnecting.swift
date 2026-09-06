@@ -141,13 +141,18 @@ func makeDecider(policy: HostKeyPolicy) -> HostKeyDecider {
                 """.utf8))
             return false
         case .prompt:
-            FileHandle.standardError.write(Data("""
+            // The question, the stream it goes to and the reading of the
+            // answer are `CLIEnvironment.confirm(_:)`'s, shared with
+            // `sessions rm` — the two places this tool asks a person
+            // anything. The TEXT is unchanged from when it was written out
+            // here, down to the missing trailing newline
+            // (`CLIMatrixSSHITests.hostKeyPromptText` pins it, and it still
+            // occurs exactly once in `Sources/`).
+            return CLIEnvironment.confirm("""
                 Unknown host key for \(candidate.host):\(candidate.port)
                   \(candidate.keyType) \(candidate.fingerprintSHA256)
                 Trust this host? [y/N]
-                """.utf8))
-            guard let line = readLine(strippingNewline: true) else { return false }
-            return line.lowercased() == "y" || line.lowercased() == "yes"
+                """)
         }
     }
 }

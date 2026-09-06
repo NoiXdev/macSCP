@@ -645,10 +645,14 @@ struct CLIMatrix: Sendable {
     /// 2026-09-04 from `macscp-cli ls --help`, where `--verbose`'s and
     /// `--accept-new`'s abstracts both wrap). Taking the first token of every
     /// indented line, as this did, would read `diagnostics.` as a command
-    /// name the moment an abstract wrapped. Nothing wraps today — counted
-    /// 2026-09-04, all six rows fit on one line, the widest being `get` at 72
-    /// columns against ArgumentParser's 80 — so the hazard was invisible and
-    /// entirely reachable: eight more characters in one abstract. This help
+    /// name the moment an abstract wrapped. Nothing wraps today — recounted
+    /// 2026-09-06 from the built binary's own `--help`, all SEVEN rows fit on
+    /// one line, the widest being `get` at 72 columns against
+    /// ArgumentParser's 80 (`diagnose` 69, `sessions` 68 since it became a
+    /// group) — so the hazard was invisible and entirely reachable: eight
+    /// more characters in one abstract. The count said six until this
+    /// recount: `diagnose` was the seventh row from 2026-09-04 on, and the
+    /// sentence went on claiming six. This help
     /// prints no `<subcommand>` alternatives in its USAGE line to
     /// cross-check against (`USAGE: macscp-cli <subcommand>`), so the column
     /// is the anchor.

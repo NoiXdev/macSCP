@@ -55,25 +55,56 @@ struct CLISessionNameCompletionTests {
     /// docs/BACKLOG.md's "CLI: completion, help, host list", the item left
     /// open after session-name completion shipped): `swift-argument-parser`
     /// wires a `.custom` completion into the generated zsh script as a call
-    /// to `__<binary>_custom_complete ---completion <command> -- <option>`,
-    /// so the positive proof that these two options actually get DYNAMIC
-    /// completion (not the generator's static fallback) is that exact call
-    /// naming `sessions` and each option, present in the real generated
-    /// script — the same binary-level proof
-    /// `theGeneratedZshScriptNamesEverySubcommand` uses for subcommands,
-    /// one level down.
+    /// to `__<binary>_custom_complete ---completion <command path> --
+    /// <option>`, so the positive proof that these two options actually get
+    /// DYNAMIC completion (not the generator's static fallback) is that exact
+    /// call, present in the real generated script — the same binary-level
+    /// proof `theGeneratedZshScriptNamesEverySubcommand` uses for
+    /// subcommands, one level down.
+    ///
+    /// The command PATH in that call is the one the option really sits on,
+    /// and neither half of it is written here any more. It used to be the
+    /// literal `sessions`, and it went stale the moment `sessions` became a
+    /// group (2026-09-06): the options moved onto its verbs, the generated
+    /// call became `---completion sessions list -- --group`, and the literal
+    /// matched nothing. So both sides are READ from the binary: which verbs
+    /// the group offers, and which of them advertise the option — then the
+    /// wired set must equal the advertising set, in both directions. A verb
+    /// that offers `--group` without dynamic completion is red, and so is a
+    /// wiring left behind on a verb that no longer takes the option.
     @Test func theGeneratedZshScriptWiresCustomCompletionForGroupAndTag() async throws {
         let binary = try Self.locateCLIBinary()
-        let result = try await Self.runProcess(binary, ["--generate-completion-script", "zsh"])
-        #expect(result.status == 0, "--generate-completion-script zsh failed: \(result.stderr)")
-        #expect(result.stdout.contains("---completion sessions -- --group"), """
-            zsh completion script does not wire custom completion onto \
-            `sessions --group`: \(result.stdout)
-            """)
-        #expect(result.stdout.contains("---completion sessions -- --tag"), """
-            zsh completion script does not wire custom completion onto \
-            `sessions --tag`: \(result.stdout)
-            """)
+        let script = try await Self.runProcess(binary, ["--generate-completion-script", "zsh"])
+        #expect(script.status == 0, "--generate-completion-script zsh failed: \(script.stderr)")
+
+        let groupHelp = try await Self.runProcess(binary, ["help", "sessions"])
+        #expect(groupHelp.status == 0, "help sessions failed: \(groupHelp.stderr)")
+        let verbs = CLIMatrix.parseSubcommands(groupHelp.stdout)
+        #expect(!verbs.isEmpty, "the sessions group offers no verbs at all")
+
+        for option in ["--group", "--tag"] {
+            var advertising: [String] = []
+            var wired: [String] = []
+            for verb in verbs {
+                let help = try await Self.runProcess(binary, ["help", "sessions", verb])
+                #expect(help.status == 0, "help sessions \(verb) failed: \(help.stderr)")
+                if CLIMatrix.parseOptionNames(help.stdout).contains(option) {
+                    advertising.append(verb)
+                }
+                if script.stdout.contains("---completion sessions \(verb) -- \(option)") {
+                    wired.append(verb)
+                }
+            }
+            #expect(
+                !advertising.isEmpty,
+                "no verb of the sessions group advertises \(option) at all")
+            #expect(
+                wired.sorted() == advertising.sorted(),
+                """
+                \(option) is advertised by \(advertising.sorted()) and given \
+                custom completion on \(wired.sorted())
+                """)
+        }
     }
 
     // MARK: - Binary-level harness (self-contained rather than shared —
