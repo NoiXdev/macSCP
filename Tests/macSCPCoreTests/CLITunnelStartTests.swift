@@ -271,20 +271,23 @@ struct CLITunnelStartExitTests {
 /// `tunnels start` is the second command in this tool that decides a host
 /// key, and it must decide it the way the first one does.
 ///
-/// A source-text scan, like this project's other wiring guards, with one
-/// difference worth stating: the function it requires is NOT spelled here.
-/// It is walked out of `LsCommand.swift` — the calls that command makes, the
-/// calls those make, until a function is reached whose declaration returns a
-/// `HostKeyDecider`. So renaming that function, or routing `ls` through a
-/// different one, moves this guard with it instead of leaving it pinned to a
-/// name nothing uses any more (CLAUDE.md, "Guards that name what they
-/// watch", rule 2).
+/// A source-text scan, like this project's other wiring guards, with two
+/// differences worth stating.
 ///
-/// The negative — the new file builds no decider of its own — has three
-/// positives beside it: the walk found exactly one such function, that
-/// function really does construct a decider, and the new file really does
-/// call it. Without those, a walk that found nothing would report the
-/// absence of a violation it never looked for.
+/// The function it requires is NOT spelled here. It is walked out of
+/// `LsCommand.swift` — the calls that command makes, the calls those make,
+/// until a function is reached whose declaration returns a `HostKeyDecider`.
+/// So renaming that function, or routing `ls` through a different one, moves
+/// this guard with it instead of leaving it pinned to a name nothing uses
+/// any more (CLAUDE.md, "Guards that name what they watch", rule 2).
+///
+/// And the scan is SCOPED to the body of the function that composes the
+/// dial, found by the type it constructs (`TunnelRunner(`) rather than by
+/// name. A whole-file scan is what round 1 shipped, and it was satisfied by
+/// the file's own doc comment naming the builder in prose — CLAUDE.md,
+/// "Source-scanning guards read comments too", exactly. Inside that body the
+/// positive is the argument itself (`decider: <derived name>(`) and the
+/// negative is every spelling that would answer the question elsewhere.
 @Suite("CLI tunnels start decider guard")
 struct CLITunnelStartDeciderGuardTests {
     private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
@@ -296,17 +299,26 @@ struct CLITunnelStartDeciderGuardTests {
     private static let startCommandFile = cliDirectory
         .appendingPathComponent("TunnelStartCommand.swift")
 
-    /// The two ways a decider gets built by hand. Both are forbidden in the
-    /// new file: the first constructs the type, the second reaches its one
-    /// factory.
-    private static let deciderConstructions = ["HostKeyDecider(", ".asking {"]
+    /// Every way a decider could be produced without asking the shared
+    /// builder: the two constructions, the two spellings of its one factory,
+    /// and the two ready-made deciders Core vends. Any of them inside the
+    /// body that composes the dial means the TOFU question is answered
+    /// there, past `--accept-new`/`--non-interactive`.
+    ///
+    /// `.refusing` and `.accepting` are the ones round 1 could not have
+    /// caught: neither constructs anything, and both would have read as a
+    /// perfectly ordinary argument.
+    private static let deciderSpellings = [
+        "HostKeyDecider(", "HostKeyDecider .init(", ".asking {", ".asking({",
+        ".refusing", ".accepting",
+    ]
 
-    private static func constructionsFound(in source: String) -> [String] {
-        deciderConstructions.filter { source.contains($0) }
+    private static func spellingsFound(in source: String) -> [String] {
+        deciderSpellings.filter { source.contains($0) }
     }
 
-    /// The one derivation, run once per test that needs it: the walk out of
-    /// `LsCommand.swift` and the single decider builder it reaches.
+    /// The walk out of `LsCommand.swift` and the single decider builder it
+    /// reaches.
     private static func derivedBuilder() throws -> (walk: CLISourceWalk, name: String) {
         var walk = try CLISourceWalk(directory: cliDirectory)
         let builders = try walk.deciderBuilders(reachableFrom: lsCommandFile)
@@ -321,6 +333,25 @@ struct CLITunnelStartDeciderGuardTests {
         return (walk, name)
     }
 
+    /// The body of the one function in `TunnelStartCommand.swift` that
+    /// builds the runner — the function that dials, found by what it
+    /// constructs rather than by its name.
+    private static func composingBody() throws -> (source: String, body: String) {
+        let source = try String(contentsOf: startCommandFile, encoding: .utf8)
+        let composing = CLISourceWalk.functionSlices(in: source)
+            .filter { $0.body.contains("TunnelRunner(") }
+        #expect(composing.count == 1, """
+            \(composing.count) functions in TunnelStartCommand.swift construct a \
+            TunnelRunner( — this guard needs exactly one body to scan.
+            """)
+        let body = try #require(composing.first?.body, """
+            no function in TunnelStartCommand.swift constructs a TunnelRunner( — \
+            the file is not the implementation this guard thinks it is.
+            """)
+        #expect(body.count < source.count, "the slice swallowed the whole file")
+        return (source, body)
+    }
+
     // MARK: - Positive: the walk lands on a real decider builder
 
     @Test func theWalkFromLsReachesExactlyOneDeciderBuilder() throws {
@@ -332,65 +363,104 @@ struct CLITunnelStartDeciderGuardTests {
         let derived = try Self.derivedBuilder()
         let body = try #require(
             derived.walk.body(of: derived.name), "no body found for \(derived.name)")
-        #expect(!Self.constructionsFound(in: body).isEmpty, """
-            \(derived.name) returns a HostKeyDecider without constructing one \
-            — the walk landed on a forwarder, so the negative check below is \
+        #expect(!Self.spellingsFound(in: body).isEmpty, """
+            \(derived.name) returns a HostKeyDecider without naming one — the \
+            walk landed on a forwarder, so the negative check below is \
             watching the wrong function.
             """)
     }
 
-    @Test func theStartCommandCallsThatSameBuilder() throws {
+    /// The positive: the decider handed to the run is the derived builder's
+    /// own return value, at the argument itself.
+    ///
+    /// Anchored on `decider: <name>(` rather than on `start(decider: <name>(`
+    /// because the `start(decider:)` call moved into Core with the loop
+    /// (`TunnelForegroundRun.drive`): the command's remaining job is to
+    /// COMPOSE, and the decider is one of the arguments it composes with.
+    /// The anchor is therefore where the choice is actually made.
+    @Test func theComposedRunIsHandedTheDerivedBuildersDecider() throws {
         #expect(FileManager.default.fileExists(atPath: Self.startCommandFile.path))
         let derived = try Self.derivedBuilder()
-        let source = try String(contentsOf: Self.startCommandFile, encoding: .utf8)
-        #expect(source.contains("TunnelRunner("), """
-            TunnelStartCommand.swift no longer builds a TunnelRunner( — the \
-            positive anchor has nothing to confirm the scanner is reading a \
-            real implementation.
-            """)
-        #expect(source.contains("\(derived.name)("), """
-            TunnelStartCommand.swift does not call \(derived.name)( — the \
-            host-key decision has to be made by the same function ls makes it \
-            with, not by a second one.
+        let scanned = try Self.composingBody()
+        #expect(scanned.body.contains("decider: \(derived.name)("), """
+            the function that builds the TunnelRunner does not pass \
+            decider: \(derived.name)( — the host-key decision has to be made \
+            by the same function ls makes it with, not by a second one.
             """)
     }
 
-    // MARK: - Negative: it builds none of its own
+    // MARK: - Negative: it answers the question nowhere else
 
-    @Test func theStartCommandConstructsNoDeciderOfItsOwn() throws {
-        let source = try String(contentsOf: Self.startCommandFile, encoding: .utf8)
-        let found = Self.constructionsFound(in: source)
+    @Test func theComposingBodyNamesNoDeciderOfItsOwn() throws {
+        let scanned = try Self.composingBody()
+        let found = Self.spellingsFound(in: scanned.body)
         #expect(found.isEmpty, """
-            TunnelStartCommand.swift names \(found) — a decider built here \
-            answers the TOFU question with its own policy instead of the one \
-            --accept-new/--non-interactive select.
+            the function that builds the TunnelRunner names \(found) — a \
+            decider chosen there answers the TOFU question with its own \
+            policy instead of the one --accept-new/--non-interactive select.
             """)
     }
 
-    @Test func theScannerFlagsAPlantedDecider() {
+    @Test(arguments: [
+        "let decider = HostKeyDecider(alwaysAccepting: true)",
+        "let decider = HostKeyDecider .init(alwaysAccepting: true)",
+        "return .asking { _ in true }",
+        "return .asking({ _ in true })",
+        "await runner.start(decider: .refusing)",
+        "await runner.start(decider: .accepting)",
+    ])
+    func theScannerFlagsEverySpellingOfAPlantedDecider(planted: String) {
         let fixture = """
             struct FixtureStart {
-                func decider() -> HostKeyDecider {
-                    if accepting { return HostKeyDecider(alwaysAccepting: true) }
-                    return .asking { _ in true }
+                static func hold() async {
+                    let runner = TunnelRunner(profile: profile, connect: connect)
+                    \(planted)
                 }
             }
             """
-        #expect(Self.constructionsFound(in: fixture) == ["HostKeyDecider(", ".asking {"], """
-            expected the scanner to flag the planted decider, found \
-            \(Self.constructionsFound(in: fixture)) instead.
+        #expect(!Self.spellingsFound(in: fixture).isEmpty, """
+            the scanner did not flag \(planted).
             """)
     }
 
     @Test func theScannerAcceptsAFixtureThatAsksForOne() {
         let fixture = """
             struct FixtureStart {
-                func run() async throws {
-                    let decider = makeSomeDecider(policy: options.hostKeyPolicy)
+                static func hold() async {
+                    let runner = TunnelRunner(profile: profile, connect: connect)
+                    await drive(runner: runner, decider: makeSomeDecider(policy: policy))
                 }
             }
             """
-        #expect(Self.constructionsFound(in: fixture).isEmpty)
+        #expect(Self.spellingsFound(in: fixture).isEmpty)
+    }
+
+    /// The slicer's own sensitivity: a second function in the same fixture
+    /// must not be read as part of the first. Round 1's slicer ended a
+    /// METHOD's body at the next declaration in column 0 — the closing brace
+    /// of the type — so every method of a struct shared one slice, and
+    /// scoping a scan to "the body that composes the dial" would have
+    /// scanned every sibling method with it.
+    @Test func theSlicerEndsAMethodAtItsOwnClosingBrace() {
+        let fixture = """
+            struct FixtureStart {
+                static func hold() async {
+                    let runner = TunnelRunner(profile: profile, connect: connect)
+                }
+
+                static func interrupts() -> AsyncStream<Void> {
+                    .asking { _ in true }
+                }
+            }
+            """
+        let slices = CLISourceWalk.functionSlices(in: fixture)
+        #expect(slices.map(\.name) == ["hold", "interrupts"])
+        let composing = slices.filter { $0.body.contains("TunnelRunner(") }
+        #expect(composing.count == 1)
+        #expect(Self.spellingsFound(in: composing[0].body).isEmpty, """
+            the slice of hold reaches into interrupts — a body-scoped scan \
+            would be reading a sibling method.
+            """)
     }
 }
 
@@ -398,15 +468,11 @@ struct CLITunnelStartDeciderGuardTests {
 ///
 /// Deliberately crude — it knows about `func` declarations and about
 /// identifiers followed by `(` — because what it is asked is crude: which
-/// functions can be reached from one command's own file. It is a test
-/// fixture, not a parser, and every question put to it is checked for having
-/// found something at all.
+/// functions can be reached from one command's own file, and what one
+/// function's body says. It is a test fixture, not a parser, and every
+/// question put to it is checked for having found something at all.
 struct CLISourceWalk {
-    /// Function name → the text from its `func` line to the next line that
-    /// starts a new declaration at column 0 (a top-level function's closing
-    /// brace is such a line, so its slice is exactly its body). A METHOD's
-    /// slice runs to the end of the type that declares it, which is wide
-    /// rather than wrong: the walk only ever asks what a slice CALLS.
+    /// Function name → the text of its body.
     private var slices: [String: String] = [:]
     /// The `func` line of each function, so a return type can be read
     /// without finding the declaration again.
@@ -422,9 +488,9 @@ struct CLISourceWalk {
         }
         for file in files {
             let source = try String(contentsOf: file, encoding: .utf8)
-            Self.eachFunction(in: source) { name, declaration, slice in
-                slices[name] = slice
-                declarations[name] = declaration
+            for slice in Self.functionSlices(in: source) {
+                slices[slice.name] = slice.body
+                declarations[slice.name] = slice.declaration
             }
         }
     }
@@ -470,34 +536,70 @@ struct CLISourceWalk {
         return names
     }
 
-    /// Calls `body` once per `func` declaration, with its name, its `func`
-    /// line and the slice that follows it.
-    private static func eachFunction(
-        in source: String, _ body: (String, String, String) -> Void
-    ) {
+    /// One entry per `func` declaration: its name, its `func` line, and the
+    /// text from that line to the end of its body.
+    ///
+    /// The end is found by INDENTATION: a body ends at the first line
+    /// indented no deeper than the `func` keyword that begins something else
+    /// — a closing brace, another declaration, a doc comment, an attribute.
+    /// A top-level function therefore ends at its own `}` in column 0, and a
+    /// method at its own `}` at the type's member indentation, so two
+    /// methods of one type get two slices. (Round 1 ended every slice at
+    /// column 0, which gave every method of a struct the same slice, running
+    /// to the end of the type.)
+    static func functionSlices(
+        in source: String
+    ) -> [(name: String, declaration: String, body: String)] {
+        var found: [(name: String, declaration: String, body: String)] = []
         let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
         for (index, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("func "), let name = functionName(in: trimmed) else { continue }
+            guard let name = functionName(in: trimmed) else { continue }
+            let indent = line.prefix { $0 == " " }.count
             var end = index + 1
-            while end < lines.count, !startsADeclaration(lines[end]) { end += 1 }
-            body(name, String(line), lines[index..<end].joined(separator: "\n"))
+            while end < lines.count, !endsABody(lines[end], deeperThan: indent) { end += 1 }
+            found.append(
+                (name, String(line), lines[index...min(end, lines.count - 1)]
+                    .joined(separator: "\n")))
         }
+        return found
     }
 
-    /// Whether a line at column 0 begins something new — the end of the
-    /// slice before it. `}` is included because a top-level function's
-    /// closing brace sits there, which is exactly where its body ends.
-    private static func startsADeclaration(_ line: Substring) -> Bool {
-        for prefix in ["func ", "struct ", "enum ", "extension ", "protocol ", "///", "}"] {
-            if line.hasPrefix(prefix) { return true }
+    /// Whether `line` is where a body indented under `indent` ends: a
+    /// non-empty line at the same indentation or shallower that closes a
+    /// brace or begins something new.
+    private static func endsABody(_ line: Substring, deeperThan indent: Int) -> Bool {
+        let leading = line.prefix { $0 == " " }.count
+        guard leading <= indent else { return false }
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return false }
+        if functionName(in: trimmed) != nil { return true }
+        for prefix in ["}", "struct ", "enum ", "extension ", "protocol ", "///", "@"] {
+            if trimmed.hasPrefix(prefix) { return true }
         }
         return false
     }
 
-    private static func functionName(in declaration: String) -> String? {
-        let afterKeyword = declaration.dropFirst("func ".count)
-        let name = afterKeyword.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
+    /// The name declared by `trimmed`, or `nil` where it declares no
+    /// function.
+    ///
+    /// The modifiers are read rather than assumed away: `static func hold`
+    /// is a declaration and `let f = funcs(…)` is not, and a check for the
+    /// bare prefix `func ` answers wrongly on both. Round 1 used that bare
+    /// prefix and saw no `static` method in the tree at all — which is every
+    /// method on `TunnelStartCommand`.
+    private static let modifiers: Set<String> = [
+        "public", "package", "open", "internal", "private", "fileprivate", "static", "class",
+        "final", "mutating", "nonmutating", "nonisolated", "override", "required",
+    ]
+
+    private static func functionName(in trimmed: String) -> String? {
+        guard let keyword = trimmed.range(of: "func ") else { return nil }
+        let before = trimmed[..<keyword.lowerBound]
+            .split(separator: " ").map(String.init)
+        guard before.allSatisfy({ modifiers.contains($0) }) else { return nil }
+        let name = trimmed[keyword.upperBound...]
+            .prefix { $0.isLetter || $0.isNumber || $0 == "_" }
         return name.isEmpty ? nil : String(name)
     }
 }

@@ -1,7 +1,6 @@
 import ArgumentParser
 import Darwin
 import Foundation
-import Synchronization
 import macSCPCore
 
 /// Holds one saved forwarding open in THIS process, the way `ssh -L` does:
@@ -12,19 +11,21 @@ import macSCPCore
 /// point 4).
 ///
 /// The one verb of the `tunnels` group that DIALS, which is why it declares
-/// `GlobalOptions` where the four store verbs declare nothing, and why it
-/// sits in its own file. Everything it decides about the connection is
-/// decided by the same functions `ls` uses: the secret chain is
-/// `secretChain(for:options:)` and the host-key question goes to
-/// `makeDecider(policy:)`, so `--accept-new`/`--non-interactive` mean here
-/// exactly what they mean there. `CLITunnelStartDeciderGuardTests` walks
-/// that second claim out of `LsCommand.swift` rather than trusting this
-/// sentence.
+/// `GlobalOptions` where the four store verbs declare none, and why it sits
+/// in its own file. Everything it decides about the connection is decided by
+/// the same functions `ls` uses: the secret chain is
+/// `secretChain(for:options:)` — `--password-command`, then the environment
+/// variable, then the keychain entry the app stored, read and never written
+/// — and the host-key question goes to the shared decider builder, so
+/// `--accept-new`/`--non-interactive` mean here exactly what they mean
+/// there. `CLITunnelStartDeciderGuardTests` walks that second claim out of
+/// `LsCommand.swift` rather than trusting this sentence.
 ///
-/// What it prints and what it exits with are not decided here either:
-/// `TunnelStateLine` and `TunnelExit` (Core) own both, table-tested in
-/// `CLITunnelStartTests`. This file is the wiring — resolve, compose, watch
-/// two signals, leave.
+/// What it prints, what it exits with and the loop that holds it open are
+/// not decided here either: `TunnelStateLine`, `TunnelExit` and
+/// `TunnelForegroundRun` (Core) own all three, measured in
+/// `CLITunnelStartTests` and `CLITunnelForegroundRunTests`. This file is the
+/// composition — resolve, compose, hand over two signals, leave.
 struct TunnelStartCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "start",
@@ -36,11 +37,12 @@ struct TunnelStartCommand: AsyncParsableCommand {
             port where the forward has one, and the live connection count as \
             it changes), reconnecting attempt=N when the profile reconnects, \
             stopped — or one JSON object per line with --json. Ctrl-C (or \
-            SIGTERM) stops the forwarding and exits 0. A tunnel that cannot \
-            be held open exits 13 with the reason on stderr; an unknown host \
-            key exits 11 (rerun with --accept-new), a key MISMATCH exits 12 \
-            and no flag makes it pass, and a session with no secret this \
-            tool can reach exits 10.
+            SIGTERM) stops the forwarding and exits 0; a second one leaves \
+            at once, without waiting for a teardown that is taking its time. \
+            A tunnel that cannot be held open exits 13 with the reason on \
+            stderr; an unknown host key exits 11 (rerun with --accept-new), \
+            a key MISMATCH exits 12 and no flag makes it pass, and a session \
+            whose secret this tool cannot resolve exits 10.
             """)
 
     @OptionGroup var options: GlobalOptions
@@ -83,10 +85,9 @@ struct TunnelStartCommand: AsyncParsableCommand {
         // block-buffered whenever its destination is not a terminal, so
         // `tunnels start --json | jq` would see nothing until the buffer
         // filled — and a forwarding that is up prints one line and then
-        // waits, possibly for hours. `diagnose` and this command are the two
-        // of the eight subcommands that print as they go (counted
-        // 2026-09-06); the other six compute their whole answer and print it
-        // in one pass.
+        // waits, possibly for hours. Two places in this tool print as they
+        // go and both set the mode at the top of their own `run()`:
+        // `diagnose`, a subcommand, and this verb (counted 2026-09-06).
         setvbuf(stdout, nil, _IOLBF, 0)
         // Re-resolved rather than carried over from `validate()`: a
         // `ParsableCommand` is handed to `validate()` as a copy and has
@@ -104,118 +105,65 @@ struct TunnelStartCommand: AsyncParsableCommand {
         Foundation.exit(code.rawValue)
     }
 
-    // MARK: - The run
+    // MARK: - The composition
 
-    /// What the dial failed with, kept as the two Sendable facts the exit
-    /// needs rather than as the error itself.
+    /// Builds the runner this tool dials with and hands it to the foreground
+    /// loop.
     ///
-    /// The ERROR is only ever in hand inside the connect closure — by the
-    /// time the runner publishes `failed` or `needsConfirmation` it has
-    /// become mapped text — and it is the error that tells 10 from 11 and 12
-    /// from 13. So it is mapped where it is caught, through the same
-    /// `CLIErrorMapping` every other subcommand exits by, and only the
-    /// answer travels.
-    private struct DialFailure: Sendable {
-        let code: CLIExitCode
-        let message: String
-
-        init(_ error: any Error) {
-            code = CLIErrorMapping.exitCode(for: error)
-            message = CLIErrorMapping.message(for: error)
-        }
-    }
-
-    /// Dials, holds the forwarding open, and returns the code to leave with.
-    ///
-    /// The loop is the whole command: `TunnelRunner.states` publishes only
-    /// states that CHANGED, so one line per element is one line per change,
-    /// and `TunnelExit.code(for:dialFailure:)` answering non-`nil` is what
-    /// ends the run. A signal reaches this loop the same way everything else
-    /// does — through a state: the watcher awaits `runner.stop()`, which
-    /// publishes `.stopped`, which the loop prints and leaves on with 0.
+    /// The same composition `TunnelManager.liveRunner` makes for a window,
+    /// with this tool's own pieces in place of the app's: the app resolves
+    /// through the keychain alone and may prompt in a sheet, and this one
+    /// walks the command line's chain (`--password-command`, the environment
+    /// variable, then that same keychain entry) and asks on the terminal.
+    /// The runtime factory and the backoff sleeper are `TunnelRunner`'s own
+    /// defaults — the live factory and `Task.sleep` — which is what the app
+    /// takes too.
     ///
     /// `stops` is a parameter rather than a call to `interrupts()` inside,
-    /// so the ending can be driven without raising a real signal at a real
+    /// so a run can be ended without raising a real signal at a real
     /// process.
     static func hold(
         profile: TunnelProfile, session: StoredSession, options: GlobalOptions,
-        stops: AsyncStream<Int32>
+        stops: AsyncStream<Void>
     ) async -> CLIExitCode {
-        let asJSON = options.json
-        let verbose = options.verbose
-        // Read out of `options` before the closures below capture anything:
-        // they are `@Sendable`, and a `Bool` copied into one is Sendable
-        // where the command value is not (`DiagnoseCommand.run()`'s own
-        // note).
+        // Read out of `options` before the dial closure captures anything:
+        // it is `@Sendable`, and these values are, where the command value
+        // is not (`DiagnoseCommand.run()`'s own note).
         let secrets = secretChain(for: session, options: options)
         let knownHosts = KnownHostsStore(directory: SessionStore.defaultDirectory)
-        let failure = Mutex<DialFailure?>(nil)
+        let dialFailure = TunnelDialFailureRecord()
         let runner = TunnelRunner(
             profile: profile,
-            connect: { decider in
-                do {
-                    // The same composition `TunnelManager.liveRunner` makes
-                    // for a window, with this tool's own chain and decider
-                    // in place of the app's: the app resolves through the
-                    // keychain and may prompt in a sheet, and this one walks
-                    // the command line's sources and asks on the terminal.
-                    return try await TunnelConnection.connect(
+            connect: { hostKey in
+                // Through the record, which is what makes a failed dial's
+                // own error decide the exit code — and what clears it again
+                // when a later dial works.
+                try await dialFailure.dialing {
+                    try await TunnelConnection.connect(
                         session: session,
                         secrets: secrets,
                         knownHosts: knownHosts,
-                        decider: decider,
+                        decider: hostKey,
                         connectTimeoutSeconds: SettingsStore.defaultConnectTimeoutSeconds)
-                } catch {
-                    failure.withLock { $0 = DialFailure(error) }
-                    throw error
                 }
-            },
-            runtimes: LiveTunnelRuntimeFactory(),
-            sleeper: { delay in
-                // The real `Task.sleep`, cancellable as the `Sleeper`
-                // contract requires — `stop()` cancels the run task, and a
-                // backoff that ignored that would hold Ctrl-C for up to a
-                // minute.
-                if verbose {
-                    OutputFormatter.note("backoff seconds=\(delay.components.seconds)")
-                }
-                try await Task.sleep(for: delay)
             })
-
-        let watcher = Task {
-            for await _ in stops { break }
-            await runner.stop()
-        }
-        await runner.start(decider: makeDecider(policy: options.hostKeyPolicy))
-
-        var code = CLIExitCode.success
-        for await state in runner.states {
-            Swift.print(
-                TunnelStateLine.render(state, port: await runner.boundPort, json: asJSON))
-            let dialFailure = failure.withLock { $0 }
-            guard let terminal = TunnelExit.code(for: state, dialFailure: dialFailure?.code)
-            else { continue }
-            if let note = TunnelExit.note(for: state, dialMessage: dialFailure?.message) {
-                OutputFormatter.note(note)
-            }
-            code = terminal
-            break
-        }
-
-        watcher.cancel()
-        // Awaited on every path out, including the ones that already ended
-        // the run: `stop()` is idempotent (a runner with no task releases
-        // nothing and publishes nothing), and it is what guarantees the SSH
-        // connection and the forward are actually gone before the process
-        // leaves. The UI owns lifecycles explicitly here too — no `deinit`
-        // does this.
-        await runner.stop()
-        return code
+        return await TunnelForegroundRun.drive(
+            runner: runner,
+            stops: stops,
+            decider: makeDecider(policy: options.hostKeyPolicy),
+            json: options.json,
+            verbose: options.verbose,
+            dialFailure: dialFailure,
+            output: TunnelForegroundOutput(
+                line: { Swift.print($0) },
+                note: { OutputFormatter.note($0) }))
     }
 
     // MARK: - The two signals
 
-    /// SIGINT and SIGTERM, as an `AsyncStream` the run loop can await.
+    /// SIGINT and SIGTERM, as an `AsyncStream` the foreground loop can
+    /// await. Every element is one signal, so a second Ctrl-C is a second
+    /// element — which is the whole reason the stream is not a one-shot.
     ///
     /// `signal(n, SIG_IGN)` FIRST, then a `DispatchSourceSignal`: the
     /// default disposition for both is to kill the process outright, which
@@ -226,10 +174,22 @@ struct TunnelStartCommand: AsyncParsableCommand {
     /// this blocks a cooperative-pool thread or runs inside the signal
     /// handler's own restricted context.
     ///
+    /// **A `--password-command` child inherits the ignore**, and that is
+    /// accepted rather than worked around. `SIG_IGN` is set here, at the top
+    /// of the run, and the secret is resolved synchronously inside the dial
+    /// afterwards — so a credential helper that hangs cannot be Ctrl-C'd,
+    /// and neither can the dial that is waiting for it. What makes it
+    /// acceptable is the second signal: it is read while the first stop is
+    /// still going, whatever the dial is blocked on, and the run leaves at
+    /// once. Restoring `SIG_DFL` around the spawn would need Core's
+    /// `PasswordCommandSecretSource` to do it (it owns the `Process`), and
+    /// it would trade this for a window in which the first Ctrl-C kills the
+    /// process outright.
+    ///
     /// The sources are held by the stream's own termination handler, which
     /// is the only reference to them: without it they would be released at
     /// the end of this function and never fire.
-    static func interrupts(_ numbers: [Int32] = [SIGINT, SIGTERM]) -> AsyncStream<Int32> {
+    static func interrupts(_ numbers: [Int32] = [SIGINT, SIGTERM]) -> AsyncStream<Void> {
         AsyncStream { continuation in
             var sources: [any DispatchSourceSignal] = []
             for number in numbers {
@@ -237,7 +197,7 @@ struct TunnelStartCommand: AsyncParsableCommand {
                 let source = DispatchSource.makeSignalSource(
                     signal: number,
                     queue: DispatchQueue(label: "dev.noidee.macscp-cli.signal.\(number)"))
-                source.setEventHandler { continuation.yield(number) }
+                source.setEventHandler { continuation.yield(()) }
                 source.resume()
                 sources.append(source)
             }

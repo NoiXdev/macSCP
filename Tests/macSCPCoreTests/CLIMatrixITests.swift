@@ -2127,8 +2127,9 @@ struct CLIMatrixCommandsITests {
     /// that assumes they are does not merely carry a useless flag — it is
     /// refused.
     ///
-    /// THREE subcommands declare no `GlobalOptions`, recounted 2026-09-06,
-    /// and for three reasons. `sessions` takes `JSONOptions`
+    /// THREE TOP-LEVEL subcommands declare no `GlobalOptions` — the level
+    /// this test's list is read at — recounted 2026-09-06, and for three
+    /// reasons. `sessions` takes `JSONOptions`
     /// (`Sources/MacSCPCLI/SessionsCommand.swift`) because it opens no
     /// connection and resolves no secret; `tunnels`
     /// (`Sources/MacSCPCLI/TunnelsCommand.swift`) declares nothing at the

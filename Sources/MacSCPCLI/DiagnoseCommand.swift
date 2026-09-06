@@ -96,10 +96,10 @@ struct DiagnoseCommand: AsyncParsableCommand {
         // answer and print it in one pass, so a row arriving early or late
         // is not something their callers can observe either way.
         // Line-buffering every subcommand from one shared spot
-        // would change all eight together for a property only this one has,
-        // and it must run before this command's first `print` — which "the
-        // top of `run()`" already guarantees without threading a flag
-        // through `MacSCPCLI`'s shared entry point for seven commands that
+        // would change all eight together for a property only two of them
+        // have, and it must run before this command's first `print` — which
+        // "the top of `run()`" already guarantees without threading a flag
+        // through `MacSCPCLI`'s shared entry point for the six commands that
         // do not need it.
         setvbuf(stdout, nil, _IOLBF, 0)
         let target = try resolveTarget()

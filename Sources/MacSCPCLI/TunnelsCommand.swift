@@ -8,10 +8,13 @@ import macSCPCore
 /// no secret, no keychain, no connection, in any verb below.
 ///
 /// The fifth, `start`, is the exception and lives in its own file
-/// (`TunnelStartCommand.swift`): it dials, so it resolves a secret through
-/// this tool's own chain and declares `GlobalOptions` where the four below
-/// declare none. Nothing here opens the keychain either way — that remains
-/// true of the whole group, `start` included.
+/// (`TunnelStartCommand.swift`): it dials, so it declares `GlobalOptions`
+/// where the four below declare none, and it resolves the session's secret
+/// the way every dialling command in this tool does — `--password-command`,
+/// then the environment variable, then the keychain entry the app stored
+/// (`secretSources(for:passwordCommand:)`, whose order is Core's). That
+/// last source is READ and never written: no verb of this tool puts a
+/// secret in the keychain.
 ///
 /// `list` is the DEFAULT subcommand, the same choice `SessionsCommand` made
 /// and for a weaker reason: no script can have been written against
@@ -25,7 +28,6 @@ import macSCPCore
 /// completer appends a trailing `:` because it completes `name:/path`
 /// targets, and a bare-name completer is its own change (the design's "Not
 /// in this plan").
-///
 struct TunnelsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "tunnels",
@@ -37,8 +39,10 @@ struct TunnelsCommand: AsyncParsableCommand {
             [bind:]port:host:hostport for --local and --remote, [bind:]port \
             for --dynamic, with the bind address defaulting to 127.0.0.1. \
             Only start opens a connection, and it does so in this process, \
-            for as long as it runs; nothing here reads the keychain, and the \
-            session's own login is what a forwarding dials with.
+            for as long as it runs: it dials with the session's own login, \
+            resolving its secret from --password-command, then the \
+            environment, then the keychain entry the app saved. The other \
+            verbs read and write nothing but the two stores.
             """,
         subcommands: [
             TunnelsListCommand.self, TunnelsAddCommand.self,

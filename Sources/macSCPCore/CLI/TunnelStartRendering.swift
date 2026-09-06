@@ -158,10 +158,22 @@ public enum TunnelExit {
     /// mapped the very error the dial threw, and it is the sentence the
     /// `reason=` of the diagnostic log line carries, so the two cannot
     /// disagree about the same failure. A `needsConfirmation` prefers
-    /// `dialMessage` (`CLIErrorMapping.message(for:)`'s own sentence,
-    /// prefix included) because the state alone cannot tell an unknown host
-    /// key from a missing secret; the fixed sentence is what is left when no
-    /// error was recorded.
+    /// `dialMessage` (`CLIErrorMapping.message(for:)`'s own sentence, prefix
+    /// included) because the state alone cannot tell an unknown host key
+    /// from a missing secret.
+    ///
+    /// The sentence written here when `dialMessage` is `nil` is a DEFENSIVE
+    /// DEFAULT, not a case the command reaches today: `needsConfirmation` is
+    /// published only for the two errors `TunnelRunner.needsAPerson`
+    /// collects, both of them thrown by the dial, so the command's record
+    /// always holds one by the time this is asked (counted 2026-09-06
+    /// against `TunnelRunner.attempt(decider:isRetry:)` — the dial and the
+    /// runtime start are its two throwing steps, and no `TunnelFailure` the
+    /// second raises is a `needsAPerson`). It stays because a state with no
+    /// sentence at all would exit 11 in silence, and because a second
+    /// caller — a tunnel started with no record to consult — is a plausible
+    /// thing to write. `anUnexplainedConfirmationNamesTheHostKeyAndTheFlag`
+    /// is what pins the wording.
     public static func note(for state: TunnelState, dialMessage: String? = nil) -> String? {
         switch state {
         case .stopped, .connecting, .active, .reconnecting:
