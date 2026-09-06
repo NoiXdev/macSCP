@@ -23,7 +23,15 @@ import Testing
 /// wiring guards read a view body. Every positional pin below is also a
 /// presence check: a needle that has moved out of the body fails on "not
 /// found" before any ordering claim is made.
-@Suite("Quit sequence")
+/// `.timeLimit(.minutes(1))` since fix round 2 of the port-forwarding
+/// plan's Task 6: this suite now drives `BoundedStep` against work that
+/// parks and cannot be cancelled, and it reads the outcome through a
+/// `pollUntil` — which carries no deadline of its own, deliberately, so what
+/// ends a step that never returns is this trait (`PollingGuardTests
+/// .everyCallerOfPollUntilDeclaresATimeLimit` requires it, and without it a
+/// version that does not bound HANGS the run instead of failing it —
+/// measured, by planting exactly that).
+@Suite("Quit sequence", .timeLimit(.minutes(1)))
 @MainActor
 struct QuitSequenceTests {
 
