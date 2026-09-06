@@ -199,6 +199,17 @@ extension ContentView {
         .sheet(isPresented: $showSSHKeysSheet) {
             SSHKeysSheet()
         }
+        // Forwardings-at-launch overlay (port-forwarding plan, Task 7) —
+        // same window-scoped presentation as `showSSHKeysSheet` above, and
+        // like it the sheet owns everything it reads. It is deliberately NOT
+        // handed this window's host-key decider: every start it offers uses
+        // `.refusing`, because these are the forwardings that are meant to
+        // come up with nobody looking (see `TunnelAutostartSheet`).
+        .sheet(isPresented: $showTunnelAutostartSheet) {
+            TunnelAutostartSheet(
+                manager: TunnelManager.shared,
+                onClose: { showTunnelAutostartSheet = false })
+        }
         // Snippets sheet (Terminal-Snippets milestone) — same window-scoped
         // presentation as `showSSHKeysSheet` above. The sheet is the only
         // place a snippet can be added, edited or deleted, so re-reading the

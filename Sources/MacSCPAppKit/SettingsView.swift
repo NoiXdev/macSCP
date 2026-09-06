@@ -180,6 +180,17 @@ private struct GeneralSettingsSection: View {
     /// fresh launch).
     var launchLanguage: AppLanguage
 
+    /// Drives the forwarding-autostart overlay from here (port-forwarding
+    /// plan, Task 7). Presented by the Settings window itself rather than
+    /// routed into a main window through `SettingsWindowBridge`, and the
+    /// reason is what the sheet reads: the app-wide `TunnelManager` and the
+    /// login item's own status, neither of which belongs to any window. That
+    /// is the same case `showKnownHostsSheet` in "Manage Data" is in, and it
+    /// is presented the same way; the three entries beside that one are
+    /// routed only because their sheets are wired into a window's live
+    /// state.
+    @State private var showTunnelAutostartSheet = false
+
     /// The running build's short version string, read the same way
     /// `UpdateCheckModel.check` and the system "About macSCP" panel do
     /// (`CFBundleShortVersionString` off `Bundle.main`) — App layer only,
@@ -260,6 +271,27 @@ private struct GeneralSettingsSection: View {
                     isOn: $store.menuBarEnabled)
             }
 
+            // Forwardings at launch (port-forwarding plan, Task 7): the
+            // second of the two routes into the autostart overlay, beside
+            // the Window menu's own entry. Both open the same sheet; this
+            // one is here because "what this app does at launch" is what
+            // this pane is about.
+            Section {
+                Button {
+                    showTunnelAutostartSheet = true
+                } label: {
+                    Label(
+                        L10n.string("tunnel.menu.autostart", "Forwardings at Launch…"),
+                        systemImage: "arrow.left.arrow.right")
+                }
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.tunnelAutostart.footer",
+                    "Which port forwardings macSCP opens by itself, and whether macOS opens "
+                        + "macSCP at login."))
+                    .foregroundStyle(.secondary)
+            }
+
             // Window restoration (Detachable Tabs plan, Task 5). Off by
             // default; what it brings back is windows and tabs, each tab
             // showing the session it had, with no connection behind it.
@@ -329,6 +361,15 @@ private struct GeneralSettingsSection: View {
             }
 
             diagnosticLogSection
+        }
+        // Presented by the Settings window itself — see
+        // `showTunnelAutostartSheet`'s own declaration for why this one is
+        // not routed into a main window the way "Manage Data"'s three
+        // entries are.
+        .sheet(isPresented: $showTunnelAutostartSheet) {
+            TunnelAutostartSheet(
+                manager: TunnelManager.shared,
+                onClose: { showTunnelAutostartSheet = false })
         }
         .formStyle(.grouped)
         .padding()

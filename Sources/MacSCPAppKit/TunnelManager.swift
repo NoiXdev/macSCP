@@ -315,9 +315,10 @@ final class TunnelManager {
     /// One read, one list, and the guard cannot disagree with the loop.
     ///
     /// `TunnelStore.autoStart(_:)` is therefore not called from here. It is
-    /// Core's own filter and stays for the autostart overlay of Task 7,
-    /// which lists every autostart profile across sessions and has no mirror
-    /// of its own to read.
+    /// Core's own filter, and the one place it IS called from is
+    /// `reloadAutoStartProfiles()` below — the autostart overlay's list,
+    /// which spans every session and needs no per-profile guard because it
+    /// starts nothing itself.
     func startAutoStart(_ when: TunnelProfile.AutoStart) async {
         reload()
         for profile in allProfiles where profile.autoStart == when {
@@ -326,6 +327,27 @@ final class TunnelManager {
     }
 
     // MARK: - The store behind it
+
+    /// Every profile that starts on its own, across every session — the
+    /// autostart overlay's rows (Task 7).
+    ///
+    /// **It reloads first, and that is not a convenience.**
+    /// `start(_:decider:)` refuses a profile the mirror does not list, so a
+    /// list read past the mirror would be a table of rows whose Start button
+    /// silently did nothing. One read, one list, the same rule
+    /// `startAutoStart(_:)` above states for itself.
+    ///
+    /// The filter is Core's (`TunnelStore.autoStart(_:)`) rather than a
+    /// second `allProfiles.filter` here: what "starts on its own" means is
+    /// one decision, and it belongs beside the model that spells
+    /// `AutoStart`. `.off` is excluded by asking for every OTHER case, so a
+    /// fourth moment added to `AutoStart` appears here without an edit.
+    func reloadAutoStartProfiles() -> [TunnelProfile] {
+        reload()
+        return TunnelProfile.AutoStart.allCases
+            .filter { $0 != .off }
+            .flatMap { store.autoStart($0) }
+    }
 
     func reload() {
         allProfiles = store.allProfiles()

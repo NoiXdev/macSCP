@@ -118,6 +118,9 @@ struct IconTooltipLintTests {
             file: "SettingsView.swift", symbol: "checkmark.seal",
             reason: "Inside the \"Server Certificates…\" button's `Label` in the Manage Data list; the button's own title names the sheet."),
         DecorativeIcon(
+            file: "SettingsView.swift", symbol: "arrow.left.arrow.right",
+            reason: "Inside the \"Forwardings at Launch…\" button's `Label` in General; the button's own title names the sheet it opens, and the section's footer says what it is for."),
+        DecorativeIcon(
             file: "SettingsView.swift", symbol: "eye.slash",
             reason: "Inside the \"Hidden Imports…\" button's `Label` in the Manage Data list; the button's own title names the sheet (with its count)."),
         DecorativeIcon(

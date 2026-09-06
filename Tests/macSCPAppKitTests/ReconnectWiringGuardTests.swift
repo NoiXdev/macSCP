@@ -433,10 +433,24 @@ struct ReconnectWiringGuardTests {
     /// therefore compiles in the App layer, reaching no TOFU. Access levels
     /// closed macSCP's own dials; this list is what stands in front of that
     /// one.
+    /// Two entries were added on 2026-09-06 by the port-forwarding plan's
+    /// Task 7, and both are read as the decision this test says they are.
+    /// Neither is a transport:
+    ///
+    /// - `ServiceManagement` is `SMAppService`, the login item. It registers
+    ///   this app's own bundle with launchd and opens no socket; the whole of
+    ///   its use is behind `LoginItemRegistering` in `LoginItem.swift`, which
+    ///   `TunnelPresenceWiringGuardTests` pins as the only file that reaches
+    ///   `SMAppService.mainApp` at all.
+    /// - `Carbon` is four Apple Event constants (`kCoreEventClass`,
+    ///   `kAEOpenApplication`, `keyAEPropData`, `keyAELaunchedAsLogInItem`)
+    ///   used to read whether THIS launch was a login launch. The alternative
+    ///   was spelling their four-character codes as literals here, which is
+    ///   the second copy of a name this project's rules exist to prevent.
     private static let permittedImports: Set<String> = [
-        "AppKit", "Combine", "CoreTransferable", "Foundation", "MacSCPAppKit",
-        "Observation", "SwiftTerm", "SwiftUI", "UniformTypeIdentifiers",
-        "macSCPCore", "os",
+        "AppKit", "Carbon", "Combine", "CoreTransferable", "Foundation", "MacSCPAppKit",
+        "Observation", "ServiceManagement", "SwiftTerm", "SwiftUI",
+        "UniformTypeIdentifiers", "macSCPCore", "os",
     ]
 
     private struct SanctionedSite {

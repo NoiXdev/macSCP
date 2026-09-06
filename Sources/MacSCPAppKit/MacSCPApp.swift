@@ -49,6 +49,11 @@ final class TabCommands {
     /// `showKnownHosts`/`showLogins`/`showHiddenImports` above, opens the
     /// SSH-key management sheet (replaces the M17 Settings tab).
     var showSSHKeys: (() -> Void)?
+    /// "Forwardings at Launch…" (port-forwarding plan, Task 7) — same
+    /// bridge shape as `showKnownHosts`/`showSSHKeys` above, opens the
+    /// autostart overlay. It has no session of its own: its subject is every
+    /// forwarding in the app that starts without being asked.
+    var showTunnelAutostart: (() -> Void)?
     /// Opens the ad-hoc connection log (M31). Its own entry rather than a
     /// parameter on the existing audit hook, because there is no session to
     /// pass -- the ad-hoc log's session is a value the App layer builds.
@@ -257,12 +262,85 @@ final class SettingsWindowBridge {
 /// before the process can exit — which is exactly what `flushSynchronously()`
 /// needs (Diagnostic Log plan, Task 2 round 1).
 ///
-/// No other code under `Sources/MacSCPAppKit` reads `NSApp.delegate` or
-/// relies on `applicationDidFinishLaunching` (checked with `grep -rn
-/// "NSApp.delegate\|applicationDidFinishLaunching" Sources/MacSCPAppKit`
-/// before adding this — no matches), so installing this adaptor changes
-/// nothing this app already depended on `NSApp.delegate` being.
+/// No other code under `Sources/MacSCPAppKit` reads `NSApp.delegate`
+/// (checked with `grep -rn "NSApp.delegate" Sources/MacSCPAppKit` before
+/// adding this — no matches, and re-counted on 2026-09-06: still none), so
+/// installing this adaptor changes nothing this app already depended on
+/// `NSApp.delegate` being. `applicationDidFinishLaunching` had no
+/// implementation at all until the port-forwarding plan's Task 7 added the
+/// one below; it is this type's only one, and nothing else in the target
+/// relies on that callback.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The Dock badge's own controller (port-forwarding plan, Task 7).
+    /// Retained for the app's lifetime, like `MacSCPApp.menuBarController`:
+    /// it re-arms an observation after every fire, and a controller nobody
+    /// held would paint the badge once and be collected.
+    @MainActor private var dockBadge: DockBadgeController?
+    /// The forwarding block the Dock menu draws — the same builder the
+    /// menu-bar item uses (`TunnelMenuBlockController`). Held rather than
+    /// rebuilt per open because it is the `target` of every item's action:
+    /// `NSMenuItem.target` is a weak reference, so a controller created
+    /// inside `applicationDockMenu(_:)` would be gone before the user could
+    /// click anything in the menu it built.
+    @MainActor private var dockMenuBlock: TunnelMenuBlockController?
+
+    /// The launch's own forwarding work, and the first point in this
+    /// process where it can be done (port-forwarding plan, Task 7).
+    ///
+    /// **Why here and not `MacSCPApp.init`.** Two of the three things below
+    /// need a launched application. `NSAppleEventManager.shared()
+    /// .currentAppleEvent` carries the launch event only while AppKit is
+    /// dispatching it, which is this callback and not the `App` value's
+    /// initializer; and `NSApp.dockTile` belongs to an application that has
+    /// finished starting up. The stores this reads are ready either way —
+    /// `MacSCPApp.init` runs before `NSApplication.run`, so the diagnostic
+    /// log is configured, the language override is applied and the What's
+    /// New decision is recorded by the time this runs.
+    ///
+    /// **Before any window connects**, which is what the plan asks for and
+    /// what this position gives for free: `ContentView` opens no connection
+    /// of its own at launch (window restoration deliberately rebuilds tabs
+    /// with nothing dialled), so the first dial a user makes is later than
+    /// this by definition.
+    ///
+    /// **Which moments run is `LaunchAutoStartPlan`'s**, over
+    /// `LoginLaunchDetector`'s answer — see that type for what the flag can
+    /// and cannot tell this app.
+    ///
+    /// The starts are `async` and this callback is not, so they run in a
+    /// `Task`. Nothing waits for them: a forwarding coming up is not a
+    /// precondition for a window, and `startAutoStart(_:)` uses `.refusing`,
+    /// so the slowest thing it can do is time out a dial.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let moments = LaunchAutoStartPlan.moments(
+            launchedAsLoginItem: LoginLaunchDetector.launchedAtLogin())
+        Task { @MainActor in
+            for moment in moments {
+                await TunnelManager.shared.startAutoStart(moment)
+            }
+        }
+        let badge = DockBadgeController(manager: TunnelManager.shared)
+        dockBadge = badge
+        badge.start()
+    }
+
+    /// The Dock icon's menu: the forwarding block, and nothing else this app
+    /// has asked for there.
+    ///
+    /// AppKit calls this on every right-click of the Dock icon, so the menu
+    /// is built fresh each time and needs no observation of its own — the
+    /// same "rebuilt per open" shape `MenuBarController.menuNeedsUpdate(_:)`
+    /// uses, with the same builder behind it.
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let block = dockMenuBlock ?? TunnelMenuBlockController(manager: TunnelManager.shared)
+        dockMenuBlock = block
+        let menu = NSMenu()
+        for item in block.items() {
+            menu.addItem(item)
+        }
+        return menu
+    }
+
     /// The quit sequence (Quit Teardown plan, Task 1).
     ///
     /// **Why this callback and not `applicationWillTerminate`.** ⌘Q closes

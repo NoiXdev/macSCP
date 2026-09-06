@@ -496,6 +496,13 @@ struct ContentView: View {
     /// always reflects the same window-wide `ManagedKeyStore` directory.
     @State var showSSHKeysSheet = false
 
+    /// Drives the forwarding-autostart overlay — opened from the Window
+    /// menu (port-forwarding plan, Task 7). Same no-item-payload shape as
+    /// `showSSHKeysSheet` above: `TunnelAutostartSheet` reads the app-wide
+    /// `TunnelManager` and the login item's own status, neither of which
+    /// this window supplies.
+    @State var showTunnelAutostartSheet = false
+
     // MARK: - Snippets (Terminal-Snippets milestone)
 
     /// Drives the snippet management sheet — opened from the Terminal menu.

@@ -98,5 +98,21 @@
             <string>Eingeschaltet prüft macSCP eine ruhige Verbindung alle %lld Sekunden. Ausgeschaltet bleibt das eingestellte Intervall erhalten, bis du die Prüfung wieder einschaltest.</string>
         </dict>
     </dict>
+    <key>tunnel.dock.running %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld Weiterleitung aktiv</string>
+            <key>other</key>
+            <string>%lld Weiterleitungen aktiv</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

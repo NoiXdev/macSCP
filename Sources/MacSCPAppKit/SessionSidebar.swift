@@ -1508,6 +1508,32 @@ private struct SessionRow: View {
             state: { tunnels.state(of: $0) })
     }
 
+    /// This session's forwardings, as states — the one reading both the
+    /// glyph and its tooltip are derived from, so the mark and the sentence
+    /// beside it cannot describe two different moments.
+    private var tunnelStates: [TunnelState] {
+        tunnels.profiles(for: session.id).map { tunnels.state(of: $0.id) }
+    }
+
+    /// What the row draws for its forwardings, or `nil` when it draws
+    /// nothing. The whole decision — including "no glyph when the session
+    /// has no profile" — is `TunnelGlyphPlan`'s; this view picks no colour
+    /// and counts nothing itself.
+    private var tunnelGlyph: TunnelGlyphPlan.Glyph? {
+        TunnelGlyphPlan.glyph(states: tunnelStates)
+    }
+
+    /// The tooltip: the worst state's own sentence, which for a failure is
+    /// the reason Core already audited, shown verbatim. Re-mapping it here
+    /// would put a second spelling of the same finding in the app — the same
+    /// rule the profile sheet's state column follows.
+    private var tunnelTooltip: String {
+        let worst = TunnelManager.Aggregate.of(tunnelStates).worst ?? .stopped
+        return String(
+            format: L10n.string("tunnel.glyph.tooltip %@", "Port forwarding: %@"),
+            TunnelProfilesSheet.stateLabel(worst))
+    }
+
     private var snippetPlan: SessionRowSnippetMenuPlan {
         SessionRowSnippetMenuPlan.build(
             snippets: snippets, isActiveTab: isActive,
@@ -1557,6 +1583,27 @@ private struct SessionRow: View {
             Text(kindBadgeLabel)
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(DesignTokens.inkTertiary)
+
+            // Port-forwarding glyph (port-forwarding plan, Task 7). Drawn in
+            // BOTH densities, for the same reason the protocol badge above
+            // it is: compact mode is the padding change alone, and a row
+            // that hid whether its forwardings were up would be hiding the
+            // one thing about them that is visible without a menu.
+            //
+            // Colour is never the only channel: the symbol says "forwarding"
+            // and the text beside it says how many are up, or `!`. Both come
+            // from `tunnelGlyph`; this view chooses neither.
+            if let glyph = tunnelGlyph {
+                HStack(spacing: 2) {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 9, weight: .semibold))
+                    if let text = glyph.text {
+                        Text(text).font(.system(size: 10, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(glyph.tint.color)
+                .help(tunnelTooltip)
+            }
 
             Spacer(minLength: 0)
         }

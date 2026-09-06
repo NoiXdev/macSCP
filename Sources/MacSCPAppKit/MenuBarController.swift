@@ -23,6 +23,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let model: MenuBarStatusModel
     private let settingsStore: SettingsStore
     private var statusItem: NSStatusItem?
+    /// The forwarding block this menu draws (port-forwarding plan, Task 7).
+    /// Held for this controller's life rather than built per open, because
+    /// it is the `target` of every item it makes and `NSMenuItem.target` is
+    /// weak — a builder created inside `menuNeedsUpdate(_:)` would be gone
+    /// before the user could click one of its entries.
+    private let tunnelBlock = TunnelMenuBlockController(manager: TunnelManager.shared)
 
     init(model: MenuBarStatusModel, settingsStore: SettingsStore) {
         self.model = model
@@ -108,6 +114,16 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             for tab in model.tabs {
                 menu.addItem(connectionItem(for: tab))
             }
+        }
+
+        // The forwarding block (port-forwarding plan, Task 7), from the same
+        // builder the Dock menu uses — the design asks this item to carry
+        // what the Dock menu carries, and one builder is what keeps the two
+        // from drifting. Below the connections, because a forwarding belongs
+        // to no tab and this menu is read top to bottom.
+        menu.addItem(.separator())
+        for item in tunnelBlock.items() {
+            menu.addItem(item)
         }
 
         menu.addItem(.separator())

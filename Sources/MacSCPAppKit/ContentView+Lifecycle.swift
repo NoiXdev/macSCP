@@ -734,6 +734,11 @@ extension ContentView {
         tabCommands.showSSHKeys = {
             showSSHKeysSheet = true
         }
+        // "Forwardings at Launch…" (port-forwarding plan, Task 7) — same
+        // shape, opens the app-wide autostart overlay.
+        tabCommands.showTunnelAutostart = {
+            showTunnelAutostartSheet = true
+        }
         // Settings "Manage Data" bridge — the two entries that must NOT get
         // their own copy of the sheet in the Settings window. Extracted into
         // methods rather than inlined closures for the same type-checker

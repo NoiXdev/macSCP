@@ -110,5 +110,25 @@
             <string>Włączone — macSCP sprawdza bezczynne połączenie co %lld sekund. Wyłączone — ustawiony odstęp zostaje zachowany, dopóki ponownie nie włączysz sprawdzania.</string>
         </dict>
     </dict>
+    <key>tunnel.dock.running %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Aktywne przekierowanie: %lld</string>
+            <key>few</key>
+            <string>Aktywne przekierowania: %lld</string>
+            <key>many</key>
+            <string>Aktywnych przekierowań: %lld</string>
+            <key>other</key>
+            <string>Aktywnych przekierowań: %lld</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

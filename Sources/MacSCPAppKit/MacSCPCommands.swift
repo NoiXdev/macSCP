@@ -128,6 +128,17 @@ struct MacSCPCommands: Commands {
                 set: { _ in tabCommands?.toggleKeepOnTop?() }
             ))
             .disabled(tabCommands == nil)
+            // "Forwardings at Launch…" (port-forwarding plan, Task 7): the
+            // app-wide autostart overlay. In the Window menu because that is
+            // where the design put it and because it belongs to no session —
+            // the per-session forwardings are reached from their own row's
+            // "Port forwarding" submenu. Disabled rather than absent with no
+            // window focused, the same rule the two entries above follow: it
+            // is presented as a sheet, and a sheet needs a window.
+            Button(L10n.string("tunnel.menu.autostart", "Forwardings at Launch…")) {
+                tabCommands?.showTunnelAutostart?()
+            }
+            .disabled(tabCommands == nil)
             Divider()
             ForEach(1...9, id: \.self) { n in
                 Button(String(format: L10n.string("menu.selectTab", "Tab %lld"), n)) {
