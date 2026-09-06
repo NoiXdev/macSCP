@@ -2132,18 +2132,27 @@ struct CLIMatrixCommandsITests {
     /// (`Sources/MacSCPCLI/SessionsCommand.swift`) because it opens no
     /// connection and resolves no secret; `tunnels`
     /// (`Sources/MacSCPCLI/TunnelsCommand.swift`) declares nothing at the
-    /// group level at all, because its four verbs only read and write two
-    /// JSON files — the one verb that dials, `start`, is not there yet and
-    /// will declare the flags itself; `diagnose` takes `DiagnoseOptions`
+    /// group level at all, because its four store verbs only read and write
+    /// two JSON files; `diagnose` takes `DiagnoseOptions`
     /// (`Sources/MacSCPCLI/DiagnoseCommand.swift`) because it resolves a
     /// secret but decides no host key — its dial answers that question with
     /// `HostKeyDecider.refusing` inside Core, so `--accept-new` would be
     /// advertised and never read.
     ///
-    /// So this asserts BOTH halves — `hostKeyFlags` gives `ls` the flag and
-    /// gives those two nothing — and then the reason: the binary really does
-    /// refuse the flag it does not declare. Without those runs the two
-    /// halves would only be agreeing with each other about a help screen.
+    /// A GROUP that declares no flags is not the same claim as its verbs
+    /// declaring none, and since 2026-09-06 the two differ: `tunnels start`
+    /// (`Sources/MacSCPCLI/TunnelStartCommand.swift`) dials, so it declares
+    /// `GlobalOptions` itself and advertises `--accept-new` where its group
+    /// advertises nothing. So the verb is asked as well as the group — the
+    /// group's `[]` alone would have gone on passing for a build where the
+    /// one verb that decides a host key had quietly stopped offering the
+    /// flag that decides it.
+    ///
+    /// So this asserts BOTH halves — `hostKeyFlags` gives `ls` and `tunnels
+    /// start` the flag and gives the three groups nothing — and then the
+    /// reason: the binary really does refuse the flag it does not declare.
+    /// Without those runs the two halves would only be agreeing with each
+    /// other about a help screen.
     ///
     /// The list at the end is SORTED, not in the binary's help order: which
     /// commands answer no is the claim, and reordering the subcommands is
@@ -2154,6 +2163,9 @@ struct CLIMatrixCommandsITests {
         #expect(try await CLIMatrix.hostKeyFlags(for: "sessions", binary: binary) == [])
         #expect(try await CLIMatrix.hostKeyFlags(for: "diagnose", binary: binary) == [])
         #expect(try await CLIMatrix.hostKeyFlags(for: "tunnels", binary: binary) == [])
+        #expect(
+            try await CLIMatrix.hostKeyFlags(for: "tunnels start", binary: binary)
+                == ["--accept-new"])
 
         // The `diagnose` probe needs a TARGET, and the reason is worth
         // writing down: ArgumentParser reports a `validate()` complaint
@@ -2186,6 +2198,9 @@ struct CLIMatrixCommandsITests {
 
         // Counted rather than asserted as a number: every subcommand the
         // binary offers is asked, and the ones that answer no are named.
+        // TOP-LEVEL names only — that is what `subcommands` reads off the
+        // root help — so `tunnels` answers here for the group and its verbs
+        // are asked one by one above.
         let names = try await CLIMatrix.subcommands(binary: binary)
         var without: [String] = []
         for name in names where try await !CLIMatrix.takesConnectionFlags(name, binary: binary) {

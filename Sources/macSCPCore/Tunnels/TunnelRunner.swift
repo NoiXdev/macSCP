@@ -71,8 +71,11 @@ public actor TunnelRunner {
 
     /// Every state the runner has published, in order.
     ///
-    /// **Single consumer**, like every `AsyncStream`: Task 6's manager is
-    /// that consumer, and it re-publishes to the UI. Buffered without bound
+    /// **Single consumer**, like every `AsyncStream`: in the app that is
+    /// `TunnelManager`, which re-publishes to the UI, and in `macscp-cli
+    /// tunnels start` it is the foreground loop that prints a line per
+    /// state and exits on the first terminal one. One runner, one reader,
+    /// either way. Buffered without bound
     /// (`AsyncStream.makeStream()`'s default), so a consumer that starts
     /// iterating after the runner has already moved misses nothing.
     ///

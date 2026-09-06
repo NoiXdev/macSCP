@@ -691,11 +691,12 @@ struct CLIMatrix: Sendable {
     /// indented line, as this did, would read `diagnostics.` as a command
     /// name the moment an abstract wrapped. Nothing wraps today — recounted
     /// 2026-09-06 from the built binary's own `--help`, all EIGHT rows fit on
-    /// one line, the widest being `get` at 72 columns against
-    /// ArgumentParser's 80, then `put` and `tunnels` at 70, `diagnose` 69
-    /// and `sessions` 68 (68 since it became a group) — so the hazard was
-    /// invisible and entirely reachable: eight more characters in one
-    /// abstract. The count said six
+    /// one line, the widest being `tunnels` at 75 columns against
+    /// ArgumentParser's 80 (75 since `start` joined the group and its
+    /// abstract gained "and run"; it was 70 before), then `get` at 72, `put`
+    /// 70, `diagnose` 69 and `sessions` 68 (68 since it became a group) — so
+    /// the hazard was invisible and entirely reachable: FIVE more characters
+    /// in one abstract. The count said six
     /// until the recount of 2026-09-04, when `diagnose` had been the seventh
     /// row and the sentence went on claiming six; `tunnels` made it eight on
     /// 2026-09-06. This help
@@ -731,9 +732,11 @@ struct CLIMatrix: Sendable {
     /// (`Sources/MacSCPCLI/SessionsCommand.swift`) because it opens no
     /// connection and resolves no secret; `TunnelsCommand`
     /// (`Sources/MacSCPCLI/TunnelsCommand.swift`) declares nothing at all at
-    /// the group level for the same reason — its four verbs only read and
-    /// write two JSON files — and gains the flags on `start` alone, the one
-    /// verb that dials; `DiagnoseCommand` declares `DiagnoseOptions`
+    /// the GROUP level for the same reason — its four store verbs only read
+    /// and write two JSON files — while its fifth verb `start`
+    /// (`Sources/MacSCPCLI/TunnelStartCommand.swift`) declares them itself,
+    /// because it is the one that dials; `DiagnoseCommand` declares
+    /// `DiagnoseOptions`
     /// (`Sources/MacSCPCLI/DiagnoseCommand.swift`) because it resolves a
     /// secret but decides no host key — its dial answers that question with
     /// `HostKeyDecider.refusing` inside Core. Either way, advertising
@@ -755,10 +758,18 @@ struct CLIMatrix: Sendable {
 
     /// One command's `--help`, read once per binary and command. A race just
     /// asks twice and stores the same answer.
+    ///
+    /// `command` may name a NESTED verb, spelled with spaces the way it is
+    /// typed: `"tunnels start"` asks `macscp-cli help tunnels start`. That is
+    /// what lets `takesConnectionFlags` be asked about a verb whose group
+    /// declares different flags than it does — which is the shape `tunnels`
+    /// has carried since `start` arrived (2026-09-06): the group advertises
+    /// none and `start` advertises the connection flags.
     static func helpText(for command: String, binary: URL) async throws -> String {
         let key = "\(binary.path(percentEncoded: false))\u{0}\(command)"
         if let cached = helpCache.withLock({ $0[key] }) { return cached }
-        let result = try await SubprocessRunner.run(binary, arguments: ["help", command])
+        let path = command.split(separator: " ").map(String.init)
+        let result = try await SubprocessRunner.run(binary, arguments: ["help"] + path)
         guard result.status == 0 else { throw CLIMatrixError.helpFailed(status: result.status) }
         helpCache.withLock { $0[key] = result.stdoutText }
         return result.stdoutText

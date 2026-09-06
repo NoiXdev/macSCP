@@ -88,12 +88,14 @@ struct DiagnoseCommand: AsyncParsableCommand {
         //
         // Set HERE, at the top of `run()`, rather than process-wide in
         // `MacSCPCLI.main()`: buffering only matters to a command that
-        // prints as it goes, and `diagnose` is the only one of the eight
-        // that does — `ls`/`get`/`put`/`rm`/`mkdir`/`sessions`/`tunnels`
-        // each compute their whole answer and print it in one pass, so a
-        // row arriving early or late is not something their callers can
-        // observe either way (recounted 2026-09-06, when `tunnels` became
-        // the eighth). Line-buffering every subcommand from one shared spot
+        // prints as it goes, and TWO do — this one and `tunnels start`,
+        // which prints a line per state change and then waits (recounted
+        // 2026-09-06, when that verb arrived; each sets the mode at the top
+        // of its own `run()`). The other six —
+        // `ls`/`get`/`put`/`rm`/`mkdir`/`sessions` — compute their whole
+        // answer and print it in one pass, so a row arriving early or late
+        // is not something their callers can observe either way.
+        // Line-buffering every subcommand from one shared spot
         // would change all eight together for a property only this one has,
         // and it must run before this command's first `print` — which "the
         // top of `run()`" already guarantees without threading a flag

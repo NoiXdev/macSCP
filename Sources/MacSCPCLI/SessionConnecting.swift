@@ -58,12 +58,29 @@ func resolveSession(
 ) throws -> (session: StoredSession, sources: [any SecretSource]) {
     let store = SessionStore(directory: SessionStore.defaultDirectory)
     let session = try reference.resolve(in: try store.all())
-    // `secretSources(for:passwordCommand:)` (Core) already encodes the
-    // agent-auth guard: an agent-auth SSH session yields an empty chain, and
-    // `SecretResolver` walking an empty chain harmlessly resolves to `nil` —
-    // so this call site is pure argument plumbing, no branching of its own.
-    let sources = secretSources(for: session, passwordCommand: options.passwordCommand)
-    return (session, sources)
+    return (session, secretChain(for: session, options: options))
+}
+
+/// The chain of secret sources this tool walks for one session, in
+/// precedence order — the environment variable, `--password-command`, and
+/// whatever else `secretSources(for:passwordCommand:)` decides that
+/// session's kind calls for.
+///
+/// Split out of `resolveSession` above so a command that already HAS its
+/// session — `tunnels start`, which addresses a forwarding by name plus
+/// `--session` rather than by a `name:/path` reference — asks for the chain
+/// in the same words rather than reaching past this file to Core. There is
+/// exactly one `secretSources(` call site under `Sources/MacSCPCLI` as a
+/// result, counted 2026-09-06.
+///
+/// `secretSources(for:passwordCommand:)` (Core) already encodes the
+/// agent-auth guard: an agent-auth SSH session yields an empty chain, and
+/// `SecretResolver` walking an empty chain harmlessly resolves to `nil` — so
+/// this is pure argument plumbing, no branching of its own.
+func secretChain(
+    for session: StoredSession, options: some SecretChainOptions
+) -> [any SecretSource] {
+    secretSources(for: session, passwordCommand: options.passwordCommand)
 }
 
 /// Resolves a reference to a stored session, gathers its secret and

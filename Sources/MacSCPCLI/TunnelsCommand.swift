@@ -2,10 +2,16 @@ import ArgumentParser
 import Foundation
 import macSCPCore
 
-/// The saved port forwardings: listing them, and creating, changing and
-/// deleting one. Reads `SessionStore` (to resolve `--session`) and reads and
-/// writes `TunnelStore` — no secret, no keychain, no connection, in any verb
-/// here.
+/// The saved port forwardings: listing them, creating, changing and
+/// deleting one — and running one. The four STORE verbs in this file read
+/// `SessionStore` (to resolve `--session`) and read and write `TunnelStore`:
+/// no secret, no keychain, no connection, in any verb below.
+///
+/// The fifth, `start`, is the exception and lives in its own file
+/// (`TunnelStartCommand.swift`): it dials, so it resolves a secret through
+/// this tool's own chain and declares `GlobalOptions` where the four below
+/// declare none. Nothing here opens the keychain either way — that remains
+/// true of the whole group, `start` included.
 ///
 /// `list` is the DEFAULT subcommand, the same choice `SessionsCommand` made
 /// and for a weaker reason: no script can have been written against
@@ -20,27 +26,24 @@ import macSCPCore
 /// targets, and a bare-name completer is its own change (the design's "Not
 /// in this plan").
 ///
-/// **`start` is deliberately absent**: running a forwarding in this process
-/// is the next task's, and it is the one verb here that dials — it will
-/// declare `GlobalOptions` (the host-key flags) where the four verbs below
-/// declare none, which is exactly why it is registered as its own file
-/// rather than folded into one of these.
 struct TunnelsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "tunnels",
-        abstract: "List, add, edit and remove port forwardings.",
+        abstract: "List, add, edit, remove and run port forwardings.",
         discussion: """
             A forwarding belongs to a saved session and is named within it, \
             so every verb but the listing takes --session as well as the \
             name. Specs are written the way ssh(1) writes them: \
             [bind:]port:host:hostport for --local and --remote, [bind:]port \
             for --dynamic, with the bind address defaulting to 127.0.0.1. \
-            Nothing here opens a connection or reads the keychain; the \
-            session's own login is what a forwarding dials with when it runs.
+            Only start opens a connection, and it does so in this process, \
+            for as long as it runs; nothing here reads the keychain, and the \
+            session's own login is what a forwarding dials with.
             """,
         subcommands: [
             TunnelsListCommand.self, TunnelsAddCommand.self,
             TunnelsEditCommand.self, TunnelsRemoveCommand.self,
+            TunnelStartCommand.self,
         ],
         defaultSubcommand: TunnelsListCommand.self)
 }

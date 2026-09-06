@@ -5,9 +5,10 @@ import macSCPCore
 /// Where the store-WRITING verbs find their files, and the rules they share
 /// about names, group paths and deletion order. SIX verbs write, counted
 /// 2026-09-06 from the two command files: `sessions add`, `sessions edit`,
-/// `sessions rm`, `tunnels add`, `tunnels edit` and `tunnels rm`. A seventh,
-/// `tunnels list`, writes nothing but resolves its `--session` through here
-/// so that a name means the same thing to every verb.
+/// `sessions rm`, `tunnels add`, `tunnels edit` and `tunnels rm`. Two more
+/// write nothing and resolve their `--session` (and, for the second, their
+/// forwarding's name) through here so that a name means the same thing to
+/// every verb: `tunnels list` and `tunnels start`.
 ///
 /// It is the only file under `Sources/MacSCPCLI` that writes either store,
 /// and `CLISessionsStoreEditingGuardTests` holds it to that by reading the

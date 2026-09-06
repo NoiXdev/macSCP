@@ -781,7 +781,10 @@ struct CLISessionsStoreEditingGuardTests {
 
     /// The `tunnels` group's own file, scanned since 2026-09-06 for the
     /// claim its header makes: "no secret, no keychain, no connection, in
-    /// any verb here". Nothing held that claim when it was written — the
+    /// any verb below" — below being the four STORE verbs, which is all
+    /// this file holds since `start` arrived in
+    /// `TunnelStartCommand.swift`. Nothing held that claim when it was
+    /// written — the
     /// other CLI guard (`CLISessionsCommandGuardTests`) scans a fixed list
     /// of five files this is not on, and the two files scanned above are the
     /// session verbs' — so the sentence was an assertion about code with
