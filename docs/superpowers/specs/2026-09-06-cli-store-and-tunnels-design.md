@@ -168,10 +168,20 @@ etc.); `active` includes the bound port whenever the runtime has one —
 for `--remote` and for a `--local`/`--dynamic` bound on port 0 (Task 4
 widened this from "for `--remote`"; the `--local 0:` case is the one
 that makes the number useful). JSON keys are sorted; consumers decode,
-they do not compare text. The secret comes
-from the environment variable or `--password-command`, resolved once
-before the dial, exactly as `ls` does; `--non-interactive` forbids the
-host-key question. Reconnect follows the profile's `reconnects` flag
+they do not compare text.
+
+The secret comes from the same chain every dialling verb walks, in the
+order `secretSources(for:passwordCommand:keychainStore:)` builds it:
+`--password-command` first when one was given, then the backend's secret
+environment variable, then — last, read-only, one macOS consent prompt
+per item — the keychain item the app wrote. The CHAIN is built once, in
+`TunnelStartCommand.hold`, but `SecretResolver.resolve` runs inside
+`TunnelConnection.connect` (`TunnelConnection.swift:82`), which is called
+on EVERY dial: a `--password-command` helper is therefore invoked once
+per reconnect attempt, not once per run. Recorded as a limit below rather
+than changed here. `--non-interactive` forbids the host-key question.
+
+Reconnect follows the profile's `reconnects` flag
 with the runner's backoff (2, 4, 8, 16, 32, 60 s), printed as
 `reconnecting attempt=N`. Only one profile per invocation (a second
 name is exit 64 with "one forwarding per invocation; run two
@@ -189,7 +199,17 @@ running forwarding only when you stop and start it". A running profile
 DELETED by the CLI is reconciled: the reload stops its runner and drops
 its state, the same way the app's own session deletion does — a row
 that is gone from disk must not keep a bound port alive with no menu
-entry to stop it (found by the Task 5 review, 2026-09-06). The app writes nothing on
+entry to stop it (found by the Task 5 review, 2026-09-06). The session
+side answers an unreadable file the other way round, and the asymmetry
+is deliberate rather than overlooked: a `sessions-v2.json` that will not
+decode empties every window's sidebar on every activation
+(`SessionListViewModel.reload()` sets `sessions = []` and shows the
+decode error), where an unreadable `tunnels.json` is explicitly NOT read
+as a deletion. Nothing is lost either way — `SessionStore.load()` throws
+and every write goes through it, so `upsert` propagates the failure
+instead of rewriting the file from an empty list — but the sidebar looks
+empty until the file is repaired (recorded 2026-09-07 at the final
+review). The app writes nothing on
 reload, so a CLI write cannot be clobbered by a stale in-memory copy;
 conversely a CLI write between an app read and an app write of the SAME
 session is lost — the app's write wins, which is the existing rule for
@@ -246,11 +266,41 @@ both reloads).
   restarted in the app.
 - A CLI write between an app read and an app write of the same session
   is lost (app wins; same as two windows).
-- No secret is ever written by the CLI; a password session created by
-  the CLI is usable from the CLI only with the environment variable or
-  `--password-command`, and from the app after its first prompt.
+- No secret is ever written by the CLI. A password session created by
+  the CLI is usable from the CLI with `--password-command`, the backend's
+  secret environment variable, or the keychain item the app wrote once it
+  has prompted for one — that last source is read, never written, and
+  macOS asks for consent per item the first time this binary reads one.
+- The secret chain is built once per `tunnels start` run, but it is
+  RESOLVED per dial: `SecretResolver.resolve` sits inside
+  `TunnelConnection.connect`, so a `--password-command` helper runs again
+  on every reconnect attempt. Not changed here, because changing it would
+  change behaviour after the review rather than record it. The fix shape,
+  when someone wants it: resolve once in the CLI and hand a fixed secret
+  source to the runner.
+- The exit codes are the M20 set plus the tunnel codes, with ONE escape:
+  a store that cannot be READ fails inside `validate()`, and
+  ArgumentParser leaves with **1** — a code no other path here produces
+  and one the M20 table does not name. It is honest (the store, not the
+  arguments, is what failed) and it is stated in
+  `SessionsCommand.swift`'s own doc comment; it is repeated here because
+  a script reading exit codes has no reason to read that file.
 - Groups are created along a path but never deleted by the CLI.
 - No `apply`, no import/export.
+
+## Deviations from this design, as built (recorded 2026-09-07)
+
+- **`--auth basic|digest` for WebDAV was not implemented.**
+  `StoredWebDAVConfig` has no auth-scheme field to hold it; `--nextcloud`
+  stands in its place.
+- **The `tunnels start` rendering lives in Core, not in the CLI target.**
+  The plan's Task 4 says `TunnelStateLine.render(_:json:)` and
+  `TunnelExit.code(for:)` are "pure functions in the CLI target"; they
+  ship as `Sources/macSCPCore/CLI/TunnelStartRendering.swift`, beside
+  `TunnelForegroundRun.drive`, which moved to Core in the same fix round
+  and for the same reason — the drive loop is what the rendering is
+  driven from, and Core is where the tests can reach both without the
+  binary.
 
 ## Not in this plan
 

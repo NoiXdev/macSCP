@@ -24,9 +24,10 @@ import macSCPCore
 /// the sixth and the first that opens no connection at all; `diagnose`
 /// (2026-09-04 CLI-diagnose plan, Task 2) is the seventh, and opens one
 /// only when the scope it was given includes the dial; `tunnels`
-/// (2026-09-06 CLI-store-and-tunnels plan, Task 3) is the eighth, and
-/// opens none either until its `start` verb arrives. Eight subcommands
-/// total — recount this comment on the next addition.
+/// (2026-09-06 CLI-store-and-tunnels plan, Tasks 3 and 4) is the eighth:
+/// its four store verbs open no connection, and its fifth, `start`, holds
+/// one open for as long as the forwarding runs. Eight subcommands total —
+/// recount this comment on the next addition.
 @main
 struct MacSCPCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(

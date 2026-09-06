@@ -62,9 +62,14 @@ func resolveSession(
 }
 
 /// The chain of secret sources this tool walks for one session, in
-/// precedence order — the environment variable, `--password-command`, and
-/// whatever else `secretSources(for:passwordCommand:)` decides that
-/// session's kind calls for.
+/// precedence order: `--password-command` first when one was given, then
+/// the backend's secret environment variable, then — last, and read-only —
+/// the very keychain item the app writes. That order is
+/// `secretSources(for:passwordCommand:keychainStore:)`'s
+/// (`macSCPCore/Sessions/CLISecretSources.swift`), not a second statement
+/// of it: the function decides, including whether a kind takes a secret at
+/// all, and this comment names what it decided. macOS asks the person for
+/// consent the first time this binary reads an item the app created.
 ///
 /// Split out of `resolveSession` above so a command that already HAS its
 /// session — `tunnels start`, which addresses a forwarding by name plus

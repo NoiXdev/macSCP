@@ -111,13 +111,37 @@ struct TunnelStartCommand: AsyncParsableCommand {
     /// loop.
     ///
     /// The same composition `TunnelManager.liveRunner` makes for a window,
-    /// with this tool's own pieces in place of the app's: the app resolves
-    /// through the keychain alone and may prompt in a sheet, and this one
-    /// walks the command line's chain (`--password-command`, the environment
-    /// variable, then that same keychain entry) and asks on the terminal.
+    /// with this tool's own pieces in place of the app's. FOUR differences,
+    /// counted 2026-09-07 by reading `TunnelManager.liveRunner` against the
+    /// `TunnelRunner(` call below, argument by argument:
+    ///
+    /// 1. **The secret chain.** The app's is keychain-only
+    ///    (`TunnelSecretSources.chain`: the session's item, plus a managed
+    ///    key's passphrase for a key session) and may prompt in a sheet;
+    ///    this one walks the command line's chain
+    ///    (`--password-command`, the environment variable, then that same
+    ///    keychain item, read-only).
+    /// 2. **The host-key decider.** The app's may prompt in a sheet; this
+    ///    one asks on the terminal, and refuses under `--non-interactive`.
+    /// 3. **The connect timeout.** This one names
+    ///    `SettingsStore.defaultConnectTimeoutSeconds`, a constant, so every
+    ///    dial of a run uses the same bound; the app calls a
+    ///    `connectTimeout` closure that reads
+    ///    `SettingsStore.connectTimeoutSeconds` per dial, so a setting
+    ///    changed between two dials reaches the second one.
+    /// 4. **The session.** This one resolves it once in `run()` and captures
+    ///    the value; the app re-reads its store per dial, so a session
+    ///    edited between two dials reaches the second one.
+    ///
     /// The runtime factory and the backoff sleeper are `TunnelRunner`'s own
     /// defaults — the live factory and `Task.sleep` — which is what the app
     /// takes too.
+    ///
+    /// Differences 3 and 4 are the same shape and the same consequence: a
+    /// CLI run is a process with a fixed lifetime, and it dials the
+    /// forwarding it was started for with the settings it was started
+    /// under. Re-reading either mid-run would make a long-lived `start`
+    /// silently change what it is doing.
     ///
     /// `stops` is a parameter rather than a call to `interrupts()` inside,
     /// so a run can be ended without raising a real signal at a real
