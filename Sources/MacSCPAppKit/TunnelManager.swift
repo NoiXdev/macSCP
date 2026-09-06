@@ -240,7 +240,17 @@ final class TunnelManager {
 
     /// Starts one profile. The decider is the caller's: a window's prompt
     /// from the context menu, `.refusing` from autostart.
+    ///
+    /// **A profile that is no longer stored is not started** (fix round 2).
+    /// A menu holds the profile it was drawn with, and `forgetEverything(for:)`
+    /// takes its own snapshot, so a click landing after a session was
+    /// deleted — or on a stale menu — would otherwise build a runner and a
+    /// `states` entry for a profile nothing lists any more: a tunnel with no
+    /// row anywhere to stop it from. Silent, because there is nothing to
+    /// report: the thing the user asked for is gone, and the row they asked
+    /// from is gone with it.
     func start(_ profile: TunnelProfile, decider: HostKeyDecider) async {
+        guard allProfiles.contains(where: { $0.id == profile.id }) else { return }
         await runner(for: profile).start(decider: decider)
     }
 

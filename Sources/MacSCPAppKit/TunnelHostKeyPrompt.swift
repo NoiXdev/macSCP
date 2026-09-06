@@ -45,19 +45,37 @@ final class TunnelHostKeyPromptBridge {
 
     /// The question at the head of the queue — what the sheet draws. `nil`
     /// while none is pending.
-    var currentCandidate: HostKeyCandidate? { queue.first?.candidate }
+    ///
+    /// **Stored, not computed** (fix round 2). It was a computed property
+    /// over `queue` for one round, and `queue` is `@ObservationIgnored`:
+    /// under `@Observable` a computed property over ignored storage
+    /// registers no dependency at all, so neither presenter was invalidated
+    /// when a question arrived. The sheet never appeared and the dial parked
+    /// on a continuation nobody could answer — exactly the failure the
+    /// one-sheet fix had just removed, arriving by a different route.
+    /// `CertificatePromptBridge.currentCandidate` is stored for the same
+    /// reason, and `theBridgeNotifiesItsObserverWhenAQuestionArrives` is the
+    /// measurement.
+    private(set) var currentCandidate: HostKeyCandidate?
 
     /// How many questions are waiting, the head included. Observable so a
     /// test can state "the second one is still queued" without reading a
     /// private field.
     private(set) var pendingCount = 0
 
-    /// Set by `invalidate()`. Every later `ask` answers `false` without
-    /// queueing anything.
+    /// Set by `invalidate()`, cleared by `revalidate()`. Every `ask` in
+    /// between answers `false` without queueing anything.
     private(set) var isInvalidated = false
 
+    /// The queue itself is ignored by observation — a `Question` holds a
+    /// continuation, and nothing outside this type reads it. What the views
+    /// observe are the three published properties above, all written HERE,
+    /// in one place, so they cannot drift from the queue they describe.
     @ObservationIgnored private var queue: [Question] = [] {
-        didSet { pendingCount = queue.count }
+        didSet {
+            pendingCount = queue.count
+            currentCandidate = queue.first?.candidate
+        }
     }
 
     init() {}
@@ -100,6 +118,20 @@ final class TunnelHostKeyPromptBridge {
         let pending = queue
         queue = []
         for question in pending { question.continuation.resume(returning: false) }
+    }
+
+    /// Opens the bridge again — called from the window's `onAppear`, the
+    /// symmetric half of the `onDisappear` that closes it.
+    ///
+    /// **Without it, `invalidate()` was permanent** (fix round 2). SwiftUI
+    /// sends a view `onDisappear`/`onAppear` for reasons that are not the
+    /// window closing, and this window's own `updateModel` half is re-armed
+    /// in `onAppear` for exactly that reason. A bridge that was closed once
+    /// and never reopened answered every later question `false`, so a
+    /// forwarding the user started by hand came to rest in
+    /// `.needsConfirmation` with no prompt ever shown.
+    func revalidate() {
+        isInvalidated = false
     }
 
     /// Resumes one specific asker, wherever in the queue it sits. Identity

@@ -116,6 +116,42 @@ struct TunnelHostKeyPromptBridgeTests {
         #expect(answers.byHost["first"] == true)
     }
 
+    // MARK: - The views have to be told
+
+    /// The property the sheets read is OBSERVED — the whole point of the
+    /// bridge being `@Observable`.
+    ///
+    /// This is the round-2 critical, and it is invisible to every other test
+    /// here: a computed `currentCandidate` over the `@ObservationIgnored`
+    /// queue answers correctly when asked, so the queue tests above stayed
+    /// green while no presenter was ever invalidated — the prompt never
+    /// appeared and the dial parked. What is measured here is the
+    /// notification, not the value.
+    @Test func theBridgeNotifiesItsObserverWhenAQuestionArrives() async throws {
+        let bridge = TunnelHostKeyPromptBridge()
+        let fired = Fired()
+        // Exactly what a SwiftUI presenter does: read the property inside a
+        // tracked closure, and be told when that read is invalidated.
+        withObservationTracking {
+            _ = bridge.currentCandidate
+        } onChange: {
+            Task { @MainActor in fired.record() }
+        }
+
+        _ = Task { @MainActor in _ = await bridge.ask(Self.candidate("first")) }
+
+        try await pollUntil("the observer was told a question arrived") { fired.count == 1 }
+        #expect(bridge.currentCandidate?.host == "first")
+        bridge.invalidate()
+    }
+
+    /// Counts the invalidations an observer received.
+    @MainActor
+    private final class Fired {
+        private(set) var count = 0
+        func record() { count += 1 }
+    }
+
     // MARK: - After the window is gone
 
     @Test func invalidateRefusesWhatIsPendingAndWhatComesLater() async throws {
@@ -141,5 +177,33 @@ struct TunnelHostKeyPromptBridgeTests {
         let later = await bridge.ask(Self.candidate("later"))
         #expect(later == false)
         #expect(bridge.pendingCount == 0)
+    }
+
+    /// A window that disappears and comes back can prompt again.
+    ///
+    /// `onDisappear`/`onAppear` are not "the window closed"/"a new window":
+    /// SwiftUI sends the pair for its own reasons, and round 1 closed the
+    /// bridge on the first of them and never reopened it — every later
+    /// question refused, every hand-started forwarding coming to rest in
+    /// `.needsConfirmation` with nothing shown.
+    @Test func revalidateLetsTheBridgeAskAgain() async throws {
+        let bridge = TunnelHostKeyPromptBridge()
+        let answers = Answers()
+
+        bridge.invalidate()
+        #expect(await bridge.ask(Self.candidate("while closed")) == false)
+
+        bridge.revalidate()
+        #expect(bridge.isInvalidated == false)
+
+        _ = Task { @MainActor in
+            answers.record("reopened", await bridge.ask(Self.candidate("reopened")))
+        }
+        try await pollUntil("the reopened bridge takes a question") {
+            bridge.currentCandidate?.host == "reopened"
+        }
+        bridge.resolve(trust: true)
+        try await pollUntil("the asker was resumed") { answers.byHost["reopened"] != nil }
+        #expect(answers.byHost["reopened"] == true)
     }
 }

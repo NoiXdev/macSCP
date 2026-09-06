@@ -23,7 +23,14 @@ extension ContentView {
         // detached window saying "yes, somebody is mounted" would send a
         // manual check's result to an alert nobody shows, instead of to
         // `UpdateCheckModel`'s own `NSAlert` fallback.
-        .onAppear { if isPrimaryWindow { updateModel.hasPresentationTarget = true } }
+        .onAppear {
+            if isPrimaryWindow { updateModel.hasPresentationTarget = true }
+            // Symmetric to the `invalidate()` below (fix round 2): SwiftUI
+            // sends this pair for reasons that are not the window closing,
+            // and a bridge closed by one of those would refuse every
+            // host-key question for the rest of the window's life.
+            tunnelHostKeyBridge.revalidate()
+        }
         .onDisappear {
             if isPrimaryWindow {
                 updateModel.hasPresentationTarget = false

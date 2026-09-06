@@ -101,6 +101,15 @@ struct TunnelManagerTests {
         func open() { isOpen = true }
     }
 
+    /// "That task got to its end" — the cancellable substitute for
+    /// `await task.value`, which ignores its awaiter's cancellation and so
+    /// hangs a suite instead of failing it.
+    @MainActor
+    final class Flag {
+        private(set) var isSet = false
+        func set() { isSet = true }
+    }
+
     /// Every runner the factory built, by profile id. Its own object because
     /// the factory closure is built before the rig below finishes
     /// initializing and has to write somewhere that outlives the call.
@@ -410,6 +419,28 @@ struct TunnelManagerTests {
         #expect(rig.store.profiles(for: survivor).count == 1)
     }
 
+    /// A menu holds the profile it was drawn with. Clicking it after the
+    /// session was deleted must reach nothing — a runner built here would
+    /// hold a port and a connection with no row anywhere left to stop it
+    /// from.
+    @Test func startingAProfileThatIsNoLongerStoredReachesNothing() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let sessionID = UUID()
+        let profile = Self.profile(session: sessionID, name: "web")
+        try await rig.manager.save(profile)
+
+        rig.manager.deletionObserver.sessionDeleted(id: sessionID)
+        try await pollUntil("the profile is gone") { rig.manager.profiles(for: sessionID).isEmpty }
+
+        // The stale menu entry, clicked.
+        await rig.manager.start(profile, decider: Self.accepting)
+
+        #expect(rig.log.runners[profile.id] == nil, "a deleted profile was dialled")
+        #expect(rig.manager.state(of: profile.id) == .stopped)
+        #expect(rig.manager.runningCount == 0)
+    }
+
     // MARK: - A start racing a discard
 
     /// A `save` discards the profile's runner and suspends inside its
@@ -431,7 +462,11 @@ struct TunnelManagerTests {
         first.beforeStop = { await gate.wait() }
 
         profile.name = "web (renamed)"
-        let saving = Task { @MainActor in try? await rig.manager.save(profile) }
+        let saved = Flag()
+        _ = Task { @MainActor in
+            try? await rig.manager.save(profile)
+            saved.set()
+        }
         try await pollUntil("the discard is parked inside stop()") { gate.arrived == 1 }
 
         // The slot is free while the discard is parked, so this builds a
@@ -444,7 +479,11 @@ struct TunnelManagerTests {
         }
 
         gate.open()
-        await saving.value
+        // Polled, not `await saving.value`: a `Task`'s `value` ignores its
+        // awaiter's cancellation, so a save that never finished would hang
+        // this suite instead of failing it (817bbee3 removed the same shape
+        // from the bridge suite; these two were missed).
+        try await pollUntil("the save finished") { saved.isSet }
 
         #expect(
             rig.manager.state(of: profile.id) == .active(connections: 0),
@@ -481,10 +520,14 @@ struct TunnelManagerTests {
         let gate = Gate()
         for profile in profiles { try rig.runner(profile).beforeStop = { await gate.wait() } }
 
-        let stopping = Task { @MainActor in await rig.manager.stopAll() }
+        let stopped = Flag()
+        _ = Task { @MainActor in
+            await rig.manager.stopAll()
+            stopped.set()
+        }
         try await pollUntil("all three stops are running at once") { gate.arrived == 3 }
         gate.open()
-        await stopping.value
+        try await pollUntil("stopAll returned") { stopped.isSet }
 
         for profile in profiles { #expect(try rig.runner(profile).stopCount == 1) }
     }

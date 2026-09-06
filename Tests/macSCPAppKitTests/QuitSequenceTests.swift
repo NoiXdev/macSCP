@@ -169,6 +169,14 @@ struct QuitSequenceTests {
     private static let shouldTerminateDeclaration = "func applicationShouldTerminate("
     private static let boundedTeardownDeclaration = "private func runBoundedQuitTeardown("
     private static let boundedTunnelStopDeclaration = "private func runBoundedTunnelStop("
+    /// Anchored on the RETURN TYPE, not on `static func run(`: that
+    /// declaration's parameter list carries a default closure argument, so
+    /// the first `{` after the name opens the DEFAULT VALUE and a
+    /// brace-balanced read from there scans `try await Task.sleep(for: $0)`
+    /// instead of the function. Measured 2026-09-06 — the check failed on
+    /// that four-word body, which is at least loud; a negative check
+    /// anchored the same way would have passed over it in silence.
+    private static let boundedStepDeclaration = "async -> BoundedStepOutcome"
     private static let teardownChainDeclaration =
         "static func run(_ work: QuitWorkList) async -> QuitRaceOutcome"
 
@@ -261,12 +269,84 @@ struct QuitSequenceTests {
         #expect(
             body.contains("TunnelManager.shared.stopAll("),
             "the bounded tunnel step no longer stops the tunnels")
-        #expect(body.contains("withTaskGroup"), "the tunnel stop no longer races anything")
+        #expect(
+            body.contains("BoundedStep.run("),
+            "the tunnel stop no longer runs under a bound")
         #expect(
             body.contains("QuitWatchdog.bound"),
-            "the tunnel stop's sleeper no longer reads QuitWatchdog.bound")
-        #expect(body.contains("Task.sleep("), "the watchdog child no longer sleeps")
-        #expect(body.contains("group.cancelAll()"), "the loser of the race is no longer cancelled")
+            "the tunnel stop no longer reads QuitWatchdog.bound")
+
+        // The bound itself is `BoundedStep`'s, and it is DRIVEN below
+        // (`aBoundedStepReturnsWhenTheBoundElapsesEvenIfTheWorkNeverDoes`)
+        // rather than only read here — round 1's version passed a source
+        // read of exactly this shape while bounding nothing at all.
+        let step = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: Self.boundedStepDeclaration,
+            in: try Self.strictSource(of: Self.quitSequenceFile))
+        #expect(step.contains("withTaskGroup"), "the bounded step no longer races anything")
+        #expect(step.contains("group.cancelAll()"), "the loser of the race is no longer cancelled")
+    }
+
+    // MARK: - The bound, driven
+
+    /// A fake `stopAll()` that never returns — the shape a runner parked in
+    /// a dial has, and the one round 1's group could not walk away from.
+    @MainActor
+    private final class ParkingStopper {
+        private(set) var entered = 0
+
+        func stopAll() async {
+            entered += 1
+            // Answers cancellation (an `AsyncStream` iteration does), so
+            // this task does not outlive the test — but nothing ever yields
+            // to it, so it never finishes on its own.
+            let (never, continuation) = AsyncStream<Void>.makeStream(of: Void.self)
+            for await _ in never { break }
+            _ = continuation
+        }
+    }
+
+    /// The property the comment claims: the CALLER stops waiting when the
+    /// bound elapses, even though the work has not finished.
+    ///
+    /// The sleeper is injected and returns at once, so nothing here waits on
+    /// a clock — what is measured is that the step returns `.timedOut` while
+    /// the work is still parked (CLAUDE.md, "A wall-clock ceiling in a test
+    /// measures the runner").
+    @Test func aBoundedStepReturnsWhenTheBoundElapsesEvenIfTheWorkNeverDoes() async {
+        let stopper = ParkingStopper()
+        let outcome = await BoundedStep.run(
+            bound: QuitWatchdog.bound, sleeper: { _ in }
+        ) {
+            await stopper.stopAll()
+        }
+        #expect(outcome == .timedOut)
+        #expect(stopper.entered == 1, "the bounded step never started the work")
+    }
+
+    /// The other half, without which the test above would pass over a step
+    /// that always times out: work that finishes reports `.finished`, and
+    /// the sleeper that never returns does not hold the caller.
+    @Test func aBoundedStepReturnsAsSoonAsTheWorkIsDone() async {
+        let done = Done()
+        let outcome = await BoundedStep.run(
+            bound: .seconds(1), sleeper: { _ in
+                // Never returns, and answers cancellation so the group can
+                // end it once the work has won.
+                let (never, _) = AsyncStream<Void>.makeStream(of: Void.self)
+                for await _ in never { break }
+            }
+        ) {
+            done.record()
+        }
+        #expect(outcome == .finished)
+        #expect(done.count == 1)
+    }
+
+    @MainActor
+    private final class Done {
+        private(set) var count = 0
+        func record() { count += 1 }
     }
 
     /// The bound is production, not a test ceiling (CLAUDE.md, "A wall-clock

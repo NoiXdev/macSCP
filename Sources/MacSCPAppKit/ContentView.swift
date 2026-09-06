@@ -809,9 +809,12 @@ struct ContentView: View {
         // this is where the App builds the view model, and additively
         // through `addDeletionObserver(_:)` — the same seam the audit log's
         // own cleanup uses — so nothing about `delete(_:)` has to know that
-        // forwardings exist. `TunnelStore.sessionDeleted(id:)` swallows its
-        // own throw: an orphaned profile is a residual, never a reason to
-        // fail a session deletion.
+        // forwardings exist. What is registered is the MANAGER's observer,
+        // not the store: it stops that session's runners before deleting
+        // their profiles (round 1 registered the store, which rewrote
+        // `tunnels.json` and left the tunnels running). It swallows its own
+        // throw, like every other cleanup on that path — an orphaned profile
+        // is a residual, never a reason to fail a session deletion.
         resolvedSessionList.addDeletionObserver(TunnelManager.shared.deletionObserver)
         _sessionListViewModel = State(initialValue: resolvedSessionList)
     }

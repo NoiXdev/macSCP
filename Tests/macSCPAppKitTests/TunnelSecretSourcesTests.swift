@@ -133,16 +133,33 @@ struct TunnelSecretSourcesTests {
     @Test func theEnvironmentIsNeverConsulted() throws {
         let rig = try Rig()
         defer { rig.tearDown() }
+        let session = rig.session()
         let labels = TunnelSecretSources.chain(
-            for: rig.session(), keys: rig.keys, secrets: rig.secrets
+            for: session, keys: rig.keys, secrets: rig.secrets
         ).map(\.label)
 
-        #expect(labels.contains("keychain"), "the chain no longer reads the keychain at all")
+        // The two forbidden labels are DERIVED from the source types
+        // themselves, not spelled here (fix round 2): a renamed label would
+        // otherwise leave this negative matching nothing while reading
+        // exactly like a check that is satisfied. Both constructions are
+        // inert — the environment source takes its environment injected, and
+        // the password-command source runs nothing until `secret(for:)` is
+        // called, which nothing here does. The variable name comes from the
+        // backend descriptor, which is where the CLI chain gets it too.
+        let descriptor = BackendDescriptor.descriptor(for: session.kind)
+        let environmentLabel = EnvironmentSecretSource(
+            variableName: descriptor.secretEnvironmentVariable ?? "MACSCP_PASSWORD",
+            environment: [:]
+        ).label
+        let passwordCommandLabel = PasswordCommandSecretSource(command: "true").label
+        let keychainLabel = KeychainSecretSource(store: rig.secrets).label
+
+        #expect(labels.contains(keychainLabel), "the chain no longer reads the keychain at all")
         #expect(
-            !labels.contains { $0.lowercased().contains("environment") },
+            !labels.contains(environmentLabel),
             "a forwarding's dial consults the environment: \(labels)")
         #expect(
-            !labels.contains { $0.contains("password-command") },
+            !labels.contains(passwordCommandLabel),
             "a forwarding's dial runs a password command: \(labels)")
     }
 
@@ -164,6 +181,6 @@ struct TunnelSecretSourcesTests {
         let labels = TunnelSecretSources.chain(
             for: rig.session(authKind: .password), keys: rig.keys, secrets: rig.secrets
         ).map(\.label)
-        #expect(labels == ["keychain"])
+        #expect(labels == [KeychainSecretSource(store: rig.secrets).label])
     }
 }

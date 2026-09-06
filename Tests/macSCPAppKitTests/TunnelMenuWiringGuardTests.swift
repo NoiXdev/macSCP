@@ -113,6 +113,7 @@ struct TunnelMenuWiringGuardTests {
     private static let appKitRoot = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
     private static let sidebarFile = appKitRoot.appendingPathComponent("SessionSidebar.swift")
     private static let sheetFile = appKitRoot.appendingPathComponent("TunnelProfilesSheet.swift")
+    private static let managerFile = appKitRoot.appendingPathComponent("TunnelManager.swift")
     private static let sheetsFile = appKitRoot.appendingPathComponent("ContentView+Sheets.swift")
     private static let contentViewFile = appKitRoot.appendingPathComponent("ContentView.swift")
 
@@ -286,6 +287,41 @@ struct TunnelMenuWiringGuardTests {
         #expect(
             callers == ["TunnelManager.swift"],
             "a runner is started outside TunnelManager: \(callers)")
+    }
+
+    /// The dial the manager builds resolves its secret through the APP's
+    /// chain — the wiring, not the function.
+    ///
+    /// `TunnelSecretSourcesTests` measures what `TunnelSecretSources.chain`
+    /// answers; nothing measured that `liveRunner` calls it, so putting
+    /// `secretSources(for:passwordCommand:)` back at the dial left the whole
+    /// suite green (measured 2026-09-06). The negative is the half that
+    /// matters — the CLI chain must not come back — and the positive beside
+    /// it names what has to be there instead.
+    ///
+    /// The span is the `connect` closure, anchored on the line that builds
+    /// the runner. `liveRunner` itself cannot be the anchor: its parameter
+    /// list carries a default closure argument, so a brace-balanced read
+    /// from the first `{` after the declaration scans that default value.
+    @Test func theDialResolvesItsSecretThroughTheAppsOwnChain() throws {
+        let strict = try SwiftSource.blankingCommentsAndStrings(try Self.text(of: Self.managerFile))
+        let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: "return TunnelRunner(profile: profile, connect:", in: strict)
+        let body = TransferQueueBarCancelGuardTests.slice(range, of: strict)
+
+        #expect(
+            body.contains("TunnelConnection.connect("),
+            "the scanned span is not the runner's dial — re-anchor this guard")
+        #expect(
+            body.contains("TunnelSecretSources.chain("),
+            "the forwarding's dial no longer resolves its secret through the App's own chain")
+        #expect(
+            !body.contains("secretSources(for:"),
+            """
+            the forwarding's dial is back on the command line's secret chain: it reads \
+            MACSCP_PASSWORD ahead of the keychain and cannot reach a managed key's own \
+            passphrase slot at all.
+            """)
     }
 
     /// The sheet asks the manager and dials nothing itself — the same

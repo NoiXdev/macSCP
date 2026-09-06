@@ -192,6 +192,77 @@ enum QuitRaceOutcome: Equatable, Sendable {
     case watchdogFired
 }
 
+/// Which way a bounded step ended.
+enum BoundedStepOutcome: Equatable, Sendable {
+    /// The work finished inside the bound.
+    case finished
+    /// The bound elapsed first. The work was NOT cancelled — see
+    /// `BoundedStep.run`.
+    case timedOut
+}
+
+/// Runs a piece of work with a ceiling on how long the CALLER waits for it.
+///
+/// **Why this is not a `TaskGroup` around the work itself**, which is what
+/// round 1 wrote and what fix round 2 replaced. The work here is
+/// `TunnelManager.stopAll()`, whose every `stop()` ends in
+/// `TunnelRunner.command(_:)` at `await mine.value` on a
+/// `Task<Void, Never>` — and that ignores the awaiting task's cancellation
+/// (the runner's own `performStop()` doc comment says so, and says why:
+/// abandoning the run task would let it publish a state after `.stopped`).
+/// So a child task holding that await cannot be cancelled, `group.cancelAll()`
+/// was a no-op, and the group waited for the work regardless of the bound.
+/// The step was bounded in the comment and unbounded in the code.
+///
+/// What bounds it instead is a task the caller can ABANDON: the work runs
+/// unstructured, its completion is signalled through an `AsyncStream`
+/// (whose iteration does answer cancellation), and the race is between that
+/// signal and the sleeper. When the sleeper wins, the work task is left
+/// running — deliberately: it is mid-teardown, cancelling it would neither
+/// stop it nor help, and the process is about to exit anyway. The caller
+/// stops waiting; that is the whole of what "bounded" means here.
+///
+/// `sleeper` is injected so a test measures what this ASKED for rather than
+/// waiting for it (CLAUDE.md, "A wall-clock ceiling in a test measures the
+/// runner").
+@MainActor
+enum BoundedStep {
+    typealias Sleeper = @Sendable (Duration) async throws -> Void
+
+    static func run(
+        bound: Duration,
+        sleeper: @escaping Sleeper = { try await Task.sleep(for: $0) },
+        _ body: @escaping @MainActor @Sendable () async -> Void
+    ) async -> BoundedStepOutcome {
+        let (done, signal) = AsyncStream<Void>.makeStream(
+            of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        // Unstructured on purpose: nothing awaits this handle, so the race
+        // below can walk away from it.
+        Task { @MainActor in
+            await body()
+            signal.yield(())
+            signal.finish()
+        }
+        return await withTaskGroup(of: BoundedStepOutcome.self) { group in
+            group.addTask {
+                for await _ in done { break }
+                return .finished
+            }
+            group.addTask {
+                try? await sleeper(bound)
+                return .timedOut
+            }
+            let first = await group.next() ?? .timedOut
+            // Both children answer cancellation — an `AsyncStream`
+            // iteration and a sleeper whose contract says so — so this
+            // really does end the loser, unlike the version that tried to
+            // cancel the work.
+            group.cancelAll()
+            return first
+        }
+    }
+}
+
 /// What the deferred quit still has to tear down, in one main-actor box.
 ///
 /// It exists for a type-system reason, not a design one: `TaskGroup

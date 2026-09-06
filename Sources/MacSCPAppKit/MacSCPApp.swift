@@ -336,33 +336,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Every forwarding stopped, raced against `QuitWatchdog.bound`
-    /// (port-forwarding plan, Task 6, fix round 1).
+    /// Every forwarding stopped, with a ceiling on how long the quit waits
+    /// for it (port-forwarding plan, Task 6, fix rounds 1 and 2).
     ///
-    /// **It needed a bound of its own.** `TunnelManager.stopAll()` waits for
-    /// each runner's run task, and a run task parked in a DIAL is bounded by
-    /// `connectTimeoutSeconds` — 10 s by default, settable to 120 s. Round 1
-    /// awaited that unbounded and in sequence, in front of a quit whose own
-    /// watchdog is 15 s: n forwardings dialling meant n × the timeout with
-    /// nothing to cut it short, and the argument for `QuitWatchdog.bound`
-    /// right below — that a quit belongs to the user after fifteen seconds —
-    /// was simply not being applied to this step. `stopAll()` now stops the
-    /// runners concurrently (one timeout, not n) and this races the whole
-    /// step against the same bound.
+    /// **It needed a ceiling.** `TunnelManager.stopAll()` waits for each
+    /// runner's run task, and a run task parked in a DIAL is bounded by
+    /// `connectTimeoutSeconds` — 10 s by default, settable to 120 s. Round 0
+    /// awaited that unbounded and in sequence in front of a quit whose own
+    /// watchdog is 15 s. `stopAll()` now stops the runners concurrently (one
+    /// timeout, not n) and this puts `QuitWatchdog.bound` on the wait.
     ///
-    /// **What losing the race costs**, stated: the sleeper wins, `stopAll`'s
-    /// child is cancelled, and whatever forwarding was still stopping is
-    /// dropped by process exit instead — the same trade `QuitTeardownChain`
-    /// makes, and the reason the quit line's `forced=` exists. This step is
-    /// not reported in that line: it has no count of its own, and inventing
-    /// one would be a second number to keep true.
+    /// **Round 1's version bounded nothing**, and the correction is
+    /// `BoundedStep`'s whole subject: a `TaskGroup` child awaiting
+    /// `TunnelRunner.stop()` cannot be cancelled (it ends at `await
+    /// mine.value` on a `Task<Void, Never>`), so `cancelAll()` was a no-op
+    /// and the group waited for the work anyway.
+    ///
+    /// **What losing the race costs**, stated: the stop keeps running,
+    /// detached, and the quit goes on without it — so a forwarding that had
+    /// not finished stopping is dropped by process exit instead, the same
+    /// trade `QuitTeardownChain` makes when the watchdog beats it. This step
+    /// is not reported in the quit line: it has no count of its own, and
+    /// inventing one would be a second number to keep true.
     @MainActor
     private func runBoundedTunnelStop() async {
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await TunnelManager.shared.stopAll() }
-            group.addTask { try? await Task.sleep(for: QuitWatchdog.bound) }
-            await group.next()
-            group.cancelAll()
+        _ = await BoundedStep.run(bound: QuitWatchdog.bound) {
+            await TunnelManager.shared.stopAll()
         }
     }
 
