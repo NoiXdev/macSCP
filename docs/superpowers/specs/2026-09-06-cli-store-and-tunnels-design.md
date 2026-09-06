@@ -88,7 +88,7 @@ exit 64 when given for the wrong kind ("--bucket applies to --kind s3"):
 |---|---|---|
 | `ssh` | `--host`, `--user` | `--port` (22), `--key <path>` (auth = key; without it, auth = password, asked by the app), `--agent` (auth = agent) |
 | `s3` | `--endpoint`, `--bucket`, `--access-key` | `--region`, `--path-style` |
-| `webdav` | `--url`, `--user` | `--auth basic\|digest` |
+| `webdav` | `--url`, `--user` | `--nextcloud` (the stored flag `useNextcloudPath`; there is no `--auth` — the scheme is negotiated at connect time and `StoredWebDAVConfig` stores none, measured in Task 2) |
 
 Common: `--group "A / B"` (created along the path if missing, `" / "`
 separated exactly as `sessions --json` prints `groupPath`), `--tag` (repeatable),
@@ -238,6 +238,11 @@ both reloads).
 - No `apply`, no import/export.
 
 ## Not in this plan
+
+Name completion for `sessions edit/rm` and `tunnels … --session`: the
+existing completer appends a trailing `:` (it completes `name:/path`
+targets), so a bare-name completer is a separate change under the CLI
+completion backlog entry (found in Task 2).
 
 Declarative `apply`; login sets and jump hosts from the CLI; keychain
 writes; an IPC to the running app; shell completion for the new verbs
