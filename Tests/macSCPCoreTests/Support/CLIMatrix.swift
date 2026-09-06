@@ -223,10 +223,13 @@ struct CLIMatrix: Sendable {
     /// The bound `runUntilLine` gives a child that is supposed to STAY up.
     ///
     /// Ten minutes: twice the longest `.timeLimit` any suite in THIS target
-    /// declares. Five minutes is that longest, in THREE files — recounted
-    /// 2026-09-06 with `grep -rln "timeLimit(.minutes(5)"
-    /// Tests/macSCPCoreTests/`: `TunnelRigITests`, `SubprocessRunnerTests`
-    /// and `CLIMatrixITests`, the last of which is where this helper's own
+    /// declares. Five minutes is that longest, in THREE test files —
+    /// recounted 2026-09-06 by searching the target's test files for the
+    /// five-minute time-limit trait (the pattern is not spelled here on
+    /// purpose: a comment that quotes the search string matches itself, and
+    /// the recount then reads four): `TunnelRigITests`,
+    /// `SubprocessRunnerTests` and `CLIMatrixITests`, the last of which is
+    /// where this helper's own
     /// callers live and which gained the trait in the same commit as this
     /// constant. The limits in the target otherwise run 1, 2 and 3, and the
     /// single 10 is in `macSCPAppKitTests`, which drives no child through
