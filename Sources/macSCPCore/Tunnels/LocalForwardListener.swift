@@ -282,6 +282,13 @@ public final class LocalForwardListener: @unchecked Sendable {
                 try await BytePump.install(
                     local: channel, remote: throughTheServer, observer: observer).get()
                 try await negotiation?.confirm(on: channel)
+                // A no-op since round 2 — both sides began reading when
+                // `install` added their handlers, from the channels' own
+                // lifecycles rather than from this task, which is what
+                // stopped it racing NIO's registration. Kept as a step
+                // because `SOCKS5Handshake` and its tests describe this
+                // path in terms of it running after `confirm`; see
+                // `BytePump.startReading`.
                 try await BytePump.startReading(
                     local: channel, remote: throughTheServer).get()
             } catch {

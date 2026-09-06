@@ -41,11 +41,11 @@ public enum BytePump {
     /// Installs the pump on both channels and returns once both handlers are
     /// in place — on `local`'s event loop, whichever loop `remote` is on.
     ///
-    /// Neither channel's `autoRead` is touched here. The caller decides when
-    /// reading may start (`LocalForwardListener` accepts with `autoRead`
-    /// off, so that nothing is read from the client before there is anywhere
-    /// to put it), and from then on the pump owns the option as its
-    /// backpressure control.
+    /// Installing IS starting: each handler turns its own channel's
+    /// `autoRead` on and asks for its first read from the channel's own
+    /// lifecycle (`BytePumpHandler.handlerAdded`/`channelActive`), never
+    /// from the task that called this. The long comment on those two methods
+    /// is the reason, and it is a measured one.
     public static func install(
         local: Channel, remote: Channel, observer: TunnelConnectionObserver? = nil
     ) -> EventLoopFuture<Void> {
@@ -61,28 +61,45 @@ public enum BytePump {
         }
     }
 
-    /// Turns reading on for both sides, once the pump is in place.
+    /// Kept, and deliberately empty: by the time anyone can call this, both
+    /// sides are already reading.
     ///
-    /// The explicit `read()` beside the option is NOT redundant, and this is
-    /// the measurement that says so (2026-09-06, against the Docker rig): a
+    /// This function used to do the work its name describes —
+    /// `setOption(autoRead, true)` followed by `read()`, on both channels,
+    /// from the accept task. That shape hangs, and Task 3 measured it
+    /// hanging (3 of 7 runs, a different test each time, every selector
+    /// thread parked in `kevent` with no frame of ours in the sample): a
+    /// `read()` issued before NIO has finished registering the accepted
+    /// channel latches `readPending` without registering read interest, and
+    /// the `readIfNeeded0` that follows activation then skips its own read
+    /// BECAUSE `readPending` is already true. An `await` in front does not
+    /// order it — the accepted channel's registration is enqueued by
+    /// `ServerSocketChannel.channelRead0` with `eventLoop.execute` on a loop
+    /// that need not be the server's. `BytePumpHandler.handlerAdded` and
+    /// `.channelActive` carry the work now; the full argument, with the
+    /// swift-nio line numbers, is on those two.
+    ///
+    /// Why it is still here rather than deleted. Three files this task must
+    /// not edit describe the accept path in terms of this step, and every
+    /// one of them stays RESOLVABLE with the symbol present and dangles
+    /// without it — a reader who follows them lands on this comment, which
+    /// says what actually happens: `SOCKS5Handshake.swift`'s reply-code
+    /// table and its `refuse`-after-handover argument (`:53`, `:409`,
+    /// `:478`), `RemoteForward.swift`'s pointer to the SSH-child
+    /// measurement (`:315`), and `SOCKS5HandshakeTests.swift:244`. Counted
+    /// 2026-09-06 with `grep -rn startReading Sources/ Tests/`. Its call
+    /// site in `LocalForwardListener` is kept for the same reason: those
+    /// comments say this step runs after `confirm`, and it still does.
+    ///
+    /// The measurement the old body carried, moved rather than lost: a
     /// socket channel's `setOption(autoRead, true)` issues the first read
-    /// itself (`BaseSocketChannel.setOption0` calls `read0()` on the
-    /// transition), but NIOSSH's `SSHChildChannel.setOption0` only assigns
-    /// the flag. Its reads are driven by `unsatisfiedRead`, which nothing
-    /// sets until someone calls `read()`, and its `tryToAutoRead` only
-    /// recurses AFTER a delivery — so a child channel activated with
-    /// `autoRead` off never delivers a byte, however true the flag is made
-    /// afterwards. Without this line the rig test hung until the SSH
-    /// handshake through the tunnel timed out.
-    ///
-    /// A second `read()` on a channel that is already reading is harmless,
-    /// so the same call covers both kinds.
+    /// itself (`BaseSocketChannel.setOption0`, on the transition), but
+    /// NIOSSH's `SSHChildChannel.setOption0` only assigns the flag — its
+    /// reads come from `unsatisfiedRead`, which nothing sets until someone
+    /// calls `read()`. So the explicit `read()` is not redundant on the
+    /// remote side; it now happens in `BytePumpHandler.startReading`.
     public static func startReading(local: Channel, remote: Channel) -> EventLoopFuture<Void> {
-        let localReading = local.setOption(ChannelOptions.autoRead, value: true)
-            .map { local.read() }
-        let remoteReading = remote.setOption(ChannelOptions.autoRead, value: true)
-            .map { remote.read() }
-        return localReading.and(remoteReading).map { _ in }
+        local.eventLoop.makeSucceededVoidFuture()
     }
 }
 
@@ -160,6 +177,64 @@ final class BytePumpHandler: ChannelInboundHandler, @unchecked Sendable {
         self.peer = peer
         self.side = side
         self.counters = counters
+    }
+
+    /// Reading starts HERE, from this channel's own lifecycle, and never
+    /// from the task that installed the pump.
+    ///
+    /// Both listeners accept with `autoRead` off — nothing may be read
+    /// before there is somewhere to put it — and `openDirectTCPIP` hands
+    /// back its child channel the same way, so something has to turn it
+    /// back on. Doing that from the accept task races NIO's registration of
+    /// the accepted channel, and the race is not theoretical: Task 3
+    /// measured this exact shape hanging 3 of 7 runs, on a different test
+    /// each time, with every selector thread parked in `kevent` and no
+    /// frame of ours in the sample — an accepted channel that was open,
+    /// active, and registered for no read interest at all.
+    ///
+    /// The mechanism, in swift-nio 2.101.2's `BaseSocketChannel.swift`:
+    /// `setOption0` only kicks a read when `lifecycleManager
+    /// .isPreRegistered` (`:694-707`); `read0` latches `readPending = true`
+    /// and registers interest only if pre-registered (`:833-844`);
+    /// registration itself asks for `[.reset, .error]` and never consults
+    /// `readPending` (`becomeFullyRegistered0`, `:1390-1398`); and the
+    /// `readIfNeeded0` that follows activation (`:755-765`) skips its
+    /// `pipeline.read()` precisely BECAUSE `readPending` is already true.
+    /// An `await` in front of the option does not order any of it: the
+    /// accepted channel's registration is enqueued by
+    /// `ServerSocketChannel.channelRead0` through `eventLoop.execute`, on a
+    /// loop that need not be the server's.
+    ///
+    /// Both entry points below run on the event loop and both imply
+    /// registration, and EXACTLY ONE of them fires: a handler added before
+    /// activation sees `isActive == false`, does nothing — it must not even
+    /// set the option — and gets `channelActive` later; a handler added
+    /// after activation sees `isActive == true` and will never get another
+    /// `channelActive`.
+    func handlerAdded(context: ChannelHandlerContext) {
+        if context.channel.isActive { startReading(context) }
+    }
+
+    func channelActive(context: ChannelHandlerContext) {
+        startReading(context)
+        context.fireChannelActive()
+    }
+
+    /// The option AND the read, in that order, on the loop.
+    ///
+    /// The `read()` is not redundant beside the option. A socket channel
+    /// kicks its own read when `autoRead` flips, but an `SSHChildChannel`
+    /// does not — `setOption0` there only assigns the flag, and its reads
+    /// come from `unsatisfiedRead`, which nothing sets until `read()` is
+    /// called. The remote side of every local and dynamic forward is such a
+    /// channel, and without this it never delivers a byte.
+    ///
+    /// The failure arm is empty for the reason
+    /// `channelWritabilityChanged`'s is: a channel that has already closed
+    /// cannot take the option, and its own close ends the pair anyway.
+    private func startReading(_ context: ChannelHandlerContext) {
+        context.channel.setOption(ChannelOptions.autoRead, value: true).whenFailure { _ in }
+        context.read()
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {

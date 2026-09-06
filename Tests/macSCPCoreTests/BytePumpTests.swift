@@ -86,18 +86,23 @@ struct BytePumpTests {
         try local.pipeline.syncOperations.addHandler(localReads)
         try installPump(local: local, remote: remote)
 
-        #expect(autoRead(of: local) == nil, "the pump must not touch autoRead before it has to")
-        #expect(localReads.count == 0)
+        // The pair is active, so installing already started reading — the
+        // baseline the throttle is measured against, not zero.
+        #expect(autoRead(of: local) == true)
+        let readsBeforeThrottling = localReads.count
+        #expect(readsBeforeThrottling >= 1)
 
         remote.isWritable = false
         remote.pipeline.fireChannelWritabilityChanged()
         #expect(autoRead(of: local) == false)
-        #expect(localReads.count == 0, "a throttled peer must not be told to read")
+        #expect(
+            localReads.count == readsBeforeThrottling,
+            "a throttled peer must not be told to read")
 
         remote.isWritable = true
         remote.pipeline.fireChannelWritabilityChanged()
         #expect(autoRead(of: local) == true)
-        #expect(localReads.count >= 1, "a resumed peer must be read again")
+        #expect(localReads.count > readsBeforeThrottling, "a resumed peer must be read again")
 
         finish(local, remote)
     }
@@ -166,18 +171,54 @@ struct BytePumpTests {
         #expect(seen.events == [.opened, .closed(bytesIn: 4, bytesOut: 3)])
     }
 
-    /// `startReading` must do TWO things, and the second is the one that is
-    /// easy to lose: turn `autoRead` on AND issue the first `read()`.
+    /// Added BEFORE activation: nothing at all until `channelActive`, then
+    /// one read on each side.
     ///
-    /// A socket channel issues that read itself when the option flips, so a
-    /// test built only on sockets would pass with the `read()` deleted. An
-    /// SSH child channel does not — `SSHChildChannel.setOption0` assigns the
-    /// flag and nothing else — which is exactly the shape the production
-    /// pairing has on its far side, and exactly what hung the rig test
-    /// before the `read()` was added. `EmbeddedChannel` behaves like the SSH
-    /// child channel here (its own `setOption` triggers no read), so this is
-    /// the cheap place to pin it.
-    @Test func startReadingTurnsOnAutoReadAndIssuesTheFirstRead() throws {
+    /// The `autoRead` assertion before activation is not decoration. Setting
+    /// the option early is half of what hangs a real socket — `setOption0`
+    /// only kicks a read when the channel is pre-registered, and a `read()`
+    /// that lands before registration latches `readPending` so that the
+    /// post-activation `readIfNeeded0` skips its own read. A handler that
+    /// "only" set the option early would look harmless here and hang there.
+    @Test func aHandlerAddedBeforeActivationWaitsForIt() throws {
+        // NOT `activeEmbeddedPair()`: a bare `EmbeddedChannel` is registered
+        // and not active, which is the state this test is about.
+        let local = EmbeddedChannel()
+        let remote = EmbeddedChannel()
+        let localReads = ReadRecorder()
+        let remoteReads = ReadRecorder()
+        try local.pipeline.syncOperations.addHandler(localReads)
+        try remote.pipeline.syncOperations.addHandler(remoteReads)
+        try installPump(local: local, remote: remote)
+
+        #expect(local.isActive == false)
+        #expect(autoRead(of: local) == nil, "autoRead must not be set before activation")
+        #expect(autoRead(of: remote) == nil)
+        #expect(localReads.count == 0)
+        #expect(remoteReads.count == 0)
+
+        let address = try SocketAddress(ipAddress: "127.0.0.1", port: 0)
+        local.connect(to: address, promise: nil)
+        remote.connect(to: address, promise: nil)
+
+        #expect(autoRead(of: local) == true)
+        #expect(autoRead(of: remote) == true)
+        #expect(localReads.count == 1, "exactly one arm fires")
+        #expect(remoteReads.count == 1)
+
+        finish(local, remote)
+    }
+
+    /// Added AFTER activation: one read from `handlerAdded`, on both sides,
+    /// and no second one — the other arm can no longer fire, because a
+    /// channel that is already active will never see another `channelActive`.
+    ///
+    /// Both sides matter, and for different reasons. The local side is a
+    /// socket in production and would half-work on the option alone; the
+    /// remote side is an `SSHChildChannel`, whose `setOption0` assigns the
+    /// flag and issues no read at all. `EmbeddedChannel` behaves like the
+    /// latter, so this is the cheap place to pin the explicit `read()`.
+    @Test func aHandlerAddedAfterActivationReadsAtOnce() throws {
         let (local, remote) = try activeEmbeddedPair()
         let localReads = ReadRecorder()
         let remoteReads = ReadRecorder()
@@ -185,15 +226,29 @@ struct BytePumpTests {
         try remote.pipeline.syncOperations.addHandler(remoteReads)
         try installPump(local: local, remote: remote)
 
-        #expect(localReads.count == 0)
-        #expect(remoteReads.count == 0)
+        #expect(autoRead(of: local) == true)
+        #expect(autoRead(of: remote) == true)
+        #expect(localReads.count == 1, "exactly one arm fires")
+        #expect(remoteReads.count == 1)
+
+        finish(local, remote)
+    }
+
+    /// The old task-driven entry point is kept as a step in the accept path
+    /// and does nothing — see its doc comment for the three files that still
+    /// name it. Pinned so that "nothing" stays true: calling it after the
+    /// pump is installed neither reads again nor disturbs the option.
+    @Test func theKeptStartReadingStepDoesNothing() throws {
+        let (local, remote) = try activeEmbeddedPair()
+        let localReads = ReadRecorder()
+        try local.pipeline.syncOperations.addHandler(localReads)
+        try installPump(local: local, remote: remote)
+        let readsAfterInstall = localReads.count
 
         try completing(BytePump.startReading(local: local, remote: remote))
 
+        #expect(localReads.count == readsAfterInstall)
         #expect(autoRead(of: local) == true)
-        #expect(autoRead(of: remote) == true)
-        #expect(localReads.count >= 1)
-        #expect(remoteReads.count >= 1)
 
         finish(local, remote)
     }
@@ -244,9 +299,10 @@ struct BytePumpTests {
 
         #expect(first.eventLoop !== second.eventLoop)
 
+        // No `setOption` here on purpose: both channels were connected with
+        // `autoRead` off, and the pump's own handlers are what turn it back
+        // on. If they did not, the polls below would never come true.
         try await awaitCancellably(BytePump.install(local: first, remote: second))
-        try await awaitCancellably(first.setOption(ChannelOptions.autoRead, value: true))
-        try await awaitCancellably(second.setOption(ChannelOptions.autoRead, value: true))
 
         let intoFirst = try #require(accepted.channel(0))
         let outOfSecond = try #require(accepted.inbox(1))
