@@ -14,8 +14,9 @@ import Foundation
 /// `SessionNameRule.conflict(_:among:excluding:matching:)` under
 /// `.exactAsSaved`, together with the trim (`SessionNameRule.asSaved`) that
 /// makes it compare the value `save` will receive rather than the value a
-/// name field holds. The command line asks the same function a different
-/// way — `.caseInsensitive`, because a writer that REFUSES may refuse more
+/// name field holds. The command line's `sessions add` asks the same
+/// function a different way — `.caseInsensitive`, because a writer that
+/// REFUSES may refuse more
 /// than saving would overwrite, while a warning that DESCRIBES may not. That
 /// difference is spelled once, in `SessionNameRule.Matching`, instead of
 /// twice by accident.

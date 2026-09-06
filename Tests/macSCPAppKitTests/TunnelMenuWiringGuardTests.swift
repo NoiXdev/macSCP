@@ -13,7 +13,10 @@ import Testing
 ///
 /// - **Values.** Which sessions may carry a forwarding at all is
 ///   `SessionRowTunnelMenuPlan.build`'s answer, so it is driven directly.
-///   That is the SSH-only rule, and it is measured, not read out of a view.
+///   Since fix round 1 of Task 1 that answer is `TunnelCarriers.refusal
+///   (for:)`'s, not a copy of it: the cases below are red under a mutated
+///   `TunnelCarriers.carries`, and were green under the same mutation while
+///   the copy stood.
 /// - **Source.** That the row draws what the plan says, that every entry
 ///   takes its title from the catalogue, and that nothing but the manager
 ///   starts a runner, are claims about text — `SessionSidebar` cannot be
@@ -59,10 +62,10 @@ struct TunnelMenuWiringGuardTests {
         #expect(plan.entries.allSatisfy { !$0.isRunning })
     }
 
-    /// The negative, and the three reasons for it. A backend with no
-    /// `direct-tcpip` at all, and the two shapes `StoredSessionConnectionConfig
-    /// .build(for:secret:)` refuses — a jump host and a login set — which a
-    /// forwarding's own dial goes through.
+    /// The negative, and the three reasons for it — the same three, in the
+    /// same order, that `TunnelCarriers.refusal(for:)` answers and
+    /// `TunnelConnection.connect` throws for: a backend with no
+    /// `direct-tcpip` at all, a login set, and a jump host.
     @Test func aSessionThatCouldNotCarryOneIsOfferedNothing() {
         let profileless = UUID()
         let cases: [(String, StoredSession)] = [

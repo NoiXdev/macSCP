@@ -3,11 +3,22 @@ import Foundation
 /// Which connection kinds can carry a port forwarding, and what a session
 /// that cannot is told.
 ///
-/// One place, because the answer is needed before anything is dialled (the
-/// command line refuses a `--tunnel` on an S3 session without opening a
-/// socket), while it is dialled (`TunnelConnection.connect`), and after
-/// (the App greys the menu item). Three copies of a rule this small drift by
-/// wording long before they drift by outcome, and a refusal that words itself
+/// One place, because the answer is needed at more than one moment: before
+/// anything is dialled, while it is dialled, and after. Counted 2026-09-06
+/// with `grep -rn "TunnelCarriers\." Sources/`, TWO call sites hold it
+/// today — `TunnelConnection.connect`, which throws `refusal`'s sentence
+/// (`TunnelConnection.swift:79`), and `SessionRowTunnelMenuPlan.build`,
+/// which hides the session row's forwarding submenu when there is one
+/// (`SessionSidebar.swift:184`). The command line's own refusal, which
+/// answers before a socket is opened, is the third and arrives with the
+/// task that adds the subcommand; the count above is what is in the tree,
+/// not what is planned.
+///
+/// The sidebar's was a second copy of the three predicates until 2026-09-06,
+/// and the copy was silent rather than merely redundant: with
+/// `carries(.s3)` mutated to `true`, `TunnelMenuWiringGuardTests` stayed
+/// green through all 16 of its tests. A rule this small drifts by wording
+/// long before it drifts by outcome, and a refusal that words itself
 /// differently in three places reads as three different rules.
 public enum TunnelCarriers {
     /// Whether a forwarding can be carried over a connection of this kind.

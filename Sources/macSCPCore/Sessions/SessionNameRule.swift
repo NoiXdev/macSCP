@@ -6,12 +6,12 @@ import Foundation
 /// for two different reasons and only one of them is free to choose the
 /// answer.
 ///
-/// * **A writer that REFUSES** — the command line's `session create` — wants
+/// * **A writer that REFUSES** — the command line's `sessions add` — wants
 ///   the human answer: `"Prod"`, `" prod "` and `"prod"` are the same name to
 ///   the person who has to find the session again later, and letting all
 ///   three into one store makes a list nobody can read. Refusing more than
 ///   strictly necessary costs the caller one error message; it cannot make a
-///   wrong thing happen. That is `.caseInsensitive`, the default.
+///   wrong thing happen. That is `.caseInsensitive`.
 /// * **A warning that DESCRIBES** — the connection form's "Saving replaces
 ///   the existing session X" — has no such freedom. It is measured against
 ///   what `SessionListViewModel.save` will actually do, and `save` finds its
@@ -25,6 +25,12 @@ import Foundation
 /// decision seen from two sides: what a name IS (trimmed, because no write
 /// path ever hands `save` untrimmed text) is answered once, in `asSaved`, and
 /// only the comparison on top of it differs.
+///
+/// `matching:` has NO default. Which of the two a caller wants is the whole
+/// question this type exists to ask, and a default answers it for whoever
+/// forgets — silently handing a future App call site the command line's
+/// rule, which would put a false sentence in front of a person rather than
+/// an extra refusal in front of a script.
 public enum SessionNameRule {
     /// How two names are compared.
     public enum Matching: Sendable {
@@ -71,7 +77,7 @@ public enum SessionNameRule {
         _ name: String,
         among sessions: [StoredSession],
         excluding: UUID? = nil,
-        matching: Matching = .caseInsensitive
+        matching: Matching
     ) -> StoredSession? {
         let candidate = asSaved(name)
         let folded = candidate.lowercased()

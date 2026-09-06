@@ -6,37 +6,44 @@ import Testing
 /// `SessionNameRule` — is this name already taken, and by which session.
 ///
 /// Two matchings, because two callers ask two different questions of the same
-/// list. The default answers "would a person call these the same name", which
-/// is what a command line refuses on. `.exactAsSaved` answers "which session
-/// would `SessionListViewModel.save` overwrite", which is what a warning that
-/// says *replaces* must be measured against.
+/// list. `.caseInsensitive` answers "would a person call these the same
+/// name", which is what a command line refuses on. `.exactAsSaved` answers
+/// "which session would `SessionListViewModel.save` overwrite", which is what
+/// a warning that says *replaces* must be measured against. Every call below
+/// names its matching, because the function has no default to inherit.
 @Suite("Session name rule")
 struct SessionNameRuleTests {
 
-    // MARK: - The default: case-insensitive, trimmed on both sides
+    // MARK: - `.caseInsensitive`: trimmed on both sides, case folded
 
     @Test func caseAloneDoesNotMakeADifferentName() {
         let stored = sshSession(name: "prod")
-        #expect(SessionNameRule.conflict("Prod", among: [stored])?.id == stored.id)
+        #expect(SessionNameRule.conflict(
+            "Prod", among: [stored], matching: .caseInsensitive)?.id == stored.id)
     }
 
     @Test func surroundingWhitespaceDoesNotMakeADifferentName() {
         // Both directions: the asked name and the stored one. The stored side
         // is the half a rule that only trims its argument gets wrong.
         let storedPadded = sshSession(name: " prod ")
-        #expect(SessionNameRule.conflict("Prod", among: [storedPadded])?.id == storedPadded.id)
+        #expect(SessionNameRule.conflict(
+            "Prod", among: [storedPadded], matching: .caseInsensitive)?.id
+            == storedPadded.id)
 
         let stored = sshSession(name: "prod")
-        #expect(SessionNameRule.conflict("  Prod  ", among: [stored])?.id == stored.id)
+        #expect(SessionNameRule.conflict(
+            "  Prod  ", among: [stored], matching: .caseInsensitive)?.id == stored.id)
     }
 
     @Test func aFreeNameConflictsWithNothing() {
-        #expect(SessionNameRule.conflict("prod", among: [sshSession(name: "staging")]) == nil)
+        #expect(SessionNameRule.conflict(
+            "prod", among: [sshSession(name: "staging")], matching: .caseInsensitive) == nil)
     }
 
     @Test func theExcludedSessionIsNotAConflictWithItself() {
         let editing = sshSession(name: "prod")
-        #expect(SessionNameRule.conflict("Prod", among: [editing], excluding: editing.id) == nil)
+        #expect(SessionNameRule.conflict(
+            "Prod", among: [editing], excluding: editing.id, matching: .caseInsensitive) == nil)
     }
 
     @Test func excludingOneSessionStillFindsAnother() {
@@ -44,14 +51,16 @@ struct SessionNameRuleTests {
         // exactly one session, not switch the rule off.
         let editing = sshSession(name: "old")
         let other = sshSession(name: "prod")
-        #expect(SessionNameRule.conflict("Prod", among: [editing, other], excluding: editing.id)?.id
-            == other.id)
+        #expect(SessionNameRule.conflict(
+            "Prod", among: [editing, other], excluding: editing.id,
+            matching: .caseInsensitive)?.id == other.id)
     }
 
     @Test func theFirstConflictingSessionIsReported() {
         let first = sshSession(name: "prod")
         let second = sshSession(name: "PROD")
-        #expect(SessionNameRule.conflict("Prod", among: [first, second])?.id == first.id)
+        #expect(SessionNameRule.conflict(
+            "Prod", among: [first, second], matching: .caseInsensitive)?.id == first.id)
     }
 
     // MARK: - `.exactAsSaved`: the app's save-mirroring matching

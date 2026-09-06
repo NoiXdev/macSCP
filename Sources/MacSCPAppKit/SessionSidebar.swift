@@ -120,14 +120,13 @@ enum SessionRowTerminalMenuPlan: Equatable {
 /// What the session row's "Port forwarding" submenu offers (port-forwarding
 /// plan, Task 6; design, "Context menu of a session row").
 ///
-/// **The whole visibility decision lives here**, and there are three reasons
-/// a row has no submenu at all, written as two bullets because the second
-/// and third share an argument — one reason from the design, two from what
-/// `TunnelConnection` can actually dial:
+/// **The visibility decision is not made here.** It is
+/// `TunnelCarriers.refusal(for:)`'s — the same three rules, in the same
+/// order, that `TunnelConnection.connect` throws for, so a row cannot offer
+/// a forwarding whose dial would refuse it. The three, and where each comes
+/// from:
 ///
-/// - The session is not SSH. There is no `direct-tcpip` over S3 or WebDAV,
-///   and `TunnelConnection.connect` says so in a sentence rather than a
-///   case index.
+/// - The session is not SSH. There is no `direct-tcpip` over S3 or WebDAV.
 /// - The session dials through a JUMP HOST, or its login comes from a LOGIN
 ///   SET. `StoredSessionConnectionConfig.build(for:secret:)` refuses both —
 ///   resolving either needs `LoginResolver` and the stores the App holds,
@@ -135,6 +134,13 @@ enum SessionRowTerminalMenuPlan: Equatable {
 ///   session would offer one that cannot start. Task 5 handed this over
 ///   explicitly: the menu must not offer them, and the sheet says so in its
 ///   help text.
+///
+/// This used to be its own copy of the three predicates. It read the same
+/// way and could drift silently: with `TunnelCarriers.carries(.s3)` mutated
+/// to `true`, `TunnelMenuWiringGuardTests` stayed green through all 16 of
+/// its tests (measured 2026-09-06) because nothing here consulted the rule.
+/// Under the same mutation it now fails
+/// `aSessionThatCouldNotCarryOneIsOfferedNothing` with two issues.
 ///
 /// A checkmark means running, and "running" is `TunnelManager.Aggregate
 /// .isRunning`: a tunnel holding a connection, a bound port, or a retry on
@@ -176,9 +182,7 @@ enum SessionRowTunnelMenuPlan: Equatable {
         for session: StoredSession, profiles: [TunnelProfile],
         state: (UUID) -> TunnelState
     ) -> SessionRowTunnelMenuPlan {
-        guard session.kind == .ssh, session.jump == nil, session.loginSetID == nil else {
-            return .hidden
-        }
+        guard TunnelCarriers.refusal(for: session) == nil else { return .hidden }
         return .shown(entries: profiles.map { profile in
             Entry(
                 profile: profile,

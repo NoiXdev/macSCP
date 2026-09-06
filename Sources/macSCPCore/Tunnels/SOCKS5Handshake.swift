@@ -62,12 +62,23 @@ extension SOCKS5ReplyCode {
     /// waiting for a factory that distinguishes a refusal, and `04` is
     /// produced by nothing. Recounted 2026-09-06 with `grep -rn "throw
     /// TunnelFailure\." Sources/`: ELEVEN throw sites — `TunnelConnection
-    /// .swift:71` and `:83`, `LocalForwardListener.swift:179` and `:205`,
+    /// .swift:80` and `:92`, `LocalForwardListener.swift:179` and `:205`,
     /// `RemoteForward.swift:132`, `:288` and `:322`,
     /// `CitadelFileSystem.swift:1451`, `:1556` and `:1574`,
-    /// `TunnelManager.swift:521` — plus the two helpers that RETURN one
-    /// rather than throw it, `LocalForwardListener.bindFailure` and
-    /// `.acceptFailure`. The earlier count of FOUR here predated
+    /// `TunnelManager.swift:521`. A `throw` is not the only way one is
+    /// built, and the earlier clause here counted only two of the other
+    /// ways. `grep -rn "func .* -> TunnelFailure" Sources/` finds FOUR
+    /// helpers that RETURN one — the `func` in the pattern is load-bearing:
+    /// the bare return type also matches this very sentence, and a count
+    /// that reads its own comment is off by exactly the number of times it
+    /// is quoted — `LocalForwardListener.acceptFailure` (`:341`) and
+    /// `.bindFailure` (`:347`), `RemoteForward.startFailure` (`:344`) and
+    /// `.pairFailure` (`:349`) — and subtracting the throw sites from
+    /// `grep -rn "TunnelFailure\." Sources/` (comment lines dropped) leaves
+    /// THREE inline constructions: `RemoteForward.swift:155` and `:172`,
+    /// which resolve a failure into the once-latch instead of throwing it,
+    /// and `:313`, which binds one to a name so the same value can be
+    /// reported and thrown. The earlier count of FOUR throw sites predated
     /// `RemoteForward` and the two bind sites in `CitadelFileSystem`; none
     /// of the additions is on the accept path this table is about, so the
     /// table itself did not change with them.

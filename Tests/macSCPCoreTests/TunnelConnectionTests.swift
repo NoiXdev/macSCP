@@ -33,7 +33,9 @@ struct TunnelConnectionTests {
     @Test(arguments: [
         TunnelSessionShape.notSSH, .loginSet, .jumpHost,
     ])
-    func aRefusedSessionThrowsTheCarriersSentence(shape: TunnelSessionShape) async throws {
+    private func aRefusedSessionThrowsTheCarriersSentence(
+        shape: TunnelSessionShape
+    ) async throws {
         let directory = throwawayDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let session = shape.session
@@ -67,10 +69,9 @@ struct TunnelConnectionTests {
 // MARK: - Helpers
 
 /// The three session shapes a forwarding refuses. An enum rather than the
-/// sessions themselves because `@Test(arguments:)` wants `Sendable`
-/// `CustomTestArgumentEncodable` values, and a case name reads better in a
-/// failure than a whole `StoredSession` would.
-enum TunnelSessionShape: Sendable {
+/// sessions themselves so a failure names the shape it was given instead of
+/// printing a whole `StoredSession`.
+private enum TunnelSessionShape: Sendable {
     case notSSH
     case loginSet
     case jumpHost

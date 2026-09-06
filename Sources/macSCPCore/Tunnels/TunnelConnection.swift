@@ -67,6 +67,15 @@ public enum TunnelConnection {
         // `.secretRequired` and `HostKeyError.rejectedByUser`, and nothing
         // else), so nothing downstream loses an answer by their arriving
         // typed as a `TunnelFailure`.
+        //
+        // ONE case did change answer, and deliberately: a session that is
+        // refused here AND has no stored secret used to reach `build`'s
+        // `.secretRequired` first and land on `needsConfirmation` — "connect
+        // this session once, by hand". Reachable from autostart and the
+        // autostart sheet. It is now `.failed`, which is the true answer:
+        // connecting a WebDAV session by hand, or resolving a jump host's
+        // login, does not make it able to carry a forwarding, so inviting
+        // the user to try was inviting a loop.
         if let refusal = TunnelCarriers.refusal(for: session) {
             throw TunnelFailure.connectFailed(reason: refusal)
         }

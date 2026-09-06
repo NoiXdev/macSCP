@@ -39,8 +39,11 @@ struct TunnelProfileDraft: Equatable {
     var name: String = ""
     var kindTag: KindTag = .local
     /// The interface the listener binds. Blank means loopback — see
-    /// `resolvedBind`.
-    var bind: String = "127.0.0.1"
+    /// `resolvedBind`. The default is `TunnelSpec.defaultBind`, the same
+    /// address a forwarding spec that omits its bind means, so the field
+    /// prefilled here and the text a command line accepts cannot disagree
+    /// about what "no bind given" is.
+    var bind: String = TunnelSpec.defaultBind
     /// The port that is LISTENED on: on this Mac for `.local`/`.dynamic`, on
     /// the server for `.remote`.
     var listenPort: String = ""
@@ -91,7 +94,7 @@ struct TunnelProfileDraft: Equatable {
     /// safe answer, not for every interface on the machine.
     private var resolvedBind: String {
         let trimmed = bind.trimmingCharacters(in: .whitespaces)
-        return trimmed.isEmpty ? "127.0.0.1" : trimmed
+        return trimmed.isEmpty ? TunnelSpec.defaultBind : trimmed
     }
 
     /// The profile these fields describe, or the first reason they describe
