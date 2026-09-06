@@ -281,14 +281,23 @@ public final class LocalForwardListener: @unchecked Sendable {
                 }
                 // Installing IS starting: each handler turns its own
                 // channel's `autoRead` on and issues the first read from
-                // that channel's own lifecycle, never from this task. There
-                // is no second, read-starting step after `confirm` any more:
-                // the one that stood there had an empty body, so deleting
-                // the call changed neither how nor when either side's first
-                // read happens.
+                // that channel's own lifecycle, never from this task.
+                //
+                // The one exception is the SERVER side of a NEGOTIATED
+                // forward, and it is an ordering exception rather than a
+                // registration one. `confirm` writes the negotiation's reply
+                // on the accepted channel, and a SOCKS5 client reads the
+                // first ten bytes after its CONNECT as that reply — so a
+                // target that greets first (sshd, SMTP, IMAP, MySQL) must not
+                // have its banner pumped across before it. The gate holds
+                // that side's first read until the reply is out; a fixed
+                // forward has no reply to be overtaken and passes none.
+                let remoteReadGate = negotiation == nil ? nil : BytePumpReadGate()
                 try await BytePump.install(
-                    local: channel, remote: throughTheServer, observer: observer).get()
+                    local: channel, remote: throughTheServer, observer: observer,
+                    remoteReadGate: remoteReadGate).get()
                 try await negotiation?.confirm(on: channel)
+                remoteReadGate?.open()
             } catch {
                 let failure = Self.acceptFailure(error, afterOpen: opened != nil)
                 await negotiation?.reject(failure, on: channel)

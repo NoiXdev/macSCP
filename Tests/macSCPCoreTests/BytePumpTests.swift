@@ -234,6 +234,60 @@ struct BytePumpTests {
         finish(local, remote)
     }
 
+    /// A gated remote side reads NOTHING — not even the option — until the
+    /// gate opens, and then reads once.
+    ///
+    /// The local side beside it is the control: it is never gated, so it
+    /// shows that installation did happen and that the gate holds one side
+    /// rather than stalling the pair.
+    @Test func aGatedRemoteSideWaitsForTheGate() throws {
+        let (local, remote) = try activeEmbeddedPair()
+        let localReads = ReadRecorder()
+        let remoteReads = ReadRecorder()
+        try local.pipeline.syncOperations.addHandler(localReads)
+        try remote.pipeline.syncOperations.addHandler(remoteReads)
+        let gate = BytePumpReadGate()
+        try completing(
+            BytePump.install(local: local, remote: remote, remoteReadGate: gate))
+
+        #expect(autoRead(of: remote) == nil, "a gated side must not even set the option")
+        #expect(remoteReads.count == 0)
+        #expect(autoRead(of: local) == true, "the ungated side started as usual")
+        #expect(localReads.count == 1)
+
+        gate.open()
+        // The release is queued onto the gated channel's OWN loop, which an
+        // `EmbeddedEventLoop` only drains when told to.
+        remote.embeddedEventLoop.run()
+
+        #expect(autoRead(of: remote) == true)
+        #expect(remoteReads.count == 1)
+        #expect(localReads.count == 1, "opening the gate must not read the other side again")
+
+        finish(local, remote)
+    }
+
+    /// Order-free: a gate opened before the handler ever asks releases the
+    /// first read anyway. Without this the accept path would have a race of
+    /// its own — `open()` runs on the accept task, the lifecycle callback on
+    /// the channel's loop, and nothing orders the two.
+    @Test func aGateOpenedFirstStillReleasesTheRead() throws {
+        let (local, remote) = try activeEmbeddedPair()
+        let remoteReads = ReadRecorder()
+        try remote.pipeline.syncOperations.addHandler(remoteReads)
+        let gate = BytePumpReadGate()
+        gate.open()
+
+        try completing(
+            BytePump.install(local: local, remote: remote, remoteReadGate: gate))
+        remote.embeddedEventLoop.run()
+
+        #expect(autoRead(of: remote) == true)
+        #expect(remoteReads.count == 1)
+
+        finish(local, remote)
+    }
+
     // MARK: - Two loops
 
     /// The production shape: the two pumped channels are on different event

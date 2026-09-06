@@ -29,25 +29,28 @@ import Testing
 struct TunnelRigITests {
 
     @Test func aLocalForwardCarriesASecondSFTPConnection() async throws {
-        let carrierHosts = throwawayDirectory("carrier")
-        let tunnelledHosts = throwawayDirectory("tunnelled")
-        defer {
-            try? FileManager.default.removeItem(at: carrierHosts)
-            try? FileManager.default.removeItem(at: tunnelledHosts)
-        }
-
-        let session = sshSession(
-            name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
-        let carrier = try await connectWithRetry {
-            try await TunnelConnection.connect(
-                session: session, secrets: [RigSecret()],
-                knownHosts: KnownHostsStore(directory: carrierHosts),
-                decider: .asking { _ in true })
-        }
-
-        let listener = LocalForwardListener()
         let seen = RigEventRecorder()
-        do {
+        try await withRigTeardown { teardown in
+            let carrierHosts = throwawayDirectory("carrier")
+            let tunnelledHosts = throwawayDirectory("tunnelled")
+            teardown.add {
+                try? FileManager.default.removeItem(at: carrierHosts)
+                try? FileManager.default.removeItem(at: tunnelledHosts)
+            }
+
+            let session = sshSession(
+                name: "rig", host: "127.0.0.1", port: 2222, username: "testuser",
+                authKind: .password)
+            let carrier = try await connectWithRetry {
+                try await TunnelConnection.connect(
+                    session: session, secrets: [RigSecret()],
+                    knownHosts: KnownHostsStore(directory: carrierHosts),
+                    decider: .asking { _ in true })
+            }
+            teardown.add { await carrier.disconnect() }
+
+            let listener = LocalForwardListener()
+            teardown.add { await listener.stop() }
             let port = try await listener.start(
                 bind: "127.0.0.1", localPort: 0, host: "127.0.0.1", remotePort: 2222,
                 directTCPIPFactory: { host, port in
@@ -65,22 +68,16 @@ struct TunnelRigITests {
                     knownHosts: KnownHostsStore(directory: tunnelledHosts),
                     onUnknownHostKey: .asking { _ in true })
             }
-            // The tunnelled connection is disconnected on EVERY exit from
-            // here, including a failing expectation below: without this, a
-            // red test leaves an SFTP session open on the rig.
-            defer { Task { await throughTheTunnel.disconnect() } }
+            teardown.add { await throughTheTunnel.disconnect() }
 
             let items = try await throughTheTunnel.list(path: "/data/seed")
             #expect(items.map(\.name).contains("hello.txt"))
             #expect(seen.events.contains(.opened))
-        } catch {
-            await listener.stop()
-            await carrier.disconnect()
-            throw error
         }
-        await listener.stop()
-        await carrier.disconnect()
 
+        // Read AFTER the teardown on purpose: `closed` is reported when both
+        // channels of a pair are gone, which is what stopping the listener
+        // and disconnecting does.
         let closed = seen.events.contains { event in
             if case .closed = event { return true }
             return false
@@ -118,26 +115,29 @@ struct TunnelRigITests {
     /// .writeUploadsAndReadsBackRoundtrip` uses — and the file is deleted
     /// again, through the tunnel, before the test returns.
     @Test func aLocalForwardCarriesABulkTransferPastTheHighWaterMark() async throws {
-        let carrierHosts = throwawayDirectory("bulk-carrier")
-        let writerHosts = throwawayDirectory("bulk-writer")
-        let readerHosts = throwawayDirectory("bulk-reader")
-        defer {
-            for directory in [carrierHosts, writerHosts, readerHosts] {
-                try? FileManager.default.removeItem(at: directory)
+        try await withRigTeardown { teardown in
+            let carrierHosts = throwawayDirectory("bulk-carrier")
+            let writerHosts = throwawayDirectory("bulk-writer")
+            let readerHosts = throwawayDirectory("bulk-reader")
+            teardown.add {
+                for directory in [carrierHosts, writerHosts, readerHosts] {
+                    try? FileManager.default.removeItem(at: directory)
+                }
             }
-        }
 
-        let session = sshSession(
-            name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
-        let carrier = try await connectWithRetry {
-            try await TunnelConnection.connect(
-                session: session, secrets: [RigSecret()],
-                knownHosts: KnownHostsStore(directory: carrierHosts),
-                decider: .asking { _ in true })
-        }
+            let session = sshSession(
+                name: "rig", host: "127.0.0.1", port: 2222, username: "testuser",
+                authKind: .password)
+            let carrier = try await connectWithRetry {
+                try await TunnelConnection.connect(
+                    session: session, secrets: [RigSecret()],
+                    knownHosts: KnownHostsStore(directory: carrierHosts),
+                    decider: .asking { _ in true })
+            }
+            teardown.add { await carrier.disconnect() }
 
-        let listener = LocalForwardListener()
-        do {
+            let listener = LocalForwardListener()
+            teardown.add { await listener.stop() }
             let port = try await listener.start(
                 bind: "127.0.0.1", localPort: 0, host: "127.0.0.1", remotePort: 2222,
                 directTCPIPFactory: { host, port in
@@ -152,7 +152,7 @@ struct TunnelRigITests {
             let writer = try await connectWithRetry {
                 try await tunnelledConnection(port: port, knownHosts: writerHosts)
             }
-            defer { Task { await writer.disconnect() } }
+            teardown.add { await writer.disconnect() }
             let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
             continuation.yield(payload)
             continuation.finish()
@@ -161,7 +161,7 @@ struct TunnelRigITests {
             let reader = try await connectWithRetry {
                 try await tunnelledConnection(port: port, knownHosts: readerHosts)
             }
-            defer { Task { await reader.disconnect() } }
+            teardown.add { await reader.disconnect() }
             var readBack = Data()
             for try await chunk in try await reader.readStream(path: remotePath) {
                 readBack.append(chunk)
@@ -169,14 +169,13 @@ struct TunnelRigITests {
             #expect(readBack.count == payload.count)
             #expect(readBack == payload)
 
+            // Registered as well as called: a failing expectation above skips
+            // this line, and the rig must not keep half a megabyte per red
+            // run. Deleting twice is harmless — the second `try?` finds it
+            // gone.
+            teardown.add { try? await reader.delete(path: remotePath) }
             try await reader.delete(path: remotePath)
-        } catch {
-            await listener.stop()
-            await carrier.disconnect()
-            throw error
         }
-        await listener.stop()
-        await carrier.disconnect()
     }
 
     /// A dynamic forward (`-D`): a hand-written SOCKS5 client asks the
@@ -194,21 +193,24 @@ struct TunnelRigITests {
     /// `aLocalForwardCarriesABulkTransferPastTheHighWaterMark` below rather
     /// than here, because this test's subject is the SOCKS5 conversation.
     @Test func aDynamicForwardCarriesASOCKS5Connect() async throws {
-        let carrierHosts = throwawayDirectory("socks-carrier")
-        defer { try? FileManager.default.removeItem(at: carrierHosts) }
+        try await withRigTeardown { teardown in
+            let carrierHosts = throwawayDirectory("socks-carrier")
+            teardown.add { try? FileManager.default.removeItem(at: carrierHosts) }
 
-        let session = sshSession(
-            name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
-        let carrier = try await connectWithRetry {
-            try await TunnelConnection.connect(
-                session: session, secrets: [RigSecret()],
-                knownHosts: KnownHostsStore(directory: carrierHosts),
-                decider: .asking { _ in true })
-        }
+            let session = sshSession(
+                name: "rig", host: "127.0.0.1", port: 2222, username: "testuser",
+                authKind: .password)
+            let carrier = try await connectWithRetry {
+                try await TunnelConnection.connect(
+                    session: session, secrets: [RigSecret()],
+                    knownHosts: KnownHostsStore(directory: carrierHosts),
+                    decider: .asking { _ in true })
+            }
+            teardown.add { await carrier.disconnect() }
 
-        let listener = SOCKS5Listener()
-        let seen = RigEventRecorder()
-        do {
+            let listener = SOCKS5Listener()
+            teardown.add { await listener.stop() }
+            let seen = RigEventRecorder()
             let port = try await listener.start(
                 bind: "127.0.0.1", localPort: 0,
                 directTCPIPFactory: { host, port in
@@ -224,6 +226,10 @@ struct TunnelRigITests {
                         channel.pipeline.addHandler(RigByteCollector(inbox: inbox))
                     }
                     .connect(host: "127.0.0.1", port: port))
+            teardown.add {
+                client.close(promise: nil)
+                try? await awaitCancellably(client.closeFuture)
+            }
 
             try await awaitCancellably(client.writeAndFlush(ByteBuffer(bytes: [0x05, 0x01, 0x00])))
             try await pollUntil("the SOCKS5 method selection") { inbox.bytes.count >= 2 }
@@ -234,6 +240,9 @@ struct TunnelRigITests {
                 client.writeAndFlush(
                     ByteBuffer(bytes: [0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x08, 0xAE])))
             try await pollUntil("the SOCKS5 success reply") { inbox.bytes.count >= 12 }
+            // sshd greets first, so these four bytes are the ordering this
+            // round's gate exists for: before it, the banner could arrive
+            // here instead, and this assertion passed by winning a race.
             #expect(Array(inbox.bytes[2..<4]) == [0x05, 0x00])
 
             try await pollUntil("the SSH banner through the dynamic forward") {
@@ -242,16 +251,7 @@ struct TunnelRigITests {
             let banner = String(decoding: inbox.bytes[12..<19], as: UTF8.self)
             #expect(banner == "SSH-2.0")
             #expect(seen.events.contains(.opened))
-
-            client.close(promise: nil)
-            try await awaitCancellably(client.closeFuture)
-        } catch {
-            await listener.stop()
-            await carrier.disconnect()
-            throw error
         }
-        await listener.stop()
-        await carrier.disconnect()
     }
 
     /// A remote forward (`-R`) driven from INSIDE the container: the rig's

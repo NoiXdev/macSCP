@@ -56,19 +56,88 @@ public enum BytePump {
     /// resolvable, is a worse anchor than prose that says what actually
     /// happens. (`BytePumpHandler.startReading` below is a different,
     /// private thing — the per-channel body both lifecycle arms call.)
+    ///
+    /// `remoteReadGate` holds the REMOTE side's first read until someone
+    /// opens it. `nil` — the default, and what a fixed forward and a remote
+    /// forward pass — means the remote side starts with the local one. A
+    /// NEGOTIATED forward passes a gate and opens it after its reply is
+    /// written; `BytePumpReadGate` says why.
     public static func install(
-        local: Channel, remote: Channel, observer: TunnelConnectionObserver? = nil
+        local: Channel, remote: Channel, observer: TunnelConnectionObserver? = nil,
+        remoteReadGate: BytePumpReadGate? = nil
     ) -> EventLoopFuture<Void> {
         let counters = BytePumpCounters(observer: observer)
         let localInstalled = local.pipeline.addHandler(
             BytePumpHandler(peer: remote, side: .local, counters: counters))
         let remoteInstalled = remote.pipeline.addHandler(
-            BytePumpHandler(peer: local, side: .remote, counters: counters))
+            BytePumpHandler(
+                peer: local, side: .remote, counters: counters, readGate: remoteReadGate))
         // `and` hops the second future onto the first's loop, so the callback
         // below runs on `local.eventLoop` regardless of where `remote` lives.
         return localInstalled.and(remoteInstalled).map { _ in
             counters.opened(local: local, remote: remote)
         }
+    }
+}
+
+/// Holds one side of a pump shut until the caller says the other side has
+/// finished speaking for itself.
+///
+/// A negotiated forward needs this and a fixed one does not. `SOCKS5Handshake
+/// .succeed` writes `05 00 …` on the LOCAL channel, and a SOCKS5 client
+/// parses the first ten bytes after its CONNECT as that reply. The pump
+/// starts reading when its handler is installed, and `install` runs BEFORE
+/// `confirm` — so on a target that greets first (sshd's `SSH-2.0…`, SMTP,
+/// IMAP, MySQL) the banner arrives on the child channel's first read and is
+/// written to the client across an event-loop hop, racing the reply. Measured
+/// 2026-09-06 against a loopback greeter: **1 of 10 runs** handed the client
+/// `SSH-` where its reply frame belonged.
+///
+/// Why gate only the remote side, when round 2 argued that reads must start
+/// from the channel's lifecycle: the registration race round 2 fixed is a
+/// property of the ACCEPTED SOCKET, which NIO registers asynchronously after
+/// the child-channel initializer runs. The remote side is an SSH child
+/// channel that is already active when `install` adds its handler — the
+/// handler still registers its intent from `handlerAdded`/`channelActive`,
+/// so nothing is asked of an unregistered channel; only the moment of the
+/// first `read()` is deferred, and it is deferred onto that channel's own
+/// event loop.
+///
+/// One-shot and order-free: opening before anyone waits is remembered, so a
+/// gate opened between `install` and the handler's lifecycle callback still
+/// releases it.
+public final class BytePumpReadGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var waiting: [@Sendable () -> Void] = []
+
+    public init() {}
+
+    /// Lets the gated side read. Safe from any thread; each waiter is
+    /// released exactly once.
+    public func open() {
+        let released: [@Sendable () -> Void] = {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !isOpen else { return [] }
+            isOpen = true
+            let taken = waiting
+            waiting = []
+            return taken
+        }()
+        for release in released { release() }
+    }
+
+    /// Runs `release` now if the gate is already open, otherwise when it is.
+    func whenOpen(_ release: @escaping @Sendable () -> Void) {
+        let now: Bool = {
+            lock.lock()
+            defer { lock.unlock() }
+            if isOpen { return true }
+            waiting.append(release)
+            return false
+        }()
+        if now { release() }
     }
 }
 
@@ -141,11 +210,16 @@ final class BytePumpHandler: ChannelInboundHandler, @unchecked Sendable {
     private let peer: Channel
     private let side: BytePumpSide
     private let counters: BytePumpCounters
+    private let readGate: BytePumpReadGate?
 
-    init(peer: Channel, side: BytePumpSide, counters: BytePumpCounters) {
+    init(
+        peer: Channel, side: BytePumpSide, counters: BytePumpCounters,
+        readGate: BytePumpReadGate? = nil
+    ) {
         self.peer = peer
         self.side = side
         self.counters = counters
+        self.readGate = readGate
     }
 
     /// Reading starts HERE, from this channel's own lifecycle, and never
@@ -201,9 +275,28 @@ final class BytePumpHandler: ChannelInboundHandler, @unchecked Sendable {
     /// The failure arm is empty for the reason
     /// `channelWritabilityChanged`'s is: a channel that has already closed
     /// cannot take the option, and its own close ends the pair anyway.
+    ///
+    /// With a gate, the intent is still registered HERE — from a lifecycle
+    /// callback, so the channel is registered and active — and only the
+    /// option and the read itself wait. They then run on this channel's own
+    /// event loop, never on the opener's, which is why the deferred form is
+    /// spelled with the channel rather than with this context: a
+    /// `ChannelHandlerContext` is valid only on the loop and only while the
+    /// handler is in the pipeline, and neither holds once the work is
+    /// queued.
     private func startReading(_ context: ChannelHandlerContext) {
-        context.channel.setOption(ChannelOptions.autoRead, value: true).whenFailure { _ in }
-        context.read()
+        guard let readGate else {
+            context.channel.setOption(ChannelOptions.autoRead, value: true).whenFailure { _ in }
+            context.read()
+            return
+        }
+        let channel = context.channel
+        readGate.whenOpen {
+            channel.eventLoop.execute {
+                channel.setOption(ChannelOptions.autoRead, value: true).whenFailure { _ in }
+                channel.read()
+            }
+        }
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {

@@ -270,6 +270,65 @@ struct LocalForwardListenerTests {
         await echo.stop()
     }
 
+    /// Ordering, on a target that GREETS FIRST — sshd, SMTP, IMAP, MySQL all
+    /// do, and the rig's dynamic case talks to sshd.
+    ///
+    /// The reply frame `05 00 00 01 …` must reach the client before the
+    /// target's banner, because a SOCKS5 client parses the first ten bytes
+    /// after CONNECT as its reply. The pump starts the SSH-child side
+    /// reading during `install`, which runs BEFORE `confirm` writes that
+    /// reply — so without a gate the banner and the reply race each other
+    /// across an event-loop hop, and the client can be handed a banner where
+    /// its reply should be.
+    ///
+    /// A real loopback server stands in for the greeting target: the banner
+    /// is on the wire before the factory's channel is even handed back, so
+    /// the first read on the remote side delivers it immediately.
+    @Test func aNegotiatedForwardRepliesBeforeTheTargetsBanner() async throws {
+        let banner = "SSH-2.0-macSCP-rig\r\n"
+        let greeter = try await GreetingServer.start(banner: banner)
+        let listener = SOCKS5Listener()
+        do {
+            let port = try await listener.start(
+                bind: "127.0.0.1", localPort: 0, directTCPIPFactory: greeter.factory())
+
+            let inbox = SOCKSByteInbox()
+            let client = try await awaitCancellably(
+                ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                    .channelInitializer { channel in
+                        channel.pipeline.addHandler(SOCKSByteCollector(inbox: inbox))
+                    }
+                    .connect(host: "127.0.0.1", port: port))
+
+            try await awaitCancellably(client.writeAndFlush(ByteBuffer(bytes: [0x05, 0x01, 0x00])))
+            try await pollUntil("the method selection") { inbox.bytes.count >= 2 }
+            #expect(Array(inbox.bytes.prefix(2)) == [0x05, 0x00])
+
+            // `05 01 00 01 7f 00 00 01 <port>` — CONNECT to 127.0.0.1, whose
+            // port the fake factory ignores.
+            let connectFrame: [UInt8] = [0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50]
+            try await awaitCancellably(client.writeAndFlush(ByteBuffer(bytes: connectFrame)))
+
+            let expected = 2 + 10 + banner.utf8.count
+            try await pollUntil("the reply and the banner") { inbox.bytes.count >= expected }
+
+            let afterGreeting = Array(inbox.bytes.dropFirst(2))
+            #expect(
+                Array(afterGreeting.prefix(4)) == [0x05, 0x00, 0x00, 0x01],
+                "the first ten bytes after CONNECT must be the reply, not the banner")
+            #expect(String(decoding: afterGreeting.dropFirst(10), as: UTF8.self) == banner)
+
+            client.close(promise: nil)
+            try await awaitCancellably(client.closeFuture)
+        } catch {
+            await listener.stop()
+            await greeter.stop()
+            throw error
+        }
+        await listener.stop()
+        await greeter.stop()
+    }
+
     private func connectClient(port: Int, inbox: TextInbox) async throws -> Channel {
         try await awaitCancellably(
             ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
@@ -307,6 +366,87 @@ private final class OpenedChannelBox: @unchecked Sendable {
         lock.lock()
         stored = channel
         lock.unlock()
+    }
+}
+
+/// A loopback server that GREETS FIRST: it writes `banner` the moment a
+/// connection is accepted, the way sshd, SMTP, IMAP and MySQL do. Standing
+/// in for "the destination behind the SSH server" in the ordering test.
+private struct GreetingServer {
+    let channel: Channel
+
+    static func start(banner: String) async throws -> GreetingServer {
+        let channel = try await awaitCancellably(
+            ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+                .childChannelInitializer { channel in
+                    channel.pipeline.addHandler(GreetingHandler(banner: banner))
+                }
+                .bind(host: "127.0.0.1", port: 0))
+        return GreetingServer(channel: channel)
+    }
+
+    func factory() -> LocalForwardListener.DirectTCPIPFactory {
+        let port = channel.localAddress?.port ?? 0
+        return { _, _ in
+            try await awaitCancellably(
+                ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                    .channelOption(ChannelOptions.autoRead, value: false)
+                    .channelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
+                    .connect(host: "127.0.0.1", port: port))
+        }
+    }
+
+    func stop() async {
+        channel.close(promise: nil)
+        try? await awaitCancellably(channel.closeFuture)
+    }
+}
+
+private final class GreetingHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+    typealias OutboundOut = ByteBuffer
+
+    private let banner: String
+
+    init(banner: String) { self.banner = banner }
+
+    func channelActive(context: ChannelHandlerContext) {
+        context.writeAndFlush(wrapOutboundOut(ByteBuffer(string: banner)), promise: nil)
+        context.fireChannelActive()
+    }
+}
+
+/// Bytes, not text: SOCKS5 frames are binary and `String(buffer:)` would
+/// mangle them. `RemoteForwardTests` has a `private` pair of the same shape;
+/// these are `private` too, so the two files do not collide.
+private final class SOCKSByteInbox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var collected: [UInt8] = []
+
+    var bytes: [UInt8] {
+        lock.lock()
+        defer { lock.unlock() }
+        return collected
+    }
+
+    func append(_ chunk: [UInt8]) {
+        lock.lock()
+        collected += chunk
+        lock.unlock()
+    }
+}
+
+private final class SOCKSByteCollector: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+
+    private let inbox: SOCKSByteInbox
+
+    init(inbox: SOCKSByteInbox) { self.inbox = inbox }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var buffer = unwrapInboundIn(data)
+        inbox.append(buffer.readBytes(length: buffer.readableBytes) ?? [])
     }
 }
 
