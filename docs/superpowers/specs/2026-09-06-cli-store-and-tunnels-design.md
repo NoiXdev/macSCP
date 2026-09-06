@@ -246,5 +246,6 @@ completion backlog entry (found in Task 2).
 
 Declarative `apply`; login sets and jump hosts from the CLI; keychain
 writes; an IPC to the running app; shell completion for the new verbs
-beyond what ArgumentParser generates (session-name completion is reused
-for `--session`).
+beyond what ArgumentParser generates — including `--session`, whose
+bare-name completer is deferred as the paragraph above says (this
+sentence used to claim the opposite; corrected 2026-09-06 in Task 3).
