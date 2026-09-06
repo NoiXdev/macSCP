@@ -538,6 +538,60 @@ struct CLITunnelsEditingTests {
         #expect(cli.profiles().isEmpty)
     }
 
+    /// The same three flags against `start`, which is the verb that actually
+    /// resolves a secret and so the one where a `--password` would look most
+    /// natural to add.
+    ///
+    /// `add` above is enough for the four store verbs; `start` is a fifth,
+    /// in a file of its own, and nothing measured it until the final review
+    /// (2026-09-07). The source guard beside it
+    /// (`CLISessionsStoreEditingGuardTests.theTunnelStartVerbNamesNoSecretAPIOfItsOwn`)
+    /// covers the claim from the other side: a `@Option var password` would
+    /// satisfy every scan for a keychain call, and only the binary can say
+    /// whether the flag parses.
+    ///
+    /// **What the refusal actually says, measured 2026-09-07.** Not
+    /// "unknown option". `alsoNamed` is a variadic `@Argument`, and
+    /// ArgumentParser's default strategy for one is `.remaining`, which
+    /// takes dash-prefixed inputs it did not match — so BOTH the flag and
+    /// its value land there and the refusal is this tool's own "one
+    /// forwarding per invocation". Exit 64 either way, and the value never
+    /// reaches a secret, which is what this case is for; the misleading
+    /// sentence is recorded as a deferred minor in `docs/BACKLOG.md` rather
+    /// than fixed here, because changing `parsing:` after the review would
+    /// be a behaviour change nobody has reviewed.
+    ///
+    /// The positive that keeps the negative honest is the same command line
+    /// without the flag: it must NOT be refused with that sentence, so the
+    /// extra positional the flag creates is what produced it. It is refused
+    /// all the same — no `db` profile is seeded — which is why the check is
+    /// on the sentence rather than on the status.
+    @Test func noSecretIsAcceptedAsAFlagByStart() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        let twoNames = "one forwarding per invocation"
+        for flag in ["--password", "--passphrase", "--secret-key"] {
+            let refused = try await cli.run([
+                "tunnels", "start", "db", "--session", CLI.sshSessionName,
+                flag, "hunter2",
+            ])
+            #expect(
+                refused.status == Self.validationFailure,
+                "\(flag) exited \(refused.status): \(refused.stderr)")
+            #expect(
+                refused.stderr.contains(twoNames),
+                "\(flag) was refused for another reason: \(refused.stderr)")
+        }
+
+        let withoutTheFlag = try await cli.run([
+            "tunnels", "start", "db", "--session", CLI.sshSessionName,
+        ])
+        #expect(
+            withoutTheFlag.stderr.contains(twoNames) == false,
+            "the flag is not what produced the refusal: \(withoutTheFlag.stderr)")
+    }
+
     // MARK: - Binary-level harness
 
     /// Exists only so `CLI.make()` has a class defined in THIS file to hand

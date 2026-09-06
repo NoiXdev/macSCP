@@ -737,13 +737,15 @@ struct CLISessionsEditingTests {
 /// and no S3 secret key — not as a flag, not from stdin, not from the
 /// keychain — and neither does any `tunnels` verb, so the files that carry
 /// their flag table, their store access and the tunnel verbs themselves must
-/// name none of the four APIs that could do it. FOUR files are scanned,
-/// counted 2026-09-06: `SessionFieldOptions.swift` and `StoreEditing.swift`
+/// name none of the four APIs that could do it. FIVE files are scanned,
+/// counted 2026-09-07: `SessionFieldOptions.swift` and `StoreEditing.swift`
 /// against the whole list, `SessionsCommand.swift` against the stdin half
 /// (`CLISessionsCommandGuardTests` already forbids `SecretStore` in it, and
-/// the two suites keep one owner per claim), and `TunnelsCommand.swift`
-/// against the whole list, added the day the `tunnels` group arrived with a
-/// header claiming exactly this and nothing measuring it.
+/// the two suites keep one owner per claim), `TunnelsCommand.swift` against
+/// the whole list, added the day the `tunnels` group arrived with a header
+/// claiming exactly this and nothing measuring it, and
+/// `TunnelStartCommand.swift` against the whole list too — added 2026-09-07
+/// by the final review, which found the fifth verb unscanned.
 ///
 /// A NEGATIVE check alone goes stale in silence the moment the files it
 /// scans are renamed out from under it (CLAUDE.md, "Guards that name what
@@ -791,6 +793,19 @@ struct CLISessionsStoreEditingGuardTests {
     /// nothing measuring it.
     private static let tunnelsCommandFile = repoRoot
         .appendingPathComponent("Sources/MacSCPCLI/TunnelsCommand.swift")
+
+    /// The fifth verb. `tunnels start` DOES reach a secret — it dials — but
+    /// never on its own: it asks `secretChain(for:options:)` for the chain
+    /// every dialling verb in this tool walks, and that one function
+    /// (`SessionConnecting.swift`) is where the keychain read and its
+    /// consent prompt are reviewed. So the claim scanned here is not "no
+    /// secret" but "no secret of its own": a `SecretStore` or a `readLine`
+    /// appearing IN THIS FILE would be a second, unreviewed way in, which is
+    /// exactly the shape a flag or a stdin read would take. It named none of
+    /// the four when it was added to this list (counted 2026-09-07) and the
+    /// negative below keeps it that way.
+    private static let tunnelStartCommandFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPCLI/TunnelStartCommand.swift")
 
     /// The four ways a secret could reach these verbs. `readLine` and
     /// `FileHandle.standardInput` are the stdin halves — a password piped in
@@ -920,6 +935,37 @@ struct CLISessionsStoreEditingGuardTests {
         #expect(found.isEmpty, """
             TunnelsCommand.swift names \(found) — tunnels list/add/edit/rm take \
             no secret: not as a flag, not from stdin, not from the keychain.
+            """)
+    }
+
+    /// The positive beside the negative below, for the fifth verb: the file
+    /// really is `tunnels start`'s implementation. `secretChain(` is the
+    /// shared chain it must keep going through, and `TunnelRunner(` is the
+    /// composition it exists to build — a file that stopped naming either
+    /// would not be the one this claim is about.
+    @Test func theTunnelStartFileExistsAndResolvesThroughTheSharedChain() throws {
+        #expect(FileManager.default.fileExists(atPath: Self.tunnelStartCommandFile.path))
+        let source = try String(contentsOf: Self.tunnelStartCommandFile, encoding: .utf8)
+        #expect(source.contains("secretChain("), """
+            TunnelStartCommand.swift no longer calls secretChain( — either it \
+            stopped resolving a secret at all, or it grew a way of its own, \
+            which is what the negative below exists to forbid.
+            """)
+        #expect(source.contains("TunnelRunner("), """
+            TunnelStartCommand.swift no longer composes a TunnelRunner( — same \
+            concern as secretChain( above.
+            """)
+    }
+
+    /// The negative: `tunnels start` reaches its secret only through the
+    /// shared chain, never through a store or a prompt of its own.
+    @Test func theTunnelStartVerbNamesNoSecretAPIOfItsOwn() throws {
+        let source = try String(contentsOf: Self.tunnelStartCommandFile, encoding: .utf8)
+        let found = Self.forbiddenMatches(in: source)
+        #expect(found.isEmpty, """
+            TunnelStartCommand.swift names \(found) — tunnels start resolves \
+            its secret through secretChain(for:options:) and nowhere else: \
+            not as a flag, not from stdin, not from a keychain call here.
             """)
     }
 
