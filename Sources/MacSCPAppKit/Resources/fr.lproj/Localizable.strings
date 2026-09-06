@@ -1282,5 +1282,5 @@
 "tunnel.autostart.loginItem.error %@" = "Impossible de modifier l’élément d’ouverture : %@";
 "tunnel.autostart.column.session" = "Connexion";
 "tunnel.autostart.empty" = "Aucune redirection ne démarre d’elle-même.";
-"tunnel.autostart.footer" = "« Au démarrage » lance une redirection chaque fois que macSCP s’ouvre. « À l’ouverture de session » n’en lance une que si macOS a lui-même ouvert macSCP à l’ouverture de session. Ni l’une ni l’autre ne pose de question : une connexion dont la clé d’hôte est encore inconnue attend que vous la connectiez une fois à la main.";
+"tunnel.autostart.footer" = "« Au démarrage » lance une redirection chaque fois que macSCP s’ouvre. « À l’ouverture de session » n’en lance une que si macOS a lui-même ouvert macSCP à l’ouverture de session. Ni l’une ni l’autre ne pose de question : une connexion dont la clé d’hôte est encore inconnue attend que vous la connectiez une fois à la main. macSCP ne peut pas toujours savoir si macOS l’a lancé comme élément d’ouverture ; si une redirection ne démarre pas d’elle-même, lancez-la une fois depuis le menu.";
 "settings.general.tunnelAutostart.footer" = "Quelles redirections de port macSCP ouvre de lui-même, et si macOS ouvre macSCP à l’ouverture de session.";

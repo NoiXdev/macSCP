@@ -106,10 +106,17 @@ final class DockBadgeController {
 /// file.
 ///
 /// **What "all" means here.** `Start all`/`Stop all` act on the profiles this
-/// block LISTS — running ones and ones that asked to start on their own
-/// (`TunnelMenuBlockPlan`) — and never on every profile the app has stored. A
-/// Dock click must not be able to dial a host the user never asked this menu
-/// about; those are reached from their own session's row.
+/// block LISTS — and `TunnelMenuBlockPlan` is the one place that decides which
+/// those are: running, asking to start on their own, or needing attention
+/// (`.failed`/`.needsConfirmation`, added in fix round 1 so the Dock badge's
+/// `"!"` always has a row behind it). Never on every profile the app has
+/// stored: a Dock click must not be able to dial a host the user never asked
+/// this menu about, and those are reached from their own session's row.
+///
+/// A consequence of the third ground, stated because it is a behaviour and not
+/// only a listing: `Start all` retries a `.failed` forwarding, which is the
+/// same thing clicking that row does and the same thing the session row's own
+/// "Start all" has always done for one.
 @MainActor
 final class TunnelMenuBlockController: NSObject {
     private let manager: TunnelManager

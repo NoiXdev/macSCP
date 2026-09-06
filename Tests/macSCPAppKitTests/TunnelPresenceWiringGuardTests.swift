@@ -33,6 +33,7 @@ struct TunnelPresenceWiringGuardTests {
 
     private static let appKitRoot = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
     private static let testsRoot = repoRoot.appendingPathComponent("Tests")
+    private static let sourcesRoot = repoRoot.appendingPathComponent("Sources")
     private static let appFile = appKitRoot.appendingPathComponent("MacSCPApp.swift")
     private static let sidebarFile = appKitRoot.appendingPathComponent("SessionSidebar.swift")
     private static let dockFile = appKitRoot.appendingPathComponent("TunnelDockPresence.swift")
@@ -40,6 +41,13 @@ struct TunnelPresenceWiringGuardTests {
     private static let plansFile = appKitRoot.appendingPathComponent("TunnelStatusPlans.swift")
     private static let sheetFile = appKitRoot.appendingPathComponent("TunnelAutostartSheet.swift")
     private static let menuBarFile = appKitRoot.appendingPathComponent("MenuBarController.swift")
+
+    /// Every App-layer file that starts a forwarding with no window behind
+    /// it: the two session-less menus' shared builder, and the autostart
+    /// overlay. Both are places a host-key question could not be drawn, so
+    /// both must hand in `.refusing` — see
+    /// `theBlockStartsOnlyWithARefusingDecider`.
+    private static let windowlessStartFiles = [dockFile, sheetFile]
 
     private static func text(of file: URL) throws -> String {
         try String(contentsOf: file, encoding: .utf8)
@@ -171,29 +179,38 @@ struct TunnelPresenceWiringGuardTests {
     ///
     /// Positive: the block starts something at all. Negative: it starts it
     /// with no other decider than `.refusing`.
+    /// Three surfaces, not one (fix round 1, review finding I-3): the
+    /// autostart overlay is on this side of the boundary too, and round 0's
+    /// version scanned only `TunnelDockPresence.swift` — so an
+    /// `.asking { _ in true }` in the sheet stayed green.
     @Test func theBlockStartsOnlyWithARefusingDecider() throws {
-        let dock = try Self.strict(Self.dockFile)
-        #expect(
-            dock.contains("manager.start("),
-            "the forwarding block starts nothing any more — re-anchor this guard")
-        #expect(
-            dock.contains("decider: .refusing"),
-            "the forwarding block no longer refuses unknown host keys")
-
-        let starts = TransferQueueBarCancelGuardTests.occurrenceCount(
-            of: "manager.start(", in: dock)
-        let refusals = TransferQueueBarCancelGuardTests.occurrenceCount(
-            of: "decider: .refusing", in: dock)
-        #expect(
-            starts == refusals,
-            """
-            \(starts) start(s) in the Dock/menu-bar block but \(refusals) `.refusing` decider(s): \
-            one of them asks a question in a place with no window to draw it in.
-            """)
-        for forbidden in ["TunnelConnection.connect(", "TunnelRunner(", "HostKeyCandidate("] {
+        // Each file gets its own positive, so a file that stopped starting
+        // anything cannot satisfy the count below by contributing zero to
+        // both sides of it.
+        for file in Self.windowlessStartFiles {
+            let source = try Self.strict(file)
             #expect(
-                !dock.contains(forbidden),
-                "the forwarding block dials for itself (\"\(forbidden)\")")
+                source.contains("manager.start("),
+                "\(file.lastPathComponent) starts nothing any more — re-anchor this guard")
+            #expect(
+                source.contains("decider: .refusing"),
+                "\(file.lastPathComponent) no longer refuses unknown host keys")
+
+            let starts = TransferQueueBarCancelGuardTests.occurrenceCount(
+                of: "manager.start(", in: source)
+            let refusals = TransferQueueBarCancelGuardTests.occurrenceCount(
+                of: "decider: .refusing", in: source)
+            #expect(
+                starts == refusals,
+                """
+                \(starts) start(s) in \(file.lastPathComponent) but \(refusals) `.refusing` \
+                decider(s): one of them asks a question in a place with no window to draw it in.
+                """)
+            for forbidden in ["TunnelConnection.connect(", "TunnelRunner(", "HostKeyCandidate("] {
+                #expect(
+                    !source.contains(forbidden),
+                    "\(file.lastPathComponent) dials for itself (\"\(forbidden)\")")
+            }
         }
     }
 
@@ -305,7 +322,10 @@ struct TunnelPresenceWiringGuardTests {
     /// reach the service. Without it, a tree that had deleted the whole
     /// feature would satisfy the scan of the tests below.
     @Test func onlyTheSeamTouchesTheServiceAndNoTestDoes() throws {
-        let production = try Self.appKitFiles().filter { file in
+        // Every file under `Sources/`, not only the App target's (fix round
+        // 1): a use in Core would otherwise hide from this scan entirely, and
+        // Core is the layer that must stay free of app-bundle machinery.
+        let production = try Self.sourceFiles().filter { file in
             try Self.strict(file).contains("SMAppService.mainApp")
         }.map(\.lastPathComponent).sorted()
         #expect(
@@ -379,10 +399,14 @@ struct TunnelPresenceWiringGuardTests {
                 keys.insert(String(rest[..<end.lowerBound]))
             }
         }
-        // 25 as counted on 2026-09-06 across those six files. The floor is
-        // lower so adding a key is not a test edit, and high enough that a
-        // pattern which stopped matching most of them fails here.
-        #expect(keys.count >= 22, "found \(keys.count) keys — re-anchor this guard")
+        // 26, RECOUNTED on 2026-09-06 (fix round 1) by running this test's own
+        // regex over those six files and reading back what it found — round 0
+        // wrote 25 from a hand count and missed `tunnel.menu` in
+        // `SessionSidebar.swift`, which is the failure mode CLAUDE.md's
+        // "Writing a number … means counting them in that same moment" names.
+        // The floor is lower so adding a key is not a test edit, and high
+        // enough that a pattern which stopped matching most of them fails here.
+        #expect(keys.count >= 24, "found \(keys.count) keys — re-anchor this guard")
         for key in keys.sorted() {
             #expect(
                 L10n.string(key, "ZZ-UNRESOLVED-ZZ") != "ZZ-UNRESOLVED-ZZ",
@@ -411,6 +435,12 @@ struct TunnelPresenceWiringGuardTests {
     /// Every `.swift` file under `Tests/`, found rather than listed.
     private static func testFiles() throws -> [URL] {
         try swiftFiles(under: testsRoot)
+    }
+
+    /// Every `.swift` file under `Sources/` — all four targets, not just the
+    /// App's.
+    private static func sourceFiles() throws -> [URL] {
+        try swiftFiles(under: sourcesRoot)
     }
 
     private static func swiftFiles(under root: URL) throws -> [URL] {

@@ -1279,5 +1279,5 @@
 "tunnel.autostart.loginItem.error %@" = "Anmeldeobjekt konnte nicht geändert werden: %@";
 "tunnel.autostart.column.session" = "Verbindung";
 "tunnel.autostart.empty" = "Keine Weiterleitung startet von selbst.";
-"tunnel.autostart.footer" = "„Beim Start“ startet eine Weiterleitung jedes Mal, wenn macSCP geöffnet wird. „Bei der Anmeldung“ startet eine nur dann, wenn macOS macSCP selbst bei der Anmeldung geöffnet hat. Beide fragen nie nach: Eine Verbindung, deren Hostschlüssel noch unbekannt ist, wartet, bis du sie einmal von Hand verbindest.";
+"tunnel.autostart.footer" = "„Beim Start“ startet eine Weiterleitung jedes Mal, wenn macSCP geöffnet wird. „Bei der Anmeldung“ startet eine nur dann, wenn macOS macSCP selbst bei der Anmeldung geöffnet hat. Beide fragen nie nach: Eine Verbindung, deren Hostschlüssel noch unbekannt ist, wartet, bis du sie einmal von Hand verbindest. macSCP kann nicht immer erkennen, ob macOS es als Anmeldeobjekt gestartet hat; wenn eine Weiterleitung nicht von selbst startet, starte sie einmal über das Menü.";
 "settings.general.tunnelAutostart.footer" = "Welche Portweiterleitungen macSCP von selbst öffnet und ob macOS macSCP bei der Anmeldung öffnet.";

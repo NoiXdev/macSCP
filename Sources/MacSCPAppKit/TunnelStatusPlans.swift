@@ -137,11 +137,20 @@ enum LaunchAutoStartPlan {
 /// The forwarding block both menus that have no session in front of them —
 /// the Dock menu and the menu-bar item — draw.
 ///
-/// It lists a profile when it is RUNNING or when it asks to start on its own,
-/// which is the design's "every running or autostart profile". A profile that
-/// is neither is reachable from its own session's row, and a Dock menu that
-/// listed every profile in the app would be a list of everything the user has
-/// ever configured.
+/// It lists a profile on three grounds: it is RUNNING, it asks to start on its
+/// own, or it NEEDS ATTENTION. A profile on none of them is reachable from its
+/// own session's row, and a Dock menu that listed every profile in the app
+/// would be a list of everything the user has ever configured.
+///
+/// **The third ground came from fix round 1** (review finding I-5), and the
+/// hole it closes is one the first two could not see. `DockBadgePlan` counts
+/// failures over EVERY profile, so a forwarding started by hand, with
+/// `autoStart == .off`, that then failed put `"!"` on the Dock — while this
+/// block answered "No forwardings set up" and a header of zero. The badge sent
+/// the user to a menu that denied the thing it was shouting about existed.
+/// `TunnelStatusPlanTests.everyStateTheBadgeShoutsAboutIsListedInTheBlock`
+/// holds the two sides together over every `TunnelState`, rather than over
+/// the cases anyone happened to think of.
 enum TunnelMenuBlockPlan {
     struct Entry: Equatable, Identifiable, Sendable {
         let profile: TunnelProfile
@@ -149,12 +158,28 @@ enum TunnelMenuBlockPlan {
         var id: UUID { profile.id }
     }
 
+    /// Whether this state is one the user has to be told about: a failure, or
+    /// a question waiting for them. Neither is running, and both are exactly
+    /// what a row in a session-less menu exists to lead to.
+    ///
+    /// An exhaustive `switch` rather than a two-case `if`: a seventh
+    /// `TunnelState` then has to be decided about here instead of silently
+    /// falling on the "nothing to see" side.
+    static func needsAttention(_ state: TunnelState) -> Bool {
+        switch state {
+        case .failed, .needsConfirmation: return true
+        case .stopped, .connecting, .active, .reconnecting: return false
+        }
+    }
+
     static func entries(
         profiles: [TunnelProfile], state: (UUID) -> TunnelState
     ) -> [Entry] {
         profiles.compactMap { profile in
-            let running = TunnelManager.Aggregate.isRunning(state(profile.id))
-            guard running || profile.autoStart != .off else { return nil }
+            let current = state(profile.id)
+            let running = TunnelManager.Aggregate.isRunning(current)
+            guard running || needsAttention(current) || profile.autoStart != .off
+            else { return nil }
             return Entry(profile: profile, isRunning: running)
         }
     }

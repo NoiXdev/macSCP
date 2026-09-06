@@ -56,7 +56,8 @@ struct TunnelAutostartSheet: View {
                 "\"At launch\" starts a forwarding every time macSCP opens. \"At login\" starts one "
                     + "only when macOS itself opened macSCP at login. Neither ever asks a question: "
                     + "a connection whose host key is not known yet waits until you connect it once "
-                    + "by hand."))
+                    + "by hand. macSCP cannot always tell whether macOS started it as a login item; "
+                    + "if a forwarding does not start by itself, start it once from the menu."))
                 .font(.caption)
                 .foregroundStyle(DesignTokens.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -168,7 +169,13 @@ struct TunnelAutostartSheet: View {
         loginItem.refresh()
         profiles = manager.reloadAutoStartProfiles()
         let store = SessionStore(directory: SessionStore.defaultDirectory)
+        // `uniquingKeysWith:` rather than `uniqueKeysWithValues:` (fix round
+        // 1): the latter TRAPS on a duplicate key, and `sessions-v2.json` is a
+        // file on disk — a hand-edited or half-merged one can carry two
+        // records with the same id. A name column is not worth a crash, so the
+        // first record wins and the sheet opens.
         sessionNames = Dictionary(
-            uniqueKeysWithValues: ((try? store.all()) ?? []).map { ($0.id, $0.name) })
+            ((try? store.all()) ?? []).map { ($0.id, $0.name) },
+            uniquingKeysWith: { first, _ in first })
     }
 }

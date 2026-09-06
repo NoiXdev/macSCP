@@ -1277,5 +1277,5 @@
 "tunnel.autostart.loginItem.error %@" = "Could not change the login item: %@";
 "tunnel.autostart.column.session" = "Connection";
 "tunnel.autostart.empty" = "No forwarding is set to start on its own.";
-"tunnel.autostart.footer" = "\"At launch\" starts a forwarding every time macSCP opens. \"At login\" starts one only when macOS itself opened macSCP at login. Neither ever asks a question: a connection whose host key is not known yet waits until you connect it once by hand.";
+"tunnel.autostart.footer" = "\"At launch\" starts a forwarding every time macSCP opens. \"At login\" starts one only when macOS itself opened macSCP at login. Neither ever asks a question: a connection whose host key is not known yet waits until you connect it once by hand. macSCP cannot always tell whether macOS started it as a login item; if a forwarding does not start by itself, start it once from the menu.";
 "settings.general.tunnelAutostart.footer" = "Which port forwardings macSCP opens by itself, and whether macOS opens macSCP at login.";

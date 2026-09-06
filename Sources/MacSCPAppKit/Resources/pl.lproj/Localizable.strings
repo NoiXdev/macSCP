@@ -1281,5 +1281,5 @@
 "tunnel.autostart.loginItem.error %@" = "Nie udało się zmienić elementu logowania: %@";
 "tunnel.autostart.column.session" = "Połączenie";
 "tunnel.autostart.empty" = "Żadne przekierowanie nie startuje samo.";
-"tunnel.autostart.footer" = "„Przy starcie” uruchamia przekierowanie za każdym razem, gdy macSCP się otwiera. „Przy logowaniu” uruchamia je tylko wtedy, gdy to macOS otworzył macSCP przy logowaniu. Żadne z nich o nic nie pyta: połączenie, którego klucz hosta nie jest jeszcze znany, czeka, aż połączysz je raz ręcznie.";
+"tunnel.autostart.footer" = "„Przy starcie” uruchamia przekierowanie za każdym razem, gdy macSCP się otwiera. „Przy logowaniu” uruchamia je tylko wtedy, gdy to macOS otworzył macSCP przy logowaniu. Żadne z nich o nic nie pyta: połączenie, którego klucz hosta nie jest jeszcze znany, czeka, aż połączysz je raz ręcznie. macSCP nie zawsze potrafi rozpoznać, czy macOS uruchomił go jako element logowania; jeśli przekierowanie nie startuje samo, uruchom je raz z menu.";
 "settings.general.tunnelAutostart.footer" = "Które przekierowania portów macSCP otwiera sam i czy macOS otwiera macSCP przy logowaniu.";

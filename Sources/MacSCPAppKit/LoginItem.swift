@@ -53,8 +53,14 @@ enum LoginItemStatusPlan {
 /// same one `TunnelRunning` gives one layer down: a test must be able to
 /// drive every branch — including the ones that throw and the one the system
 /// answers `.requiresApproval` to — without registering a real login item on
-/// the machine running `swift test`. `LoginItemGuardTests` scans the test
-/// sources for `SMAppService.mainApp` to keep that true.
+/// the machine running `swift test`.
+/// `TunnelPresenceWiringGuardTests.onlyTheSeamTouchesTheServiceAndNoTestDoes`
+/// scans every file under `Sources/` and every file under `Tests/` for
+/// `SMAppService.mainApp` — this file must be the only one in the first set
+/// and nothing may be in the second — which is what keeps that true. (Named
+/// rather than derived: a production file cannot reference a test type, so
+/// the pointer is prose either way; the guard's own positive is what fails
+/// loudly if this file stops reaching the service at all.)
 @MainActor
 protocol LoginItemRegistering {
     func status() -> LoginItemStatus

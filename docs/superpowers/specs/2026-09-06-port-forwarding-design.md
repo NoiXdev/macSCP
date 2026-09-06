@@ -132,6 +132,12 @@ its profiles (the store is told; pinned).
   .mainApp`, status shown as the system reports it), "Start in the
   background" (see limits), and the table of every autostart profile
   across sessions with state, "when", "last", start/stop.
+  **"Last active" is not recorded; the column is deferred until the
+  runner keeps a timestamp** (Task 7, 2026-09-06). Nothing in Core holds
+  one — `TunnelState` carries no time and `TunnelStore` writes no
+  history — so the column was left out rather than filled with a value
+  invented at the App layer, which would have been a timestamp of when
+  the sheet was opened rather than of when the forwarding last ran.
 - Sidebar: the session row shows the forwarding glyph with the count
   of active tunnels; colour by the worst state among the session's
   tunnels (red > amber > green); grey with no count when all stopped;
@@ -141,8 +147,15 @@ its profiles (the store is told; pinned).
 - Dock: `NSApp.dockTile.badgeLabel` = the active count, `!` when any
   failed, nothing when none active; the Dock menu
   (`applicationDockMenu`) carries the same block as the context menu
-  for every running or autostart profile. The menu-bar item, when the
-  setting is on, gets the same block.
+  for every running, autostart, **or failed** profile. The menu-bar
+  item, when the setting is on, gets the same block.
+  **"Or failed" was added in Task 7's fix round 1** (2026-09-06): the
+  badge counts failures over EVERY profile, so a forwarding started by
+  hand with autostart off, which then failed, put `!` on the Dock while
+  a running-or-autostart block answered "No forwardings set up". The
+  membership rule is "running, autostart, or needing attention", where
+  needing attention is `.failed` or `.needsConfirmation` — so whatever
+  the badge shouts about always has a row behind it.
 
 ## Limits, stated
 

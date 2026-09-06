@@ -150,21 +150,67 @@ struct TunnelStatusPlanTests {
 
     /// "Running" is the manager's own predicate, so a reconnecting profile —
     /// which holds a retry on its way to a connection — is listed and is
-    /// checkable, while a failed one that never asked to autostart is not
-    /// listed at all.
+    /// checkable.
     @Test func runningMeansWhatTheManagerMeansByIt() {
         let reconnecting = Self.profile("reconnecting")
-        let failed = Self.profile("failed")
         let entries = TunnelMenuBlockPlan.entries(
-            profiles: [reconnecting, failed],
-            state: { id in
-                id == reconnecting.id
-                    ? .reconnecting(attempt: 2)
-                    : .failed(reason: "the host refused the connection")
-            })
+            profiles: [reconnecting], state: { _ in .reconnecting(attempt: 2) })
 
         #expect(entries.map(\.profile.name) == ["reconnecting"])
         #expect(entries.first?.isRunning == true)
+    }
+
+    /// **The alarm is listed where the user sees it** (fix round 1, review
+    /// finding I-5). `DockBadgePlan` counts failures over EVERY profile, so a
+    /// manually started forwarding with `autoStart == .off` that fails puts
+    /// `"!"` on the Dock — while a block that listed only running-or-autostart
+    /// profiles answered "No forwardings set up" and a header of zero. The
+    /// badge shouted about something the menu behind it denied existed.
+    ///
+    /// So the block lists exactly what the badge can shout about as well:
+    /// `.failed` and `.needsConfirmation`, neither of which is running.
+    @Test func aFailedManualProfileIsListedBecauseTheBadgeShoutsAboutIt() {
+        let failed = Self.profile("failed")
+        let waiting = Self.profile("waiting")
+        let entries = TunnelMenuBlockPlan.entries(
+            profiles: [failed, waiting],
+            state: { id in
+                id == failed.id
+                    ? .failed(reason: "the host refused the connection")
+                    : .needsConfirmation
+            })
+
+        #expect(entries.map(\.profile.name) == ["failed", "waiting"])
+        #expect(entries.allSatisfy { !$0.isRunning })
+    }
+
+    /// The negative beside it, and the reason the rule is not "list
+    /// everything": a stopped forwarding nobody asked to autostart puts
+    /// nothing on the badge, so it has nothing to explain here. It is reached
+    /// from its own session's row.
+    @Test func aStoppedManualProfileIsStillNotListed() {
+        let manual = Self.profile("manual")
+        #expect(TunnelMenuBlockPlan.entries(profiles: [manual], state: { _ in .stopped }).isEmpty)
+    }
+
+    /// The property behind both, stated once: whatever the badge marks with
+    /// `"!"`, the block lists. Driven over every state rather than over the
+    /// two the cases above name, so a sixth `TunnelState` cannot be added
+    /// on one side of this only.
+    @Test func everyStateTheBadgeShoutsAboutIsListedInTheBlock() {
+        let states: [TunnelState] = [
+            .stopped, .connecting, .active(connections: 0), .reconnecting(attempt: 1),
+            .failed(reason: "the host refused the connection"), .needsConfirmation,
+        ]
+        for state in states {
+            let manual = Self.profile("manual")
+            let listed = !TunnelMenuBlockPlan.entries(
+                profiles: [manual], state: { _ in state }).isEmpty
+            let shouted = DockBadgePlan.label(states: [state]) == "!"
+            #expect(
+                !shouted || listed,
+                "the badge marks \(state) with \"!\" and the block lists nothing for it")
+        }
     }
 
     /// Nothing configured, nothing listed — the case the Dock menu draws its

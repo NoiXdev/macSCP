@@ -185,6 +185,43 @@ struct TunnelDockPresenceTests {
         #expect(busy != idle, "the header does not change when a forwarding starts")
     }
 
+    /// The manager-level half of fix round 1's finding I-5: a MANUALLY
+    /// started forwarding that fails is findable in the block, because the
+    /// Dock badge it just put a `"!"` on is what sends the user to look.
+    @Test func aFailedManualForwardingIsFindableInTheBlock() async throws {
+        let rig = TunnelManagerTests.Rig()
+        defer { rig.tearDown() }
+        let session = UUID()
+        let manual = Self.profile(session: session, name: "manual", port: 8080)
+        try rig.store.upsert(manual)
+        rig.manager.reload()
+
+        let tile = RecordingTile()
+        let controller = DockBadgeController(manager: rig.manager, display: tile)
+        controller.start()
+        let block = TunnelMenuBlockController(manager: rig.manager)
+        #expect(
+            !block.items().map(\.title).contains("manual"),
+            "a stopped, manual forwarding is listed in the Dock menu")
+
+        await rig.manager.start(manual, decider: Self.refusing)
+        try rig.runner(manual).emit(.failed(reason: "port 8080 is in use"))
+        try await pollUntil("the badge marks the failure") { tile.badge == "!" }
+
+        let listed = block.items()
+        #expect(
+            listed.map(\.title).contains("manual"),
+            """
+            the Dock badge reads "!" while the menu behind it lists nothing: the alarm has \
+            nowhere to send the user.
+            """)
+        let entry = try #require(listed.first { $0.title == "manual" })
+        #expect(entry.state == .off, "a failed forwarding is checked as though it were running")
+        #expect(
+            entry.toolTip == "port 8080 is in use",
+            "the entry does not carry the audited failure reason verbatim")
+    }
+
     /// Nothing configured: the block says so rather than showing an empty
     /// stretch of menu.
     @Test func anEmptyBlockSaysSo() throws {

@@ -164,16 +164,18 @@ final class TunnelManager {
         states.values.count(where: Aggregate.isRunning)
     }
 
-    /// Every session that has at least one profile — what Task 7's sidebar
-    /// glyph asks before drawing anything at all.
-    func hasProfiles(for sessionID: UUID) -> Bool {
-        allProfiles.contains { $0.sessionID == sessionID }
-    }
-
-    func aggregate() -> Aggregate {
-        Aggregate.of(allProfiles.map { state(of: $0.id) })
-    }
-
+    /// `hasProfiles(for:)` and `aggregate()` used to sit here, and both were
+    /// deleted in fix round 1 (review finding I-1) because nothing read
+    /// either. `hasProfiles(for:)`'s own doc comment claimed the sidebar glyph
+    /// asked it before drawing anything — it never did: the row hands
+    /// `TunnelGlyphPlan.glyph(states:)` this session's states and the plan
+    /// answers `nil` for an empty array, so "no profile, no glyph" is decided
+    /// there and in one place. A comment describing a caller that does not
+    /// exist is the exact failure mode CLAUDE.md's "Comments that describe
+    /// other code" is about, so the honest fix was to remove the code rather
+    /// than to correct the sentence about it. `aggregate()` — the whole app's
+    /// aggregate — had no caller and no claim; the Dock badge reads
+    /// `DockBadgePlan.label(states:)` instead.
     func aggregate(for sessionID: UUID) -> Aggregate {
         Aggregate.of(profiles(for: sessionID).map { state(of: $0.id) })
     }
