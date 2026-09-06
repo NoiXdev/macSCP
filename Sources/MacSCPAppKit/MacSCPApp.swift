@@ -312,10 +312,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // `QuitStep.stopTunnels`): a forwarding is held by no window
                 // and by no tab, so no window's closure reaches one, and a
                 // process that exits without this leaves the server holding
-                // a remote forward nobody cancelled. Awaited, and outside
-                // the watchdog's race on purpose — see `QuitStep
-                // .stopTunnels` for what bounds it instead.
-                await TunnelManager.shared.stopAll()
+                // a remote forward nobody cancelled. Bounded by the same
+                // watchdog the teardown races — see `runBoundedTunnelStop`.
+                await runBoundedTunnelStop()
                 let outcome = await runBoundedQuitTeardown(
                     parked: parked, windows: windowTeardowns)
                 DiagnosticLog.shared.log(
@@ -334,6 +333,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DiagnosticLog.shared.log(.info, "app", "quit")
             DiagnosticLog.shared.flushSynchronously()
             return .terminateNow
+        }
+    }
+
+    /// Every forwarding stopped, raced against `QuitWatchdog.bound`
+    /// (port-forwarding plan, Task 6, fix round 1).
+    ///
+    /// **It needed a bound of its own.** `TunnelManager.stopAll()` waits for
+    /// each runner's run task, and a run task parked in a DIAL is bounded by
+    /// `connectTimeoutSeconds` — 10 s by default, settable to 120 s. Round 1
+    /// awaited that unbounded and in sequence, in front of a quit whose own
+    /// watchdog is 15 s: n forwardings dialling meant n × the timeout with
+    /// nothing to cut it short, and the argument for `QuitWatchdog.bound`
+    /// right below — that a quit belongs to the user after fifteen seconds —
+    /// was simply not being applied to this step. `stopAll()` now stops the
+    /// runners concurrently (one timeout, not n) and this races the whole
+    /// step against the same bound.
+    ///
+    /// **What losing the race costs**, stated: the sleeper wins, `stopAll`'s
+    /// child is cancelled, and whatever forwarding was still stopping is
+    /// dropped by process exit instead — the same trade `QuitTeardownChain`
+    /// makes, and the reason the quit line's `forced=` exists. This step is
+    /// not reported in that line: it has no count of its own, and inventing
+    /// one would be a second number to keep true.
+    @MainActor
+    private func runBoundedTunnelStop() async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await TunnelManager.shared.stopAll() }
+            group.addTask { try? await Task.sleep(for: QuitWatchdog.bound) }
+            await group.next()
+            group.cancelAll()
         }
     }
 

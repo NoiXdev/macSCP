@@ -71,7 +71,17 @@ final class TunnelManager {
     @ObservationIgnored private let store: TunnelStore
     @ObservationIgnored private let makeRunner: RunnerFactory
     @ObservationIgnored private var runners: [UUID: any TunnelRunning] = [:]
-    @ObservationIgnored private var mirrors: [UUID: Task<Void, Never>] = [:]
+    /// One mirror task per RUNNER, keyed by that runner's generation — not
+    /// by the profile, which is what round 1 keyed it by. Two runners for
+    /// one profile can be alive at once (a start landing inside a discard's
+    /// `stop()`), and both write the same `states` entry; keying by profile
+    /// meant the second overwrote the first's task in the dictionary and the
+    /// first's writes went on landing unnoticed. See `runner(for:)`.
+    @ObservationIgnored private var mirrors: [Int: Task<Void, Never>] = [:]
+    /// Which generation of runner each profile's slot currently holds, and
+    /// the counter that hands them out.
+    @ObservationIgnored private var generations: [UUID: Int] = [:]
+    @ObservationIgnored private var generation = 0
 
     /// Every stored profile, as the store last read them. Kept here rather
     /// than re-read per row: a context menu asks for one session's profiles
@@ -88,10 +98,53 @@ final class TunnelManager {
         allProfiles = store.allProfiles()
     }
 
-    /// The store this manager owns, handed to `SessionListViewModel
-    /// .addDeletionObserver(_:)` so a deleted session takes its profiles with
-    /// it (`TunnelStore`'s `SessionDeletionObserver` conformance).
-    var deletionObserver: any SessionDeletionObserver { store }
+    /// Handed to `SessionListViewModel.addDeletionObserver(_:)` so a deleted
+    /// session takes its forwardings with it.
+    ///
+    /// **The adapter, not the store.** Round 1 handed out `TunnelStore`
+    /// itself, whose `sessionDeleted(id:)` rewrites `tunnels.json` and
+    /// nothing else — so deleting a connected session left its RUNNERS
+    /// running: a bound local port, a forward still registered at the
+    /// server, an SSH connection open, `allProfiles` still listing the
+    /// deleted rows and `runningCount` still counting them, with no menu
+    /// anywhere left to stop them from. The manager owns the runners, so the
+    /// manager has to be the one told.
+    var deletionObserver: any SessionDeletionObserver {
+        DeletionObserver(manager: self)
+    }
+
+    /// `SessionDeletionObserver.sessionDeleted(id:)` is synchronous and
+    /// `Sendable`; stopping a runner is neither. So the adapter hops onto
+    /// the main actor and the cleanup finishes AFTER the deletion returns —
+    /// stated rather than hidden, because it is what a test has to wait for
+    /// (`pollUntil`) and what a reader of `delete(_:)` should expect. The
+    /// deletion itself is unaffected either way: `SessionListViewModel
+    /// .delete(_:)` has already written the session store by the time
+    /// observers are told.
+    private struct DeletionObserver: SessionDeletionObserver {
+        let manager: TunnelManager
+
+        func sessionDeleted(id: UUID) {
+            Task { @MainActor in await manager.forgetEverything(for: id) }
+        }
+    }
+
+    /// Stops every runner of `sessionID`, deletes its profiles, and forgets
+    /// their states — the whole of what a deleted session leaves behind.
+    ///
+    /// Throw-free, like every other cleanup on the deletion path
+    /// (`SessionListViewModel.delete(_:)`'s audit-log and stray-secret
+    /// steps): an unwritable `tunnels.json` is a residual, never a reason to
+    /// leave a tunnel running.
+    func forgetEverything(for sessionID: UUID) async {
+        let doomed = profiles(for: sessionID)
+        for profile in doomed {
+            await discardRunner(for: profile.id)
+            states[profile.id] = nil
+        }
+        try? store.deleteAll(for: sessionID)
+        reload()
+    }
 
     // MARK: - What a view reads
 
@@ -214,12 +267,24 @@ final class TunnelManager {
     /// Stops every tunnel this manager holds — the quit chain's own step,
     /// run before the windows close (`QuitStep.stopTunnels`).
     ///
-    /// Sequential rather than concurrent: each `stop()` is bounded by the
-    /// forward underneath it, and a quit that tears down one tunnel at a
-    /// time is easier to read in the log than one that interleaves six.
+    /// **Concurrent, and that is a quit-time decision** (fix round 1). A
+    /// `stop()` waits for its run task, and a run task parked in a DIAL is
+    /// bounded by `connectTimeoutSeconds` — 10 s by default and settable to
+    /// 120 s. Sequentially that is n × the timeout in front of a quit whose
+    /// own watchdog is 15 s; concurrently it is one timeout however many
+    /// forwardings are up. The per-session `stopAll(for:)` above stays
+    /// sequential on purpose: it is a menu action on a handful of profiles,
+    /// and one tunnel at a time reads better in the log.
+    ///
+    /// The bound itself is NOT here — the quit owns its own clock. See
+    /// `AppDelegate.runBoundedTunnelStop()`, which races this against
+    /// `QuitWatchdog.bound`.
     func stopAll() async {
-        for runner in runners.values {
-            await runner.stop()
+        let running = Array(runners.values)
+        await withTaskGroup(of: Void.self) { group in
+            for runner in running {
+                group.addTask { await runner.stop() }
+            }
         }
     }
 
@@ -273,31 +338,64 @@ final class TunnelManager {
     // MARK: - Runners
 
     /// This profile's runner, built and mirrored on first use.
+    ///
+    /// Every runner gets a GENERATION, and it is what keeps two runners for
+    /// one profile from writing over each other. `discardRunner(for:)`
+    /// suspends inside `stop()`, and anything that starts the same profile
+    /// in that window builds a fresh runner here — so for a moment the OLD
+    /// runner is still finishing its stop while the NEW one is already
+    /// active. Two things follow, and round 1 had neither:
+    ///
+    /// - the mirror writes `states` only while its own generation is still
+    ///   the profile's current one, so the old runner's parting `.stopped`
+    ///   cannot land on the new runner's tunnel;
+    /// - the discard clears the mirror and the state only for the
+    ///   generation it was discarding.
+    ///
+    /// `aStartDuringADiscardKeepsItsOwnRunner` is the measurement, and it
+    /// caught the first version of this fix (which had the second half and
+    /// not the first: the old runner's own mirror published `.stopped` over
+    /// a live tunnel anyway).
     private func runner(for profile: TunnelProfile) -> any TunnelRunning {
         if let existing = runners[profile.id] { return existing }
         let created = makeRunner(profile)
         runners[profile.id] = created
+        generation += 1
+        let mine = generation
+        generations[profile.id] = mine
         states[profile.id] = .stopped
-        // One mirror per runner, for the runner's whole life: `states` is a
+        // One mirror per runner, for that runner's whole life: `states` is a
         // single-consumer stream (see `TunnelRunner.states`), and this is
         // that consumer. It ends when the runner is discarded, never when
         // the tunnel stops — a stopped tunnel can be started again, and a
         // second mirror on the same stream would split the states between
         // two readers.
-        mirrors[profile.id] = Task { [weak self] in
+        mirrors[mine] = Task { [weak self] in
             for await state in created.states {
                 guard let self else { return }
+                guard generations[profile.id] == mine else { return }
                 states[profile.id] = state
             }
         }
         return created
     }
 
-    /// Stops a runner and forgets it, mirror included.
+    /// Stops a runner and forgets it, mirror included — leaving any NEWER
+    /// runner for the same profile entirely alone.
+    ///
+    /// The slot is cleared before the `await` on purpose: a start landing in
+    /// that window must build a new runner rather than hand out the one
+    /// being torn down. The generation check is the other half — this call
+    /// then cleans up only what it was cleaning up.
     private func discardRunner(for profileID: UUID) async {
         guard let runner = runners.removeValue(forKey: profileID) else { return }
+        let mine = generations[profileID]
         await runner.stop()
-        mirrors.removeValue(forKey: profileID)?.cancel()
+        // Cancelled either way: this runner's mirror has nothing left to
+        // report, whoever holds the profile's slot now.
+        if let mine { mirrors.removeValue(forKey: mine)?.cancel() }
+        guard generations[profileID] == mine else { return }
+        generations[profileID] = nil
         states[profileID] = .stopped
     }
 
@@ -315,17 +413,40 @@ final class TunnelManager {
     /// through because they are fixed English written here, never composed
     /// out of what a user typed).
     ///
-    /// The three stores are the App's own: the sessions and known hosts in
-    /// `SessionStore.defaultDirectory`, and the Keychain behind
-    /// `secretSources(for:passwordCommand:)` — the same chain the session
-    /// row's Connect resolves through. No secret is stored, logged or
-    /// carried on the profile; it is resolved per dial and handed straight
-    /// to the connect.
+    /// The stores are the App's own, all four rooted at
+    /// `SessionStore.defaultDirectory`: the sessions, the known hosts, the
+    /// managed keys and the Keychain.
+    ///
+    /// **The secret chain is `TunnelSecretSources.chain(for:keys:secrets:)`,
+    /// not `secretSources(for:passwordCommand:)`** (fix round 1). The latter
+    /// is the command line's: it consults `MACSCP_PASSWORD` BEFORE the
+    /// Keychain, which must not decide a GUI dial, and it reaches only
+    /// session-keyed slots — so a session using a managed private key, whose
+    /// passphrase is stored under the KEY's id, resolved to nothing and the
+    /// forwarding failed authentication while the same session's tab
+    /// connected. See that type for what the chain is and why it is in that
+    /// order.
+    ///
+    /// No secret is stored, logged or carried on the profile; it is resolved
+    /// per dial and handed straight to the connect.
+    ///
+    /// `connectTimeout` is read per dial rather than captured, like every
+    /// other setting this app reads on a loop: a forwarding can be up for
+    /// days, and the number a reconnect uses should be the one currently in
+    /// Settings. `async` because `SettingsStore` is main-actor isolated and
+    /// a dial is not — the hop is one main-actor step per dial, not per
+    /// byte.
     static func liveRunner(
         for profile: TunnelProfile,
         sessions: SessionStore = SessionStore(directory: SessionStore.defaultDirectory),
         knownHosts: KnownHostsStore = KnownHostsStore(directory: SessionStore.defaultDirectory),
-        secrets: any SecretStore = KeychainSecretStore()
+        keys: ManagedKeyStore = ManagedKeyStore(directory: SessionStore.defaultDirectory),
+        secrets: any SecretStore = KeychainSecretStore(),
+        connectTimeout: @escaping @Sendable () async -> Int = {
+            await MainActor.run {
+                SettingsStore(directory: SessionStore.defaultDirectory).connectTimeoutSeconds
+            }
+        }
     ) -> any TunnelRunning {
         let sessionID = profile.sessionID
         return TunnelRunner(profile: profile, connect: { decider in
@@ -335,10 +456,11 @@ final class TunnelManager {
             }
             return try await TunnelConnection.connect(
                 session: session,
-                secrets: secretSources(
-                    for: session, passwordCommand: nil, keychainStore: secrets),
+                secrets: TunnelSecretSources.chain(
+                    for: session, keys: keys, secrets: secrets),
                 knownHosts: knownHosts,
-                decider: decider)
+                decider: decider,
+                connectTimeoutSeconds: await connectTimeout())
         })
     }
 }

@@ -126,28 +126,26 @@ extension ContentView {
         .sheet(item: $auditLogSession) { stored in
             AuditLogSheet(session: stored, store: auditStore)
         }
-        // Forwarding profiles (port-forwarding plan, Task 6): opened from
-        // the row's "Port forwarding" submenu, for a session that need not
-        // be connected — a forwarding dials its own connection and borrows
-        // no tab's. The decider is this window's, the same one the submenu's
-        // own Start hands in.
-        .sheet(item: $tunnelProfilesSession) { stored in
-            TunnelProfilesSheet(
-                session: stored, manager: TunnelManager.shared,
-                decider: tunnelHostKeyDecider,
-                onClose: { tunnelProfilesSession = nil })
-        }
-        // The unknown-host-key question for a forwarding. Dismissing it any
-        // other way than by answering — Esc, a click outside — refuses, so
-        // the dial waiting on the continuation is never left hanging.
-        .sheet(
-            isPresented: Binding(
-                get: { tunnelHostKeyBridge.currentCandidate != nil },
-                set: { isPresented in
-                    if !isPresented { tunnelHostKeyBridge.resolve(trust: false) }
-                })
-        ) {
-            if let candidate = tunnelHostKeyBridge.currentCandidate {
+        // The window's ONE forwarding sheet (fix round 1): the profile
+        // table, or the unknown-host-key question, whichever
+        // `TunnelSheetPlan` says — never both, because macOS SwiftUI
+        // presents one sheet per presenter and the second modifier's sheet
+        // simply never appears. While the profile sheet is up it keeps the
+        // window, and the question is drawn inside it
+        // (`TunnelProfilesSheet`'s own `.sheet`).
+        //
+        // Both are opened for a session that need not be connected — a
+        // forwarding dials its own connection and borrows no tab's — and the
+        // decider is this window's, the same one the submenu's Start hands
+        // in.
+        .sheet(item: tunnelSheetBinding) { item in
+            switch item {
+            case .profiles(let stored):
+                TunnelProfilesSheet(
+                    session: stored, manager: TunnelManager.shared,
+                    decider: tunnelHostKeyDecider, bridge: tunnelHostKeyBridge,
+                    onClose: { tunnelProfilesSession = nil })
+            case .hostKey(let candidate):
                 TunnelHostKeyPromptView(
                     candidate: candidate,
                     onTrust: { tunnelHostKeyBridge.resolve(trust: true) },
@@ -436,6 +434,32 @@ extension ContentView {
     /// closure — which is what that guard was asking. Re-adding it would be
     /// a second answer to a question SwiftUI has already answered, and it
     /// would also make this function unreachable from a test, since
+    /// What the window's one forwarding sheet is showing, and what closing
+    /// it means.
+    ///
+    /// The GET is `TunnelSheetPlan`'s answer, so the precedence is a value a
+    /// test can state. The SET only ever receives `nil` (SwiftUI dismissing
+    /// the sheet) and has to undo whichever source put it up: forget the
+    /// session, or refuse the pending question — a dismissal that forgot the
+    /// question would leave the dial parked on a continuation nothing
+    /// resolves.
+    var tunnelSheetBinding: Binding<TunnelSheetItem?> {
+        Binding(
+            get: {
+                TunnelSheetPlan.item(
+                    profilesSession: tunnelProfilesSession,
+                    hostKeyCandidate: tunnelHostKeyBridge.currentCandidate)
+            },
+            set: { newValue in
+                guard newValue == nil else { return }
+                if tunnelProfilesSession != nil {
+                    tunnelProfilesSession = nil
+                } else {
+                    tunnelHostKeyBridge.resolve(trust: false)
+                }
+            })
+    }
+
     /// `window` is `@State` and a `ContentView` built outside a SwiftUI
     /// hierarchy reads it as `nil`.
     func presentSnippets() {

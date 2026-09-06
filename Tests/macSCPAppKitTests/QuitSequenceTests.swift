@@ -168,6 +168,7 @@ struct QuitSequenceTests {
     /// the part that cannot: the name and its opening parenthesis.
     private static let shouldTerminateDeclaration = "func applicationShouldTerminate("
     private static let boundedTeardownDeclaration = "private func runBoundedQuitTeardown("
+    private static let boundedTunnelStopDeclaration = "private func runBoundedTunnelStop("
     private static let teardownChainDeclaration =
         "static func run(_ work: QuitWorkList) async -> QuitRaceOutcome"
 
@@ -190,16 +191,20 @@ struct QuitSequenceTests {
     }
 
     /// The seven needles, in the order `QuitSequence.steps` says they must
-    /// occur, spelled once — counted 2026-09-06, when
-    /// `TunnelManager.shared.stopAll(` joined them for `QuitStep
-    /// .stopTunnels`. `sweepUnclaimedMoves(` is the parked sweep and
+    /// occur, spelled once — counted 2026-09-06, when `runBoundedTunnelStop(`
+    /// joined them for `QuitStep.stopTunnels`. That step is a call to the
+    /// delegate's own bounded wrapper rather than to `TunnelManager.shared
+    /// .stopAll(` directly (fix round 1 gave it a bound of its own); what
+    /// the wrapper does is read in `theDeferredQuitBoundsTheTunnelStop`
+    /// below, the same split `runBoundedQuitTeardown(` already has.
+    /// `sweepUnclaimedMoves(` is the parked sweep and
     /// `runBoundedQuitTeardown(` is the window loop — both are calls, so a
     /// rename turns the guard red (nothing left to find) rather than
     /// silently satisfying it.
     private static let orderedNeedles = [
         "writeRestorationSeeds(",
         "sweepUnclaimedMoves(",
-        "TunnelManager.shared.stopAll(",
+        "runBoundedTunnelStop(",
         "runBoundedQuitTeardown(",
         "QuitSequence.quitLine(",
         "flushSynchronously(",
@@ -236,6 +241,32 @@ struct QuitSequenceTests {
             applicationShouldTerminate runs the quit steps out of order — found, by first \
             occurrence: \(zip(Self.orderedNeedles, positions).map { "\($0.0)@\($0.1)" })
             """)
+    }
+
+    /// The tunnel step carries the SAME bound as the teardown chain
+    /// (port-forwarding plan, Task 6, fix round 1): `stopAll()` waits for
+    /// every runner's run task, and a runner parked in a dial is bounded by
+    /// `connectTimeoutSeconds` — up to 120 s — which unbounded sat in front
+    /// of a quit whose watchdog is 15 s.
+    ///
+    /// Read from the wrapper's own body, positionally-free: what is claimed
+    /// is that the race exists, stops the tunnels, and reads its constant
+    /// from the one place that names it. How long a quit takes is asserted
+    /// nowhere (CLAUDE.md, "A wall-clock ceiling in a test measures the
+    /// runner").
+    @Test func theDeferredQuitBoundsTheTunnelStop() throws {
+        let source = try Self.strictSource(of: Self.appFile)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: Self.boundedTunnelStopDeclaration, in: source)
+        #expect(
+            body.contains("TunnelManager.shared.stopAll("),
+            "the bounded tunnel step no longer stops the tunnels")
+        #expect(body.contains("withTaskGroup"), "the tunnel stop no longer races anything")
+        #expect(
+            body.contains("QuitWatchdog.bound"),
+            "the tunnel stop's sleeper no longer reads QuitWatchdog.bound")
+        #expect(body.contains("Task.sleep("), "the watchdog child no longer sleeps")
+        #expect(body.contains("group.cancelAll()"), "the loser of the race is no longer cancelled")
     }
 
     /// The bound is production, not a test ceiling (CLAUDE.md, "A wall-clock

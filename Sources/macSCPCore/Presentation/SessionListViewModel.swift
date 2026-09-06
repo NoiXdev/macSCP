@@ -524,10 +524,14 @@ public final class SessionListViewModel {
             // Throw-free by design (M9b) — an orphaned log file is a minor
             // leak, never a reason to fail the session deletion itself.
             auditStore.deleteLog(for: session.id)
-            // Same throw-free shape: a registered observer (`TunnelStore`,
-            // wired up by a later task) cleans up whatever it owns for this
-            // session; a failure there is its own concern, never a reason
-            // to fail the session deletion itself.
+            // Same throw-free shape: a registered observer cleans up
+            // whatever it owns for this session; a failure there is its own
+            // concern, never a reason to fail the session deletion itself.
+            // The App registers one — the tunnel manager's, which stops
+            // that session's forwardings and then deletes their profiles
+            // (`TunnelManager.deletionObserver`, wired in
+            // `ContentView.init`). Nothing here knows that: an observer's
+            // work is its own, and this loop only guarantees it is told.
             for observer in deletionObservers {
                 observer.sessionDeleted(id: session.id)
             }

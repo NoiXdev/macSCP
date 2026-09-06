@@ -53,7 +53,14 @@ struct TunnelManagerTests {
             publish.yield(.active(connections: 0))
         }
 
+        /// Awaited INSIDE `stop()`, before it counts or publishes anything.
+        /// A test that has to hold a stop open — a discard racing a start, n
+        /// stops proving they run at once — sets this; everything else
+        /// leaves it nil and `stop()` returns straight away.
+        var beforeStop: (@MainActor () async -> Void)?
+
         func stop() async {
+            await beforeStop?()
             stopCount += 1
             publish.yield(.stopped)
         }
@@ -66,6 +73,32 @@ struct TunnelManagerTests {
         /// this candidate renders is the "unknown" placeholder.
         private static let candidate = HostKeyCandidate(
             host: "example.invalid", port: 22, keyType: "ssh-ed25519", publicKeyBase64: "")
+    }
+
+    /// A latch several parked stops can wait on, and a count of how many
+    /// arrived.
+    ///
+    /// Polls rather than parking on a continuation: several waiters need to
+    /// be released at once, a single `AsyncStream` fans out to none of them,
+    /// and a bare `withCheckedContinuation` is what `PollingGuardTests
+    /// .noBareContinuationEscapesAwaitResumption` exists to keep out of this
+    /// tree. No deadline of its own — the wait ends when the gate opens or
+    /// when the awaiting task is cancelled, which for a wait that never
+    /// finishes is this suite's `.timeLimit` (CLAUDE.md, "A wall-clock
+    /// ceiling in a test measures the runner").
+    @MainActor
+    final class Gate {
+        private var isOpen = false
+        private(set) var arrived = 0
+
+        func wait() async {
+            arrived += 1
+            while !isOpen {
+                do { try await Task.sleep(for: .milliseconds(2)) } catch { return }
+            }
+        }
+
+        func open() { isOpen = true }
     }
 
     /// Every runner the factory built, by profile id. Its own object because
@@ -336,6 +369,124 @@ struct TunnelManagerTests {
         #expect(
             failing.worst == .failed(reason: "port 8080 is already in use"),
             "a failure must outrank a reconnect — the glyph's colour is the worst state")
+    }
+
+    // MARK: - A deleted session takes its tunnels with it
+
+    /// The `SessionDeletionObserver` seam, driven directly — which is what
+    /// `SessionListViewModel.delete(_:)` does with it (pinned on the Core
+    /// side by `TunnelStoreTests`).
+    ///
+    /// Round 1 handed the STORE out as the observer, so this rewrote
+    /// `tunnels.json` and left the runner running: a bound port, a forward
+    /// still registered at the server, and a profile list still naming rows
+    /// that no longer exist.
+    @Test func deletingASessionStopsItsTunnelsAndForgetsItsProfiles() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let doomed = UUID()
+        let survivor = UUID()
+        let mine = Self.profile(session: doomed, name: "web")
+        let foreign = Self.profile(session: survivor, name: "elsewhere", port: 9000)
+        for profile in [mine, foreign] { try await rig.manager.save(profile) }
+        await rig.manager.start(mine, decider: Self.accepting)
+        await rig.manager.start(foreign, decider: Self.accepting)
+
+        rig.manager.deletionObserver.sessionDeleted(id: doomed)
+
+        // The observer is synchronous and stopping a runner is not, so the
+        // cleanup lands after the call returns — see `DeletionObserver`.
+        try await pollUntil("the deleted session's tunnel was stopped") {
+            rig.log.runners[mine.id]?.stopCount == 1
+        }
+        try await pollUntil("the deleted session's profiles are gone") {
+            rig.manager.profiles(for: doomed).isEmpty
+        }
+        #expect(rig.store.profiles(for: doomed).isEmpty, "tunnels.json still lists the profiles")
+        #expect(rig.manager.state(of: mine.id) == .stopped)
+        #expect(
+            rig.log.runners[foreign.id]?.stopCount == 0,
+            "deleting one session stopped another session's tunnel")
+        #expect(rig.store.profiles(for: survivor).count == 1)
+    }
+
+    // MARK: - A start racing a discard
+
+    /// A `save` discards the profile's runner and suspends inside its
+    /// `stop()`; a start landing in that window builds a NEW runner. The
+    /// resuming discard must leave that one alone.
+    ///
+    /// Round 1 cleared the mirror and wrote `.stopped` unconditionally, so
+    /// the new tunnel was live with its state published as stopped and
+    /// nothing watching its stream any more.
+    @Test func aStartDuringADiscardKeepsItsOwnRunner() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        var profile = Self.profile(session: UUID(), name: "web")
+        try await rig.manager.save(profile)
+        await rig.manager.start(profile, decider: Self.accepting)
+
+        let gate = Gate()
+        let first = try rig.runner(profile)
+        first.beforeStop = { await gate.wait() }
+
+        profile.name = "web (renamed)"
+        let saving = Task { @MainActor in try? await rig.manager.save(profile) }
+        try await pollUntil("the discard is parked inside stop()") { gate.arrived == 1 }
+
+        // The slot is free while the discard is parked, so this builds a
+        // second runner rather than handing back the one being torn down.
+        await rig.manager.start(profile, decider: Self.accepting)
+        let second = try rig.runner(profile)
+        #expect(second !== first, "the start reused the runner that was being discarded")
+        try await pollUntil("the new runner's state reached the manager") {
+            rig.manager.state(of: profile.id) == .active(connections: 0)
+        }
+
+        gate.open()
+        await saving.value
+
+        #expect(
+            rig.manager.state(of: profile.id) == .active(connections: 0),
+            "the finishing discard published .stopped over the runner that replaced it")
+        // And its mirror is still connected: a state the new runner
+        // publishes now still arrives.
+        second.emit(.reconnecting(attempt: 2))
+        try await pollUntil("the new runner's mirror is still alive") {
+            rig.manager.state(of: profile.id) == .reconnecting(attempt: 2)
+        }
+    }
+
+    // MARK: - The quit's stop
+
+    /// `stopAll()` stops the runners CONCURRENTLY. Sequentially, a runner
+    /// parked in a dial holds every later one behind it for up to
+    /// `connectTimeoutSeconds` each, in front of a quit whose watchdog is
+    /// fifteen seconds.
+    ///
+    /// The measurement is the gate: all three stops must be inside it at
+    /// once. A sequential `stopAll` never gets past the first, and what ends
+    /// that wait is this suite's `.timeLimit` — deliberately, since a
+    /// deadline of this test's own would be a wall-clock ceiling.
+    @Test func stopAllStopsEveryRunnerAtOnce() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let profiles = (0..<3).map {
+            Self.profile(session: UUID(), name: "tunnel \($0)", port: 8000 + $0)
+        }
+        for profile in profiles {
+            try await rig.manager.save(profile)
+            await rig.manager.start(profile, decider: Self.accepting)
+        }
+        let gate = Gate()
+        for profile in profiles { try rig.runner(profile).beforeStop = { await gate.wait() } }
+
+        let stopping = Task { @MainActor in await rig.manager.stopAll() }
+        try await pollUntil("all three stops are running at once") { gate.arrived == 3 }
+        gate.open()
+        await stopping.value
+
+        for profile in profiles { #expect(try rig.runner(profile).stopCount == 1) }
     }
 
     @Test func theAggregateOfOneSessionReadsOnlyThatSessionsProfiles() async throws {

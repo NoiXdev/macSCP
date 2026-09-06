@@ -29,6 +29,15 @@ extension ContentView {
                 updateModel.hasPresentationTarget = false
                 updateModel.presentedResult = nil
             }
+            // This window's forwarding host-key bridge closes with the
+            // window (port-forwarding plan, Task 6, fix round 1). A runner
+            // keeps the decider it was started with across every reconnect,
+            // so without this a question raised after the window is gone
+            // would park a dial on a continuation no sheet is watching —
+            // and `TunnelRunner.stop()`, which waits for that run task,
+            // would hold the quit behind it. Refusing is the honest answer:
+            // an unknown host key nobody can be shown is not one to accept.
+            tunnelHostKeyBridge.invalidate()
         }
         // Session actions live in the window's native toolbar (M5f/T5) —
         // attached at the outer container so it belongs to the window, not

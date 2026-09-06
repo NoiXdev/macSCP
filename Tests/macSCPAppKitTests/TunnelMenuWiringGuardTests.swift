@@ -113,7 +113,8 @@ struct TunnelMenuWiringGuardTests {
     private static let appKitRoot = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
     private static let sidebarFile = appKitRoot.appendingPathComponent("SessionSidebar.swift")
     private static let sheetFile = appKitRoot.appendingPathComponent("TunnelProfilesSheet.swift")
-    private static let managerFile = appKitRoot.appendingPathComponent("TunnelManager.swift")
+    private static let sheetsFile = appKitRoot.appendingPathComponent("ContentView+Sheets.swift")
+    private static let contentViewFile = appKitRoot.appendingPathComponent("ContentView.swift")
 
     /// The submenu's own statement, anchored on the one line that decides
     /// whether it is drawn at all. Carries no string literal, so it is found
@@ -268,9 +269,15 @@ struct TunnelMenuWiringGuardTests {
     /// Positive: the manager IS in the set. A scan that found nothing at all
     /// would otherwise report success over an empty answer.
     @Test func theManagerIsTheOnlyCallerOfARunnersStart() throws {
+        // `.start(decider:` — with the leading dot, which is the CALL and
+        // not the declaration (fix round 1). The needle without it was also
+        // matched by `func start(decider: HostKeyDecider) async` in the
+        // protocol at the top of `TunnelManager.swift`, so the positive
+        // below was satisfied by the declaration alone: deleting the real
+        // call would have left this guard green.
         let callers = try Self.appKitFiles().filter { file in
             try SwiftSource.blankingCommentsAndStrings(try Self.text(of: file))
-                .contains("start(decider:")
+                .contains(".start(decider:")
         }.map(\.lastPathComponent).sorted()
 
         #expect(
@@ -298,6 +305,108 @@ struct TunnelMenuWiringGuardTests {
                 !strict.contains(forbidden),
                 "the profile sheet dials for itself (\"\(forbidden)\")")
         }
+    }
+
+    // MARK: - One sheet at a time
+
+    /// The window presents ONE forwarding sheet, and which one is a value.
+    ///
+    /// Round 1 attached two `.sheet` modifiers to the same view: macOS
+    /// SwiftUI presents one per presenter, so the second never appeared —
+    /// and the one that never appeared was the host-key question, whose
+    /// dial then parked on a continuation nobody could resolve.
+    @Test func theSheetPlanNeverPresentsTwoThingsAtOnce() {
+        let session = Self.sshSession()
+        let candidate = HostKeyCandidate(
+            host: "example.invalid", port: 22, keyType: "ssh-ed25519", publicKeyBase64: "")
+
+        #expect(TunnelSheetPlan.item(profilesSession: nil, hostKeyCandidate: nil) == nil)
+        #expect(
+            TunnelSheetPlan.item(profilesSession: session, hostKeyCandidate: nil)
+                == .profiles(session))
+        #expect(
+            TunnelSheetPlan.item(profilesSession: nil, hostKeyCandidate: candidate)
+                == .hostKey(candidate))
+        // The precedence that makes the split work: while the profile sheet
+        // is up it keeps the window, and the question is drawn inside it.
+        #expect(
+            TunnelSheetPlan.item(profilesSession: session, hostKeyCandidate: candidate)
+                == .profiles(session),
+            "a host-key question took the window away from the open profile sheet")
+    }
+
+    /// Distinct ids, so `.sheet(item:)` re-presents when the thing on screen
+    /// actually changes — and a candidate's id carries its full identity
+    /// (host, port, key type, public key), never a secret.
+    @Test func theSheetItemsAreIdentifiedApart() {
+        let session = Self.sshSession()
+        let first = HostKeyCandidate(
+            host: "one.invalid", port: 22, keyType: "ssh-ed25519", publicKeyBase64: "AAAA")
+        let second = HostKeyCandidate(
+            host: "one.invalid", port: 22, keyType: "ssh-ed25519", publicKeyBase64: "BBBB")
+        let ids = [
+            TunnelSheetItem.profiles(session).id,
+            TunnelSheetItem.hostKey(first).id,
+            TunnelSheetItem.hostKey(second).id,
+        ]
+        #expect(Set(ids).count == 3)
+    }
+
+    /// The window's side of it, read from source: exactly one `.sheet` shows
+    /// either, and both live inside it.
+    @Test func theWindowPresentsBothForwardingSheetsThroughOnePresentation() throws {
+        let strict = try SwiftSource.blankingCommentsAndStrings(
+            try Self.text(of: Self.sheetsFile))
+        for needle in ["TunnelProfilesSheet(", "TunnelHostKeyPromptView("] {
+            #expect(
+                Self.positions(of: needle, in: strict).count == 1,
+                "`\(needle)` is presented \(Self.positions(of: needle, in: strict).count) times by the window, expected 1")
+        }
+        let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: ".sheet(item: tunnelSheetBinding)", in: strict)
+        for needle in ["TunnelProfilesSheet(", "TunnelHostKeyPromptView("] {
+            for position in Self.positions(of: needle, in: strict) {
+                #expect(
+                    range.contains(position),
+                    """
+                    `\(needle)` is presented by a second `.sheet` on the window — macOS \
+                    SwiftUI presents one sheet per presenter, so one of them never appears.
+                    """)
+            }
+        }
+    }
+
+    /// The sheet's side: while the profile sheet has the window, it is the
+    /// one that draws the question — nested inside itself, which is an
+    /// ordinary presentation and not a second sheet on one presenter.
+    @Test func theProfileSheetDrawsTheQuestionWhileItIsUp() throws {
+        let strict = try SwiftSource.blankingCommentsAndStrings(try Self.text(of: Self.sheetFile))
+        #expect(
+            Self.positions(of: "TunnelHostKeyPromptView(", in: strict).count == 1,
+            "the profile sheet no longer draws the host-key question it can raise")
+        #expect(
+            strict.contains("bridge.resolve(trust: false)"),
+            "dismissing the profile sheet's question no longer refuses it — the dial would park")
+    }
+
+    // MARK: - A deleted session
+
+    /// The App-level half of the Task 1 hand-off: the window registers the
+    /// MANAGER's observer (which stops the runners) on the session list it
+    /// builds. The Core half — that `delete(_:)` tells its observers at all
+    /// — is `TunnelStoreTests`'.
+    @Test func theWindowRegistersTheManagersDeletionObserver() throws {
+        let strict = try SwiftSource.blankingCommentsAndStrings(
+            try Self.text(of: Self.contentViewFile))
+        #expect(
+            strict.contains("SessionListViewModel("),
+            "ContentView no longer builds a session list — re-anchor this guard")
+        #expect(
+            strict.contains("addDeletionObserver(TunnelManager.shared.deletionObserver)"),
+            """
+            the window no longer registers the tunnel manager's deletion observer: a deleted \
+            session would keep its forwardings running, with no menu left to stop them from.
+            """)
     }
 
     /// Every `.swift` file of the App target, found rather than listed.

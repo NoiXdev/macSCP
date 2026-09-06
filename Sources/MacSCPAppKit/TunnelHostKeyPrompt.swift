@@ -17,49 +17,98 @@ import macSCPCore
 /// this bridge is an UNKNOWN key and nothing else. Autostart reaches it
 /// never at all — that path hands in `.refusing`, which asks nobody.
 ///
-/// Single-continuation, like the certificate bridge: a second question
-/// arriving while one is open resolves the first as refused rather than
-/// silently replacing it, so no dial is left waiting on a continuation
-/// nothing will resume.
+/// **A QUEUE, not a single continuation** (fix round 1). "Start all" dials
+/// every forwarding of a session at once, so two unknown-key questions can
+/// arrive within milliseconds of each other. A single slot answered the
+/// first one `false` to make room for the second — the user saw one prompt
+/// and one profile came to rest in `.needsConfirmation` for no reason they
+/// could see. Questions now wait their turn: the head is the one on screen,
+/// each answer resumes exactly its own asker, and the next question takes
+/// the screen.
+///
+/// **The bridge can be closed.** A window's decider outlives its window: the
+/// runner keeps it across every reconnect, so a question raised hours later
+/// would park a dial on a continuation nobody can answer, and
+/// `TunnelRunner.stop()` — which waits for that run task — would then hold
+/// the quit. `invalidate()`, called when the window disappears, refuses
+/// everything queued and everything later, at once.
 @MainActor
 @Observable
 final class TunnelHostKeyPromptBridge {
-    /// The open question — drives the presenter. `nil` while none is
-    /// pending.
-    private(set) var currentCandidate: HostKeyCandidate?
-    @ObservationIgnored private var continuation: CheckedContinuation<Bool, Never>?
+    /// One waiting question: the candidate on screen (or behind the one on
+    /// screen) and the asker to resume.
+    private struct Question {
+        let id: UUID
+        let candidate: HostKeyCandidate
+        let continuation: CheckedContinuation<Bool, Never>
+    }
+
+    /// The question at the head of the queue — what the sheet draws. `nil`
+    /// while none is pending.
+    var currentCandidate: HostKeyCandidate? { queue.first?.candidate }
+
+    /// How many questions are waiting, the head included. Observable so a
+    /// test can state "the second one is still queued" without reading a
+    /// private field.
+    private(set) var pendingCount = 0
+
+    /// Set by `invalidate()`. Every later `ask` answers `false` without
+    /// queueing anything.
+    private(set) var isInvalidated = false
+
+    @ObservationIgnored private var queue: [Question] = [] {
+        didSet { pendingCount = queue.count }
+    }
 
     init() {}
 
     /// Decider side: awaited by the `HostKeyDecider` this window hands to
-    /// `TunnelManager.start(_:decider:)`. Cancellation-safe — a cancelled
-    /// start resolves `false` (refuse) rather than hanging.
+    /// `TunnelManager.start(_:decider:)`.
+    ///
+    /// Cancellation-safe — a cancelled start resolves `false` rather than
+    /// hanging, and leaves the OTHER queued questions alone.
     func ask(_ candidate: HostKeyCandidate) async -> Bool {
-        resolve(trust: false)
-        currentCandidate = candidate
+        guard !isInvalidated else { return false }
+        let id = UUID()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                if Task.isCancelled {
-                    currentCandidate = nil
+                if Task.isCancelled || isInvalidated {
                     continuation.resume(returning: false)
                     return
                 }
-                self.continuation = continuation
+                queue.append(Question(id: id, candidate: candidate, continuation: continuation))
             }
         } onCancel: {
             Task { @MainActor [weak self] in
-                self?.resolve(trust: false)
+                self?.answer(id: id, trust: false)
             }
         }
     }
 
-    /// Called by the UI once the user answers Trust/Cancel — and by `ask`
-    /// itself, to close a question that is being replaced.
+    /// Called by the UI once the user answers Trust/Cancel — always about
+    /// the question on screen, which is the head of the queue.
     func resolve(trust: Bool) {
-        guard let continuation else { return }
-        self.continuation = nil
-        currentCandidate = nil
-        continuation.resume(returning: trust)
+        guard let head = queue.first else { return }
+        answer(id: head.id, trust: trust)
+    }
+
+    /// Refuses everything pending and everything to come. Called when the
+    /// window that owns this bridge disappears: from that moment no sheet is
+    /// watching, so a question would be one nobody could ever answer.
+    func invalidate() {
+        isInvalidated = true
+        let pending = queue
+        queue = []
+        for question in pending { question.continuation.resume(returning: false) }
+    }
+
+    /// Resumes one specific asker, wherever in the queue it sits. Identity
+    /// matters: a cancelled dial three questions back must not consume the
+    /// answer the user gave to the one on screen.
+    private func answer(id: UUID, trust: Bool) {
+        guard let index = queue.firstIndex(where: { $0.id == id }) else { return }
+        let question = queue.remove(at: index)
+        question.continuation.resume(returning: trust)
     }
 }
 

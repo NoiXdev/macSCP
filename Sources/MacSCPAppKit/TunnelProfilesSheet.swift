@@ -135,6 +135,51 @@ struct TunnelProfileDraft: Equatable {
     }
 }
 
+/// Which of the window's two forwarding sheets is up — at most ONE, which is
+/// the whole point of the type (fix round 1).
+///
+/// Round 1 attached two `.sheet` modifiers to the same view. macOS SwiftUI
+/// presents one sheet per presenter: the second modifier's sheet never
+/// appeared, so a host-key question raised by the profile sheet's own Start
+/// button was invisible, its dial parked on a continuation nobody could
+/// resolve, and `TunnelRunner.stop()` — which waits for that run task —
+/// would have held the quit behind it.
+///
+/// So the window presents one sheet chosen from both sources, and the
+/// profile sheet presents the prompt ITSELF when it is the one up (a sheet
+/// on a sheet is an ordinary nested presentation; two sheets on one view are
+/// not). The precedence below is what makes that split work: while the
+/// profile sheet is open the window keeps showing it, and the question is
+/// the sheet's own to draw.
+enum TunnelSheetItem: Identifiable, Equatable {
+    case profiles(StoredSession)
+    case hostKey(HostKeyCandidate)
+
+    /// Stable per presented thing: the session's id, or the candidate's full
+    /// identity (host, port, key type and the PUBLIC key). A public key is
+    /// not a secret; nothing here carries one.
+    var id: String {
+        switch self {
+        case .profiles(let session): return "profiles:\(session.id.uuidString)"
+        case .hostKey(let candidate):
+            return "hostkey:\(candidate.host):\(candidate.port):\(candidate.keyType):"
+                + candidate.publicKeyBase64
+        }
+    }
+}
+
+/// The choice above, as a value — so "the prompt never replaces the profile
+/// sheet" is measured rather than read out of a view body.
+enum TunnelSheetPlan {
+    static func item(
+        profilesSession: StoredSession?, hostKeyCandidate: HostKeyCandidate?
+    ) -> TunnelSheetItem? {
+        if let profilesSession { return .profiles(profilesSession) }
+        if let hostKeyCandidate { return .hostKey(hostKeyCandidate) }
+        return nil
+    }
+}
+
 /// The port-forwarding profiles of one connection: the table of what exists
 /// and the form that edits one (port-forwarding plan, Task 6; design,
 /// "The profile overlay").
@@ -151,6 +196,10 @@ struct TunnelProfilesSheet: View {
     /// context menu hands in. Never `.refusing` here: someone is looking at
     /// this sheet, so they can be asked.
     let decider: HostKeyDecider
+    /// The bridge that decider asks, so the question can be drawn HERE while
+    /// this sheet is up — see `TunnelSheetItem` for why the window cannot
+    /// draw it at the same time.
+    let bridge: TunnelHostKeyPromptBridge
     let onClose: () -> Void
 
     /// Which stored profile the form is editing, or `nil` while it describes
@@ -204,6 +253,24 @@ struct TunnelProfilesSheet: View {
         .padding(20)
         .frame(minWidth: 640, minHeight: 560)
         .onChange(of: selection) { _, newValue in loadSelection(newValue) }
+        // The unknown-host-key question for a forwarding STARTED FROM HERE.
+        // Nested inside this sheet on purpose: the window is already
+        // presenting this one, and a second sheet on the same presenter
+        // would simply never appear (`TunnelSheetItem`). Dismissing it any
+        // way but by answering refuses, so no dial is left on a
+        // continuation nothing resolves.
+        .sheet(
+            isPresented: Binding(
+                get: { bridge.currentCandidate != nil },
+                set: { isPresented in if !isPresented { bridge.resolve(trust: false) } })
+        ) {
+            if let candidate = bridge.currentCandidate {
+                TunnelHostKeyPromptView(
+                    candidate: candidate,
+                    onTrust: { bridge.resolve(trust: true) },
+                    onCancel: { bridge.resolve(trust: false) })
+            }
+        }
     }
 
     // MARK: - The table

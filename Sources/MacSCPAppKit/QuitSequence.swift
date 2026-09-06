@@ -107,12 +107,15 @@ enum QuitStep: Equatable, Sendable, CaseIterable {
     case teardownParked
     /// Every running forwarding, stopped through `TunnelManager.stopAll()`.
     ///
-    /// **Outside `QuitWatchdog.bound`**, and stated rather than implied: the
-    /// watchdog races the TEARDOWN CHAIN, and this step runs before that
-    /// race begins. What bounds it is the runner underneath —
-    /// `TunnelRunner.stop()` cancels its run task and awaits a teardown
-    /// whose every wait is bounded (`RemoteForward.stop()` spends at most
-    /// five seconds per forward) — not a clock kept here.
+    /// **Raced against `QuitWatchdog.bound`, in its own group**
+    /// (`AppDelegate.runBoundedTunnelStop()`), and the runners are stopped
+    /// concurrently inside it. Round 1 awaited them one at a time with no
+    /// bound at all, which was wrong twice over: a runner parked in a dial
+    /// is bounded by `connectTimeoutSeconds` (10 s by default, up to 120 s),
+    /// so the sequential wait was n × that number in front of a quit whose
+    /// watchdog is 15 s. The five-second `RemoteForward.stop()` close this
+    /// comment used to name is only the teardown AFTER a dial has finished —
+    /// never the ceiling on the step.
     case stopTunnels
     /// Every open window's registered closure, in registration order.
     case teardownWindows
