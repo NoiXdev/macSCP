@@ -229,9 +229,8 @@ enum StoreEditing {
     /// the same question from two sides, and answering them with two
     /// spellings is how `add DB` and `rm db` end up disagreeing.
     static func profiles(named name: String, on session: StoredSession) -> [TunnelProfile] {
-        let folded = SessionNameRule.asSaved(name).lowercased()
-        return profiles(on: session).filter {
-            SessionNameRule.asSaved($0.name).lowercased() == folded
+        profiles(on: session).filter {
+            SessionNameRule.matches(name, $0.name, matching: .caseInsensitive)
         }
     }
 

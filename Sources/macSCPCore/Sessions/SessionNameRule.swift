@@ -62,6 +62,26 @@ public enum SessionNameRule {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Whether `asked` and a `stored` name are the same name under
+    /// `matching`.
+    ///
+    /// The comparison `conflict(_:among:excluding:matching:)` applies, on
+    /// its own, for the callers that hold something other than a
+    /// `StoredSession` — the command line's tunnel profiles, which are
+    /// addressed by name per session and so ask the identical question
+    /// about a different type. It was a hand-written second copy of the
+    /// fold in `StoreEditing.profiles(named:on:)` until 2026-09-07, which
+    /// is the shape this file exists to prevent: the trim and the case
+    /// folding are ONE decision, and a second spelling of it is how
+    /// `add DB` and `rm db` come to disagree.
+    public static func matches(_ asked: String, _ stored: String, matching: Matching) -> Bool {
+        let candidate = asSaved(asked)
+        switch matching {
+        case .caseInsensitive: return asSaved(stored).lowercased() == candidate.lowercased()
+        case .exactAsSaved: return stored == candidate
+        }
+    }
+
     /// The session `name` conflicts with, or `nil` when none does.
     ///
     /// `excluding` is the session currently being edited: a form editing a
@@ -79,14 +99,9 @@ public enum SessionNameRule {
         excluding: UUID? = nil,
         matching: Matching
     ) -> StoredSession? {
-        let candidate = asSaved(name)
-        let folded = candidate.lowercased()
-        return sessions.first { session in
+        sessions.first { session in
             guard session.id != excluding else { return false }
-            switch matching {
-            case .caseInsensitive: return asSaved(session.name).lowercased() == folded
-            case .exactAsSaved: return session.name == candidate
-            }
+            return matches(name, session.name, matching: matching)
         }
     }
 }
