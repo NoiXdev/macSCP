@@ -223,12 +223,15 @@ struct CLIMatrix: Sendable {
     /// The bound `runUntilLine` gives a child that is supposed to STAY up.
     ///
     /// Ten minutes: twice the longest `.timeLimit` any suite in THIS target
-    /// declares (five minutes, in `TunnelRigITests` and
-    /// `SubprocessRunnerTests`; recounted 2026-09-06 with `grep -rn
-    /// "timeLimit(.minutes" Tests/macSCPCoreTests/`, where the limits run 1,
-    /// 2, 3 and 5, and the single 10 is in `macSCPAppKitTests`, which drives
-    /// no child through this runner). So the harness's own cancellation
-    /// always wins and this number decides nothing. It is a net against a child nobody ends — a
+    /// declares. Five minutes is that longest, in THREE files — recounted
+    /// 2026-09-06 with `grep -rln "timeLimit(.minutes(5)"
+    /// Tests/macSCPCoreTests/`: `TunnelRigITests`, `SubprocessRunnerTests`
+    /// and `CLIMatrixITests`, the last of which is where this helper's own
+    /// callers live and which gained the trait in the same commit as this
+    /// constant. The limits in the target otherwise run 1, 2 and 3, and the
+    /// single 10 is in `macSCPAppKitTests`, which drives no child through
+    /// this runner. So the harness's own cancellation always wins and this
+    /// number decides nothing. It is a net against a child nobody ends — a
     /// `tunnels start` whose SIGINT never arrived would otherwise sit in
     /// `.build` forever — not a statement about how long a forwarding should
     /// take to come up (CLAUDE.md, "A wall-clock ceiling in a test measures
@@ -340,7 +343,7 @@ struct CLIMatrix: Sendable {
             }
         }
         if environment[CLIMatrix.secretRelayVariable] != nil { return true }
-        return environment.values.contains { leaksSecret($0) }
+        return environment.values.contains { isTheSecret($0) }
     }
 
     /// The positive beside it: the environment `run(_:)` hands a DIALLING
@@ -354,8 +357,8 @@ struct CLIMatrix: Sendable {
     func dialEnvironmentCarriesTheSecretUnderItsOwnVariable() -> Bool {
         guard let variable = descriptor.secretEnvironmentVariable else { return false }
         let environment = environment(secretVariable: variable)
-        guard let value = environment[variable], leaksSecret(value) else { return false }
-        return environment.filter { leaksSecret($0.value) }.count == 1
+        guard let value = environment[variable], isTheSecret(value) else { return false }
+        return environment.filter { isTheSecret($0.value) }.count == 1
     }
 
     /// The `sessions add` argument vector that saves a SECOND session of this
@@ -433,40 +436,92 @@ struct CLIMatrix: Sendable {
     ///
     /// Partial lines are held back rather than matched: stdout arrives in
     /// chunks, and a predicate looking for `active port=` would otherwise
-    /// match half of `active port=6` and read a truncated number.
+    /// match half of `active port=6` and read a truncated number. The
+    /// predicate itself runs OUTSIDE the scanner's lock: it is
+    /// caller-supplied code, and a lock held across arbitrary code is a lock
+    /// held across anything.
+    ///
+    /// EVERY wait on the child's result goes through `settle()`, which
+    /// answers this task's cancellation by cancelling the child. Without it
+    /// the last of them — the one after the `SIGINT` — is a wait a
+    /// cancellation cannot reach: a child that IGNORES the signal parks the
+    /// run until `heldChildBound`, ten minutes after the suite's five-minute
+    /// limit already recorded its red, which is exactly the shape
+    /// `PollingGuardTests.noBareContinuationEscapesAwaitResumption`
+    /// condemns ("the 'exceeded' report is not the process actually
+    /// stopping"). `aChildThatIgnoresTheInterruptDoesNotOutliveACancelledCaller`
+    /// is the measurement.
     @discardableResult
     func runUntilLine(
         _ arguments: [String],
         matching predicate: @escaping @Sendable (String) -> Bool,
         _ body: (String) async throws -> Void = { _ in }
     ) async throws -> SubprocessResult {
-        let binary = try CLIMatrix.binaryURL()
-        let childEnvironment = environment(secretVariable: descriptor.secretEnvironmentVariable)
+        try await CLIMatrix.runUntilLine(
+            try CLIMatrix.binaryURL(),
+            arguments: arguments,
+            environment: environment(secretVariable: descriptor.secretEnvironmentVariable),
+            matching: predicate,
+            body)
+    }
+
+    /// The same run, over any executable — the shape a test of THIS helper
+    /// needs, since the property that matters (a caller's cancellation is
+    /// answered even by a child that ignores `SIGINT`) cannot be asked of
+    /// `macscp-cli`, which handles the signal correctly.
+    ///
+    /// The binary comes FIRST, exactly as `SubprocessRunner.run`'s does, so
+    /// this overload cannot enter `drivenSubcommands`' driven set: a call
+    /// through it is a guard driving a fixture, not a case driving a
+    /// subcommand.
+    @discardableResult
+    static func runUntilLine(
+        _ binary: URL,
+        arguments: [String],
+        environment childEnvironment: [String: String]?,
+        matching predicate: @escaping @Sendable (String) -> Bool,
+        _ body: (String) async throws -> Void = { _ in }
+    ) async throws -> SubprocessResult {
         let scanner = Mutex(LineScan())
         let settledOrMatched = AsyncSignal()
         let childPID = Mutex<Int32?>(nil)
+        // Read before the `kill` below. `SubprocessRunner` hands over the pid
+        // and Foundation reaps the child on its own, so a number that named
+        // this child a moment ago can name somebody else's process by the
+        // time a `body` returns — signalling it would be signalling a
+        // stranger.
+        let childIsOver = Mutex(false)
 
         let observe: @Sendable (Data) -> Void = { chunk in
-            let matched = scanner.withLock { scan -> Bool in
-                guard scan.matched == nil else { return false }
+            // Complete lines are taken out under the lock; the predicate runs
+            // outside it (see the doc comment). A second pass takes the lock
+            // again to claim the first match, so two chunks racing still
+            // produce one `matched` and one signal.
+            let candidates = scanner.withLock { scan -> [String] in
+                guard scan.matched == nil else { return [] }
                 scan.pending += String(decoding: chunk, as: UTF8.self)
                 var lines = scan.pending.components(separatedBy: "\n")
                 scan.pending = lines.removeLast()
-                for line in lines where predicate(line) {
-                    scan.matched = line
-                    return true
-                }
-                return false
+                return lines
             }
-            if matched { settledOrMatched.signal() }
+            guard let hit = candidates.first(where: predicate) else { return }
+            let claimed = scanner.withLock { scan -> Bool in
+                guard scan.matched == nil else { return false }
+                scan.matched = hit
+                return true
+            }
+            if claimed { settledOrMatched.signal() }
         }
 
         // `Task`, not a task group: this task's own cancellation is answered
-        // explicitly below, and an unstructured child keeps `body` — which is
-        // not `@Sendable` and captures the caller's channels and inboxes —
-        // out of a `sending` closure entirely.
+        // explicitly by `settle()` below, and an unstructured child keeps
+        // `body` — which is not `@Sendable` and captures the caller's
+        // channels and inboxes — out of a `sending` closure entirely.
         let child = Task { () -> SubprocessResult in
-            defer { settledOrMatched.signal() }
+            defer {
+                childIsOver.withLock { $0 = true }
+                settledOrMatched.signal()
+            }
             return try await SubprocessRunner.run(
                 binary, arguments: arguments, environment: childEnvironment,
                 timeout: CLIMatrix.heldChildBound,
@@ -474,23 +529,46 @@ struct CLIMatrix: Sendable {
                 onStarted: { pid in childPID.withLock { $0 = pid } })
         }
 
+        /// Waits for the child's result, and cancels the child if THIS task
+        /// is cancelled while waiting. `Task.value` on its own ignores the
+        /// awaiting task's cancellation — the defect
+        /// `CLITunnelForegroundRunTests` hit from the other side — so a
+        /// suite `.timeLimit` would record a red and then leave the run
+        /// going.
+        func settle() async throws -> SubprocessResult {
+            try await withTaskCancellationHandler {
+                try await child.value
+            } onCancel: {
+                child.cancel()
+            }
+        }
+
         if await settledOrMatched.wait() == .cancelled { child.cancel() }
         guard let line = scanner.withLock({ $0.matched }) else {
             // The child ended (or this task was cancelled) before the line
             // came. Its own result — or its own error — is the answer.
-            return try await child.value
+            return try await settle()
         }
 
         do {
             try await body(line)
         } catch {
             child.cancel()
-            _ = try? await child.value
+            _ = try? await settle()
             throw error
         }
 
-        if let pid = childPID.withLock({ $0 }) { kill(pid, SIGINT) }
-        return try await child.value
+        // Not signalled at all once the child is known to be over: the pid is
+        // valid only until the child exits, and Foundation may already have
+        // reaped it. A residual window remains — between Foundation's reap
+        // and `SubprocessRunner.run` returning, this flag is still false —
+        // and it is left stated rather than closed, because it opens only for
+        // a child that has ALREADY ended, whose settled result is the very
+        // next thing read.
+        if !childIsOver.withLock({ $0 }), let pid = childPID.withLock({ $0 }) {
+            kill(pid, SIGINT)
+        }
+        return try await settle()
     }
 
     /// The stdout line scanner's state: what has arrived since the last
@@ -523,6 +601,25 @@ struct CLIMatrix: Sendable {
     /// (CLAUDE.md, "A value a test must not leak has two exits, not one").
     func leaksSecret(_ text: String) -> Bool {
         text.contains(secret)
+    }
+
+    /// Whether `value` IS this rig's secret, rather than merely containing
+    /// it — the question the environment checks above ask.
+    ///
+    /// Separate from `leaksSecret(_:)` because the two are different
+    /// questions and the substring one is wrong here: an environment
+    /// variable whose value happens to CONTAIN the rig's short password as a
+    /// substring (`PATH` with a `testpass` directory in it, a shell prompt
+    /// string) is not a secret handed to the child, and reading it as one
+    /// would make a negative check red for a reason about the developer's
+    /// shell. A leak into OUTPUT is the opposite case: there the secret's
+    /// presence anywhere in a stream is the whole point, which is why that
+    /// one stays a `contains`.
+    ///
+    /// Answers a `Bool` for the reason `leaksSecret(_:)` gives: neither the
+    /// value nor its spelling may reach an expectation's source text.
+    func isTheSecret(_ value: String) -> Bool {
+        value == secret
     }
 
     /// The same question about a whole run, both streams at once — the shape
@@ -1684,10 +1781,14 @@ extension CLIMatrix {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
-        // `run`, `runStore`, `runWithoutASecret` — the rig's whole run
-        // family, and nothing else: the suffix may not contain a `(`, so
+        // The rig's whole run family and nothing else — a name written by
+        // the pattern rather than enumerated here, because a list in a
+        // comment is a second copy of the members and this one has already
+        // fallen behind once. The suffix may not contain a `(`, so
         // `SubprocessRunner.run(binary, …)` still cannot match (its first
-        // argument is not an array literal either).
+        // argument is not an array literal either), and neither can the
+        // STATIC `runUntilLine(_:arguments:…)`, which takes its binary
+        // first for that reason.
         let pattern = try Regex(#"\.run[A-Za-z]*\(\s*\[\s*"([A-Za-z0-9-]+)""#)
         var names: Set<String> = []
         for match in code.matches(of: pattern) {

@@ -966,9 +966,7 @@ enum CLIMatrixCases {
         ])
         let listed = try await rig.runStore(["tunnels", "list", "--json"])
         #expect(listed.status == 0, "tunnels list exited \(listed.status): \(listed.stderrText)")
-        let rows = listed.stdoutText.split(separator: "\n").compactMap {
-            try? JSONDecoder().decode(TunnelRow.self, from: Data($0.utf8))
-        }
+        let rows = try CLIMatrix.tunnelRows(listed.stdoutText)
 
         guard CLIMatrix.carriesTunnels(kind) else {
             let refusal = try #require(
@@ -1402,6 +1400,29 @@ struct CLIMatrixSSHITests {
         return name
     }
 
+    /// A predicate over `tunnels start --json` lines that accepts the one
+    /// whose `state` is `key` — and ALSO any non-empty line that does not
+    /// decode at all.
+    ///
+    /// The second half is the point. `CLIMatrix.tunnelStateLines` is strict,
+    /// so a renamed key makes every line undecodable; a predicate that
+    /// simply answered `false` for those would then wait for a line that can
+    /// never come, and the case would be red at the suite's five-minute
+    /// limit with nothing said about why. Accepting an undecodable line ends
+    /// the wait at once, and the strict pass every caller runs over the
+    /// whole of stdout afterwards turns it into a decode error NAMING the
+    /// key. The lines this scanner offers are always complete (it holds back
+    /// everything after the last newline), so "does not decode" here cannot
+    /// mean "not yet".
+    private static func jsonStateIs(_ key: String) -> @Sendable (String) -> Bool {
+        { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return false }
+            guard let decoded = try? CLIMatrix.tunnelStateLines(trimmed).first else { return true }
+            return decoded.state == key
+        }
+    }
+
     /// Whether a TEXT state line says `active` AND names the bound port.
     ///
     /// Both halves matter for a `--local 0:…` or `--dynamic 0` profile: the
@@ -1491,7 +1512,7 @@ struct CLIMatrixSSHITests {
         let sshPort = try Self.rigSSHPort(rig)
         let name = try await Self.saveForwarding(on: rig, spec: ["--dynamic", "0"])
 
-        let selection = SOCKS5Frames.methodSelection(0x00)
+        let selection = SOCKS5Frames.methodSelection(SOCKS5Frames.noAuthentication)
         let granted = SOCKS5Frames.reply(.succeeded)
         let reached = Mutex(false)
 
@@ -1504,11 +1525,16 @@ struct CLIMatrixSSHITests {
             let probe = try await TunnelProbe.connect(toPort: port)
             do {
                 // VER, NMETHODS=1, "no authentication required".
-                try await probe.send([SOCKS5Frames.version, 0x01, 0x00])
+                try await probe.send(
+                    [SOCKS5Frames.version, 0x01, SOCKS5Frames.noAuthentication])
                 try await probe.until("the SOCKS5 method selection") { $0.count >= selection.count }
                 #expect(Array(probe.bytes.prefix(selection.count)) == selection)
 
-                // VER, CONNECT, RSV, ATYP=IPv4, 127.0.0.1, port.
+                // VER, CONNECT, RSV, ATYP=IPv4, 127.0.0.1, port. RSV and
+                // ATYP are literals because Core's own constants for them
+                // are `private` — they are only ever read by its parser —
+                // and the two the CLIENT chooses (the version, and "no
+                // authentication required" above) come from `SOCKS5Frames`.
                 try await probe.send(
                     [SOCKS5Frames.version, 0x01, 0x00, 0x01, 127, 0, 0, 1]
                         + [UInt8(sshPort >> 8), UInt8(sshPort & 0xFF)])
@@ -1677,9 +1703,7 @@ struct CLIMatrixSSHITests {
 
         let result = try await rig.runUntilLine(
             ["tunnels", "start", name, "--session", rig.session.name, "--accept-new", "--json"],
-            matching: { line in
-                (try? CLIMatrix.tunnelStateLines(line))?.first?.state == active
-            })
+            matching: Self.jsonStateIs(active))
 
         let leaks = rig.leaksSecret(result)
         #expect(leaks == false, "tunnels start printed the secret")
@@ -1746,14 +1770,20 @@ struct CLIMatrixSSHITests {
 
         let accepted = try await rig.runUntilLine(
             ["tunnels", "start", name, "--session", rig.session.name, "--accept-new", "--json"],
-            matching: { line in
-                (try? CLIMatrix.tunnelStateLines(line))?.first?.state == active
-            })
+            matching: Self.jsonStateIs(active))
         let acceptedLeaks = rig.leaksSecret(accepted)
         #expect(acceptedLeaks == false, "the accepted run printed the secret")
         #expect(
             accepted.status == 0,
             "tunnels start --accept-new exited \(accepted.status): \(accepted.stderrText)")
+        // Decoded strictly, and asserted to contain `active`: exiting 0 is
+        // also what a run that was interrupted before it ever came up does,
+        // and this is where a renamed `--json` key becomes a decode error
+        // naming the key rather than a silent pass (see `jsonStateIs`).
+        let acceptedStates = try CLIMatrix.tunnelStateLines(accepted.stdoutText).map(\.state)
+        #expect(
+            acceptedStates.contains(active),
+            "the accepted run never went active: \(acceptedStates)")
         let recorded = try rig.recordedHostKeys()
         #expect(recorded.count == 1, "--accept-new recorded \(recorded.count) host keys")
     }
@@ -1788,12 +1818,17 @@ struct CLIMatrixSSHITests {
 
         let accepted = try await rig.runUntilLine(
             ["tunnels", "start", name, "--session", rig.session.name, "--accept-new", "--json"],
-            matching: { line in
-                (try? CLIMatrix.tunnelStateLines(line))?.first?.state == active
-            })
+            matching: Self.jsonStateIs(active))
         #expect(
             accepted.status == 0,
             "tunnels start --accept-new exited \(accepted.status): \(accepted.stderrText)")
+        // The same strict read the sibling case makes, and for the same two
+        // reasons: exit 0 alone does not say the forwarding came up, and an
+        // undecodable line has to fail here rather than run out the clock.
+        let acceptedStates = try CLIMatrix.tunnelStateLines(accepted.stdoutText).map(\.state)
+        #expect(
+            acceptedStates.contains(active),
+            "the accepted run never went active: \(acceptedStates)")
         #expect(try rig.recordedHostKeys().count == 1, "the accepted run recorded no host key")
 
         let planted = try rig.plantADifferentHostKey()
@@ -2826,6 +2861,112 @@ struct CLIMatrixCoverageTests {
     }
 }
 
+/// `CLIMatrix.runUntilLine`'s own ending, measured against a scripted child
+/// rather than against `macscp-cli`.
+///
+/// The property is one the CLI cannot be asked for: `tunnels start` handles
+/// `SIGINT` correctly, so a run through it can never show what happens when
+/// the signal is ignored. Nothing here needs the rig or the built binary —
+/// it runs `/bin/sh` — so it runs in the ordinary `swift test`, which is
+/// where a change to the helper will actually be made.
+///
+/// One minute, not five: this suite's whole point is that the wait ENDS on
+/// cancellation, so a generous limit would hide the very regression it
+/// exists for. The limit is still a net rather than a measurement — nothing
+/// below asserts on elapsed time.
+@Suite("CLIMatrixRunUntilLine", .timeLimit(.minutes(1)))
+struct CLIMatrixRunUntilLineTests {
+    private static let shell = URL(fileURLWithPath: "/bin/sh")
+
+    /// A child that IGNORES `SIGINT` does not outlive a cancelled caller.
+    ///
+    /// `runUntilLine` ends its child with a signal, and every wait it makes
+    /// on the child's result has to answer the calling task's cancellation —
+    /// otherwise the last of those waits, the one after the `kill`, parks on
+    /// `Task.value`, which ignores the awaiting task's cancellation. A suite
+    /// `.timeLimit` would then record its red and leave the run going for
+    /// the rest of `heldChildBound`: ten minutes past a five-minute limit,
+    /// the "the 'exceeded' report is not the process actually stopping"
+    /// shape `PollingGuardTests` documents. `settle()` is the fix, and this
+    /// is what measures it.
+    ///
+    /// The child is `trap '' INT`, so the signal reaches it and does
+    /// nothing. `sleep`'s own output is redirected away from the pipe, so
+    /// the shell alone holds the write end: when the run's escalation
+    /// SIGTERMs the shell the readers reach EOF at once, and no orphan keeps
+    /// them open. It is BACKGROUNDED with `& wait` rather than run in the
+    /// foreground for a reason the sibling case below measured — a POSIX
+    /// shell defers a trap until the foreground command it is waiting on
+    /// finishes, and `kill(shell, SIGINT)` does not reach a foreground
+    /// `sleep`, so `trap 'exit 0' INT` never ran and that case was red at
+    /// its own time limit. `wait` is interrupted by a trapped signal;
+    /// a foreground wait is not.
+    ///
+    /// The sequence has no clock in it. `matched` is raised from inside
+    /// `body`, which runs only once the predicate has accepted the child's
+    /// own `ready` line, so the cancellation is placed AFTER the run has
+    /// certainly reached its post-signal wait. What is asserted is that the
+    /// call came back at all, and that it came back reporting cancellation
+    /// rather than a result — never how long it took.
+    @Test func aChildThatIgnoresTheInterruptDoesNotOutliveACancelledCaller() async throws {
+        let reachedTheWait = AsyncSignal()
+        let call = Task { () -> (any Error)? in
+            do {
+                _ = try await CLIMatrix.runUntilLine(
+                    Self.shell,
+                    arguments: ["-c", "trap '' INT; echo ready; sleep 600 >/dev/null 2>&1 & wait"],
+                    environment: nil,
+                    matching: { $0 == "ready" }
+                ) { _ in reachedTheWait.signal() }
+                return nil
+            } catch {
+                return error
+            }
+        }
+
+        // No bound of its own: a wait that gave up here would put a clock
+        // back into the property. The suite's `.timeLimit` is the net.
+        #expect(await reachedTheWait.wait() == .signalled)
+        call.cancel()
+
+        let thrown = await call.value
+        let cancelled = thrown as? SubprocessCancelled
+        #expect(
+            cancelled != nil,
+            "the cancelled call answered \(String(describing: thrown)) instead of reporting cancellation")
+    }
+
+    /// The positive beside it: the same helper, against a child that DOES
+    /// honour the signal, comes back with that child's result and never
+    /// touches the cancellation path.
+    ///
+    /// Without this, "a cancelled caller is answered" would be satisfied by
+    /// a helper that reported cancellation for everything.
+    @Test func aChildThatHonoursTheInterruptIsSettledNormally() async throws {
+        let result = try await CLIMatrix.runUntilLine(
+            Self.shell,
+            arguments: ["-c", "trap 'exit 0' INT; echo ready; sleep 600 >/dev/null 2>&1 & wait"],
+            environment: nil,
+            matching: { $0 == "ready" })
+        #expect(result.status == 0, "the child exited \(result.status)")
+        #expect(result.stdoutText.contains("ready"), "the child's line is not in the result")
+    }
+
+    /// A child that ENDS before printing a matching line hands its own
+    /// settled result back rather than parking the caller — the shape every
+    /// refusal case depends on (`tunnels start` on a session that carries no
+    /// forwarding never prints a state line at all).
+    @Test func aChildThatEndsFirstAnswersWithItsOwnResult() async throws {
+        let result = try await CLIMatrix.runUntilLine(
+            Self.shell,
+            arguments: ["-c", "echo refused >&2; exit 64"],
+            environment: nil,
+            matching: { $0 == "never printed" })
+        #expect(result.status == 64, "the child exited \(result.status)")
+        #expect(result.stderrText.contains("refused"))
+    }
+}
+
 /// The command axis, read from the binary rather than written down. Needs
 /// the built binary, so it is gated with the rest of the matrix.
 @Suite("CLIMatrixCommands", .enabled(if: rigIsEnabled), .serialized)
@@ -3092,7 +3233,6 @@ struct CLIMatrixCommandsITests {
         #expect(refused.stderrText.contains("rename"))
     }
 }
-
 
 // MARK: - Reading bytes through a forwarding
 

@@ -220,9 +220,17 @@ enum SubprocessRunner {
     ///   child — the escalation on the timeout and the cancellation paths —
     ///   uses the same pid, read from the same `Process`; this parameter
     ///   adds no lifecycle of its own, it only tells the caller the number.
-    ///   The pid is valid until this function returns; after that the child
-    ///   has been reaped and the number may be reused by the system, which
-    ///   is why nothing here retains it.
+    ///
+    ///   **The pid is valid until the CHILD EXITS, which is earlier than
+    ///   this function returning.** Foundation reaps the child from its own
+    ///   dispatch source, and it does so BEFORE it calls
+    ///   `terminationHandler` — so between the child's death and this
+    ///   function handing back a `SubprocessResult` the number is already
+    ///   free for the system to reuse. A caller that holds it must therefore
+    ///   know, by some other means, that the child is still alive before it
+    ///   signals; `CLIMatrix.runUntilLine` keeps a flag its run task raises
+    ///   in a `defer` and skips the `kill` once that is set. Nothing here
+    ///   retains the number for the same reason.
     @discardableResult
     static func run(
         _ executable: URL,
