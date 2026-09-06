@@ -145,6 +145,47 @@ struct SessionFieldOptions: ParsableArguments {
         }
     }
 
+    /// Every string-valued flag, paired with the value THIS invocation gave
+    /// it — absent flags are not in the list, which is what makes the check
+    /// below "every field that was given" rather than "every field".
+    ///
+    /// `--tag` is not here and does not need to be: `TagList.normalized`
+    /// drops an empty tag on the way into `StoredSession.tags`, so
+    /// `--tag ""` carries nothing rather than storing nothing-as-a-tag.
+    private var givenStringValues: [(flag: String, value: String)] {
+        [
+            ("--host", host), ("--user", user), ("--key", key),
+            ("--endpoint", endpoint), ("--bucket", bucket), ("--access-key", accessKey),
+            ("--region", region), ("--url", url), ("--group", group),
+        ].compactMap { flag, value in value.map { (flag, $0) } }
+    }
+
+    /// The checks that are about the VALUES rather than about which flags may
+    /// appear — and the shared path `add` and `edit` both run.
+    ///
+    /// Sharing it is the point. `add` used to be the only careful one: its
+    /// required fields go through `required(_:_:for:)`, which refuses an
+    /// empty string as well as a missing one, while `edit` wrote whatever it
+    /// was handed — so `sessions edit web --host ""` exited 0 and stored a
+    /// session with no host, a record `SessionStore` keeps and nothing can
+    /// dial (round-1 review, I1). A check on one side only is a check that
+    /// looks satisfied from the side that has it.
+    ///
+    /// The port range is Core's own, not a number invented here:
+    /// `SSHConnectionConfig` refuses anything outside `1...65535` at connect
+    /// time, and the app's forwarding form states the same bounds. Enforcing
+    /// it at the moment the value is typed turns a later, further-away
+    /// failure into a usage error.
+    func validateGivenValues() throws {
+        for given in givenStringValues
+        where given.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw ValidationError("\(given.flag) cannot be empty")
+        }
+        if let port, !(1...65535).contains(port) {
+            throw ValidationError("--port must be between 1 and 65535")
+        }
+    }
+
     /// The two ways to name an SSH login are alternatives, not layers.
     func validateAuthChoice() throws {
         guard key != nil, agent else { return }
@@ -188,6 +229,7 @@ struct SessionFieldOptions: ParsableArguments {
     func newSession(named name: String, kind: ConnectionKind) throws -> StoredSession {
         try validateKindOwnership(kind)
         try validateAuthChoice()
+        try validateGivenValues()
         try validateRequiredFields(for: kind)
 
         var session = StoredSession(name: SessionNameRule.asSaved(name), kind: kind)

@@ -51,11 +51,24 @@ enum StoreEditing {
         return session
     }
 
-    /// Refuses a name another session already carries. `excluding` is the
-    /// session being renamed, which cannot collide with itself.
+    /// Refuses a name no session may carry: an empty one, or one another
+    /// session already has. `excluding` is the session being renamed, which
+    /// cannot collide with itself.
+    ///
+    /// EMPTY first, and it is not a theoretical case: `sessions add ""` and
+    /// `edit web --rename ""` both wrote `name: ""` before this check existed
+    /// (round-1 review, I2). A session with no name is addressable by
+    /// nothing — every other command takes it as `name:/path`, and `edit`
+    /// and `rm` match by it — and the conflict rule below cannot catch it,
+    /// since two empty names collide with each other but the FIRST one has
+    /// nothing to collide with. Trimmed, because `SessionNameRule.asSaved` is
+    /// what a name means here: a name of three spaces is the empty name.
     static func requireNameIsFree(
         _ name: String, excluding: UUID? = nil, in sessions: [StoredSession]
     ) throws {
+        guard !SessionNameRule.asSaved(name).isEmpty else {
+            throw ValidationError("a session needs a name")
+        }
         guard let clash = SessionNameRule.conflict(
             name, among: sessions, excluding: excluding, matching: .caseInsensitive)
         else { return }
@@ -65,6 +78,16 @@ enum StoreEditing {
     /// `"Work / Prod"` split back into `["Work", "Prod"]` — the inverse of
     /// what `SessionCatalog.Row.groupPath` joins, separator included, so what
     /// `sessions --json` prints can be pasted straight back into `--group`.
+    ///
+    /// The inverse is AMBIGUOUS, and knowingly so: a group whose own name
+    /// contains `" / "` is read here as two levels, exactly as
+    /// `SessionCatalog.groupNames`' doc comment says of splitting a rendered
+    /// path apart. The catalog avoids the ambiguity by never splitting (it
+    /// reads every group's own `name` instead); a command line has nothing
+    /// but the string a person typed, so it splits and lives with the one
+    /// case it cannot tell apart. Such a group can still be filed into from
+    /// the app, and a session already in one keeps its place — only naming it
+    /// with `--group` is out of reach.
     ///
     /// Pure, so `validate()` can refuse a malformed path before `run()`
     /// creates anything: half a group tree written and then an error is a
@@ -95,25 +118,41 @@ enum StoreEditing {
             }
             let group = StoredGroup(
                 name: name, parentID: parentID,
-                position: groups.filter { $0.parentID == parentID }.count)
+                position: try nextPosition(under: parentID, store: store))
             try store.upsertGroup(group)
             groups.append(group)
             parentID = group.id
         }
+        // Unreachable, and named rather than force-unwrapped: the loop above
+        // runs at least once for every input `groupPathSegments` accepts —
+        // `components(separatedBy:)` never returns an empty array, and an
+        // empty segment throws there — so `parentID` is always set by the
+        // time this is read. It stays as a throw because that is what a
+        // future `groupPathSegments` returning nothing should produce here,
+        // rather than a crash or a silent file at the top level.
         guard let parentID else {
             throw ValidationError("--group names no group at all")
         }
         return parentID
     }
 
-    /// Where a newly added session sits among its siblings: last, which is
-    /// what appending to a list means. `position` is renumbered on every
-    /// reorder in the app, so a value that merely sorts after the existing
-    /// siblings is all this owes it.
-    static func nextPosition(inGroup groupID: UUID?, store: SessionStore) throws -> Int {
-        let siblings = try store.all().filter { $0.groupID == groupID }.count
-        let folders = try store.allGroups().filter { $0.parentID == groupID }.count
-        return siblings + folders
+    /// Where something newly filed under `parentID` sits among its siblings:
+    /// last, which is what appending to a list means.
+    ///
+    /// SESSIONS AND GROUPS ARE COUNTED TOGETHER because they share one
+    /// numbering: `SidebarOrdering.children(of:in:)` sorts a group's folders
+    /// and sessions against each other by `position`, breaking a tie by
+    /// putting folders first. Counting only one of the two — as the group
+    /// creation below did in round 1 — hands out a number an existing sibling
+    /// of the other kind already has, which is a tie, decided by a rule about
+    /// something else entirely.
+    ///
+    /// `position` is renumbered on every reorder in the app, so a value that
+    /// merely sorts after the existing siblings is all this owes it.
+    static func nextPosition(under parentID: UUID?, store: SessionStore) throws -> Int {
+        let sessions = try store.all().filter { $0.groupID == parentID }.count
+        let groups = try store.allGroups().filter { $0.parentID == parentID }.count
+        return sessions + groups
     }
 
     /// Writes a session, new or changed.

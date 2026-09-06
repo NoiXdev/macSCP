@@ -160,6 +160,64 @@ struct CLISessionsEditingTests {
         #expect(groups.count == 2, "expected exactly Work and Prod, got \(groups.map(\.name))")
     }
 
+    /// The other value of `--pane`, and its absence: `files` is what a
+    /// session gets when nothing is said, so a `--pane` that silently did
+    /// nothing would be invisible without the `files-and-terminal` case above
+    /// AND this one.
+    @Test func theDefaultPaneIsFilesAndTheFlagCanSayItOutLoud() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        #expect(try await cli.run([
+            "sessions", "add", "silent", "--kind", "ssh",
+            "--host", "h.example.org", "--user", "bob",
+        ]).status == 0)
+        #expect(try await cli.run([
+            "sessions", "add", "spoken", "--kind", "ssh",
+            "--host", "h.example.org", "--user", "bob", "--pane", "files",
+        ]).status == 0)
+
+        let silent = try #require(cli.storedSession(named: "silent"))
+        let spoken = try #require(cli.storedSession(named: "spoken"))
+        #expect(silent.paneVisibility == .filesOnly)
+        #expect(spoken.paneVisibility == .filesOnly)
+    }
+
+    /// A group path is EXTENDED, not re-created: a session filed under
+    /// `"Work"` and a later one under `"Work / Prod"` share the `Work` the
+    /// first one made. The reuse test above proves an identical path is
+    /// reused; this proves a longer path walks into the shorter one rather
+    /// than starting a second tree beside it.
+    @Test func aLongerGroupPathExtendsTheOneAlreadyThere() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        #expect(try await cli.run([
+            "sessions", "add", "shallow", "--kind", "ssh",
+            "--host", "h.example.org", "--user", "bob", "--group", "Work",
+        ]).status == 0)
+        #expect(try await cli.run([
+            "sessions", "add", "deep", "--kind", "ssh",
+            "--host", "h.example.org", "--user", "bob", "--group", "Work / Prod",
+        ]).status == 0)
+
+        let groups = try SessionStore(directory: cli.storageDirectory).allGroups()
+        #expect(groups.filter { $0.name == "Work" }.count == 1, "Work was made twice")
+        let work = try #require(groups.first { $0.name == "Work" })
+        let prod = try #require(groups.first { $0.name == "Prod" })
+        #expect(work.parentID == nil)
+        #expect(prod.parentID == work.id, "Prod was not filed under the existing Work")
+
+        // Through the binary too, so the reuse is visible in what a person
+        // reads rather than only in the file underneath it. Driven as
+        // `sessions list --json`, the verb spelled out, beside the bare
+        // `sessions --json` the other cases use: both spellings must work.
+        let rows = try await cli.rows(["sessions", "list", "--json"])
+        #expect(rows.count == 2)
+        #expect(rows.contains { $0["group"] as? String == "Work" })
+        #expect(rows.contains { $0["group"] as? String == "Work / Prod" })
+    }
+
     /// Case-insensitively, and trimmed — `SessionNameRule`'s
     /// `.caseInsensitive` matching, which the CLI passes explicitly and the
     /// app does not.
@@ -177,7 +235,12 @@ struct CLISessionsEditingTests {
             "--host", "h.example.org", "--user", "bob",
         ])
         #expect(refused.status == Self.validationFailure, "exit \(refused.status): \(refused.stderr)")
-        #expect(refused.stderr.contains("already exists"), "\(refused.stderr)")
+        // The design's whole sentence, not the two words it shares with every
+        // other refusal: it names the session that is in the way (as SAVED,
+        // not as typed) and says which verb to reach for instead.
+        #expect(
+            refused.stderr.contains("a session named Prod already exists — use `sessions edit`"),
+            "\(refused.stderr)")
         let remaining = try await cli.rows(["sessions", "--json"])
         #expect(remaining.count == 1)
     }
@@ -241,6 +304,138 @@ struct CLISessionsEditingTests {
         #expect(refused.stderr.contains("--agent"), "\(refused.stderr)")
     }
 
+    /// An empty value is not a value. `add` refused one already — its
+    /// required fields are checked for emptiness, not merely for presence —
+    /// but `edit` wrote it straight through and stored a session with no
+    /// host, which is a record `SessionStore` keeps and nothing can dial.
+    /// Both verbs are asserted here, because the check is one shared path and
+    /// a fix on one side only would look exactly like this test passing.
+    @Test func anEmptyValueIsRefusedByBothVerbs() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        #expect(try await cli.run([
+            "sessions", "add", "web", "--kind", "ssh",
+            "--host", "good.example.org", "--user", "bob",
+        ]).status == 0)
+
+        let addRefused = try await cli.run([
+            "sessions", "add", "empty", "--kind", "ssh", "--host", "", "--user", "bob",
+        ])
+        #expect(
+            addRefused.status == Self.validationFailure,
+            "exit \(addRefused.status): \(addRefused.stderr)")
+        #expect(addRefused.stderr.contains("--host"), "\(addRefused.stderr)")
+        #expect(cli.storedSession(named: "empty") == nil)
+
+        let editRefused = try await cli.run(["sessions", "edit", "web", "--host", ""])
+        #expect(
+            editRefused.status == Self.validationFailure,
+            "exit \(editRefused.status): \(editRefused.stderr)")
+        #expect(editRefused.stderr.contains("--host"), "\(editRefused.stderr)")
+        let untouched = try #require(cli.storedSession(named: "web")?.ssh)
+        #expect(untouched.host == "good.example.org", "the refused edit wrote anyway")
+    }
+
+    /// A session with no name is addressable by nothing: every other command
+    /// takes `name:/path`, and `sessions edit`/`rm` match by name. Both the
+    /// creating and the renaming path could write one.
+    @Test func aSessionNameCannotBeEmpty() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        // Whitespace, not just "": the name rule trims before it compares, so
+        // a name that is only spaces is the same empty name.
+        let added = try await cli.run([
+            "sessions", "add", "   ", "--kind", "ssh", "--host", "h.example.org", "--user", "bob",
+        ])
+        #expect(added.status == Self.validationFailure, "exit \(added.status): \(added.stderr)")
+        let afterAdd = try await cli.rows(["sessions", "--json"])
+        #expect(afterAdd.isEmpty, "an unnamed session was written: \(afterAdd)")
+
+        #expect(try await cli.run([
+            "sessions", "add", "web", "--kind", "ssh",
+            "--host", "h.example.org", "--user", "bob",
+        ]).status == 0)
+        let renamed = try await cli.run(["sessions", "edit", "web", "--rename", ""])
+        #expect(renamed.status == Self.validationFailure, "exit \(renamed.status): \(renamed.stderr)")
+        #expect(cli.storedSession(named: "web") != nil, "the refused rename wrote anyway")
+    }
+
+    /// The port range Core already enforces at connect time
+    /// (`SSHConnectionConfig`'s `1...65535`) and the app's own forwarding
+    /// form states. Enforcing it here is what turns "the session fails to
+    /// dial, later, somewhere else" into a usage error at the moment the
+    /// value is typed. Both ends of the range are probed, and both verbs.
+    @Test func aPortOutsideTheRangeIsRefused() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        #expect(try await cli.run([
+            "sessions", "add", "web", "--kind", "ssh",
+            "--host", "h.example.org", "--user", "bob",
+        ]).status == 0)
+
+        for port in ["0", "65536"] {
+            let added = try await cli.run([
+                "sessions", "add", "bad-\(port)", "--kind", "ssh",
+                "--host", "h.example.org", "--user", "bob", "--port", port,
+            ])
+            #expect(
+                added.status == Self.validationFailure,
+                "add --port \(port) exited \(added.status): \(added.stderr)")
+            #expect(
+                added.stderr.contains("--port must be between 1 and 65535"), "\(added.stderr)")
+            #expect(cli.storedSession(named: "bad-\(port)") == nil)
+
+            let edited = try await cli.run(["sessions", "edit", "web", "--port", port])
+            #expect(
+                edited.status == Self.validationFailure,
+                "edit --port \(port) exited \(edited.status): \(edited.stderr)")
+        }
+
+        // The positive at both ends: the range's own boundaries are accepted,
+        // so a check that refused everything could not pass this.
+        for port in ["1", "65535"] {
+            #expect(try await cli.run(["sessions", "edit", "web", "--port", port]).status == 0)
+            let ssh = try #require(cli.storedSession(named: "web")?.ssh)
+            #expect(ssh.port == Int(port))
+        }
+    }
+
+    /// **No secret is a flag.** The guard beside this suite scans the two
+    /// store-editing files for the APIs that could READ one; this is the
+    /// other half, and only the binary can answer it: an `@Option var
+    /// password: String?` added to `SessionFieldOptions` would satisfy every
+    /// source scan and every existing case here, and the only thing that
+    /// notices is the binary accepting the flag.
+    ///
+    /// The positive is the same add without the flag, so a build that refused
+    /// every add alike could not pass this.
+    @Test func noSecretIsAcceptedAsAFlag() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        for flag in ["--password", "--passphrase", "--secret-key"] {
+            let refused = try await cli.run([
+                "sessions", "add", "secretive", "--kind", "ssh",
+                "--host", "h.example.org", "--user", "bob", flag, "hunter2",
+            ])
+            #expect(
+                refused.status == Self.validationFailure,
+                "\(flag) exited \(refused.status): \(refused.stderr)")
+            #expect(
+                refused.stderr.contains(flag),
+                "\(flag) was refused without being named: \(refused.stderr)")
+            #expect(cli.storedSession(named: "secretive") == nil)
+        }
+
+        #expect(try await cli.run([
+            "sessions", "add", "secretive", "--kind", "ssh",
+            "--host", "h.example.org", "--user", "bob",
+        ]).status == 0)
+    }
+
     // MARK: - edit
 
     @Test func editChangesOnlyTheFieldsNamed() async throws {
@@ -279,6 +474,30 @@ struct CLISessionsEditingTests {
         #expect(try await cli.run(["sessions", "edit", "web", "--no-tag", "eu"]).status == 0)
         let untagged = try #require(cli.storedSession(named: "web"))
         #expect(untagged.tags == ["db"])
+    }
+
+    /// Moving a session into another group gives it a place among ITS
+    /// siblings. Carrying the old `position` over means the moved session
+    /// sorts by a number that was about a different list — landing above
+    /// sessions that were there first, or below ones that were not.
+    @Test func editingTheGroupPutsTheSessionAmongItsNewSiblings() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        for name in ["first", "second", "wanderer"] {
+            #expect(try await cli.run([
+                "sessions", "add", name, "--kind", "ssh",
+                "--host", "h.example.org", "--user", "bob", "--group", "Work",
+            ]).status == 0)
+        }
+        let before = try #require(cli.storedSession(named: "wanderer"))
+        #expect(before.position == 2, "the fixture did not stack three sessions in one group")
+
+        #expect(try await cli.run(["sessions", "edit", "wanderer", "--group", "Home"]).status == 0)
+
+        let after = try #require(cli.storedSession(named: "wanderer"))
+        #expect(after.groupID != before.groupID, "the move did not happen")
+        #expect(after.position == 0, "the moved session kept a position from its old group")
     }
 
     @Test func editRenamesAndRefusesARenameOntoATakenName() async throws {
@@ -564,12 +783,31 @@ struct CLISessionsStoreEditingGuardTests {
     /// one. It lives in `SessionsCommand.swift`, not in either file scanned
     /// here, but the case rule is what keeps the two apart on purpose rather
     /// than by luck.
-    private static let forbiddenIdentifiers = [
-        "readLine", "FileHandle.standardInput", "SecretStore", "Keychain",
-    ]
+    /// The two stdin halves, split out because they are scanned in THREE
+    /// files rather than two: the verbs themselves live in
+    /// `SessionsCommand.swift`, which is where a "just read the password
+    /// from stdin" would most naturally be written, and no guard looked at
+    /// it for these until now (round-1 review, I4). That file legitimately
+    /// names `SecretStore`-adjacent nothing but is not scanned for the
+    /// storage half here — `CLISessionsCommandGuardTests` already forbids
+    /// `SecretStore` in it, and the two suites are left with one owner per
+    /// claim rather than two copies of it.
+    private static let stdinIdentifiers = ["readLine", "FileHandle.standardInput"]
 
-    private static func forbiddenMatches(in source: String) -> [String] {
-        forbiddenIdentifiers.filter { source.contains($0) }
+    /// The storage half: a secret this tool wrote down.
+    private static let secretStorageIdentifiers = ["SecretStore", "Keychain"]
+
+    private static let forbiddenIdentifiers = stdinIdentifiers + secretStorageIdentifiers
+
+    /// The subset of `identifiers` that appears anywhere in `source`, in the
+    /// order the list itself is declared — so a caller comparing against a
+    /// literal array gets a stable result regardless of where in the source
+    /// each identifier sits. Defaults to the whole list; the stdin-only scan
+    /// passes its own half.
+    private static func forbiddenMatches(
+        in source: String, identifiers: [String] = forbiddenIdentifiers
+    ) -> [String] {
+        identifiers.filter { source.contains($0) }
     }
 
     // MARK: - Positive: both files exist and do the real work
@@ -618,6 +856,26 @@ struct CLISessionsStoreEditingGuardTests {
                 keychain.
                 """)
         }
+    }
+
+    /// The verbs' own file. `sessions rm` asks a question — through
+    /// `CLIEnvironment.confirm(_:)`, in another file — and that is the whole
+    /// of what these commands read from a person. A `readLine` HERE would be
+    /// a second question nobody has reviewed, and the obvious place to write
+    /// one is next to the verb that wants a value.
+    ///
+    /// The positive beside it is the same slice the prompt check below uses:
+    /// the file really declares the remove command, so a scan reading a
+    /// renamed or empty file cannot report this absence as a pass.
+    @Test func theVerbsThemselvesReadNothingFromStandardInput() throws {
+        let source = try String(contentsOf: Self.sessionsCommandFile, encoding: .utf8)
+        #expect(source.contains("struct SessionsRemoveCommand"), """
+            SessionsCommand.swift no longer declares SessionsRemoveCommand —             the positive anchor beside the negative check has nothing to             confirm the scanner is reading a real implementation.
+            """)
+        let found = Self.forbiddenMatches(in: source, identifiers: Self.stdinIdentifiers)
+        #expect(found.isEmpty, """
+            SessionsCommand.swift names \(found) — sessions add/edit/rm read             nothing from standard input; the one question rm asks goes             through CLIEnvironment.confirm(_:).
+            """)
     }
 
     @Test func scannerFlagsAPlantedStdinRead() {

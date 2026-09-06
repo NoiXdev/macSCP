@@ -80,6 +80,13 @@ struct SessionsListCommand: AsyncParsableCommand {
 /// `CLIErrorMapping` has no case for it and classifies it as a connection
 /// failure (13) — telling a script the store was unreachable when in fact
 /// its arguments were wrong.
+///
+/// So 0 and 64 are the only codes an ARGUMENT can produce here. A store that
+/// cannot be read or written is not an argument and is not in that set: the
+/// read inside `validate()` leaves through ArgumentParser as 1, and a write
+/// failure inside `run()` reaches `CLIErrorMapping`, which has no case for a
+/// `CocoaError` and answers 13. Both are honest — neither is a usage error —
+/// and the same is true of `edit` and `rm`.
 struct SessionsAddCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "add",
@@ -115,13 +122,18 @@ struct SessionsAddCommand: ParsableCommand {
         if let path = fields.group {
             session.groupID = try StoreEditing.ensureGroup(atPath: path, in: store)
         }
-        session.position = try StoreEditing.nextPosition(inGroup: session.groupID, store: store)
+        session.position = try StoreEditing.nextPosition(under: session.groupID, store: store)
         try StoreEditing.save(session)
     }
 
-    /// Everything that can be decided without writing anything: the flags
-    /// belong to this kind, the required ones are there, and the name is
-    /// free.
+    /// Everything that can be decided without WRITING anything: the flags
+    /// belong to this kind, their values are usable, the required ones are
+    /// there, and the name is free and not empty.
+    ///
+    /// It reads the store — the name check has to — so it is not pure; what
+    /// it is is repeatable and free of side effects, which is what lets
+    /// `validate()` run it for the refusal and `run()` run it again for the
+    /// value.
     private func planned() throws -> StoredSession {
         let session = try fields.newSession(named: name, kind: kind)
         if let path = fields.group { _ = try StoreEditing.groupPathSegments(path) }
@@ -168,7 +180,18 @@ struct SessionsEditCommand: ParsableCommand {
         var session = try planned()
         let store = StoreEditing.sessionStore()
         if let path = fields.group {
-            session.groupID = try StoreEditing.ensureGroup(atPath: path, in: store)
+            let groupID = try StoreEditing.ensureGroup(atPath: path, in: store)
+            // Only when the session actually MOVES. A `position` carried into
+            // another group is a number about a different list — it lands the
+            // moved session above siblings that were there first, or below
+            // ones that were not — so a move ends where an add would:
+            // last among its new siblings. Re-filing into the group it is
+            // already in is not a move, and renumbering it there would
+            // shuffle a list nobody asked to reorder.
+            if groupID != session.groupID {
+                session.groupID = groupID
+                session.position = try StoreEditing.nextPosition(under: groupID, store: store)
+            }
         }
         try StoreEditing.save(session)
     }
@@ -182,6 +205,9 @@ struct SessionsEditCommand: ParsableCommand {
         // of its own to read them against.
         try fields.validateKindOwnership(stored.kind)
         try fields.validateAuthChoice()
+        // The same value checks `add` runs — see `validateGivenValues`' doc
+        // comment for what happened when only one verb had them.
+        try fields.validateGivenValues()
         if let path = fields.group { _ = try StoreEditing.groupPathSegments(path) }
 
         var session = fields.edited(stored, removingTags: noTag)

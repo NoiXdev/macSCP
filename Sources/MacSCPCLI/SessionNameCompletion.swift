@@ -14,9 +14,10 @@ import macSCPCore
 /// on the default file completion, since it names a local path, not a
 /// session.
 ///
-/// Opens the store at `SessionStore.defaultDirectory` — the same injection
-/// point `SessionsCommand` uses — and reads nothing else: no secret, no
-/// keychain, no connection. `CLISessionsCommandGuardTests` extends its
+/// Opens the store at `SessionStore.defaultDirectory` — the same place
+/// every store reader and writer in this target resolves, `sessions list`
+/// and the store-editing verbs included — and reads nothing else: no
+/// secret, no keychain, no connection. `CLISessionsCommandGuardTests` extends its
 /// forbidden-symbol scan to this file for exactly that reason, even though
 /// this file itself now does none of the store-opening work directly —
 /// `SessionNameCompleter.complete(prefix:storeDirectory:)` does, and the

@@ -954,10 +954,14 @@ struct CLIMatrixSSHITests {
     static let kind: ConnectionKind = .ssh
 
     /// The exact prompt text `makeDecider(policy:)`'s `.prompt` branch
-    /// writes to stderr (`Sources/MacSCPCLI/SessionConnecting.swift:147`).
-    /// Occurs exactly once in `Sources/` — `grep -rn "Trust this host? \
-    /// \[y/N\]" Sources/` on 2026-09-05 — so this is the one and only
-    /// place either PTY case below could see it appear.
+    /// puts on stderr. The branch still composes the words
+    /// (`Sources/MacSCPCLI/SessionConnecting.swift`, the `.prompt` case);
+    /// the WRITE moved on 2026-09-06 into `CLIEnvironment.confirm(_:)`
+    /// (`Sources/MacSCPCLI/CLIEnvironment.swift:33`), shared with the one
+    /// question `sessions rm` asks. Still occurs exactly once in `Sources/`
+    /// — `grep -rn "Trust this host? \[y/N\]" Sources/` recounted
+    /// 2026-09-06, one hit — so this is the one and only place either PTY
+    /// case below could see it appear.
     private static let hostKeyPromptText = "Trust this host? [y/N]"
 
     @Test func listsASeededFileAsJSON() async throws {

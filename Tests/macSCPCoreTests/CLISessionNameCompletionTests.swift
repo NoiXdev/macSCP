@@ -82,22 +82,32 @@ struct CLISessionNameCompletionTests {
         let verbs = CLIMatrix.parseSubcommands(groupHelp.stdout)
         #expect(!verbs.isEmpty, "the sessions group offers no verbs at all")
 
+        // One help run per verb, not one per verb per option: the options
+        // are read out of the same text, and launching the binary again for
+        // the second one buys nothing.
+        var optionsByVerb: [String: Set<String>] = [:]
+        for verb in verbs {
+            let help = try await Self.runProcess(binary, ["help", "sessions", verb])
+            #expect(help.status == 0, "help sessions \(verb) failed: \(help.stderr)")
+            optionsByVerb[verb] = CLIMatrix.parseOptionNames(help.stdout)
+        }
+
         for option in ["--group", "--tag"] {
-            var advertising: [String] = []
-            var wired: [String] = []
-            for verb in verbs {
-                let help = try await Self.runProcess(binary, ["help", "sessions", verb])
-                #expect(help.status == 0, "help sessions \(verb) failed: \(help.stderr)")
-                if CLIMatrix.parseOptionNames(help.stdout).contains(option) {
-                    advertising.append(verb)
-                }
-                if script.stdout.contains("---completion sessions \(verb) -- \(option)") {
-                    wired.append(verb)
-                }
+            let advertising = verbs.filter { optionsByVerb[$0]?.contains(option) == true }
+            let wired = verbs.filter {
+                script.stdout.contains("---completion sessions \($0) -- \(option)")
             }
             #expect(
                 !advertising.isEmpty,
                 "no verb of the sessions group advertises \(option) at all")
+            // The listing verb by name, as the one anchor that has carried
+            // both options since before the group existed: an option scan
+            // that had gone blind would satisfy the set equality below with
+            // two empty sets, and `advertising` being non-empty alone does
+            // not say WHICH verb was found.
+            #expect(
+                advertising.contains("list"),
+                "the listing verb advertises no \(option): \(advertising)")
             #expect(
                 wired.sorted() == advertising.sorted(),
                 """

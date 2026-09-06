@@ -44,7 +44,8 @@ public enum SessionNameCompleter {
 
     /// The store-opening convenience the CLI wrapper calls with the
     /// directory `SessionStore.defaultDirectory` resolves — the same
-    /// injection point `SessionsCommand` uses. `[]` on any store failure
+    /// location every command that touches the store resolves, the listing
+    /// and the store-editing verbs alike. `[]` on any store failure
     /// (an unreadable file, a corrupt one) rather than throwing — silent,
     /// per this file's own doc comment above.
     public static func complete(prefix: String, storeDirectory: URL) -> [String] {
