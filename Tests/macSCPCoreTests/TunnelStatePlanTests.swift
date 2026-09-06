@@ -52,6 +52,14 @@ struct TunnelStatePlanTests {
         rows.append((.failed(reason: "x"), .stop, .stopped))
         rows.append((.stopped, .stop, .stopped))
         rows.append((.connecting, .needsConfirmation, .needsConfirmation))
+        // A failed tunnel restarts from the context menu — the design says
+        // so, and without this row `TunnelRunner.start(decider:)` would dial
+        // with the state stuck at `.failed`, so the UI would show a failure
+        // while a connection was being made. Added in Task 5's fix round 1
+        // together with the runner clearing its own `task` when a run ends
+        // by itself; before that, a terminal state could not be restarted at
+        // all and the gap was invisible.
+        rows.append((.failed(reason: "bind failed"), .start, .connecting))
         return rows
     }()
 

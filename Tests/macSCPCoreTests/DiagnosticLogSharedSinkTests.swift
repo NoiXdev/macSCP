@@ -4,13 +4,13 @@ import Testing
 
 @testable import macSCPCore
 
-/// The eight tests that MUST touch `DiagnosticLog.shared`, because the
+/// The nine tests that MUST touch `DiagnosticLog.shared`, because the
 /// production code under test — `LocalFileSystem`, `TransferEngine`,
 /// `ConnectionViewModel`, `RemoteBrowserViewModel`, `TunnelRunner` — logs
 /// through that exact singleton and cannot be pointed at a private instance
 /// instead (their call sites spell `DiagnosticLog.shared.log(` directly).
-/// Eight counted 2026-09-06, in the pass that added the tunnel-line test —
-/// seven before it. Every other diagnostic-log test lives in
+/// Nine counted 2026-09-06, in Task 5's fix round 1 — seven before that
+/// task, eight after its first commit. Every other diagnostic-log test lives in
 /// `DiagnosticLogTests.swift` against its own, private `DiagnosticLog()`.
 ///
 /// `DiagnosticLogSharedSinkIsolationGuardTests` holds this split in place:
@@ -547,5 +547,56 @@ struct DiagnosticLogSharedSinkTests {
             contents.contains(
                 "[debug] tunnel tunnel \(profile.name) connection closed to internal:80 "
                     + "in=11 out=22 ms=250"))
+    }
+
+    /// The `failed` line carries `reason=` through the sanctioned overload.
+    ///
+    /// Fix round 1, SPEC: the line used to interpolate the already-mapped
+    /// sentence into the message itself, so it read `failed <sentence>` with
+    /// no `reason=` key — a line nobody could `grep "reason="` for alongside
+    /// every other failure this app writes. `DiagnosticLog
+    /// .log(_:_:_:reason:)` is the one place that key may be formatted; it
+    /// runs `DialSupport.reason(for:)` itself, which is why the runner now
+    /// carries the ERROR in `AttemptOutcome.failed` rather than its text.
+    ///
+    /// A host-key MISMATCH is the fixture because it is both a first-attempt
+    /// `failed` (never a confirmation — the TOFU hard stop) and one of the
+    /// four error types `DialSupport.reason(for:)` spells out, so the line
+    /// proves the mapping ran rather than merely that something was
+    /// appended. The assertion stops before the fingerprints: what is being
+    /// pinned is the key and the mapper, not the sentence's tail.
+    @Test("TunnelRunner's failed line carries reason= through the audited mapper")
+    func tunnelRunnerFailedLineCarriesAMappedReason() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let profile = TunnelProfile(
+            sessionID: UUID(), name: "web-\(UUID().uuidString.prefix(8))",
+            kind: .local(bind: "127.0.0.1", localPort: 8080, host: "internal", remotePort: 80),
+            reconnects: true)
+        let connections = TunnelFakeConnections()
+        connections.failAttempts(
+            [1],
+            with: HostKeyError.mismatch(
+                host: "example.test", expected: "SHA256:aaa", presented: "SHA256:bbb"))
+        let runner = TunnelRunner(
+            profile: profile, connect: connections.connect,
+            runtimes: TunnelFakeRuntimes(boundPort: 8080),
+            sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        let fixedNow = Date()
+        DiagnosticLog.shared.configure(
+            level: .info, directory: logDirectory, now: { fixedNow })
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitForFailure()
+        await DiagnosticLog.shared.flush()
+
+        let contents = fileContents(ownFileURL(directory: logDirectory, fixedNow: fixedNow))
+        #expect(
+            contents.contains(
+                "[info] tunnel tunnel \(profile.name) failed reason=host key MISMATCH for"))
     }
 }

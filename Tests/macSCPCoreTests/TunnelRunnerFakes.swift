@@ -173,10 +173,19 @@ final class TunnelFakeConnection: TunnelSSHConnection, @unchecked Sendable {
 final class TunnelFakeRuntimes: TunnelRuntimeFactory, @unchecked Sendable {
     private let lock = NSLock()
     private let port: Int
+    private let firstStopGate: TunnelLatch?
     private var runtimes: [TunnelFakeRuntime] = []
     private var kinds: [TunnelProfile.Kind] = []
 
-    init(boundPort: Int) { port = boundPort }
+    /// - Parameter firstStopGate: when given, the FIRST runtime's `stop()`
+    ///   parks on it. That is what holds `TunnelRunner.stop()` suspended at
+    ///   `await running?.value` for as long as a test needs, which is the
+    ///   only way to drive the start-during-stop window deliberately rather
+    ///   than by racing the scheduler.
+    init(boundPort: Int, firstStopGate: TunnelLatch? = nil) {
+        port = boundPort
+        self.firstStopGate = firstStopGate
+    }
 
     var made: [TunnelFakeRuntime] {
         lock.lock()
@@ -194,7 +203,9 @@ final class TunnelFakeRuntimes: TunnelRuntimeFactory, @unchecked Sendable {
         _ kind: TunnelProfile.Kind, over connection: any TunnelSSHConnection,
         observer: @escaping TunnelConnectionObserver, onEnded: @escaping @Sendable () -> Void
     ) async throws -> any TunnelRuntime {
-        let runtime = TunnelFakeRuntime(port: port, observer: observer, onEnded: onEnded)
+        let gate = lock.withLock { runtimes.isEmpty ? firstStopGate : nil }
+        let runtime = TunnelFakeRuntime(
+            port: port, observer: observer, onEnded: onEnded, stopGate: gate)
         lock.withLock {
             runtimes.append(runtime)
             kinds.append(kind)
@@ -207,6 +218,8 @@ final class TunnelFakeRuntime: TunnelRuntime, @unchecked Sendable {
     private let lock = NSLock()
     private let port: Int
     private var stops = 0
+    private var stopsEntered = 0
+    private let stopGate: TunnelLatch?
     /// The runner's own connection observer, so a test can report an
     /// accepted connection without a socket.
     let observer: TunnelConnectionObserver?
@@ -214,25 +227,38 @@ final class TunnelFakeRuntime: TunnelRuntime, @unchecked Sendable {
 
     init(
         port: Int, observer: @escaping TunnelConnectionObserver,
-        onEnded: @escaping @Sendable () -> Void
+        onEnded: @escaping @Sendable () -> Void, stopGate: TunnelLatch? = nil
     ) {
         self.port = port
         self.observer = observer
         self.onEnded = onEnded
+        self.stopGate = stopGate
     }
 
     var boundPort: Int? { port }
 
+    /// How many `stop()` calls have COMPLETED.
     var stopCount: Int {
         lock.lock()
         defer { lock.unlock() }
         return stops
     }
 
+    /// How many `stop()` calls have been ENTERED — which for a gated
+    /// runtime is the only observable that says the teardown is parked
+    /// rather than finished.
+    var stopEntered: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopsEntered
+    }
+
     /// The forward ending by itself, with the SSH connection still up.
     func endOnItsOwn() { onEnded() }
 
     func stop() async {
+        lock.withLock { stopsEntered += 1 }
+        await stopGate?.wait()
         lock.withLock { stops += 1 }
     }
 }
@@ -289,5 +315,51 @@ final class TunnelParkingSleeper: @unchecked Sendable {
                 throw error
             }
         }
+    }
+}
+
+/// A latch a test opens by hand, awaited without throwing.
+///
+/// `try?` around the sleep on purpose: what waits on this is a teardown
+/// running inside an ALREADY-CANCELLED task (`TunnelRunner.stop()` cancels
+/// the run task before its `releaseCurrent()` runs), so a wait that
+/// propagated cancellation would return immediately and the window this
+/// exists to hold open would never open. No deadline of its own — the
+/// suite's `.timeLimit` ends a latch nobody releases.
+final class TunnelLatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+
+    var isOpen: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return opened
+    }
+
+    func release() {
+        lock.withLock { opened = true }
+    }
+
+    func wait() async {
+        while !isOpen {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
+}
+
+/// A counter a test double bumps and a test polls on — the smallest thing
+/// that turns "has the dial been entered yet" into an `await`.
+final class TunnelCallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
+    }
+
+    func record() {
+        lock.withLock { calls += 1 }
     }
 }

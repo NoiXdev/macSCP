@@ -24,7 +24,26 @@ public enum TunnelEvent: Sendable, Equatable {
     /// profile's own `reconnects` flag, not a retry state — it says whether
     /// this LOSS should be retried at all.
     case connectionLost(reconnects: Bool)
-    /// The backoff timer for the current reconnect attempt elapsed.
+    /// A reconnect attempt has produced a live connection and forward — the
+    /// event that takes a tunnel out of `reconnecting` and back toward
+    /// `active`.
+    ///
+    /// **Not the backoff timer firing**, which is what this comment used to
+    /// say and what its name suggests. `TunnelRunner` feeds it AFTER the
+    /// retry's dial has succeeded, immediately before `listening`, and the
+    /// reason is this table's own shape: `reconnecting(k) + connectionLost
+    /// → reconnecting(k + 1)` is the only row that increments an attempt,
+    /// and it is reachable only while the state is still `reconnecting`. Fed
+    /// at the timer, the state would already be `connecting`, so a retry
+    /// that failed would take `connecting + connectionLost →
+    /// reconnecting(1)` and reset the count every time — flattening
+    /// `BackoffPlan`'s 2, 4, 8, 16 … into 2, 2, 2, 2 …. Measured by
+    /// `TunnelRunnerTests.aFailedRetryKeepsClimbing`, which goes red against
+    /// exactly that placement.
+    ///
+    /// One consequence for a caller: a SUCCESSFUL reconnect therefore
+    /// publishes a transient `connecting` between `reconnecting(k)` and
+    /// `active(0)`, because this event lands one step before `listening`.
     case retryDue
     /// A step failed in a way that ends the run outright (a listener could
     /// not bind, autostart met `.needsConfirmation`'s own precondition
@@ -62,6 +81,7 @@ public enum TunnelStatePlan {
     /// | `active` or `connecting` | `connectionLost(reconnects: true)` | `reconnecting(1)` |
     /// | `active` or `connecting` | `connectionLost(reconnects: false)` | `failed("connection lost")` |
     /// | `reconnecting(k)` | `retryDue` | `connecting` |
+    /// | `failed` | `start` | `connecting` |
     /// | `reconnecting(k)` | `connectionLost` | `reconnecting(k+1)` |
     /// | any | `failed(reason)` | `failed(reason)` |
     /// | any | `stop` | `stopped` |
@@ -86,7 +106,12 @@ public enum TunnelStatePlan {
     /// changed.
     public static func next(_ state: TunnelState, on event: TunnelEvent) -> TunnelState {
         switch (state, event) {
-        case (.stopped, .start), (.needsConfirmation, .start):
+        // A failed tunnel restarts from the context menu — the design says
+        // so, and `TunnelRunner.runEnded(_:)` makes it reachable by clearing
+        // its own task when a run ends by itself. Without this row the
+        // runner would dial while its state still read `failed`, so the
+        // sidebar would show a failure over a connection being made.
+        case (.stopped, .start), (.needsConfirmation, .start), (.failed, .start):
             return .connecting
 
         case (.connecting, .connected):

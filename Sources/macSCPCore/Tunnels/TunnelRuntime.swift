@@ -187,7 +187,8 @@ private struct RemoteForwardRuntime: TunnelRuntime {
 /// caller; reporting an ending as well would drive a reconnect for a forward
 /// that never existed.
 /// Module-internal rather than `private` so `TunnelRuntimeTests` can drive
-/// its three cases directly — a `.remote` runtime is otherwise only
+/// its four cases directly (counted 2026-09-06, one per `@Test` in that
+/// file) — a `.remote` runtime is otherwise only
 /// reachable through a live SSH connection, and a mutation probe on the
 /// cancellation gate below came back GREEN for exactly that reason
 /// (2026-09-06).

@@ -304,6 +304,170 @@ struct TunnelRunnerTests {
         await runner.stop()
     }
 
+    /// A run that ended BY ITSELF leaves the runner startable: the terminal
+    /// `.needsConfirmation` this task introduces is only a recovery path if
+    /// `start(decider:)` works afterwards without anyone calling `stop()`
+    /// first.
+    ///
+    /// Fix round 1: `task` used to be cleared only in `stop()`, so after a
+    /// terminal state `start(decider:)` was a silent no-op — no state, no
+    /// log line, no dial. The whole "connect this session once by hand, then
+    /// start the tunnel again" story was dead, and nothing said so.
+    @Test func aRunnerThatNeedsConfirmationCanBeStartedAgainWithoutStopping() async throws {
+        let connections = TunnelFakeConnections()
+        connections.failAttempts([1], with: StoredSessionConnectionError.secretRequired)
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080)
+        let runner = TunnelRunner(
+            profile: localProfile(), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .refusing)
+        try await states.waitFor(.needsConfirmation)
+
+        // No `stop()` in between — that is the whole point.
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+        #expect(connections.made.count == 1)
+
+        await runner.stop()
+    }
+
+    /// The same for a terminal `.failed`, which additionally needs the
+    /// plan's `(.failed, .start) → .connecting` row: without it the runner
+    /// would dial while its state still read `.failed`.
+    @Test func aFailedRunnerCanBeStartedAgainWithoutStopping() async throws {
+        let connections = TunnelFakeConnections()
+        connections.failAttempts([1], with: TunnelFailure.connectFailed(reason: "no route"))
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080)
+        let runner = TunnelRunner(
+            profile: localProfile(), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitForFailure()
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.connecting)
+        try await states.waitFor(.active(connections: 0))
+
+        await runner.stop()
+    }
+
+    /// A dial that `stop()` cancelled, whose decider then reports the host
+    /// key as refused, must NOT publish `.needsConfirmation` on the way out
+    /// of a stop.
+    ///
+    /// Fix round 1: cancellation used to be classified AFTER `needsAPerson`,
+    /// so a stop that landed while the dial was in flight ended in
+    /// `.needsConfirmation` — a state the user never asked for, plus a
+    /// `needs confirmation` line in the log — instead of `.stopped`.
+    @Test func aDialCancelledByStopIsNotAConfirmation() async throws {
+        let dialling = TunnelCallCounter()
+        let connect: TunnelRunner.Connect = { _ in
+            dialling.record()
+            // Parks until `stop()` cancels the run task, then reports what a
+            // refusing decider reports.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+            throw HostKeyError.rejectedByUser
+        }
+        let runner = TunnelRunner(
+            profile: localProfile(), connect: connect,
+            runtimes: TunnelFakeRuntimes(boundPort: 8080),
+            sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .refusing)
+        try await pollUntil("the dial to be in flight") { dialling.count == 1 }
+        await runner.stop()
+
+        #expect(await runner.state == .stopped)
+        let reachedConfirmation = states.recorded.contains(.needsConfirmation)
+        #expect(reachedConfirmation == false)
+    }
+
+    /// The race the fix round's CRITICAL names: `stop()` clears `task` and
+    /// then SUSPENDS on the run task's own teardown, leaving the actor free.
+    /// A `start(decider:)` that lands in that window used to see
+    /// `task == nil`, dial a second connection and bind a second forward —
+    /// and the resuming `stop()` would tear THOSE down and publish
+    /// `.stopped` over a tunnel that was up.
+    ///
+    /// Driven exactly: the first runtime's `stop()` parks on a latch this
+    /// test holds, so the window stays open for as long as the test needs
+    /// rather than for however long a scheduler happens to give it.
+    ///
+    /// The assertion that catches the defect is `connections.made.count == 1`
+    /// WHILE the window is open — in the pre-fix code the restart dials
+    /// there and then; in the fixed code it cannot dial until the stop has
+    /// finished. The full published sequence afterwards is the second half:
+    /// `.stopped` belongs to the stop the user asked for, and the restart's
+    /// `.connecting`/`.active` follow it in that order rather than being
+    /// swallowed (the state was still `.active` inside the window, and
+    /// `(.active, .start)` is not a row in the plan's table, so every event
+    /// the second run published there would have been a no-op).
+    @Test func aStartThatLandsWhileStopIsSuspendedWaitsForIt() async throws {
+        let latch = TunnelLatch()
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080, firstStopGate: latch)
+        let runner = TunnelRunner(
+            profile: localProfile(), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+
+        let stopping = Task { await runner.stop() }
+        // The first runtime's `stop()` has been ENTERED and is parked, so
+        // the run task cannot finish and the stop is suspended on it.
+        try await pollUntil("the first runtime's stop to be parked") {
+            runtimes.made[0].stopEntered == 1
+        }
+
+        let entered = TunnelCallCounter()
+        let restarting = Task {
+            entered.record()
+            await runner.start(decider: .asking { _ in true })
+        }
+        try await pollUntil("the restart task to begin") { entered.count == 1 }
+        // Yields rather than a clock: the actor is free (the stop is
+        // suspended on the parked teardown), so the restart reaches
+        // `start(decider:)` as soon as the scheduler gives it a turn, and
+        // the window stays open until this test opens the latch.
+        for _ in 0..<50 { await Task.yield() }
+        #expect(connections.made.count == 1)
+        #expect(runtimes.made.count == 1)
+
+        latch.release()
+        await stopping.value
+        await restarting.value
+        try await states.waitFor(.stopped)
+        try await states.waitFor(.connecting)
+        try await states.waitFor(.active(connections: 0))
+
+        #expect(connections.made.count == 2)
+        // The first stop released the FIRST run's resources and nothing
+        // else.
+        #expect(connections.made[0].disconnectCount == 1)
+        #expect(runtimes.made[0].stopCount == 1)
+        #expect(connections.made[1].disconnectCount == 0)
+        #expect(runtimes.made[1].stopCount == 0)
+        #expect(await runner.state == .active(connections: 0))
+        #expect(
+            states.recorded == [
+                .connecting, .active(connections: 0), .stopped,
+                .connecting, .active(connections: 0),
+            ])
+
+        await runner.stop()
+        try await states.waitFor(.stopped)
+        #expect(connections.made[1].disconnectCount == 1)
+    }
+
     /// A stopped runner starts again — `needsConfirmation` and `stopped`
     /// are both `start`-able states in the plan's own table.
     @Test func aStoppedRunnerCanBeStartedAgain() async throws {

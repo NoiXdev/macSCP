@@ -26,8 +26,11 @@ import Foundation
 /// dial (which is also what the user should see: "reconnecting, attempt 3",
 /// not a `connecting` that hides which attempt this is), and `retryDue`
 /// immediately precedes the `listening` that makes it `active` again.
-/// `aFailedRetryKeepsClimbing` pins the climbing series (2, 4, 8 across
-/// three consecutive failed retries); `aLossAfterAHealthyPeriodStartsTheBackoffOver`
+/// `aFailedRetryKeepsClimbing` pins the climbing series — 2, 4, 8 across
+/// one loss and the TWO consecutive failed retries that follow it (counted
+/// 2026-09-06 against that test's own `failAttempts([2, 3])`: the 2 s is the
+/// initial loss's own backoff, and only the 4 s and the 8 s are retries
+/// failing); `aLossAfterAHealthyPeriodStartsTheBackoffOver`
 /// pins the other half of the same table — a loss AFTER the tunnel was
 /// active again starts at `reconnecting(1)`, so a long-lived tunnel's first
 /// blip never inherits an old attempt count.
@@ -80,6 +83,13 @@ public actor TunnelRunner {
     private let publish: AsyncStream<TunnelState>.Continuation
 
     private var task: Task<Void, Never>?
+    /// The `stop()` currently in flight, if any. See `start(decider:)` and
+    /// `performStop()` — this one field is what closes the window between
+    /// `stop()` clearing `task` and `stop()` actually finishing.
+    private var stopping: Task<Void, Never>?
+    /// Identifies one run, so a run that ends by itself clears `task` only
+    /// if `task` is still ITS task.
+    private var runID = 0
     private var connection: (any TunnelSSHConnection)?
     private var runtime: (any TunnelRuntime)?
 
@@ -112,12 +122,35 @@ public actor TunnelRunner {
     /// Returns as soon as the run task is scheduled — the connect, the bind
     /// and every retry happen inside it. A caller that wants to know when
     /// the tunnel is up reads `states`.
-    public func start(decider: HostKeyDecider) {
+    ///
+    /// **A `stop()` in flight is waited for first**, and that is not
+    /// politeness. `stop()` clears `task` and then SUSPENDS on the run
+    /// task's own teardown, which leaves the actor free with `task == nil`;
+    /// a `start` landing in that window used to begin a second run whose
+    /// connection and forward the resuming `stop()` would then tear down,
+    /// publishing `.stopped` over a tunnel that was up and leaving a live
+    /// SSH connection the owner believed was gone (fix round 1, CRITICAL).
+    /// A second symptom of the same window: the state at that moment is
+    /// still `.active`, and `(.active, .start)` is not a row in
+    /// `TunnelStatePlan`'s table, so the second run's `start`, `listening`
+    /// and `connected` events would ALL be no-ops and the run would carry
+    /// traffic while publishing nothing at all.
+    ///
+    /// Waiting rather than refusing, because refusing is the behaviour a
+    /// user cannot see: clicking Start right after Stop would do nothing,
+    /// silently. After the wait the state is `.stopped`, which is a row the
+    /// table has, so the restart publishes exactly what it should.
+    public func start(decider: HostKeyDecider) async {
+        while let inFlight = stopping {
+            await inFlight.value
+        }
         guard task == nil else { return }
+        runID += 1
+        let id = runID
         apply(.start)
         log(.info, "tunnel \(profile.name) start")
         task = Task { [weak self] in
-            await self?.run(decider: decider)
+            await self?.run(decider: decider, id: id)
         }
     }
 
@@ -148,14 +181,41 @@ public actor TunnelRunner {
     /// `cancel()` below — the suite then hung rather than going red, which
     /// is exactly what this paragraph describes.
     public func stop() async {
+        if let inFlight = stopping {
+            // A second stop has nothing of its own to do: the first one
+            // cancels the same run task, releases the same resources and
+            // publishes the same `.stopped`. It only has to not return
+            // before that has happened.
+            await inFlight.value
+            return
+        }
+        let mine = Task<Void, Never> { [weak self] in
+            await self?.performStop()
+        }
+        stopping = mine
+        await mine.value
+    }
+
+    /// The stop itself, run as its OWN task so that `start(decider:)` and a
+    /// second `stop()` have something to await.
+    ///
+    /// Nothing between `stopping = mine` above and this body's first line
+    /// suspends, so this cannot run before the field that publishes it is
+    /// set.
+    private func performStop() async {
         let running = task
         task = nil
         running?.cancel()
         await running?.value
         await releaseCurrent()
-        guard state != .stopped else { return }
-        apply(.stop)
-        log(.info, "tunnel \(profile.name) stop")
+        if state != .stopped {
+            apply(.stop)
+            log(.info, "tunnel \(profile.name) stop")
+        }
+        // Last, with no `await` after it: a `start` parked on this task's
+        // completion resumes only once this task is over, and must find the
+        // field already cleared rather than loop on a task that has ended.
+        stopping = nil
     }
 
     // MARK: - The run loop
@@ -165,15 +225,21 @@ public actor TunnelRunner {
         /// The connection (or the forward) is gone and the profile may want
         /// it back.
         case lost
-        /// The run ends here, with the mapped reason.
-        case failed(reason: String)
-        /// A person has to connect this session once, by hand.
-        case needsConfirmation(reason: String)
+        /// The run ends here. The ERROR travels, not its mapped text: the
+        /// state needs `DialSupport.reason(for:)`'s sentence and the log
+        /// line needs the error itself, because `DiagnosticLog
+        /// .log(_:_:_:reason:)` is the only sanctioned way to write a
+        /// `reason=` key and it takes an `Error`.
+        case failed(error: any Error)
+        /// A person has to connect this session once, by hand. Carries the
+        /// error for the same reason.
+        case needsConfirmation(error: any Error)
         /// `stop()` happened.
         case cancelled
     }
 
-    private func run(decider: HostKeyDecider) async {
+    private func run(decider: HostKeyDecider, id: Int) async {
+        defer { runEnded(id) }
         var isRetry = false
         while !Task.isCancelled {
             let outcome = await attempt(decider: decider, isRetry: isRetry)
@@ -182,14 +248,14 @@ public actor TunnelRunner {
             case .cancelled:
                 return
 
-            case .failed(let reason):
-                apply(.failed(reason: reason))
-                log(.info, "tunnel \(profile.name) failed \(reason)")
+            case .failed(let error):
+                apply(.failed(reason: DialSupport.reason(for: error)))
+                log(.info, "tunnel \(profile.name) failed", reason: error)
                 return
 
-            case .needsConfirmation(let reason):
+            case .needsConfirmation(let error):
                 apply(.needsConfirmation)
-                log(.info, "tunnel \(profile.name) needs confirmation \(reason)")
+                log(.info, "tunnel \(profile.name) needs confirmation", reason: error)
                 return
 
             case .lost:
@@ -215,6 +281,27 @@ public actor TunnelRunner {
                 isRetry = true
             }
         }
+    }
+
+    /// Clears `task` when a run ends BY ITSELF — a terminal `.failed`, a
+    /// terminal `.needsConfirmation`, or a loss on a profile that does not
+    /// reconnect.
+    ///
+    /// Without it `task` stayed set forever after a terminal state and
+    /// `start(decider:)` was a silent no-op: no state, no log line, no dial
+    /// (fix round 1, IMPORTANT). That made this task's whole
+    /// `.needsConfirmation` story — connect the session once by hand, then
+    /// start the tunnel again — unreachable unless the caller happened to
+    /// call `stop()` first.
+    ///
+    /// The identity check is what keeps it from clobbering a LATER run's
+    /// task. It cannot fire today (a `start` waits for any stop in flight,
+    /// so a second run cannot exist while a first one is still running), and
+    /// it is kept because that is an invariant of `start`, not of this
+    /// method.
+    private func runEnded(_ id: Int) {
+        guard id == runID else { return }
+        task = nil
     }
 
     /// One dial plus one forward, then a wait for whichever comes first: the
@@ -267,8 +354,18 @@ public actor TunnelRunner {
 
     /// What a dial or a forward-start failure means.
     ///
-    /// Three answers, and the split is the architecture invariant plus one
+    /// Four answers, and the split is the architecture invariant plus one
     /// judgement:
+    ///
+    /// - **Cancellation is read FIRST**, before anything else is
+    ///   classified. `stop()` cancels the run task, and a dial that was in
+    ///   flight then fails with whatever its own path produces — for a
+    ///   `.refusing` decider that is `HostKeyError.rejectedByUser`, which
+    ///   used to be classified before the cancellation and published
+    ///   `.needsConfirmation` plus a `needs confirmation` line on the way
+    ///   out of a stop the user had just asked for (fix round 1,
+    ///   IMPORTANT). Nothing a cancelled attempt reports is news about the
+    ///   tunnel.
     ///
     /// - An unknown host key the decider refused, or a session with no
     ///   stored secret, is `needsConfirmation` — resolvable only by
@@ -284,10 +381,9 @@ public actor TunnelRunner {
     ///   and the user needs to read what went wrong rather than watch it be
     ///   retried forever.
     private func outcome(for error: any Error, isRetry: Bool) -> AttemptOutcome {
-        let reason = DialSupport.reason(for: error)
-        if Self.needsAPerson(error) { return .needsConfirmation(reason: reason) }
         if Task.isCancelled || error is CancellationError { return .cancelled }
-        return isRetry ? .lost : .failed(reason: reason)
+        if Self.needsAPerson(error) { return .needsConfirmation(error: error) }
+        return isRetry ? .lost : .failed(error: error)
     }
 
     /// The two errors a person, not a retry, resolves.
@@ -381,13 +477,34 @@ public actor TunnelRunner {
     /// `DiagnosticLogSharedSinkTests`, the one `.serialized` suite allowed to
     /// touch the process-wide sink.
     ///
-    /// **No `reason=` is ever written here by hand**, which is why a failure
-    /// line carries the plan's own mapped sentence as plain text instead: the
-    /// mapping through `DialSupport.reason(for:)` has already happened in
-    /// `outcome(for:isRetry:)`, and re-wrapping a `String` in an error just
-    /// to reach the `reason:` overload would add a second spelling of the
-    /// same sentence.
+    /// **No `reason=` is ever written here by hand.** Where an error is in
+    /// hand — a failed dial, a failed forward start, a refused host key — the
+    /// `reason:` overload below writes the key, and it runs
+    /// `DialSupport.reason(for:)` itself.
+    ///
+    /// ONE line carries no `reason=` and cannot: the loss of a connection on
+    /// a profile that does not reconnect. There is no error there — a
+    /// disconnect signal carries none — and the sentence is
+    /// `TunnelStatePlan`'s own `"connection lost"`, taken from the state the
+    /// plan just computed so that the line and the state cannot disagree.
+    /// Inventing an error to wrap it would put a second spelling of that
+    /// sentence in this file; recorded as a limit instead (Task 5 report,
+    /// round 1).
     private func log(_ level: DiagnosticLogLevel, _ message: @autoclosure @Sendable () -> String) {
         DiagnosticLog.shared.log(level, "tunnel", message())
+    }
+
+    /// The same, with the error appended as `reason=<mapped sentence>`.
+    ///
+    /// `DiagnosticLog.log(_:_:_:reason:)` is the ONLY sanctioned way that
+    /// key is written: it runs `DialSupport.reason(for:)` itself, so no call
+    /// site can format an unaudited one. The line's state counterpart runs
+    /// the same mapping on the same error, which is what keeps
+    /// `TunnelState.failed(reason:)` and the log line from ever disagreeing.
+    private func log(
+        _ level: DiagnosticLogLevel, _ message: @autoclosure @Sendable () -> String,
+        reason error: any Error
+    ) {
+        DiagnosticLog.shared.log(level, "tunnel", message(), reason: error)
     }
 }
