@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 /// What `SubprocessRunner` has to get right for the suites that replaced
@@ -649,5 +650,60 @@ struct SubprocessRunnerTests {
             arguments: ["-c", "printf '%s' \"$MACSCP_RUNNER_PROBE\""],
             environment: ["MACSCP_RUNNER_PROBE": "reached"])
         #expect(probed.stdoutText == "reached")
+    }
+
+    /// `onStarted` hands over the child's OWN pid, and a signal sent to that
+    /// number really reaches the child.
+    ///
+    /// Two halves, because either one alone would pass for the wrong reason.
+    /// The number is compared against the pid the child announces about
+    /// itself (`echo $$`, after `exec` so the shell and the `sleep` are one
+    /// process) — a seam that handed over this process's pid, or a stale
+    /// one, fails there. And the number is then USED: `SIGTERM` to it must
+    /// end the run, which is the only thing the seam exists for. A pid that
+    /// was merely well-formed would satisfy the comparison and leave the
+    /// child running to its bound.
+    ///
+    /// `terminationStatus` for a signalled child is the signal number
+    /// (Foundation reports `.uncaughtSignal`), so the ending is read off the
+    /// result rather than off a clock — the run returns when the child dies,
+    /// not when a deadline passes.
+    ///
+    /// The waits have no bound of their own, for the reason the two cases
+    /// above give: the suite's `.timeLimit` is the net, and a bound here
+    /// would put a clock back into the property.
+    @Test(.timeLimit(.minutes(5)))
+    func theStartedChildsPidIsHandedOverAndCanBeSignalled() async throws {
+        let announced = AsyncSignal()
+        let collected = Mutex("")
+        let handed = Mutex<Int32?>(nil)
+
+        let task = Task { () -> SubprocessResult in
+            try await SubprocessRunner.run(
+                Self.shell,
+                arguments: ["-c", "echo $$ >&2; exec sleep 60"],
+                timeout: .seconds(60),
+                onStderrChunk: { chunk in
+                    let text = collected.withLock { text -> String in
+                        text += String(decoding: chunk, as: UTF8.self)
+                        return text
+                    }
+                    if pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)) != nil {
+                        announced.signal()
+                    }
+                },
+                onStarted: { pid in handed.withLock { $0 = pid } })
+        }
+
+        #expect(await announced.wait() == .signalled)
+        let seam = try #require(handed.withLock { $0 }, "onStarted handed over nothing")
+        let byTheChild = try #require(
+            pid_t(collected.withLock { $0 }.trimmingCharacters(in: .whitespacesAndNewlines)),
+            "the child announced no pid")
+        #expect(seam == byTheChild)
+
+        #expect(kill(seam, SIGTERM) == 0, "the pid the seam handed over could not be signalled")
+        let result = try await task.value
+        #expect(result.status == SIGTERM, "the child ended with \(result.status)")
     }
 }

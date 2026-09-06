@@ -165,11 +165,18 @@ struct TestsNeverBlockThePoolGuardTests {
     /// Compile-time, not textual: if `run` is renamed, moved or reshaped,
     /// this binding stops compiling. A guard that only spelled the name
     /// would go on passing while the thing it names had gone.
+    ///
+    /// It has done exactly that twice, and the last trailing parameter is
+    /// the newer one: `onStarted` — the child's pid, handed over once so a
+    /// caller can SIGNAL a child rather than only read it — was added on
+    /// 2026-09-06 for `CLIMatrix.runUntilLine`, and this binding was the
+    /// only thing in the tree that stopped compiling when it landed.
     @Test func theRunnerExists() throws {
         let run:
             (
                 URL, [String], [String: String]?, URL?, Data?, Duration,
-                (@Sendable (Data) -> Void)?, (@Sendable (Data) -> Void)?
+                (@Sendable (Data) -> Void)?, (@Sendable (Data) -> Void)?,
+                (@Sendable (Int32) -> Void)?
             )
             async throws -> SubprocessResult = SubprocessRunner.run
         _ = run

@@ -211,6 +211,18 @@ enum SubprocessRunner {
     ///   (`CLIMatrixDiagnoseITests.rowsArriveInMoreThanOneChunk`), which has
     ///   to count stdout reads as they land rather than only see the
     ///   settled `SubprocessResult`.
+    /// - Parameter onStarted: the child's pid, handed over once — right
+    ///   after `Process.run()` returns, before either reader is installed.
+    ///   The seam a caller needs to SIGNAL the child rather than merely read
+    ///   it: `CLIMatrix.runUntilLine` sends `SIGINT` to a `tunnels start`
+    ///   that is holding a forwarding open, which is the only way to measure
+    ///   what Ctrl-C does to it. Everything the runner itself does to a
+    ///   child — the escalation on the timeout and the cancellation paths —
+    ///   uses the same pid, read from the same `Process`; this parameter
+    ///   adds no lifecycle of its own, it only tells the caller the number.
+    ///   The pid is valid until this function returns; after that the child
+    ///   has been reaped and the number may be reused by the system, which
+    ///   is why nothing here retains it.
     @discardableResult
     static func run(
         _ executable: URL,
@@ -220,7 +232,8 @@ enum SubprocessRunner {
         stdin: Data? = nil,
         timeout: Duration = .seconds(60),
         onStderrChunk: (@Sendable (Data) -> Void)? = nil,
-        onStdoutChunk: (@Sendable (Data) -> Void)? = nil
+        onStdoutChunk: (@Sendable (Data) -> Void)? = nil,
+        onStarted: (@Sendable (Int32) -> Void)? = nil
     ) async throws -> SubprocessResult {
         let process = Process()
         process.executableURL = executable
@@ -252,6 +265,11 @@ enum SubprocessRunner {
         // the assignment would otherwise never raise the latch.
         process.terminationHandler = { _ in exited.signal() }
         try process.run()
+        // AFTER `run()`, because there is no pid before it, and before the
+        // readers, because a caller that wants to signal the child wants the
+        // number as early as it exists. A `run()` that throws hands nothing
+        // over — there was no child.
+        onStarted?(process.processIdentifier)
 
         // Event-driven, and this is the third shape these readers have had.
         //

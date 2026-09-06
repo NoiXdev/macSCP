@@ -220,6 +220,21 @@ struct CLIMatrix: Sendable {
     /// cases must not swap them.
     static let validationFailure: Int32 = 64
 
+    /// The bound `runUntilLine` gives a child that is supposed to STAY up.
+    ///
+    /// Ten minutes: twice the longest `.timeLimit` any suite in THIS target
+    /// declares (five minutes, in `TunnelRigITests` and
+    /// `SubprocessRunnerTests`; recounted 2026-09-06 with `grep -rn
+    /// "timeLimit(.minutes" Tests/macSCPCoreTests/`, where the limits run 1,
+    /// 2, 3 and 5, and the single 10 is in `macSCPAppKitTests`, which drives
+    /// no child through this runner). So the harness's own cancellation
+    /// always wins and this number decides nothing. It is a net against a child nobody ends — a
+    /// `tunnels start` whose SIGINT never arrived would otherwise sit in
+    /// `.build` forever — not a statement about how long a forwarding should
+    /// take to come up (CLAUDE.md, "A wall-clock ceiling in a test measures
+    /// the runner").
+    static let heldChildBound: Duration = .seconds(600)
+
     /// The same environment `run(_:...)` builds for the built binary,
     /// exposed for a caller that drives the binary through something other
     /// than `SubprocessRunner` — `PTYSubprocessTests`' gated pair
@@ -296,6 +311,193 @@ struct CLIMatrix: Sendable {
     @discardableResult
     func runStore(_ arguments: [String]) async throws -> SubprocessResult {
         try await runWithoutASecret(arguments)
+    }
+
+    /// Whether the environment `runStore(_:)` hands a child carries this
+    /// rig's secret ANYWHERE — under a backend's own variable, under the
+    /// relay variable, or as the value of any variable at all.
+    ///
+    /// A `Bool` computed inside the only type that holds the value, for the
+    /// reason `leaksSecret(_:)` states: `#expect` prints the SOURCE TEXT of
+    /// the expression it checked, so a test that compared an environment
+    /// against the secret would print the secret in the failure that says it
+    /// leaked (CLAUDE.md, "A value a test must not leak has two exits, not
+    /// one").
+    ///
+    /// The value scan is the half that is not a restatement of
+    /// `environment(secretVariable:)`'s own code: the variable-name checks
+    /// follow the same list that function scrubs from, so on their own they
+    /// would be that function agreeing with itself. Scanning the VALUES
+    /// catches a secret that reached the child under a name nobody thought
+    /// of — an ambient variable in the developer's shell among them, which
+    /// is the case the scrub exists for.
+    func storeEnvironmentCarriesASecret() -> Bool {
+        let environment = environment(secretVariable: nil)
+        for kind in ConnectionKind.allCases {
+            if let variable = BackendDescriptor.descriptor(for: kind).secretEnvironmentVariable,
+               environment[variable] != nil {
+                return true
+            }
+        }
+        if environment[CLIMatrix.secretRelayVariable] != nil { return true }
+        return environment.values.contains { leaksSecret($0) }
+    }
+
+    /// The positive beside it: the environment `run(_:)` hands a DIALLING
+    /// child does carry the secret, under this backend's own variable and
+    /// nowhere else.
+    ///
+    /// Without this, "the store verbs' child carries no secret" is satisfied
+    /// by an `environment(secretVariable:)` that stopped setting anything at
+    /// all — which would leave every dialling case failing for a reason that
+    /// looks like the rig being down.
+    func dialEnvironmentCarriesTheSecretUnderItsOwnVariable() -> Bool {
+        guard let variable = descriptor.secretEnvironmentVariable else { return false }
+        let environment = environment(secretVariable: variable)
+        guard let value = environment[variable], leaksSecret(value) else { return false }
+        return environment.filter { leaksSecret($0.value) }.count == 1
+    }
+
+    /// The `sessions add` argument vector that saves a SECOND session of this
+    /// rig's own kind, derived from the fixture's own stored configuration
+    /// rather than written out per backend in a case.
+    ///
+    /// EXHAUSTIVE over `ConnectionKind`, like `fixture(for:name:)`: a fourth
+    /// protocol does not compile here until someone says which flags `add`
+    /// needs for it. The flags themselves are the required ones
+    /// `SessionFieldOptions.requiredFields(for:)` lists, plus the ones this
+    /// rig's fixture actually sets — the port SSH is reached on, S3's region
+    /// and path-style addressing — so the saved session is a usable copy of
+    /// the fixture rather than a shape that merely parses.
+    ///
+    /// No secret is named anywhere in it, and none could be: `sessions add`
+    /// takes none (its own `discussion` says so), so the vector carries a
+    /// host, a user and a bucket, and the child that runs it goes through
+    /// `runStore(_:)`.
+    func sessionsAddArguments(named name: String) throws -> [String] {
+        var arguments = ["sessions", "add", name, "--kind", kind.rawValue]
+        switch kind {
+        case .ssh:
+            guard let ssh = session.ssh else { throw CLIMatrixError.fixtureHasNoConfig(kind: kind.rawValue) }
+            arguments += [
+                "--host", ssh.host, "--port", String(ssh.port), "--user", ssh.username,
+            ]
+        case .s3:
+            guard let s3 = session.s3 else { throw CLIMatrixError.fixtureHasNoConfig(kind: kind.rawValue) }
+            arguments += [
+                "--endpoint", s3.endpoint, "--bucket", s3.bucket,
+                "--access-key", s3.accessKeyID, "--region", s3.region,
+            ]
+            if s3.usePathStyle { arguments.append("--path-style") }
+        case .webdav:
+            guard let webdav = session.webdav else { throw CLIMatrixError.fixtureHasNoConfig(kind: kind.rawValue) }
+            arguments += ["--url", webdav.baseURL, "--user", webdav.username]
+            if webdav.useNextcloudPath { arguments.append("--nextcloud") }
+        }
+        return arguments
+    }
+
+    /// Runs the binary, waits for a stdout LINE that satisfies `matching`,
+    /// runs `body` while the child is still holding that state, then sends
+    /// `SIGINT` and returns the child's settled result.
+    ///
+    /// The shape `tunnels start` needs and no other verb does: it prints one
+    /// line per state change and then stays up until Ctrl-C, so a case about
+    /// it has to observe a line, act on the world while the process is
+    /// alive, and end it on purpose. Every one of those three is an
+    /// observation rather than a wait on a clock — the line arrives through
+    /// `SubprocessRunner`'s stdout seam and raises a latch, `body` runs after
+    /// the latch, and the ending is a signal this test sends rather than a
+    /// deadline anyone set. The only bound is the calling suite's
+    /// `.timeLimit`, which cancels this task; `AsyncSignal.wait()` answers
+    /// that cancellation, and the child task is then cancelled too, so
+    /// `SubprocessRunner`'s own escalation reaps the child rather than
+    /// leaving a bound forwarding behind.
+    ///
+    /// The runner's `timeout` (`heldChildBound`) is deliberately far past any
+    /// suite limit here:
+    /// it is a net against a child nobody ends, not a statement about how
+    /// long the work should take, and a bound tighter than the harness's
+    /// would be a wall-clock ceiling deciding a test (CLAUDE.md, "A
+    /// wall-clock ceiling in a test measures the runner").
+    ///
+    /// A child that ENDS before printing a matching line does not park this:
+    /// the run task raises the same latch on its way out, and the settled
+    /// result — the failed one — is returned for the caller to assert on.
+    /// That is what makes this usable for a `tunnels start` that is supposed
+    /// to refuse.
+    ///
+    /// The child's environment is the dialling one (`run(_:)`'s), because
+    /// every caller here is a `tunnels start`: the secret rides the
+    /// environment and nothing else.
+    ///
+    /// Partial lines are held back rather than matched: stdout arrives in
+    /// chunks, and a predicate looking for `active port=` would otherwise
+    /// match half of `active port=6` and read a truncated number.
+    @discardableResult
+    func runUntilLine(
+        _ arguments: [String],
+        matching predicate: @escaping @Sendable (String) -> Bool,
+        _ body: (String) async throws -> Void = { _ in }
+    ) async throws -> SubprocessResult {
+        let binary = try CLIMatrix.binaryURL()
+        let childEnvironment = environment(secretVariable: descriptor.secretEnvironmentVariable)
+        let scanner = Mutex(LineScan())
+        let settledOrMatched = AsyncSignal()
+        let childPID = Mutex<Int32?>(nil)
+
+        let observe: @Sendable (Data) -> Void = { chunk in
+            let matched = scanner.withLock { scan -> Bool in
+                guard scan.matched == nil else { return false }
+                scan.pending += String(decoding: chunk, as: UTF8.self)
+                var lines = scan.pending.components(separatedBy: "\n")
+                scan.pending = lines.removeLast()
+                for line in lines where predicate(line) {
+                    scan.matched = line
+                    return true
+                }
+                return false
+            }
+            if matched { settledOrMatched.signal() }
+        }
+
+        // `Task`, not a task group: this task's own cancellation is answered
+        // explicitly below, and an unstructured child keeps `body` — which is
+        // not `@Sendable` and captures the caller's channels and inboxes —
+        // out of a `sending` closure entirely.
+        let child = Task { () -> SubprocessResult in
+            defer { settledOrMatched.signal() }
+            return try await SubprocessRunner.run(
+                binary, arguments: arguments, environment: childEnvironment,
+                timeout: CLIMatrix.heldChildBound,
+                onStdoutChunk: observe,
+                onStarted: { pid in childPID.withLock { $0 = pid } })
+        }
+
+        if await settledOrMatched.wait() == .cancelled { child.cancel() }
+        guard let line = scanner.withLock({ $0.matched }) else {
+            // The child ended (or this task was cancelled) before the line
+            // came. Its own result — or its own error — is the answer.
+            return try await child.value
+        }
+
+        do {
+            try await body(line)
+        } catch {
+            child.cancel()
+            _ = try? await child.value
+            throw error
+        }
+
+        if let pid = childPID.withLock({ $0 }) { kill(pid, SIGINT) }
+        return try await child.value
+    }
+
+    /// The stdout line scanner's state: what has arrived since the last
+    /// newline, and the first complete line the predicate accepted.
+    private struct LineScan {
+        var pending = ""
+        var matched: String?
     }
 
     /// Whether a connection of this kind can carry a forwarding — Core's own
@@ -963,6 +1165,95 @@ extension CLIMatrix {
     }
 }
 
+extension CLIMatrix {
+    /// Decodes `tunnels list --json`: one JSON object per line, every
+    /// non-empty line decoded into Core's own `TunnelRow`, nothing skipped.
+    ///
+    /// `TunnelRow` rather than a shape declared here, because that type IS
+    /// the `--json` contract — `TunnelsListCommand` hands the very same
+    /// values to `OutputFormatter` — so a renamed property is one break in
+    /// one place rather than a listing that quietly decodes into a row with
+    /// a default in it.
+    ///
+    /// Strict, for the reason `listing` states: a `compactMap { try? … }`
+    /// turns a line the decoder could not read into a row that is simply
+    /// absent, and an emptiness assertion is exactly what that satisfies.
+    static func tunnelRows(_ stdout: String) throws -> [TunnelRow] {
+        let decoder = JSONDecoder()
+        return try stdout
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .map { try decoder.decode(TunnelRow.self, from: Data($0.utf8)) }
+    }
+}
+
+/// One line of `tunnels start --json`, decoded — the same strictness
+/// `CLIListedItem`, `CLISessionRow` and `TunnelRow` are decoded with, and for
+/// the same reason: a renamed key must fail the case, not empty the
+/// comparison.
+///
+/// `state` is the only required field, which is `TunnelStateLine.jsonLine`'s
+/// own shape: `connections` and `port` appear on an `active` line (and
+/// `port` only when one is bound), `attempt` on a `reconnecting` one, and
+/// `reason` on a `failed` one.
+///
+/// Decoded rather than compared as text, because the object's keys are
+/// SORTED (`JSONSerialization` with `.sortedKeys`) and a JSON object is
+/// unordered anyway — a case that compared the line would be asserting on a
+/// serialiser's choice.
+struct CLITunnelStateLine: Decodable, Equatable, Sendable {
+    let state: String
+    let port: Int?
+    let connections: Int?
+    let attempt: Int?
+    let reason: String?
+}
+
+extension CLIMatrix {
+    /// Decodes `tunnels start --json`: one JSON object per line, every
+    /// non-empty line decoded, nothing skipped.
+    static func tunnelStateLines(_ stdout: String) throws -> [CLITunnelStateLine] {
+        let decoder = JSONDecoder()
+        return try stdout
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .map { try decoder.decode(CLITunnelStateLine.self, from: Data($0.utf8)) }
+    }
+
+    /// The `state` value `--json` writes for one state, read off the
+    /// RENDERER rather than spelled a second time here — the same derivation
+    /// `outcomeKey(for:)` makes for `diagnose`.
+    ///
+    /// `TunnelStateLine`'s own `key(_:)` is private, and deliberately: the
+    /// programmatic spelling is the renderer's to choose. Asking it to
+    /// render a sample and reading the field back is how a script would
+    /// learn it too, and it means a renamed spelling moves every case with
+    /// it instead of leaving one comparing against a word nothing prints.
+    static func tunnelStateKey(for state: TunnelState) throws -> String {
+        let line = TunnelStateLine.render(state, json: true)
+        return try JSONDecoder().decode(CLITunnelStateLine.self, from: Data(line.utf8)).state
+    }
+
+    /// The prefix an `active` TEXT line carries when a port is bound —
+    /// `active port=` — derived by rendering one with a known port and
+    /// dropping that port's own digits, so nothing here spells either half.
+    ///
+    /// The sample is `UInt16.max`, which is a real port and therefore a
+    /// number the renderer cannot treat specially.
+    static let activePortPrefix: String = {
+        let sample = Int(UInt16.max)
+        let rendered = TunnelStateLine.render(.active(connections: 0), port: sample, json: false)
+        return String(rendered.dropLast("\(sample)".count))
+    }()
+
+    /// The port an `active` text line reports, or `nil` when the line is not
+    /// one or carries no port.
+    static func boundPort(inActiveLine line: String) -> Int? {
+        guard line.hasPrefix(activePortPrefix) else { return nil }
+        return Int(line.dropFirst(activePortPrefix.count).prefix { $0.isNumber })
+    }
+}
+
 /// One step object of `diagnose --json`, decoded — the same strictness
 /// `CLIListedItem` and `CLISessionRow` are decoded with, and for the same
 /// reason: a renamed key must fail the case, not empty the comparison.
@@ -1351,12 +1642,17 @@ extension CLIMatrix {
     /// The token is a LITERAL subcommand string as the first array element
     /// of a fixture's own run — `rig.run(["ls", …])` in a backend case,
     /// `fixture.run(["sessions", …])` in a sessions one,
-    /// `rig.runStore(["tunnels", …])` in a store one. The whole `run…`
-    /// family counts, because a rig has more than one way to run the binary
-    /// and they differ only in the child's ENVIRONMENT: `runStore` and
+    /// `rig.runStore(["tunnels", …])` in a store one,
+    /// `rig.runUntilLine(["tunnels", …], matching: …)` in a `tunnels start`
+    /// one. The whole `run…`
+    /// family counts, because a rig has more than one way to run the binary:
+    /// they differ in the child's ENVIRONMENT — `runStore` and
     /// `runWithoutASecret` put no secret in it (added to the pattern
     /// 2026-09-06, when the first `tunnels` case drove the binary through
-    /// `runStore`). A drive is a drive whichever of them a case picked.
+    /// `runStore`) — and in WHEN the run ends, which is what `runUntilLine`
+    /// adds (it signals a child that would otherwise never exit). A drive is
+    /// a drive whichever of them a case picked. FOUR members today, counted
+    /// 2026-09-06 against this file's own `func run` declarations.
     /// That is what
     /// "a case drives this subcommand" means here, and it is deliberately
     /// narrower than "the file mentions the name somewhere": a guard that
@@ -1409,6 +1705,11 @@ extension CLIMatrix {
     /// `SubprocessRunner` launches (which passes the binary first, so the
     /// pattern cannot reach it).
     ///
+    /// The `runUntilLine` line is there for the same reason `runStore`'s is:
+    /// it is a real member of the run family with a name the pattern has to
+    /// reach through, and a scan that only knew `run(` and `runStore(` would
+    /// pass this fixture while missing every `tunnels start` case.
+    ///
     /// It lives in THIS file rather than beside the test, and the placement
     /// is the whole point: `drivenSubcommands(inFileAt:)` scans the CASE
     /// file, where a fixture's live line is indistinguishable from a real
@@ -1424,6 +1725,7 @@ extension CLIMatrix {
             ["mkdir"] + flags + [rig.target(remotePath)])
         let listed = try await fixture.run(["sessions"] + flags + ["--json"])
         let added = try await rig.runStore(["tunnels", "add", name, "--session", session])
+        let held = try await rig.runUntilLine(["diagnose", name], matching: { $0 == "x" })
         // let skipped = try await rig.run(["nevermind"])
         /// A drive of rig.run(["alsonot"]) described in prose.
         let asked = try await SubprocessRunner.run(binary, arguments: ["help", name])
@@ -1432,7 +1734,9 @@ extension CLIMatrix {
     /// The names `drivenScanFixture` really declares — the answer the scan
     /// must give for it. Beside the fixture rather than in the case, so the
     /// two move together.
-    static let drivenScanFixtureNames: Set<String> = ["mkdir", "sessions", "tunnels"]
+    static let drivenScanFixtureNames: Set<String> = [
+        "mkdir", "sessions", "tunnels", "diagnose",
+    ]
 
     /// The same scan, over a source FILE — the caller passes its own
     /// `#filePath`, so the guard reads the very file the cases live in and
@@ -1448,6 +1752,7 @@ extension CLIMatrix {
 
 enum CLIMatrixError: Error, CustomStringConvertible {
     case binaryNotFound(String)
+    case fixtureHasNoConfig(kind: String)
     case helpFailed(status: Int32)
     case noSubcommandsInHelp
     case noHostKeyRecorded(kind: String)
@@ -1459,6 +1764,8 @@ enum CLIMatrixError: Error, CustomStringConvertible {
 
     var description: String {
         switch self {
+        case .fixtureHasNoConfig(let kind):
+            return "the \(kind) rig fixture carries no configuration of its own kind"
         case .noHostKeyRecorded(let kind):
             return "no host key was recorded for the \(kind) rig"
         case .unreadableHostKey(let kind):

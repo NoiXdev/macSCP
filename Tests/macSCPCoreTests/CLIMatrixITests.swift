@@ -1,5 +1,7 @@
 import Foundation
 import MacSCPTestSupport
+import NIOCore
+import NIOPosix
 import Synchronization
 import Testing
 @testable import macSCPCore
@@ -992,6 +994,256 @@ enum CLIMatrixCases {
         #expect(row.reconnect == false)
     }
 
+    // MARK: - The store verbs
+
+    /// `sessions add`, `edit` and `rm`, in one round trip, on every backend.
+    ///
+    /// The second session is a copy of the rig's OWN fixture — its kind, its
+    /// coordinates — built by `CLIMatrix.sessionsAddArguments(named:)` from
+    /// the stored session rather than written out per backend here, so a
+    /// fourth protocol needs no edit in this case and cannot be added
+    /// without answering which flags `add` wants for it.
+    ///
+    /// Run through `runStore`, so the child's environment carries NO secret:
+    /// none of these three verbs dials or resolves one (`sessions add`'s own
+    /// `discussion` says it takes no password, no passphrase and no S3
+    /// secret key), and a case that passed only because a secret happened to
+    /// be present would be measuring something else. That the environment
+    /// really is empty of one is not left to this sentence — it is
+    /// `theStoreVerbsChildCarriesNoSecret` in the coverage suite, with its
+    /// own positive beside it.
+    ///
+    /// What each step asserts is the STORE as the binary reports it, read
+    /// back through `sessions --json` and decoded strictly: an exit code
+    /// alone cannot tell a write that happened from one that was skipped.
+    /// The kind column is compared against the FIXTURE's own row rather than
+    /// against a spelling written here — both sessions are of the same kind,
+    /// so a renamed column value moves both sides at once and this case says
+    /// nothing about which word it is.
+    static func sessionsAddEditRmRoundTrip(_ kind: ConnectionKind) async throws {
+        let rig = try CLIMatrix.make(for: kind, label: "sessions-roundtrip")
+        defer { rig.tearDown() }
+
+        let second = "matrix-second-\(UUID().uuidString)"
+        let tag = "matrix-tag-\(UUID().uuidString)"
+
+        let added = try await rig.runStore(try rig.sessionsAddArguments(named: second))
+        #expect(
+            added.status == 0,
+            "sessions add exited \(added.status) on \(kind.rawValue): \(added.stderrText)")
+
+        let edited = try await rig.runStore(["sessions", "edit", second, "--tag", tag])
+        #expect(
+            edited.status == 0,
+            "sessions edit exited \(edited.status) on \(kind.rawValue): \(edited.stderrText)")
+
+        let listed = try await rig.runStore(["sessions", "--json"])
+        #expect(listed.status == 0, "sessions --json exited \(listed.status): \(listed.stderrText)")
+        // The leak question before anything else is asserted, the way every
+        // rig case here asks it: this child was given no secret, so an
+        // answer of `true` would mean the STORE carries one.
+        let leaks = rig.leaksSecret(listed)
+        #expect(leaks == false, "sessions --json printed the secret on \(kind.rawValue)")
+
+        let rows = try CLIMatrix.sessionRows(listed.stdoutText)
+        #expect(
+            Set(rows.map(\.name)) == [rig.session.name, second],
+            "the store holds \(rows.map(\.name).sorted()) after the add")
+        let fixtureRow = try #require(
+            rows.first { $0.name == rig.session.name }, "the fixture's own session is gone")
+        let row = try #require(rows.first { $0.name == second }, "the added session is not listed")
+        #expect(row.kind == fixtureRow.kind, "the added session is a \(row.kind)")
+        #expect(row.tags == [tag], "sessions edit --tag left \(row.tags)")
+        #expect(!row.target.isEmpty, "the added session has no target column")
+
+        let removed = try await rig.runStore([
+            "sessions", "rm", second, "--yes", "--non-interactive",
+        ])
+        #expect(
+            removed.status == 0,
+            "sessions rm exited \(removed.status) on \(kind.rawValue): \(removed.stderrText)")
+
+        let after = try await rig.runStore(["sessions", "--json"])
+        #expect(after.status == 0, "sessions --json exited \(after.status): \(after.stderrText)")
+        let remaining = try CLIMatrix.sessionRows(after.stdoutText).map(\.name)
+        #expect(remaining == [rig.session.name], "the rm left \(remaining)")
+    }
+
+    /// `tunnels edit`, `list` and `rm`, on every backend — and neither half
+    /// of it is a skip.
+    ///
+    /// On a backend Core says CAN carry a forwarding: a profile is saved,
+    /// edited in four fields at once (renamed, re-specced, autostarted,
+    /// set to reconnect), read back through `tunnels list --json`, and
+    /// removed. The assertion that matters most is the IDENTITY one — the
+    /// row's `id` before and after the edit — because `TunnelsEditCommand`'s
+    /// own discussion promises "the forwarding keeps its identity", and an
+    /// edit implemented as a delete-and-recreate would satisfy every other
+    /// expectation here.
+    ///
+    /// On a backend that cannot: the `add` is refused (which
+    /// `tunnelsAddIsAllowedExactlyWhereCoreSaysSo` measures in full), so the
+    /// question this case asks instead is what `edit` and `rm` do about a
+    /// forwarding that consequently does not exist. They must REFUSE, naming
+    /// it, rather than exiting 0 over a store with no such row — and the
+    /// listing for that session must be empty. That is a real measurement on
+    /// those two backends, not a guarded `return`: a build in which `edit`
+    /// wrote a profile onto an S3 session would be red here.
+    ///
+    /// The autostart spelling is `TunnelProfile.AutoStart.appStart.rowName`
+    /// on both sides — the flag value and the expected column — so this case
+    /// contains no copy of it.
+    static func tunnelsEditListRm(_ kind: ConnectionKind) async throws {
+        let rig = try CLIMatrix.make(for: kind, label: "tunnels-edit")
+        defer { rig.tearDown() }
+
+        let name = "matrix-edit-\(UUID().uuidString)"
+        let renamed = "matrix-renamed-\(UUID().uuidString)"
+        let firstSpec = "127.0.0.1:8080:db.internal:5432"
+        let secondSpec = "127.0.0.1:9090:db.internal:5432"
+        let autostart = TunnelProfile.AutoStart.appStart.rowName
+
+        let added = try await rig.runStore([
+            "tunnels", "add", name, "--session", rig.session.name, "--local", firstSpec,
+        ])
+
+        guard CLIMatrix.carriesTunnels(kind) else {
+            #expect(
+                added.status == CLIMatrix.validationFailure,
+                "tunnels add exited \(added.status) on \(kind.rawValue): \(added.stderrText)")
+
+            let edited = try await rig.runStore([
+                "tunnels", "edit", name, "--session", rig.session.name, "--rename", renamed,
+            ])
+            #expect(
+                edited.status == CLIMatrix.validationFailure,
+                "tunnels edit exited \(edited.status) on \(kind.rawValue): \(edited.stderrText)")
+            #expect(
+                edited.stderrText.contains(name),
+                "the edit refusal on \(kind.rawValue) did not name the forwarding")
+
+            let removed = try await rig.runStore([
+                "tunnels", "rm", name, "--session", rig.session.name,
+            ])
+            #expect(
+                removed.status == CLIMatrix.validationFailure,
+                "tunnels rm exited \(removed.status) on \(kind.rawValue): \(removed.stderrText)")
+
+            let listed = try await rig.runStore([
+                "tunnels", "list", "--session", rig.session.name, "--json",
+            ])
+            #expect(listed.status == 0, "tunnels list exited \(listed.status): \(listed.stderrText)")
+            let none = try CLIMatrix.tunnelRows(listed.stdoutText)
+            #expect(none.isEmpty, "a refused add left \(none.count) rows on \(kind.rawValue)")
+            return
+        }
+
+        #expect(
+            added.status == 0,
+            "tunnels add exited \(added.status) on \(kind.rawValue): \(added.stderrText)")
+        let before = try await rig.runStore([
+            "tunnels", "list", "--session", rig.session.name, "--json",
+        ])
+        #expect(before.status == 0, "tunnels list exited \(before.status): \(before.stderrText)")
+        let savedRows = try CLIMatrix.tunnelRows(before.stdoutText)
+        let saved = try #require(
+            savedRows.first { $0.name == name }, "the added forwarding is not listed")
+        #expect(saved.spec == firstSpec)
+
+        let edited = try await rig.runStore([
+            "tunnels", "edit", name, "--session", rig.session.name,
+            "--rename", renamed, "--local", secondSpec,
+            "--autostart", autostart, "--reconnect",
+        ])
+        #expect(
+            edited.status == 0,
+            "tunnels edit exited \(edited.status) on \(kind.rawValue): \(edited.stderrText)")
+
+        let listed = try await rig.runStore([
+            "tunnels", "list", "--session", rig.session.name, "--json",
+        ])
+        #expect(listed.status == 0, "tunnels list exited \(listed.status): \(listed.stderrText)")
+        let rows = try CLIMatrix.tunnelRows(listed.stdoutText)
+        #expect(rows.count == 1, "the edit left \(rows.count) rows on the session")
+        let row = try #require(rows.first, "the edited forwarding is not listed")
+        #expect(row.name == renamed, "--rename left the name as \(row.name)")
+        #expect(row.spec == secondSpec, "--local left the spec as \(row.spec)")
+        #expect(row.autostart == autostart, "--autostart left \(row.autostart)")
+        #expect(row.reconnect, "--reconnect left reconnect off")
+        #expect(row.session == rig.session.name)
+        // The promise in `TunnelsEditCommand`'s own discussion: an edit
+        // changes a forwarding, it does not replace one.
+        #expect(row.id == saved.id, "the edit replaced the forwarding instead of changing it")
+
+        let removed = try await rig.runStore([
+            "tunnels", "rm", renamed, "--session", rig.session.name,
+        ])
+        #expect(
+            removed.status == 0,
+            "tunnels rm exited \(removed.status) on \(kind.rawValue): \(removed.stderrText)")
+        let after = try await rig.runStore([
+            "tunnels", "list", "--session", rig.session.name, "--json",
+        ])
+        #expect(after.status == 0, "tunnels list exited \(after.status): \(after.stderrText)")
+        let left = try CLIMatrix.tunnelRows(after.stdoutText)
+        #expect(left.isEmpty, "the rm left \(left.count) rows behind on \(kind.rawValue)")
+    }
+
+    /// `tunnels start` is refused on exactly the backends Core says carry no
+    /// forwarding, in Core's own words — and on the one that does, it is
+    /// refused for the OTHER reason without ever dialling.
+    ///
+    /// The forwarding named is one that was never saved, and that is the
+    /// sharp part of the probe rather than a convenience.
+    /// `TunnelStartCommand.validate()` asks the carrier question BEFORE it
+    /// looks the forwarding up, so on S3 and WebDAV the answer must be the
+    /// carrier refusal; a build that had lost that check would answer with
+    /// the "no forwarding named" complaint instead, at the same exit code.
+    /// Reading the sentence from `TunnelCarriers.refusal(for:)` against the
+    /// very session in the store is what makes this a measurement of the
+    /// shipped rule rather than an agreement between two copies of it.
+    ///
+    /// The SSH branch is the positive companion, not a skip: Core must word
+    /// no refusal for it, `start` must still exit 64 for the unknown name,
+    /// and — the half that says it never dialled — stdout must carry no
+    /// state line at all. The SSH suite measures what `start` does when the
+    /// forwarding IS there.
+    ///
+    /// `runStore`, because nothing here reaches a connect: every refusal
+    /// happens in `validate()`, before a secret would be resolved.
+    static func tunnelsStartIsRefusedWhereCoreSaysSo(_ kind: ConnectionKind) async throws {
+        let rig = try CLIMatrix.make(for: kind, label: "tunnels-start-refusal")
+        defer { rig.tearDown() }
+
+        let name = "matrix-never-saved-\(UUID().uuidString)"
+        let result = try await rig.runStore([
+            "tunnels", "start", name, "--session", rig.session.name,
+        ])
+        #expect(
+            result.status == CLIMatrix.validationFailure,
+            "tunnels start exited \(result.status) on \(kind.rawValue): \(result.stderrText)")
+        #expect(
+            result.stdoutText.isEmpty,
+            "a refused start printed a state line on \(kind.rawValue)")
+
+        let refusal = TunnelCarriers.refusal(for: rig.session)
+        guard CLIMatrix.carriesTunnels(kind) else {
+            let worded = try #require(
+                refusal,
+                "Core says \(kind.rawValue) carries no forwarding, but words no refusal for it")
+            #expect(
+                result.stderrText.contains(worded),
+                "the refusal on \(kind.rawValue) was \"\(result.stderrText)\"")
+            return
+        }
+        #expect(
+            refusal == nil,
+            "Core says \(kind.rawValue) carries forwardings and refuses one anyway")
+        #expect(
+            result.stderrText.contains(name),
+            "the refusal on \(kind.rawValue) did not name the forwarding: \(result.stderrText)")
+    }
+
     // MARK: - Shared reading
 
     /// Whether the entry is gone, distinguishing "not there" from "the
@@ -1012,7 +1264,17 @@ enum CLIMatrixCases {
 
 // MARK: - One suite per backend
 
-@Suite("CLIMatrixSSH", .enabled(if: rigIsEnabled), .serialized)
+// A five-minute limit on the suite rather than a bound anywhere inside a
+// case: the `tunnels start` cases below hold a real child open, wait for a
+// line it prints and for bytes to cross a real forwarding, and then end the
+// child on purpose. Not one of those waits carries a deadline — a deadline
+// would measure the runner rather than the forwarding (CLAUDE.md, "A
+// wall-clock ceiling in a test measures the runner"). This trait is the only
+// clock in the arrangement, and it is a net: it cancels the test, which
+// `AsyncSignal.wait()` and `pollUntil` both answer, and which
+// `CLIMatrix.runUntilLine` turns into a cancelled child rather than a
+// forwarding left bound.
+@Suite("CLIMatrixSSH", .enabled(if: rigIsEnabled), .serialized, .timeLimit(.minutes(5)))
 struct CLIMatrixSSHITests {
     static let kind: ConnectionKind = .ssh
 
@@ -1086,6 +1348,471 @@ struct CLIMatrixSSHITests {
 
     @Test func tunnelsAddIsAllowedExactlyWhereCoreSaysSo() async throws {
         try await CLIMatrixCases.tunnelsAddIsAllowedExactlyWhereCoreSaysSo(Self.kind)
+    }
+
+    @Test func sessionsAddEditRmRoundTrip() async throws {
+        try await CLIMatrixCases.sessionsAddEditRmRoundTrip(Self.kind)
+    }
+
+    @Test func tunnelsEditListRm() async throws {
+        try await CLIMatrixCases.tunnelsEditListRm(Self.kind)
+    }
+
+    @Test func tunnelsStartIsRefusedWhereCoreSaysSo() async throws {
+        try await CLIMatrixCases.tunnelsStartIsRefusedWhereCoreSaysSo(Self.kind)
+    }
+
+    // MARK: - `tunnels start`, end to end against the rig
+
+    /// The rig's own SSH port, read off the fixture rather than written
+    /// again: every forwarding below targets the container's sshd, which is
+    /// the one service inside it this suite already knows how to reach.
+    private static func rigSSHPort(_ rig: CLIMatrix) throws -> Int {
+        try #require(rig.session.ssh?.port, "the SSH fixture carries no port")
+    }
+
+    /// What the Mac's listener answers the container with in the remote-
+    /// forward case, and what the container sends it. Two different words, so
+    /// each direction is proved by something only that direction could have
+    /// produced.
+    private static let fromTheContainer = "hi"
+    private static let fromTheMac = "ho"
+
+    /// The first bytes any SSH server writes, before anything is negotiated
+    /// (RFC 4253 §4.2). Reaching them through a forward is proof the bytes
+    /// really crossed it — a bound port that accepted a connection and
+    /// carried nothing would satisfy an assertion made on the connect alone.
+    private static let sshBanner = "SSH-2.0"
+
+    /// Saves one forwarding on the rig's session and answers its name.
+    ///
+    /// Through `runStore`, like every other store write in this file: `add`
+    /// dials nothing.
+    private static func saveForwarding(
+        on rig: CLIMatrix, spec: [String],
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws -> String {
+        let name = "matrix-start-\(UUID().uuidString)"
+        let added = try await rig.runStore(
+            ["tunnels", "add", name, "--session", rig.session.name] + spec)
+        #expect(
+            added.status == 0,
+            "tunnels add exited \(added.status): \(added.stderrText)",
+            sourceLocation: sourceLocation)
+        return name
+    }
+
+    /// Whether a TEXT state line says `active` AND names the bound port.
+    ///
+    /// Both halves matter for a `--local 0:…` or `--dynamic 0` profile: the
+    /// port the kernel chose is the only way to reach the forward, and an
+    /// `active` line without one is a line the case cannot act on. The
+    /// prefix and the parse are `CLIMatrix`'s, derived from
+    /// `TunnelStateLine` itself.
+    private static func namesABoundPort(_ line: String) -> Bool {
+        CLIMatrix.boundPort(inActiveLine: line) != nil
+    }
+
+    /// A local forward held open by `tunnels start` really carries bytes: the
+    /// rig's own sshd banner comes back through the port the CLI bound.
+    ///
+    /// `--local 0:…`, so the kernel picks the port and nothing on this
+    /// machine can be claimed twice; the CLI's `active port=<n>` line is how
+    /// the case learns which one, which is also the assertion that the line
+    /// carries a usable number rather than merely the word.
+    ///
+    /// The sequence has no clock in it. The line arrives through
+    /// `SubprocessRunner`'s stdout seam and raises a latch; the probe
+    /// connects and waits for the banner by polling its own inbox; the child
+    /// is then ended by a `SIGINT` this case sends, not by a deadline. The
+    /// suite's `.timeLimit` is the only bound, and it can only make this
+    /// slow, never wrong.
+    ///
+    /// The secret rides the child's ENVIRONMENT (`runUntilLine` uses the
+    /// dialling environment) and is asserted absent from both streams before
+    /// anything else is read.
+    @Test func startLocalForwardCarriesTheSshdBanner() async throws {
+        let rig = try CLIMatrix.make(for: Self.kind, label: "start-local")
+        defer { rig.tearDown() }
+        let sshPort = try Self.rigSSHPort(rig)
+        let name = try await Self.saveForwarding(
+            on: rig, spec: ["--local", "0:127.0.0.1:\(sshPort)"])
+
+        let carried = Mutex(false)
+        let result = try await rig.runUntilLine(
+            ["tunnels", "start", name, "--session", rig.session.name, "--accept-new"],
+            matching: { Self.namesABoundPort($0) }
+        ) { line in
+            let port = try #require(
+                CLIMatrix.boundPort(inActiveLine: line), "no port in \(line)")
+            #expect(port > 0, "the forward reported port \(port)")
+            let probe = try await TunnelProbe.connect(toPort: port)
+            do {
+                try await probe.until("the sshd banner through the forward") {
+                    String(decoding: $0, as: UTF8.self).contains(Self.sshBanner)
+                }
+            } catch {
+                await probe.close()
+                throw error
+            }
+            carried.withLock { $0 = true }
+            await probe.close()
+        }
+
+        let leaks = rig.leaksSecret(result)
+        #expect(leaks == false, "tunnels start printed the secret")
+        #expect(carried.withLock { $0 }, "no bytes came back through the forward")
+        #expect(result.status == 0, "tunnels start exited \(result.status): \(result.stderrText)")
+        #expect(
+            result.stdoutText.contains(TunnelStateLine.render(.stopped, json: false)),
+            "the SIGINT produced no stopped line")
+    }
+
+    /// A DYNAMIC forward speaks SOCKS5: the greeting is answered, a CONNECT
+    /// to the rig's own sshd is granted, and the banner then arrives on the
+    /// same socket.
+    ///
+    /// The client side is hand-rolled — three bytes, then ten — because the
+    /// point is to speak the protocol at the CLI rather than to reuse this
+    /// project's own listener, which is what is under test. Both server
+    /// frames are read from Core's `SOCKS5Frames` rather than spelled here,
+    /// so a change to either moves this case with it; only the CLIENT frames
+    /// (which Core writes nowhere, having only ever parsed them) are built
+    /// by hand, and even those take their version byte from Core.
+    ///
+    /// Three assertions in order, and each is needed: a method selection
+    /// proves the greeting was understood, a `succeeded` reply proves the
+    /// CONNECT was granted, and the banner proves the granted connection
+    /// really reaches sshd. A listener that answered both frames and then
+    /// carried nothing would pass the first two.
+    @Test func startDynamicForwardAnswersSOCKS5Connect() async throws {
+        let rig = try CLIMatrix.make(for: Self.kind, label: "start-dynamic")
+        defer { rig.tearDown() }
+        let sshPort = try Self.rigSSHPort(rig)
+        let name = try await Self.saveForwarding(on: rig, spec: ["--dynamic", "0"])
+
+        let selection = SOCKS5Frames.methodSelection(0x00)
+        let granted = SOCKS5Frames.reply(.succeeded)
+        let reached = Mutex(false)
+
+        let result = try await rig.runUntilLine(
+            ["tunnels", "start", name, "--session", rig.session.name, "--accept-new"],
+            matching: { Self.namesABoundPort($0) }
+        ) { line in
+            let port = try #require(
+                CLIMatrix.boundPort(inActiveLine: line), "no port in \(line)")
+            let probe = try await TunnelProbe.connect(toPort: port)
+            do {
+                // VER, NMETHODS=1, "no authentication required".
+                try await probe.send([SOCKS5Frames.version, 0x01, 0x00])
+                try await probe.until("the SOCKS5 method selection") { $0.count >= selection.count }
+                #expect(Array(probe.bytes.prefix(selection.count)) == selection)
+
+                // VER, CONNECT, RSV, ATYP=IPv4, 127.0.0.1, port.
+                try await probe.send(
+                    [SOCKS5Frames.version, 0x01, 0x00, 0x01, 127, 0, 0, 1]
+                        + [UInt8(sshPort >> 8), UInt8(sshPort & 0xFF)])
+                let throughReply = selection.count + granted.count
+                try await probe.until("the SOCKS5 CONNECT reply") { $0.count >= throughReply }
+                #expect(Array(probe.bytes[selection.count..<throughReply]) == granted)
+
+                try await probe.until("the sshd banner through the SOCKS5 forward") { bytes in
+                    guard bytes.count > throughReply else { return false }
+                    return String(decoding: bytes[throughReply...], as: UTF8.self)
+                        .contains(Self.sshBanner)
+                }
+            } catch {
+                await probe.close()
+                throw error
+            }
+            reached.withLock { $0 = true }
+            await probe.close()
+        }
+
+        let leaks = rig.leaksSecret(result)
+        #expect(leaks == false, "tunnels start printed the secret")
+        #expect(reached.withLock { $0 }, "the SOCKS5 forward never reached sshd")
+        #expect(result.status == 0, "tunnels start exited \(result.status): \(result.stderrText)")
+    }
+
+    /// A REMOTE forward held open by `tunnels start` is reachable from inside
+    /// the container: `nc` there opens a connection to the port the rig's
+    /// sshd bound on its own loopback, and the bytes arrive on a listener
+    /// this test owns, on this Mac.
+    ///
+    /// Both directions are asserted, with a different word each way, so
+    /// neither can be satisfied by the other: `hi` reaching the listener
+    /// proves the server→Mac leg, and `ho` in `nc`'s own standard output
+    /// proves the Mac→server leg. Nothing inside the container writes `ho`.
+    ///
+    /// The remote port is NAMED rather than left to the server, and the
+    /// reason is measured in `TunnelRigITests
+    /// .aRemoteForwardCarriesAConnectionFromInsideTheContainer`: the pinned
+    /// Citadel keys its inbound handler on the REQUESTED `(host, port)` and
+    /// looks it up under the BOUND one, so `port: 0` binds and then delivers
+    /// nothing. It is drawn at random from 40000–60000, because a fixed one
+    /// is a shared resource inside the container that two overlapping runs
+    /// would collide on; ONE retry covers a collision, and a second failure
+    /// is reported rather than papered over — two in a row is evidence of
+    /// something other than bad luck. The retry re-specs the SAME profile
+    /// through `tunnels edit`, which is the store verb doing real work here.
+    ///
+    /// `127.0.0.1` deliberately: `GatewayPorts` is off in the rig (nothing
+    /// sets it, OpenSSH's default is `no`), so a `0.0.0.0` bind would be
+    /// narrowed to loopback anyway.
+    ///
+    /// `nc` exits on its own because the Mac's listener answers and closes,
+    /// which the pump carries back through the SSH channel — so this waits
+    /// for a process to end rather than for a clock.
+    @Test func startRemoteForwardIsReachableInsideTheContainer() async throws {
+        let rig = try CLIMatrix.make(for: Self.kind, label: "start-remote")
+        defer { rig.tearDown() }
+
+        let inbox = TunnelByteInbox()
+        let listener = try await awaitCancellably(
+            ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+                .childChannelInitializer { channel in
+                    channel.pipeline.addHandler(
+                        TunnelAnswerAndClose(inbox: inbox, answer: Self.fromTheMac))
+                }
+                .bind(host: "127.0.0.1", port: 0))
+        // Written out rather than `defer`red, for the reason
+        // `CLIMatrix.withRig` gives: a `defer` body cannot `await`, and the
+        // close has to be awaited on the throwing path too or the next run
+        // of this case inherits a bound port.
+        func shutDown() async {
+            listener.close(promise: nil)
+            _ = try? await awaitCancellably(listener.closeFuture)
+        }
+
+        do {
+            let targetPort = try #require(listener.localAddress?.port, "the listener bound nothing")
+            let name = try await Self.saveForwarding(
+                on: rig, spec: ["--remote", Self.remoteSpec(toLocalPort: targetPort)])
+
+            var reached = false
+            var last: SubprocessResult?
+            for attempt in 1...2 where !reached {
+                if attempt > 1 {
+                    let respec = try await rig.runStore([
+                        "tunnels", "edit", name, "--session", rig.session.name,
+                        "--remote", Self.remoteSpec(toLocalPort: targetPort),
+                    ])
+                    #expect(respec.status == 0, "tunnels edit exited \(respec.status)")
+                }
+                last = try await rig.runUntilLine(
+                    ["tunnels", "start", name, "--session", rig.session.name, "--accept-new"],
+                    matching: { Self.namesABoundPort($0) }
+                ) { line in
+                    let port = try #require(
+                        CLIMatrix.boundPort(inActiveLine: line), "no port in \(line)")
+                    let sent = try await SubprocessRunner.run(
+                        URL(fileURLWithPath: "/usr/bin/env"),
+                        arguments: [
+                            "docker", "exec", "macscp-test-sshd", "sh", "-c",
+                            "printf \(Self.fromTheContainer) | nc 127.0.0.1 \(port)",
+                        ],
+                        timeout: CLIMatrix.heldChildBound)
+                    #expect(sent.status == 0, "docker exec exited \(sent.status): \(sent.stderrText)")
+                    #expect(
+                        sent.stdoutText == Self.fromTheMac,
+                        "the container read \"\(sent.stdoutText)\" back through the forward")
+                    try await pollUntil("the bytes to arrive from inside the container") {
+                        inbox.text == Self.fromTheContainer
+                    }
+                    reached = true
+                }
+            }
+
+            let result = try #require(last, "no attempt produced a result")
+            let leaks = rig.leaksSecret(result)
+            #expect(leaks == false, "tunnels start printed the secret")
+            #expect(
+                reached,
+                "the remote forward never carried anything: \(result.stdoutText)")
+            #expect(
+                result.status == 0,
+                "tunnels start exited \(result.status): \(result.stderrText)")
+        } catch {
+            await shutDown()
+            throw error
+        }
+        await shutDown()
+    }
+
+    /// The `--remote` spec for a forward the container reaches on a random
+    /// loopback port and this Mac answers on `localPort`.
+    private static func remoteSpec(toLocalPort localPort: Int) -> String {
+        "127.0.0.1:\(Int.random(in: 40_000...60_000)):127.0.0.1:\(localPort)"
+    }
+
+    /// `SIGINT` ends a running forwarding cleanly: a `stopped` line, and exit
+    /// 0.
+    ///
+    /// Under `--json`, and every line decoded: the states are read as objects
+    /// rather than compared as text, because the keys are sorted by the
+    /// serialiser and a JSON object is unordered — a case comparing the line
+    /// would be asserting on `JSONSerialization`'s choice rather than on the
+    /// CLI's. Every spelling here (`connecting`, `active`, `stopped`) is read
+    /// off `TunnelStateLine` through `CLIMatrix.tunnelStateKey(for:)`, so
+    /// this case contains no copy of any of them.
+    ///
+    /// The ORDER is the property, not merely the presence: `connecting`
+    /// first, an `active` in the middle, `stopped` last. A run that printed
+    /// `stopped` and then went on running would satisfy a `contains`.
+    ///
+    /// Exit 0 rather than 130: the tunnel was ASKED to end and it ended, which
+    /// is what `TunnelForegroundRun.drive` says at length.
+    @Test func startEndsWithExitZeroOnSIGINT() async throws {
+        let rig = try CLIMatrix.make(for: Self.kind, label: "start-sigint")
+        defer { rig.tearDown() }
+        let sshPort = try Self.rigSSHPort(rig)
+        let name = try await Self.saveForwarding(
+            on: rig, spec: ["--local", "0:127.0.0.1:\(sshPort)"])
+
+        let connecting = try CLIMatrix.tunnelStateKey(for: .connecting)
+        let active = try CLIMatrix.tunnelStateKey(for: .active(connections: 0))
+        let stopped = try CLIMatrix.tunnelStateKey(for: .stopped)
+
+        let result = try await rig.runUntilLine(
+            ["tunnels", "start", name, "--session", rig.session.name, "--accept-new", "--json"],
+            matching: { line in
+                (try? CLIMatrix.tunnelStateLines(line))?.first?.state == active
+            })
+
+        let leaks = rig.leaksSecret(result)
+        #expect(leaks == false, "tunnels start printed the secret")
+        #expect(result.status == 0, "tunnels start exited \(result.status): \(result.stderrText)")
+
+        let lines = try CLIMatrix.tunnelStateLines(result.stdoutText)
+        #expect(lines.first?.state == connecting, "the run began with \(lines.first?.state ?? "nothing")")
+        #expect(lines.contains { $0.state == active }, "the run never went active")
+        #expect(lines.last?.state == stopped, "the run ended with \(lines.last?.state ?? "nothing")")
+        // The port is on the `active` line, which is what a script reading
+        // this stream is there for.
+        let bound = lines.first { $0.state == active }?.port
+        #expect((bound ?? 0) > 0, "the active object named no bound port")
+    }
+
+    /// `tunnels start` refuses an unknown host key, and `--accept-new` is
+    /// what turns the same run into a working forwarding.
+    ///
+    /// A fresh store per rig, so the container's key really is unknown to the
+    /// child (`CLIMatrix.make` hands it a `MACSCP_STORAGE_DIRECTORY` with no
+    /// `known_hosts.json` in it), asserted before anything runs.
+    ///
+    /// `--non-interactive` on the refusing half for the reason
+    /// `anUnknownHostKeyIsRefusedUntilAccepted` states about itself:
+    /// `SubprocessRunner` hands every child `/dev/null` for stdin, so the
+    /// policy already resolves `.ask` to `.reject` — the flag makes the
+    /// intention explicit rather than supplying the refusal. The
+    /// discriminator this case measures is `--accept-new`, which is the only
+    /// difference between the two runs.
+    ///
+    /// The refusal must also leave the store alone: a run that recorded the
+    /// key and then refused would exit 11 all the same.
+    @Test func startRefusesAnUnknownHostKey() async throws {
+        let rig = try CLIMatrix.make(for: Self.kind, label: "start-unknown-key")
+        defer { rig.tearDown() }
+        #expect(try rig.recordedHostKeys().isEmpty, "a fresh store already knows a host key")
+        let sshPort = try Self.rigSSHPort(rig)
+        let name = try await Self.saveForwarding(
+            on: rig, spec: ["--local", "0:127.0.0.1:\(sshPort)"])
+        let active = try CLIMatrix.tunnelStateKey(for: .active(connections: 0))
+        let needsConfirmation = try CLIMatrix.tunnelStateKey(for: .needsConfirmation)
+
+        // No `--accept-new`: the child ends by itself, so an ordinary run is
+        // the right shape — there is no state to act on while it is up.
+        let refused = try await rig.run([
+            "tunnels", "start", name, "--session", rig.session.name,
+            "--non-interactive", "--json",
+        ])
+        let refusedLeaks = rig.leaksSecret(refused)
+        #expect(refusedLeaks == false, "the refused run printed the secret")
+        #expect(
+            refused.status == CLIExitCode.hostKeyUnknown.rawValue,
+            "an unknown host key exited \(refused.status): \(refused.stderrText)")
+        let refusedStates = try CLIMatrix.tunnelStateLines(refused.stdoutText).map(\.state)
+        #expect(
+            !refusedStates.contains(active),
+            "a refused start went active anyway: \(refusedStates)")
+        #expect(
+            refusedStates.last == needsConfirmation,
+            "the refused run ended on \(refusedStates.last ?? "nothing")")
+        #expect(
+            try rig.recordedHostKeys().isEmpty,
+            "a refused start recorded the host key anyway")
+
+        let accepted = try await rig.runUntilLine(
+            ["tunnels", "start", name, "--session", rig.session.name, "--accept-new", "--json"],
+            matching: { line in
+                (try? CLIMatrix.tunnelStateLines(line))?.first?.state == active
+            })
+        let acceptedLeaks = rig.leaksSecret(accepted)
+        #expect(acceptedLeaks == false, "the accepted run printed the secret")
+        #expect(
+            accepted.status == 0,
+            "tunnels start --accept-new exited \(accepted.status): \(accepted.stderrText)")
+        let recorded = try rig.recordedHostKeys()
+        #expect(recorded.count == 1, "--accept-new recorded \(recorded.count) host keys")
+    }
+
+    /// A REMEMBERED host key that changes is a hard stop for `tunnels start`
+    /// too, and `--accept-new` does not soften it.
+    ///
+    /// The same security-critical invariant `aChangedHostKeyIsAHardStop`
+    /// pins for `ls`, asked of the one verb that holds a connection open:
+    /// `--accept-new` says something about UNKNOWN keys and nothing about a
+    /// mismatch, and `HostKeyValidation.evaluate` never consults a decider
+    /// for one. The planted key is derived from the key the rig really
+    /// presented (last byte inverted, same host and port), so nothing here
+    /// carries key material and the two cannot accidentally agree.
+    ///
+    /// The first run is the positive companion: the SAME flags, against the
+    /// SAME rig, DO bring a forwarding up while the remembered key is the
+    /// right one. Without it, "the mismatch refused" would be satisfied by a
+    /// build in which `tunnels start` never worked at all.
+    ///
+    /// The last assertion is the one that would go unnoticed: a mismatch that
+    /// re-TOFU'd would exit non-zero all the same while quietly replacing the
+    /// remembered key, so the store is read afterwards and the PLANTED key
+    /// must still be the one on file.
+    @Test func startIsAHardStopOnAChangedHostKey() async throws {
+        let rig = try CLIMatrix.make(for: Self.kind, label: "start-key-mismatch")
+        defer { rig.tearDown() }
+        let sshPort = try Self.rigSSHPort(rig)
+        let name = try await Self.saveForwarding(
+            on: rig, spec: ["--local", "0:127.0.0.1:\(sshPort)"])
+        let active = try CLIMatrix.tunnelStateKey(for: .active(connections: 0))
+
+        let accepted = try await rig.runUntilLine(
+            ["tunnels", "start", name, "--session", rig.session.name, "--accept-new", "--json"],
+            matching: { line in
+                (try? CLIMatrix.tunnelStateLines(line))?.first?.state == active
+            })
+        #expect(
+            accepted.status == 0,
+            "tunnels start --accept-new exited \(accepted.status): \(accepted.stderrText)")
+        #expect(try rig.recordedHostKeys().count == 1, "the accepted run recorded no host key")
+
+        let planted = try rig.plantADifferentHostKey()
+        let refused = try await rig.run([
+            "tunnels", "start", name, "--session", rig.session.name, "--accept-new", "--json",
+        ])
+        let leaks = rig.leaksSecret(refused)
+        #expect(leaks == false, "the refused run printed the secret")
+        #expect(
+            refused.status == CLIExitCode.hostKeyMismatch.rawValue,
+            "a changed host key exited \(refused.status): \(refused.stderrText)")
+        let states = try CLIMatrix.tunnelStateLines(refused.stdoutText).map(\.state)
+        #expect(!states.contains(active), "a mismatched start went active anyway: \(states)")
+
+        let after = try rig.recordedHostKeys()
+        #expect(after.count == 1, "the mismatch left \(after.count) keys on file")
+        #expect(
+            after.first?.publicKeyBase64 == planted.publicKeyBase64,
+            "the mismatch overwrote the remembered key instead of stopping")
     }
 
     // MARK: - `--non-interactive` under a real terminal
@@ -1250,6 +1977,18 @@ struct CLIMatrixS3ITests {
     @Test func tunnelsAddIsAllowedExactlyWhereCoreSaysSo() async throws {
         try await CLIMatrixCases.tunnelsAddIsAllowedExactlyWhereCoreSaysSo(Self.kind)
     }
+
+    @Test func sessionsAddEditRmRoundTrip() async throws {
+        try await CLIMatrixCases.sessionsAddEditRmRoundTrip(Self.kind)
+    }
+
+    @Test func tunnelsEditListRm() async throws {
+        try await CLIMatrixCases.tunnelsEditListRm(Self.kind)
+    }
+
+    @Test func tunnelsStartIsRefusedWhereCoreSaysSo() async throws {
+        try await CLIMatrixCases.tunnelsStartIsRefusedWhereCoreSaysSo(Self.kind)
+    }
 }
 
 @Suite("CLIMatrixWebDAV", .enabled(if: rigIsEnabled), .serialized)
@@ -1315,6 +2054,18 @@ struct CLIMatrixWebDAVITests {
 
     @Test func tunnelsAddIsAllowedExactlyWhereCoreSaysSo() async throws {
         try await CLIMatrixCases.tunnelsAddIsAllowedExactlyWhereCoreSaysSo(Self.kind)
+    }
+
+    @Test func sessionsAddEditRmRoundTrip() async throws {
+        try await CLIMatrixCases.sessionsAddEditRmRoundTrip(Self.kind)
+    }
+
+    @Test func tunnelsEditListRm() async throws {
+        try await CLIMatrixCases.tunnelsEditListRm(Self.kind)
+    }
+
+    @Test func tunnelsStartIsRefusedWhereCoreSaysSo() async throws {
+        try await CLIMatrixCases.tunnelsStartIsRefusedWhereCoreSaysSo(Self.kind)
     }
 }
 
@@ -1862,6 +2613,45 @@ struct CLIMatrixCoverageTests {
         }
     }
 
+    /// The store verbs' child gets NO secret, and the dialling child does.
+    ///
+    /// `CLIMatrix.runStore(_:)` is what every `sessions add/edit/rm` and
+    /// `tunnels list/add/edit/rm` case in this file runs through, and its
+    /// whole claim is about the child's ENVIRONMENT: those verbs read and
+    /// write two JSON files and dial nothing, so a secret in their
+    /// environment would be a value the case put there for no reason — and a
+    /// case that passed only because one was present would be measuring
+    /// something else.
+    ///
+    /// A NEGATIVE check needs a positive beside it (CLAUDE.md, "Guards that
+    /// name what they watch"), and here the positive is not decoration: an
+    /// `environment(secretVariable:)` that had stopped setting ANY variable
+    /// would satisfy "the store child carries no secret" perfectly, while
+    /// breaking every dialling case in a way that reads like the rig being
+    /// down. So the dialling environment is asked in the same breath, and it
+    /// must carry the secret under this backend's own variable and under
+    /// exactly one variable in total.
+    ///
+    /// Both questions are answered INSIDE `CLIMatrix`, which is the only
+    /// type holding the value, and both come back as `Bool`s: `#expect`
+    /// prints the source text of what it checked, so an expectation written
+    /// over the environment itself would print the secret in the very
+    /// failure that says it leaked.
+    ///
+    /// Ungated: it opens nothing and needs no binary, so a fourth backend
+    /// meets it in the ordinary `swift test`.
+    @Test(arguments: ConnectionKind.allCases)
+    func theStoreVerbsChildCarriesNoSecret(kind: ConnectionKind) throws {
+        let rig = try CLIMatrix.make(for: kind, label: "store-environment")
+        defer { rig.tearDown() }
+        #expect(
+            rig.storeEnvironmentCarriesASecret() == false,
+            "a store verb's child would be handed a secret on \(kind.rawValue)")
+        #expect(
+            rig.dialEnvironmentCarriesTheSecretUnderItsOwnVariable(),
+            "a dialling child gets no secret on \(kind.rawValue), or gets it twice")
+    }
+
     /// The relay variable the `--password-command` cases carry the secret in
     /// is read by no backend.
     ///
@@ -2300,5 +3090,109 @@ struct CLIMatrixCommandsITests {
         let refused = try await rig.run([command, "--on-conflict", "rename", "a", "b"])
         #expect(refused.status != 0, "\(command) accepted --on-conflict rename")
         #expect(refused.stderrText.contains("rename"))
+    }
+}
+
+
+// MARK: - Reading bytes through a forwarding
+
+/// What a socket delivered, collected off a NIO event loop and read from a
+/// test.
+///
+/// `Mutex` rather than a class with an `NSLock` behind `@unchecked
+/// Sendable`: the bytes really do cross an isolation boundary — appended on
+/// an event loop, read by the case — and this language mode wants a check
+/// rather than an assertion.
+private final class TunnelByteInbox: Sendable {
+    private let storage = Mutex<[UInt8]>([])
+
+    var bytes: [UInt8] { storage.withLock { $0 } }
+    var text: String { String(decoding: bytes, as: UTF8.self) }
+
+    func append(_ chunk: [UInt8]) { storage.withLock { $0 += chunk } }
+}
+
+/// Puts everything that arrives into an inbox and does nothing else.
+private final class TunnelByteCollector: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+
+    private let inbox: TunnelByteInbox
+
+    init(inbox: TunnelByteInbox) { self.inbox = inbox }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var buffer = unwrapInboundIn(data)
+        inbox.append(buffer.readBytes(length: buffer.readableBytes) ?? [])
+    }
+}
+
+/// The local target of the remote-forward case: it records what arrives,
+/// answers once, and closes.
+///
+/// Closing is what lets `nc` inside the container exit on its own — the pump
+/// carries the close back through the SSH channel — so the case waits for a
+/// process to end rather than for a timeout.
+private final class TunnelAnswerAndClose: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+    typealias OutboundOut = ByteBuffer
+
+    private let inbox: TunnelByteInbox
+    private let answer: String
+    private var answered = false
+
+    init(inbox: TunnelByteInbox, answer: String) {
+        self.inbox = inbox
+        self.answer = answer
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var buffer = unwrapInboundIn(data)
+        inbox.append(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        guard !answered else { return }
+        answered = true
+        context.writeAndFlush(wrapOutboundOut(ByteBuffer(string: answer)), promise: nil)
+        context.close(promise: nil)
+    }
+}
+
+/// One TCP connection to a port the CLI bound, for a case that has to speak
+/// to a forwarding rather than only read what the CLI said about it.
+///
+/// Raw NIO rather than `nc` or a `Foundation` stream: `nc` would need a
+/// `-w <seconds>` to end, which is a wall-clock ceiling inside the property
+/// (CLAUDE.md), and a blocking read would park a cooperative-pool thread.
+/// Every wait here is `pollUntil` over the inbox, ended by the suite's
+/// `.timeLimit` and by nothing else.
+private struct TunnelProbe {
+    let channel: any Channel
+    private let inbox: TunnelByteInbox
+
+    var bytes: [UInt8] { inbox.bytes }
+
+    static func connect(toPort port: Int) async throws -> TunnelProbe {
+        let inbox = TunnelByteInbox()
+        let channel = try await awaitCancellably(
+            ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                .channelInitializer { channel in
+                    channel.pipeline.addHandler(TunnelByteCollector(inbox: inbox))
+                }
+                .connect(host: "127.0.0.1", port: port))
+        return TunnelProbe(channel: channel, inbox: inbox)
+    }
+
+    func send(_ bytes: [UInt8]) async throws {
+        try await awaitCancellably(channel.writeAndFlush(ByteBuffer(bytes: bytes)))
+    }
+
+    /// Waits until everything collected so far satisfies `condition`. The
+    /// name is what `pollUntil` prints if the calling task is cancelled, so
+    /// a red says which wait it was.
+    func until(_ what: String, _ condition: @escaping ([UInt8]) -> Bool) async throws {
+        try await pollUntil(what) { condition(inbox.bytes) }
+    }
+
+    func close() async {
+        channel.close(promise: nil)
+        _ = try? await awaitCancellably(channel.closeFuture)
     }
 }
