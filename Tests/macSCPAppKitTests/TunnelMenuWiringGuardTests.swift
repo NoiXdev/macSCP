@@ -189,7 +189,13 @@ struct TunnelMenuWiringGuardTests {
         for file in [Self.sidebarFile, Self.sheetFile,
                      Self.appKitRoot.appendingPathComponent("TunnelHostKeyPrompt.swift")] {
             let source = try SwiftSource.blankingComments(try Self.text(of: file))
-            for match in source.ranges(of: try Regex(#"L10n\.string\("(tunnel\.[^"]+)""#)) {
+            // `\s*` after the parenthesis, and it is load-bearing: a
+            // `L10n.string(` whose key sits on the NEXT line is how six of
+            // these keys are written (the call wraps), and a pattern
+            // demanding the quote immediately after the parenthesis found 42
+            // of the 48 while reporting success — counted 2026-09-06 against
+            // the catalogue.
+            for match in source.ranges(of: try Regex(#"L10n\.string\(\s*"(tunnel\.[^"]+)""#)) {
                 let call = String(source[match])
                 guard let start = call.range(of: "\"") else { continue }
                 let rest = call[start.upperBound...]
@@ -197,7 +203,11 @@ struct TunnelMenuWiringGuardTests {
                 keys.insert(String(rest[..<end.lowerBound]))
             }
         }
-        #expect(keys.count >= 20, "found \(keys.count) tunnel keys — re-anchor this guard")
+        // 48 as counted on 2026-09-06 — every `tunnel.*` key in the
+        // catalogue. The floor is lower than the count so that adding one
+        // key is not a test edit, and high enough that a pattern which
+        // silently stopped matching most of them (see above) fails here.
+        #expect(keys.count >= 45, "found \(keys.count) tunnel keys — re-anchor this guard")
         for key in keys.sorted() {
             #expect(
                 L10n.string(key, "ZZ-UNRESOLVED-ZZ") != "ZZ-UNRESOLVED-ZZ",
