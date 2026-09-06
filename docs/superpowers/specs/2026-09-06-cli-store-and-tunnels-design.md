@@ -74,8 +74,13 @@ UUID stays internal and is printed only under `--json`.
 
 ### `sessions add <name> --kind ssh|s3|webdav …`
 
-Creates one session. The name must be free (case-insensitive, like the
-app's name-conflict rule); otherwise exit 64 with "a session named X
+Creates one session. The name must be free — case-insensitively and
+whitespace-trimmed, which is STRICTER than the app's own rule (the app
+compares exactly, measured 2026-09-06 in Task 1: `SessionListViewModel.save`
+looks up `$0.name == name`; a script creating `prod` and `Prod` is almost
+always a mistake, a person typing them is not). One function,
+`SessionNameRule.conflict(_:among:excluding:matching:)`, serves both,
+with the mode passed explicitly; otherwise exit 64 with "a session named X
 already exists — use `sessions edit`". Flags per kind, refused with
 exit 64 when given for the wrong kind ("--bucket applies to --kind s3"):
 
