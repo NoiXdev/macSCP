@@ -176,6 +176,8 @@ final class TunnelFakeRuntimes: TunnelRuntimeFactory, @unchecked Sendable {
     private let firstStopGate: TunnelLatch?
     private var runtimes: [TunnelFakeRuntime] = []
     private var kinds: [TunnelProfile.Kind] = []
+    private var starts = 0
+    private var failures: [Int: any Error] = [:]
 
     /// - Parameter firstStopGate: when given, the FIRST runtime's `stop()`
     ///   parks on it. That is what holds `TunnelRunner.stop()` suspended at
@@ -199,10 +201,24 @@ final class TunnelFakeRuntimes: TunnelRuntimeFactory, @unchecked Sendable {
         return kinds
     }
 
+    /// Which START attempts throw instead of producing a runtime — a bind
+    /// that could not be taken, which is where a `TunnelFailure` really
+    /// comes from (the connection fake's own `failAttempts` covers the dial).
+    func failStarts(_ numbers: [Int], with error: any Error) {
+        lock.lock()
+        for number in numbers { failures[number] = error }
+        lock.unlock()
+    }
+
     func start(
         _ kind: TunnelProfile.Kind, over connection: any TunnelSSHConnection,
         observer: @escaping TunnelConnectionObserver, onEnded: @escaping @Sendable () -> Void
     ) async throws -> any TunnelRuntime {
+        let planned: (any Error)? = lock.withLock {
+            starts += 1
+            return failures[starts]
+        }
+        if let planned { throw planned }
         let gate = lock.withLock { runtimes.isEmpty ? firstStopGate : nil }
         let runtime = TunnelFakeRuntime(
             port: port, observer: observer, onEnded: onEnded, stopGate: gate)

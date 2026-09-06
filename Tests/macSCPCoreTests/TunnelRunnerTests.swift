@@ -264,6 +264,35 @@ struct TunnelRunnerTests {
         #expect(sleeper.slept.isEmpty)
     }
 
+    /// A bind that could not be taken names the PORT in the failure the
+    /// user reads — the one thing they need in order to free it.
+    ///
+    /// Round 2, IMPORTANT: `DialSupport.reason(for:)` had no `TunnelFailure`
+    /// arm and `TunnelFailure` is not `LocalizedError`, so this reached both
+    /// the state and the log as Foundation's generic
+    /// "The operation couldn't be completed. (macSCPCore.TunnelFailure error
+    /// 0.)" — the port dropped, and a case index in its place.
+    @Test func aPortAlreadyInUseNamesThePortInTheFailureReason() async throws {
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080)
+        runtimes.failStarts([1], with: TunnelFailure.portInUse(port: 8080))
+        let runner = TunnelRunner(
+            profile: localProfile(), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitForFailure()
+
+        let reported: String? = states.recorded.compactMap {
+            if case .failed(let reason) = $0 { return reason }
+            return nil
+        }.first
+        #expect(reported == "port 8080 is already in use")
+        // The connection dialled for a forward that never bound is released.
+        #expect(connections.made[0].disconnectCount == 1)
+    }
+
     /// A forward that ends on its own AFTER the server confirmed it — the
     /// remote-forward shape Task 4 handed off as reporting to nobody — is a
     /// connection loss like any other.
@@ -411,6 +440,9 @@ struct TunnelRunnerTests {
     /// the second run published there would have been a no-op).
     @Test func aStartThatLandsWhileStopIsSuspendedWaitsForIt() async throws {
         let latch = TunnelLatch()
+        // A failing expectation below would otherwise leave the gated
+        // teardown parked on a 1 ms spinner for the rest of the process.
+        defer { latch.release() }
         let connections = TunnelFakeConnections()
         let runtimes = TunnelFakeRuntimes(boundPort: 8080, firstStopGate: latch)
         let runner = TunnelRunner(
@@ -466,6 +498,73 @@ struct TunnelRunnerTests {
         await runner.stop()
         try await states.waitFor(.stopped)
         #expect(connections.made[1].disconnectCount == 1)
+    }
+
+    /// The mirror of the window above, and the one round 1 got wrong: a
+    /// STOP that arrives while a START is already waiting must still be the
+    /// last word.
+    ///
+    /// Round 1 gave `stop()` a coalescing branch — "a stop already in
+    /// flight does the same work, so just await it and return" — which is
+    /// sound only if nothing can begin a run between that first stop
+    /// finishing and this one returning. A parked `start` is exactly that:
+    /// stop A runs, start B is parked behind it, stop C coalesces onto A;
+    /// A finishes, C returns satisfied, and B then resumes and dials. The
+    /// caller's last command was stop and the tunnel comes up anyway, with a
+    /// live SSH connection `stop()`'s own doc comment promises is gone.
+    ///
+    /// The fix is one command chain in actor-entry order, so C is queued
+    /// BEHIND B and undoes it. This test drives that order deliberately: A
+    /// is parked on a latch, and B and C are each let onto the actor before
+    /// the next is started.
+    @Test func aStopThatArrivesWhileAStartIsWaitingWins() async throws {
+        let latch = TunnelLatch()
+        defer { latch.release() }
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080, firstStopGate: latch)
+        let runner = TunnelRunner(
+            profile: localProfile(), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+
+        // A: parked on the first runtime's teardown.
+        let stopA = Task { await runner.stop() }
+        try await pollUntil("the first runtime's stop to be parked") {
+            runtimes.made[0].stopEntered == 1
+        }
+
+        // B: queued behind A.
+        let enteredB = TunnelCallCounter()
+        let startB = Task {
+            enteredB.record()
+            await runner.start(decider: .asking { _ in true })
+        }
+        try await pollUntil("the start to begin") { enteredB.count == 1 }
+        for _ in 0..<50 { await Task.yield() }
+
+        // C: queued behind B — which is the whole property.
+        let enteredC = TunnelCallCounter()
+        let stopC = Task {
+            enteredC.record()
+            await runner.stop()
+        }
+        try await pollUntil("the second stop to begin") { enteredC.count == 1 }
+        for _ in 0..<50 { await Task.yield() }
+
+        latch.release()
+        await stopA.value
+        await startB.value
+        await stopC.value
+
+        #expect(await runner.state == .stopped)
+        // Whatever B dialled — a whole connection, or none at all — is gone.
+        let leaked = connections.made.filter { $0.disconnectCount == 0 }
+        #expect(leaked.isEmpty)
+        #expect(runtimes.made.allSatisfy { $0.stopCount == 1 })
+        #expect(states.recorded.last == .stopped)
     }
 
     /// A stopped runner starts again — `needsConfirmation` and `stopped`

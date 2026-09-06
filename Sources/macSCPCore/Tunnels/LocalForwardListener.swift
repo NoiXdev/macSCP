@@ -310,14 +310,18 @@ public final class LocalForwardListener: @unchecked Sendable {
 
     /// What to report for a failure on the accept path.
     ///
-    /// A `TunnelFailure` travels through UNCHANGED. Re-mapping one through
-    /// `DialSupport.reason(for:)` destroys it: that function spells out four
-    /// error types and reduces everything else to `localizedDescription`,
-    /// which for a `TunnelFailure` — no `LocalizedError` conformance — reads
-    /// "The operation couldn't be completed. (macSCPCore.TunnelFailure error
-    /// 2.)". The factory's own sentence, which is the only one that says why
-    /// the server refused, would be replaced by a case index. Only a foreign
-    /// error is mapped.
+    /// A `TunnelFailure` travels through UNCHANGED, so the factory's own
+    /// sentence — the only one that says why the server refused — reaches
+    /// the caller as the CASE it was raised as, not merely as text. This
+    /// comment used to argue the point differently, and that argument is now
+    /// out of date: `DialSupport.reason(for:)` gained a `TunnelFailure` arm
+    /// on 2026-09-06 (Task 5, round 2) which passes those `reason:` payloads
+    /// straight through, so mapping one would no longer destroy its
+    /// sentence. It would still destroy its CASE — `portInUse` carries a
+    /// port, and `pumpFailed` and `channelOpenFailed` mean different things
+    /// to the accept path — and a value that is already a `TunnelFailure` has
+    /// nothing to gain from a round trip through text. Only a foreign error
+    /// is mapped.
     ///
     /// `afterOpen` decides the case, not the error: everything up to the
     /// factory's answer is `channelOpenFailed`, everything after it is

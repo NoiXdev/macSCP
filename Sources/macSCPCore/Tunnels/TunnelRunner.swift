@@ -83,10 +83,10 @@ public actor TunnelRunner {
     private let publish: AsyncStream<TunnelState>.Continuation
 
     private var task: Task<Void, Never>?
-    /// The `stop()` currently in flight, if any. See `start(decider:)` and
-    /// `performStop()` — this one field is what closes the window between
-    /// `stop()` clearing `task` and `stop()` actually finishing.
-    private var stopping: Task<Void, Never>?
+    /// The last command queued on this runner — the tail of the chain
+    /// `command(_:)` builds. See that method: this one field is what makes
+    /// `start` and `stop` take effect in the order they reached the actor.
+    private var lastCommand: Task<Void, Never>?
     /// Identifies one run, so a run that ends by itself clears `task` only
     /// if `task` is still ITS task.
     private var runID = 0
@@ -119,31 +119,80 @@ public actor TunnelRunner {
 
     /// Starts the tunnel, if it is not already running.
     ///
-    /// Returns as soon as the run task is scheduled — the connect, the bind
-    /// and every retry happen inside it. A caller that wants to know when
-    /// the tunnel is up reads `states`.
-    ///
-    /// **A `stop()` in flight is waited for first**, and that is not
-    /// politeness. `stop()` clears `task` and then SUSPENDS on the run
-    /// task's own teardown, which leaves the actor free with `task == nil`;
-    /// a `start` landing in that window used to begin a second run whose
-    /// connection and forward the resuming `stop()` would then tear down,
-    /// publishing `.stopped` over a tunnel that was up and leaving a live
-    /// SSH connection the owner believed was gone (fix round 1, CRITICAL).
-    /// A second symptom of the same window: the state at that moment is
-    /// still `.active`, and `(.active, .start)` is not a row in
-    /// `TunnelStatePlan`'s table, so the second run's `start`, `listening`
-    /// and `connected` events would ALL be no-ops and the run would carry
-    /// traffic while publishing nothing at all.
-    ///
-    /// Waiting rather than refusing, because refusing is the behaviour a
-    /// user cannot see: clicking Start right after Stop would do nothing,
-    /// silently. After the wait the state is `.stopped`, which is a row the
-    /// table has, so the restart publishes exactly what it should.
+    /// Returns once the command has taken effect — every command queued
+    /// before it included. The connect, the bind and every retry then happen
+    /// inside the run task; a caller that wants to know when the tunnel is up
+    /// reads `states`.
     public func start(decider: HostKeyDecider) async {
-        while let inFlight = stopping {
-            await inFlight.value
+        await command { runner in
+            await runner.performStart(decider: decider)
         }
+    }
+
+    /// Stops the tunnel and returns once the connection and the forward are
+    /// actually gone — and once every command queued before this one has
+    /// taken effect.
+    ///
+    /// Cancelling the run task is what ends a backoff sleep, a dial in
+    /// flight, and `RemoteForward`'s own `cancel-tcpip-forward`. The
+    /// teardown is repeated in `performStop()` rather than left to the
+    /// cancelled task, because a task cancelled between two `await`s may
+    /// return without reaching its own teardown — and a caller of `stop()` is
+    /// entitled to a tunnel that is gone when the call returns.
+    public func stop() async {
+        await command { runner in
+            await runner.performStop()
+        }
+    }
+
+    /// Runs `body` after every command already queued on this runner, and
+    /// returns when it has run.
+    ///
+    /// **The commands are a chain, not a flag**, and two rounds of review
+    /// were spent learning why. Both `start` and `stop` suspend in the
+    /// middle — `stop` on the run task's own teardown, `start` on whatever
+    /// stands before it — and each suspension leaves the actor free with the
+    /// runner's fields in an intermediate shape. Anything that looks at
+    /// those fields to decide whether it may proceed is reading a state
+    /// nobody is in:
+    ///
+    /// - Round 1's CRITICAL: `stop()` cleared `task` and then suspended, so
+    ///   a `start` landing there saw `task == nil` and began a second run
+    ///   that the resuming `stop()` tore down — publishing `.stopped` over a
+    ///   tunnel that was up, and leaving a live SSH connection behind.
+    /// - Round 2's CRITICAL, the mirror: a `stop` that coalesced onto a stop
+    ///   already in flight returned as soon as THAT one finished, without
+    ///   noticing the `start` parked between them. The parked start then
+    ///   dialled, so the tunnel was up after the caller's last command was
+    ///   stop.
+    ///
+    /// A chain has no such window because it does not ask a question at all.
+    /// Each command captures the current tail, appends itself, and runs only
+    /// once its predecessor is over — so commands take effect in the order
+    /// they reached the actor, and the last one really is the last word. Two
+    /// stops in a row still cost nothing: `performStop()` on an already
+    /// stopped runner finds no task, releases nothing and publishes nothing.
+    ///
+    /// `lastCommand` is cleared only by the command that is still the tail
+    /// when it finishes, so a chain that has grown behind this one is left
+    /// intact.
+    private func command(_ body: @escaping @Sendable (TunnelRunner) async -> Void) async {
+        let previous = lastCommand
+        let mine = Task<Void, Never> { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            await body(self)
+        }
+        lastCommand = mine
+        await mine.value
+        if lastCommand == mine { lastCommand = nil }
+    }
+
+    /// The start itself, run from the command chain.
+    ///
+    /// A start that finds a run already going is a no-op — the tunnel the
+    /// caller asked for is the tunnel that is running.
+    private func performStart(decider: HostKeyDecider) async {
         guard task == nil else { return }
         runID += 1
         let id = runID
@@ -154,15 +203,7 @@ public actor TunnelRunner {
         }
     }
 
-    /// Stops the tunnel and returns once the connection and the forward are
-    /// actually gone.
-    ///
-    /// Cancelling the run task is what ends a backoff sleep, a dial in
-    /// flight, and `RemoteForward`'s own `cancel-tcpip-forward`. The
-    /// teardown is repeated here rather than left to the cancelled task,
-    /// because a task cancelled between two `await`s may return without
-    /// reaching its own teardown — and a caller of `stop()` is entitled to
-    /// a tunnel that is gone when the call returns.
+    /// The stop itself, run from the command chain.
     ///
     /// **`await running?.value` is not itself cancellable**, and that is the
     /// shape `RemoteForward.stop()`'s own doc comment warns about:
@@ -180,42 +221,20 @@ public actor TunnelRunner {
     /// waiting. Measured 2026-09-06 by planting the removal of the
     /// `cancel()` below — the suite then hung rather than going red, which
     /// is exactly what this paragraph describes.
-    public func stop() async {
-        if let inFlight = stopping {
-            // A second stop has nothing of its own to do: the first one
-            // cancels the same run task, releases the same resources and
-            // publishes the same `.stopped`. It only has to not return
-            // before that has happened.
-            await inFlight.value
-            return
-        }
-        let mine = Task<Void, Never> { [weak self] in
-            await self?.performStop()
-        }
-        stopping = mine
-        await mine.value
-    }
-
-    /// The stop itself, run as its OWN task so that `start(decider:)` and a
-    /// second `stop()` have something to await.
     ///
-    /// Nothing between `stopping = mine` above and this body's first line
-    /// suspends, so this cannot run before the field that publishes it is
-    /// set.
+    /// Idempotent: on a runner that is already stopped there is no task to
+    /// cancel, nothing to release and nothing to publish. That is what lets
+    /// `command(_:)` queue a second stop unconditionally instead of asking
+    /// whether one is needed.
     private func performStop() async {
         let running = task
         task = nil
         running?.cancel()
         await running?.value
         await releaseCurrent()
-        if state != .stopped {
-            apply(.stop)
-            log(.info, "tunnel \(profile.name) stop")
-        }
-        // Last, with no `await` after it: a `start` parked on this task's
-        // completion resumes only once this task is over, and must find the
-        // field already cleared rather than loop on a task that has ended.
-        stopping = nil
+        guard state != .stopped else { return }
+        apply(.stop)
+        log(.info, "tunnel \(profile.name) stop")
     }
 
     // MARK: - The run loop
@@ -295,10 +314,10 @@ public actor TunnelRunner {
     /// call `stop()` first.
     ///
     /// The identity check is what keeps it from clobbering a LATER run's
-    /// task. It cannot fire today (a `start` waits for any stop in flight,
-    /// so a second run cannot exist while a first one is still running), and
-    /// it is kept because that is an invariant of `start`, not of this
-    /// method.
+    /// task. It cannot fire today — commands run one after another on
+    /// `command(_:)`'s chain, so a second run cannot begin while a first one
+    /// is still going — and it is kept because that is an invariant of the
+    /// chain, not of this method.
     private func runEnded(_ id: Int) {
         guard id == runID else { return }
         task = nil
@@ -470,12 +489,25 @@ public actor TunnelRunner {
     /// The tunnel category's one writer.
     ///
     /// `DiagnosticLog.shared` directly, like `TunnelStore` and
-    /// `CitadelFileSystem` — the house pattern, and what keeps
-    /// `DiagnosticLogSecrecyGuardTests`' scan able to see these call sites at
-    /// all (it matches the literal text `DiagnosticLog.shared.log(`). The
-    /// tests that read these lines therefore live in
-    /// `DiagnosticLogSharedSinkTests`, the one `.serialized` suite allowed to
-    /// touch the process-wide sink.
+    /// `CitadelFileSystem` — the house pattern. The tests that read these
+    /// lines therefore live in `DiagnosticLogSharedSinkTests`, the one
+    /// `.serialized` suite allowed to touch the process-wide sink.
+    ///
+    /// **This wrapper used to hide every tunnel line from the secrecy
+    /// guard**, and this comment used to claim the opposite. The guard
+    /// matches the literal text `DiagnosticLog.shared.log(` and reads the
+    /// `\(…)` inside that call's arguments; routed through here, the only
+    /// arguments it ever saw were `level, "tunnel", message()` — no
+    /// interpolation at all — so its negative check passed for the whole
+    /// category by finding nothing to look at, exactly the way CLAUDE.md's
+    /// "only a NEGATIVE check can go stale in silence" describes. Found in
+    /// review, 2026-09-06. `DiagnosticLogSecrecyGuardTests` now also walks a
+    /// file's own wrapper (structurally: any function whose body contains
+    /// the marker) and scans ITS call sites, with a positive beside the
+    /// negative asserting that the `tunnel` category contributes more than
+    /// zero scanned interpolations. So a wrapper is safe to keep — but it is
+    /// safe because the guard was taught about it, not because of anything
+    /// this file does.
     ///
     /// **No `reason=` is ever written here by hand.** Where an error is in
     /// hand — a failed dial, a failed forward start, a refused host key — the

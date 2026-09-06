@@ -4,13 +4,13 @@ import Testing
 
 @testable import macSCPCore
 
-/// The nine tests that MUST touch `DiagnosticLog.shared`, because the
+/// The ten tests that MUST touch `DiagnosticLog.shared`, because the
 /// production code under test — `LocalFileSystem`, `TransferEngine`,
 /// `ConnectionViewModel`, `RemoteBrowserViewModel`, `TunnelRunner` — logs
 /// through that exact singleton and cannot be pointed at a private instance
 /// instead (their call sites spell `DiagnosticLog.shared.log(` directly).
-/// Nine counted 2026-09-06, in Task 5's fix round 1 — seven before that
-/// task, eight after its first commit. Every other diagnostic-log test lives in
+/// Ten counted 2026-09-06, in Task 5's fix round 2 — seven before that
+/// task, eight after its first commit, nine after round 1. Every other diagnostic-log test lives in
 /// `DiagnosticLogTests.swift` against its own, private `DiagnosticLog()`.
 ///
 /// `DiagnosticLogSharedSinkIsolationGuardTests` holds this split in place:
@@ -598,5 +598,49 @@ struct DiagnosticLogSharedSinkTests {
         #expect(
             contents.contains(
                 "[info] tunnel tunnel \(profile.name) failed reason=host key MISMATCH for"))
+    }
+
+    /// The same key, for the failure a user actually has to act on: a local
+    /// port that is already taken.
+    ///
+    /// Round 2, IMPORTANT: `DialSupport.reason(for:)` had no `TunnelFailure`
+    /// arm and `TunnelFailure` conforms to no `LocalizedError`, so the whole
+    /// family reached this line as Foundation's generic sentence with a case
+    /// INDEX in it — `portInUse(port: 8080)` wrote "(macSCPCore.TunnelFailure
+    /// error 0.)" and dropped the port, which is the one thing the line
+    /// exists to say. The arm added in that round is pinned here, on the
+    /// whole sentence rather than a prefix.
+    ///
+    /// The failure is planted on the runtime START, not on the dial, because
+    /// that is where a bind failure really comes from — the listener is what
+    /// takes the port.
+    @Test("TunnelRunner's failed line names the port a bind could not take")
+    func tunnelRunnerFailedLineNamesAPortInUse() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let profile = TunnelProfile(
+            sessionID: UUID(), name: "web-\(UUID().uuidString.prefix(8))",
+            kind: .local(bind: "127.0.0.1", localPort: 8080, host: "internal", remotePort: 80))
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080)
+        runtimes.failStarts([1], with: TunnelFailure.portInUse(port: 8080))
+        let runner = TunnelRunner(
+            profile: profile, connect: TunnelFakeConnections().connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        let fixedNow = Date()
+        DiagnosticLog.shared.configure(
+            level: .info, directory: logDirectory, now: { fixedNow })
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitForFailure()
+        await DiagnosticLog.shared.flush()
+
+        let contents = fileContents(ownFileURL(directory: logDirectory, fixedNow: fixedNow))
+        #expect(
+            contents.contains(
+                "[info] tunnel tunnel \(profile.name) failed reason=port 8080 is already in use"))
     }
 }

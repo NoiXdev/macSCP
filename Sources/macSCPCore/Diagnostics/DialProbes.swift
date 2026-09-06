@@ -144,10 +144,11 @@ public enum DialSupport {
     /// host keys — in the row this file documents
     /// as the answer to "why does this not connect", and for the four
     /// commonest SSH dial failures. Every arm below is an exhaustive
-    /// `switch` with no `default` — counted 2026-09-04: FOUR of them, over
-    /// `HostKeyError`, `SSHKeyError`, `AgentError` and `RemoteFSError` — so
-    /// a case added to any of the four fails to compile here until someone
-    /// writes its sentence.
+    /// `switch` with no `default` — re-counted 2026-09-06: FIVE of them, over
+    /// `HostKeyError`, `SSHKeyError`, `AgentError`, `RemoteFSError` and
+    /// `TunnelFailure` (four until the port-forwarding plan's Task 5 added
+    /// the fifth) — so a case added to any of the five fails to compile here
+    /// until someone writes its sentence.
     ///
     /// `RemoteFSError` is spelled out too, and this comment used to argue
     /// the opposite — that every one of its cases carries strings this
@@ -162,6 +163,36 @@ public enum DialSupport {
     /// authority scan ends at the slash and the line is copied through
     /// whole. So each case gets one fixed sentence instead, and the two
     /// free-text payloads are dropped rather than rendered.
+    ///
+    /// `TunnelFailure` is spelled out because it conforms to no
+    /// `LocalizedError` either, and its generic rendering was measured on
+    /// 2026-09-06 as the exact shape the paragraph above describes:
+    /// `portInUse(port: 8080)` reached `TunnelState.failed(reason:)` and the
+    /// `tunnel … failed reason=` line as "The operation couldn't be
+    /// completed. (macSCPCore.TunnelFailure error 0.)" — the port, the one
+    /// thing a person can act on, replaced by a case index.
+    ///
+    /// Its four `reason:` payloads are passed through rather than dropped,
+    /// which is the OPPOSITE of the decision taken for `RemoteFSError` above,
+    /// and the difference is where the text comes from. `RemoteFSError`'s
+    /// free text is composed out of an endpoint the user typed;
+    /// `TunnelFailure`'s is not composed out of user input at all. Counted
+    /// 2026-09-06 — 14 construction sites under `Sources/` carry a `reason:`,
+    /// and every one of them passes either this function's own output or a
+    /// fixed English sentence written in this repository: SEVEN pass
+    /// `DialSupport.reason(for:)` (or `CitadelFileSystem.bindReason(for:
+    /// bind:)`, which is that plus a fixed clause naming `GatewayPorts`) —
+    /// `CitadelFileSystem.openDirectTCPIP` and `withRemotePortForward`,
+    /// `LocalForwardListener.acceptFailure` and `bindFailure`,
+    /// `RemoteForward.serve`, `startFailure` and `pairFailure` — and SEVEN
+    /// pass a literal: `CitadelFileSystem`'s port-0 refusal,
+    /// `LocalForwardListener`'s "the bound socket reports no port",
+    /// `RemoteForward`'s two answer-bound sentences and its two "the forward
+    /// has been stopped", and `TunnelConnection`'s "port forwarding needs an
+    /// SSH session". A payload that is already this function's output must
+    /// not be re-mapped (that is `LocalForwardListener.acceptFailure`'s own
+    /// argument, one layer down), and a payload that is a fixed sentence has
+    /// nothing to hide.
     ///
     /// Everything else — a `URLError`, an NIO or Citadel error — is reduced
     /// to `localizedDescription` and never `String(describing:)`, because
@@ -181,6 +212,27 @@ public enum DialSupport {
                 return "host key MISMATCH for \(host): expected \(expected), got \(presented)"
             case .rejectedByUser:
                 return "the host key is not known to this app and was not accepted"
+            }
+        case let error as TunnelFailure:
+            switch error {
+            case .portInUse(let port):
+                // The port is the whole finding: it is what the user has to
+                // free, or change in the profile.
+                return "port \(port) is already in use"
+            case .bindFailed(let reason):
+                return reason
+            case .channelOpenFailed(let reason):
+                return reason
+            case .connectFailed(let reason):
+                return reason
+            case .pumpFailed(let reason):
+                return reason
+            case .alreadyStarted:
+                // Not a condition a user can be in: every forward type is
+                // single-use by contract and a reconnect builds a new one.
+                // A sentence rather than a case index, because if it ever
+                // does reach a person it should say what happened.
+                return "this forward has already been started"
             }
         case let error as SSHKeyError:
             switch error {

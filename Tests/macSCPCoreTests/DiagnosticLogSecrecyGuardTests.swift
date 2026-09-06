@@ -8,12 +8,19 @@ import Testing
 /// (NEGATIVE — no interpolation `\(…)` inside a call's arguments names an
 /// identifier that looks like a secret), and, beside it, two POSITIVE
 /// checks that keep the negative from going stale in silence the way
-/// "Guards that name what they watch" describes: 38 call sites exist under
-/// `Sources/` as of 2026-09-06 — `grep -rc "DiagnosticLog.shared.log("` over
-/// `Sources/`, summed, re-counted in the pass that added the `tunnel`
-/// category (`docs/BACKLOG.md` records 27, the number measured on
+/// "Guards that name what they watch" describes: `grep -rc
+/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **39** as
+/// of 2026-09-06 (re-counted in Task 5's round 2, which added the second
+/// `reason:` overload wrapper in `TunnelRunner`; 38 before it, 27 on
+/// 2026-09-05). That grep and this scan do NOT count the same thing, and
+/// the difference is two: the grep counts the literal text wherever it
+/// appears, INCLUDING inside a doc comment — `TabDetachSequence.swift` and
+/// `TunnelRunner.swift` each spell it in prose — while this scan blanks
+/// comments first and sees 37 real calls. Both numbers are stated because
+/// either one alone is a claim somebody will later check with the other's
+/// method. (`docs/BACKLOG.md` records 27, the number measured on
 /// 2026-09-05; that row is a dated record of that day, not a claim about
-/// HEAD). The assertion below holds the threshold at 20 rather than any
+/// HEAD.) The assertion below holds the threshold at 20 rather than any
 /// exact number, deliberately: it exists to catch a wholesale regression
 /// (the scan losing its footing, or most of the instrumentation being
 /// reverted), not to be re-edited on every call site a later task adds or
@@ -106,6 +113,202 @@ struct DiagnosticLogSecrecyGuardTests {
             sites.append(contentsOf: Self.callSites(in: stripped, file: file.lastPathComponent))
         }
         return sites
+    }
+
+    /// One file's forwarded call sites, with the categories that file's own
+    /// DIRECT sites use — so the positive below can ask what a given category
+    /// actually contributes to the scan.
+    private struct ForwardedSites {
+        let file: String
+        let categories: Set<String>
+        let sites: [CallSite]
+    }
+
+    /// Call sites of a file's OWN wrapper around the marker.
+    ///
+    /// The hole this closes (round 2 of the port-forwarding plan's Task 5,
+    /// found in review): the negative check reads the `\(…)` inside a
+    /// marker call's arguments, and a file that routes every line through a
+    /// private wrapper has exactly one marker call whose arguments are the
+    /// wrapper's own parameters — `level, "tunnel", message()`. No
+    /// interpolation, nothing to scan, and the negative check passes for the
+    /// whole category by finding nothing to look at. That is precisely the
+    /// "a negative check that starts matching nothing reads exactly like a
+    /// check that is satisfied" failure CLAUDE.md's "Guards that name what
+    /// they watch" describes, and `TunnelRunner` was in it: its two wrappers
+    /// were the only scanned spans for the `tunnel` category, and the real
+    /// lines — the ones that interpolate — were invisible.
+    ///
+    /// Structural, not by name. A forwarder is a function whose BODY
+    /// contains the marker, found by brace-matching over the
+    /// strings-and-comments-blanked text (so a brace inside a literal cannot
+    /// close a body early) and taking the innermost such function per marker
+    /// occurrence. Its own call sites in the same file are then collected the
+    /// same way the marker's are. The marker occurrences are blanked out
+    /// first, because `DiagnosticLog.shared.log(` ends in `log(` and would
+    /// otherwise match a forwarder named `log`; a declaration (`func log(`)
+    /// is skipped for the same reason.
+    ///
+    /// Deliberately NOT limited to `TunnelRunner`, or to a wrapper named
+    /// `log`: whatever helper a file routes its lines through gets scanned,
+    /// which is the property this check is supposed to have.
+    private static func collectForwardedCallSites() throws -> [ForwardedSites] {
+        var collected: [ForwardedSites] = []
+        for file in swiftFiles(under: sourcesRoot) {
+            let raw = try String(contentsOf: file, encoding: .utf8)
+            let stripped = try SwiftSource.stripComments(raw)
+            guard !stripped.contains("final class DiagnosticLog: Sendable") else { continue }
+            let markers = Self.occurrences(of: marker, in: stripped)
+            guard !markers.isEmpty else { continue }
+            let blanked = try SwiftSource.stripCommentsAndStrings(raw)
+            let names = Self.forwarderNames(markerStarts: markers, blanked: blanked)
+            guard !names.isEmpty else { continue }
+
+            var chars = Array(stripped)
+            for start in markers {
+                for index in start..<min(start + marker.count, chars.count) { chars[index] = " " }
+            }
+            let scannable = String(chars)
+            var sites: [CallSite] = []
+            for name in names.sorted() {
+                sites.append(
+                    contentsOf: Self.callSites(
+                        callingFunctionNamed: name, in: scannable,
+                        file: file.lastPathComponent))
+            }
+            guard !sites.isEmpty else { continue }
+            let categories = Set(
+                Self.callSites(in: stripped, file: file.lastPathComponent)
+                    .compactMap { Self.categoryLiteral(in: $0.arguments) })
+            collected.append(
+                ForwardedSites(
+                    file: file.lastPathComponent, categories: categories, sites: sites))
+        }
+        return collected
+    }
+
+    /// Character offsets of every occurrence of `needle` in `text`.
+    private static func occurrences(of needle: String, in text: String) -> [Int] {
+        var found: [Int] = []
+        var searchFrom = text.startIndex
+        while let range = text.range(of: needle, range: searchFrom..<text.endIndex) {
+            found.append(text.distance(from: text.startIndex, to: range.lowerBound))
+            searchFrom = range.upperBound
+        }
+        return found
+    }
+
+    /// The name of the innermost function whose body contains each marker
+    /// occurrence.
+    private static func forwarderNames(markerStarts: [Int], blanked: String) -> Set<String> {
+        let spans = Self.functionSpans(in: blanked)
+        var names: Set<String> = []
+        for start in markerStarts {
+            let enclosing = spans
+                .filter { $0.body.contains(start) }
+                .min { $0.body.count < $1.body.count }
+            if let enclosing { names.insert(enclosing.name) }
+        }
+        return names
+    }
+
+    private struct FunctionSpan {
+        let name: String
+        let body: Range<Int>
+    }
+
+    /// Every `func <name>` in `blanked`, with its brace-matched body.
+    ///
+    /// `blanked` must be the strings-AND-comments-blanked text: a `{` inside
+    /// a string literal would otherwise open a body that never closes where
+    /// it should. Both stripping modes are length-preserving, so the offsets
+    /// this returns index the comments-only text just as well.
+    private static func functionSpans(in blanked: String) -> [FunctionSpan] {
+        let chars = Array(blanked)
+        var spans: [FunctionSpan] = []
+        var i = 0
+        let keyword = Array("func ")
+        while i + keyword.count < chars.count {
+            guard Array(chars[i..<(i + keyword.count)]) == keyword else {
+                i += 1
+                continue
+            }
+            let before = i == 0 ? " " : chars[i - 1]
+            guard !before.isLetter, !before.isNumber, before != "_" else {
+                i += 1
+                continue
+            }
+            var nameEnd = i + keyword.count
+            while nameEnd < chars.count,
+                chars[nameEnd].isLetter || chars[nameEnd].isNumber || chars[nameEnd] == "_"
+            {
+                nameEnd += 1
+            }
+            let name = String(chars[(i + keyword.count)..<nameEnd])
+            guard !name.isEmpty else {
+                i += 1
+                continue
+            }
+            var open = nameEnd
+            while open < chars.count, chars[open] != "{" { open += 1 }
+            guard open < chars.count else { break }
+            var depth = 0
+            var j = open
+            while j < chars.count {
+                if chars[j] == "{" { depth += 1 }
+                if chars[j] == "}" {
+                    depth -= 1
+                    if depth == 0 { break }
+                }
+                j += 1
+            }
+            guard j < chars.count else {
+                i = nameEnd
+                continue
+            }
+            spans.append(FunctionSpan(name: name, body: (open + 1)..<j))
+            i = nameEnd
+        }
+        return spans
+    }
+
+    /// Every call to `name(` in `text` that is not its own declaration, with
+    /// the same brace-balanced argument extraction the marker gets.
+    private static func callSites(
+        callingFunctionNamed name: String, in text: String, file: String
+    ) -> [CallSite] {
+        var results: [CallSite] = []
+        let chars = Array(text)
+        var searchFrom = text.startIndex
+        let needle = name + "("
+        while let range = text.range(of: needle, range: searchFrom..<text.endIndex) {
+            let start = text.distance(from: text.startIndex, to: range.lowerBound)
+            searchFrom = range.upperBound
+            // A longer identifier ending in `name` is a different function.
+            if start > 0 {
+                let before = chars[start - 1]
+                if before.isLetter || before.isNumber || before == "_" { continue }
+            }
+            // `func name(` is the declaration, not a call.
+            var back = start - 1
+            while back >= 0, chars[back] == " " { back -= 1 }
+            if back >= 3, String(chars[(back - 3)...back]) == "func" { continue }
+
+            var i = start + needle.count
+            let argStart = i
+            var depth = 1
+            while i < chars.count, depth > 0 {
+                switch chars[i] {
+                case "(": depth += 1
+                case ")": depth -= 1
+                default: break
+                }
+                i += 1
+            }
+            guard depth == 0 else { break }
+            results.append(CallSite(file: file, arguments: String(chars[argStart..<(i - 1)])))
+        }
+        return results
     }
 
     /// Finds every occurrence of `marker` in `text` and extracts the
@@ -277,13 +480,35 @@ struct DiagnosticLogSecrecyGuardTests {
     /// `marker` string, the file walk, or the brace counter would also
     /// drive toward zero.
     @Test func noInterpolationNamesASecretIdentifier() throws {
-        let sites = try Self.collectCallSites()
+        let direct = try Self.collectCallSites()
+        let forwarded = try Self.collectForwardedCallSites()
+        let sites = direct + forwarded.flatMap(\.sites)
         #expect(
-            sites.count >= 20,
+            direct.count >= 20,
             """
-            only \(sites.count) DiagnosticLog.shared.log( call sites found under Sources/ — \
+            only \(direct.count) DiagnosticLog.shared.log( call sites found under Sources/ — \
             the scan is not reaching the files it is meant to guard, or the instrumentation \
             this task added regressed.
+            """)
+
+        // The second positive, and the one round 2 added: a category whose
+        // lines all go through a file's own wrapper contributes NOTHING to
+        // the negative below unless `collectForwardedCallSites()` reaches
+        // them — the wrapper's own marker call interpolates nothing at all.
+        // `tunnel` is that category (`TunnelRunner` is the only file under
+        // Sources/ that wraps the marker as of 2026-09-06), so it is the one
+        // named here; a rewrite that broke the forwarding walk would drive
+        // this to zero while every other check stayed green.
+        let tunnelInterpolations = forwarded
+            .filter { $0.categories.contains("tunnel") }
+            .flatMap { $0.sites }
+            .flatMap { Self.interpolations(in: $0.arguments) }
+        #expect(
+            tunnelInterpolations.count > 0,
+            """
+            the tunnel category contributed no scanned interpolations at all — its lines are \
+            written through a wrapper, so without the forwarding walk the negative check below \
+            reads an empty span and passes by finding nothing to look at.
             """)
 
         var offenders: [String] = []
