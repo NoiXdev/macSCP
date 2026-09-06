@@ -1415,6 +1415,44 @@ private final class SFTPReadHandle: Sendable {
     }
 }
 
+extension CitadelFileSystem {
+    /// Opens a `direct-tcpip` channel to `host:port` **as the far side
+    /// reaches it** — the child channel a local or dynamic forward pumps
+    /// bytes through.
+    ///
+    /// A fourth kind of child channel on this connection, beside SFTP, the
+    /// terminal's PTY and the checksum `exec`, and it is here for the same
+    /// reason those are: the `SSHClient` stays private to this class, so a
+    /// tunnel gets a `Channel` and never the client that made it. Opening one
+    /// does not disturb the connection or the other channels on it.
+    ///
+    /// The returned channel speaks `ByteBuffer` in both directions: Citadel
+    /// installs its own `DataToBufferCodec` before this initializer runs
+    /// (`DirectTCPIP+Client.swift`), which also turns remote half-closure on.
+    ///
+    /// `autoRead` is off on the way out. Nothing is pumping the channel yet,
+    /// and bytes read before `BytePump` is installed would be fired at the
+    /// end of a pipeline that drops them — see `LocalForwardListener
+    /// .DirectTCPIPFactory`, whose contract this satisfies.
+    ///
+    /// The originator address is `127.0.0.1:0`. It is a courtesy field in the
+    /// channel-open request (the server may log it); this app is the
+    /// originator, and it names no port it is not actually listening on.
+    public func openDirectTCPIP(host: String, port: Int) async throws -> Channel {
+        do {
+            let originator = try SocketAddress(ipAddress: "127.0.0.1", port: 0)
+            return try await client.createDirectTCPIPChannel(
+                using: SSHChannelType.DirectTCPIP(
+                    targetHost: host, targetPort: port, originatorAddress: originator)
+            ) { channel in
+                channel.setOption(ChannelOptions.autoRead, value: false)
+            }
+        } catch {
+            throw TunnelFailure.channelOpenFailed(reason: DialSupport.reason(for: error))
+        }
+    }
+}
+
 extension CitadelFileSystem: RemoteShellProvider {
     /// Shell channel over the SAME connection as SFTP (multiplexed, like WinSCP).
     public func openShell(
