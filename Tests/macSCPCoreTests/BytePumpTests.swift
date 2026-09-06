@@ -168,7 +168,23 @@ struct BytePumpTests {
         local.close(promise: nil)
         finish(local, remote)
 
-        #expect(seen.events == [.opened, .closed(bytesIn: 4, bytesOut: 3)])
+        // Pattern-matched rather than compared whole, because `closed`
+        // carries a measured `duration` now: an exact `==` against a
+        // literal event would have to name a number the clock produces.
+        // The bytes are asserted exactly; the duration only as a FLOOR
+        // (`>= .zero`), which no slow machine can defeat — CLAUDE.md, "A
+        // wall-clock ceiling in a test measures the runner".
+        #expect(seen.events.count == 2)
+        #expect(seen.events.first == .opened)
+        let closeReport: (bytesIn: Int, bytesOut: Int, duration: Duration)? = {
+            guard case .closed(let bytesIn, let bytesOut, let duration) = seen.events.last else {
+                return nil
+            }
+            return (bytesIn, bytesOut, duration)
+        }()
+        #expect(closeReport?.bytesIn == 4)
+        #expect(closeReport?.bytesOut == 3)
+        #expect((closeReport?.duration ?? .seconds(-1)) >= .zero)
     }
 
     /// Added BEFORE activation: nothing at all until `channelActive`, then

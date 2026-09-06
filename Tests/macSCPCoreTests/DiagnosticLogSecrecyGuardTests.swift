@@ -8,17 +8,19 @@ import Testing
 /// (NEGATIVE — no interpolation `\(…)` inside a call's arguments names an
 /// identifier that looks like a secret), and, beside it, two POSITIVE
 /// checks that keep the negative from going stale in silence the way
-/// "Guards that name what they watch" describes: 27 call sites exist under
-/// `Sources/` as of 2026-09-05 — `grep -c "DiagnosticLog.shared.log("` over
-/// `Sources/`, counted the moment this suite was written (`docs/BACKLOG.md`
-/// carries the same number). The assertion below holds the threshold at 20
-/// rather than 27 itself, deliberately: it exists to catch a wholesale
-/// regression (the scan losing its footing, or most of the instrumentation
-/// being reverted), not to be re-edited on every call site a later task
-/// adds or removes — see `noInterpolationNamesASecretIdentifier`'s own
-/// assertion message for the up-to-date count if this ever goes red. Every
-/// category literal used is also checked against the fixed eight the
-/// diagnostic-log design settled on.
+/// "Guards that name what they watch" describes: 38 call sites exist under
+/// `Sources/` as of 2026-09-06 — `grep -rc "DiagnosticLog.shared.log("` over
+/// `Sources/`, summed, re-counted in the pass that added the `tunnel`
+/// category (`docs/BACKLOG.md` records 27, the number measured on
+/// 2026-09-05; that row is a dated record of that day, not a claim about
+/// HEAD). The assertion below holds the threshold at 20 rather than any
+/// exact number, deliberately: it exists to catch a wholesale regression
+/// (the scan losing its footing, or most of the instrumentation being
+/// reverted), not to be re-edited on every call site a later task adds or
+/// removes — see `noInterpolationNamesASecretIdentifier`'s own assertion
+/// message for the up-to-date count if this ever goes red. Every category
+/// literal used is also checked against the fixed nine the diagnostic-log
+/// design settled on plus the one the port-forwarding plan added.
 ///
 /// Scans `SwiftSource.stripComments`'s output, not
 /// `stripCommentsAndStrings`'s: blanking string literals blanks what they
@@ -59,13 +61,18 @@ struct DiagnosticLogSecrecyGuardTests {
         "presigned", "fingerprint", "hostkey",
     ]
 
-    /// The fixed category list the diagnostic-log design settled on. A
-    /// category outside this list is either a typo (a line nobody can
-    /// filter on the way the design's other lines can) or an undocumented
-    /// ninth category that needs a decision, not a silent addition.
+    /// The fixed category list: the eight the diagnostic-log design settled
+    /// on, plus `tunnel`, added by Task 5 of the port-forwarding plan for
+    /// `TunnelRunner`'s own lines (`tunnel <name> start|active port=…|
+    /// failed …|reconnecting attempt=…|stop` at `.info`, one `.debug` line
+    /// per accepted connection). Nine as of 2026-09-06, counted in this
+    /// pass. A category outside this list is either a typo (a line nobody
+    /// can filter on the way the design's other lines can) or an
+    /// undocumented tenth category that needs a decision, not a silent
+    /// addition.
     private static let fixedCategories: Set<String> = [
         "app", "browser.local", "browser.remote", "connect", "sftp",
-        "shell", "transfer", "error",
+        "shell", "transfer", "error", "tunnel",
     ]
 
     private struct CallSite {
@@ -312,9 +319,11 @@ struct DiagnosticLogSecrecyGuardTests {
     @Test func everyCategoryLiteralIsOnTheFixedList() throws {
         let sites = try Self.collectCallSites()
         var offenders: [String] = []
+        var usedLiterals: Set<String> = []
         var resolvedIdentifiers: Set<String> = []
         for site in sites {
             if let category = Self.categoryLiteral(in: site.arguments) {
+                usedLiterals.insert(category)
                 if !Self.fixedCategories.contains(category) {
                     offenders.append(
                         "\(site.file): category \"\(category)\" is not one of \(Self.fixedCategories.sorted())"
@@ -345,6 +354,28 @@ struct DiagnosticLogSecrecyGuardTests {
             }
         }
         #expect(offenders.isEmpty, "\(offenders.joined(separator: "\n"))")
+
+        // The positive beside the list itself. A `fixedCategories` entry
+        // nobody writes is a list that has stopped describing the tree, and
+        // the check above cannot notice: it only ever reads the list to
+        // ACCEPT with, so an entry for a category no call site uses is
+        // silently fine — the "only a NEGATIVE check can go stale in
+        // silence" shape from CLAUDE.md, one level up. Every entry is
+        // required to be reached by at least one call site whose category
+        // is a plain literal, EXCEPT the two `RemoteBrowserViewModel`
+        // passes dynamically through `logCategory` (checked above by
+        // resolving that identifier's literal values instead).
+        let dynamicOnly: Set<String> = ["browser.local", "browser.remote"]
+        let unusedEntries = Self.fixedCategories.subtracting(usedLiterals)
+            .subtracting(dynamicOnly).sorted()
+        #expect(
+            unusedEntries.isEmpty,
+            """
+            \(unusedEntries) are on the fixed category list but no \
+            DiagnosticLog.shared.log(...) call under Sources/ spells any of them as a literal \
+            category — either the instrumentation that used them was removed (and the list \
+            should shrink with it) or the scan is no longer reading the calls.
+            """)
     }
 
     /// Whether a call site's arguments use the `reason:` labeled overload

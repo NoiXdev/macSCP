@@ -403,6 +403,63 @@ struct TunnelRigITests {
             #expect(isBindFailure)
         }
     }
+
+    /// `TunnelRunner` end to end, with the LIVE runtime factory: the runner
+    /// dials the rig for itself, binds an ephemeral local forward, reports
+    /// `active`, carries a second, independent SFTP connection through that
+    /// port, and gives everything back on `stop()`.
+    ///
+    /// The unit suite (`TunnelRunnerTests`) drives the same lifecycle
+    /// against doubles; what only the rig can prove is that
+    /// `LiveTunnelRuntimeFactory` wires the real `LocalForwardListener` to
+    /// the real connection's `openDirectTCPIP` — a mis-wiring there is
+    /// invisible to every fake.
+    ///
+    /// `localPort: 0` so nothing on this machine is claimed twice; the
+    /// runner's `boundPort` is the answer, read from the runtime through the
+    /// state stream's `active` rather than guessed.
+    @Test func theRunnerCarriesALocalForwardEndToEnd() async throws {
+        try await withRigTeardown { teardown in
+            let carrierHosts = throwawayDirectory("runner-carrier")
+            let tunnelledHosts = throwawayDirectory("runner-tunnelled")
+            teardown.add {
+                try? FileManager.default.removeItem(at: carrierHosts)
+                try? FileManager.default.removeItem(at: tunnelledHosts)
+            }
+
+            let session = sshSession(
+                name: "rig", host: "127.0.0.1", port: 2222, username: "testuser",
+                authKind: .password)
+            let profile = TunnelProfile(
+                sessionID: session.id, name: "rig-runner",
+                kind: .local(
+                    bind: "127.0.0.1", localPort: 0, host: "127.0.0.1", remotePort: 2222))
+            let runner = TunnelRunner(
+                profile: profile,
+                connect: { decider in
+                    try await TunnelConnection.connect(
+                        session: session, secrets: [RigSecret()],
+                        knownHosts: KnownHostsStore(directory: carrierHosts), decider: decider)
+                })
+            let states = TunnelStateCollector(runner.states)
+            teardown.add { await runner.stop() }
+
+            await runner.start(decider: .asking { _ in true })
+            try await states.waitFor(.active(connections: 0))
+
+            let port = try #require(await runner.boundPort)
+            #expect(port > 0)
+            let throughTheTunnel = try await connectWithRetry {
+                try await tunnelledConnection(port: port, knownHosts: tunnelledHosts)
+            }
+            teardown.add { await throughTheTunnel.disconnect() }
+            let items = try await throughTheTunnel.list(path: "/data/seed")
+            #expect(items.map(\.name).contains("hello.txt"))
+
+            await runner.stop()
+            #expect(await runner.state == .stopped)
+        }
+    }
 }
 
 // MARK: - Helpers

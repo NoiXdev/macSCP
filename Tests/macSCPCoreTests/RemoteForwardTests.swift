@@ -80,7 +80,7 @@ struct RemoteForwardTests {
             try await awaitCancellably(inbound.closeFuture)
             #expect(inbound.isActive == false)
             let closedAfterStop = seen.events.contains { event in
-                if case .closed(let bytesIn, let bytesOut) = event {
+                if case .closed(let bytesIn, let bytesOut, _) = event {
                     return bytesIn == 4 && bytesOut == 4
                 }
                 return false

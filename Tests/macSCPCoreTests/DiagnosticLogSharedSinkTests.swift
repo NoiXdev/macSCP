@@ -4,21 +4,21 @@ import Testing
 
 @testable import macSCPCore
 
-/// The seven tests that MUST touch `DiagnosticLog.shared`, because the
+/// The eight tests that MUST touch `DiagnosticLog.shared`, because the
 /// production code under test — `LocalFileSystem`, `TransferEngine`,
-/// `ConnectionViewModel`, `RemoteBrowserViewModel` — logs through that
-/// exact singleton and cannot be pointed at a private instance instead
-/// (`DiagnosticLog.swift`'s own call sites spell `DiagnosticLog.shared.log(`
-/// directly). Every other diagnostic-log test lives in
+/// `ConnectionViewModel`, `RemoteBrowserViewModel`, `TunnelRunner` — logs
+/// through that exact singleton and cannot be pointed at a private instance
+/// instead (their call sites spell `DiagnosticLog.shared.log(` directly).
+/// Eight counted 2026-09-06, in the pass that added the tunnel-line test —
+/// seven before it. Every other diagnostic-log test lives in
 /// `DiagnosticLogTests.swift` against its own, private `DiagnosticLog()`.
 ///
 /// `DiagnosticLogSharedSinkIsolationGuardTests` holds this split in place:
 /// this is the ONE file its scan lets mention `DiagnosticLog.shared`, on
 /// the strength of the two things below.
 ///
-/// **`.serialized` is load-bearing** — two of these seven tests running at
-/// once would each see the other's `configure` call on the one shared
-/// instance.
+/// **`.serialized` is load-bearing** — two of these tests running at once
+/// would each see the other's `configure` call on the one shared instance.
 ///
 /// **Never `DiagnosticLog.shared.currentFileURL`.** Diagnostic-log plan,
 /// final fix round 2: the re-review traced an intermittent empty-file read
@@ -477,5 +477,75 @@ struct DiagnosticLogSharedSinkTests {
 
         let hostStillPresent = contents.contains("s3.example.test")
         #expect(hostStillPresent)
+    }
+
+    /// `TunnelRunner`'s own lines, in the `tunnel` category the
+    /// port-forwarding plan added to the fixed list.
+    ///
+    /// Here, and not in `TunnelRunnerTests`, for the reason this whole file
+    /// exists: the runner logs through `DiagnosticLog.shared` directly (the
+    /// same house pattern `TunnelStore` and `CitadelFileSystem` follow),
+    /// which is also what keeps `DiagnosticLogSecrecyGuardTests`' scan able
+    /// to read its call site at all — that scan matches the literal text
+    /// `DiagnosticLog.shared.log(`, so a runner that logged through an
+    /// injected instance would have its category checked by nobody.
+    ///
+    /// Drives one whole lifecycle — start, active, one accepted connection,
+    /// a loss with a reconnect, stop — against the doubles in
+    /// `TunnelRunnerFakes.swift`, so every line shape the plan names is
+    /// written by the real code path rather than asserted about in the
+    /// abstract. `.debug`, because the per-connection lines are `.debug`
+    /// and the five lifecycle lines are `.info`: at `.info` the two
+    /// `connection` assertions below would be trivially unreachable.
+    @Test("TunnelRunner writes its lifecycle and per-connection lines in the tunnel category")
+    func tunnelRunnerWritesItsLifecycleLines() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let profile = TunnelProfile(
+            sessionID: UUID(), name: "web-\(UUID().uuidString.prefix(8))",
+            kind: .local(bind: "127.0.0.1", localPort: 8080, host: "internal", remotePort: 80),
+            reconnects: true)
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 18_080)
+        let runner = TunnelRunner(
+            profile: profile, connect: connections.connect, runtimes: runtimes,
+            sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        let fixedNow = Date()
+        DiagnosticLog.shared.configure(
+            level: .debug, directory: logDirectory, now: { fixedNow })
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+        runtimes.made[0].observer?(.opened)
+        try await states.waitFor(.active(connections: 1))
+        runtimes.made[0].observer?(
+            .closed(bytesIn: 11, bytesOut: 22, duration: .milliseconds(250)))
+        try await states.waitFor(.active(connections: 0))
+        connections.made[0].drop()
+        try await states.waitFor(.reconnecting(attempt: 1))
+        try await states.waitFor(.active(connections: 0))
+        await runner.stop()
+        try await states.waitFor(.stopped)
+        await DiagnosticLog.shared.flush()
+
+        // Every line this test asserts on is one this profile's own name
+        // makes unique, so a parallel suite logging into the same shared
+        // sink cannot satisfy any of them.
+        let contents = fileContents(ownFileURL(directory: logDirectory, fixedNow: fixedNow))
+        #expect(contents.contains("[info] tunnel tunnel \(profile.name) start"))
+        #expect(contents.contains("[info] tunnel tunnel \(profile.name) active port=18080"))
+        #expect(contents.contains("[info] tunnel tunnel \(profile.name) reconnecting attempt=1"))
+        #expect(contents.contains("[info] tunnel tunnel \(profile.name) stop"))
+        #expect(
+            contents.contains(
+                "[debug] tunnel tunnel \(profile.name) connection opened to internal:80"))
+        #expect(
+            contents.contains(
+                "[debug] tunnel tunnel \(profile.name) connection closed to internal:80 "
+                    + "in=11 out=22 ms=250"))
     }
 }

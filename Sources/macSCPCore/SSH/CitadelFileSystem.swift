@@ -1452,6 +1452,25 @@ extension CitadelFileSystem {
         }
     }
 
+    /// Registers the one handler called when this connection's transport
+    /// drops — the signal a `TunnelRunner` turns into a reconnect.
+    ///
+    /// **One handler, not a list.** Citadel's `SSHClient` stores a single
+    /// closure (`Client.swift`, `onDisconnect(perform:)`), so a second
+    /// registration replaces the first. Nothing else in this project
+    /// registers one, and a tunnel owns its connection outright
+    /// (`TunnelConnection`'s doc comment), so the runner is the only
+    /// registrant there is.
+    ///
+    /// Fired from the SSH channel's own `closeFuture`, which means it fires
+    /// for a deliberate `disconnect()` as well as for a drop. The runner
+    /// tears its stream down before disconnecting, so a self-inflicted call
+    /// reaches nobody; a caller that cannot say the same has to tell the two
+    /// apart itself.
+    public func onDisconnect(_ handler: @escaping @Sendable () -> Void) {
+        client.onDisconnect(perform: handler)
+    }
+
     /// Asks the server to listen on `bind:port` and hands every connection it
     /// accepts there back as a channel — the `forwarded-tcpip` side of a
     /// remote forward (`-R`).

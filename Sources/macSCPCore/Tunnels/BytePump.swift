@@ -9,7 +9,14 @@ import NIOCore
 /// shows: a local forward's "out" is the user's own upload.
 public enum TunnelConnectionEvent: Sendable, Equatable {
     case opened
-    case closed(bytesIn: Int, bytesOut: Int)
+    /// `duration` is how long the PAIR was open — measured on a
+    /// `ContinuousClock` from the moment `BytePumpCounters.opened(local:
+    /// remote:)` armed the close report (both handlers installed) to the
+    /// moment the second of the two channels closed. Monotonic, so a system
+    /// clock change cannot make it negative, and it is the only way a
+    /// caller can time one tunnelled connection: nothing else in this file
+    /// correlates an `opened` with the `closed` that answers it.
+    case closed(bytesIn: Int, bytesOut: Int, duration: Duration)
 }
 
 /// The seam a running tunnel counts its connections through. Deliberately a
@@ -166,6 +173,11 @@ final class BytePumpCounters: @unchecked Sendable {
     private var bytesOut = 0
     private var stillOpen = 2
     private var reportedClosed = false
+    /// Set by `opened(local:remote:)`, read once by `oneSideClosed()`.
+    /// `ContinuousClock` rather than `Date`: the number is a duration, and
+    /// a wall clock that steps backwards would otherwise produce a negative
+    /// one.
+    private var openedAt: ContinuousClock.Instant?
 
     init(observer: TunnelConnectionObserver?) {
         self.observer = observer
@@ -175,6 +187,9 @@ final class BytePumpCounters: @unchecked Sendable {
     /// after both handlers are installed — so an observer never sees a
     /// `closed` it has no `opened` for.
     func opened(local: Channel, remote: Channel) {
+        lock.lock()
+        openedAt = ContinuousClock.now
+        lock.unlock()
         observer?(.opened)
         local.closeFuture.whenComplete { [self] _ in oneSideClosed() }
         remote.closeFuture.whenComplete { [self] _ in oneSideClosed() }
@@ -196,7 +211,8 @@ final class BytePumpCounters: @unchecked Sendable {
             stillOpen -= 1
             guard stillOpen <= 0, !reportedClosed else { return nil }
             reportedClosed = true
-            return .closed(bytesIn: bytesIn, bytesOut: bytesOut)
+            let duration = openedAt.map { ContinuousClock.now - $0 } ?? .zero
+            return .closed(bytesIn: bytesIn, bytesOut: bytesOut, duration: duration)
         }()
         if let report { observer?(report) }
     }
