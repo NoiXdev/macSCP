@@ -14,7 +14,10 @@ import Testing
 /// together, and the round trip stays green while the printed key changes.
 @Suite("TunnelRow")
 struct TunnelRowTests {
-    private static let profileID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+    /// Carries hex LETTERS on purpose: `uuidString` differs from its
+    /// lowercased form only on letters, so an all-digit fixture cannot
+    /// tell the two apart (found by the round-1 re-review, 2026-09-06).
+    private static let profileID = UUID(uuidString: "ABCDEF12-3456-4ABC-8DEF-ABCDEF123456")!
     private static let sessionID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
 
     private static func encoded(_ row: TunnelRow) throws -> [String: Any] {
@@ -60,7 +63,8 @@ struct TunnelRowTests {
         // value `appStart`, which `TunnelProfile`'s own JSON carries.
         #expect(object["autostart"] as? String == "app-start")
         #expect(object["reconnect"] as? Bool == true)
-        #expect(object["id"] as? String == "22222222-2222-2222-2222-222222222222")
+        #expect(object["id"] as? String == "ABCDEF12-3456-4ABC-8DEF-ABCDEF123456")
+        #expect(object["id"] as? String != Self.profileID.uuidString.lowercased())
         #expect(object["id"] as? String == Self.profileID.uuidString)
     }
 
