@@ -90,22 +90,45 @@ struct StoreReloadOnActivationGuardTests {
 
     // MARK: - The names, derived
 
-    /// The name of the zero-argument, nothing-returning function whose name
-    /// begins with `reload` that `file`'s type declares — `TunnelManager
-    /// .reload()` and `SessionListViewModel.reload()`.
+    /// The name of the zero-argument, nothing-returning, SYNCHRONOUS
+    /// function whose name begins with `reload` that `file`'s type declares
+    /// — `SessionListViewModel.reload()`.
     ///
     /// Fails closed: a second such function makes the derivation ambiguous
-    /// and this throws rather than picking one. `TunnelManager
-    /// .reloadAutoStartProfiles()` takes no argument either and is excluded
-    /// by its return type, which is the whole reason the pattern insists on
-    /// the body brace following the parentheses directly.
+    /// and this throws rather than picking one. Two of `TunnelManager`'s
+    /// three `reload…` functions are excluded here and that is deliberate —
+    /// `reloadAutoStartProfiles()` by its return type and
+    /// `reloadReconciling()` by its `async`, which is the whole reason the
+    /// pattern insists on the body brace following the parentheses directly.
     private static func reloadFunctionName(in file: URL) throws -> String {
         let names = Set(
             try captures(of: #"func\s+(reload\w*)\s*\(\s*\)\s*\{"#, in: strictSource(of: file)))
         guard names.count == 1, let only = names.first else {
             throw ScanError.derivation("""
-                expected exactly one zero-argument, nothing-returning reload function in \
-                \(file.lastPathComponent) — found \(names.sorted())
+                expected exactly one zero-argument, nothing-returning, synchronous reload \
+                function in \(file.lastPathComponent) — found \(names.sorted())
+                """)
+        }
+        return only
+    }
+
+    /// The name of the zero-argument, nothing-returning `async` function
+    /// whose name begins with `reload` that `file`'s type declares — the
+    /// tunnel store's re-read, which awaits a discard for every profile that
+    /// disappeared and so cannot be the synchronous one above.
+    ///
+    /// Fails closed the same way, and the `async` is what tells the two
+    /// apart: `reload()` and `reloadReconciling()` both take no argument and
+    /// return nothing.
+    private static func asyncReloadFunctionName(in file: URL) throws -> String {
+        let names = Set(
+            try captures(
+                of: #"func\s+(reload\w*)\s*\(\s*\)\s*async\s*\{"#,
+                in: strictSource(of: file)))
+        guard names.count == 1, let only = names.first else {
+            throw ScanError.derivation("""
+                expected exactly one zero-argument, nothing-returning async reload function \
+                in \(file.lastPathComponent) — found \(names.sorted())
                 """)
         }
         return only
@@ -164,7 +187,7 @@ struct StoreReloadOnActivationGuardTests {
                 the CLI wrote would need a relaunch to appear.
                 """)
 
-        let tunnelReload = try Self.reloadFunctionName(in: Self.tunnelManagerFile)
+        let tunnelReload = try Self.asyncReloadFunctionName(in: Self.tunnelManagerFile)
         let listReload = try Self.reloadFunctionName(in: Self.sessionListFile)
         let enumeration = try Self.sessionListEnumerationName()
 
@@ -176,11 +199,25 @@ struct StoreReloadOnActivationGuardTests {
                 activation no longer asks the registry for the open windows' session lists — \
                 either the reload reaches no window, or a second registry has appeared.
                 """)
-        let reloadCalls = TransferQueueBarCancelGuardTests.occurrenceCount(
+
+        // Counted per derived name, never as one total (fix round 1). The
+        // two names are distinct today, so each call is counted by the name
+        // that spells it; a rename of ONE of them used to give a false red
+        // against a total of two, and a spelling both share still has to be
+        // counted once for both.
+        let sharedSpelling = tunnelReload == listReload
+        let tunnelCalls = TransferQueueBarCancelGuardTests.occurrenceCount(
+            of: "\(tunnelReload)(", in: body)
+        #expect(tunnelCalls == (sharedSpelling ? 2 : 1), """
+            the activation observer spells "\(tunnelReload)(" \(tunnelCalls) time(s), not \
+            \(sharedSpelling ? 2 : 1) — the tunnel store's re-read is missing or doubled.
+            """)
+        let listCalls = TransferQueueBarCancelGuardTests.occurrenceCount(
             of: "\(listReload)(", in: body)
-        #expect(reloadCalls == 2, """
-            the activation observer makes \(reloadCalls) reload calls, not 2 — one for the \
-            tunnel store and one for each window's session list.
+        #expect(listCalls == (sharedSpelling ? 2 : 1), """
+            the activation observer spells "\(listReload)(" \(listCalls) time(s), not \
+            \(sharedSpelling ? 2 : 1) — each open window's session list is no longer \
+            re-read.
             """)
     }
 
@@ -353,16 +390,27 @@ struct SessionListRegistrationTests {
     /// unregistering cannot be reloaded — and cannot be kept alive by the
     /// registry either, which is the same rule `registerModel(_:for:)`
     /// follows for a whole window's worth of live sessions.
+    ///
+    /// **The view model's lifetime is a SCOPE, not an `= nil`** (fix round
+    /// 1). An optional set back to `nil` leaves the release to whatever
+    /// temporaries the enclosing function still holds, which is a timing this
+    /// test would be measuring rather than asserting. Registered from a
+    /// `do {}` of its own instead: the only strong reference is the `let`
+    /// inside it, and the check below runs after that scope has ended. The
+    /// count inside the scope is asserted on an array that is itself
+    /// released at the end of its statement — nothing that outlives the
+    /// brace holds the model.
     @Test func aSessionListThatWentAwayIsDroppedRatherThanReloaded() {
         let directory = Self.makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let registry = TabRegistry()
         let window = WindowID()
-        var list: SessionListViewModel? = Self.makeSessionList(in: directory)
-        registry.registerSessionList(list!, for: window)
-        #expect(registry.allSessionLists().count == 1)
 
-        list = nil
+        do {
+            let list = Self.makeSessionList(in: directory)
+            registry.registerSessionList(list, for: window)
+            #expect(registry.allSessionLists().count == 1)
+        }
 
         #expect(registry.allSessionLists().isEmpty)
     }

@@ -456,6 +456,15 @@ final class TabRegistry {
     /// `reload()` on each. A window whose model has gone away without
     /// unregistering is dropped here rather than left to answer `nil`
     /// forever, the same way `model(for:)` drops a stale entry.
+    ///
+    /// The returned array holds STRONG references, which is the only thing
+    /// about the weak storage a caller can notice: for as long as it keeps
+    /// the array, it keeps those view models alive. Every caller here uses it
+    /// as a loop's sequence and lets it go at the end of the statement, and a
+    /// test that wants to observe the drop has to let its own reference go
+    /// out of scope first (`SessionListRegistrationTests
+    /// .aSessionListThatWentAwayIsDroppedRatherThanReloaded` does that with a
+    /// `do {}`).
     func allSessionLists() -> [SessionListViewModel] {
         var live: [WindowID] = []
         var lists: [SessionListViewModel] = []

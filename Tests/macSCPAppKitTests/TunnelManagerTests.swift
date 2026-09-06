@@ -413,13 +413,15 @@ struct TunnelManagerTests {
     ///
     /// **Two claims, and the second is the one worth a test.** A profile
     /// written from outside appears — that is the point of the reload. And a
-    /// forwarding that is RUNNING is not disturbed by it: the manager keys
-    /// its runners by profile id and the reload touches only the mirror, so
-    /// the runner is the SAME OBJECT afterwards. The identity is read off the
-    /// factory's log, so a reload that rebuilt its runners would be caught by
-    /// the second runner the factory had to build — the design records this
-    /// as the accepted limit that a profile edited on disk keeps running as
-    /// it was until it is stopped and started.
+    /// forwarding that is RUNNING and still STORED is not disturbed by it:
+    /// the manager keys its runners by profile id and an edit on disk does
+    /// not touch them, so the runner is the SAME OBJECT afterwards. The
+    /// identity is read off the factory's log, so a reload that rebuilt its
+    /// runners would be caught by the second runner the factory had to
+    /// build — the design records this as the accepted limit that a profile
+    /// EDITED on disk keeps running as it was until it is stopped and
+    /// started. A profile DELETED on disk is the opposite case, and is the
+    /// test below.
     @Test func reloadPicksUpAnOutsideWriteAndLeavesARunningRunnerAlone() async throws {
         let rig = Rig()
         defer { rig.tearDown() }
@@ -440,7 +442,7 @@ struct TunnelManagerTests {
                 — this test would then prove nothing about the reload.
                 """)
 
-        rig.manager.reload()
+        await rig.manager.reloadReconciling()
 
         #expect(
             rig.manager.profiles(for: sessionID).map(\.name).sorted() == ["db", "web"],
@@ -452,6 +454,57 @@ struct TunnelManagerTests {
                 """)
         #expect(runnerBeforeReload.stopCount == 0, "the reload stopped a running forwarding")
         #expect(rig.manager.runningCount == 1, "the reload lost a running forwarding")
+    }
+
+    /// The other half of the same reload, and the reason it reconciles at
+    /// all (fix round 1): a profile the CLI DELETES while the app is running
+    /// it must not survive as a runner nothing can reach.
+    ///
+    /// Without the reconciliation the row leaves `allProfiles` — so it
+    /// leaves the sheet, the context menu and the Dock block, and every
+    /// caller of `stop(_:)` needs a `TunnelProfile` out of `allProfiles` —
+    /// while `runners[id]` and `states[id]` survive: a bound port and a live
+    /// forward with no control anywhere to stop it, under a Dock header
+    /// still counting it as running. A deletion on disk is a deletion.
+    @Test func reloadStopsARunningForwardingWhoseProfileWasDeletedOnDisk() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let sessionID = UUID()
+        let doomed = Self.profile(session: sessionID, name: "web")
+        let survivor = Self.profile(session: sessionID, name: "db", port: 5432)
+        try await rig.manager.save(doomed)
+        try await rig.manager.save(survivor)
+        await rig.manager.start(doomed, decider: Self.accepting)
+        await rig.manager.start(survivor, decider: Self.accepting)
+        try await pollUntil("both forwardings are running") { rig.manager.runningCount == 2 }
+        let doomedRunner = try rig.runner(doomed)
+        let survivorRunner = try rig.runner(survivor)
+
+        // Straight to the store, the way `macscp tunnels rm` writes it.
+        try rig.store.delete(id: doomed.id)
+
+        await rig.manager.reloadReconciling()
+
+        #expect(
+            rig.manager.profiles(for: sessionID).map(\.name) == ["db"],
+            "the reload did not pick up the deletion written outside the app")
+        #expect(doomedRunner.stopCount == 1, """
+            the deleted forwarding's runner was never stopped — it would hold its port and \
+            its forward with no row anywhere left to stop it from.
+            """)
+        #expect(rig.manager.states[doomed.id] == nil, """
+            the deleted forwarding kept a state entry — runningCount is counted over states, \
+            so the Dock badge would go on reporting a forwarding nothing lists.
+            """)
+        #expect(rig.manager.runningCount == 1, "the deleted forwarding is still counted")
+
+        // The control beside it: the profile that is still stored keeps the
+        // very runner it had. Without this the assertions above would be
+        // satisfied by a reload that stopped everything.
+        #expect(
+            try rig.runner(survivor) === survivorRunner,
+            "the reload rebuilt a runner for a profile that was not deleted")
+        #expect(survivorRunner.stopCount == 0, "the reload stopped a forwarding nobody deleted")
     }
 
     // MARK: - A deleted session takes its tunnels with it

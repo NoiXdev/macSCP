@@ -350,30 +350,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the quit teardown; asking it for their session lists adds a slot to
     /// that registry rather than a second registry beside it.
     ///
-    /// **Neither reload disturbs anything running.** `TunnelManager.reload()`
-    /// assigns its profile mirror and nothing else — the runners stay keyed
-    /// by profile id — so a forwarding edited from the CLI keeps running as
-    /// it was until it is stopped and started, which is exactly what the
-    /// sheet's help text tells the user (`tunnel.help.externalEdits`) and
-    /// what `TunnelManagerTests
-    /// .reloadPicksUpAnOutsideWriteAndLeavesARunningRunnerAlone` holds it to.
-    /// `SessionListViewModel.reload()` assigns only its four store-derived
-    /// properties; a sheet's draft lives in the sheet, never in the view
-    /// model, so this needs no "not while a sheet is open" condition —
+    /// **An EDITED forwarding is not disturbed; a DELETED one is stopped**
+    /// (fix round 1). `TunnelManager.reloadReconciling()` re-reads the
+    /// profile mirror and then discards the runners of profiles that
+    /// disappeared from it — a plain `reload()` left a deleted profile's
+    /// runner holding its port and its forward with no row anywhere left to
+    /// stop it from, because every caller of `stop(_:)` needs a
+    /// `TunnelProfile` out of `allProfiles`. An edit changes nothing about a
+    /// runner, so a forwarding edited from the CLI keeps running as it was
+    /// until it is stopped and started, which is what the sheet's help text
+    /// tells the user (`tunnel.help.externalEdits`). Both halves are held by
+    /// `TunnelManagerTests
+    /// .reloadPicksUpAnOutsideWriteAndLeavesARunningRunnerAlone` and
+    /// `.reloadStopsARunningForwardingWhoseProfileWasDeletedOnDisk`.
+    ///
+    /// **No session edit is lost either.** `SessionListViewModel.reload()`
+    /// assigns only its four store-derived properties, and every draft being
+    /// edited lives in the view layer — a form's own state, never the view
+    /// model — so this needs no "not while a sheet is open" condition;
     /// `SessionListViewModelTests.anEditSavedAfterAnActivationReloadStillLands`
     /// is the measurement behind that sentence.
     ///
-    /// The block runs on the main queue and this app's whole UI layer is
-    /// main-actor-isolated, so `MainActor.assumeIsolated` states what the
-    /// queue already guarantees rather than hopping and losing the
-    /// activation's own turn.
+    /// **What this costs, stated rather than optimised** (fix round 1
+    /// minor): each `SessionListViewModel.reload()` is three file reads
+    /// (`sessions-v2.json`, its groups, `logins.json`), so an activation
+    /// costs 3n reads for n open windows plus the tunnel store's one.
+    /// Neither of the two cheaper shapes was built: ONE read fanned out to
+    /// every window would mean a new Core seam handing decoded values to a
+    /// view model that currently owns its own read, and an mtime check would
+    /// be a second source of truth about a file two processes write, wrong
+    /// exactly when a write lands inside the same timestamp granularity.
+    /// Windows are single digits and an activation is a human-paced event;
+    /// if that ever stops being true, the fan-out is the one to build,
+    /// because it removes the reads rather than guessing about them.
+    ///
+    /// The work is `async` (the tunnel reconcile awaits each discarded
+    /// runner's `stop()`), so the block starts a `Task` on the main actor.
+    /// Nothing waits for it: an activation is not a barrier, and the two
+    /// reloads are idempotent, so a second activation arriving mid-flight
+    /// simply reads the file again.
     @MainActor
     private func observeActivation() {
+        // Installed once. `applicationDidFinishLaunching` is called once per
+        // process, but this is the kind of guard whose absence is only
+        // visible as a store read happening n times per activation.
+        guard activationObserver == nil else { return }
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { _ in
-            MainActor.assumeIsolated {
-                TunnelManager.shared.reload()
+            Task { @MainActor in
+                await TunnelManager.shared.reloadReconciling()
                 for sessionList in TabRegistry.shared.allSessionLists() {
                     sessionList.reload()
                 }

@@ -153,14 +153,18 @@ final class TunnelManager {
     /// (`SessionListViewModel.delete(_:)`'s audit-log and stray-secret
     /// steps): an unwritable `tunnels.json` is a residual, never a reason to
     /// leave a tunnel running.
+    ///
+    /// **The stop-and-forget loop is `reloadReconciling()`'s** (fix round
+    /// 1). This used to snapshot the doomed ids itself and run its own copy
+    /// of that loop; the activation re-read needs exactly the same one, for
+    /// exactly the same reason, so there is one of them and this deletes
+    /// through it. Deleting first still loses nothing: `reloadReconciling()`
+    /// snapshots the ids off the MIRROR as it stands on entry, and the
+    /// mirror has not been re-read yet, so it still lists every row this
+    /// call just removed from the file.
     func forgetEverything(for sessionID: UUID) async {
-        let doomed = profiles(for: sessionID).map(\.id)
         try? store.deleteAll(for: sessionID)
-        reload()
-        for profileID in doomed {
-            await discardRunner(for: profileID)
-            states[profileID] = nil
-        }
+        await reloadReconciling()
     }
 
     // MARK: - What a view reads
@@ -376,6 +380,42 @@ final class TunnelManager {
 
     func reload() {
         allProfiles = store.allProfiles()
+    }
+
+    /// The re-read the app performs when it becomes active (CLI sessions and
+    /// tunnels plan, Task 5, fix round 1): `reload()`, and then the runners
+    /// belonging to profiles that are no longer stored are stopped and
+    /// forgotten.
+    ///
+    /// **A deletion on disk is a deletion.** `reload()` alone assigns
+    /// `allProfiles` and nothing else, so a profile the CLI removed while
+    /// the app was RUNNING it left the sheet, the context menu and the Dock
+    /// block — every caller of `stop(_:)` needs a `TunnelProfile` out of
+    /// `allProfiles` — while `runners[id]` and `states[id]` survived: a
+    /// bound port and a live forward with nothing anywhere left to stop it
+    /// from until ⌘Q, under a Dock header still counting it. That is the
+    /// same outcome `start(_:decider:)`'s own guard and
+    /// `forgetEverything(for:)` exist to prevent, arriving by a third door.
+    ///
+    /// **Edited is not deleted.** Only ids that DISAPPEARED are discarded; a
+    /// profile whose ports or name changed on disk keeps the runner it has,
+    /// which is the design's stated limit (and what the profiles sheet's
+    /// `tunnel.help.externalEdits` tells the user).
+    ///
+    /// The ids are snapshotted BEFORE the re-read, because after it the
+    /// deleted ones are exactly what is no longer there to name.
+    /// `discardRunner(for:)` then `states[id] = nil` is
+    /// `forgetEverything(for:)`'s own shape — and that function is now
+    /// written in terms of this one, so there is one such loop rather than
+    /// two.
+    func reloadReconciling() async {
+        let before = Set(allProfiles.map(\.id))
+        reload()
+        let after = Set(allProfiles.map(\.id))
+        for profileID in before.subtracting(after) {
+            await discardRunner(for: profileID)
+            states[profileID] = nil
+        }
     }
 
     /// Writes a profile and drops whatever runner it had.
