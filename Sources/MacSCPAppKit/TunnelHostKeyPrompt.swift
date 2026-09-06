@@ -68,9 +68,12 @@ final class TunnelHostKeyPromptBridge {
     private(set) var isInvalidated = false
 
     /// The queue itself is ignored by observation — a `Question` holds a
-    /// continuation, and nothing outside this type reads it. What the views
-    /// observe are the three published properties above, all written HERE,
-    /// in one place, so they cannot drift from the queue they describe.
+    /// continuation, and nothing outside this type reads it. The TWO
+    /// properties that describe the queue (`currentCandidate` and
+    /// `pendingCount`) are written here and nowhere else, so they cannot
+    /// drift from what they describe; the third published property,
+    /// `isInvalidated`, is not about the queue at all and is written by
+    /// `invalidate()`/`revalidate()`.
     @ObservationIgnored private var queue: [Question] = [] {
         didSet {
             pendingCount = queue.count

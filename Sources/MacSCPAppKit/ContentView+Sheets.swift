@@ -434,6 +434,12 @@ extension ContentView {
     /// closure — which is what that guard was asking. Re-adding it would be
     /// a second answer to a question SwiftUI has already answered, and it
     /// would also make this function unreachable from a test, since
+    /// `window` is `@State` and a `ContentView` built outside a SwiftUI
+    /// hierarchy reads it as `nil`.
+    func presentSnippets() {
+        showSnippetsSheet = true
+    }
+
     /// What the window's one forwarding sheet is showing, and what closing
     /// it means.
     ///
@@ -458,12 +464,6 @@ extension ContentView {
                     tunnelHostKeyBridge.resolve(trust: false)
                 }
             })
-    }
-
-    /// `window` is `@State` and a `ContentView` built outside a SwiftUI
-    /// hierarchy reads it as `nil`.
-    func presentSnippets() {
-        showSnippetsSheet = true
     }
 
     /// Settings "Manage Data" → "Logins…": raises THIS window and opens the

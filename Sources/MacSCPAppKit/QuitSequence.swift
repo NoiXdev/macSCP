@@ -86,6 +86,23 @@ enum QuitSequence {
     static func quitLine(windows: Int, tornDown: Int, forced: Bool) -> String {
         "quit windows=\(windows) tornDown=\(tornDown) forced=\(forced)"
     }
+
+    /// The tunnel step's own line, or `nil` when there is nothing to say.
+    ///
+    /// **Only the forced outcome is written**, and that is the whole
+    /// decision: a step that finished inside its bound is the ordinary case
+    /// and needs no line, while a step the bound cut short leaves a
+    /// forwarding still stopping as the process exits — a server may go on
+    /// holding a remote forward nobody cancelled, and that is a fact a log
+    /// read afterwards has to be able to explain. It is a separate line
+    /// rather than a field on `quitLine` because it is decided before the
+    /// window teardown even starts, and `forced=` there already means
+    /// something else (the WINDOW chain's watchdog).
+    ///
+    /// Carries the outcome and nothing else: no count, no name, no host.
+    static func tunnelStopLine(_ outcome: BoundedStepOutcome) -> String? {
+        outcome == .timedOut ? "quit tunnels forced=true" : nil
+    }
 }
 
 /// Quit now, or quit once the teardown is done.

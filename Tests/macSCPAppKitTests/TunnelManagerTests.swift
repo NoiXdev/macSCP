@@ -301,6 +301,31 @@ struct TunnelManagerTests {
             "autostart handed in a decider that would accept an unknown host key")
     }
 
+    /// Autostart reads the disk, not a mirror that may predate it: a
+    /// profile written after this manager was built still starts.
+    ///
+    /// It is also what keeps `startAutoStart` and `start(_:decider:)` from
+    /// disagreeing — the start refuses a profile the mirror does not list,
+    /// so the reload has to happen before the loop, not after it (fix round
+    /// 3).
+    @Test func autoStartReadsWhatIsOnDiskNow() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let sessionID = UUID()
+        let profile = Self.profile(
+            session: sessionID, name: "written later", autoStart: .appStart)
+
+        // Straight into the store, with no `reload()` — the manager has
+        // never seen this profile.
+        try rig.store.upsert(profile)
+        #expect(rig.manager.profiles(for: sessionID).isEmpty)
+
+        await rig.manager.startAutoStart(.appStart)
+
+        #expect(try rig.runner(profile).startCount == 1)
+        #expect(rig.manager.profiles(for: sessionID).count == 1)
+    }
+
     // MARK: - The store behind it
 
     @Test func savingAProfilePersistsItAndDropsItsRunner() async throws {

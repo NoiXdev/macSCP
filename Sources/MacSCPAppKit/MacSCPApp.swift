@@ -355,13 +355,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// **What losing the race costs**, stated: the stop keeps running,
     /// detached, and the quit goes on without it — so a forwarding that had
     /// not finished stopping is dropped by process exit instead, the same
-    /// trade `QuitTeardownChain` makes when the watchdog beats it. This step
-    /// is not reported in the quit line: it has no count of its own, and
-    /// inventing one would be a second number to keep true.
+    /// trade `QuitTeardownChain` makes when the watchdog beats it.
+    ///
+    /// **And it is written down** (fix round 3). The outcome used to be
+    /// discarded, with a comment saying the step had no count of its own —
+    /// true, and beside the point: the fact worth keeping is not a count but
+    /// that the bound won, because a server may still be holding a forward
+    /// this quit never cancelled. `QuitSequence.tunnelStopLine(_:)` decides
+    /// the text and writes nothing at all for the ordinary outcome, so the
+    /// log gains a line exactly when there is something to explain.
     @MainActor
     private func runBoundedTunnelStop() async {
-        _ = await BoundedStep.run(bound: QuitWatchdog.bound) {
+        let outcome = await BoundedStep.run(bound: QuitWatchdog.bound) {
             await TunnelManager.shared.stopAll()
+        }
+        if let line = QuitSequence.tunnelStopLine(outcome) {
+            DiagnosticLog.shared.log(.info, "app", line)
         }
     }
 

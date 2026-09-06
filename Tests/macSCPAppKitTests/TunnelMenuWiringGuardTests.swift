@@ -116,6 +116,8 @@ struct TunnelMenuWiringGuardTests {
     private static let managerFile = appKitRoot.appendingPathComponent("TunnelManager.swift")
     private static let sheetsFile = appKitRoot.appendingPathComponent("ContentView+Sheets.swift")
     private static let contentViewFile = appKitRoot.appendingPathComponent("ContentView.swift")
+    private static let lifecycleFile = appKitRoot
+        .appendingPathComponent("ContentView+Lifecycle.swift")
 
     /// The submenu's own statement, anchored on the one line that decides
     /// whether it is drawn at all. Carries no string literal, so it is found
@@ -423,6 +425,68 @@ struct TunnelMenuWiringGuardTests {
         #expect(
             strict.contains("bridge.resolve(trust: false)"),
             "dismissing the profile sheet's question no longer refuses it — the dial would park")
+    }
+
+    // MARK: - The window opens and closes its bridge
+
+    /// The bridge is closed when the window disappears and opened again
+    /// when it appears — and BOTH halves are wiring, which is what round 2
+    /// left unpinned.
+    ///
+    /// Round 2's probe mutated `revalidate()`'s BODY and called that a
+    /// measurement of the fix; deleting the CALL from `onAppear` left the
+    /// whole suite green (`grep tunnelHostKeyBridge Tests/` came back empty).
+    /// That is the same mistake round 1 made with the secret chain: a test
+    /// over the function is not a test over the call.
+    ///
+    /// Each span is anchored inside `lifecycleAndToolbar`'s own body — never
+    /// on a declaration whose parameter list could carry a default closure,
+    /// which is the trap two other guards in this task hit — and each is
+    /// checked to BE the modifier it claims (the `updateModel` line that has
+    /// always been there) before anything is claimed about the bridge.
+    @Test func theWindowOpensItsBridgeOnAppearAndClosesItOnDisappear() throws {
+        let strict = try SwiftSource.blankingCommentsAndStrings(
+            try Self.text(of: Self.lifecycleFile))
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "func lifecycleAndToolbar<Content: View>(_ content: Content) -> some View",
+            in: strict)
+
+        let onAppear = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: ".onAppear", in: body)
+        let onDisappear = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: ".onDisappear", in: body)
+
+        #expect(
+            onAppear.contains("updateModel.hasPresentationTarget = true"),
+            "the scanned span is not this window's .onAppear — re-anchor this guard")
+        #expect(
+            onDisappear.contains("updateModel.hasPresentationTarget = false"),
+            "the scanned span is not this window's .onDisappear — re-anchor this guard")
+
+        #expect(
+            onAppear.contains("tunnelHostKeyBridge.revalidate("),
+            """
+            the window no longer reopens its host-key bridge on appear: a bridge closed by \
+            any of the disappear/appear pairs SwiftUI sends for its own reasons would refuse \
+            every unknown host key for the rest of that window's life, with no prompt shown.
+            """)
+        #expect(
+            onDisappear.contains("tunnelHostKeyBridge.invalidate("),
+            """
+            the window no longer closes its host-key bridge on disappear: a question raised \
+            after it is gone parks a dial on a continuation no sheet is watching, and \
+            `TunnelRunner.stop()` — which waits for that run task — holds the quit behind it.
+            """)
+
+        // The swap, which reads as plausible in either place and is wrong in
+        // both: an `onAppear` that closes the bridge, an `onDisappear` that
+        // opens it.
+        #expect(
+            !onAppear.contains("tunnelHostKeyBridge.invalidate("),
+            "the window CLOSES its host-key bridge when it appears")
+        #expect(
+            !onDisappear.contains("tunnelHostKeyBridge.revalidate("),
+            "the window REOPENS its host-key bridge when it disappears")
     }
 
     // MARK: - A deleted session

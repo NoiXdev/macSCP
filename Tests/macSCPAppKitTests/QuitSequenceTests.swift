@@ -85,6 +85,14 @@ struct QuitSequenceTests {
                 == "quit windows=3 tornDown=1 forced=true")
     }
 
+    /// The tunnel step writes a line only when the bound beat it — the
+    /// ordinary outcome is silent, so a log that carries this line carries a
+    /// fact worth reading (fix round 3).
+    @Test func onlyAForcedTunnelStopWritesALine() {
+        #expect(QuitSequence.tunnelStopLine(.timedOut) == "quit tunnels forced=true")
+        #expect(QuitSequence.tunnelStopLine(.finished) == nil)
+    }
+
     // MARK: - The registry hands out, it never runs
 
     /// Collects the closure calls a test's own loop makes, so "each ran
@@ -260,16 +268,23 @@ struct QuitSequenceTests {
     }
 
     /// The tunnel step carries the SAME bound as the teardown chain
-    /// (port-forwarding plan, Task 6, fix round 1): `stopAll()` waits for
-    /// every runner's run task, and a runner parked in a dial is bounded by
-    /// `connectTimeoutSeconds` — up to 120 s — which unbounded sat in front
-    /// of a quit whose watchdog is 15 s.
+    /// (port-forwarding plan, Task 6, fix rounds 1 and 2): `stopAll()` waits
+    /// for every runner's run task, and a runner parked in a dial is bounded
+    /// by `connectTimeoutSeconds` — up to 120 s — which unbounded sat in
+    /// front of a quit whose watchdog is 15 s.
     ///
-    /// Read from the wrapper's own body, positionally-free: what is claimed
-    /// is that the race exists, stops the tunnels, and reads its constant
-    /// from the one place that names it. How long a quit takes is asserted
-    /// nowhere (CLAUDE.md, "A wall-clock ceiling in a test measures the
-    /// runner").
+    /// **Two spans, because the step is two pieces since round 2.** The
+    /// wrapper's own body is three lines and holds no race any more: what is
+    /// claimed of it is that it stops the tunnels, runs them under a bound,
+    /// and takes that bound from the one place that names it. The RACE moved
+    /// into `BoundedStep`, so the second slice below is where `withTaskGroup`
+    /// and `cancelAll()` are read — and, more to the point, the bound is
+    /// DRIVEN by the two cases under "The bound, driven" rather than only
+    /// read here. Round 1 passed a source read of exactly this shape while
+    /// bounding nothing at all.
+    ///
+    /// How long a quit takes is asserted nowhere (CLAUDE.md, "A wall-clock
+    /// ceiling in a test measures the runner").
     @Test func theDeferredQuitBoundsTheTunnelStop() throws {
         let source = try Self.strictSource(of: Self.appFile)
         let body = try TransferQueueBarCancelGuardTests.declarationBody(
@@ -283,11 +298,11 @@ struct QuitSequenceTests {
         #expect(
             body.contains("QuitWatchdog.bound"),
             "the tunnel stop no longer reads QuitWatchdog.bound")
+        #expect(
+            body.contains("QuitSequence.tunnelStopLine("),
+            "a tunnel stop the bound cut short is no longer written down")
 
-        // The bound itself is `BoundedStep`'s, and it is DRIVEN below
-        // (`aBoundedStepReturnsWhenTheBoundElapsesEvenIfTheWorkNeverDoes`)
-        // rather than only read here — round 1's version passed a source
-        // read of exactly this shape while bounding nothing at all.
+        // The race itself, one type over — see this test's doc comment.
         let step = try TransferQueueBarCancelGuardTests.declarationBody(
             of: Self.boundedStepDeclaration,
             in: try Self.strictSource(of: Self.quitSequenceFile))
@@ -359,6 +374,10 @@ struct QuitSequenceTests {
                 })
         }
 
+        // Released whatever happens: a red must not leave the fake's task
+        // suspended for the rest of the run (fix round 3).
+        defer { stopper.releaseTheWork() }
+
         try await pollUntil("the bounded step returned") { box.outcome != nil }
         #expect(box.outcome == .timedOut)
         #expect(stopper.entered == 1, "the bounded step never started the work")
@@ -368,6 +387,8 @@ struct QuitSequenceTests {
 
         stopper.releaseTheWork()
         try await pollUntil("the abandoned work ended") { stopper.finished }
+        // The `defer` above then releases nothing: the stream is already
+        // finished, and `AsyncStream.Continuation.finish()` is idempotent.
     }
 
     /// The other half, and it is not decoration: without it the test above

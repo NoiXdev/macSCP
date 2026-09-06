@@ -307,10 +307,20 @@ final class TunnelManager {
     /// the session once, by hand, in a window — not a dialog that appears
     /// while nobody is looking at the app.
     ///
-    /// Read from the STORE rather than from `allProfiles`, because the one
-    /// caller is a launch: whatever is on disk is what was asked for.
+    /// **Reloads first, then reads the mirror**, and the order is the point.
+    /// The one caller is a launch, so what is on disk is what was asked for
+    /// — but `start(_:decider:)` refuses a profile the mirror does not list
+    /// (see its own doc comment), so handing it rows straight out of the
+    /// store would mean starting them past a guard that had never seen them.
+    /// One read, one list, and the guard cannot disagree with the loop.
+    ///
+    /// `TunnelStore.autoStart(_:)` is therefore not called from here. It is
+    /// Core's own filter and stays for the autostart overlay of Task 7,
+    /// which lists every autostart profile across sessions and has no mirror
+    /// of its own to read.
     func startAutoStart(_ when: TunnelProfile.AutoStart) async {
-        for profile in store.autoStart(when) {
+        reload()
+        for profile in allProfiles where profile.autoStart == when {
             await start(profile, decider: .refusing)
         }
     }
