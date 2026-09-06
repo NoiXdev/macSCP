@@ -370,6 +370,32 @@ struct QuitSequenceTests {
         try await pollUntil("the abandoned work ended") { stopper.finished }
     }
 
+    /// The other half, and it is not decoration: without it the test above
+    /// would pass over a `BoundedStep` that ALWAYS reports `.timedOut` —
+    /// including one that never runs the work at all. Work that finishes
+    /// wins the race, and a sleeper that never returns does not hold the
+    /// caller.
+    ///
+    /// Restored in fix round 2 after a scripted edit dropped it while
+    /// rewriting the fake beside it; the test count is what caught that
+    /// (5121 → 5120).
+    @Test func aBoundedStepReturnsAsSoonAsTheWorkIsDone() async {
+        let done = Done()
+        let outcome = await BoundedStep.run(
+            bound: .seconds(1),
+            sleeper: { _ in
+                // Never returns, and answers cancellation, so the group can
+                // end it once the work has won.
+                let (never, _) = AsyncStream<Void>.makeStream(of: Void.self)
+                for await _ in never { break }
+            }
+        ) {
+            done.record()
+        }
+        #expect(outcome == .finished)
+        #expect(done.count == 1)
+    }
+
     @MainActor
     private final class Done {
         private(set) var count = 0
