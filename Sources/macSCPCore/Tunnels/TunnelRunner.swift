@@ -130,6 +130,23 @@ public actor TunnelRunner {
     /// because a task cancelled between two `await`s may return without
     /// reaching its own teardown — and a caller of `stop()` is entitled to
     /// a tunnel that is gone when the call returns.
+    ///
+    /// **`await running?.value` is not itself cancellable**, and that is the
+    /// shape `RemoteForward.stop()`'s own doc comment warns about:
+    /// `Task<Void, Never>.value` ignores the awaiting task's cancellation,
+    /// so this returns only when the run task actually ends. What makes it
+    /// safe is that every `await` the run task can be parked on is bounded
+    /// or answers cancellation — the `AsyncStream` iteration it waits for a
+    /// drop on, the injected `Sleeper` (whose contract says so), the dial
+    /// (bounded by the connect timeout), the runtime start (`RemoteForward
+    /// .start` bounds the server's answer, a bind does not wait), and
+    /// `releaseCurrent()` (bounded per forward by `BoundedClose`). It is
+    /// NOT bounded with a `BoundedClose` of its own on purpose: abandoning
+    /// the run task here would leave a task that can still enter this actor
+    /// and publish a state after `.stopped`, which is a worse failure than
+    /// waiting. Measured 2026-09-06 by planting the removal of the
+    /// `cancel()` below — the suite then hung rather than going red, which
+    /// is exactly what this paragraph describes.
     public func stop() async {
         let running = task
         task = nil

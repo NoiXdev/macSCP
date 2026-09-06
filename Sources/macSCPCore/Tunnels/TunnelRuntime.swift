@@ -186,7 +186,12 @@ private struct RemoteForwardRuntime: TunnelRuntime {
 /// port has failed the start, and `start` throws that error to the factory's
 /// caller; reporting an ending as well would drive a reconnect for a forward
 /// that never existed.
-private struct EndReportingTransport: RemoteForwardTransport {
+/// Module-internal rather than `private` so `TunnelRuntimeTests` can drive
+/// its three cases directly — a `.remote` runtime is otherwise only
+/// reachable through a live SSH connection, and a mutation probe on the
+/// cancellation gate below came back GREEN for exactly that reason
+/// (2026-09-06).
+struct EndReportingTransport: RemoteForwardTransport {
     let wrapped: any TunnelSSHConnection
     let onEnded: @Sendable () -> Void
 
