@@ -82,6 +82,10 @@ final class TunnelManager {
     /// the counter that hands them out.
     @ObservationIgnored private var generations: [UUID: Int] = [:]
     @ObservationIgnored private var generation = 0
+    /// The reconcile currently running, if any — see `reloadReconciling()`.
+    /// A `Task` handle rather than a `Bool` because a second caller has to
+    /// be able to WAIT for the first, not merely notice it.
+    @ObservationIgnored private var reconcileInFlight: Task<Void, Never>?
 
     /// Every stored profile, as the store last read them. Kept here rather
     /// than re-read per row: a context menu asks for one session's profiles
@@ -162,6 +166,15 @@ final class TunnelManager {
     /// snapshots the ids off the MIRROR as it stands on entry, and the
     /// mirror has not been re-read yet, so it still lists every row this
     /// call just removed from the file.
+    ///
+    /// **What it inherits from round 2**, stated rather than worked around:
+    /// the reconcile discards nothing when the store read FAILS, so a
+    /// session deleted while `tunnels.json` is both undecodable AND
+    /// unwritable would leave its forwardings running. The write above is
+    /// what makes that pair almost unreachable — `deleteAll(for:)` goes
+    /// through `load()`, which flattens an undecodable file to empty, and
+    /// `persist` then writes a valid one, so the following read fails only
+    /// if that write threw.
     func forgetEverything(for sessionID: UUID) async {
         try? store.deleteAll(for: sessionID)
         await reloadReconciling()
@@ -383,9 +396,9 @@ final class TunnelManager {
     }
 
     /// The re-read the app performs when it becomes active (CLI sessions and
-    /// tunnels plan, Task 5, fix round 1): `reload()`, and then the runners
-    /// belonging to profiles that are no longer stored are stopped and
-    /// forgotten.
+    /// tunnels plan, Task 5, fix rounds 1 and 2): the store is read, the
+    /// mirror is replaced, and the runners belonging to profiles that are no
+    /// longer stored are stopped and forgotten.
     ///
     /// **A deletion on disk is a deletion.** `reload()` alone assigns
     /// `allProfiles` and nothing else, so a profile the CLI removed while
@@ -402,17 +415,74 @@ final class TunnelManager {
     /// which is the design's stated limit (and what the profiles sheet's
     /// `tunnel.help.externalEdits` tells the user).
     ///
-    /// The ids are snapshotted BEFORE the re-read, because after it the
-    /// deleted ones are exactly what is no longer there to name.
+    /// **Unreadable is not deleted either** (fix round 2). The read goes
+    /// through `TunnelStore.readProfiles()`, which reports a failure instead
+    /// of flattening it: `allProfiles()` answers `[]` for a present-but-
+    /// undecodable file, and handing that to this loop would have read a
+    /// corrupt or version-mismatched `tunnels.json` as "every profile was
+    /// deleted" and dropped every running forwarding on the next ⌘-Tab. A
+    /// failed read changes nothing at all and writes one line.
+    ///
+    /// **A MISSING file is a successful read of an empty store**, not a
+    /// failure — a fresh install has none, and emptying the store leaves a
+    /// present file holding `"profiles": []` rather than no file (measured
+    /// on the store side; see `TunnelStore.decode()`). So the reconcile does
+    /// not need to tell the two empty states apart.
+    ///
+    /// The ids are snapshotted BEFORE the mirror is replaced, because after
+    /// it the deleted ones are exactly what is no longer there to name.
     /// `discardRunner(for:)` then `states[id] = nil` is
     /// `forgetEverything(for:)`'s own shape — and that function is now
     /// written in terms of this one, so there is one such loop rather than
     /// two.
+    ///
+    /// **One pass at a time**, and the gate is the function body below.
     func reloadReconciling() async {
+        // One reconcile at a time (fix round 2). Two activations arriving
+        // close together — ⌘-Tab away and back — would otherwise each start
+        // a pass, and a pass suspends for as long as a discarded runner's
+        // `stop()` takes, which for a runner parked in a dial is
+        // `connectTimeoutSeconds`. The second caller WAITS for the one in
+        // flight rather than skipping: an activation should not return
+        // before the state it exists to refresh has settled.
+        if let inFlight = reconcileInFlight {
+            await inFlight.value
+            return
+        }
+        let task = Task { @MainActor in await performReconcilingReload() }
+        reconcileInFlight = task
+        await task.value
+        reconcileInFlight = nil
+    }
+
+    /// The pass itself. Separate from the gate above so the `Task` the gate
+    /// hands out has exactly one body, and so a second caller awaiting that
+    /// task cannot re-enter this.
+    private func performReconcilingReload() async {
+        // Read through `readProfiles()`, NOT `reload()` (fix round 2).
+        // `TunnelStore.allProfiles()` answers `[]` for a present-but-
+        // undecodable file — right for the glyph and autostart, and exactly
+        // wrong here: it would say every profile had been deleted and this
+        // would stop every running forwarding. A read that failed leaves the
+        // mirror, the runners and the states as they are; the one line
+        // written is the only record, since `readProfiles()` deliberately
+        // writes none of its own.
+        let profiles: [TunnelProfile]
+        switch store.readProfiles() {
+        case .success(let read):
+            profiles = read
+        case .failure(let error):
+            DiagnosticLog.shared.log(
+                .info, "app", "tunnels.json unreadable, keeping the forwardings as they are",
+                reason: error)
+            return
+        }
+        // The mirror is assigned here rather than through `reload()`, which
+        // would be a second read of the same file — and, having gone through
+        // `allProfiles()`, a read that could disagree with the one above.
         let before = Set(allProfiles.map(\.id))
-        reload()
-        let after = Set(allProfiles.map(\.id))
-        for profileID in before.subtracting(after) {
+        allProfiles = profiles
+        for profileID in before.subtracting(Set(profiles.map(\.id))) {
             await discardRunner(for: profileID)
             states[profileID] = nil
         }

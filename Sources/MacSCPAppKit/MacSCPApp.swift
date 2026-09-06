@@ -356,8 +356,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// disappeared from it — a plain `reload()` left a deleted profile's
     /// runner holding its port and its forward with no row anywhere left to
     /// stop it from, because every caller of `stop(_:)` needs a
-    /// `TunnelProfile` out of `allProfiles`. An edit changes nothing about a
-    /// runner, so a forwarding edited from the CLI keeps running as it was
+    /// `TunnelProfile` out of `allProfiles`. A `tunnels.json` it cannot READ
+    /// is a third case again and changes nothing at all (fix round 2) — an
+    /// empty answer from a broken file must not read as a deletion. An edit
+    /// changes nothing about a runner, so a forwarding edited from the CLI
+    /// keeps running as it was
     /// until it is stopped and started, which is what the sheet's help text
     /// tells the user (`tunnel.help.externalEdits`). Both halves are held by
     /// `TunnelManagerTests

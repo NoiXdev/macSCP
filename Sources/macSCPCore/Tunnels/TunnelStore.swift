@@ -27,6 +27,33 @@ public struct TunnelStore: Sendable {
         var profiles: [TunnelProfile] = []
     }
 
+    /// The read, with its outcome intact — the one place this file is
+    /// decoded. Neither logs nor flattens: `load()` below is what decides
+    /// that a failure reads as empty, and `readProfiles()` is what hands the
+    /// failure to a caller that must not treat it that way.
+    ///
+    /// **A MISSING file is a success, not a failure**, and it is genuinely
+    /// an empty store: only a fresh install has none. Deleting the LAST
+    /// profile goes through `delete(id:)`, which persists the emptied
+    /// container — so an emptied store is a PRESENT file holding
+    /// `"profiles": []`, and nothing this app or its CLI does removes the
+    /// file itself (measured 2026-09-06,
+    /// `TunnelStoreTests.deletingTheLastProfileLeavesAnEmptyFileRatherThanNoFile`).
+    /// That is what lets `TunnelManager.reloadReconciling()` treat "absent
+    /// from a successful read" as a deletion without having to ask which of
+    /// the two empty states it is looking at.
+    private func decode() -> Result<StoreFile, any Error> {
+        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
+            return .success(StoreFile())
+        }
+        do {
+            return .success(
+                try JSONDecoder().decode(StoreFile.self, from: Data(contentsOf: fileURL)))
+        } catch {
+            return .failure(error)
+        }
+    }
+
     /// A present-but-undecodable file reads as empty rather than throwing.
     /// Unlike `SessionStore.all()` — whose caller has an error banner to
     /// show — this store feeds the sidebar glyph and autostart, neither of
@@ -34,13 +61,17 @@ public struct TunnelStore: Sendable {
     /// and returning no profiles is the only record of it, at `.error` in
     /// the `app` category (the fixed list `DiagnosticLogSecrecyGuardTests`
     /// holds every call site to).
+    ///
+    /// **Every write path goes through this**, deliberately: an
+    /// `upsert`/`delete` over an unreadable file rewrites it from empty,
+    /// which is the existing behaviour and is not what this round changed.
+    /// What changed is that a READER which stops things — the activation
+    /// reconcile — no longer comes through here; see `readProfiles()`.
     private func load() -> StoreFile {
-        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)) else {
-            return StoreFile()
-        }
-        do {
-            return try JSONDecoder().decode(StoreFile.self, from: Data(contentsOf: fileURL))
-        } catch {
+        switch decode() {
+        case .success(let file):
+            return file
+        case .failure(let error):
             DiagnosticLog.shared.log(
                 .error, "app", "tunnels.json unreadable, returning no profiles", reason: error)
             return StoreFile()
@@ -55,6 +86,28 @@ public struct TunnelStore: Sendable {
     }
 
     public func allProfiles() -> [TunnelProfile] { load().profiles }
+
+    /// Every stored profile, or the reason the file could not be read.
+    ///
+    /// **Why this exists beside `allProfiles()`** (CLI sessions and tunnels
+    /// plan, Task 5, fix round 2). `allProfiles()` answers `[]` for a
+    /// present-but-undecodable file, which is right for the readers it was
+    /// built for — the sidebar glyph and autostart have nowhere to put a
+    /// failure. It is wrong for any caller that acts on ABSENCE:
+    /// `TunnelManager.reloadReconciling()` stops the runners of profiles
+    /// that are no longer listed, so a corrupt or version-mismatched
+    /// `tunnels.json` read through `allProfiles()` would have said "every
+    /// profile was deleted" and dropped every running forwarding on the next
+    /// activation. This reader reports the failure so that caller can keep
+    /// what it has.
+    ///
+    /// It does NOT log: `load()` logs because it is swallowing something,
+    /// and this hands the error to a caller that writes its own line. Two
+    /// records of one unreadable file would be two lines saying different
+    /// things happened.
+    public func readProfiles() -> Result<[TunnelProfile], any Error> {
+        decode().map(\.profiles)
+    }
 
     public func profiles(for sessionID: UUID) -> [TunnelProfile] {
         load().profiles.filter { $0.sessionID == sessionID }

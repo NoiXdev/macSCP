@@ -24,17 +24,20 @@ import Testing
 ///
 /// They keep the negative from going stale in silence the way
 /// "Guards that name what they watch" describes: `grep -rc
-/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **40** as
-/// of 2026-09-06 — recounted in the port-forwarding plan's final fix round
-/// by running exactly that command and summing its per-file numbers, and it
-/// is one more than the 39 this paragraph carried, because Task 6's round 3
-/// (`7046da25`) added a call in `MacSCPApp.swift` (39 was Task 5's round 2,
-/// which added the second `reason:` overload wrapper in `TunnelRunner`; 38
-/// before it, 27 on 2026-09-05). That grep and this scan do NOT count the
-/// same thing, and the difference is two: the grep counts the literal text
-/// wherever it appears, INCLUDING inside a doc comment —
+/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **41** as
+/// of 2026-09-06 — recounted by running exactly that command and summing its
+/// per-file numbers, and it is one more than the 40 this paragraph carried,
+/// because the CLI-store plan's Task 5 round 2 added a call in
+/// `TunnelManager.swift` (the line written when `tunnels.json` cannot be
+/// read and the activation reconcile therefore changes nothing). The
+/// preceding numbers, newest first: 40 came from the port-forwarding plan's
+/// Task 6 round 3 (`7046da25`), a call in `MacSCPApp.swift`; 39 from that
+/// plan's Task 5 round 2, which added the second `reason:` overload wrapper
+/// in `TunnelRunner`; 38 before it, and 27 on 2026-09-05. That grep and this scan
+/// do NOT count the same thing, and the difference is two: the grep counts
+/// the literal text wherever it appears, INCLUDING inside a doc comment —
 /// `TabDetachSequence.swift` and `TunnelRunner.swift` each spell it in prose
-/// — while this scan blanks comments first and sees 38 real calls. Both numbers are stated because
+/// — while this scan blanks comments first and sees 39 real calls. Both numbers are stated because
 /// either one alone is a claim somebody will later check with the other's
 /// method. (`docs/BACKLOG.md` records 27, the number measured on
 /// 2026-09-05; that row is a dated record of that day, not a claim about

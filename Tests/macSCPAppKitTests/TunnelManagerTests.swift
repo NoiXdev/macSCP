@@ -507,6 +507,126 @@ struct TunnelManagerTests {
         #expect(survivorRunner.stopCount == 0, "the reload stopped a forwarding nobody deleted")
     }
 
+    /// A file that cannot be READ is not a file that says "everything was
+    /// deleted" (fix round 2).
+    ///
+    /// `TunnelStore.allProfiles()` answers `[]` for a present-but-undecodable
+    /// `tunnels.json` — deliberately, for the glyph and autostart readers,
+    /// which have nowhere to put a failure. Handed to a reconcile, that empty
+    /// answer means every id disappeared, so a corrupt or version-mismatched
+    /// file would have stopped every running forwarding on the next ⌘-Tab.
+    /// The reconcile therefore reads through `readProfiles()` and keeps
+    /// everything it has when the read fails.
+    @Test func anUnreadableStoreLeavesTheMirrorAndEveryRunnerAlone() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let sessionID = UUID()
+        let running = Self.profile(session: sessionID, name: "web")
+        try await rig.manager.save(running)
+        await rig.manager.start(running, decider: Self.accepting)
+        try await pollUntil("the forwarding is running") { rig.manager.runningCount == 1 }
+        let runnerBefore = try rig.runner(running)
+        let statesBefore = rig.manager.states
+
+        try Data("kein json".utf8).write(to: rig.directory.appendingPathComponent("tunnels.json"))
+
+        await rig.manager.reloadReconciling()
+
+        #expect(rig.manager.allProfiles == [running], """
+            an unreadable tunnels.json emptied the mirror — every row would leave the sheet, \
+            the context menu and the Dock block.
+            """)
+        #expect(try rig.runner(running) === runnerBefore, "the unreadable file rebuilt a runner")
+        #expect(runnerBefore.stopCount == 0, """
+            an unreadable tunnels.json stopped a running forwarding — a corrupt or \
+            version-mismatched file would drop every tunnel on the next activation.
+            """)
+        #expect(rig.manager.states == statesBefore, "the unreadable file disturbed the states")
+        #expect(rig.manager.runningCount == 1)
+
+        // The control beside it, and the reason the assertions above are not
+        // satisfied by a reconcile that does nothing at all: a file that
+        // READS fine and no longer lists the profile still discards it.
+        try Data("{\"profiles\":[]}".utf8)
+            .write(to: rig.directory.appendingPathComponent("tunnels.json"))
+
+        await rig.manager.reloadReconciling()
+
+        #expect(rig.manager.allProfiles.isEmpty)
+        #expect(runnerBefore.stopCount == 1, "a readable deletion no longer stops its runner")
+        #expect(rig.manager.states[running.id] == nil)
+        #expect(rig.manager.runningCount == 0)
+    }
+
+    /// Two activations arriving close together run ONE reconcile (fix round
+    /// 2): the second waits for the one in flight rather than starting a
+    /// second pass over the same discards.
+    ///
+    /// Driven by parking the fake runner's `stop()` inside the first
+    /// reconcile, which is exactly where the real one suspends — a
+    /// `TunnelRunner.stop()` waits for its run task, and a run task in a dial
+    /// is bounded by `connectTimeoutSeconds`. Nothing here asserts how LONG
+    /// anything took; what is asserted is that the second call had not
+    /// returned while the first was still parked, and that the runner was
+    /// stopped once rather than twice.
+    @Test func aSecondActivationWaitsForTheReconcileInFlight() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let doomed = Self.profile(session: UUID(), name: "web")
+        try await rig.manager.save(doomed)
+        await rig.manager.start(doomed, decider: Self.accepting)
+        try await pollUntil("the forwarding is running") { rig.manager.runningCount == 1 }
+        let runner = try rig.runner(doomed)
+
+        let gate = Gate()
+        runner.beforeStop = { await gate.wait() }
+        try rig.store.delete(id: doomed.id)
+
+        let firstDone = Flag()
+        let secondDone = Flag()
+        let first = Task { @MainActor in
+            await rig.manager.reloadReconciling()
+            firstDone.set()
+        }
+        try await pollUntil("the first reconcile is parked inside the stop") { gate.arrived == 1 }
+        // `secondStarted` is the synchronisation point, and it has to be:
+        // an unserialised second call SUSPENDS NOWHERE (the first discard
+        // already took the runner out of the dictionary, so its own discard
+        // returns at the `guard`), so waiting on the gate's arrival count
+        // would read the flag before that call had run at all — and pass.
+        // Set inside the task, immediately before the call, so observing it
+        // means the second reconcile has run to its first suspension.
+        let secondStarted = Flag()
+        let second = Task { @MainActor in
+            secondStarted.set()
+            await rig.manager.reloadReconciling()
+            secondDone.set()
+        }
+        try await pollUntil("the second activation reached the manager") { secondStarted.isSet }
+
+        // Read BEFORE the gate opens — after it, both calls have returned
+        // and the two outcomes are indistinguishable (CLAUDE.md, "a check
+        // that reads after the healing is not a check").
+        #expect(secondDone.isSet == false, """
+            the second activation returned while a reconcile was still parked in a stop — it \
+            ran a pass of its own instead of waiting for the one in flight.
+            """)
+        #expect(gate.arrived == 1, """
+            the runner's stop was entered \(gate.arrived) times — two reconciles were \
+            discarding at once.
+            """)
+
+        gate.open()
+        await first.value
+        await second.value
+
+        #expect(firstDone.isSet)
+        #expect(secondDone.isSet)
+        #expect(runner.stopCount == 1, "the deleted forwarding was stopped more than once")
+        #expect(rig.manager.allProfiles.isEmpty)
+        #expect(rig.manager.states[doomed.id] == nil)
+    }
+
     // MARK: - A deleted session takes its tunnels with it
 
     /// The `SessionDeletionObserver` seam, driven directly — which is what

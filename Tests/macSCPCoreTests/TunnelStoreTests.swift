@@ -107,6 +107,79 @@ struct TunnelStoreTests {
         #expect(store.allProfiles() == [])
     }
 
+    // MARK: - "Absent" and "unreadable" are two different answers
+
+    /// `allProfiles()` cannot tell an empty store from a broken one, and
+    /// that is deliberate for its readers (the sidebar glyph, autostart) —
+    /// but it is exactly the wrong answer for a caller that STOPS things
+    /// which are no longer listed. `readProfiles()` is that caller's reader:
+    /// it reports the failure instead of flattening it to `[]`.
+    @Test func readProfilesReportsAnUndecodableFileInsteadOfReadingItAsEmpty() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("kein json".utf8).write(to: dir.appendingPathComponent("tunnels.json"))
+
+        // The control beside it: the SAME file still reads as empty through
+        // the lenient reader, so this pins a difference between the two and
+        // not merely a property of one.
+        #expect(store.allProfiles() == [])
+
+        switch store.readProfiles() {
+        case .success(let profiles):
+            Issue.record("an undecodable tunnels.json was reported as \(profiles.count) profiles")
+        case .failure:
+            break
+        }
+    }
+
+    /// A MISSING file is a legitimately empty store, not a failed read: a
+    /// fresh install has never written one. Measured beside it below —
+    /// deleting the LAST profile leaves a file holding zero profiles rather
+    /// than no file — so "missing" and "emptied" are two different states on
+    /// disk and both are genuinely empty.
+    @Test func readProfilesReportsAMissingFileAsAnEmptyStore() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let profiles = try store.readProfiles().get()
+        #expect(profiles == [])
+    }
+
+    /// What `persist` writes for zero profiles — the finding the reconcile's
+    /// missing-file note rests on. `macscp tunnels rm` of the last profile
+    /// goes through `delete(id:)`, which persists the emptied container, so
+    /// it leaves `tunnels.json` PRESENT and decodable with an empty array.
+    /// Removing the file itself is nothing this app or its CLI does.
+    @Test func deletingTheLastProfileLeavesAnEmptyFileRatherThanNoFile() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let only = profile(sessionID: UUID())
+        try store.upsert(only)
+
+        try store.delete(id: only.id)
+
+        let path = dir.appendingPathComponent("tunnels.json").path(percentEncoded: false)
+        #expect(FileManager.default.fileExists(atPath: path), """
+            deleting the last profile removed tunnels.json — the reconcile treats a missing \
+            file as an empty store, which would then be indistinguishable from a file \
+            somebody removed by hand.
+            """)
+        #expect(try store.readProfiles().get() == [])
+    }
+
+    /// A store that reads fine reports success, which is the positive beside
+    /// the failure check above: without it, a `readProfiles()` that always
+    /// failed would satisfy that test.
+    @Test func readProfilesReportsAReadableFile() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let stored = profile(sessionID: UUID())
+        try store.upsert(stored)
+
+        #expect(try store.readProfiles().get() == [stored])
+    }
+
     /// The written file's own keys never spell a secret field — computed as
     /// a `Bool` before the expectation, so neither the file's content nor
     /// the check's own source text can leak one through a failure message
