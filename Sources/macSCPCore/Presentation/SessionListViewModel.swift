@@ -21,9 +21,18 @@ private struct LoginMergeSecretConflict: Error, CustomStringConvertible {
 /// throw-free way the audit-log and stray-secret cleanup beside it already
 /// work.
 ///
-/// `TunnelStore` is the first (and, as of this task, only) conformer —
-/// registered additively through `addDeletionObserver(_:)` rather than as a
-/// new required `init` parameter, deliberately: `SessionListViewModel`'s
+/// `TunnelManager`'s private `DeletionObserver` (App target), handed over as
+/// `TunnelManager.deletionObserver`, is the only production conformer —
+/// counted 2026-09-06 with `grep -rn "SessionDeletionObserver" Sources/`,
+/// whose ten hits are this declaration, that one conformance and references
+/// to both. `TunnelStore` conformed as well until that day, which is why
+/// this paragraph used to call the store the conformer: nothing ever
+/// registered it, and a store rewriting `tunnels.json` would have left the
+/// session's tunnels running.
+///
+/// Observers are registered additively through `addDeletionObserver(_:)`
+/// rather than as a new required `init` parameter, deliberately:
+/// `SessionListViewModel`'s
 /// `init` already has every existing store as a required argument (see its
 /// own doc comment on why), and a required `tunnelStore:` there would touch
 /// every one of `SessionListViewModel`'s own construction sites, most of
@@ -527,10 +536,11 @@ public final class SessionListViewModel {
             // Same throw-free shape: a registered observer cleans up
             // whatever it owns for this session; a failure there is its own
             // concern, never a reason to fail the session deletion itself.
-            // The App registers one — the tunnel manager's, which stops
-            // that session's forwardings and then deletes their profiles
-            // (`TunnelManager.deletionObserver`, wired in
-            // `ContentView.init`). Nothing here knows that: an observer's
+            // The App registers one — the tunnel manager's, which deletes
+            // that session's forwarding profiles and then stops their
+            // runners, in that order (`TunnelManager.deletionObserver`,
+            // wired in `ContentView.init`; `forgetEverything(for:)` says why
+            // the order matters). Nothing here knows that: an observer's
             // work is its own, and this loop only guarantees it is told.
             for observer in deletionObservers {
                 observer.sessionDeleted(id: session.id)

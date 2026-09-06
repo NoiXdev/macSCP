@@ -76,9 +76,17 @@ public struct TunnelStore: Sendable {
         try persist(file)
     }
 
-    /// Every profile belonging to `sessionID` — the session-deletion pin
-    /// (`SessionDeletionObserver.sessionDeleted(id:)` below) calls this so a
-    /// deleted session leaves no orphaned profile behind.
+    /// Removes every profile belonging to `sessionID`, so a deleted session
+    /// leaves no orphaned profile behind.
+    ///
+    /// The session-deletion seam (`SessionDeletionObserver`, declared on
+    /// `SessionListViewModel`) ends here, but it does NOT end here directly:
+    /// the registered observer is `TunnelManager.deletionObserver` in the App
+    /// target, which stops the session's runners as well as deleting their
+    /// rows — a store that only rewrote `tunnels.json` left the tunnels
+    /// themselves running. `TunnelStore` used to carry the conformance
+    /// itself; it was deleted in the final review's fix round (2026-09-06)
+    /// once nothing but a test registered it.
     public func deleteAll(for sessionID: UUID) throws {
         var file = load()
         file.profiles.removeAll { $0.sessionID == sessionID }
@@ -87,18 +95,5 @@ public struct TunnelStore: Sendable {
 
     public func autoStart(_ when: TunnelProfile.AutoStart) -> [TunnelProfile] {
         load().profiles.filter { $0.autoStart == when }
-    }
-}
-
-/// `TunnelStore`'s side of the session-deletion seam
-/// (`SessionDeletionObserver`, declared on `SessionListViewModel`): a
-/// deleted session's own profiles are removed the same way a deleted
-/// session's audit log is. `try?`, deliberately — the same throw-free
-/// pattern `SessionListViewModel.delete(_:)` already uses for its audit-log
-/// and stray-secret cleanup: an orphaned tunnel profile is a residual, never
-/// a reason to fail the session deletion itself.
-extension TunnelStore: SessionDeletionObserver {
-    public func sessionDeleted(id: UUID) {
-        try? deleteAll(for: id)
     }
 }

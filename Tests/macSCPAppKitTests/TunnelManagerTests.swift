@@ -466,6 +466,57 @@ struct TunnelManagerTests {
         #expect(rig.manager.runningCount == 0)
     }
 
+    /// The same refusal, during the deletion rather than after it.
+    ///
+    /// Stopping a runner takes as long as the dial it is inside — up to the
+    /// connect timeout — and the deletion awaits every one of them. While it
+    /// does, the profiles must already be gone from the store and from
+    /// `allProfiles`, because `start(_:decider:)` decides on `allProfiles`:
+    /// a Dock-menu click inside that window would otherwise build a runner
+    /// the resuming deletion no longer knows about, holding a port and a
+    /// connection with no row anywhere left to stop it from.
+    ///
+    /// The deletion snapshots the ids it is about to stop, so deleting
+    /// first costs it nothing.
+    @Test func aStartDuringADeletionReachesNothing() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let sessionID = UUID()
+        let first = Self.profile(session: sessionID, name: "web")
+        let second = Self.profile(session: sessionID, name: "db", port: 9000)
+        for profile in [first, second] {
+            try await rig.manager.save(profile)
+            await rig.manager.start(profile, decider: Self.accepting)
+        }
+        let gate = Gate()
+        let started = try [rig.runner(first), rig.runner(second)]
+        for runner in started { runner.beforeStop = { await gate.wait() } }
+
+        rig.manager.deletionObserver.sessionDeleted(id: sessionID)
+        try await pollUntil("a stop is parked inside the deletion") { gate.arrived == 1 }
+
+        // The window this test exists for: a menu drawn before the deletion,
+        // clicked while it runs.
+        #expect(
+            rig.manager.profiles(for: sessionID).isEmpty,
+            "the profiles are still listed while their runners are being stopped")
+        await rig.manager.start(first, decider: Self.accepting)
+        #expect(
+            rig.log.runners[first.id] === started[0],
+            "the start built a second runner for a profile being deleted")
+        #expect(started[0].startCount == 1, "the deleted profile was started again")
+
+        gate.open()
+        try await pollUntil("both runners were stopped") {
+            started.allSatisfy { $0.stopCount == 1 }
+        }
+        try await pollUntil("the deletion finished") { rig.manager.runningCount == 0 }
+        #expect(rig.manager.allProfiles.isEmpty)
+        #expect(rig.store.profiles(for: sessionID).isEmpty)
+        #expect(rig.manager.state(of: first.id) == .stopped)
+        #expect(rig.manager.state(of: second.id) == .stopped)
+    }
+
     // MARK: - A start racing a discard
 
     /// A `save` discards the profile's runner and suspends inside its
@@ -557,7 +608,16 @@ struct TunnelManagerTests {
         for profile in profiles { #expect(try rig.runner(profile).stopCount == 1) }
     }
 
-    @Test func theAggregateOfOneSessionReadsOnlyThatSessionsProfiles() async throws {
+    /// The states a session's row aggregates are that session's and no
+    /// other's — the property `SessionSidebar` depends on when it colours the
+    /// forwarding glyph.
+    ///
+    /// Built here from `profiles(for:)` and `state(of:)`, the way the sidebar
+    /// builds it (`Aggregate.of(tunnelStates)`). A `manager.aggregate(for:)`
+    /// used to do it in one call, but this suite held its only two callers —
+    /// test-only production API, deleted in the final review's fix round
+    /// (2026-09-06).
+    @Test func theStatesOfOneSessionAreThatSessionsOnly() async throws {
         let rig = Rig()
         defer { rig.tearDown() }
         let mine = UUID()
@@ -568,8 +628,14 @@ struct TunnelManagerTests {
 
         await rig.manager.start(foreign, decider: Self.accepting)
         try await pollUntil("the other session's tunnel is active") {
-            rig.manager.aggregate(for: other).active == 1
+            aggregate(rig, of: other).active == 1
         }
-        #expect(rig.manager.aggregate(for: mine).active == 0)
+        #expect(aggregate(rig, of: mine).active == 0)
+    }
+
+    /// One session's states, aggregated — the sidebar's own two steps.
+    private func aggregate(_ rig: Rig, of sessionID: UUID) -> TunnelManager.Aggregate {
+        TunnelManager.Aggregate.of(
+            rig.manager.profiles(for: sessionID).map { rig.manager.state(of: $0.id) })
     }
 }

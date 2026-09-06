@@ -136,19 +136,39 @@ struct TunnelStoreTests {
             keys: ManagedKeyStore(directory: directory))
     }
 
-    /// Deleting a session removes its port-forwarding profiles too — through
-    /// the `SessionDeletionObserver` seam `TunnelStore` conforms to,
-    /// registered on the view model that actually orchestrates a session's
-    /// deletion (`SessionListViewModel.delete(_:)`; see that seam's own doc
-    /// comment for why the observer lives there rather than on
-    /// `SessionStore` itself).
+    /// An observer that deletes a session's profiles the way the production
+    /// one does.
+    ///
+    /// A stand-in for `TunnelManager.deletionObserver`, which lives in the
+    /// App target and cannot be reached from here: it stops the session's
+    /// runners AND calls `deleteAll(for:)`, and the stopping half is pinned
+    /// by `TunnelManagerTests`. `TunnelStore` carried this conformance
+    /// itself until the final review's fix round (2026-09-06) removed it —
+    /// a store that only rewrites `tunnels.json` leaves the tunnels running,
+    /// so nothing in production ever registered it and only this test did.
+    /// `try?` is the production adapter's own choice: an unwritable
+    /// `tunnels.json` is a residual, never a reason to fail the session
+    /// deletion.
+    private struct ProfileDeleting: SessionDeletionObserver {
+        let store: TunnelStore
+        func sessionDeleted(id: UUID) { try? store.deleteAll(for: id) }
+    }
+
+    /// Deleting a session reaches the `SessionDeletionObserver` seam, and an
+    /// observer that removes the session's port-forwarding profiles leaves
+    /// none behind.
+    ///
+    /// The seam is Core's (`SessionListViewModel.delete(_:)` tells its
+    /// observers; see that seam's own doc comment for why it lives there
+    /// rather than on `SessionStore`). What production registers on it is
+    /// `TunnelManager.deletionObserver`, one target up.
     @Test @MainActor func deletingASessionRemovesItsProfiles() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-tunnels-deletion-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let tunnelStore = TunnelStore(directory: dir)
         let viewModel = makeViewModel(directory: dir)
-        viewModel.addDeletionObserver(tunnelStore)
+        viewModel.addDeletionObserver(ProfileDeleting(store: tunnelStore))
 
         let session = viewModel.save(
             name: "web", values: sshValues(host: "example.com", port: 22, username: "tim"),

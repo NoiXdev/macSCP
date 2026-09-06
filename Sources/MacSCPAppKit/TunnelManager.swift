@@ -102,13 +102,16 @@ final class TunnelManager {
     /// session takes its forwardings with it.
     ///
     /// **The adapter, not the store.** Round 1 handed out `TunnelStore`
-    /// itself, whose `sessionDeleted(id:)` rewrites `tunnels.json` and
+    /// itself, whose `sessionDeleted(id:)` rewrote `tunnels.json` and
     /// nothing else — so deleting a connected session left its RUNNERS
     /// running: a bound local port, a forward still registered at the
     /// server, an SSH connection open, `allProfiles` still listing the
     /// deleted rows and `runningCount` still counting them, with no menu
     /// anywhere left to stop them from. The manager owns the runners, so the
-    /// manager has to be the one told.
+    /// manager has to be the one told. The store's conformance is gone
+    /// altogether since the final review's fix round (2026-09-06): a seam
+    /// nothing registers is not a seam, and the one test that did register
+    /// it now hands `SessionListViewModel` an observer of its own.
     var deletionObserver: any SessionDeletionObserver {
         DeletionObserver(manager: self)
     }
@@ -129,21 +132,35 @@ final class TunnelManager {
         }
     }
 
-    /// Stops every runner of `sessionID`, deletes its profiles, and forgets
-    /// their states — the whole of what a deleted session leaves behind.
+    /// Deletes `sessionID`'s profiles, then stops every runner they had and
+    /// forgets their states — the whole of what a deleted session leaves
+    /// behind.
+    ///
+    /// **The store goes first, and the order is the point** (final review,
+    /// 2026-09-06). Stopping a runner takes as long as the dial it is inside
+    /// — `connectTimeoutSeconds`, 10 s by default and up to 120 s — and this
+    /// awaits every one of them. Stopping BEFORE the delete left the rows in
+    /// `tunnels.json` and in `allProfiles` for that whole window, and
+    /// `start(_:decider:)` decides on `allProfiles`: a Dock-menu or
+    /// context-menu click landing there passed the guard, built a runner for
+    /// a profile about to be deleted, and the resuming loop — iterating the
+    /// snapshot it took at entry — never stopped it. A tunnel holding a port
+    /// and a connection, with no row anywhere left to stop it from, which is
+    /// the exact outcome that guard exists to prevent. The ids are
+    /// snapshotted before the delete, so nothing is lost by deleting first.
     ///
     /// Throw-free, like every other cleanup on the deletion path
     /// (`SessionListViewModel.delete(_:)`'s audit-log and stray-secret
     /// steps): an unwritable `tunnels.json` is a residual, never a reason to
     /// leave a tunnel running.
     func forgetEverything(for sessionID: UUID) async {
-        let doomed = profiles(for: sessionID)
-        for profile in doomed {
-            await discardRunner(for: profile.id)
-            states[profile.id] = nil
-        }
+        let doomed = profiles(for: sessionID).map(\.id)
         try? store.deleteAll(for: sessionID)
         reload()
+        for profileID in doomed {
+            await discardRunner(for: profileID)
+            states[profileID] = nil
+        }
     }
 
     // MARK: - What a view reads
@@ -176,9 +193,15 @@ final class TunnelManager {
     /// than to correct the sentence about it. `aggregate()` — the whole app's
     /// aggregate — had no caller and no claim; the Dock badge reads
     /// `DockBadgePlan.label(states:)` instead.
-    func aggregate(for sessionID: UUID) -> Aggregate {
-        Aggregate.of(profiles(for: sessionID).map { state(of: $0.id) })
-    }
+    ///
+    /// `aggregate(for:)` — the per-session one — followed them in the final
+    /// review's fix round (2026-09-06), for the same reason and one round
+    /// later: its only two callers were in `TunnelManagerTests`, so it was
+    /// test-only production API. Every surface that wants a session's
+    /// aggregate builds it from the two things a view reads anyway,
+    /// `profiles(for:)` and `state(of:)` — `SessionSidebar` does exactly that
+    /// (`Aggregate.of(tunnelStates)`), and so does the test that used to call
+    /// this.
 
     /// What a glyph, a badge or a tooltip needs about a SET of tunnels,
     /// derived from their states and nothing else.
