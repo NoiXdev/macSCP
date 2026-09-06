@@ -186,7 +186,7 @@ its profiles (the store is told; pinned).
   failure direction is the safe one (an unread flag starts nothing),
   which is why the `.login` moment shipped and the toggle did not: a
   wrong `true` would hide the window of an ordinary launch. The
-  procedure that separates the two hypotheses is the Bugs row
+  procedure that separates the two hypotheses is the Interface row
   `Forwardings "At login": the launch flag is unverified, and "Start in
   the background" is not shipped` in `docs/BACKLOG.md`; the sheet's
   footer states the limit to the user.

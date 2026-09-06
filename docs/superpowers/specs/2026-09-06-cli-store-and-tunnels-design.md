@@ -101,10 +101,11 @@ keyed by the session id), which is what the app does too.
 
 ### `sessions rm <name> [--yes]`
 
-Deletes the session AND its tunnel profiles, through the same
-`SessionDeletionObserver` path the app uses (`TunnelStore` conforms in
-Core; the CLI registers it on a `SessionListViewModel`-free helper —
-see the plan). Interactive terminal without `--yes`: asks "Delete
+Deletes the session AND its tunnel profiles: the CLI calls
+`TunnelStore.deleteAll(for:)` and then `SessionStore.delete(id:)`
+directly. (The app reaches the same two calls through its registered
+`TunnelManager.deletionObserver` in the App target, which also stops the
+running tunnels; the CLI has no runners to stop.) Interactive terminal without `--yes`: asks "Delete
 session X and N forwardings? [y/N]" on the TTY; `--non-interactive`
 without `--yes`: exit 64. The keychain entry is left in place (the CLI
 never touches the keychain), and `--verbose` says so.
