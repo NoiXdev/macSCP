@@ -786,22 +786,25 @@ struct RemoteFileTableView: NSViewRepresentable {
                 cell.addSubview(field)
                 cell.textField = field
                 NSLayoutConstraint.activate([
-                    field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 12),
                     field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -12),
                     field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 ])
                 // Kind marker (M11h/T1; extended for buckets, Browser Type
                 // Column 2026-09-04): only the "name" column ever needs it,
                 // built once per fresh cell — the `NSImageView` itself,
-                // never re-added, never repositioned. It lives IN the
-                // existing 12pt left inset rather than pushing `field`
-                // further right, so the resting layout (row height, text
-                // baseline, 12pt text indent) is byte-for-byte what M5g
-                // froze: `field`'s own leading constraint above is
-                // untouched. Its IMAGE is no longer fixed at build time —
-                // see the block right after this `if`/`else`, which sets it
-                // (and the marker's visibility) on every reuse, because
-                // which glyph a row gets now varies row to row.
+                // never re-added, never repositioned. The name's text
+                // starts a fixed distance AFTER the marker's trailing edge,
+                // whether the marker is shown or not, so every name in the
+                // column lines up and a glyph can never run into its text.
+                // It used to sit inside the 12pt inset the other columns
+                // keep, which put an 11pt symbol's trailing edge 5pt past
+                // the text's leading edge (reported from the dev build on
+                // 2026-09-06, a bucket named `ido/` glued to its glyph;
+                // `theMarkerKeepsAGapBeforeTheName` measures the gap). The
+                // marker's IMAGE is not fixed at build time — see the block
+                // right after this `if`/`else`, which sets it (and the
+                // marker's visibility) on every reuse, because which glyph
+                // a row gets varies row to row.
                 if column == .name {
                     let marker = NSImageView()
                     marker.translatesAutoresizingMaskIntoConstraints = false
@@ -812,9 +815,13 @@ struct RemoteFileTableView: NSViewRepresentable {
                     cell.addSubview(marker)
                     cell.imageView = marker
                     NSLayoutConstraint.activate([
-                        marker.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 1),
+                        marker.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
                         marker.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                        field.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: 6),
                     ])
+                } else {
+                    field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 12)
+                        .isActive = true
                 }
             }
             // Recycling hygiene (M11h/T1, critical; extended for buckets,

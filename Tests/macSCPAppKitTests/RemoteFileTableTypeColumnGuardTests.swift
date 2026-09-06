@@ -182,4 +182,35 @@ struct RemoteFileTableTypeColumnGuardTests {
         #expect(symlinkMarker.image != nil)
         #expect(plainMarker.isHidden == true)
     }
+
+    /// The marker must not touch the name. Reported from the dev build on
+    /// 2026-09-06 with a screenshot of `ido/` glued to the bucket glyph:
+    /// the marker used to live INSIDE the name column's 12pt text inset,
+    /// so an 11pt symbol at x = 1 ended where the text began. This lays
+    /// the bucket row's cell out at a realistic width and measures the
+    /// gap between the glyph's trailing edge and the text's leading edge
+    /// — a floor, never a ceiling: a wider gap is not a defect.
+    @Test @MainActor
+    func theMarkerKeepsAGapBeforeTheName() throws {
+        let bucket = RemoteFileItem(
+            name: "ido", path: "/ido", kind: .directory, isBucket: true)
+        let coordinator = RemoteFileTableView.Coordinator(
+            onOpen: { _ in }, onSelect: { _ in }, side: .remote)
+        coordinator.items = [bucket]
+
+        let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 400, height: 100))
+        let nameColumn = NSTableColumn(identifier: .init(FileColumn.name.rawValue))
+        tableView.addTableColumn(nameColumn)
+
+        let cell = try #require(
+            coordinator.tableView(tableView, viewFor: nameColumn, row: 0) as? NSTableCellView)
+        let marker = try #require(cell.imageView)
+        let field = try #require(cell.textField)
+        cell.frame = NSRect(x: 0, y: 0, width: 240, height: 22)
+        cell.layoutSubtreeIfNeeded()
+
+        let gap = field.frame.minX - marker.frame.maxX
+        #expect(marker.frame.width > 0)
+        #expect(gap >= 4, "the name starts \(gap)pt after the marker")
+    }
 }
