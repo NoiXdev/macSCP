@@ -9,7 +9,7 @@ import Foundation
 /// today — `TunnelConnection.connect`, which throws `refusal`'s sentence
 /// (`TunnelConnection.swift:79`), and `SessionRowTunnelMenuPlan.build`,
 /// which hides the session row's forwarding submenu when there is one
-/// (`SessionSidebar.swift:184`). The command line's own refusal, which
+/// (`SessionSidebar.swift:185`). The command line's own refusal, which
 /// answers before a socket is opened, is the third and arrives with the
 /// task that adds the subcommand; the count above is what is in the tree,
 /// not what is planned.
