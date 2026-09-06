@@ -829,7 +829,7 @@ key is the pair `(host, port)`:
   `SSHRemotePortForward(host:boundPort:)` built from the values the
   CALLER passed — and it does so BEFORE `tcpip-forward` is sent, so the
   server's answer cannot have influenced it
-  (`RemotePortForward+Client.swift:65-88`).
+  (`Sources/Citadel/RemotePortForward/Client/RemotePortForward+Client.swift:65-88`).
 - `handleChannel` (`ClientSession.swift:47-60`) rebuilds that key from
   `forwardedTCPIP.listeningHost` and `.listeningPort` — what the server
   actually BOUND — and a miss returns
@@ -857,9 +857,11 @@ cannot be exercised at all. Stated, not guarded.
 **What a fix in the fork would be.** Register the handler under the pair
 the SERVER confirmed, after the reply, rather than under the requested
 pair before it: `withRemotePortForward` already has `response.boundPort`
-in hand (`RemotePortForward+Client.swift:82-93`), so the registration
-moves below that point and keys on `(response.boundHost ?? host,
-response.boundPort ?? port)`. Registering after the reply opens a window
+in hand (`Sources/Citadel/RemotePortForward/Client/RemotePortForward+Client.swift:82-93`), so the registration
+moves below that point and keys on `(host, response.boundPort ?? port)` —
+the protocol reply carries only the bound PORT (`TCPForwardingResponse`,
+`GlobalRequestDelegate.swift:52-60`, has no bound host), so the host half
+of the key cannot be corrected by this route at all. Registering after the reply opens a window
 in which a very eager server could deliver a channel before the handler
 exists, so the honest shape is to register under the requested pair
 first — preserving today's behaviour for a named port — and ADD the

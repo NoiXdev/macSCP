@@ -103,9 +103,10 @@ public final class RemoteForward: @unchecked Sendable {
     /// forward and throws `bindFailed`, and cancelling the calling task
     /// throws `CancellationError` rather than parking forever. The default
     /// bound is `SettingsStore.defaultConnectTimeoutSeconds`, the same
-    /// number `TunnelConnection.connect` dials this connection with — one
-    /// round trip on a connection that is already established cannot
-    /// reasonably need longer than the connect itself was given.
+    /// number `TunnelConnection.connect` uses by default (the App may dial
+    /// with `settingsStore.connectTimeoutSeconds` instead) — one round
+    /// trip on a connection that is already established cannot reasonably
+    /// need longer than the connect itself was given.
     ///
     /// - Parameters:
     ///   - bind, remotePort: the address the SERVER listens on. `0.0.0.0`

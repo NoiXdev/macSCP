@@ -157,7 +157,8 @@ its profiles (the store is told; pinned).
 - Remote forwards bound to `0.0.0.0` on the server work only with the
   server's `GatewayPorts` allowing it; the failure reason names it.
 - A remote forward must **name** the port the server listens on; `0` —
-  "let the server choose" — is refused, with the port in the reason.
+  "let the server choose" — is refused; the reason names the refusal, not
+  a port (there is none yet).
   Measured 2026-09-06: the pinned Citadel registers its inbound handler
   under the REQUESTED `(host, port)` and dispatches on the BOUND one, so
   a server-chosen port binds and then swallows every connection inside
