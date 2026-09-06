@@ -66,18 +66,22 @@ extension SOCKS5ReplyCode {
     /// compile until someone decides what the client should be told.
     public init(_ failure: TunnelFailure) {
         switch failure {
-        case .channelOpenFailed:
+        case .channelOpenFailed, .pumpFailed:
+            // `pumpFailed` reaches a client that IS connected — the accept
+            // path rejects a negotiation with it — and there is no SOCKS5
+            // code for "the far end answered but we could not wire you to
+            // it", so it joins the general failure.
             self = .generalFailure
         case .connectFailed:
             // The one arm that IS specific: `connectFailed` is raised where
             // this machine dialled something itself, and a refusal is the
             // overwhelmingly common cause.
             self = .connectionRefused
-        case .portInUse, .bindFailed:
-            // Neither can reach a connected SOCKS client — the listener is
-            // already bound by the time anyone speaks to it — but a failure
-            // enum is not the place for an unreachable arm to be spelled
-            // `fatalError`.
+        case .portInUse, .bindFailed, .alreadyStarted:
+            // None of the three can reach a connected SOCKS client — the
+            // listener is already bound by the time anyone speaks to it —
+            // but a failure enum is not the place for an unreachable arm to
+            // be spelled `fatalError`.
             self = .generalFailure
         }
     }

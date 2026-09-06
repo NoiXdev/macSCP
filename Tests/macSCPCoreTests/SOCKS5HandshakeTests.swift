@@ -224,6 +224,8 @@ struct SOCKS5HandshakeTests {
         #expect(SOCKS5ReplyCode(.connectFailed(reason: "refused")) == .connectionRefused)
         #expect(SOCKS5ReplyCode(.portInUse(port: 1080)) == .generalFailure)
         #expect(SOCKS5ReplyCode(.bindFailed(reason: "no such address")) == .generalFailure)
+        #expect(SOCKS5ReplyCode(.pumpFailed(reason: "the pump did not install")) == .generalFailure)
+        #expect(SOCKS5ReplyCode(.alreadyStarted) == .generalFailure)
     }
 
     /// A connection that goes away mid-handshake resolves the wait rather

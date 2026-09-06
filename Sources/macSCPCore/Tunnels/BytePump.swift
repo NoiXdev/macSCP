@@ -177,12 +177,28 @@ final class BytePumpHandler: ChannelInboundHandler, @unchecked Sendable {
 
     /// Backpressure. When THIS channel — the one the peer's bytes are
     /// written into — stops being writable, the peer must stop reading, and
-    /// start again when it drains. The failure arm is empty on purpose: a
-    /// channel that has already closed cannot take the option, and its own
-    /// close is about to tear the pair down anyway.
+    /// start again when it drains.
+    ///
+    /// The `read()` on the RESUME is the same necessity `startReading`
+    /// documents, and for the same reason: turning `autoRead` back on is
+    /// enough for a socket, which kicks the read itself on the transition,
+    /// and does nothing at all for an SSH child channel, whose
+    /// `setOption0` only assigns the flag. Without it a pair that has been
+    /// throttled ONCE never reads from the server again — every bulk
+    /// download to a client slower than the tunnel crosses the 64 KiB
+    /// high-water mark, so this was not a corner case but the ordinary end
+    /// of a large transfer.
+    ///
+    /// The failure arm is empty on purpose: a channel that has already
+    /// closed cannot take the option, and its own close is about to tear the
+    /// pair down anyway.
     func channelWritabilityChanged(context: ChannelHandlerContext) {
         let writable = context.channel.isWritable
-        peer.setOption(ChannelOptions.autoRead, value: writable).whenFailure { _ in }
+        let peer = self.peer
+        peer.setOption(ChannelOptions.autoRead, value: writable).whenComplete { outcome in
+            guard case .success = outcome, writable else { return }
+            peer.read()
+        }
         context.fireChannelWritabilityChanged()
     }
 

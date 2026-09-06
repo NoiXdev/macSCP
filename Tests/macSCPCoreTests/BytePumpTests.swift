@@ -72,19 +72,32 @@ struct BytePumpTests {
     /// because `EmbeddedChannel.getOption(ChannelOptions.autoRead)` is
     /// hardcoded to `true` (`Embedded.swift`, `getOptionSync`) and would
     /// answer the same whether or not the pump had touched it.
+    ///
+    /// The RESUME is measured with a read recorder as well as with the
+    /// option, and that is the half a socket-only test cannot see: a socket
+    /// starts reading again when `autoRead` flips, an SSH child channel does
+    /// not (`SSHChildChannel.setOption0` only assigns the flag), and
+    /// `EmbeddedChannel` behaves like the SSH child channel. Zero reads
+    /// while throttled is the negative; at least one after the resume is the
+    /// positive beside it.
     @Test func anUnwritablePeerStopsTheOtherSideFromReading() throws {
         let (local, remote) = try activeEmbeddedPair()
+        let localReads = ReadRecorder()
+        try local.pipeline.syncOperations.addHandler(localReads)
         try installPump(local: local, remote: remote)
 
         #expect(autoRead(of: local) == nil, "the pump must not touch autoRead before it has to")
+        #expect(localReads.count == 0)
 
         remote.isWritable = false
         remote.pipeline.fireChannelWritabilityChanged()
         #expect(autoRead(of: local) == false)
+        #expect(localReads.count == 0, "a throttled peer must not be told to read")
 
         remote.isWritable = true
         remote.pipeline.fireChannelWritabilityChanged()
         #expect(autoRead(of: local) == true)
+        #expect(localReads.count >= 1, "a resumed peer must be read again")
 
         finish(local, remote)
     }

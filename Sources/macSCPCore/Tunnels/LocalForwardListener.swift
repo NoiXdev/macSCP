@@ -31,6 +31,18 @@ public enum TunnelFailure: Error, Sendable, Equatable {
     /// remote-forward direction, where an inbound channel from the server is
     /// connected to a local address.
     case connectFailed(reason: String)
+    /// The channel through the server WAS opened, and gluing the two sides
+    /// together then failed — installing the pump, answering the
+    /// negotiation, or starting the reads.
+    ///
+    /// Distinct from `channelOpenFailed` because the two need different
+    /// clean-up and say different things about the far side: after this one
+    /// there is an open channel on the server to close, and the server is
+    /// demonstrably willing to forward.
+    case pumpFailed(reason: String)
+    /// `start` was called on a listener that has already been started. One
+    /// listener binds once; see `LocalForwardListener.start`.
+    case alreadyStarted
 }
 
 /// What decides where an accepted connection is forwarded to.
@@ -105,6 +117,12 @@ public final class LocalForwardListener: @unchecked Sendable {
 
     /// Binds `bind:localPort` and returns the port actually bound.
     ///
+    /// **One listener binds once.** A second `start` — including one after
+    /// `stop()` — throws `TunnelFailure.alreadyStarted`. Task 5's reconnect
+    /// builds a fresh SSH connection per attempt and builds a fresh listener
+    /// with it; that is the documented contract rather than an accident of
+    /// this implementation.
+    ///
     /// - Parameters:
     ///   - localPort: `0` asks the kernel for an ephemeral port; the answer
     ///     is the return value and `boundPort`.
@@ -139,6 +157,15 @@ public final class LocalForwardListener: @unchecked Sendable {
         onFailure: (@Sendable (TunnelFailure) -> Void)? = nil
     ) async throws -> Int {
         let open = self.open
+        // One listener binds once, successfully or not. `stop()` is final:
+        // it marks the state stopped so that a connection accepted during
+        // the teardown closes itself, and nothing resets that — a listener
+        // restarted after `stop()` would bind a port and then silently drop
+        // every connection on it. Refusing here is the alternative to a
+        // reset, chosen because it is the contract the caller already wants:
+        // a reconnect builds its own connection, so it builds its own
+        // listener too.
+        guard open.claimStart() else { throw TunnelFailure.alreadyStarted }
         let bootstrap = ServerBootstrap(group: group)
             // Lets the listener rebind a port whose previous connections are
             // still in TIME_WAIT. It does NOT let two listeners hold the same
@@ -171,7 +198,8 @@ public final class LocalForwardListener: @unchecked Sendable {
     }
 
     /// Closes the server socket and every pair still open, and returns only
-    /// once each of them has actually closed.
+    /// once each of them has actually closed. Final: this listener cannot be
+    /// started again (see `start`).
     ///
     /// A connection accepted while this runs, whose channel through the
     /// server is still being opened, is closed by the accept path itself
@@ -238,8 +266,14 @@ public final class LocalForwardListener: @unchecked Sendable {
                     return
                 }
             }
+            // Held outside the `do` so the catch can close it: once the
+            // factory has answered, there is a channel open ON THE SERVER,
+            // and a pump that then fails to install would otherwise leave it
+            // there until `stop()`.
+            var opened: Channel?
             do {
                 let throughTheServer = try await directTCPIPFactory(host, remotePort)
+                opened = throughTheServer
                 guard open.track(throughTheServer) else {
                     throughTheServer.close(promise: nil)
                     channel.close(promise: nil)
@@ -251,13 +285,34 @@ public final class LocalForwardListener: @unchecked Sendable {
                 try await BytePump.startReading(
                     local: channel, remote: throughTheServer).get()
             } catch {
-                let failure = TunnelFailure.channelOpenFailed(
-                    reason: DialSupport.reason(for: error))
+                let failure = Self.acceptFailure(error, afterOpen: opened != nil)
                 await negotiation?.reject(failure, on: channel)
+                opened?.close(promise: nil)
                 channel.close(promise: nil)
                 onFailure?(failure)
             }
         }
+    }
+
+    /// What to report for a failure on the accept path.
+    ///
+    /// A `TunnelFailure` travels through UNCHANGED. Re-mapping one through
+    /// `DialSupport.reason(for:)` destroys it: that function spells out four
+    /// error types and reduces everything else to `localizedDescription`,
+    /// which for a `TunnelFailure` — no `LocalizedError` conformance — reads
+    /// "The operation couldn't be completed. (macSCPCore.TunnelFailure error
+    /// 2.)". The factory's own sentence, which is the only one that says why
+    /// the server refused, would be replaced by a case index. Only a foreign
+    /// error is mapped.
+    ///
+    /// `afterOpen` decides the case, not the error: everything up to the
+    /// factory's answer is `channelOpenFailed`, everything after it is
+    /// `pumpFailed`. A `TunnelFailure` the factory itself raised keeps its
+    /// own case regardless — it knows better than this function does.
+    private static func acceptFailure(_ error: any Error, afterOpen: Bool) -> TunnelFailure {
+        if let failure = error as? TunnelFailure { return failure }
+        let reason = DialSupport.reason(for: error)
+        return afterOpen ? .pumpFailed(reason: reason) : .channelOpenFailed(reason: reason)
     }
 
     private static func bindFailure(_ error: any Error, port: Int) -> TunnelFailure {
@@ -280,12 +335,25 @@ private final class OpenForwards: @unchecked Sendable {
     private var server: Channel?
     private var port: Int?
     private var channels: [ObjectIdentifier: Channel] = [:]
+    private var started = false
     private var stopped = false
 
     var boundPort: Int? {
         lock.lock()
         defer { lock.unlock() }
         return port
+    }
+
+    /// Takes this listener's one and only start. `false` on every call
+    /// after the first, whether or not that first one went on to bind
+    /// successfully — a listener is a single use, and a caller that wants to
+    /// try again wants a new one.
+    func claimStart() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !started else { return false }
+        started = true
+        return true
     }
 
     func bound(_ channel: Channel, port: Int) {

@@ -38,10 +38,12 @@ struct TunnelRigITests {
 
         let session = sshSession(
             name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
-        let carrier = try await TunnelConnection.connect(
-            session: session, secrets: [RigSecret()],
-            knownHosts: KnownHostsStore(directory: carrierHosts),
-            decider: .asking { _ in true })
+        let carrier = try await connectWithRetry {
+            try await TunnelConnection.connect(
+                session: session, secrets: [RigSecret()],
+                knownHosts: KnownHostsStore(directory: carrierHosts),
+                decider: .asking { _ in true })
+        }
 
         let listener = LocalForwardListener()
         let seen = RigEventRecorder()
@@ -54,19 +56,23 @@ struct TunnelRigITests {
                 observer: { seen.record($0) })
             #expect(port > 0)
 
-            let throughTheTunnel = try await CitadelFileSystem.connect(
-                config: try SSHConnectionConfig(
-                    host: "127.0.0.1", port: port, username: "testuser",
-                    auth: .password("testpass")),
-                connectTimeout: .seconds(30),
-                knownHosts: KnownHostsStore(directory: tunnelledHosts),
-                onUnknownHostKey: .asking { _ in true })
+            let throughTheTunnel = try await connectWithRetry {
+                try await CitadelFileSystem.connect(
+                    config: try SSHConnectionConfig(
+                        host: "127.0.0.1", port: port, username: "testuser",
+                        auth: .password("testpass")),
+                    connectTimeout: .seconds(30),
+                    knownHosts: KnownHostsStore(directory: tunnelledHosts),
+                    onUnknownHostKey: .asking { _ in true })
+            }
+            // The tunnelled connection is disconnected on EVERY exit from
+            // here, including a failing expectation below: without this, a
+            // red test leaves an SFTP session open on the rig.
+            defer { Task { await throughTheTunnel.disconnect() } }
 
             let items = try await throughTheTunnel.list(path: "/data/seed")
             #expect(items.map(\.name).contains("hello.txt"))
             #expect(seen.events.contains(.opened))
-
-            await throughTheTunnel.disconnect()
         } catch {
             await listener.stop()
             await carrier.disconnect()
@@ -82,6 +88,97 @@ struct TunnelRigITests {
         #expect(closed)
     }
 
+    /// Bulk, past the 64 KiB high-water mark: half a megabyte written
+    /// through the tunnel and read back through a SECOND connection over the
+    /// same forward, byte for byte.
+    ///
+    /// This is the case the backpressure resume exists for. When the local
+    /// socket's pending writes cross `ChannelOptions.writeBufferWaterMark`'s
+    /// 64 KiB default the pump throttles the SSH child channel, and until
+    /// fix round 1 it turned `autoRead` back on WITHOUT a `read()` — which
+    /// an `SSHChildChannel` ignores, so server→local never resumed.
+    ///
+    /// Honest about what this measures, because it was measured: with the
+    /// `read()` removed again this test still passed, in 0.244 s. It is NOT
+    /// a detector for that defect, and the reason is structural rather than
+    /// a matter of payload size — SFTP is request/response, so the tunnelled
+    /// client's own flow control keeps the accepted socket's PENDING writes
+    /// far below the 64 KiB high-water mark and the throttle never engages.
+    /// A test that would engage it needs a far side that pushes unsolicited
+    /// bulk, which nothing in this rig does. The deterministic pin is
+    /// `BytePumpTests.anUnwritablePeerStopsTheOtherSideFromReading`, which
+    /// drives the writability change by hand.
+    ///
+    /// What this test does prove, on every run, is that a transfer far
+    /// larger than any single window or socket buffer survives the pump
+    /// intact, over two separate connections through one forward.
+    ///
+    /// `/config` is the writable home of `testuser` in the linuxserver
+    /// image — the same path `CitadelFileSystemIntegrationTests
+    /// .writeUploadsAndReadsBackRoundtrip` uses — and the file is deleted
+    /// again, through the tunnel, before the test returns.
+    @Test func aLocalForwardCarriesABulkTransferPastTheHighWaterMark() async throws {
+        let carrierHosts = throwawayDirectory("bulk-carrier")
+        let writerHosts = throwawayDirectory("bulk-writer")
+        let readerHosts = throwawayDirectory("bulk-reader")
+        defer {
+            for directory in [carrierHosts, writerHosts, readerHosts] {
+                try? FileManager.default.removeItem(at: directory)
+            }
+        }
+
+        let session = sshSession(
+            name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
+        let carrier = try await connectWithRetry {
+            try await TunnelConnection.connect(
+                session: session, secrets: [RigSecret()],
+                knownHosts: KnownHostsStore(directory: carrierHosts),
+                decider: .asking { _ in true })
+        }
+
+        let listener = LocalForwardListener()
+        do {
+            let port = try await listener.start(
+                bind: "127.0.0.1", localPort: 0, host: "127.0.0.1", remotePort: 2222,
+                directTCPIPFactory: { host, port in
+                    try await carrier.openDirectTCPIP(host: host, port: port)
+                })
+
+            // 512 KiB — eight times the high-water mark, and unmistakably
+            // more than one SSH channel window.
+            let payload = Data((0..<(512 * 1024)).map { UInt8($0 % 251) })
+            let remotePath = "/config/macscp-tunnel-bulk-\(UUID().uuidString).bin"
+
+            let writer = try await connectWithRetry {
+                try await tunnelledConnection(port: port, knownHosts: writerHosts)
+            }
+            defer { Task { await writer.disconnect() } }
+            let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+            continuation.yield(payload)
+            continuation.finish()
+            try await writer.write(path: remotePath, contents: stream)
+
+            let reader = try await connectWithRetry {
+                try await tunnelledConnection(port: port, knownHosts: readerHosts)
+            }
+            defer { Task { await reader.disconnect() } }
+            var readBack = Data()
+            for try await chunk in try await reader.readStream(path: remotePath) {
+                readBack.append(chunk)
+            }
+            #expect(readBack.count == payload.count)
+            #expect(readBack == payload)
+
+            try await reader.delete(path: remotePath)
+        } catch {
+            await listener.stop()
+            await carrier.disconnect()
+            throw error
+        }
+        await listener.stop()
+        await carrier.disconnect()
+    }
+
     /// A dynamic forward (`-D`): a hand-written SOCKS5 client asks the
     /// listener to CONNECT to the rig's own sshd — `127.0.0.1:2222` as the
     /// SERVER sees it, the same target the local forward above uses — and
@@ -90,20 +187,24 @@ struct TunnelRigITests {
     /// listener's: nothing in this process writes `SSH-2.0`.
     ///
     /// The payload is deliberately tiny (a banner is a few dozen bytes).
-    /// `BytePump`'s backpressure resume turns `autoRead` back on without an
-    /// explicit `read()`, which an SSH child channel needs; a transfer large
-    /// enough to make the local socket unwritable would therefore stall.
-    /// That is Task 2's to fix and is written down in this task's report.
+    /// Task 3 wrote here that a transfer large enough to make the local
+    /// socket unwritable would stall, because `BytePump`'s backpressure
+    /// resume turned `autoRead` back on without an explicit `read()`. That
+    /// defect is fixed (Task 2, fix round 1); the bulk case is measured by
+    /// `aLocalForwardCarriesABulkTransferPastTheHighWaterMark` below rather
+    /// than here, because this test's subject is the SOCKS5 conversation.
     @Test func aDynamicForwardCarriesASOCKS5Connect() async throws {
         let carrierHosts = throwawayDirectory("socks-carrier")
         defer { try? FileManager.default.removeItem(at: carrierHosts) }
 
         let session = sshSession(
             name: "rig", host: "127.0.0.1", port: 2222, username: "testuser", authKind: .password)
-        let carrier = try await TunnelConnection.connect(
-            session: session, secrets: [RigSecret()],
-            knownHosts: KnownHostsStore(directory: carrierHosts),
-            decider: .asking { _ in true })
+        let carrier = try await connectWithRetry {
+            try await TunnelConnection.connect(
+                session: session, secrets: [RigSecret()],
+                knownHosts: KnownHostsStore(directory: carrierHosts),
+                decider: .asking { _ in true })
+        }
 
         let listener = SOCKS5Listener()
         let seen = RigEventRecorder()
@@ -163,6 +264,18 @@ private struct RigSecret: SecretSource {
     let label = "rig"
 
     func secret(for sessionID: UUID) throws -> String? { "testpass" }
+}
+
+/// One SFTP connection dialled THROUGH the forward on `port`. A fresh
+/// known-hosts directory per caller, so each dial is its own first contact
+/// and no test depends on another's pinning.
+private func tunnelledConnection(port: Int, knownHosts: URL) async throws -> CitadelFileSystem {
+    try await CitadelFileSystem.connect(
+        config: try SSHConnectionConfig(
+            host: "127.0.0.1", port: port, username: "testuser", auth: .password("testpass")),
+        connectTimeout: .seconds(30),
+        knownHosts: KnownHostsStore(directory: knownHosts),
+        onUnknownHostKey: .asking { _ in true })
 }
 
 private func throwawayDirectory(_ role: String) -> URL {
