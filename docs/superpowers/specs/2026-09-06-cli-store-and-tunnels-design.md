@@ -180,11 +180,15 @@ terminals").
 
 `MacSCPApp` observes `NSApplication.didBecomeActiveNotification` and
 calls `SessionListViewModel.reload()` on every window's view model and
-`TunnelManager.shared.reload()`. Both reloads are already idempotent
-(the manager keeps runners by id; a running profile edited by the CLI
-keeps running under its old mapping until restarted — stated in
-`tunnels edit`'s `--verbose` output: "the app restarts a running
-forwarding only when you stop and start it"). The app writes nothing on
+`TunnelManager.shared.reload()`. Both reloads are idempotent for what
+is still there (the manager keeps runners by id): a running profile
+EDITED by the CLI keeps running under its old mapping until restarted —
+stated in `tunnels edit`'s `--verbose` output: "the app restarts a
+running forwarding only when you stop and start it". A running profile
+DELETED by the CLI is reconciled: the reload stops its runner and drops
+its state, the same way the app's own session deletion does — a row
+that is gone from disk must not keep a bound port alive with no menu
+entry to stop it (found by the Task 5 review, 2026-09-06). The app writes nothing on
 reload, so a CLI write cannot be clobbered by a stale in-memory copy;
 conversely a CLI write between an app read and an app write of the SAME
 session is lost — the app's write wins, which is the existing rule for
