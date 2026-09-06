@@ -41,13 +41,17 @@ public enum BytePump {
     /// Installs the pump on both channels and returns once both handlers are
     /// in place — on `local`'s event loop, whichever loop `remote` is on.
     ///
-    /// Installing IS starting: each handler turns its own channel's
-    /// `autoRead` on and asks for its first read from the channel's own
-    /// lifecycle (`BytePumpHandler.handlerAdded`/`channelActive`), never
-    /// from the task that called this. The long comment on those two methods
-    /// is the reason, and it is a measured one.
+    /// Installing IS starting, for every side without a gate: each handler
+    /// turns its own channel's `autoRead` on and asks for its first read
+    /// from the channel's own lifecycle
+    /// (`BytePumpHandler.handlerAdded`/`channelActive`), never from the
+    /// task that called this. The long comment on those two methods is the
+    /// reason, and it is a measured one. A gated remote side (below)
+    /// registers its intent from the same two arms and only defers the
+    /// moment of the first `read()` until the gate opens.
     ///
-    /// There is no second, read-starting step after this one. Round 2 of
+    /// For an ungated side there is no second, read-starting step after
+    /// this one. Round 2 of
     /// this file moved the work into the handlers and left the old
     /// task-driven `BytePump.startReading` behind as an empty function,
     /// because comments in three other files described the accept path in
@@ -58,8 +62,9 @@ public enum BytePump {
     /// private thing — the per-channel body both lifecycle arms call.)
     ///
     /// `remoteReadGate` holds the REMOTE side's first read until someone
-    /// opens it. `nil` — the default, and what a fixed forward and a remote
-    /// forward pass — means the remote side starts with the local one. A
+    /// opens it. `nil` — the default, and what the `.fixed` path passes; a
+    /// remote forward builds its handlers directly and takes the same
+    /// default — means the remote side starts with the local one. A
     /// NEGOTIATED forward passes a gate and opens it after its reply is
     /// written; `BytePumpReadGate` says why.
     public static func install(

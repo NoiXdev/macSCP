@@ -46,9 +46,10 @@ extension SOCKS5ReplyCode {
     /// `channelOpenFailed`. `reject` is called from exactly one place — that
     /// accept path's catch — so the reachable set is whatever can be thrown
     /// between the factory call and the end of `confirm`, which is where
-    /// that path ends — `BytePump.install` starts both sides reading when it
-    /// adds their handlers, so there is no read-starting step after
-    /// `confirm` for anything to fail in:
+    /// that path ends — `BytePump.install` starts the LOCAL side reading
+    /// when it adds the handlers, and a negotiated forward's remote side is
+    /// released by `remoteReadGate.open()` after `confirm`, which cannot
+    /// throw, so nothing after `confirm` adds to the set:
     ///
     /// | `TunnelFailure` | code | raised by, today |
     /// |---|---|---|
