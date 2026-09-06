@@ -40,11 +40,18 @@ public struct TunnelProfile: Codable, Hashable, Identifiable, Sendable {
     /// | `dynamic` (`-D`) | on this Mac, a SOCKS5 server (no auth; CONNECT; IPv4, IPv6, domain) at `bind:localPort` | a `direct-tcpip` channel to the destination the SOCKS client named |
     ///
     /// `Codable` is the compiler-synthesized conformance — an
-    /// enum-with-associated-values encodes as a single-key object keyed by
-    /// the case name, its payload an array of the associated values in
-    /// declaration order (`TunnelProfileTests` pins the exact shape for one
-    /// profile of each case, so a future change to this enum's shape is a
-    /// visible, reviewed decision rather than a silent format break).
+    /// enum-with-associated-values, every case fully labeled, encodes as a
+    /// single-key object keyed by the case name, its payload a NESTED
+    /// KEYED object with one key per parameter label (not an array):
+    /// `.local(bind: "127.0.0.1", localPort: 8080, host: "internal",
+    /// remotePort: 80)` encodes as `{"local":{"bind":"127.0.0.1",
+    /// "host":"internal","localPort":8080,"remotePort":80}}` (key order
+    /// alphabetical only because the encoder that produced this example
+    /// asked for `.sortedKeys`). `TunnelProfileTests
+    /// .localKindJSONShapeIsPinned` pins the exact shape, so a future
+    /// change to this enum — a renamed case, a renamed or dropped
+    /// parameter label — is a visible, reviewed decision rather than a
+    /// silent format break.
     public enum Kind: Codable, Hashable, Sendable {
         /// Local → remote (`-L`): this Mac listens on `bind:localPort` and
         /// forwards each accepted connection, through the server, to

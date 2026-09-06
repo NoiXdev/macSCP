@@ -36,6 +36,12 @@ struct TunnelStatePlanTests {
             (.reconnecting(attempt: 1), .connectionLost(reconnects: true), .reconnecting(attempt: 2)))
         rows.append(
             (.reconnecting(attempt: 2), .connectionLost(reconnects: true), .reconnecting(attempt: 3)))
+        // The `reconnects` flag is ignored once already `.reconnecting` —
+        // see `TunnelStatePlan.next(_:on:)`'s own doc comment for why — so
+        // a `false` flag here still advances the attempt count rather than
+        // failing.
+        rows.append(
+            (.reconnecting(attempt: 1), .connectionLost(reconnects: false), .reconnecting(attempt: 2)))
         rows.append((.stopped, .failed(reason: "x"), .failed(reason: "x")))
         rows.append((.connecting, .failed(reason: "bind failed"), .failed(reason: "bind failed")))
         rows.append((.active(connections: 1), .failed(reason: "y"), .failed(reason: "y")))
