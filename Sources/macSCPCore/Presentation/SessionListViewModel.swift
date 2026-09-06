@@ -12,6 +12,30 @@ private struct LoginMergeSecretConflict: Error, CustomStringConvertible {
     var description: String { CoreL10n.string("core.login.mergeConflictingSecrets") }
 }
 
+/// A seam for a Core store that must react to a session going away without
+/// `SessionStore` or `SessionListViewModel` naming that store's concrete
+/// type. `SessionStore.delete(id:)` itself is a plain file write — no
+/// orchestration happens there — and `SessionListViewModel.delete(_:)` is
+/// the one call site that reaches it (jump restoration, the audit log, the
+/// Keychain secret), so this is where every observer is told, the same
+/// throw-free way the audit-log and stray-secret cleanup beside it already
+/// work.
+///
+/// `TunnelStore` is the first (and, as of this task, only) conformer —
+/// registered additively through `addDeletionObserver(_:)` rather than as a
+/// new required `init` parameter, deliberately: `SessionListViewModel`'s
+/// `init` already has every existing store as a required argument (see its
+/// own doc comment on why), and a required `tunnelStore:` there would touch
+/// every one of `SessionListViewModel`'s own construction sites, most of
+/// them tests unrelated to tunnels. A caller that cares about tunnels
+/// registers one; a caller that does not is unaffected. Deletion has this
+/// one call site (`grep -rn "\.delete(id:" Sources/` finds no other, in
+/// either the App target or Core itself, counted 2026-09-06) — the App has
+/// no deletion path of its own to hang this off instead.
+public protocol SessionDeletionObserver: Sendable {
+    func sessionDeleted(id: UUID)
+}
+
 /// State of the sessions sidebar: list, save, delete, password access.
 /// Secrets go exclusively through the SecretStore.
 @Observable
@@ -39,6 +63,10 @@ public final class SessionListViewModel {
     /// already lives under the KEY's own Keychain slot before writing it into
     /// the session's.
     private let keys: ManagedKeyStore
+    /// Registered through `addDeletionObserver(_:)`, told in `delete(_:)`.
+    /// See `SessionDeletionObserver`'s own doc comment for why this is an
+    /// additive list rather than another required `init` argument.
+    private var deletionObservers: [any SessionDeletionObserver] = []
 
     /// Every store is a required argument, deliberately.
     ///
@@ -106,6 +134,13 @@ public final class SessionListViewModel {
     /// because nothing here latches the channel shut.
     public func dismissError() {
         errorMessage = nil
+    }
+
+    /// Registers `observer` to be told (`sessionDeleted(id:)`) whenever
+    /// `delete(_:)` removes a session — see `SessionDeletionObserver`'s doc
+    /// comment for why this is additive rather than an `init` argument.
+    public func addDeletionObserver(_ observer: any SessionDeletionObserver) {
+        deletionObservers.append(observer)
     }
 
     /// Sessions belonging to the given group, or ungrouped sessions when
@@ -489,6 +524,13 @@ public final class SessionListViewModel {
             // Throw-free by design (M9b) — an orphaned log file is a minor
             // leak, never a reason to fail the session deletion itself.
             auditStore.deleteLog(for: session.id)
+            // Same throw-free shape: a registered observer (`TunnelStore`,
+            // wired up by a later task) cleans up whatever it owns for this
+            // session; a failure there is its own concern, never a reason
+            // to fail the session deletion itself.
+            for observer in deletionObservers {
+                observer.sessionDeleted(id: session.id)
+            }
             reload()
         } catch {
             reload()
