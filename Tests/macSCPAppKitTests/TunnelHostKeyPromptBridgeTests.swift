@@ -19,6 +19,15 @@ import Testing
 ///
 /// Nothing here dials: a `HostKeyCandidate` is a value, and the bridge is
 /// the whole system under test.
+///
+/// **Every wait is a `pollUntil`, never `await task.value`.** A `Task<Void,
+/// Never>`'s `value` ignores its awaiter's cancellation, so a bridge that
+/// failed to resume an asker would HANG this suite rather than fail it — the
+/// suite's `.timeLimit` could not end it. Measured while probing this round:
+/// planting an `invalidate()` that forgets to resume made the first version
+/// of these tests hang until the probe was killed by hand, with no verdict
+/// at all. Polling for the recorded answer is cancellable, so the same plant
+/// is red instead.
 @Suite("Tunnel host-key prompt bridge", .timeLimit(.minutes(1)))
 @MainActor
 struct TunnelHostKeyPromptBridgeTests {
@@ -44,13 +53,17 @@ struct TunnelHostKeyPromptBridgeTests {
         let bridge = TunnelHostKeyPromptBridge()
         let answers = Answers()
 
-        let first = Task { @MainActor in
+        // Discarded handles: an unstructured task runs whether or not
+        // anyone holds it, and nothing here waits on one — see the suite's
+        // header for why `await task.value` is not a wait this project can
+        // afford.
+        _ = Task { @MainActor in
             answers.record("first", await bridge.ask(Self.candidate("first")))
         }
         try await pollUntil("the first question is on screen") {
             bridge.currentCandidate?.host == "first"
         }
-        let second = Task { @MainActor in
+        _ = Task { @MainActor in
             answers.record("second", await bridge.ask(Self.candidate("second")))
         }
         try await pollUntil("the second question is queued") { bridge.pendingCount == 2 }
@@ -61,14 +74,14 @@ struct TunnelHostKeyPromptBridgeTests {
         #expect(answers.byHost["first"] == nil, "the first question was answered by the second one")
 
         bridge.resolve(trust: true)
-        await first.value
+        try await pollUntil("the first asker was resumed") { answers.byHost["first"] != nil }
         #expect(answers.byHost["first"] == true)
         try await pollUntil("the second question takes the screen") {
             bridge.currentCandidate?.host == "second" && bridge.pendingCount == 1
         }
 
         bridge.resolve(trust: false)
-        await second.value
+        try await pollUntil("the second asker was resumed") { answers.byHost["second"] != nil }
         #expect(answers.byHost["second"] == false)
         #expect(bridge.currentCandidate == nil)
         #expect(bridge.pendingCount == 0)
@@ -80,25 +93,26 @@ struct TunnelHostKeyPromptBridgeTests {
         let bridge = TunnelHostKeyPromptBridge()
         let answers = Answers()
 
-        let first = Task { @MainActor in
+        _ = Task { @MainActor in
             answers.record("first", await bridge.ask(Self.candidate("first")))
         }
         try await pollUntil("the first question is on screen") {
             bridge.currentCandidate?.host == "first"
         }
+        // The one handle this suite keeps: this test cancels it.
         let second = Task { @MainActor in
             answers.record("second", await bridge.ask(Self.candidate("second")))
         }
         try await pollUntil("the second question is queued") { bridge.pendingCount == 2 }
 
         second.cancel()
-        await second.value
+        try await pollUntil("the cancelled asker was resumed") { answers.byHost["second"] != nil }
         #expect(answers.byHost["second"] == false, "a cancelled dial must be refused, not left")
         try await pollUntil("the cancelled question left the queue") { bridge.pendingCount == 1 }
         #expect(bridge.currentCandidate?.host == "first", "the cancelled asker took the screen")
 
         bridge.resolve(trust: true)
-        await first.value
+        try await pollUntil("the first asker was resumed") { answers.byHost["first"] != nil }
         #expect(answers.byHost["first"] == true)
     }
 
@@ -108,13 +122,13 @@ struct TunnelHostKeyPromptBridgeTests {
         let bridge = TunnelHostKeyPromptBridge()
         let answers = Answers()
 
-        let pending = Task { @MainActor in
+        _ = Task { @MainActor in
             answers.record("pending", await bridge.ask(Self.candidate("pending")))
         }
         try await pollUntil("the question is on screen") { bridge.currentCandidate != nil }
 
         bridge.invalidate()
-        await pending.value
+        try await pollUntil("the pending asker was resumed") { answers.byHost["pending"] != nil }
 
         #expect(answers.byHost["pending"] == false, "a closed bridge left a dial waiting")
         #expect(bridge.currentCandidate == nil)
