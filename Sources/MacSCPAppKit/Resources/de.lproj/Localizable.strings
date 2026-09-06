@@ -1264,6 +1264,7 @@
 "tunnel.error.delete %@" = "Konnte nicht gelöscht werden: %@";
 "tunnel.empty" = "Für diese Verbindung gibt es noch keine Weiterleitung.";
 "tunnel.help.unsupportedSessions" = "Für Verbindungen mit Jump-Host oder gespeichertem Login gibt es keine Weiterleitungen: eine Weiterleitung öffnet ihre eigene Verbindung, und dieser Weg unterstützt beides nicht.";
+"tunnel.help.externalEdits" = "Eine Weiterleitung, die außerhalb der App geändert wurde, läuft unverändert weiter, bis du sie stoppst und wieder startest.";
 "tunnel.hostkey.subtitle" = "Eine Weiterleitung öffnet gerade eine eigene Verbindung zu diesem Server.";
 "tunnel.menu.autostart" = "Weiterleitungen beim Start …";
 "tunnel.glyph.tooltip %@" = "Portweiterleitung: %@";

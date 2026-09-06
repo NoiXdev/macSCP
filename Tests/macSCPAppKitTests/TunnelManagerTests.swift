@@ -405,6 +405,55 @@ struct TunnelManagerTests {
             "a failure must outrank a reconnect — the glyph's colour is the worst state")
     }
 
+    // MARK: - A store another process wrote
+
+    /// What the app does when it becomes active (CLI sessions and tunnels
+    /// plan, Task 5): it re-reads `tunnels.json`, because the CLI writes the
+    /// same file and no IPC tells the app about it.
+    ///
+    /// **Two claims, and the second is the one worth a test.** A profile
+    /// written from outside appears — that is the point of the reload. And a
+    /// forwarding that is RUNNING is not disturbed by it: the manager keys
+    /// its runners by profile id and the reload touches only the mirror, so
+    /// the runner is the SAME OBJECT afterwards. The identity is read off the
+    /// factory's log, so a reload that rebuilt its runners would be caught by
+    /// the second runner the factory had to build — the design records this
+    /// as the accepted limit that a profile edited on disk keeps running as
+    /// it was until it is stopped and started.
+    @Test func reloadPicksUpAnOutsideWriteAndLeavesARunningRunnerAlone() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let sessionID = UUID()
+        let running = Self.profile(session: sessionID, name: "web")
+        try await rig.manager.save(running)
+        await rig.manager.start(running, decider: Self.accepting)
+        try await pollUntil("the forwarding is running") { rig.manager.runningCount == 1 }
+        let runnerBeforeReload = try rig.runner(running)
+
+        // Straight to the store, the way another process writes it — the
+        // manager is told nothing.
+        let fromOutside = Self.profile(session: sessionID, name: "db", port: 5432)
+        try rig.store.upsert(fromOutside)
+        #expect(
+            rig.manager.allProfiles.contains { $0.id == fromOutside.id } == false, """
+                the manager listed a profile written straight to the store before it reloaded \
+                — this test would then prove nothing about the reload.
+                """)
+
+        rig.manager.reload()
+
+        #expect(
+            rig.manager.profiles(for: sessionID).map(\.name).sorted() == ["db", "web"],
+            "the reload did not pick up the profile written outside the app")
+        #expect(
+            try rig.runner(running) === runnerBeforeReload, """
+                the reload rebuilt the running forwarding's runner — a forwarding the user \
+                started would be replaced by an activation of the app.
+                """)
+        #expect(runnerBeforeReload.stopCount == 0, "the reload stopped a running forwarding")
+        #expect(rig.manager.runningCount == 1, "the reload lost a running forwarding")
+    }
+
     // MARK: - A deleted session takes its tunnels with it
 
     /// The `SessionDeletionObserver` seam, driven directly — which is what

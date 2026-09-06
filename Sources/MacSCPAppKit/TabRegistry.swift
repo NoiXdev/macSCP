@@ -94,9 +94,22 @@ final class TabRegistry {
     private var windowTeardowns: [WindowID: WindowTeardown] = [:]
     private var windowTeardownOrder: [WindowID] = []
 
+    /// Each open window's own `SessionListViewModel`, held WEAKLY — see
+    /// `registerSessionList(_:for:)`.
+    private var sessionListsByWindow: [WindowID: WeakSessionList] = [:]
+    /// The order those windows registered, for the same reason the
+    /// describers and the teardowns keep one: a dictionary has none, and a
+    /// sweep over every window should read the same way twice.
+    private var sessionListWindowOrder: [WindowID] = []
+
     /// A weak reference in a place a dictionary cannot hold one directly.
     private struct WeakModel {
         weak var model: TabsViewModel<SessionTab>?
+    }
+
+    /// The same, for a window's session list.
+    private struct WeakSessionList {
+        weak var list: SessionListViewModel?
     }
 
     /// What a window answers when asked to describe itself: a `WindowSeed`
@@ -394,6 +407,70 @@ final class TabRegistry {
         return model
     }
 
+    // MARK: - Each window's session list, for the activation that re-reads it
+
+    /// Records the `SessionListViewModel` `window` renders, so the app can
+    /// hand it a reload when it becomes active (CLI sessions and tunnels
+    /// plan, Task 5).
+    ///
+    /// **Why the registry has to answer this.** The CLI writes the same
+    /// `sessions-v2.json` the app reads, and there is no IPC to tell the app
+    /// about it — so the app re-reads on activation, and "every open window"
+    /// is a set that is known here and nowhere else. `AppDelegate` has no
+    /// `ContentView` to ask, which is the same argument
+    /// `registerWindowDescriber(_:for:)` and `registerWindowTeardown(_:for:)`
+    /// make for their own registrations. Adding a slot to the registry that
+    /// already enumerates windows is also what keeps there from being a
+    /// SECOND registry of windows.
+    ///
+    /// **What it must NOT become is a copy of the list.** The sessions
+    /// themselves live in the window's own view model; this holds a reference
+    /// to that model and nothing about its contents.
+    ///
+    /// Weak, like `registerModel(_:for:)`, and for the same reason: the
+    /// registry must never be what keeps a window's view model alive, and
+    /// this type performs no `deinit` cleanup (see the type's doc comment).
+    /// `unregisterSessionList(for:)` on the window's close path is what makes
+    /// the ordinary case immediate.
+    ///
+    /// Idempotent and order-stable, like every other registration here: a
+    /// window calls it on every setup pass, the last call wins, and the
+    /// window keeps the position it first registered in.
+    func registerSessionList(_ list: SessionListViewModel, for window: WindowID) {
+        if sessionListsByWindow[window] == nil {
+            sessionListWindowOrder.append(window)
+        }
+        sessionListsByWindow[window] = WeakSessionList(list: list)
+    }
+
+    /// Forgets `window`'s session list. Called from the window's close path —
+    /// a window that is going away is not one to hand a reload to.
+    func unregisterSessionList(for window: WindowID) {
+        sessionListsByWindow[window] = nil
+        sessionListWindowOrder.removeAll { $0 == window }
+    }
+
+    /// Every open window's session list, in the order the windows appeared.
+    ///
+    /// Handing them over is all this does — the caller is what calls
+    /// `reload()` on each. A window whose model has gone away without
+    /// unregistering is dropped here rather than left to answer `nil`
+    /// forever, the same way `model(for:)` drops a stale entry.
+    func allSessionLists() -> [SessionListViewModel] {
+        var live: [WindowID] = []
+        var lists: [SessionListViewModel] = []
+        for window in sessionListWindowOrder {
+            guard let list = sessionListsByWindow[window]?.list else {
+                sessionListsByWindow[window] = nil
+                continue
+            }
+            live.append(window)
+            lists.append(list)
+        }
+        sessionListWindowOrder = live
+        return lists
+    }
+
     // MARK: - Each window's description, for the quit that restores it
 
     /// Records how `window` describes itself, for the restoration sweep at
@@ -411,7 +488,8 @@ final class TabRegistry {
     /// the tab list live in the window's own `ContentView`, and a closure
     /// asks that view rather than mirroring it here.
     ///
-    /// Idempotent, like `register(_:in:)` and `registerModel(_:for:)`: a
+    /// Idempotent, like `register(_:in:)`, `registerModel(_:for:)` and
+    /// `registerSessionList(_:for:)`: a
     /// window calls this on every setup pass, the last closure wins, and
     /// the window keeps the position it first registered in.
     ///
@@ -465,7 +543,10 @@ final class TabRegistry {
     /// a function value and returns it; it does not know what is in it and
     /// cannot run it.
     ///
-    /// Idempotent, and order-stable, like the three registrations above: a
+    /// Idempotent, and order-stable, like the four registrations above
+    /// (counted 2026-09-06, when `registerSessionList(_:for:)` joined
+    /// `register(_:in:)`, `registerModel(_:for:)` and
+    /// `registerWindowDescriber(_:for:)`): a
     /// window calls this on every setup pass, the last closure wins, and the
     /// window keeps the position it first registered in.
     ///

@@ -283,6 +283,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// inside `applicationDockMenu(_:)` would be gone before the user could
     /// click anything in the menu it built.
     @MainActor private var dockMenuBlock: TunnelMenuBlockController?
+    /// The activation observer's token (CLI sessions and tunnels plan,
+    /// Task 5). Held for the app's lifetime like the two controllers above:
+    /// `NotificationCenter.addObserver(forName:object:queue:using:)` returns
+    /// the only handle that could ever remove this observation, and this
+    /// object outlives the process's windows, so there is no removal path and
+    /// nothing to write one for. Kept rather than discarded so the
+    /// observation has an owner that can be named.
+    @MainActor private var activationObserver: (any NSObjectProtocol)?
 
     /// The launch's own forwarding work, and the first point in this
     /// process where it can be done (port-forwarding plan, Task 7).
@@ -322,6 +330,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let badge = DockBadgeController(manager: TunnelManager.shared)
         dockBadge = badge
         badge.start()
+        observeActivation()
+    }
+
+    /// Both stores are re-read whenever the app becomes active (CLI sessions
+    /// and tunnels plan, Task 5).
+    ///
+    /// **Why activation, and why here.** The CLI writes the very files this
+    /// app reads — `sessions-v2.json` through `SessionStore`, `tunnels.json`
+    /// through `TunnelStore` — and there is no IPC in either direction (the
+    /// design says so, and none is added). So a session added in a terminal
+    /// would otherwise need a relaunch to appear. Activation is the moment
+    /// the user comes back from that terminal, and this delegate is the
+    /// app's one owner of process-wide lifecycle, the same place the quit
+    /// chain lives.
+    ///
+    /// **The windows are the quit chain's windows.** `TabRegistry` already
+    /// answers "which windows exist right now" for the restoration sweep and
+    /// the quit teardown; asking it for their session lists adds a slot to
+    /// that registry rather than a second registry beside it.
+    ///
+    /// **Neither reload disturbs anything running.** `TunnelManager.reload()`
+    /// assigns its profile mirror and nothing else — the runners stay keyed
+    /// by profile id — so a forwarding edited from the CLI keeps running as
+    /// it was until it is stopped and started, which is exactly what the
+    /// sheet's help text tells the user (`tunnel.help.externalEdits`) and
+    /// what `TunnelManagerTests
+    /// .reloadPicksUpAnOutsideWriteAndLeavesARunningRunnerAlone` holds it to.
+    /// `SessionListViewModel.reload()` assigns only its four store-derived
+    /// properties; a sheet's draft lives in the sheet, never in the view
+    /// model, so this needs no "not while a sheet is open" condition —
+    /// `SessionListViewModelTests.anEditSavedAfterAnActivationReloadStillLands`
+    /// is the measurement behind that sentence.
+    ///
+    /// The block runs on the main queue and this app's whole UI layer is
+    /// main-actor-isolated, so `MainActor.assumeIsolated` states what the
+    /// queue already guarantees rather than hopping and losing the
+    /// activation's own turn.
+    @MainActor
+    private func observeActivation() {
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                TunnelManager.shared.reload()
+                for sessionList in TabRegistry.shared.allSessionLists() {
+                    sessionList.reload()
+                }
+            }
+        }
     }
 
     /// The Dock icon's menu: the forwarding block, and nothing else this app

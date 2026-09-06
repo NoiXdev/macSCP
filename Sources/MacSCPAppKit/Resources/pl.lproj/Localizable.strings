@@ -1266,6 +1266,7 @@
 "tunnel.error.delete %@" = "Nie udało się usunąć: %@";
 "tunnel.empty" = "Brak przekierowań dla tego połączenia.";
 "tunnel.help.unsupportedSessions" = "Przekierowania nie są dostępne dla połączeń korzystających z hosta pośredniego lub zapisanego loginu: przekierowanie otwiera własne połączenie, a ta ścieżka nie obsługuje żadnego z nich.";
+"tunnel.help.externalEdits" = "Przekierowanie zmienione poza aplikacją działa dalej bez zmian, dopóki go nie zatrzymasz i nie uruchomisz ponownie.";
 "tunnel.hostkey.subtitle" = "Przekierowanie otwiera własne połączenie z tym serwerem.";
 "tunnel.menu.autostart" = "Przekierowania przy starcie…";
 "tunnel.glyph.tooltip %@" = "Przekierowanie portu: %@";

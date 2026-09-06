@@ -4068,6 +4068,77 @@ struct SessionListViewModelTests {
         let templateKeptItsJumpSecret = try secrets.password(for: spec.secretID) != nil
         #expect(templateKeptItsJumpSecret, "duplicating must not disturb the template's jump slot")
     }
+
+    // MARK: - A store another process wrote (CLI sessions and tunnels, Task 5)
+    //
+    // The app re-reads `sessions-v2.json` when it becomes active, because
+    // the CLI writes the same file and no IPC tells the app about it. The
+    // wiring — the activation observer, and the registry that hands it every
+    // open window's view model — is pinned in the App target
+    // (`StoreReloadOnActivationGuardTests`); what belongs here is what
+    // `reload()` itself does with a file that changed underneath it.
+
+    /// A second view model over the SAME directory stands in for the other
+    /// process: it writes through the ordinary store, exactly as `sessions
+    /// add` does, and the first one is told nothing until it reloads.
+    @Test func reloadPicksUpASessionWrittenOutsideThisViewModel() {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = vm.save(
+            name: "web", values: sshValues(host: "h", port: 22, username: "u"), password: "")
+
+        let otherProcess = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
+        _ = otherProcess.save(
+            name: "db", values: sshValues(host: "db.internal", port: 22, username: "u"),
+            password: "")
+
+        #expect(vm.sessions.map(\.name) == ["web"], """
+            this view model listed the outside write before it reloaded — the test would then \
+            prove nothing about the reload.
+            """)
+
+        vm.reload()
+
+        #expect(vm.sessions.map(\.name) == ["db", "web"])
+    }
+
+    /// **No edit is lost to the reload, and the reason is structural rather
+    /// than timed.** `reload()` assigns only the four store-derived
+    /// properties — `sessions`, `groups`, `loginSets`, `errorMessage`; a
+    /// sheet's draft lives in the sheet, never here, which is why the
+    /// activation reload needs no "not while a sheet is open" condition.
+    /// This drives that: a save issued AFTER a reload that arrived
+    /// mid-edit still lands, and it lands over the file the other process
+    /// wrote rather than over a stale copy of it.
+    @Test func anEditSavedAfterAnActivationReloadStillLands() {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = vm.save(
+            name: "web", values: sshValues(host: "h", port: 22, username: "u"), password: "")
+
+        let otherProcess = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
+        _ = otherProcess.save(
+            name: "db", values: sshValues(host: "db.internal", port: 22, username: "u"),
+            password: "")
+
+        // The app becomes active in the middle of the edit.
+        vm.reload()
+        // …and the edit is saved afterwards.
+        _ = vm.save(
+            name: "web", values: sshValues(host: "edited.example", port: 2222, username: "u"),
+            password: "")
+
+        #expect(vm.sessions.map(\.name) == ["db", "web"], "the reload lost the outside write")
+        let edited = vm.sessions.first { $0.name == "web" }?.ssh
+        #expect(edited?.host == "edited.example", "the edit saved across the reload was lost")
+        #expect(edited?.port == 2222)
+    }
 }
 
 private final class FailingSecretStore: SecretStore, @unchecked Sendable {

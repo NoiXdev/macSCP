@@ -1262,6 +1262,7 @@
 "tunnel.error.delete %@" = "Could not delete: %@";
 "tunnel.empty" = "No forwardings for this connection yet.";
 "tunnel.help.unsupportedSessions" = "Forwardings are not available for connections that use a jump host or a saved login: a forwarding opens its own connection, and that path supports neither.";
+"tunnel.help.externalEdits" = "A forwarding edited outside the app keeps running as it was until you stop and start it.";
 "tunnel.hostkey.subtitle" = "A forwarding is opening a connection of its own to this server.";
 "tunnel.menu.autostart" = "Forwardings at Launch…";
 "tunnel.glyph.tooltip %@" = "Port forwarding: %@";

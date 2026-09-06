@@ -244,6 +244,21 @@ struct TunnelProfilesSheet: View {
                 .foregroundStyle(DesignTokens.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // The limit the activation reload accepts (CLI sessions and
+            // tunnels plan, Task 5): the app re-reads `tunnels.json` when it
+            // becomes active, so a profile the CLI edited shows its new
+            // values here at once — but the runner behind a RUNNING
+            // forwarding is keyed by profile id and is deliberately left
+            // alone, so what it forwards is still what it was started with.
+            // Said here because this table is where the two can be seen to
+            // disagree.
+            Text(L10n.string(
+                "tunnel.help.externalEdits",
+                "A forwarding edited outside the app keeps running as it was until you stop and start it."))
+                .font(.caption)
+                .foregroundStyle(DesignTokens.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
             HStack {
                 Spacer()
                 Button(L10n.string("common.close", "Close")) { onClose() }

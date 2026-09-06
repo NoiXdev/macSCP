@@ -1267,6 +1267,7 @@
 "tunnel.error.delete %@" = "Suppression impossible : %@";
 "tunnel.empty" = "Aucune redirection pour cette connexion.";
 "tunnel.help.unsupportedSessions" = "Les redirections ne sont pas disponibles pour les connexions qui passent par un hôte rebond ou un identifiant enregistré : une redirection ouvre sa propre connexion, et ce chemin ne prend en charge ni l’un ni l’autre.";
+"tunnel.help.externalEdits" = "Une redirection modifiée en dehors de l’application continue de fonctionner telle quelle jusqu’à ce que vous l’arrêtiez et la redémarriez.";
 "tunnel.hostkey.subtitle" = "Une redirection ouvre sa propre connexion vers ce serveur.";
 "tunnel.menu.autostart" = "Redirections au démarrage…";
 "tunnel.glyph.tooltip %@" = "Redirection de port : %@";

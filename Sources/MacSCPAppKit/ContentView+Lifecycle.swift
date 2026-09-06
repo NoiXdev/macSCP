@@ -597,6 +597,16 @@ extension ContentView {
         // plan, Task 3) — `TabRegistry.registerModel(_:for:)` holds it
         // weakly, and `releaseHeldTabsOnClose()` is where it is given up.
         TabRegistry.shared.registerModel(tabsModel, for: windowID)
+        // And this window's session list, so the activation reload can
+        // reach it (CLI sessions and tunnels plan, Task 5). The CLI writes
+        // the same `sessions-v2.json` this window reads and no IPC says so,
+        // which is why the read cannot stay at window setup alone; the
+        // registry is asked for every open window's session list at
+        // `NSApplication.didBecomeActiveNotification` (`AppDelegate
+        // .observeActivation()`). Held weakly, and given up in
+        // `handleWindowWillClose(_:)` beside the describer and the quit
+        // teardown.
+        TabRegistry.shared.registerSessionList(sessionListViewModel, for: windowID)
         // Fourth: how this window describes itself, for the quit that
         // restores it (Detachable Tabs plan, Task 5 fix round 1). A
         // closure, asked once at `applicationWillTerminate`, because the
@@ -1015,6 +1025,12 @@ extension ContentView {
         // restoration file is written once, at quit, from the windows
         // still registered — see `AppDelegate.writeRestorationSeeds()`.
         TabRegistry.shared.unregisterWindowDescriber(for: windowID)
+        // And this window's session list (CLI sessions and tunnels plan,
+        // Task 5): a window on its way out is not one to hand an activation
+        // reload to. Belt and braces rather than load-bearing — the registry
+        // holds it weakly — but immediate, which the weak reference alone is
+        // not.
+        TabRegistry.shared.unregisterSessionList(for: windowID)
         // And what this window would have done at quit (Quit Teardown plan,
         // Task 1) — BEFORE the two sweeps below, which are that very
         // sequence, running now. Unregistering first is what stops the quit
