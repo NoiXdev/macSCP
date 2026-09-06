@@ -305,16 +305,23 @@ struct CLITunnelStartDeciderGuardTests {
     /// body that composes the dial means the TOFU question is answered
     /// there, past `--accept-new`/`--non-interactive`.
     ///
-    /// `.refusing` and `.accepting` are the ones round 1 could not have
-    /// caught: neither constructs anything, and both would have read as a
-    /// perfectly ordinary argument.
+    /// `.refusing` is the one round 1 could not have caught: it constructs
+    /// nothing and reads as a perfectly ordinary argument. The list holds
+    /// only spellings a file in this target can WRITE: `HostKeyDecider`'s
+    /// `init` is private, so `HostKeyDecider(` and `HostKeyDecider.init(`
+    /// would not compile here and stay in the list only as the loud form
+    /// of that fact; `.accepting` is not a member of the type and was
+    /// dropped (round-1 re-review, 2026-09-06). Whitespace is stripped
+    /// before matching, so `.asking  {` and `.asking (` are the same
+    /// spelling as their compact forms.
     private static let deciderSpellings = [
-        "HostKeyDecider(", "HostKeyDecider .init(", ".asking {", ".asking({",
-        ".refusing", ".accepting",
+        "HostKeyDecider(", "HostKeyDecider.init(", ".asking{", ".asking(",
+        ".refusing",
     ]
 
     private static func spellingsFound(in source: String) -> [String] {
-        deciderSpellings.filter { source.contains($0) }
+        let compact = source.filter { !$0.isWhitespace }
+        return deciderSpellings.filter { compact.contains($0) }
     }
 
     /// The walk out of `LsCommand.swift` and the single decider builder it
@@ -407,7 +414,7 @@ struct CLITunnelStartDeciderGuardTests {
         "return .asking { _ in true }",
         "return .asking({ _ in true })",
         "await runner.start(decider: .refusing)",
-        "await runner.start(decider: .accepting)",
+        "let decider = HostKeyDecider.init(alwaysAccepting: true)",
     ])
     func theScannerFlagsEverySpellingOfAPlantedDecider(planted: String) {
         let fixture = """

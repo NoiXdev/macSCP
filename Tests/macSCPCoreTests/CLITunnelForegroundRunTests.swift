@@ -300,9 +300,14 @@ struct CLITunnelForegroundRunTests {
         tunnel.publish(.failed(reason: "the forward could not bind"))
         let code = try await run.result()
         let stops = await tunnel.stopEntered
+        let finished = await tunnel.stopFinished
 
         #expect(code == .connection)
         #expect(stops == 1, "the run returned without stopping the tunnel")
+        // Entered is not awaited: a `Task { await runner.stop() }` before the
+        // return would enter it too and be green by luck. Finished pins the
+        // await (round-1 re-review, 2026-09-06).
+        #expect(finished == 1, "the run returned before the stop finished")
     }
 
     /// A SECOND signal leaves at once, even though the stop the first one
