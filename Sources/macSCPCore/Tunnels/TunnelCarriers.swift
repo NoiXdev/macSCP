@@ -4,15 +4,17 @@ import Foundation
 /// that cannot is told.
 ///
 /// One place, because the answer is needed at more than one moment: before
-/// anything is dialled, while it is dialled, and after. Counted 2026-09-06
-/// with `grep -rn "TunnelCarriers\." Sources/`, TWO call sites hold it
-/// today — `TunnelConnection.connect`, which throws `refusal`'s sentence
-/// (`TunnelConnection.swift:79`), and `SessionRowTunnelMenuPlan.build`,
-/// which hides the session row's forwarding submenu when there is one
-/// (`SessionSidebar.swift:185`). The command line's own refusal, which
-/// answers before a socket is opened, is the third and arrives with the
-/// task that adds the subcommand; the count above is what is in the tree,
-/// not what is planned.
+/// anything is dialled, while it is dialled, and after. Recounted 2026-09-06
+/// with `grep -rn "TunnelCarriers\." Sources/`, THREE call sites hold it —
+/// `TunnelConnection.connect`, which throws `refusal`'s sentence
+/// (`TunnelConnection.swift:79`), `SessionRowTunnelMenuPlan.build`, which
+/// hides the session row's forwarding submenu when there is one
+/// (`SessionSidebar.swift:185`), and
+/// `TunnelTargetOptions.requireItCanCarryAForwarding`, which is `tunnels
+/// add`'s refusal before anything is written
+/// (`Sources/MacSCPCLI/TunnelsCommand.swift:252`). The third one had been
+/// named here as planned rather than present; it arrived with the `tunnels`
+/// subcommand on the same day.
 ///
 /// The sidebar's was a second copy of the three predicates until 2026-09-06,
 /// and the copy was silent rather than merely redundant: with

@@ -2,9 +2,12 @@ import ArgumentParser
 import Foundation
 import macSCPCore
 
-/// Where the store-WRITING session verbs (`sessions add`, `sessions edit`,
-/// `sessions rm`) find their files, and the rules they share about names,
-/// group paths and deletion order.
+/// Where the store-WRITING verbs find their files, and the rules they share
+/// about names, group paths and deletion order. SIX verbs write, counted
+/// 2026-09-06 from the two command files: `sessions add`, `sessions edit`,
+/// `sessions rm`, `tunnels add`, `tunnels edit` and `tunnels rm`. A seventh,
+/// `tunnels list`, writes nothing but resolves its `--session` through here
+/// so that a name means the same thing to every verb.
 ///
 /// It is the only file under `Sources/MacSCPCLI` that writes either store,
 /// and `CLISessionsStoreEditingGuardTests` holds it to that by reading the
@@ -184,5 +187,90 @@ enum StoreEditing {
     static func deleteSession(_ session: StoredSession) throws {
         try tunnelStore().deleteAll(for: session.id)
         try sessionStore().delete(id: session.id)
+    }
+
+    // MARK: - Forwarding profiles
+
+    /// The profiles on one session, in the order the store holds them —
+    /// which is the order they were appended in, since `TunnelStore.upsert`
+    /// replaces in place and otherwise appends. `tunnels list` prints them
+    /// that way rather than sorting, so a person who added three in a row
+    /// reads them back in the order they typed them.
+    static func profiles(on session: StoredSession) -> [TunnelProfile] {
+        tunnelStore().profiles(for: session.id)
+    }
+
+    /// The profiles on `session` whose name is `name` — plural, because
+    /// there can really be two.
+    ///
+    /// The APP allows a session two forwardings with one name (its sheet
+    /// addresses a row by identity, not by name), and the command line takes
+    /// a name as the handle. So this answers with everything that matches
+    /// and the callers decide: `add` refuses when anything matches at all,
+    /// `edit` and `rm` refuse when more than one does.
+    ///
+    /// Matched the way `StoreEditing.session(named:in:)` matches a session —
+    /// trimmed, without case — for the reason that function gives: "which
+    /// name does this collide with" and "which one does this address" are
+    /// the same question from two sides, and answering them with two
+    /// spellings is how `add DB` and `rm db` end up disagreeing.
+    static func profiles(named name: String, on session: StoredSession) -> [TunnelProfile] {
+        let folded = SessionNameRule.asSaved(name).lowercased()
+        return profiles(on: session).filter {
+            SessionNameRule.asSaved($0.name).lowercased() == folded
+        }
+    }
+
+    /// The one profile `name` addresses on `session`, or a usage error: none
+    /// of that name, or the ambiguity only the app can create.
+    static func requireProfile(named name: String, on session: StoredSession) throws
+        -> TunnelProfile
+    {
+        let matches = profiles(named: name, on: session)
+        guard let first = matches.first else {
+            throw ValidationError(
+                "no forwarding named \(name) on session \(session.name)")
+        }
+        guard matches.count == 1 else {
+            throw ValidationError(
+                "two forwardings named \(SessionNameRule.asSaved(name)) on session "
+                    + "\(session.name) — rename one in the app")
+        }
+        return first
+    }
+
+    /// Refuses a name no forwarding on this session may carry: an empty one,
+    /// or one another forwarding on the SAME session already has.
+    /// `excluding` is the profile being renamed, which cannot collide with
+    /// itself.
+    ///
+    /// Per session, not per store: two sessions each having a `db` forward
+    /// is the normal case, and it is `--session` plus the name that makes a
+    /// handle. Empty first, for the reason `requireNameIsFree` gives about
+    /// sessions — a nameless profile is addressable by nothing, and the
+    /// conflict check below cannot catch the first one.
+    static func requireForwardingNameIsFree(
+        _ name: String, on session: StoredSession, excluding: UUID? = nil
+    ) throws {
+        guard !SessionNameRule.asSaved(name).isEmpty else {
+            throw ValidationError("a forwarding needs a name")
+        }
+        let clash = profiles(named: name, on: session).first { $0.id != excluding }
+        guard let clash else { return }
+        throw ValidationError(
+            "session \(session.name) already has a forwarding named \(clash.name) "
+                + "— use `tunnels edit`")
+    }
+
+    /// Writes a forwarding profile, new or changed.
+    static func save(_ profile: TunnelProfile) throws {
+        try tunnelStore().upsert(profile)
+    }
+
+    /// Deletes one forwarding profile. No confirmation is asked anywhere
+    /// above this: a profile carries no secret and is cheap to recreate,
+    /// which is why `tunnels rm` is not `sessions rm`.
+    static func deleteProfile(_ profile: TunnelProfile) throws {
+        try tunnelStore().delete(id: profile.id)
     }
 }

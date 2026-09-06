@@ -65,10 +65,10 @@ enum CLIMatrixCases {
             try await fileSystem.createDirectory(at: directoryPath)
 
             // `--accept-new` is NOT written into the vector: five of the
-            // seven subcommands take the connection flags, and `sessions`
-            // and `diagnose` do not — so the flag is asked for per command
-            // (`CLIMatrix.hostKeyFlags(for:binary:)`, which reads that
-            // command's own help). Counted 2026-09-04.
+            // eight subcommands take the connection flags, and `sessions`,
+            // `tunnels` and `diagnose` do not — so the flag is asked for per
+            // command (`CLIMatrix.hostKeyFlags(for:binary:)`, which reads
+            // that command's own help). Recounted 2026-09-06.
             let binary = try CLIMatrix.binaryURL()
             let flags = try await CLIMatrix.hostKeyFlags(for: "ls", binary: binary)
             let result = try await rig.run(
@@ -929,6 +929,69 @@ enum CLIMatrixCases {
         return (dial, result.status)
     }
 
+    // MARK: - The store verbs
+
+    /// `tunnels add` on the rig's own session succeeds exactly where Core
+    /// says a forwarding can be carried, and is refused with CORE'S OWN
+    /// SENTENCE everywhere else.
+    ///
+    /// This is the matrix's first case for a subcommand that applies to a
+    /// SUBSET of backends, and the subset is not written down here: it is
+    /// `CLIMatrix.carriesTunnels(_:)`, which is
+    /// `TunnelCarriers.carries(_:)`. So a fourth backend, or a decision that
+    /// S3 could carry one after all, changes what this case expects the
+    /// moment Core's switch changes — and until someone changes it, an S3
+    /// `tunnels add` that quietly succeeded is red here.
+    ///
+    /// The refusal text is read from `TunnelCarriers.refusal(for:)` against
+    /// the very session the store holds, never spelled: a copy in a test is
+    /// a second place the wording lives, and the copy is what drifts.
+    ///
+    /// Run through `runStore`, so the child's environment carries NO secret:
+    /// these verbs read and write two JSON files and dial nothing, and a
+    /// case that passed only because a secret happened to be present would
+    /// be measuring something else. `list` is asked afterwards either way —
+    /// the positive half proves the row was really written and the negative
+    /// half proves nothing was.
+    static func tunnelsAddIsAllowedExactlyWhereCoreSaysSo(_ kind: ConnectionKind) async throws {
+        let rig = try CLIMatrix.make(for: kind, label: "tunnels-add")
+        defer { rig.tearDown() }
+
+        let name = "matrix-forward-\(UUID().uuidString)"
+        let spec = "127.0.0.1:8080:db.internal:5432"
+        let added = try await rig.runStore([
+            "tunnels", "add", name, "--session", rig.session.name, "--local", spec,
+        ])
+        let listed = try await rig.runStore(["tunnels", "list", "--json"])
+        #expect(listed.status == 0, "tunnels list exited \(listed.status): \(listed.stderrText)")
+        let rows = listed.stdoutText.split(separator: "\n").compactMap {
+            try? JSONDecoder().decode(TunnelRow.self, from: Data($0.utf8))
+        }
+
+        guard CLIMatrix.carriesTunnels(kind) else {
+            let refusal = try #require(
+                TunnelCarriers.refusal(for: rig.session),
+                "Core says \(kind.rawValue) carries no forwarding, but words no refusal for it")
+            #expect(
+                added.status == CLIMatrix.validationFailure,
+                "tunnels add exited \(added.status) on \(kind.rawValue): \(added.stderrText)")
+            #expect(
+                added.stderrText.contains(refusal),
+                "the refusal on \(kind.rawValue) was \"\(added.stderrText)\"")
+            #expect(rows.isEmpty, "the refused add wrote \(rows.count) rows anyway")
+            return
+        }
+
+        #expect(added.status == 0, "tunnels add failed on \(kind.rawValue): \(added.stderrText)")
+        let row = try #require(
+            rows.first { $0.name == name }, "tunnels list on \(kind.rawValue) printed \(rows)")
+        #expect(row.session == rig.session.name)
+        #expect(row.kind == "local")
+        #expect(row.spec == spec)
+        #expect(row.autostart == "off")
+        #expect(row.reconnect == false)
+    }
+
     // MARK: - Shared reading
 
     /// Whether the entry is gone, distinguishing "not there" from "the
@@ -1019,6 +1082,10 @@ struct CLIMatrixSSHITests {
 
     @Test func diagnoseDialMeasuresTheBackendsOwnConnect() async throws {
         try await CLIMatrixCases.diagnoseDialMeasuresTheBackendsOwnConnect(Self.kind)
+    }
+
+    @Test func tunnelsAddIsAllowedExactlyWhereCoreSaysSo() async throws {
+        try await CLIMatrixCases.tunnelsAddIsAllowedExactlyWhereCoreSaysSo(Self.kind)
     }
 
     // MARK: - `--non-interactive` under a real terminal
@@ -1179,6 +1246,10 @@ struct CLIMatrixS3ITests {
     @Test func diagnoseDialMeasuresTheBackendsOwnConnect() async throws {
         try await CLIMatrixCases.diagnoseDialMeasuresTheBackendsOwnConnect(Self.kind)
     }
+
+    @Test func tunnelsAddIsAllowedExactlyWhereCoreSaysSo() async throws {
+        try await CLIMatrixCases.tunnelsAddIsAllowedExactlyWhereCoreSaysSo(Self.kind)
+    }
 }
 
 @Suite("CLIMatrixWebDAV", .enabled(if: rigIsEnabled), .serialized)
@@ -1240,6 +1311,10 @@ struct CLIMatrixWebDAVITests {
 
     @Test func diagnoseDialMeasuresTheBackendsOwnConnect() async throws {
         try await CLIMatrixCases.diagnoseDialMeasuresTheBackendsOwnConnect(Self.kind)
+    }
+
+    @Test func tunnelsAddIsAllowedExactlyWhereCoreSaysSo() async throws {
+        try await CLIMatrixCases.tunnelsAddIsAllowedExactlyWhereCoreSaysSo(Self.kind)
     }
 }
 
@@ -1719,9 +1794,9 @@ struct CLIMatrixDiagnoseITests {
 // MARK: - What makes the matrix a matrix
 
 /// The derivation guards. None of these needs the rig or the binary, so they
-/// run in the ordinary `swift test` — which is where a fourth backend, or an
-/// eighth subcommand, is actually going to be added (the seventh, `diagnose`,
-/// arrived on 2026-09-04).
+/// run in the ordinary `swift test` — which is where a fourth backend, or a
+/// ninth subcommand, is actually going to be added (the seventh, `diagnose`,
+/// arrived on 2026-09-04, the eighth, `tunnels`, on 2026-09-06).
 @Suite("CLIMatrixCoverage")
 struct CLIMatrixCoverageTests {
     /// The one place the three suites above are enumerated, and it is
@@ -1886,10 +1961,11 @@ struct CLIMatrixCoverageTests {
     /// `get`'s abstract here is the real one, padded past 80 columns so it
     /// wraps: the continuation's first token is `directory.`, which the
     /// column-blind parse returned as a subcommand name. Nothing in today's
-    /// help wraps — all seven rows fit, the widest still `get`'s at 72
-    /// columns (recounted 2026-09-04, with `diagnose` at 69) — so this
-    /// fixture is the only place the hazard is reachable, and the assertion
-    /// is that `directory.` is absent while every real name is present.
+    /// help wraps — all eight rows fit, the widest still `get`'s at 72
+    /// columns (recounted 2026-09-06 from the built binary, with `tunnels`
+    /// at 70 and `diagnose` at 69) — so this fixture is the only place the
+    /// hazard is reachable, and the assertion is that `directory.` is absent
+    /// while every real name is present.
     @Test func theSubcommandParseReadsNamesAndStopsAtTheBlock() {
         let help = """
             USAGE: macscp-cli <subcommand>
@@ -2016,12 +2092,13 @@ struct CLIMatrixCommandsITests {
     /// The two sides are both READ rather than written down: the offered set
     /// comes from the binary's own `--help`, and the driven set from the
     /// source of the cases (`CLIMatrix.drivenSubcommands`, which counts a run
-    /// through a fixture's own `run` and ignores comment lines). So an EIGHTH
-    /// subcommand turns this red the day it is added — which is the guard
-    /// this matrix existed without until now, and the reason `sessions` could
-    /// have gone uncovered through two green tasks. It did exactly that on
-    /// 2026-09-04: the seventh, `diagnose`, arrived in one commit and left
-    /// this red until the cases above drove it.
+    /// through any of a fixture's own `run…` methods and ignores comment
+    /// lines). So a NINTH subcommand turns this red the day it is added —
+    /// which is the guard this matrix existed without until now, and the
+    /// reason `sessions` could have gone uncovered through two green tasks.
+    /// It did exactly that twice: on 2026-09-04 the seventh, `diagnose`,
+    /// arrived in one commit and left this red until the cases above drove
+    /// it, and on 2026-09-06 the eighth, `tunnels`, did the same.
     ///
     /// Set equality, not containment, in both directions on purpose: a case
     /// driving a name the binary does not offer is a case that cannot be
@@ -2037,6 +2114,7 @@ struct CLIMatrixCommandsITests {
 
         let driven = try CLIMatrix.drivenSubcommands(inFileAt: #filePath)
         #expect(driven.contains("sessions"), "the scan reads no drives at all")
+        #expect(driven.contains("tunnels"), "the scan reads no drive through runStore")
         #expect(
             driven == offered,
             """
@@ -2049,14 +2127,18 @@ struct CLIMatrixCommandsITests {
     /// that assumes they are does not merely carry a useless flag — it is
     /// refused.
     ///
-    /// TWO subcommands declare their own option group rather than
-    /// `GlobalOptions`, and for the same reason. `sessions` takes
-    /// `JSONOptions` (`Sources/MacSCPCLI/SessionsCommand.swift`) because it
-    /// opens no connection and resolves no secret; `diagnose` takes
-    /// `DiagnoseOptions` (`Sources/MacSCPCLI/DiagnoseCommand.swift`) because
-    /// it resolves a secret but decides no host key — its dial answers that
-    /// question with `HostKeyDecider.refusing` inside Core, so
-    /// `--accept-new` would be advertised and never read.
+    /// THREE subcommands declare no `GlobalOptions`, recounted 2026-09-06,
+    /// and for three reasons. `sessions` takes `JSONOptions`
+    /// (`Sources/MacSCPCLI/SessionsCommand.swift`) because it opens no
+    /// connection and resolves no secret; `tunnels`
+    /// (`Sources/MacSCPCLI/TunnelsCommand.swift`) declares nothing at the
+    /// group level at all, because its four verbs only read and write two
+    /// JSON files — the one verb that dials, `start`, is not there yet and
+    /// will declare the flags itself; `diagnose` takes `DiagnoseOptions`
+    /// (`Sources/MacSCPCLI/DiagnoseCommand.swift`) because it resolves a
+    /// secret but decides no host key — its dial answers that question with
+    /// `HostKeyDecider.refusing` inside Core, so `--accept-new` would be
+    /// advertised and never read.
     ///
     /// So this asserts BOTH halves — `hostKeyFlags` gives `ls` the flag and
     /// gives those two nothing — and then the reason: the binary really does
@@ -2071,6 +2153,7 @@ struct CLIMatrixCommandsITests {
         #expect(try await CLIMatrix.hostKeyFlags(for: "ls", binary: binary) == ["--accept-new"])
         #expect(try await CLIMatrix.hostKeyFlags(for: "sessions", binary: binary) == [])
         #expect(try await CLIMatrix.hostKeyFlags(for: "diagnose", binary: binary) == [])
+        #expect(try await CLIMatrix.hostKeyFlags(for: "tunnels", binary: binary) == [])
 
         // The `diagnose` probe needs a TARGET, and the reason is worth
         // writing down: ArgumentParser reports a `validate()` complaint
@@ -2078,8 +2161,8 @@ struct CLIMatrixCommandsITests {
         // alone answers "Name a stored session, or pass --host" and exits 64
         // without ever mentioning the flag (measured 2026-09-04). A probe
         // that read THAT as the refusal would pass for a build that accepted
-        // `--accept-new` happily. `sessions` takes no argument, so its
-        // vector is the bare one.
+        // `--accept-new` happily. `sessions` and `tunnels` take no argument
+        // (each lists by default), so their vectors are the bare ones.
         //
         // Through `rig.run`, like the other guards in this suite, so the
         // child's environment is scrubbed; and the subcommand name comes out
@@ -2088,7 +2171,11 @@ struct CLIMatrixCommandsITests {
         // set (see that function's doc comment).
         let rig = try CLIMatrix.make(for: .ssh, label: "connection-flags")
         defer { rig.tearDown() }
-        let probes = [["sessions", "--accept-new"], ["diagnose", rig.session.name, "--accept-new"]]
+        let probes = [
+            ["sessions", "--accept-new"],
+            ["tunnels", "--accept-new"],
+            ["diagnose", rig.session.name, "--accept-new"],
+        ]
         for probe in probes {
             let refused = try await rig.run(probe)
             #expect(refused.status != 0, "\(probe[0]) accepted a flag it does not declare")
@@ -2105,7 +2192,7 @@ struct CLIMatrixCommandsITests {
             without.append(name)
         }
         #expect(
-            without.sorted() == ["diagnose", "sessions"],
+            without.sorted() == ["diagnose", "sessions", "tunnels"],
             "the commands without the connection flags moved")
     }
 

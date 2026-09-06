@@ -59,6 +59,38 @@ enum OutputFormatter {
         }
     }
 
+    /// The forwarding rows `tunnels list` prints.
+    ///
+    /// The JSON half goes through `JSONEncoder` rather than the
+    /// `[String: Any]` route the two listings above take, and that is the
+    /// whole reason `TunnelRow` is `Codable`: the keys are the type's
+    /// property names, so a renamed field is a visible break in Core rather
+    /// than a dictionary literal here quietly printing a different key.
+    /// Silent on an encoding failure, for the reason `print(json:)` states —
+    /// every field is a `String` or a `Bool`.
+    ///
+    /// `reconnect` reads as `yes`/`no` in the columns and as a JSON boolean:
+    /// a column is read by a person and `true` is not how one answers a
+    /// question about a switch, while `jq` wants the boolean it can test.
+    static func print(tunnels rows: [TunnelRow], asJSON: Bool) {
+        if asJSON {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            for row in rows {
+                if let data = try? encoder.encode(row),
+                   let line = String(data: data, encoding: .utf8) {
+                    Swift.print(line)
+                }
+            }
+        } else {
+            for row in rows {
+                Swift.print(
+                    "\(row.name)\t\(row.session)\t\(row.kind)\t\(row.spec)\t\(row.autostart)\t"
+                        + (row.reconnect ? "yes" : "no"))
+            }
+        }
+    }
+
     /// One diagnosis row, printed the moment its step lands — `diagnose`
     /// hands this to `ConnectionDiagnostics.run(scope:onStep:)`, whose whole
     /// reason for existing is that a trace can spend twenty seconds after

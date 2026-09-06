@@ -208,6 +208,18 @@ struct CLIMatrix: Sendable {
     /// which of them prints the line at all.
     static let secretSourceNote = "secret source: "
 
+    /// ArgumentParser's `ExitCode.validationFailure` — what a store verb's
+    /// `validate()` produces when it refuses.
+    ///
+    /// Written here rather than taken from `CLIExitCode` for the reason
+    /// `CLISessionsEditingTests` gives: that enum deliberately does not
+    /// carry this number, because it is ArgumentParser's and not this
+    /// project's. Distinct from `CLIExitCode.usage` (2), which is what a
+    /// refusal thrown from `run()` and mapped by `CLIErrorMapping` comes
+    /// back as — the two are different codes for different moments and the
+    /// cases must not swap them.
+    static let validationFailure: Int32 = 64
+
     /// The same environment `run(_:...)` builds for the built binary,
     /// exposed for a caller that drives the binary through something other
     /// than `SubprocessRunner` — `PTYSubprocessTests`' gated pair
@@ -265,6 +277,38 @@ struct CLIMatrix: Sendable {
         try await SubprocessRunner.run(
             try CLIMatrix.binaryURL(), arguments: arguments,
             environment: environment(secretVariable: nil))
+    }
+
+    /// Runs the binary for a STORE verb: this rig's storage directory, and
+    /// no secret variable anywhere in the child's environment.
+    ///
+    /// `sessions add/edit/rm` and `tunnels add/edit/list/rm` read and write
+    /// two JSON files and dial nothing, so a secret in their environment
+    /// would be a value the case put there for no reason — and a case that
+    /// passed only because one was present would be measuring the wrong
+    /// thing. The rig's own `secret` stays `private` and unused here.
+    ///
+    /// The environment is the same one `runWithoutASecret(_:)` builds, and
+    /// the two are deliberately separate names for it: that one is the
+    /// CONTROL a `--password-command` case is measured against, and this one
+    /// is how the store verbs are always run. They share a body today; a
+    /// change to either reason moves only its own caller.
+    @discardableResult
+    func runStore(_ arguments: [String]) async throws -> SubprocessResult {
+        try await runWithoutASecret(arguments)
+    }
+
+    /// Whether a connection of this kind can carry a forwarding — Core's own
+    /// answer, never a second list here.
+    ///
+    /// The matrix's cases branch on it (a `tunnels add` succeeds on SSH and
+    /// is refused on S3 and WebDAV), and reading it from
+    /// `TunnelCarriers.carries(_:)` is what makes the refusal cases a
+    /// measurement of the shipped rule rather than an agreement between two
+    /// copies of it. A fourth backend that could carry a forwarding changes
+    /// the answer here the moment Core's switch says so.
+    static func carriesTunnels(_ kind: ConnectionKind) -> Bool {
+        TunnelCarriers.carries(kind)
     }
 
     /// Whether `text` carries this rig's secret.
@@ -607,12 +651,12 @@ struct CLIMatrix: Sendable {
 
     /// The subcommands the binary itself offers, read from its `--help`.
     ///
-    /// The matrix's command axis, and read rather than written down: an
-    /// eighth subcommand appears here the moment it appears in
+    /// The matrix's command axis, and read rather than written down: a
+    /// ninth subcommand appears here the moment it appears in
     /// `MacSCPCLI.configuration.subcommands`, without an edit in this target
-    /// — which is exactly what the seventh, `diagnose`, did on 2026-09-04.
-    /// A list typed here would instead go on passing while covering six of
-    /// seven commands.
+    /// — which is exactly what the seventh, `diagnose`, did on 2026-09-04
+    /// and the eighth, `tunnels`, did on 2026-09-06. A list typed here would
+    /// instead go on passing while covering seven of eight commands.
     ///
     /// Read ONCE per binary and cached: every case in the matrix asks, and
     /// launching a process per ask is a cost with nothing to show for it.
@@ -646,13 +690,14 @@ struct CLIMatrix: Sendable {
     /// `--accept-new`'s abstracts both wrap). Taking the first token of every
     /// indented line, as this did, would read `diagnostics.` as a command
     /// name the moment an abstract wrapped. Nothing wraps today — recounted
-    /// 2026-09-06 from the built binary's own `--help`, all SEVEN rows fit on
+    /// 2026-09-06 from the built binary's own `--help`, all EIGHT rows fit on
     /// one line, the widest being `get` at 72 columns against
-    /// ArgumentParser's 80 (`diagnose` 69, `sessions` 68 since it became a
-    /// group) — so the hazard was invisible and entirely reachable: eight
-    /// more characters in one abstract. The count said six until this
-    /// recount: `diagnose` was the seventh row from 2026-09-04 on, and the
-    /// sentence went on claiming six. This help
+    /// ArgumentParser's 80 (`tunnels` 70, `diagnose` 69, `sessions` 68 since
+    /// it became a group) — so the hazard was invisible and entirely
+    /// reachable: eight more characters in one abstract. The count said six
+    /// until the recount of 2026-09-04, when `diagnose` had been the seventh
+    /// row and the sentence went on claiming six; `tunnels` made it eight on
+    /// 2026-09-06. This help
     /// prints no `<subcommand>` alternatives in its USAGE line to
     /// cross-check against (`USAGE: macscp-cli <subcommand>`), so the column
     /// is the anchor.
@@ -678,12 +723,16 @@ struct CLIMatrix: Sendable {
     /// Whether `command` takes `GlobalOptions` — the connection flags — read
     /// from that command's OWN help rather than written down here.
     ///
-    /// Not every subcommand takes them — TWO do not, counted 2026-09-04 and
-    /// named by `theConnectionFlagsAreAskedForPerCommand`, which reads the
-    /// list off the binary rather than off this comment. `SessionsCommand`
-    /// declares `JSONOptions` (`Sources/MacSCPCLI/SessionsCommand.swift`)
-    /// because it opens no connection and resolves no secret;
-    /// `DiagnoseCommand` declares `DiagnoseOptions`
+    /// Not every subcommand takes them — THREE do not, recounted 2026-09-06
+    /// and named by `theConnectionFlagsAreAskedForPerCommand`, which reads
+    /// the list off the binary rather than off this comment.
+    /// `SessionsCommand` declares `JSONOptions`
+    /// (`Sources/MacSCPCLI/SessionsCommand.swift`) because it opens no
+    /// connection and resolves no secret; `TunnelsCommand`
+    /// (`Sources/MacSCPCLI/TunnelsCommand.swift`) declares nothing at all at
+    /// the group level for the same reason — its four verbs only read and
+    /// write two JSON files — and gains the flags on `start` alone, the one
+    /// verb that dials; `DiagnoseCommand` declares `DiagnoseOptions`
     /// (`Sources/MacSCPCLI/DiagnoseCommand.swift`) because it resolves a
     /// secret but decides no host key — its dial answers that question with
     /// `HostKeyDecider.refusing` inside Core. Either way, advertising
@@ -1288,8 +1337,15 @@ extension CLIMatrix {
     /// source rather than from a list a reader would have to maintain.
     ///
     /// The token is a LITERAL subcommand string as the first array element
-    /// of a fixture's own `run([…])` — `rig.run(["ls", …])` in a backend
-    /// case, `fixture.run(["sessions", …])` in a sessions one. That is what
+    /// of a fixture's own run — `rig.run(["ls", …])` in a backend case,
+    /// `fixture.run(["sessions", …])` in a sessions one,
+    /// `rig.runStore(["tunnels", …])` in a store one. The whole `run…`
+    /// family counts, because a rig has more than one way to run the binary
+    /// and they differ only in the child's ENVIRONMENT: `runStore` and
+    /// `runWithoutASecret` put no secret in it (added to the pattern
+    /// 2026-09-06, when the first `tunnels` case drove the binary through
+    /// `runStore`). A drive is a drive whichever of them a case picked.
+    /// That is what
     /// "a case drives this subcommand" means here, and it is deliberately
     /// narrower than "the file mentions the name somewhere": a guard that
     /// asks the binary about a flag it does not declare, or reads a help
@@ -1320,7 +1376,11 @@ extension CLIMatrix {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
-        let pattern = try Regex(#"\.run\(\s*\[\s*"([A-Za-z0-9-]+)""#)
+        // `run`, `runStore`, `runWithoutASecret` — the rig's whole run
+        // family, and nothing else: the suffix may not contain a `(`, so
+        // `SubprocessRunner.run(binary, …)` still cannot match (its first
+        // argument is not an array literal either).
+        let pattern = try Regex(#"\.run[A-Za-z]*\(\s*\[\s*"([A-Za-z0-9-]+)""#)
         var names: Set<String> = []
         for match in code.matches(of: pattern) {
             guard let range = match.output[1].range else { continue }
@@ -1331,7 +1391,8 @@ extension CLIMatrix {
 
     /// The source `theDrivenScanReadsCallsAndNotComments` measures the scan
     /// against, in the shapes the case file really contains: a drive whose
-    /// call spans two lines, a drive on one line, a commented-out drive, a
+    /// call spans two lines, a drive on one line, a drive through a
+    /// differently-named member of the run family, a commented-out drive, a
     /// prose sentence quoting one, and one of the guards' own
     /// `SubprocessRunner` launches (which passes the binary first, so the
     /// pattern cannot reach it).
@@ -1350,6 +1411,7 @@ extension CLIMatrix {
         let result = try await rig.run(
             ["mkdir"] + flags + [rig.target(remotePath)])
         let listed = try await fixture.run(["sessions"] + flags + ["--json"])
+        let added = try await rig.runStore(["tunnels", "add", name, "--session", session])
         // let skipped = try await rig.run(["nevermind"])
         /// A drive of rig.run(["alsonot"]) described in prose.
         let asked = try await SubprocessRunner.run(binary, arguments: ["help", name])
@@ -1358,7 +1420,7 @@ extension CLIMatrix {
     /// The names `drivenScanFixture` really declares — the answer the scan
     /// must give for it. Beside the fixture rather than in the case, so the
     /// two move together.
-    static let drivenScanFixtureNames: Set<String> = ["mkdir", "sessions"]
+    static let drivenScanFixtureNames: Set<String> = ["mkdir", "sessions", "tunnels"]
 
     /// The same scan, over a source FILE — the caller passes its own
     /// `#filePath`, so the guard reads the very file the cases live in and

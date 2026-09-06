@@ -88,16 +88,17 @@ struct DiagnoseCommand: AsyncParsableCommand {
         //
         // Set HERE, at the top of `run()`, rather than process-wide in
         // `MacSCPCLI.main()`: buffering only matters to a command that
-        // prints as it goes, and `diagnose` is the only one of the seven
-        // that does — `ls`/`get`/`put`/`rm`/`mkdir`/`sessions` each compute
-        // their whole answer and print it in one pass, so a row arriving
-        // early or late is not something their callers can observe either
-        // way. Line-buffering every subcommand from one shared spot would
-        // change all seven together for a property only this one has, and
-        // it must run before this command's first `print` — which "the top
-        // of `run()`" already guarantees without threading a flag through
-        // `MacSCPCLI`'s shared entry point for six commands that do not
-        // need it.
+        // prints as it goes, and `diagnose` is the only one of the eight
+        // that does — `ls`/`get`/`put`/`rm`/`mkdir`/`sessions`/`tunnels`
+        // each compute their whole answer and print it in one pass, so a
+        // row arriving early or late is not something their callers can
+        // observe either way (recounted 2026-09-06, when `tunnels` became
+        // the eighth). Line-buffering every subcommand from one shared spot
+        // would change all eight together for a property only this one has,
+        // and it must run before this command's first `print` — which "the
+        // top of `run()`" already guarantees without threading a flag
+        // through `MacSCPCLI`'s shared entry point for seven commands that
+        // do not need it.
         setvbuf(stdout, nil, _IOLBF, 0)
         let target = try resolveTarget()
         // Read out of `self` before the observer closure below captures

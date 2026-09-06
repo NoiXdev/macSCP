@@ -21,9 +21,11 @@ import macSCPCore
 /// Root dispatcher: subcommands do the work, this type just lists them.
 /// `get`/`put` landed in M20 Task 10; `rm`/`mkdir` complete the set in
 /// M20 Task 11; `sessions` (2026-09-02 CLI-sessions-list plan, Task 2) is
-/// the sixth and the only one that opens no connection at all; `diagnose`
+/// the sixth and the first that opens no connection at all; `diagnose`
 /// (2026-09-04 CLI-diagnose plan, Task 2) is the seventh, and opens one
-/// only when the scope it was given includes the dial. Seven subcommands
+/// only when the scope it was given includes the dial; `tunnels`
+/// (2026-09-06 CLI-store-and-tunnels plan, Task 3) is the eighth, and
+/// opens none either until its `start` verb arrives. Eight subcommands
 /// total — recount this comment on the next addition.
 @main
 struct MacSCPCLI: AsyncParsableCommand {
@@ -43,7 +45,7 @@ struct MacSCPCLI: AsyncParsableCommand {
         subcommands: [
             LsCommand.self, GetCommand.self, PutCommand.self,
             RmCommand.self, MkdirCommand.self, SessionsCommand.self,
-            DiagnoseCommand.self,
+            DiagnoseCommand.self, TunnelsCommand.self,
         ]
     )
 

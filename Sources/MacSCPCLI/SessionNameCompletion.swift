@@ -10,9 +10,12 @@ import macSCPCore
 /// SOURCE, `put`'s DESTINATION, `rm`, `mkdir`) and onto `diagnose`'s
 /// session argument, which is a bare NAME and accepts the trailing colon
 /// this completer appends rather than parsing a path after it — six
-/// arguments across six commands, counted 2026-09-04. `put`'s SOURCE stays
+/// arguments across six commands, recounted 2026-09-06. `put`'s SOURCE stays
 /// on the default file completion, since it names a local path, not a
-/// session.
+/// session, and `tunnels`' `--session` takes NO completion: this completer
+/// appends a trailing `:` because it completes `name:/path` targets, and
+/// that option takes a bare name. A bare-name completer is its own change
+/// (the design's "Not in this plan", 2026-09-06).
 ///
 /// Opens the store at `SessionStore.defaultDirectory` — the same place
 /// every store reader and writer in this target resolves, `sessions list`
