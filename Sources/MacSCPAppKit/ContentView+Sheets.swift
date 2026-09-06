@@ -126,6 +126,34 @@ extension ContentView {
         .sheet(item: $auditLogSession) { stored in
             AuditLogSheet(session: stored, store: auditStore)
         }
+        // Forwarding profiles (port-forwarding plan, Task 6): opened from
+        // the row's "Port forwarding" submenu, for a session that need not
+        // be connected — a forwarding dials its own connection and borrows
+        // no tab's. The decider is this window's, the same one the submenu's
+        // own Start hands in.
+        .sheet(item: $tunnelProfilesSession) { stored in
+            TunnelProfilesSheet(
+                session: stored, manager: TunnelManager.shared,
+                decider: tunnelHostKeyDecider,
+                onClose: { tunnelProfilesSession = nil })
+        }
+        // The unknown-host-key question for a forwarding. Dismissing it any
+        // other way than by answering — Esc, a click outside — refuses, so
+        // the dial waiting on the continuation is never left hanging.
+        .sheet(
+            isPresented: Binding(
+                get: { tunnelHostKeyBridge.currentCandidate != nil },
+                set: { isPresented in
+                    if !isPresented { tunnelHostKeyBridge.resolve(trust: false) }
+                })
+        ) {
+            if let candidate = tunnelHostKeyBridge.currentCandidate {
+                TunnelHostKeyPromptView(
+                    candidate: candidate,
+                    onTrust: { tunnelHostKeyBridge.resolve(trust: true) },
+                    onCancel: { tunnelHostKeyBridge.resolve(trust: false) })
+            }
+        }
         // Diagnostics panel: opened from the tab (toolbar or failed-connect
         // surface), the sidebar's session menu and the connect-error dialog,
         // all through `showDiagnostics(for:)`. Presenting it runs nothing —

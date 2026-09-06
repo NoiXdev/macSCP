@@ -117,6 +117,76 @@ enum SessionRowTerminalMenuPlan: Equatable {
     }
 }
 
+/// What the session row's "Port forwarding" submenu offers (port-forwarding
+/// plan, Task 6; design, "Context menu of a session row").
+///
+/// **The whole visibility decision lives here**, and there are three reasons
+/// a row has no submenu at all, written as two bullets because the second
+/// and third share an argument — one reason from the design, two from what
+/// `TunnelConnection` can actually dial:
+///
+/// - The session is not SSH. There is no `direct-tcpip` over S3 or WebDAV,
+///   and `TunnelConnection.connect` says so in a sentence rather than a
+///   case index.
+/// - The session dials through a JUMP HOST, or its login comes from a LOGIN
+///   SET. `StoredSessionConnectionConfig.build(for:secret:)` refuses both —
+///   resolving either needs `LoginResolver` and the stores the App holds,
+///   which no tunnel threads through — so offering a forwarding on such a
+///   session would offer one that cannot start. Task 5 handed this over
+///   explicitly: the menu must not offer them, and the sheet says so in its
+///   help text.
+///
+/// A checkmark means running, and "running" is `TunnelManager.Aggregate
+/// .isRunning`: a tunnel holding a connection, a bound port, or a retry on
+/// its way to one. A `.failed` profile is NOT checked, and clicking it
+/// starts it again — which is the table's own `.failed → .start` row.
+///
+/// Untested claim, stated rather than implied: that `SessionRow` really
+/// draws these entries. This type proves which entries a session maps to;
+/// the drawing is view code, and this project has no rendering harness (the
+/// boundary `SessionRowSnippetMenuPlan` states for itself).
+enum SessionRowTunnelMenuPlan: Equatable {
+    /// No submenu: this session can carry no forwarding.
+    case hidden
+    /// The submenu, with one entry per stored profile — possibly none, in
+    /// which case only "Manage forwardings…" is left to draw.
+    case shown(entries: [Entry])
+
+    /// One profile, and the one fact the menu draws differently for.
+    struct Entry: Equatable, Identifiable {
+        let profile: TunnelProfile
+        let isRunning: Bool
+        var id: UUID { profile.id }
+    }
+
+    var isShown: Bool {
+        if case .shown = self { return true }
+        return false
+    }
+
+    var entries: [Entry] {
+        if case .shown(let entries) = self { return entries }
+        return []
+    }
+
+    /// `state` is asked per profile rather than handed in as a dictionary so
+    /// the caller can be the manager itself — one reading of the states, not
+    /// a copy that can already be stale by the time the menu opens.
+    static func build(
+        for session: StoredSession, profiles: [TunnelProfile],
+        state: (UUID) -> TunnelState
+    ) -> SessionRowTunnelMenuPlan {
+        guard session.kind == .ssh, session.jump == nil, session.loginSetID == nil else {
+            return .hidden
+        }
+        return .shown(entries: profiles.map { profile in
+            Entry(
+                profile: profile,
+                isRunning: TunnelManager.Aggregate.isRunning(state(profile.id)))
+        })
+    }
+}
+
 /// Left column: stored connections and folders, drawn as a tree of arbitrary
 /// depth. A click selects a connection, a double click or Return connects it;
 /// context menus cover connect/edit/rename/duplicate/move/delete on connections,
@@ -137,13 +207,18 @@ struct SessionSidebar: View {
     let interactionsDisabled: Bool
     /// Opens a connection to one stored session.
     ///
-    /// The first of this sidebar's three host-reaching callbacks, and all
-    /// three are effect values rather than closures. This view cannot fire
-    /// any of them: their `run` is private to the file that declares them,
-    /// and `SessionRowActivation.apply` — the only code that runs one — is
-    /// `fileprivate` there too. What is reachable from here is
-    /// `performSessionRowInput`, which states an input and the two facts
-    /// about the row and picks nothing.
+    /// The first of this sidebar's host-reaching callbacks — five of them
+    /// since the port-forwarding plan's Task 6 (this one, the two terminal
+    /// ones, and `onStartTunnel`/`onStartAllTunnels` below), and every one
+    /// is an effect value rather than a closure. This view cannot fire any
+    /// of them: their `run` is private to the file that declares them, and
+    /// `SessionRowActivation.apply` — the only code that runs one of the
+    /// first three — is `fileprivate` there too. What is reachable from
+    /// here is `performSessionRowInput`, which states an input and the two
+    /// facts about the row and picks nothing. The two tunnel effects are
+    /// fired by naming a menu entry instead (`SessionRowTunnelActivation`),
+    /// because they act on a profile rather than on the session an input
+    /// carries.
     ///
     /// Fix round 2 gave `onConnect` that shape; round 3 put the firing
     /// decision out of reach; round 4 extended both to the two terminal
@@ -212,6 +287,23 @@ struct SessionSidebar: View {
     /// and `onShowAuditLog`; if this ever opened a panel that ran on appear,
     /// it would belong with `onConnect` instead.
     let onDiagnose: (StoredSession) -> Void
+    /// The app-wide port forwardings (port-forwarding plan, Task 6) — read
+    /// for the row's "Port forwarding" submenu, which asks
+    /// `SessionRowTunnelMenuPlan.build` what to draw. Not a per-window value
+    /// and deliberately not one: a forwarding belongs to no window, and
+    /// `TunnelManager` is process-wide for that reason.
+    let tunnels: TunnelManager
+    /// Starts ONE forwarding — an effect value, not a closure, because it
+    /// dials the user's host (see `SessionRowStartTunnelEffect`).
+    let onStartTunnel: SessionRowStartTunnelEffect<TunnelProfile>
+    /// Stops one forwarding. A plain callback: stopping reaches nobody.
+    let onStopTunnel: (TunnelProfile) -> Void
+    /// Starts every forwarding of one session — an effect value for the same
+    /// reason as `onStartTunnel`.
+    let onStartAllTunnels: SessionRowStartAllTunnelsEffect<StoredSession>
+    let onStopAllTunnels: (StoredSession) -> Void
+    /// Opens the profile sheet for this session. Opening it dials nothing.
+    let onManageTunnels: (StoredSession) -> Void
     /// The saved snippets, in store order (Terminal-Snippets, Task 7) — same
     /// list `MacSCPApp`'s Terminal menu reads from `tabCommands.snippetsLoad`,
     /// handed down here so the session row's "Snippet" submenu renders the
@@ -818,6 +910,12 @@ struct SessionSidebar: View {
             onExport: { onExport(.single(session)) },
             onShowAuditLog: { onShowAuditLog(session) },
             onDiagnose: { onDiagnose(session) },
+            tunnels: tunnels,
+            onStartTunnel: onStartTunnel,
+            onStopTunnel: onStopTunnel,
+            onStartAllTunnels: onStartAllTunnels,
+            onStopAllTunnels: onStopAllTunnels,
+            onManageTunnels: onManageTunnels,
             dragOrigin: dragOrigin,
             onDrop: { payload in drop(payload, before: .session(session.id)) },
             snippets: snippets,
@@ -1323,6 +1421,14 @@ private struct SessionRow: View {
     let onExport: () -> Void
     let onShowAuditLog: () -> Void
     let onDiagnose: () -> Void
+    /// The app-wide forwardings, read by `tunnelPlan` below. The row asks
+    /// the plan what to draw and decides nothing about visibility itself.
+    let tunnels: TunnelManager
+    let onStartTunnel: SessionRowStartTunnelEffect<TunnelProfile>
+    let onStopTunnel: (TunnelProfile) -> Void
+    let onStartAllTunnels: SessionRowStartAllTunnelsEffect<StoredSession>
+    let onStopAllTunnels: (StoredSession) -> Void
+    let onManageTunnels: (StoredSession) -> Void
     /// The sidebar's shared note of which row a drag is carrying — written
     /// by this row's own payload, read when a drop is targeted here.
     let dragOrigin: SidebarDragOrigin
@@ -1390,6 +1496,16 @@ private struct SessionRow: View {
     private var highlightFill: Color {
         SessionRowHighlight.build(
             isActive: isActive, isSelected: isSelected, isHovering: isHovering).fill
+    }
+
+    /// What this row's "Port forwarding" submenu offers — the whole
+    /// decision, this session's profiles and their states included, is
+    /// `SessionRowTunnelMenuPlan.build`'s. Whether a row may carry a
+    /// forwarding at all is decided there and nowhere in this view.
+    private var tunnelPlan: SessionRowTunnelMenuPlan {
+        SessionRowTunnelMenuPlan.build(
+            for: session, profiles: tunnels.profiles(for: session.id),
+            state: { tunnels.state(of: $0) })
     }
 
     private var snippetPlan: SessionRowSnippetMenuPlan {
@@ -1535,6 +1651,56 @@ private struct SessionRow: View {
             // been dialled — that is exactly the case it is for — and
             // opening it puts nothing on anyone's host.
             Button(L10n.string("diagnostics.menu", "Diagnose…")) { onDiagnose() }
+            // "Port forwarding" submenu (port-forwarding plan, Task 6),
+            // under the two entries that ask this connection a question,
+            // because it is the third: a forwarding is opened against the
+            // stored session without a tab of its own. Whether it appears at
+            // all is `tunnelPlan`'s answer — a session that cannot carry a
+            // forwarding (not SSH, a jump host, a login set) gets no
+            // submenu rather than a greyed one, which is what this project
+            // does with what cannot act.
+            //
+            // The per-profile entry toggles: checked means running, and a
+            // click stops it; unchecked starts it, including after a
+            // failure (the state table allows `.failed → .start`). Starting
+            // reaches the user's host, so it goes through an effect value
+            // and `SessionRowTunnelActivation`; stopping does not, so it is
+            // a plain callback.
+            if case .shown(let tunnelEntries) = tunnelPlan {
+                Menu(L10n.string("tunnel.menu", "Port forwarding")) {
+                    ForEach(tunnelEntries) { entry in
+                        Button {
+                            if entry.isRunning {
+                                onStopTunnel(entry.profile)
+                            } else {
+                                SessionRowTunnelActivation.start(
+                                    profile: entry.profile, using: onStartTunnel)
+                            }
+                        } label: {
+                            // The glyph carries the state, never a colour on
+                            // its own: a filled check for running, an empty
+                            // circle for not.
+                            Label(
+                                entry.profile.name,
+                                systemImage: entry.isRunning ? "checkmark.circle.fill" : "circle")
+                        }
+                    }
+                    if !tunnelEntries.isEmpty {
+                        Divider()
+                        Button(L10n.string("tunnel.menu.startAll", "Start all")) {
+                            SessionRowTunnelActivation.startAll(
+                                for: session, using: onStartAllTunnels)
+                        }
+                        Button(L10n.string("tunnel.menu.stopAll", "Stop all")) {
+                            onStopAllTunnels(session)
+                        }
+                        Divider()
+                    }
+                    Button(L10n.string("tunnel.menu.manage", "Manage forwardings…")) {
+                        onManageTunnels(session)
+                    }
+                }
+            }
             // "Snippet" submenu (Terminal-Snippets, Task 7): same shared
             // `SnippetMenuItems` rendering the Terminal menu bar (Task 6)
             // uses, gated by `snippetPlan` — see that property's and

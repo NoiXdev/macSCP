@@ -110,6 +110,31 @@ extension ContentView {
             // session that is not connected — the panel opens with
             // nothing measured, and the probes run on its own button.
             onDiagnose: { stored in showDiagnostics(for: .stored(stored)) },
+            // The app-wide forwardings (port-forwarding plan, Task 6).
+            // `TunnelManager.shared` rather than a per-window value: a
+            // forwarding belongs to no window and outlives every tab, so
+            // there is no window-scoped place it could live.
+            //
+            // The decider handed with every START is this WINDOW's — the
+            // sheet-backed `tunnelHostKeyBridge` below — the same shape the
+            // session row's Connect uses, where the tab's own view model
+            // wraps its prompt. Autostart hands `.refusing` instead, inside
+            // the manager, and never reaches a prompt at all.
+            tunnels: TunnelManager.shared,
+            onStartTunnel: SessionRowStartTunnelEffect { profile in
+                Task { await TunnelManager.shared.start(profile, decider: tunnelHostKeyDecider) }
+            },
+            onStopTunnel: { profile in Task { await TunnelManager.shared.stop(profile) } },
+            onStartAllTunnels: SessionRowStartAllTunnelsEffect { stored in
+                Task {
+                    await TunnelManager.shared.startAll(
+                        for: stored.id, decider: tunnelHostKeyDecider)
+                }
+            },
+            onStopAllTunnels: { stored in
+                Task { await TunnelManager.shared.stopAll(for: stored.id) }
+            },
+            onManageTunnels: { stored in tunnelProfilesSession = stored },
             // Session-row "Snippet" submenu (Terminal-Snippets, Task 7):
             // same store list the Terminal menu bar reads via
             // `tabCommands.snippetsLoad`, and the identical

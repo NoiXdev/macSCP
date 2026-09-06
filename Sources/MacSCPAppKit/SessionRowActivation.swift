@@ -65,9 +65,13 @@ enum SessionRowInput: Equatable, CaseIterable {
 /// the whole suite stayed green while every single click dialled a host.
 /// With distinct types that edit does not compile, which is a class of
 /// mistake removed rather than a mistake watched for. The same argument is
-/// why the three host-reaching effects are three types and not one repeated:
+/// why the host-reaching effects are a type each and not one repeated:
 /// swapping two of THOSE would send a double click to the terminal-only
-/// layout, or the terminal entry to a plain connect.
+/// layout, or the terminal entry to a plain connect. Counted 2026-09-06,
+/// when the port-forwarding plan's Task 6 added the fourth and fifth: five
+/// effect types in this file reach the user's host — `SessionRowConnectEffect`,
+/// `SessionRowTerminalEffect`, `SessionRowExternalTerminalEffect`,
+/// `SessionRowStartTunnelEffect` and `SessionRowStartAllTunnelsEffect`.
 struct SessionRowSelectEffect<Value> {
     fileprivate let run: (Value) -> Void
 
@@ -85,9 +89,17 @@ struct SessionRowSelectEffect<Value> {
 /// selection effect belongs — each of those is a compile error, and each was
 /// a green mutation before.
 ///
-/// **The rule this type and its two host-reaching siblings share.** Every
+/// **The rule this type and its four host-reaching siblings share.** Every
 /// callback of the sidebar whose far end reaches the user's host is one of
-/// these values, and the only way to fire any of them is to name an input.
+/// these values, and the only way to fire any of them is to name the thing
+/// that fired it. For this type and the two terminal ones that is an INPUT,
+/// through `SessionRowActivation.apply`. For the two tunnel effects at the
+/// bottom of this file it is a menu ENTRY, through
+/// `SessionRowTunnelActivation`: a forwarding entry acts on one PROFILE of
+/// the session, which no `SessionRowInput` carries, so it cannot be an
+/// input — and because the row therefore holds those two effects itself,
+/// `TunnelMenuWiringGuardTests` pins that they are fired nowhere but inside
+/// the submenu.
 /// Fix round 4 exists because that rule held for `onConnect` alone while
 /// `onOpenTerminal` — a connect by its own doc comment and by
 /// `ContentView.openTerminalFromSidebar` — stayed a plain closure: one
@@ -404,5 +416,60 @@ enum SidebarRenameHandoff {
         guard renamingID != nil else { return false }
         return SessionRowActivation.build(
             for: input, isRenaming: isRenaming, isSelected: isSelected).acts
+    }
+}
+
+/// The effect behind one profile's entry in the row's "Port forwarding"
+/// submenu: starting that forwarding.
+///
+/// Held to the same rule as `SessionRowConnectEffect`, and for the same
+/// reason — a forwarding dials the user's host. It dials it WITHOUT a tab:
+/// `TunnelConnection` opens a connection of its own, authenticated from the
+/// session's stored login, so a stray click here reaches the server just as
+/// surely as "Connect" does and leaves nothing on screen to show for it.
+///
+/// Its own type rather than a fourth `SessionRowConnectEffect`, under the
+/// rule stated there: two parameters of one type are swappable by a
+/// one-token edit, and `ContentView` hands the sidebar all of them at once.
+/// The stop side is a plain closure — stopping reaches nobody.
+struct SessionRowStartTunnelEffect<Value> {
+    fileprivate let run: (Value) -> Void
+
+    init(_ run: @escaping (Value) -> Void) {
+        self.run = run
+    }
+}
+
+/// The effect behind the submenu's "Start all": every forwarding of one
+/// session, started together. A separate type from the per-profile start for
+/// the reason above — and because its `Value` is a session, not a profile.
+struct SessionRowStartAllTunnelsEffect<Value> {
+    fileprivate let run: (Value) -> Void
+
+    init(_ run: @escaping (Value) -> Void) {
+        self.run = run
+    }
+}
+
+/// The only way to fire a tunnel effect, and the reason both types above can
+/// be held by a view that cannot use them: `run` is `fileprivate`, so the
+/// two functions here are the whole surface.
+///
+/// There is no plan to consult, unlike `SessionRowActivation.apply`: these
+/// entries are named by the user in a menu, never inferred from a gesture,
+/// so there is no second meaning a click could have. What the type system
+/// still buys is the swap — neither effect can be passed where the other,
+/// or where a connect, belongs.
+enum SessionRowTunnelActivation {
+    static func start(
+        profile: TunnelProfile, using effect: SessionRowStartTunnelEffect<TunnelProfile>
+    ) {
+        effect.run(profile)
+    }
+
+    static func startAll(
+        for session: StoredSession, using effect: SessionRowStartAllTunnelsEffect<StoredSession>
+    ) {
+        effect.run(session)
     }
 }

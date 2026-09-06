@@ -32,14 +32,23 @@ struct QuitSequenceTests {
     /// Nothing live: the app has nothing to tear down, so it must not make
     /// the user wait for a deferral it would spend on an empty loop.
     @Test func nothingLiveQuitsImmediately() {
-        #expect(QuitSequence.decision(liveTabCount: 0) == .now)
+        #expect(QuitSequence.decision(liveTabCount: 0, runningTunnelCount: 0) == .now)
+    }
+
+    /// A forwarding is reachable from no tab and no window, so it is counted
+    /// on its own: an app with tunnels up and nothing connected must still
+    /// take the deferred path, which is the only one that stops them
+    /// (port-forwarding plan, Task 6).
+    @Test func aRunningTunnelDefersTheQuitWithNoTabAtAll() {
+        #expect(QuitSequence.decision(liveTabCount: 0, runningTunnelCount: 1) == .later)
+        #expect(QuitSequence.decision(liveTabCount: 0, runningTunnelCount: 4) == .later)
     }
 
     /// One live tab is already enough to defer — the whole point of the
     /// deferral is the `disconnected` audit row that tab's teardown writes.
     @Test func oneLiveTabDefersTheQuit() {
-        #expect(QuitSequence.decision(liveTabCount: 1) == .later)
-        #expect(QuitSequence.decision(liveTabCount: 7) == .later)
+        #expect(QuitSequence.decision(liveTabCount: 1, runningTunnelCount: 0) == .later)
+        #expect(QuitSequence.decision(liveTabCount: 7, runningTunnelCount: 0) == .later)
     }
 
     // MARK: - The step order
@@ -52,7 +61,7 @@ struct QuitSequenceTests {
     /// last.
     @Test func theStepsAreInTheOrderTheDelegateRunsThem() {
         #expect(QuitSequence.steps == [
-            .writeRestoration, .teardownParked, .teardownWindows,
+            .writeRestoration, .teardownParked, .stopTunnels, .teardownWindows,
             .logQuit, .flush, .reply,
         ])
     }
@@ -180,14 +189,17 @@ struct QuitSequenceTests {
         return text.distance(from: text.startIndex, to: range.lowerBound)
     }
 
-    /// The six needles, in the order `QuitSequence.steps` says they must
-    /// occur, spelled once. `sweepUnclaimedMoves(` is the parked sweep and
+    /// The seven needles, in the order `QuitSequence.steps` says they must
+    /// occur, spelled once — counted 2026-09-06, when
+    /// `TunnelManager.shared.stopAll(` joined them for `QuitStep
+    /// .stopTunnels`. `sweepUnclaimedMoves(` is the parked sweep and
     /// `runBoundedQuitTeardown(` is the window loop — both are calls, so a
     /// rename turns the guard red (nothing left to find) rather than
     /// silently satisfying it.
     private static let orderedNeedles = [
         "writeRestorationSeeds(",
         "sweepUnclaimedMoves(",
+        "TunnelManager.shared.stopAll(",
         "runBoundedQuitTeardown(",
         "QuitSequence.quitLine(",
         "flushSynchronously(",
@@ -202,7 +214,7 @@ struct QuitSequenceTests {
     /// possible: `.now` repeats `writeRestorationSeeds(`,
     /// `sweepUnclaimedMoves(` and `flushSynchronously(`, and a first-
     /// occurrence pin can only be read if the deferred path — the one with
-    /// all six steps — comes first in the source.
+    /// all seven steps — comes first in the source.
     @Test func theDelegateRunsTheQuitStepsInOrder() throws {
         let source = try Self.strictSource(of: Self.appFile)
         let body = try TransferQueueBarCancelGuardTests.declarationBody(

@@ -92,6 +92,9 @@ struct IconTooltipLintTests {
             file: "SessionSidebar.swift", symbol: "plus",
             reason: "Inside a `Label` whose visible title is \"New connection\" — the button is not icon-only."),
         DecorativeIcon(
+            file: "SessionSidebar.swift", symbol: "checkmark.circle.fill",
+            reason: "The running/not-running glyph on a forwarding's entry in the row's \"Port forwarding\" submenu, inside a `Label` whose visible title is the profile's own name — a menu item takes no tooltip, and the glyph is the checkmark the design asks for rather than the item's only content."),
+        DecorativeIcon(
             file: "SnippetsSheet.swift", symbol: "plus",
             reason: "Inside a `Label` whose visible title is \"Add variable\" — the button is not icon-only."),
         DecorativeIcon(

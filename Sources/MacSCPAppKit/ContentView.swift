@@ -353,6 +353,29 @@ struct ContentView: View {
     /// whether or not that session is currently connected.
     @State var auditLogSession: StoredSession?
 
+    // MARK: - Port forwarding (port-forwarding plan, Task 6)
+
+    /// Session whose forwarding-profile sheet is open, or `nil` — the same
+    /// `.sheet(item:)` shape `auditLogSession` uses, opened from the row's
+    /// "Port forwarding ▸ Manage forwardings…" entry. Opening it dials
+    /// nothing.
+    @State var tunnelProfilesSession: StoredSession?
+
+    /// This WINDOW's answer to an unknown host key on a forwarding's own
+    /// dial. A tunnel has no tab, so it has no `ConnectionViewModel` to
+    /// carry the question; this bridge and the sheet it drives are where it
+    /// is asked. Autostart never reaches it — `TunnelManager
+    /// .startAutoStart(_:)` hands `.refusing`.
+    @State var tunnelHostKeyBridge = TunnelHostKeyPromptBridge()
+
+    /// The decider handed to every forwarding this window starts. A MISMATCH
+    /// never arrives here: it is a hard stop inside the dial, decided before
+    /// any decider is consulted.
+    var tunnelHostKeyDecider: HostKeyDecider {
+        let bridge = tunnelHostKeyBridge
+        return .asking { candidate in await bridge.ask(candidate) }
+    }
+
     // MARK: - Connection diagnostics
 
     /// This window's diagnostics panel — open or not — and the one place its
@@ -774,13 +797,23 @@ struct ContentView: View {
         // The way to close the residual is to make the two hardwired stores
         // parameters as well, so that omitting them cannot compile. Until
         // then this is a runtime hazard, not a type-level guarantee.
-        _sessionListViewModel = State(initialValue: sessionListViewModel ?? SessionListViewModel(
+        let resolvedSessionList = sessionListViewModel ?? SessionListViewModel(
             store: SessionStore(directory: SessionStore.defaultDirectory),
             secrets: resolvedSecretStore,
             auditStore: auditStore,
             loginSetStore: LoginSetStore(directory: SessionStore.defaultDirectory),
             keys: resolvedKeyStore
-        ))
+        )
+        // A deleted session takes its forwarding profiles with it
+        // (port-forwarding plan, Task 1 hand-off). Registered here because
+        // this is where the App builds the view model, and additively
+        // through `addDeletionObserver(_:)` — the same seam the audit log's
+        // own cleanup uses — so nothing about `delete(_:)` has to know that
+        // forwardings exist. `TunnelStore.sessionDeleted(id:)` swallows its
+        // own throw: an orphaned profile is a residual, never a reason to
+        // fail a session deletion.
+        resolvedSessionList.addDeletionObserver(TunnelManager.shared.deletionObserver)
+        _sessionListViewModel = State(initialValue: resolvedSessionList)
     }
 
     /// The mounted tab. Every view below renders THIS tab's state; switching

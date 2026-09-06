@@ -17,7 +17,7 @@ import Testing
 /// correctly, so an anchor against a spelling loses. Round 1 left an
 /// unguarded condition; round 2 replaced it with an unguarded slot; round 3
 /// found the slot had become an unguarded `self`; round 4 found the rule had
-/// only ever been applied to one of the sidebar's three host-reaching
+/// only ever been applied to one of the sidebar's then-three host-reaching
 /// callbacks, while `onOpenTerminal` — a connect — stayed a plain closure
 /// that any function in the file could call. What follows is therefore split
 /// by what KIND of thing holds each site, and the split is the claim — each
@@ -114,6 +114,23 @@ struct SessionRowActivationWiringTests {
         "let onOpenExternalTerminal: SessionRowExternalTerminalEffect<StoredSession>",
     ]
 
+    /// The three host-reaching callbacks this suite is about — NOT every
+    /// host-reaching callback the sidebar has.
+    ///
+    /// Counted 2026-09-06: `SessionSidebar` holds five, and the two the
+    /// port-forwarding plan's Task 6 added (`onStartTunnel`,
+    /// `onStartAllTunnels`) are deliberately absent from both lists above.
+    /// The property below — "the ROW declares none of them" — is not true of
+    /// those two and cannot be: a forwarding entry acts on ONE PROFILE of
+    /// the session, which no `SessionRowInput` carries, so the row holds the
+    /// effects and fires them from the submenu. What replaces this
+    /// property for them is `TunnelMenuWiringGuardTests
+    /// .aForwardingIsStartedOnlyFromInsideTheSubmenu`, which pins that each
+    /// is fired exactly once and only inside the submenu's own span. Adding
+    /// their names here would turn the row guard red for a shape that is
+    /// guarded elsewhere; leaving them unmentioned would make this list
+    /// claim more than it checks, which is the failure this comment exists
+    /// to prevent.
     private static let hostReachingNames = [
         "onConnect", "onOpenTerminal", "onOpenExternalTerminal",
     ]

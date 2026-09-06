@@ -280,13 +280,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// **The order is `QuitSequence.steps`**, and
     /// `QuitSequenceTests.theDelegateRunsTheQuitStepsInOrder` pins this
     /// body against it positionally. The `.later` case is written FIRST so
-    /// that reading is possible — it is the branch that runs all six steps,
+    /// that reading is possible — it is the branch that runs all seven steps,
     /// and `.now` repeats three of the same calls.
     ///
     /// **`.now` is not a shortcut past the teardown.** It is chosen only
     /// when `liveTabCount` is zero, counted over every tab the registry
-    /// knows — parked ones included — so there is provably no session to
-    /// close. The parked sweep still runs, because the RECORD of a move
+    /// knows — parked ones included — AND no forwarding is running
+    /// (`TunnelManager.runningCount`, which belongs to no tab and would
+    /// otherwise be invisible to this count), so there is provably nothing
+    /// open to close. The parked sweep still runs, because the RECORD of a move
     /// that never landed is written whether or not the tab was connected;
     /// with nothing live, the tabs it hands back have no session and their
     /// teardown would be a no-op, so this branch discards them and stays
@@ -295,7 +297,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {
         let liveTabCount = TabRegistry.shared.allTabs().filter { $0.session != nil }.count
-        switch QuitSequence.decision(liveTabCount: liveTabCount) {
+        let tunnels = TunnelManager.shared.runningCount
+        switch QuitSequence.decision(liveTabCount: liveTabCount, runningTunnelCount: tunnels) {
         case .later:
             // FIRST, and synchronously, before any teardown can run: a
             // teardown clears `tab.activeStoredSessionID`, which is exactly
@@ -305,6 +308,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let windowTeardowns = TabRegistry.shared.allWindowTeardowns()
             Task { @MainActor in
                 let parked = sweepUnclaimedMoves()
+                // Before the windows (port-forwarding plan, Task 6;
+                // `QuitStep.stopTunnels`): a forwarding is held by no window
+                // and by no tab, so no window's closure reaches one, and a
+                // process that exits without this leaves the server holding
+                // a remote forward nobody cancelled. Awaited, and outside
+                // the watchdog's race on purpose — see `QuitStep
+                // .stopTunnels` for what bounds it instead.
+                await TunnelManager.shared.stopAll()
                 let outcome = await runBoundedQuitTeardown(
                     parked: parked, windows: windowTeardowns)
                 DiagnosticLog.shared.log(

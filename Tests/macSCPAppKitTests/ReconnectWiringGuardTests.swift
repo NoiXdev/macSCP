@@ -528,6 +528,16 @@ struct ReconnectWiringGuardTests {
             occurrences: 1,
             reason: "`ConnectFailureDetailText.read(from:)` — the only construction of the details text in the App layer, and the line that decides it is the published message and nothing else."),
         SanctionedSite(
+            file: "Sources/MacSCPAppKit/TunnelManager.swift",
+            code: "return TunnelRunner(profile: profile, connect: { decider in",
+            occurrences: 1,
+            reason: "`TunnelManager.liveRunner(for:sessions:knownHosts:secrets:)` — the App layer's one construction of a port-forwarding runner (port-forwarding plan, Task 6). A forwarding is NOT a tab's connection: it belongs to no window, survives every tab, and so cannot be obtained through `ContentView.connect(in:stored:)`. What the rules above buy is preserved rather than bypassed — TOFU stays a hard stop inside the dial (a MISMATCH is decided before any decider is consulted), the decider handed in is the window's own prompt or `.refusing` for autostart, the secret is resolved through the same `secretSources(for:passwordCommand:)` chain, and a session bound to a login set or dialling through a jump host is refused by `StoredSessionConnectionConfig.build(for:secret:)` and never offered a profile in the first place (`SessionRowTunnelMenuPlan.build`)."),
+        SanctionedSite(
+            file: "Sources/MacSCPAppKit/TunnelManager.swift",
+            code: "return try await TunnelConnection.connect(",
+            occurrences: 1,
+            reason: "The dial inside that same runner's `connect` closure — Core's one entry point for a forwarding's own connection, and the only site in the App layer that calls it."),
+        SanctionedSite(
             file: "Sources/MacSCPAppKit/TabStripView.swift",
             code: "case .attention: dot(.red, pulse: false)",
             occurrences: 1,

@@ -28,8 +28,18 @@ enum QuitSequence {
     /// Zero means `.now` rather than "defer and finish instantly": a
     /// deferral is a round trip through AppKit and a reply, and an app with
     /// nothing connected should quit the moment it is asked to.
-    static func decision(liveTabCount: Int) -> QuitDecision {
-        liveTabCount == 0 ? .now : .later
+    ///
+    /// A RUNNING TUNNEL defers the quit too (port-forwarding plan, Task 6),
+    /// and it has to be counted separately because it is reachable from
+    /// nowhere else: a forwarding belongs to no tab and to no window, so an
+    /// app with three tunnels up and not one connected tab has
+    /// `liveTabCount == 0`. Without this argument that app would quit
+    /// through the `.now` branch, which runs no `stopAll()` — every
+    /// forwarding would be dropped by process exit rather than stopped, with
+    /// no `tunnel <name> stop` line and no `cancel-tcpip-forward` sent to
+    /// the server that is still listening for one.
+    static func decision(liveTabCount: Int, runningTunnelCount: Int) -> QuitDecision {
+        liveTabCount == 0 && runningTunnelCount == 0 ? .now : .later
     }
 
     /// The deferred path's steps, in the order the delegate runs them —
@@ -49,8 +59,14 @@ enum QuitSequence {
     /// - `logQuit`, `flush` and `reply` are last, in that order, because the
     ///   line has to describe a finished sequence, the flush has to include
     ///   that line, and the reply is what lets the process go.
+    /// - `stopTunnels` is before `teardownWindows` because a forwarding is
+    ///   in no window either (`TunnelManager` is process-wide, and holds the
+    ///   runners), so no window's closure can reach one; and it is before
+    ///   rather than after so that the `tunnel … stop` lines are written
+    ///   while the log is still being flushed by this same sequence.
     static let steps: [QuitStep] = [
-        .writeRestoration, .teardownParked, .teardownWindows, .logQuit, .flush, .reply,
+        .writeRestoration, .teardownParked, .stopTunnels, .teardownWindows,
+        .logQuit, .flush, .reply,
     ]
 
     /// The deferred path's own `app quit` line: counts and one verdict, and
@@ -89,6 +105,15 @@ enum QuitStep: Equatable, Sendable, CaseIterable {
     case writeRestoration
     /// The unclaimed parked seeds, torn down through `TabTeardown.run`.
     case teardownParked
+    /// Every running forwarding, stopped through `TunnelManager.stopAll()`.
+    ///
+    /// **Outside `QuitWatchdog.bound`**, and stated rather than implied: the
+    /// watchdog races the TEARDOWN CHAIN, and this step runs before that
+    /// race begins. What bounds it is the runner underneath —
+    /// `TunnelRunner.stop()` cancels its run task and awaits a teardown
+    /// whose every wait is bounded (`RemoteForward.stop()` spends at most
+    /// five seconds per forward) — not a clock kept here.
+    case stopTunnels
     /// Every open window's registered closure, in registration order.
     case teardownWindows
     /// The diagnostic log's `app quit …` line — see
