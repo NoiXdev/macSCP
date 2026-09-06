@@ -558,9 +558,16 @@ struct TunnelManagerTests {
         #expect(rig.manager.runningCount == 0)
     }
 
-    /// Two activations arriving close together run ONE reconcile (fix round
-    /// 2): the second waits for the one in flight rather than starting a
-    /// second pass over the same discards.
+    /// Two activations arriving close together never DISCARD at the same time
+    /// (fix round 2): the second waits for the pass in flight instead of
+    /// running one beside it.
+    ///
+    /// It waits and then runs a pass of its own, which is fix round 3's
+    /// correction — see
+    /// `aDeletionArrivingDuringAReconcileStillStopsItsForwardings` for why
+    /// waiting alone was not enough. That second pass finds the runner
+    /// already gone from the dictionary, which is why the stop is entered
+    /// once here and the count below is 1.
     ///
     /// Driven by parking the fake runner's `stop()` inside the first
     /// reconcile, which is exactly where the real one suspends — a
@@ -624,6 +631,108 @@ struct TunnelManagerTests {
         #expect(secondDone.isSet)
         #expect(runner.stopCount == 1, "the deleted forwarding was stopped more than once")
         #expect(rig.manager.allProfiles.isEmpty)
+        #expect(rig.manager.states[doomed.id] == nil)
+    }
+
+    /// Waiting for the pass in flight is not the same as being reconciled
+    /// (fix round 3).
+    ///
+    /// A pass reads the store when it STARTS. A caller that writes the store
+    /// and then coalesces onto a pass already in flight is therefore waiting
+    /// for a read that happened before its own write — so
+    /// `forgetEverything(for:)` could return having deleted the rows from
+    /// `tunnels.json` and stopped nothing at all, with the deleted session's
+    /// profiles still in `allProfiles`, its runners still forwarding and
+    /// `runningCount` still counting them. That is round 1's defect back
+    /// again, reached through round 2's gate; two rapid session deletions
+    /// have the same shape.
+    ///
+    /// So a coalesced caller waits AND THEN runs a pass of its own. The cost
+    /// is one extra read per coalesced caller, which is a JSON file of a
+    /// handful of rows.
+    @Test func aDeletionArrivingDuringAReconcileStillStopsItsForwardings() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let firstSession = UUID()
+        let secondSession = UUID()
+        let parked = Self.profile(session: firstSession, name: "web")
+        let deletedLater = Self.profile(session: secondSession, name: "db", port: 5432)
+        try await rig.manager.save(parked)
+        try await rig.manager.save(deletedLater)
+        await rig.manager.start(parked, decider: Self.accepting)
+        await rig.manager.start(deletedLater, decider: Self.accepting)
+        try await pollUntil("both forwardings are running") { rig.manager.runningCount == 2 }
+        let parkedRunner = try rig.runner(parked)
+        let laterRunner = try rig.runner(deletedLater)
+
+        // Pass A: the first profile is deleted on disk and the reconcile
+        // parks inside its runner's stop.
+        let gate = Gate()
+        parkedRunner.beforeStop = { await gate.wait() }
+        try rig.store.delete(id: parked.id)
+        let passA = Task { @MainActor in await rig.manager.reloadReconciling() }
+        try await pollUntil("pass A is parked inside the stop") { gate.arrived == 1 }
+
+        // The session deletion lands while pass A is parked. Its own write
+        // is later than pass A's read, which is the whole point.
+        let deletionStarted = Flag()
+        let deletionDone = Flag()
+        let deletion = Task { @MainActor in
+            deletionStarted.set()
+            await rig.manager.forgetEverything(for: secondSession)
+            deletionDone.set()
+        }
+        try await pollUntil("the deletion reached the manager") { deletionStarted.isSet }
+        #expect(deletionDone.isSet == false, "the deletion returned while pass A was parked")
+
+        gate.open()
+        await passA.value
+        await deletion.value
+
+        #expect(rig.manager.allProfiles.isEmpty, """
+            forgetEverything returned with the deleted session's rows still in the mirror — \
+            it coalesced onto a pass whose read predated its own write.
+            """)
+        #expect(laterRunner.stopCount == 1, """
+            forgetEverything stopped nothing: the deleted session's forwarding is still \
+            holding its port and its forward, with no row anywhere left to stop it from.
+            """)
+        #expect(rig.manager.states[deletedLater.id] == nil)
+        #expect(rig.manager.runningCount == 0)
+
+        // The control beside it: pass A did its own work too, so this is not
+        // satisfied by one pass that happened to stop everything.
+        #expect(parkedRunner.stopCount == 1)
+        #expect(rig.manager.states[parked.id] == nil)
+    }
+
+    /// A reconcile that follows a COMPLETED one runs its own pass (fix round
+    /// 3, N2): the in-flight handle is cleared by the task itself, so a
+    /// caller arriving after that task finished can never await a completed
+    /// task and skip its own read.
+    @Test func aReconcileFollowingACompletedOneRunsItsOwnPass() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let doomed = Self.profile(session: UUID(), name: "web")
+        try await rig.manager.save(doomed)
+        await rig.manager.start(doomed, decider: Self.accepting)
+        try await pollUntil("the forwarding is running") { rig.manager.runningCount == 1 }
+        let runner = try rig.runner(doomed)
+
+        // One pass that changes nothing, so the next call is the first one
+        // with anything to do.
+        await rig.manager.reloadReconciling()
+        #expect(runner.stopCount == 0)
+        #expect(rig.manager.allProfiles == [doomed])
+
+        try rig.store.delete(id: doomed.id)
+        await rig.manager.reloadReconciling()
+
+        #expect(rig.manager.allProfiles.isEmpty, """
+            the second reconcile read nothing — it awaited the first pass's finished task \
+            instead of running one of its own.
+            """)
+        #expect(runner.stopCount == 1)
         #expect(rig.manager.states[doomed.id] == nil)
     }
 

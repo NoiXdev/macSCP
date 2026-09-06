@@ -387,11 +387,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// if that ever stops being true, the fan-out is the one to build,
     /// because it removes the reads rather than guessing about them.
     ///
-    /// The work is `async` (the tunnel reconcile awaits each discarded
-    /// runner's `stop()`), so the block starts a `Task` on the main actor.
-    /// Nothing waits for it: an activation is not a barrier, and the two
-    /// reloads are idempotent, so a second activation arriving mid-flight
-    /// simply reads the file again.
+    /// **The session lists go first, and the tunnel reconcile second** (fix
+    /// round 3). The session reloads are synchronous — a few file reads —
+    /// while the reconcile can suspend for as long as a discarded runner's
+    /// `stop()` takes, which for a runner parked in a dial is
+    /// `connectTimeoutSeconds`, up to 120 s. Behind it, the sidebar would
+    /// have gone on showing yesterday's sessions for that whole wait.
+    ///
+    /// The block starts a `Task` because the reconcile is `async`. AppKit
+    /// does not wait for that task — the activation notification returns as
+    /// soon as it is scheduled — but the two reloads inside it are ordered
+    /// with respect to each other, which is the point above. A second
+    /// activation arriving while the reconcile is in flight WAITS for it and
+    /// then reads the store again (`TunnelManager.reloadReconciling()`), so
+    /// no activation returns having skipped a read.
     @MainActor
     private func observeActivation() {
         // Installed once. `applicationDidFinishLaunching` is called once per
@@ -402,10 +411,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { _ in
             Task { @MainActor in
-                await TunnelManager.shared.reloadReconciling()
                 for sessionList in TabRegistry.shared.allSessionLists() {
                     sessionList.reload()
                 }
+                await TunnelManager.shared.reloadReconciling()
             }
         }
     }

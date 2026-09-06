@@ -150,8 +150,10 @@ final class TunnelManager {
     /// a profile about to be deleted, and the resuming loop — iterating the
     /// snapshot it took at entry — never stopped it. A tunnel holding a port
     /// and a connection, with no row anywhere left to stop it from, which is
-    /// the exact outcome that guard exists to prevent. The ids are
-    /// snapshotted before the delete, so nothing is lost by deleting first.
+    /// the exact outcome that guard exists to prevent. Deleting first loses
+    /// nothing, and the paragraph on `reloadReconciling()` below says why:
+    /// the ids it discards are read off the MIRROR, which this call has not
+    /// touched.
     ///
     /// Throw-free, like every other cleanup on the deletion path
     /// (`SessionListViewModel.delete(_:)`'s audit-log and stray-secret
@@ -166,6 +168,13 @@ final class TunnelManager {
     /// snapshots the ids off the MIRROR as it stands on entry, and the
     /// mirror has not been re-read yet, so it still lists every row this
     /// call just removed from the file.
+    ///
+    /// **And it is reconciled by a pass of its OWN** (fix round 3). A pass
+    /// already in flight read the store before the `deleteAll` above, so
+    /// waiting for one would have returned with this session's rows still
+    /// in the mirror and its runners still forwarding. `reloadReconciling()`
+    /// waits and then runs its own pass, which is what makes this function
+    /// correct while another one is parked in a `stop()`.
     ///
     /// **What it inherits from round 2**, stated rather than worked around:
     /// the reconcile discards nothing when the store read FAILS, so a
@@ -436,23 +445,55 @@ final class TunnelManager {
     /// written in terms of this one, so there is one such loop rather than
     /// two.
     ///
-    /// **One pass at a time**, and the gate is the function body below.
+    /// **One pass at a time, and one pass per caller** — the gate is the
+    /// function body below, and it both waits and re-runs.
     func reloadReconciling() async {
-        // One reconcile at a time (fix round 2). Two activations arriving
-        // close together — ⌘-Tab away and back — would otherwise each start
-        // a pass, and a pass suspends for as long as a discarded runner's
+        // One pass at a time (fix round 2), and every caller gets a pass of
+        // its own (fix round 3).
+        //
+        // The waiting is what round 2 added: two activations arriving close
+        // together — ⌘-Tab away and back — would otherwise each start a
+        // pass, and a pass suspends for as long as a discarded runner's
         // `stop()` takes, which for a runner parked in a dial is
-        // `connectTimeoutSeconds`. The second caller WAITS for the one in
-        // flight rather than skipping: an activation should not return
-        // before the state it exists to refresh has settled.
-        if let inFlight = reconcileInFlight {
+        // `connectTimeoutSeconds`.
+        //
+        // **Waiting is not the same as being reconciled**, which is what
+        // round 3 corrected: a pass reads the store when it STARTS, so a
+        // caller that WROTE the store and then coalesced onto a pass already
+        // in flight was waiting for a read older than its own write.
+        // `forgetEverything(for:)` could return having deleted the rows and
+        // stopped nothing — round 1's defect, reached through round 2's
+        // gate. So this waits and then runs a pass of its own; the cost is
+        // one extra read of a small JSON file per coalesced caller.
+        //
+        // A `while` rather than an `if`: by the time a waiter resumes, a
+        // third caller may already have installed its own pass, and that one
+        // is just as old relative to this caller's write.
+        while let inFlight = reconcileInFlight {
             await inFlight.value
-            return
         }
-        let task = Task { @MainActor in await performReconcilingReload() }
+        // The handle is cleared INSIDE the task (fix round 3, N2), and with
+        // the loop above that placement is load-bearing rather than tidy.
+        //
+        // Cleared by this caller after `await task.value` instead, there is a
+        // turn in which the task has finished and the handle still names it.
+        // A caller arriving in that turn would await a completed task — which
+        // resumes without suspending — and then re-check a handle only this
+        // caller can clear, on an actor it never yields. Measured 2026-09-06
+        // by planting exactly that move: the run did not finish in 100 s and
+        // produced no verdict at all, because a main actor spinning in the
+        // loop cannot deliver the suite's own time limit either. Clearing
+        // here means a waiter resumes knowing the task that woke it has
+        // already given the slot up, so the loop re-checks once and exits.
+        //
+        // The body cannot run before the assignment below, because nothing
+        // between them suspends.
+        let task = Task { @MainActor in
+            await performReconcilingReload()
+            reconcileInFlight = nil
+        }
         reconcileInFlight = task
         await task.value
-        reconcileInFlight = nil
     }
 
     /// The pass itself. Separate from the gate above so the `Task` the gate
@@ -467,13 +508,20 @@ final class TunnelManager {
         // mirror, the runners and the states as they are; the one line
         // written is the only record, since `readProfiles()` deliberately
         // writes none of its own.
+        //
+        // `.error`, matching `TunnelStore.load()`'s level for the same
+        // condition (fix round 3, N7). At `.info` this line was dropped by
+        // any sink configured at `.error` — which is the level a user turns
+        // the log down to precisely when they are looking for failures, and
+        // the one setting under which an unreadable store would have left no
+        // record at all.
         let profiles: [TunnelProfile]
         switch store.readProfiles() {
         case .success(let read):
             profiles = read
         case .failure(let error):
             DiagnosticLog.shared.log(
-                .info, "app", "tunnels.json unreadable, keeping the forwardings as they are",
+                .error, "app", "tunnels.json unreadable, keeping the forwardings as they are",
                 reason: error)
             return
         }

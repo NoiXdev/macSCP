@@ -116,18 +116,30 @@ struct DiagnosticLogSecrecyGuardTests {
     /// antecedent comes from the thing under test cancels out — extraction
     /// that stops finding a wrapper's calls also stops the fixpoint growing
     /// onto its callers, so the file quietly leaves the set the check
-    /// quantifies over. Naming the six files is what makes the check able to
+    /// quantifies over. Naming the seven files is what makes the check able to
     /// fail: break the extraction for any one of their wrappers and that file
     /// stops yielding sites while its name stays here.
     ///
-    /// Eleven files have a forwarder; the five absent from this list have a
+    /// TWELVE files have a forwarder; the five absent from this list have a
     /// name set equal to their seed set — no wrapper, an ordinary function
     /// holding a line that the direct scan reads. Adding them would be red on
     /// correct code.
+    ///
+    /// **`TunnelManager.swift` joined on 2026-09-06** (CLI-store plan, Task 5
+    /// round 3), when its unreadable-store line was written inside
+    /// `performReconcilingReload()` — a private function `reloadReconciling()`
+    /// calls, so the walk seeds on it and grows onto its caller. The list did
+    /// NOT go red when that happened, and the reason is worth naming: the
+    /// assertion in `noInterpolationNamesASecretIdentifier` is a SUBSET check
+    /// in one direction — every file named here must still yield sites — so a
+    /// file that STARTS yielding them is invisible to it. That is deliberate
+    /// (the other direction would be red on correct code, see above), and it
+    /// is exactly why this list has to be recounted by hand whenever a marker
+    /// call moves into a function something else calls.
     private static let filesWithReachableForwardedSites: Set<String> = [
         "CitadelFileSystem.swift", "ContentView+Lifecycle.swift",
         "MacSCPApp.swift", "RemoteBrowserViewModel.swift",
-        "TunnelRunner.swift", "TunnelStore.swift",
+        "TunnelManager.swift", "TunnelRunner.swift", "TunnelStore.swift",
     ]
 
     private struct CallSite {
@@ -667,16 +679,29 @@ struct DiagnosticLogSecrecyGuardTests {
         //
         // Measured 2026-09-06 by running the walk and printing what it
         // collects, per file, with the name set split into seeds and the names
-        // the fixpoint grew onto. ELEVEN files under `Sources/` have a
-        // forwarder; SIX of them yield call sites:
+        // the fixpoint grew onto — RE-RUN the same way on 2026-09-06 for the
+        // CLI-store plan's Task 5 round 3, which is where every number below
+        // comes from. TWELVE files under `Sources/` have a forwarder; SEVEN of
+        // them yield call sites:
         //
         //   file                       all  seeded  names  seeds  direct
         //   CitadelFileSystem           23      11     13      1       2
         //   TunnelRunner                18       9      9      1       2
         //   RemoteBrowserViewModel       8       8      9      1       2
         //   ContentView+Lifecycle        7       4      8      2       2
-        //   TunnelStore                  7       6      8      1       1
-        //   MacSCPApp                    6       4      5      3       5
+        //   MacSCPApp                    7       5      6      4       6
+        //   TunnelStore                  6       6      7      1       1
+        //   TunnelManager                3       1      4      1       1
+        //
+        // Three rows moved and one is new, and the re-run is what found them:
+        // `TunnelManager` because round 3 put its unreadable-store line inside
+        // a private function its own entry point calls; `TunnelStore` because
+        // round 2 moved the decode into `decode()`, which `readProfiles()`
+        // reaches WITHOUT going through the marker-holding `load()`, so one
+        // name and one call site left the walk; and `MacSCPApp`, which this
+        // table had recorded as `6 4 5 3 5` — stale since the port-forwarding
+        // plan's own final round added the call that took the tree from 39 to
+        // 40. A table nobody re-runs is a comment, not a measurement.
         //
         // and FIVE yield none, correctly — `CitadelShell`, `ConnectionViewModel`,
         // `LocalFileSystem`, `LocalMetadataSource`, `TransferEngine`. In every

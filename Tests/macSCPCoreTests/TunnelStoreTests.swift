@@ -159,11 +159,24 @@ struct TunnelStoreTests {
 
         try store.delete(id: only.id)
 
-        let path = dir.appendingPathComponent("tunnels.json").path(percentEncoded: false)
-        #expect(FileManager.default.fileExists(atPath: path), """
+        let fileURL = dir.appendingPathComponent("tunnels.json")
+        #expect(FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)), """
             deleting the last profile removed tunnels.json — the reconcile treats a missing \
             file as an empty store, which would then be indistinguishable from a file \
             somebody removed by hand.
+            """)
+        // The BYTES, not only the decode (fix round 3): `TunnelStore.decode()`'s
+        // doc comment tells the reconcile that an emptied store is a file
+        // holding `"profiles": []`, and a check that only decodes would be
+        // satisfied by a file that said something else entirely. Whitespace
+        // is removed rather than reproduced — `.prettyPrinted` writes
+        // `"profiles" : [\n\n  ]`, which is a claim about Foundation's
+        // formatter, not about this store.
+        let written = try String(contentsOf: fileURL, encoding: .utf8)
+            .filter { !$0.isWhitespace }
+        #expect(written == "{\"profiles\":[]}", """
+            an emptied tunnels.json holds \(written) — the reconcile's missing-file note \
+            rests on it holding an empty profiles array.
             """)
         #expect(try store.readProfiles().get() == [])
     }

@@ -49,6 +49,8 @@ struct StoreReloadOnActivationGuardTests {
         .appendingPathComponent("Sources/MacSCPAppKit/TunnelManager.swift")
     private static let contentViewFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView.swift")
+    private static let tunnelStoreFile = repoRoot
+        .appendingPathComponent("Sources/macSCPCore/Tunnels/TunnelStore.swift")
     private static let sessionListFile = repoRoot
         .appendingPathComponent("Sources/macSCPCore/Presentation/SessionListViewModel.swift")
 
@@ -300,12 +302,94 @@ struct StoreReloadOnActivationGuardTests {
         }
     }
 
+    /// The session lists are reloaded BEFORE the tunnel reconcile (fix round
+    /// 3, N3), and the order is the claim: the session reloads are
+    /// synchronous file reads, while the reconcile can suspend for as long as
+    /// a discarded runner's `stop()` takes — `connectTimeoutSeconds`, up to
+    /// 120 s. Behind it, the sidebar would show yesterday's sessions for that
+    /// whole wait.
+    ///
+    /// Positional, over the same derived names the count check above uses.
+    /// Each is asserted PRESENT first — an ordering claim over a needle that
+    /// is not there is no claim at all.
+    @Test func theActivationReloadsTheSessionListsBeforeItReconcilesTheTunnels() throws {
+        let source = try Self.strictSource(of: Self.appFile)
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: Self.observerDeclaration, in: source)
+        let tunnelReload = try Self.asyncReloadFunctionName(in: Self.tunnelManagerFile)
+        let enumeration = try Self.sessionListEnumerationName()
+
+        let lists = Self.firstIndex(of: "TabRegistry.shared.\(enumeration)(", in: body)
+        let tunnels = Self.firstIndex(of: "TunnelManager.shared.\(tunnelReload)(", in: body)
+        #expect(lists != nil, "the activation no longer reloads the windows' session lists")
+        #expect(tunnels != nil, "the activation no longer reconciles the tunnel store")
+        if let lists, let tunnels {
+            #expect(lists < tunnels, """
+                the activation awaits the tunnel reconcile before it reloads the session \
+                lists — a reconcile parked in a runner's stop would hold the sidebar on \
+                stale sessions for the length of a dial timeout.
+                """)
+        }
+    }
+
+    /// The character index of `needle`'s first occurrence in `text`, or
+    /// `nil` — the two indices the ordering claim above compares.
+    private static func firstIndex(of needle: String, in text: String) -> Int? {
+        guard let range = text.range(of: needle) else { return nil }
+        return text.distance(from: text.startIndex, to: range.lowerBound)
+    }
+
+    /// One unreadable `tunnels.json` is one condition, so the two lines
+    /// written about it are written at the same level (fix round 3, N7).
+    ///
+    /// `TunnelStore.load()` logs the swallow at `.error`; the activation
+    /// reconcile logs the "changed nothing" at whatever this reads out of
+    /// that file. At `.info` — which is what it was — the reconcile's line
+    /// was dropped by any sink configured at `.error`, which is the level a
+    /// user selects precisely when hunting a failure, leaving the one
+    /// unreadable-store record that matters unwritten.
+    ///
+    /// Both levels are DERIVED, from the single `DiagnosticLog.shared.log(`
+    /// call each of the two files contains — so the check is "these agree",
+    /// not "both are `.error`", and it fails closed if either file grows a
+    /// second call and the derivation stops being unambiguous.
+    @Test func theReconcileLogsAnUnreadableStoreAtTheStoresOwnLevel() throws {
+        let storeLevel = try Self.soleLogLevel(in: Self.tunnelStoreFile)
+        let reconcileLevel = try Self.soleLogLevel(in: Self.tunnelManagerFile)
+        #expect(reconcileLevel == storeLevel, """
+            the reconcile writes its unreadable-store line at \(reconcileLevel) while \
+            TunnelStore writes the same condition at \(storeLevel) — a sink configured at \
+            the stricter of the two keeps one record of an unreadable file and drops the \
+            other.
+            """)
+    }
+
+    /// The level argument of the ONE `DiagnosticLog.shared.log(` call `file`
+    /// contains. Throws when there is not exactly one, so a second call site
+    /// makes this loud rather than arbitrary.
+    private static func soleLogLevel(in file: URL) throws -> String {
+        let levels = try captures(
+            of: #"DiagnosticLog\.shared\.log\(\s*\.(\w+)"#, in: strictSource(of: file))
+        guard levels.count == 1, let only = levels.first else {
+            throw ScanError.derivation("""
+                expected exactly one DiagnosticLog.shared.log( call in \
+                \(file.lastPathComponent) — found \(levels.count): \(levels)
+                """)
+        }
+        return only
+    }
+
     /// Every direct store read the activation path must not perform, with the
     /// file that still performs it — the positive half of the check above.
-    /// Counted 2026-09-06: four spellings, each pinned in one file.
+    /// Counted 2026-09-06: FIVE spellings, each pinned in one file.
+    /// `store.readProfiles(` joined the list in fix round 3, when it became
+    /// the reconcile's own reader — a reporting read is exactly as wrong
+    /// here as a lenient one, because the observer is not the place either
+    /// belongs.
     private static let directStoreReads: [(String, URL)] = [
         ("store.all(", sessionListFile),
         ("store.allProfiles(", tunnelManagerFile),
+        ("store.readProfiles(", tunnelManagerFile),
         ("SessionStore(directory:", contentViewFile),
         ("TunnelStore(directory:", tunnelManagerFile),
     ]
