@@ -6,8 +6,22 @@ import Testing
 /// `DiagnosticLog.shared.log(...)` and holds two properties of them: the
 /// hard rule from the diagnostic-log design's "Never logged" paragraph
 /// (NEGATIVE — no interpolation `\(…)` inside a call's arguments names an
-/// identifier that looks like a secret), and, beside it, two POSITIVE
-/// checks that keep the negative from going stale in silence the way
+/// identifier that looks like a secret), and, beside it, SIX POSITIVE checks
+/// — counted 2026-09-06 by listing every `#expect` outside this file's
+/// self-tests that asserts the scan FOUND something rather than nothing:
+///
+/// 1. `noInterpolationNamesASecretIdentifier`: the direct call-site floor
+///    (`direct.count >= 20`).
+/// 2. …: every file the forwarding walk names a wrapper in yields at least
+///    one of that wrapper's call sites.
+/// 3. …: the `tunnel` category yields forwarded call sites at all.
+/// 4. …: every one of those `tunnel` sites carries an interpolation.
+/// 5. `everyCategoryLiteralIsOnTheFixedList`: every entry on
+///    `fixedCategories` is reached by at least one call site.
+/// 6. `noHandWrittenMessageSpellsReasonEquals`: at least three call sites use
+///    the `reason:` overload.
+///
+/// They keep the negative from going stale in silence the way
 /// "Guards that name what they watch" describes: `grep -rc
 /// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **39** as
 /// of 2026-09-06 (re-counted in Task 5's round 2, which added the second
@@ -26,8 +40,10 @@ import Testing
 /// reverted), not to be re-edited on every call site a later task adds or
 /// removes — see `noInterpolationNamesASecretIdentifier`'s own assertion
 /// message for the up-to-date count if this ever goes red. Every category
-/// literal used is also checked against the fixed nine the diagnostic-log
-/// design settled on plus the one the port-forwarding plan added.
+/// literal used is also checked against the fixed NINE — the diagnostic-log
+/// design's own eight plus `tunnel`, added by the port-forwarding plan;
+/// counted 2026-09-06 against `fixedCategories` itself, which is the array
+/// this sentence describes.
 ///
 /// Scans `SwiftSource.stripComments`'s output, not
 /// `stripCommentsAndStrings`'s: blanking string literals blanks what they
@@ -121,7 +137,20 @@ struct DiagnosticLogSecrecyGuardTests {
     private struct ForwardedSites {
         let file: String
         let categories: Set<String>
+        /// Every collected site — the seeded wrappers' own call sites plus
+        /// those of every function the fixpoint grew onto.
         let sites: [CallSite]
+        /// Only the SEEDED wrappers' call sites: the functions that contain
+        /// the marker themselves. These are the actual log lines of the
+        /// file; the grown ones are the calls that lead to them, which carry
+        /// whatever their own callers pass and need not interpolate anything.
+        let seeded: [CallSite]
+    }
+
+    /// What one file's walk found, split by how each forwarder was reached.
+    private struct WalkResult {
+        let all: [CallSite]
+        let seeded: [CallSite]
     }
 
     /// Call sites of a file's OWN wrapper around the marker.
@@ -161,30 +190,66 @@ struct DiagnosticLogSecrecyGuardTests {
             let markers = Self.occurrences(of: marker, in: stripped)
             guard !markers.isEmpty else { continue }
             let blanked = try SwiftSource.stripCommentsAndStrings(raw)
-            let names = Self.forwarderNames(markerStarts: markers, blanked: blanked)
-            guard !names.isEmpty else { continue }
-
-            var chars = Array(stripped)
-            for start in markers {
-                for index in start..<min(start + marker.count, chars.count) { chars[index] = " " }
-            }
-            let scannable = String(chars)
-            var sites: [CallSite] = []
-            for name in names.sorted() {
-                sites.append(
-                    contentsOf: Self.callSites(
-                        callingFunctionNamed: name, in: scannable,
-                        file: file.lastPathComponent))
-            }
-            guard !sites.isEmpty else { continue }
+            let walked = Self.walk(
+                stripped: stripped, blanked: blanked, file: file.lastPathComponent)
+            guard !walked.all.isEmpty else { continue }
             let categories = Set(
                 Self.callSites(in: stripped, file: file.lastPathComponent)
                     .compactMap { Self.categoryLiteral(in: $0.arguments) })
             collected.append(
                 ForwardedSites(
-                    file: file.lastPathComponent, categories: categories, sites: sites))
+                    file: file.lastPathComponent, categories: categories,
+                    sites: walked.all, seeded: walked.seeded))
         }
         return collected
+    }
+
+    /// The pure half of `collectForwardedCallSites()`, over one file's text —
+    /// so a self-test can plant a wrapper and check the walk reaches through
+    /// it without touching the file system.
+    private static func forwardedCallSites(stripped: String, blanked: String, file: String)
+        -> [CallSite]
+    {
+        Self.walk(stripped: stripped, blanked: blanked, file: file).all
+    }
+
+    private static func walk(stripped: String, blanked: String, file: String) -> WalkResult {
+        let markers = Self.occurrences(of: marker, in: stripped)
+        guard !markers.isEmpty else { return WalkResult(all: [], seeded: []) }
+        let seeds = Self.seedForwarderNames(markerStarts: markers, blanked: blanked)
+        let names = Self.forwarderNames(markerStarts: markers, blanked: blanked)
+        guard !names.isEmpty else { return WalkResult(all: [], seeded: []) }
+
+        // The marker text ends in `log(`, which would match a forwarder
+        // actually named `log`; blanking the marker occurrences first is what
+        // keeps the two apart.
+        var chars = Array(stripped)
+        for start in markers {
+            for index in start..<min(start + marker.count, chars.count) { chars[index] = " " }
+        }
+        let scannable = String(chars)
+        var sites: [CallSite] = []
+        var seeded: [CallSite] = []
+        for name in names.sorted() {
+            let found = Self.callSites(callingFunctionNamed: name, in: scannable, file: file)
+            sites.append(contentsOf: found)
+            if seeds.contains(name) { seeded.append(contentsOf: found) }
+        }
+        return WalkResult(all: sites, seeded: seeded)
+    }
+
+    /// The innermost function whose body contains each marker occurrence —
+    /// the fixpoint's seed, before it grows onto callers.
+    private static func seedForwarderNames(markerStarts: [Int], blanked: String) -> Set<String> {
+        let spans = Self.functionSpans(in: blanked)
+        var names: Set<String> = []
+        for start in markerStarts {
+            let enclosing = spans
+                .filter { $0.body.contains(start) }
+                .min { $0.body.count < $1.body.count }
+            if let enclosing { names.insert(enclosing.name) }
+        }
+        return names
     }
 
     /// Character offsets of every occurrence of `needle` in `text`.
@@ -198,16 +263,52 @@ struct DiagnosticLogSecrecyGuardTests {
         return found
     }
 
-    /// The name of the innermost function whose body contains each marker
-    /// occurrence.
+    /// Every function in the file that reaches the marker — directly, or
+    /// through another such function, to any depth.
+    ///
+    /// **Iterated to a fixpoint**, which is round 3's correction. One layer
+    /// was not enough: a file that wraps the marker in `emit` and wraps
+    /// `emit` in `log` would have had `emit`'s own call sites collected (one
+    /// call, inside `log`, carrying nothing) and `log`'s real call sites —
+    /// the ones that interpolate — left invisible, silently, exactly the way
+    /// the wrapper hid `TunnelRunner`'s lines in the first place.
+    /// `selfTestTheWalkReachesATwoLayerWrapper` plants that shape.
+    ///
+    /// Seeded with the INNERMOST function whose body contains a marker
+    /// occurrence, then grown: a function whose body calls a known forwarder
+    /// becomes one. The growth cannot run away — it is bounded by the number
+    /// of functions in the file, and every pass adds at least one name or
+    /// stops.
+    ///
+    /// **What it still cannot reach**, stated rather than implied: a marker
+    /// inside a computed property, an `init`, or a stored closure has no
+    /// enclosing `func`, so nothing is seeded for that file at all. Extending
+    /// the seed to those shapes would name them but buy nothing — a property
+    /// read has no argument list, so there is no span for this scan to read
+    /// — and the honest fix for such a file would be to give it a `func`
+    /// wrapper or to let its lines interpolate at the marker. The per-file
+    /// positive in `noInterpolationNamesASecretIdentifier` does not catch it
+    /// either: a file with no forwarder is simply absent from the walk's
+    /// result.
     private static func forwarderNames(markerStarts: [Int], blanked: String) -> Set<String> {
         let spans = Self.functionSpans(in: blanked)
-        var names: Set<String> = []
-        for start in markerStarts {
-            let enclosing = spans
-                .filter { $0.body.contains(start) }
-                .min { $0.body.count < $1.body.count }
-            if let enclosing { names.insert(enclosing.name) }
+        var names = Self.seedForwarderNames(markerStarts: markerStarts, blanked: blanked)
+        guard !names.isEmpty else { return names }
+
+        let chars = Array(blanked)
+        var grew = true
+        while grew {
+            grew = false
+            for span in spans where !names.contains(span.name) {
+                let body = String(chars[span.body])
+                let callsAForwarder = names.contains { name in
+                    !Self.callSites(callingFunctionNamed: name, in: body, file: "").isEmpty
+                }
+                if callsAForwarder {
+                    names.insert(span.name)
+                    grew = true
+                }
+            }
         }
         return names
     }
@@ -491,24 +592,84 @@ struct DiagnosticLogSecrecyGuardTests {
             this task added regressed.
             """)
 
-        // The second positive, and the one round 2 added: a category whose
-        // lines all go through a file's own wrapper contributes NOTHING to
-        // the negative below unless `collectForwardedCallSites()` reaches
-        // them — the wrapper's own marker call interpolates nothing at all.
-        // `tunnel` is that category (`TunnelRunner` is the only file under
-        // Sources/ that wraps the marker as of 2026-09-06), so it is the one
-        // named here; a rewrite that broke the forwarding walk would drive
-        // this to zero while every other check stayed green.
-        let tunnelInterpolations = forwarded
+        // Positives 2, 3 and 4 (see this type's doc comment), added in round
+        // 2 and split in round 3: a file
+        // that routes its lines through its own wrapper contributes NOTHING
+        // to the negative below unless `collectForwardedCallSites()` reaches
+        // it — the wrapper's own marker call interpolates nothing at all.
+        //
+        // Measured 2026-09-06 by running the walk and printing what it
+        // collects, seeded/grown split — SIX files have a forwarder, and
+        // every one of them yields call sites:
+        //
+        //   file                       all  seeded  seeded interpolations
+        //   CitadelFileSystem           23      11                     2
+        //   TunnelRunner                18       9                    17
+        //   RemoteBrowserViewModel       8       8                     0
+        //   ContentView+Lifecycle        7       4                     0
+        //   TunnelStore                  7       6                     0
+        //   MacSCPApp                    6       4                     0
+        //
+        // `CitadelFileSystem`'s wrapper is `measured<T>`, and it is the
+        // reason the claim this comment used to make — that `TunnelRunner`
+        // is the only file under `Sources/` that wraps the marker — was
+        // FALSE. `TunnelRunner` is the only file whose whole CATEGORY goes
+        // through a wrapper (both of its direct marker sites carry zero
+        // interpolations); `measured` is the other real wrapper, and it
+        // interpolates at the marker itself, so the direct scan was never
+        // blind there. The remaining four are ordinary functions that happen
+        // to contain a line, collected too rather than guessing which
+        // wrappers are "real".
+        //
+        // So the per-FILE positive is stated in call sites, not in
+        // interpolations: four of those six yield zero interpolations,
+        // because their lines are constant messages with nothing to
+        // interpolate. A floor on interpolations per file would be red on
+        // code that is perfectly fine.
+        for entry in forwarded {
+            #expect(
+                entry.sites.count > 0,
+                """
+                the forwarding walk named a wrapper in \(entry.file) but found none of its \
+                call sites — the walk is naming functions it cannot then locate, so every line \
+                that file writes through that wrapper is invisible to the negative below.
+                """)
+        }
+
+        // Positives 3 and 4: `TunnelRunner` is the one file whose WHOLE CATEGORY is
+        // written through a wrapper — its two direct marker sites carry zero
+        // interpolations between them (measured in the same run) — so
+        // `tunnel` is the category that vanishes entirely if the walk
+        // breaks. Pinned tighter than a bare floor, and derived from the
+        // same run rather than from a copied number: every call site of a
+        // SEEDED wrapper in that category must carry at least one
+        // interpolation, which is true because every one of those lines names
+        // the profile.
+        //
+        // Seeded, not every collected site: the fixpoint also grows onto the
+        // functions that CALL a wrapper, and `attempt(decider:isRetry:)`
+        // calling `run` has no reason to interpolate anything. Only the
+        // wrapper's own call sites are log lines.
+        let tunnelSites = forwarded
             .filter { $0.categories.contains("tunnel") }
-            .flatMap { $0.sites }
-            .flatMap { Self.interpolations(in: $0.arguments) }
+            .flatMap { $0.seeded }
         #expect(
-            tunnelInterpolations.count > 0,
+            tunnelSites.count > 0,
             """
-            the tunnel category contributed no scanned interpolations at all — its lines are \
+            the tunnel category contributed no scanned call sites at all — its lines are \
             written through a wrapper, so without the forwarding walk the negative check below \
             reads an empty span and passes by finding nothing to look at.
+            """)
+        let tunnelSitesWithoutInterpolation = tunnelSites
+            .filter { Self.interpolations(in: $0.arguments).isEmpty }
+            .map(\.arguments)
+        #expect(
+            tunnelSitesWithoutInterpolation.isEmpty,
+            """
+            a tunnel line carries no interpolation at all:
+            \(tunnelSitesWithoutInterpolation.joined(separator: "\n"))
+            Every line that category writes names the profile, so a site with nothing to scan \
+            means the walk is reading a span that is not a call site.
             """)
 
         var offenders: [String] = []
@@ -533,7 +694,9 @@ struct DiagnosticLogSecrecyGuardTests {
             """)
     }
 
-    /// The second positive: every category used is one of the fixed eight —
+    /// Positive 5 of the six this file holds (see the type's own doc comment
+    /// for the list): every category used is one of the fixed NINE — counted
+    /// 2026-09-06 against `fixedCategories` itself —
     /// a literal checked directly, or, for the one call site that passes a
     /// variable (`RemoteBrowserViewModel`'s `logCategory`, set by the App
     /// per pane rather than known at the call site itself), every literal
@@ -702,6 +865,67 @@ struct DiagnosticLogSecrecyGuardTests {
             }
         }
         #expect(offenders == ["password"])
+    }
+
+    /// The forwarding walk reaches through TWO layers of wrapper.
+    ///
+    /// The shape that motivated the fixpoint: `work` interpolates, calls
+    /// `log`, which calls `emit`, which calls the marker. One layer of walk
+    /// finds only `emit`'s call sites — the single call inside `log`, which
+    /// carries nothing — and the interpolation in `work` is invisible. The
+    /// planted identifier is a NAME, never a value: nothing here is a secret,
+    /// and the expectation below computes its `Bool` from `contains` so no
+    /// failure message can print a payload.
+    @Test func selfTestTheWalkReachesATwoLayerWrapper() throws {
+        let source = """
+            final class Noisy {
+                private func emit(_ text: String) {
+                    DiagnosticLog.shared.log(.info, "app", text)
+                }
+                private func log(_ text: String) {
+                    emit(text)
+                }
+                func work(password: String) {
+                    log("leaking \\(password) here")
+                }
+            }
+            """
+        let stripped = try SwiftSource.stripComments(source)
+        let blanked = try SwiftSource.stripCommentsAndStrings(source)
+        let sites = Self.forwardedCallSites(
+            stripped: stripped, blanked: blanked, file: "planted.swift")
+        let found = sites
+            .flatMap { Self.interpolations(in: $0.arguments) }
+            .contains("password")
+        #expect(found)
+    }
+
+    /// One layer is still reached, and a file with no wrapper at all
+    /// contributes nothing — the negative beside the positive above, so a
+    /// walk that started returning every identifier in the file would not
+    /// pass by over-reaching.
+    @Test func selfTestAFileWithNoWrapperYieldsNoForwardedSites() throws {
+        let source = """
+            final class Plain {
+                func work(path: String) {
+                    DiagnosticLog.shared.log(.info, "app", "read \\(path)")
+                }
+                func other(path: String) {
+                    work(path: path)
+                }
+            }
+            """
+        let stripped = try SwiftSource.stripComments(source)
+        let blanked = try SwiftSource.stripCommentsAndStrings(source)
+        let sites = Self.forwardedCallSites(
+            stripped: stripped, blanked: blanked, file: "planted.swift")
+        // `work` IS a forwarder (it contains the marker), so its one call
+        // site inside `other` is collected — and `other` becomes a forwarder
+        // in the next pass, with no call sites of its own. What matters is
+        // that the walk collects call sites, not identifiers: the file's own
+        // marker line is read by the DIRECT scan, not by this one.
+        #expect(sites.count == 1)
+        #expect(sites[0].arguments.contains("path: path"))
     }
 
     /// The category extractor's own correctness: a literal on the fixed

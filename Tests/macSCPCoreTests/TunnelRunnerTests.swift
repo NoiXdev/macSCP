@@ -466,11 +466,15 @@ struct TunnelRunnerTests {
             await runner.start(decider: .asking { _ in true })
         }
         try await pollUntil("the restart task to begin") { entered.count == 1 }
-        // Yields rather than a clock: the actor is free (the stop is
-        // suspended on the parked teardown), so the restart reaches
-        // `start(decider:)` as soon as the scheduler gives it a turn, and
-        // the window stays open until this test opens the latch.
-        for _ in 0..<50 { await Task.yield() }
+        // The restart is ON the chain, not merely running: `queuedCommands`
+        // is bumped in the same actor step that appends to it. Round 2 used
+        // a 50× `Task.yield()` loop here, which proved only that a `Task`
+        // had been scheduled — the window could have been released before
+        // the restart ever reached the actor, and the test would have passed
+        // for the wrong reason.
+        try await pollUntil("the restart to be queued") {
+            await runner.queuedCommands == 3
+        }
         #expect(connections.made.count == 1)
         #expect(runtimes.made.count == 1)
 
@@ -543,7 +547,9 @@ struct TunnelRunnerTests {
             await runner.start(decider: .asking { _ in true })
         }
         try await pollUntil("the start to begin") { enteredB.count == 1 }
-        for _ in 0..<50 { await Task.yield() }
+        try await pollUntil("the start to be queued behind the stop") {
+            await runner.queuedCommands == 3
+        }
 
         // C: queued behind B — which is the whole property.
         let enteredC = TunnelCallCounter()
@@ -552,7 +558,9 @@ struct TunnelRunnerTests {
             await runner.stop()
         }
         try await pollUntil("the second stop to begin") { enteredC.count == 1 }
-        for _ in 0..<50 { await Task.yield() }
+        try await pollUntil("the second stop to be queued behind the start") {
+            await runner.queuedCommands == 4
+        }
 
         latch.release()
         await stopA.value
@@ -560,6 +568,12 @@ struct TunnelRunnerTests {
         await stopC.value
 
         #expect(await runner.state == .stopped)
+        // The arrival-order assertion: TWO connections were dialled, so B
+        // took effect and C then undid it. One would mean C overtook B — the
+        // tunnel stopped, but by a stop that ran before the start it was
+        // supposed to follow, which is a different (and equally wrong)
+        // ordering from the one this test is about.
+        #expect(connections.made.count == 2)
         // Whatever B dialled — a whole connection, or none at all — is gone.
         let leaked = connections.made.filter { $0.disconnectCount == 0 }
         #expect(leaked.isEmpty)

@@ -90,6 +90,19 @@ public actor TunnelRunner {
     /// Identifies one run, so a run that ends by itself clears `task` only
     /// if `task` is still ITS task.
     private var runID = 0
+
+    /// How many commands have ever been queued on this runner.
+    ///
+    /// `internal`, and the only member here that exists for the tests: the
+    /// two race tests have to place a command ON the chain before releasing
+    /// the one in front of it, and every other signal they could poll —
+    /// "the task body began", "some yields have happened" — proves only that
+    /// a Swift `Task` started running, not that it reached the actor and
+    /// took its place in the chain. Round 2's tests used a 50× `Task.yield()`
+    /// loop for that and the reviewer was right to call it no proof at all.
+    /// Bumped in `command(_:)` in the same actor step that appends to the
+    /// chain, so a test that sees this number sees a queued command.
+    private(set) var queuedCommands = 0
     private var connection: (any TunnelSSHConnection)?
     private var runtime: (any TunnelRuntime)?
 
@@ -184,6 +197,7 @@ public actor TunnelRunner {
             await body(self)
         }
         lastCommand = mine
+        queuedCommands += 1
         await mine.value
         if lastCommand == mine { lastCommand = nil }
     }
