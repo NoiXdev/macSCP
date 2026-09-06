@@ -30,13 +30,22 @@ public struct HostKeyDecider: Sendable {
     /// CLI's policy and its terminal. The closure PRESENTS; it is not meant
     /// to decide on its own.
     ///
-    /// Who builds one, checked while writing this: `ConnectionViewModel
-    /// .connect`, which wraps its own host-key prompt, and the command-line
-    /// tool's `makeDecider`, which wraps its policy and its terminal. The App
-    /// layer builds none at all — its connector closure RECEIVES the view
-    /// model's decider and passes it along. Nothing scans for an `asking`
-    /// that answers by itself; the factory's name is what a reader gets
-    /// instead, which is already more than a bare closure gave them.
+    /// Who builds one, re-counted 2026-09-06 (`grep -rn "HostKeyDecider
+    /// .asking\|\.asking {" Sources`): THREE call sites. `ConnectionViewModel
+    /// .connect`, which wraps its own host-key prompt; the command-line
+    /// tool's `makeDecider`, which wraps its policy and its terminal; and
+    /// `ContentView.tunnelHostKeyDecider`, which wraps a window's
+    /// `TunnelHostKeyPromptBridge` (port-forwarding plan, Task 6).
+    ///
+    /// The third is why this paragraph no longer says "the App layer builds
+    /// none at all". It did not, while every connection the App opened
+    /// belonged to a tab and its connector closure could simply RECEIVE the
+    /// view model's decider. A port forwarding belongs to no tab and has no
+    /// view model, so the window that starts one builds the decider for it.
+    ///
+    /// Nothing scans for an `asking` that answers by itself; the factory's
+    /// name is what a reader gets instead, which is already more than a bare
+    /// closure gave them.
     public static func asking(
         _ present: @escaping @Sendable (HostKeyCandidate) async -> Bool
     ) -> HostKeyDecider {
