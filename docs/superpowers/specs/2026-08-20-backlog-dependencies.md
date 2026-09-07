@@ -880,3 +880,29 @@ announce it. The general `(host, port)` hazard is not guarded at all.
 
 **Review date:** at the next release and before the next Citadel fork
 change, with the rest of the fork check this document prescribes.
+
+## Measured 2026-09-07 — fork check at release v1.4.0
+
+The check CLAUDE.md prescribes at every release, run with `gh api`
+against both upstreams on 2026-09-07 (UTC):
+
+- **apple/swift-nio-ssh**: `main` at `3ec28149` (2026-07-28); commits
+  since the last check (2026-09-01): **0** (`commits?since=2026-09-01`).
+  Published advisories: **1** — GHSA-998x-vgvp-xwpc (critical,
+  2026-07-17, patched upstream in 0.14.1), carried by the fork since
+  `0.3.8` as `b098395` (see "Measured 2026-09-01 (evening)" above). No
+  new security commit; nothing to cherry-pick. Fork at `0.3.10` on
+  `citadel2`, unchanged.
+- **orlandos-nl/Citadel**: `main` at `ae8562f8` (2026-04-04); commits
+  since 2026-09-01: **0**; the fork branch `noix` is 5 commits ahead of
+  upstream `main` and 0 behind (`compare/NoiXdev:noix...orlandos-nl:main`:
+  ahead 0, behind 5 from the fork's side). Published advisories: **0**.
+  Fork at `0.12.1-noix.3`, unchanged.
+
+**Can either fork be retired?** No — upstream carries neither the
+RSA-SHA2 PR nor `hostKeyAlgorithmNames`/`userAuthAlgorithmName`, and
+Citadel upstream has not moved since 0.12.1. The remote-port-0 debt (the
+"Open 2026-09-06" section above) stands; no fork change was made for
+this release.
+
+**Review date:** at the next release and before the next fork change.
