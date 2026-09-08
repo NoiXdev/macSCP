@@ -213,4 +213,41 @@ struct RemoteFileTableTypeColumnGuardTests {
         #expect(marker.frame.width > 0)
         #expect(gap >= 4, "the name starts \(gap)pt after the marker")
     }
+
+    /// A row WITHOUT a marker keeps its name at the same left edge as a row
+    /// with one. Reported from release 1.4.0 with a screenshot of a plain
+    /// directory listing whose names were pushed against the right edge:
+    /// the name's leading edge follows the marker's trailing edge, and a
+    /// marker with no image has no intrinsic width, so the layout solved
+    /// the ambiguity by stretching the marker and collapsing the text to
+    /// the right. The text's left edge must be a small, fixed inset in both
+    /// rows — measured as equality between the two, plus an upper bound on
+    /// the inset (a layout claim, not a timing one).
+    @Test @MainActor
+    func aRowWithoutAMarkerKeepsTheNameAtTheLeftEdge() throws {
+        let bucket = RemoteFileItem(
+            name: "ido", path: "/ido", kind: .directory, isBucket: true)
+        let plain = RemoteFileItem(name: "news", path: "/news", kind: .directory)
+        let coordinator = RemoteFileTableView.Coordinator(
+            onOpen: { _ in }, onSelect: { _ in }, side: .remote)
+        coordinator.items = [bucket, plain]
+
+        let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 400, height: 100))
+        let nameColumn = NSTableColumn(identifier: .init(FileColumn.name.rawValue))
+        tableView.addTableColumn(nameColumn)
+
+        func laidOutField(row: Int) throws -> NSTextField {
+            let cell = try #require(
+                coordinator.tableView(tableView, viewFor: nameColumn, row: row) as? NSTableCellView)
+            cell.frame = NSRect(x: 0, y: 0, width: 240, height: 22)
+            cell.layoutSubtreeIfNeeded()
+            return try #require(cell.textField)
+        }
+
+        let withMarker = try laidOutField(row: 0)
+        let withoutMarker = try laidOutField(row: 1)
+        #expect(withoutMarker.frame.minX == withMarker.frame.minX)
+        #expect(withoutMarker.frame.minX <= 24, "the name starts \(withoutMarker.frame.minX)pt in")
+        #expect(withoutMarker.frame.width > 100, "the name field collapsed to \(withoutMarker.frame.width)pt")
+    }
 }

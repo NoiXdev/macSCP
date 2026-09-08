@@ -814,9 +814,20 @@ struct RemoteFileTableView: NSViewRepresentable {
                     marker.isHidden = true
                     cell.addSubview(marker)
                     cell.imageView = marker
+                    // A FIXED box for the marker, image or none: an `NSImageView`
+                    // without an image has no intrinsic width, and with the
+                    // name's leading edge tied to the marker's trailing edge
+                    // the solver then stretched the marker and collapsed the
+                    // name against the right edge — every row of a plain
+                    // listing right-aligned, shipped in 1.4.0 and reported
+                    // with a screenshot the same day. 14pt fits the 11pt
+                    // symbol; `aRowWithoutAMarkerKeepsTheNameAtTheLeftEdge`
+                    // measures the marker-less row against the marked one.
                     NSLayoutConstraint.activate([
                         marker.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
                         marker.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                        marker.widthAnchor.constraint(equalToConstant: 14),
+                        marker.heightAnchor.constraint(equalToConstant: 14),
                         field.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: 6),
                     ])
                 } else {
