@@ -147,10 +147,13 @@ struct ConnectFailurePlanTests {
         let without = ConnectFailurePlan.content(
             hasStoredSession: hasStoredSession, remedy: nil)
         #expect(without.convertKeyButton == nil, """
-            the surface offers "Convert key…" for a failure `ssh-keygen -p` cannot fix —             there is no key path to hand the sheet, so the button can only open a converter             over nothing.
+            the surface offers "Convert key…" for a failure `ssh-keygen -p` cannot fix — \
+            there is no key path to hand the sheet, so the button can only open a converter \
+            over nothing.
             """)
         #expect(without.copyCommandButton == nil, """
-            the surface offers "Copy command" with no remedy, which would put a command line             for an unknown file on the pasteboard.
+            the surface offers "Copy command" with no remedy, which would put a command line \
+            for an unknown file on the pasteboard.
             """)
 
         let with = ConnectFailurePlan.content(

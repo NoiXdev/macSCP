@@ -135,9 +135,22 @@ struct WindowAccessor: NSViewRepresentable {
 /// `SSHKeysSheet`'s own `ImportTarget` is one: `URL` is not `Identifiable`,
 /// and identifying a presentation by its path would tie the sheet's life to
 /// the file it happens to name.
+///
+/// It carries the TAB as well as the file (fix round 1, review finding C1),
+/// both taken when "Convert key…" was pressed. A `.sheet(item:)` closure
+/// runs when the sheet CLOSES, and ⌘1-9 switches tabs while one is open —
+/// nothing gates that. Resolving the tab there re-pointed and re-dialled
+/// whichever tab happened to be active by then, writing a key path into
+/// another session's stored record while the tab that actually failed was
+/// left on the PEM file. Same "capture now, not later" discipline
+/// `PresignedSheetItem` and `closeRequest` already follow.
 struct ImportKeyTarget: Identifiable {
     let id = UUID()
     let fileURL: URL
+    /// The tab whose failed attempt this conversion is for — a reference,
+    /// so the conversion still reaches it after it has been dragged to
+    /// another window (the tab moves, its identity does not).
+    let tab: SessionTab
 }
 
 struct ContentView: View {
@@ -374,9 +387,10 @@ struct ContentView: View {
     /// `.sheet(item:)` shape `auditLogSession` uses, opened from
     /// `convertFailedKey(_:)` and presented in `ContentView+Sheets.swift`.
     ///
-    /// Carries the file URL as a VALUE, taken when the button was pressed,
-    /// so a form the user keeps typing into behind the sheet cannot change
-    /// which file is converted.
+    /// Carries the file URL AND the tab as values, both taken when the
+    /// button was pressed, so neither a form the user keeps typing into
+    /// behind the sheet nor a ⌘1-9 tab switch can change what the
+    /// conversion is applied to (see `ImportKeyTarget`).
     @State var convertKeyTarget: ImportKeyTarget?
 
     // MARK: - Port forwarding (port-forwarding plan, Task 6)
@@ -2486,7 +2500,7 @@ struct ContentView: View {
         guard case .convertKey(let path)? = tab.connectionViewModel.lastFailureRemedy else {
             return
         }
-        convertKeyTarget = ImportKeyTarget(fileURL: URL(fileURLWithPath: path))
+        convertKeyTarget = ImportKeyTarget(fileURL: URL(fileURLWithPath: path), tab: tab)
     }
 
     /// The failed-connect surface's "Copy command" (PEM private keys plan,
@@ -2516,12 +2530,20 @@ struct ContentView: View {
     ///
     /// * A STORED session gets the new path written into it through
     ///   `sessionListViewModel.updateSession(_:newSecret:)`, with
-    ///   `newSecret: nil` so the session's own Keychain slot is left exactly
-    ///   as it was — the converted key's passphrase now lives under the
-    ///   MANAGED key's id, which `ManagedKeyPassphrase.resolve` reads. Then
-    ///   `retryConnect(_:)`, the one function that redials through the
-    ///   shared `connect(in:stored:)`: TOFU stays the hard stop it is, and
-    ///   this surface still adds no second dial site.
+    ///   `newSecret: nil` — this path replaces no secret. When the import
+    ///   reported `keptPassphrase`, the managed key's OWN Keychain slot now
+    ///   holds the passphrase, and the project's rule is that a session
+    ///   using such a key carries no copy of its own
+    ///   (`SessionSecretPolicy.usesStoredManagedPassphrase`,
+    ///   `ManagedKeyPassphrase.hasStoredPassphrase`): the session's slot is
+    ///   dropped, because `ManagedKeyPassphrase.resolve` answers the TYPED
+    ///   value first and the connect-time fill types the session's slot into
+    ///   the form — a leftover copy would shadow the key's real one on every
+    ///   later dial. When the import could NOT keep it, the session's slot is
+    ///   the only copy left and is left alone. Then `retryConnect(_:)`, the
+    ///   one function that redials through the shared `connect(in:stored:)`:
+    ///   TOFU stays the hard stop it is, and this surface still adds no
+    ///   second dial site.
     /// * An AD-HOC attempt has nothing stored to write to and nothing stored
     ///   to redial, so the new path goes onto the form and
     ///   `dismissConnectFailure(_:)` hands the tab back to it with the key
@@ -2532,13 +2554,25 @@ struct ContentView: View {
     /// A key whose `fileName` does not address a file inside the key
     /// directory yields no path and nothing happens, which is the same
     /// refusal `ConnectionFormView.managedKeyPath(for:)` makes.
-    func convertedKeyImported(_ key: ManagedKey, for tab: SessionTab) {
-        guard let path = ManagedKeyStore(directory: SessionStore.defaultDirectory)
-            .privateKeyURL(for: key)?.path(percentEncoded: false)
+    func convertedKeyImported(_ key: ManagedKey, keptPassphrase: Bool, for tab: SessionTab) {
+        // The window's injected store, not one built here (fix round 1,
+        // review finding I2): `ContentView.init` takes `managedKeyStore` for
+        // exactly this, and a store constructed at the call site reaches the
+        // real key directory whatever a test points the window at. The same
+        // instance the sheet was handed, so the path is resolved in the store
+        // the key was just written into.
+        guard let path = managedKeyStore.privateKeyURL(for: key)?.path(percentEncoded: false)
         else { return }
         if var updated = failedConnectTarget(for: tab) {
             updated.ssh?.keyPath = path
             sessionListViewModel.updateSession(updated, newSecret: nil)
+            // One passphrase, one slot: with the managed key holding it, the
+            // session's own copy is stale AND authoritative (the fill types
+            // it in, and `ManagedKeyPassphrase.resolve` prefers what is
+            // typed), so it goes.
+            if keptPassphrase {
+                sessionListViewModel.dropSessionSecret(for: updated.id)
+            }
             retryConnect(tab)
         } else {
             tab.connectionViewModel.keyPath = path

@@ -1813,7 +1813,26 @@ enum ConnectFailurePlan {
     static func content(
         hasStoredSession: Bool, remedy: ConnectFailureRemedy?
     ) -> ConnectFailureContent {
-        ConnectFailureContent(
+        // Both, or neither: they are two ways to run the same conversion,
+        // and a surface that offered one of them alone would be answering a
+        // question nobody asked it.
+        //
+        // Matched on the CASE, not on `remedy != nil` (fix round 1, review
+        // finding M1): `convertFailedKey(_:)` and
+        // `copyConversionCommand(for:)` both open with
+        // `guard case .convertKey(let path)? = …`, so a second remedy case
+        // added to `ConnectFailureRemedy` would, under a nil-test, put two
+        // buttons on the surface that silently return when pressed. The
+        // compiler cannot catch that; this can.
+        var convertKeyButton: ConnectFailureContent.Message?
+        var copyCommandButton: ConnectFailureContent.Message?
+        if case .convertKey? = remedy {
+            convertKeyButton = .init(
+                key: "connection.failed.convertKey", fallback: "Convert key…")
+            copyCommandButton = .init(
+                key: "connection.failed.copyCommand", fallback: "Copy command")
+        }
+        return ConnectFailureContent(
             title: .init(
                 key: "connection.failed.title", fallback: "No connection possible"),
             body: hasStoredSession
@@ -1832,15 +1851,8 @@ enum ConnectFailurePlan {
             closeButton: .init(key: "connection.failed.close", fallback: "Close"),
             detailsButton: .init(key: "connection.failed.details", fallback: "Details…"),
             diagnoseButton: .init(key: "diagnostics.menu", fallback: "Diagnose…"),
-            // Both, or neither: they are two ways to run the same
-            // conversion, and a surface that offered one of them alone
-            // would be answering a question nobody asked it.
-            convertKeyButton: remedy == nil
-                ? nil
-                : .init(key: "connection.failed.convertKey", fallback: "Convert key…"),
-            copyCommandButton: remedy == nil
-                ? nil
-                : .init(key: "connection.failed.copyCommand", fallback: "Copy command"),
+            convertKeyButton: convertKeyButton,
+            copyCommandButton: copyCommandButton,
             detailsTitle: .init(
                 key: "connection.failed.details.title", fallback: "Connection details"))
     }

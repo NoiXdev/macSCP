@@ -559,6 +559,31 @@ public final class SessionListViewModel {
         (try? secrets.password(for: session.id)) ?? nil
     }
 
+    /// Deletes a session's OWN Keychain slot, leaving the stored session
+    /// itself untouched (PEM private keys plan, Task 4 fix round 1).
+    ///
+    /// The one thing `updateSession(_:newSecret:)` cannot say: `nil` and
+    /// `""` both mean "leave the existing secret alone" there, so there is
+    /// no value a caller can pass that REMOVES one. Its caller is the
+    /// conversion remedy, which re-points a session at a managed key whose
+    /// own slot now holds the passphrase — and a session that uses a managed
+    /// key with a stored passphrase carries no copy of its own
+    /// (`ManagedKeyPassphrase.hasStoredPassphrase` and
+    /// `SessionSecretPolicy.usesStoredManagedPassphrase` are the two halves
+    /// of that same rule). Leaving the old copy behind would not merely
+    /// duplicate the secret: `ManagedKeyPassphrase.resolve` answers the
+    /// TYPED value first, and the connect-time fill types the session's own
+    /// slot into the form — so the stale copy would shadow the key's real
+    /// one on every dial.
+    ///
+    /// Throw-free like every other slot cleanup here (`save`'s agent-login
+    /// sweep, `updateSession`'s): a slot that is already gone, or a Keychain
+    /// that refuses the delete, is a residual and never a reason to report a
+    /// failure to the user. Does NOT `reload()` — no stored data changed.
+    public func dropSessionSecret(for sessionID: UUID) {
+        try? secrets.deletePassword(for: sessionID)
+    }
+
     /// Renames a session in place (trims whitespace; an empty result is a
     /// no-op). Does not touch the Keychain secret.
     public func renameSession(_ session: StoredSession, to newName: String) {

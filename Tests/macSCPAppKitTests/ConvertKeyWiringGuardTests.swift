@@ -19,16 +19,24 @@ import Testing
 /// here is a CODE token: a string literal would have been blanked away with
 /// the comments.
 ///
-/// Three claims, each a positive check with its negative pinned beside it
-/// (CLAUDE.md, "Guards that name what they watch": a `!contains` alone
+/// FIVE claims, counted 2026-09-10 against the `MARK` sections below. Every
+/// negative check among them has a positive check beside it over the SAME
+/// span (CLAUDE.md, "Guards that name what they watch": a `!contains` alone
 /// starts matching nothing the moment the code it names moves, and reads
-/// exactly like a check that is satisfied):
+/// exactly like a check that is satisfied). Claim 1 is the exception in the
+/// other direction — two positives and no negative — and its own doc comment
+/// says why:
 ///
 /// 1. The window presents the key-import sheet for a conversion at all.
-/// 2. The converted key reaches the stored session and the ONE dial path —
-///    `updateSession(`, `retryConnect(`, `dismissConnectFailure(` — and
-///    dials nothing itself.
-/// 3. The import sheet converts on the way in instead of copying bytes.
+/// 2. The sheet hands what came back to `convertedKeyImported(` and to the
+///    tab CAPTURED when the button was pressed, never to whichever tab is
+///    active at dismissal.
+/// 3. Both conversion sites read the window's injected `managedKeyStore`
+///    rather than building a `ManagedKeyStore(` of their own.
+/// 4. The converted key reaches the stored session and the ONE dial path —
+///    `updateSession(`, `dropSessionSecret(`, `retryConnect(`,
+///    `dismissConnectFailure(` — and dials nothing itself.
+/// 5. The import sheet converts on the way in instead of copying bytes.
 @Suite("Convert key wiring guard")
 struct ConvertKeyWiringGuardTests {
     /// `#filePath` here is
@@ -74,28 +82,137 @@ struct ConvertKeyWiringGuardTests {
             """)
     }
 
-    // MARK: - 2. The converted key goes back through the real handlers
+    /// The `.sheet(item:)` whose closure claims 2 and 3 read. A code token
+    /// (the binding `convertFailedKey(_:)` writes), so the blanked view the
+    /// scanner searches carries it verbatim.
+    private static let conversionSheetAnchor = ".sheet(item: $convertKeyTarget)"
+
+    // MARK: - 2. The sheet applies the conversion to the tab it was opened for
+
+    /// The positive half: the closure calls the handler, and hands it the
+    /// tab the presentation item CARRIES.
+    ///
+    /// `convertedKeyImported(` is named here rather than only in claim 4
+    /// because claim 4 reads the handler's own body — it is green for a
+    /// perfectly wired handler nothing calls. Replacing the call in this
+    /// closure with `_ = key` was measured (fix round 1, review finding I1)
+    /// to leave all 61 guards in this target green.
+    ///
+    /// `target.tab` is the capture: `ImportKeyTarget` carries the
+    /// `SessionTab` taken when "Convert key…" was pressed, the same
+    /// "capture now, not later" discipline `PresignedSheetItem` and
+    /// `closeRequest` already follow.
+    @Test func theConversionSheetAppliesTheKeyToTheTabItWasOpenedFor() throws {
+        let closure = try Self.strippedBody(after: Self.conversionSheetAnchor, in: Self.sheetsFile)
+        #expect(closure.contains("convertedKeyImported("), """
+            the conversion sheet's closure no longer calls `convertedKeyImported(` — the \
+            converted key is then created, added to the store and dropped on the floor: the \
+            session still points at the PEM file and the tab stays on the failed surface.
+            """)
+        #expect(closure.contains("target.tab"), """
+            the conversion sheet's closure no longer reads the tab off its presentation item \
+            — the tab has to be the one that was failing when the button was pressed, not one \
+            resolved while the sheet was open.
+            """)
+    }
+
+    /// The negative half, pinned by the positive one above: the closure does
+    /// not resolve `activeTab`.
+    ///
+    /// The defect this exists for (fix round 1, review finding C1): a
+    /// `.sheet(item:)` closure runs at DISMISSAL, and ⌘1-9 switches tabs
+    /// while a sheet is open — nothing gates it. Reading `activeTab` there
+    /// rewrote and re-dialled whichever tab the person had switched to,
+    /// persisting a key path into the wrong stored session
+    /// (`updateSession`), while the tab that actually failed was never
+    /// re-pointed.
+    ///
+    /// `editFailedSession(_:)` may read the active tab and this may not:
+    /// that one resolves inside the button's own event, where "active" and
+    /// "failing" are the same tab by construction.
+    @Test func theConversionSheetDoesNotResolveTheTabAtDismissal() throws {
+        let closure = try Self.strippedBody(after: Self.conversionSheetAnchor, in: Self.sheetsFile)
+        #expect(!closure.contains("activeTab"), """
+            the conversion sheet's closure resolves `activeTab` — which is read when the sheet \
+            CLOSES, so a tab switch behind the open sheet applies the conversion to the wrong \
+            tab: the wrong stored session is rewritten and re-dialled, and the failing one is \
+            left pointing at the key that could not be read.
+            """)
+    }
+
+    // MARK: - 3. Both sites use the window's injected key store
+
+    /// `ContentView` is handed a `ManagedKeyStore` (`managedKeyStore`) for
+    /// exactly this: its `init`'s own comment calls the parameter the seam
+    /// that lets a `ContentView`-level test point the key store at a
+    /// temporary directory instead of this machine's real one. A site that
+    /// builds `ManagedKeyStore(directory: SessionStore.defaultDirectory)`
+    /// inline is outside that seam and reaches the real directory whatever
+    /// a test passes.
+    ///
+    /// Positive and negative over the same two spans, so neither half can go
+    /// stale alone: the property is "this store, not a fresh one".
+    @Test func bothConversionSitesUseTheWindowsInjectedKeyStore() throws {
+        let closure = try Self.strippedBody(after: Self.conversionSheetAnchor, in: Self.sheetsFile)
+        let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
+        #expect(closure.contains("managedKeyStore"), """
+            the conversion sheet is no longer handed the window's `managedKeyStore` — a store \
+            built at the sheet is outside `ContentView.init`'s injection seam.
+            """)
+        #expect(!closure.contains("ManagedKeyStore("), """
+            the conversion sheet builds a `ManagedKeyStore(` of its own, bypassing the \
+            `managedKeyStore` the window was given — the key then lands in the real key \
+            directory even when a test pointed the window at a temporary one.
+            """)
+        #expect(body.contains("managedKeyStore"), """
+            `convertedKeyImported(_:keptPassphrase:for:)` no longer reads the window's \
+            `managedKeyStore` to resolve the new key's path.
+            """)
+        #expect(!body.contains("ManagedKeyStore("), """
+            `convertedKeyImported(_:keptPassphrase:for:)` builds a `ManagedKeyStore(` of its \
+            own — it would then resolve the path in a different store than the sheet just \
+            wrote the key into.
+            """)
+    }
+
+    // MARK: - 4. The converted key goes back through the real handlers
 
     /// The positive half: the handler persists the new key path on the
-    /// stored session and re-dials through `retryConnect(`, or hands an
-    /// ad-hoc attempt back to the form through `dismissConnectFailure(`.
-    /// All three are named individually because "the handler does
-    /// something" is not the property — the property is that each of its
-    /// two paths ends in the function that already owns that action.
+    /// stored session, drops the session's own passphrase slot and re-dials
+    /// through `retryConnect(`, or hands an ad-hoc attempt back to the form
+    /// through `dismissConnectFailure(`. All FOUR are named individually
+    /// because "the handler does something" is not the property — the
+    /// property is that each of its two paths ends in the function that
+    /// already owns that action.
+    ///
+    /// `dropSessionSecret(` is the project's existing no-duplication rule
+    /// applied to this new path (fix round 1, review finding I3): a session
+    /// that uses a managed key with a stored passphrase carries no copy of
+    /// its own, and a leftover copy does not merely duplicate the secret —
+    /// `ManagedKeyPassphrase.resolve` answers the TYPED value first, so the
+    /// session's stale copy shadows the managed key's real one on every
+    /// dial.
     @Test func theConvertedKeyIsWiredThroughTheRealHandlers() throws {
         let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
         #expect(body.contains("updateSession("), """
-            `convertedKeyImported(_:for:)` no longer calls `updateSession(` — the converted \
-            key would then be written nowhere, and the next dial would read the PEM file \
-            again.
+            `convertedKeyImported(_:keptPassphrase:for:)` no longer calls `updateSession(` — \
+            the converted key would then be written nowhere, and the next dial would read the \
+            PEM file again.
+            """)
+        #expect(body.contains("dropSessionSecret("), """
+            `convertedKeyImported(_:keptPassphrase:for:)` no longer calls \
+            `dropSessionSecret(` — the session keeps its own copy of the passphrase beside \
+            the managed key's slot, and because `ManagedKeyPassphrase.resolve` answers the \
+            typed value first, that stale copy is what every later dial uses.
             """)
         #expect(body.contains("retryConnect("), """
-            `convertedKeyImported(_:for:)` no longer calls `retryConnect(` — the one function \
+            `convertedKeyImported(_:keptPassphrase:for:)` no longer calls `retryConnect(` — \
             that redials through the shared `connect(in:stored:)`, which is what keeps TOFU a \
             hard stop and the keychain and login-set rules applied.
             """)
         #expect(body.contains("dismissConnectFailure("), """
-            `convertedKeyImported(_:for:)` no longer calls `dismissConnectFailure(` — an \
+            `convertedKeyImported(_:keptPassphrase:for:)` no longer calls \
+            `dismissConnectFailure(` — an \
             ad-hoc attempt has no stored session to redial, so returning it to the form with \
             the new key selected is its only way on, and without this it stays on the failed \
             surface.
@@ -119,12 +236,14 @@ struct ConvertKeyWiringGuardTests {
     @Test func theConversionHandlerDialsNothingItself() throws {
         let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
         #expect(!body.contains("CitadelFileSystem.connect"), """
-            `convertedKeyImported(_:for:)` dials `CitadelFileSystem.connect` itself — a second \
+            `convertedKeyImported(_:keptPassphrase:for:)` dials `CitadelFileSystem.connect` \
+            itself — a second \
             dial site is a second place TOFU, the keychain and login-set rules, the plaintext \
             confirmation and the attempt-token lock can each be forgotten.
             """)
         #expect(!body.contains("connect(in:"), """
-            `convertedKeyImported(_:for:)` calls `connect(in:` directly instead of going \
+            `convertedKeyImported(_:keptPassphrase:for:)` calls `connect(in:` directly \
+            instead of going \
             through `retryConnect(_:)` — which resolves the failed attempt's stored session \
             live, and is the guard against dialling a session deleted from another window \
             between the conversion and the redial.
@@ -175,7 +294,7 @@ struct ConvertKeyWiringGuardTests {
 
     @Test func theBodyScannerReadsToTheEndOfTheFunction() throws {
         let source = """
-            func convertedKeyImported(_ key: ManagedKey, for tab: SessionTab) {
+            func convertedKeyImported(_ key: ManagedKey, keptPassphrase: Bool, for tab: SessionTab) {
                 guard let path = store.privateKeyURL(for: key) else { return }
                 if let stored = failedConnectTarget(for: tab) {
                     sessionListViewModel.updateSession(updated, newSecret: nil)
@@ -202,7 +321,7 @@ struct ConvertKeyWiringGuardTests {
 
     @Test func theBodyScannerSeesADialPlantedInsideTheFunction() throws {
         let source = """
-            func convertedKeyImported(_ key: ManagedKey, for tab: SessionTab) {
+            func convertedKeyImported(_ key: ManagedKey, keptPassphrase: Bool, for tab: SessionTab) {
                 connect(in: tab, stored: stored)
             }
             """
@@ -210,6 +329,33 @@ struct ConvertKeyWiringGuardTests {
         #expect(body.contains("connect(in:"), """
             a dial written straight into the handler is invisible to the span — the negative \
             checks above would pass over exactly the violation they exist for.
+            """)
+    }
+
+    /// The anchor is searched in the BLANKED view, not the raw source (fix
+    /// round 1, review finding M4): this suite's header claims every anchor
+    /// here is a code token, and a raw search buys the first spelling of the
+    /// anchor in the file whether it is code or a sentence about code. That
+    /// is CLAUDE.md's "Source-scanning guards read comments too", applied to
+    /// the anchor rather than to the checks.
+    ///
+    /// The fixture is the shape that actually happens: an older version of
+    /// the handler kept in a comment above the real one. Anchoring there
+    /// reads braces that belong to nothing.
+    @Test func theBodyScannerDoesNotAnchorInAComment() throws {
+        let source = """
+            // func convertedKeyImported(_ key: ManagedKey, keptPassphrase: Bool, for tab: SessionTab) {
+            //     the shape this handler had before the fix round
+            // }
+            func convertedKeyImported(_ key: ManagedKey, keptPassphrase: Bool, for tab: SessionTab) {
+                dismissConnectFailure(tab)
+            }
+            """
+        let body = try Self.strippedBody(after: "func convertedKeyImported(", in: source)
+        #expect(body.contains("dismissConnectFailure(tab)"), """
+            the scanner anchored on the commented-out signature instead of the real one — \
+            every check above would then be reading a comment, which is the one thing \
+            blanking exists to prevent.
             """)
     }
 
@@ -248,14 +394,22 @@ struct ConvertKeyWiringGuardTests {
     /// call. Throws rather than returning `nil` so a moved anchor is a loud
     /// failure, not an empty string that makes every negative check pass.
     ///
-    /// The anchor is searched in the RAW source: it is a code token here, so
-    /// searching the blanked view would work too, but the raw search keeps
-    /// this scanner interchangeable with the two it copies, whose anchors
-    /// are `//` comments a global blanking would delete.
+    /// The anchor is searched in the BLANKED view, not the raw source (fix
+    /// round 1, review finding M4): every anchor this suite uses is a code
+    /// token, and this suite's header says so — a raw search would buy the
+    /// first SPELLING of the anchor in the file, comment or code, which is
+    /// exactly the collision CLAUDE.md's "Source-scanning guards read
+    /// comments too" describes. The two scanners this one copies search raw
+    /// because THEIR anchors are `//` comments a global blanking deletes;
+    /// none of these is.
+    ///
+    /// `blankingCommentsAndStrings` replaces characters in place rather than
+    /// removing them, so offsets in the blanked view are the raw source's
+    /// offsets and the span below is the same span either way.
     private static func strippedBody(after anchor: String, in source: String) throws -> String {
-        guard let anchorRange = source.range(of: anchor) else { throw ScanError.anchorNotFound }
-        let stripped = try SwiftSource.blankingCommentsAndStrings(
-            String(source[anchorRange.lowerBound...]))
+        let blanked = try SwiftSource.blankingCommentsAndStrings(source)
+        guard let anchorRange = blanked.range(of: anchor) else { throw ScanError.anchorNotFound }
+        let stripped = String(blanked[anchorRange.lowerBound...])
         guard let openBraceIndex = stripped.firstIndex(of: "{") else {
             throw ScanError.openBraceNotFound
         }

@@ -134,24 +134,29 @@ extension ContentView {
         // the conversion, the inspection and the Keychain slot are its job
         // already, and the passphrase field it needs for them is the field
         // this remedy needs too. What is different is only what happens
-        // after — `convertedKeyImported(_:for:)` re-points the session and
+        // after — `convertedKeyImported(_:keptPassphrase:for:)` re-points the session and
         // redials, where the key manager just reloads its list.
         //
-        // The store is built the way the App builds it everywhere else
-        // (`ConnectionFormView.managedKeyPath(for:)`), so the key lands in
-        // the same directory the key picker reads.
+        // The store is the window's own `managedKeyStore` (fix round 1,
+        // review finding I2), the same instance `fillForm` and the two save
+        // paths read: `ContentView.init` takes it precisely so a test can
+        // point the whole window at a temporary key directory, and a
+        // `ManagedKeyStore(directory: SessionStore.defaultDirectory)` built
+        // here would reach the real one regardless.
         //
-        // Resolved against `activeTab`, the same tab the failed-connect
-        // surface is rendered for: `ContentView.detail` renders exactly one
-        // tab's content, and a tab showing that surface is unconnected by
-        // construction — the same argument `editFailedSession(_:)`'s own doc
-        // comment makes for `editStored`'s target rule.
+        // Applied to `target.tab` — the tab captured when the button was
+        // pressed — and NOT to `activeTab` (fix round 1, review finding C1).
+        // This closure runs when the sheet is dismissed, and ⌘1-9 switches
+        // tabs while it is open with nothing to stop it, so the active tab
+        // by then need not be the tab that failed: reading it here rewrote
+        // and re-dialled another session. `editFailedSession(_:)`'s doc
+        // comment argues the opposite way for ITS target and stays correct —
+        // it resolves inside the button's own event, where the active tab
+        // and the failing tab are the same one by construction. Nothing
+        // transfers that argument across an open sheet.
         .sheet(item: $convertKeyTarget) { target in
-            ImportKeySheet(
-                fileURL: target.fileURL,
-                store: ManagedKeyStore(directory: SessionStore.defaultDirectory)
-            ) { key, _ in
-                convertedKeyImported(key, for: activeTab)
+            ImportKeySheet(fileURL: target.fileURL, store: managedKeyStore) { key, kept in
+                convertedKeyImported(key, keptPassphrase: kept, for: target.tab)
             }
         }
         // The window's ONE forwarding sheet (fix round 1): the profile

@@ -523,9 +523,9 @@ struct ReconnectWiringGuardTests {
             reason: "`ContentView.detail`'s lost branch — the only site that renders the error view."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
-            code: "ConnectFailureContent(",
+            code: "return ConnectFailureContent(",
             occurrences: 1,
-            reason: "`ConnectFailurePlan.content` — the only builder of the failed-connect surface's content, which is what keeps that surface to a fixed set of catalog keys (see `ConnectFailurePlanTests`)."),
+            reason: "`ConnectFailurePlan.content` — the only builder of the failed-connect surface's content, which is what keeps that surface to a fixed set of catalog keys (see `ConnectFailurePlanTests`). Spelled with `return` since the PEM private keys plan, Task 4 fix round 1, which made the function's body statements rather than one expression; the same spelling `return LostConnectionContent(` above has always had."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
             code: "ConnectFailureView(",
@@ -1282,12 +1282,26 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
-    /// Every one of the four actions goes to the function that owns it,
+    /// Every one of the SEVEN actions goes to the function that owns it,
     /// rather than to an inline reimplementation. Named individually
-    /// because "the surface has four buttons" is not the property — the
+    /// because "the surface has seven buttons" is not the property — the
     /// property is that each button reaches the same code the rest of the
     /// app reaches for that action.
-    @Test func theFailedBranchRoutesAllFourActionsToTheirRealHandlers() throws {
+    ///
+    /// Seven counted 2026-09-10 at the call site itself, by its `on…:`
+    /// closure arguments: `onRetry`, `onEdit`, `onEditSession`,
+    /// `onDiagnose`, `onConvertKey`, `onCopyCommand`, `onClose`. Five until
+    /// the PEM private keys plan, Task 4, added the conversion pair — the
+    /// same history the `ConnectFailureView(` sanctioned site's `reason:`
+    /// above records, and the two numbers are meant to agree.
+    ///
+    /// `onDiagnose` is also pinned by `DiagnosticsDoorsGuardTests`, which
+    /// reads every diagnostics door in the App at once. It is checked here
+    /// too rather than left out, because a count in a test's NAME is a claim
+    /// about what the test does (CLAUDE.md, "Comments that describe other
+    /// code"): six checks under a name that says seven is the kind of number
+    /// that sounds plausible while you write it.
+    @Test func theFailedBranchRoutesAllSevenActionsToTheirRealHandlers() throws {
         let body = try Self.strippedBody(after: Self.failedBranchAnchor, in: Self.detailFile)
         #expect(body.contains("retryConnect(tab)"), """
             the failed-connect surface's Retry no longer calls `retryConnect(tab)` — the one \
@@ -1300,6 +1314,22 @@ struct ReconnectWiringGuardTests {
             the failed-connect surface's "Edit session" no longer calls \
             `editFailedSession(tab)`, which is what routes it through the same `editStored` \
             the sidebar's own Edit uses.
+            """)
+        #expect(body.contains("showDiagnostics(for: .tab(tab))"), """
+            the failed-connect surface's "Diagnose…" no longer calls \
+            `showDiagnostics(for: .tab(tab))` — the one door the toolbar and the menu open too.
+            """)
+        #expect(body.contains("convertFailedKey(tab)"), """
+            the failed-connect surface's "Convert key…" no longer calls \
+            `convertFailedKey(tab)` — the function that reads the remedy's path and opens the \
+            key manager's own import sheet over it. Wired to anything else, the conversion \
+            either runs over a file nobody named or does not run at all.
+            """)
+        #expect(body.contains("copyConversionCommand(for: tab)"), """
+            the failed-connect surface's "Copy command" no longer calls \
+            `copyConversionCommand(for: tab)` — the one place `SSHKeyConverter \
+            .inPlaceCommandLine` reaches the pasteboard, and the reason the command line \
+            never becomes a display string.
             """)
         #expect(body.contains("requestClose(tab)"), """
             the failed-connect surface's Close no longer calls `requestClose(tab)` — closing \
