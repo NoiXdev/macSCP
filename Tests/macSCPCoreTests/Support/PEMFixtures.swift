@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import macSCPCore
 
 /// Runtime PEM key files for the decoder, loader and converter tests. Every
 /// file is written into a fresh temporary directory the caller removes;
@@ -24,12 +25,17 @@ enum PEMFixtures {
             .flatMap { t, b in [Format.pem, .pkcs8].map { Shape(type: t, bits: b, format: $0) } }
     }
 
-    /// `ssh-keygen -t <type> [-b bits] -m <format> -N <passphrase> -f <dir>/key -C fixture`.
+    /// `ssh-keygen -t <type> [-b bits] [-m <format>] -N <passphrase> -f <dir>/key -C fixture`.
     /// Returns the private key path; `<path>.pub` is beside it.
-    static func sshKeygen(type: String, bits: Int?, format: Format, passphrase: String?,
+    ///
+    /// A `nil` format omits `-m` entirely, which is how ssh-keygen writes its
+    /// OWN `openssh-key-v1` container — the one file shape this decoder hands
+    /// back rather than reads.
+    static func sshKeygen(type: String, bits: Int?, format: Format?, passphrase: String?,
                           in dir: URL) async throws -> String {
         let path = dir.appendingPathComponent("key-\(UUID().uuidString)").path(percentEncoded: false)
-        var args = ["-q", "-t", type, "-m", format.rawValue, "-N", passphrase ?? "", "-f", path, "-C", "fixture"]
+        var args = ["-q", "-t", type, "-N", passphrase ?? "", "-f", path, "-C", "fixture"]
+        if let format { args += ["-m", format.rawValue] }
         if let bits { args += ["-b", String(bits)] }
         let result = try await SubprocessRunner.run(URL(fileURLWithPath: "/usr/bin/ssh-keygen"), arguments: args)
         #expect(result.status == 0)
@@ -114,6 +120,20 @@ enum PEMFixtures {
         return "-----BEGIN PRIVATE KEY-----\n"
             + der.base64EncodedString(options: [.lineLength64Characters])
             + "\n-----END PRIVATE KEY-----\n"
+    }
+
+    /// A decoded key's KIND, with no payload.
+    ///
+    /// `DecodedPrivateKey` interpolated whole prints the components, and both
+    /// an `Issue.record` message and a thrown error's description are exits
+    /// that open only when a test fails — which is exactly when someone is
+    /// reading them.
+    static func kind(of decoded: PEMPrivateKeyDecoder.DecodedPrivateKey) -> String {
+        switch decoded {
+        case .rsa: return "an RSA key"
+        case .ecdsa(let curve, _): return "an ECDSA key on \(curve)"
+        case .ed25519: return "an Ed25519 key"
+        }
     }
 
     /// The DER between a PEM file's boundaries.

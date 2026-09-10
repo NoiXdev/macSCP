@@ -14,9 +14,11 @@ import macSCPCore
 /// reads. This suite is that parser used as the oracle: what it reads back
 /// must name the same public key `ssh-keygen -y` names for the source file.
 ///
-/// `.timeLimit(.minutes(2))`: the padding case runs `ssh-keygen` eight
-/// times. The trait bounds a hang, not a duration — nothing here reads a
-/// clock.
+/// `.timeLimit(.minutes(2))`: the padding test expands to eight cases, one
+/// per remainder, and each of them generates a key with `ssh-keygen` and
+/// reads it back with `ssh-keygen -y` — eight keys, sixteen process starts,
+/// counted against `rsaFixture(in:)` on 2026-09-10. The trait bounds a hang,
+/// not a duration — nothing here reads a clock.
 @Suite("OpenSSHKeyContainer", .timeLimit(.minutes(2)))
 struct OpenSSHKeyContainerTests {
     /// Decodes a fresh `-m PEM` RSA key and returns its components with the
@@ -28,7 +30,10 @@ struct OpenSSHKeyContainerTests {
         let text = try String(contentsOfFile: path, encoding: .utf8)
         let decoded = try PEMPrivateKeyDecoder.decode(text, passphrase: nil)
         guard case .rsa(let components) = decoded else {
-            throw DecodedTheWrongKind(what: "\(decoded)")
+            // The CASE, never the payload: a thrown error's description is a
+            // second exit for the components, and it opens on failure —
+            // exactly when someone is reading it.
+            throw DecodedTheWrongKind(what: PEMFixtures.kind(of: decoded))
         }
         let line = try await PEMFixtures.publicKeyLine(ofKeyAt: path, passphrase: nil)
         guard let blob = PEMFixtures.blob(ofPublicKeyLine: line) else {
@@ -45,9 +50,10 @@ struct OpenSSHKeyContainerTests {
     /// The blob `ssh-keygen -y` prints is `string "ssh-rsa" ‖ mpint e ‖
     /// mpint n`. Citadel's `Insecure.RSA.PublicKey.write(to:)` — the
     /// `NIOSSHPublicKeyProtocol` requirement — writes the two mpints ONLY
-    /// (`Algorithms/RSA.swift:191`, read 2026-09-10); the type field is
-    /// written by whatever wraps it. So the field is written here, once,
-    /// rather than assumed.
+    /// (`Algorithms/RSA.swift:99-105`, re-read 2026-09-10; `:191` is
+    /// `Insecure.RSA.PrivateKey.init(bits:publicExponent:)`, which this says
+    /// nothing about); the type field is written by whatever wraps it. So the
+    /// field is written here, once, rather than assumed.
     private func blob(of publicKey: NIOSSHPublicKeyProtocol) -> Data {
         var buffer = ByteBuffer()
         _ = publicKey.write(to: &buffer)
@@ -82,12 +88,16 @@ struct OpenSSHKeyContainerTests {
         let fixture = try await rsaFixture(in: dir)
 
         let container = OpenSSHKeyContainer.unencryptedRSA(fixture.components, comment: "fixture")
-        #expect(container.hasPrefix("-----BEGIN OPENSSH PRIVATE KEY-----"))
+        // Bool first: the container carries `d`, `p` and `q`, and `#expect`
+        // reports the values of what it checks.
+        let hasTheOpenSSHBoundary = container.hasPrefix("-----BEGIN OPENSSH PRIVATE KEY-----")
+        #expect(hasTheOpenSSHBoundary)
         let parsed = try Insecure.RSA.PrivateKey(sshRsa: container)
         // The private half, through Citadel's parser...
         #expect(blob(of: parsed.publicKey) == fixture.blob)
         // ...and the public half, which that parser never looks at.
-        #expect(try publicBlob(inContainer: container) == fixture.blob)
+        let carriesTheOraclePublicBlob = try publicBlob(inContainer: container) == fixture.blob
+        #expect(carriesTheOraclePublicBlob)
     }
 
     /// `n` and `e` are the whole of what a public blob comparison can see, and
@@ -95,10 +105,14 @@ struct OpenSSHKeyContainerTests {
     /// makes, verified by a public key built from the ORACLE's blob, is what
     /// measures that `d` belongs to that modulus.
     ///
-    /// `p`, `q` and `iqmp` stay unmeasured here: Citadel's reader consumes
-    /// them and keeps only `n`, `e` and `d` (`OpenSSHKey.swift:26-50`, read
-    /// 2026-09-10), so nothing it exposes can tell a right `q` from a wrong
-    /// one.
+    /// `p`, `q` and `iqmp` stay unmeasured HERE, and only here: Citadel's
+    /// reader consumes all six fields and keeps only `n`, `e` and `d`
+    /// (`OpenSSHKey.swift:26-50`, read 2026-09-10), so nothing it exposes can
+    /// tell a right `q` from a wrong one. What the DECODER read into those
+    /// three is measured arithmetically instead, by
+    /// `PEMPrivateKeyDecoderTests.expectTheFactorsBelongTo(_:)` — and this
+    /// writer copies them straight through, so the only thing left unmeasured
+    /// is the order they are written to the container in.
     @Test("the private exponent in the container belongs to the public key OpenSSH names")
     func thePrivateExponentBelongsToThatModulus() async throws {
         let dir = try PEMFixtures.tempDir()

@@ -156,7 +156,14 @@ enum PEMKeyStructures {
     ///
     /// `outerCurve` is what a PKCS#8 wrapper's `AlgorithmIdentifier` named;
     /// the inner structure may omit its own parameters, and then that is the
-    /// only place the curve is written.
+    /// only place the curve is written. When the inner structure DOES carry
+    /// parameters they decide, and a refusal from them is this function's
+    /// refusal — `pkcs8` has by then already dropped an outer
+    /// `AlgorithmIdentifier` it could not name, so both places failing to name
+    /// a curve is the only way to reach `.keyType("unknown")` from a file any
+    /// producer in the design table writes. Each of them writes the domain in
+    /// exactly ONE of the two places (measured 2026-09-10, `openssl asn1parse`
+    /// on ssh-keygen `-m PKCS8` and `-m PEM` output).
     static func ecSEC1(_ der: Data, outerCurve: Curve?) throws(Failure) -> (Curve, Data) {
         let nodes = try PEMDER.children(try PEMDER.parse(der))
         guard nodes.count >= 2, try PEMDER.integer(nodes[0]) == 1 else {
@@ -220,9 +227,16 @@ enum PEMKeyStructures {
         case PEMDER.rsaEncryption:
             return .rsa(try rsaPKCS1(inner))
         case PEMDER.idEcPublicKey:
+            // The outer parameters are OPTIONAL, and when they are there they
+            // may be something this reader cannot turn into a curve — a `NULL`,
+            // or a curve it does not carry. That is not a refusal on its own:
+            // `ecSEC1` prefers the inner structure's own `[0] parameters`
+            // anyway, and refuses with `.keyType("unknown")` only when NEITHER
+            // place names a curve. So an unreadable outer AlgorithmIdentifier
+            // falls through to the inner one rather than ending the read here.
             var outerCurve: Curve?
             if algorithm.count >= 2 {
-                outerCurve = try curve(fromParameters: algorithm[1])
+                outerCurve = try? curve(fromParameters: algorithm[1])
             }
             let (curve, scalar) = try ecSEC1(inner, outerCurve: outerCurve)
             return .ecdsa(curve: curve, scalar: scalar)

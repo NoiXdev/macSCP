@@ -1,3 +1,4 @@
+import BigInt
 import Crypto
 import Foundation
 import SwiftASN1
@@ -13,10 +14,13 @@ import macSCPCore
 /// decoder read the wrong bytes, the public key it can build from them does
 /// not match the one OpenSSH builds.
 ///
-/// `.timeLimit(.minutes(2))`: the widest case generates eight keys through
-/// `ssh-keygen` (including a 2048-bit RSA and a P-521), each of which is a
-/// process launch. The trait is a bound on the SUITE hanging, not an
-/// assertion about speed — no test here reads a clock.
+/// `.timeLimit(.minutes(2))`: the widest test is `decodesEveryShape`, which
+/// expands to 16 cases — `PEMFixtures.Shape.all` is eight, times plain and
+/// encrypted — and every case generates one key with `ssh-keygen` and reads it
+/// back with `ssh-keygen -y`: 16 keys, 32 process starts, four of them
+/// 2048-bit RSA and four P-521. Counted against `Shape.all` and the body of
+/// that test on 2026-09-10. The trait is a bound on a HANG, not an assertion
+/// about speed — no test here reads a clock.
 @Suite("PEMPrivateKeyDecoder", .timeLimit(.minutes(2)))
 struct PEMPrivateKeyDecoderTests {
     /// Five characters at least: ssh-keygen refuses a shorter one.
@@ -43,6 +47,31 @@ struct PEMPrivateKeyDecoderTests {
         }
     }
 
+    /// `p`, `q` and `iqmp` are in NO public key, so `ssh-keygen -y` — the
+    /// oracle every other component here is measured against — cannot see
+    /// them at all. The arithmetic can, and it needs no external producer:
+    /// RFC 8017 §3.2 says `n = p·q` and, for the CRT coefficient OpenSSH
+    /// calls `iqmp`, `q⁻¹ mod p`, i.e. `iqmp·q ≡ 1 (mod p)`.
+    ///
+    /// Together the two identities pin which INTEGER of the PKCS#1 SEQUENCE
+    /// each field was read from: the first is red if `p` or `q` came from the
+    /// wrong index, and the second is red for a swap of the two (which the
+    /// first cannot see, since `p·q = q·p`) and for `dq` read as `iqmp`.
+    ///
+    /// Each expectation is a `Bool` computed first: `#expect` reports the
+    /// values of what it compares, and these three are private key material.
+    private func expectTheFactorsBelongTo(_ components: PEMPrivateKeyDecoder.RSAPrivateKeyComponents,
+                                          sourceLocation: SourceLocation = #_sourceLocation) {
+        let n = BigUInt(components.n)
+        let p = BigUInt(components.p)
+        let q = BigUInt(components.q)
+        let iqmp = BigUInt(components.iqmp)
+        let primesMultiplyToTheModulus = p * q == n
+        #expect(primesMultiplyToTheModulus, sourceLocation: sourceLocation)
+        let coefficientInvertsQModuloP = p > 0 && (iqmp * q) % p == 1
+        #expect(coefficientInvertsQModuloP, sourceLocation: sourceLocation)
+    }
+
     // MARK: - 1: the eight shapes, plain and encrypted
 
     @Test("RSA and ECDSA decode in both PEM formats, plain and encrypted",
@@ -54,7 +83,10 @@ struct PEMPrivateKeyDecoderTests {
         let path = try await PEMFixtures.sshKeygen(type: shape.type, bits: shape.bits,
                                                    format: shape.format, passphrase: secret, in: dir)
         let text = try String(contentsOfFile: path, encoding: .utf8)
-        #expect(PEMPrivateKeyDecoder.isPEM(text))
+        // Bool first, here and below: `#expect` reports the source text AND the
+        // values of what it checks, and `text` is a private key file.
+        let readsAsPEM = PEMPrivateKeyDecoder.isPEM(text)
+        #expect(readsAsPEM)
 
         let decoded = try PEMPrivateKeyDecoder.decode(text, passphrase: secret)
         let line = try await PEMFixtures.publicKeyLine(ofKeyAt: path, passphrase: secret)
@@ -67,6 +99,7 @@ struct PEMPrivateKeyDecoderTests {
             #expect(String(decoding: fields[0], as: UTF8.self) == "ssh-rsa")
             #expect(strippingLeadingZero(fields[1]) == components.e)
             #expect(strippingLeadingZero(fields[2]) == components.n)
+            expectTheFactorsBelongTo(components)
         case .ecdsa(let curve, let scalar):
             #expect(shape.type == "ecdsa")
             #expect(curve == self.curve(forBits: shape.bits))
@@ -92,10 +125,11 @@ struct PEMPrivateKeyDecoderTests {
         let text = PEMFixtures.ed25519PKCS8PEM(seed: generator.rawRepresentation)
         let decoded = try PEMPrivateKeyDecoder.decode(text, passphrase: nil)
         guard case .ed25519(let seed) = decoded else {
-            Issue.record("expected an Ed25519 key, got \(decoded)")
+            Issue.record("expected an Ed25519 key, got \(PEMFixtures.kind(of: decoded))")
             return
         }
-        #expect(seed == generator.rawRepresentation)
+        let seedIsTheGeneratorSeed = seed == generator.rawRepresentation
+        #expect(seedIsTheGeneratorSeed)
         let rebuilt = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
         #expect(rebuilt.publicKey.rawRepresentation == generator.publicKey.rawRepresentation)
     }
@@ -116,14 +150,87 @@ struct PEMPrivateKeyDecoderTests {
 
         let decoded = try PEMPrivateKeyDecoder.decode(text, passphrase: nil)
         guard case .ecdsa(let curve, let scalar) = decoded else {
-            Issue.record("expected an ECDSA key, got \(decoded)")
+            Issue.record("expected an ECDSA key, got \(PEMFixtures.kind(of: decoded))")
             return
         }
         #expect(curve == .p256)
         let line = try await PEMFixtures.publicKeyLine(ofKeyAt: path, passphrase: nil)
         let blob = try #require(PEMFixtures.blob(ofPublicKeyLine: line))
         let fields = try #require(PEMFixtures.sshStrings(in: blob, count: 3))
-        #expect(fields[2] == (try P256.Signing.PrivateKey(rawRepresentation: scalar).publicKey.x963Representation))
+        // The point is built in a `let` so the scalar it is built FROM is not
+        // a subexpression of the expectation.
+        let point = try P256.Signing.PrivateKey(rawRepresentation: scalar).publicKey.x963Representation
+        #expect(fields[2] == point)
+    }
+
+    // MARK: - 3b: PKCS#8 whose OUTER parameters name no curve
+
+    /// A PKCS#8 `PrivateKeyInfo` around a SEC1 `ECPrivateKey`, with the outer
+    /// `AlgorithmIdentifier` parameters written as `NULL`. No producer on this
+    /// machine writes that shape, so it is built here; it is the file that
+    /// separates "the outer parameters are not a curve this reader names" from
+    /// "nothing in this file says which curve it is".
+    private func pkcs8PEM(aroundECPrivateKey der: Data) throws -> String {
+        let idEcPublicKey: ASN1ObjectIdentifier = [1, 2, 840, 10_045, 2, 1]
+        var serializer = DER.Serializer()
+        try serializer.appendConstructedNode(identifier: .sequence) { outer in
+            try outer.serialize(Int(0))                       // version
+            try outer.appendConstructedNode(identifier: .sequence) { algorithm in
+                try algorithm.serialize(idEcPublicKey)
+                try algorithm.serialize(ASN1Null())           // not a curve
+            }
+            try outer.serialize(ASN1OctetString(contentBytes: ArraySlice(der)))
+        }
+        let wrapped = Data(serializer.serializedBytes)
+        return "-----BEGIN PRIVATE KEY-----\n"
+            + wrapped.base64EncodedString(options: [.lineLength64Characters])
+            + "\n-----END PRIVATE KEY-----\n"
+    }
+
+    /// ssh-keygen writes the EC domain parameters in exactly ONE of the two
+    /// places, and which one depends on the format. Measured 2026-09-10 with
+    /// `openssl asn1parse` against this machine's ssh-keygen: `-m PKCS8` puts
+    /// the `SpecifiedECDomain` in the OUTER `AlgorithmIdentifier` and writes an
+    /// inner `ECPrivateKey` with NO `[0] parameters`, while `-m PEM` writes the
+    /// SEC1 structure alone with the domain inside its own `[0]`. So an outer
+    /// `AlgorithmIdentifier` this reader cannot turn into a curve is not a
+    /// refusal by itself — the inner structure may still say which curve it is,
+    /// and it is the one SEC1 prefers when both are there.
+    @Test("a PKCS#8 EC key whose outer parameters name no curve reads the inner ones")
+    func readsTheInnerParametersWhenTheOuterOnesNameNoCurve() async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = try await PEMFixtures.sshKeygen(type: "ecdsa", bits: 256, format: .pem,
+                                                   passphrase: nil, in: dir)
+        let sec1Text = try String(contentsOfFile: path, encoding: .utf8)
+        let sec1DER = try #require(PEMFixtures.der(ofPEM: sec1Text))
+
+        // The positive check beside the point of the test: this file only
+        // measures the fallback while the inner structure really does carry
+        // parameters of its own. If ssh-keygen ever stops writing them, this
+        // goes red rather than passing about nothing.
+        let sec1Node = try DER.parse(Array(sec1DER))
+        guard case .constructed(let sec1Children) = sec1Node.content else {
+            Issue.record("the SEC1 body is not a SEQUENCE")
+            return
+        }
+        let innerCarriesItsOwnParameters = sec1Children.contains {
+            $0.identifier.tagClass == .contextSpecific && $0.identifier.tagNumber == 0
+        }
+        #expect(innerCarriesItsOwnParameters)
+
+        let wrapped = try pkcs8PEM(aroundECPrivateKey: sec1DER)
+        let fromWrapped = try PEMPrivateKeyDecoder.decode(wrapped, passphrase: nil)
+        let fromSEC1 = try PEMPrivateKeyDecoder.decode(sec1Text, passphrase: nil)
+        guard case .ecdsa(let curve, _) = fromWrapped else {
+            Issue.record("expected an ECDSA key, got \(PEMFixtures.kind(of: fromWrapped))")
+            return
+        }
+        #expect(curve == .p256)
+        // Bool first: `DecodedPrivateKey` carries the scalar, and `#expect`
+        // reports the values of what it compares.
+        let bothReadTheSameKey = fromWrapped == fromSEC1
+        #expect(bothReadTheSameKey)
     }
 
     // MARK: - 4: legacy AES-256
@@ -142,10 +249,14 @@ struct PEMPrivateKeyDecoderTests {
 
         let plainText = try String(contentsOfFile: plainPath, encoding: .utf8)
         let encryptedText = try String(contentsOfFile: encryptedPath, encoding: .utf8)
-        #expect(encryptedText.contains("AES-256-CBC"))
+        // Bool first: `encryptedText` is the encrypted key file, and
+        // `DecodedPrivateKey` carries `d`, `p` and `q`.
+        let headerNamesAES256 = encryptedText.contains("AES-256-CBC")
+        #expect(headerNamesAES256)
         let fromPlain = try PEMPrivateKeyDecoder.decode(plainText, passphrase: nil)
         let fromEncrypted = try PEMPrivateKeyDecoder.decode(encryptedText, passphrase: Self.passphrase)
-        #expect(fromPlain == fromEncrypted)
+        let bothReadTheSameKey = fromPlain == fromEncrypted
+        #expect(bothReadTheSameKey)
     }
 
     // MARK: - 5 and 6: what a passphrase does and does not open
@@ -240,6 +351,49 @@ struct PEMPrivateKeyDecoderTests {
         }
     }
 
+    // MARK: - 8b: what is not a PEM file at all
+
+    /// `.notPEM` is the answer for a file this decoder does not own, and it
+    /// has two sources: OpenSSH's own container, which Citadel reads and which
+    /// `decode` hands back by LABEL, and text that carries no `-----BEGIN`
+    /// boundary at all, which `PEMArmor.parse` refuses before any label
+    /// exists. Both are here because neither was measured before.
+    @Test("an OpenSSH container is handed back rather than read")
+    func namesAnOpenSSHContainerAsNotPEM() async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // No `-m`: this is ssh-keygen's default output, `openssh-key-v1`.
+        let path = try await PEMFixtures.sshKeygen(type: "ed25519", bits: nil, format: nil,
+                                                   passphrase: nil, in: dir)
+        let text = try String(contentsOfFile: path, encoding: .utf8)
+        // The positive check beside the two negative ones: without it, a
+        // fixture that stopped producing an OpenSSH container would leave
+        // `isPEM == false` and `.notPEM` true for an entirely different
+        // reason, and this test would pass about nothing. Bool first — `text`
+        // is a private key file.
+        let isAnOpenSSHContainer = text.hasPrefix("-----BEGIN OPENSSH PRIVATE KEY-----")
+        #expect(isAnOpenSSHContainer)
+        let readsAsPEM = PEMPrivateKeyDecoder.isPEM(text)
+        #expect(readsAsPEM == false)
+
+        var caught: PEMPrivateKeyDecoder.DecodeError?
+        do {
+            _ = try PEMPrivateKeyDecoder.decode(text, passphrase: nil)
+        } catch let error as PEMPrivateKeyDecoder.DecodeError {
+            caught = error
+        }
+        #expect(caught == .notPEM)
+    }
+
+    @Test("text without a PEM boundary is not PEM",
+          arguments: ["ssh-ed25519 AAAAC3Nz fixture\n", "", "\n   \n\t\n", "not a key at all\n"])
+    func namesNoiseAsNotPEM(_ noise: String) {
+        #expect(PEMPrivateKeyDecoder.isPEM(noise) == false)
+        #expect(throws: PEMPrivateKeyDecoder.DecodeError.notPEM) {
+            try PEMPrivateKeyDecoder.decode(noise, passphrase: nil)
+        }
+    }
+
     // MARK: - 9: the gate the loader asks
 
     @Test("isPEM tells PEM from OpenSSH and from noise")
@@ -317,7 +471,8 @@ struct PEMPrivateKeyDecoderTests {
         let built = try pbes2SHA256PEM(pkcs8DER: plainDER, passphrase: Self.passphrase, rounds: 2048)
         let fromBuilt = try PEMPrivateKeyDecoder.decode(built, passphrase: Self.passphrase)
         let fromPlain = try PEMPrivateKeyDecoder.decode(plainText, passphrase: nil)
-        #expect(fromBuilt == fromPlain)
+        let bothReadTheSameKey = fromBuilt == fromPlain
+        #expect(bothReadTheSameKey)
     }
 
     @Test("an iteration count above the ceiling is refused")

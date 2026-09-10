@@ -60,6 +60,13 @@ let package = Package(
         // optional and context-tagged members, which is where a hand-written
         // reader starts lying (see the PEM design of 2026-09-10).
         .package(url: "https://github.com/apple/swift-asn1.git", from: "1.0.0"),
+        // Arbitrary-precision arithmetic for `PEMPrivateKeyDecoderTests` ONLY:
+        // `p`, `q` and `iqmp` appear in no public key, so `ssh-keygen -y`
+        // cannot see them — the arithmetic RFC 8017 §3.2 states about them
+        // can (n = p·q, iqmp·q ≡ 1 mod p). Already in the graph as Citadel's
+        // own dependency at 5.7.0; naming it here makes it a product the TEST
+        // target may import. No non-test target depends on it.
+        .package(url: "https://github.com/attaswift/BigInt.git", from: "5.2.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "d5ee56e1c74777120f3af688600d336de4201bd2"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
@@ -153,6 +160,16 @@ let package = Package(
                 // event loop, to read the algorithm names it would offer.
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
+                // `PEMPrivateKeyDecoderTests` builds a PBES2 file and a
+                // PKCS#8 wrapper with `DER.Serializer`, derives the PBKDF2 key
+                // the file declares, and checks the RSA primes with
+                // arbitrary-precision arithmetic. All three modules reach the
+                // test target through the graph anyway; they are named here so
+                // an import in this target rests on a declaration rather than
+                // on which module happened to be built next door.
+                .product(name: "SwiftASN1", package: "swift-asn1"),
+                .product(name: "_CryptoExtras", package: "swift-crypto"),
+                .product(name: "BigInt", package: "BigInt"),
             ],
             // `LegacyStoreCompatibilityTests` copies these into a temporary
             // directory and loads them through the real stores, addressing

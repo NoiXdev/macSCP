@@ -11,8 +11,11 @@ import NIOCore
 /// 2026-09-10). Its `init(sshRsa:)` parses this container, so this is the
 /// door that is open.
 ///
-/// Nothing here reaches disk. The string exists for exactly as long as the
-/// caller holds it.
+/// Nothing here reaches disk. It is NOT a wiping writer, though: `d`, `p` and
+/// `q` pass through an intermediate `ByteBuffer` and a base64 `String` on the
+/// way out, and neither is zeroed — they are released when they are released,
+/// and the returned string lives at least as long as the caller holds it. What
+/// this type guarantees is only that none of it is written to a file.
 public enum OpenSSHKeyContainer {
     private static let magic = "openssh-key-v1"
     private static let keyType = "ssh-rsa"

@@ -102,6 +102,17 @@ public enum PEMPrivateKeyDecoder {
     }
 
     /// The DER, once any encryption is off it, by the label that named it.
+    ///
+    /// It is a separate function for a toolchain reason, not a design one, so
+    /// do not inline it back: `decode` needs to turn a `.malformed` into a
+    /// `.wrongPassphrase` only when the DER came out of a decryption, and
+    /// writing that as `catch let error as DecodeError where decrypted && …`
+    /// on a `do` block whose thrown type Swift has already INFERRED as
+    /// `DecodeError` crashes Apple Swift 6.3.3 (swiftlang-6.3.3.1.3) with
+    /// `Found ownership error?!` and `compile command failed due to signal 6`
+    /// — an ownership-verifier assertion, not a diagnostic. With the switch
+    /// behind a `throws(DecodeError)` function the caller's `catch` needs no
+    /// `as` and no `where`, and the same code compiles.
     private static func structure(_ der: Data, label: String) throws(DecodeError) -> DecodedPrivateKey {
         switch label {
         case "RSA PRIVATE KEY":
