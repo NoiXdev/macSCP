@@ -913,6 +913,18 @@
 "settings.cli.status.translocated" = "macSCP is running from a temporary location.";
 "settings.cli.status.translocated.detail" = "macOS runs apps opened from a disk image or the Downloads folder from a temporary copy that disappears on quit. Move macSCP to your Applications folder, open it from there, and install again.";
 
+/* Shell completion (Shell Completion plan, Task 1) */
+"settings.cli.completion.header" = "Shell Completion";
+"settings.cli.completion.intro" = "To complete macscp-cli's commands and options with the Tab key, add this line to your shell's startup file:";
+"settings.cli.completion.shell" = "Shell";
+"settings.cli.completion.copy" = "Copy Command";
+"settings.cli.completion.where.zsh" = "Add it to ~/.zshrc. It asks the installed tool for its current completion every time a shell starts, so an updated macSCP needs no second step.";
+"settings.cli.completion.where.bash" = "Add it to ~/.bashrc — or to ~/.bash_profile, which is what Terminal reads for login shells. It asks the installed tool for its current completion every time a shell starts, so an updated macSCP needs no second step.";
+"settings.cli.completion.where.fish" = "Add it to ~/.config/fish/config.fish. It asks the installed tool for its current completion every time a shell starts, so an updated macSCP needs no second step.";
+"settings.cli.completion.zshCompinit" = "zsh also needs its completion system running: autoload -Uz compinit && compinit, before this line. The setup macOS ships does that already.";
+"settings.cli.completion.footer.installed" = "The line calls the macscp-cli shortcut by name, so it keeps working after macSCP is updated or moved.";
+"settings.cli.completion.footer.notInstalled" = "Without the shortcut the line has to name the tool inside the app bundle. Install the shortcut above to shorten it — and to keep it working if macSCP moves.";
+
 /* Snippets sheet (Terminal-Snippets milestone, Task 3) */
 "snippets.sheet.title" = "Snippets";
 "snippets.empty" = "No snippets yet.";

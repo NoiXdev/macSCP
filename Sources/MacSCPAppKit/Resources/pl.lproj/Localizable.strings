@@ -916,6 +916,18 @@
 "settings.cli.status.translocated" = "macSCP działa z lokalizacji tymczasowej.";
 "settings.cli.status.translocated.detail" = "macOS uruchamia aplikacje otwierane z obrazu dysku lub folderu Pobrane z tymczasowej kopii, która znika po zamknięciu. Przenieś macSCP do folderu Aplikacje, otwórz go stamtąd i zainstaluj ponownie.";
 
+/* Shell completion (Shell Completion plan, Task 1) */
+"settings.cli.completion.header" = "Uzupełnianie w powłoce";
+"settings.cli.completion.intro" = "Aby uzupełniać polecenia i opcje macscp-cli klawiszem Tab, dodaj tę linię do pliku startowego swojej powłoki:";
+"settings.cli.completion.shell" = "Powłoka";
+"settings.cli.completion.copy" = "Kopiuj polecenie";
+"settings.cli.completion.where.zsh" = "Wpisz ją do ~/.zshrc. Linia pyta zainstalowane narzędzie o aktualne uzupełnianie przy każdym uruchomieniu powłoki, więc aktualizacja macSCP nie wymaga drugiego kroku.";
+"settings.cli.completion.where.bash" = "Wpisz ją do ~/.bashrc — albo do ~/.bash_profile, który Terminal czyta dla powłok logowania. Linia pyta zainstalowane narzędzie o aktualne uzupełnianie przy każdym uruchomieniu powłoki, więc aktualizacja macSCP nie wymaga drugiego kroku.";
+"settings.cli.completion.where.fish" = "Wpisz ją do ~/.config/fish/config.fish. Linia pyta zainstalowane narzędzie o aktualne uzupełnianie przy każdym uruchomieniu powłoki, więc aktualizacja macSCP nie wymaga drugiego kroku.";
+"settings.cli.completion.zshCompinit" = "zsh potrzebuje dodatkowo uruchomionego systemu uzupełniania: autoload -Uz compinit && compinit, przed tą linią. Konfiguracja dostarczana przez macOS robi to już sama.";
+"settings.cli.completion.footer.installed" = "Linia wywołuje skrót macscp-cli po nazwie, więc działa także po aktualizacji lub przeniesieniu macSCP.";
+"settings.cli.completion.footer.notInstalled" = "Bez skrótu linia musi wskazywać narzędzie wewnątrz pakietu aplikacji. Zainstaluj skrót powyżej, aby ją skrócić — i aby działała także po przeniesieniu macSCP.";
+
 /* Snippets sheet (Terminal-Snippets milestone, Task 3) */
 "snippets.sheet.title" = "Snippets";
 "snippets.empty" = "Brak zapisanych fragmentów.";

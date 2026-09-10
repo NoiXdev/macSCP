@@ -914,6 +914,18 @@
 "settings.cli.status.translocated" = "macSCP läuft von einem temporären Ort.";
 "settings.cli.status.translocated.detail" = "macOS startet Apps, die von einem Image oder aus dem Ordner „Downloads“ geöffnet werden, aus einer temporären Kopie, die beim Beenden verschwindet. Verschiebe macSCP in deinen Programme-Ordner, öffne es von dort und installiere erneut.";
 
+/* Shell completion (Shell Completion plan, Task 1) */
+"settings.cli.completion.header" = "Shell-Vervollständigung";
+"settings.cli.completion.intro" = "Für die Tab-Vervollständigung von Befehlen und Optionen in macscp-cli diese Zeile in die Startdatei der Shell eintragen:";
+"settings.cli.completion.shell" = "Shell";
+"settings.cli.completion.copy" = "Befehl kopieren";
+"settings.cli.completion.where.zsh" = "Gehört in ~/.zshrc. Die Zeile holt bei jedem Start einer Shell die aktuelle Vervollständigung vom installierten Werkzeug, ein Update von macSCP braucht also keinen zweiten Schritt.";
+"settings.cli.completion.where.bash" = "Gehört in ~/.bashrc — oder in ~/.bash_profile, das Terminal für Login-Shells liest. Die Zeile holt bei jedem Start einer Shell die aktuelle Vervollständigung vom installierten Werkzeug, ein Update von macSCP braucht also keinen zweiten Schritt.";
+"settings.cli.completion.where.fish" = "Gehört in ~/.config/fish/config.fish. Die Zeile holt bei jedem Start einer Shell die aktuelle Vervollständigung vom installierten Werkzeug, ein Update von macSCP braucht also keinen zweiten Schritt.";
+"settings.cli.completion.zshCompinit" = "zsh braucht außerdem ein gestartetes Vervollständigungssystem: autoload -Uz compinit && compinit, vor dieser Zeile. Die Standardkonfiguration von macOS erledigt das bereits.";
+"settings.cli.completion.footer.installed" = "Die Zeile ruft die Verknüpfung macscp-cli beim Namen auf und funktioniert deshalb auch nach einem Update oder einem Verschieben von macSCP.";
+"settings.cli.completion.footer.notInstalled" = "Ohne die Verknüpfung muss die Zeile das Werkzeug im App-Bundle benennen. Installiere die Verknüpfung oben, um sie zu kürzen — und damit sie auch nach einem Verschieben von macSCP funktioniert.";
+
 /* Snippets sheet (Terminal-Snippets milestone, Task 3) */
 "snippets.sheet.title" = "Snippets";
 "snippets.empty" = "Noch keine Snippets.";

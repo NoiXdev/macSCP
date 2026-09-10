@@ -1615,6 +1615,77 @@ private struct CLISettingsSection: View {
         }
     }
 
+    // MARK: - Shell completion
+
+    /// The shell whose line is on screen. Opens on the user's LOGIN shell
+    /// — `$SHELL` is a path, so `ShellCompletionRecipe` reads the name off
+    /// it — and is a plain `@State`: the choice steers what this section
+    /// shows and nothing else, so there is nothing to persist.
+    ///
+    /// `$SHELL` is a weaker claim than the `PATH` note above forbids, and a
+    /// different one: it names the login shell from the user record
+    /// (`dscl . -read ~ UserShell`, `/bin/zsh` on this machine on
+    /// 2026-09-10) rather than anything a shell profile computed, so a
+    /// value that arrives is meaningful. Whether a Finder-launched process
+    /// always receives one is NOT measured here — and it does not have to
+    /// be: an absent or unrecognised value falls back to zsh in the recipe,
+    /// which is macOS's default, and the picker is one click.
+    @State private var completionShell = ShellCompletionRecipe.shell(
+        fromLoginShellPath: ProcessInfo.processInfo.environment["SHELL"])
+
+    /// What the line invokes. While the shortcut resolves to THIS app's own
+    /// tool, its bare name is enough and survives every update; in every
+    /// other state there is no shortcut to call, so the line names the tool
+    /// inside the bundle — quoted, because the app usually lives at a path
+    /// with a space in it.
+    private var completionTool: String {
+        state == .installed
+            ? CLIToolInstaller.toolName
+            : ShellCompletionRecipe.quotedForShell(installer.toolURL.path(percentEncoded: false))
+    }
+
+    /// ONE property, read by both the label and the copy button, so the
+    /// pasteboard cannot drift from what is on screen. The three spellings
+    /// themselves live in Core (`ShellCompletionRecipe.line(for:tool:)`),
+    /// where a test runs each of them in a real interpreter — a line
+    /// spelled here would be a copy nothing executes.
+    private var completionLine: String {
+        ShellCompletionRecipe.line(for: completionShell, tool: completionTool)
+    }
+
+    /// Which file the line belongs in, per shell. bash names two: macOS's
+    /// Terminal opens LOGIN shells, which read `~/.bash_profile` and not
+    /// `~/.bashrc`.
+    private var completionWhere: String {
+        switch completionShell {
+        case .zsh:
+            return L10n.string(
+                "settings.cli.completion.where.zsh",
+                "Add it to ~/.zshrc. It asks the installed tool for its current completion every time a shell starts, so an updated macSCP needs no second step.")
+        case .bash:
+            return L10n.string(
+                "settings.cli.completion.where.bash",
+                "Add it to ~/.bashrc — or to ~/.bash_profile, which is what Terminal reads for login shells. It asks the installed tool for its current completion every time a shell starts, so an updated macSCP needs no second step.")
+        case .fish:
+            return L10n.string(
+                "settings.cli.completion.where.fish",
+                "Add it to ~/.config/fish/config.fish. It asks the installed tool for its current completion every time a shell starts, so an updated macSCP needs no second step.")
+        }
+    }
+
+    /// The footer follows the same state the tool token does: with the
+    /// shortcut in place the line is short and stays correct wherever the
+    /// app moves; without it, the line carries a path into the bundle.
+    private var completionFooter: String {
+        state == .installed
+            ? L10n.string(
+                "settings.cli.completion.footer.installed",
+                "The line calls the macscp-cli shortcut by name, so it keeps working after macSCP is updated or moved.")
+            : L10n.string(
+                "settings.cli.completion.footer.notInstalled",
+                "Without the shortcut the line has to name the tool inside the app bundle. Install the shortcut above to shorten it — and to keep it working if macSCP moves.")
+    }
+
     var body: some View {
         Form {
             Section {
@@ -1675,6 +1746,68 @@ private struct CLISettingsSection: View {
                         "settings.cli.systemWide.footer",
                         "That folder belongs to the system, so the command asks for your administrator password. macSCP never requests administrator rights itself."
                     ))
+            }
+
+            Section {
+                Text(
+                    L10n.string(
+                        "settings.cli.completion.intro",
+                        "To complete macscp-cli's commands and options with the Tab key, add this line to your shell's startup file:"
+                    ))
+                .fixedSize(horizontal: false, vertical: true)
+
+                // The shell list is the recipe's own, so this picker cannot
+                // offer a shell the CLI has no script for. The labels are
+                // the raw values on purpose: a shell's name is its name in
+                // every language, and it is also what the user types.
+                Picker(
+                    L10n.string("settings.cli.completion.shell", "Shell"),
+                    selection: $completionShell
+                ) {
+                    ForEach(ShellCompletionRecipe.Shell.allCases, id: \.self) { shell in
+                        Text(shell.rawValue).tag(shell)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text(completionLine)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack {
+                    Spacer()
+                    Button(L10n.string("settings.cli.completion.copy", "Copy Command")) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(completionLine, forType: .string)
+                    }
+                }
+
+                Text(completionWhere)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // zsh only: the line defines a completion, and defining one
+                // is a no-op until the completion system has been started.
+                // Stated rather than detected — reading it would mean
+                // starting a login shell, which this pane must not do (see
+                // this type's own note about PATH).
+                if completionShell == .zsh {
+                    Text(
+                        L10n.string(
+                            "settings.cli.completion.zshCompinit",
+                            "zsh also needs its completion system running: autoload -Uz compinit && compinit, before this line. The setup macOS ships does that already."
+                        ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            } header: {
+                Text(L10n.string("settings.cli.completion.header", "Shell Completion"))
+            } footer: {
+                Text(completionFooter)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .formStyle(.grouped)

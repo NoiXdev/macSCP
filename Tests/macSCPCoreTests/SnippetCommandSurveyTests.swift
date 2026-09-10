@@ -898,12 +898,16 @@ struct SnippetCommandSurveyTests {
     /// `SSHConnectionConfig` keeps `Character` allow lists (see the guard
     /// above); `FileChecksum` walks a digest field it requires to be ASCII
     /// element by element, so a grapheme cluster carrying a combining mark
-    /// is refused rather than mis-read; `SSHCommandBuilder` and
-    /// `CLIToolInstaller` only hand a value to `PosixQuoting.singleQuoted`.
+    /// is refused rather than mis-read; `SSHCommandBuilder`,
+    /// `CLIToolInstaller` and `ShellCompletionRecipe` only hand a value to
+    /// `PosixQuoting.singleQuoted` (the last of the three does nothing else
+    /// with it: `quotedForShell(_:)` forwards, so the shell-completion line
+    /// quotes by the same rule as every other command this app shows).
     private static let shellCallerFileNames = [
         "SSHConnectionConfig.swift",
         "SSHCommandBuilder.swift",
         "CLIToolInstaller.swift",
+        "ShellCompletionRecipe.swift",
         "FileChecksum.swift",
     ]
 
