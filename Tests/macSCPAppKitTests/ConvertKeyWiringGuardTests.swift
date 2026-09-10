@@ -36,8 +36,9 @@ import Testing
 /// 4. The converted key reaches the stored session and the ONE dial path —
 ///    `updateSession(`, `dropSessionSecret(`, `retryConnect(`,
 ///    `dismissConnectFailure(` — after asking the two questions that decide
-///    which path it takes (`hasStoredPassphrase(`, `loginSetID`), and dials
-///    nothing itself.
+///    which path it takes (`hasStoredPassphrase(`, `loginSetID`), with the
+///    drop INSIDE the branch the first question's positive answer opens and
+///    nowhere else, and dials nothing itself.
 /// 5. The import sheet converts on the way in instead of copying bytes.
 @Suite("Convert key wiring guard")
 struct ConvertKeyWiringGuardTests {
@@ -59,6 +60,7 @@ struct ConvertKeyWiringGuardTests {
 
     private enum ScanError: Error {
         case anchorNotFound, openBraceNotFound, unbalancedBraces
+        case probeNotFound, probeNotBound
     }
 
     // MARK: - 1. The sheet is presented
@@ -205,10 +207,11 @@ struct ConvertKeyWiringGuardTests {
     /// cleared when a SAVE throws, so an import with an EMPTY passphrase
     /// reports `true` having written no slot at all. Gating the drop on that
     /// flag deleted the session's own — and then only — copy of a passphrase
-    /// the key's slot never received. The check is an ORDER check (probe
-    /// before drop), not a nesting check: it cannot see that the drop is
-    /// inside the `if`, only that the question is asked first. Nesting is
-    /// read in review.
+    /// the key's slot never received. This function only asks that the
+    /// question is PRESENT; which branch of it the drop sits in is
+    /// `theSlotDropSitsInsideTheBranchTheProbeOpens` below, and until that
+    /// test existed the polarity was guarded by nothing (final whole-branch
+    /// review, Critical 1).
     ///
     /// `loginSetID` is the second fact (fix round 2, review finding
     /// MEDIUM 2). A session bound to a login set takes its username, auth
@@ -245,19 +248,13 @@ struct ConvertKeyWiringGuardTests {
             the new key selected is its only way on, and without this it stays on the failed \
             surface.
             """)
-        let slotIsProbedBeforeTheDrop: Bool
-        if let probe = body.range(of: "hasStoredPassphrase(")?.lowerBound,
-           let drop = body.range(of: "dropSessionSecret(")?.lowerBound {
-            slotIsProbedBeforeTheDrop = probe < drop
-        } else {
-            slotIsProbedBeforeTheDrop = false
-        }
-        #expect(slotIsProbedBeforeTheDrop, """
-            `convertedKeyImported(_:for:)` drops the session's Keychain slot without asking \
-            `ManagedKeyPassphrase.hasStoredPassphrase(` first, or does not ask it at all — \
-            the import sheet's `keptPassphrase` flag is `true` for an import that wrote no \
-            slot (an empty passphrase never reaches the Keychain), so a drop gated on it \
-            deletes the only copy there is.
+        #expect(body.contains("hasStoredPassphrase("), """
+            `convertedKeyImported(_:for:)` no longer asks \
+            `ManagedKeyPassphrase.hasStoredPassphrase(` — the import sheet's `keptPassphrase` \
+            flag is `true` for an import that wrote no slot (an empty passphrase never reaches \
+            the Keychain), so a drop gated on it deletes the only copy there is. This is also \
+            the token `theSlotDropSitsInsideTheBranchTheProbeOpens` reads the branch's \
+            identifier from, and that test fails closed without it.
             """)
         #expect(body.contains("loginSetID"), """
             `convertedKeyImported(_:for:)` no longer reads `loginSetID` — a session whose \
@@ -265,6 +262,53 @@ struct ConvertKeyWiringGuardTests {
             every fill, so writing the converted path into the session persists a value no \
             dial reads, and dropping the session's own slot leaves the set's shadowing copy \
             in place.
+            """)
+    }
+
+    /// The POLARITY of that drop, which the token checks above cannot see.
+    ///
+    /// Measured in the final whole-branch review: planting
+    /// `if !keySlotHoldsThePassphrase {` — the inversion that deletes the
+    /// session's only copy of the passphrase in exactly the case where the
+    /// key's slot holds none — left every App test in this target green. A
+    /// check that the probe is asked before the drop is satisfied by the
+    /// inverted branch too; the question is which branch the drop sits in.
+    ///
+    /// So this reads the structure instead of the offsets: the `if` whose
+    /// condition names the probe's result POSITIVELY, its span found by the
+    /// same brace-balancing helper `strippedBody` uses, and the drop
+    /// required to be inside it and nowhere else in the handler. The two
+    /// halves are the two ways the property breaks — an inverted (or
+    /// missing) gate leaves no span to be inside, and a second drop beside
+    /// the branch makes the gate decide nothing.
+    ///
+    /// The identifier is READ out of the body, never spelled here (CLAUDE.md,
+    /// "Guards that name what they watch", rule 2): whatever
+    /// `hasStoredPassphrase(`'s result is bound to is the name the branch has
+    /// to test, and a rename of that local must not quietly turn this into a
+    /// check about nothing. Both helpers throw rather than return an empty
+    /// string when they cannot find what they name, so a handler that stops
+    /// binding the probe at all is a loud failure here as well as in
+    /// `theConvertedKeyIsWiredThroughTheRealHandlers` above.
+    @Test func theSlotDropSitsInsideTheBranchTheProbeOpens() throws {
+        let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
+        let identifier = try Self.probeResultIdentifier(inBlankedBody: body)
+        let gate = Self.positiveGateSpan(on: identifier, inBlankedBody: body)
+        let dropsInsideTheGate = gate.map { Self.occurrences(of: "dropSessionSecret(", in: $0) } ?? 0
+        let dropsInTheBody = Self.occurrences(of: "dropSessionSecret(", in: body)
+        #expect(dropsInsideTheGate >= 1, """
+            `convertedKeyImported(_:for:)` does not call `dropSessionSecret(` inside the branch \
+            that `\(identifier)` being TRUE opens — either the branch tests the probe's result \
+            inverted (`!`, or `== false`), which drops the session's Keychain slot in exactly \
+            the case where the managed key's slot holds no passphrase and the session's copy is \
+            the only one there is, or the drop has moved out of that branch altogether.
+            """)
+        #expect(dropsInTheBody == dropsInsideTheGate, """
+            `convertedKeyImported(_:for:)` calls `dropSessionSecret(` \(dropsInTheBody) times \
+            but only \(dropsInsideTheGate) of those are inside the branch `\(identifier)` gates \
+            — a drop outside it runs whatever the probe answered, so the gate decides nothing \
+            and the session's own copy of the passphrase goes even when the key's slot never \
+            received one.
             """)
     }
 
@@ -340,6 +384,14 @@ struct ConvertKeyWiringGuardTests {
     // body span stops early, makes every positive check red and every
     // negative check green. The positives failing loudly is the intended
     // half; the negatives are why the span itself is measured here.
+    //
+    // The branch scanner claim 4 added is measured the same way and for a
+    // sharper reason: it reports a violation by finding NO span, so a
+    // scanner that finds no span for the correct code and one that finds
+    // none for the inverted code look identical from the check's side. The
+    // fixtures below run it against both spellings of the inversion, against
+    // a second drop written beside the branch, and against the shape the
+    // real handler has.
 
     @Test func theBodyScannerReadsToTheEndOfTheFunction() throws {
         let source = """
@@ -414,6 +466,77 @@ struct ConvertKeyWiringGuardTests {
         }
     }
 
+    /// A handler in the shape the real one has, with the branch condition and
+    /// an extra statement after that branch as the two knobs — the same two
+    /// the probes turned in the source when this check was measured.
+    private static func handlerFixture(gatedBy condition: String, tail: String = "") -> String {
+        """
+        func convertedKeyImported(_ key: ManagedKey, for tab: SessionTab) {
+            if var updated = failedConnectTarget(for: tab), updated.loginSetID == nil {
+                let keySlotHoldsThePassphrase = (try? ManagedKeyPassphrase.hasStoredPassphrase(
+                    keyPath: path, store: managedKeyStore, secrets: secretStore)) == true
+                if \(condition) {
+                    sessionListViewModel.dropSessionSecret(for: updated.id)
+                }
+        \(tail)
+                retryConnect(tab)
+            }
+        }
+        """
+    }
+
+    @Test func theBranchScannerReadsTheGuardedDropOutOfTheRealShape() throws {
+        let body = try Self.strippedBody(
+            after: "func convertedKeyImported(",
+            in: Self.handlerFixture(gatedBy: "keySlotHoldsThePassphrase"))
+        let identifier = try Self.probeResultIdentifier(inBlankedBody: body)
+        #expect(identifier == "keySlotHoldsThePassphrase")
+        let gate = Self.positiveGateSpan(on: identifier, inBlankedBody: body)
+        #expect(Self.occurrences(of: "dropSessionSecret(", in: gate ?? "") == 1, """
+            the branch scanner cannot find the drop in a handler written exactly as the real \
+            one is — the check over the source would then be red for the correct code, which \
+            is the other way for a guard to be useless.
+            """)
+    }
+
+    @Test("an inverted gate leaves no positive branch to be inside",
+          arguments: ["!keySlotHoldsThePassphrase", "keySlotHoldsThePassphrase == false"])
+    func theBranchScannerSeesAnInvertedGate(_ condition: String) throws {
+        let body = try Self.strippedBody(
+            after: "func convertedKeyImported(",
+            in: Self.handlerFixture(gatedBy: condition))
+        let identifier = try Self.probeResultIdentifier(inBlankedBody: body)
+        let gate = Self.positiveGateSpan(on: identifier, inBlankedBody: body)
+        #expect(gate == nil, """
+            the branch scanner accepted an inverted gate as the branch a TRUE answer opens — \
+            the check over the source would pass over exactly the violation it exists for.
+            """)
+    }
+
+    @Test func theBranchScannerSeesADropOutsideTheGate() throws {
+        let body = try Self.strippedBody(
+            after: "func convertedKeyImported(",
+            in: Self.handlerFixture(
+                gatedBy: "keySlotHoldsThePassphrase",
+                tail: "        sessionListViewModel.dropSessionSecret(for: updated.id)"))
+        let identifier = try Self.probeResultIdentifier(inBlankedBody: body)
+        let gate = Self.positiveGateSpan(on: identifier, inBlankedBody: body)
+        let dropsInsideTheGate = gate.map { Self.occurrences(of: "dropSessionSecret(", in: $0) } ?? 0
+        let dropsInTheBody = Self.occurrences(of: "dropSessionSecret(", in: body)
+        #expect(dropsInsideTheGate == 1)
+        #expect(dropsInTheBody == 2, """
+            an unconditional second drop written beside the branch is invisible to the span — \
+            the equality over the source would then compare two numbers that move together and \
+            could not report the drop the gate does not decide.
+            """)
+    }
+
+    @Test func theProbeReaderFailsClosedWhenNothingIsAsked() {
+        #expect(throws: ScanError.self) {
+            try Self.probeResultIdentifier(inBlankedBody: "func handler() { dropSessionSecret(id) }")
+        }
+    }
+
     @Test func theScannedFilesAreTheOnesThisSuiteNames() throws {
         for file in [Self.contentViewFile, Self.sheetsFile, Self.keysSheetFile] {
             let code = try Self.strictSource(of: file)
@@ -462,19 +585,104 @@ struct ConvertKeyWiringGuardTests {
         guard let openBraceIndex = stripped.firstIndex(of: "{") else {
             throw ScanError.openBraceNotFound
         }
+        let span = try balancedSpan(from: openBraceIndex, in: stripped)
+        return String(stripped[stripped.startIndex..<openBraceIndex]) + span
+    }
+
+    /// Everything from the `{` at `openBrace` through the `}` that closes
+    /// it. The brace balancing `strippedBody` has always done, lifted out so
+    /// the branch scanner below runs the same one over an inner `if` rather
+    /// than a second copy of it.
+    ///
+    /// Its input is a BLANKED view in both callers, which is what makes
+    /// counting braces meaningful at all: a `{` inside a comment or a string
+    /// literal would otherwise decide where a span ends.
+    private static func balancedSpan(from openBrace: String.Index, in source: String) throws -> String {
         var depth = 0
-        var index = openBraceIndex
-        while index < stripped.endIndex {
-            let character = stripped[index]
+        var index = openBrace
+        while index < source.endIndex {
+            let character = source[index]
             if character == "{" { depth += 1 }
             if character == "}" {
                 depth -= 1
                 if depth == 0 {
-                    return String(stripped[stripped.startIndex...index])
+                    return String(source[openBrace...index])
                 }
             }
-            index = stripped.index(after: index)
+            index = source.index(after: index)
         }
         throw ScanError.unbalancedBraces
+    }
+
+    private static func isIdentifierCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber || character == "_"
+    }
+
+    private static func occurrences(of token: String, in source: String) -> Int {
+        source.components(separatedBy: token).count - 1
+    }
+
+    /// The name the slot probe's answer is bound to, read out of `body`
+    /// instead of spelled in this file (CLAUDE.md, "Guards that name what
+    /// they watch", rule 2): the `let` whose right-hand side calls
+    /// `hasStoredPassphrase(`.
+    ///
+    /// Throws rather than returning `nil` for either half — no probe, or a
+    /// probe whose result is not bound to a name a branch could test — so a
+    /// handler that stops asking the question is red here instead of turning
+    /// the branch scanner into a search for an empty string.
+    private static func probeResultIdentifier(inBlankedBody body: String) throws -> String {
+        guard let call = body.range(of: "hasStoredPassphrase(") else { throw ScanError.probeNotFound }
+        let beforeTheCall = body[body.startIndex..<call.lowerBound]
+        guard let equals = beforeTheCall.range(of: "=", options: .backwards) else {
+            throw ScanError.probeNotBound
+        }
+        let declaration = beforeTheCall[beforeTheCall.startIndex..<equals.lowerBound]
+        guard let letKeyword = declaration.range(of: "let ", options: .backwards) else {
+            throw ScanError.probeNotBound
+        }
+        let identifier = declaration[letKeyword.upperBound...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard identifier.isEmpty == false, identifier.allSatisfy(isIdentifierCharacter) else {
+            throw ScanError.probeNotBound
+        }
+        return identifier
+    }
+
+    /// The body of the first `if` in `body` whose condition names
+    /// `identifier` POSITIVELY — `nil` when there is none.
+    ///
+    /// "Positively" is read three ways, all of them on the condition text
+    /// between the `if` and its `{`: it does not begin with `!`, it does not
+    /// carry `== false`, and the identifier itself is not preceded by `!`.
+    /// Each is a spelling of the inversion that the review planted; a
+    /// condition that carries none of them is the branch a TRUE answer
+    /// opens.
+    ///
+    /// `nil` rather than a throw: "there is no positive branch" is the
+    /// violation this scanner exists to report, and its caller says so in a
+    /// sentence the offsets could not.
+    private static func positiveGateSpan(on identifier: String, inBlankedBody body: String) -> String? {
+        var searchStart = body.startIndex
+        while let keyword = body.range(of: "if", range: searchStart..<body.endIndex) {
+            searchStart = keyword.upperBound
+            let startsAWord = keyword.lowerBound == body.startIndex
+                || !isIdentifierCharacter(body[body.index(before: keyword.lowerBound)])
+            let endsAWord = keyword.upperBound == body.endIndex
+                || !isIdentifierCharacter(body[keyword.upperBound])
+            guard startsAWord, endsAWord else { continue }
+            guard let openBrace = body[keyword.upperBound...].firstIndex(of: "{") else { continue }
+            let condition = String(body[keyword.upperBound..<openBrace])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let named = condition.range(of: identifier) else { continue }
+            let negatedInPlace = named.lowerBound > condition.startIndex
+                && condition[condition.index(before: named.lowerBound)] == "!"
+            guard condition.hasPrefix("!") == false,
+                  condition.contains("== false") == false,
+                  negatedInPlace == false
+            else { continue }
+            return try? balancedSpan(from: openBrace, in: body)
+        }
+        return nil
     }
 }
