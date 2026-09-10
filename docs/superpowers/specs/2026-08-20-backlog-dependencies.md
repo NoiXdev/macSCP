@@ -906,3 +906,18 @@ Citadel upstream has not moved since 0.12.1. The remote-port-0 debt (the
 this release.
 
 **Review date:** at the next release and before the next fork change.
+
+## Measured 2026-09-10 — fork check at the patch release after v1.4.0
+
+Three days after the v1.4.0 check, re-run with `gh api` against both
+upstreams on 2026-09-10 (UTC):
+
+- **apple/swift-nio-ssh**: commits since 2026-09-07: **0**; advisories:
+  **1** (GHSA-998x-vgvp-xwpc, carried by the fork since `0.3.8`). Fork
+  at `0.3.10`, unchanged.
+- **orlandos-nl/Citadel**: commits since 2026-09-07: **0**; advisories:
+  **0**. Fork at `0.12.1-noix.3`, unchanged.
+
+Nothing to cherry-pick, neither fork retirable; no fork change.
+
+**Review date:** at the next release and before the next fork change.
