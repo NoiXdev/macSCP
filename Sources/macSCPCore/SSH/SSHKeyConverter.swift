@@ -37,8 +37,19 @@ public enum SSHKeyConverter {
     /// by `copyItem` itself, which cannot be provoked deterministically to
     /// test). Returns `true` when a conversion ran, `false` when the copy
     /// was already OpenSSH-format.
+    ///
+    /// `async` because it waits for a child process, and a wait for a child
+    /// process is never allowed to be a blocking one here (CLAUDE.md, "Tests
+    /// never block the cooperative pool"): every test that called this
+    /// parked a cooperative-pool thread on `ssh-keygen` for as long as it
+    /// ran, and that pool is exactly as wide as the machine has cores. The
+    /// waiting is `waitForExit(_:)` below, an `await` on the process's own
+    /// termination handler. The file system work around it stays
+    /// synchronous — it is the process wait, not the I/O, that this changed
+    /// for.
     @discardableResult
-    public static func copyAsOpenSSH(from source: URL, to destination: URL, passphrase: String?) throws -> Bool {
+    public static func copyAsOpenSSH(from source: URL, to destination: URL,
+                                     passphrase: String?) async throws -> Bool {
         let tool = "/usr/bin/ssh-keygen"
         guard FileManager.default.isExecutableFile(atPath: tool) else {
             throw ConversionError.toolMissing
@@ -75,19 +86,45 @@ public enum SSHKeyConverter {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        let status: Int32
         do {
-            try process.run()
+            status = try await waitForExit(process)
         } catch {
             try? FileManager.default.removeItem(at: destination)
             throw ConversionError.conversionFailed
         }
-        process.waitUntilExit()
 
-        guard process.terminationStatus == 0, isOpenSSHFormat(fileAt: destination) else {
+        guard status == 0, isOpenSSHFormat(fileAt: destination) else {
             try? FileManager.default.removeItem(at: destination)
             throw ConversionError.conversionFailed
         }
         return true
+    }
+
+    /// Starts `process` and suspends until it exits, handing back its exit
+    /// status; throws whatever `run()` threw when it could not be started at
+    /// all.
+    ///
+    /// The termination handler is installed BEFORE `run()`, which is the
+    /// only order that cannot lose the notification for a process that exits
+    /// immediately. The continuation is resumed exactly once on each path:
+    /// `run()` throwing means the handler will never be called (nothing was
+    /// started), and clearing it there keeps that true even if the reference
+    /// outlives this call. The handler reads the exit status off the
+    /// `Process` it is HANDED rather than the one captured here, so there is
+    /// no shared mutable state between the two sides of the suspension.
+    private static func waitForExit(_ process: Process) async throws -> Int32 {
+        try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { finished in
+                continuation.resume(returning: finished.terminationStatus)
+            }
+            do {
+                try process.run()
+            } catch {
+                process.terminationHandler = nil
+                continuation.resume(throwing: error)
+            }
+        }
     }
 
     /// The in-place conversion a person runs in a terminal themselves:

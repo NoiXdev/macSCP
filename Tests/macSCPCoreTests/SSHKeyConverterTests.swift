@@ -7,6 +7,17 @@ import macSCPCore
 ///
 /// Every key is generated at RUNTIME into a temporary directory the test
 /// removes — nothing here is checked in.
+///
+/// Every call to `copyAsOpenSSH` here is an `await`, because the function
+/// is `async`, because it waits for `ssh-keygen`. It used to end in
+/// `Process.waitUntilExit()`, and a test that calls that parks a
+/// cooperative-pool thread for as long as the tool runs — the pool is
+/// exactly as wide as the machine has cores, and the CI runner has three
+/// (CLAUDE.md, "Tests never block the cooperative pool";
+/// `LoopbackTLSStub`'s initializer records the same removal). Counted
+/// 2026-09-10 against this file: six call sites in six of its eight `@Test`
+/// functions, one of them parameterised over five producers — ten cases
+/// that each held a thread until the tool exited.
 @Suite("SSHKeyConverter", .timeLimit(.minutes(2)))
 struct SSHKeyConverterTests {
     /// Five characters at least: ssh-keygen refuses a shorter one. Never
@@ -93,7 +104,7 @@ struct SSHKeyConverterTests {
         let beforeModified = try FileManager.default
             .attributesOfItem(atPath: sourcePath)[.modificationDate] as? Date
 
-        let converted = try SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: passphrase)
+        let converted = try await SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: passphrase)
         #expect(converted)
 
         let destinationText = try String(contentsOf: destinationURL, encoding: .utf8)
@@ -134,7 +145,7 @@ struct SSHKeyConverterTests {
         let destinationURL = dir.appendingPathComponent("copy-\(UUID().uuidString)")
         let beforeBytes = try Data(contentsOf: sourceURL)
 
-        let converted = try SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: nil)
+        let converted = try await SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: nil)
         #expect(converted == false)
 
         let destinationBytes = try Data(contentsOf: destinationURL)
@@ -156,7 +167,7 @@ struct SSHKeyConverterTests {
 
         var caught: SSHKeyConverter.ConversionError?
         do {
-            _ = try SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: wrong)
+            _ = try await SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: wrong)
         } catch let error as SSHKeyConverter.ConversionError {
             caught = error
         }
@@ -180,7 +191,7 @@ struct SSHKeyConverterTests {
 
         var caught: SSHKeyConverter.ConversionError?
         do {
-            _ = try SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: nil)
+            _ = try await SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: nil)
         } catch let error as SSHKeyConverter.ConversionError {
             caught = error
         }
@@ -211,7 +222,7 @@ struct SSHKeyConverterTests {
         let sourceURL = URL(fileURLWithPath: sourcePath)
         let destinationURL = dir.appendingPathComponent("world-readable-openssh-\(UUID().uuidString)")
 
-        let converted = try SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: nil)
+        let converted = try await SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: nil)
         #expect(converted == false)
 
         let mode = try FileManager.default
@@ -229,7 +240,7 @@ struct SSHKeyConverterTests {
         let sourceURL = URL(fileURLWithPath: sourcePath)
         let destinationURL = dir.appendingPathComponent("world-readable-pem-\(UUID().uuidString)")
 
-        let converted = try SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: nil)
+        let converted = try await SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: nil)
         #expect(converted)
 
         let mode = try FileManager.default

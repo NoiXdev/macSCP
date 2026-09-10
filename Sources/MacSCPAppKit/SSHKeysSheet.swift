@@ -763,6 +763,13 @@ struct ImportKeySheet: View {
     @State private var comment = ""
     @State private var passphrase = ""
     @State private var errorMessage: String?
+    /// True while the import task runs. It greys the button out
+    /// (`isImportDisabled`) for the whole conversion, which is what keeps a
+    /// second press from starting a second conversion into a second UUID
+    /// destination — the copy and the `ssh-keygen` rewrite are `await`ed
+    /// now, so the press is no longer over before the sheet can be pressed
+    /// again.
+    @State private var isImporting = false
 
     init(
         fileURL: URL, store: ManagedKeyStore,
@@ -775,7 +782,7 @@ struct ImportKeySheet: View {
     }
 
     private var isImportDisabled: Bool {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        isImporting || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -821,78 +828,96 @@ struct ImportKeySheet: View {
         .textFieldStyle(.roundedBorder)
     }
 
-    private func performImport() {
-        // `fileURL` came out of a `fileImporter` picker in the parent sheet,
-        // possibly outside this app's own sandbox container — the same
-        // access dance `ContentView.handleImportFileSelection` already
-        // documents for session imports.
-        let didAccess = fileURL.startAccessingSecurityScopedResource()
-        defer { if didAccess { fileURL.stopAccessingSecurityScopedResource() } }
+    /// Runs on the main actor and hands the work to a task on it: the
+    /// conversion below is `await`ed now, and a `Button` action cannot be
+    /// `async`. Nothing leaves the main actor — `SSHKeyConverter`'s wait for
+    /// `ssh-keygen` is a suspension rather than a blocked thread, so
+    /// awaiting it here does not hold the main actor while the tool runs.
+    ///
+    /// `isImporting` closes the door that suspension opens: until the
+    /// converter became `async` this ran to completion inside the press, so
+    /// a second press could not overlap the first. Now it can, and two
+    /// overlapping imports would write two UUID destinations and add two
+    /// keys for one picked file. The flag greys the button out
+    /// (`isImportDisabled`), and the `guard` refuses a press that reached
+    /// here anyway.
+    @MainActor private func performImport() {
+        guard !isImporting else { return }
+        isImporting = true
+        Task { @MainActor in
+            defer { isImporting = false }
+            // `fileURL` came out of a `fileImporter` picker in the parent sheet,
+            // possibly outside this app's own sandbox container — the same
+            // access dance `ContentView.handleImportFileSelection` already
+            // documents for session imports.
+            let didAccess = fileURL.startAccessingSecurityScopedResource()
+            defer { if didAccess { fileURL.stopAccessingSecurityScopedResource() } }
 
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
-        do {
-            let newID = UUID()
-            let destination = store.keyDirectory.appendingPathComponent(newID.uuidString)
-            let key: ManagedKey
+            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
             do {
-                try FileManager.default.createDirectory(
-                    at: store.keyDirectory, withIntermediateDirectories: true,
-                    attributes: [.posixPermissions: 0o700])
-                // `createDirectory` only applies `attributes` when it creates the
-                // directory; if it already existed, permissions are left untouched.
-                // Harden explicitly so the 0700 invariant holds either way.
-                try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o700],
-                    ofItemAtPath: store.keyDirectory.path(percentEncoded: false))
-                // Copy AND convert in one step: the converter writes the
-                // destination at 0600, rewrites it with `ssh-keygen -p` unless
-                // it is already OpenSSH-format, never opens the source for
-                // writing, and removes the destination itself on any failure
-                // of its own. The inspection below therefore reads the copy,
-                // not the picked file — which is what makes the stored key's
-                // recorded type and fingerprint those of the file macSCP will
-                // actually dial with.
-                try SSHKeyConverter.copyAsOpenSSH(
-                    from: fileURL, to: destination,
-                    passphrase: passphrase.isEmpty ? nil : passphrase)
-                let info = try SSHKeyImporter.inspect(
-                    privateKeyURL: destination,
-                    passphrase: passphrase.isEmpty ? nil : passphrase)
-                key = ManagedKey(
-                    id: newID, name: trimmedName, comment: trimmedComment, type: info.type,
-                    fingerprint: info.fingerprint, publicKeyOpenSSH: info.publicKeyOpenSSH,
-                    createdAt: Date(), hasPassphrase: !passphrase.isEmpty,
-                    fileName: newID.uuidString)
-                try store.add(key)
-            } catch {
-                // Anything failing AFTER the copy above (the inspection or
-                // `store.add`) must not leave a key file behind that no
-                // metadata entry claims. The removal is best-effort and safe
-                // to run even if the step that "created" the file never
-                // actually got there (`copyAsOpenSSH` removes its own
-                // destination on every failure of its own, and this covers
-                // the steps after it). No Keychain slot exists to clean up
-                // yet — that write happens below, once the key is
-                // discoverable.
-                try? FileManager.default.removeItem(at: destination)
-                throw error
-            }
-            var keptPassphrase = true
-            if !passphrase.isEmpty {
+                let newID = UUID()
+                let destination = store.keyDirectory.appendingPathComponent(newID.uuidString)
+                let key: ManagedKey
                 do {
-                    try KeychainSecretStore().savePassword(passphrase, for: newID)
+                    try FileManager.default.createDirectory(
+                        at: store.keyDirectory, withIntermediateDirectories: true,
+                        attributes: [.posixPermissions: 0o700])
+                    // `createDirectory` only applies `attributes` when it creates the
+                    // directory; if it already existed, permissions are left untouched.
+                    // Harden explicitly so the 0700 invariant holds either way.
+                    try FileManager.default.setAttributes(
+                        [.posixPermissions: 0o700],
+                        ofItemAtPath: store.keyDirectory.path(percentEncoded: false))
+                    // Copy AND convert in one step: the converter writes the
+                    // destination at 0600, rewrites it with `ssh-keygen -p` unless
+                    // it is already OpenSSH-format, never opens the source for
+                    // writing, and removes the destination itself on any failure
+                    // of its own. The inspection below therefore reads the copy,
+                    // not the picked file — which is what makes the stored key's
+                    // recorded type and fingerprint those of the file macSCP will
+                    // actually dial with.
+                    try await SSHKeyConverter.copyAsOpenSSH(
+                        from: fileURL, to: destination,
+                        passphrase: passphrase.isEmpty ? nil : passphrase)
+                    let info = try SSHKeyImporter.inspect(
+                        privateKeyURL: destination,
+                        passphrase: passphrase.isEmpty ? nil : passphrase)
+                    key = ManagedKey(
+                        id: newID, name: trimmedName, comment: trimmedComment, type: info.type,
+                        fingerprint: info.fingerprint, publicKeyOpenSSH: info.publicKeyOpenSSH,
+                        createdAt: Date(), hasPassphrase: !passphrase.isEmpty,
+                        fileName: newID.uuidString)
+                    try store.add(key)
                 } catch {
-                    keptPassphrase = false
+                    // Anything failing AFTER the copy above (the inspection or
+                    // `store.add`) must not leave a key file behind that no
+                    // metadata entry claims. The removal is best-effort and safe
+                    // to run even if the step that "created" the file never
+                    // actually got there (`copyAsOpenSSH` removes its own
+                    // destination on every failure of its own, and this covers
+                    // the steps after it). No Keychain slot exists to clean up
+                    // yet — that write happens below, once the key is
+                    // discoverable.
+                    try? FileManager.default.removeItem(at: destination)
+                    throw error
                 }
+                var keptPassphrase = true
+                if !passphrase.isEmpty {
+                    do {
+                        try KeychainSecretStore().savePassword(passphrase, for: newID)
+                    } catch {
+                        keptPassphrase = false
+                    }
+                }
+                onImported(key, keptPassphrase)
+                dismiss()
+            } catch {
+                // Fixed message only (same reasoning as `GenerateKeySheet`):
+                // never surface the underlying error, which could otherwise leak
+                // filesystem paths or `ssh-keygen` diagnostics.
+                errorMessage = L10n.string("keys.import.error", "Couldn't import the key.")
             }
-            onImported(key, keptPassphrase)
-            dismiss()
-        } catch {
-            // Fixed message only (same reasoning as `GenerateKeySheet`):
-            // never surface the underlying error, which could otherwise leak
-            // filesystem paths or `ssh-keygen` diagnostics.
-            errorMessage = L10n.string("keys.import.error", "Couldn't import the key.")
         }
     }
 }
