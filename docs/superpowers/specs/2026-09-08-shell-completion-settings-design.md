@@ -68,7 +68,12 @@ Placed after "System-Wide Installation", header "Shell Completion":
   carries the bundled tool's full path, quoted for the shell, so it
   works without the shortcut — and the footer says that installing the
   shortcut shortens it. The pane already re-reads the state on
-  appearance, so the line follows an Install click.
+  appearance, so the line follows an Install click. **Except
+  `translocated`** (the app runs from a disk image's temporary copy):
+  that path disappears when the app quits, so the section shows no line
+  and no copy button there, only the sentence to move the app to
+  Applications first — the same reason the Install button is withheld
+  in that state (Task 1 review, 2026-09-10).
 
 ## Where the text comes from
 
