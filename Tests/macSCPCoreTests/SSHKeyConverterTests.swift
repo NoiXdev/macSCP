@@ -190,6 +190,53 @@ struct SSHKeyConverterTests {
         #expect(destinationUnchanged)
     }
 
+    // MARK: - 4b: the 0600 guarantee against a world-readable SOURCE
+
+    /// Every other fixture in this file is already 0600 before
+    /// `copyAsOpenSSH` runs (`ssh-keygen`'s own output, or `PEMFixtures.restrict`
+    /// on the openssl shapes), and `FileManager.copyItem` preserves the
+    /// SOURCE's mode onto the destination — so none of the tests above would
+    /// notice the destination's own `setAttributes(0600)` call going missing.
+    /// These two start from a 0644 source instead, one on each branch
+    /// (already-OpenSSH short-circuit, needs-conversion), so a missing
+    /// `setAttributes` call is visible on the branch where nothing else
+    /// would catch it.
+    @Test("a world-readable OpenSSH source still yields a 0600 destination")
+    func worldReadableOpenSSHSourceYields0600Destination() async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sourcePath = try await PEMFixtures.sshKeygen(type: "ed25519", bits: nil, format: nil,
+                                                          passphrase: nil, in: dir)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: sourcePath)
+        let sourceURL = URL(fileURLWithPath: sourcePath)
+        let destinationURL = dir.appendingPathComponent("world-readable-openssh-\(UUID().uuidString)")
+
+        let converted = try SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: nil)
+        #expect(converted == false)
+
+        let mode = try FileManager.default
+            .attributesOfItem(atPath: destinationURL.path(percentEncoded: false))[.posixPermissions] as? Int
+        #expect(mode == 0o600)
+    }
+
+    @Test("a world-readable PEM source still yields a 0600 destination")
+    func worldReadablePEMSourceYields0600Destination() async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sourcePath = try await PEMFixtures.sshKeygen(type: "rsa", bits: 2048, format: .pem,
+                                                          passphrase: nil, in: dir)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: sourcePath)
+        let sourceURL = URL(fileURLWithPath: sourcePath)
+        let destinationURL = dir.appendingPathComponent("world-readable-pem-\(UUID().uuidString)")
+
+        let converted = try SSHKeyConverter.copyAsOpenSSH(from: sourceURL, to: destinationURL, passphrase: nil)
+        #expect(converted)
+
+        let mode = try FileManager.default
+            .attributesOfItem(atPath: destinationURL.path(percentEncoded: false))[.posixPermissions] as? Int
+        #expect(mode == 0o600)
+    }
+
     // MARK: - 5: the terminal command line
 
     @Test("the command line quotes the path for a POSIX shell")

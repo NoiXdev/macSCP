@@ -32,8 +32,10 @@ public enum SSHKeyConverter {
     /// Copies `source` to `destination` with mode 0600 and, unless the copy
     /// is already OpenSSH-format, rewrites the COPY with `ssh-keygen -p`
     /// (argument array, never a shell string). The source is never opened
-    /// for writing. On any failure after the copy, the destination is
-    /// removed. Returns `true` when a conversion ran, `false` when the copy
+    /// for writing. On any failure once the copy has started, the
+    /// destination is removed (best-effort — including a partial file left
+    /// by `copyItem` itself, which cannot be provoked deterministically to
+    /// test). Returns `true` when a conversion ran, `false` when the copy
     /// was already OpenSSH-format.
     @discardableResult
     public static func copyAsOpenSSH(from source: URL, to destination: URL, passphrase: String?) throws -> Bool {
@@ -48,6 +50,12 @@ public enum SSHKeyConverter {
         do {
             try FileManager.default.copyItem(at: source, to: destination)
         } catch {
+            // Best-effort: `copyItem` can fail after writing a partial file
+            // (e.g. it dies mid-copy on a large source); removing here holds
+            // the "removed on any failure after the copy started" invariant
+            // for that case too. Not deterministically provokable, so it has
+            // no dedicated test.
+            try? FileManager.default.removeItem(at: destination)
             throw ConversionError.sourceUnreadable
         }
         do {
