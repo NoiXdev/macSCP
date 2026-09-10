@@ -727,7 +727,8 @@ struct ReconnectPathTests {
         #expect(view.failedConnectTarget(for: tab) == nil)
         #expect(
             ConnectFailurePlan.content(
-                hasStoredSession: view.failedConnectTarget(for: tab) != nil).retryButton == nil,
+                hasStoredSession: view.failedConnectTarget(for: tab) != nil,
+                remedy: nil).retryButton == nil,
             "the surface must not offer a Retry the app has no way to perform")
 
         // Reachable only if a target vanished between render and click.

@@ -1062,6 +1062,8 @@
 "connection.failed.close" = "Close";
 "connection.failed.details" = "Details…";
 "connection.failed.details.title" = "Connection details";
+"connection.failed.convertKey" = "Convert key…";
+"connection.failed.copyCommand" = "Copy command";
 
 // Management sheets: the footer overflow menu (backlog 2026-08-20, point 5)
 "sheets.moreActions" = "More actions";

@@ -530,7 +530,7 @@ struct ReconnectWiringGuardTests {
             file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
             code: "ConnectFailureView(",
             occurrences: 1,
-            reason: "`ContentView.detail`'s failed-connect branch — the only site that renders that surface, and the one place its five actions are wired to the functions they delegate to."),
+            reason: "`ContentView.detail`'s failed-connect branch — the only site that renders that surface, and the one place its seven actions are wired to the functions they delegate to (five until the PEM private keys plan, Task 4, added \"Convert key…\" and \"Copy command\")."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView+Detail.swift",
             code: "ConnectFailureDetailsSheet(",

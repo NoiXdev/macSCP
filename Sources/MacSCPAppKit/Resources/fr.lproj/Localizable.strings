@@ -1066,6 +1066,8 @@
 "connection.failed.close" = "Fermer";
 "connection.failed.details" = "Détails…";
 "connection.failed.details.title" = "Détails de la connexion";
+"connection.failed.convertKey" = "Convertir la clé…";
+"connection.failed.copyCommand" = "Copier la commande";
 
 // Feuilles de gestion : menu de débordement du pied de page (backlog 2026-08-20, point 5)
 "sheets.moreActions" = "Autres actions";

@@ -1063,6 +1063,8 @@
 "connection.failed.close" = "Schließen";
 "connection.failed.details" = "Details…";
 "connection.failed.details.title" = "Verbindungsdetails";
+"connection.failed.convertKey" = "Schlüssel konvertieren…";
+"connection.failed.copyCommand" = "Befehl kopieren";
 
 // Verwaltungs-Sheets: Überlaufmenü in der Fußzeile (Backlog 2026-08-20, Punkt 5)
 "sheets.moreActions" = "Weitere Aktionen";

@@ -172,7 +172,7 @@ struct SSHKeysSheet: View {
             }
         }
         .sheet(item: $importTarget) { target in
-            ImportKeySheet(fileURL: target.fileURL, store: store) { keptPassphrase in
+            ImportKeySheet(fileURL: target.fileURL, store: store) { _, keptPassphrase in
                 reportKeyOutcome(keptPassphrase: keptPassphrase)
             }
         }
@@ -718,19 +718,35 @@ private struct GenerateKeySheet: View {
 
 /// Import-key sheet (M18/T5 Step 2): name/comment/optional-passphrase fields
 /// for the private key file the caller already picked via `fileImporter`.
-/// `SSHKeyImporter.inspect` (Task 4) reads the file first — on success, the
-/// file is copied into `store.keyDirectory` under a FRESH id, chmod'd 0600,
-/// the resulting `ManagedKey` persisted, and only THEN the passphrase (if any)
-/// saved to the Keychain under that SAME id. A failure up to and including the
-/// metadata write rolls the copied file back; a failed passphrase write keeps
-/// the key and reports itself instead — same ordering and the same reasoning
-/// as `GenerateKeySheet.generate()`, whose doc spells both directions out.
-private struct ImportKeySheet: View {
+///
+/// The file is copied into `store.keyDirectory` under a FRESH id and
+/// CONVERTED to OpenSSH format on the way (`SSHKeyConverter.copyAsOpenSSH`,
+/// PEM private keys plan, Task 4); the copy is what `SSHKeyImporter.inspect`
+/// then reads, the resulting `ManagedKey` is persisted, and only THEN is the
+/// passphrase (if any) saved to the Keychain under that SAME id. A failure up
+/// to and including the metadata write rolls the copied file back; a failed
+/// passphrase write keeps the key and reports itself instead — same ordering
+/// and the same reasoning as `GenerateKeySheet.generate()`, whose doc spells
+/// both directions out.
+///
+/// Converting on the way in is what keeps the store homogeneous. Until Task 4
+/// the inspection ran on the SOURCE and the copy was a byte-for-byte
+/// `copyItem`, so a PEM key imported that way would connect (the loader reads
+/// PEM now) but could never be exported — `EmbeddedKeyPorter` requires the
+/// OpenSSH boundary, for the reason its own comment gives.
+///
+/// Not `private`: the failed-connect surface presents this same sheet for its
+/// "Convert key…" remedy (`ContentView.convertFailedKey(_:)`), which is why
+/// `onImported` hands back the `ManagedKey` it created — that caller has to
+/// re-point a session at the new file, and the key is where its path comes
+/// from.
+struct ImportKeySheet: View {
     let fileURL: URL
     let store: ManagedKeyStore
-    /// `false` means the key exists but its passphrase did not reach the
-    /// Keychain — see `GenerateKeySheet.generate()`.
-    let onImported: (Bool) -> Void
+    /// The key that was created, and whether its passphrase reached the
+    /// Keychain — `false` means the key exists but the passphrase did not,
+    /// see `GenerateKeySheet.generate()`.
+    let onImported: (ManagedKey, Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
@@ -738,7 +754,10 @@ private struct ImportKeySheet: View {
     @State private var passphrase = ""
     @State private var errorMessage: String?
 
-    init(fileURL: URL, store: ManagedKeyStore, onImported: @escaping (Bool) -> Void) {
+    init(
+        fileURL: URL, store: ManagedKeyStore,
+        onImported: @escaping (ManagedKey, Bool) -> Void
+    ) {
         self.fileURL = fileURL
         self.store = store
         self.onImported = onImported
@@ -803,10 +822,9 @@ private struct ImportKeySheet: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let info = try SSHKeyImporter.inspect(
-                privateKeyURL: fileURL, passphrase: passphrase.isEmpty ? nil : passphrase)
             let newID = UUID()
             let destination = store.keyDirectory.appendingPathComponent(newID.uuidString)
+            let key: ManagedKey
             do {
                 try FileManager.default.createDirectory(
                     at: store.keyDirectory, withIntermediateDirectories: true,
@@ -817,23 +835,36 @@ private struct ImportKeySheet: View {
                 try FileManager.default.setAttributes(
                     [.posixPermissions: 0o700],
                     ofItemAtPath: store.keyDirectory.path(percentEncoded: false))
-                try FileManager.default.copyItem(at: fileURL, to: destination)
-                try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o600], ofItemAtPath: destination.path(percentEncoded: false))
-                let key = ManagedKey(
+                // Copy AND convert in one step: the converter writes the
+                // destination at 0600, rewrites it with `ssh-keygen -p` unless
+                // it is already OpenSSH-format, never opens the source for
+                // writing, and removes the destination itself on any failure
+                // of its own. The inspection below therefore reads the copy,
+                // not the picked file — which is what makes the stored key's
+                // recorded type and fingerprint those of the file macSCP will
+                // actually dial with.
+                try SSHKeyConverter.copyAsOpenSSH(
+                    from: fileURL, to: destination,
+                    passphrase: passphrase.isEmpty ? nil : passphrase)
+                let info = try SSHKeyImporter.inspect(
+                    privateKeyURL: destination,
+                    passphrase: passphrase.isEmpty ? nil : passphrase)
+                key = ManagedKey(
                     id: newID, name: trimmedName, comment: trimmedComment, type: info.type,
                     fingerprint: info.fingerprint, publicKeyOpenSSH: info.publicKeyOpenSSH,
                     createdAt: Date(), hasPassphrase: !passphrase.isEmpty,
                     fileName: newID.uuidString)
                 try store.add(key)
             } catch {
-                // Anything failing AFTER the copy above (chmod or `store.add`)
-                // must not leave a key file behind that no metadata entry
-                // claims. The removal is best-effort and safe to run even if
-                // the step that "created" the file never actually got there
-                // (e.g. `copyItem` itself is what threw). No Keychain slot
-                // exists to clean up yet — that write happens below, once the
-                // key is discoverable.
+                // Anything failing AFTER the copy above (the inspection or
+                // `store.add`) must not leave a key file behind that no
+                // metadata entry claims. The removal is best-effort and safe
+                // to run even if the step that "created" the file never
+                // actually got there (`copyAsOpenSSH` removes its own
+                // destination on every failure of its own, and this covers
+                // the steps after it). No Keychain slot exists to clean up
+                // yet — that write happens below, once the key is
+                // discoverable.
                 try? FileManager.default.removeItem(at: destination)
                 throw error
             }
@@ -845,7 +876,7 @@ private struct ImportKeySheet: View {
                     keptPassphrase = false
                 }
             }
-            onImported(keptPassphrase)
+            onImported(key, keptPassphrase)
             dismiss()
         } catch {
             // Fixed message only (same reasoning as `GenerateKeySheet`):

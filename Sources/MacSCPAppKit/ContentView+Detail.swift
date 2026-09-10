@@ -773,14 +773,20 @@ extension ContentView {
                     // could be forgotten; Edit and "Edit session" to the
                     // functions the sidebar's own Edit already goes
                     // through; Close to the ordinary tab-close entry point,
-                    // warnings and all. What the surface SAYS is
+                    // warnings and all; and the conversion pair — offered
+                    // only when Core published a remedy — to
+                    // `convertFailedKey(_:)` and
+                    // `copyConversionCommand(for:)`, the first of which ends
+                    // in `retryConnect(_:)` too rather than dialling for
+                    // itself. What the surface SAYS is
                     // `ConnectFailurePlan.content`'s answer, and the
                     // technical text is `ConnectFailureDetailText.read`'s —
                     // this branch decides nothing of its own.
                     else if surface == .failed {
                         ConnectFailureView(
                             content: ConnectFailurePlan.content(
-                                hasStoredSession: failedConnectTarget(for: tab) != nil),
+                                hasStoredSession: failedConnectTarget(for: tab) != nil,
+                                remedy: tab.connectionViewModel.lastFailureRemedy),
                             details: ConnectFailureDetailText.read(
                                 from: tab.connectionViewModel.state),
                             onRetry: { retryConnect(tab) },
@@ -794,6 +800,8 @@ extension ContentView {
                             // connect does not start a diagnosis by itself,
                             // so this stays a control the user presses.
                             onDiagnose: { showDiagnostics(for: .tab(tab)) },
+                            onConvertKey: { convertFailedKey(tab) },
+                            onCopyCommand: { copyConversionCommand(for: tab) },
                             onClose: { requestClose(tab) })
                     }
                     // Session overview branch (session overview plan, Task
@@ -1754,6 +1762,28 @@ struct ConnectFailureContent: Equatable {
     /// The SAME key the other two doors use: one action, one label, in three
     /// places.
     let diagnoseButton: Message
+    /// Opens the key-import sheet over the PEM key the failed attempt used,
+    /// so macSCP converts a copy of it (PEM private keys plan, Task 4).
+    /// `nil` unless Core published a `ConnectFailureRemedy` — that is the
+    /// one failure `ssh-keygen -p` fixes, and its payload is the only place
+    /// a path to convert comes from.
+    ///
+    /// Optional for the same reason `retryButton` is: an action that cannot
+    /// act is worse than an action that is not offered. Without a remedy
+    /// there is no file to hand the sheet.
+    let convertKeyButton: Message?
+    /// Puts the in-place conversion command on the pasteboard, for the
+    /// person who would rather run it themselves (PEM private keys plan,
+    /// Task 4). `nil` under exactly the same condition as
+    /// `convertKeyButton`.
+    ///
+    /// The COMMAND itself is not carried here and is not a display string:
+    /// it comes from `SSHKeyConverter.inPlaceCommandLine(forKeyAt:)` and
+    /// goes to `NSPasteboard`, never to a `Text` — which is what leaves this
+    /// type's "a fixed, enumerated set of catalog keys and nothing else"
+    /// claim intact. What this field holds is the button's LABEL, like every
+    /// other field here.
+    let copyCommandButton: Message?
     /// The details dialog's own headline. A field here rather than a
     /// literal in the dialog for the reason `LostConnectionContent`'s own
     /// doc comment gives for its two button labels: a type that covers the
@@ -1773,7 +1803,16 @@ enum ConnectFailurePlan {
     /// `hasStoredSession` is "this tab's failed attempt was dialed from a
     /// stored session" — resolved at the call site, the same place
     /// `LostConnectionPlan.content`'s `targetIsKnown` is.
-    static func content(hasStoredSession: Bool) -> ConnectFailureContent {
+    ///
+    /// `remedy` is what Core published about the failure
+    /// (`ConnectionViewModel.lastFailureRemedy`), and it is the whole of
+    /// what the two conversion controls turn on. No default value, on
+    /// purpose: a caller that forgot to pass it would silently render a
+    /// surface without the remedy the layer below had already worked out,
+    /// and the compiler is the cheapest place to catch that.
+    static func content(
+        hasStoredSession: Bool, remedy: ConnectFailureRemedy?
+    ) -> ConnectFailureContent {
         ConnectFailureContent(
             title: .init(
                 key: "connection.failed.title", fallback: "No connection possible"),
@@ -1793,6 +1832,15 @@ enum ConnectFailurePlan {
             closeButton: .init(key: "connection.failed.close", fallback: "Close"),
             detailsButton: .init(key: "connection.failed.details", fallback: "Details…"),
             diagnoseButton: .init(key: "diagnostics.menu", fallback: "Diagnose…"),
+            // Both, or neither: they are two ways to run the same
+            // conversion, and a surface that offered one of them alone
+            // would be answering a question nobody asked it.
+            convertKeyButton: remedy == nil
+                ? nil
+                : .init(key: "connection.failed.convertKey", fallback: "Convert key…"),
+            copyCommandButton: remedy == nil
+                ? nil
+                : .init(key: "connection.failed.copyCommand", fallback: "Copy command"),
             detailsTitle: .init(
                 key: "connection.failed.details.title", fallback: "Connection details"))
     }
@@ -2289,6 +2337,15 @@ private struct ConnectFailureView: View {
     /// more: the probes run when the user presses the panel's own button
     /// (decision of 2026-09-02), so this surface starts no dial of its own.
     let onDiagnose: () -> Void
+    /// Opens the key-import sheet over the PEM key that failed, which is
+    /// where the conversion and the redial happen (PEM private keys plan,
+    /// Task 4). Offered only when `content.convertKeyButton` is non-nil.
+    let onConvertKey: () -> Void
+    /// Copies the in-place `ssh-keygen -p` command line to the pasteboard.
+    /// The command is built in `ContentView`, from `SSHKeyConverter`; this
+    /// view never sees it, which is why the surface still renders nothing
+    /// but catalog keys.
+    let onCopyCommand: () -> Void
     let onClose: () -> Void
 
     @State private var showsDetails = false
@@ -2327,9 +2384,24 @@ private struct ConnectFailureView: View {
             // link below carries. No gate, and deliberately: every probe is
             // measured fresh, so there is no state in which asking is
             // meaningless.
-            Button(
-                L10n.string(content.diagnoseButton.key, content.diagnoseButton.fallback),
-                action: onDiagnose)
+            HStack(spacing: 12) {
+                Button(
+                    L10n.string(content.diagnoseButton.key, content.diagnoseButton.fallback),
+                    action: onDiagnose)
+                // The conversion pair, in the secondary row rather than in
+                // the row of ways ON: converting a key is a remedy for one
+                // particular failure, not a way off this surface, and it is
+                // offered at all only when the layer below said this
+                // failure has one.
+                if let convert = content.convertKeyButton {
+                    Button(L10n.string(convert.key, convert.fallback), action: onConvertKey)
+                }
+                if let copyCommand = content.copyCommandButton {
+                    Button(
+                        L10n.string(copyCommand.key, copyCommand.fallback),
+                        action: onCopyCommand)
+                }
+            }
             if details != nil {
                 Button(
                     L10n.string(content.detailsButton.key, content.detailsButton.fallback)

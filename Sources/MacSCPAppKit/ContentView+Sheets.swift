@@ -126,6 +126,34 @@ extension ContentView {
         .sheet(item: $auditLogSession) { stored in
             AuditLogSheet(session: stored, store: auditStore)
         }
+        // Key conversion sheet (PEM private keys plan, Task 4): the failed-
+        // connect surface's "Convert key…", opened by
+        // `convertFailedKey(_:)` over the PEM file that attempt used.
+        //
+        // The key manager's OWN import sheet, not a second one: the copy,
+        // the conversion, the inspection and the Keychain slot are its job
+        // already, and the passphrase field it needs for them is the field
+        // this remedy needs too. What is different is only what happens
+        // after — `convertedKeyImported(_:for:)` re-points the session and
+        // redials, where the key manager just reloads its list.
+        //
+        // The store is built the way the App builds it everywhere else
+        // (`ConnectionFormView.managedKeyPath(for:)`), so the key lands in
+        // the same directory the key picker reads.
+        //
+        // Resolved against `activeTab`, the same tab the failed-connect
+        // surface is rendered for: `ContentView.detail` renders exactly one
+        // tab's content, and a tab showing that surface is unconnected by
+        // construction — the same argument `editFailedSession(_:)`'s own doc
+        // comment makes for `editStored`'s target rule.
+        .sheet(item: $convertKeyTarget) { target in
+            ImportKeySheet(
+                fileURL: target.fileURL,
+                store: ManagedKeyStore(directory: SessionStore.defaultDirectory)
+            ) { key, _ in
+                convertedKeyImported(key, for: activeTab)
+            }
+        }
         // The window's ONE forwarding sheet (fix round 1): the profile
         // table, or the unknown-host-key question, whichever
         // `TunnelSheetPlan` says — never both, because macOS SwiftUI

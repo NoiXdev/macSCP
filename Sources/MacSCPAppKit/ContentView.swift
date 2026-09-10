@@ -126,6 +126,20 @@ struct WindowAccessor: NSViewRepresentable {
     }
 }
 
+/// The file a `.sheet(item:)` presents `ImportKeySheet` over (PEM private
+/// keys plan, Task 4) — a fresh identity per presentation, so pressing
+/// "Convert key…" twice for the same path opens the sheet twice rather than
+/// being swallowed as "the same item".
+///
+/// A type of its own rather than the `URL` itself, for the reason
+/// `SSHKeysSheet`'s own `ImportTarget` is one: `URL` is not `Identifiable`,
+/// and identifying a presentation by its path would tie the sheet's life to
+/// the file it happens to name.
+struct ImportKeyTarget: Identifiable {
+    let id = UUID()
+    let fileURL: URL
+}
+
 struct ContentView: View {
     /// Passed in from `MacSCPApp` (same instance as the `Settings` scene —
     /// no singleton, per the v2 multi-window rule). Wired into every tab's
@@ -352,6 +366,18 @@ struct ContentView: View {
     /// `Identifiable`). Opened from the sidebar's "Audit Log…" entry, works
     /// whether or not that session is currently connected.
     @State var auditLogSession: StoredSession?
+
+    // MARK: - Key conversion (PEM private keys plan, Task 4)
+
+    /// The PEM key file the failed-connect surface's "Convert key…" is
+    /// converting, or `nil` when that sheet is closed — the same
+    /// `.sheet(item:)` shape `auditLogSession` uses, opened from
+    /// `convertFailedKey(_:)` and presented in `ContentView+Sheets.swift`.
+    ///
+    /// Carries the file URL as a VALUE, taken when the button was pressed,
+    /// so a form the user keeps typing into behind the sheet cannot change
+    /// which file is converted.
+    @State var convertKeyTarget: ImportKeyTarget?
 
     // MARK: - Port forwarding (port-forwarding plan, Task 6)
 
@@ -2440,6 +2466,84 @@ struct ContentView: View {
     func editFailedSession(_ tab: SessionTab) {
         guard let stored = failedConnectTarget(for: tab) else { return }
         editStored(stored)
+    }
+
+    /// The failed-connect surface's "Convert key…" (PEM private keys plan,
+    /// Task 4): opens the key manager's own import sheet over the PEM file
+    /// the failed attempt used.
+    ///
+    /// The sheet is where the person types the passphrase and the name, and
+    /// where the copy, the conversion, the inspection and the Keychain slot
+    /// already happen — `ImportKeySheet.performImport()`, unchanged in its
+    /// order by this button. Nothing about the conversion is written here.
+    ///
+    /// The guard is the shape `retryConnect(_:)`'s is and means the same
+    /// thing: no remedy, nothing to convert. It is not reachable from the
+    /// surface — `ConnectFailurePlan` omits the button entirely without a
+    /// remedy — and stays because the published remedy is cleared at the
+    /// head of the next attempt, which another window can start.
+    func convertFailedKey(_ tab: SessionTab) {
+        guard case .convertKey(let path)? = tab.connectionViewModel.lastFailureRemedy else {
+            return
+        }
+        convertKeyTarget = ImportKeyTarget(fileURL: URL(fileURLWithPath: path))
+    }
+
+    /// The failed-connect surface's "Copy command" (PEM private keys plan,
+    /// Task 4): the in-place conversion the person runs themselves, on the
+    /// pasteboard.
+    ///
+    /// The command line comes from `SSHKeyConverter.inPlaceCommandLine`,
+    /// which quotes the path — it is not a display string and has no catalog
+    /// key, the same standing `ShellCompletionRecipe`'s lines have. It never
+    /// reaches a `Text`, which is what keeps the surface's "fixed catalog
+    /// keys only" claim true (`ConnectFailureContent`'s own doc comment, and
+    /// `theFailedSurfaceRendersNoStringOfItsOwn`).
+    func copyConversionCommand(for tab: SessionTab) {
+        guard case .convertKey(let path)? = tab.connectionViewModel.lastFailureRemedy else {
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(
+            SSHKeyConverter.inPlaceCommandLine(forKeyAt: path), forType: .string)
+    }
+
+    /// What happens once the conversion sheet has written the new managed
+    /// key (PEM private keys plan, Task 4): the session points at the
+    /// converted file, and the tab dials again.
+    ///
+    /// Two paths, and each ends in the function that already owns its half:
+    ///
+    /// * A STORED session gets the new path written into it through
+    ///   `sessionListViewModel.updateSession(_:newSecret:)`, with
+    ///   `newSecret: nil` so the session's own Keychain slot is left exactly
+    ///   as it was — the converted key's passphrase now lives under the
+    ///   MANAGED key's id, which `ManagedKeyPassphrase.resolve` reads. Then
+    ///   `retryConnect(_:)`, the one function that redials through the
+    ///   shared `connect(in:stored:)`: TOFU stays the hard stop it is, and
+    ///   this surface still adds no second dial site.
+    /// * An AD-HOC attempt has nothing stored to write to and nothing stored
+    ///   to redial, so the new path goes onto the form and
+    ///   `dismissConnectFailure(_:)` hands the tab back to it with the key
+    ///   already selected. No retry, deliberately — the failed surface
+    ///   offers an ad-hoc attempt none (`ConnectFailurePlan`'s own rule),
+    ///   and this does not add one.
+    ///
+    /// A key whose `fileName` does not address a file inside the key
+    /// directory yields no path and nothing happens, which is the same
+    /// refusal `ConnectionFormView.managedKeyPath(for:)` makes.
+    func convertedKeyImported(_ key: ManagedKey, for tab: SessionTab) {
+        guard let path = ManagedKeyStore(directory: SessionStore.defaultDirectory)
+            .privateKeyURL(for: key)?.path(percentEncoded: false)
+        else { return }
+        if var updated = failedConnectTarget(for: tab) {
+            updated.ssh?.keyPath = path
+            sessionListViewModel.updateSession(updated, newSecret: nil)
+            retryConnect(tab)
+        } else {
+            tab.connectionViewModel.keyPath = path
+            dismissConnectFailure(tab)
+        }
     }
 
     /// Fills `form` from a stored session — the ONE fill both callers of a

@@ -3,8 +3,9 @@ import Testing
 @testable import MacSCPAppKit
 @testable import macSCPCore
 
-/// Direct tests over `ConnectFailurePlan.content(hasStoredSession:)`
-/// (failed-connect surface, Task 2) — the plain, testable decision behind
+/// Direct tests over `ConnectFailurePlan.content(hasStoredSession:remedy:)`
+/// (failed-connect surface, Task 2; the `remedy:` axis is the PEM private
+/// keys plan, Task 4) — the plain, testable decision behind
 /// what a failed connect attempt says and which actions it offers.
 /// Nothing in this project renders SwiftUI, so this cannot prove what lands
 /// on screen; what it CAN prove, and does, is the mapping itself: the
@@ -33,7 +34,7 @@ struct ConnectFailurePlanTests {
     /// would not catch a mutation that also dropped one of the other three
     /// under this same condition — so every button's key is asserted.
     @Test func allFourActionsAppearWithAStoredSession() {
-        let content = ConnectFailurePlan.content(hasStoredSession: true)
+        let content = ConnectFailurePlan.content(hasStoredSession: true, remedy: nil)
         #expect(content.retryButton?.key == "connection.failed.retry")
         #expect(content.editButton.key == "connection.failed.edit")
         #expect(content.editSessionButton?.key == "connection.failed.editSession")
@@ -59,7 +60,7 @@ struct ConnectFailurePlanTests {
     /// violates each. (Task 2's own report claimed it would fail "exactly
     /// one of the two"; that was wrong, and the report has been corrected.)
     @Test func retryAndEditSessionAreAbsentForAnAdHocConnection() {
-        let content = ConnectFailurePlan.content(hasStoredSession: false)
+        let content = ConnectFailurePlan.content(hasStoredSession: false, remedy: nil)
         #expect(content.editSessionButton == nil)
         #expect(content.retryButton == nil, """
             an ad-hoc failure has no stored session to redial, and there is deliberately no \
@@ -76,7 +77,7 @@ struct ConnectFailurePlanTests {
     /// nothing about it depends on where the attempt came from.
     @Test(arguments: [true, false])
     func theDetailsControlIsOfferedEitherWay(hasStoredSession: Bool) {
-        let content = ConnectFailurePlan.content(hasStoredSession: hasStoredSession)
+        let content = ConnectFailurePlan.content(hasStoredSession: hasStoredSession, remedy: nil)
         #expect(content.detailsButton.key == "connection.failed.details")
         #expect(content.detailsTitle.key == "connection.failed.details.title")
     }
@@ -92,8 +93,8 @@ struct ConnectFailurePlanTests {
     /// exactly that through.) The fixed key is asserted as well, so the
     /// test still fails if both sides change together.
     @Test func theHeadlineDoesNotDependOnWhetherASessionIsStored() {
-        let stored = ConnectFailurePlan.content(hasStoredSession: true)
-        let adHoc = ConnectFailurePlan.content(hasStoredSession: false)
+        let stored = ConnectFailurePlan.content(hasStoredSession: true, remedy: nil)
+        let adHoc = ConnectFailurePlan.content(hasStoredSession: false, remedy: nil)
         #expect(stored.title == adHoc.title)
         #expect(stored.title.key == "connection.failed.title")
     }
@@ -114,8 +115,8 @@ struct ConnectFailurePlanTests {
     /// satisfy a test written as two independent lookups of whichever arm
     /// it kept.
     @Test func theBodyTellsAnAdHocFailureHowToGetBack() {
-        let stored = ConnectFailurePlan.content(hasStoredSession: true)
-        let adHoc = ConnectFailurePlan.content(hasStoredSession: false)
+        let stored = ConnectFailurePlan.content(hasStoredSession: true, remedy: nil)
+        let adHoc = ConnectFailurePlan.content(hasStoredSession: false, remedy: nil)
         #expect(stored.body.key != adHoc.body.key, """
             both cases now show the same sentence. The ad-hoc case has no Retry button, so \
             its body is the only thing that can say why "Edit" is the way to try again.
@@ -129,17 +130,59 @@ struct ConnectFailurePlanTests {
         #expect(!adHoc.body.fallback.isEmpty)
     }
 
+    /// The two conversion controls (PEM private keys plan, Task 4) turn on
+    /// the remedy Core published and on nothing else — not on whether a
+    /// session is stored, which is why both arms of `hasStoredSession` are
+    /// driven here.
+    ///
+    /// Both directions, and both buttons in each: a plan that offered them
+    /// unconditionally would leave "Convert key…" on every failed dial,
+    /// pointing at whatever the form's key path happened to be — including
+    /// no key at all. Core answers `nil` for exactly that case
+    /// (`ConnectFailureRemedy.convertKey`'s own doc comment: the path is
+    /// never empty), and this is the half of that promise the surface has
+    /// to keep.
+    @Test("the conversion buttons appear exactly with a remedy", arguments: [true, false])
+    func theConversionButtonsAppearExactlyWithARemedy(hasStoredSession: Bool) {
+        let without = ConnectFailurePlan.content(
+            hasStoredSession: hasStoredSession, remedy: nil)
+        #expect(without.convertKeyButton == nil, """
+            the surface offers "Convert key…" for a failure `ssh-keygen -p` cannot fix —             there is no key path to hand the sheet, so the button can only open a converter             over nothing.
+            """)
+        #expect(without.copyCommandButton == nil, """
+            the surface offers "Copy command" with no remedy, which would put a command line             for an unknown file on the pasteboard.
+            """)
+
+        let with = ConnectFailurePlan.content(
+            hasStoredSession: hasStoredSession, remedy: .convertKey(path: "/k"))
+        #expect(with.convertKeyButton?.key == "connection.failed.convertKey")
+        #expect(with.copyCommandButton?.key == "connection.failed.copyCommand")
+    }
+
     /// Every message this plan can produce, across both `hasStoredSession`
-    /// values. Shared by the key-set sweep and the catalog check below so
-    /// the two cannot disagree about what "reachable" means.
+    /// values AND both remedy states. Shared by the key-set sweep and the
+    /// catalog check below so the two cannot disagree about what
+    /// "reachable" means.
+    ///
+    /// The remedy arm joined it in Task 4 of the PEM private keys plan: two
+    /// of the plan's messages exist only when Core published a remedy, and
+    /// a sweep that drove `hasStoredSession` alone would have declared the
+    /// surface's key set complete without ever producing them.
     private static func everyReachableMessage() -> [ConnectFailureContent.Message] {
-        [true, false].flatMap { hasStoredSession -> [ConnectFailureContent.Message] in
-            let content = ConnectFailurePlan.content(hasStoredSession: hasStoredSession)
-            return [
-                content.title, content.body, content.editButton,
-                content.closeButton, content.detailsButton, content.detailsTitle,
-                content.diagnoseButton,
-            ] + [content.retryButton, content.editSessionButton].compactMap { $0 }
+        let remedies: [ConnectFailureRemedy?] = [nil, .convertKey(path: "/k")]
+        return [true, false].flatMap { hasStoredSession -> [ConnectFailureContent.Message] in
+            remedies.flatMap { remedy -> [ConnectFailureContent.Message] in
+                let content = ConnectFailurePlan.content(
+                    hasStoredSession: hasStoredSession, remedy: remedy)
+                return [
+                    content.title, content.body, content.editButton,
+                    content.closeButton, content.detailsButton, content.detailsTitle,
+                    content.diagnoseButton,
+                ] + [
+                    content.retryButton, content.editSessionButton,
+                    content.convertKeyButton, content.copyCommandButton,
+                ].compactMap { $0 }
+            }
         }
     }
 
@@ -152,9 +195,11 @@ struct ConnectFailurePlanTests {
     /// would have to invent a key outside this set, or change one of these
     /// strings, and either fails here.
     ///
-    /// Ten keys, recounted while adding the diagnostics door: the title, the
-    /// TWO bodies (stored and ad-hoc), the four action labels, the details
-    /// control's label and headline, and "Diagnose…".
+    /// Twelve keys, recounted while adding the two conversion controls (PEM
+    /// private keys plan, Task 4): the title, the TWO bodies (stored and
+    /// ad-hoc), the four action labels, the details control's label and
+    /// headline, "Diagnose…", and the conversion pair ("Convert key…" and
+    /// "Copy command").
     ///
     /// The second body is exactly the kind of addition that makes this
     /// sweep worth keeping. `hasStoredSession` now selects a KEY rather
@@ -177,6 +222,12 @@ struct ConnectFailurePlanTests {
             "connection.failed.close",
             "connection.failed.details",
             "connection.failed.details.title",
+            // The two conversion controls (PEM private keys plan, Task 4).
+            // Reachable only with a remedy, which is why
+            // `everyReachableMessage()` drives that axis as well — see its
+            // own doc comment.
+            "connection.failed.convertKey",
+            "connection.failed.copyCommand",
             // Shared with the sidebar's session menu and the connect-error
             // dialog: one action offered from three places, under one label.
             // It is inside this set — rather than an exception to it —
@@ -293,19 +344,20 @@ struct ConnectFailurePlanTests {
         // details", and a check that skips a key it could make is a check
         // that would not notice that key going untranslated.
         //
-        // Eight keys are checked, recounted in the pass that adds the
-        // diagnostics door: the title, both bodies, the FIVE action labels
-        // (retry, edit, edit-session, close, diagnose) and the details
-        // headline, less the two exclusions — ten reachable less two, which
-        // is what the assertion below says. It said "seven" until review
-        // round 1 and "eight" over nine reachable keys until this pass; a
-        // number written into a comment is a claim to be checked, not a
-        // decoration on the list next to it.
+        // Ten keys are checked, recounted in the pass that adds the two
+        // conversion controls: the title, both bodies, the SEVEN action
+        // labels (retry, edit, edit-session, close, diagnose, convert-key,
+        // copy-command) and the details headline, less the two exclusions —
+        // twelve reachable less two, which is what the assertion below
+        // says. It said "seven" until review round 1, "eight" over nine
+        // reachable keys until the diagnostics door, and "eight" over ten
+        // until this pass; a number written into a comment is a claim to be
+        // checked, not a decoration on the list next to it.
         let translated = Set(Self.everyReachableMessage().map(\.key)).subtracting([
             "connection.failed.details",
             "diagnostics.menu",
         ])
-        #expect(translated.count == 8)
+        #expect(translated.count == 10)
         for key in translated.sorted() {
             #expect(german[key] != english[key], """
                 `\(key)` reads the same in German as in English \
