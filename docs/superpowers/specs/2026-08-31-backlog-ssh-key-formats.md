@@ -443,6 +443,10 @@ measured on both paths, with and without a passphrase.** Not covered, by
 decision: PEM containers, PuTTY `.ppk`, DSA, FIDO2 `sk-*` keys,
 certificates.
 
+**Addendum 2026-09-10:** PEM containers — reversed; see
+`2026-09-10-pem-private-keys-design.md`. PuTTY, DSA, `sk-*` and
+certificates stay as decided.
+
 ## Done 2026-09-02 (night) — RSA on Go-based servers, both paths
 
 The refusal carried over from the agent path is gone: an RSA file key

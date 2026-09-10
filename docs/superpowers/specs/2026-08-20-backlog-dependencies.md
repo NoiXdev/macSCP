@@ -921,3 +921,40 @@ upstreams on 2026-09-10 (UTC):
 Nothing to cherry-pick, neither fork retirable; no fork change.
 
 **Review date:** at the next release and before the next fork change.
+
+## Done 2026-09-10 — two transitive dependencies become direct, for the PEM private keys plan
+
+`Package.swift` names two packages that were already in the dependency
+graph but not products either target could import:
+
+- **`swift-asn1`** (`.package(url: "https://github.com/apple/swift-asn1.git",
+  from: "1.0.0")`, product `SwiftASN1`) is now a direct dependency of
+  `macSCPCore`. Previously transitive, pulled in through swift-crypto
+  and Citadel; `Package.resolved` already pinned it at **1.7.1** before
+  this change and still does. Why: `PEMPrivateKeyDecoder`
+  (`docs/superpowers/specs/2026-09-10-pem-private-keys-design.md`)
+  parses PKCS#1, SEC1, PKCS#8 and RFC 8018 DER structures that carry
+  optional and context-tagged members — exactly where a hand-written
+  ~80-line ASN.1 reader starts lying, per that design's own reasoning
+  for rejecting one.
+- **`BigInt`** (`.package(url: "https://github.com/attaswift/BigInt.git",
+  from: "5.2.0")`, product `BigInt`) is now a direct dependency of the
+  `macSCPCoreTests` target ONLY — no non-test target imports it.
+  Previously transitive, pulled in through Citadel; `Package.resolved`
+  already pinned it at **5.7.0** before this change and still does.
+  Why: the RSA components `p`, `q` and `iqmp` appear in no public key
+  and Citadel's own parser discards them once a key verifies, so
+  nothing in the tree can check them against an external oracle the
+  way `ssh-keygen -y` checks `n` and `e` — the decoder tests instead
+  compute RFC 8017 §3.2's own arithmetic (`p · q = n`,
+  `iqmp · q ≡ 1 (mod p)`) with arbitrary-precision integers.
+
+**Measured 2026-09-10, `git diff --stat 374f9ac2..HEAD -- Package.resolved`:
+empty.** Neither package moved a version; both changes are additions of
+a `dependencies:` product entry to an already-resolved pin, nothing this
+plan's nine commits (`79589a00`..`38e1e062`) did touched the resolution
+itself.
+
+**Review date:** at the next release and before the next fork change (as
+above — neither of these two is a fork, so neither carries its own
+review clock).

@@ -1,8 +1,12 @@
 # PEM private keys: read, convert, or say why not — design
 
 **Status:** approved by the maintainer on 2026-09-10 ("alle drei Varianten
-anbieten … ok, konvertieren, lesen"; design "Ja, so ausschreiben"). Not
-implemented yet; the implementing commits will be listed here.
+anbieten … ok, konvertieren, lesen"; design "Ja, so ausschreiben").
+Implemented, nine commits: Task 1 (the decoder and the container writer)
+`79589a00`, `ce366821`; Task 2 (the converter) `7f3e02b8`, `d22f09d4`;
+Task 3 (the loader reads PEM, and the failure names what it cannot)
+`5634c012`, `71fdf3f2`; Task 4 (convert from the key manager and from
+the failed surface) `6dba7444`, `6e89ee9b`, `38e1e062`.
 
 ## The occasion
 
@@ -240,6 +244,16 @@ comment). Counted 2026-09-10 with
 `grep -rn "pemNotSupported\|keyPEMNotSupported" Sources Tests`: 4 source
 files, 4 test files.
 
+`ConnectionViewModel.failedState(for:jumpEnabled:jumpKeyPath:jumpAuthChoice:keyPath:)`
+gained the `keyPath` parameter Part 3 depends on, defaulted to `""`. It
+is always the TARGET hop's key path, raw as the form holds it — because
+that is what the form knows there. A PEM key that fails to read on the
+JUMP hop therefore still reaches `failedState` with `keyPath: ""`, which
+the `.pemNotReadable` arm reads as "no path to name" and answers with
+`core.connect.keyPEMNotReadable.noPath %@` (Part 3) rather than the
+two-argument message and its command line — not because the jump key's
+own path is unknowable, but because this parameter does not carry it.
+
 ### What is not read, by decision
 
 DES, 3DES and RC2 (no primitive in swift-crypto; adding one for a cipher
@@ -350,15 +364,64 @@ command"), both non-nil exactly when `remedy` is `.convertKey`.
   the surface offers no retry for an ad-hoc attempt, by the failed-surface
   plan's own rule, and this does not add one.
 
+**Three decisions the reviews made, not in the draft above:**
+
+1. **The tab is captured at press, not resolved at dismissal.** The
+   design's `ImportKeyTarget` above carries only `fileURL`; Task 4's
+   review (Critical C1) found that reading `activeTab` when the sheet
+   is dismissed lets a tab switch in between re-point the wrong tab's
+   session. `ImportKeyTarget` therefore also carries the tab the failed
+   attempt belongs to, captured when "Convert key…" is pressed — a
+   reference, so the conversion still reaches it if the tab is dragged
+   to another window before the sheet closes.
+2. **The session's own Keychain slot is dropped after re-pointing only
+   when the managed key's own slot holds the passphrase.** The
+   `newSecret: nil` sentence above stays true — `updateSession` is still
+   called with `newSecret: nil` — but a second write follows it:
+   `ManagedKeyPassphrase.hasStoredPassphrase(keyPath:store:secrets:)`
+   is asked whether the managed key's own slot holds a passphrase, and
+   only when it answers `true` does `SessionListViewModel
+   .dropSessionSecret(for:)` remove the session's now-redundant copy.
+   `keptPassphrase` from the import sheet's own report is not this
+   answer and is not used for it (Task 4 review, finding I3, closed in
+   two rounds) — that flag means something else (whether the typed
+   passphrase reached the Keychain at all) and answering a different
+   question with it would risk deleting a secret's only copy on a
+   probe that could not actually confirm one existed elsewhere. `try?`
+   around the probe collapses "no slot" and "could not find out" onto
+   the same answer, deliberately in the safe direction: no drop.
+3. **A stored session bound to a login set takes the ad-hoc route.**
+   `loginSetID == nil` gates the branch above, not just the write
+   inside it — a set-bound session does not own its `ssh.keyPath` or
+   its Keychain slot (the set does, through `LoginResolver.resolve`),
+   so re-pointing the session's own fields would persist a path no dial
+   reads. Such a session therefore falls to the `else` arm: converted
+   for this one attempt, with the set left untouched. The residue this
+   leaves is recorded in `docs/BACKLOG.md`'s Interface section: the
+   next submit re-applies the set (`SessionListViewModel+Submit.swift`),
+   so the converted key is dialled only after the person switches the
+   login to Manual or edits the set itself; offering a login-set edit
+   from the failed surface is a scope decision, not made here.
+
 ## Part 3 — the message
 
-`core.connect.keyPEMNotSupported` is replaced by
-`core.connect.keyPEMNotReadable %@ %@`:
+`core.connect.keyPEMNotSupported` is replaced by two keys: one for a dial
+that has a key path, `core.connect.keyPEMNotReadable %@ %@`; one for a
+dial that has none, `core.connect.keyPEMNotReadable.noPath %@`.
 
-> macSCP cannot read this PEM key: %1$@. Convert a copy in the terminal
-> with %2$@ (the passphrase stays), press Convert key… to let macSCP do
-> it, or load the key into the ssh-agent and choose the agent as the
-> login.
+> Note, 2026-09-10: the two message texts and the `pemFeature.keyType`
+> sentence below are the design's ORIGINAL wording. Task 3's fix round 1
+> (`71fdf3f2`) corrected all three after review — `ssh-keygen -p`
+> rewrites its target IN PLACE, not onto a copy, and the sentence as
+> first drafted said "convert a copy," which is true of the button, not
+> of the command it sits beside. What follows is the catalog's current
+> text, copied verbatim from
+> `Sources/macSCPCore/Resources/en.lproj/Localizable.strings`.
+
+> macSCP cannot read this PEM key: %1$@. Convert it in place in the
+> terminal with %2$@ (the passphrase stays), press Convert key… to let
+> macSCP convert a copy, or load the key into the ssh-agent and choose
+> the agent as the login.
 
 `%1$@` is one of five feature sentences, each its own key so every
 language can phrase it:
@@ -367,15 +430,27 @@ language can phrase it:
 |---|---|
 | `core.connect.pemFeature.cipher %@` | its %@ encryption is not supported |
 | `core.connect.pemFeature.scheme %@` | its %@ password scheme is not supported |
-| `core.connect.pemFeature.keyType %@` | it holds a %@ key |
+| `core.connect.pemFeature.keyType %@` | its key type (%@) is not one macSCP connects with |
 | `core.connect.pemFeature.putty` | it is a PuTTY key file, not PEM |
 | `core.connect.pemFeature.malformed` | its contents do not parse |
 
 `%2$@` is `SSHKeyConverter.inPlaceCommandLine(forKeyAt:)` over the
 attempt's key path. The path is the one the person typed; it is not a
-credential, and the existing `keyNotFound %@` already prints it. Six
-keys in each of the four Core catalogs (`en`, `de`, `fr`, `pl`), German
-in du-form. `DialProbes.reason(for:)` says
+credential, and the existing `keyNotFound %@` already prints it.
+
+The `.noPath` variant carries no `%2$@` and no in-place remedy at all:
+
+> macSCP cannot read this PEM key: %@. Convert it with ssh-keygen -p, or
+> load it into the ssh-agent and choose the agent as the login.
+
+Its rule is the one Part 1 states below: an empty key path means there
+is no file to name in a command line, so the sentence builds no command
+(`ssh-keygen -p` appears as the bare tool name, not a command line
+`SSHKeyConverter` built) and offers no "convert it in place" clause —
+only the button and the agent remain as remedies.
+
+Seven keys in each of the four Core catalogs (`en`, `de`, `fr`, `pl`),
+German in du-form. `DialProbes.reason(for:)` says
 `"the key is a PEM file with a feature this app does not read"` — fixed
 text, no payload, per that function's rule.
 
@@ -385,6 +460,28 @@ Red first, every one; the plan carries the exact cases. Keys are
 generated at runtime, never checked in; no real host name appears
 anywhere; passphrases live in named constants so an `#expect` failure
 cannot print one.
+
+Two things measured in Task 1 that the plan's own text did not say:
+
+- **PBKDF2 is called through `KDF.Insecure.PBKDF2.deriveKey(…,
+  unsafeUncheckedRounds:)`**, not the checked variant. swift-crypto's
+  checked `deriveKey` refuses fewer than 210 000 rounds; every producer
+  in the design's measurement table above (`ssh-keygen`, `openssl`)
+  writes PBES2 files with 2048 rounds, RFC 8018's own example count and
+  what every reader of this format actually has to accept. Reading a
+  file with a lower round count is not a choice this decoder makes —
+  it is what a PEM/PKCS#8 private key on disk looks like.
+- **The RSA components `p`, `q` and `iqmp` are measured arithmetically,
+  not against an external oracle.** `ssh-keygen -y` derives a public key
+  from `n` and `e` alone, so it can confirm those two components but
+  says nothing about the other three — Citadel's own `Insecure.RSA
+  .PrivateKey` discards `p`, `q` and `iqmp` once it has verified the key
+  parses, so the container round-trip test does not see them either.
+  What pins them instead is RFC 8017 §3.2's own arithmetic: `p · q = n`
+  and `iqmp · q ≡ 1 (mod p)`, computed with `BigInt`. This is why
+  `BigInt` (resolved 5.7.0, already in the graph through Citadel)
+  became a direct dependency of the `macSCPCoreTests` target — see
+  `docs/superpowers/specs/2026-08-20-backlog-dependencies.md`.
 
 - **Decoder unit tests** (`PEMPrivateKeyDecoderTests`): for RSA 2048 and
   ECDSA 256/384/521, each of `-m PEM` and `-m PKCS8`, plain and with a

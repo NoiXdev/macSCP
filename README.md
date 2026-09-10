@@ -30,7 +30,9 @@ and move files between them with drag and drop, buttons, or the Finder.
   next time you launch, disconnected until you click in.
 - **SSH key authentication** — ed25519, RSA, and ECDSA keys, from a file
   or your SSH agent, with or without a passphrase; entries from
-  `~/.ssh/config` appear automatically.
+  `~/.ssh/config` appear automatically. PEM-format private keys
+  (PKCS#1, SEC1, PKCS#8, plain or passphrase-protected) open directly,
+  and the key manager converts a PEM file to OpenSSH format on import.
 - **SSH agent support** — authenticate with the identities already loaded
   in your local agent; the private key never leaves it.
 - **Host-key pinning** — first-connect confirmation with the key
