@@ -351,6 +351,84 @@ struct PEMPrivateKeyDecoderTests {
         }
     }
 
+    // MARK: - 8a: a refusal carries the decoder's constant, not the file's text
+
+    /// A name that appears in NO table in the source — neither the cipher
+    /// switch nor the label switch — and therefore in no constant either of
+    /// them can throw. That is what makes an echo visible: with a real name
+    /// (`DES-EDE3-CBC`, `CERTIFICATE`) the constant and the file's own text
+    /// are the same string, so the two cases above cannot tell a lookup from
+    /// a payload built out of the header.
+    ///
+    /// Not a secret — a fabrication, so it is written into these fixtures
+    /// plainly. The `Bool` computed before each expectation is the project's
+    /// rule for the OTHER kind of value; here it also keeps the failure
+    /// message about the invariant rather than about a string comparison.
+    private static let fabricatedName = "ZZZ-FABRICATED-9"
+
+    /// `PEMEncryption.aesKeyLength(forCipherNamed:)`'s `default:` arm, with
+    /// the file's `DEK-Info` cipher name in scope as `name`. The final
+    /// whole-branch review planted `.cipher(name)` there and the whole Core
+    /// suite stayed green — nothing measured that the refusal names a
+    /// constant, which is the invariant in the plan's global constraints
+    /// ("`PEMReadFailure` payloads are the decoder's own constants, never
+    /// bytes from the file").
+    ///
+    /// The cipher is read before the passphrase is: a passphrase is passed
+    /// anyway, so a reordering shows up as a different error rather than as
+    /// this test asking a second question by accident.
+    @Test("a DEK-Info cipher no table carries is named unknown, not echoed")
+    func namesAnUnknownCipherWithoutEchoingTheHeader() throws {
+        let text = """
+            -----BEGIN RSA PRIVATE KEY-----
+            Proc-Type: 4,ENCRYPTED
+            DEK-Info: \(Self.fabricatedName),0123456789ABCDEF0123456789ABCDEF
+
+            AAAA
+            -----END RSA PRIVATE KEY-----
+            """
+        var caught: PEMPrivateKeyDecoder.DecodeError?
+        do {
+            _ = try PEMPrivateKeyDecoder.decode(text, passphrase: Self.passphrase)
+        } catch let error as PEMPrivateKeyDecoder.DecodeError {
+            caught = error
+        }
+        #expect(caught == .notReadable(.cipher("unknown")))
+        let refusalCarriesTheFilesOwnText = String(describing: caught).contains(Self.fabricatedName)
+        #expect(refusalCarriesTheFilesOwnText == false, """
+            the refusal for an unknown `DEK-Info` cipher carries the name the FILE wrote \
+            instead of this decoder's own `"unknown"` — a header can claim any cipher name, \
+            and the payload ends up in a user-visible message.
+            """)
+    }
+
+    /// `PEMPrivateKeyDecoder.decode`'s `default:` arm, with `armor.label` in
+    /// scope. Same invariant, same review probe (`.keyType(armor.label)`),
+    /// and the same reason a real label cannot measure it: this fixture's
+    /// label is in no switch in the source.
+    @Test("a label no table carries is named unknown, not echoed")
+    func namesAnUnknownLabelWithoutEchoingIt() throws {
+        let label = "\(Self.fabricatedName) KEY"
+        let text = """
+            -----BEGIN \(label)-----
+            AAAA
+            -----END \(label)-----
+            """
+        var caught: PEMPrivateKeyDecoder.DecodeError?
+        do {
+            _ = try PEMPrivateKeyDecoder.decode(text, passphrase: nil)
+        } catch let error as PEMPrivateKeyDecoder.DecodeError {
+            caught = error
+        }
+        #expect(caught == .notReadable(.keyType("unknown")))
+        let refusalCarriesTheFilesOwnText = String(describing: caught).contains(Self.fabricatedName)
+        #expect(refusalCarriesTheFilesOwnText == false, """
+            the refusal for an unknown PEM label carries the label the FILE wrote instead of \
+            this decoder's own `"unknown"` — a boundary line can claim anything, and the \
+            payload ends up in a user-visible message.
+            """)
+    }
+
     // MARK: - 8b: what is not a PEM file at all
 
     /// `.notPEM` is the answer for a file this decoder does not own, and it
