@@ -53,6 +53,13 @@ let package = Package(
         // independently choosable for a CLIENT key.
         .package(url: "https://github.com/NoiXdev/swift-nio-ssh.git", exact: "0.3.10"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
+        // DER for the PEM private-key reader (`PEMPrivateKeyDecoder`).
+        // Already in the graph through swift-crypto and Citadel at 1.7.1;
+        // naming it here makes it a product `macSCPCore` may import. The
+        // structures it reads — PKCS#1, SEC1, PKCS#8, RFC 8018 — carry
+        // optional and context-tagged members, which is where a hand-written
+        // reader starts lying (see the PEM design of 2026-09-10).
+        .package(url: "https://github.com/apple/swift-asn1.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "d5ee56e1c74777120f3af688600d336de4201bd2"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
@@ -73,6 +80,8 @@ let package = Package(
                 // over SHA-512 lives in `_RSA.Signing`, which `Crypto` does
                 // not vend.
                 .product(name: "_CryptoExtras", package: "swift-crypto"),
+                // `PEMPrivateKeyDecoder` reads DER with it.
+                .product(name: "SwiftASN1", package: "swift-asn1"),
             ],
             resources: [
                 .process("Resources/en.lproj"),
