@@ -1,6 +1,7 @@
 # Shell completion from Settings — design
 
-**Status:** approved by the maintainer in chat on 2026-09-08; plan at
+**Status:** implemented 2026-09-10 at `eb0c387f`; approved by the
+maintainer in chat on 2026-09-08; plan at
 `docs/superpowers/plans/2026-09-08-shell-completion-settings.md`.
 
 ## Goal
