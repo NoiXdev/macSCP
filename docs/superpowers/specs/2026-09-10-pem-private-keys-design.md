@@ -1,0 +1,442 @@
+# PEM private keys: read, convert, or say why not — design
+
+**Status:** approved by the maintainer on 2026-09-10 ("alle drei Varianten
+anbieten … ok, konvertieren, lesen"; design "Ja, so ausschreiben"). Not
+implemented yet; the implementing commits will be listed here.
+
+## The occasion
+
+A stored SSH session pointed at a key in PEM format
+(`-----BEGIN RSA PRIVATE KEY-----`). macSCP refused it with the message
+the key-formats plan of 2026-09-01 wrote for exactly that case
+(`core.connect.keyPEMNotSupported`: convert with `ssh-keygen -p`, or use
+the agent). That refusal was a decision, recorded in
+`2026-08-31-backlog-ssh-key-formats.md` ("Not covered, by decision: PEM
+containers, PuTTY `.ppk`, DSA, FIDO2 `sk-*` keys, certificates"). The
+maintainer has now reversed it for PEM, in three parts:
+
+1. **Read.** The loader opens PEM keys itself. No dialog when it succeeds.
+2. **Convert.** One click turns a copy of the file into an OpenSSH-format
+   managed key and re-points the session at it. The original is never
+   touched.
+3. **OK.** For what the reader cannot open, the message names the exact
+   feature that stops it and carries the exact command, and the failed
+   surface offers to copy that command.
+
+## What is measured (2026-09-10, this machine)
+
+`ssh-keygen` is OpenSSH_10.3p1 with LibreSSL 3.3.6; `openssl` is LibreSSL
+3.3.6. Every file below was generated at runtime in the scratchpad; none
+is checked in.
+
+| producer | flag | header | encryption |
+|---|---|---|---|
+| ssh-keygen -t rsa | `-m PEM` | `RSA PRIVATE KEY` (PKCS#1) | `Proc-Type: 4,ENCRYPTED` / `DEK-Info: AES-128-CBC,<16-byte hex IV>` |
+| ssh-keygen -t ecdsa (256/521) | `-m PEM` | `EC PRIVATE KEY` (SEC1) with **explicit** curve parameters (`prime-field`, not a named-curve OID) | same `DEK-Info: AES-128-CBC` |
+| ssh-keygen -t rsa / ecdsa | `-m PKCS8` | `PRIVATE KEY` / `ENCRYPTED PRIVATE KEY` | PBES2, PBKDF2 (8-byte salt, 2048 rounds, **no PRF parameter** → hmacWithSHA1 by RFC 8018 default), `aes-128-cbc` |
+| ssh-keygen -t ed25519 | `-m PEM` / `-m PKCS8` | refused: "error in libcrypto" | — |
+| openssl rsa | `-aes256` | `RSA PRIVATE KEY` | `DEK-Info: AES-256-CBC` |
+| openssl rsa | `-des3` | `RSA PRIVATE KEY` | `DEK-Info: DES-EDE3-CBC,<8-byte hex IV>` |
+| openssl genpkey rsa | `-aes256` | `ENCRYPTED PRIVATE KEY` | PBES2, PBKDF2 (no PRF), `aes-256-cbc` |
+| openssl pkcs8 -topk8 | `-v2 des3` | `ENCRYPTED PRIVATE KEY` | PBES2, PBKDF2, `des-ede3-cbc` |
+| openssl pkcs8 -topk8 | `-v2prf …`, `-scrypt` | LibreSSL 3.3.6 has neither flag | — |
+| openssl ecparam -genkey | | `EC PRIVATE KEY` with a **named** curve OID (`prime256v1`) | — |
+| openssl genpkey ed25519 | | "Algorithm ed25519 not found" | — |
+
+`ssh-keygen -Z aes256-cbc -m PEM` still writes `AES-128-CBC`; the legacy
+cipher cannot be chosen from ssh-keygen here.
+
+`ssh-keygen -p -P <pass> -N <pass> -f <copy>` rewrote every one of these
+copies — PKCS#1, SEC1, PKCS#8 plain and encrypted, legacy AES and legacy
+DES-EDE3, PBES2 DES-EDE3 — to `-----BEGIN OPENSSH PRIVATE KEY-----`, and
+`-P '' -N ''` did the same for the unencrypted ones. It refuses a copy
+whose mode is 0644 ("bad permissions"); the copy must be 0600 before the
+call.
+
+What the library stack offers, read from `.build/checkouts`:
+
+- swift-crypto 3.15.1: `Insecure.MD5`; `_CryptoExtras`: `AES._CBC.decrypt`
+  (PKCS#7 padding checked), `KDF.Insecure.PBKDF2.deriveKey` with
+  `insecureSHA1`, `sha256`, `sha384`, `sha512` (and `insecureMD5`,
+  `insecureSHA224`). No DES, no 3DES, no RC2, no scrypt.
+- swift-asn1 1.7.1 is already in the dependency graph (through
+  swift-crypto and Citadel), not yet a product `macSCPCore` names.
+- CryptoKit (what `Crypto` re-exports on macOS): `P256/P384/P521.Signing
+  .PrivateKey(rawRepresentation:)` take the raw scalar (32/48/66 bytes);
+  `Curve25519.Signing.PrivateKey(rawRepresentation:)` takes the 32-byte
+  seed.
+- Citadel fork 0.12.1-noix.3: `Insecure.RSA.PrivateKey` has no
+  component initialiser reachable from outside the module (its
+  `init(privateExponent:publicExponent:modulus:)` takes BoringSSL
+  `BIGNUM` pointers, and `CCryptoBoringSSL` is not a product `macSCPCore`
+  can import). Its `init(sshRsa:decryptionKey:)` parses an
+  `openssh-key-v1` container whose private section reads, in order,
+  `n, e, d, iqmp, p, q` as SSH strings (`OpenSSHKey.swift:26-44`), the
+  public blob `e, n`; cipher `none` has block size 8, padding is `1, 2, …`
+  and must be **shorter** than the block size (`paddingLength <
+  cipher.blockSize`). Citadel's own writer can produce a padding of 8 on
+  an aligned buffer, which its parser would refuse; macSCP's writer pads
+  `(8 - len % 8) % 8` bytes.
+
+## Part 1 — the reader
+
+### Shape
+
+One new Core type, `PEMPrivateKeyDecoder`, pure: text and passphrase in,
+key material out, no file system, no subprocess. The loader calls it when
+the file begins with a PEM boundary other than OpenSSH's, exactly where it
+throws `pemNotSupported` today.
+
+```
+PEM text ──► armor (label, headers, base64)
+   ├─ "OPENSSH PRIVATE KEY"           → not this decoder (Citadel, as today)
+   ├─ "RSA PRIVATE KEY"  ─┐
+   ├─ "EC PRIVATE KEY"   ─┼─ legacy headers? ─► EVP_BytesToKey(MD5) + AES-CBC ─► DER
+   ├─ "PRIVATE KEY"      ─┘                                                      │
+   ├─ "ENCRYPTED PRIVATE KEY" ─► PBES2 params ─► PBKDF2 + AES-CBC ─► PKCS#8 DER ─┤
+   └─ anything else (PuTTY, certificates, …) ─► notReadable                      ▼
+                                                        PKCS#1 │ SEC1 │ PKCS#8 (RSA, EC, Ed25519)
+                                                                        │
+                                                        DecodedPrivateKey (.rsa / .ecdsa / .ed25519)
+```
+
+```swift
+public enum PEMPrivateKeyDecoder {
+    public enum Curve: Equatable, Sendable { case p256, p384, p521 }
+    public struct RSAPrivateKeyComponents: Equatable, Sendable {
+        /// Big-endian magnitudes without a leading zero byte.
+        public let n, e, d, p, q, iqmp: Data
+    }
+    public enum DecodedPrivateKey: Equatable, Sendable {
+        case rsa(RSAPrivateKeyComponents)
+        case ecdsa(curve: Curve, scalar: Data)   // scalar left-padded to 32/48/66 bytes
+        case ed25519(seed: Data)                  // 32 bytes
+    }
+    public enum DecodeError: Error, Equatable, Sendable {
+        case notPEM
+        case passphraseRequired
+        case wrongPassphrase
+        case notReadable(PEMReadFailure)
+    }
+    /// True for "-----BEGIN <label>-----" with any label but OpenSSH's.
+    public static func isPEM(_ text: String) -> Bool
+    public static func decode(_ text: String, passphrase: String?) throws -> DecodedPrivateKey
+}
+
+/// What stopped the reader. Every payload is one of the decoder's OWN
+/// constants — never a substring of the file. A file's header can claim any
+/// cipher name; an unknown one is reported as "unknown", not echoed.
+public enum PEMReadFailure: Equatable, Sendable {
+    case cipher(String)    // "DES-EDE3-CBC", "DES-CBC", "RC2-CBC", "unknown"
+    case scheme(String)    // "PBES1", "PKCS#12", "scrypt", "unknown"
+    case keyType(String)   // "DSA", "multi-prime RSA", "unknown"
+    case putty
+    case malformed
+}
+```
+
+### What it reads
+
+- **Armor.** `-----BEGIN <label>-----`, optional RFC 1421 headers
+  (`Proc-Type`, `DEK-Info`) terminated by a blank line, base64 body,
+  `-----END <label>-----`. Labels: `RSA PRIVATE KEY`, `EC PRIVATE KEY`,
+  `PRIVATE KEY`, `ENCRYPTED PRIVATE KEY`. `PuTTY-User-Key-File-` at the
+  head of the file is `.putty` (it is not PEM but it is the other format
+  people have on disk, and naming it costs one line). Every other label
+  → `.keyType("unknown")`; a body that is not base64 or DER → `.malformed`.
+- **Legacy encryption** (`Proc-Type: 4,ENCRYPTED`, `DEK-Info: <cipher>,<hex IV>`):
+  key = OpenSSL `EVP_BytesToKey` with MD5, one iteration, salt = first 8
+  bytes of the IV, concatenating `MD5(prev ‖ pass ‖ salt)` blocks until
+  the key length is reached (16/24/32 bytes for AES-128/192/256-CBC).
+  Decrypt with `AES._CBC.decrypt`. `DES-CBC`, `DES-EDE3-CBC`, `RC2-CBC`
+  → `.cipher(<that name>)`; any other → `.cipher("unknown")`. No
+  passphrase on an encrypted file → `passphraseRequired` before any
+  arithmetic.
+- **PBES2** (`ENCRYPTED PRIVATE KEY`, RFC 8018): `EncryptedPrivateKeyInfo
+  ::= SEQUENCE { AlgorithmIdentifier, OCTET STRING }`. Scheme OID must be
+  PBES2 `1.2.840.113549.1.5.13`; PBES1 (`1.2.840.113549.1.5.{1,3,4,6,10,11}`)
+  → `.scheme("PBES1")`, PKCS#12 PBE (`1.2.840.113549.1.12.1.*`) →
+  `.scheme("PKCS#12")`, anything else → `.scheme("unknown")`. KDF must be
+  PBKDF2 `1.2.840.113549.1.5.12` (salt OCTET STRING, iterations INTEGER,
+  optional keyLength, optional PRF AlgorithmIdentifier: absent →
+  hmacWithSHA1 `1.2.840.113549.2.7`; `.9` SHA-256, `.10` SHA-384, `.11`
+  SHA-512; `.8` SHA-224 and anything else → `.scheme("unknown")`); scrypt
+  `1.3.6.1.4.1.11591.4.11` → `.scheme("scrypt")`. Cipher: aes128-CBC
+  `2.16.840.1.101.3.4.1.2`, aes192-CBC `.22`, aes256-CBC `.42` with the IV
+  as parameter; des-ede3-cbc `1.2.840.113549.3.7` → `.cipher("DES-EDE3-CBC")`,
+  rc2 `1.2.840.113549.3.2` → `.cipher("RC2-CBC")`, else `.cipher("unknown")`.
+  Iterations above 10 000 000 are refused as `.malformed` rather than run
+  (a hostile file must not pin a core for minutes).
+- **PKCS#1** `RSAPrivateKey ::= SEQUENCE { version 0, n, e, d, p, q, dp,
+  dq, qInv }`; version 1 (multi-prime) → `.keyType("multi-prime RSA")`.
+- **SEC1** `ECPrivateKey ::= SEQUENCE { version 1, privateKey OCTET
+  STRING, [0] parameters OPTIONAL, [1] publicKey OPTIONAL }`. Parameters
+  are either a named-curve OID (P-256 `1.2.840.10045.3.1.7`, P-384
+  `1.3.132.0.34`, P-521 `1.3.132.0.35`) or `SpecifiedECDomain`, in which
+  case the curve is identified by the field prime `p` in `fieldID`
+  against the three NIST primes; any other prime, any other field type,
+  and any other named OID → `.keyType("unknown")`. For a PKCS#8-wrapped
+  EC key the parameters come from the outer `AlgorithmIdentifier` when
+  the inner structure omits them.
+- **PKCS#8** `PrivateKeyInfo ::= SEQUENCE { version 0, AlgorithmIdentifier,
+  privateKey OCTET STRING, … }`: rsaEncryption `1.2.840.113549.1.1.1` →
+  PKCS#1 inside; id-ecPublicKey `1.2.840.10045.2.1` → SEC1 inside;
+  id-Ed25519 `1.3.101.112` → `OCTET STRING` holding a 32-byte `OCTET
+  STRING`; id-dsa `1.2.840.10040.4.1` → `.keyType("DSA")`; else
+  `.keyType("unknown")`.
+- **Wrong passphrase.** Neither legacy PEM nor PBES2 carries a MAC. A
+  wrong passphrase shows up as a padding error from `AES._CBC` or as DER
+  that does not parse. Both, when a passphrase was supplied, map to
+  `wrongPassphrase`; without one, an encrypted file is `passphraseRequired`
+  before decryption is attempted. A file that is not encrypted and does
+  not parse is `.malformed`.
+
+DER is read with swift-asn1 (`SwiftASN1`), added to `Package.swift` as a
+direct dependency of `macSCPCore` at the version already resolved
+(`from: "1.0.0"`, resolved 1.7.1). Hand-written ASN.1 was the alternative
+and was rejected: the structures above have optional and context-tagged
+members, which is exactly where a ~80-line reader starts lying.
+
+### Feeding the keys to a connection
+
+- **ECDSA and Ed25519**: `P256/P384/P521.Signing.PrivateKey(rawRepresentation:)`
+  and `Curve25519.Signing.PrivateKey(rawRepresentation:)` — the same
+  NIOSSH-native types the loader already returns for OpenSSH files.
+- **RSA**: a second new Core type, `OpenSSHKeyContainer.unencryptedRSA(_:
+  comment:) -> String`, serialises the components into an `openssh-key-v1`
+  container (cipher `none`, kdf `none`, one key, public blob `ssh-rsa e n`,
+  private section `checkint checkint "ssh-rsa" n e d iqmp p q comment
+  padding`, mpint encoding with a leading zero byte where the high bit is
+  set) and the loader hands that string to Citadel's existing
+  `Insecure.RSA.PrivateKey(sshRsa:)`. The container lives in memory only
+  and is never written anywhere. This keeps the one RSA path there is:
+  `SSHAuthenticationMethod.rsaSHA2(…, includeSHA1Fallback: false)`,
+  pinned by `rsaKeyOffersSHA2Only`. A fork initialiser would have been
+  the other route; it was rejected because it changes the fork for a
+  format the fork does not otherwise know, and the container writer is
+  ~40 lines that Citadel's own parser verifies in the round-trip test.
+
+### The loader
+
+`SSHPrivateKeyLoader.authentication(username:keyPath:passphrase:)`:
+
+```
+if PEMPrivateKeyDecoder.isPEM(contents) {
+    decode → map DecodeError (.passphraseRequired / .wrongPassphrase / .notReadable → SSHKeyError.pemNotReadable) 
+    dispatch DecodedPrivateKey → SSHAuthenticationMethod (same four arms as the OpenSSH path)
+} else { … unchanged … }
+```
+
+`SSHKeyError.pemNotSupported` becomes `pemNotReadable(PEMReadFailure)`.
+The name changes because the meaning did: it is no longer "PEM is not
+supported", it is "this PEM file has a feature the reader does not
+have". Every mention moves with it — the loader, `ConnectionViewModel`'s
+mapping, `DialProbes.reason(for:)`, `KeyType`'s and `SSHKeyImporter`'s
+comments, the porter test's comment, and the four tests that name the
+case (`SSHPrivateKeyLoaderTests.pemKeyIsReported`,
+`ConnectionViewModelTests.pemNotSupportedMapsToLocalizedMessage`,
+`ConnectionDiagnosticsTests` row `"PEM"`, `EmbeddedKeyPorterTests`'
+comment). Counted 2026-09-10 with
+`grep -rn "pemNotSupported\|keyPEMNotSupported" Sources Tests`: 4 source
+files, 4 test files.
+
+### What is not read, by decision
+
+DES, 3DES and RC2 (no primitive in swift-crypto; adding one for a cipher
+OpenSSH itself deprecated is the wrong direction), PBES1 and PKCS#12 PBE
+(same reasoning, they are MD5/SHA-1-with-DES schemes), scrypt (no
+producer on this machine to measure against), DSA (the loader does not
+connect with DSA in any format), PuTTY. Each is named in the message and
+handled by Part 2, because `ssh-keygen -p` reads all of them but PuTTY.
+
+## Part 2 — convert
+
+### Core
+
+```swift
+public enum SSHKeyConverter {
+    public enum ConversionError: Error, Equatable, Sendable {
+        case toolMissing, sourceUnreadable, conversionFailed, destinationExists
+    }
+    /// The OpenSSH boundary is the first non-blank line of the file.
+    public static func isOpenSSHFormat(fileAt url: URL) -> Bool
+    /// Copies `source` to `destination` with mode 0600 and, unless the copy
+    /// is already OpenSSH-format, rewrites the COPY with
+    /// `/usr/bin/ssh-keygen -p -P <passphrase> -N <passphrase> -f <destination>`
+    /// (argument array, never a shell string). The source is never opened for
+    /// writing. On any failure after the copy, the destination is removed.
+    /// Returns `true` when a conversion ran, `false` when the copy was already
+    /// OpenSSH-format.
+    @discardableResult
+    public static func copyAsOpenSSH(from source: URL, to destination: URL, passphrase: String?) throws -> Bool
+    /// The in-place conversion a person runs in a terminal:
+    /// `ssh-keygen -p -f '<path>'` with `PosixQuoting.singleQuoted`.
+    public static func inPlaceCommandLine(forKeyAt path: String) -> String
+}
+```
+
+The passphrase reaches `ssh-keygen` through `-P`/`-N` in the argument
+array — the same accepted minor `SSHKeyImporter` and `SSHKeyGenerator`
+document today (visible to the same user via `ps` for the life of the
+process, never in a shell string, never in a log). A converted key keeps
+the passphrase it had; the converter sets no new one and prints nothing.
+
+### The key manager imports by converting
+
+`ImportKeySheet.performImport()` changes its order: copy the picked file
+into the key directory as `<uuid>` through `SSHKeyConverter.copyAsOpenSSH`,
+**then** `SSHKeyImporter.inspect` the copy, then `store.add`. Today the
+inspection runs on the source and the copy is a byte-for-byte
+`copyItem`; a PEM key imported that way would connect (Part 1) but could
+not be exported (`EmbeddedKeyPorter` requires the OpenSSH boundary, for
+the reason its own comment gives). Converting on the way in keeps the
+store homogeneous. `onImported` gains the `ManagedKey` it created:
+`(ManagedKey, keptPassphrase: Bool)`. `ImportKeySheet` stops being
+`private` so the failed surface can present it.
+
+### The failed surface
+
+Core publishes what the surface may offer, typed, next to the reason it
+already publishes:
+
+```swift
+public enum ConnectFailureRemedy: Equatable, Sendable {
+    /// The key file the failed attempt used, tilde-expanded. Offered only for
+    /// `SSHKeyError.pemNotReadable` — the one failure `ssh-keygen -p` fixes.
+    case convertKey(path: String)
+}
+// ConnectionViewModel
+public private(set) var lastFailureRemedy: ConnectFailureRemedy?
+```
+
+Written in `connect()`'s `catch` beside `lastFailureReason`, cleared at
+the head of every attempt beside it, and **not** inside `fail(_:kind:)`
+— `ConnectionViewModelSourceGuardTests.theOneFailureWriterSetsTheVerdictFirst`
+reads the lines after that function's signature and a sixth line would
+push `state = newState` out of its window. The path is the form's
+`keyPath` at the time of the attempt, with the same target/jump
+imprecision the existing `pemNotSupported` mapping documents.
+
+`ConnectFailurePlan.content(hasStoredSession:remedy:)` gains two optional
+messages, `convertKeyButton` (`connection.failed.convertKey`, "Convert
+key…") and `copyCommandButton` (`connection.failed.copyCommand`, "Copy
+command"), both non-nil exactly when `remedy` is `.convertKey`.
+`ConnectFailureView` renders them in the secondary row beside
+"Diagnose…" and "Details…", with `onConvertKey` and `onCopyCommand`.
+
+`ContentView`:
+
+- `onCopyCommand`: `NSPasteboard.general` ← `SSHKeyConverter.inPlaceCommandLine(forKeyAt:)`.
+  The command is not a display string (the precedent is
+  `ShellCompletionRecipe`'s lines); `theFailedSurfaceRendersNoStringOfItsOwn`
+  keeps holding because the view still renders only catalog keys — the
+  command goes to the pasteboard, not to a `Text`.
+- `onConvertKey`: sets `@State var convertKeyTarget: ImportKeyTarget?`
+  (`Identifiable` by `UUID`, carrying the file URL) and a `.sheet(item:)`
+  presents `ImportKeySheet(fileURL:store:onImported:)` with the app's
+  `ManagedKeyStore(directory: SessionStore.defaultDirectory)`. The sheet
+  is where the person types the passphrase (it has the field) and a name
+  (prefilled with the file name); the converter and the Keychain slot
+  are the sheet's existing job.
+- `onImported(key, _)`: `path = store.privateKeyURL(for: key)`. With a
+  stored session (`failedConnectTarget(for:)` non-nil): copy it, set
+  `ssh.keyPath = path`, `sessionListViewModel.updateSession(copy,
+  newSecret: nil)` (nil leaves the session's own secret slot alone; the
+  passphrase now lives under the managed key's id, which
+  `ManagedKeyPassphrase.resolve` reads), then `retryConnect(tab)` — the
+  same one dial path, TOFU and all. Without a stored session:
+  `tab.connectionViewModel.keyPath = path` and `dismissConnectFailure(tab)`,
+  which returns the person to the form with the new key selected —
+  the surface offers no retry for an ad-hoc attempt, by the failed-surface
+  plan's own rule, and this does not add one.
+
+## Part 3 — the message
+
+`core.connect.keyPEMNotSupported` is replaced by
+`core.connect.keyPEMNotReadable %@ %@`:
+
+> macSCP cannot read this PEM key: %1$@. Convert a copy in the terminal
+> with %2$@ (the passphrase stays), press Convert key… to let macSCP do
+> it, or load the key into the ssh-agent and choose the agent as the
+> login.
+
+`%1$@` is one of five feature sentences, each its own key so every
+language can phrase it:
+
+| key | en |
+|---|---|
+| `core.connect.pemFeature.cipher %@` | its %@ encryption is not supported |
+| `core.connect.pemFeature.scheme %@` | its %@ password scheme is not supported |
+| `core.connect.pemFeature.keyType %@` | it holds a %@ key |
+| `core.connect.pemFeature.putty` | it is a PuTTY key file, not PEM |
+| `core.connect.pemFeature.malformed` | its contents do not parse |
+
+`%2$@` is `SSHKeyConverter.inPlaceCommandLine(forKeyAt:)` over the
+attempt's key path. The path is the one the person typed; it is not a
+credential, and the existing `keyNotFound %@` already prints it. Six
+keys in each of the four Core catalogs (`en`, `de`, `fr`, `pl`), German
+in du-form. `DialProbes.reason(for:)` says
+`"the key is a PEM file with a feature this app does not read"` — fixed
+text, no payload, per that function's rule.
+
+## Tests
+
+Red first, every one; the plan carries the exact cases. Keys are
+generated at runtime, never checked in; no real host name appears
+anywhere; passphrases live in named constants so an `#expect` failure
+cannot print one.
+
+- **Decoder unit tests** (`PEMPrivateKeyDecoderTests`): for RSA 2048 and
+  ECDSA 256/384/521, each of `-m PEM` and `-m PKCS8`, plain and with a
+  passphrase (`ssh-keygen`); legacy AES-256 and DES-EDE3 and PBES2
+  DES-EDE3 (`openssl`); named-curve SEC1 (`openssl ecparam`); Ed25519
+  PKCS#8 built in the test from a CryptoKit seed
+  (`302e020100300506032b657004220420 ‖ seed` — ssh-keygen 10.3 writes
+  none, and LibreSSL 3.3.6 knows no ed25519). Each readable file
+  decodes; the public key derived from the decoded material equals
+  `ssh-keygen -y -f` on the same file (an external oracle, not our
+  writer). Wrong passphrase → `wrongPassphrase`, none → `passphraseRequired`,
+  DES-EDE3 → `.cipher("DES-EDE3-CBC")`, a PuTTY header → `.putty`. The
+  PBES2 branch for an explicit PRF (SHA-256) cannot be produced on this
+  machine; the test builds one with swift-asn1 and the swift-crypto
+  primitives and says so in its comment — it measures the OID table and
+  the wiring, not an external producer.
+- **Container round trip** (`OpenSSHKeyContainerTests`): components from
+  a PEM RSA key → container → `Insecure.RSA.PrivateKey(sshRsa:)` parses
+  it and its public key line equals `ssh-keygen -y`; padding is measured
+  for lengths 0 through 7.
+- **Loader**: `pemKeyIsReported` becomes `aPEMKeyLoads` (RSA and each
+  curve, plain and encrypted, both `-m` flags); a DES-EDE3 file throws
+  `pemNotReadable(.cipher("DES-EDE3-CBC"))`; `rsaKeyOffersSHA2Only` gets
+  a PEM twin.
+- **Rig (gated)**: `FileKeyTypeIntegrationTests` gains PEM shapes —
+  `makeInstalledKey` takes `extraKeygenArguments:`; RSA `-m PEM`, ECDSA
+  P-256 `-m PEM`, RSA `-m PKCS8` encrypted — and each logs in and lists.
+- **Converter**: every readable and unreadable sample above converts to
+  a 0600 OpenSSH copy with the source byte-identical afterwards; a
+  wrong passphrase leaves no destination; an already-OpenSSH source is
+  copied without a conversion (`returns false`); the command line quotes
+  a path with a space and an apostrophe.
+- **Import sheet**: no App test target; the Core-side order (copy,
+  convert, inspect) is what the converter tests cover, and the sheet's
+  wiring is read in review.
+- **Failed surface** (`ConnectFailurePlanTests`): the two buttons appear
+  exactly with a remedy; their keys resolve in all four App catalogs;
+  German du-form; `everyReachableMessageComesFromTheFixedCatalogKeySet`
+  extended. `ConnectionViewModelTests`: a `pemNotReadable` dial publishes
+  `.convertKey(path:)` and the localized message; any other error
+  publishes `nil`; the head of the next attempt clears it.
+- **Guards**: the `.sheet(item: $convertKeyTarget)` presentation and the
+  `retryConnect`/`updateSession` wiring are scanned by a new
+  `ConvertKeyWiringGuardTests`, positive and negative side by side, over
+  comment-blanked source.
+
+## What stays as it was
+
+- The agent route, the OpenSSH-format path, and the SHA-2-only RSA offer.
+- TOFU. Conversion re-dials through `connect(in:stored:)`, nothing else.
+- No secret in any store, state, log or reason string: the decoder's
+  errors carry the decoder's own constants; the remedy carries a path.
+- No key material is written by the reader. The converter writes one
+  file, the copy the person asked for, into the key directory the store
+  already protects (0700 / 0600).
