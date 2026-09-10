@@ -1,3 +1,15 @@
+## [1.5.0](https://github.com/NoiXdev/macSCP/compare/v1.4.0...v1.5.0) (2026-09-10)
+
+### Features
+
+* **settings:** shell completion for the command-line tool, one copyable line per shell ([5262774](https://github.com/NoiXdev/macSCP/commit/52627742a502df080e8f43a8edab9425c9516e04))
+
+### Bug Fixes
+
+* **browser:** the name column's marker has a fixed box, so a marker-less row keeps its name at the left edge ([79048e5](https://github.com/NoiXdev/macSCP/commit/79048e538d84bb359b7ed0f5be88defa318d0734))
+* **settings:** a translocated app is offered no completion line, and the guard reads the recipe's own spellings ([eb0c387](https://github.com/NoiXdev/macSCP/commit/eb0c387f1a8b9e842a2d984367a4ce99ca358764))
+* **settings:** bash's completion line is eval "$(…)", and the shell test asserts the completion is registered ([23fdd60](https://github.com/NoiXdev/macSCP/commit/23fdd60f61f6449c4d74806a6bd4dbd92438d636))
+
 ## [1.4.0](https://github.com/NoiXdev/macSCP/compare/v1.3.0...v1.4.0) (2026-09-07)
 
 ### Features
