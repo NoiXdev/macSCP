@@ -926,8 +926,9 @@
 "settings.cli.completion.where.bash" = "À placer dans ~/.bashrc — ou dans ~/.bash_profile, que Terminal lit pour les shells de connexion. La ligne demande sa complétion actuelle à l’outil installé à chaque démarrage d’un shell : une mise à jour de macSCP ne demande donc aucune seconde étape.";
 "settings.cli.completion.where.fish" = "À placer dans ~/.config/fish/config.fish. La ligne demande sa complétion actuelle à l’outil installé à chaque démarrage d’un shell : une mise à jour de macSCP ne demande donc aucune seconde étape.";
 "settings.cli.completion.zshCompinit" = "zsh a besoin en plus d’un système de complétion démarré : autoload -Uz compinit && compinit, avant cette ligne. La configuration livrée par macOS le fait déjà.";
-"settings.cli.completion.footer.installed" = "La ligne appelle le raccourci macscp-cli par son nom : elle continue donc de fonctionner après une mise à jour ou un déplacement de macSCP.";
+"settings.cli.completion.footer.installed" = "La ligne appelle le raccourci macscp-cli par son nom : elle continue donc de fonctionner après une mise à jour ou un déplacement de macSCP — à condition que ~/.local/bin fasse partie du PATH de votre shell, comme l’indique la note ci-dessus.";
 "settings.cli.completion.footer.notInstalled" = "Sans le raccourci, la ligne doit nommer l’outil situé dans le bundle de l’app. Installez le raccourci ci-dessus pour la raccourcir — et pour qu’elle continue de fonctionner si macSCP est déplacé.";
+"settings.cli.completion.translocated" = "macSCP s’exécute depuis une copie temporaire dont le chemin disparaît dès que macSCP se ferme — un fichier de démarrage le garderait pour toujours. Déplacez macSCP dans votre dossier Applications et ouvrez-le depuis là : cette section affichera alors une ligne à conserver.";
 
 /* Snippets sheet (Terminal-Snippets milestone, Task 3) */
 "snippets.sheet.title" = "Snippets";

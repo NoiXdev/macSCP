@@ -899,11 +899,18 @@ struct CLIMatrix: Sendable {
     /// `Bundle(for:)`.
     private final class TestBundleAnchor {}
 
-    /// Locates the already-built `macscp-cli` binary. The one definition
-    /// every gated case in this target calls through — `CLIRoundtripITests`
-    /// included, since 2026-09-04; it used to carry a second copy of exactly
-    /// this lookup (`locateCLIBinary()`), folded into this one when Task 4
-    /// of the CLI test matrix plan closed out.
+    /// Locates the already-built `macscp-cli` binary. The one definition in
+    /// this target: every gated case calls through it, `CLIRoundtripITests`
+    /// included since 2026-09-04, and so does every ungated suite that runs
+    /// the binary. Each of those used to carry its own copy of exactly this
+    /// lookup, under the name `locateCLIBinary()` —
+    /// `CLIRoundtripITests`' was folded in when Task 4 of the CLI test
+    /// matrix plan closed out, and the remaining SIX on 2026-09-10 (counted
+    /// in that pass, one per file: `CLICompletionScriptTests`,
+    /// `CLIRootHelpTests`, `CLISessionNameCompletionTests`,
+    /// `CLISessionsJSONRoundtripTests`, `CLISessionsEditingTests`,
+    /// `CLITunnelsEditingTests`). The suites that want a path rather than a
+    /// URL call `binaryPath()` below.
     ///
     /// It deliberately does NOT run `swift build`. A test running under
     /// `swift test` is inside a process that holds SwiftPM's lock on
@@ -949,6 +956,13 @@ struct CLIMatrix: Sendable {
             throw CLIMatrixError.binaryNotFound(url.path(percentEncoded: false))
         }
         return url
+    }
+
+    /// `binaryURL()` as a path, which is what the suites that hand the
+    /// binary straight to a subprocess want. A forward, not a second
+    /// lookup: everything the doc comment above says applies here.
+    static func binaryPath() throws -> String {
+        try binaryURL().path(percentEncoded: false)
     }
 
     /// The subcommands the binary itself offers, read from its `--help`.

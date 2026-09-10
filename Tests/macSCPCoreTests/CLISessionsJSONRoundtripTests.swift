@@ -8,16 +8,17 @@ import Testing
 /// runs the built `macscp-cli` binary as a subprocess against it, the same
 /// way `CLIRoundtripITests` drives every other subcommand. This test used
 /// to live inside `CLIRoundtripITests` (gated behind the Docker rig) even
-/// though it never touches the rig — it moved out once `locateCLIBinary()`
+/// though it never touches the rig — it moved out once the binary lookup
 /// became bundle-relative (final-branch-review finding, 2026-09-02) rather
-/// than a third copy of the old repo-root-relative lookup.
+/// than a third copy of the old repo-root-relative one. That lookup is now
+/// `CLIMatrix.binaryPath()`, and this suite calls it like every other.
 @Suite("CLI sessions --json roundtrip")
 struct CLISessionsJSONRoundtripTests {
     /// Confirms the whole path end to end through the real subprocess: the
     /// tag and group filters, and that `--json` emits one line whose fields
     /// match what was stored.
     @Test func sessionsJSONListsAStoredSessionWithItsGroupAndTags() async throws {
-        let binary = try Self.locateCLIBinary()
+        let binary = try CLIMatrix.binaryPath()
         let storageDirectory = try Self.makeTempDirectory(prefix: "macscp-cli-sessions-storage")
         defer { try? FileManager.default.removeItem(at: storageDirectory) }
 
@@ -50,17 +51,9 @@ struct CLISessionsJSONRoundtripTests {
         #expect(object["tags"] as? [String] == ["prod"])
     }
 
-    // MARK: - Test harness (still self-contained, not yet folded into
-    // `CLIMatrix.binaryURL()`: `CLIRoundtripITests` and every suite in
-    // `CLIMatrixITests.swift` call through that shared lookup, but this
-    // suite, `CLIRootHelpTests` and `CLISessionNameCompletionTests` still
-    // each carry their own small copy of it — `CLISessionsKindHelpTextTests`
-    // did the same before it was deleted, for the same reason stated
-    // there).
-
-    /// Exists only so `locateCLIBinary()` has a class defined in THIS file
-    /// to hand `Bundle(for:)`.
-    private final class TestBundleAnchor {}
+    // MARK: - Test harness (the store seeding and the subprocess call; the
+    // binary is located by `CLIMatrix.binaryPath()`, which this suite's own
+    // copy of the lookup was folded into on 2026-09-10)
 
     private static func makeTempDirectory(prefix: String) throws -> URL {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -68,38 +61,6 @@ struct CLISessionsJSONRoundtripTests {
         try FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true)
         return directory
-    }
-
-    /// Locates the already-built `macscp-cli` binary, bundle-relative —
-    /// see `CLIMatrix.binaryURL()` for why: it deliberately does not run
-    /// `swift build` (that would deadlock on SwiftPM's `.build` lock), and
-    /// reading a repo-root-relative `.build/debug` path instead of the test
-    /// bundle's own sibling breaks under `--scratch-path` and `-c release`.
-    /// (`CLIRoundtripITests` used to carry this same lookup under this same
-    /// name; it now calls through `CLIMatrix.binaryURL()` instead, folded
-    /// there when Task 4 of the CLI test matrix plan closed out.)
-    private static func locateCLIBinary() throws -> String {
-        if let override = ProcessInfo.processInfo.environment["MACSCP_CLI_BINARY"],
-           !override.isEmpty {
-            guard FileManager.default.isExecutableFile(atPath: override) else {
-                throw HarnessError("MACSCP_CLI_BINARY is set to \(override), which is not executable")
-            }
-            return override
-        }
-        let productsDirectory = Bundle(for: TestBundleAnchor.self).bundleURL
-            .deletingLastPathComponent()
-        let binaryPath = productsDirectory
-            .appendingPathComponent("macscp-cli")
-            .path(percentEncoded: false)
-        guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
-            throw HarnessError("""
-                macscp-cli not found at \(binaryPath).
-                Build it before running this suite:
-                  swift build --product macscp-cli
-                or point MACSCP_CLI_BINARY at an existing binary.
-                """)
-        }
-        return binaryPath
     }
 
     /// Runs the built CLI binary as a subprocess with an isolated storage
@@ -118,8 +79,4 @@ struct CLISessionsJSONRoundtripTests {
         return (result.status, result.stdoutText, result.stderrText)
     }
 
-    private struct HarnessError: Error, CustomStringConvertible {
-        let description: String
-        init(_ description: String) { self.description = description }
-    }
 }

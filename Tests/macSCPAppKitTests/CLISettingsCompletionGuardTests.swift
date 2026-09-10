@@ -1,14 +1,23 @@
 import Foundation
 import MacSCPTestSupport
 import Testing
+import macSCPCore
+
+@testable import MacSCPAppKit
 
 /// Guards Settings → Command-Line Tool's "Shell Completion" section (Shell
 /// Completion plan, Task 1): the line the user copies is BUILT by
 /// `ShellCompletionRecipe`, never spelled in the view, the picker iterates
 /// the recipe's own shell list, the label and the copy button read the same
-/// one property, the tool token follows the install state, and every
-/// `settings.cli.completion.` key the section reads resolves in all four
-/// catalogues.
+/// one property, the section asks `CLICompletionPresentation` for its tool
+/// token, and every `settings.cli.completion.` key the section reads
+/// resolves in all four catalogues.
+///
+/// **What the tool token does per state is NOT scanned here.** It is a pure
+/// function now — `CLICompletionPresentation.forState(_:bundledToolPath:)`
+/// — and `CLISettingsCompletionPresentationTests` at the bottom of this file runs
+/// it over every `CLIInstallState` case. This suite only proves the section
+/// asks it, which is what makes that table a test of what the user sees.
 ///
 /// **Why the line must not be spelled here.** Three commands in a view and
 /// one function in Core that also spells them is a second copy of a name —
@@ -56,27 +65,52 @@ struct CLISettingsCompletionGuardTests {
 
     /// No trailing `{`, matching the convention of the other Settings
     /// guards: `declarationBodyRange` opens its span at the first `{` after
-    /// this text. The whole section struct is the scan target, not one
-    /// computed property: the negative below is about the commands
-    /// appearing ANYWHERE in the section, including in a helper the picker
-    /// reads.
+    /// this text. It is the span of the POSITIVE claims below — that the
+    /// section itself calls the recipe and iterates its shell list. The
+    /// negative reads the whole FILE instead: see
+    /// `theViewSpellsNoneOfTheCommandsItself`.
     private static let sectionDeclaration = "private struct CLISettingsSection: View"
 
-    /// The three spellings the section must not contain. `source <(` and
-    /// `| source` are the two loading forms; the flag is what makes either
-    /// of them a completion line rather than an ordinary source.
-    private static let forbiddenCommandFragments = [
-        "--generate-completion-script", "source <(", "| source",
-    ]
+    /// A tool token no Swift source can contain, so splitting a line around
+    /// it leaves exactly the parts `ShellCompletionRecipe` spells itself.
+    private static let toolSentinel = "\u{1}TOOL\u{1}"
+
+    /// What `shell`'s line spells AROUND the tool, taken from
+    /// `ShellCompletionRecipe.line(for:tool:)` rather than typed here
+    /// (CLAUDE.md, "Guards that name what they watch", rule 2). A written-out
+    /// list is a second copy of a name: the day `line(for:tool:)` changes,
+    /// it goes on forbidding the spelling the tree no longer produces and
+    /// permits the one it does — a negative that has quietly stopped
+    /// watching anything.
+    ///
+    /// The sentinel is substituted verbatim, so the line falls into the part
+    /// before it and the part after it. fish's first part is empty (its line
+    /// opens with the tool) and drops out;
+    /// `theForbiddenFragmentsAreTheRecipesOwnSpelling` is the positive that
+    /// the split really cut a line in two.
+    static func forbiddenFragments(
+        for shell: ShellCompletionRecipe.Shell
+    ) -> [String] {
+        ShellCompletionRecipe.line(for: shell, tool: toolSentinel)
+            .components(separatedBy: toolSentinel)
+            .filter { !$0.isEmpty }
+    }
+
+    /// Every shell's fragments, which is every spelling the view must not
+    /// contain.
+    private static let forbiddenCommandFragments: [String] =
+        ShellCompletionRecipe.Shell.allCases.flatMap(
+            CLISettingsCompletionGuardTests.forbiddenFragments(for:))
 
     private static let keyPrefix = "settings.cli.completion."
 
-    /// The keys the section is expected to read. TEN, counted against the
-    /// derived set by `theSectionReadsExactlyTheKeysThisGuardNames` below
-    /// rather than by eye: header, intro, the picker label, the copy
-    /// button, three "where" sentences, the zsh compinit clause and the two
-    /// footers.
-    private static let expectedKeyCount = 10
+    /// The keys the section is expected to read. ELEVEN, counted against
+    /// the derived set by `theSectionReadsExactlyTheKeysThisGuardNames`
+    /// below rather than by eye: header, intro, the picker label, the copy
+    /// button, three "where" sentences, the zsh compinit clause, the two
+    /// footers, and the sentence shown INSTEAD of a line while the app runs
+    /// translocated (design, "The section").
+    private static let expectedKeyCount = 11
 
     // MARK: - Source access
 
@@ -124,19 +158,32 @@ struct CLISettingsCompletionGuardTests {
             """)
     }
 
-    /// The negative, with the positive above beside it. Read on the
-    /// literals-preserving view: a command SPELLED in the view is exactly
-    /// what this forbids, and the strict view would have blanked it.
-    @Test func theSectionSpellsNoneOfTheThreeCommandsItself() throws {
-        let bodies = try Self.sectionBodies()
-        #expect(bodies.code.contains("ShellCompletionRecipe.line("), """
+    /// The negative, with the positive above beside it. Its span is the
+    /// WHOLE FILE, not the section: a command spelled in a helper next to
+    /// the section — an extension, a small view struct, the presentation
+    /// type — is the same second copy, and a span that stopped at the
+    /// section's closing brace would report it as absent. Counted in this
+    /// pass, 2026-09-10: SettingsView.swift contains none of the derived
+    /// fragments outside a comment.
+    ///
+    /// Read on the literals-preserving view: a command SPELLED in the view
+    /// is exactly what this forbids, and the strict view would have blanked
+    /// it.
+    @Test func theViewSpellsNoneOfTheCommandsItself() throws {
+        let sectionCode = try Self.sectionBodies().code
+        #expect(sectionCode.contains("ShellCompletionRecipe.line("), """
             the positive beside this negative is gone: without a call into \
             the recipe, "spells no command" would hold because the section \
             shows no command at all.
             """)
+        #expect(!Self.forbiddenCommandFragments.isEmpty, """
+            no fragment was derived from ShellCompletionRecipe at all -- this \
+            negative is scanning for nothing and cannot fail.
+            """)
+        let file = try Self.views(of: Self.settingsViewFile).withLiterals
         for fragment in Self.forbiddenCommandFragments {
-            #expect(!bodies.withLiterals.contains(fragment), """
-                CLISettingsSection spells "\(fragment)" itself. The three \
+            #expect(!file.contains(fragment), """
+                SettingsView.swift spells "\(fragment)" itself. The three \
                 completion lines live in ShellCompletionRecipe.line(for:tool:) \
                 and nowhere else -- a copy here is a spelling no test runs.
                 """)
@@ -160,20 +207,17 @@ struct CLISettingsCompletionGuardTests {
             """)
     }
 
-    /// The install state decides the token: the bare name while the
-    /// shortcut is installed, the bundled tool's quoted path otherwise, so
-    /// the line works before anything is installed (design, "The section").
-    @Test func theToolTokenFollowsTheInstallState() throws {
+    /// The wiring, and the whole reason the table test at the bottom of
+    /// this file is a test of what the user sees: the section asks
+    /// `CLICompletionPresentation` what to show rather than switching on
+    /// the install state itself.
+    @Test func theSectionAsksThePresentationWhatToShow() throws {
         let code = try Self.sectionBodies().code
-        #expect(code.contains("CLIToolInstaller.toolName"), """
-            CLISettingsSection no longer names CLIToolInstaller.toolName -- \
-            the installed-state line is spelling the tool's name some other \
-            way.
-            """)
-        #expect(code.contains("ShellCompletionRecipe.quotedForShell("), """
-            CLISettingsSection no longer quotes the bundled tool's path -- an \
-            unquoted path breaks the line for every app in a folder with a \
-            space in its name, which includes "mac SCP.app" itself.
+        #expect(code.contains("CLICompletionPresentation.forState("), """
+            CLISettingsSection no longer calls \
+            CLICompletionPresentation.forState( -- the tool token and the \
+            translocated case are being decided somewhere the table test in \
+            CLISettingsCompletionPresentationTests cannot reach.
             """)
     }
 
@@ -306,15 +350,52 @@ struct CLISettingsCompletionGuardTests {
 
     // MARK: - The scanner reacts (self-tests over synthetic sources)
 
-    /// A section that spells the zsh line itself — the exact violation this
-    /// guard exists for — must be caught, and must be caught on the
+    /// The fragments really are the recipe's own parts: the sentinel was
+    /// substituted EXACTLY once (so the split cut the line in two rather
+    /// than handing back the whole line, which would forbid a fragment
+    /// nothing can contain), and every fragment appears in the line the
+    /// recipe spells for a real tool.
+    @Test(arguments: ShellCompletionRecipe.Shell.allCases)
+    func theForbiddenFragmentsAreTheRecipesOwnSpelling(
+        shell: ShellCompletionRecipe.Shell
+    ) {
+        let parts = ShellCompletionRecipe.line(for: shell, tool: Self.toolSentinel)
+            .components(separatedBy: Self.toolSentinel)
+        #expect(parts.count == 2, """
+            the tool token appears \(parts.count - 1) time(s) in the \
+            \(shell.rawValue) line -- the fragments are derived by splitting \
+            around it, so any other count means they are not its parts
+            """)
+        let fragments = Self.forbiddenFragments(for: shell)
+        #expect(!fragments.isEmpty, "no fragment derived for \(shell.rawValue)")
+        let line = ShellCompletionRecipe.line(for: shell, tool: "macscp-cli")
+        for fragment in fragments {
+            #expect(line.contains(fragment), """
+                "\(fragment)" is not part of the \(shell.rawValue) line \
+                \(line) -- the derivation is producing something the recipe \
+                does not spell
+                """)
+        }
+    }
+
+    /// A section that spells a line itself — the exact violation this guard
+    /// exists for — must be caught, and must be caught on the
     /// literals-preserving view. The second expectation is the record of
     /// why: the strict view CANNOT see it.
-    @Test func scannerCatchesACommandSpelledInTheView() throws {
+    ///
+    /// Run for every shell, which is how fish's `| source` form — the one a
+    /// scan for the process-substitution form alone would miss — is covered
+    /// without a second synthetic source of its own. Both views are cut to
+    /// the declaration's body first, so the scan measured here is the one
+    /// the checks above run.
+    @Test(arguments: ShellCompletionRecipe.Shell.allCases)
+    func scannerCatchesACommandSpelledInTheView(
+        shell: ShellCompletionRecipe.Shell
+    ) throws {
         let source = """
             \(Self.sectionDeclaration) {
                 var body: some View {
-                    Text("source <(macscp-cli --generate-completion-script zsh)")
+                    Text("\(ShellCompletionRecipe.line(for: shell, tool: "macscp-cli"))")
                 }
             }
             """
@@ -322,7 +403,9 @@ struct CLISettingsCompletionGuardTests {
             of: Self.sectionDeclaration, in: try SwiftSource.blankingComments(source))
         let strict = try TransferQueueBarCancelGuardTests.declarationBody(
             of: Self.sectionDeclaration, in: try SwiftSource.blankingCommentsAndStrings(source))
-        for fragment in Self.forbiddenCommandFragments where fragment != "| source" {
+        let fragments = Self.forbiddenFragments(for: shell)
+        #expect(!fragments.isEmpty, "no fragment derived for \(shell.rawValue)")
+        for fragment in fragments {
             #expect(withLiterals.contains(fragment), """
                 the scanner failed to catch "\(fragment)" spelled in the view
                 """)
@@ -332,22 +415,6 @@ struct CLISettingsCompletionGuardTests {
                 is wrong
                 """)
         }
-    }
-
-    /// The fish spelling, which is the one a `source <(` scan alone would
-    /// miss.
-    @Test func scannerCatchesTheFishPipeSpelling() throws {
-        let source = """
-            \(Self.sectionDeclaration) {
-                var body: some View {
-                    Text("macscp-cli --generate-completion-script fish | source")
-                }
-            }
-            """
-        let withLiterals = try SwiftSource.blankingComments(source)
-        #expect(withLiterals.contains("| source"), """
-            the scanner failed to catch the fish line's pipe-into-source form
-            """)
     }
 
     /// A comment naming the commands must NOT be caught: this file's own
@@ -431,5 +498,109 @@ struct CLISettingsCompletionGuardTests {
             try TransferQueueBarCancelGuardTests.declarationBody(
                 of: Self.sectionDeclaration, in: source)
         }
+    }
+}
+
+/// What the Shell Completion section shows, per install state — the claim
+/// the source guard above deliberately does NOT make.
+///
+/// It is a pure function rather than a `switch` inside a `private` view,
+/// for one reason: a table can run it over EVERY `CLIInstallState` case,
+/// and a scan of the view's source can only report that the words
+/// `CLIToolInstaller.toolName` appear somewhere in it. The section's own
+/// call is pinned by `theSectionAsksThePresentationWhatToShow`, so this
+/// table is a test of what a user sees.
+///
+/// **`.translocated` is the case this type was extracted for** (Task 1
+/// review, 2026-09-10). The app then runs from a randomised read-only mount
+/// that disappears on quit, so a path into it is exactly the wrong thing to
+/// write into a startup file — the section offers no line there at all, the
+/// same reason `actionTitle` withholds the Install button.
+@Suite("Settings — Shell completion presentation")
+struct CLISettingsCompletionPresentationTests {
+    /// A translocated-looking bundle path, carrying both a space and an
+    /// apostrophe so a token that reaches a line is recognisable as itself.
+    private static let bundledToolPath =
+        "/private/var/folders/xy/AppTranslocation/mac SCP's copy.app/Contents/MacOS/macscp-cli"
+
+    struct Case: Sendable {
+        let state: CLIInstallState
+        let expected: CLICompletionPresentation
+    }
+
+    /// The state's own name, for a failure message — and the structural
+    /// boundary this table rests on: a sixth `CLIInstallState` case does not
+    /// COMPILE here, so it cannot be added without deciding what the section
+    /// shows for it.
+    static func tag(_ state: CLIInstallState) -> String {
+        switch state {
+        case .notInstalled: return "notInstalled"
+        case .installed: return "installed"
+        case .stale: return "stale"
+        case .occupied: return "occupied"
+        case .translocated: return "translocated"
+        }
+    }
+
+    /// Six entries over five states: `.stale` appears twice, with and
+    /// without a readable target, because the target is a display detail and
+    /// must not reach the decision.
+    static let table: [Case] = [
+        Case(state: .installed, expected: .line(tool: CLIToolInstaller.toolName)),
+        Case(
+            state: .notInstalled,
+            expected: .line(
+                tool: ShellCompletionRecipe.quotedForShell(
+                    CLISettingsCompletionPresentationTests.bundledToolPath))),
+        Case(
+            state: .stale(target: nil),
+            expected: .line(
+                tool: ShellCompletionRecipe.quotedForShell(
+                    CLISettingsCompletionPresentationTests.bundledToolPath))),
+        Case(
+            state: .stale(target: "/usr/local/bin/macscp-cli"),
+            expected: .line(
+                tool: ShellCompletionRecipe.quotedForShell(
+                    CLISettingsCompletionPresentationTests.bundledToolPath))),
+        Case(
+            state: .occupied,
+            expected: .line(
+                tool: ShellCompletionRecipe.quotedForShell(
+                    CLISettingsCompletionPresentationTests.bundledToolPath))),
+        Case(state: .translocated, expected: .moveFirst),
+    ]
+
+    @Test(arguments: CLISettingsCompletionPresentationTests.table)
+    func theInstallStateDecidesWhatTheSectionShows(testCase: Case) {
+        let presentation = CLICompletionPresentation.forState(
+            testCase.state, bundledToolPath: Self.bundledToolPath)
+        #expect(presentation == testCase.expected, """
+            \(Self.tag(testCase.state)) is presented as \(presentation), \
+            this table was written against \(testCase.expected)
+            """)
+    }
+
+    /// The positive beside the table: it really covers every state, so a
+    /// case quietly dropped from it cannot pass as "all green".
+    @Test func theTableCoversEveryInstallState() {
+        #expect(Set(Self.table.map { Self.tag($0.state) }) == [
+            "notInstalled", "installed", "stale", "occupied", "translocated",
+        ], "the table covers \(Set(Self.table.map { Self.tag($0.state) }).sorted())")
+    }
+
+    /// Stronger than `== .moveFirst`: whatever the branch returns, no part
+    /// of the temporary path may reach a line the user is invited to paste
+    /// into a startup file.
+    @Test func aTranslocatedAppIsOfferedNoLineAtAll() {
+        var offeredTool: String?
+        if case .line(let tool) = CLICompletionPresentation.forState(
+            .translocated, bundledToolPath: Self.bundledToolPath) {
+            offeredTool = tool
+        }
+        #expect(offeredTool == nil, """
+            a translocated app was offered a line invoking \(offeredTool ?? "") \
+            -- that path is gone the moment macSCP quits, and a startup file \
+            keeps it forever
+            """)
     }
 }

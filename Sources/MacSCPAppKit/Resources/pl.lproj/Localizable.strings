@@ -925,8 +925,9 @@
 "settings.cli.completion.where.bash" = "Wpisz ją do ~/.bashrc — albo do ~/.bash_profile, który Terminal czyta dla powłok logowania. Linia pyta zainstalowane narzędzie o aktualne uzupełnianie przy każdym uruchomieniu powłoki, więc aktualizacja macSCP nie wymaga drugiego kroku.";
 "settings.cli.completion.where.fish" = "Wpisz ją do ~/.config/fish/config.fish. Linia pyta zainstalowane narzędzie o aktualne uzupełnianie przy każdym uruchomieniu powłoki, więc aktualizacja macSCP nie wymaga drugiego kroku.";
 "settings.cli.completion.zshCompinit" = "zsh potrzebuje dodatkowo uruchomionego systemu uzupełniania: autoload -Uz compinit && compinit, przed tą linią. Konfiguracja dostarczana przez macOS robi to już sama.";
-"settings.cli.completion.footer.installed" = "Linia wywołuje skrót macscp-cli po nazwie, więc działa także po aktualizacji lub przeniesieniu macSCP.";
+"settings.cli.completion.footer.installed" = "Linia wywołuje skrót macscp-cli po nazwie, więc działa także po aktualizacji lub przeniesieniu macSCP — o ile ~/.local/bin jest częścią zmiennej PATH twojej powłoki, jak mówi uwaga powyżej.";
 "settings.cli.completion.footer.notInstalled" = "Bez skrótu linia musi wskazywać narzędzie wewnątrz pakietu aplikacji. Zainstaluj skrót powyżej, aby ją skrócić — i aby działała także po przeniesieniu macSCP.";
+"settings.cli.completion.translocated" = "macSCP działa z kopii tymczasowej, której ścieżka znika zaraz po zamknięciu macSCP — a plik startowy zachowałby ją na zawsze. Przenieś macSCP do folderu Aplikacje i otwórz go stamtąd, wtedy ta sekcja pokaże linię, którą warto zachować.";
 
 /* Snippets sheet (Terminal-Snippets milestone, Task 3) */
 "snippets.sheet.title" = "Snippets";

@@ -85,7 +85,9 @@ public enum ShellCompletionRecipe {
     /// A thin wrapper on purpose: it names, in the CLI's own vocabulary,
     /// the one quoting rule the completion line needs, so a caller cannot
     /// reach for a different quoter. Outside tests it has ONE caller,
-    /// counted on 2026-09-10: the Settings section's `completionTool`.
+    /// counted on 2026-09-10 (fix round 1, after the token moved out of the
+    /// view): `CLICompletionPresentation.forState(_:bundledToolPath:)` in
+    /// `SettingsView.swift`.
     public static func quotedForShell(_ path: String) -> String {
         PosixQuoting.singleQuoted(path)
     }

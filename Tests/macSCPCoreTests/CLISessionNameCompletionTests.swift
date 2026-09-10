@@ -39,7 +39,7 @@ struct CLISessionNameCompletionTests {
     /// nothing: the set is non-empty, and it carries a name that has been
     /// there since the first subcommand.
     @Test func theGeneratedZshScriptNamesEverySubcommand() async throws {
-        let binary = try Self.locateCLIBinary()
+        let binary = try CLIMatrix.binaryPath()
         let names = try await CLIMatrix.subcommands(binary: URL(fileURLWithPath: binary))
         #expect(!names.isEmpty, "the binary offers no subcommands at all")
         #expect(names.contains("ls"), "the binary offers no ls: \(names)")
@@ -73,7 +73,7 @@ struct CLISessionNameCompletionTests {
     /// that offers `--group` without dynamic completion is red, and so is a
     /// wiring left behind on a verb that no longer takes the option.
     @Test func theGeneratedZshScriptWiresCustomCompletionForGroupAndTag() async throws {
-        let binary = try Self.locateCLIBinary()
+        let binary = try CLIMatrix.binaryPath()
         let script = try await Self.runProcess(binary, ["--generate-completion-script", "zsh"])
         #expect(script.status == 0, "--generate-completion-script zsh failed: \(script.stderr)")
 
@@ -117,44 +117,8 @@ struct CLISessionNameCompletionTests {
         }
     }
 
-    // MARK: - Binary-level harness (self-contained rather than shared —
-    // see `CLISessionsJSONRoundtripTests`'s doc comment for why each
-    // gated/ungated suite here carries its own small copy)
-
-    /// Exists only so `locateCLIBinary()` has a class defined in THIS file
-    /// to hand `Bundle(for:)`.
-    private final class TestBundleAnchor {}
-
-    /// Locates the already-built `macscp-cli` binary, bundle-relative — see
-    /// `CLISessionsJSONRoundtripTests.locateCLIBinary` for why: it
-    /// deliberately does not run `swift build` (that would deadlock on
-    /// SwiftPM's `.build` lock), and reading a repo-root-relative
-    /// `.build/debug` path instead of the test bundle's own sibling breaks
-    /// under `--scratch-path` and `-c release`.
-    private static func locateCLIBinary() throws -> String {
-        if let override = ProcessInfo.processInfo.environment["MACSCP_CLI_BINARY"],
-           !override.isEmpty {
-            guard FileManager.default.isExecutableFile(atPath: override) else {
-                throw HarnessError(
-                    "MACSCP_CLI_BINARY is set to \(override), which is not executable")
-            }
-            return override
-        }
-        let productsDirectory = Bundle(for: TestBundleAnchor.self).bundleURL
-            .deletingLastPathComponent()
-        let binaryPath = productsDirectory
-            .appendingPathComponent("macscp-cli")
-            .path(percentEncoded: false)
-        guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
-            throw HarnessError("""
-                macscp-cli not found at \(binaryPath).
-                Build it before running this suite:
-                  swift build --product macscp-cli
-                or point MACSCP_CLI_BINARY at an existing binary.
-                """)
-        }
-        return binaryPath
-    }
+    // MARK: - Binary-level harness (the binary itself is located by
+    // `CLIMatrix.binaryPath()`, this target's one lookup)
 
     /// Draining, the bound and the kill escalation all live in
     /// `SubprocessRunner`, which awaits the child instead of parking a
@@ -168,8 +132,4 @@ struct CLISessionNameCompletionTests {
         return (result.status, result.stdoutText, result.stderrText)
     }
 
-    private struct HarnessError: Error, CustomStringConvertible {
-        let description: String
-        init(_ description: String) { self.description = description }
-    }
 }

@@ -637,11 +637,6 @@ struct CLISessionsEditingTests {
 
     // MARK: - Harness
 
-    /// Exists only so `CLI.make()` has a class defined in THIS file to hand
-    /// `Bundle(for:)` — same reason `CLISessionsJSONRoundtripTests` carries
-    /// one.
-    private final class TestBundleAnchor {}
-
     /// The built binary plus its own throwaway store. A small value rather
     /// than four static functions because every case here needs the same
     /// pair and then asks the store what the binary wrote.
@@ -651,7 +646,7 @@ struct CLISessionsEditingTests {
 
         static func make() throws -> CLI {
             CLI(
-                binary: try locateCLIBinary(),
+                binary: try CLIMatrix.binaryPath(),
                 storageDirectory: try makeTempDirectory(prefix: "macscp-cli-sessions-editing"))
         }
 
@@ -698,38 +693,8 @@ struct CLISessionsEditingTests {
             return directory
         }
 
-        /// Bundle-relative, for the reason `CLIMatrix.binaryURL()` states: a
-        /// repo-root-relative `.build/debug` path breaks under
-        /// `--scratch-path` and `-c release`, and running `swift build` from
-        /// a test deadlocks on SwiftPM's own lock.
-        private static func locateCLIBinary() throws -> String {
-            if let override = ProcessInfo.processInfo.environment["MACSCP_CLI_BINARY"],
-               !override.isEmpty {
-                guard FileManager.default.isExecutableFile(atPath: override) else {
-                    throw HarnessError("MACSCP_CLI_BINARY is set to \(override), which is not executable")
-                }
-                return override
-            }
-            let binaryPath = Bundle(for: TestBundleAnchor.self).bundleURL
-                .deletingLastPathComponent()
-                .appendingPathComponent("macscp-cli")
-                .path(percentEncoded: false)
-            guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
-                throw HarnessError("""
-                    macscp-cli not found at \(binaryPath).
-                    Build it before running this suite:
-                      swift build --product macscp-cli
-                    or point MACSCP_CLI_BINARY at an existing binary.
-                    """)
-            }
-            return binaryPath
-        }
     }
 
-    private struct HarnessError: Error, CustomStringConvertible {
-        let description: String
-        init(_ description: String) { self.description = description }
-    }
 }
 
 /// The security constraint the store-editing verbs exist under: **no secret

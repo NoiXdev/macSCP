@@ -5,12 +5,16 @@ import Testing
 /// it.
 ///
 /// Measured before it was written, because the rule was not obvious from
-/// the outside: **twelve** strings in the App catalog carry a du-pronoun
-/// (`du`, `dich`, `dir`, `dein…`) — counted in the pass that writes this
-/// sentence, over the catalog as it stands — and more use the du-imperative
-/// without one ("Prüfe deine Internetverbindung und versuche es erneut.",
-/// "Verschiebe macSCP in deinen Programme-Ordner", "Bearbeite die
-/// Verbindung…"). Core's catalog is no longer the neutral-only exception
+/// the outside: **twenty-two** strings in the App catalog carry a
+/// du-pronoun (`du`, `dich`, `dir`, `dein…`) — counted in the pass that
+/// writes this sentence, over the catalog as it stands — and more use the
+/// du-imperative without one ("Bearbeite die Verbindung…", "Installiere
+/// die Verknüpfung oben…"). Note which examples those are NOT: the two
+/// this sentence used to give, "Prüfe deine Internetverbindung und
+/// versuche es erneut." and "Verschiebe macSCP in deinen
+/// Programme-Ordner", both carry a pronoun and are two of the twenty-two —
+/// they illustrated the opposite of the sentence they stood in.
+/// Core's catalog is no longer the neutral-only exception
 /// this once described: its S3 field-required messages use the
 /// du-imperative ("Gib den Bucket ein…", "Gib die Region ein…") and one
 /// of them, `core.connect.s3BucketRequired`, carries an explicit du-pronoun
@@ -25,21 +29,36 @@ import Testing
 /// number nobody can recompute is a number that drifts. This one said
 /// "eight" when it was written, in the same commit that moved two more
 /// strings into the du-register, "ten" through the pass that restructured
-/// this file without recounting, and "eleven" through the pass that added
+/// this file without recounting, "eleven" through the pass that added
 /// the S3-without-a-bucket messages without recounting the du-pronoun list
 /// against the catalog it was drifting away from — `snippets.dryRun
 /// .rehearsalNote` ("Was du hier für einen Test eingibst…") was in the
-/// catalog the whole time and simply never made it into the enumeration.
-/// Every one of those sentences read as plausible; that is the whole
-/// hazard. The twelve, counted here:
+/// catalog the whole time and simply never made it into the enumeration —
+/// and "twelve" until 2026-09-10, when a recount over the catalog found
+/// **fifteen**: `settings.general.restoreWindows.footer`,
+/// `tunnel.autostart.footer` and `tunnel.help.externalEdits` had arrived
+/// since and named nobody. The same pass put the Shell Completion section's
+/// German into the du-register, which added seven more. Every one of those
+/// sentences read as plausible; that is the whole hazard. The twenty-two,
+/// counted here, 2026-09-10:
 /// `connection.lost.body.needsPerson`,
 /// `connection.lost.hint.noSavedSession`, `connection.saveName.replaces %@`,
+/// `settings.cli.completion.footer.installed`,
+/// `settings.cli.completion.intro`,
+/// `settings.cli.completion.translocated`,
+/// `settings.cli.completion.where.bash`,
+/// `settings.cli.completion.where.fish`,
+/// `settings.cli.completion.where.zsh`,
+/// `settings.cli.completion.zshCompinit`,
 /// `settings.cli.footer`, `settings.cli.status.translocated.detail`,
 /// `settings.cli.systemWide.footer`, `settings.connection.keepAlive.footer %lld`,
+/// `settings.general.restoreWindows.footer`,
 /// `settings.general.updateCheckHint`,
 /// `settings.terminal.target.builtInFallback.footer`,
 /// `snippets.dryRun.rehearsalNote`,
-/// `snippets.variables.error.quotedPlaceholder %@`, `update.error.offline`.
+/// `snippets.variables.error.quotedPlaceholder %@`,
+/// `tunnel.autostart.footer`, `tunnel.help.externalEdits`,
+/// `update.error.offline`.
 ///
 /// Two strings used the polite form until the failed-connect surface's own
 /// round 4, and both sat in `connection.lost.*`, which is how a user met
@@ -212,9 +231,9 @@ struct GermanAddressFormTests {
             German string(s) addressing the user in the polite form:
             \(offenders.joined(separator: "\n"))
 
-            This app says du — twelve strings in the App catalog carry a du-pronoun and more \
-            use the du-imperative ("Prüfe deine Internetverbindung und versuche es \
-            erneut."). Two strings in \
+            This app says du — twenty-two strings in the App catalog carry a du-pronoun and \
+            more use the du-imperative ("Bearbeite die Verbindung, um die Angaben zu prüfen \
+            und erneut zu verbinden."). Two strings in \
             `connection.lost.*` used Sie until the failed-connect surface's own round 4, \
             which is how a user met both registers one after the other. Reword in the \
             du-form; if a string genuinely needs the polite form, that is a decision to make \

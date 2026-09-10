@@ -16,11 +16,19 @@ import Testing
 /// **Which interpreters are measured depends on the machine.** `/bin/zsh`
 /// and `/bin/bash` ship with macOS, so those two are always run. **fish is
 /// run only where it is installed** — looked up on `PATH` and in the two
-/// usual Homebrew prefixes — and where it is not, that shell's case
-/// returns having asserted nothing rather than recording a pass it did not
-/// measure. `theInterpreterLookupFindsTheTwoShellsMacOSAlwaysShips` below
-/// keeps the lookup itself honest, so "not installed" cannot quietly
-/// become "never looked".
+/// usual Homebrew prefixes.
+///
+/// Where it is not installed, the case still MEASURES something: it asserts
+/// that the shell that went missing is fish (zsh and bash absent would be a
+/// broken lookup, not a machine without them) and that
+/// `fishCandidates(inPATH:)` — the pure function the lookup itself is built
+/// out of — really finds nothing on this machine's `PATH`. So "fish is not
+/// installed here" is a reading, not a silent skip.
+/// `theFishLookupFindsAPlantedExecutableAndOnlyThen` runs that same function
+/// against a fish planted in a temporary directory, so its ability to find
+/// one is measured even where none exists, and
+/// `theInterpreterLookupFindsTheTwoShellsMacOSAlwaysShips` keeps the other
+/// two honest.
 ///
 /// Bounded by the suite's `.timeLimit` alone — no elapsed-time assertion
 /// (CLAUDE.md, "A wall-clock ceiling in a test measures the runner").
@@ -38,7 +46,7 @@ struct CLICompletionScriptTests {
     func theBinaryGeneratesACompletionScriptForEveryShellInTheEnum(
         shell: ShellCompletionRecipe.Shell
     ) async throws {
-        let binary = try Self.locateCLIBinary()
+        let binary = try CLIMatrix.binaryPath()
         let result = try await Self.runProcess(
             binary, ["--generate-completion-script", shell.rawValue])
         #expect(result.status == 0, """
@@ -79,8 +87,11 @@ struct CLICompletionScriptTests {
     func theRecipesLineLoadsTheCompletionInThatShell(
         shell: ShellCompletionRecipe.Shell
     ) async throws {
-        guard let interpreter = Self.interpreter(for: shell) else { return }
-        let binary = try Self.locateCLIBinary()
+        guard let interpreter = Self.interpreter(for: shell) else {
+            Self.recordTheAbsenceOf(shell)
+            return
+        }
+        let binary = try CLIMatrix.binaryPath()
         let line = ShellCompletionRecipe.line(
             for: shell, tool: ShellCompletionRecipe.quotedForShell(binary))
         let command = shell == .zsh ? "autoload -Uz compinit && compinit -D && \(line)" : line
@@ -99,7 +110,10 @@ struct CLICompletionScriptTests {
     func theQuotedFormSurvivesAPathWithASpaceAndAnApostrophe(
         shell: ShellCompletionRecipe.Shell
     ) async throws {
-        guard let interpreter = Self.interpreter(for: shell) else { return }
+        guard let interpreter = Self.interpreter(for: shell) else {
+            Self.recordTheAbsenceOf(shell)
+            return
+        }
         let path = "/Applications/mac SCP's copy.app/Contents/MacOS/macscp-cli"
         let result = try await Self.runProcess(
             interpreter, ["-c", "/bin/echo -n \(ShellCompletionRecipe.quotedForShell(path))"])
@@ -109,75 +123,107 @@ struct CLICompletionScriptTests {
             """)
     }
 
-    /// The positive beside the two `guard let interpreter … else { return }`
-    /// above (CLAUDE.md, "a negative check needs a positive check beside
-    /// it"): a lookup that had gone blind — a wrong path, a broken PATH
-    /// split — would make both tests return without measuring anything and
-    /// still report green. zsh and bash ship with macOS, so their absence
-    /// is a broken lookup, not a machine without them.
+    /// The positive beside the two early returns above (CLAUDE.md, "a
+    /// negative check needs a positive check beside it"): a lookup that had
+    /// gone blind — a wrong path, a broken PATH split — would make both
+    /// tests return without measuring anything and still report green. zsh
+    /// and bash ship with macOS, so their absence is a broken lookup, not a
+    /// machine without them.
     @Test func theInterpreterLookupFindsTheTwoShellsMacOSAlwaysShips() {
         #expect(Self.interpreter(for: .zsh) == "/bin/zsh")
         #expect(Self.interpreter(for: .bash) == "/bin/bash")
     }
 
+    /// The fish branch, measured on a machine that may well not have fish:
+    /// a `fish` planted in a temporary directory is found when that
+    /// directory is on the `PATH` handed in, and is not found when it is
+    /// not. Both directions, because "finds everything" and "finds nothing"
+    /// are the two ways a lookup can be useless.
+    @Test func theFishLookupFindsAPlantedExecutableAndOnlyThen() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-fish-lookup-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        // A directory URL's path carries a trailing slash, and a PATH entry
+        // does not; the difference is invisible to the file system but not
+        // to a string comparison.
+        var pathEntry = directory.path(percentEncoded: false)
+        if pathEntry.hasSuffix("/") { pathEntry.removeLast() }
+        let planted = "\(pathEntry)/fish"
+        #expect(FileManager.default.createFile(
+            atPath: planted,
+            contents: Data("#!/bin/sh\nexit 0\n".utf8),
+            attributes: [.posixPermissions: 0o755]))
+
+        let onPATH = Self.fishCandidates(inPATH: "\(pathEntry):/nonexistent")
+        #expect(onPATH.first == planted, """
+            a fish planted at \(planted) was not the first candidate; the \
+            lookup found \(onPATH)
+            """)
+
+        let offPATH = Self.fishCandidates(inPATH: "/nonexistent")
+        #expect(!offPATH.contains(planted), """
+            the lookup found \(planted) with its directory off the PATH -- it \
+            is not reading the PATH it was handed
+            """)
+    }
+
     // MARK: - Harness
 
     /// The interpreter to run a shell's line in, or `nil` when this machine
-    /// has none. zsh and bash are at their macOS paths; fish is searched
-    /// on `PATH` and in the two Homebrew prefixes — a file check rather
-    /// than a `which` subprocess, which keeps this synchronous and out of
-    /// the way of the cooperative pool.
+    /// has none. zsh and bash are at their macOS paths; fish goes through
+    /// `fishCandidates(inPATH:)` below.
     static func interpreter(for shell: ShellCompletionRecipe.Shell) -> String? {
         switch shell {
         case .zsh: return executable("/bin/zsh")
         case .bash: return executable("/bin/bash")
-        case .fish:
-            let pathDirectories = (ProcessInfo.processInfo.environment["PATH"] ?? "")
-                .split(separator: ":", omittingEmptySubsequences: true)
-                .map(String.init)
-            let candidates = pathDirectories.map { "\($0)/fish" }
-                + ["/opt/homebrew/bin/fish", "/usr/local/bin/fish"]
-            return candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+        case .fish: return fishCandidates(inPATH: currentPATH).first
         }
+    }
+
+    static var currentPATH: String { ProcessInfo.processInfo.environment["PATH"] ?? "" }
+
+    /// Every `fish` the lookup can actually see, in the order it would take
+    /// them: one per `PATH` entry, then the two usual Homebrew prefixes. A
+    /// file check rather than a `which` subprocess, which keeps this
+    /// synchronous and out of the way of the cooperative pool.
+    ///
+    /// Pure and parameterised on `PATH` on purpose. The fish branch is the
+    /// only one that may legitimately come back empty, which used to make it
+    /// the only one whose correctness was never measured on a machine
+    /// without fish — the branch could have been searching nothing and read
+    /// exactly like "not installed here" (Task 1 review, 2026-09-10). With
+    /// the `PATH` passed in, a test plants a fish of its own and reads the
+    /// decision back.
+    static func fishCandidates(inPATH path: String) -> [String] {
+        let fromPATH = path
+            .split(separator: ":", omittingEmptySubsequences: true)
+            .map { "\($0)/fish" }
+        return (fromPATH + ["/opt/homebrew/bin/fish", "/usr/local/bin/fish"])
+            .filter { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    /// What the two interpreter-level cases assert INSTEAD of running, on a
+    /// machine that has no fish. Both halves are real claims: only fish may
+    /// be missing, and the same pure lookup the guard used must agree that
+    /// there is nothing to find.
+    static func recordTheAbsenceOf(_ shell: ShellCompletionRecipe.Shell) {
+        #expect(shell == .fish, """
+            no interpreter was found for \(shell.rawValue), which macOS ships \
+            at a fixed path -- that is a broken lookup, not a machine without \
+            the shell
+            """)
+        let found = fishCandidates(inPATH: currentPATH)
+        #expect(found.isEmpty, """
+            interpreter(for: .fish) came back nil while fishCandidates(inPATH:) \
+            finds \(found) -- the two disagree, so the skip above is not the \
+            measurement it claims to be
+            """)
     }
 
     private static func executable(_ path: String) -> String? {
         FileManager.default.isExecutableFile(atPath: path) ? path : nil
-    }
-
-    /// Exists only so `locateCLIBinary()` has a class defined in THIS file
-    /// to hand `Bundle(for:)`.
-    private final class TestBundleAnchor {}
-
-    /// Locates the already-built `macscp-cli` binary, bundle-relative —
-    /// see `CLISessionsJSONRoundtripTests.locateCLIBinary` for why: it
-    /// deliberately does not run `swift build` (that would deadlock on
-    /// SwiftPM's `.build` lock), and reading a repo-root-relative
-    /// `.build/debug` path instead of the test bundle's own sibling breaks
-    /// under `--scratch-path` and `-c release`.
-    private static func locateCLIBinary() throws -> String {
-        if let override = ProcessInfo.processInfo.environment["MACSCP_CLI_BINARY"],
-           !override.isEmpty {
-            guard FileManager.default.isExecutableFile(atPath: override) else {
-                throw HarnessError(
-                    "MACSCP_CLI_BINARY is set to \(override), which is not executable")
-            }
-            return override
-        }
-        let productsDirectory = Bundle(for: TestBundleAnchor.self).bundleURL
-            .deletingLastPathComponent()
-        let binaryPath = productsDirectory
-            .appendingPathComponent("macscp-cli")
-            .path(percentEncoded: false)
-        guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
-            throw HarnessError("""
-                macscp-cli not found at \(binaryPath).
-                Build it before running this suite:
-                  swift build --product macscp-cli
-                or point MACSCP_CLI_BINARY at an existing binary.
-                """)
-        }
-        return binaryPath
     }
 
     /// Draining, the bound and the kill escalation all live in
@@ -192,8 +238,4 @@ struct CLICompletionScriptTests {
         return (result.status, result.stdoutText, result.stderrText)
     }
 
-    private struct HarnessError: Error, CustomStringConvertible {
-        let description: String
-        init(_ description: String) { self.description = description }
-    }
 }

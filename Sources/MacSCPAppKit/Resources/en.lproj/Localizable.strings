@@ -922,8 +922,9 @@
 "settings.cli.completion.where.bash" = "Add it to ~/.bashrc — or to ~/.bash_profile, which is what Terminal reads for login shells. It asks the installed tool for its current completion every time a shell starts, so an updated macSCP needs no second step.";
 "settings.cli.completion.where.fish" = "Add it to ~/.config/fish/config.fish. It asks the installed tool for its current completion every time a shell starts, so an updated macSCP needs no second step.";
 "settings.cli.completion.zshCompinit" = "zsh also needs its completion system running: autoload -Uz compinit && compinit, before this line. The setup macOS ships does that already.";
-"settings.cli.completion.footer.installed" = "The line calls the macscp-cli shortcut by name, so it keeps working after macSCP is updated or moved.";
+"settings.cli.completion.footer.installed" = "The line calls the macscp-cli shortcut by name, so it keeps working after macSCP is updated or moved — as long as ~/.local/bin is part of your shell's PATH, as the note above says.";
 "settings.cli.completion.footer.notInstalled" = "Without the shortcut the line has to name the tool inside the app bundle. Install the shortcut above to shorten it — and to keep it working if macSCP moves.";
+"settings.cli.completion.translocated" = "macSCP is running from a temporary copy, and that copy's path is gone as soon as macSCP quits — a startup file would keep it forever. Move macSCP to your Applications folder and open it from there, then this section shows a line worth keeping.";
 
 /* Snippets sheet (Terminal-Snippets milestone, Task 3) */
 "snippets.sheet.title" = "Snippets";

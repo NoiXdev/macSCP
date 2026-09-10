@@ -916,15 +916,16 @@
 
 /* Shell completion (Shell Completion plan, Task 1) */
 "settings.cli.completion.header" = "Shell-Vervollständigung";
-"settings.cli.completion.intro" = "Für die Tab-Vervollständigung von Befehlen und Optionen in macscp-cli diese Zeile in die Startdatei der Shell eintragen:";
+"settings.cli.completion.intro" = "Um Befehle und Optionen von macscp-cli mit der Tab-Taste zu vervollständigen, füge diese Zeile in die Startdatei deiner Shell ein:";
 "settings.cli.completion.shell" = "Shell";
 "settings.cli.completion.copy" = "Befehl kopieren";
-"settings.cli.completion.where.zsh" = "Gehört in ~/.zshrc. Die Zeile holt bei jedem Start einer Shell die aktuelle Vervollständigung vom installierten Werkzeug, ein Update von macSCP braucht also keinen zweiten Schritt.";
-"settings.cli.completion.where.bash" = "Gehört in ~/.bashrc — oder in ~/.bash_profile, das Terminal für Login-Shells liest. Die Zeile holt bei jedem Start einer Shell die aktuelle Vervollständigung vom installierten Werkzeug, ein Update von macSCP braucht also keinen zweiten Schritt.";
-"settings.cli.completion.where.fish" = "Gehört in ~/.config/fish/config.fish. Die Zeile holt bei jedem Start einer Shell die aktuelle Vervollständigung vom installierten Werkzeug, ein Update von macSCP braucht also keinen zweiten Schritt.";
-"settings.cli.completion.zshCompinit" = "zsh braucht außerdem ein gestartetes Vervollständigungssystem: autoload -Uz compinit && compinit, vor dieser Zeile. Die Standardkonfiguration von macOS erledigt das bereits.";
-"settings.cli.completion.footer.installed" = "Die Zeile ruft die Verknüpfung macscp-cli beim Namen auf und funktioniert deshalb auch nach einem Update oder einem Verschieben von macSCP.";
+"settings.cli.completion.where.zsh" = "Trag sie in ~/.zshrc ein. Die Zeile holt bei jedem Start deiner Shell die aktuelle Vervollständigung vom installierten Werkzeug, ein Update von macSCP braucht also keinen zweiten Schritt.";
+"settings.cli.completion.where.bash" = "Trag sie in ~/.bashrc ein — oder in ~/.bash_profile, das Terminal für Login-Shells liest. Die Zeile holt bei jedem Start deiner Shell die aktuelle Vervollständigung vom installierten Werkzeug, ein Update von macSCP braucht also keinen zweiten Schritt.";
+"settings.cli.completion.where.fish" = "Trag sie in ~/.config/fish/config.fish ein. Die Zeile holt bei jedem Start deiner Shell die aktuelle Vervollständigung vom installierten Werkzeug, ein Update von macSCP braucht also keinen zweiten Schritt.";
+"settings.cli.completion.zshCompinit" = "zsh braucht außerdem ein gestartetes Vervollständigungssystem: autoload -Uz compinit && compinit, das schreibst du vor diese Zeile. Die Standardkonfiguration von macOS erledigt das bereits.";
+"settings.cli.completion.footer.installed" = "Die Zeile ruft die Verknüpfung macscp-cli beim Namen auf und funktioniert deshalb auch nach einem Update oder einem Verschieben von macSCP — solange ~/.local/bin Teil des PATH deiner Shell ist, wie im Hinweis oben.";
 "settings.cli.completion.footer.notInstalled" = "Ohne die Verknüpfung muss die Zeile das Werkzeug im App-Bundle benennen. Installiere die Verknüpfung oben, um sie zu kürzen — und damit sie auch nach einem Verschieben von macSCP funktioniert.";
+"settings.cli.completion.translocated" = "macSCP läuft aus einer temporären Kopie, und deren Pfad ist weg, sobald macSCP beendet wird — eine Startdatei würde ihn für immer behalten. Verschiebe macSCP in deinen Programme-Ordner und öffne es von dort, dann zeigt dieser Abschnitt eine Zeile, die du behalten kannst.";
 
 /* Snippets sheet (Terminal-Snippets milestone, Task 3) */
 "snippets.sheet.title" = "Snippets";
