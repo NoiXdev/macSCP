@@ -190,19 +190,20 @@ way to pass a host and password directly on the command line. Point it at
 one with `name:/path`, e.g. `macscp-cli ls prod:/var/www`.
 
 Tab completion is set up from **Settings → Command-Line Tool → Shell
-Completion**: pick your shell there and copy the line it shows — for zsh,
-that line is
+Completion**: pick your shell there and copy the line it shows. For zsh,
+that line is:
 
 ```sh
 source <(macscp-cli --generate-completion-script zsh)
 ```
 
-— into your shell's startup file (`~/.zshrc`, `~/.bashrc`, or
+Paste it into your shell's startup file (`~/.zshrc`, `~/.bashrc`, or
 `~/.config/fish/config.fish`); bash and fish each have their own line
 shown there, in the form that shell expects. The line asks the installed
 tool for its current completion every time a shell starts, so an update
 never leaves a stale script behind, and it also offers the saved session
-names for the `name:` half.
+names for the `name:` half. The completion reads the session list only —
+no secret, no connection.
 
 **Commands**
 

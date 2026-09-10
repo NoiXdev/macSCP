@@ -22,7 +22,7 @@ struct ShellCompletionRecipeTests {
     @Test func everyShellHasItsLineSpelledExactly() {
         let expected: [ShellCompletionRecipe.Shell: String] = [
             .zsh: "source <(macscp-cli --generate-completion-script zsh)",
-            .bash: "source <(macscp-cli --generate-completion-script bash)",
+            .bash: "eval \"$(macscp-cli --generate-completion-script bash)\"",
             .fish: "macscp-cli --generate-completion-script fish | source",
         ]
         for shell in ShellCompletionRecipe.Shell.allCases {

@@ -70,9 +70,15 @@ struct CLICompletionScriptTests {
     // MARK: - The recipe's line loads in a real interpreter
 
     /// The whole point of the section: paste the line into a shell and the
-    /// completion loads without an error. Run non-interactively with `-c`,
-    /// so a broken script shows up as a non-zero status instead of a
-    /// message nobody reads.
+    /// completion is REGISTERED afterwards. Exit status alone cannot say
+    /// so — `source <(cmd)` and `cmd | source` return 0 when `cmd` fails
+    /// (an empty file sources cleanly; measured 2026-09-10 with
+    /// `/usr/bin/false --bogus` in zsh and bash, both 0) — so each run
+    /// ends in the shell's own registration probe: zsh
+    /// `(( ${+_comps[macscp-cli]} ))`, bash `complete -p macscp-cli`, fish
+    /// `complete -C 'macscp-cli ' | string length -q`. The same probe is
+    /// what caught bash 3.2 registering nothing from `source <(…)`, which
+    /// is why bash's line is the `eval "$(…)"` form.
     ///
     /// zsh gets `autoload -Uz compinit && compinit -D && ` in front,
     /// because `#compdef` is a no-op — and `compdef` an unknown command —
@@ -94,7 +100,14 @@ struct CLICompletionScriptTests {
         let binary = try CLIMatrix.binaryPath()
         let line = ShellCompletionRecipe.line(
             for: shell, tool: ShellCompletionRecipe.quotedForShell(binary))
-        let command = shell == .zsh ? "autoload -Uz compinit && compinit -D && \(line)" : line
+        let probe: String
+        switch shell {
+        case .zsh: probe = "(( ${+_comps[macscp-cli]} ))"
+        case .bash: probe = "complete -p macscp-cli >/dev/null"
+        case .fish: probe = "complete -C 'macscp-cli ' | string length -q"
+        }
+        let prefix = shell == .zsh ? "autoload -Uz compinit && compinit -D && " : ""
+        let command = "\(prefix)\(line) && \(probe)"
         let result = try await Self.runProcess(interpreter, ["-c", command])
         #expect(result.status == 0, """
             \(interpreter) -c exited \(result.status) on the \(shell.rawValue) \

@@ -41,12 +41,19 @@ public enum ShellCompletionRecipe {
     /// path already run through `quotedForShell(_:)`. Quoting here as well
     /// would produce a doubly quoted token no shell can resolve.
     ///
-    /// zsh and bash share the process-substitution form; fish has no
+    /// zsh takes the process-substitution form. bash does NOT: macOS ships
+    /// bash 3.2, whose `source <(…)` reads the substitution incompletely
+    /// and registers nothing — measured 2026-09-10 on `/bin/bash`
+    /// 3.2.57: `source <(TOOL --generate-completion-script bash)` exits 0
+    /// and `complete -p macscp-cli` then reports no specification, while
+    /// `eval "$(…)"` registers it (and does in zsh too). fish has no
     /// `<(…)` and pipes into its own `source` builtin instead.
     public static func line(for shell: Shell, tool: String) -> String {
         switch shell {
-        case .zsh, .bash:
+        case .zsh:
             return "source <(\(tool) \(generateFlag) \(shell.rawValue))"
+        case .bash:
+            return "eval \"$(\(tool) \(generateFlag) \(shell.rawValue))\""
         case .fish:
             return "\(tool) \(generateFlag) \(shell.rawValue) | source"
         }

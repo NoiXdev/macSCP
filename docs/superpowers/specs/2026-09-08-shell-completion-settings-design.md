@@ -13,7 +13,12 @@ installed tool at shell start, so a CLI update never leaves a stale
 script behind:
 
 - zsh: `source <(macscp-cli --generate-completion-script zsh)`
-- bash: `source <(macscp-cli --generate-completion-script bash)`
+- bash: `eval "$(macscp-cli --generate-completion-script bash)"` — not the
+  `source <(…)` form the maintainer asked for: macOS ships bash 3.2,
+  where `source <(…)` exits 0 and registers nothing (measured
+  2026-09-10 on `/bin/bash` 3.2.57, `complete -p macscp-cli` empty
+  afterwards; `eval "$(…)"` registers it). The maintainer was told in
+  chat the same day.
 - fish: `macscp-cli --generate-completion-script fish | source`
 
 ## Starting point (verified in the tree, 2026-09-08)
@@ -123,6 +128,10 @@ from outside).
   copies the same `line(` the label shows (both derived from one
   property); every catalogue key the section reads resolves in all four
   catalogs.
+- `CLISettingsCompletionPresentationTests` (App, added in Task 1's fix
+  round): `CLICompletionPresentation.forState(_:bundledToolPath:)` over
+  every `CLIInstallState` case — the table that carries the
+  `translocated` decision above.
 
 ## Limits
 
