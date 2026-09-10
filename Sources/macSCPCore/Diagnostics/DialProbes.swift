@@ -258,8 +258,13 @@ public enum DialSupport {
                 return "the key file could not be parsed"
             case .typeNotLoadable(let algorithm):
                 return "this app cannot load a key of type \(algorithm)"
-            case .pemNotSupported:
-                return "the key is in PEM format, which this app does not read"
+            case .pemNotReadable:
+                // The payload is dropped, like `unsupportedFormat`'s above,
+                // though for the milder reason: it is one of the decoder's
+                // own constants, not a foreign error's description. The rule
+                // this function states is fixed sentences with no payload,
+                // and the connect form is where the feature gets named.
+                return "the key is a PEM file with a feature this app does not read"
             }
         case let error as AgentError:
             switch error {

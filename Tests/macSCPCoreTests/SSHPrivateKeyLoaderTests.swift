@@ -428,12 +428,145 @@ struct SSHPrivateKeyLoaderTests {
         case noLeadingSSHString
     }
 
-    @Test("a PEM-format key is reported as PEM, not as garbage")
-    func pemKeyIsReported() async throws {
-        let (dir, keyPath) = try await makeKey(type: "rsa", extra: ["-b", "2048", "-m", "PEM"])
+    // MARK: - PEM files (PEM private keys plan, Task 3)
+
+    /// The one passphrase the PEM cells below use.
+    ///
+    /// A named constant because `#expect` reports the SOURCE TEXT of the
+    /// expression it checks, so a passphrase spelled inside an expectation
+    /// leaks through the failure message — the second exit `CLAUDE.md` names
+    /// ("A value a test must not leak has two exits, not one"). It reaches
+    /// `ssh-keygen -N` and the loader, nothing else.
+    static let pemPassphrase = "pem-loader-fixture"
+
+    /// Every shape `PEMFixtures.Shape.all` produces — RSA 2048 and ECDSA on
+    /// all three curves, each written by `ssh-keygen -m PEM` (PKCS#1 / SEC1)
+    /// and by `-m PKCS8` — plain and passphrase-protected: sixteen cells.
+    ///
+    /// This replaces `pemKeyIsReported`, which asserted the refusal these
+    /// files used to get. The refusal was the boundary check in
+    /// `authentication(username:keyPath:passphrase:)`; the files it turned
+    /// away are exactly the ones read here.
+    @Test("a PEM key loads", arguments: PEMFixtures.Shape.all, [false, true])
+    func aPEMKeyLoads(shape: PEMFixtures.Shape, encrypted: Bool) async throws {
+        let dir = try PEMFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        #expect(throws: SSHKeyError.pemNotSupported) {
-            _ = try SSHPrivateKeyLoader.authentication(username: "tim", keyPath: keyPath, passphrase: nil)
+        let passphrase: String? = encrypted ? Self.pemPassphrase : nil
+        let keyPath = try await PEMFixtures.sshKeygen(
+            type: shape.type, bits: shape.bits, format: shape.format,
+            passphrase: passphrase, in: dir)
+        _ = try SSHPrivateKeyLoader.authentication(
+            username: "tim", keyPath: keyPath, passphrase: passphrase)
+    }
+
+    /// `rsaKeyOffersSHA2Only`'s twin for a PEM RSA file, and it exists
+    /// because the PEM path reaches `.rsaSHA2` through its OWN call: the
+    /// components go through `OpenSSHKeyContainer.unencryptedRSA` and
+    /// Citadel's `sshRsa` parser, and that call passes its own
+    /// `includeSHA1Fallback:`. A `true` there would offer SHA-1 for every
+    /// PEM RSA key while the OpenSSH path stayed correct, and the original
+    /// test could not see it.
+    ///
+    /// Read the same way, off the same two identifiers — see
+    /// `rsaKeyOffersSHA2Only`'s doc comment for what each half proves.
+    @Test("a PEM RSA key is offered as rsa-sha2 only, never as ssh-rsa")
+    func pemRSAKeyOffersSHA2Only() async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let keyPath = try await PEMFixtures.sshKeygen(
+            type: "rsa", bits: 2048, format: .pem, passphrase: nil, in: dir)
+        let method = try SSHPrivateKeyLoader.authentication(
+            username: "tim", keyPath: keyPath, passphrase: nil)
+
+        let offers = try await offeredKeys(method)
+        #expect(offers.map(\.algorithmName) == [
+            Insecure.RSA.SHA2PublicKey<RSASHA2_512>.userAuthAlgorithmName,
+            Insecure.RSA.SHA2PublicKey<RSASHA2_256>.userAuthAlgorithmName,
+        ])
+        #expect(Set(offers.map(\.blobType)) == [Insecure.RSA.PublicKey.publicKeyPrefix])
+        #expect(!offers.map(\.algorithmName)
+            .contains(Insecure.RSA.PublicKey.userAuthAlgorithmName))
+    }
+
+    /// Ed25519 has no cell in `Shape.all` because no producer on this
+    /// machine writes one: `ssh-keygen -m PEM`/`-m PKCS8` refuse ed25519
+    /// ("error in libcrypto") and LibreSSL 3.3.6 does not know the algorithm
+    /// (design table, 2026-09-10). The file is therefore built from a
+    /// CryptoKit seed and its fixed PKCS#8 prefix, and what it measures is
+    /// the loader's ed25519 arm, not an external producer.
+    ///
+    /// The offer is read back rather than the return value merely being
+    /// discarded: the ECDSA arms would also return a `SSHAuthenticationMethod`
+    /// for a mis-dispatched key, and the offered algorithm name is what says
+    /// which arm ran. Both names come from NIOSSH's own key, never spelled.
+    @Test("an Ed25519 PKCS#8 key loads")
+    func ed25519PKCS8KeyLoads() async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let seed = Curve25519.Signing.PrivateKey().rawRepresentation
+        let keyURL = dir.appendingPathComponent("ed25519-pkcs8.pem")
+        try Data(PEMFixtures.ed25519PKCS8PEM(seed: seed).utf8).write(to: keyURL)
+
+        let method = try SSHPrivateKeyLoader.authentication(
+            username: "tim", keyPath: keyURL.path(percentEncoded: false), passphrase: nil)
+        let offers = try await offeredKeys(method)
+        let expected = String(NIOSSHPrivateKey(
+            ed25519Key: try Curve25519.Signing.PrivateKey(rawRepresentation: seed))
+            .publicKey.userAuthAlgorithmName)
+        #expect(offers == [OfferedKey(algorithmName: expected, blobType: expected)])
+    }
+
+    /// swift-crypto carries no DES, so a 3DES file cannot be opened with any
+    /// passphrase — and saying "wrong passphrase" to someone holding the
+    /// right one is the failure this case exists to prevent. The cipher name
+    /// is the decoder's own constant, not a substring of the file.
+    @Test("a DES-EDE3 PEM key is named")
+    func desEDE3PEMKeyIsNamed() async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plainPath = try await PEMFixtures.sshKeygen(
+            type: "rsa", bits: 2048, format: .pem, passphrase: nil, in: dir)
+        let keyPath = dir.appendingPathComponent("des3.pem").path(percentEncoded: false)
+        try await PEMFixtures.openssl(["rsa", "-in", plainPath, "-des3",
+                                       "-passout", "pass:\(Self.pemPassphrase)",
+                                       "-out", keyPath])
+
+        #expect(throws: SSHKeyError.pemNotReadable(.cipher("DES-EDE3-CBC"))) {
+            _ = try SSHPrivateKeyLoader.authentication(
+                username: "tim", keyPath: keyPath, passphrase: Self.pemPassphrase)
         }
+    }
+
+    /// The two passphrase verdicts have to survive the PEM path unchanged —
+    /// they are the two `SSHKeyError` cases `ConnectionViewModel` treats as
+    /// `.needsPerson`, and a PEM key that reported `unsupportedFormat`
+    /// instead would silently lose the passphrase prompt.
+    ///
+    /// Both encryptions ssh-keygen writes: the legacy `DEK-Info` header
+    /// (`-m PEM`) and PBES2 (`-m PKCS8`). The right passphrase opens the
+    /// same file at the end, so neither refusal is about the file.
+    @Test("an encrypted PEM key maps the two passphrase failures",
+          arguments: [PEMFixtures.Format.pem, .pkcs8])
+    func encryptedPEMKeyMapsThePassphraseFailures(format: PEMFixtures.Format) async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let keyPath = try await PEMFixtures.sshKeygen(
+            type: "rsa", bits: 2048, format: format,
+            passphrase: Self.pemPassphrase, in: dir)
+
+        #expect(throws: SSHKeyError.passphraseRequired) {
+            _ = try SSHPrivateKeyLoader.authentication(
+                username: "tim", keyPath: keyPath, passphrase: nil)
+        }
+        let wrong = "not-the-" + Self.pemPassphrase
+        #expect(throws: SSHKeyError.wrongPassphrase) {
+            _ = try SSHPrivateKeyLoader.authentication(
+                username: "tim", keyPath: keyPath, passphrase: wrong)
+        }
+        // The positive half, as in the OpenSSH twin above: the same file
+        // opens with the right passphrase, so both refusals are about the
+        // passphrase and not about PEM.
+        _ = try SSHPrivateKeyLoader.authentication(
+            username: "tim", keyPath: keyPath, passphrase: Self.pemPassphrase)
     }
 }

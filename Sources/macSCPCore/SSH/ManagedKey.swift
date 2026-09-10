@@ -2,9 +2,11 @@ import Foundation
 
 /// The kind of SSH key (M17). All three cases can be used to CONNECT in
 /// macSCP: `SSHPrivateKeyLoader` opens OpenSSH-format ed25519, RSA and
-/// ECDSA (P-256/384/521) private key files (`fa67138`); DSA, `sk-*`
-/// security-key types and PEM-format keys are not modelled here at all and
-/// never reach `KeyType`.
+/// ECDSA (P-256/384/521) private key files (`fa67138`), and since
+/// 2026-09-10 PEM-format files of the same three types through
+/// `PEMPrivateKeyDecoder` — a PEM file reaches the same three cases, so
+/// nothing new is modelled here for it. DSA and `sk-*` security-key types
+/// are not modelled at all and never reach `KeyType`.
 public enum KeyType: Equatable, Sendable, Codable {
     case ed25519
     case rsa(bits: Int)

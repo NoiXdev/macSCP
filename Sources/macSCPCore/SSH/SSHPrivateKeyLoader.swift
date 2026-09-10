@@ -14,19 +14,27 @@ public enum SSHKeyError: Error, Equatable, Sendable {
     /// (e.g. `ssh-dss`, `sk-ssh-ed25519@openssh.com`), because that is the
     /// only name available for a type Citadel does not model.
     case typeNotLoadable(algorithm: String)
-    /// The file begins with a PEM boundary other than
-    /// `-----BEGIN OPENSSH PRIVATE KEY-----`.
-    case pemNotSupported
+    /// A PEM file `PEMPrivateKeyDecoder` opened far enough to NAME what
+    /// stops it — a cipher the stack does not carry, a password scheme that
+    /// is not PBES2, a key algorithm this loader does not build, a PuTTY
+    /// file, or contents that do not parse.
+    ///
+    /// The payload is one of the decoder's own constants and never a
+    /// substring of the file (see `PEMReadFailure`), because it reaches a
+    /// user-visible message and the command the failure surface offers.
+    case pemNotReadable(PEMReadFailure)
 }
 
-/// Loads private OpenSSH keys — ed25519, RSA and ECDSA on all three NIST
-/// curves, each optionally encrypted — via Citadel's parser.
+/// Loads private SSH keys — ed25519, RSA and ECDSA on all three NIST
+/// curves, each optionally encrypted — from OpenSSH's own container via
+/// Citadel's parser, and from PEM files via `PEMPrivateKeyDecoder`.
 ///
 /// RSA is offered under the RFC 8332 SHA-2 signature algorithms only; see
 /// `authentication(username:keyPath:passphrase:)` for why the SHA-1
-/// fallback is passed explicitly. PEM-format files and key types Citadel
-/// does not model (DSA, FIDO `sk-*`, certificates) are named rather than
-/// parsed.
+/// fallback is passed explicitly. PEM is PARSED since 2026-09-10 (PEM
+/// private keys plan); what the PEM reader cannot open it names
+/// (`pemNotReadable`), as do key types Citadel does not model (DSA, FIDO
+/// `sk-*`, certificates).
 public enum SSHPrivateKeyLoader {
     public static func authentication(
         username: String, keyPath: String, passphrase: String?
@@ -43,15 +51,29 @@ public enum SSHPrivateKeyLoader {
             throw SSHKeyError.unsupportedFormat(reason: String(describing: error))
         }
 
+        // A PEM file — anything with a `-----BEGIN` boundary that is not
+        // OpenSSH's own, plus a PuTTY file — goes to the PEM reader. This is
+        // exactly the set the boundary check standing here until 2026-09-10
+        // turned away unread.
+        if PEMPrivateKeyDecoder.isPEM(contents) {
+            let decoded = try Self.decodePEM(contents, passphrase: passphrase)
+            do {
+                return try Self.authentication(username: username, decoded: decoded)
+            } catch {
+                // The decoder said the file holds a key of this shape and
+                // the key type's own initialiser disagreed — a scalar of the
+                // wrong length, a container Citadel's parser refuses. Not a
+                // FEATURE the reader lacks, so not `pemNotReadable`: the
+                // same verdict the OpenSSH path gives a file it cannot make
+                // a key out of.
+                throw SSHKeyError.unsupportedFormat(reason: String(describing: error))
+            }
+        }
+
         // Name the key before parsing it. The openssh-key-v1 header is cleartext
         // even when the private half is encrypted, so a key type this loader
         // cannot use is reported as itself before anyone is asked for a
         // passphrase that could never have helped.
-        let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("-----BEGIN ") && !trimmed.hasPrefix("-----BEGIN OPENSSH PRIVATE KEY-----") {
-            throw SSHKeyError.pemNotSupported
-        }
-
         let type: SSHKeyType
         do {
             type = try SSHKeyDetection.detectPrivateKeyType(from: contents)
@@ -99,6 +121,76 @@ public enum SSHPrivateKeyLoader {
             throw error
         } catch {
             throw Self.map(error, hadPassphrase: decryptionKey != nil)
+        }
+    }
+
+    /// `PEMPrivateKeyDecoder.decode` with its errors in this type's
+    /// vocabulary.
+    ///
+    /// The two passphrase verdicts keep their meaning across the two
+    /// readers, which is what lets `ConnectionViewModel.failureKind(for:)`
+    /// go on classifying them as `.needsPerson` without knowing which reader
+    /// produced them. `.notPEM` cannot arise from a call the `isPEM` guard
+    /// let through — the decoder throws it only for OpenSSH's own label —
+    /// and is mapped rather than force-unwrapped away.
+    ///
+    /// An EMPTY passphrase means "no passphrase", the same normalisation the
+    /// OpenSSH path does above: the decoder takes `nil` as the absence and
+    /// would otherwise derive a key from the empty string and report a wrong
+    /// passphrase where the honest answer is that one is needed.
+    private static func decodePEM(
+        _ contents: String, passphrase: String?
+    ) throws -> PEMPrivateKeyDecoder.DecodedPrivateKey {
+        let effective = passphrase.flatMap { $0.isEmpty ? nil : $0 }
+        do {
+            return try PEMPrivateKeyDecoder.decode(contents, passphrase: effective)
+        } catch PEMPrivateKeyDecoder.DecodeError.passphraseRequired {
+            throw SSHKeyError.passphraseRequired
+        } catch PEMPrivateKeyDecoder.DecodeError.wrongPassphrase {
+            throw SSHKeyError.wrongPassphrase
+        } catch PEMPrivateKeyDecoder.DecodeError.notReadable(let failure) {
+            throw SSHKeyError.pemNotReadable(failure)
+        } catch PEMPrivateKeyDecoder.DecodeError.notPEM {
+            throw SSHKeyError.unsupportedFormat(reason: "not PEM")
+        }
+    }
+
+    /// The decoded material as an authentication method — the same five
+    /// factories the OpenSSH path dispatches to (ed25519, RSA, and one per
+    /// NIST curve; counted 2026-09-10 in both switches), reached from
+    /// components instead of from a file.
+    ///
+    /// RSA takes the detour through `OpenSSHKeyContainer.unencryptedRSA`
+    /// because Citadel's `Insecure.RSA.PrivateKey` has no component
+    /// initialiser reachable from outside its module (design, "Feeding the
+    /// keys to a connection"). The container exists in memory for the length
+    /// of this call and is written nowhere.
+    private static func authentication(
+        username: String, decoded: PEMPrivateKeyDecoder.DecodedPrivateKey
+    ) throws -> SSHAuthenticationMethod {
+        switch decoded {
+        case .rsa(let components):
+            // `includeSHA1Fallback` is passed EXPLICITLY here for the same
+            // reason as on the OpenSSH path above — see that call's comment.
+            // `SSHPrivateKeyLoaderTests.pemRSAKeyOffersSHA2Only` is this
+            // call's own pin.
+            return .rsaSHA2(
+                username: username,
+                privateKey: try Insecure.RSA.PrivateKey(
+                    sshRsa: OpenSSHKeyContainer.unencryptedRSA(components, comment: "")),
+                includeSHA1Fallback: false)
+        case .ecdsa(.p256, let scalar):
+            return .p256(username: username,
+                         privateKey: try P256.Signing.PrivateKey(rawRepresentation: scalar))
+        case .ecdsa(.p384, let scalar):
+            return .p384(username: username,
+                         privateKey: try P384.Signing.PrivateKey(rawRepresentation: scalar))
+        case .ecdsa(.p521, let scalar):
+            return .p521(username: username,
+                         privateKey: try P521.Signing.PrivateKey(rawRepresentation: scalar))
+        case .ed25519(let seed):
+            return .ed25519(username: username,
+                            privateKey: try Curve25519.Signing.PrivateKey(rawRepresentation: seed))
         }
     }
 

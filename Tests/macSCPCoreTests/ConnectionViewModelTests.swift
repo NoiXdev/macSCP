@@ -413,17 +413,113 @@ struct ConnectionViewModelTests {
     /// by definition one no type in either project declares.
     nonisolated static let unmodelledKeyType = "ssh-dss"
 
-    /// `SSHKeyError.pemNotSupported` (Task 1: a PEM-boundary file, not an
-    /// `openssh-key-v1` one) gets its own catalog entry rather than falling
-    /// into the generic `keyUnsupportedFormat` branch.
-    @Test func pemNotSupportedMapsToLocalizedMessage() async {
-        let vm = makeVM(connector: { _, _ in throw SSHKeyError.pemNotSupported })
+    /// `SSHKeyError.pemNotReadable` (PEM private keys plan, Task 3: a PEM
+    /// file the reader opened far enough to NAME what stops it) publishes
+    /// two things — the message that carries the feature and the command,
+    /// and the typed remedy the failed surface turns into a button.
+    ///
+    /// The message is rebuilt here from the same catalog keys rather than
+    /// spelled: what this pins is the composition (which feature sentence,
+    /// which command, in which order), not the English wording, which the
+    /// catalogs own and the parity tests check.
+    @Test func pemNotReadableMapsToLocalizedMessageAndRemedy() async {
+        let vm = makeVM(connector: { _, _ in
+            throw SSHKeyError.pemNotReadable(.cipher("DES-EDE3-CBC"))
+        })
         vm.authChoice = .privateKey
-        vm.keyPath = "~/.ssh/id_rsa"
+        vm.keyPath = "~/.ssh/legacy"
+        let expanded = NSString(string: vm.keyPath).expandingTildeInPath
         _ = await vm.connect()
+
         #expect(vm.state == .failed(
-            message: CoreL10n.string("core.connect.keyPEMNotSupported"),
+            message: String(
+                format: CoreL10n.string("core.connect.keyPEMNotReadable %@ %@"),
+                String(format: CoreL10n.string("core.connect.pemFeature.cipher %@"),
+                       "DES-EDE3-CBC"),
+                SSHKeyConverter.inPlaceCommandLine(forKeyAt: expanded)),
             field: .schema("SSHField.keyPath")))
+        #expect(vm.lastFailureRemedy == .convertKey(path: expanded))
+    }
+
+    /// The negative half of the property, and the reason it is typed rather
+    /// than a `Bool`: a remedy is offered for ONE condition. Every other
+    /// dial failure — including the other key errors, which look alike from
+    /// the surface — leaves it `nil`, so no button appears where converting
+    /// the file would change nothing.
+    ///
+    /// The four walked here are the NEIGHBOURS, not a sample: every other
+    /// `SSHKeyError` the loader can throw about the same file, each of which
+    /// a mapping written one case too wide would catch.
+    @Test func anyOtherFailurePublishesNoRemedy() async {
+        for error: SSHKeyError in [.fileNotFound(path: "~/.ssh/legacy"), .wrongPassphrase,
+                                   .typeNotLoadable(algorithm: "ssh-dss"),
+                                   .unsupportedFormat(reason: "bad header")] {
+            let vm = makeVM(connector: { _, _ in throw error })
+            vm.authChoice = .privateKey
+            vm.keyPath = "~/.ssh/legacy"
+            _ = await vm.connect()
+            // The positive check beside the negative one: the attempt really
+            // did fail, so the `nil` below is a verdict and not an untouched
+            // slot.
+            #expect(vm.lastFailureReason != nil, "\(error): the dial did not fail at all")
+            #expect(vm.lastFailureRemedy == nil, "\(error): offered a remedy")
+        }
+    }
+
+    /// A remedy belongs to ONE attempt. The next `connect()` clears it
+    /// before it dials, so nothing reading the property while a dial is in
+    /// flight can offer to convert a key the PREVIOUS attempt tripped over.
+    ///
+    /// Read inside the connector — the moment the dial is running — because
+    /// reading it after `connect()` returns would see the new attempt's own
+    /// verdict and could not tell a clear from a rewrite. Both calls record,
+    /// so the list itself says the connector ran twice; only the second
+    /// reading is the one under test.
+    @Test func theNextAttemptClearsTheRemedyBeforeDialing() async {
+        let observed = ObservedRemedies()
+        let box = ViewModelBox()
+        let outcomes = Outcomes(errors: [SSHKeyError.pemNotReadable(.putty),
+                                         SSHKeyError.wrongPassphrase])
+        let vm = makeVM(connector: { _, _ in
+            await observed.record(await MainActor.run { box.viewModel?.lastFailureRemedy })
+            throw await outcomes.next()
+        })
+        box.viewModel = vm
+        vm.authChoice = .privateKey
+        vm.keyPath = "~/.ssh/legacy"
+
+        _ = await vm.connect()
+        // The positive check beside the clearing one: the first attempt
+        // really did publish a remedy, so the `nil` the second attempt reads
+        // is a clear and not a property that was never written.
+        #expect(vm.lastFailureRemedy != nil)
+
+        _ = await vm.connect()
+        let readings = await observed.values
+        #expect(readings.count == 2)
+        if readings.count == 2 {
+            let secondReading: ConnectFailureRemedy?? = readings[1]
+            // `.some(nil)`: the box still held the view model, and what it
+            // held for this property was nothing.
+            let clearedBeforeDialing = secondReading == .some(nil)
+            #expect(clearedBeforeDialing)
+        }
+    }
+
+    /// What `theNextAttemptClearsTheRemedyBeforeDialing` read while each
+    /// dial ran. Doubly optional: the outer level is "the box still held the
+    /// view model", the inner one the property's own value.
+    private actor ObservedRemedies {
+        private(set) var values: [ConnectFailureRemedy??] = []
+        func record(_ remedy: ConnectFailureRemedy??) { values.append(remedy) }
+    }
+
+    /// Lets the connector closure — `@Sendable`, and built BEFORE the view
+    /// model it belongs to — read that view model back. Weak, so the box
+    /// does not keep it alive through the retain cycle a strong reference
+    /// would close (view model → connector → box → view model).
+    @MainActor private final class ViewModelBox {
+        weak var viewModel: ConnectionViewModel?
     }
 
     /// `selectAuthChoice` is what the auth-kind PICKER goes through — the form

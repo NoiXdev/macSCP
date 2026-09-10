@@ -4,8 +4,8 @@ import Foundation
 ///
 /// Pure: text and passphrase in, components out. No file system, no
 /// subprocess, no clock. The loader calls it when a key file begins with a
-/// PEM boundary other than OpenSSH's — exactly where it refused with
-/// `pemNotSupported` before.
+/// PEM boundary other than OpenSSH's — exactly where it refused such a file
+/// unread until 2026-09-10.
 ///
 /// What it cannot open it NAMES: a 3DES file is `.cipher("DES-EDE3-CBC")`,
 /// not a wrong passphrase, so the message can carry the one command that

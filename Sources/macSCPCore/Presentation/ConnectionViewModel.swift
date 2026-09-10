@@ -34,6 +34,26 @@ public enum ConnectFailureKind: Equatable, Sendable {
     case other
 }
 
+/// Something macSCP itself can DO about a failed dial, published beside the
+/// message that describes it (`ConnectionViewModel.lastFailureRemedy`).
+///
+/// One case, and typed rather than a `Bool` for the reason
+/// `ConnectFailureKind` above is typed: the surface offering it needs the
+/// path to act on, and a second remedy — should one ever exist — must be a
+/// case here rather than a second flag that can contradict this one.
+///
+/// Lives in Core beside the mapping that produces it
+/// (`ConnectionViewModel.remedy(for:keyPath:)`), for the same reason
+/// `ConnectFailureKind` does: the classification is over Core's own error
+/// types, and the App cannot re-derive it from a localized message.
+public enum ConnectFailureRemedy: Equatable, Sendable {
+    /// The key file at `path` is a PEM file macSCP could not read, and
+    /// `SSHKeyConverter` can rewrite a COPY of it into a key macSCP opens.
+    /// `path` is tilde-expanded — the file system's spelling, not the
+    /// form's — because it is what a converter and a command line take.
+    case convertKey(path: String)
+}
+
 /// State and logic of the connection form.
 /// The connector is injectable: production uses CitadelFileSystem.connect,
 /// tests use a mock — the view model stays testable without a network.
@@ -528,6 +548,25 @@ public final class ConnectionViewModel {
     /// out of the window that guard reads.
     public private(set) var lastFailureReason: String?
 
+    /// What macSCP can OFFER to do about the most recent dial failure, or
+    /// `nil` when there is nothing to offer (PEM private keys plan, Task 3).
+    ///
+    /// `nil` for every failure but one: `SSHKeyError.pemNotReadable`, where
+    /// converting a copy of the key file is a real action rather than
+    /// advice. See `remedy(for:keyPath:)` for the mapping, and
+    /// `ConnectFailureRemedy` for why it is a type and not a flag.
+    ///
+    /// Written in `connect()` alone, exactly like `lastFailureReason` above
+    /// and in the same two places: cleared at the head of every attempt,
+    /// beside that property's own clear, and set in the `catch` beside that
+    /// property's own write. Deliberately NOT inside `fail(_:kind:)`, and
+    /// for the reason spelled there:
+    /// `ConnectionViewModelSourceGuardTests.theOneFailureWriterSetsTheVerdictFirst`
+    /// reads the five normalized lines that follow that function's
+    /// signature, so a sixth line in its body would push `state = newState`
+    /// out of the window the guard reads.
+    public private(set) var lastFailureRemedy: ConnectFailureRemedy?
+
     /// Identifies whichever `connect()` call is currently allowed to write
     /// to this instance (connection-liveness plan, Task 6 fix round 1).
     ///
@@ -806,6 +845,7 @@ public final class ConnectionViewModel {
         // not own.
         lastFailureKind = nil
         lastFailureReason = nil
+        lastFailureRemedy = nil
         let myAttempt = UUID()
         currentAttempt = myAttempt
         // Assigned WITH the attempt, and after the refusal above — see
@@ -894,6 +934,9 @@ public final class ConnectionViewModel {
             // The fixed sentence for this error, computed where the error
             // is — the only place it exists. See `lastFailureReason`.
             lastFailureReason = DialSupport.reason(for: error)
+            // Beside it, and from the same error: what macSCP can offer to
+            // DO about it. See `lastFailureRemedy`.
+            lastFailureRemedy = Self.remedy(for: error, keyPath: keyPath)
             // `.mismatch` never reaches the decider closure above (it is a
             // hard stop, evaluated before the decider is ever asked), so it
             // is the one host-key outcome this catch has to log itself.
@@ -1011,7 +1054,7 @@ public final class ConnectionViewModel {
     ///
     /// Every other `SSHKeyError` case (`fileNotFound`, `unsupportedFormat`,
     /// and, since Task 1 of the key-formats plan, `typeNotLoadable` and
-    /// `pemNotSupported`) is deliberately `.other`, even though no second
+    /// `pemNotReadable`) is deliberately `.other`, even though no second
     /// attempt will fix any of them either: the spec's rule is about the
     /// two conditions above, and treating this as a general "would retrying
     /// help" oracle would make it a growing list of guesses instead of one
@@ -1025,6 +1068,58 @@ public final class ConnectionViewModel {
             return .needsPerson
         default:
             return .other
+        }
+    }
+
+    /// What macSCP can DO about a thrown dial error — `lastFailureRemedy`'s
+    /// mapping (PEM private keys plan, Task 3).
+    ///
+    /// One error, one remedy. `pemNotReadable` is the only case where an
+    /// action exists that macSCP can carry out itself: `ssh-keygen -p`
+    /// rewrites a copy of the file into a container the loader opens, and
+    /// every feature the PEM reader refuses is one `ssh-keygen` reads
+    /// (design, "What is not read, by decision"). Every other failure —
+    /// including the other key errors — gets `nil` rather than a button that
+    /// would change nothing.
+    ///
+    /// `keyPath` is the form's own, tilde-expanded here exactly as
+    /// `SSHPrivateKeyLoader` expands it, because a converter and a command
+    /// line both take a file-system path. It is the path the person typed;
+    /// it is not a credential, and `core.connect.keyNotFound %@` already
+    /// prints one.
+    static func remedy(for error: Error, keyPath: String) -> ConnectFailureRemedy? {
+        switch error {
+        case SSHKeyError.pemNotReadable:
+            return .convertKey(path: NSString(string: keyPath).expandingTildeInPath)
+        default:
+            return nil
+        }
+    }
+
+    /// The half-sentence naming what stopped the PEM reader — `%1$@` of
+    /// `core.connect.keyPEMNotReadable %@ %@`.
+    ///
+    /// Five keys rather than one with a `%@` for the whole clause, so a
+    /// language can phrase each case its own way: what follows "its %@
+    /// encryption" is a noun in one language and a clause in another, and
+    /// `putty`/`malformed` carry no name at all.
+    ///
+    /// The interpolated name is `PEMReadFailure`'s payload, which is one of
+    /// the decoder's own constants — never a substring of the file (see
+    /// `PEMReadFailure`). A file therefore cannot write its own text into
+    /// this message.
+    static func pemFeatureSentence(_ failure: PEMReadFailure) -> String {
+        switch failure {
+        case .cipher(let name):
+            return String(format: CoreL10n.string("core.connect.pemFeature.cipher %@"), name)
+        case .scheme(let name):
+            return String(format: CoreL10n.string("core.connect.pemFeature.scheme %@"), name)
+        case .keyType(let name):
+            return String(format: CoreL10n.string("core.connect.pemFeature.keyType %@"), name)
+        case .putty:
+            return CoreL10n.string("core.connect.pemFeature.putty")
+        case .malformed:
+            return CoreL10n.string("core.connect.pemFeature.malformed")
         }
     }
 
@@ -1103,18 +1198,21 @@ public final class ConnectionViewModel {
         resolveHostKeyPrompt(trust: false)
     }
 
-    /// `failedState` carrying the jump context the form currently holds.
+    /// `failedState` carrying the form context the form currently holds.
     ///
     /// Used by both jump-aware failure sites -- attaching the hop, and the dial
-    /// itself. The four-argument form is what maps `invalidJumpPort`,
+    /// itself. The jump arguments are what map `invalidJumpPort`,
     /// `emptyJumpKeyPath`, `invalidJumpHost` and `invalidJumpUsername` onto the
     /// jump rows, and what lets `channelSetupRejected`, the `AgentError` cases
     /// and `SSHKeyError.fileNotFound` tell the jump hop from the target one.
+    /// `keyPath` is the target hop's own, and only `SSHKeyError.pemNotReadable`
+    /// reads it -- see `failedState`'s own doc comment.
     private func jumpAwareFailedState(for error: Error) -> State {
         Self.failedState(
             for: error, jumpEnabled: jumpEnabled,
             jumpKeyPath: jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-            jumpAuthChoice: jumpAuthChoice)
+            jumpAuthChoice: jumpAuthChoice,
+            keyPath: keyPath.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// The secret the active backend's visible secret field currently holds.
@@ -1879,9 +1977,15 @@ public final class ConnectionViewModel {
         }
     }
 
+    /// `keyPath` is the TARGET hop's key path, and only
+    /// `SSHKeyError.pemNotReadable` reads it: that case carries no path of
+    /// its own (like `typeNotLoadable`, and unlike `fileNotFound`), while
+    /// its message has to carry the command that converts the file. It
+    /// defaults to empty because every caller but the dial passes an error
+    /// that never looks at it.
     static func failedState(
         for error: Error, jumpEnabled: Bool = false, jumpKeyPath: String = "",
-        jumpAuthChoice: AuthChoice = .password
+        jumpAuthChoice: AuthChoice = .password, keyPath: String = ""
     ) -> State {
         switch error {
         case SSHConnectionConfig.ConfigError.emptyHost:
@@ -2039,9 +2143,10 @@ public final class ConnectionViewModel {
                 field: Self.sshField(.passphrase))
         case SSHKeyError.wrongPassphrase:
             return .failed(message: CoreL10n.string("core.connect.keyWrongPassphrase"), field: Self.sshField(.passphrase))
-        // `typeNotLoadable`/`pemNotSupported` (Task 1) carry only an algorithm
-        // name or nothing at all -- no `path`, unlike `fileNotFound` above --
-        // so the jump/target hop can't be told apart the way `fileNotFound`
+        // `typeNotLoadable` (key formats plan, Task 1) and `pemNotReadable`
+        // (PEM private keys plan, Task 3) carry only an algorithm name or a
+        // refused feature -- no `path`, unlike `fileNotFound` above -- so the
+        // jump/target hop can't be told apart the way `fileNotFound`
         // does (comparing the error's own path against `jumpKeyPath`). Nor
         // does the `AgentError.socketUnavailable`/`.noIdentities` trick above
         // apply: those two attribute purely from `jumpAuthChoice` because a
@@ -2064,7 +2169,12 @@ public final class ConnectionViewModel {
         // this comment describes is narrower than a wrong field, not zero:
         // with a jump host whose OWN key file is the unloadable one, this
         // error can still originate at the jump hop while the target's row is
-        // the one that gets outlined.
+        // the one that gets outlined. `pemNotReadable` widens that same
+        // imprecision by exactly one step, and no further: its message and
+        // its remedy name the TARGET's key path, so in that same jump-key
+        // case the command offered would convert the wrong file. It is the
+        // one attribution this arm cannot make, for the one reason stated at
+        // the top of this comment -- the error carries no path.
         case SSHKeyError.typeNotLoadable(let algorithm):
             // No RSA note any more. It existed because an RSA key FILE could
             // not be loaded at all and the user's only remaining route was the
@@ -2077,9 +2187,18 @@ public final class ConnectionViewModel {
                 message: String(
                     format: CoreL10n.string("core.connect.keyTypeNotLoadable %@"), algorithm),
                 field: Self.sshField(.keyPath))
-        case SSHKeyError.pemNotSupported:
+        case SSHKeyError.pemNotReadable(let failure):
+            // The one message here built from two catalog entries: the
+            // feature that stops the reader, and the command that gets past
+            // it. The command is NOT a display string and comes from
+            // `SSHKeyConverter`, never from a catalog — a translator must
+            // not be able to change what a person is told to run.
             return .failed(
-                message: CoreL10n.string("core.connect.keyPEMNotSupported"),
+                message: String(
+                    format: CoreL10n.string("core.connect.keyPEMNotReadable %@ %@"),
+                    Self.pemFeatureSentence(failure),
+                    SSHKeyConverter.inPlaceCommandLine(
+                        forKeyAt: NSString(string: keyPath).expandingTildeInPath)),
                 field: Self.sshField(.keyPath))
         case SSHKeyError.unsupportedFormat:
             return .failed(

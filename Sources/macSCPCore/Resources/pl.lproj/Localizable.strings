@@ -77,7 +77,15 @@
 "core.connect.keyPassphraseRequired" = "Klucz SSH jest zaszyfrowany — wprowadź hasło klucza.";
 "core.connect.keyWrongPassphrase" = "Hasło klucza jest nieprawidłowe.";
 "core.connect.keyTypeNotLoadable %@" = "To jest klucz %@. macSCP otwiera z pliku klucze ed25519, RSA i ECDSA; ten typ do nich nie należy.";
-"core.connect.keyPEMNotSupported" = "Ten klucz jest w formacie PEM. macSCP otwiera klucze w formacie OpenSSH — przekonwertuj go za pomocą ssh-keygen -p (hasło klucza zostaje zachowane) albo wczytaj go do ssh-agenta i wybierz agenta jako metodę logowania.";
+/* Czytnik PEM nazywa to, co go zatrzymuje (plan „PEM private keys”, zadanie 3).
+   %1$@ to jedno ze zdań core.connect.pemFeature.* poniżej; %2$@ to wiersz
+   poleceń zbudowany przez SSHKeyConverter — nigdy tekst z katalogu. */
+"core.connect.keyPEMNotReadable %@ %@" = "macSCP nie może odczytać tego klucza PEM: %1$@. Przekonwertuj kopię w terminalu za pomocą %2$@ (hasło klucza zostaje zachowane), naciśnij „Konwertuj klucz…”, aby zrobił to macSCP, albo wczytaj klucz do ssh-agenta i wybierz agenta jako metodę logowania.";
+"core.connect.pemFeature.cipher %@" = "jego szyfrowanie %@ nie jest obsługiwane";
+"core.connect.pemFeature.scheme %@" = "jego schemat hasła %@ nie jest obsługiwany";
+"core.connect.pemFeature.keyType %@" = "zawiera klucz %@";
+"core.connect.pemFeature.putty" = "to plik klucza PuTTY, a nie PEM";
+"core.connect.pemFeature.malformed" = "jego zawartości nie da się przeanalizować";
 "core.connect.keyUnsupportedFormat" = "Tego pliku nie udało się odczytać jako klucza SSH. macSCP otwiera z pliku klucze prywatne w formacie OpenSSH (ed25519, RSA, ECDSA); klucz PEM jest zgłaszany osobno.";
 
 /* ConnectionViewModel.failedState(for:) — ssh-agent (M10d/T4) */

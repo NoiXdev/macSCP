@@ -12,8 +12,14 @@ import Testing
 /// `passphrase`, when non-nil, is passed to `ssh-keygen -N` so the generated
 /// private key is encrypted — one of the two documented places a test
 /// passphrase is allowed to reach.
+///
+/// `extraKeygenArguments` is appended to the argument array unchanged, which
+/// is how the PEM cells of `FileKeyTypeIntegrationTests` ask for `-m PEM` /
+/// `-m PKCS8` (PEM private keys plan, Task 3). It never carries a secret: the
+/// passphrase has its own parameter above, and `-N` is the only flag that
+/// takes one.
 private func generateKeyPair(
-    type: String, bits: Int?, passphrase: String?
+    type: String, bits: Int?, passphrase: String?, extraKeygenArguments: [String] = []
 ) async throws -> (dir: URL, keyPath: String, publicKey: String) {
     let dir = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("macscp-itest-key-\(UUID().uuidString)")
@@ -25,6 +31,7 @@ private func generateKeyPair(
     if let bits {
         arguments += ["-b", String(bits)]
     }
+    arguments += extraKeygenArguments
     let result = try await SubprocessRunner.run(
         URL(fileURLWithPath: "/usr/bin/ssh-keygen"), arguments: arguments)
     #expect(result.status == 0)
@@ -42,7 +49,8 @@ private func generateKeyPair(
 /// the exact same docker-exec authorized_keys installation pattern.
 /// `passphrase`, when non-nil, is passed to `ssh-keygen -N` so the
 /// generated private key is encrypted (T4: the passphrase-protected
-/// agent route).
+/// agent route). `extraKeygenArguments` is handed to `generateKeyPair`
+/// unchanged — see its doc comment.
 ///
 /// Shared by `CitadelFileSystemIntegrationTests` and
 /// `FileKeyTypeIntegrationTests` (counted 2026-09-02). It lived as a
@@ -52,8 +60,13 @@ private func generateKeyPair(
 /// A key generated here is authorized against the rig for as long as the
 /// container lives — `authorized_keys` grows across runs, which the rig
 /// accepts by design (see the note inside).
-func makeInstalledKey(type: String = "ed25519", bits: Int? = nil, passphrase: String? = nil) async throws -> (dir: URL, keyPath: String) {
-    let generated = try await generateKeyPair(type: type, bits: bits, passphrase: passphrase)
+func makeInstalledKey(
+    type: String = "ed25519", bits: Int? = nil, passphrase: String? = nil,
+    extraKeygenArguments: [String] = []
+) async throws -> (dir: URL, keyPath: String) {
+    let generated = try await generateKeyPair(
+        type: type, bits: bits, passphrase: passphrase,
+        extraKeygenArguments: extraKeygenArguments)
     do {
         // Note: authorized_keys grows across runs on a long-lived container —
         // acceptable for the test rig.

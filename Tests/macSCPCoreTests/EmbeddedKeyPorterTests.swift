@@ -844,10 +844,13 @@ struct EmbeddedKeyPorterTests {
     /// closed — deliberately: nothing is left that ties the file to the
     /// declared identity, and accepting it on the payload's word would reopen
     /// exactly the hole the two tests above close. The PEM *format* is what
-    /// blocks it, not the RSA/DSA/ECDSA *type* — `SSHPrivateKeyLoader` opens
-    /// RSA and ECDSA (`KeyType.isConnectable`) in OpenSSH format, and refuses
-    /// PEM for every type (`pemNotSupported`); the way to carry a PEM key here
-    /// is to export WITH its passphrase, which lands in the strong
+    /// blocks it, not the RSA/DSA/ECDSA *type* — and it blocks it HERE, in
+    /// the porter, not in the loader: since 2026-09-10 `SSHPrivateKeyLoader`
+    /// reads PEM files too (`PEMPrivateKeyDecoder`), so such a key connects
+    /// perfectly well from the path it sits at. What it cannot do is arrive
+    /// through an export that carried no passphrase, because then nothing
+    /// ties the file to the declared identity. The way to carry a PEM key
+    /// here is to export WITH its passphrase, which lands in the strong
     /// `ssh-keygen -y -P` branch.
     @Test func materializeRejectsALegacyPEMEncryptedKeyExportedWithoutItsPassphrase() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }

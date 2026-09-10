@@ -116,19 +116,34 @@ struct FileKeyTypeIntegrationTests {
         }
     }
 
-    // MARK: - The ten cells
+    // MARK: - The cells: 5 types × 2, and 3 PEM containers × 2
 
     /// One `ssh-keygen` shape. `bits` is `nil` where the type has only one
-    /// size (ed25519) and the curve size otherwise.
+    /// size (ed25519) and the curve size otherwise. `format` is appended to
+    /// the `ssh-keygen` argument list verbatim — empty for the container
+    /// ssh-keygen writes by default, `["-m", "PEM"]` / `["-m", "PKCS8"]` for
+    /// the PEM shapes below.
     struct KeyShape: Sendable, CustomStringConvertible {
         let type: String
         let bits: Int?
+        let format: [String]
 
-        var description: String { bits.map { "\(type)-\($0)" } ?? type }
+        init(type: String, bits: Int?, format: [String] = []) {
+            self.type = type
+            self.bits = bits
+            self.format = format
+        }
+
+        var description: String {
+            let size = bits.map { "\(type)-\($0)" } ?? type
+            return format.isEmpty ? size : "\(size) \(format.joined(separator: " "))"
+        }
 
         /// The five private key types `SSHPrivateKeyLoader` claims to load —
         /// one per `SSHKeyType` case, which is what makes five the right
-        /// number here and not a round one.
+        /// number for THIS list and not a round one. It counts `all` alone;
+        /// `pem` below is a second list with its own reason, and neither the
+        /// five nor the types they name change when it grows.
         static let all: [KeyShape] = [
             KeyShape(type: "ed25519", bits: nil),
             KeyShape(type: "rsa", bits: 2048),
@@ -136,11 +151,48 @@ struct FileKeyTypeIntegrationTests {
             KeyShape(type: "ecdsa", bits: 384),
             KeyShape(type: "ecdsa", bits: 521),
         ]
+
+        /// The PEM shapes (PEM private keys plan, Task 3). Not one per key
+        /// type: what varies here is the CONTAINER, and the three that exist
+        /// on this machine are legacy PKCS#1 (`-m PEM` on RSA), legacy SEC1
+        /// with explicit curve parameters (`-m PEM` on ECDSA) and PKCS#8
+        /// (`-m PKCS8`) — ssh-keygen 10.3 refuses `-m PEM` for ed25519
+        /// entirely (design table, 2026-09-10).
+        static let pem: [KeyShape] = [
+            KeyShape(type: "rsa", bits: 2048, format: ["-m", "PEM"]),
+            KeyShape(type: "ecdsa", bits: 256, format: ["-m", "PEM"]),
+            KeyShape(type: "rsa", bits: 2048, format: ["-m", "PKCS8"]),
+        ]
     }
 
-    /// Five key types × {unencrypted, passphrase-protected}, each one a real
-    /// key file generated for this run, authorized on the rig, and used
-    /// through macSCP's OWN connect path — `CitadelFileSystem.connect` with
+    /// Five key types × {unencrypted, passphrase-protected} — the shapes of
+    /// `KeyShape.all`, each one a real key file generated for this run and
+    /// authorized on the rig. What it does with them is
+    /// `authenticateAndList` below.
+    @Test("every private key type authenticates, with and without a passphrase",
+          arguments: KeyShape.all, [false, true])
+    func fileKeyAuthenticatesThroughMacSCP(shape: KeyShape, encrypted: Bool) async throws {
+        try await authenticateAndList(shape: shape, encrypted: encrypted)
+    }
+
+    /// The same measurement over the PEM containers (PEM private keys plan,
+    /// Task 3). Before this task every cell here failed in the loader — the
+    /// boundary check refused the file unread and nothing dialled at all
+    /// (measured 2026-09-10: six red cells). It is the same rig, the same
+    /// `CitadelFileSystem.connect`, the same listing; only the container the
+    /// key sits in differs, which is exactly what the task changed.
+    @Test("PEM file keys authenticate through macSCP",
+          arguments: KeyShape.pem, [false, true])
+    func pemFileKeyAuthenticatesThroughMacSCP(shape: KeyShape, encrypted: Bool) async throws {
+        try await authenticateAndList(shape: shape, encrypted: encrypted)
+    }
+
+    /// The body both cell tests above share, extracted rather than copied:
+    /// the two differ only in the shape list they walk, and a second copy of
+    /// the connect would be a second thing to keep true.
+    ///
+    /// The key is used through macSCP's OWN connect path —
+    /// `CitadelFileSystem.connect` with
     /// `SSHConnectionConfig.AuthMethod.privateKey`, which is the same code
     /// the app runs. Nothing here reaches into Citadel directly; that is
     /// Step 0's job.
@@ -154,12 +206,11 @@ struct FileKeyTypeIntegrationTests {
     /// The listing at the end is what makes a green cell mean authentication:
     /// a connect that returned without a usable session would fail here
     /// rather than pass quietly.
-    @Test("every private key type authenticates, with and without a passphrase",
-          arguments: KeyShape.all, [false, true])
-    func fileKeyAuthenticatesThroughMacSCP(shape: KeyShape, encrypted: Bool) async throws {
+    private func authenticateAndList(shape: KeyShape, encrypted: Bool) async throws {
         let passphrase = encrypted ? "itest-\(UUID().uuidString)" : nil
         let (dir, keyPath) = try await makeInstalledKey(
-            type: shape.type, bits: shape.bits, passphrase: passphrase)
+            type: shape.type, bits: shape.bits, passphrase: passphrase,
+            extraKeygenArguments: shape.format)
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let config = try SSHConnectionConfig(

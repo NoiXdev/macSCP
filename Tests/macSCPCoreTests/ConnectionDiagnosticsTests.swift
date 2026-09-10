@@ -1319,7 +1319,7 @@ struct ConnectionDiagnosticsTests {
         (AnyDialError(SSHKeyError.wrongPassphrase), "passphrase"),
         (AnyDialError(SSHKeyError.unsupportedFormat(reason: "bad header")), "key file"),
         (AnyDialError(SSHKeyError.typeNotLoadable(algorithm: "ssh-dss")), "ssh-dss"),
-        (AnyDialError(SSHKeyError.pemNotSupported), "PEM"),
+        (AnyDialError(SSHKeyError.pemNotReadable(.putty)), "PEM"),
         (AnyDialError(AgentError.socketUnavailable), "agent"),
         (AnyDialError(AgentError.noIdentities), "agent"),
         (AnyDialError(AgentError.noUsableIdentities), "agent"),
@@ -1342,6 +1342,22 @@ struct ConnectionDiagnosticsTests {
     @Test func anUnknownErrorStillFallsBackToItsBridgedDescription() {
         let error = CocoaError(.fileNoSuchFile)
         #expect(DialSupport.reason(for: error) == (error as NSError).localizedDescription)
+    }
+
+    /// `DialSupport.reason(for:)`'s own rule — fixed sentences, no payload —
+    /// applied to the one `SSHKeyError` case whose payload the CONNECT form
+    /// deliberately does print (`core.connect.pemFeature.*`). The two
+    /// surfaces are easy to conflate; the report is the one that carries no
+    /// name at all.
+    @Test func thePEMSentenceIsTheSameWhateverTheFileNames() {
+        let cipher = "DES-EDE3-CBC"
+        let plain = DialSupport.reason(for: SSHKeyError.pemNotReadable(.putty))
+        let withPayload = DialSupport.reason(for: SSHKeyError.pemNotReadable(.cipher(cipher)))
+        #expect(withPayload == plain)
+        #expect(withPayload.contains(cipher) == false)
+        // The positive companion: there IS a sentence, and it names PEM —
+        // so the equality above compares two real strings.
+        #expect(plain.contains("PEM"))
     }
 
     /// A key-parsing failure is reported by NAME, never by re-exporting the
