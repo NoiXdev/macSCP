@@ -739,13 +739,23 @@ private struct GenerateKeySheet: View {
 /// "Convert key…" remedy (`ContentView.convertFailedKey(_:)`), which is why
 /// `onImported` hands back the `ManagedKey` it created — that caller has to
 /// re-point a session at the new file, and the key is where its path comes
-/// from.
+/// from. It ignores the `Bool`; `onImported`'s own doc says why.
 struct ImportKeySheet: View {
     let fileURL: URL
     let store: ManagedKeyStore
     /// The key that was created, and whether its passphrase reached the
     /// Keychain — `false` means the key exists but the passphrase did not,
     /// see `GenerateKeySheet.generate()`.
+    ///
+    /// `true` is NOT "a Keychain slot exists" and must not be read as one
+    /// (PEM private keys plan, Task 4 fix round 2, review finding MEDIUM 1).
+    /// An import with an EMPTY passphrase writes no slot and reports `true`,
+    /// because the flag answers "did what the user typed get lost", which is
+    /// the question its consumer `SSHKeysSheet.reportKeyOutcome(
+    /// keptPassphrase:)` asks in order to warn about it. A caller that needs
+    /// the other question — does the key's slot hold a passphrase — asks
+    /// `ManagedKeyPassphrase.hasStoredPassphrase(keyPath:store:secrets:)`,
+    /// as `ContentView.convertedKeyImported(_:for:)` does.
     let onImported: (ManagedKey, Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss

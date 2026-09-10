@@ -150,6 +150,14 @@ struct ImportKeyTarget: Identifiable {
     /// The tab whose failed attempt this conversion is for — a reference,
     /// so the conversion still reaches it after it has been dragged to
     /// another window (the tab moves, its identity does not).
+    ///
+    /// Residue, not a feature: holding the reference does not make the
+    /// dismissal legal from here. The captured tab can be CLOSED or dragged
+    /// to another window while the sheet is open, and the closure then runs
+    /// `convertedKeyImported(_:for:)` — and through it `retryConnect(_:)` —
+    /// from THIS window on a tab this window may no longer own. Nothing
+    /// re-checks ownership against `TabRegistry` at dismissal, and nothing
+    /// closes the sheet when the tab goes.
     let tab: SessionTab
 }
 
@@ -201,21 +209,25 @@ struct ContentView: View {
     /// Assigned in `init` (not a bare default value) so it can pass
     /// `auditStore` through — mirrors `_tabsModel` below.
     @State var sessionListViewModel: SessionListViewModel
-    /// The Keychain-backed secret store `maybeCreateNewLoginSet(from:
-    /// editedSession:)` and the ad-hoc "save as session" path
-    /// (`startSession`'s `shouldSaveSession` branch) both read to check
-    /// for an existing managed-key passphrase, alongside `managedKeyStore`
-    /// below (connection-liveness plan, Task 6 fix round 3, review item
-    /// "Important — the seam is only half there"). A `let`, not
-    /// constructed inline at each call site — those two call sites used to
-    /// build their own `KeychainSecretStore()` on the spot, unreachable by
-    /// any test seam; routing both through this one property is what lets
-    /// `ContentView.init`'s `secretStore:` parameter isolate them the same
-    /// way `sessionListViewModel:` isolates `startSession`'s OWN keychain
-    /// write.
+    /// The Keychain-backed secret store every window-level path that asks
+    /// about a managed key's passphrase reads (connection-liveness plan,
+    /// Task 6 fix round 3, review item "Important — the seam is only half
+    /// there"). A `let`, not constructed inline at each call site — those
+    /// call sites used to build their own `KeychainSecretStore()` on the
+    /// spot, unreachable by any test seam; routing them through this one
+    /// property is what lets `ContentView.init`'s `secretStore:` parameter
+    /// isolate them the same way `sessionListViewModel:` isolates
+    /// `startSession`'s OWN keychain write.
+    ///
+    /// Deliberately no list of those call sites here. This comment used to
+    /// name two, and the set has grown twice since without the comment
+    /// moving (fix round 2, PEM private keys plan Task 4) — a count in a
+    /// comment is a claim about the rest of the project, and this one is
+    /// better made by `grep` than by prose (CLAUDE.md, "Comments that
+    /// describe other code").
     let secretStore: any SecretStore
-    /// The managed-key store the same two call sites read alongside
-    /// `secretStore` above — same reasoning, same fix.
+    /// The managed-key store those same paths read alongside `secretStore`
+    /// above — same reasoning, same fix.
     let managedKeyStore: ManagedKeyStore
     /// Window-scoped tab collection (M8a/T3). Everything that used to be
     /// window-wide session state (connection form, session, queue, conflict
@@ -2528,33 +2540,42 @@ struct ContentView: View {
     ///
     /// Two paths, and each ends in the function that already owns its half:
     ///
-    /// * A STORED session gets the new path written into it through
-    ///   `sessionListViewModel.updateSession(_:newSecret:)`, with
-    ///   `newSecret: nil` — this path replaces no secret. When the import
-    ///   reported `keptPassphrase`, the managed key's OWN Keychain slot now
-    ///   holds the passphrase, and the project's rule is that a session
-    ///   using such a key carries no copy of its own
-    ///   (`SessionSecretPolicy.usesStoredManagedPassphrase`,
-    ///   `ManagedKeyPassphrase.hasStoredPassphrase`): the session's slot is
-    ///   dropped, because `ManagedKeyPassphrase.resolve` answers the TYPED
-    ///   value first and the connect-time fill types the session's slot into
-    ///   the form — a leftover copy would shadow the key's real one on every
-    ///   later dial. When the import could NOT keep it, the session's slot is
-    ///   the only copy left and is left alone. Then `retryConnect(_:)`, the
-    ///   one function that redials through the shared `connect(in:stored:)`:
-    ///   TOFU stays the hard stop it is, and this surface still adds no
-    ///   second dial site.
+    /// * A STORED session THAT OWNS ITS OWN LOGIN gets the new path written
+    ///   into it through `sessionListViewModel.updateSession(_:newSecret:)`,
+    ///   with `newSecret: nil` — this path replaces no secret. If the managed
+    ///   key's OWN Keychain slot holds a passphrase, the project's rule is
+    ///   that a session using such a key carries no copy of its own
+    ///   (`SessionSecretPolicy.usesStoredManagedPassphrase`): the session's
+    ///   slot is dropped, because `ManagedKeyPassphrase.resolve` answers the
+    ///   TYPED value first and the connect-time fill types the session's slot
+    ///   into the form — a leftover copy would shadow the key's real one on
+    ///   every later dial. Then `retryConnect(_:)`, the one function that
+    ///   redials through the shared `connect(in:stored:)`: TOFU stays the
+    ///   hard stop it is, and this surface still adds no second dial site.
     /// * An AD-HOC attempt has nothing stored to write to and nothing stored
     ///   to redial, so the new path goes onto the form and
     ///   `dismissConnectFailure(_:)` hands the tab back to it with the key
     ///   already selected. No retry, deliberately — the failed surface
     ///   offers an ad-hoc attempt none (`ConnectFailurePlan`'s own rule),
-    ///   and this does not add one.
+    ///   and this does not add one. A session bound to a LOGIN SET takes
+    ///   this path too; the branch condition below says why.
+    ///
+    /// The import sheet's `keptPassphrase` flag is deliberately NOT what
+    /// decides the drop (fix round 2, review finding MEDIUM 1). It starts
+    /// `true` and is only cleared when a Keychain SAVE throws, so an import
+    /// with an empty passphrase reports `true` having written no slot at all
+    /// — and the drop would then delete the session's own, and only, copy.
+    /// The question this function asks is the one that matters,
+    /// `ManagedKeyPassphrase.hasStoredPassphrase(keyPath:store:secrets:)`:
+    /// does the key's slot HOLD a passphrase. The flag stays what it is for
+    /// the consumer it was written for — `SSHKeysSheet.reportKeyOutcome(
+    /// keptPassphrase:)`, which warns that a passphrase the user typed did
+    /// not reach the Keychain — so this handler takes it no longer.
     ///
     /// A key whose `fileName` does not address a file inside the key
     /// directory yields no path and nothing happens, which is the same
     /// refusal `ConnectionFormView.managedKeyPath(for:)` makes.
-    func convertedKeyImported(_ key: ManagedKey, keptPassphrase: Bool, for tab: SessionTab) {
+    func convertedKeyImported(_ key: ManagedKey, for tab: SessionTab) {
         // The window's injected store, not one built here (fix round 1,
         // review finding I2): `ContentView.init` takes `managedKeyStore` for
         // exactly this, and a store constructed at the call site reaches the
@@ -2563,14 +2584,43 @@ struct ContentView: View {
         // the key was just written into.
         guard let path = managedKeyStore.privateKeyURL(for: key)?.path(percentEncoded: false)
         else { return }
-        if var updated = failedConnectTarget(for: tab) {
+        // `loginSetID == nil` belongs in the CONDITION, not in a branch
+        // inside it (fix round 2, review finding MEDIUM 2). A session bound
+        // to a login set does not own the two things this branch writes:
+        // `fillForm(_:from:)` resolves username, auth kind, key path and —
+        // for private-key auth — the passphrase from the SET
+        // (`LoginResolver.resolve` returns `SSHFieldSchema.values(from:)`
+        // plus the set's own Keychain slot, and
+        // `ConnectionViewModel.applyResolvedCredentials` blanks the whole
+        // credential block before merging them over the session's values).
+        // So `updated.ssh?.keyPath` would persist a path no dial reads, and
+        // `dropSessionSecret(for:)` would delete a slot that is not the one
+        // shadowing the managed key's. Re-pointing the SET is the login-sets
+        // sheet's job, not this remedy's, so a set-bound session takes the
+        // ad-hoc route below: converted for this attempt, with the set left
+        // as it stands.
+        if var updated = failedConnectTarget(for: tab), updated.loginSetID == nil {
             updated.ssh?.keyPath = path
             sessionListViewModel.updateSession(updated, newSecret: nil)
-            // One passphrase, one slot: with the managed key holding it, the
-            // session's own copy is stale AND authoritative (the fill types
-            // it in, and `ManagedKeyPassphrase.resolve` prefers what is
-            // typed), so it goes.
-            if keptPassphrase {
+            // One passphrase, one slot — and the fact that decides it is
+            // whether the managed key's slot HOLDS one, asked here rather
+            // than taken from the import sheet's report (fix round 2, review
+            // finding MEDIUM 1; the doc comment above says what that report
+            // does and does not mean). With the key holding it, the session's
+            // own copy is stale AND authoritative (the fill types it in, and
+            // `ManagedKeyPassphrase.resolve` prefers what is typed), so it
+            // goes.
+            //
+            // `try?` collapses "no slot" and "could not find out" onto the
+            // same answer deliberately, and in the SAFE direction: the probe
+            // throws when the store or the Keychain cannot be read at all
+            // (see its own doc comment), and a drop taken on an unanswerable
+            // probe would destroy a secret that has no other home. A stale
+            // second copy is a wrong dial the user can fix; a deleted only
+            // copy is not.
+            let keySlotHoldsThePassphrase = (try? ManagedKeyPassphrase.hasStoredPassphrase(
+                keyPath: path, store: managedKeyStore, secrets: secretStore)) == true
+            if keySlotHoldsThePassphrase {
                 sessionListViewModel.dropSessionSecret(for: updated.id)
             }
             retryConnect(tab)

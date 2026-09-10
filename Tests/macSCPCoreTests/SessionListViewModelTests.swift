@@ -41,17 +41,14 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: stored!.id) == "geheim")
     }
 
-    /// `save(tags:)` (P3a/T5): whatever the caller passes goes through
-    /// `TagList.normalized` — trimmed, empties dropped, exact duplicates
-    /// dropped, order kept.
     /// `dropSessionSecret(for:)` (PEM private keys plan, Task 4 fix round
     /// 1): deletes ONE session's own Keychain slot, leaves the stored
     /// session itself and every other slot alone.
     ///
     /// It exists for the one caller that must remove a secret rather than
-    /// replace it — `ContentView.convertedKeyImported(_:keptPassphrase:for:)`,
-    /// which re-points a session at a managed key whose OWN slot now holds
-    /// the passphrase. `updateSession(_:newSecret:)` cannot express that:
+    /// replace it — `ContentView.convertedKeyImported(_:for:)`, which
+    /// re-points a session at a managed key whose OWN slot now holds the
+    /// passphrase. `updateSession(_:newSecret:)` cannot express that:
     /// `nil` and `""` both mean "leave it", so the session would keep a
     /// second copy of the same secret, and `ManagedKeyPassphrase.resolve`
     /// returns the typed value first — the session's copy would shadow the
@@ -92,6 +89,13 @@ struct SessionListViewModelTests {
             """)
     }
 
+    /// `save(tags:)` (P3a/T5): whatever the caller passes goes through
+    /// `TagList.normalized` — trimmed, empties dropped, exact duplicates
+    /// dropped, order kept.
+    ///
+    /// (This doc had been appended to the one above by Task 4 fix round 1
+    /// and left this test undocumented; restored in fix round 2, review
+    /// finding LOW 3.)
     @Test func savingCarriesTagsOntoTheStoredSession() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

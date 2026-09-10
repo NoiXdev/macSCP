@@ -134,8 +134,17 @@ extension ContentView {
         // the conversion, the inspection and the Keychain slot are its job
         // already, and the passphrase field it needs for them is the field
         // this remedy needs too. What is different is only what happens
-        // after — `convertedKeyImported(_:keptPassphrase:for:)` re-points the session and
+        // after — `convertedKeyImported(_:for:)` re-points the session and
         // redials, where the key manager just reloads its list.
+        //
+        // The sheet's second closure argument is DROPPED here (fix round 2,
+        // review finding MEDIUM 1). It is `keptPassphrase`, and it does not
+        // mean "a slot was written": it is `true` for an import with an empty
+        // passphrase, which writes none. `SSHKeysSheet.reportKeyOutcome(
+        // keptPassphrase:)` is the consumer it was written for — it warns
+        // that a passphrase the user TYPED did not reach the Keychain, which
+        // is exactly what the flag says. This site needs the other fact, and
+        // `convertedKeyImported(_:for:)` measures it itself.
         //
         // The store is the window's own `managedKeyStore` (fix round 1,
         // review finding I2), the same instance `fillForm` and the two save
@@ -155,8 +164,8 @@ extension ContentView {
         // and the failing tab are the same one by construction. Nothing
         // transfers that argument across an open sheet.
         .sheet(item: $convertKeyTarget) { target in
-            ImportKeySheet(fileURL: target.fileURL, store: managedKeyStore) { key, kept in
-                convertedKeyImported(key, keptPassphrase: kept, for: target.tab)
+            ImportKeySheet(fileURL: target.fileURL, store: managedKeyStore) { key, _ in
+                convertedKeyImported(key, for: target.tab)
             }
         }
         // The window's ONE forwarding sheet (fix round 1): the profile

@@ -35,7 +35,9 @@ import Testing
 ///    rather than building a `ManagedKeyStore(` of their own.
 /// 4. The converted key reaches the stored session and the ONE dial path —
 ///    `updateSession(`, `dropSessionSecret(`, `retryConnect(`,
-///    `dismissConnectFailure(` — and dials nothing itself.
+///    `dismissConnectFailure(` — after asking the two questions that decide
+///    which path it takes (`hasStoredPassphrase(`, `loginSetID`), and dials
+///    nothing itself.
 /// 5. The import sheet converts on the way in instead of copying bytes.
 @Suite("Convert key wiring guard")
 struct ConvertKeyWiringGuardTests {
@@ -96,7 +98,9 @@ struct ConvertKeyWiringGuardTests {
     /// because claim 4 reads the handler's own body — it is green for a
     /// perfectly wired handler nothing calls. Replacing the call in this
     /// closure with `_ = key` was measured (fix round 1, review finding I1)
-    /// to leave all 61 guards in this target green.
+    /// to turn no other check in this target red — the number that used to
+    /// stand here (61) was reproducible by no counting rule (fix round 2,
+    /// review finding LOW 5).
     ///
     /// `target.tab` is the capture: `ImportKeyTarget` carries the
     /// `SessionTab` taken when "Convert key…" was pressed, the same
@@ -165,11 +169,11 @@ struct ConvertKeyWiringGuardTests {
             directory even when a test pointed the window at a temporary one.
             """)
         #expect(body.contains("managedKeyStore"), """
-            `convertedKeyImported(_:keptPassphrase:for:)` no longer reads the window's \
+            `convertedKeyImported(_:for:)` no longer reads the window's \
             `managedKeyStore` to resolve the new key's path.
             """)
         #expect(!body.contains("ManagedKeyStore("), """
-            `convertedKeyImported(_:keptPassphrase:for:)` builds a `ManagedKeyStore(` of its \
+            `convertedKeyImported(_:for:)` builds a `ManagedKeyStore(` of its \
             own — it would then resolve the path in a different store than the sheet just \
             wrote the key into.
             """)
@@ -180,10 +184,12 @@ struct ConvertKeyWiringGuardTests {
     /// The positive half: the handler persists the new key path on the
     /// stored session, drops the session's own passphrase slot and re-dials
     /// through `retryConnect(`, or hands an ad-hoc attempt back to the form
-    /// through `dismissConnectFailure(`. All FOUR are named individually
-    /// because "the handler does something" is not the property — the
-    /// property is that each of its two paths ends in the function that
-    /// already owns that action.
+    /// through `dismissConnectFailure(`. SIX tokens are named individually
+    /// (counted 2026-09-10 against the `#expect` calls in this function's
+    /// body) because "the handler does something" is not the property — the
+    /// property is that each of its paths ends in the function that already
+    /// owns that action, and that the two facts it branches on are asked
+    /// rather than assumed.
     ///
     /// `dropSessionSecret(` is the project's existing no-duplication rule
     /// applied to this new path (fix round 1, review finding I3): a session
@@ -192,30 +198,73 @@ struct ConvertKeyWiringGuardTests {
     /// `ManagedKeyPassphrase.resolve` answers the TYPED value first, so the
     /// session's stale copy shadows the managed key's real one on every
     /// dial.
+    ///
+    /// `hasStoredPassphrase(` is what makes that drop safe (fix round 2,
+    /// review finding MEDIUM 1). The import sheet's `keptPassphrase` flag
+    /// does NOT mean "a slot was written": it starts `true` and is only
+    /// cleared when a SAVE throws, so an import with an EMPTY passphrase
+    /// reports `true` having written no slot at all. Gating the drop on that
+    /// flag deleted the session's own — and then only — copy of a passphrase
+    /// the key's slot never received. The check is an ORDER check (probe
+    /// before drop), not a nesting check: it cannot see that the drop is
+    /// inside the `if`, only that the question is asked first. Nesting is
+    /// read in review.
+    ///
+    /// `loginSetID` is the second fact (fix round 2, review finding
+    /// MEDIUM 2). A session bound to a login set takes its username, auth
+    /// kind, key path AND — for private-key auth — its passphrase from the
+    /// SET, not from itself: `LoginResolver.resolve` returns
+    /// `SSHFieldSchema.values(from: set)` plus the set's Keychain secret,
+    /// and `ConnectionViewModel.applyResolvedCredentials` blanks the whole
+    /// credential block before merging them over the session's own values.
+    /// Writing the converted path into such a session persists something no
+    /// dial ever reads, and dropping the session's slot leaves the set's
+    /// shadowing copy untouched.
     @Test func theConvertedKeyIsWiredThroughTheRealHandlers() throws {
         let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
         #expect(body.contains("updateSession("), """
-            `convertedKeyImported(_:keptPassphrase:for:)` no longer calls `updateSession(` — \
+            `convertedKeyImported(_:for:)` no longer calls `updateSession(` — \
             the converted key would then be written nowhere, and the next dial would read the \
             PEM file again.
             """)
         #expect(body.contains("dropSessionSecret("), """
-            `convertedKeyImported(_:keptPassphrase:for:)` no longer calls \
+            `convertedKeyImported(_:for:)` no longer calls \
             `dropSessionSecret(` — the session keeps its own copy of the passphrase beside \
             the managed key's slot, and because `ManagedKeyPassphrase.resolve` answers the \
             typed value first, that stale copy is what every later dial uses.
             """)
         #expect(body.contains("retryConnect("), """
-            `convertedKeyImported(_:keptPassphrase:for:)` no longer calls `retryConnect(` — \
+            `convertedKeyImported(_:for:)` no longer calls `retryConnect(` — \
             that redials through the shared `connect(in:stored:)`, which is what keeps TOFU a \
             hard stop and the keychain and login-set rules applied.
             """)
         #expect(body.contains("dismissConnectFailure("), """
-            `convertedKeyImported(_:keptPassphrase:for:)` no longer calls \
+            `convertedKeyImported(_:for:)` no longer calls \
             `dismissConnectFailure(` — an \
             ad-hoc attempt has no stored session to redial, so returning it to the form with \
             the new key selected is its only way on, and without this it stays on the failed \
             surface.
+            """)
+        let slotIsProbedBeforeTheDrop: Bool
+        if let probe = body.range(of: "hasStoredPassphrase(")?.lowerBound,
+           let drop = body.range(of: "dropSessionSecret(")?.lowerBound {
+            slotIsProbedBeforeTheDrop = probe < drop
+        } else {
+            slotIsProbedBeforeTheDrop = false
+        }
+        #expect(slotIsProbedBeforeTheDrop, """
+            `convertedKeyImported(_:for:)` drops the session's Keychain slot without asking \
+            `ManagedKeyPassphrase.hasStoredPassphrase(` first, or does not ask it at all — \
+            the import sheet's `keptPassphrase` flag is `true` for an import that wrote no \
+            slot (an empty passphrase never reaches the Keychain), so a drop gated on it \
+            deletes the only copy there is.
+            """)
+        #expect(body.contains("loginSetID"), """
+            `convertedKeyImported(_:for:)` no longer reads `loginSetID` — a session whose \
+            login comes from a SET resolves its key path and its passphrase from that set on \
+            every fill, so writing the converted path into the session persists a value no \
+            dial reads, and dropping the session's own slot leaves the set's shadowing copy \
+            in place.
             """)
     }
 
@@ -236,13 +285,13 @@ struct ConvertKeyWiringGuardTests {
     @Test func theConversionHandlerDialsNothingItself() throws {
         let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
         #expect(!body.contains("CitadelFileSystem.connect"), """
-            `convertedKeyImported(_:keptPassphrase:for:)` dials `CitadelFileSystem.connect` \
+            `convertedKeyImported(_:for:)` dials `CitadelFileSystem.connect` \
             itself — a second \
             dial site is a second place TOFU, the keychain and login-set rules, the plaintext \
             confirmation and the attempt-token lock can each be forgotten.
             """)
         #expect(!body.contains("connect(in:"), """
-            `convertedKeyImported(_:keptPassphrase:for:)` calls `connect(in:` directly \
+            `convertedKeyImported(_:for:)` calls `connect(in:` directly \
             instead of going \
             through `retryConnect(_:)` — which resolves the failed attempt's stored session \
             live, and is the guard against dialling a session deleted from another window \
@@ -250,7 +299,7 @@ struct ConvertKeyWiringGuardTests {
             """)
     }
 
-    // MARK: - 3. The import converts on the way in
+    // MARK: - 5. The import converts on the way in
 
     /// The positive half: the import runs the converter. Since Task 4 a key
     /// enters the managed store in OpenSSH format or not at all — a PEM key
@@ -286,7 +335,7 @@ struct ConvertKeyWiringGuardTests {
 
     // MARK: - Scanner self-tests
     //
-    // Without these the four claims above could all pass by reading an
+    // Without these the five claims above could all pass by reading an
     // empty string: a scanner that cannot find its anchor, or one whose
     // body span stops early, makes every positive check red and every
     // negative check green. The positives failing loudly is the intended
@@ -294,7 +343,7 @@ struct ConvertKeyWiringGuardTests {
 
     @Test func theBodyScannerReadsToTheEndOfTheFunction() throws {
         let source = """
-            func convertedKeyImported(_ key: ManagedKey, keptPassphrase: Bool, for tab: SessionTab) {
+            func convertedKeyImported(_ key: ManagedKey, for tab: SessionTab) {
                 guard let path = store.privateKeyURL(for: key) else { return }
                 if let stored = failedConnectTarget(for: tab) {
                     sessionListViewModel.updateSession(updated, newSecret: nil)
@@ -321,7 +370,7 @@ struct ConvertKeyWiringGuardTests {
 
     @Test func theBodyScannerSeesADialPlantedInsideTheFunction() throws {
         let source = """
-            func convertedKeyImported(_ key: ManagedKey, keptPassphrase: Bool, for tab: SessionTab) {
+            func convertedKeyImported(_ key: ManagedKey, for tab: SessionTab) {
                 connect(in: tab, stored: stored)
             }
             """
@@ -344,10 +393,10 @@ struct ConvertKeyWiringGuardTests {
     /// reads braces that belong to nothing.
     @Test func theBodyScannerDoesNotAnchorInAComment() throws {
         let source = """
-            // func convertedKeyImported(_ key: ManagedKey, keptPassphrase: Bool, for tab: SessionTab) {
+            // func convertedKeyImported(_ key: ManagedKey, for tab: SessionTab) {
             //     the shape this handler had before the fix round
             // }
-            func convertedKeyImported(_ key: ManagedKey, keptPassphrase: Bool, for tab: SessionTab) {
+            func convertedKeyImported(_ key: ManagedKey, for tab: SessionTab) {
                 dismissConnectFailure(tab)
             }
             """
