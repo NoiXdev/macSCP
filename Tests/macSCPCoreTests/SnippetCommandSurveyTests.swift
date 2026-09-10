@@ -899,16 +899,20 @@ struct SnippetCommandSurveyTests {
     /// above); `FileChecksum` walks a digest field it requires to be ASCII
     /// element by element, so a grapheme cluster carrying a combining mark
     /// is refused rather than mis-read; `SSHCommandBuilder`,
-    /// `CLIToolInstaller` and `ShellCompletionRecipe` only hand a value to
-    /// `PosixQuoting.singleQuoted` (the last of the three does nothing else
-    /// with it: `quotedForShell(_:)` forwards, so the shell-completion line
-    /// quotes by the same rule as every other command this app shows).
+    /// `CLIToolInstaller`, `ShellCompletionRecipe` and `SSHKeyConverter`
+    /// only hand a value to `PosixQuoting.singleQuoted` (`ShellCompletionRecipe`
+    /// does nothing else with it: `quotedForShell(_:)` forwards, so the
+    /// shell-completion line quotes by the same rule as every other command
+    /// this app shows; `SSHKeyConverter.inPlaceCommandLine(forKeyAt:)`
+    /// quotes the key path into the `ssh-keygen -p -f …` command line the
+    /// same way).
     private static let shellCallerFileNames = [
         "SSHConnectionConfig.swift",
         "SSHCommandBuilder.swift",
         "CLIToolInstaller.swift",
         "ShellCompletionRecipe.swift",
         "FileChecksum.swift",
+        "SSHKeyConverter.swift",
     ]
 
     private static func shellLexingSourceFiles() throws -> [URL] {
