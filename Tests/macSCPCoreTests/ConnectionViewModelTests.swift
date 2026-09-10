@@ -441,6 +441,104 @@ struct ConnectionViewModelTests {
         #expect(vm.lastFailureRemedy == .convertKey(path: expanded))
     }
 
+    /// The form's key path can be EMPTY while this error is thrown. With a
+    /// legacy PEM key on the JUMP hop and agent or password auth on the
+    /// target, `CitadelFileSystem.connect` dials the jump first and that
+    /// hop's `SSHKeyError` reaches this mapping unchanged — the arm's own
+    /// comment states the attribution it cannot make, and the target's key
+    /// path row is empty because the target uses no file. There is then no
+    /// file to name: the message drops the command clause, and no remedy is
+    /// offered, because a Convert button over `path: ""` acts on nothing.
+    @Test func pemNotReadableWithNoKeyPathNamesNoFileAndOffersNoRemedy() async {
+        let vm = makeVM(connector: { _, _ in
+            throw SSHKeyError.pemNotReadable(.cipher("DES-EDE3-CBC"))
+        })
+        vm.authChoice = .agent
+        vm.keyPath = ""
+        _ = await vm.connect()
+
+        #expect(vm.state == .failed(
+            message: String(
+                format: CoreL10n.string("core.connect.keyPEMNotReadable.noPath %@"),
+                String(format: CoreL10n.string("core.connect.pemFeature.cipher %@"),
+                       "DES-EDE3-CBC")),
+            field: .schema("SSHField.keyPath")))
+        // The positive beside the negative: the dial really did fail, so the
+        // `nil` below is a verdict and not an untouched slot.
+        #expect(vm.lastFailureReason != nil)
+        #expect(vm.lastFailureRemedy == nil)
+    }
+
+    /// One normalisation, two readers. The message's path is built inside
+    /// `failedState` and the remedy's inside `remedy(for:keyPath:)`, from two
+    /// different strings — `jumpAwareFailedState`'s and the `catch`'s raw
+    /// form value — so a padded field made them disagree: the message named
+    /// the expanded path while the remedy carried the padded, unexpanded one
+    /// (`expandingTildeInPath` expands only a LEADING `~`, and a leading
+    /// space is not one). `ConnectFailureRemedy.convertKey`'s doc comment
+    /// says that path is the file system's spelling; this holds both to it.
+    @Test func aPaddedKeyPathIsTrimmedAndExpandedForBothMessageAndRemedy() async {
+        let vm = makeVM(connector: { _, _ in throw SSHKeyError.pemNotReadable(.putty) })
+        vm.authChoice = .privateKey
+        vm.keyPath = "  ~/.ssh/legacy  "
+        let expanded = NSString(string: "~/.ssh/legacy").expandingTildeInPath
+
+        _ = await vm.connect()
+
+        #expect(vm.lastFailureRemedy == .convertKey(path: expanded))
+        guard case .failed(let message, _) = vm.state else {
+            Issue.record("expected a failed state, got \(vm.state)")
+            return
+        }
+        // The command line is asked of the same builder the message asks, so
+        // this pins the PATH inside it and not the quoting around it.
+        let namesTheExpandedPath = message.contains(
+            SSHKeyConverter.inPlaceCommandLine(forKeyAt: expanded))
+        #expect(namesTheExpandedPath)
+    }
+
+    /// `PEMReadFailure.keyType` carries the decoder's own `"unknown"` for
+    /// every armor label it does not recognise
+    /// (`PEMPrivateKeyDecoder.swift:93`, e.g. a legacy `DSA PRIVATE KEY`
+    /// file), so this sentence has to read for a real name and for that
+    /// placeholder alike. "it holds a %@ key" did not: "it holds a unknown
+    /// key". English is what this reads — the sentence the reword was for —
+    /// and the parity suites own the other three catalogs.
+    @Test func theKeyTypeSentenceReadsForAnyName() async {
+        for name in ["unknown", "DSA"] {
+            let sentence = ConnectionViewModel.pemFeatureSentence(.keyType(name))
+            // The positive beside the negative: the name really is in the
+            // rendered sentence, so the check below reads that sentence and
+            // not an empty string.
+            #expect(sentence.contains(name), "\(name): the sentence drops the name")
+            let readsAsAnArticleBeforeTheName = sentence.contains("a \(name)")
+            #expect(readsAsAnArticleBeforeTheName == false,
+                    "\(name): reads as \"a \(name)\"")
+        }
+    }
+
+    /// Every `pemFeature` key resolves, not only the `cipher` one the
+    /// message test renders. `CoreL10n.string(_:)` falls back to the KEY
+    /// when no catalog holds an entry — deliberately, rather than trapping
+    /// (see `CoreL10n`) — so a renamed or dropped key reaches the user as
+    /// `core.connect.pemFeature.putty` and nothing goes red. Every Core key
+    /// begins `core.`, which is what makes the fallback recognisable
+    /// without spelling the five keys a second time here.
+    ///
+    /// Five cases, counted against `PEMReadFailure`'s own declaration on
+    /// 2026-09-10; it carries associated values and cannot be `CaseIterable`.
+    @Test func everyPEMFeatureSentenceResolves() async {
+        let failures: [PEMReadFailure] = [.cipher("DES-EDE3-CBC"), .scheme("PBES2"),
+                                          .keyType("unknown"), .putty, .malformed]
+        for failure in failures {
+            let sentence = ConnectionViewModel.pemFeatureSentence(failure)
+            // The positive beside the negative: something was rendered at all.
+            #expect(sentence.isEmpty == false, "\(failure): rendered nothing")
+            let isTheUnresolvedKey = sentence.hasPrefix("core.")
+            #expect(isTheUnresolvedKey == false, "\(failure): fell back to the key")
+        }
+    }
+
     /// The negative half of the property, and the reason it is typed rather
     /// than a `Bool`: a remedy is offered for ONE condition. Every other
     /// dial failure — including the other key errors, which look alike from

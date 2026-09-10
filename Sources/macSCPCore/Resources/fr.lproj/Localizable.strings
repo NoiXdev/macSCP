@@ -79,14 +79,22 @@
 "core.connect.keyTypeNotLoadable %@" = "Il s'agit d'une clé %@. macSCP ouvre les clés ed25519, RSA et ECDSA à partir d'un fichier ; ce type n'en fait pas partie.";
 /* Le lecteur PEM nomme ce qui l'arrête (plan « PEM private keys », tâche 3).
    %1$@ est l'une des phrases core.connect.pemFeature.* ci-dessous ; %2$@ est la
-   ligne de commande construite par SSHKeyConverter — jamais un texte du catalogue. */
-"core.connect.keyPEMNotReadable %@ %@" = "macSCP ne peut pas lire cette clé PEM : %1$@. Convertissez-en une copie dans le terminal avec %2$@ (la phrase secrète est conservée), appuyez sur « Convertir la clé… » pour que macSCP s'en charge, ou chargez la clé dans le ssh-agent et choisissez l'agent comme connexion.";
+   ligne de commande construite par SSHKeyConverter — jamais un texte du catalogue.
+   `ssh-keygen -p` réécrit le fichier SUR PLACE ; le bouton convertit une COPIE
+   — les deux propositions disent laquelle fait quoi.
+   La variante .noPath vaut pour l'échec qui ne nomme aucun fichier : le champ
+   du chemin de clé est vide parce que la clé PEM était celle du rebond et que
+   la cible s'authentifie autrement. Le simple nom de l'outil n'est pas une
+   ligne de commande — il ne prend aucun chemin —, la règle ci-dessus ne
+   s'applique donc pas là. */
+"core.connect.keyPEMNotReadable %@ %@" = "macSCP ne peut pas lire cette clé PEM : %1$@. Convertissez-la sur place dans le terminal avec %2$@ (la phrase secrète est conservée), appuyez sur « Convertir la clé… » pour que macSCP en convertisse une copie, ou chargez la clé dans le ssh-agent et choisissez l'agent comme connexion.";
+"core.connect.keyPEMNotReadable.noPath %@" = "macSCP ne peut pas lire cette clé PEM : %@. Convertissez-la avec ssh-keygen -p, ou chargez-la dans le ssh-agent et choisissez l'agent comme connexion.";
 "core.connect.pemFeature.cipher %@" = "son chiffrement %@ n'est pas pris en charge";
 "core.connect.pemFeature.scheme %@" = "son schéma de mot de passe %@ n'est pas pris en charge";
-"core.connect.pemFeature.keyType %@" = "elle contient une clé %@";
+"core.connect.pemFeature.keyType %@" = "son type de clé (%@) n'est pas un type avec lequel macSCP se connecte";
 "core.connect.pemFeature.putty" = "c'est un fichier de clé PuTTY, pas du PEM";
 "core.connect.pemFeature.malformed" = "son contenu ne peut pas être analysé";
-"core.connect.keyUnsupportedFormat" = "Ce fichier n'a pas pu être lu comme une clé SSH. macSCP ouvre les clés privées au format OpenSSH à partir d'un fichier (ed25519, RSA, ECDSA) ; une clé PEM est signalée séparément.";
+"core.connect.keyUnsupportedFormat" = "Ce fichier n'a pas pu être lu comme une clé SSH. macSCP ouvre les clés privées aux formats OpenSSH et PEM (ed25519, RSA, ECDSA) ; un fichier PEM comportant une fonctionnalité non prise en charge est signalé séparément.";
 
 /* ConnectionViewModel.failedState(for:) — ssh-agent (M10d/T4) */
 "core.connect.agentSocketUnavailable" = "Aucun agent SSH accessible (SSH_AUTH_SOCK).";

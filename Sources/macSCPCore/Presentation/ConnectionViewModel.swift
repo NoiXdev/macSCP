@@ -49,8 +49,15 @@ public enum ConnectFailureKind: Equatable, Sendable {
 public enum ConnectFailureRemedy: Equatable, Sendable {
     /// The key file at `path` is a PEM file macSCP could not read, and
     /// `SSHKeyConverter` can rewrite a COPY of it into a key macSCP opens.
-    /// `path` is tilde-expanded — the file system's spelling, not the
-    /// form's — because it is what a converter and a command line take.
+    /// `path` is the file system's spelling, not the form's: trimmed of the
+    /// whitespace a pasted field carries and tilde-expanded, because that is
+    /// what a converter and a command line take. One function produces it —
+    /// `ConnectionViewModel.normalizedKeyPath(_:)` — and the message and
+    /// this payload both read that one, so they cannot name two files.
+    ///
+    /// `path` is never empty: a form with no key path (the PEM key was the
+    /// JUMP hop's and the target authenticates some other way) yields no
+    /// remedy at all rather than a button over nothing.
     case convertKey(path: String)
 }
 
@@ -1082,27 +1089,63 @@ public final class ConnectionViewModel {
     /// including the other key errors — gets `nil` rather than a button that
     /// would change nothing.
     ///
-    /// `keyPath` is the form's own, tilde-expanded here exactly as
-    /// `SSHPrivateKeyLoader` expands it, because a converter and a command
-    /// line both take a file-system path. It is the path the person typed;
+    /// `keyPath` is the form's own, raw — `normalizedKeyPath(_:)` puts it
+    /// into the file system's spelling here, the same call the message
+    /// makes, so the two cannot disagree (fix round 1, I-2: this took the
+    /// UNTRIMMED value while the message took a trimmed one, and a padded
+    /// field made the remedy carry `" ~/.ssh/legacy "` unexpanded while the
+    /// message named the expanded path). It is the path the person typed;
     /// it is not a credential, and `core.connect.keyNotFound %@` already
     /// prints one.
+    ///
+    /// An EMPTY path yields `nil` even for `pemNotReadable` (fix round 1,
+    /// I-1). The form's key path row is empty whenever the target hop does
+    /// not authenticate with a file, and a jump hop's PEM key reaches this
+    /// mapping unchanged (`CitadelFileSystem` dials the jump first) — so
+    /// there is a real failure with no file to act on. `.convertKey(path:
+    /// "")` would be a button that converts nothing.
     static func remedy(for error: Error, keyPath: String) -> ConnectFailureRemedy? {
         switch error {
         case SSHKeyError.pemNotReadable:
-            return .convertKey(path: NSString(string: keyPath).expandingTildeInPath)
+            let path = Self.normalizedKeyPath(keyPath)
+            guard !path.isEmpty else { return nil }
+            return .convertKey(path: path)
         default:
             return nil
         }
     }
 
+    /// The form's key path as the file system spells it: trimmed, then
+    /// tilde-expanded — the same two steps `SSHFieldSchema.makeConfig` takes
+    /// before it dials, in the same order.
+    ///
+    /// The order is the point, not a detail: `expandingTildeInPath` expands
+    /// only a LEADING `~`, so expanding a padded `"  ~/.ssh/legacy  "` first
+    /// leaves the tilde standing. ONE function, because two readers need the
+    /// answer — the message built in `failedState` and the remedy built in
+    /// `remedy(for:keyPath:)` — and a second copy of these two steps is what
+    /// let them name two different files (fix round 1, I-2).
+    ///
+    /// Empty in, empty out: a form with no key path has no file to name, and
+    /// both readers branch on that rather than printing `''`.
+    static func normalizedKeyPath(_ keyPath: String) -> String {
+        let trimmed = keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return NSString(string: trimmed).expandingTildeInPath
+    }
+
     /// The half-sentence naming what stopped the PEM reader — `%1$@` of
-    /// `core.connect.keyPEMNotReadable %@ %@`.
+    /// `core.connect.keyPEMNotReadable %@ %@`, and the whole argument of
+    /// `core.connect.keyPEMNotReadable.noPath %@`, which is the same
+    /// message for a dial that names no file (see the arm that builds both).
     ///
     /// Five keys rather than one with a `%@` for the whole clause, so a
     /// language can phrase each case its own way: what follows "its %@
     /// encryption" is a noun in one language and a clause in another, and
-    /// `putty`/`malformed` carry no name at all.
+    /// `putty`/`malformed` carry no name at all. `keyType` names its type in
+    /// parentheses rather than after an article: its payload is `"unknown"`
+    /// for every armor label the decoder does not recognise, and "a unknown
+    /// key" is what an article made of that (fix round 1, M-1).
     ///
     /// The interpolated name is `PEMReadFailure`'s payload, which is one of
     /// the decoder's own constants — never a substring of the file (see
@@ -1205,14 +1248,20 @@ public final class ConnectionViewModel {
     /// `emptyJumpKeyPath`, `invalidJumpHost` and `invalidJumpUsername` onto the
     /// jump rows, and what lets `channelSetupRejected`, the `AgentError` cases
     /// and `SSHKeyError.fileNotFound` tell the jump hop from the target one.
-    /// `keyPath` is the target hop's own, and only `SSHKeyError.pemNotReadable`
-    /// reads it -- see `failedState`'s own doc comment.
+    /// `keyPath` is the target hop's own and goes in RAW, unlike
+    /// `jumpKeyPath` above: only `SSHKeyError.pemNotReadable` reads it, and
+    /// that arm calls `normalizedKeyPath(_:)`, which is the one place the
+    /// trimming and the tilde expansion happen — the same call
+    /// `remedy(for:keyPath:)` makes on the same raw value from the `catch`.
+    /// Trimming it a second time here would be a second copy of half of
+    /// that normalisation (fix round 1, I-2). See `failedState`'s own doc
+    /// comment.
     private func jumpAwareFailedState(for error: Error) -> State {
         Self.failedState(
             for: error, jumpEnabled: jumpEnabled,
             jumpKeyPath: jumpKeyPath.trimmingCharacters(in: .whitespacesAndNewlines),
             jumpAuthChoice: jumpAuthChoice,
-            keyPath: keyPath.trimmingCharacters(in: .whitespacesAndNewlines))
+            keyPath: keyPath)
     }
 
     /// The secret the active backend's visible secret field currently holds.
@@ -1977,12 +2026,15 @@ public final class ConnectionViewModel {
         }
     }
 
-    /// `keyPath` is the TARGET hop's key path, and only
-    /// `SSHKeyError.pemNotReadable` reads it: that case carries no path of
-    /// its own (like `typeNotLoadable`, and unlike `fileNotFound`), while
-    /// its message has to carry the command that converts the file. It
-    /// defaults to empty because every caller but the dial passes an error
-    /// that never looks at it.
+    /// `keyPath` is the TARGET hop's key path, RAW as the form holds it,
+    /// and only `SSHKeyError.pemNotReadable` reads it: that case carries no
+    /// path of its own (like `typeNotLoadable`, and unlike `fileNotFound`),
+    /// while its message has to carry the command that converts the file.
+    /// That arm normalises it through `normalizedKeyPath(_:)`, the one
+    /// function `remedy(for:keyPath:)` also calls. It defaults to empty
+    /// because every caller but the dial passes an error that never looks at
+    /// it -- and empty is also a real value the dial produces, which the arm
+    /// handles rather than printing an empty path into a command.
     static func failedState(
         for error: Error, jumpEnabled: Bool = false, jumpKeyPath: String = "",
         jumpAuthChoice: AuthChoice = .password, keyPath: String = ""
@@ -2171,10 +2223,14 @@ public final class ConnectionViewModel {
         // error can still originate at the jump hop while the target's row is
         // the one that gets outlined. `pemNotReadable` widens that same
         // imprecision by exactly one step, and no further: its message and
-        // its remedy name the TARGET's key path, so in that same jump-key
-        // case the command offered would convert the wrong file. It is the
-        // one attribution this arm cannot make, for the one reason stated at
-        // the top of this comment -- the error carries no path.
+        // its remedy name the TARGET's key path, so with a jump key in PEM
+        // AND a target that authenticates with a file of its own, the
+        // command offered would convert the wrong file. It is the one
+        // attribution this arm cannot make, for the one reason stated at
+        // the top of this comment -- the error carries no path. Where the
+        // target authenticates some OTHER way there is no wrong file to
+        // offer, only no file at all, and the arm below says so instead
+        // (fix round 1, I-1).
         case SSHKeyError.typeNotLoadable(let algorithm):
             // No RSA note any more. It existed because an RSA key FILE could
             // not be loaded at all and the user's only remaining route was the
@@ -2193,12 +2249,33 @@ public final class ConnectionViewModel {
             // it. The command is NOT a display string and comes from
             // `SSHKeyConverter`, never from a catalog — a translator must
             // not be able to change what a person is told to run.
+            //
+            // Two entries, because the path can be EMPTY (fix round 1,
+            // I-1). The paragraph above says this error carries no path and
+            // is attributed to the TARGET hop; when the target does not
+            // authenticate with a file at all — agent or password login,
+            // with the PEM key sitting on the JUMP hop, which
+            // `CitadelFileSystem` dials first — the form's key path row is
+            // empty and there is nothing to quote. The `.noPath` entry drops
+            // the command clause instead, rather than offering
+            // `ssh-keygen -p -f ''`; `remedy(for:keyPath:)` returns `nil` in
+            // the same case, so the button and the sentence agree.
+            //
+            // `normalizedKeyPath` is what both read — see its own comment
+            // for why the trimming and the expansion live in one place.
+            let path = Self.normalizedKeyPath(keyPath)
+            guard !path.isEmpty else {
+                return .failed(
+                    message: String(
+                        format: CoreL10n.string("core.connect.keyPEMNotReadable.noPath %@"),
+                        Self.pemFeatureSentence(failure)),
+                    field: Self.sshField(.keyPath))
+            }
             return .failed(
                 message: String(
                     format: CoreL10n.string("core.connect.keyPEMNotReadable %@ %@"),
                     Self.pemFeatureSentence(failure),
-                    SSHKeyConverter.inPlaceCommandLine(
-                        forKeyAt: NSString(string: keyPath).expandingTildeInPath)),
+                    SSHKeyConverter.inPlaceCommandLine(forKeyAt: path)),
                 field: Self.sshField(.keyPath))
         case SSHKeyError.unsupportedFormat:
             return .failed(
