@@ -202,6 +202,12 @@ struct FileKeyTypeIntegrationTests {
     /// The public key line is COMPUTED from the seed rather than derived by
     /// `ssh-keygen -y`, which answers "invalid format" for an Ed25519 PKCS#8
     /// file (measured 2026-09-11, OpenSSH 10.3p1).
+    ///
+    /// Nothing in this cell proves the encrypted half's file is actually
+    /// encrypted — it authenticates either way if `PEMFixtures.pbes2PEM`
+    /// silently wrote a plain container. That layout is pinned instead by
+    /// `refusesAnAbsurdIterationCount` in `PEMPrivateKeyDecoderTests`, which
+    /// reads the same builder's output back and asserts its PBES2 shape.
     @Test("an Ed25519 PKCS#8 key authenticates", arguments: [false, true])
     func ed25519PKCS8FileAuthenticates(encrypted: Bool) async throws {
         let dir = try PEMFixtures.tempDir()
@@ -293,19 +299,34 @@ struct FileKeyTypeIntegrationTests {
     /// rewrites a COPY, and the copy logs in against the same
     /// `authorized_keys` line — which is the proof that the conversion kept
     /// the key rather than merely producing a well-formed file.
+    enum DESContainer: CaseIterable, CustomStringConvertible {
+        case legacy, pbes2
+
+        var description: String {
+            switch self {
+            case .legacy: return "legacy"
+            case .pbes2: return "pbes2"
+            }
+        }
+    }
+
     @Test("a DES-EDE3 key is refused by the dial and logs in once converted",
-          arguments: ["legacy", "pbes2"])
-    func desEDE3KeyIsRefusedThenConverted(container: String) async throws {
+          arguments: DESContainer.allCases)
+    func desEDE3KeyIsRefusedThenConverted(container: DESContainer) async throws {
         let dir = try PEMFixtures.tempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let passphrase = "itest-\(UUID().uuidString)"
         let plainPath = try await PEMFixtures.sshKeygen(
             type: "rsa", bits: 2048, format: .pem, passphrase: nil, in: dir)
         let keyPath = dir.appendingPathComponent("id_rsa_des3").path(percentEncoded: false)
-        let arguments = container == "legacy"
-            ? ["rsa", "-in", plainPath, "-des3", "-passout", "pass:\(passphrase)", "-out", keyPath]
-            : ["pkcs8", "-topk8", "-in", plainPath, "-v2", "des3",
-               "-passout", "pass:\(passphrase)", "-out", keyPath]
+        let arguments: [String]
+        switch container {
+        case .legacy:
+            arguments = ["rsa", "-in", plainPath, "-des3", "-passout", "pass:\(passphrase)", "-out", keyPath]
+        case .pbes2:
+            arguments = ["pkcs8", "-topk8", "-in", plainPath, "-v2", "des3",
+                         "-passout", "pass:\(passphrase)", "-out", keyPath]
+        }
         try await PEMFixtures.openssl(arguments)
         try PEMFixtures.restrict(keyPath)
 
@@ -317,12 +338,24 @@ struct FileKeyTypeIntegrationTests {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser",
             auth: .privateKey(keyPath: keyPath, passphrase: passphrase))
-        await #expect(throws: SSHKeyError.pemNotReadable(.cipher("DES-EDE3-CBC"))) {
-            _ = try await CitadelFileSystem.connect(
+        // Caught into a local rather than `#expect(throws:)`, so a red here
+        // prints both sides (the idiom `PEMPrivateKeyDecoderTests.swift:326`
+        // uses for the same decoder-level refusal) instead of only "an error
+        // was expected but none was thrown".
+        var caught: SSHKeyError?
+        do {
+            let fs = try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30),
                 knownHosts: KnownHostsStore(directory: khDir),
                 onUnknownHostKey: .asking { _ in true })
+            // No leaked connection on the branch that should not exist: a
+            // regression that lets the dial through must not also leave a
+            // live SSH session parked past this test.
+            await fs.disconnect()
+        } catch let error as SSHKeyError {
+            caught = error
         }
+        #expect(caught == .pemNotReadable(.cipher("DES-EDE3-CBC")))
 
         let converted = dir.appendingPathComponent("converted")
         let didConvert = try await SSHKeyConverter.copyAsOpenSSH(

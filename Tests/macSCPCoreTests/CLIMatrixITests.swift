@@ -167,16 +167,34 @@ enum CLIMatrixCases {
             // `StoredSSHConfig` is documented secret-free
             // (`Sources/macSCPCore/Sessions/StoredSSHConfig.swift`), and this
             // is the printed-output half of that claim, read the same way
-            // `sessionsAddEditRmRoundTrip` reads it.
+            // `everySessionInTheStoreIsListed` reads it: the expected field
+            // COUNT comes from `SessionCatalog.Row` itself through `Mirror`,
+            // not a literal list of field names here that a rename would
+            // leave uncaught.
             let listedSessions = try await rig.runStore(["sessions", "--json"])
             #expect(
                 listedSessions.status == 0,
                 "sessions --json exited \(listedSessions.status): \(listedSessions.stderrText)")
             let sessionsLeak = rig.leaksSecret(listedSessions)
             #expect(sessionsLeak == false, "sessions --json printed the secret on \(kind.rawValue)")
+
+            // The positive beside the key-shape check below: a key-shape
+            // check alone passes vacuously on an empty listing, so this
+            // requires the session just added actually be among the decoded
+            // rows — the way `everySessionInTheStoreIsListed` requires its
+            // own fixture entries.
+            let sessionRows = try CLIMatrix.sessionRows(listedSessions.stdoutText)
+            _ = try #require(
+                sessionRows.first { $0.name == name },
+                "sessions --json did not report \(name) on \(kind.rawValue)")
+
             let rowKeys = try CLIMatrix.sessionRowKeys(listedSessions.stdoutText)
+            let declaredFieldCount = Mirror(
+                reflecting: SessionCatalog.Row(
+                    name: "n", kind: .ssh, groupPath: "", tags: [], target: "t")
+            ).children.count
             #expect(
-                rowKeys.allSatisfy { $0 == ["name", "kind", "target", "group", "tags"] },
+                rowKeys.allSatisfy { $0.count == declaredFieldCount && $0.contains("name") },
                 "sessions --json printed \(rowKeys) for \(kind.rawValue)")
 
             // The dial: the session just added, with no secret in the
@@ -1454,7 +1472,7 @@ struct CLIMatrixSSHITests {
 
     /// PEM private keys plan, Task 2: the store-to-dial chain, not exercised
     /// by `FileKeyTypeIntegrationTests` — see the case's own doc comment.
-    /// SSH only: `--key`, `--host`, `--port` and `--user` are SSH-only flags
+    /// SSH only: `--key`, `--host` and `--port` are SSH-only flags
     /// (`SessionFieldOptions.kindSpecificFlags`), so there is no S3 or
     /// WebDAV counterpart to run this case against.
     @Test func listsThroughAPEMKeySession() async throws {
