@@ -528,6 +528,74 @@ Two things measured in Task 1 that the plan's own text did not say:
   `ConvertKeyWiringGuardTests`, positive and negative side by side, over
   comment-blanked source.
 
+### Coverage addendum 2026-09-11
+
+The "Rig (gated)" bullet above named three PEM shapes; two gaps were still
+open at that point — Ed25519 PKCS#8 and openssl's encrypted legacy files had
+been measured only against the decoder, never against the rig — and the
+CLI's own store-to-dial chain had never been dialled with a PEM key at all.
+Plan `docs/superpowers/plans/2026-09-11-pem-rig-coverage.md` closed both,
+in `Tests/macSCPCoreTests/FileKeyTypeIntegrationTests.swift` and
+`Tests/macSCPCoreTests/CLIMatrixITests.swift`.
+
+- **Rig, six new producer cells** in `FileKeyTypeIntegrationTests.swift`,
+  under `// MARK: - The producer cells: files no \`ssh-keygen -t\` run
+  writes`:
+  - `ed25519PKCS8FileAuthenticates(encrypted:)` — `"an Ed25519 PKCS#8 key
+    authenticates"`, `arguments: [false, true]` — 2 cells.
+  - `opensslEncryptedLegacyRSAFileAuthenticates()` — `"openssl's encrypted
+    legacy RSA file authenticates"` — 1 cell.
+  - `opensslNamedCurveSEC1KeyAuthenticates()` — `"openssl's named-curve
+    SEC1 key authenticates"` — 1 cell.
+  - `desEDE3KeyIsRefusedThenConverted(container:)` — `"a DES-EDE3 key is
+    refused by the dial and logs in once converted"`, `arguments: ["legacy",
+    "pbes2"]` — 2 cells: each first asserts the refusal
+    (`SSHKeyError.pemNotReadable(.cipher("DES-EDE3-CBC"))`) straight out of
+    `CitadelFileSystem.connect`, unwrapped, then converts a copy with
+    `SSHKeyConverter.copyAsOpenSSH` and logs in with it.
+
+  Six new cells, recounted against the file's own MARK line
+  (`FileKeyTypeIntegrationTests.swift:119`): `// MARK: - The cells: 5 types
+  × 2, 3 PEM containers × 2, 6 producer cells — 22`.
+
+- **CLI matrix**: `CLIMatrixCases.listsThroughAPEMKeySession(_:)` in
+  `Tests/macSCPCoreTests/CLIMatrixITests.swift`, run as
+  `listsThroughAPEMKeySession()` in the SSH matrix suite only (`--key`,
+  `--host`, `--port` and `--user` are SSH-only flags, so there is no S3 or
+  WebDAV counterpart). It proves the chain none of the cells above touch:
+  the binary's own `sessions add --key <path>` writing a `StoredSession`
+  in one process, and a later `ls` in a second process reading that store
+  and dialling with it — not Core's `CitadelFileSystem.connect` called
+  directly in the same process, which is what every `FileKeyTypeIntegrationTests`
+  cell does. The key is unencrypted only: `sessions add` takes no
+  passphrase flag, and the CLI's login chain reads a stored key's
+  passphrase from the Keychain read-only, as its last link, which this rig
+  has no way to seed for a session it is about to create.
+
+- **Two measured limits**, both on this machine, OpenSSH 10.3p1 / LibreSSL
+  3.3.6:
+  - `ssh-keygen -y` cannot read an Ed25519 PKCS#8 file (answers "invalid
+    format"), so `ed25519PKCS8FileAuthenticates` computes the authorized
+    line from the seed instead, with
+    `PEMFixtures.ed25519PublicKeyLine(seed:comment:)`.
+  - LibreSSL 3.3.6 cannot encrypt an Ed25519 PKCS#8 container, so the
+    encrypted half of the same cell wraps the plain file's DER with
+    `PEMFixtures.pbes2PEM(pkcs8DER: Data, passphrase: String, rounds: Int =
+    2048, declaredRounds: Int? = nil) throws -> String` — the PBES2 builder
+    `PEMPrivateKeyDecoderTests` already used for its own absurd-iteration-count
+    case, moved into `PEMFixtures` in the same task so both suites share it.
+
+- **`sessions --json` carries no key path, by design**:
+  `OutputFormatter.print(rows:asJSON:)` prints `name`/`kind`/`target`/
+  `group`/`tags` only — `SessionCatalog.Row` never carries `authKind` or
+  `keyPath`. `listsThroughAPEMKeySession` therefore asserts the private-key
+  login two ways: `authKind` and `keyPath` are read directly off
+  `SessionStore(directory:).all()`, the same type the fixture used to seed
+  itself; "no secret field present" is asserted against the actual
+  `sessions --json` output via `CLIMatrix.sessionRowKeys`.
+
+- Commits: `d9c4ff54` (the six rig cells), `2465d684` (the CLI case).
+
 ## What stays as it was
 
 - The agent route, the OpenSSH-format path, and the SHA-2-only RSA offer.
