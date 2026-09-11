@@ -561,8 +561,8 @@ in `Tests/macSCPCoreTests/FileKeyTypeIntegrationTests.swift` and
 - **CLI matrix**: `CLIMatrixCases.listsThroughAPEMKeySession(_:)` in
   `Tests/macSCPCoreTests/CLIMatrixITests.swift`, run as
   `listsThroughAPEMKeySession()` in the SSH matrix suite only (`--key`,
-  `--host`, `--port` and `--user` are SSH-only flags, so there is no S3 or
-  WebDAV counterpart). It proves the chain none of the cells above touch:
+  `--host` and `--port` are SSH-only flags, so there is no S3 or WebDAV
+  counterpart). It proves the chain none of the cells above touch:
   the binary's own `sessions add --key <path>` writing a `StoredSession`
   in one process, and a later `ls` in a second process reading that store
   and dialling with it — not Core's `CitadelFileSystem.connect` called
@@ -582,8 +582,9 @@ in `Tests/macSCPCoreTests/FileKeyTypeIntegrationTests.swift` and
     encrypted half of the same cell wraps the plain file's DER with
     `PEMFixtures.pbes2PEM(pkcs8DER: Data, passphrase: String, rounds: Int =
     2048, declaredRounds: Int? = nil) throws -> String` — the PBES2 builder
-    `PEMPrivateKeyDecoderTests` already used for its own absurd-iteration-count
-    case, moved into `PEMFixtures` in the same task so both suites share it.
+    `PEMPrivateKeyDecoderTests` already used at two call sites
+    (`decodesPBES2WithExplicitSHA256` and `refusesAnAbsurdIterationCount`),
+    moved into `PEMFixtures` in the same task so both suites share it.
 
 - **`sessions --json` carries no key path, by design**:
   `OutputFormatter.print(rows:asJSON:)` prints `name`/`kind`/`target`/
