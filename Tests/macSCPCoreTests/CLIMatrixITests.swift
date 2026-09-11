@@ -106,6 +106,106 @@ enum CLIMatrixCases {
         }
     }
 
+    // MARK: - Sessions with a PEM private key
+
+    /// `sessions add --key <PEM path>` writes a private-key login into the
+    /// binary's OWN store, and a later `ls` through that session name dials
+    /// with it — the store-to-dial CHAIN `FileKeyTypeIntegrationTests` never
+    /// exercises: every cell there logs in through Core's own
+    /// `CitadelFileSystem.connect` directly, in the same process
+    /// (`expectLogin`, `FileKeyTypeIntegrationTests.swift`), never through a
+    /// `StoredSession` a SEPARATE process (this one, running `sessions add`)
+    /// writes and a THIRD process (the `ls` below) reads back and dials.
+    ///
+    /// The key is UNENCRYPTED. `sessions add` takes no passphrase flag at
+    /// all — the CLI's own login chain reads a stored key passphrase from
+    /// the app's Keychain read-only, as its last link, and this rig has no
+    /// way to seed that Keychain slot for a session it is about to create —
+    /// so an encrypted key cannot be exercised through this path.
+    ///
+    /// `-m PEM` on an RSA key is legacy PKCS#1, one of the shapes the PEM
+    /// private keys plan taught the reader (Task 1); the plan's design says
+    /// this task adds measurement, not behaviour — a refusal here is a
+    /// finding to record, not something to work around.
+    static func listsThroughAPEMKeySession(_ kind: ConnectionKind) async throws {
+        try await CLIMatrix.withRig(kind, label: "pem-key") { rig, fileSystem, litter in
+            let installed = try await makeInstalledKey(
+                type: "rsa", bits: 2048, extraKeygenArguments: ["-m", "PEM"])
+            defer { try? FileManager.default.removeItem(at: installed.dir) }
+
+            let fileName = "cli-matrix-pem-\(UUID().uuidString).txt"
+            let remotePath = rig.remotePath(fileName)
+            let payload = Data("cli-matrix pem-key session fixture\n".utf8)
+            await litter.file(remotePath)
+            try await rig.seed(fileSystem, path: remotePath, content: payload)
+
+            let name = "cli-matrix-pem-session-\(UUID().uuidString)"
+            let added = try await rig.runStore([
+                "sessions", "add", name, "--kind", kind.rawValue,
+                "--host", "127.0.0.1", "--port", "2222", "--user", "testuser",
+                "--key", installed.keyPath,
+            ])
+            #expect(
+                added.status == 0,
+                "sessions add exited \(added.status) on \(kind.rawValue): \(added.stderrText)")
+
+            // The store, read back DIRECTLY: `authKind` and `keyPath` never
+            // reach `sessions --json` at all
+            // (`OutputFormatter.print(rows:asJSON:)` prints only
+            // name/kind/target/group/tags,
+            // `Sources/MacSCPCLI/OutputFormatter.swift`), so this is the
+            // only read that can say the private-key login was actually
+            // written.
+            let stored = try SessionStore(directory: rig.storageDirectory).all()
+            let savedSSH = try #require(
+                stored.first { $0.name == name }?.ssh,
+                "the added session carries no ssh block")
+            #expect(savedSSH.authKind == .privateKey)
+            #expect(savedSSH.keyPath == installed.keyPath)
+
+            // `sessions --json` itself: no secret field on any row —
+            // `StoredSSHConfig` is documented secret-free
+            // (`Sources/macSCPCore/Sessions/StoredSSHConfig.swift`), and this
+            // is the printed-output half of that claim, read the same way
+            // `sessionsAddEditRmRoundTrip` reads it.
+            let listedSessions = try await rig.runStore(["sessions", "--json"])
+            #expect(
+                listedSessions.status == 0,
+                "sessions --json exited \(listedSessions.status): \(listedSessions.stderrText)")
+            let sessionsLeak = rig.leaksSecret(listedSessions)
+            #expect(sessionsLeak == false, "sessions --json printed the secret on \(kind.rawValue)")
+            let rowKeys = try CLIMatrix.sessionRowKeys(listedSessions.stdoutText)
+            #expect(
+                rowKeys.allSatisfy { $0 == ["name", "kind", "target", "group", "tags"] },
+                "sessions --json printed \(rowKeys) for \(kind.rawValue)")
+
+            // The dial: the session just added, with no secret in the
+            // child's environment at all — the key needs none.
+            let binary = try CLIMatrix.binaryURL()
+            let flags = try await CLIMatrix.hostKeyFlags(for: "ls", binary: binary)
+            let result = try await rig.runWithoutASecret(
+                ["ls"] + flags + ["--json", "\(name):\(rig.remoteRoot)"])
+            // The leak question first, computed before any message below
+            // could quote this run's output (CLAUDE.md, "A value a test
+            // must not leak has two exits, not one").
+            let leaks = rig.leaksSecret(result)
+            #expect(leaks == false, "the run printed the secret on \(kind.rawValue)")
+            #expect(
+                result.status == 0,
+                """
+                ls through the PEM-keyed session failed on \(kind.rawValue) \
+                (exit \(result.status), stderr \(result.stderrText.count) bytes)
+                """)
+
+            let listed = try CLIMatrix.listing(result.stdoutText)
+            let entry = try #require(
+                listed.first { $0.name == fileName },
+                "ls --json did not report the seeded file through the PEM-keyed session")
+            #expect(entry.directory == false)
+            #expect(entry.size == UInt64(payload.count))
+        }
+    }
+
     // MARK: - mkdir
 
     /// `mkdir` creates something the backend itself calls a directory.
@@ -1350,6 +1450,15 @@ struct CLIMatrixSSHITests {
 
     @Test func sessionsAddEditRmRoundTrip() async throws {
         try await CLIMatrixCases.sessionsAddEditRmRoundTrip(Self.kind)
+    }
+
+    /// PEM private keys plan, Task 2: the store-to-dial chain, not exercised
+    /// by `FileKeyTypeIntegrationTests` — see the case's own doc comment.
+    /// SSH only: `--key`, `--host`, `--port` and `--user` are SSH-only flags
+    /// (`SessionFieldOptions.kindSpecificFlags`), so there is no S3 or
+    /// WebDAV counterpart to run this case against.
+    @Test func listsThroughAPEMKeySession() async throws {
+        try await CLIMatrixCases.listsThroughAPEMKeySession(Self.kind)
     }
 
     @Test func tunnelsEditListRm() async throws {
