@@ -59,7 +59,7 @@ private func generateKeyPair(
 ///
 /// A key generated here is authorized against the rig for as long as the
 /// container lives — `authorized_keys` grows across runs, which the rig
-/// accepts by design (see the note inside).
+/// accepts by design (see the note in `installAuthorizedKey`).
 func makeInstalledKey(
     type: String = "ed25519", bits: Int? = nil, passphrase: String? = nil,
     extraKeygenArguments: [String] = []
@@ -68,23 +68,35 @@ func makeInstalledKey(
         type: type, bits: bits, passphrase: passphrase,
         extraKeygenArguments: extraKeygenArguments)
     do {
-        // Note: authorized_keys grows across runs on a long-lived container —
-        // acceptable for the test rig.
-        let result = try await SubprocessRunner.run(
-            URL(fileURLWithPath: "/usr/local/bin/docker"),
-            arguments: [
-                "exec", "macscp-test-sshd", "sh", "-c",
-                "mkdir -p /config/.ssh && echo '\(generated.publicKey)' >> /config/.ssh/authorized_keys"
-                    + " && chmod 700 /config/.ssh && chmod 600 /config/.ssh/authorized_keys"
-                    + " && chown -R 1000:1000 /config/.ssh",
-            ])
-        #expect(result.status == 0)
-
+        try await installAuthorizedKey(publicKeyLine: generated.publicKey)
         return (generated.dir, generated.keyPath)
     } catch {
         try? FileManager.default.removeItem(at: generated.dir)
         throw error
     }
+}
+
+/// Appends one public key line to the rig sshd's `authorized_keys`, with the
+/// modes and ownership that container's sshd requires.
+///
+/// Extracted from `makeInstalledKey` on 2026-09-11, when the producer cells
+/// of `FileKeyTypeIntegrationTests` needed the same installation for key
+/// files no `ssh-keygen -t` run wrote — an `openssl ecparam` SEC1 file, an
+/// Ed25519 PKCS#8 file whose public line is computed from the seed. The body
+/// is unchanged by the move; only the source of the line differs.
+///
+/// Note: authorized_keys grows across runs on a long-lived container —
+/// acceptable for the test rig.
+func installAuthorizedKey(publicKeyLine: String) async throws {
+    let result = try await SubprocessRunner.run(
+        URL(fileURLWithPath: "/usr/local/bin/docker"),
+        arguments: [
+            "exec", "macscp-test-sshd", "sh", "-c",
+            "mkdir -p /config/.ssh && echo '\(publicKeyLine)' >> /config/.ssh/authorized_keys"
+                + " && chmod 700 /config/.ssh && chmod 600 /config/.ssh/authorized_keys"
+                + " && chown -R 1000:1000 /config/.ssh",
+        ])
+    #expect(result.status == 0)
 }
 
 // MARK: - SFTPGo

@@ -116,7 +116,7 @@ struct FileKeyTypeIntegrationTests {
         }
     }
 
-    // MARK: - The cells: 5 types × 2, and 3 PEM containers × 2
+    // MARK: - The cells: 5 types × 2, 3 PEM containers × 2, 6 producer cells — 22
 
     /// One `ssh-keygen` shape. `bits` is `nil` where the type has only one
     /// size (ed25519) and the curve size otherwise. `format` is appended to
@@ -187,9 +187,175 @@ struct FileKeyTypeIntegrationTests {
         try await authenticateAndList(shape: shape, encrypted: encrypted)
     }
 
-    /// The body both cell tests above share, extracted rather than copied:
-    /// the two differ only in the shape list they walk, and a second copy of
-    /// the connect would be a second thing to keep true.
+    // MARK: - The producer cells: files no `ssh-keygen -t` run writes
+
+    /// An Ed25519 key in a PKCS#8 container, plain and PBES2-encrypted.
+    ///
+    /// Neither producer on this machine writes this file: ssh-keygen 10.3
+    /// refuses `-m PKCS8` for ed25519 and LibreSSL 3.3.6 writes no encrypted
+    /// Ed25519 PKCS#8 at all (design table, 2026-09-10), so both halves are
+    /// built here — the plain one by `PEMFixtures.ed25519PKCS8PEM`, the
+    /// encrypted one by wrapping that file's DER with `PEMFixtures.pbes2PEM`.
+    /// Until this cell the shape was measured only against the decoder; what
+    /// it adds is the rest of the path — loader, Citadel, the rig's sshd.
+    ///
+    /// The public key line is COMPUTED from the seed rather than derived by
+    /// `ssh-keygen -y`, which answers "invalid format" for an Ed25519 PKCS#8
+    /// file (measured 2026-09-11, OpenSSH 10.3p1).
+    @Test("an Ed25519 PKCS#8 key authenticates", arguments: [false, true])
+    func ed25519PKCS8FileAuthenticates(encrypted: Bool) async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let seed = Curve25519.Signing.PrivateKey().rawRepresentation
+        let plain = PEMFixtures.ed25519PKCS8PEM(seed: seed)
+        let passphrase = encrypted ? "itest-\(UUID().uuidString)" : nil
+
+        let text: String
+        if let passphrase {
+            let plainDER = try #require(PEMFixtures.der(ofPEM: plain))
+            text = try PEMFixtures.pbes2PEM(pkcs8DER: plainDER, passphrase: passphrase)
+        } else {
+            text = plain
+        }
+        let keyPath = dir.appendingPathComponent("id_ed25519_pkcs8")
+            .path(percentEncoded: false)
+        try text.write(toFile: keyPath, atomically: true, encoding: .utf8)
+        try PEMFixtures.restrict(keyPath)
+
+        try await installAuthorizedKey(
+            publicKeyLine: PEMFixtures.ed25519PublicKeyLine(seed: seed, comment: "macscp-itest"))
+        try await expectLogin(keyPath: keyPath, passphrase: passphrase)
+    }
+
+    /// A legacy PKCS#1 file encrypted the way `openssl rsa` encrypts it —
+    /// `Proc-Type: 4,ENCRYPTED` with `DEK-Info: AES-256-CBC` — rather than
+    /// the way ssh-keygen does. `KeyShape.pem` covers ssh-keygen's own
+    /// `-m PEM` output; this covers openssl's, which is the file people
+    /// actually have on disk from an `openssl rsa` run.
+    ///
+    /// The key material is the same in both files, so the plain key's `.pub`
+    /// is what the rig must authorize.
+    @Test("openssl's encrypted legacy RSA file authenticates")
+    func opensslEncryptedLegacyRSAFileAuthenticates() async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let passphrase = "itest-\(UUID().uuidString)"
+        let plainPath = try await PEMFixtures.sshKeygen(
+            type: "rsa", bits: 2048, format: .pem, passphrase: nil, in: dir)
+        let keyPath = dir.appendingPathComponent("id_rsa_aes256").path(percentEncoded: false)
+        try await PEMFixtures.openssl([
+            "rsa", "-in", plainPath, "-aes256", "-passout", "pass:\(passphrase)", "-out", keyPath,
+        ])
+        try PEMFixtures.restrict(keyPath)
+
+        try await installAuthorizedKey(publicKeyLine: try publicKeyLine(besideKeyAt: plainPath))
+        try await expectLogin(keyPath: keyPath, passphrase: passphrase)
+    }
+
+    /// A SEC1 file whose curve is a NAMED one — `openssl ecparam -genkey`
+    /// writes the curve as an OID in the key's own `parameters [0]` field,
+    /// where ssh-keygen's `-m PEM` ECDSA output carries an explicit-parameter
+    /// block instead. Same container, different way of saying which curve,
+    /// and only the second was measured before this cell.
+    ///
+    /// `ssh-keygen -y` DOES read this file (measured 2026-09-11), so the
+    /// public key line comes from the external oracle rather than from a
+    /// second computation here.
+    @Test("openssl's named-curve SEC1 key authenticates")
+    func opensslNamedCurveSEC1KeyAuthenticates() async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let keyPath = dir.appendingPathComponent("id_ecdsa_sec1").path(percentEncoded: false)
+        try await PEMFixtures.openssl([
+            "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", keyPath,
+        ])
+        try PEMFixtures.restrict(keyPath)
+
+        let derived = try await PEMFixtures.publicKeyLine(ofKeyAt: keyPath, passphrase: nil)
+        try await installAuthorizedKey(publicKeyLine: derived + " macscp-itest")
+        try await expectLogin(keyPath: keyPath, passphrase: nil)
+    }
+
+    /// The one variant the reader REFUSES, in both containers openssl can put
+    /// it in: `openssl rsa -des3` writes `DEK-Info: DES-EDE3-CBC` into a
+    /// legacy PKCS#1 file, `openssl pkcs8 -topk8 -v2 des3` writes the
+    /// `des-ede3-cbc` OID into a PBES2 scheme. The decoder names both the
+    /// same way — `.cipher("DES-EDE3-CBC")` — and this cell measures that the
+    /// refusal survives all the way out of `CitadelFileSystem.connect`
+    /// unwrapped, which is what lets the app offer the Convert remedy.
+    ///
+    /// No `connectWithRetry` around the refusing dial: the retry exists to
+    /// cushion the rig's reconnect throttling for connects that are SUPPOSED
+    /// to succeed, and this one throws in the key loader before anything
+    /// reaches the wire.
+    ///
+    /// Then the remedy itself, end to end: `SSHKeyConverter.copyAsOpenSSH`
+    /// rewrites a COPY, and the copy logs in against the same
+    /// `authorized_keys` line — which is the proof that the conversion kept
+    /// the key rather than merely producing a well-formed file.
+    @Test("a DES-EDE3 key is refused by the dial and logs in once converted",
+          arguments: ["legacy", "pbes2"])
+    func desEDE3KeyIsRefusedThenConverted(container: String) async throws {
+        let dir = try PEMFixtures.tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let passphrase = "itest-\(UUID().uuidString)"
+        let plainPath = try await PEMFixtures.sshKeygen(
+            type: "rsa", bits: 2048, format: .pem, passphrase: nil, in: dir)
+        let keyPath = dir.appendingPathComponent("id_rsa_des3").path(percentEncoded: false)
+        let arguments = container == "legacy"
+            ? ["rsa", "-in", plainPath, "-des3", "-passout", "pass:\(passphrase)", "-out", keyPath]
+            : ["pkcs8", "-topk8", "-in", plainPath, "-v2", "des3",
+               "-passout", "pass:\(passphrase)", "-out", keyPath]
+        try await PEMFixtures.openssl(arguments)
+        try PEMFixtures.restrict(keyPath)
+
+        try await installAuthorizedKey(publicKeyLine: try publicKeyLine(besideKeyAt: plainPath))
+
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-des3-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let config = try SSHConnectionConfig(
+            host: "127.0.0.1", port: 2222, username: "testuser",
+            auth: .privateKey(keyPath: keyPath, passphrase: passphrase))
+        await #expect(throws: SSHKeyError.pemNotReadable(.cipher("DES-EDE3-CBC"))) {
+            _ = try await CitadelFileSystem.connect(
+                config: config, connectTimeout: .seconds(30),
+                knownHosts: KnownHostsStore(directory: khDir),
+                onUnknownHostKey: .asking { _ in true })
+        }
+
+        let converted = dir.appendingPathComponent("converted")
+        let didConvert = try await SSHKeyConverter.copyAsOpenSSH(
+            from: URL(fileURLWithPath: keyPath), to: converted, passphrase: passphrase)
+        #expect(didConvert)
+        try await expectLogin(keyPath: converted.path(percentEncoded: false),
+                              passphrase: passphrase)
+    }
+
+    // MARK: - The body every cell above shares
+
+    /// The generate-install-login body of the two `KeyShape` cell tests,
+    /// extracted rather than copied: the two differ only in the shape list
+    /// they walk, and a second copy of the connect would be a second thing to
+    /// keep true. The producer cells above build their own files, so they
+    /// call `expectLogin` directly.
+    ///
+    /// The passphrase is generated per cell and never written down: it is not
+    /// a test argument (argument values are printed in test names and failure
+    /// output), not an expectation's source text, and not a log line. It
+    /// reaches exactly two places — `ssh-keygen -N`, the documented
+    /// exception, and the `SSHConnectionConfig` the connect consumes.
+    private func authenticateAndList(shape: KeyShape, encrypted: Bool) async throws {
+        let passphrase = encrypted ? "itest-\(UUID().uuidString)" : nil
+        let (dir, keyPath) = try await makeInstalledKey(
+            type: shape.type, bits: shape.bits, passphrase: passphrase,
+            extraKeygenArguments: shape.format)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try await expectLogin(keyPath: keyPath, passphrase: passphrase)
+    }
+
+    /// Logs in with the key file at `keyPath` and lists the rig's seed
+    /// directory. Every cell in this file ends here.
     ///
     /// The key is used through macSCP's OWN connect path —
     /// `CitadelFileSystem.connect` with
@@ -197,22 +363,10 @@ struct FileKeyTypeIntegrationTests {
     /// the app runs. Nothing here reaches into Citadel directly; that is
     /// Step 0's job.
     ///
-    /// The passphrase is generated per cell and never written down: it is not
-    /// a test argument (argument values are printed in test names and failure
-    /// output), not an expectation's source text, and not a log line. It
-    /// reaches exactly two places — `ssh-keygen -N`, the documented
-    /// exception, and the `SSHConnectionConfig` the connect consumes.
-    ///
     /// The listing at the end is what makes a green cell mean authentication:
     /// a connect that returned without a usable session would fail here
     /// rather than pass quietly.
-    private func authenticateAndList(shape: KeyShape, encrypted: Bool) async throws {
-        let passphrase = encrypted ? "itest-\(UUID().uuidString)" : nil
-        let (dir, keyPath) = try await makeInstalledKey(
-            type: shape.type, bits: shape.bits, passphrase: passphrase,
-            extraKeygenArguments: shape.format)
-        defer { try? FileManager.default.removeItem(at: dir) }
-
+    private func expectLogin(keyPath: String, passphrase: String?) async throws {
         let config = try SSHConnectionConfig(
             host: "127.0.0.1", port: 2222, username: "testuser",
             auth: .privateKey(keyPath: keyPath, passphrase: passphrase))
@@ -230,5 +384,13 @@ struct FileKeyTypeIntegrationTests {
 
         let items = try await fs.list(path: "/data/seed")
         #expect(items.contains { $0.name == "hello.txt" })
+    }
+
+    /// The `<key>.pub` line `ssh-keygen` wrote beside a key it generated.
+    /// Used where the file under measurement is a re-encryption of that key
+    /// and therefore carries the same public half.
+    private func publicKeyLine(besideKeyAt path: String) throws -> String {
+        try String(contentsOfFile: path + ".pub", encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

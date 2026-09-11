@@ -484,59 +484,14 @@ struct PEMPrivateKeyDecoderTests {
     // MARK: - 10 and 11: a PBES2 file this machine's openssl cannot write
 
     /// LibreSSL 3.3.6 has neither `-v2prf` nor `-scrypt` (design table), so
-    /// no producer here writes a PBES2 file with an EXPLICIT PRF. This test
-    /// builds one. It therefore measures the decoder's OID table and its
-    /// wiring — not an external producer, which is what every other case
-    /// above measures.
+    /// no producer here writes a PBES2 file with an EXPLICIT PRF. The builder
+    /// the two cases below use — `PEMFixtures.pbes2PEM` — writes one. They
+    /// therefore measure the decoder's OID table and its wiring, not an
+    /// external producer, which is what every other case above measures.
     ///
-    /// `declaredRounds` is what goes into the file; the key is always
-    /// derived at `rounds`. They differ only for the ceiling case below,
-    /// where the file is refused before any key is derived, so no key at the
-    /// declared count is ever needed.
-    private func pbes2SHA256PEM(pkcs8DER: Data, passphrase: String,
-                                rounds: Int, declaredRounds: Int? = nil) throws -> String {
-        let salt = Data((0..<8).map { _ in UInt8.random(in: 0...255) })
-        let key = try KDF.Insecure.PBKDF2.deriveKey(
-            from: Data(passphrase.utf8), salt: salt, using: .sha256,
-            outputByteCount: 32, unsafeUncheckedRounds: rounds)
-        let iv = AES._CBC.IV()
-        let ciphertext = try AES._CBC.encrypt(pkcs8DER, using: key, iv: iv)
-
-        let pbes2: ASN1ObjectIdentifier = [1, 2, 840, 113_549, 1, 5, 13]
-        let pbkdf2: ASN1ObjectIdentifier = [1, 2, 840, 113_549, 1, 5, 12]
-        let hmacSHA256: ASN1ObjectIdentifier = [1, 2, 840, 113_549, 2, 9]
-        let aes256CBC: ASN1ObjectIdentifier = [2, 16, 840, 1, 101, 3, 4, 1, 42]
-
-        var serializer = DER.Serializer()
-        try serializer.appendConstructedNode(identifier: .sequence) { outer in
-            try outer.appendConstructedNode(identifier: .sequence) { algorithm in
-                try algorithm.serialize(pbes2)
-                try algorithm.appendConstructedNode(identifier: .sequence) { parameters in
-                    try parameters.appendConstructedNode(identifier: .sequence) { kdf in
-                        try kdf.serialize(pbkdf2)
-                        try kdf.appendConstructedNode(identifier: .sequence) { kdfParameters in
-                            try kdfParameters.serialize(ASN1OctetString(contentBytes: ArraySlice(salt)))
-                            try kdfParameters.serialize(declaredRounds ?? rounds)
-                            try kdfParameters.appendConstructedNode(identifier: .sequence) { prf in
-                                try prf.serialize(hmacSHA256)
-                                try prf.serialize(ASN1Null())
-                            }
-                        }
-                    }
-                    try parameters.appendConstructedNode(identifier: .sequence) { scheme in
-                        try scheme.serialize(aes256CBC)
-                        try scheme.serialize(ASN1OctetString(contentBytes: ArraySlice(Data(iv))))
-                    }
-                }
-            }
-            try outer.serialize(ASN1OctetString(contentBytes: ArraySlice(ciphertext)))
-        }
-        let der = Data(serializer.serializedBytes)
-        return "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
-            + der.base64EncodedString(options: [.lineLength64Characters])
-            + "\n-----END ENCRYPTED PRIVATE KEY-----\n"
-    }
-
+    /// The builder moved to `PEMFixtures` on 2026-09-11, when the rig's
+    /// Ed25519 PKCS#8 cell needed the same file shape; the body is unchanged
+    /// by the move.
     @Test("a PBES2 file with an explicit SHA-256 PRF decodes")
     func decodesPBES2WithExplicitSHA256() async throws {
         let dir = try PEMFixtures.tempDir()
@@ -546,7 +501,8 @@ struct PEMPrivateKeyDecoderTests {
         let plainText = try String(contentsOfFile: plainPath, encoding: .utf8)
         let plainDER = try #require(PEMFixtures.der(ofPEM: plainText))
 
-        let built = try pbes2SHA256PEM(pkcs8DER: plainDER, passphrase: Self.passphrase, rounds: 2048)
+        let built = try PEMFixtures.pbes2PEM(pkcs8DER: plainDER, passphrase: Self.passphrase,
+                                             rounds: 2048)
         let fromBuilt = try PEMPrivateKeyDecoder.decode(built, passphrase: Self.passphrase)
         let fromPlain = try PEMPrivateKeyDecoder.decode(plainText, passphrase: nil)
         let bothReadTheSameKey = fromBuilt == fromPlain
@@ -560,8 +516,8 @@ struct PEMPrivateKeyDecoderTests {
         let plainPath = try await PEMFixtures.sshKeygen(type: "rsa", bits: 2048, format: .pkcs8,
                                                         passphrase: nil, in: dir)
         let plainDER = try #require(PEMFixtures.der(ofPEM: try String(contentsOfFile: plainPath, encoding: .utf8)))
-        let built = try pbes2SHA256PEM(pkcs8DER: plainDER, passphrase: Self.passphrase,
-                                       rounds: 2048, declaredRounds: 10_000_001)
+        let built = try PEMFixtures.pbes2PEM(pkcs8DER: plainDER, passphrase: Self.passphrase,
+                                             rounds: 2048, declaredRounds: 10_000_001)
         var caught: PEMPrivateKeyDecoder.DecodeError?
         do {
             _ = try PEMPrivateKeyDecoder.decode(built, passphrase: Self.passphrase)

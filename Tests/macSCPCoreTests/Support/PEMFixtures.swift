@@ -1,5 +1,8 @@
+import Crypto
 import Foundation
+import SwiftASN1
 import Testing
+import _CryptoExtras
 import macSCPCore
 
 /// Runtime PEM key files for the decoder, loader and converter tests. Every
@@ -120,6 +123,81 @@ enum PEMFixtures {
         return "-----BEGIN PRIVATE KEY-----\n"
             + der.base64EncodedString(options: [.lineLength64Characters])
             + "\n-----END PRIVATE KEY-----\n"
+    }
+
+    /// The `authorized_keys` line for an Ed25519 seed, computed rather than
+    /// derived: `ssh-ed25519 <base64 of the two SSH strings> <comment>`.
+    ///
+    /// `ssh-keygen -y` is the oracle everywhere else here, but it answers
+    /// "invalid format" for an Ed25519 PKCS#8 file (measured 2026-09-11,
+    /// OpenSSH 10.3p1) — and that container is exactly the one the rig cell
+    /// for this key type needs a public line for. The blob is RFC 8709 §4's:
+    /// the algorithm name, then the 32-byte public key, each as an SSH
+    /// string.
+    static func ed25519PublicKeyLine(seed: Data, comment: String) throws -> String {
+        let publicKey = try Curve25519.Signing.PrivateKey(rawRepresentation: seed).publicKey
+        let blob = sshString(Data("ssh-ed25519".utf8))
+            + sshString(publicKey.rawRepresentation)
+        return "ssh-ed25519 \(blob.base64EncodedString()) \(comment)"
+    }
+
+    /// A PBES2 file with an EXPLICIT SHA-256 PRF and AES-256-CBC, built here
+    /// because no producer on this machine writes one: LibreSSL 3.3.6 has
+    /// neither `-v2prf` nor `-scrypt`, and it writes no encrypted Ed25519
+    /// PKCS#8 at all (design table, 2026-09-10).
+    ///
+    /// `declaredRounds` is what goes into the file; the key is always derived
+    /// at `rounds`. They differ only for
+    /// `PEMPrivateKeyDecoderTests.refusesAnAbsurdIterationCount`, where the
+    /// file is refused before any key is derived, so no key at the declared
+    /// count is ever needed.
+    ///
+    /// Lives here rather than in that suite since 2026-09-11, when the
+    /// Ed25519 PKCS#8 rig cell of `FileKeyTypeIntegrationTests` needed the
+    /// same builder; the body is unchanged by the move, and `rounds` gained
+    /// the default the decoder suite was already passing.
+    static func pbes2PEM(pkcs8DER: Data, passphrase: String,
+                         rounds: Int = 2048, declaredRounds: Int? = nil) throws -> String {
+        let salt = Data((0..<8).map { _ in UInt8.random(in: 0...255) })
+        let key = try KDF.Insecure.PBKDF2.deriveKey(
+            from: Data(passphrase.utf8), salt: salt, using: .sha256,
+            outputByteCount: 32, unsafeUncheckedRounds: rounds)
+        let iv = AES._CBC.IV()
+        let ciphertext = try AES._CBC.encrypt(pkcs8DER, using: key, iv: iv)
+
+        let pbes2: ASN1ObjectIdentifier = [1, 2, 840, 113_549, 1, 5, 13]
+        let pbkdf2: ASN1ObjectIdentifier = [1, 2, 840, 113_549, 1, 5, 12]
+        let hmacSHA256: ASN1ObjectIdentifier = [1, 2, 840, 113_549, 2, 9]
+        let aes256CBC: ASN1ObjectIdentifier = [2, 16, 840, 1, 101, 3, 4, 1, 42]
+
+        var serializer = DER.Serializer()
+        try serializer.appendConstructedNode(identifier: .sequence) { outer in
+            try outer.appendConstructedNode(identifier: .sequence) { algorithm in
+                try algorithm.serialize(pbes2)
+                try algorithm.appendConstructedNode(identifier: .sequence) { parameters in
+                    try parameters.appendConstructedNode(identifier: .sequence) { kdf in
+                        try kdf.serialize(pbkdf2)
+                        try kdf.appendConstructedNode(identifier: .sequence) { kdfParameters in
+                            try kdfParameters.serialize(ASN1OctetString(contentBytes: ArraySlice(salt)))
+                            try kdfParameters.serialize(declaredRounds ?? rounds)
+                            try kdfParameters.appendConstructedNode(identifier: .sequence) { prf in
+                                try prf.serialize(hmacSHA256)
+                                try prf.serialize(ASN1Null())
+                            }
+                        }
+                    }
+                    try parameters.appendConstructedNode(identifier: .sequence) { scheme in
+                        try scheme.serialize(aes256CBC)
+                        try scheme.serialize(ASN1OctetString(contentBytes: ArraySlice(Data(iv))))
+                    }
+                }
+            }
+            try outer.serialize(ASN1OctetString(contentBytes: ArraySlice(ciphertext)))
+        }
+        let der = Data(serializer.serializedBytes)
+        return "-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+            + der.base64EncodedString(options: [.lineLength64Characters])
+            + "\n-----END ENCRYPTED PRIVATE KEY-----\n"
     }
 
     /// A decoded key's KIND, with no payload.
