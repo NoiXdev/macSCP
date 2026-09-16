@@ -584,6 +584,22 @@ public final class SessionListViewModel {
         try? secrets.deletePassword(for: sessionID)
     }
 
+    /// Deletes a login set's OWN Keychain slot, leaving the stored set itself
+    /// untouched (maintainer decisions of 2026-09-16, Task 2) — the set-shaped
+    /// twin of `dropSessionSecret(for:)` above, for the same reason.
+    ///
+    /// `saveLoginSet(_:secret:)` cannot say it: a nil or empty secret keeps
+    /// the slot. Its caller is `ContentView.repointLoginSet(_:)`, which
+    /// re-points a set at a managed key whose own slot holds the passphrase;
+    /// the set's leftover copy would be typed into the form by the
+    /// connect-time fill (`LoginResolver.resolve` reads the set's slot) and
+    /// `ManagedKeyPassphrase.resolve` answers the typed value first.
+    ///
+    /// Throw-free and no `reload()`, exactly as `dropSessionSecret(for:)`.
+    public func dropLoginSetSecret(for setID: UUID) {
+        try? secrets.deletePassword(for: setID)
+    }
+
     /// Renames a session in place (trims whitespace; an empty result is a
     /// no-op). Does not touch the Keychain secret.
     public func renameSession(_ session: StoredSession, to newName: String) {

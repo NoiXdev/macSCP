@@ -1067,6 +1067,10 @@
 "connection.failed.details.title" = "Szczegóły połączenia";
 "connection.failed.convertKey" = "Konwertuj klucz…";
 "connection.failed.copyCommand" = "Kopiuj polecenie";
+"connection.convertKey.repoint.title %@" = "Zaktualizować zestaw logowania „%@”?";
+"connection.convertKey.repoint.message %lld %@" = "Ten zestaw logowania jest używany przez %1$lld sesji. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@” dla wszystkich z nich.";
+"connection.convertKey.repoint.confirm" = "Zaktualizuj zestaw logowania";
+"connection.convertKey.repoint.thisAttempt" = "Tylko ta próba";
 
 // Arkusze zarządzania: menu nadmiarowe w stopce (backlog 2026-08-20, punkt 5)
 "sheets.moreActions" = "Więcej akcji";

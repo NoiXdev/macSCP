@@ -135,7 +135,8 @@ extension ContentView {
         // already, and the passphrase field it needs for them is the field
         // this remedy needs too. What is different is only what happens
         // after — `convertedKeyImported(_:for:)` re-points the session and
-        // redials, where the key manager just reloads its list.
+        // redials (or, for a session bound to a login set, asks whether to
+        // update the set), where the key manager just reloads its list.
         //
         // The sheet's second closure argument is DROPPED here (fix round 2,
         // review finding MEDIUM 1). It is `keptPassphrase`, and it does not
@@ -163,9 +164,67 @@ extension ContentView {
         // it resolves inside the button's own event, where the active tab
         // and the failing tab are the same one by construction. Nothing
         // transfers that argument across an open sheet.
-        .sheet(item: $convertKeyTarget) { target in
+        //
+        // `onDismiss:` is where the login-set question may open (maintainer
+        // decisions of 2026-09-16, Task 2): the import sheet runs the closure
+        // below and THEN dismisses itself, so a question raised from the
+        // closure would be presented while this sheet is still up.
+        .sheet(item: $convertKeyTarget, onDismiss: {
+            setRepointDialogArmed = setRepointRequest != nil
+        }) { target in
             ImportKeySheet(fileURL: target.fileURL, store: managedKeyStore) { key, _ in
                 convertedKeyImported(key, for: target.tab)
+            }
+        }
+        // The login-set question (maintainer decisions of 2026-09-16, Task
+        // 2): a conversion for a session bound to an SSH private-key set asks
+        // whether to update the set, naming it and how many sessions use it.
+        // Both answers do something, so neither is destructive; "This attempt
+        // only" carries the cancel role, so Escape gives that answer, and any
+        // other way the dialog closes gives it too (the binding's setter) —
+        // the conversion is never dropped unanswered.
+        .confirmationDialog(
+            String(
+                format: L10n.string(
+                    "connection.convertKey.repoint.title %@", "Update the login set “%@”?"),
+                setRepointRequest?.set.name ?? ""),
+            isPresented: Binding(
+                get: { setRepointDialogArmed && setRepointRequest != nil },
+                set: { isPresented in
+                    guard !isPresented else { return }
+                    setRepointDialogArmed = false
+                    if let request = setRepointRequest {
+                        setRepointRequest = nil
+                        convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(L10n.string("connection.convertKey.repoint.confirm", "Update login set")) {
+                if let request = setRepointRequest {
+                    setRepointRequest = nil
+                    setRepointDialogArmed = false
+                    repointLoginSet(request)
+                }
+            }
+            Button(
+                L10n.string("connection.convertKey.repoint.thisAttempt", "This attempt only"),
+                role: .cancel
+            ) {
+                if let request = setRepointRequest {
+                    setRepointRequest = nil
+                    setRepointDialogArmed = false
+                    convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)
+                }
+            }
+        } message: {
+            if let request = setRepointRequest {
+                Text(String(
+                    format: L10n.string(
+                        "connection.convertKey.repoint.message %lld %@",
+                        "This login set is used by %1$lld sessions. Its key will point to the converted key “%2$@” for all of them."),
+                    request.usageCount, request.key.name))
             }
         }
         // The window's ONE forwarding sheet (fix round 1): the profile

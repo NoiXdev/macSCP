@@ -89,6 +89,48 @@ struct SessionListViewModelTests {
             """)
     }
 
+    /// `dropLoginSetSecret(for:)` (maintainer decisions of 2026-09-16, Task
+    /// 2): deletes ONE login set's own Keychain slot and nothing else.
+    ///
+    /// Its caller is `ContentView.repointLoginSet(_:)`, which re-points a
+    /// set at a managed key whose own slot holds the passphrase — the set's
+    /// copy would otherwise be typed into the form by the connect-time fill
+    /// and shadow the key's, which is `dropSessionSecret(for:)`'s reason
+    /// above applied to a set. The session slot and the jump slot beside it
+    /// carry other ids and must survive.
+    @Test func droppingALoginSetSecretRemovesOnlyThatSetsSlot() throws {
+        let (vm, secrets, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Named, never written into an `#expect` expression (CLAUDE.md, "A
+        // value a test must not leak has two exits, not one").
+        let passphrase = "value-under-test"
+        let set = LoginSet(name: "team", username: "u", authKind: .privateKey, keyPath: "/old")
+        vm.saveLoginSet(set, secret: passphrase)
+        let session = try #require(
+            vm.save(
+                name: "own", values: sshValues(host: "a.example", username: "u"),
+                password: passphrase))
+        let jumpSlot = UUID()
+        try secrets.savePassword(passphrase, for: jumpSlot)
+
+        vm.dropLoginSetSecret(for: set.id)
+
+        let setSlotIsGone = ((try secrets.password(for: set.id)) ?? "").isEmpty
+        #expect(setSlotIsGone, """
+            the login set's own Keychain slot survived `dropLoginSetSecret(for:)` — a set \
+            re-pointed at a managed key keeps a second copy of the passphrase, and the \
+            connect-time fill types the set's copy first.
+            """)
+        let sessionSlotSurvives = (try secrets.password(for: session.id)) == passphrase
+        #expect(sessionSlotSurvives, "dropping a set's secret removed a session's slot too.")
+        let jumpSlotSurvives = (try secrets.password(for: jumpSlot)) == passphrase
+        #expect(jumpSlotSurvives, "dropping a set's secret removed a jump's slot too.")
+        #expect(vm.loginSets.map(\.id) == [set.id], """
+            `dropLoginSetSecret(for:)` changed the stored login sets — it owns the Keychain \
+            slot and nothing else.
+            """)
+    }
+
     /// `save(tags:)` (P3a/T5): whatever the caller passes goes through
     /// `TagList.normalized` — trimmed, empties dropped, exact duplicates
     /// dropped, order kept.

@@ -1068,6 +1068,10 @@
 "connection.failed.details.title" = "Détails de la connexion";
 "connection.failed.convertKey" = "Convertir la clé…";
 "connection.failed.copyCommand" = "Copier la commande";
+"connection.convertKey.repoint.title %@" = "Mettre à jour le jeu d’identifiants « %@ » ?";
+"connection.convertKey.repoint.message %lld %@" = "Ce jeu d’identifiants est utilisé par %1$lld sessions. Sa clé pointera vers la clé convertie « %2$@ » pour toutes.";
+"connection.convertKey.repoint.confirm" = "Mettre à jour le jeu d’identifiants";
+"connection.convertKey.repoint.thisAttempt" = "Pour cette tentative uniquement";
 
 // Feuilles de gestion : menu de débordement du pied de page (backlog 2026-08-20, point 5)
 "sheets.moreActions" = "Autres actions";

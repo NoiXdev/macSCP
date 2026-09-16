@@ -114,5 +114,21 @@
             <string>%lld Weiterleitungen aktiv</string>
         </dict>
     </dict>
+    <key>connection.convertKey.repoint.message %lld %@</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@sessions@</string>
+        <key>sessions</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Dieses Login-Set wird von einer Sitzung verwendet. Sein Schlüssel zeigt dann auf den konvertierten Schlüssel „%2$@“.</string>
+            <key>other</key>
+            <string>Dieses Login-Set wird von %1$lld Sitzungen verwendet. Sein Schlüssel zeigt dann für alle auf den konvertierten Schlüssel „%2$@“.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

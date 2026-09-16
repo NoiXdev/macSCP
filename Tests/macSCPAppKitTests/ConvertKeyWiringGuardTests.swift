@@ -19,7 +19,7 @@ import Testing
 /// here is a CODE token: a string literal would have been blanked away with
 /// the comments.
 ///
-/// FIVE claims, counted 2026-09-10 against the `MARK` sections below. Every
+/// NINE claims, counted 2026-09-16 against the `MARK` sections below. Every
 /// negative check among them has a positive check beside it over the SAME
 /// span (CLAUDE.md, "Guards that name what they watch": a `!contains` alone
 /// starts matching nothing the moment the code it names moves, and reads
@@ -35,11 +35,22 @@ import Testing
 ///    rather than building a `ManagedKeyStore(` of their own.
 /// 4. The converted key reaches the stored session and the ONE dial path —
 ///    `updateSession(`, `dropSessionSecret(`, `retryConnect(`,
-///    `dismissConnectFailure(` — after asking the two questions that decide
-///    which path it takes (`hasStoredPassphrase(`, `loginSetID`), with the
-///    drop INSIDE the branch the first question's positive answer opens and
-///    nowhere else, and dials nothing itself.
+///    `convertForThisAttemptOnly(` — after asking the two questions that
+///    decide which path it takes (`hasStoredPassphrase(`, `loginSetID`), with
+///    the drop INSIDE the branch the first question's positive answer opens
+///    and nowhere else, and dials nothing itself.
 /// 5. The import sheet converts on the way in instead of copying bytes.
+/// 6. A session bound to a login set is ASKED whether to update the set
+///    (`LoginSetRepointPlan.request(`, `setRepointRequest`) rather than
+///    routed to the attempt-only path in silence.
+/// 7. Updating the set writes it through `saveLoginSet(`, drops the SET's
+///    slot only inside the branch `hasStoredPassphrase(`'s positive answer
+///    opens, and re-dials through `retryConnect(` and nothing else.
+/// 8. "This attempt only" hands the tab back to the form
+///    (`dismissConnectFailure(`) and writes no set.
+/// 9. The window presents that question as a `.confirmationDialog(` bound to
+///    `setRepointRequest`, opened only once the conversion sheet has closed,
+///    whose buttons reach claims 7 and 8 and whose text is catalog keys.
 @Suite("Convert key wiring guard")
 struct ConvertKeyWiringGuardTests {
     /// `#filePath` here is
@@ -60,7 +71,7 @@ struct ConvertKeyWiringGuardTests {
 
     private enum ScanError: Error {
         case anchorNotFound, openBraceNotFound, unbalancedBraces
-        case probeNotFound, probeNotBound
+        case probeNotFound, probeNotBound, dialogNotFound
     }
 
     // MARK: - 1. The sheet is presented
@@ -74,8 +85,8 @@ struct ConvertKeyWiringGuardTests {
     /// presenter ever reaches.
     @Test func theConversionSheetIsPresentedFromTheWindow() throws {
         let code = try Self.strictSource(of: Self.sheetsFile)
-        #expect(code.contains(".sheet(item: $convertKeyTarget)"), """
-            `ContentView+Sheets.swift` no longer presents `.sheet(item: $convertKeyTarget)` — \
+        #expect(code.contains(Self.conversionSheetPresenter), """
+            `ContentView+Sheets.swift` no longer presents `.sheet(item: $convertKeyTarget` — \
             the failed-connect surface's "Convert key…" writes that binding and nothing else, \
             so without this presenter the button sets state no view reads.
             """)
@@ -86,10 +97,19 @@ struct ConvertKeyWiringGuardTests {
             """)
     }
 
-    /// The `.sheet(item:)` whose closure claims 2 and 3 read. A code token
-    /// (the binding `convertFailedKey(_:)` writes), so the blanked view the
-    /// scanner searches carries it verbatim.
-    private static let conversionSheetAnchor = ".sheet(item: $convertKeyTarget)"
+    /// The presenter claim 1 requires. A prefix, not the whole modifier:
+    /// since claim 9 the sheet also takes an `onDismiss:` closure, which is
+    /// the one place that may open the login-set question.
+    private static let conversionSheetPresenter = ".sheet(item: $convertKeyTarget"
+
+    /// Where the closure claims 2 and 3 read begins: the sheet's
+    /// construction, whose trailing closure is what runs with the imported
+    /// key. Anchored on the construction rather than on the presenter
+    /// because `.sheet(item:onDismiss:content:)` puts the `onDismiss:`
+    /// closure FIRST — the presenter's first `{` is no longer the content.
+    /// A code token, so the blanked view the scanner searches carries it
+    /// verbatim.
+    private static let conversionSheetAnchor = "ImportKeySheet(fileURL:"
 
     // MARK: - 2. The sheet applies the conversion to the tab it was opened for
 
@@ -186,7 +206,8 @@ struct ConvertKeyWiringGuardTests {
     /// The positive half: the handler persists the new key path on the
     /// stored session, drops the session's own passphrase slot and re-dials
     /// through `retryConnect(`, or hands an ad-hoc attempt back to the form
-    /// through `dismissConnectFailure(`. SIX tokens are named individually
+    /// through `convertForThisAttemptOnly(` (which claim 8 holds to
+    /// `dismissConnectFailure(`). SIX tokens are named individually
     /// (counted 2026-09-10 against the `#expect` calls in this function's
     /// body) because "the handler does something" is not the property — the
     /// property is that each of its paths ends in the function that already
@@ -241,9 +262,9 @@ struct ConvertKeyWiringGuardTests {
             that redials through the shared `connect(in:stored:)`, which is what keeps TOFU a \
             hard stop and the keychain and login-set rules applied.
             """)
-        #expect(body.contains("dismissConnectFailure("), """
+        #expect(body.contains("convertForThisAttemptOnly("), """
             `convertedKeyImported(_:for:)` no longer calls \
-            `dismissConnectFailure(` — an \
+            `convertForThisAttemptOnly(` — an \
             ad-hoc attempt has no stored session to redial, so returning it to the form with \
             the new key selected is its only way on, and without this it stays on the failed \
             surface.
@@ -377,9 +398,176 @@ struct ConvertKeyWiringGuardTests {
             """)
     }
 
+    // MARK: - 6. A set-bound session is asked, not routed in silence
+
+    /// Maintainer decision 1 of 2026-09-16: a conversion for a session whose
+    /// login comes from a SET asks whether to update the set. Before it, the
+    /// handler sent such a session down the attempt-only path without a
+    /// word, and the next connect read the PEM file again.
+    ///
+    /// Both halves positive: the plan is consulted, and its answer reaches
+    /// the state the dialog in claim 9 is bound to. Either alone passes over
+    /// a handler that builds the request and drops it, or one that assigns
+    /// the state from something the plan never decided.
+    @Test func aSetBoundSessionIsAskedWhetherToUpdateTheSet() throws {
+        let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
+        #expect(body.contains("LoginSetRepointPlan.request("), """
+            `convertedKeyImported(_:for:)` no longer consults `LoginSetRepointPlan.request(` — \
+            a session bound to a login set is then converted for one attempt without being \
+            asked, and every later connect reads the set's PEM path again.
+            """)
+        #expect(body.contains("setRepointRequest ="), """
+            `convertedKeyImported(_:for:)` no longer assigns `setRepointRequest` — the \
+            login-set question is built and never presented.
+            """)
+    }
+
+    // MARK: - 7. Updating the set
+
+    /// The positive half: the set is written through the view model's own
+    /// save, the slot question is asked, the set's slot drop exists, and the
+    /// tab re-dials through the one function that does.
+    ///
+    /// `saveLoginSet(` with a nil secret keeps the set's slot as it is; the
+    /// drop is the separate, gated step below — decision 2 of 2026-09-16
+    /// applied to a set: one passphrase, one place.
+    @Test func updatingTheSetGoesThroughTheRealHandlers() throws {
+        let body = try Self.strippedBody(after: "func repointLoginSet(", in: Self.contentViewFile)
+        #expect(body.contains("saveLoginSet("), """
+            `repointLoginSet(_:)` no longer calls `saveLoginSet(` — the set keeps pointing at \
+            the PEM file, and the redial fails the same way again.
+            """)
+        #expect(body.contains("hasStoredPassphrase("), """
+            `repointLoginSet(_:)` no longer asks `ManagedKeyPassphrase.hasStoredPassphrase(` — \
+            the set's slot would then be dropped (or kept) without knowing whether the managed \
+            key's slot holds the passphrase. This is also the token \
+            `theSetSlotDropSitsInsideTheBranchTheProbeOpens` reads the branch's identifier from.
+            """)
+        #expect(body.contains("dropLoginSetSecret("), """
+            `repointLoginSet(_:)` no longer calls `dropLoginSetSecret(` — the set keeps its own \
+            copy of the passphrase beside the managed key's, and the connect-time fill types \
+            the set's copy first, so it shadows the key's on every dial.
+            """)
+        #expect(body.contains("retryConnect("), """
+            `repointLoginSet(_:)` no longer calls `retryConnect(` — the set is updated and the \
+            tab stays on the failed surface with nothing dialled.
+            """)
+    }
+
+    /// The POLARITY of the set's slot drop — the same structural read
+    /// `theSlotDropSitsInsideTheBranchTheProbeOpens` makes for the session's
+    /// slot, over `repointLoginSet(_:)`'s body: the drop inside the branch a
+    /// TRUE answer opens, and nowhere else.
+    @Test func theSetSlotDropSitsInsideTheBranchTheProbeOpens() throws {
+        let body = try Self.strippedBody(after: "func repointLoginSet(", in: Self.contentViewFile)
+        let identifier = try Self.probeResultIdentifier(inBlankedBody: body)
+        let gate = Self.positiveGateSpan(on: identifier, inBlankedBody: body)
+        let dropsInsideTheGate = gate.map { Self.occurrences(of: "dropLoginSetSecret(", in: $0) } ?? 0
+        let dropsInTheBody = Self.occurrences(of: "dropLoginSetSecret(", in: body)
+        #expect(dropsInsideTheGate >= 1, """
+            `repointLoginSet(_:)` does not call `dropLoginSetSecret(` inside the branch that \
+            `\(identifier)` being TRUE opens — an inverted gate drops the set's slot exactly \
+            when the managed key's slot holds no passphrase and the set's copy is the only one.
+            """)
+        #expect(dropsInTheBody == dropsInsideTheGate, """
+            `repointLoginSet(_:)` calls `dropLoginSetSecret(` \(dropsInTheBody) times but only \
+            \(dropsInsideTheGate) of those are inside the branch `\(identifier)` gates — a drop \
+            outside it runs whatever the probe answered.
+            """)
+    }
+
+    /// The negative half, pinned by `retryConnect(` in
+    /// `updatingTheSetGoesThroughTheRealHandlers` over the same body: the
+    /// set update dials nothing itself.
+    @Test func updatingTheSetDialsNothingItself() throws {
+        let body = try Self.strippedBody(after: "func repointLoginSet(", in: Self.contentViewFile)
+        #expect(!body.contains("CitadelFileSystem.connect"), """
+            `repointLoginSet(_:)` dials `CitadelFileSystem.connect` itself — a second dial site \
+            is a second place TOFU, the keychain and login-set rules can each be forgotten.
+            """)
+        #expect(!body.contains("connect(in:"), """
+            `repointLoginSet(_:)` calls `connect(in:` directly instead of going through \
+            `retryConnect(_:)`, which resolves the failed attempt's stored session live.
+            """)
+    }
+
+    // MARK: - 8. This attempt only
+
+    /// Positive and negative over the same body: the attempt-only answer
+    /// hands the tab back to the form with the converted key selected, and
+    /// writes no login set — "no" to the question means the set stays as it
+    /// stands.
+    @Test func thisAttemptOnlyReturnsToTheFormAndWritesNoSet() throws {
+        let body = try Self.strippedBody(after: "func convertForThisAttemptOnly(", in: Self.contentViewFile)
+        #expect(body.contains("dismissConnectFailure("), """
+            `convertForThisAttemptOnly` no longer calls `dismissConnectFailure(` — the tab stays \
+            on the failed surface and the converted key it was handed is never offered.
+            """)
+        #expect(!body.contains("saveLoginSet("), """
+            `convertForThisAttemptOnly` calls `saveLoginSet(` — answering "This attempt only" \
+            rewrote the login set for every session that uses it.
+            """)
+    }
+
+    // MARK: - 9. The question is presented
+
+    /// The dialog bound to `setRepointRequest`: its buttons reach claims 7
+    /// and 8, its presentation waits for the conversion sheet to close, and
+    /// every text it shows comes from a catalog key.
+    ///
+    /// The wait is the conversion sheet's `onDismiss:` arming
+    /// `setRepointDialogArmed`, which the dialog's binding reads. The import
+    /// sheet calls its completion BEFORE it dismisses itself, and a
+    /// presentation raised while a sheet is still up does not appear — the
+    /// import-password sheet's `onDismiss:` in the same file says so for the
+    /// conflict sheet (M19/T8).
+    ///
+    /// "Catalog keys only" is read in two views at the same offsets: in the
+    /// strict view, every `Button(` and `Text(` and the dialog's title open
+    /// straight into `L10n.string(` (optionally through `String(format:`);
+    /// in the literal-keeping view, every `L10n.string(` names a key under
+    /// `connection.convertKey.repoint.`. The first alone would pass a
+    /// catalog lookup of some unrelated key; the second alone would pass a
+    /// `Text` built from a literal beside a correct lookup.
+    @Test func theQuestionIsAConfirmationDialogBoundToTheRequest() throws {
+        let source = try String(contentsOf: Self.sheetsFile, encoding: .utf8)
+        let dialog = try Self.dialog(boundTo: "setRepointRequest", in: source)
+        #expect(dialog.buttons.contains("repointLoginSet("), """
+            the login-set question's buttons no longer call `repointLoginSet(` — "Update login \
+            set" updates nothing.
+            """)
+        #expect(dialog.buttons.contains("convertForThisAttemptOnly("), """
+            the login-set question's buttons no longer call `convertForThisAttemptOnly(` — \
+            "This attempt only" leaves the tab on the failed surface.
+            """)
+        #expect(dialog.arguments.contains("setRepointDialogArmed"), """
+            the login-set question's presentation no longer waits for `setRepointDialogArmed` \
+            — it is then raised while the conversion sheet is still up.
+            """)
+        let sheet = try Self.strippedBody(after: Self.conversionSheetPresenter, in: source)
+        #expect(sheet.contains("setRepointDialogArmed"), """
+            the conversion sheet's `onDismiss:` no longer arms `setRepointDialogArmed` — the \
+            login-set question is never presented, and a set-bound conversion does nothing.
+            """)
+        #expect(dialog.unlocalizedTexts.isEmpty, """
+            the login-set question shows text that does not open into `L10n.string(`: \
+            \(dialog.unlocalizedTexts)
+            """)
+        #expect(dialog.textCount >= 4, """
+            the login-set question's text scan found \(dialog.textCount) texts (title, two \
+            buttons, message) — the scan is not reading the dialog.
+            """)
+        #expect(dialog.keys.count >= 4 && dialog.keys.allSatisfy {
+            $0.hasPrefix("connection.convertKey.repoint.")
+        }, """
+            the login-set question reads catalog keys outside `connection.convertKey.repoint.`, \
+            or fewer than four: \(dialog.keys)
+            """)
+    }
+
     // MARK: - Scanner self-tests
     //
-    // Without these the five claims above could all pass by reading an
+    // Without these the nine claims above could all pass by reading an
     // empty string: a scanner that cannot find its anchor, or one whose
     // body span stops early, makes every positive check red and every
     // negative check green. The positives failing loudly is the intended
@@ -537,6 +725,92 @@ struct ConvertKeyWiringGuardTests {
         }
     }
 
+    /// A window with two dialogs, the second bound to the request, and the
+    /// text of the bound one as the knob — the shape
+    /// `theQuestionIsAConfirmationDialogBoundToTheRequest` reads.
+    private static func dialogFixture(message: String) -> String {
+        """
+        func sheets() -> some View {
+            content
+            .confirmationDialog(
+                L10n.string("tabs.close.title", "Close tab?"),
+                isPresented: Binding(get: { closeRequest != nil }, set: { _ in }),
+                titleVisibility: .visible
+            ) {
+                Button(L10n.string("tabs.close.confirm", "Close")) { performClose() }
+            } message: {
+                Text(closeWarningText)
+            }
+            .confirmationDialog(
+                String(
+                    format: L10n.string("connection.convertKey.repoint.title %@", "Update?"),
+                    setRepointRequest?.set.name ?? ""),
+                isPresented: Binding(
+                    get: { setRepointDialogArmed && setRepointRequest != nil },
+                    set: { _ in }),
+                titleVisibility: .visible
+            ) {
+                Button(L10n.string("connection.convertKey.repoint.confirm", "Update")) {
+                    repointLoginSet(request)
+                }
+                Button(L10n.string("connection.convertKey.repoint.thisAttempt", "Only")) {
+                    convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)
+                }
+            } message: {
+                \(message)
+            }
+            .confirmationDialog(
+                L10n.string("tabs.alreadyOpen.title", "Open?"),
+                isPresented: .constant(false)
+            ) {
+                Button(L10n.string("tabs.alreadyOpen.jump", "Go")) { startWithoutAsking() }
+            } message: {
+                Text(alreadyOpenMessage)
+            }
+        }
+        """
+    }
+
+    @Test func theDialogScannerReadsTheBoundDialogAndOnlyIt() throws {
+        let dialog = try Self.dialog(
+            boundTo: "setRepointRequest",
+            in: Self.dialogFixture(message: """
+                Text(String(format: L10n.string("connection.convertKey.repoint.message %lld %@", "N"), 1, ""))
+                """))
+        #expect(dialog.buttons.contains("repointLoginSet("))
+        #expect(dialog.buttons.contains("convertForThisAttemptOnly("))
+        #expect(dialog.arguments.contains("setRepointDialogArmed"))
+        #expect(dialog.unlocalizedTexts.isEmpty, "\(dialog.unlocalizedTexts)")
+        #expect(dialog.textCount == 4)
+        #expect(dialog.keys == [
+            "connection.convertKey.repoint.title %@",
+            "connection.convertKey.repoint.confirm",
+            "connection.convertKey.repoint.thisAttempt",
+            "connection.convertKey.repoint.message %lld %@",
+        ])
+        #expect(!dialog.buttons.contains("performClose(") && !dialog.buttons.contains("startWithoutAsking("), """
+            the dialog span reached into a neighbouring dialog — the bound dialog's checks would \
+            then read another dialog's buttons.
+            """)
+    }
+
+    @Test("a text that is not a catalog lookup is reported",
+          arguments: ["Text(\"Update the set?\")", "Text(request.set.name)"])
+    func theDialogScannerSeesAnUnlocalizedText(_ message: String) throws {
+        let dialog = try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture(message: message))
+        #expect(dialog.unlocalizedTexts.count == 1, """
+            a `Text` that does not open into `L10n.string(` passed the dialog scan — the \
+            "catalog keys only" check over the source would pass over exactly that.
+            """)
+    }
+
+    @Test func theDialogScannerFailsClosedWhenNoDialogIsBound() {
+        #expect(throws: ScanError.self) {
+            try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture(message: "Text(x)")
+                .replacingOccurrences(of: "setRepointRequest", with: "otherRequest"))
+        }
+    }
+
     @Test func theScannedFilesAreTheOnesThisSuiteNames() throws {
         for file in [Self.contentViewFile, Self.sheetsFile, Self.keysSheetFile] {
             let code = try Self.strictSource(of: file)
@@ -682,6 +956,113 @@ struct ConvertKeyWiringGuardTests {
                   negatedInPlace == false
             else { continue }
             return try? balancedSpan(from: openBrace, in: body)
+        }
+        return nil
+    }
+
+    /// One `.confirmationDialog(` read out of a source file.
+    private struct Dialog {
+        /// The parenthesised argument list, strict view.
+        let arguments: String
+        /// The buttons closure, strict view.
+        let buttons: String
+        /// The `message:` closure, strict view.
+        let message: String
+        /// Every title, `Button(` or `Text(` in the dialog that does not open
+        /// straight into `L10n.string(` (directly or through
+        /// `String(format:`), as the strict text it opens into.
+        let unlocalizedTexts: [String]
+        /// How many texts were checked: the title plus every `Button(` and
+        /// `Text(`.
+        let textCount: Int
+        /// Every key literal an `L10n.string(` in the dialog names, in order.
+        let keys: [String]
+    }
+
+    /// The first `.confirmationDialog(` whose ARGUMENT LIST names `state`,
+    /// with its buttons and `message:` closures, read in the strict view for
+    /// code and in the comment-only view for key literals.
+    ///
+    /// Both views blank in place, so one offset addresses the same character
+    /// in each (`SwiftSource`'s own doc comment); the spans are balanced in
+    /// the strict view, where a brace or parenthesis inside a literal cannot
+    /// decide where they end. Throws when no dialog names `state` or when
+    /// the dialog's shape cannot be read, so a moved dialog is a loud
+    /// failure rather than an empty span that satisfies every negative.
+    private static func dialog(boundTo state: String, in source: String) throws -> Dialog {
+        let strict = Array(try SwiftSource.blankingCommentsAndStrings(source))
+        let literal = Array(try SwiftSource.blankingComments(source))
+        guard strict.count == literal.count else { throw ScanError.dialogNotFound }
+        let opener = Array(".confirmationDialog(")
+        var start = 0
+        while let found = firstOffset(of: opener, in: strict, from: start) {
+            start = found + opener.count
+            let parenOpen = found + opener.count - 1
+            guard let parenClose = closingOffset(from: parenOpen, in: strict, open: "(", close: ")")
+            else { throw ScanError.unbalancedBraces }
+            let arguments = String(strict[parenOpen...parenClose])
+            guard arguments.contains(state) else { continue }
+            guard let buttonsOpen = firstOffset(of: ["{"], in: strict, from: parenClose),
+                  let buttonsClose = closingOffset(from: buttonsOpen, in: strict, open: "{", close: "}"),
+                  let label = firstOffset(of: Array("message:"), in: strict, from: buttonsClose),
+                  let messageOpen = firstOffset(of: ["{"], in: strict, from: label),
+                  let messageClose = closingOffset(from: messageOpen, in: strict, open: "{", close: "}")
+            else { throw ScanError.dialogNotFound }
+
+            var textStarts = [parenOpen + 1]
+            for token in [Array("Button("), Array("Text(")] {
+                var from = parenOpen
+                while let hit = firstOffset(of: token, in: strict, from: from), hit < messageClose {
+                    textStarts.append(hit + token.count)
+                    from = hit + token.count
+                }
+            }
+            let unlocalized = textStarts.compactMap { offset -> String? in
+                let window = String(strict[offset..<min(offset + 120, strict.count)])
+                    .filter { !$0.isWhitespace }
+                let localized = window.hasPrefix("L10n.string(")
+                    || window.hasPrefix("String(format:L10n.string(")
+                return localized ? nil : String(window.prefix(40))
+            }
+            let span = String(literal[parenOpen...messageClose])
+            // Walked by hand rather than matched with a regex literal: the
+            // project's source strippers read every test file, and a bare
+            // `/…/` literal carrying a quote is what they cannot parse.
+            var keys: [String] = []
+            for piece in span.components(separatedBy: "L10n.string(").dropFirst() {
+                let rest = piece.drop(while: { $0.isWhitespace })
+                guard rest.first == "\"" else { continue }
+                keys.append(String(rest.dropFirst().prefix(while: { $0 != "\"" })))
+            }
+            return Dialog(
+                arguments: arguments,
+                buttons: String(strict[buttonsOpen...buttonsClose]),
+                message: String(strict[messageOpen...messageClose]),
+                unlocalizedTexts: unlocalized,
+                textCount: textStarts.count,
+                keys: keys)
+        }
+        throw ScanError.dialogNotFound
+    }
+
+    private static func firstOffset(of token: [Character], in text: [Character], from start: Int) -> Int? {
+        guard !token.isEmpty, text.count >= token.count, start <= text.count - token.count else { return nil }
+        for offset in start...(text.count - token.count) where text[offset..<(offset + token.count)].elementsEqual(token) {
+            return offset
+        }
+        return nil
+    }
+
+    private static func closingOffset(
+        from open: Int, in text: [Character], open opener: Character, close closer: Character
+    ) -> Int? {
+        var depth = 0
+        for offset in open..<text.count {
+            if text[offset] == opener { depth += 1 }
+            if text[offset] == closer {
+                depth -= 1
+                if depth == 0 { return offset }
+            }
         }
         return nil
     }

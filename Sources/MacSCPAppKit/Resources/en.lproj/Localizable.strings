@@ -1064,6 +1064,10 @@
 "connection.failed.details.title" = "Connection details";
 "connection.failed.convertKey" = "Convert key…";
 "connection.failed.copyCommand" = "Copy command";
+"connection.convertKey.repoint.title %@" = "Update the login set “%@”?";
+"connection.convertKey.repoint.message %lld %@" = "This login set is used by %1$lld sessions. Its key will point to the converted key “%2$@” for all of them.";
+"connection.convertKey.repoint.confirm" = "Update login set";
+"connection.convertKey.repoint.thisAttempt" = "This attempt only";
 
 // Management sheets: the footer overflow menu (backlog 2026-08-20, point 5)
 "sheets.moreActions" = "More actions";

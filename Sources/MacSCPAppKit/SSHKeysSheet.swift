@@ -755,7 +755,8 @@ struct ImportKeySheet: View {
     /// keptPassphrase:)` asks in order to warn about it. A caller that needs
     /// the other question — does the key's slot hold a passphrase — asks
     /// `ManagedKeyPassphrase.hasStoredPassphrase(keyPath:store:secrets:)`,
-    /// as `ContentView.convertedKeyImported(_:for:)` does.
+    /// as `ContentView.convertedKeyImported(_:for:)` and
+    /// `ContentView.repointLoginSet(_:)` do.
     let onImported: (ManagedKey, Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
