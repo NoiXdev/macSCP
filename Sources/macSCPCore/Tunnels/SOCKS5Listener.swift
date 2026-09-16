@@ -100,7 +100,8 @@ public final class SOCKS5Listener: @unchecked Sendable {
     ///   - onFailure: called for each accepted connection whose channel
     ///     through the server could not be opened. A client that fails the
     ///     SOCKS5 conversation itself is NOT reported here: it is turned away
-    ///     with a reply frame and the tunnel stays healthy.
+    ///     with a reply frame and the tunnel stays healthy. Nor is one that
+    ///     is gone before its success reply can be written.
     @discardableResult
     public func start(
         bind: String, localPort: Int,

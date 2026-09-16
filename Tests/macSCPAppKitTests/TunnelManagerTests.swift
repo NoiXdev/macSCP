@@ -445,6 +445,28 @@ struct TunnelManagerTests {
             "a failure must outrank a reconnect — the glyph's colour is the worst state")
     }
 
+    /// Every `.active` has the same rank, so the sidebar's tooltip — which
+    /// reads `worst` — showed whichever active tunnel came first. A healthy
+    /// forwarding listed before a failing one hid the failures. Within
+    /// `active`, one that is failing connections wins; the rank, and so the
+    /// tint, is unchanged.
+    @Test func anActiveTunnelFailingConnectionsIsTheOneTheAggregateKeeps() {
+        let failing = TunnelState.active(
+            connections: 0, failedConnections: 3, lastFailure: .channelOpenFailed)
+        let healthyFirst = TunnelManager.Aggregate.of([.active(connections: 2), failing])
+        #expect(healthyFirst.worst == failing)
+        #expect(healthyFirst.active == 2)
+
+        let failingFirst = TunnelManager.Aggregate.of([failing, .active(connections: 2)])
+        #expect(failingFirst.worst == failing)
+
+        let healthyOnly = TunnelManager.Aggregate.of([.active(connections: 2), .active(connections: 5)])
+        #expect(healthyOnly.worst == .active(connections: 2))
+
+        let reconnecting = TunnelManager.Aggregate.of([failing, .reconnecting(attempt: 1)])
+        #expect(reconnecting.worst == .reconnecting(attempt: 1))
+    }
+
     // MARK: - A store another process wrote
 
     /// What the app does when it becomes active (CLI sessions and tunnels

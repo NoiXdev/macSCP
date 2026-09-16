@@ -237,6 +237,52 @@ struct LocalForwardListenerTests {
         await echo.stop()
     }
 
+    /// A negotiated client that is gone by the time its reply is written —
+    /// it asked for a destination and hung up before the answer — is the
+    /// CLIENT's failure, not the tunnel's: the pair is closed and nothing is
+    /// reported. The tunnel's own failure on a second connection IS
+    /// reported, and waiting for exactly that one is what makes the absence
+    /// of the first mean something.
+    @Test func aClientGoneBeforeItsReplyIsNotReportedAsAFailure() async throws {
+        let echo = try await EchoServer.start()
+        let listener = LocalForwardListener()
+        let failures = TunnelFailureRecorder()
+        let seen = TunnelEventRecorder()
+        let dials = DialCounter()
+        let echoFactory = echo.factory()
+        let refusal = TunnelFailure.channelOpenFailed(reason: "the server refused the second one")
+        do {
+            let port = try await listener.start(
+                bind: "127.0.0.1", localPort: 0,
+                destination: .negotiated { _ in ReplyFailingNegotiation() },
+                directTCPIPFactory: { host, port in
+                    if dials.next() == 1 { return try await echoFactory(host, port) }
+                    throw refusal
+                },
+                observer: { seen.record($0) },
+                onFailure: { failures.record($0) })
+
+            let goneClient = try await connectClient(port: port, inbox: TextInbox())
+            try await awaitCancellably(goneClient.closeFuture)
+            try await pollUntil("the first pair was installed and closed") {
+                seen.events.contains(.opened) && seen.events.count == 2
+            }
+
+            let refusedClient = try await connectClient(port: port, inbox: TextInbox())
+            try await awaitCancellably(refusedClient.closeFuture)
+            try await pollUntil("the tunnel's own failure is reported") {
+                failures.failures.contains(refusal)
+            }
+            #expect(failures.failures == [refusal])
+        } catch {
+            await listener.stop()
+            await echo.stop()
+            throw error
+        }
+        await listener.stop()
+        await echo.stop()
+    }
+
     /// One listener binds once. A second `start` — with or without a `stop()`
     /// in between — is refused rather than silently binding a port whose
     /// connections `OpenForwards` would then drop on the floor.
@@ -350,6 +396,30 @@ private struct ClosingNegotiation: ForwardNegotiation {
 
     func confirm(on channel: Channel) async throws {}
     func reject(_ failure: TunnelFailure, on channel: Channel) async {}
+}
+
+/// A negotiation whose reply cannot be written: the client it would go to
+/// is gone.
+private struct ReplyFailingNegotiation: ForwardNegotiation {
+    struct ClientGone: Error {}
+
+    let host = "irrelevant.example"
+    let port = 1
+
+    func confirm(on channel: Channel) async throws { throw ClientGone() }
+    func reject(_ failure: TunnelFailure, on channel: Channel) async {}
+}
+
+private final class DialCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func next() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        count += 1
+        return count
+    }
 }
 
 private final class OpenedChannelBox: @unchecked Sendable {

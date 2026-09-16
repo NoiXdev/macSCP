@@ -292,10 +292,27 @@ final class TunnelManager {
                     aggregate.active += 1
                     aggregate.connections += connections
                 }
-                if let worst = aggregate.worst, rank(of: worst) >= rank(of: state) { continue }
+                if let worst = aggregate.worst {
+                    let kept = rank(of: worst)
+                    let seen = rank(of: state)
+                    if kept > seen { continue }
+                    // Equal ranks keep the first — except that an `active`
+                    // failing connections replaces a healthy `active`, or a
+                    // healthy forwarding listed first would hide the
+                    // failures from the sidebar's tooltip. Same rank, so the
+                    // tint does not change.
+                    if kept == seen, !(isFailingConnections(state) && !isFailingConnections(worst)) {
+                        continue
+                    }
+                }
                 if rank(of: state) > 0 { aggregate.worst = state }
             }
             return aggregate
+        }
+
+        private static func isFailingConnections(_ state: TunnelState) -> Bool {
+            guard case .active(_, let failed, _) = state else { return false }
+            return failed > 0
         }
 
         /// The design's precedence — "colour by the worst state among the

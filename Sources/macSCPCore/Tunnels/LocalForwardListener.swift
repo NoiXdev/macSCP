@@ -44,8 +44,9 @@ public enum TunnelFailure: Error, Sendable, Equatable {
     /// connected to a local address.
     case connectFailed(reason: String)
     /// The channel through the server WAS opened, and gluing the two sides
-    /// together then failed — installing the pump, answering the
-    /// negotiation, or starting the reads.
+    /// together then failed — installing the pump or starting the reads. A
+    /// negotiated forward whose reply could not be written is NOT this: that
+    /// client is gone, and the accept path closes the pair unreported.
     ///
     /// Distinct from `channelOpenFailed` because the two need different
     /// clean-up and say different things about the far side: after this one
@@ -298,6 +299,9 @@ public final class LocalForwardListener: @unchecked Sendable {
             // and a pump that then fails to install would otherwise leave it
             // there until `stop()`.
             var opened: Channel?
+            // Set just before the negotiation's reply is written, so the
+            // catch can tell whose failure it is — see there.
+            var replying = false
             do {
                 let throughTheServer = try await directTCPIPFactory(host, remotePort)
                 opened = throughTheServer
@@ -323,8 +327,22 @@ public final class LocalForwardListener: @unchecked Sendable {
                 try await BytePump.install(
                     local: channel, remote: throughTheServer, observer: observer,
                     remoteReadGate: remoteReadGate).get()
+                replying = true
                 try await negotiation?.confirm(on: channel)
                 remoteReadGate?.open()
+            } catch where replying {
+                // The channel through the server is open and the pump is
+                // installed: the tunnel did its part. What failed is writing
+                // the reply on the ACCEPTED socket — a client that named a
+                // destination and was gone before the answer. That is the
+                // client's failure, like one that never named a destination
+                // above, so `onFailure` is not called and nothing is
+                // counted; no `reject` either, since the reply that failed
+                // is the one it would write to. A failed pump INSTALL is
+                // still reported below: it happens before `replying` is set,
+                // on the channel pair the tunnel is building.
+                opened?.close(promise: nil)
+                channel.close(promise: nil)
             } catch {
                 let failure = Self.acceptFailure(error, afterOpen: opened != nil)
                 await negotiation?.reject(failure, on: channel)

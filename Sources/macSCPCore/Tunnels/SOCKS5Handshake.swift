@@ -54,7 +54,7 @@ extension SOCKS5ReplyCode {
     /// | `TunnelFailure` | code | raised by, today |
     /// |---|---|---|
     /// | `.channelOpenFailed` | `01` | `CitadelFileSystem.openDirectTCPIP`'s own catch, and any foreign error before the factory answers |
-    /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install` or `confirm` |
+    /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install`. (A failed `confirm` was a producer too until 2026-09-17; the accept path now closes that pair without calling `reject`, because a reply that cannot be written is the client's failure — see `LocalForwardListener.accepted`.) |
     /// | `.connectFailed` | `05` | nothing on this path. Its producers are `TunnelConnection.connect`'s unreachable non-SSH-config arm, before a listener exists, and `RemoteForward`, which is not this path at all. (A refused session and a deleted one were producers too until 2026-09-16; both are `TunnelRefusal` now.) Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
     /// | `.portInUse`, `.bindFailed`, `.alreadyStarted` | `01` | `start`, before any client has connected — unreachable here |
     /// | `.remotePortZeroRefused`, `.remoteBindRefused`, `.remoteForwardUnanswered` | `01` | a remote forward's start (`CitadelFileSystem.withRemotePortForward`, `RemoteForward.start`), never this path — unreachable here |
@@ -440,12 +440,14 @@ final class SOCKS5HandshakeHandler: ChannelInboundHandler, RemovableChannelHandl
     /// one.** After `succeed` handed the connection over, the ten bytes of a
     /// reply are no longer a reply: they are ten bytes of `05 01 …` injected
     /// into an established payload stream, which the client would read as
-    /// part of whatever it asked for. That is reachable — the accept path
-    /// calls `reject` for a `pumpFailed` too, and `confirm` itself can fail
-    /// AFTER it has already handed over: `succeed` sets `.handedOver` and
-    /// writes the success frame before its final `removeHandler`, whose
-    /// future is the one the accept path awaits. So the state is checked
-    /// rather than assumed. In `.handedOver` and `.done` the connection is
+    /// part of whatever it asked for. That was reachable until 2026-09-17:
+    /// `confirm` can fail AFTER it has already handed over (`succeed` sets
+    /// `.handedOver` and writes the success frame before its final
+    /// `removeHandler`, whose future is the one the accept path awaits), and
+    /// the accept path used to call `reject` for that failure. It no longer
+    /// does — a failed `confirm` closes the pair unreported — so the check
+    /// now guards a path nothing takes, and is kept because the state, not
+    /// the caller, is what knows whether a reply is still owed. In `.handedOver` and `.done` the connection is
     /// closed and nothing is written.
     func reject(_ code: SOCKS5ReplyCode, on channel: Channel) -> EventLoopFuture<Void> {
         channel.eventLoop.flatSubmit {

@@ -23,8 +23,9 @@ public enum TunnelEvent: Sendable, Equatable {
     /// One accepted connection could not be carried: its channel through the
     /// server could not be opened, or (remote forward) its local target
     /// could not be reached. The forward itself is still up. A SOCKS5 client
-    /// that never named a destination is not reported — that is the
-    /// client's failure, not the tunnel's.
+    /// that never named a destination, or was gone before its reply was
+    /// written, is not reported — that is the client's failure, not the
+    /// tunnel's.
     case connectionFailed(TunnelFailureKind)
     /// The tunnel's own SSH connection dropped. `reconnects` carries the
     /// profile's own `reconnects` flag, not a retry state — it says whether

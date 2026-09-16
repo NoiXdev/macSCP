@@ -464,9 +464,12 @@ struct TunnelRigITests {
     /// and the next connection through the tunnel opens and resets the
     /// count — the same forward, not a new one.
     ///
-    /// The port is drawn at random from 40000–60000, for the reason
-    /// `aRemoteForwardCarriesAConnectionFromInsideTheContainer` gives about
-    /// shared ports inside the container. OpenBSD `nc -lk` keeps listening
+    /// The target port is a fixed PRIVILEGED one, `999`. `docker exec` runs
+    /// as uid 0, while `testuser` — whose session every other rig forward
+    /// runs as — cannot bind below 1024, so the test's own root `nc` is the
+    /// only thing that can ever listen there; a random high port could be
+    /// taken by a concurrent rig run and make the "refused" step succeed.
+    /// OpenBSD `nc -lk` keeps listening
     /// across connections, so the probe that waits for it to be up does not
     /// use the one accept the tunnel needs; `-d` detaches it and the
     /// teardown kills it by its full command line. Every wait is on a
@@ -476,7 +479,7 @@ struct TunnelRigITests {
             let carrierHosts = throwawayDirectory("failure-carrier")
             teardown.add { try? FileManager.default.removeItem(at: carrierHosts) }
 
-            let targetPort = Int.random(in: 40_000...60_000)
+            let targetPort = 999
             let session = sshSession(
                 name: "rig", host: "127.0.0.1", port: 2222, username: "testuser",
                 authKind: .password)

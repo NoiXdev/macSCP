@@ -112,6 +112,17 @@ public actor TunnelRunner {
     /// `attempt(decider:isRetry:)` for why the reports travel through one.
     /// Finished by `releaseCurrent()` once the forward is stopped.
     private var connectionReports: AsyncStream<ConnectionReport>.Continuation?
+    /// The task reading `connectionReports`. `releaseCurrent()` awaits it
+    /// after finishing the stream, so no report of an attempt that is over
+    /// can reach the next one.
+    private var connectionReportReader: Task<Void, Never>?
+
+    /// How many report readers have started and not yet ended.
+    ///
+    /// `internal`, and for the tests, like `queuedCommands`: whether a
+    /// stopped attempt's reader is really over is otherwise invisible until
+    /// a stale report happens to land in the next attempt.
+    private(set) var reportReaders = 0
 
     /// The port the running forward actually bound — a LOCAL port for
     /// `.local`/`.dynamic`, the SERVER's for `.remote`. `nil` whenever no
@@ -398,10 +409,12 @@ public actor TunnelRunner {
         // are delivered in the order they were made.
         let (reports, report) = AsyncStream.makeStream(of: ConnectionReport.self)
         connectionReports = report
-        Task { [weak self] in
+        reportReaders += 1
+        connectionReportReader = Task { [weak self] in
             for await next in reports {
                 await self?.connectionReport(next)
             }
+            await self?.reportReaderEnded()
         }
 
         let started: any TunnelRuntime
@@ -482,15 +495,29 @@ public actor TunnelRunner {
     ///
     /// The report stream is finished only after the forward has stopped, so
     /// the `closed` reports its teardown produces still reach the log.
+    ///
+    /// **And its reader is awaited.** Finishing a stream does not discard
+    /// what is buffered: the reader goes on delivering it. Without the wait
+    /// a stopped attempt's reports kept arriving after the next attempt was
+    /// `active` — measured in review of `b9ee7d22`: 20,000 failures, stop,
+    /// start, and the new `active` read `failedConnections: 26`
+    /// (`reportsFromAStoppedAttemptDoNotReachTheNext`). The wait is bounded:
+    /// the stream is finished, so the reader ends once the buffer is empty,
+    /// and the actor is re-entrant, so the reader's own hops onto it are not
+    /// blocked by this suspension. Whatever it delivers lands before the
+    /// caller's next state (`.stopped`, or `reconnecting`).
     private func releaseCurrent() async {
         let held = runtime
         let dialled = connection
         let reports = connectionReports
+        let reader = connectionReportReader
         runtime = nil
         connection = nil
         connectionReports = nil
+        connectionReportReader = nil
         await held?.stop()
         reports?.finish()
+        await reader?.value
         await dialled?.disconnect()
     }
 
@@ -503,6 +530,10 @@ public actor TunnelRunner {
         /// A connection the forward could not carry — the listeners'
         /// `onFailure`, the remote forward's `onConnectionFailure`.
         case failed(TunnelFailure)
+    }
+
+    private func reportReaderEnded() {
+        reportReaders -= 1
     }
 
     private func connectionReport(_ report: ConnectionReport) {
@@ -518,9 +549,10 @@ public actor TunnelRunner {
     /// The line carries the kind's own English sentence and the bound port,
     /// and nothing the failure's `reason:` payload holds — that text can be
     /// a foreign error's, and nothing about the client that connected is
-    /// in it either. A SOCKS5 client that never named a destination never
-    /// gets here: `LocalForwardListener` does not report it, because that
-    /// is the client's failure, not the tunnel's.
+    /// in it either. A SOCKS5 client that never named a destination, or was
+    /// gone before its reply was written, never gets here:
+    /// `LocalForwardListener` does not report it, because that is the
+    /// client's failure, not the tunnel's.
     private func connectionFailed(_ failure: TunnelFailure) {
         let kind = TunnelFailureKind(failure)
         apply(.connectionFailed(kind))

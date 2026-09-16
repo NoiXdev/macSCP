@@ -89,10 +89,14 @@ public enum TunnelState: Sendable, Equatable {
     /// Up and carrying traffic. `connections` is how many tunnelled
     /// connections are open right now.
     ///
-    /// `failedConnections` counts the accepted connections whose channel
-    /// through the server (or, for a remote forward, whose local target)
-    /// could not be opened since the last one that could, and
-    /// `lastFailure` is the kind of the latest of them. The next connection
+    /// `failedConnections` counts the connections the TUNNEL could not
+    /// carry since the last one it could: a channel through the server that
+    /// could not be opened or glued to its pump (local and dynamic), a local
+    /// target that could not be reached or glued (remote). `lastFailure` is
+    /// the kind of the latest of them. A dynamic forward's client that
+    /// fails its own part — never names a destination, or is gone before
+    /// the reply is written — is not counted: the tunnel worked.
+    /// `LocalForwardListener.accepted` is where the two are told apart. The next connection
     /// that opens resets both to `0`/`nil`, and so does every entry into
     /// `active`. A failed connection does not change the lifecycle: the
     /// forward itself is still up, so `.failed` would be untrue (the

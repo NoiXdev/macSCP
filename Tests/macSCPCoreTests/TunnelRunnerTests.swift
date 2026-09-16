@@ -114,9 +114,9 @@ struct TunnelRunnerTests {
     }
 
     /// The reports reach the plan in the order the forward made them. An
-    /// `opened` followed at once by a failure — a SOCKS5 pair whose reply
-    /// could not be written after the pump was installed reports exactly
-    /// that — must end counted, not reset by an `opened` that overtook it.
+    /// `opened` followed at once by a failure — one connection that opened
+    /// and, a moment later, another whose channel the server refused — must
+    /// end counted, not reset by an `opened` that overtook it.
     @Test func connectionReportsKeepTheirOrder() async throws {
         let connections = TunnelFakeConnections()
         let runtimes = TunnelFakeRuntimes(boundPort: 1080)
@@ -136,16 +136,62 @@ struct TunnelRunnerTests {
         var expected: [TunnelState] = [.connecting, .active(connections: 0)]
         for pair in 1...pairs {
             runtimes.made[0].observer?(.opened)
-            runtimes.made[0].onConnectionFailure(.pumpFailed(reason: "reply not written"))
+            runtimes.made[0].onConnectionFailure(.channelOpenFailed(reason: "refused"))
             expected.append(.active(connections: pair))
             expected.append(
-                .active(connections: pair, failedConnections: 1, lastFailure: .pumpFailed))
+                .active(connections: pair, failedConnections: 1, lastFailure: .channelOpenFailed))
         }
         try await states.waitFor(
-            .active(connections: pairs, failedConnections: 1, lastFailure: .pumpFailed))
+            .active(connections: pairs, failedConnections: 1, lastFailure: .channelOpenFailed))
         #expect(states.recorded == expected)
 
         await runner.stop()
+    }
+
+    /// Reports a stopped attempt had buffered never reach the next attempt.
+    ///
+    /// Review of `b9ee7d22` measured the opposite: `releaseCurrent()`
+    /// finished the stream without waiting for its reader, which went on
+    /// draining — 20,000 failures on attempt 1, then stop and start, and the
+    /// NEW attempt's `active` read `failedConnections: 26`. A stale `opened`
+    /// would add a phantom connection too, so one is buffered last.
+    ///
+    /// Two reads: the reader count right after `stop()` returns — exact,
+    /// and what a reader that never ends turns red — and every state
+    /// published after the first `.stopped`.
+    @Test func reportsFromAStoppedAttemptDoNotReachTheNext() async throws {
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080)
+        let runner = TunnelRunner(
+            profile: localProfile(), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+        #expect(await runner.reportReaders == 1)
+
+        for _ in 1...20_000 {
+            runtimes.made[0].onConnectionFailure(.channelOpenFailed(reason: "refused"))
+        }
+        runtimes.made[0].observer?(.opened)
+        await runner.stop()
+        #expect(await runner.reportReaders == 0)
+        try await states.waitFor(.stopped)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+        await runner.stop()
+        try await states.waitFor(.stopped)
+
+        let recorded = states.recorded
+        let firstStop = try #require(recorded.firstIndex(of: .stopped))
+        let staleAfterStop = recorded[(firstStop + 1)...].contains { state in
+            guard case .active(let open, let failed, let last) = state else { return false }
+            return open != 0 || failed != 0 || last != nil
+        }
+        #expect(staleAfterStop == false)
+        #expect(await runner.reportReaders == 0)
     }
 
     /// A reconnect forgets the failures: they belonged to the forward that
