@@ -360,6 +360,46 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: first.id) == "p2")
     }
 
+    /// `save` replaces exactly the session `SessionNameRule.conflict(…,
+    /// matching: .exactAsSaved)` names — the rule the form's "Saving
+    /// replaces" warning is computed by — and not a hand-written lookup of
+    /// its own.
+    ///
+    /// The case that separates the two is a name with surrounding
+    /// whitespace: the rule trims the ASKED name (`SessionNameRule.asSaved`),
+    /// a bare `$0.name == name` does not. With a second copy, the form would
+    /// warn "replaces web" for `"web "` while saving created a second
+    /// session beside it. The case-sensitive half is asserted beside it so
+    /// that a `save` which folded case on its own would be red as well.
+    @Test func saveReplacesExactlyTheSessionTheNameRuleNames() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = vm.save(
+            name: "web",
+            values: sshValues(host: "alt.example.com", port: 22, username: "tim"),
+            password: "p1")!
+
+        let asked = " web \n"
+        let named = SessionNameRule.conflict(asked, among: vm.sessions, matching: .exactAsSaved)
+        #expect(named?.id == first.id)
+
+        let second = vm.save(
+            name: asked,
+            values: sshValues(host: "neu.example.com", port: 2222, username: "tim2"),
+            password: "p2")!
+        #expect(second.id == named?.id)
+        #expect(vm.sessions.map(\.name) == ["web"])
+        #expect(vm.sessions.first?.ssh?.host == "neu.example.com")
+
+        #expect(SessionNameRule.conflict("WEB", among: vm.sessions, matching: .exactAsSaved) == nil)
+        let third = vm.save(
+            name: "WEB",
+            values: sshValues(host: "drei.example.com", port: 22, username: "tim3"),
+            password: "p3")!
+        #expect(third.id != first.id)
+        #expect(vm.sessions.count == 2)
+    }
+
     /// M12/T7b: saving an S3 session goes through the same `save(...)`
     /// entry point as SSH, just with `kind` and S3's own field values (M23/T7)
     /// — the secret access key rides the existing `password:` slot (no

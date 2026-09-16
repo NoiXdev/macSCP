@@ -15,11 +15,12 @@ import Foundation
 /// * **A warning that DESCRIBES** — the connection form's "Saving replaces
 ///   the existing session X" — has no such freedom. It is measured against
 ///   what `SessionListViewModel.save` will actually do, and `save` finds its
-///   target with `==` against the stored names as they stand. A
-///   case-insensitive warning on that path names a session that saving would
-///   leave untouched, which is not a clumsy sentence but a false one. That is
-///   `.exactAsSaved`, and `SessionNameCollision.collides` is the caller that
-///   asks for it.
+///   target by asking this rule under `.exactAsSaved` — `==` against the
+///   stored names as they stand. A case-insensitive warning on that path
+///   names a session that saving would leave untouched, which is not a
+///   clumsy sentence but a false one. That is `.exactAsSaved`, and
+///   `SessionNameCollision.collides` and `save` itself are the two callers
+///   that ask for it.
 ///
 /// The two are here rather than in two files precisely because they are one
 /// decision seen from two sides: what a name IS (trimmed, because no write
@@ -37,7 +38,9 @@ public enum SessionNameRule {
         /// Both sides trimmed, compared without case. The human answer.
         case caseInsensitive
         /// The asked name trimmed, the stored names as they stand, compared
-        /// with `==` — a mirror of `SessionListViewModel.save`.
+        /// with `==` — the matching `SessionListViewModel.save` asks for to
+        /// find the session it replaces, so the warning and the outcome are
+        /// one answer rather than two copies that happen to agree.
         ///
         /// One direction only, and deliberately: `save` does not trim the
         /// STORED names either. No known writer produces a stored name with

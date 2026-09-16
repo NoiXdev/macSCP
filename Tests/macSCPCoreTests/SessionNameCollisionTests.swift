@@ -31,7 +31,8 @@ struct SessionNameCollisionTests {
     }
 
     @Test func theComparisonIsExactBecauseSaveIsExact() {
-        // `SessionListViewModel.save` matches with `==`. A rule that treated
+        // `SessionListViewModel.save` matches through `SessionNameRule`
+        // under `.exactAsSaved`, which compares with `==`. A rule that treated
         // "Web" as taken would step aside from a name that saving would have
         // left alone — and one that treated "web" as free when "Web" exists
         // would still overwrite. Both directions are wrong.

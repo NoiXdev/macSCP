@@ -66,7 +66,8 @@ struct SessionNameRuleTests {
     // MARK: - `.exactAsSaved`: the app's save-mirroring matching
 
     @Test func theSaveMirroringMatchingIsCaseSensitive() {
-        // `SessionListViewModel.save` finds its target with `==`. A warning
+        // `SessionListViewModel.save` finds its target through this very
+        // matching, which compares with `==`. A warning
         // saying "saving replaces prod" while saving would create a second
         // session called "Prod" describes an outcome that does not happen.
         #expect(SessionNameRule.conflict(

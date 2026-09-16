@@ -8,7 +8,8 @@ import Foundation
 /// the whole reason this type is not just "the session that collides":
 ///
 /// * A new connection is written by `SessionListViewModel.save`, which finds
-///   its target with `sessions.first(where: { $0.name == name })` and
+///   its target with `SessionNameRule.conflict(_:among:excluding:matching:)`
+///   under `.exactAsSaved` — the rule this warning is computed by — and
 ///   mutates it in place. It really does replace, taking the existing
 ///   session's group, tags, login-set binding, jump spec and keychain slot
 ///   with it. → `replaces`.

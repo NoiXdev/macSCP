@@ -192,13 +192,20 @@ public final class SessionListViewModel {
         let descriptor = BackendDescriptor.descriptor(for: kind)
         var previousJump: StoredSession.JumpSpec?
         var session: StoredSession
-        if let existing = sessions.first(where: { $0.name == name }) {
+        // The session this save replaces is the one `SessionNameRule` names
+        // under `.exactAsSaved` — the same question, asked the same way, as
+        // the form's "Saving replaces" warning (`SessionNameCollision`). A
+        // lookup spelled here would be a second copy of that rule, and the
+        // first change to one of them would make the warning describe an
+        // outcome saving does not produce.
+        let savedName = SessionNameRule.asSaved(name)
+        if let existing = SessionNameRule.conflict(name, among: sessions, matching: .exactAsSaved) {
             previousJump = existing.jump
             session = existing
         } else {
-            session = StoredSession(id: UUID(), name: name, kind: kind)
+            session = StoredSession(id: UUID(), name: savedName, kind: kind)
         }
-        session.name = name
+        session.name = savedName
         // A name collision across KINDS is the one way this method changes an
         // existing session's protocol (M23/T7 fix round 1) — "Save & connect"
         // matches by name, so saving an SSH connection under a name an S3
