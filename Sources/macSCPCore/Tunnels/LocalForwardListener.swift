@@ -55,6 +55,21 @@ public enum TunnelFailure: Error, Sendable, Equatable {
     /// `start` was called on a listener that has already been started. One
     /// listener binds once; see `LocalForwardListener.start`.
     case alreadyStarted
+    /// A remote forward asked the server to choose its port (`0`), which
+    /// this client refuses — see `CitadelFileSystem.withRemotePortForward`.
+    case remotePortZeroRefused
+    /// The server refused a remote forward's `tcpip-forward` request — the
+    /// port is taken on the server, or the bind address is not allowed.
+    ///
+    /// `reason` is `DialSupport.reason(for:)` of the transport's error and
+    /// reaches the log only. `needsGatewayPorts` is true when the bind
+    /// address is not loopback, which the server allows only with its
+    /// `GatewayPorts` setting: the one thing the user can act on, so it is
+    /// carried as a fact rather than only as a clause in the sentence.
+    case remoteBindRefused(reason: String, needsGatewayPorts: Bool)
+    /// The server did not answer a remote forward's request within the
+    /// bound `RemoteForward.start` waits.
+    case remoteForwardUnanswered
 }
 
 /// What decides where an accepted connection is forwarded to.

@@ -1505,11 +1505,13 @@ extension CitadelFileSystem {
     /// itself is unaffected.
     ///
     /// A server that refuses the global request — `AllowTcpForwarding no`, or
-    /// a non-loopback `bind` without `GatewayPorts` — comes back as
-    /// `TunnelFailure.bindFailed`. The reason names `GatewayPorts` when the
-    /// bind is not loopback, because the server does not say which of the two
-    /// it was and that is the one the user can do something about. A
-    /// cancellation is NOT mapped: it is how a forward ends normally.
+    /// a non-loopback `bind` without `GatewayPorts`, a port already taken on
+    /// the server — comes back as `TunnelFailure.remoteBindRefused`, with
+    /// `needsGatewayPorts` true when the bind is not loopback, because the
+    /// server does not say which it was and that is the one the user can do
+    /// something about; the log's sentence and the App's message both name
+    /// `GatewayPorts` then. A cancellation is NOT mapped: it is how a forward
+    /// ends normally.
     ///
     /// **`port` 0 is refused**, and that is a limitation of the pinned
     /// Citadel rather than a decision. Measured against the rig on
@@ -1553,10 +1555,9 @@ extension CitadelFileSystem {
         handleChannel: @escaping @Sendable (Channel) async throws -> Void
     ) async throws {
         guard port != 0 else {
-            throw TunnelFailure.bindFailed(
-                reason:
-                    "a remote forward must name the port the server listens on; "
-                    + "letting the server choose it is not supported by this client")
+            // The sentence is `TunnelFailureKind.remotePortZeroRefused`'s,
+            // rendered by `DialSupport.reason(for:)`.
+            throw TunnelFailure.remotePortZeroRefused
         }
         do {
             try await client.withRemotePortForward(
@@ -1571,18 +1572,23 @@ extension CitadelFileSystem {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw TunnelFailure.bindFailed(reason: Self.bindReason(for: error, bind: bind))
+            throw Self.remoteBindFailure(for: error, bind: bind)
         }
     }
 
+    /// The server's refusal of a `tcpip-forward` request, typed.
+    ///
     /// Loopback binds are the server's default and need no permission; every
     /// other bind address needs `GatewayPorts`, and a refusal that does not
-    /// say so is a dead end for the user.
-    private static func bindReason(for error: any Error, bind: String) -> String {
-        let reason = DialSupport.reason(for: error)
+    /// say so is a dead end for the user. So the refusal carries
+    /// `needsGatewayPorts` as a fact, which the App translates, and the log's
+    /// sentence (`DialSupport.reason(for:)`) appends the same clause this
+    /// function used to append itself — `TunnelFailureKind
+    /// .gatewayPortsClause`, byte for byte.
+    static func remoteBindFailure(for error: any Error, bind: String) -> TunnelFailure {
         let loopback = ["127.0.0.1", "::1", "localhost"]
-        guard !loopback.contains(bind) else { return reason }
-        return reason + " (a bind address other than loopback needs the server's GatewayPorts)"
+        return .remoteBindRefused(
+            reason: DialSupport.reason(for: error), needsGatewayPorts: !loopback.contains(bind))
     }
 }
 

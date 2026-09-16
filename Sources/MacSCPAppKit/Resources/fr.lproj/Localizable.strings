@@ -1291,6 +1291,10 @@
 "tunnel.failure.connectFailed" = "Une connexion pour la redirection a échoué";
 "tunnel.failure.pumpFailed" = "Une connexion redirigée n’a pas pu être établie";
 "tunnel.failure.alreadyStarted" = "La redirection était déjà démarrée";
+"tunnel.failure.remotePortZeroRefused" = "Une redirection distante doit indiquer le port du serveur ; le port 0 n’est pas pris en charge";
+"tunnel.failure.remoteBindRefused" = "Le serveur a refusé d’écouter pour la redirection";
+"tunnel.failure.remoteBindRefused.gatewayPorts" = "Le serveur a refusé d’écouter pour la redirection ; une adresse autre que loopback exige le réglage GatewayPorts du serveur";
+"tunnel.failure.remoteForwardUnanswered" = "Le serveur n’a pas répondu à la demande de redirection";
 "tunnel.failure.connectionLost" = "Connexion perdue";
 "tunnel.failure.unknown" = "La redirection a échoué";
 "tunnel.form.name" = "Nom";

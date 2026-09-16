@@ -1290,6 +1290,10 @@
 "tunnel.failure.connectFailed" = "Połączenie dla przekierowania nie powiodło się";
 "tunnel.failure.pumpFailed" = "Nie udało się zestawić przekierowanego połączenia";
 "tunnel.failure.alreadyStarted" = "Przekierowanie było już uruchomione";
+"tunnel.failure.remotePortZeroRefused" = "Zdalne przekierowanie musi wskazywać port serwera; port 0 nie jest obsługiwany";
+"tunnel.failure.remoteBindRefused" = "Serwer odmówił nasłuchiwania dla przekierowania";
+"tunnel.failure.remoteBindRefused.gatewayPorts" = "Serwer odmówił nasłuchiwania dla przekierowania; adres inny niż loopback wymaga ustawienia GatewayPorts na serwerze";
+"tunnel.failure.remoteForwardUnanswered" = "Serwer nie odpowiedział na żądanie przekierowania";
 "tunnel.failure.connectionLost" = "Utracono połączenie";
 "tunnel.failure.unknown" = "Przekierowanie nie powiodło się";
 "tunnel.form.name" = "Nazwa";

@@ -72,8 +72,8 @@ public enum TunnelFailureKind: Sendable, Equatable {
     case sessionMissing
     /// The local port the forward wants is taken.
     case portInUse(port: Int)
-    /// The forward could not start listening — locally, or on the server
-    /// for a remote forward.
+    /// The forward could not start listening — locally, or on the server for
+    /// a remote forward whose failure has no case of its own below.
     case bindFailed
     /// The server could not open the channel for a forwarded connection.
     case channelOpenFailed
@@ -83,6 +83,14 @@ public enum TunnelFailureKind: Sendable, Equatable {
     case pumpFailed
     /// A forward was started twice. Not a condition a user can be in.
     case alreadyStarted
+    /// A remote forward named port `0`, which this client refuses.
+    case remotePortZeroRefused
+    /// The server refused to listen for a remote forward. `needsGatewayPorts`
+    /// is true when the bind address is not loopback — the server then needs
+    /// its `GatewayPorts` setting. No server text is carried.
+    case remoteBindRefused(needsGatewayPorts: Bool)
+    /// The server did not answer the remote forward's request.
+    case remoteForwardUnanswered
     /// The forwarding's connection dropped on a profile that does not
     /// reconnect.
     case connectionLost
@@ -104,7 +112,8 @@ public enum TunnelFailureKind: Sendable, Equatable {
         case keychainUnreadable, connectionFailed, serverAnswerUnusable
         case sessionUsesLoginSet, sessionUsesJumpHost, sessionIsNotSSH, sessionMissing
         case portInUse, bindFailed, channelOpenFailed, connectFailed, pumpFailed
-        case alreadyStarted, connectionLost, unknown
+        case alreadyStarted, remotePortZeroRefused, remoteBindRefused, remoteForwardUnanswered
+        case connectionLost, unknown
     }
 
     public var name: Name {
@@ -136,6 +145,9 @@ public enum TunnelFailureKind: Sendable, Equatable {
         case .connectFailed: return .connectFailed
         case .pumpFailed: return .pumpFailed
         case .alreadyStarted: return .alreadyStarted
+        case .remotePortZeroRefused: return .remotePortZeroRefused
+        case .remoteBindRefused: return .remoteBindRefused
+        case .remoteForwardUnanswered: return .remoteForwardUnanswered
         case .connectionLost: return .connectionLost
         case .unknown: return .unknown
         }
@@ -217,12 +229,26 @@ public enum TunnelFailureKind: Sendable, Equatable {
             // sentence rather than a case index, because if it ever does
             // reach a person it should say what happened.
             return "this forward has already been started"
+        case .remotePortZeroRefused:
+            return "a remote forward must name the port the server listens on; "
+                + "letting the server choose it is not supported by this client"
+        case .remoteBindRefused(let needsGatewayPorts):
+            return "the server refused to listen for the remote forward"
+                + (needsGatewayPorts ? Self.gatewayPortsClause : "")
+        case .remoteForwardUnanswered:
+            return "the server did not answer the forwarding request"
         case .connectionLost:
             return "connection lost"
         case .unknown:
             return "the forwarding failed"
         }
     }
+
+    /// The clause a refused non-loopback remote bind appends to its
+    /// sentence — one spelling, for the kind's sentence and for the log's
+    /// (`DialSupport.reason(for:)` of `TunnelFailure.remoteBindRefused`).
+    static let gatewayPortsClause =
+        " (a bind address other than loopback needs the server's GatewayPorts)"
 
     /// The per-connection mapping: what a listener's or a remote forward's
     /// `TunnelFailure` is as a kind. The same switch

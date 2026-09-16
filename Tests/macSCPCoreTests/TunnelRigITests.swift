@@ -277,7 +277,7 @@ struct TunnelRigITests {
     /// fixed one is a shared resource inside the container, and two rig runs
     /// on one machine — two checkouts, or a rerun overlapping its
     /// predecessor's teardown — would collide on it and fail with a
-    /// `bindFailed` that says nothing about this code. One retry covers a
+    /// `remoteBindRefused` that says nothing about this code. One retry covers a
     /// collision; a second failure is reported rather than papered over,
     /// because two collisions in a row is evidence of something other than
     /// bad luck. A fresh `RemoteForward` per attempt, since one forward
@@ -396,11 +396,7 @@ struct TunnelRigITests {
                 raised = error
             }
 
-            let isBindFailure: Bool = {
-                guard case .bindFailed = raised as? TunnelFailure else { return false }
-                return true
-            }()
-            #expect(isBindFailure)
+            #expect(raised as? TunnelFailure == .remotePortZeroRefused)
         }
     }
 
@@ -513,7 +509,7 @@ private final class RigTeardown {
 /// the server refuses the bind.
 ///
 /// A fresh `RemoteForward` per attempt: one forward starts once, and `start`
-/// consumes that use even when it fails. A second `bindFailed` is thrown
+/// consumes that use even when it fails. A second `remoteBindRefused` is thrown
 /// rather than retried — see the calling test's doc comment.
 private func forwardOnAFreeRemotePort(
     carrier: CitadelFileSystem, targetPort: Int,
@@ -529,7 +525,7 @@ private func forwardOnAFreeRemotePort(
                 observer: observer)
             return (forward, port)
         } catch let failure as TunnelFailure {
-            guard case .bindFailed = failure else { throw failure }
+            guard case .remoteBindRefused = failure else { throw failure }
             lastFailure = failure
         }
     }

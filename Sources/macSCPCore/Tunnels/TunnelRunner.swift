@@ -127,9 +127,10 @@ public actor TunnelRunner {
     /// translates that. The command line prints English and has no
     /// diagnostic log a user reads, so `macscp-cli tunnels start` takes this
     /// sentence instead — which keeps the detail a free-text
-    /// `TunnelFailure` payload carries (a `GatewayPorts` clause, "the server
-    /// did not answer the forwarding request") on its stderr, where the kind
-    /// alone would have said "the forward could not start listening".
+    /// `TunnelFailure` payload carries (a transport error's text, the
+    /// server's own reason for refusing a remote bind) on its stderr, where
+    /// the kind alone would have said "the forward could not start
+    /// listening".
     public var failureReason: String? {
         guard case .failed = state else { return nil }
         return lastFailureReason

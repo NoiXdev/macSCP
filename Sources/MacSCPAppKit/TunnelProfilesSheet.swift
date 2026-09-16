@@ -565,12 +565,17 @@ struct TunnelProfilesSheet: View {
     }
 
     /// The catalogue key of one failure kind: `tunnel.failure.<name>`, plus
-    /// ` %@` where the kind shows its payload. Exhaustive over
-    /// `TunnelFailureKind.Name`, so a kind added in Core does not compile
-    /// here until it has a key; `TunnelFailureLabelGuardTests` holds every
-    /// key to its name and to the catalogue.
-    static func failureKey(_ name: TunnelFailureKind.Name) -> String {
-        switch name {
+    /// ` %@` where the kind shows its payload, or `.gatewayPorts` for the
+    /// refused remote bind whose message names the server's `GatewayPorts`
+    /// setting. Exhaustive over `TunnelFailureKind.Name`, so a kind added in
+    /// Core does not compile here until it has a key;
+    /// `TunnelFailureLabelGuardTests` holds every key to its name and to the
+    /// catalogue.
+    static func failureKey(_ kind: TunnelFailureKind) -> String {
+        if case .remoteBindRefused(needsGatewayPorts: true) = kind {
+            return "tunnel.failure.remoteBindRefused.gatewayPorts"
+        }
+        switch kind.name {
         case .hostKeyMismatch: return "tunnel.failure.hostKeyMismatch %@"
         case .hostKeyNotAccepted: return "tunnel.failure.hostKeyNotAccepted"
         case .authenticationFailed: return "tunnel.failure.authenticationFailed"
@@ -598,6 +603,9 @@ struct TunnelProfilesSheet: View {
         case .connectFailed: return "tunnel.failure.connectFailed"
         case .pumpFailed: return "tunnel.failure.pumpFailed"
         case .alreadyStarted: return "tunnel.failure.alreadyStarted"
+        case .remotePortZeroRefused: return "tunnel.failure.remotePortZeroRefused"
+        case .remoteBindRefused: return "tunnel.failure.remoteBindRefused"
+        case .remoteForwardUnanswered: return "tunnel.failure.remoteForwardUnanswered"
         case .connectionLost: return "tunnel.failure.connectionLost"
         case .unknown: return "tunnel.failure.unknown"
         }
@@ -610,7 +618,7 @@ struct TunnelProfilesSheet: View {
     /// never a description of the kind itself, which would print a case
     /// name. `TunnelFailureLabelGuardTests` holds both.
     static func failureLabel(_ kind: TunnelFailureKind) -> String {
-        let key = failureKey(kind.name)
+        let key = failureKey(kind)
         switch kind {
         case .hostKeyMismatch(let host):
             return String(format: L10n.string(key, "The host key of %@ has changed"), host)
@@ -673,6 +681,18 @@ struct TunnelProfilesSheet: View {
             return L10n.string(key, "A forwarded connection could not be set up")
         case .alreadyStarted:
             return L10n.string(key, "The forwarding had already been started")
+        case .remotePortZeroRefused:
+            return L10n.string(
+                key, "A remote forwarding must name the server's port; port 0 is not supported")
+        case .remoteBindRefused(let needsGatewayPorts):
+            return needsGatewayPorts
+                ? L10n.string(
+                    key,
+                    "The server refused to listen for the forwarding; an address other than "
+                        + "loopback needs the server's GatewayPorts setting")
+                : L10n.string(key, "The server refused to listen for the forwarding")
+        case .remoteForwardUnanswered:
+            return L10n.string(key, "The server did not answer the forwarding request")
         case .connectionLost:
             return L10n.string(key, "Connection lost")
         case .unknown:

@@ -1288,6 +1288,10 @@
 "tunnel.failure.connectFailed" = "Eine Verbindung für die Weiterleitung ist fehlgeschlagen";
 "tunnel.failure.pumpFailed" = "Eine weitergeleitete Verbindung konnte nicht eingerichtet werden";
 "tunnel.failure.alreadyStarted" = "Die Weiterleitung war bereits gestartet";
+"tunnel.failure.remotePortZeroRefused" = "Eine entfernte Weiterleitung muss den Port auf dem Server nennen; Port 0 wird nicht unterstützt";
+"tunnel.failure.remoteBindRefused" = "Der Server hat es abgelehnt, für die Weiterleitung zu lauschen";
+"tunnel.failure.remoteBindRefused.gatewayPorts" = "Der Server hat es abgelehnt, für die Weiterleitung zu lauschen; eine andere Adresse als Loopback braucht die Server-Einstellung GatewayPorts";
+"tunnel.failure.remoteForwardUnanswered" = "Der Server hat auf die Weiterleitungsanfrage nicht geantwortet";
 "tunnel.failure.connectionLost" = "Verbindung verloren";
 "tunnel.failure.unknown" = "Die Weiterleitung ist fehlgeschlagen";
 "tunnel.form.name" = "Name";

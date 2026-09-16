@@ -175,7 +175,8 @@ public enum DialSupport {
     /// completed. (macSCPCore.TunnelFailure error 0.)" — the port, the one
     /// thing a person can act on, replaced by a case index.
     ///
-    /// Its four `reason:` payloads are passed through rather than dropped,
+    /// Its five `reason:` payloads (the four free-text cases and
+    /// `remoteBindRefused`) are passed through rather than dropped,
     /// which is the OPPOSITE of the decision taken for `RemoteFSError` above,
     /// and the difference is where the text comes from. `RemoteFSError`'s
     /// free text is composed out of an endpoint the user typed;
@@ -187,28 +188,32 @@ public enum DialSupport {
     /// `9167f325` — the two that count had not listed were
     /// `TunnelConnection`'s refusal, which passed `TunnelCarriers`' sentence,
     /// and `TunnelManager`'s "no longer exists" literal — and 14 after both
-    /// became `TunnelRefusal` the same day. Every one of the 14 passes either
-    /// this function's own output or a fixed English sentence written in this
-    /// repository: SEVEN pass
-    /// `DialSupport.reason(for:)` (or `CitadelFileSystem.bindReason(for:
-    /// bind:)`, which is that plus a fixed clause naming `GatewayPorts`) —
-    /// `CitadelFileSystem.openDirectTCPIP` and `withRemotePortForward`,
-    /// `LocalForwardListener.acceptFailure` and `bindFailure`,
-    /// `RemoteForward.serve`, `startFailure` and `pairFailure` — and SEVEN
-    /// pass a literal: `CitadelFileSystem`'s port-0 refusal,
+    /// became `TunnelRefusal` the same day. Recounted 2026-09-17 with
+    /// `remoteBindRefused` added to that alternation: 12, after the port-0
+    /// refusal and the unanswered request became payload-free cases of their
+    /// own and the refused remote bind became `remoteBindRefused`. Every one
+    /// of the 12 passes either this function's own output or a fixed English
+    /// sentence written in this repository: SEVEN pass
+    /// `DialSupport.reason(for:)` — `CitadelFileSystem.openDirectTCPIP` and
+    /// `remoteBindFailure(for:bind:)`, `LocalForwardListener.acceptFailure`
+    /// and `bindFailure`, `RemoteForward.serve`, `startFailure` and
+    /// `pairFailure` — and FIVE pass a literal:
     /// `LocalForwardListener`'s "the bound socket reports no port",
-    /// `RemoteForward`'s two answer-bound sentences and its two "the forward
-    /// has been stopped", and `TunnelConnection`'s "built a non-SSH
-    /// connection" sentence (named here as "port forwarding needs an SSH
-    /// session" until 2026-09-16, a sentence `Sources/` at `9167f325` held
-    /// only in this comment). A payload
+    /// `RemoteForward`'s "ended before the server named a port" and its two
+    /// "the forward has been stopped", and `TunnelConnection`'s "built a
+    /// non-SSH connection" sentence (named here as "port forwarding needs an
+    /// SSH session" until 2026-09-16, a sentence `Sources/` at `9167f325`
+    /// held only in this comment). The `GatewayPorts` clause a refused
+    /// non-loopback remote bind carries is appended by the arm below from
+    /// `TunnelFailureKind.gatewayPortsClause`, not by the throw site. A payload
     /// that is already this function's output must
     /// not be re-mapped (that is `LocalForwardListener.acceptFailure`'s own
     /// argument, one layer down), and a payload that is a fixed sentence has
     /// nothing to hide. The payload reaches the log and the command line's
     /// stderr (`TunnelRunner.failureReason`) only — never the state:
-    /// `failureKind(for:)` names these four cases `bindFailed` …
-    /// `pumpFailed` and drops the text, because a payload built by this
+    /// `failureKind(for:)` names these five cases by kind (`bindFailed` …
+    /// `pumpFailed`, `remoteBindRefused`) and drops the text, because a
+    /// payload built by this
     /// function can be a foreign error's `localizedDescription`.
     ///
     /// Everything else — a `URLError`, an NIO or Citadel error — is reduced
@@ -277,6 +282,18 @@ public enum DialSupport {
                 return (.pumpFailed, reason)
             case .alreadyStarted:
                 return known(.alreadyStarted)
+            case .remotePortZeroRefused:
+                return known(.remotePortZeroRefused)
+            case .remoteBindRefused(let reason, let needsGatewayPorts):
+                // The server's reason goes to the log with the clause it has
+                // always carried; the kind keeps only whether the clause
+                // applies.
+                return (
+                    .remoteBindRefused(needsGatewayPorts: needsGatewayPorts),
+                    reason + (needsGatewayPorts ? TunnelFailureKind.gatewayPortsClause : "")
+                )
+            case .remoteForwardUnanswered:
+                return known(.remoteForwardUnanswered)
             }
         case let error as TunnelRefusal:
             // The refusals a stored session earns before anything is dialled.

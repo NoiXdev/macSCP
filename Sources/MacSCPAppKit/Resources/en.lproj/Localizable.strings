@@ -1286,6 +1286,10 @@
 "tunnel.failure.connectFailed" = "A connection for the forwarding failed";
 "tunnel.failure.pumpFailed" = "A forwarded connection could not be set up";
 "tunnel.failure.alreadyStarted" = "The forwarding had already been started";
+"tunnel.failure.remotePortZeroRefused" = "A remote forwarding must name the server's port; port 0 is not supported";
+"tunnel.failure.remoteBindRefused" = "The server refused to listen for the forwarding";
+"tunnel.failure.remoteBindRefused.gatewayPorts" = "The server refused to listen for the forwarding; an address other than loopback needs the server's GatewayPorts setting";
+"tunnel.failure.remoteForwardUnanswered" = "The server did not answer the forwarding request";
 "tunnel.failure.connectionLost" = "Connection lost";
 "tunnel.failure.unknown" = "The forwarding failed";
 "tunnel.form.name" = "Name";

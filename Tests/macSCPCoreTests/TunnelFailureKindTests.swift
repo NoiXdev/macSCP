@@ -126,6 +126,30 @@ import Testing
         Row(
             label: "already started", error: TunnelFailure.alreadyStarted, kind: .alreadyStarted,
             sentence: "this forward has already been started"),
+        // The three remote-forward start failures that were `bindFailed`
+        // with a fixed sentence until fix round 1: the log text is what the
+        // throw sites wrote at `ab4a2c4c`.
+        Row(
+            label: "remote port zero", error: TunnelFailure.remotePortZeroRefused,
+            kind: .remotePortZeroRefused,
+            sentence:
+                "a remote forward must name the port the server listens on; "
+                + "letting the server choose it is not supported by this client"),
+        Row(
+            label: "remote bind, non-loopback",
+            error: TunnelFailure.remoteBindRefused(
+                reason: "server text", needsGatewayPorts: true),
+            kind: .remoteBindRefused(needsGatewayPorts: true),
+            sentence:
+                "server text (a bind address other than loopback needs the server's GatewayPorts)"),
+        Row(
+            label: "remote bind, loopback",
+            error: TunnelFailure.remoteBindRefused(reason: "server text", needsGatewayPorts: false),
+            kind: .remoteBindRefused(needsGatewayPorts: false), sentence: "server text"),
+        Row(
+            label: "remote unanswered", error: TunnelFailure.remoteForwardUnanswered,
+            kind: .remoteForwardUnanswered,
+            sentence: "the server did not answer the forwarding request"),
         // Errors a forwarding's dial does not produce keep their sentence and
         // are `unknown` as a kind.
         Row(
@@ -155,6 +179,7 @@ import Testing
     func aKindThatCarriesItsWholeSentenceIsTheLogSentence(_ row: Row) {
         let freeText: Set<TunnelFailureKind.Name> = [
             .bindFailed, .channelOpenFailed, .connectFailed, .pumpFailed, .unknown,
+            .remoteBindRefused,
         ]
         guard !freeText.contains(row.kind.name), row.label != "jump authentication" else { return }
         #expect(row.kind.sentence == row.sentence)
@@ -182,11 +207,16 @@ import Testing
         let failures: [TunnelFailure] = [
             .portInUse(port: 1), .bindFailed(reason: "a"), .channelOpenFailed(reason: "b"),
             .connectFailed(reason: "c"), .pumpFailed(reason: "d"), .alreadyStarted,
+            .remotePortZeroRefused, .remoteBindRefused(reason: "e", needsGatewayPorts: true),
+            .remoteForwardUnanswered,
         ]
         for failure in failures {
             #expect(TunnelFailureKind(failure) == DialSupport.failureKind(for: failure))
         }
         #expect(TunnelFailureKind(.portInUse(port: 1)) == .portInUse(port: 1))
+        #expect(
+            TunnelFailureKind(.remoteBindRefused(reason: "e", needsGatewayPorts: true))
+                == .remoteBindRefused(needsGatewayPorts: true))
     }
 
     /// Decision (d) holds on the kind too: the mismatch carries the host
@@ -234,6 +264,9 @@ enum TunnelFailureKindSamples {
         case .connectFailed: return .connectFailed
         case .pumpFailed: return .pumpFailed
         case .alreadyStarted: return .alreadyStarted
+        case .remotePortZeroRefused: return .remotePortZeroRefused
+        case .remoteBindRefused: return .remoteBindRefused(needsGatewayPorts: true)
+        case .remoteForwardUnanswered: return .remoteForwardUnanswered
         case .connectionLost: return .connectionLost
         case .unknown: return .unknown
         }

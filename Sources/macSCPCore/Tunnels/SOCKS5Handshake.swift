@@ -57,33 +57,36 @@ extension SOCKS5ReplyCode {
     /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install` or `confirm` |
     /// | `.connectFailed` | `05` | nothing on this path. Its producers are `TunnelConnection.connect`'s unreachable non-SSH-config arm, before a listener exists, and `RemoteForward`, which is not this path at all. (A refused session and a deleted one were producers too until 2026-09-16; both are `TunnelRefusal` now.) Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
     /// | `.portInUse`, `.bindFailed`, `.alreadyStarted` | `01` | `start`, before any client has connected — unreachable here |
+    /// | `.remotePortZeroRefused`, `.remoteBindRefused`, `.remoteForwardUnanswered` | `01` | a remote forward's start (`CitadelFileSystem.withRemotePortForward`, `RemoteForward.start`), never this path — unreachable here |
     ///
     /// So in production **`01` is what every refusal produces**, `05` is
     /// waiting for a factory that distinguishes a refusal, and `04` is
-    /// produced by nothing. Recounted 2026-09-16 with `grep -rn "throw
-    /// TunnelFailure\." Sources/`: NINE throw sites — `TunnelConnection
-    /// .swift:95`, `LocalForwardListener.swift:180` and `:206`,
-    /// `RemoteForward.swift:132`, `:288` and `:322`,
-    /// `CitadelFileSystem.swift:1451`, `:1556` and `:1574`. ELEVEN on
-    /// 2026-09-06; the two that left were `TunnelConnection`'s refusal and
-    /// `TunnelManager`'s deleted session, which throw `TunnelRefusal` since
-    /// 2026-09-16. A `throw` is not the only way one is
-    /// built, and the earlier clause here counted only two of the other
-    /// ways. `grep -rn "func .* -> TunnelFailure" Sources/` finds FOUR
-    /// helpers that RETURN one — the `func` in the pattern is load-bearing:
-    /// the bare return type also matches this very sentence, and a count
-    /// that reads its own comment is off by exactly the number of times it
-    /// is quoted — `LocalForwardListener.acceptFailure` (`:342`) and
-    /// `.bindFailure` (`:348`), `RemoteForward.startFailure` (`:344`) and
-    /// `.pairFailure` (`:349`) — and subtracting the throw sites from
-    /// `grep -rn "TunnelFailure\." Sources/` (comment lines dropped) leaves
-    /// THREE inline constructions: `RemoteForward.swift:155` and `:172`,
-    /// which resolve a failure into the once-latch instead of throwing it,
-    /// and `:313`, which binds one to a name so the same value can be
-    /// reported and thrown. The earlier count of FOUR throw sites predated
-    /// `RemoteForward` and the two bind sites in `CitadelFileSystem`; none
-    /// of the additions is on the accept path this table is about, so the
-    /// table itself did not change with them.
+    /// produced by nothing. Recounted 2026-09-17, after fix round 1 of the
+    /// technical-backlog plan's Task 6, with `grep -rn "throw
+    /// TunnelFailure\." Sources/`: EIGHT throw sites — `TunnelConnection
+    /// .swift:95`, `LocalForwardListener.swift:195` and `:221`,
+    /// `RemoteForward.swift:132`, `:286` and `:320`,
+    /// `CitadelFileSystem.swift:1451` and `:1558`. ELEVEN on 2026-09-06;
+    /// NINE on 2026-09-16 once `TunnelConnection`'s refusal and
+    /// `TunnelManager`'s deleted session began throwing `TunnelRefusal`;
+    /// EIGHT once `CitadelFileSystem`'s refused remote bind began throwing
+    /// the value `remoteBindFailure(for:bind:)` returns (`throw
+    /// Self.remoteBindFailure`, which that grep does not match). A `throw`
+    /// is not the only way one is built. `grep -rnE "func .* -> TunnelFailure
+    /// \{" Sources/` — the ` \{` is load-bearing twice over: without it the
+    /// pattern also matches `DialSupport.failureKind(for:)`, whose return
+    /// type is `TunnelFailureKind`, and a bare return type matches this very
+    /// sentence — finds FIVE helpers that RETURN one:
+    /// `LocalForwardListener.acceptFailure` (`:357`) and `.bindFailure`
+    /// (`:363`), `RemoteForward.startFailure` (`:342`) and `.pairFailure`
+    /// (`:347`), and `CitadelFileSystem.remoteBindFailure` (`:1586`). And
+    /// subtracting the throw sites from `grep -rn "TunnelFailure\." Sources/`
+    /// (comment lines dropped) leaves THREE inline constructions:
+    /// `RemoteForward.swift:155` and `:171`, which resolve a failure into the
+    /// once-latch instead of throwing it, and `:311`, which binds one to a
+    /// name so the same value can be reported and thrown. None of these is
+    /// on the accept path this table is about, so the table's first four
+    /// rows did not change with them.
     ///
     /// The mapping reads the FAILURE'S CASE and never its `reason` text. Two
     /// measurements, both 2026-09-06, say it has to:
@@ -127,11 +130,14 @@ extension SOCKS5ReplyCode {
             // tree raises it on this path (see the table above); the arm
             // exists for the one that will.
             self = .connectionRefused
-        case .portInUse, .bindFailed, .alreadyStarted:
-            // None of the three can reach a connected SOCKS client — the
-            // listener is already bound by the time anyone speaks to it —
-            // but a failure enum is not the place for an unreachable arm to
-            // be spelled `fatalError`.
+        case .portInUse, .bindFailed, .alreadyStarted, .remotePortZeroRefused,
+            .remoteBindRefused, .remoteForwardUnanswered:
+            // None of the six can reach a connected SOCKS client — the first
+            // three are raised by `start`, and the listener is already bound
+            // by the time anyone speaks to it; the last three are a remote
+            // forward's start, which is not this listener at all — but a
+            // failure enum is not the place for an unreachable arm to be
+            // spelled `fatalError`.
             self = .generalFailure
         }
     }

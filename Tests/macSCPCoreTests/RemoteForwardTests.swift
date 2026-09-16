@@ -210,11 +210,10 @@ struct RemoteForwardTests {
             raised = error
         }
 
-        let isBindFailure: Bool = {
-            guard case .bindFailed = raised as? TunnelFailure else { return false }
-            return true
-        }()
-        #expect(isBindFailure)
+        // Its own case since fix round 1 of the technical-backlog plan's
+        // Task 6, so the App can say the server did not answer instead of
+        // "could not start listening".
+        #expect(raised as? TunnelFailure == .remoteForwardUnanswered)
         #expect(forward.boundPort == nil)
         #expect(fake.sawCancellation)
     }
@@ -252,12 +251,13 @@ struct RemoteForwardTests {
     }
 
     /// A server that refuses the global request fails the START, and the
-    /// failure it raised itself reaches the caller unchanged — the reason
-    /// naming `GatewayPorts` is the only thing that says why a `0.0.0.0`
-    /// bind was turned down, and re-mapping it would replace that sentence
-    /// with a case index.
+    /// failure it raised itself reaches the caller unchanged —
+    /// `needsGatewayPorts` is the only thing that says why a `0.0.0.0` bind
+    /// was turned down, and re-mapping it would replace the case with
+    /// `bindFailed`.
     @Test func aRefusedForwardFailsTheStartWithItsOwnReason() async throws {
-        let refusal = TunnelFailure.bindFailed(reason: "the server refuses to listen")
+        let refusal = TunnelFailure.remoteBindRefused(
+            reason: "the server refuses to listen", needsGatewayPorts: true)
         let fake = FakeRemoteForwardTransport(boundPort: 45_003, refusal: refusal)
         let forward = RemoteForward(transport: fake)
         await #expect(throws: refusal) {

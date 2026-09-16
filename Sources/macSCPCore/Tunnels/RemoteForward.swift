@@ -91,16 +91,17 @@ public final class RemoteForward: @unchecked Sendable {
     /// Returns only once the server has answered: the request is sent from a
     /// long-lived task, and this waits for either the bound port or the
     /// failure that came instead. A refusal the transport raised itself
-    /// travels through unchanged — the reason naming `GatewayPorts` is the
-    /// only sentence that says why a non-loopback bind was turned down —
-    /// while a foreign error is mapped to `bindFailed`.
+    /// travels through unchanged — `remoteBindRefused`'s
+    /// `needsGatewayPorts` is the only thing that says why a non-loopback
+    /// bind was turned down — while a foreign error is mapped to
+    /// `bindFailed`.
     ///
     /// **That wait is bounded and cancellable**, because the thing being
     /// waited for is a server's reply to a global request and a server that
     /// never answers is not a hypothetical. `tcpip-forward` is sent with
     /// `wantReply`, and Citadel completes its promise only from the reply;
     /// nothing underneath times it out. So: `answerBound` elapsing stops the
-    /// forward and throws `bindFailed`, and cancelling the calling task
+    /// forward and throws `remoteForwardUnanswered`, and cancelling the calling task
     /// throws `CancellationError` rather than parking forever. The default
     /// bound is `SettingsStore.defaultConnectTimeoutSeconds`, the same
     /// number `TunnelConnection.connect` uses by default (the App may dial
@@ -168,9 +169,7 @@ public final class RemoteForward: @unchecked Sendable {
         let deadline = Task {
             try? await Task.sleep(for: answerBound)
             opened.resolve(
-                .failure(
-                    TunnelFailure.bindFailed(
-                        reason: "the server did not answer the forwarding request")))
+                .failure(TunnelFailure.remoteForwardUnanswered))
         }
         defer { deadline.cancel() }
         do {
@@ -339,8 +338,9 @@ public final class RemoteForward: @unchecked Sendable {
     /// travels through unchanged, for the reason
     /// `LocalForwardListener.acceptFailure` gives at length: re-mapping one
     /// through `DialSupport.reason(for:)` replaces its sentence with a case
-    /// index, and here that sentence is the one naming `GatewayPorts`. Only
-    /// a foreign error is mapped.
+    /// index, and here the case is `remoteBindRefused` with its
+    /// `needsGatewayPorts`, or `remotePortZeroRefused`. Only a foreign error
+    /// is mapped.
     private static func startFailure(_ error: any Error) -> TunnelFailure {
         if let failure = error as? TunnelFailure { return failure }
         return .bindFailed(reason: DialSupport.reason(for: error))

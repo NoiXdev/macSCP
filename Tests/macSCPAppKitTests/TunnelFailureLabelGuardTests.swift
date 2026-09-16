@@ -23,7 +23,7 @@ import macSCPCore
 
     /// One value per name. Payloads are placeholders a rendered label can
     /// be searched for.
-    static func sample(_ name: TunnelFailureKind.Name) -> TunnelFailureKind {
+    nonisolated static func sample(_ name: TunnelFailureKind.Name) -> TunnelFailureKind {
         switch name {
         case .hostKeyMismatch: return .hostKeyMismatch(host: "server.test")
         case .hostKeyNotAccepted: return .hostKeyNotAccepted
@@ -53,6 +53,9 @@ import macSCPCore
         case .connectFailed: return .connectFailed
         case .pumpFailed: return .pumpFailed
         case .alreadyStarted: return .alreadyStarted
+        case .remotePortZeroRefused: return .remotePortZeroRefused
+        case .remoteBindRefused: return .remoteBindRefused(needsGatewayPorts: true)
+        case .remoteForwardUnanswered: return .remoteForwardUnanswered
         case .connectionLost: return .connectionLost
         case .unknown: return .unknown
         }
@@ -77,33 +80,74 @@ import macSCPCore
     /// `LocalizableStringsTests`' and `LocalizationParityTests`' job.
     @Test(arguments: TunnelFailureKind.Name.allCases)
     func everyKindHasAKeyTheCatalogueAnswers(_ name: TunnelFailureKind.Name) {
-        let key = TunnelProfilesSheet.failureKey(name)
+        let key = TunnelProfilesSheet.failureKey(Self.sample(name))
         let stem = "tunnel.failure.\(name.rawValue)"
-        #expect(key == stem || key.hasPrefix(stem + " "), "\(name.rawValue) has the key \(key)")
+        #expect(
+            key == stem || key.hasPrefix(stem + " ") || key.hasPrefix(stem + "."),
+            "\(name.rawValue) has the key \(key)")
         #expect(
             L10n.string(key, Self.sentinel) != Self.sentinel,
             "the catalogue answers nothing for \(key)")
     }
 
     @Test func noTwoKindsShareAKey() {
-        let keys = TunnelFailureKind.Name.allCases.map { TunnelProfilesSheet.failureKey($0) }
+        let keys = Self.everyVariant.map { TunnelProfilesSheet.failureKey($0) }
         #expect(Set(keys).count == keys.count)
     }
 
     /// Rendered: a key with a placeholder shows the payload, and no label
     /// shows a placeholder, a key, or the log's English sentence.
-    @Test(arguments: TunnelFailureKind.Name.allCases)
-    func everyKindRendersThroughTheCatalogue(_ name: TunnelFailureKind.Name) {
-        let kind = Self.sample(name)
+    ///
+    /// The label must EQUAL the catalogue's value for its key, with the
+    /// fixture's payload filled in — not merely avoid a few bad shapes. A
+    /// helper that described the kind would pass every negative above and
+    /// fail this (fix round 1, Minor 1: a planted `describeProbe(kind)`
+    /// stayed green against the source scan, which reads two bodies only).
+    @Test(arguments: TunnelFailureLabelGuardTests.everyVariant)
+    func everyKindRendersThroughTheCatalogue(_ kind: TunnelFailureKind) {
+        let name = kind.name.rawValue
         let label = TunnelProfilesSheet.stateLabel(.failed(kind))
-        let key = TunnelProfilesSheet.failureKey(name)
-        #expect(!label.isEmpty)
-        #expect(!label.contains("%@"), "\(name.rawValue) shows a raw placeholder")
-        #expect(!label.contains("tunnel.failure."), "\(name.rawValue) shows its key")
-        #expect(label != kind.sentence, "\(name.rawValue) shows the log's sentence")
-        #expect(key.hasSuffix(" %@") == (Self.shownPayload(kind) != nil))
-        if let payload = Self.shownPayload(kind) {
-            #expect(label.contains(payload), "\(name.rawValue) does not show its payload")
+        let key = TunnelProfilesSheet.failureKey(kind)
+        let template = L10n.string(key, Self.sentinel)
+        #expect(template != Self.sentinel, "the catalogue answers nothing for \(key)")
+        let payload = Self.shownPayload(kind)
+        let expected = payload.map { String(format: template, $0) } ?? template
+        #expect(label == expected, "\(name) is not its catalogue value")
+        #expect(!label.contains("%@"), "\(name) shows a raw placeholder")
+        #expect(label != kind.sentence, "\(name) shows the log's sentence")
+        #expect(key.hasSuffix(" %@") == (payload != nil))
+        if let payload {
+            #expect(label.contains(payload), "\(name) does not show its payload")
+        }
+    }
+
+    /// One value per name, plus the second variant of the one kind whose
+    /// payload picks a different message.
+    nonisolated static let everyVariant: [TunnelFailureKind] =
+        TunnelFailureKind.Name.allCases.map { sample($0) }
+        + [.remoteBindRefused(needsGatewayPorts: false)]
+
+    /// A refused non-loopback remote bind names the server's `GatewayPorts`
+    /// setting in every language; a refused loopback bind does not — the
+    /// design's "the failure reason names it", on the App's surfaces.
+    @Test func onlyANonLoopbackRefusalNamesGatewayPorts() throws {
+        let hint = TunnelProfilesSheet.stateLabel(.failed(.remoteBindRefused(needsGatewayPorts: true)))
+        let plain = TunnelProfilesSheet.stateLabel(
+            .failed(.remoteBindRefused(needsGatewayPorts: false)))
+        #expect(hint.contains("GatewayPorts"))
+        #expect(!plain.contains("GatewayPorts"))
+
+        let hintKey = TunnelProfilesSheet.failureKey(.remoteBindRefused(needsGatewayPorts: true))
+        let plainKey = TunnelProfilesSheet.failureKey(.remoteBindRefused(needsGatewayPorts: false))
+        #expect(hintKey != plainKey)
+        let resources = Self.repoRoot.appendingPathComponent("Sources/MacSCPAppKit/Resources")
+        for locale in ["en", "de", "fr", "pl"] {
+            let url = resources.appendingPathComponent("\(locale).lproj/Localizable.strings")
+            let catalogue = try #require(NSDictionary(contentsOf: url) as? [String: String])
+            let hinted = try #require(catalogue[hintKey], "\(locale) has no \(hintKey)")
+            let unhinted = try #require(catalogue[plainKey], "\(locale) has no \(plainKey)")
+            #expect(hinted.contains("GatewayPorts"), "\(locale) does not name GatewayPorts")
+            #expect(!unhinted.contains("GatewayPorts"), "\(locale) names GatewayPorts on loopback")
         }
     }
 
@@ -131,7 +175,7 @@ import macSCPCore
         // Positives: the scanned bodies are the ones that translate.
         #expect(stateStrict.contains("failureLabel(kind)"), "stateLabel no longer maps a failure")
         #expect(failureStrict.contains("L10n.string("), "failureLabel reads no catalogue")
-        #expect(failureStrict.contains("failureKey(kind.name)"), "failureLabel derives no key")
+        #expect(failureStrict.contains("failureKey(kind)"), "failureLabel derives no key")
         #expect(stateLiterals.contains("tunnel.state.stopped"), "the literal view lost its span")
         #expect(failureLiterals.contains("%@"), "the literal view lost its span")
 
