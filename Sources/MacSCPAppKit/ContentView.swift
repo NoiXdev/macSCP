@@ -2229,11 +2229,10 @@ struct ContentView: View {
         // `SessionTab.reconnectAttempt`'s own doc comment.
         let myAttempt = UUID()
         tab.reconnectAttempt = myAttempt
-        // Discarded on purpose (Swift 6.4 `NoUseUnstructuredThrowingTask`):
-        // `fillForm`'s `throws` is meant to escape uncaught here — see
-        // `openExternalTerminalFromSidebar`'s own doc comment, which states
-        // this path shows nothing for a fill failure, unlike its own `catch`.
-        _ = Task {
+        // `Task<Void, Never>`, spelled out: a throw from `fillForm` must not
+        // leave this task uncaught and unseen, and a non-throwing task will not
+        // compile one that does (technical backlog of 2026-09-16, Task 5).
+        Task<Void, Never> {
             defer {
                 if tab.reconnectAttempt == myAttempt { tab.isReconnecting = false }
             }
@@ -2246,8 +2245,15 @@ struct ContentView: View {
             // ONE fill for every protocol, shared with the sidebar's
             // "Open in External Terminal" entry — see `fillForm`. A `false`
             // means it already published the reason on THIS form, which is
-            // on screen, so there is nothing more to show here.
-            guard try fillForm(form, from: stored) else { return }
+            // on screen, so there is nothing more to show here. A THROW is
+            // not a refusal and published nothing: it goes onto this form in
+            // the text the sidebar route shows for the same throw.
+            do {
+                guard try fillForm(form, from: stored) else { return }
+            } catch {
+                form.showFailure(message: error.localizedDescription)
+                return
+            }
 
             // The dial's origin (failed-connect surface plan, Task 3;
             // rebound to the attempt by the two-open-questions design, M3).
@@ -3350,11 +3356,11 @@ struct ContentView: View {
                 return
             }
         } catch {
-            // Not a refusal but a failure (see `fillForm`'s `throws`). The
-            // connect path lets this escape its `Task` and shows nothing;
-            // here there is a place to put it, so it goes there — same
-            // `localizedDescription` fallback `performExternalOpen` uses for
-            // an error it has no specific wording for.
+            // Not a refusal but a failure (see `fillForm`'s `throws`). Shown
+            // in the same `localizedDescription` fallback `performExternalOpen`
+            // uses for an error it has no specific wording for — and the text
+            // `connect(in:stored:paneVisibility:)` puts on its form for the
+            // same throw (technical backlog of 2026-09-16, Task 5).
             externalTerminalErrorMessage = error.localizedDescription
             return
         }
