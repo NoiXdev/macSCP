@@ -80,10 +80,11 @@ public enum SessionSecretPolicy {
             keys: keys, secrets: secrets)
     }
 
-    /// The value to persist under a session's (or new login set's) OWN
-    /// secret slot when a NEW session is created — see this type's own doc
-    /// comment for which paths actually call this and which one (edit-save
-    /// without a new login set) does not. Empty when
+    /// The value to persist under a session's OWN secret slot when a NEW
+    /// session is created. Its one caller, counted 2026-09-16 with
+    /// `grep -rn "valueToPersist(" Sources` outside comments, is
+    /// `ContentView.persistFormAsSession`; the other consumers this type's own
+    /// doc comment lists ask `usesStoredManagedPassphrase` directly. Empty when
     /// `usesStoredManagedPassphrase` says the
     /// passphrase already lives under the managed key's own slot — on the
     /// ordinary path nothing is lost by that: the connect-time fill still
