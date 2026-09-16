@@ -72,6 +72,99 @@ struct JumpManagedKeyPassphraseTests {
         return ssh.jump?.auth
     }
 
+    // MARK: - LoginResolver.fallingBackToManagedKeyPassphrase, directly
+
+    private static let unencryptedKeySlotValue = "unencrypted-key-slot-value"
+
+    /// A key store holding the fixture's encrypted key (`hopkey`, slot holds
+    /// `managedPassphrase`) plus an UNENCRYPTED managed key (`plainkey`,
+    /// `hasPassphrase == false`) whose slot nonetheless holds a value — so a
+    /// fallback that ignored the flag would be seen.
+    private func makeKeys() throws -> (ManagedKeyStore, InMemorySecretStore, URL, encrypted: String, plain: String) {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-fallback-\(UUID().uuidString)")
+        let keys = ManagedKeyStore(directory: dir)
+        let secrets = InMemorySecretStore()
+        let encrypted = ManagedKey(
+            name: "hop-key", comment: "", type: .ed25519, fingerprint: "SHA256:x",
+            publicKeyOpenSSH: "ssh-ed25519 AAAA", createdAt: Date(timeIntervalSince1970: 0),
+            hasPassphrase: true, fileName: "hopkey")
+        let plain = ManagedKey(
+            name: "plain-key", comment: "", type: .ed25519, fingerprint: "SHA256:p",
+            publicKeyOpenSSH: "ssh-ed25519 AAAA", createdAt: Date(timeIntervalSince1970: 0),
+            hasPassphrase: false, fileName: "plainkey")
+        try keys.add(encrypted)
+        try keys.add(plain)
+        try secrets.savePassword(Self.managedPassphrase, for: encrypted.id)
+        try secrets.savePassword(Self.unencryptedKeySlotValue, for: plain.id)
+        return (keys, secrets, dir,
+                keys.keyDirectory.appendingPathComponent("hopkey").path,
+                keys.keyDirectory.appendingPathComponent("plainkey").path)
+    }
+
+    private func login(keyPath: String?, secret: String?, authKind: StoredSession.AuthKind = .privateKey) -> ResolvedLogin {
+        ResolvedLogin(username: "u", authKind: authKind, keyPath: keyPath, secret: secret)
+    }
+
+    @Test(arguments: ["", "   ", "\n\t"])
+    func anEmptyOrBlankKeyPathLeavesTheLoginUnchanged(keyPath: String) throws {
+        let (keys, secrets, dir, _, _) = try makeKeys()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for typed in [nil, ""] as [String?] {
+            let input = login(keyPath: keyPath, secret: typed)
+            let unchanged = LoginResolver.fallingBackToManagedKeyPassphrase(
+                input, keys: keys, secrets: secrets) == input
+            #expect(unchanged, "a blank key path resolved a passphrase")
+        }
+        let nilPath = login(keyPath: nil, secret: nil)
+        let nilUnchanged = LoginResolver.fallingBackToManagedKeyPassphrase(
+            nilPath, keys: keys, secrets: secrets) == nilPath
+        #expect(nilUnchanged, "a nil key path resolved a passphrase")
+    }
+
+    @Test func aManagedKeyWithoutAPassphraseLeavesTheLoginUnchanged() throws {
+        let (keys, secrets, dir, _, plain) = try makeKeys()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let input = login(keyPath: plain, secret: nil)
+        let unchanged = LoginResolver.fallingBackToManagedKeyPassphrase(
+            input, keys: keys, secrets: secrets) == input
+        #expect(unchanged, "an unencrypted managed key's slot was read into the login")
+    }
+
+    @Test func aTypedPassphraseWins() throws {
+        let (keys, secrets, dir, encrypted, _) = try makeKeys()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let input = login(keyPath: encrypted, secret: Self.ownPassphrase)
+        let typedWins = LoginResolver.fallingBackToManagedKeyPassphrase(
+            input, keys: keys, secrets: secrets).secret == Self.ownPassphrase
+        #expect(typedWins)
+    }
+
+    /// Both spellings of "nothing typed" — a slot that holds no item (`nil`)
+    /// and one that holds an empty string — take the managed key's value; a
+    /// padded key path is trimmed before it is looked up.
+    @Test(arguments: [nil, ""] as [String?])
+    func nothingTypedTakesTheManagedKeysPassphrase(typed: String?) throws {
+        let (keys, secrets, dir, encrypted, _) = try makeKeys()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for keyPath in [encrypted, "  \(encrypted)\n"] {
+            let resolved = LoginResolver.fallingBackToManagedKeyPassphrase(
+                login(keyPath: keyPath, secret: typed), keys: keys, secrets: secrets)
+            let takesManaged = resolved.secret == Self.managedPassphrase
+            #expect(takesManaged, "nothing typed did not take the managed key's passphrase")
+        }
+    }
+
+    @Test(arguments: [StoredSession.AuthKind.password, .agent])
+    func aNonKeyLoginIsUnchanged(authKind: StoredSession.AuthKind) throws {
+        let (keys, secrets, dir, encrypted, _) = try makeKeys()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let input = login(keyPath: encrypted, secret: nil, authKind: authKind)
+        let unchanged = LoginResolver.fallingBackToManagedKeyPassphrase(
+            input, keys: keys, secrets: secrets) == input
+        #expect(unchanged)
+    }
+
     // MARK: - The fallback reaches the jump config
 
     @Test func aJumpBoundToASetWithAnEmptySlotDialsWithTheManagedKeysPassphrase() throws {
