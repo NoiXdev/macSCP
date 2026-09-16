@@ -135,7 +135,8 @@ public struct EnvironmentSecretSource: SecretSource {
 
 /// Adapts a `SecretStore` (the Keychain in production) to `SecretSource`, so
 /// the CLI's staged chain can fall through to it exactly like the App does —
-/// the workstation default, last in line (M20).
+/// the workstation default, after the explicit sources (M20); only a managed
+/// key's own slot follows it, for a private-key session.
 public struct KeychainSecretSource: SecretSource {
     public let label = "keychain"
     private let store: any SecretStore
@@ -155,7 +156,10 @@ public struct KeychainSecretSource: SecretSource {
 /// S3-conventional `AWS_SECRET_ACCESS_KEY` for an S3 session, so existing
 /// pipelines don't have to relearn a name; `MACSCP_PASSWORD` for SSH, the
 /// name the M1 driver already used); the Keychain is the workstation
-/// default, last in line. `SecretResolver` is what actually enforces "empty
+/// default, last in line — followed, for an SSH private-key session only, by
+/// the passphrase slot of the managed key its `keyPath` names
+/// (`ManagedKeyPassphraseSecretSource`, read-only; `keyStore` is the app's
+/// managed-key store). `SecretResolver` is what actually enforces "empty
 /// means did not deliver" and "a throwing source aborts the whole attempt"
 /// — this function only has to get the ORDER right; WHICH variable and
 /// WHETHER a secret is needed at all are the backend's own answers since
@@ -180,7 +184,8 @@ public struct KeychainSecretSource: SecretSource {
 public func secretSources(
     for session: StoredSession,
     passwordCommand: String?,
-    keychainStore: any SecretStore = KeychainSecretStore()
+    keychainStore: any SecretStore = KeychainSecretStore(),
+    keyStore: ManagedKeyStore = ManagedKeyStore(directory: SessionStore.defaultDirectory)
 ) -> [any SecretSource] {
     let descriptor = BackendDescriptor.descriptor(for: session.kind)
     // Read through the BACKEND'S OWN adapter, never a shared one: SSH's
@@ -196,7 +201,7 @@ public func secretSources(
     if let variableName = descriptor.secretEnvironmentVariable {
         sources.append(EnvironmentSecretSource(variableName: variableName))
     }
-    // Last resort, and the comfortable one at a workstation: the very same
+    // The comfortable source at a workstation: the very same
     // keychain items the app writes. macOS asks the user for consent the
     // first time THIS binary reads an item the app created; answering
     // "Always Allow" puts the CLI on that item's ACL permanently, which is
@@ -205,6 +210,19 @@ public func secretSources(
     // shipped, Developer-ID-signed binary keeps it across invocations while
     // a locally rebuilt, ad-hoc-signed one has to be confirmed again.
     sources.append(KeychainSecretSource(store: keychainStore))
+    // After the session's own slot, for a private-key session only: a key the
+    // app manages keeps its passphrase under the KEY's id, and a session
+    // using it carries no copy of its own when that slot holds one (the
+    // App's rule, `ContentView.convertedKeyImported(_:for:)`). The same last
+    // link, and the same order, as the forwarding chain
+    // (`TunnelSecretSources.chain`). Read-only, like the link above.
+    if session.ssh?.authKind == .privateKey, let keyPath = session.ssh?.keyPath {
+        let trimmed = keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            sources.append(
+                ManagedKeyPassphraseSecretSource(keyPath: trimmed, keys: keyStore, secrets: keychainStore))
+        }
+    }
     return sources
 }
 

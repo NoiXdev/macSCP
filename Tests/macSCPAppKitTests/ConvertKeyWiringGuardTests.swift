@@ -830,7 +830,8 @@ struct ConvertKeyWiringGuardTests {
         message: String = "Text(String(format: L10n.string(\"connection.convertKey.repoint.message %lld %@\", \"N\"), request.usageCount, request.key.name))",
         confirmAction: String = "repointLoginSet(request)",
         attemptAction: String = "convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)",
-        setter: String = "if !isPresented { setRepointRequest = nil; setRepointDialogArmed = false }"
+        setter: String = "if !isPresented { setRepointRequest = nil; setRepointDialogArmed = false }",
+        extraButton: String = ""
     ) -> String {
         """
         func sheets() -> some View {
@@ -860,6 +861,7 @@ struct ConvertKeyWiringGuardTests {
                 Button(L10n.string("connection.convertKey.repoint.thisAttempt", "Only"), role: .cancel) {
                     \(attemptAction)
                 }
+                \(extraButton)
             } message: { request in
                 \(message)
             }
@@ -908,6 +910,24 @@ struct ConvertKeyWiringGuardTests {
         #expect(Self.dialogViolations(dialog).isEmpty == false, """
             swapping the two buttons' actions passed the pairing — Escape would then rewrite \
             the shared login set.
+            """)
+    }
+
+    /// The review's third button (Task 2 fix round 2): a check that looks
+    /// only at the two buttons it knows by key passes a third that reaches
+    /// the shared-set rewrite under a key of its own.
+    @Test("a third button is reported, whatever it calls",
+          arguments: [
+            "Button(L10n.string(\"connection.convertKey.repoint.extra\", \"Extra\")) { repointLoginSet(request) }",
+            "Button(L10n.string(\"connection.convertKey.repoint.extra\", \"Extra\")) { dismissConnectFailure(request.tab) }",
+          ])
+    func theDialogScannerSeesAThirdButton(_ extraButton: String) throws {
+        let dialog = try Self.dialog(
+            boundTo: "setRepointRequest", in: Self.dialogFixture(extraButton: extraButton))
+        #expect(dialog.buttonSpans.count == 3, "the scan did not read the third button")
+        #expect(Self.dialogViolations(dialog).isEmpty == false, """
+            a third button in the login-set question passed the pairing — the dialog's button \
+            set is not bounded, so an extra way to rewrite the shared set goes unseen.
             """)
     }
 
@@ -1152,10 +1172,29 @@ struct ConvertKeyWiringGuardTests {
     /// cancel button) and not on "Update login set"; the setter must clear
     /// the request and run neither handler; and the request must reach the
     /// buttons through `presenting:`.
+    ///
+    /// The button SET is bounded too (Task 2 fix round 2): exactly two
+    /// `Button(` spans, whose keys are exactly the two above, and
+    /// `repointLoginSet(` exactly once in the whole buttons closure. Checking
+    /// only the buttons named by key passed a third button with a key of its
+    /// own that called the set rewrite.
     private static func dialogViolations(_ dialog: Dialog) -> [String] {
         var violations: [String] = []
         let confirm = dialog.buttonSpans.filter { $0.key == "connection.convertKey.repoint.confirm" }
         let attempt = dialog.buttonSpans.filter { $0.key == "connection.convertKey.repoint.thisAttempt" }
+        let expectedKeys: Set<String?> = [
+            "connection.convertKey.repoint.confirm", "connection.convertKey.repoint.thisAttempt",
+        ]
+        if dialog.buttonSpans.count != 2 {
+            violations.append("\(dialog.buttonSpans.count) buttons, not 2")
+        }
+        if Set(dialog.buttonSpans.map(\.key)) != expectedKeys {
+            violations.append("button keys \(dialog.buttonSpans.map(\.key)) are not exactly confirm and thisAttempt")
+        }
+        let rewrites = occurrences(of: "repointLoginSet(", in: dialog.buttons)
+        if rewrites != 1 {
+            violations.append("repointLoginSet( occurs \(rewrites) times in the buttons closure, not once")
+        }
         if confirm.count != 1 { violations.append("\(confirm.count) Update-login-set buttons") }
         if attempt.count != 1 { violations.append("\(attempt.count) This-attempt-only buttons") }
         for button in confirm {

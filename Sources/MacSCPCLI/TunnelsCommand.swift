@@ -11,10 +11,11 @@ import macSCPCore
 /// (`TunnelStartCommand.swift`): it dials, so it declares `GlobalOptions`
 /// where the four below declare none, and it resolves the session's secret
 /// the way every dialling command in this tool does — `--password-command`,
-/// then the environment variable, then the keychain entry the app stored
-/// (`secretSources(for:passwordCommand:)`, whose order is Core's). That
-/// last source is READ and never written: no verb of this tool puts a
-/// secret in the keychain.
+/// then the environment variable, then the keychain entry the app stored,
+/// then, for a private-key session, the passphrase the app stored for a key
+/// it manages (`secretSources(for:passwordCommand:)`, whose order is Core's).
+/// Both keychain sources are READ and never written: no verb of this tool
+/// puts a secret in the keychain.
 ///
 /// `list` is the DEFAULT subcommand, the same choice `SessionsCommand` made
 /// and for a weaker reason: no script can have been written against
@@ -41,7 +42,8 @@ struct TunnelsCommand: AsyncParsableCommand {
             Only start opens a connection, and it does so in this process, \
             for as long as it runs: it dials with the session's own login, \
             resolving its secret from --password-command, then the \
-            environment, then the keychain entry the app saved. The other \
+            environment, then the keychain entry the app saved, then the \
+            passphrase the app saved for a key it manages. The other \
             verbs read and write nothing but the two stores.
             """,
         subcommands: [

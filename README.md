@@ -252,8 +252,9 @@ order, stopping at the first one that answers: an explicit
 `--password-command <cmd>` (the command's own stdout, trimmed); an
 environment variable (`MACSCP_PASSWORD` for an SSH or WebDAV session,
 `AWS_SECRET_ACCESS_KEY` for an S3 one); the keychain, same as the app
-itself uses. A session authenticating through an SSH agent needs none of
-these — the agent supplies the key.
+itself uses; and, for a session signing in with a key the app manages,
+the passphrase the app stored for that key. A session authenticating
+through an SSH agent needs none of these — the agent supplies the key.
 
 **The keychain prompt.** The CLI reads the very same keychain items the
 app writes, and macOS asks your permission per item the first time a

@@ -15,10 +15,11 @@ import macSCPCore
 /// in its own file. Everything it decides about the connection is decided by
 /// the same functions `ls` uses: the secret chain is
 /// `secretChain(for:options:)` — `--password-command`, then the environment
-/// variable, then the keychain entry the app stored, read and never written
-/// — and the host-key question goes to the shared decider builder, so
-/// `--accept-new`/`--non-interactive` mean here exactly what they mean
-/// there. `CLITunnelStartDeciderGuardTests` walks that second claim out of
+/// variable, then the keychain entry the app stored, then a managed key's
+/// stored passphrase, both read and never written — and the host-key
+/// question goes to the shared decider builder, so
+/// `--accept-new`/`--non-interactive` mean here exactly what they mean there.
+/// `CLITunnelStartDeciderGuardTests` walks that second claim out of
 /// `LsCommand.swift` rather than trusting this sentence.
 ///
 /// What it prints, what it exits with and the loop that holds it open are
@@ -135,7 +136,7 @@ struct TunnelStartCommand: AsyncParsableCommand {
     ///    key's passphrase for a key session) and may prompt in a sheet;
     ///    this one walks the command line's chain
     ///    (`--password-command`, the environment variable, then that same
-    ///    keychain item, read-only).
+    ///    keychain item and that same managed key passphrase, read-only).
     /// 2. **The host-key decider.** The app's may prompt in a sheet; this
     ///    one asks on the terminal, and refuses under `--non-interactive`.
     /// 3. **The connect timeout.** This one names

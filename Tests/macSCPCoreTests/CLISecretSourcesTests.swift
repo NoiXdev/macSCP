@@ -139,7 +139,9 @@ struct KeychainSecretSourceTests {
 }
 
 /// Pins the composition the CLI relies on: the FIXED source order
-/// (`--password-command` → environment variable → Keychain) and the
+/// (`--password-command` → environment variable → Keychain, and for a
+/// private-key session the managed key's slot after that —
+/// `SecretSourcesManagedKeyTests` below) and the
 /// agent-auth guard (an SSH session authenticating via the local ssh-agent
 /// needs no secret at all, so the chain is empty). This used to live in
 /// `Sources/MacSCPCLI/SessionConnecting.swift`, a target with no test
@@ -344,5 +346,147 @@ struct ChainedSecretSourceTests {
         #expect(firstIsTheSecret)
         #expect(secondIsTheSecret)
         #expect(source.callCount == 2, "a second session id was answered from the wrong memo")
+    }
+}
+
+/// The CLI chain's last link for a key the app manages (Task 2 fix round 2):
+/// a manual private-key session whose own slot was dropped, because the
+/// managed key's slot holds the passphrase, must still resolve on the
+/// command line — the App's form and the forwarding chain already read that
+/// slot.
+///
+/// The values are resolved with the ENVIRONMENT source filtered out by its
+/// label: `secretSources` builds it over the real process environment, and a
+/// `MACSCP_PASSWORD` set on the machine running the suite would otherwise
+/// answer first. The order itself is pinned on labels, environment included.
+///
+/// No secret value is written into an expectation (CLAUDE.md, "A value a
+/// test must not leak has two exits"): named constants, `Bool`s computed first.
+@Suite("secretSources — a managed key's own passphrase")
+struct SecretSourcesManagedKeyTests {
+    private static let keyPassphrase = "fixture-key-passphrase-not-a-real-secret"
+    private static let sessionSecret = "fixture-session-secret-not-a-real-secret"
+    private static let managedLabel = "managed key passphrase"
+
+    /// Records every slot id it is asked for, so a case can show a slot was
+    /// never read.
+    private final class RecordingSecretStore: SecretStore, @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [UUID: String] = [:]
+        private var reads: [UUID] = []
+
+        var readIDs: [UUID] { lock.withLock { reads } }
+
+        func savePassword(_ password: String, for sessionID: UUID) throws {
+            lock.withLock { storage[sessionID] = password }
+        }
+
+        func password(for sessionID: UUID) throws -> String? {
+            lock.withLock {
+                reads.append(sessionID)
+                return storage[sessionID]
+            }
+        }
+
+        func deletePassword(for sessionID: UUID) throws {
+            lock.withLock { storage[sessionID] = nil }
+        }
+    }
+
+    private struct Rig {
+        let directory: URL
+        let keys: ManagedKeyStore
+        let secrets = RecordingSecretStore()
+        let keyID: UUID
+        let managedPath: String
+
+        init() throws {
+            directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cli-managed-key-\(UUID().uuidString)")
+            keys = ManagedKeyStore(directory: directory)
+            let key = ManagedKey(
+                name: "cli key", comment: "", type: .ed25519, fingerprint: "SHA256:cli-test",
+                publicKeyOpenSSH: "ssh-ed25519 AAAAclitest", createdAt: Date(),
+                hasPassphrase: true, fileName: "cli-test-key")
+            try keys.add(key)
+            keyID = key.id
+            managedPath = keys.keyDirectory.appendingPathComponent("cli-test-key")
+                .path(percentEncoded: false)
+        }
+
+        func tearDown() { try? FileManager.default.removeItem(at: directory) }
+
+        func session(authKind: StoredSession.AuthKind, keyPath: String?) -> StoredSession {
+            StoredSession(
+                name: "web", kind: .ssh,
+                ssh: StoredSSHConfig(
+                    host: "example.invalid", username: "tester", authKind: authKind,
+                    keyPath: keyPath))
+        }
+
+        func resolve(_ session: StoredSession) throws -> ResolvedSecret? {
+            let chain = secretSources(
+                for: session, passwordCommand: nil, keychainStore: secrets, keyStore: keys)
+                .filter { !$0.label.hasPrefix("environment variable") }
+            return try SecretResolver(sources: chain).resolve(for: session.id)
+        }
+    }
+
+    @Test func aPrivateKeySessionsChainEndsWithTheManagedKeysSlot() throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let sources = secretSources(
+            for: rig.session(authKind: .privateKey, keyPath: rig.managedPath),
+            passwordCommand: "echo x", keychainStore: rig.secrets, keyStore: rig.keys)
+        #expect(sources.map(\.label) == [
+            "--password-command", "environment variable MACSCP_PASSWORD", "keychain", Self.managedLabel,
+        ])
+    }
+
+    @Test func theSessionsOwnSlotAnswersFirst() throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let session = rig.session(authKind: .privateKey, keyPath: rig.managedPath)
+        try rig.secrets.savePassword(Self.sessionSecret, for: session.id)
+        try rig.secrets.savePassword(Self.keyPassphrase, for: rig.keyID)
+        let resolved = try rig.resolve(session)
+        let isTheSessionSecret = resolved?.value == Self.sessionSecret
+        #expect(isTheSessionSecret, "the session's own slot did not win")
+        #expect(resolved?.sourceLabel == "keychain")
+    }
+
+    @Test func aDroppedSessionSlotFallsBackToTheManagedKeysSlot() throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let session = rig.session(authKind: .privateKey, keyPath: rig.managedPath)
+        try rig.secrets.savePassword(Self.keyPassphrase, for: rig.keyID)
+        let resolved = try rig.resolve(session)
+        let isTheKeyPassphrase = resolved?.value == Self.keyPassphrase
+        #expect(isTheKeyPassphrase, "the managed key's stored passphrase did not reach the CLI dial")
+        #expect(resolved?.sourceLabel == Self.managedLabel)
+    }
+
+    @Test func aKeyTheAppDoesNotManageResolvesNothing() throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        try rig.secrets.savePassword(Self.keyPassphrase, for: rig.keyID)
+        let session = rig.session(authKind: .privateKey, keyPath: "/tmp/not-a-managed-key")
+        let resolvedNothing = try rig.resolve(session) == nil
+        #expect(resolvedNothing, "an unmanaged key path resolved a secret")
+    }
+
+    @Test func aPasswordSessionNeverConsultsTheManagedKey() throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        try rig.secrets.savePassword(Self.keyPassphrase, for: rig.keyID)
+        // A password session carrying a stale key path must still not reach it.
+        let session = rig.session(authKind: .password, keyPath: rig.managedPath)
+        let labels = secretSources(
+            for: session, passwordCommand: nil, keychainStore: rig.secrets, keyStore: rig.keys)
+            .map(\.label)
+        #expect(labels.contains(Self.managedLabel) == false)
+        let resolvedNothing = try rig.resolve(session) == nil
+        #expect(resolvedNothing, "a password session resolved the managed key's passphrase")
+        #expect(rig.secrets.readIDs.contains(rig.keyID) == false, "the managed key's slot was read")
     }
 }

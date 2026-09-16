@@ -662,12 +662,13 @@ final class TunnelManager {
     /// **The secret chain is `TunnelSecretSources.chain(for:keys:secrets:)`,
     /// not `secretSources(for:passwordCommand:)`** (fix round 1). The latter
     /// is the command line's: it consults `MACSCP_PASSWORD` BEFORE the
-    /// Keychain, which must not decide a GUI dial, and it reaches only
-    /// session-keyed slots — so a session using a managed private key, whose
-    /// passphrase is stored under the KEY's id, resolved to nothing and the
-    /// forwarding failed authentication while the same session's tab
-    /// connected. See that type for what the chain is and why it is in that
-    /// order.
+    /// Keychain, which must not decide a GUI dial. At fix round 1 it also
+    /// reached only session-keyed slots — so a session using a managed
+    /// private key, whose passphrase is stored under the KEY's id, resolved
+    /// to nothing and the forwarding failed authentication while the same
+    /// session's tab connected; both chains now end in the same
+    /// `ManagedKeyPassphraseSecretSource`. See that type for what the chain
+    /// is and why it is in that order.
     ///
     /// No secret is stored, logged or carried on the profile; it is resolved
     /// per dial and handed straight to the connect.

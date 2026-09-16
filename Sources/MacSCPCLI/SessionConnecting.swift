@@ -63,8 +63,10 @@ func resolveSession(
 
 /// The chain of secret sources this tool walks for one session, in
 /// precedence order: `--password-command` first when one was given, then
-/// the backend's secret environment variable, then — last, and read-only —
-/// the very keychain item the app writes. That order is
+/// the backend's secret environment variable, then — read-only — the very
+/// keychain item the app writes, and last, for an SSH private-key session
+/// only, the passphrase slot of the managed key its key path names (also
+/// read-only). That order is
 /// `secretSources(for:passwordCommand:keychainStore:)`'s
 /// (`macSCPCore/Sessions/CLISecretSources.swift`), not a second statement
 /// of it: the function decides, including whether a kind takes a secret at

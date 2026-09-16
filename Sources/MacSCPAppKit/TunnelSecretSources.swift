@@ -1,52 +1,20 @@
 import Foundation
 import macSCPCore
 
-/// A managed key's own passphrase slot, as a `SecretSource`.
-///
-/// The Keychain item is keyed by the KEY's id, not by the session's — see
-/// `ManagedKeyPassphrase.resolve(keyPath:typed:store:secrets:)`, which is
-/// what this wraps — so a session using a managed private key has its
-/// passphrase in a slot no session-keyed lookup can reach. That is the whole
-/// reason this type exists: `KeychainSecretSource` asks for
-/// `sessionID.uuidString` and comes back empty for exactly those sessions.
-///
-/// `sessionID` is ignored, deliberately: what identifies the secret here is
-/// the key path the session points at.
-struct ManagedKeyPassphraseSecretSource: SecretSource {
-    let label = "managed key passphrase"
-
-    private let keyPath: String
-    private let keys: ManagedKeyStore
-    private let secrets: any SecretStore
-
-    init(keyPath: String, keys: ManagedKeyStore, secrets: any SecretStore) {
-        self.keyPath = keyPath
-        self.keys = keys
-        self.secrets = secrets
-    }
-
-    /// `typed: ""` because nobody typed anything: a forwarding dials without
-    /// a form, so the stored passphrase is the only one there is. An
-    /// unencrypted or unmanaged key answers `""`, which `SecretResolver`
-    /// treats as no answer and walks past.
-    func secret(for sessionID: UUID) throws -> String? {
-        ManagedKeyPassphrase.resolve(
-            keyPath: keyPath, typed: "", store: keys, secrets: secrets)
-    }
-}
-
 /// The secret chain a FORWARDING's dial resolves through.
 ///
 /// **Not `secretSources(for:passwordCommand:)`.** That function is the
 /// command line's chain and says so: it puts `EnvironmentSecretSource`
 /// (`MACSCP_PASSWORD`) ahead of the Keychain, which is right for a cron job
 /// and wrong for a GUI — a variable in the environment the app happened to
-/// be launched from would silently outrank the password the user saved. And
-/// it reaches only session-keyed Keychain slots, so a session using a
-/// MANAGED private key resolved to nothing at all: the tab connected (the
-/// window's own path resolves the key's passphrase) and the forwarding
-/// failed authentication, for a session whose only difference was which code
-/// asked.
+/// be launched from would silently outrank the password the user saved.
+/// When this chain was written, that function also reached only
+/// session-keyed Keychain slots, so a session using a MANAGED private key
+/// resolved to nothing at all: the tab connected (the window's own path
+/// resolves the key's passphrase) and the forwarding failed authentication.
+/// Since Task 2 fix round 2 of the 2026-09-16 plan both chains end in the
+/// same `ManagedKeyPassphraseSecretSource` (Core); the environment is still
+/// the difference.
 ///
 /// What the App's own connect path does, and what this reproduces:
 /// `ContentView.fillForm(_:from:)` fills the secret from the session's
