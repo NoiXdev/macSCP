@@ -125,9 +125,9 @@
             <key>NSStringFormatValueTypeKey</key>
             <string>lld</string>
             <key>one</key>
-            <string>Ce jeu d’identifiants est utilisé par une session. Sa clé pointera vers la clé convertie « %2$@ ».</string>
+            <string>Ce jeu d’identifiants est utilisé par une session, directement ou pour son hôte relais. Sa clé pointera vers la clé convertie « %2$@ ».</string>
             <key>other</key>
-            <string>Ce jeu d’identifiants est utilisé par %1$lld sessions. Sa clé pointera vers la clé convertie « %2$@ » pour toutes.</string>
+            <string>Ce jeu d’identifiants est utilisé par %1$lld sessions, directement ou pour leur hôte relais. Sa clé pointera vers la clé convertie « %2$@ » pour toutes.</string>
         </dict>
     </dict>
 </dict>

@@ -141,13 +141,13 @@
             <key>NSStringFormatValueTypeKey</key>
             <string>lld</string>
             <key>one</key>
-            <string>Ten zestaw logowania jest używany przez jedną sesję. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@”.</string>
+            <string>Ten zestaw logowania jest używany przez jedną sesję, bezpośrednio lub dla jej hosta pośredniczącego. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@”.</string>
             <key>few</key>
-            <string>Ten zestaw logowania jest używany przez %1$lld sesje. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@” dla wszystkich z nich.</string>
+            <string>Ten zestaw logowania jest używany przez %1$lld sesje, bezpośrednio lub dla ich hosta pośredniczącego. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@” dla wszystkich z nich.</string>
             <key>many</key>
-            <string>Ten zestaw logowania jest używany przez %1$lld sesji. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@” dla wszystkich z nich.</string>
+            <string>Ten zestaw logowania jest używany przez %1$lld sesji, bezpośrednio lub dla ich hosta pośredniczącego. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@” dla wszystkich z nich.</string>
             <key>other</key>
-            <string>Ten zestaw logowania jest używany przez %1$lld sesji. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@” dla wszystkich z nich.</string>
+            <string>Ten zestaw logowania jest używany przez %1$lld sesji, bezpośrednio lub dla ich hosta pośredniczącego. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@” dla wszystkich z nich.</string>
         </dict>
     </dict>
 </dict>

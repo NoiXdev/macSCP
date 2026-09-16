@@ -56,6 +56,17 @@ enum LoginSetRepointPlan {
         return set
     }
 
+    /// The name the dialog asks about: the set's name as it stands in `sets`
+    /// NOW, through the same re-read `currentSet(id:in:)` makes for "Update
+    /// login set" (technical backlog of 2026-09-16, Task 5) — a set renamed
+    /// in another window while the question is open is asked about under the
+    /// name it will be saved under. The name captured with the request only
+    /// when that re-read finds nothing, which is exactly the case "Update
+    /// login set" answers with the attempt-only route and writes no set.
+    static func currentName(of request: LoginSetRepointRequest, in sets: [LoginSet]) -> String {
+        currentSet(id: request.set.id, in: sets)?.name ?? request.set.name
+    }
+
     /// The one kind of set a converted key can be written into.
     private static func qualifies(_ set: LoginSet) -> Bool {
         set.kind == .ssh && set.authKind == .privateKey

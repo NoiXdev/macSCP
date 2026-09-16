@@ -137,6 +137,31 @@ struct LoginSetRepointPlanTests {
         #expect(LoginSetRepointPlan.currentSet(id: captured.id, in: [edited]) == nil)
     }
 
+    /// The dialog's title names the set as it stands NOW (technical backlog
+    /// of 2026-09-16, Task 5), the same fresh read "Update login set" writes:
+    /// a set renamed in another window while the question is open is asked
+    /// about under the name it is saved under.
+    @Test func theDialogNamesTheSetAsItStandsNow() throws {
+        let captured = LoginSet(name: "team", username: "u", authKind: .privateKey, keyPath: "/old")
+        let made = try #require(request(session: session(boundTo: captured.id), sets: [captured]))
+        var renamed = captured
+        renamed.name = "renamed-meanwhile"
+        #expect(LoginSetRepointPlan.currentName(of: made, in: [renamed]) == "renamed-meanwhile")
+    }
+
+    /// Only when the re-read finds nothing does the captured name stand in —
+    /// and that set is not written: "Update login set" takes the attempt-only
+    /// route for it.
+    @Test func aSetThatIsNoLongerCurrentIsNamedAsCaptured() throws {
+        let captured = LoginSet(name: "team", username: "u", authKind: .privateKey, keyPath: "/old")
+        let made = try #require(request(session: session(boundTo: captured.id), sets: [captured]))
+        var retyped = captured
+        retyped.name = "retyped-meanwhile"
+        retyped.authKind = .password
+        #expect(LoginSetRepointPlan.currentName(of: made, in: []) == "team")
+        #expect(LoginSetRepointPlan.currentName(of: made, in: [retyped]) == "team")
+    }
+
     // MARK: - The dialog's text, in every catalog
 
     nonisolated static let languages = ["en", "de", "fr", "pl"]
@@ -144,6 +169,11 @@ struct LoginSetRepointPlanTests {
     static let messageKey = "connection.convertKey.repoint.message %lld %@"
     static let confirmKey = "connection.convertKey.repoint.confirm"
     static let thisAttemptKey = "connection.convertKey.repoint.thisAttempt"
+    /// Each catalog's own word for the jump host, as its connection form's
+    /// `form.jump.label` spells it (Polish in the genitive the sentence needs).
+    static let jumpHostTerms = [
+        "en": "jump host", "de": "Jump-Host", "fr": "hôte relais", "pl": "hosta pośredniczącego",
+    ]
 
     private static func bundle(forLanguage language: String) -> Bundle? {
         guard let path = L10n.bundle.path(forResource: language, ofType: "lproj") else { return nil }
@@ -167,6 +197,14 @@ struct LoginSetRepointPlanTests {
         for (count, text) in zip(counts, texts) {
             #expect(text.contains(keyName), "\(language), \(count): \(text)")
             #expect(text.contains("%") == false, "\(language), \(count): \(text)")
+        }
+        // The count covers sessions that use the set directly AND sessions
+        // whose jump host uses it (`SessionListViewModel.sessionsUsing(setID:)`),
+        // and the wording says so in every form (technical backlog of
+        // 2026-09-16, Task 5).
+        let jumpTerm = try #require(Self.jumpHostTerms[language])
+        for (count, text) in zip(counts, texts) {
+            #expect(text.contains(jumpTerm), "\(language), \(count) does not name the jump host: \(text)")
         }
         let wordings = Set(texts.map { $0.filter { !$0.isNumber } })
         #expect(wordings.count == counts.count, "\(language): \(texts)")

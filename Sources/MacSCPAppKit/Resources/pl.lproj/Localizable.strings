@@ -1068,7 +1068,7 @@
 "connection.failed.convertKey" = "Konwertuj klucz…";
 "connection.failed.copyCommand" = "Kopiuj polecenie";
 "connection.convertKey.repoint.title %@" = "Zaktualizować zestaw logowania „%@”?";
-"connection.convertKey.repoint.message %lld %@" = "Ten zestaw logowania jest używany przez %1$lld sesji. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@” dla wszystkich z nich.";
+"connection.convertKey.repoint.message %lld %@" = "Ten zestaw logowania jest używany przez %1$lld sesji, bezpośrednio lub dla ich hosta pośredniczącego. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@” dla wszystkich z nich.";
 "connection.convertKey.repoint.confirm" = "Zaktualizuj zestaw logowania";
 "connection.convertKey.repoint.thisAttempt" = "Tylko ta próba";
 

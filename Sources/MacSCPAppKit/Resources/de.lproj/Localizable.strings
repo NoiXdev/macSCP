@@ -1066,7 +1066,7 @@
 "connection.failed.convertKey" = "Schlüssel konvertieren…";
 "connection.failed.copyCommand" = "Befehl kopieren";
 "connection.convertKey.repoint.title %@" = "Login-Set „%@“ aktualisieren?";
-"connection.convertKey.repoint.message %lld %@" = "Dieses Login-Set wird von %1$lld Sitzungen verwendet. Sein Schlüssel zeigt dann für alle auf den konvertierten Schlüssel „%2$@“.";
+"connection.convertKey.repoint.message %lld %@" = "Dieses Login-Set wird von %1$lld Sitzungen verwendet, direkt oder für ihren Jump-Host. Sein Schlüssel zeigt dann für alle auf den konvertierten Schlüssel „%2$@“.";
 "connection.convertKey.repoint.confirm" = "Login-Set aktualisieren";
 "connection.convertKey.repoint.thisAttempt" = "Nur für diesen Versuch";
 

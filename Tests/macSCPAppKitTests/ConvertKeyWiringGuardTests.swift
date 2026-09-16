@@ -55,7 +55,9 @@ import Testing
 /// 8. "This attempt only" hands the tab back to the form
 ///    (`dismissConnectFailure(`) and writes no set.
 /// 9. The window presents that question as a `.confirmationDialog(` bound to
-///    `setRepointRequest`, opened only once the conversion sheet has closed
+///    `setRepointRequest`, titled with the set's name as it stands now
+///    (`LoginSetRepointPlan.currentName(`, never the captured `.set.name`),
+///    opened only once the conversion sheet has closed
 ///    and disarmed when a new conversion starts, whose "Update login set"
 ///    button alone reaches claim 7 and whose cancel-role "This attempt only"
 ///    button alone reaches claim 8, whose `isPresented:` setter runs neither,
@@ -661,6 +663,18 @@ struct ConvertKeyWiringGuardTests {
         #expect(violations.isEmpty, """
             the login-set question's buttons, setter or presentation are wired wrong: \
             \(violations)
+            """)
+        // The title names the set as it stands NOW (technical backlog of
+        // 2026-09-16, Task 5): the positive names the plan's fresh read, the
+        // negative the captured copy, over the same argument list.
+        #expect(dialog.arguments.contains("LoginSetRepointPlan.currentName("), """
+            the login-set question's title no longer reads `LoginSetRepointPlan.currentName(` \
+            — a set renamed in another window while the question is open is asked about \
+            under its old name and updated under its new one.
+            """)
+        #expect(!dialog.arguments.contains(".set.name"), """
+            the login-set question's title reads the set name captured with the request \
+            (`.set.name`) instead of the fresh read.
             """)
         #expect(dialog.arguments.contains("setRepointDialogArmed"), """
             the login-set question's presentation no longer waits for `setRepointDialogArmed` \

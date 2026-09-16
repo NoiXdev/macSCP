@@ -183,12 +183,16 @@ extension ContentView {
         // reaches each button through `presenting:`, and each button acts on
         // the request it was handed; "This attempt only" carries the cancel
         // role, so Escape gives that answer. The `isPresented:` setter only
-        // clears state and runs no handler (Task 2 fix round 1).
+        // clears state and runs no handler (Task 2 fix round 1). The title
+        // names the set as it stands now, through the plan's fresh read
+        // (technical backlog of 2026-09-16, Task 5).
         .confirmationDialog(
             String(
                 format: L10n.string(
                     "connection.convertKey.repoint.title %@", "Update the login set “%@”?"),
-                setRepointRequest?.set.name ?? ""),
+                setRepointRequest.map {
+                    LoginSetRepointPlan.currentName(of: $0, in: sessionListViewModel.loginSets)
+                } ?? ""),
             isPresented: Binding(
                 get: { setRepointDialogArmed && setRepointRequest != nil },
                 set: { isPresented in
@@ -214,7 +218,7 @@ extension ContentView {
             Text(String(
                 format: L10n.string(
                     "connection.convertKey.repoint.message %lld %@",
-                    "This login set is used by %1$lld sessions. Its key will point to the converted key “%2$@” for all of them."),
+                    "This login set is used by %1$lld sessions, directly or as their jump host. Its key will point to the converted key “%2$@” for all of them."),
                 request.usageCount, request.key.name))
         }
         // The window's ONE forwarding sheet (fix round 1): the profile

@@ -125,9 +125,9 @@
             <key>NSStringFormatValueTypeKey</key>
             <string>lld</string>
             <key>one</key>
-            <string>This login set is used by one session. Its key will point to the converted key “%2$@”.</string>
+            <string>This login set is used by one session, directly or as its jump host. Its key will point to the converted key “%2$@”.</string>
             <key>other</key>
-            <string>This login set is used by %1$lld sessions. Its key will point to the converted key “%2$@” for all of them.</string>
+            <string>This login set is used by %1$lld sessions, directly or as their jump host. Its key will point to the converted key “%2$@” for all of them.</string>
         </dict>
     </dict>
 </dict>
