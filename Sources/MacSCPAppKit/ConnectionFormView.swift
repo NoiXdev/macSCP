@@ -297,9 +297,12 @@ struct ConnectionFormView: View {
         case error(String)
     }
 
-    /// Resolves `viewModel.jumpSessionID` through the SAME
-    /// `SessionListViewModel.resolvedJump(for:)` the connect wiring uses
-    /// (`ContentView`), via a throwaway `StoredSession` whose only
+    /// Resolves `viewModel.jumpSessionID` through
+    /// `SessionListViewModel.resolvedJumpEndpoint(for:)` — the same resolver
+    /// and the same refusals as the connect wiring's `resolvedJump(for:)`
+    /// (`ContentView`), reading no Keychain item: this runs in `body`, on
+    /// every render, and shows no secret (technical backlog of 2026-09-16,
+    /// Task 5 fix round 1). Via a throwaway `StoredSession` whose only
     /// meaningful content is the jump spec's `sessionID` — nothing else
     /// about this synthetic session is ever read or persisted. `id` mirrors
     /// the session actually being edited (so self-reference/chain detection
@@ -312,7 +315,7 @@ struct ConnectionFormView: View {
             id: editingSessionID ?? UUID(), name: "",
             ssh: StoredSSHConfig(host: "", username: "", jump: spec))
         do {
-            guard let resolved = try sessionList.resolvedJump(for: synthetic) else { return nil }
+            guard let resolved = try sessionList.resolvedJumpEndpoint(for: synthetic) else { return nil }
             return .resolved(
                 "\(resolved.host):\(resolved.port) · \(resolved.login.username) · "
                     + shortAuthLabel(resolved.login.authKind))

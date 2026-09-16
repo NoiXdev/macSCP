@@ -1407,6 +1407,26 @@ public final class SessionListViewModel {
             keyPath: path, store: keys, secrets: secrets)) == true
     }
 
+    /// A session's jump host resolved for DISPLAY (fix round 1 of the
+    /// technical backlog's Task 5): host, port, user, auth kind and key path
+    /// exactly as `resolvedJump(for:)` resolves them, with the same refusals,
+    /// and `login.secret` always `nil` — no Keychain item is read at all,
+    /// neither the slot the hop is bound to nor the managed key's.
+    ///
+    /// For `ConnectionFormView.jumpSessionSummary`, which is computed in
+    /// `body` and so runs on every render: through `resolvedJump(for:)` each
+    /// keystroke read `managed_keys.json` and up to two Keychain items (and on
+    /// a re-signed build could raise a consent prompt) for a row that shows no
+    /// secret. The same resolver runs, handed a store that holds nothing;
+    /// every refusal it raises is decided before any read, so what the row
+    /// shows cannot differ from what the connect path resolves.
+    public func resolvedJumpEndpoint(for session: StoredSession) throws -> ResolvedJump? {
+        guard let jump = session.jump else { return nil }
+        return try LoginResolver.resolveJump(
+            spec: jump, sets: loginSets, secrets: NoSecretsStore(), sessions: sessions,
+            referencingSessionID: session.id)
+    }
+
     /// What subset of the sidebar an export covers.
     public enum ExportScope {
         case single(StoredSession)
@@ -2140,4 +2160,16 @@ public final class SessionListViewModel {
         reload()
         return result
     }
+}
+
+/// A `SecretStore` that holds nothing and is never written: every read answers
+/// `nil`, every write throws. Handed to a resolver whose secret the caller does
+/// not want (`SessionListViewModel.resolvedJumpEndpoint(for:)`), so the
+/// Keychain is not touched.
+private struct NoSecretsStore: SecretStore {
+    struct WriteRefused: Error {}
+
+    func savePassword(_ password: String, for sessionID: UUID) throws { throw WriteRefused() }
+    func password(for sessionID: UUID) throws -> String? { nil }
+    func deletePassword(for sessionID: UUID) throws { throw WriteRefused() }
 }
