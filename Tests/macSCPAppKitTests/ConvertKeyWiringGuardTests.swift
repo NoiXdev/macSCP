@@ -1104,6 +1104,8 @@ struct ConvertKeyWiringGuardTests {
         "guard !sessionListViewModel.saveLoginSet(set, secret: nil) else { return }",
         "guard sessionListViewModel.saveLoginSet(set, secret: nil) == false else { return }",
         "guard sessionListViewModel.saveLoginSet(set, secret: nil) else { print(set) }",
+        "guard sessionListViewModel.saveLoginSet(set, secret: nil) != true else { return }",
+        "guard canWrite, !sessionListViewModel.saveLoginSet(set, secret: nil) else { return }",
     ])
     func theSaveGateScannerReportsAnUngatedSave(save: String) throws {
         let body = try Self.strippedBody(after: "func repointLoginSet(", in: Self.repointFixture(save: save))
@@ -1329,9 +1331,9 @@ struct ConvertKeyWiringGuardTests {
     /// shape claim 7 requires is there (technical backlog of 2026-09-16,
     /// Task 5).
     ///
-    /// The gate is a `guard` whose condition calls `saveLoginSet(`
-    /// POSITIVELY — not preceded by `!`, not compared `== false` — and whose
-    /// `else` block contains a `return`. Everything else is measured against
+    /// The gate is a `guard` whose whole condition is the `saveLoginSet(`
+    /// call (`isExactlyTheSaveCall`) — nothing negating, comparing or
+    /// joining it — and whose `else` block contains a `return`. Everything else is measured against
     /// where that block ends: every `dropLoginSetSecret(` and every
     /// `retryConnect(` in the body must start after it. The positives sit in
     /// the same list: exactly one `saveLoginSet(` (a second, ungated save
@@ -1375,11 +1377,7 @@ struct ConvertKeyWiringGuardTests {
             else { return nil }
             let condition = String(body[keyword.upperBound..<elseKeyword.lowerBound])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard condition.contains("saveLoginSet("),
-                  condition.hasPrefix("!") == false,
-                  condition.contains("== false") == false,
-                  condition.contains("{") == false
-            else { continue }
+            guard condition.contains("saveLoginSet("), isExactlyTheSaveCall(condition) else { continue }
             guard let openBrace = body[elseKeyword.upperBound...].firstIndex(of: "{"),
                   let elseBlock = try? balancedSpan(from: openBrace, in: body),
                   elseBlock.contains("return")
@@ -1387,6 +1385,30 @@ struct ConvertKeyWiringGuardTests {
             return body.index(openBrace, offsetBy: elseBlock.count)
         }
         return nil
+    }
+
+    /// Whether a blanked `guard` condition is EXACTLY one `saveLoginSet(` call
+    /// expression — an optional receiver chain of identifiers and dots, the
+    /// call, and its balanced argument list ending the condition (fix round 1
+    /// of the technical backlog's Task 5). Anything else is refused as a
+    /// whole: a `!` before it, a comparison after it (`== false`, `!= true`),
+    /// or a second clause beside it (`guard canWrite, !…`) — a list of
+    /// forbidden spellings would keep missing the next one.
+    private static func isExactlyTheSaveCall(_ condition: String) -> Bool {
+        guard let call = condition.range(of: "saveLoginSet(") else { return false }
+        let receiver = condition[condition.startIndex..<call.lowerBound]
+        guard receiver.allSatisfy({ isIdentifierCharacter($0) || $0 == "." }) else { return false }
+        var depth = 0
+        var index = condition.index(before: call.upperBound)
+        while index < condition.endIndex {
+            if condition[index] == "(" { depth += 1 }
+            if condition[index] == ")" {
+                depth -= 1
+                if depth == 0 { return condition.index(after: index) == condition.endIndex }
+            }
+            index = condition.index(after: index)
+        }
+        return false
     }
 
     /// One `.confirmationDialog(` read out of a source file.
