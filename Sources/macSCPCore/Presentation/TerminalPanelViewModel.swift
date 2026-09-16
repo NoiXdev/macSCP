@@ -142,7 +142,11 @@ public final class TerminalPanelViewModel {
         cancelPendingSends()
         generation += 1
         let myGeneration = generation
-        openTask = Task {
+        // `[self]` spelled out: the read loop below captures `self` weakly,
+        // and Swift 6.4 warns when that differs from an implicit strong
+        // capture in the enclosing closure. The strong capture is the one
+        // this task always had; only its spelling changed.
+        openTask = Task { [self] in
             do {
                 let shell = try await openShell("xterm-256color", 80, 24)
                 // `shutdown()` may have run while the `await` above was in
