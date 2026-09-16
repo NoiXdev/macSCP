@@ -1387,6 +1387,26 @@ public final class SessionListViewModel {
         return resolved
     }
 
+    /// Whether an export may count a login with no secret of its own as
+    /// covered: an SSH private-key login whose managed key's own Keychain slot
+    /// holds the passphrase (technical backlog of 2026-09-16, Task 5). Such a
+    /// login carries no copy — the slot was dropped for the key's, or never
+    /// written (`SessionSecretPolicy.usesStoredManagedPassphrase`) — and is not
+    /// missing anything. The export still writes no passphrase for it.
+    ///
+    /// Probed with `try?`, `== true`: a store or Keychain that cannot answer
+    /// counts the login as missing, the answer a user can check, rather than
+    /// hiding a gap behind a count of zero.
+    private func managedKeyHoldsThePassphrase(
+        authKind: StoredSession.AuthKind?, keyPath: String?, kind: ConnectionKind
+    ) -> Bool {
+        guard kind == .ssh, authKind == .privateKey else { return false }
+        let path = (keyPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return false }
+        return (try? ManagedKeyPassphrase.hasStoredPassphrase(
+            keyPath: path, store: keys, secrets: secrets)) == true
+    }
+
     /// What subset of the sidebar an export covers.
     public enum ExportScope {
         case single(StoredSession)
@@ -1401,7 +1421,9 @@ public final class SessionListViewModel {
     /// only looked up when
     /// `includePasswords`; a missing keychain entry is omitted from the
     /// payload and counted in `missingPasswordCount` rather than aborting
-    /// the export.
+    /// the export — unless the login is a private key whose managed key's
+    /// own slot holds the passphrase (`managedKeyHoldsThePassphrase`), which
+    /// is covered and not counted.
     public func exportPayload(
         for scope: ExportScope, includeGroups: Bool, includePasswords: Bool
     ) -> (payload: SessionExportPayload, missingPasswordCount: Int) {
@@ -1462,7 +1484,10 @@ public final class SessionListViewModel {
             if includePasswords, needsSecret, session.kind != .s3,
                 session.kind != .webdav || session.webdav != nil {
                 password = resolved != nil ? resolved?.secret : self.password(for: session)
-                if password == nil {
+                if password == nil, !managedKeyHoldsThePassphrase(
+                    authKind: resolved?.authKind ?? session.ssh?.authKind,
+                    keyPath: resolved != nil ? resolved?.keyPath : session.ssh?.keyPath,
+                    kind: session.kind) {
                     missingPasswordCount += 1
                 }
             }
@@ -1540,7 +1565,8 @@ public final class SessionListViewModel {
                 jumpKeyPath = resolvedJump?.login.keyPath ?? jump.keyPath
                 if includePasswords, jumpAuthKind != .agent {
                     jumpPassword = resolvedJump?.login.secret
-                    if jumpPassword == nil {
+                    if jumpPassword == nil, !managedKeyHoldsThePassphrase(
+                        authKind: jumpAuthKind, keyPath: jumpKeyPath, kind: .ssh) {
                         missingPasswordCount += 1
                     }
                 }

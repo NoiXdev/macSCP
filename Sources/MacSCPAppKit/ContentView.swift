@@ -2990,8 +2990,9 @@ struct ContentView: View {
                     // `sessionID` too, but swallows the throw with `try?`
                     // and falls back to the spec's raw values, so the
                     // export writes no jump password and counts the jump
-                    // under its missing-password tally instead of
-                    // surfacing a refusal.
+                    // under its missing-password tally (unless the spec's
+                    // own key is a managed one whose slot holds the
+                    // passphrase) instead of surfacing a refusal.
                     //
                     // The raw fallback is what keeps the refusal
                     // meaningful on THIS path: it clears
