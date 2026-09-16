@@ -563,14 +563,26 @@ struct DiagnosticLogSharedSinkTests {
     /// `failed` (never a confirmation — the TOFU hard stop) and one of the
     /// four error types `DialSupport.reason(for:)` spells out, so the line
     /// proves the mapping ran rather than merely that something was
-    /// appended. The assertion stops before the fingerprints: what is being
-    /// pinned is the key and the mapper, not the sentence's tail.
+    /// appended.
+    ///
+    /// Pinned on the WHOLE line, host included, rather than a prefix
+    /// (maintainer decision, 2026-09-16, Task 1): the mismatch sentence no
+    /// longer has a fingerprint tail to stop short of, so there is nothing
+    /// left a prefix check would be avoiding. The two fingerprints below are
+    /// named `let`s, and their absence from the written line is checked as
+    /// Bools computed before the `#expect`s that read them (CLAUDE.md, "A
+    /// value a test must not leak has two exits") — even though these are
+    /// fixture strings, not real key material, the same discipline keeps a
+    /// future real fingerprint from being pasted into a failure message by
+    /// habit.
     @Test("TunnelRunner's failed line carries reason= through the audited mapper")
     func tunnelRunnerFailedLineCarriesAMappedReason() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
         defer { DiagnosticLog.shared.configure(level: .off) }
 
+        let expectedFingerprint = "SHA256:aaa"
+        let presentedFingerprint = "SHA256:bbb"
         let profile = TunnelProfile(
             sessionID: UUID(), name: "web-\(UUID().uuidString.prefix(8))",
             kind: .local(bind: "127.0.0.1", localPort: 8080, host: "internal", remotePort: 80),
@@ -579,7 +591,8 @@ struct DiagnosticLogSharedSinkTests {
         connections.failAttempts(
             [1],
             with: HostKeyError.mismatch(
-                host: "example.test", expected: "SHA256:aaa", presented: "SHA256:bbb"))
+                host: "example.test", expected: expectedFingerprint,
+                presented: presentedFingerprint))
         let runner = TunnelRunner(
             profile: profile, connect: connections.connect,
             runtimes: TunnelFakeRuntimes(boundPort: 8080),
@@ -597,7 +610,40 @@ struct DiagnosticLogSharedSinkTests {
         let contents = fileContents(ownFileURL(directory: logDirectory, fixedNow: fixedNow))
         #expect(
             contents.contains(
-                "[info] tunnel tunnel \(profile.name) failed reason=host key MISMATCH for"))
+                "[info] tunnel tunnel \(profile.name) failed reason=host key MISMATCH for "
+                    + "example.test: the presented key differs from the recorded one"))
+
+        let containsExpectedFingerprint = contents.contains(expectedFingerprint)
+        let containsPresentedFingerprint = contents.contains(presentedFingerprint)
+        #expect(containsExpectedFingerprint == false)
+        #expect(containsPresentedFingerprint == false)
+    }
+
+    /// The low-level pin behind the integration-level check above, direct on
+    /// `DialSupport.reason(for:)` itself rather than through the tunnel
+    /// runner and the log sink — so a future consumer of the mapper (Task
+    /// 1's Step 2 counts 19 call sites across the tree) is covered by a test
+    /// that does not also depend on `TunnelRunner`'s or `DiagnosticLog`'s own
+    /// plumbing staying exactly as it is today.
+    @Test("DialSupport.reason(for:) names the host, never either fingerprint, for a mismatch")
+    func dialSupportReasonNamesTheHostNeverTheFingerprintsForAMismatch() {
+        let expectedFingerprint = "SHA256:ccc"
+        let presentedFingerprint = "SHA256:ddd"
+
+        let sentence = DialSupport.reason(
+            for: HostKeyError.mismatch(
+                host: "rig.invalid", expected: expectedFingerprint,
+                presented: presentedFingerprint))
+
+        #expect(
+            sentence
+                == "host key MISMATCH for rig.invalid: the presented key differs from the recorded one"
+        )
+
+        let containsExpectedFingerprint = sentence.contains(expectedFingerprint)
+        let containsPresentedFingerprint = sentence.contains(presentedFingerprint)
+        #expect(containsExpectedFingerprint == false)
+        #expect(containsPresentedFingerprint == false)
     }
 
     /// The same key, for the failure a user actually has to act on: a local

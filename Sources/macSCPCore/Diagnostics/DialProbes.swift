@@ -208,8 +208,19 @@ public enum DialSupport {
         switch error {
         case let error as HostKeyError:
             switch error {
-            case .mismatch(let host, let expected, let presented):
-                return "host key MISMATCH for \(host): expected \(expected), got \(presented)"
+            case .mismatch(let host, _, _):
+                // Names the host, never the fingerprints (maintainer
+                // decision, 2026-09-16): this sentence is what
+                // `DiagnosticLog`, the tunnel failure reason and the
+                // diagnostics report persist or display verbatim, and a
+                // fingerprint pasted into one of those is a fingerprint
+                // pasted into a public issue. The App's mismatch alert
+                // (`core.hostkey.mismatch %@ %@ %@`) and the CLI's stderr
+                // (`CLIErrorMapping`) build their own sentence straight from
+                // `expected`/`presented` instead of calling this function,
+                // and keep showing both — they are shown only to the person
+                // deciding whether to trust the new key, never persisted.
+                return "host key MISMATCH for \(host): the presented key differs from the recorded one"
             case .rejectedByUser:
                 return "the host key is not known to this app and was not accepted"
             }
